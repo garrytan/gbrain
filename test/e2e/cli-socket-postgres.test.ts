@@ -57,6 +57,12 @@ describe.skipIf(!DATABASE_URL)('warm CLI socket (postgres)', () => {
     return { stdout, stderr, exitCode };
   }
 
+  /** The [AGENT] block a refused non-JSON call prints on stdout before the cold path's output. */
+  function refusedNotice(part: string): string {
+    const why = `[socket_identity_mismatch] The running serve's warm CLI socket refused this call because ${part} differs from the serve's (the value is never shown), so it ran on the slower cold path. Every call from this environment does until that part matches the serve's.`;
+    return `[AGENT]\nwhy: ${why}\nactor: agent\nnext: run: gbrain doctor --only cli_socket_refusals --json --brain host\n[/AGENT]\n`;
+  }
+
   function traceFile(): string { return join(home, `trace-${traceSeq++}.jsonl`); }
   function tripLines(file: string): string[] {
     if (!existsSync(file)) return [];
@@ -132,6 +138,14 @@ describe.skipIf(!DATABASE_URL)('warm CLI socket (postgres)', () => {
     await stopServe();
   }, 90_000);
 
+  test('without a socket, GBRAIN_DEBUG names the missing socket and the read runs cold', async () => {
+    expect(existsSync(socketPath)).toBe(false);
+    const run = await cli(READS.search!, { GBRAIN_DEBUG: '1' });
+    expect(run.stderr).toContain(`[cli-socket] cold path: no socket at ${socketPath}; start the serve with gbrain serve --cli-socket or set serve.cli_socket true`);
+    expect(run.stderr).not.toContain('[cli-socket] warm:');
+    expect({ stdout: run.stdout, exitCode: run.exitCode }).toEqual({ stdout: cold.get('search')!.stdout, exitCode: cold.get('search')!.exitCode });
+  }, 90_000);
+
   test('serve.cli_socket true opens it without the flag (read from the connect-time config merge)', async () => {
     expect((await cli(['config', 'set', 'serve.cli_socket', 'true'])).exitCode).toBe(0);
     try {
@@ -161,8 +175,10 @@ describe.skipIf(!DATABASE_URL)('warm CLI socket (postgres)', () => {
     for (const [name, args] of Object.entries(READS)) {
       const warm = await cli(args, { GBRAIN_DEBUG: '1' });
       expect(warm.stderr, `${name} took the cold path`).not.toContain('[cli-socket] cold path');
+      expect(warm.stderr).toContain(`[cli-socket] warm: ${args[0]} answered by the serve socket at ${socketPath}\n`);
       const expected = cold.get(name)!;
-      expect({ name, ...warm }).toEqual({ name, ...expected });
+      const output = { ...warm, stderr: warm.stderr.replace(`[cli-socket] warm: ${args[0]} answered by the serve socket at ${socketPath}\n`, '') };
+      expect({ name, ...output }).toEqual({ name, ...expected });
     }
     expect(cold.get('get missing')!.exitCode).not.toBe(0);
   }, 180_000);
@@ -205,7 +221,7 @@ describe.skipIf(!DATABASE_URL)('warm CLI socket (postgres)', () => {
     try {
       const run = await cli(READS.search!, { GBRAIN_DEBUG: '1' });
       expect(run.stderr).toContain('[cli-socket] cold path: refused (identity_mismatch): config contents');
-      expect(run.stdout).toBe(cold.get('search')!.stdout);
+      expect(run.stdout).toBe(refusedNotice('config contents') + cold.get('search')!.stdout);
       expect(run.exitCode).toBe(0);
     } finally {
       writeFileSync(configFile, original);
@@ -226,8 +242,36 @@ describe.skipIf(!DATABASE_URL)('warm CLI socket (postgres)', () => {
     for (const [extra, part] of extras) {
       const run = await cli(READS.search!, { GBRAIN_DEBUG: '1', ...extra });
       expect(run.stderr).toContain(`[cli-socket] cold path: refused (identity_mismatch): ${part}`);
-      expect(run.stdout).toBe(cold.get('search')!.stdout);
+      expect(run.stdout).toBe(refusedNotice(part) + cold.get('search')!.stdout);
     }
+    // GBRA-156: without GBRAIN_DEBUG the refusal is still printed (an [AGENT] block on a non-TTY stdout; stderr under --json).
+    const quiet = await cli(READS.search!, { GBRAIN_CONTRIBUTOR_MODE: '1' });
+    expect(quiet.stdout).toBe(refusedNotice('env GBRAIN_CONTRIBUTOR_MODE') + cold.get('search')!.stdout);
+    const quietJson = await cli(READS['search --json']!, { GBRAIN_CONTRIBUTOR_MODE: '1' });
+    expect(quietJson.stdout).toBe(cold.get('search --json')!.stdout);
+    expect(quietJson.stderr).toContain('[socket_identity_mismatch]');
+  }, 90_000);
+
+  test('a variable of a provider neither side can call (an Azure API version, no Azure endpoint) no longer refuses: answered warm', async () => {
+    const trace = traceFile();
+    const run = await cli(READS.search!, { GBRAIN_DEBUG: '1', GBRAIN_SQL_TRACE: trace, AZURE_OPENAI_API_VERSION: '2024-10-21', OPENAI_ORG_ID: 'org-example' });
+    expect(run.stderr).not.toContain('[cli-socket] cold path');
+    expect(roundTrips(trace)).toBe(0);
+    expect({ stdout: run.stdout, exitCode: run.exitCode }).toEqual({ stdout: cold.get('search')!.stdout, exitCode: 0 });
+  }, 90_000);
+
+  test('a request that reaches its round-trip cap answers a retryable timeout error (not a cold rerun), and its slot is free again', async () => {
+    const identity = cliSocketIdentity({ config: { engine: 'postgres', database_url: databaseUrl }, brainId: 'host', configDir: join(home, '.gbrain'), configFile, version: VERSION, env });
+    const capped = await exchangeCliSocket(socketPath, { v: 1, identity, command: 'search', kind: 'op', op: 'search', params: { query: WORD },
+      routing: { cwd: process.cwd(), source_env: null }, cli: { quiet: false, timeout_ms: 1 } }, 30_000);
+    expect(capped).toMatchObject({ frame: { kind: 'error', error: { code: 'timeout', reason: 'cli_socket_round_trip_cap', retryable: true } } });
+    const run = await cli(['search', WORD, '--timeout=1ms']);
+    expect(run.exitCode).toBe(124);
+    expect(run.stdout).toContain('[AGENT]');
+    expect(run.stdout).toContain('[timeout] gbrain search did not finish within 1 ms on the warm CLI socket');
+    const after = await cli(READS.search!, { GBRAIN_DEBUG: '1' });
+    expect(after.stderr).not.toContain('[cli-socket] cold path');
+    expect(after.stdout).toBe(cold.get('search')!.stdout);
   }, 90_000);
 
   test('a CLI that differs only in connection sizing and driver-only URL parameters is answered warm', async () => {

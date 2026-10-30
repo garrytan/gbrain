@@ -12,9 +12,10 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { BrainEngine } from '../engine.ts';
+import type { BrainEngine, FactAttribution } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { inferFactSubject, recordedPageSlug } from './subject-infer.ts';
+import { entityLinkable } from './attribution.ts';
 import { RELINK_REASONS, type RelinkReason } from './relink-reasons.ts';
 import { estimateModelTokens, judgeBatch, MODEL_BATCH_SIZE, type ModelVerdict } from './relink-model.ts';
 import { relinkFactHash, submitRelinkGroup, type RelinkIntentFact } from './relink-publish.ts';
@@ -73,7 +74,7 @@ export interface RelinkReport {
   examples: Record<string, Example[]>;
 }
 
-interface Candidate { id: number; fact: string; visibility: 'private' | 'world'; context: string | null; source: string | null }
+interface Candidate { id: number; fact: string; visibility: 'private' | 'world'; context: string | null; source: string | null; attributed_to: FactAttribution | null }
 interface Planned { id: number; slug: string; tier: RelinkTier; model: string | null }
 
 const MODEL_VERDICT_SKIP = new Set<string>(['no_subject', 'ambiguous', 'unverified_match']);
@@ -90,7 +91,7 @@ function emptyReport(opts: RelinkOptions, runId: string): RelinkReport {
 export async function loadRelinkCandidates(engine: BrainEngine, opts: RelinkOptions): Promise<{ rows: Candidate[]; hasMore: boolean }> {
   const limit = opts.limit ?? RELINK_DEFAULT_LIMIT;
   const rows = await engine.executeRaw<Candidate & { id: number | string }>(
-    `SELECT id, fact, visibility, context, source FROM facts
+    `SELECT id, fact, visibility, context, source, attributed_to FROM facts
       WHERE source_id = $1 AND entity_slug IS NULL AND expired_at IS NULL
         AND row_num IS NULL AND source_markdown_slug IS NULL
         AND (valid_until IS NULL OR valid_until > now())
@@ -130,6 +131,11 @@ export async function runFactsRelink(engine: BrainEngine, opts: RelinkOptions): 
   const leftovers: Array<Candidate & { freeReason: RelinkReason; resolved: string[] }> = [];
   for (const [i, c] of rows.entries()) {
     opts.signal?.throwIfAborted();
+    if (!entityLinkable(c.attributed_to)) {
+      skip('not_user_attributed', c);
+      opts.onProgress?.(i + 1, rows.length);
+      continue;
+    }
     const r = await inferFactSubject(engine, opts.sourceId, { fact: c.fact, pageSlug: recordedPageSlug(c.context, c.source), mode: 'relink' });
     if (r.slug !== null) planned.push({ id: c.id, slug: r.slug, tier: r.via, model: null });
     else leftovers.push({ ...c, freeReason: r.reason, resolved: r.resolved });

@@ -32,6 +32,7 @@
  */
 import type { BrainEngine, ReservedConnection } from '../engine.ts';
 import { PoolCapacityError } from '../pool-budget.ts';
+import { READ_WRITE_BEGIN } from '../postgres-engine/read-write-transactions.ts';
 import { recordClaimSql, type ClaimPhaseClock } from './claim-phase.ts';
 import { registerEngineView, viewedEngine } from './switches.ts';
 
@@ -163,7 +164,7 @@ class BoundedReadSession {
     const steps: Promise<unknown>[] = [];
     if (!this.open) {
       this.open = true;
-      steps.push(this.conn.executeRaw('BEGIN'));
+      steps.push(this.conn.executeRaw(READ_WRITE_BEGIN));
       steps.push(this.conn.executeRaw(`SET LOCAL statement_timeout = ${ms}`));
       this.boundMs = ms;
     } else if (Math.abs(this.boundMs - ms) > BOUNDED_SESSION_SLACK_MS) {

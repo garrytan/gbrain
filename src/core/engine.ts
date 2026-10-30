@@ -139,6 +139,22 @@ export interface BatchOpts {
  */
 export interface TransactionOptions {
   signal?: AbortSignal;
+  /**
+   * GBRA-156: Postgres behind a transaction-mode pooler (transaction pipelining on) sends the transaction's first
+   * statement with BEGIN instead of a round trip later, when this accepts its text. If BEGIN fails that statement runs
+   * in autocommit, so pass only a test that accepts a read or a transaction-local set_config, never a write
+   * (`isPersistenceDeclaration`). Ignored by PGLite and inside a transaction.
+   */
+  pipelineFirst?: (statement: string) => boolean;
+  /**
+   * GBRA-156: Postgres on a pool that pipelines inside a transaction sends every statement this accepts, in order,
+   * behind BEGIN before BEGIN's answer; the first it refuses, and every later one, waits for the answer. If BEGIN fails
+   * the accepted statements run in autocommit, so pass only a test that accepts reads and transaction-local
+   * set_config (`isPipelinableSearchRead`). Ignored by PGLite and inside a transaction.
+   */
+  pipelineEarly?: (statement: string) => boolean;
+  /** GBRA-156: Postgres opens `BEGIN READ ONLY` (a write inside fails with 25006); search's reads pass it. Ignored by PGLite and when nested. */
+  readOnly?: boolean;
 }
 
 /** Input row for addLinksBatch. Optional fields default to '' (matches NOT NULL DDL). */
@@ -325,6 +341,16 @@ export interface TakesListOpts extends PageReadPolicy {
   /** Per-token MCP allow-list. Server applies AND holder = ANY($takesHoldersAllowList) when set. */
   takesHoldersAllowList?: string[];
   sortBy?: 'weight' | 'since_date' | 'created_at';
+  /** With `sortBy: 'since_date'`, oldest first (default newest first). */
+  oldestFirst?: boolean;
+  /**
+   * Only takes made on or before this ISO date (YYYY-MM-DD): a take with no
+   * since_date is left out, and one in ISO form (YYYY-MM-DD, or YYYY-MM read as
+   * the 15th) after the date is left out; any other form is kept for the caller.
+   */
+  sinceOnOrBefore?: string;
+  /** Takes with no take_grade_cache row for this prompt version and judge come first. */
+  ungradedFirst?: { promptVersion: string; judgeModelId: string };
   limit?: number;
   offset?: number;
   /** Federated/source scope via the take's page.source_id. Array wins over
@@ -351,6 +377,7 @@ export interface TakeHit {
 import type { StaleTakeOpts, StaleTakeRow, TakeEmbeddingInput } from './takes-row-types.ts';
 import type { BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyStagingState, ManifestRow, ManifestRowInput, SegmentChunkInput,
   SegmentedPageMeta, SegmentSweepOptions, SegmentSweepResult, SegmentTextInput } from './page-body/types.ts';
+import type { SegmentDerivationInput, SegmentDerivationKind, SegmentDerivationRow } from './page-body/derivations.ts';
 export type { StaleTakeOpts, StaleTakeRow, TakeEmbeddingInput } from './takes-row-types.ts';
 
 /** Resolution metadata for resolveTake. */
@@ -2201,8 +2228,8 @@ export interface BrainEngine {
    * self-commits, so an insert throw would permanently lose the page's
    * facts.) `slug` / `excludeSourcePrefixes` / `preserveExpiredLegacy`
    * mirror `deleteFactsForPage`; the deleted count is returned as
-   * `deleted`. Callers that omit it get the standalone insert
-   * (deleted: 0), unchanged.
+   * `deleted`. Callers that omit it get the standalone insert (deleted: 0), unchanged.
+   * `opts.deleteForPageFirst` is deprecated (GBRA-161 PR 2, test/generations-deprecated-fact-writers.test.ts).
    */
   insertFacts(
     rows: Array<NewFact & { row_num: number; source_markdown_slug: string; superseded_by_row?: number }>,
@@ -2248,8 +2275,8 @@ export interface BrainEngine {
    * this does NOT promise: it protects the record, not the forget itself —
    * if the fence still carries the same claim, fence canonicality
    * independently reinserts it as a fresh active row (legacy DB-only
-   * forgets are documented as non-durable; see extract-facts.ts). Omitted
-   * ⇒ legacy behavior.
+   * forgets are documented as non-durable; see extract-facts.ts). Omitted ⇒ legacy behavior.
+   * @deprecated GBRA-161 PR 2: retire through publishFenceGeneration / publishExtractedFacts (docs/architecture/generations.md).
    */
   deleteFactsForPage(
     slug: string,
@@ -2260,6 +2287,7 @@ export interface BrainEngine {
   /**
    * Mark a fact expired. Never DELETE. Returns true iff a row was updated.
    * Idempotent-as-false (already expired returns false without changing state).
+   * @deprecated GBRA-161 PR 2: retire through publishFenceGeneration / publishExtractedFacts (docs/architecture/generations.md).
    */
   expireFact(id: number, opts?: { supersededBy?: number; at?: Date }): Promise<boolean>;
 
@@ -2395,6 +2423,13 @@ export interface BrainEngine {
   setBodyStagingState(id: string, state: BodyStagingState, opts?: { commitRequestId?: string | null }): Promise<void>;
   /** Garbage collection: retired chunks and dead manifest rows (versions are roots), unreferenced texts past the grace window, expired stagings. */
   sweepSegments(opts?: SegmentSweepOptions): Promise<SegmentSweepResult>;
+  // Per-segment derivation watermarks (Wave B PR 4; types in page-body/derivations.ts, SQL in engine-sql/page-body.ts).
+  /** A page's rows (every kind, or `kind`; optionally only `occurrenceIds`), by kind then occurrence. */
+  readSegmentDerivations(pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[] }): Promise<SegmentDerivationRow[]>;
+  /** Insert or replace rows keyed (page, kind, occurrence) in bounded statements; a replaced row keeps created_at. */
+  upsertSegmentDerivations(rows: readonly SegmentDerivationInput[]): Promise<void>;
+  /** Delete a page's rows (every kind, or `kind`) whose occurrence is not in `liveOccurrenceIds`; returns the count. */
+  retireSegmentDerivations(pageId: number, liveOccurrenceIds: readonly number[], opts?: { kind?: SegmentDerivationKind }): Promise<number>;
 
   // Versions
   /**

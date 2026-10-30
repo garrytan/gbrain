@@ -1,0 +1,71 @@
+{
+  "description": "A full page overwrite without its Facts or takes section holds the fence fence_absent and keeps its rows (GBRA-161 PR 2, B-5). The reference model still required fence == rows, so every schedule that added a fact or take and then overwrote that page reported projection_drift (seeds 5108, 5109, 5113, 5115, 5116 from master 1d04e8ee). The model now accepts a mismatch only while the page has no fence block, the fence_absent hold is recorded and the rows are unchanged since they last matched; a parsed fence with the hold still recorded fails. fence_dropped_then_restored drops both sections, tries a supersede on the held page, then republishes the fenced bytes: the rows must match the restored fences and the hold must be gone.",
+  "engine": "pglite",
+  "reproduced_before_fix": "7/7 runs on master 1d04e8ee (4 to 15 projection_drift violations each); 0 on 61e52ec9, the commit before PR 2",
+  "failing_runs": [
+    {
+      "schedule": "random-5108",
+      "seed": 5108,
+      "length": 24,
+      "crashed": false,
+      "violations": []
+    },
+    {
+      "schedule": "random-5109",
+      "seed": 5109,
+      "length": 24,
+      "crashed": false,
+      "violations": []
+    },
+    {
+      "schedule": "random-5113",
+      "seed": 5113,
+      "length": 24,
+      "crashed": false,
+      "violations": []
+    },
+    {
+      "schedule": "random-5115",
+      "seed": 5115,
+      "length": 24,
+      "crashed": false,
+      "violations": []
+    },
+    {
+      "schedule": "random-5116",
+      "seed": 5116,
+      "length": 24,
+      "crashed": false,
+      "violations": []
+    },
+    {
+      "schedule": "random-5108",
+      "seed": 5108,
+      "length": 24,
+      "fault": {
+        "point": "effect:links:mid",
+        "nth": 1
+      },
+      "crashed": true,
+      "violations": []
+    },
+    {
+      "schedule": "random-5109",
+      "seed": 5109,
+      "length": 24,
+      "fault": {
+        "point": "publication:before_publication",
+        "nth": 2
+      },
+      "crashed": true,
+      "violations": []
+    },
+    {
+      "schedule": "fence_dropped_then_restored",
+      "seed": 5105,
+      "length": 6,
+      "crashed": false,
+      "violations": []
+    }
+  ]
+}

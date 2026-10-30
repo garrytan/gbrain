@@ -12,27 +12,28 @@ type Launch = { kind: 'warmup' | 'protection'; timeout: number | undefined; exec
 type Outcome = 'ok' | 'timeout' | 'error' | 'throw';
 
 /**
- * Simulates Windows PowerShell on any host. `coldMs` is how long the first
- * launch in the process takes: a launch whose bound is shorter fails as
- * execFile's timeout kill does. Later launches are warm. `warmup` forces the
- * warm-up launch's outcome instead; `protection: 'timeout'` makes every
- * protection launch hang past its bound.
+ * Simulates Windows PowerShell on any host. `coldMs` is how long PowerShell
+ * takes to start for the first time, on a virtual clock: each launch waits for
+ * what is left of it and fails as execFile's timeout kill does when its bound
+ * is shorter, so a warm-up killed at its bound leaves the next launch still
+ * cold. `warmup` forces the warm-up launch's outcome instead; `protection`
+ * forces every protection launch to hang past its bound or fail.
  */
-function simulatePowerShell(options: { coldMs?: number; warmup?: Outcome; protection?: 'timeout' }) {
+function simulatePowerShell(options: { coldMs?: number; warmup?: Outcome; protection?: 'timeout' | 'error' }) {
   const launches: Launch[] = [];
   const execute = childProcess.execFile;
-  let cold = true;
+  let elapsed = 0;
   const spy = spyOn(childProcess, 'execFile').mockImplementation(new Proxy(execute, {
     apply(target, thisArg, args) {
       if (args[0] !== powershell) return Reflect.apply(target, thisArg, args);
       const launchOptions = args[2] as childProcess.ExecFileOptionsWithStringEncoding;
       const kind = launchOptions.env?.GBRAIN_BACKUP_PRIVATE_PATH ? 'protection' : 'warmup';
       launches.push({ kind, timeout: launchOptions.timeout, executable: args[0], args: [...args[1]] });
-      const startup = cold ? options.coldMs ?? 0 : 0;
-      cold = false;
+      const startup = Math.max(0, (options.coldMs ?? 0) - elapsed);
       const forced = kind === 'warmup' ? options.warmup : options.protection;
       if (forced === 'throw') throw new Error('injected warm-up launch failure');
       const timedOut = forced === 'timeout' || startup > (launchOptions.timeout ?? Infinity);
+      elapsed += timedOut ? launchOptions.timeout ?? 0 : startup;
       const done = args[3];
       return Reflect.apply(target, thisArg, [process.execPath, ['--no-env-file', '--eval',
         "process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(process.env.GBRAIN_BACKUP_PRIVATE_PATH ? 'private' : ''))"],
@@ -99,6 +100,28 @@ test('a protection timeout after the warm-up stays final: one launch, no retry',
   try {
     const result = await protectFresh();
     expect(shell.launches.map(launch => launch.kind)).toEqual(['warmup', 'protection']);
+    expect(result.error).toMatchObject({ code: 'private_backup_protection_timeout' });
+  } finally { shell.restore(); }
+});
+
+// security-regressions (windows-latest, Bun 1.4.0) on #7409: the round trip failed after 46,063 ms, the warm-up's 30 s
+// bound plus the protection launch's 15 s, and reported the destination's permissions.
+test('a 50 s cold start outlasts both bounds and is reported as a PowerShell timeout, not a permissions refusal', async () => {
+  privacy.__resetPowerShellWarmupForTests();
+  const shell = simulatePowerShell({ coldMs: 50_000 });
+  try {
+    const result = await protectFresh();
+    expect(shell.launches.map(launch => launch.kind)).toEqual(['warmup', 'protection']);
+    expect(result.error).toMatchObject({ code: 'private_backup_protection_timeout' });
+    expect((result.error as Error).message).toContain('did not start within 15 seconds');
+  } finally { shell.restore(); }
+});
+
+test('a protection launch that fails without a timeout still reports the destination refusal', async () => {
+  privacy.__resetPowerShellWarmupForTests();
+  const shell = simulatePowerShell({ protection: 'error' });
+  try {
+    const result = await protectFresh();
     expect(result.error).toMatchObject({ code: 'private_backup_path_unavailable' });
   } finally { shell.restore(); }
 });

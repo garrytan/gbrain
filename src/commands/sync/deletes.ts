@@ -17,6 +17,7 @@ import { unsyncableReason, isPoisonedPath, DEFAULT_SOURCE_ID } from '../../core/
 import type { SyncResult } from '../sync.ts';
 import { partial, markCompleted, maybeYield } from './sync-run.ts';
 import type { SyncPlan, SyncRun, SyncProgress } from './sync-run.ts';
+import { noteCommittedProgress } from '../../core/forward-progress.ts';
 
 export async function sweepUnsyncableModified(
   engine: BrainEngine,
@@ -189,6 +190,7 @@ export async function runDeletesPhase(
           // lookups.
           pagesAffected.push(...deleted);
           for (const s of deleted) deletedSlugs.add(s);
+          if (deleted.length) noteCommittedProgress();
           // v0.42.x (#1794): the whole batch is handled (soft-deleted,
           // already gone, or refused above); checkpoint every path so a
           // resume skips it.
@@ -203,6 +205,7 @@ export async function runDeletesPhase(
           for (let j = 0; j < slugs.length; j++) {
             try {
               await softDeleteSyncPages(engine, [slugs[j]], deleteScopedOpts);
+              noteCommittedProgress();
               pagesAffected.push(slugs[j]);
               deletedSlugs.add(slugs[j]);
               await markCompleted(run, deletable[j]);
@@ -240,6 +243,7 @@ export async function runDeletesPhase(
           // optional-opts deletePage call applied on this legacy lane
           // (opts.sourceId is undefined here by construction).
           await softDeleteSyncPages(engine, [slug], { sourceId: opts.sourceId ?? DEFAULT_SOURCE_ID });
+          noteCommittedProgress();
           pagesAffected.push(slug);
           deletedSlugs.add(slug);
           await markCompleted(run, path);

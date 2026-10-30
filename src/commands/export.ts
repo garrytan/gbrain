@@ -1,6 +1,5 @@
 import { existsSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
-import { serializeMarkdown, slugStampedFrontmatter } from '../core/markdown.ts';
 import { scannerSlugRootMode } from '../core/write-through.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -12,7 +11,7 @@ import { ExportPathCollision, ExportStage, EXPORT_PAYLOAD_LIMIT, EXPORT_SNAPSHOT
 import { slugPortabilityProblem } from '../core/portable-slug.ts';
 import { publishExport } from '../core/export-publish.ts';
 import { nativeFileTarget } from '../core/persistence/native-file-target.ts';
-import { exportBodyLedger, readExportPage, readExportWithdrawals, segmentedExportMarkdown } from '../core/export-snapshot.ts';
+import { exportBodyLedger, inlineExportMarkdown, readExportPage, readExportWithdrawals, segmentedExportHead, segmentedExportMarkdown } from '../core/export-snapshot.ts';
 import { segmentedPageCeiling } from '../core/page-body/limits.ts';
 import { isSegmentedPage } from '../core/page-body/page-shape.ts';
 
@@ -148,18 +147,14 @@ a fresh directory. See docs/storage-tiering.md#safe-export.`);
             if (Number(key.bytes) > (key.segmented ? segmentedLimit : EXPORT_PAYLOAD_LIMIT)) throw new Error('Export page payload limit exceeded. No destination output was published.');
             const snapshot = await readExportPage(tx, key, withdrawals);
             const page = snapshot.page;
-            // #5966: the slug stamp rule lives in slugStampedFrontmatter (markdown.ts), shared with every render; an
-            // escaped file always carries its slug.
-            const frontmatter = target.escaped ? { ...(page.frontmatter ?? {}), slug: page.slug } : slugStampedFrontmatter(page.slug, page.frontmatter ?? {});
-            const meta = { type: page.type, title: page.title, tags: snapshot.tags };
             const label = `${page.source_id}:${page.slug}`;
             const raw = Number(key.raw_count) ? await tx.getRawData(page.slug, undefined, { sourceId: page.source_id, includeDeleted: true }) : [];
             try {
               if (isSegmentedPage(page)) {
                 streamedBytes += Number(key.bytes);
-                const head = serializeMarkdown(frontmatter, '', '', meta).slice(0, -1);
-                await staged.addStream(target.path, Number(key.bytes), segmentedLimit, segmentedExportMarkdown(tx, page, exportBodyLedger(page.slug, withdrawals), head));
-              } else staged.add(target.path, 'file', serializeMarkdown(frontmatter, page.compiled_truth, page.timeline, meta));
+                await staged.addStream(target.path, Number(key.bytes), segmentedLimit,
+                  segmentedExportMarkdown(tx, page, exportBodyLedger(page.slug, withdrawals), segmentedExportHead(snapshot, target.escaped)));
+              } else staged.add(target.path, 'file', inlineExportMarkdown(snapshot, target.escaped));
               owners.set(target.path, { source_id: page.source_id, label });
               if (raw.length) {
                 staged.add(target.rawPath, 'file', JSON.stringify(Object.fromEntries(raw.map(row => [row.source, row.data])), null, 2) + '\n');

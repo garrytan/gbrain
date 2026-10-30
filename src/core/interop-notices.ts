@@ -205,7 +205,7 @@ export function degradedRecallNotice(
 
 const BINDING_READ_OPS: ReadonlySet<string> = new Set(['search', 'query', 'recall', 'list_pages']);
 
-function emptyRead(op: string, result: unknown): boolean {
+export function emptyRead(op: string, result: unknown): boolean {
   if (Array.isArray(result)) return result.length === 0;
   if (op !== 'recall' || !result || typeof result !== 'object') return false;
   const r = result as { facts?: unknown[]; results?: unknown[] };

@@ -52,7 +52,7 @@ export interface ServeHeadWatcherOptions {
   revParse?: (root: string) => Promise<string>;
   quiet?: (source: WatchedSource) => boolean;
   syncRunning?: () => boolean | Promise<boolean>;
-  drainHeld?: (sourceId: string) => Promise<boolean>;
+  drainHeld?: (sourceId: string) => Promise<boolean | 'stalled'>;
   startSync?: (sourceId: string, req: StartRequest) => Promise<OnCommitStart>;
   jobStatus?: (jobId: string) => OnCommitJobStatus | null;
   watch?: (gitDir: string, onChange: () => void) => (() => void) | null;

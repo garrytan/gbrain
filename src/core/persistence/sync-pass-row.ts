@@ -72,6 +72,8 @@ export interface ManagedSyncPassValue {
     converged?: PassConverged;
     mismatch: Record<string, { level: string | null; streak: number }>;
     not_converged_streak: number;
+    /** #7355: at this pass's pin, how many passes in a row before it never ended (their row was left `open`: a pass the drain's governor abandoned, or a killed process). Status counts it only while this pass's row is open. */
+    abandoned_streak?: number;
     /** When the current run of unhealthy endings (`blocked`, `not_converged`) began; kept across them, cleared at `synced`/`up_to_date`. The §3.7 readers age a stuck source from it. */
     stuck_since?: string | null;
     faults: Record<string, { level: string | null; class: string; attempts: number }>;
@@ -132,6 +134,10 @@ export const OPEN_AT_STAMP_CAP = 256;
 export const SETTLE_MISMATCH_STREAK = 3;
 /** Consecutive `not_converged` passes after which `fix.next` becomes `report` (design §3.1, DX R9). */
 export const NOT_CONVERGED_REPORT_STREAK = 3;
+/** #7355: passes in a row that never ended (the newest counted once its row has been quiet for ABANDONED_QUIET_MS) before status stops sending the plain sync. */
+export const ABANDONED_REPORT_STREAK = 2;
+/** The drain's in-pass no-progress window: an open row quiet this long belongs to no live pass. */
+export const ABANDONED_QUIET_MS = 5 * 60_000;
 
 export const passFingerprint = (sourceId: string, incarnation: string) => `${sourceId}:${incarnation}`;
 
@@ -160,14 +166,16 @@ export async function readLivePassRows(engine: Exec, sourceIds?: readonly string
  * Writes the pass row inside `tx` (the caller has run `assertDrainLease` in the same transaction). `pin`: the pass that
  * just took the lease replaces whatever row a former holder left; otherwise the write lands only while the row still
  * carries `leaseToken`. Returns false when it did not land (another pass pinned since). `clock`: `telemetry.started_at` is the
- * transaction's clock (`now()`, as an ISO string), so the write needs no earlier read of it.
+ * transaction's clock (`now()`, as an ISO string), so the write needs no earlier read of it. `onlyOpen`: the write lands only
+ * on a row still `open`, so a stop after a folded stamp ended the row `synced` never rewrites the stamp's obligations.
  */
-export async function writePassRow(tx: Exec, value: ManagedSyncPassValue, opts: { pin?: boolean; clock?: boolean } = {}): Promise<boolean> {
+export async function writePassRow(tx: Exec, value: ManagedSyncPassValue, opts: { pin?: boolean; clock?: boolean; onlyOpen?: boolean } = {}): Promise<boolean> {
   const json = opts.clock ? `jsonb_set($3::text::jsonb,'{telemetry,started_at}',to_jsonb(to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')))` : '$3::text::jsonb';
   const rows = await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES($1,$2,jsonb_build_array(${json}),now())
     ON CONFLICT (op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys, updated_at=now()
-      WHERE $4::boolean OR op_checkpoints.completed_keys->0->>'lease_token'=$5 RETURNING 1`,
-  [MANAGED_SYNC_PASS_OP, passFingerprint(value.source_id, value.incarnation), JSON.stringify(value), opts.pin === true, value.lease_token]);
+      WHERE ($4::boolean OR op_checkpoints.completed_keys->0->>'lease_token'=$5)
+        AND (NOT $6::boolean OR op_checkpoints.completed_keys->0->'telemetry'->>'outcome'='open') RETURNING 1`,
+  [MANAGED_SYNC_PASS_OP, passFingerprint(value.source_id, value.incarnation), JSON.stringify(value), opts.pin === true, value.lease_token, opts.onlyOpen === true]);
   return rows.length > 0;
 }
 

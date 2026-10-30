@@ -45,8 +45,9 @@
  */
 import type { SearchOpts, SearchResult } from '../types.ts';
 import { searchLimitCap } from '../search/eval-pool-depth.ts';
-import { boundWebsearchQuery, buildOrFallbackWebsearchQuery } from '../search/sql-ranking.ts';
+import { boundWebsearchQuery, buildOrFallbackWebsearchQuery, orFallbackTokens } from '../search/sql-ranking.ts';
 import { buildSearchTitlesStatement, type SearchTitlesDialect } from '../search/title-statement.ts';
+import { RARITY_MAX_TERMS } from '../search/keyword-or-rarity.ts';
 import { rowToSearchResult } from '../utils.ts';
 import type { ScopedRead } from './brands.ts';
 import type { ScopedReadRunner } from './cjk-search.ts';
@@ -58,6 +59,8 @@ import type { ScopedReadRunner } from './cjk-search.ts';
  */
 export type SearchTitlesRunDialect = Omit<SearchTitlesDialect, 'chunkManifest'> & {
   chunkManifest?: (exec: ScopedRead) => Promise<boolean>;
+  /** Transaction-local settings for every attempt (Postgres: the keyword statement's work_mem, so a common term's bitmap stays exact). */
+  statementSettings?: Readonly<Record<string, string>>;
 };
 
 export async function searchTitles(
@@ -75,25 +78,63 @@ export async function searchTitles(
   }
   const statementFor = (chunkManifest: boolean, relaxed = false) => buildSearchTitlesStatement(query, opts, { ...dialect, chunkManifest, relaxed });
   const statement = statementFor(true);
-  const run = (queryText: string, relaxed: boolean) => {
+  /** One scoped read running the statement once per query text ($1), in order. */
+  const run = (queryTexts: string[], relaxed: boolean) => {
     const preferIndex = relaxed && dialect.relaxedPrefersIndex && !statement.safeChunks;
     const settings = {
       ...(dialect.statementTimeout ? { statement_timeout: dialect.statementTimeout } : {}),
+      ...dialect.statementSettings,
       ...(preferIndex ? { enable_seqscan: 'off' } : {}),
     };
-    const params = [...statement.params];
-    params[0] = queryText;
-    return scoped(async exec => (await exec.unsafe(statementFor(await dialect.chunkManifest?.(exec) ?? true, relaxed).sql, params)).rows,
-      Object.keys(settings).length ? settings : undefined);
+    return scoped(async exec => {
+      const sql = statementFor(await dialect.chunkManifest?.(exec) ?? true, relaxed).sql;
+      const lists = [];
+      for (const text of queryTexts) lists.push((await exec.unsafe(sql, [text, ...statement.params.slice(1)])).rows);
+      return lists;
+    }, Object.keys(settings).length ? settings : undefined);
   };
 
   const strictQuery = statement.params[0] as string;
-  const rows = await run(strictQuery, false);
+  const [rows] = await run([strictQuery], false);
   if (rows.length > 0) return rows.map(rowToSearchResult);
   const orQuery = buildOrFallbackWebsearchQuery(strictQuery);
   if (!orQuery) return [];
+  const terms = orFallbackTokens(strictQuery);
+  const rarity = terms.length <= RARITY_MAX_TERMS && !opts?.offset;
+  const [orRows, ...wordLists] = await run([boundWebsearchQuery(orQuery), ...(rarity ? terms : [])], true);
+  const relaxedRows = rarity ? rankByRarity(orRows, wordLists, statement.params[2] as number) : orRows;
   // 2026-09 (#3617 follow-up): relaxed rows are TAGGED so hybrid's fusion can
   // demote them (SearchResult.keyword_relaxed).
-  const relaxedRows = await run(boundWebsearchQuery(orQuery), true);
   return relaxedRows.map((r) => ({ ...rowToSearchResult(r), keyword_relaxed: true as const }));
+}
+
+
+/**
+ * #7471: the OR fallback ranks every title holding one query word alike
+ * (ts_rank_cd knows no term rarity) and breaks the tie by page id, so once
+ * thousands of titles held a common word ("Matt"), the one title holding the
+ * rare word (the surname) fell out of the arm. A short query also runs once
+ * per word. A word with fewer rows than the limit is rare, and all of its
+ * titles are known: each weighs 1 / its row count, a title sums the weights
+ * of the rare words it holds, and titles sort by that sum, then in the OR
+ * query's order. A word that fills the limit weighs nothing, so a query with
+ * no rare word keeps the OR query's order exactly.
+ */
+export function rankByRarity<T extends { page_id?: unknown }>(orRows: T[], wordLists: T[][], limit: number): T[] {
+  const weight = new Map<string, number>();
+  const pool = [...orRows];
+  const seen = new Set(orRows.map(row => String(row.page_id)));
+  for (const list of wordLists) {
+    if (list.length === 0 || list.length >= limit) continue;
+    for (const row of list) {
+      const key = String(row.page_id);
+      weight.set(key, (weight.get(key) ?? 0) + 1 / list.length);
+      if (!seen.has(key)) { seen.add(key); pool.push(row); }
+    }
+  }
+  return pool
+    .map((row, i) => ({ row, i, w: weight.get(String(row.page_id)) ?? 0 }))
+    .sort((a, b) => b.w - a.w || a.i - b.i)
+    .slice(0, limit)
+    .map(e => e.row);
 }

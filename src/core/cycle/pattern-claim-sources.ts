@@ -17,7 +17,7 @@
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
-import { publishOrHold } from '../persistence/accepted-pending.ts';
+import { publicationHold } from '../persistence/accepted-pending.ts';
 import { throwIfAborted } from '../abort-check.ts';
 
 export const CLAIM_SOURCES_KEY = 'unverified_claim_sources';
@@ -103,6 +103,13 @@ export async function dedupePatternClaimSources(engine: BrainEngine, maintenance
     [sourceId, `${outputSlugPrefix}/%`]);
   const rewritten: string[] = [];
   const held: string[] = [];
+  const skipped = (slug: string, error: unknown) => {
+    if (signal?.aborted) throw error;
+    process.stderr.write(`[dream] patterns: could not de-duplicate the claim sources of ${slug}; the next run retries `
+      + `(${error instanceof Error ? error.message : String(error)})\n`);
+  };
+  // G6: a managed brain submits every rewrite as one maintenance batch before waiting on any (one publication group on Postgres).
+  const batch: Array<{ slug: string; content: string; expectedRevision: string }> = [];
   for (const { slug } of rows) {
     throwIfAborted(signal, '[dream] patterns claim de-duplication');
     try {
@@ -112,22 +119,22 @@ export async function dedupePatternClaimSources(engine: BrainEngine, maintenance
       if (!changed) continue;
       const { serializePageToMarkdown } = await import('../markdown.ts');
       const content = serializePageToMarkdown({ ...snapshot.page, frontmatter }, snapshot.tags);
-      if (maintenance) {
-        const { publishMaintenancePage } = await import('../persistence/prepared-maintenance.ts');
-        if (await publishOrHold(() => publishMaintenancePage(engine, maintenance, slug, content, { expectedRevision: snapshot.revision }))) {
-          held.push(slug);
-          continue;
-        }
-      } else {
-        const [{ importFromContent }, { isAvailable }] = await Promise.all([import('../import-file.ts'), import('../ai/gateway.ts')]);
-        await importFromContent(engine, slug, content, { noEmbed: !isAvailable('embedding'), sourceId, preserveGateMarkers: true });
-      }
+      if (maintenance) { batch.push({ slug, content, expectedRevision: snapshot.revision }); continue; }
+      const [{ importFromContent }, { isAvailable }] = await Promise.all([import('../import-file.ts'), import('../ai/gateway.ts')]);
+      await importFromContent(engine, slug, content, { noEmbed: !isAvailable('embedding'), sourceId, preserveGateMarkers: true });
       rewritten.push(slug);
     } catch (error) {
-      if (signal?.aborted) throw error;
-      process.stderr.write(`[dream] patterns: could not de-duplicate the claim sources of ${slug}; the next run retries `
-        + `(${error instanceof Error ? error.message : String(error)})\n`);
+      skipped(slug, error);
     }
+  }
+  if (maintenance && batch.length) {
+    const { publishMaintenancePages } = await import('../persistence/prepared-maintenance.ts');
+    (await publishMaintenancePages(engine, maintenance, batch)).forEach((outcome, i) => {
+      const { slug } = batch[i]!;
+      if (!('error' in outcome)) rewritten.push(slug);
+      else if (publicationHold(outcome.error)) held.push(slug);
+      else skipped(slug, outcome.error);
+    });
   }
   if (rewritten.length) process.stderr.write(`[dream] patterns: de-duplicated the claim sources of ${rewritten.length} pattern page(s)\n`);
   return { rewritten, held };

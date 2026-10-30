@@ -45,6 +45,19 @@ export async function declareDurablePersistence(tx: SqlEngine, lockTimeout = '1s
   return row?.brain ?? null;
 }
 
+const LOCAL_SETTING = String.raw`set_config\('[a-z_.]+',(?:\$\d+|'[^']*'),true\)`;
+const DECLARATION = new RegExp(`^SELECT ${LOCAL_SETTING}(?:,\\s*${LOCAL_SETTING})*(?:,\\s*${BRAIN_SHARE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})?$`);
+/**
+ * GBRA-156: whether `statement` is a declaration this module sends: one SELECT of transaction-local set_config calls,
+ * optionally with the brain row FOR SHARE. Run outside a transaction it changes nothing (a local setting ends with its
+ * statement, and so does the share lock), so a transaction whose first statement it is may send it before BEGIN's
+ * answer (`TransactionOptions.pipelineFirst`): if BEGIN fails, only this statement runs, in autocommit. It accepts no
+ * other text, writes included, and nothing containing `;` (a simple-protocol query may hold several statements).
+ */
+export function isPersistenceDeclaration(statement: string): boolean {
+  return !statement.includes(';') && DECLARATION.test(statement.trim());
+}
+
 export const PERSISTENCE_PROTOCOL_PREDICATE = "set_config('gbrain.persistence_protocol','2',true)='2'";
 
 export function assertMutationProtocol(row: Pick<WriteRequest, 'target_kind' | 'protocol_version'>): void {

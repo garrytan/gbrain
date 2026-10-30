@@ -4,6 +4,11 @@
  * Inline by default (PGLite-safe: it's the same runConnectorSync the handler
  * wraps). `--background` submits the `connector-sync` minion job on Postgres;
  * on PGLite (no worker daemon) it falls back to inline with a note.
+ *
+ * #7515: `--all` (the scheduled form) syncs only providers whose
+ * `connectors.<p>.auto_sync` is on; an explicit provider overrides it.
+ * `--max-requests` and `--deadline` bound the whole invocation under the hard
+ * MAX_CONNECTOR_REQUESTS_PER_RUN ceiling every run has.
  */
 
 import type { BrainEngine } from '../../core/engine.ts';
@@ -14,7 +19,9 @@ import { runConnectorSync } from '../../core/connectors/sync.ts';
 import type { ConnectorSyncResult } from '../../core/connectors/sync.ts';
 import { connectorProviderNames, isConnectorProviderName } from '../../core/connectors/registry.ts';
 import { loadCredential } from '../../core/connectors/credentials.ts';
-import { sourceIdKey } from '../../core/connectors/config-keys.ts';
+import { autoSyncKey, isTruthy, sourceIdKey } from '../../core/connectors/config-keys.ts';
+import { MAX_CONNECTOR_REQUESTS_PER_RUN } from '../../core/connectors/client.ts';
+import { parseDurationSeconds } from '../../core/sync-concurrency.ts';
 import type { ConnectorProviderName } from '../../core/connectors/types.ts';
 import { flagValueError, intFlagValue } from '../../cli/flag-values.ts';
 import { usageError } from '../../cli/cli-error.ts';
@@ -29,6 +36,19 @@ interface SyncFlags {
   background: boolean;
   json: boolean;
   all: boolean;
+  maxRequests?: number;
+  deadlineSec?: number;
+}
+
+function deadlineFlagValue(raw: string | undefined): number {
+  const accepts = 'a duration such as 90s, 30m or 2h';
+  try {
+    const seconds = raw === undefined || raw.startsWith('-') ? undefined : parseDurationSeconds(raw, '--deadline');
+    if (seconds !== undefined) return seconds;
+  } catch {
+    // falls through to the usage error below
+  }
+  throw flagValueError('--deadline', raw, accepts, '30m');
 }
 
 function parseFlags(args: string[]): { provider: string; providerIndex: number; flags: SyncFlags } {
@@ -46,13 +66,15 @@ function parseFlags(args: string[]): { provider: string; providerIndex: number; 
     // #5930 (D4): decimals, zero limits and unsafe integers are usage errors (exit 2), not Number() coercions.
     else if (a === '--limit') flags.limit = intFlagValue(args[++i], '--limit', { min: 1, example: 50 });
     else if (a === '--window-days') flags.windowDays = intFlagValue(args[++i], '--window-days', { min: 0, example: 30 });
+    else if (a === '--max-requests') flags.maxRequests = intFlagValue(args[++i], '--max-requests', { min: 1, max: MAX_CONNECTOR_REQUESTS_PER_RUN, example: 500 });
+    else if (a === '--deadline') flags.deadlineSec = deadlineFlagValue(args[++i]);
     else if (a === '--source') flags.source = args[++i];
     else if (!a.startsWith('-')) { provider = a; providerIndex = i; }
   }
   return { provider, providerIndex, flags };
 }
 
-const SYNC_USAGE = 'gbrain connectors sync <chatgpt|claude>|--all [--full] [--dry-run] [--limit N] [--window-days N] [--source id] [--embed] [--background] [--json]';
+const SYNC_USAGE = 'gbrain connectors sync <chatgpt|claude>|--all [--full] [--dry-run] [--limit N] [--window-days N] [--max-requests N] [--deadline 30m] [--source id] [--embed] [--background] [--json]';
 
 /** Agent contract v1: usage errors are `invalid_params` (exit 2, one `--json` envelope) naming the usage and the fix. */
 function syncUsageError(message: string, fix: { argv: string[]; inputs: Array<{ name: string; how: string }> }) {
@@ -81,11 +103,17 @@ export async function runConnectorSyncCmd(engine: BrainEngine, args: string[]): 
   let providers: ConnectorProviderName[];
   if (flags.all) {
     // Only providers that have a credential (env or file) are worth syncing.
-    providers = connectorProviderNames().filter((p) => loadCredential(p) !== null);
-    if (providers.length === 0) {
+    const credentialed = connectorProviderNames().filter((p) => loadCredential(p) !== null);
+    if (credentialed.length === 0) {
       console.error('No connector credentials found. Run `gbrain connectors auth <provider>` first.');
       setCliExitVerdict(1);
       return;
+    }
+    // #7515: --all is the scheduled form, so a provider whose owner turned auto_sync off is left alone.
+    providers = [];
+    for (const p of credentialed) {
+      if (isTruthy(await engine.getConfig(autoSyncKey(p)))) providers.push(p);
+      else console.error(`Skipped ${p}: connectors.${p}.auto_sync is off (\`gbrain connectors sync ${p}\` syncs it explicitly).`);
     }
   } else if (isConnectorProviderName(provider)) {
     providers = [provider];
@@ -99,6 +127,7 @@ export async function runConnectorSyncCmd(engine: BrainEngine, args: string[]): 
 
   const sourceId = flags.source ?? (await engine.getConfig(sourceIdKey())) ?? 'default';
   const results: ConnectorSyncResult[] = [];
+  const deadlineAt = flags.deadlineSec !== undefined ? Date.now() + flags.deadlineSec * 1000 : undefined;
 
   for (const p of providers) {
     if (flags.background && !flags.dryRun) {
@@ -116,6 +145,8 @@ export async function runConnectorSyncCmd(engine: BrainEngine, args: string[]): 
         limit: flags.limit,
         windowDays: flags.windowDays,
         embed: flags.embed,
+        maxRequests: flags.maxRequests,
+        deadlineAt,
         onProgress: (pr) => reporter.heartbeat(`${pr.phase}: listed ${pr.listed}, fetched ${pr.fetched}, imported ${pr.imported}`),
       });
       results.push(r);
@@ -146,7 +177,10 @@ async function submitBackground(
   const slot = new Date().toISOString().slice(0, 13); // hour bucket
   const job = await queue.add(
     'connector-sync',
-    { provider, sourceId, full: flags.full, limit: flags.limit },
+    {
+      provider, sourceId, full: flags.full, limit: flags.limit, maxRequests: flags.maxRequests,
+      deadlineSec: flags.deadlineSec, explicit: !flags.all,
+    },
     { idempotency_key: `connector-sync:${provider}:${slot}`, max_attempts: 2 },
   );
   console.log(`Queued connector-sync for ${provider} (job ${job.id}). Track with \`gbrain jobs get ${job.id}\`.`);

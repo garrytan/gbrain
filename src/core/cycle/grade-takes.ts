@@ -50,6 +50,7 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { parseTakesFence } from '../takes-fence.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { utcDate } from './cycle-date.ts';
 
 /**
  * Bump when the judge prompt or the JSON output shape changes. Old verdicts
@@ -490,6 +491,22 @@ export async function defaultJudge(input: {
 }
 
 /**
+ * The phase's work window: unresolved active takes, oldest-first. Takes too
+ * recent to grade are left out in SQL so they cannot fill the window, and
+ * takes with no verdict for this prompt and judge come first, so graded takes
+ * (which stay unresolved while auto-resolve is off) leave room for the ones
+ * behind them. takeIsOldEnough still runs on each take for dates SQL cannot read.
+ */
+function listGradeWindow(engine: BrainEngine, opts: { minAgeMonths: number; promptVersion: string; judgeModelId: string; limit: number }): Promise<Take[]> {
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - opts.minAgeMonths);
+  return engine.listTakes({
+    resolved: false, active: true, sortBy: 'since_date', oldestFirst: true, sinceOnOrBefore: utcDate(cutoff),
+    ungradedFirst: { promptVersion: opts.promptVersion, judgeModelId: opts.judgeModelId }, limit: opts.limit,
+  });
+}
+
+/**
  * Determine whether a take is old enough to grade. Defaults to 6 months.
  * Takes without since_date are NOT graded (we'd be hallucinating context).
  */
@@ -618,13 +635,7 @@ class GradeTakesPhase extends BaseCyclePhase {
     // streak; auth/billing halt on the first hit.
     const llmHalt = createGlobalLlmHaltTracker();
 
-    // Load unresolved active takes, oldest-first.
-    const takes = await engine.listTakes({
-      resolved: false,
-      active: true,
-      sortBy: 'since_date',
-      limit: takeLimit,
-    });
+    const takes = await listGradeWindow(engine, { minAgeMonths, promptVersion, judgeModelId, limit: takeLimit });
 
     if (opts.reporter) {
       opts.reporter.start('grade_takes.takes' as never, takes.length);

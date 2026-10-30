@@ -58,15 +58,18 @@ describe('doctor runtime_build_skew', () => {
       workers: [{ pid: 5151, version: OLD, install_root: INSTALL }],
       supervisor: { pid: 6161, version: OLD, install_root: INSTALL },
     }), service);
-    expect(check.status).toBe('warn');
+    expect(check.status).toBe('fail');
     expect(check.message).toStartWith(`runtime_build_skew: 3 gbrain builds are running on this host (newest v${VERSION})`);
     expect(check.message).toContain(`serve pid 4242 v${OLDER}`);
     expect(check.message).toContain(`supervisor pid 6161 v${OLD} (its install now holds v${VERSION})`);
     expect(check.message).toContain(`worker pid 5151 v${OLD} (its install now holds v${VERSION})`);
     expect(check.message).toContain(`job children of worker pid 5151 ran v${VERSION} (jobs #11, #12)`);
-    const fix = check.fix as { argv: string[]; actor: string; verify: { argv: string[] } };
-    expect(fix.argv).toEqual(['kill', '4242']);
-    expect(fix.actor).toBe('user');
+    const fix = check.fix as { argv: string[]; actor: string; ask_user?: boolean; user_message: string; verify: { argv: string[] } };
+    expect(fix.argv).toEqual(['gbrain', 'upgrade', '--restart-only']);
+    expect(fix.actor).toBe('agent');
+    expect(fix.ask_user).toBe(true);
+    expect(fix.user_message).toContain(`serve pid 4242 v${OLDER}`);
+    expect(check.message).toContain('By hand: restart with `kill 4242`');
     expect(fix.verify.argv).toEqual(['gbrain', 'doctor', '--only', 'runtime_build_skew', '--json']);
     expect(check.details).toMatchObject({ count: 3, newest: VERSION, earlier_job_children: 0 });
     expect(JSON.stringify(check)).not.toContain(INSTALL);
@@ -86,14 +89,15 @@ describe('doctor runtime_build_skew', () => {
     const check = await runtimeBuildSkewCheck(stub([]).engine, HOST, sources({ workers: [{ pid: 5151, version: OLD, install_root: INSTALL }] }), service);
     expect(check.status).toBe('warn');
     expect(check.message).toStartWith(`runtime_build_skew: a gbrain process runs an older build than its install (newest v${OLD})`);
-    expect((check.fix as { argv: string[] }).argv).toEqual(['kill', '5151']);
+    expect((check.fix as { argv: string[] }).argv).toEqual(['gbrain', 'upgrade', '--restart-only']);
+    expect(check.message).toContain('By hand: restart with `kill 5151`');
   });
 
   test('a stale supervisor is restarted before its worker', async () => {
     const check = await runtimeBuildSkewCheck(stub([heartbeat()]).engine, HOST, sources({
       workers: [{ pid: 5151, version: OLD, install_root: INSTALL }], supervisor: { pid: 6161, version: OLD, install_root: INSTALL } }), service);
-    expect(check.status).toBe('warn');
-    expect((check.fix as { argv: string[] }).argv).toEqual(['gbrain', 'jobs', 'supervisor', 'stop']);
+    expect(check.status).toBe('fail');
+    expect(check.message).toContain('By hand: restart with `gbrain jobs supervisor stop`');
     expect(check.message).toContain('gbrain jobs supervisor start --detach');
   });
 
@@ -125,7 +129,7 @@ describe('doctor runtime_build_skew on PGLite', () => {
     const job = await queue.add('sync', {});
     await engine.executeRaw(`UPDATE minion_jobs SET stacktrace = jsonb_build_array('earlier failure', $1::text) WHERE id = $2`, [childLine(process.pid, OLD), job.id]);
     const check = await runtimeBuildSkewCheck(engine as unknown as BrainEngine, HOST, sources({ workers: [{ pid: process.pid, version: OLD, install_root: INSTALL }] }), service);
-    expect(check.status).toBe('warn');
+    expect(check.status).toBe('fail');
     expect(check.details).toMatchObject({ job_children: [{ job_id: job.id, child_version: VERSION, worker_pid: process.pid, worker_version: OLD, refused: false }] });
     expect(check.message).toContain(`job children of worker pid ${process.pid} ran v${VERSION} (jobs #${job.id})`);
   });

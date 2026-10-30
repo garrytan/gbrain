@@ -5,7 +5,9 @@
  * answered, then stale, then new evidence in scope since the watermark. A pin
  * refreshed (or attempted) within its cooldown (`cooldown_days` on the pin, or
  * `cycle.standing_questions.cooldown_days`, default 1) waits, except a pin that
- * was never attempted. Inactive and draft-only pins follow their own rules
+ * was never attempted. A pin whose last refresh failed `answer_too_long` at
+ * the current `cycle.standing_questions.max_output_tokens` (#7306) is skipped
+ * and reported blocked until the cap is raised. Inactive and draft-only pins follow their own rules
  * (inactive: never refreshed; draft: refreshed, not served by context_pack).
  *
  * The phase also brings question pages in line with their pins (materializes
@@ -20,7 +22,7 @@ import { BudgetMeter, loadAllowUnpriced, loadPricingOverrides, parseBudgetUsd } 
 import { evaluateAnswer, newEvidenceSinceWatermark } from './freshness.ts';
 import { syncQuestionPage } from './pages.ts';
 import { LAST_PHASE_RUN_KEY } from './receipt.ts';
-import { refreshPin, type QuestionChatFn, type RefreshHooks } from './refresh.ts';
+import { answerTooLongCap, refreshPin, resolveMaxOutputTokens, type QuestionChatFn, type RefreshHooks } from './refresh.ts';
 import { listPins, pinId, type PinRow } from './store.ts';
 import { DEFAULT_BUDGET_USD } from './service.ts';
 
@@ -59,8 +61,13 @@ export async function runPhaseStandingQuestions(engine: BrainEngine, opts: Stand
     catch (e) { process.stderr.write(`[questions] page sync for ${pinId(pin)} failed: ${(e as Error).message}\n`); }
   }
   const now = Date.now();
+  const maxTokens = await resolveMaxOutputTokens(engine);
   const candidates: Array<{ pin: PinRow; rank: number }> = [];
+  const tooLong: string[] = [];
   for (const pin of pins.filter(p => p.state === 'active')) {
+    // #7306: an answer that did not fit the output cap fails the same way at that cap; it waits for the cap to be raised.
+    const failedCap = answerTooLongCap(pin.last_error);
+    if (failedCap !== null && failedCap >= maxTokens) { tooLong.push(pinId(pin)); continue; }
     const neverAttempted = pin.last_attempt_at === null;
     const cooldownMs = (pin.cooldown_days ?? defaultCooldownDays) * 86_400_000;
     if (!neverAttempted && pin.last_attempt_at && now - pin.last_attempt_at.getTime() < cooldownMs) continue;
@@ -70,8 +77,8 @@ export async function runPhaseStandingQuestions(engine: BrainEngine, opts: Stand
     if (await newEvidenceSinceWatermark(engine, pin)) candidates.push({ pin, rank: 2 });
   }
   candidates.sort((a, b) => a.rank - b.rank || (a.pin.last_attempt_at?.getTime() ?? 0) - (b.pin.last_attempt_at?.getTime() ?? 0));
-  const tally = { candidates: candidates.length, refreshed: 0, blocked: 0, failed: 0, conflicts: 0, in_progress: 0, pages_synced: pagesSynced };
-  const outcomes: Array<{ id: string; status: string }> = [];
+  const tally = { candidates: candidates.length, refreshed: 0, blocked: tooLong.length, failed: 0, conflicts: 0, in_progress: 0, pages_synced: pagesSynced };
+  const outcomes: Array<{ id: string; status: string }> = tooLong.map(id => ({ id, status: 'blocked:answer_too_long' }));
   for (const { pin } of candidates.slice(0, maxPerCycle)) {
     opts.signal?.throwIfAborted();
     if (opts.dryRun) { outcomes.push({ id: pinId(pin), status: 'dry_run' }); continue; }
@@ -94,6 +101,6 @@ export async function runPhaseStandingQuestions(engine: BrainEngine, opts: Stand
     phase: 'standing_questions', status, duration_ms: 0,
     summary: `${tally.refreshed} refreshed, ${tally.blocked} blocked, ${tally.failed} failed, ${tally.conflicts} conflicts of ${candidates.length} due; ` +
       `$${meter.totalSpent.toFixed(4)} / $${budgetUsd.toFixed(2)}`,
-    details: { ...tally, spend_usd: meter.totalSpent, budget_usd: budgetUsd, max_per_cycle: maxPerCycle, outcomes },
+    details: { ...tally, spend_usd: meter.totalSpent, budget_usd: budgetUsd, max_per_cycle: maxPerCycle, max_output_tokens: maxTokens, outcomes },
   };
 }

@@ -29,7 +29,7 @@
  *    statement: a bounded member never reads it as its own deadline, and it is charged once, to the first member that
  *    settles with it (the member that would have sent it alone), never to every member. A shared read the database
  *    cancels every time therefore ends bounded: each charged member reaches the limit and ends write_interrupted, and
- *    the last member, alone, takes the single path. write_interrupted is a write error code (a foreground receipt and a
+ *    the last member, alone, takes the single path, where the same read is its own statement and is charged to it. write_interrupted is a write error code (a foreground receipt and a
  *    source lifecycle failure name it, never storage_error), and the sync breaker names the write_interrupted receipts
  *    it tripped on instead of reporting them as preparations that could not finish.
  * 4. Semantic injection: installFaultHook on the publication's before_commit seam (inside the publication transaction),
@@ -357,7 +357,13 @@ for (const backend of testBackends()) describe(`[${backend}] transient publicati
       expect(readFileSync(path, 'utf8')).toContain(`Next ${n}`);
     }, 120_000);
 
-    test('a group\'s shared read the database cancels every time ends bounded: each cancelled read is charged to one member, and every member ends write_interrupted', async () => withEnv({ GBRAIN_HOME: home,
+    /**
+     * Every read of the members' shared skill-pack check is cancelled: a group's shared read at its seam, and the same read a
+     * lone member sends on the single path, where no shared read exists. `holdMs` holds each cancelled shared read, so every
+     * member waiting joins it: one member is charged and the others are released uncounted, and the last of them is claimed
+     * again alone, uncharged, which takes the single path.
+     */
+    const sharedReadCancelledEveryTime = (holdMs: number) => withEnv({ GBRAIN_HOME: home,
       OPENAI_API_KEY: undefined, VOYAGE_API_KEY: undefined, ANTHROPIC_API_KEY: undefined }, async () => {
       await registerLocalWriter(engine, 'cli');
       await retries(1);
@@ -367,15 +373,26 @@ for (const backend of testBackends()) describe(`[${backend}] transient publicati
         writeFileSync(join(brainDir, dir, `${name}.md`), page(`Shared ${n} ${name}`));
         return { filePath: join(brainDir, dir, `${name}.md`), sourcePath: `${dir}/${name}.md` };
       });
-      // Every shared read of a group's preparation is cancelled; a guard far above the bound stops it, so an unbounded loop
-      // ends committed instead of hanging the test.
+      // A guard far above the bound stops the cancels, so an unbounded loop ends committed instead of hanging the test.
       const GUARD = 40;
       let cancelled = 0;
+      let preparing = false;
       installFaultHook(async point => {
-        if (point === 'group:shared_read' && cancelled < GUARD) { cancelled++; throw interruption('57014'); }
+        if (point === 'consumer:preparing') preparing = true;
+        if (point !== 'group:shared_read' || cancelled >= GUARD) return;
+        cancelled++;
+        if (holdMs) await new Promise(resolve => setTimeout(resolve, holdMs));
+        throw interruption('57014');
       });
-      const settled = await importManagedFiles(engine, files, { sourceId, noEmbed: true });
-      installFaultHook(undefined);
+      // The single path reads through the engine itself (a transaction's view is another object and is left alone); a shared
+      // read never gets here, because its seam above threw first. The import's own screening, before any preparation, reads it too.
+      const direct = engine.executeRaw;
+      engine.executeRaw = function (this: BrainEngine, sql: string, ...rest: unknown[]) {
+        if (preparing && this === engine && /shared_skill_packs/.test(sql) && cancelled < GUARD) { cancelled++; return Promise.reject(interruption('57014')); }
+        return (direct as (...args: unknown[]) => Promise<unknown>).call(this, sql, ...rest);
+      } as BrainEngine['executeRaw'];
+      const settled = await importManagedFiles(engine, files, { sourceId, noEmbed: true })
+        .finally(() => { installFaultHook(undefined); engine.executeRaw = direct; });
       const rows = await engine.executeRaw<{ slug: string; state: string; error_code: string | null; transient_interruptions: number }>(
         `SELECT slug,state,error_code,transient_interruptions FROM persistence_requests WHERE source_id=$1 AND slug LIKE $2 ORDER BY slug`, [sourceId, `${dir}/%`]);
       // Each cancelled read is charged to exactly one member (the first that settles with it), so the reads stop once every
@@ -383,6 +400,12 @@ for (const backend of testBackends()) describe(`[${backend}] transient publicati
       expect(cancelled).toBe(3 * 2);
       expect(rows).toEqual(['a', 'b', 'c'].map(name => ({ slug: `${dir}/${name}`, state: 'failed', error_code: 'write_interrupted', transient_interruptions: 2 })));
       expect(settled.map(result => result.status === 'rejected' ? (result.reason as { code?: string }).code : 'ok')).toEqual(['write_interrupted', 'write_interrupted', 'write_interrupted']);
-    }), 120_000);
+    });
+
+    test('a group\'s shared read the database cancels every time ends bounded: each cancelled read is charged to one member, and every member ends write_interrupted',
+      () => sharedReadCancelledEveryTime(0), 120_000);
+
+    test('a member a cancelled shared read released uncounted, claimed again alone, is cancelled and charged on the single path too (forced probe)',
+      () => sharedReadCancelledEveryTime(150), 120_000);
   });
 });

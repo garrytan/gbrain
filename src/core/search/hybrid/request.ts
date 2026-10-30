@@ -3,7 +3,7 @@
  * Each stage reads the resolved request (HybridRequest, request.ts) and
  * writes its per-request accumulators only as `req.<field>`.
  */
-import { applyGeneratedDemotion } from '../provenance-demotion.ts';
+import { applyGeneratedDemotion, type GeneratedPage } from '../provenance-demotion.ts';
 import { normalizeChainSlots } from '../relational-chain.ts';
 import type { BrainEngine } from '../../engine.ts';
 import { perArmPoolLimit } from '../eval-pool-depth.ts';
@@ -96,6 +96,8 @@ export interface HybridRequest {
   collapse?: import('../collapse.ts').CollapseDecision;
   /** Page facts the collapse stage read, reused by its second pass after the identity tiers. */
   collapseFacts?: Map<number, import('../collapse.ts').PageFacts>;
+  /** GBRA-156: the fused pages' facts, read beside the post-fusion stages (collapse.ts prefetchPageFacts). */
+  collapsePrefetch?: Promise<Map<number, import('../collapse.ts').PageFacts> | null>;
   /** The op's stage-timing collector (`opts._timings`), or the no-op timer. */
   timer: StageTimer;
 }
@@ -339,9 +341,9 @@ export async function resolveHybridRequest(
 
   // Intent identity boosts (exact/mentioned title or slug, mentioned alias),
   // shared by the fused path and both keyword-only paths. Caller re-sorts.
-export async function applyIdentityBoosts(req: HybridRequest, list: SearchResult[]): Promise<void> {
+export async function applyIdentityBoosts(req: HybridRequest, list: SearchResult[], generatedRead?: Promise<GeneratedPage[] | null>): Promise<void> {
   const { engine, query, opts, suggestions, intentWeightingOn, intentWeights, resolvedMode } = req;
-  await applyGeneratedDemotion(engine, list, query, { sourceId: opts?.sourceId, sourceIds: opts?.sourceIds, excludePrivate: opts?.excludePrivate });
+  await applyGeneratedDemotion(engine, list, query, { sourceId: opts?.sourceId, sourceIds: opts?.sourceIds, excludePrivate: opts?.excludePrivate }, generatedRead);
   if (intentWeights.exactMatchBoost === 1.0) {
     // #4694: general and temporal questions still honor a multi-token
     // title that is the query's subject. Not concept intent (Cat 13: a

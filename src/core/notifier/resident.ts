@@ -135,7 +135,7 @@ export function runnerStart(engine: BrainEngine): Pick<CommitNotifierOptions, 's
       const hard = deadline ? Math.max(1, Math.round(deadline.deadlineMs / 1000)) : 3600;
       const timeoutSeconds = req.sliceSeconds ? Math.min(hard, Math.max(1, Math.round(req.sliceSeconds))) : hard;
       const start = await r.startDelegatedSync(engine, { sourceId, noPull: req.intent !== 'pull', ...(req.intent === 'full' ? { full: true } : {}), timeoutSeconds, origin: 'background' },
-        `on-commit-${randomUUID()}`, { registration: { id: local.id, credential: local.credential, lane: 'cli' } });
+        `on-commit-${randomUUID()}`, { registration: { id: local.id, credential: local.credential, lane: 'cli' }, logLines: true });
       if (start.ok && start.jobId) return { jobId: start.jobId };
       if (start.error === 'busy' || start.error === 'shutting_down') return { busy: true };
       return { refused: String(start.refusal?.message ?? start.error ?? 'refused') };
@@ -143,10 +143,16 @@ export function runnerStart(engine: BrainEngine): Pick<CommitNotifierOptions, 's
     jobStatus: (jobId) => {
       const s = runner?.getDelegatedSyncStatus(jobId);
       if (!s || !s.ok || !s.state) return null;
-      return { state: s.state, ...(s.drain ? { outcome: s.drain.outcome, ...(s.drain.stop_reason ? { reason: s.drain.stop_reason } : {}) } : {}), ...(s.jobError ? { error: s.jobError } : {}) };
+      return { state: s.state, ...(s.drain ? { outcome: s.drain.outcome, committed: s.drain.written + s.drain.waived > 0, ...(s.drain.stop_reason ? { reason: s.drain.stop_reason } : {}) } : {}),
+        ...(s.jobError ? { error: s.jobError } : {}) };
     },
     syncRunning: async () => (await load()).isDelegatedSyncRunning(),
-    drainHeld: async (sourceId) => (await (await import('../persistence/sync-lease.ts')).readDrainHolder(engine, sourceId)) !== null,
+    drainHeld: async (sourceId) => {
+      // #7614: a killed holder's lock row defers nothing; the sync this starts takes its expired lease over.
+      const { holderStalled, readLiveDrainHolder } = await import('../persistence/sync-lease.ts');
+      const holder = await readLiveDrainHolder(engine, sourceId);
+      return holder === null ? false : holderStalled(holder) ? 'stalled' : true;
+    },
   };
 }
 

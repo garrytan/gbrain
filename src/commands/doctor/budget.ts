@@ -192,6 +192,20 @@ export function isBudgetUnknown(check: Pick<Check, 'details'>): boolean {
   return check.details?.health === 'unknown' && check.details?.reason === 'budget';
 }
 
+/** A doctor score category (src/core/doctor-categories.ts). */
+export type ScoreCategory = 'brain' | 'skill' | 'ops' | 'meta';
+
+/**
+ * #7276: what the scores count. An over-budget unknown says nothing about the brain, so the scores skip it
+ * (it still keeps the status at warnings, never healthy); a category whose every check is unknown has no score.
+ */
+export function scoredChecks<T extends Pick<Check, 'details' | 'category'>>(checks: readonly T[]): { known: T[]; unknown_count: number; unknown_categories: ScoreCategory[] } {
+  const known = checks.filter((c) => !isBudgetUnknown(c));
+  const unknown_categories = (['brain', 'skill', 'ops', 'meta'] as const)
+    .filter((cat) => checks.some((c) => c.category === cat) && !known.some((c) => c.category === cat));
+  return { known, unknown_count: checks.length - known.length, unknown_categories };
+}
+
 /** #6696 B1: what the report says about the run's tier and deadline (`--tier` / `--budget-ms` given). */
 export interface DoctorRunSummary { tier: DoctorTier; startedAt: number; budgetMs: number | null }
 

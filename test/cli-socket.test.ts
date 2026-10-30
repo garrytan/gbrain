@@ -32,13 +32,16 @@ import {
 } from '../src/core/cli-socket/fs-guard.ts';
 import { peerCredSupport } from '../src/core/cli-socket/peer-cred.ts';
 import { startCliSocketServer, type CliSocketBinding } from '../src/core/cli-socket/server.ts';
-import { cliSocketRoundTripMs, exchangeCliSocket, renderOp } from '../src/cli/cli-socket-client.ts';
+import { cliSocketRoundTripMs, exchangeCliSocket, noteCliSocketRefusal, renderOp } from '../src/cli/cli-socket-client.ts';
+import { readRefusals } from '../src/core/cli-socket/refusals.ts';
+import { cliSocketRefusalsEntry } from '../src/commands/doctor/checks/cli-socket-refusals.ts';
 import { loadOperation } from '../src/core/operation-load.ts';
 import { isResultFrame, reviveOperationError, serializeOperationError, type CliSocketRequest, type ResultFrame } from '../src/core/cli-socket/protocol.ts';
 import { queueFirstFallbackHop, takeChatFallbackHopNotices, __resetChatFallbackHopNoticeForTests } from '../src/core/ai/fallback-hop-queue.ts';
-import { installOutputCapture, OutputCapture, withOutputCapture } from '../src/core/cli-socket/output-capture.ts';
+import { _uninstallOutputCaptureForTests, installOutputCapture, OutputCapture, withOutputCapture } from '../src/core/cli-socket/output-capture.ts';
 import { opError, OperationError } from '../src/core/ops/contract.ts';
 import { loadConfigWithEngine, type GBrainConfig } from '../src/core/config.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const uid = process.getuid!();
 const engine = { kind: 'postgres', connectedDatabaseUrl: 'postgresql://alice-example@db.acme-example.test/brain' } as unknown as BrainEngine;
@@ -53,7 +56,7 @@ function runDir(): string {
 let root: string;
 
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'gbrain-cli-sock-')); });
-afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { rmSync(root, { recursive: true, force: true }); _uninstallOutputCaptureForTests(); });
 
 function homeWithConfig(name: string, body = '{"engine":"postgres"}'): { dir: string; file: string } {
   const dir = join(root, name, '.gbrain');
@@ -83,12 +86,12 @@ const NOT_READ_BEHAVIOR_PREFIXES = [
   'GBRAIN_PROGRESSIVE_BATCH_', 'GBRAIN_QUEUE_', 'GBRAIN_SETUP_', 'GBRAIN_STOP_PUSH', 'GBRAIN_SUPERVIS', 'GBRAIN_SWEEP', 'GBRAIN_SYNC', 'GBRAIN_WORKER_',
 ];
 const NOT_READ_BEHAVIOR = new Set([
-  'GBRAIN_HOME', 'GBRAIN_BRAIN_ID', 'GBRAIN_MOUNTS_PATH', 'GBRAIN_CWD_ENV_QUARANTINED',
-  'GBRAIN_FAIL_ON_EMPTY', 'GBRAIN_CLI_SOCKET', 'GBRAIN_DEBUG', 'GBRAIN_SQL_TRACE', 'GBRAIN_SQL_TRACE_LABEL', 'GBRAIN_LME_DEBUG', 'GBRAIN_SOURCE',
-  'GBRAIN_DATABASE_URL', 'GBRAIN_DIRECT_DATABASE_URL', 'GBRAIN_DIRECT_POOL_SIZE', 'GBRAIN_DISABLE_DIRECT_POOL', 'GBRAIN_PREPARE',
+  'GBRAIN_AGENT_INSTRUCTIONS', 'GBRAIN_PLUGIN', 'GBRAIN_HOME', 'GBRAIN_SERVE_LOG_MAX_BYTES', 'GBRAIN_SERVE_LOG_MAX_FILES', 'GBRAIN_SERVE_LOG_DEDUPE_SECONDS', 'GBRAIN_BRAIN_ID', 'GBRAIN_MOUNTS_PATH', 'GBRAIN_CWD_ENV_QUARANTINED',
+  'GBRAIN_FAIL_ON_EMPTY', 'GBRAIN_CLI_SOCKET', 'GBRAIN_DEBUG', 'GBRAIN_SQL_TRACE', 'GBRAIN_SQL_TRACE_LABEL', 'GBRAIN_MEMORY_TRACE', 'GBRAIN_LME_DEBUG', 'GBRAIN_SOURCE',
+  'GBRAIN_DATABASE_URL', 'GBRAIN_DIRECT_DATABASE_URL', 'GBRAIN_DIRECT_POOL_SIZE', 'GBRAIN_DIRECT_POOL_BY_COMMAND', 'GBRAIN_DISABLE_DIRECT_POOL', 'GBRAIN_PREPARE',
   'GBRAIN_IDLE_TX_TIMEOUT', 'GBRAIN_MAX_CONNECTIONS', 'GBRAIN_NO_RETRY_CONNECT', 'GBRAIN_DB_ACCESS',
-  'GBRAIN_ACCEPT_PENDING', 'GBRAIN_ACCEPT_SILENT_WIDEN', 'GBRAIN_WRITE_WAIT_MS', 'GBRAIN_PREADMIT_CACHE', 'GBRAIN_PREPARATION_DEADLINES',
-  'GBRAIN_SINGLE_CONSUMER', 'GBRAIN_SINGLE_WRITE_GROUP', 'GBRAIN_CONSUMER_DIRECT_LANE', 'GBRAIN_COMMIT_LOCK_WAIT_SECONDS',
+  'GBRAIN_ACCEPT_PENDING', 'GBRAIN_ACCEPT_SILENT_WIDEN', 'GBRAIN_WRITE_WAIT_MS', 'GBRAIN_ONESHOT_HOUSEKEEPING_INTERVAL_MS', 'GBRAIN_PREADMIT_CACHE', 'GBRAIN_PREPARATION_DEADLINES',
+  'GBRAIN_SINGLE_CONSUMER', 'GBRAIN_SINGLE_WRITE_GROUP', 'GBRAIN_CONSUMER_DIRECT_LANE', 'GBRAIN_COMMIT_LOCK_WAIT_SECONDS', 'GBRAIN_COMMIT_VIA', 'GBRAIN_COMMIT_GUARD',
   'GBRAIN_PUBLISH_LOCK_WAIT_SECONDS', 'GBRAIN_PUSH_LOCK_WAIT_SECONDS', 'GBRAIN_PAGE_BLOCK_BYTES', 'GBRAIN_PAGE_WARN_BYTES', 'GBRAIN_INGEST_MAX_BYTES',
   'GBRAIN_BELIEF_PREIMAGE_CHECK', 'GBRAIN_BLOCK_MARKERS', 'GBRAIN_CANCEL_SETTLE_MS', 'GBRAIN_CHUNKER_TIMEOUT_MS', 'GBRAIN_CONTENT_REPAIR_CALL_TIMEOUT_MS',
   'GBRAIN_CONTEXTUAL_CHUNK_CONCURRENCY', 'GBRAIN_CONTEXTUAL_HAIKU_RPM', 'GBRAIN_CONTEXTUAL_SYNOPSIS_RPM', 'GBRAIN_CONTRADICTIONS_JUDGE_MODEL',
@@ -183,9 +186,10 @@ describe('identity', () => {
     homeWithConfig('a');
     const env = (extra: Record<string, string>) => identity({ env: { GBRAIN_HOME: '/home/alice-example', ...extra } });
     expect(cliSocketIdentityMismatch(env({ OPENAI_BASE_URL: 'http://127.0.0.1:11434/v1' }), env({ OPENAI_BASE_URL: 'https://api.openai.com/v1' }))).toBe('env OPENAI_BASE_URL');
+    const callable = { OPENROUTER_API_KEY: 'k', OPENAI_API_KEY: 'k', MINIMAX_API_KEY: 'k', AZURE_OPENAI_ENDPOINT: 'https://azure.acme-example.test', AZURE_OPENAI_DEPLOYMENT: 'd' };
     for (const name of ['OLLAMA_BASE_URL', 'LMSTUDIO_BASE_URL', 'LLAMA_SERVER_BASE_URL', 'LLAMA_SERVER_RERANKER_BASE_URL', 'LITELLM_BASE_URL', 'OPENROUTER_BASE_URL',
       'ANTHROPIC_BASE_URL', 'AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_DEPLOYMENT', 'AZURE_OPENAI_API_VERSION', 'OPENAI_ORG_ID', 'OPENAI_PROJECT', 'MINIMAX_GROUP_ID']) {
-      expect(cliSocketIdentityMismatch(env({ [name]: 'value-one' }), env({ [name]: 'value-two' })), name).toBe(`env ${name}`);
+      expect(cliSocketIdentityMismatch(env({ ...callable, [name]: 'value-one' }), env({ ...callable, [name]: 'value-two' })), name).toBe(`env ${name}`);
     }
     for (const name of ['OPENAI_API_KEY', 'AZURE_OPENAI_API_KEY', 'LLAMA_SERVER_API_KEY', 'VOYAGE_API_KEY']) {
       expect(cliSocketIdentityMismatch(env({ [name]: 'value-one' }), env({ [name]: 'value-two' })), name).toBeNull();
@@ -193,6 +197,36 @@ describe('identity', () => {
     }
     expect(cliSocketIdentityMismatch(env({}), env({ VOYAGE_API_KEY: '' }))).toBeNull();
     expect(JSON.stringify(env({ VOYAGE_API_KEY: 'value-one' }))).not.toContain('value-one');
+  });
+
+  test('a routing variable of a provider neither side can call may differ; one that either side can call, from its environment or its config file, may not', () => {
+    homeWithConfig('a');
+    const env = (extra: Record<string, string>) => identity({ env: { GBRAIN_HOME: '/home/alice-example', ...extra } });
+    expect(cliSocketIdentityMismatch(env({}), env({ AZURE_OPENAI_API_VERSION: '2024-10-21' }))).toBeNull();
+    expect(cliSocketIdentityMismatch(env({ AZURE_OPENAI_API_VERSION: 'a' }), env({ AZURE_OPENAI_API_VERSION: 'b' }))).toBeNull();
+    expect(cliSocketIdentityMismatch(env({ OPENAI_ORG_ID: 'org-a' }), env({}))).toBeNull();
+    expect(cliSocketIdentityMismatch(env({ OPENROUTER_REFERER: 'a', MINIMAX_GROUP_ID: 'g' }), env({}))).toBeNull();
+    const azure = { AZURE_OPENAI_ENDPOINT: 'https://azure.acme-example.test', AZURE_OPENAI_DEPLOYMENT: 'd' };
+    expect(cliSocketIdentityMismatch(env({ ...azure, AZURE_OPENAI_API_VERSION: 'a' }), env({ ...azure }))).toBe('env AZURE_OPENAI_API_VERSION');
+    expect(cliSocketIdentityMismatch(env({ ...azure, AZURE_OPENAI_API_VERSION: 'a' }), env({ AZURE_OPENAI_API_VERSION: 'a' }))).toBe('env AZURE_OPENAI_API_VERSION');
+    expect(cliSocketIdentityMismatch(env({ AZURE_OPENAI_API_VERSION: 'a' }), env({ ...azure, AZURE_OPENAI_API_VERSION: 'a' }))).toBe('env AZURE_OPENAI_API_VERSION');
+    expect(cliSocketIdentityMismatch(env({ AZURE_OPENAI_API_KEY: 'k', AZURE_OPENAI_API_VERSION: 'a' }), env({ AZURE_OPENAI_API_KEY: 'k' }))).toBe('env AZURE_OPENAI_API_VERSION');
+    expect(cliSocketIdentityMismatch(env({ OPENAI_API_KEY: 'k', OPENAI_ORG_ID: 'org-a' }), env({ OPENAI_API_KEY: 'k' }))).toBe('env OPENAI_ORG_ID');
+    expect(cliSocketIdentityMismatch(env({ OLLAMA_BASE_URL: 'http://127.0.0.1:11434' }), env({}))).toBe('env OLLAMA_BASE_URL');
+    homeWithConfig('a', JSON.stringify({ engine: 'postgres', azure_openai_endpoint: 'https://azure.acme-example.test', azure_openai_deployment: 'd' }));
+    expect(cliSocketIdentityMismatch(env({ AZURE_OPENAI_API_VERSION: 'a' }), env({}))).toBe('env AZURE_OPENAI_API_VERSION');
+  });
+
+  test('narrowing never lets a caller borrow a credential or a provider it did not configure (who may connect is the uid check below, never the identity)', () => {
+    homeWithConfig('a');
+    const env = (extra: Record<string, string>) => identity({ env: { GBRAIN_HOME: '/home/alice-example', ...extra } });
+    for (const name of ['OPENAI_API_KEY', 'AZURE_OPENAI_API_KEY', 'VOYAGE_API_KEY', 'ANTHROPIC_API_KEY', 'TYPESAFE_API_KEY', 'JEV_TYPESAFE_API_KEY']) {
+      expect(cliSocketIdentityMismatch(env({ [name]: 'k' }), env({})), name).toBe(`provider key ${name}`);
+      expect(cliSocketIdentityMismatch(env({}), env({ [name]: 'k' })), name).toBe(`provider key ${name}`);
+    }
+    const azure = { AZURE_OPENAI_ENDPOINT: 'https://azure.acme-example.test', AZURE_OPENAI_DEPLOYMENT: 'd', AZURE_OPENAI_USE_ENTRA: '1' };
+    expect(cliSocketIdentityMismatch(env(azure), env({}))).not.toBeNull();
+    expect(cliSocketIdentityMismatch(env({}), env(azure))).not.toBeNull();
   });
 
   test('every GBRAIN_* name in src is classified: read behavior (READ_BEHAVIOR_ENV) or listed here as unable to change a socket read', () => {
@@ -314,6 +348,17 @@ describe('serve listener', () => {
     return { binding, lines, path: cliSocketPath(home) };
   }
 
+  test('closing a serve drops its exit listener and the test undo puts console and stderr back', async () => {
+    const before = { exits: process.listenerCount('exit'), log: console.log, error: console.error, write: process.stderr.write };
+    const { binding } = await start();
+    expect(process.listenerCount('exit')).toBe(before.exits + 1);
+    expect(console.log).not.toBe(before.log);
+    binding!.close();
+    expect(process.listenerCount('exit')).toBe(before.exits);
+    _uninstallOutputCaptureForTests();
+    expect([console.log, console.error, process.stderr.write]).toEqual([before.log, before.error, before.write]);
+  });
+
   test('this platform reads peer credentials (otherwise the serve would refuse to start)', () => {
     if (process.platform === 'linux' || process.platform === 'darwin') expect(peerCredSupport().ok).toBe(true);
   });
@@ -336,7 +381,82 @@ describe('serve listener', () => {
     expect(started.lines.filter(line => line.includes('identity_mismatch')).length).toBe(2);
   });
 
-  test('rejects a peer whose kernel uid differs, and one whose uid cannot be read', async () => {
+  test('GBRA-175: a probe gets the handshake alone, runs nothing, and names a version mismatch', async () => {
+    let executed = 0;
+    const { path } = await start({ execute: async () => { executed++; return { frame: okFrame, settled: Promise.resolve() }; } });
+    const probe = (identity: CliSocketIdentity) => new Promise<unknown[]>((resolveFrames, reject) => {
+      const socket = net.createConnection(path);
+      let text = '';
+      socket.on('data', data => { text += data.toString(); });
+      socket.once('error', reject);
+      socket.once('close', () => resolveFrames(text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line))));
+      socket.once('connect', () => socket.write(JSON.stringify({ v: 1, kind: 'probe', identity }) + '\n'));
+    });
+    expect(await probe(serveIdentity())).toEqual([{ v: 1, accepted: true }]);
+    expect(await probe({ ...serveIdentity(), version: '1.0.1' })).toEqual([{ v: 1, accepted: false, reason: 'identity_mismatch', mismatch: 'version' }]);
+    expect(executed).toBe(0);
+  });
+
+  test('a refusal is counted by part (never its value) for doctor cli_socket_refusals, and the CLI prints a degraded notice whatever GBRAIN_DEBUG says', async () => {
+    const { binding, path } = await start();
+    const drifted = { ...serveIdentity(), env: { values: { AZURE_OPENAI_API_VERSION: 'f'.repeat(64) }, credentials: [] } };
+    for (let i = 0; i < 3; i++) expect(await exchangeCliSocket(path, request(drifted), 5_000)).toEqual({ reason: 'refused (identity_mismatch): env AZURE_OPENAI_API_VERSION' });
+    expect(await exchangeCliSocket(path, request({ ...serveIdentity(), version: '1.0.1' }), 5_000)).toHaveProperty('reason');
+    binding!.close();
+    bindings.length = 0;
+    const record = readRefusals(join(root, 'home', '.gbrain', 'run'))!;
+    expect(record.parts['env AZURE_OPENAI_API_VERSION']!.count).toBe(3);
+    expect(record.parts.version!.count).toBe(1);
+    expect(JSON.stringify(record)).not.toContain('f'.repeat(64));
+    await withEnv({ GBRAIN_HOME: join(root, 'home') }, async () => {
+      const [check] = await cliSocketRefusalsEntry.run({} as never) as unknown as Array<{ status: string; message: string; details: { refusals: number } }>;
+      expect(check!.status).toBe('warn');
+      expect(check!.details.refusals).toBe(4);
+      expect(check!.message).toContain('env AZURE_OPENAI_API_VERSION differs');
+      rmSync(join(root, 'home', '.gbrain', 'run', 'cli-socket-refusals.json'));
+      expect((await cliSocketRefusalsEntry.run({} as never) as Array<{ status: string }>)[0]!.status).toBe('ok');
+    });
+    const err: string[] = [];
+    const write = process.stderr.write.bind(process.stderr);
+    const writeOut = process.stdout.write.bind(process.stdout);
+    const capture = ((chunk: string | Uint8Array) => { err.push(String(chunk)); return true; }) as typeof process.stderr.write;
+    process.stderr.write = capture;
+    process.stdout.write = capture;
+    try {
+      await withEnv({ GBRAIN_DEBUG: undefined }, async () => {
+        await noteCliSocketRefusal('refused (identity_mismatch): env AZURE_OPENAI_API_VERSION');
+        await noteCliSocketRefusal('refused (busy)');
+        await noteCliSocketRefusal('connect_failed (ENOENT)');
+      });
+    } finally {
+      process.stderr.write = write;
+      process.stdout.write = writeOut;
+    }
+    const printed = err.join('');
+    expect(printed).toContain('socket_identity_mismatch');
+    expect(printed).toContain('env AZURE_OPENAI_API_VERSION differs');
+    expect(printed).toContain('gbrain doctor --only cli_socket_refusals --json');
+    expect(printed.match(/socket_identity_mismatch/g)!.length).toBe(1);
+  });
+
+  test('a client that goes away before its answer aborts the request\'s signal, and the serve logs it', async () => {
+    let seen: AbortSignal | undefined;
+    let release!: () => void;
+    const settled = new Promise<void>(resolve => { release = resolve; });
+    const { path, lines } = await start({ execute: async (_request, signal) => {
+      seen = signal;
+      await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+      release();
+      return { frame: okFrame, settled };
+    } });
+    expect(await exchangeCliSocket(path, request(serveIdentity()), 300)).toEqual({ reason: 'round_trip_timeout' });
+    await settled;
+    expect(seen!.aborted).toBe(true);
+    expect(String((seen!.reason as Error).message)).toBe('client_disconnected');
+    expect(lines.join('\n')).toMatch(/a search request's client disconnected after \d+ ms; its remaining work is cancelled\./);
+  });
+
+  test('rejects a peer whose kernel uid differs, and one whose uid cannot be read, even when it presents the serve\'s exact identity', async () => {
     let calls = 0;
     // The first read is the start-up self-test on this process's own connection.
     const { binding, path, lines } = await start({ peerCred: { ok: true, read: () => (calls++ === 0 ? uid : uid + 1) } });

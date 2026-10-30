@@ -9,6 +9,9 @@
  *   lower of the write's tier and the page's stored tier (an unclassified
  *   `unknown` row does not lower it, #6550), so the tier survives
  *   the git round trip (sync honors it; an owner restamp needs the marker gone).
+ *   #7905: a derived page a maintenance job publishes (`submit_job` with a
+ *   derivation declaration: patterns, concepts, claim-source rewrites) authors
+ *   its content too, so it stamps the marker at its declared tier.
  * - ENG-1: gbrain-managed fence edits (remember / takes fence appends, proposal
  *   accept strikes, loop and relink maintenance) and add_timeline_entry rewrite
  *   the page body without authoring it, so the page keeps its stored tier
@@ -16,7 +19,10 @@
  *   is gated per row (CEO-27).
  * - CEO-12: an agent write that replaces the body of a higher-tier page lowers
  *   the page and files one `lower_page` trust proposal per page (later edits
- *   fold into it) with the prior owner version to revert to.
+ *   fold into it) with the prior owner version to revert to. #7917: so does a
+ *   derived page publication that lowers a page.
+ * - #7918: a derivation declaration that is present but unreadable (a malformed
+ *   input, a missing origin) rates the write `unknown`, never the source default.
  */
 import type { BrainEngine } from '../engine.ts';
 import { queuePageProjection } from '../page-state/projections.ts';
@@ -29,7 +35,7 @@ import { OWNER_TIER_FLOOR, compareTrust, effectiveWriteTrust, minTrust, storedTr
 
 /** Page writes that only edit a gbrain-managed fence (or strike a row) and keep the page's tier. */
 const FENCE_EDIT_OPERATIONS = ['remember', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve', 'takes_remove',
-  'decide_proposal', 'loops_close', 'relink_facts', 'add_timeline_entry'];
+  'decide_proposal', 'loops_close', 'relink_facts', 'add_timeline_entry', 'add_link', 'remove_link', 'trust_release'];
 /** Page writes whose caller supplies the page content: they stamp the marker and can lower the page (CEO-12). */
 const CONTENT_OPERATIONS = ['put_page', 'capture', 'edit_page', 'append_page', 'revert_version', 'restore_page'];
 
@@ -37,11 +43,20 @@ export function isFenceEditWrite(row: Pick<WriteRequest, 'operation' | 'intent'>
   return FENCE_EDIT_OPERATIONS.includes(row.operation) || row.intent?.kind === 'managed_facts_entity';
 }
 
+/** The write carries a derivation declaration, readable or not. */
+const declaresDerivation = (intent: WriteRequest['intent'] | null | undefined) => intent?.derivation !== undefined && intent?.derivation !== null;
+
+/** The declared tier of a derived write; `unknown` when the declaration is present but unreadable (#7918), undefined when absent. */
+export function derivationWriteTrust(intent: WriteRequest['intent'] | null | undefined): WriteTrust | undefined {
+  if (!declaresDerivation(intent)) return undefined;
+  const derivation = readDerivationDeclaration(intent!.derivation);
+  return derivation ? declaredWriteTrust(derivation) : effectiveWriteTrust({ channel: 'unknown', origin: { channel: 'derivation_unreadable' } });
+}
+
 /** The tier of one journaled page write, or undefined when the request's channel declares none. */
 export function pageWriteTrust(row: Pick<WriteRequest, 'id' | 'operation' | 'authority' | 'intent'>, frontmatter: Record<string, unknown> | null | undefined): WriteTrust | undefined {
   // A managed derived page (atoms, synthesis, concepts, chronicle) carries its derivation declaration (trust/taint.ts).
-  const derivation = readDerivationDeclaration(row.intent?.derivation);
-  const channel = derivation ? declaredWriteTrust(derivation) : requestChannelTrust(row);
+  const channel = derivationWriteTrust(row.intent) ?? requestChannelTrust(row);
   if (!channel || isFenceEditWrite(row)) return channel;
   const caps = frontmatterTrustCaps(frontmatter);
   return caps.length ? effectiveWriteTrust({ channel: channel.tier, lowerTo: caps, origin: channel.origin ?? { channel: row.operation } }) : channel;
@@ -67,10 +82,17 @@ export async function storedPageTier(engine: BrainEngine, sourceId: string, slug
  * #6550: a stored `unknown` means "not classified yet", not "known unverified", so it does not lower the
  * marker: the marker names the writer's tier and the row keeps min(writer, stored) until the backfill
  * classifies it. An explicit `trust_tier: unknown` already in the frontmatter still caps (stampTrustMarker).
+ * #7873: an unclassified page's own lowering markers (`storedFrontmatter`, the page before the write) still cap the
+ * marker, so a write that removes one (a `ingested_via: webhook` stamp) cannot raise the page when it is re-derived.
+ * #7905: a derived page publication (a derivation declaration on a write that is not a fence edit) stamps it as a
+ * content write does, so a re-read of the repository cannot rate model-written text at the source default.
  */
-export function stampPageTrustMarker(row: Pick<WriteRequest, 'operation'>, frontmatter: Record<string, unknown>, trust: WriteTrust | undefined, stored: TrustTier | null): void {
-  if (!trust || !CONTENT_OPERATIONS.includes(row.operation)) return;
-  const tier = stored && stored !== 'unknown' ? minTrust(trust.tier, stored) : trust.tier;
+export function stampPageTrustMarker(row: Pick<WriteRequest, 'operation' | 'intent'>, frontmatter: Record<string, unknown>, trust: WriteTrust | undefined, stored: TrustTier | null,
+  storedFrontmatter?: Record<string, unknown> | null): void {
+  if (!trust || isFenceEditWrite(row)) return;
+  if (!CONTENT_OPERATIONS.includes(row.operation) && !declaresDerivation(row.intent)) return;
+  const prior = stored && stored !== 'unknown' ? [stored] : frontmatterTrustCaps(storedFrontmatter);
+  const tier = minTrust(trust.tier, ...prior);
   const stamped = stampTrustMarker(frontmatter, tier);
   if (stamped !== frontmatter) frontmatter.trust_tier = stamped.trust_tier;
 }
@@ -79,10 +101,13 @@ export function stampPageTrustMarker(row: Pick<WriteRequest, 'operation'>, front
  * CEO-12, inside the publication transaction after the page write: when the
  * write lowered a page's tier, file (or refresh) its `lower_page` proposal.
  * `prior` is the tier and revision read under the page lock before the write.
+ * Content writes and derived page publications (#7917) file it; another writer
+ * that lowers a page on purpose names itself in `proposer`.
  */
-export async function recordAgentPageLowering(tx: BrainEngine, row: Pick<WriteRequest, 'operation' | 'source_id' | 'slug'>,
-  prior: { tier: TrustTier; revision: string | null } | null): Promise<{ proposal_ref: string } | null> {
-  if (!prior || !CONTENT_OPERATIONS.includes(row.operation)) return null;
+export async function recordAgentPageLowering(tx: BrainEngine, row: Pick<WriteRequest, 'operation' | 'source_id' | 'slug'> & { intent?: WriteRequest['intent'] | null },
+  prior: { tier: TrustTier; revision: string | null } | null, proposer?: string): Promise<{ proposal_ref: string } | null> {
+  const derived = !CONTENT_OPERATIONS.includes(row.operation) && declaresDerivation(row.intent);
+  if (!prior || !(proposer || CONTENT_OPERATIONS.includes(row.operation) || derived)) return null;
   const snapshot = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
   const [page] = snapshot ? await tx.executeRaw<{ trust_tier: string }>('SELECT trust_tier FROM pages WHERE id = $1', [snapshot.page.id]) : [];
   if (!snapshot || !page) return null;
@@ -101,7 +126,7 @@ export async function recordAgentPageLowering(tx: BrainEngine, row: Pick<WriteRe
   const [version] = await tx.executeRaw<{ id: number }>(
     'SELECT id FROM page_versions WHERE page_id = $1 AND trust_tier = $2 ORDER BY id DESC LIMIT 1', [pageId, prior.tier]);
   const proposal = await insertTrustProposal(tx, {
-    action: 'lower_page', sourceId: row.source_id, target: { table: 'pages', id: pageId }, proposer: `agent_page_edit:${row.operation}`,
+    action: 'lower_page', sourceId: row.source_id, target: { table: 'pages', id: pageId }, proposer: proposer ?? (derived ? `derived_page:${row.operation}` : `agent_page_edit:${row.operation}`),
     before: { slug: row.slug, prior_tier: prior.tier, prior_revision: prior.revision, version_id: version ? Number(version.id) : null }, after,
   });
   if (!proposal.created) await updatePendingTrustProposalAfter(tx, proposal.id, after);

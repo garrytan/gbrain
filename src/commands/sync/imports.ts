@@ -34,6 +34,7 @@ import { clearLegacyHold, holdClassicFile, holdRefusedImport, noteScreenedImport
 import { classifyClassicFile } from '../../core/classic-file-holds.ts';
 import { partial, markCompleted, noteTypeWarning, maybeYield } from './sync-run.ts';
 import type { SyncPlan, SyncProgress, SyncRun } from './sync-run.ts';
+import { noteCommittedProgress } from '../../core/forward-progress.ts';
 
 type ImportPlan = Pick<SyncPlan, 'opts' | 'filtered' | 'lastCommit' | 'pin' | 'company' | 'gitContextRoot' | 'syncImportRoot' | 'syncActivePack' | 'holds'>;
 
@@ -371,6 +372,7 @@ async function importOnePath(run: SyncRun, ctx: ImportContext, eng: BrainEngine,
       // much actually landed before --timeout fired.
       run.filesImported++;
       run.itemRun.succeed();
+      noteCommittedProgress();
       await clearLegacyHold(eng, holds, path);
       // v0.42.x (#1794): checkpoint this path so a kill banks it.
       await markCompleted(run, path);

@@ -203,7 +203,7 @@ export async function fenceIntegrityResult(engine: BrainEngine, opts: { timeoutM
   if (uncommitted.length) {
     const bySource = [...new Set(uncommitted.map(n => n.source_id))];
     sentences.push(`${uncommitted.length} fence repair(s) on legacy source(s) ${bySource.join(', ')} are written and imported but not committed; `
-      + `gbrain sources status ${bySource[0]} prints each file's exact git add and git commit step (the backup of the original is kept).`);
+      + `gbrain sources status ${bySource[0]} prints each file's exact gbrain git commit-push step, which commits and pushes only that file (the backup of the original is kept).`);
   }
   if (partial.length) {
     sentences.push(`PARTIAL CENSUS: the scan of ${partial.map(c => c.source_id).join(', ')} did not finish within ${timeoutMs / 1000}s, so more fences may be malformed; `
@@ -217,7 +217,7 @@ export async function fenceIntegrityResult(engine: BrainEngine, opts: { timeoutM
     : partial.length || (!unrenderable.total && !unrenderable.complete) ? agentFix(['gbrain', 'doctor', '--only', 'fence_integrity', '--json'], 'Resumes the fence census where the last scan stopped and reports what it found.', 'fence_integrity', { docs: DOCS })
       : noisy.length ? agentFix(['gbrain', 'sources', 'status', noisy[0]!.source_id, '--json'], `Shows ${noisy[0]!.source_id}'s recent sync result, including fences_normalized with sample paths, so you can find what writes the malformed fences.`,
         'fence_integrity', { docs: DOCS })
-        : uncommitted.length ? agentFix(['gbrain', 'sources', 'status', uncommitted[0]!.source_id], 'Lists the uncommitted fence repairs of this legacy source with the exact git add and git commit step for each file.',
+        : uncommitted.length ? agentFix(['gbrain', 'sources', 'status', uncommitted[0]!.source_id], 'Lists the uncommitted fence repairs of this legacy source with the exact gbrain git commit-push step for each file.',
           'fence_integrity', { docs: DOCS })
           : unbound.length && !unrenderable.total ? agentFix(['gbrain', 'config', 'set', UNBOUND_WRITE_KEY, 'database_only'],
             `Allows database-only writes to sources with a checkout but no canonical owner, so the next extract_facts run fences these rows into their database pages. It is brain-wide (every database-only page of such a source stays database-only after binding), so ask the user first.`,

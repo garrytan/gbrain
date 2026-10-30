@@ -20,6 +20,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { importFile } from '../src/core/import-file.ts';
 import { readReconcileState } from '../src/core/persistence/reconcile-state.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { resolveRepairScope, type RepairResult } from '../src/core/repair/core.ts';
@@ -83,13 +84,17 @@ for (const kind of backends) describe(`repair frontmatter stamps a legacy unstam
     git(root, 'config', 'user.name', 'Example'); git(root, 'config', 'user.email', 'example@example.invalid');
     writeFileSync(join(root, '.git', 'hooks', 'post-commit'), '#!/bin/sh\n# gbrain brain-durability post-commit hook (v0.42.44+)\n'); chmodSync(join(root, '.git', 'hooks', 'post-commit'), 0o755);
     writeFileSync(join(root, 'notes', 'ok.md'), '---\ntitle: Ok\n---\nFine.\n');
+    // #7305: put_page refuses a NEW notes/a--b, so the page an earlier gbrain wrote is imported from its stamped file.
+    writeFileSync(join(root, 'notes', 'a--b.md'), '---\ntitle: Double\nslug: notes/a--b\n---\nTwo hyphens.\n');
     git(root, 'add', '-A'); git(root, 'commit', '-qm', 'fixture');
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
     await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{}')", [id, root]);
+    await importFile(engine, join(root, 'notes', 'a--b.md'), 'notes/a--b.md', { noEmbed: true, sourceId: id });
     await claimWorktree(engine, id, root);
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
     try {
-      await submitPageMutation(localCtx(engine, id), { operation: 'put_page', params: { slug: 'notes/a--b', source_id: id, content: '---\ntitle: Double\n---\nTwo hyphens.\n' } });
+      const imported = (await engine.readPageSnapshot('notes/a--b', { sourceId: id }))!;
+      await submitPageMutation(localCtx(engine, id), { operation: 'put_page', params: { slug: 'notes/a--b', source_id: id, content: '---\ntitle: Double\n---\nTwo hyphens, updated.\n', expected_revision: imported.revision } });
       const written = readFileSync(join(root, 'notes', 'a--b.md'), 'utf8');
       expect(written).toContain('slug: notes/a--b');
       // A file an earlier gbrain rendered without the stamp.

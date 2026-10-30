@@ -15,7 +15,7 @@
  * same process.exit stub).
  */
 
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -43,9 +43,10 @@ describe('gbrain sources set-path', () => {
 
   afterAll(async () => {
     await engine.disconnect();
-    process.exit = origExit;
     for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
   });
+
+  afterEach(() => { process.exit = origExit; });
 
   beforeEach(async () => {
     await resetPgliteState(engine);

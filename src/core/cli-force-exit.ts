@@ -64,8 +64,9 @@ import {
   pgliteCloseTimeoutMs,
   SINK_DRAIN_TIMEOUT_MS,
 } from './background-work.ts';
-import { POOL_END_TIMEOUT_SECONDS } from './db.ts';
+import { POOL_END_TIMEOUT_SECONDS } from './pool-end-timeout.ts';
 import { parseGlobalFlags } from './cli-options.ts';
+import { setInterruptedDocumentWriter, slowReadElapsedMs, withReadMeta } from './read-heartbeat.ts';
 
 const DAEMON_COMMANDS: ReadonlySet<string> = new Set(['serve']);
 
@@ -759,6 +760,11 @@ export function installStdoutPipeDelivery(opts: { json?: 'document' | 'ndjson' }
   if (process.stdout.isTTY && !opts.json) return;
   stdoutInterposed = true;
   jsonGuardMode = opts.json ?? null;
+  setInterruptedDocumentWriter(doc => {
+    if (jsonDocumentWritten) return;
+    jsonDocumentWritten = true;
+    void chainStdoutWrite(`${JSON.stringify(doc, null, jsonGuardMode === 'ndjson' ? undefined : 2)}\n`).catch(() => { /* fd 1 gone */ });
+  });
   const toStderr = (data: string | Uint8Array, encoding?: BufferEncoding): Promise<void> => {
     try { process.stderr.write(typeof data === 'string' ? Buffer.from(data, encoding ?? 'utf8') : data); } catch { /* best effort */ }
     return Promise.resolve();
@@ -835,12 +841,16 @@ function writeJsonFallbackIfMissing(exitCode: number): void {
     return;
   }
   jsonDocumentWritten = true;
+  // 129/130/143: a signal stopped the command before its result; say so, so a harness timeout never reads as empty.
+  const signalled = exitCode === 129 || exitCode === 130 || exitCode === 143;
   const doc = {
     ...(jsonGuardMode === 'ndjson' ? { status: 'error' } : {}),
-    error: 'command_failed',
-    code: lastRenderedErrorCode ?? 'command_failed',
-    message: `The command exited with status ${exitCode} without writing its JSON result.`,
-    suggestion: 'Re-run without --json to read the error on stderr, or run `gbrain doctor --json`.',
+    error: signalled ? 'interrupted' : 'command_failed',
+    code: signalled ? 'interrupted' : lastRenderedErrorCode ?? 'command_failed',
+    message: signalled ? `The command was interrupted by a signal (exit ${exitCode}) before it wrote its JSON result. Nothing was read, so this is not an empty result.`
+      : `The command exited with status ${exitCode} without writing its JSON result.`,
+    suggestion: signalled ? 'Re-run the same command with a longer timeout; large brains can take minutes.'
+      : 'Re-run without --json to read the error on stderr, or run `gbrain doctor --json`.',
     exit_code: exitCode,
     contract_version: 1,
   };
@@ -875,7 +885,15 @@ function recordJsonDocumentMissing(): void {
  */
 export async function writeStdoutFinal(output: string): Promise<void> {
   jsonDocumentWritten = true;
-  await chainStdoutWrite(output);
+  await chainStdoutWrite(jsonGuardMode === 'document' && slowReadElapsedMs() !== null ? withReadMetaText(output) : output);
+}
+
+/** A slow read's document text with `elapsed_ms` and `complete` (read-heartbeat.ts), in the text's own indentation. */
+function withReadMetaText(output: string): string {
+  let doc: unknown;
+  try { doc = JSON.parse(output); } catch { return output; }
+  const indent = /^\{\n( +)"/.exec(output)?.[1]?.length;
+  return `${JSON.stringify(withReadMeta(doc), null, indent)}${output.endsWith('\n') ? '\n' : ''}`;
 }
 
 /**

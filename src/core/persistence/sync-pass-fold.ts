@@ -33,7 +33,7 @@ import { fileContentHash } from './large-file.ts';
 import { readBlobBytes, readTreeBlobs } from './sync-blobs.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
-import { syncLockId } from '../db-lock.ts';
+import { fenceLockRow, syncLockId } from '../db-lock.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { findOpenPassWork } from './checkpoint-validation.ts';
 import { countsMatch, proveConfirm, type LevelMark } from './sync-pass-confirm.ts';
@@ -141,7 +141,7 @@ async function provenStamp(tx: BrainEngine, { row, p, root }: { row: WriteReques
   const scope = { worktreeId: row.worktree_id!, sourceId: row.source_id, incarnation: row.source_incarnation };
   await faultPoint('sync:pass_fold', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id });
   const [lease, pass, blocker, watermark, sources, proof, refused] = await pipelined(tx, [
-    () => tx.executeRaw('SELECT 1 FROM gbrain_cycle_locks WHERE id=$1 AND acquisition_token=$2::uuid AND ttl_expires_at > now() FOR SHARE', [syncLockId(row.source_id), stamp.leaseToken]),
+    () => fenceLockRow(tx, syncLockId(row.source_id), stamp.leaseToken),
     () => readPassRow(tx, row.source_id, stamp.incarnation),
     () => findOpenPassWork(tx, row.worktree_id!, row.request_id, !!writeback),
     () => readConvergedWatermark(tx, scope, row.request_id, OPEN_AT_STAMP_CAP, writeback ? { own: writeback } : undefined),

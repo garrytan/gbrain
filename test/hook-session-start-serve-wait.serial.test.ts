@@ -13,11 +13,13 @@
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import type net from 'node:net';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runHook, readHeartbeatTail, SESSION_START_DEADLINE_MS, SESSION_START_SERVE_WAIT_DEADLINE_MS } from '../src/commands/hook.ts';
 import {
+  CONTEXT_PACK_CLIENT_TIMEOUT_MS,
   ensureIpcSecretForConfig,
   resolveSocketPathForConfig,
   startResolveIpcServer,
@@ -224,5 +226,34 @@ describe('SessionStart does not wait when no serve is being started', () => {
     writeSetupReceipt({ scope: 'project', project_dir: ws });
     startServeLater(cfg, SERVE_DELAY_MS);
     expect((await sessionStart('startup')).out).toContain(FACT);
+  }, 20_000);
+});
+
+describe('SessionStart names a pack the serve did not deliver in time', () => {
+  // #7409's gate: a starved serve answered the post-compaction pack after the client timeout, and the heartbeat still
+  // read ok with no reason, so the empty pack named nothing.
+  test('a live serve that answers nothing within the client timeout: no pack, heartbeat degraded ipc_unavailable', async () => {
+    const cfg = pgliteConfig();
+    writeConfig(cfg);
+    ensureIpcSecretForConfig(cfg);
+    // A serve whose main thread is starved: it accepts the connection and answers nothing within the client timeout.
+    const server = createServer(() => {});
+    await new Promise<void>(resolve => server.listen(resolveSocketPathForConfig(cfg, 'resolve')!, resolve));
+    servers.push(server);
+    const { out, ms } = await sessionStart('compact');
+    expect(ms).toBeGreaterThanOrEqual(CONTEXT_PACK_CLIENT_TIMEOUT_MS);
+    expect(out).not.toContain(FACT);
+    const hb = await lastSessionStartHeartbeat();
+    expect(hb?.outcome).toBe('degraded');
+    expect(hb?.reason).toBe('ipc_unavailable');
+  }, 20_000);
+
+  test('no serve was ever started (no secret): the heartbeat stays ok', async () => {
+    const cfg = pgliteConfig();
+    writeConfig(cfg);
+    await sessionStart('compact');
+    const hb = await lastSessionStartHeartbeat();
+    expect(hb?.outcome).toBe('ok');
+    expect(hb?.reason).toBeUndefined();
   }, 20_000);
 });

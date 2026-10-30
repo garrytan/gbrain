@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 161 tools across 25 areas. **Starter** marks membership in the ~40-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 162 tools across 25 areas. **Starter** marks membership in the ~40-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -53,7 +53,7 @@ Every non-localOnly operation on the MCP surface: 161 tools across 25 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `request_tools` | More tools: no arguments lists your catalog; {tools: [names]} returns schemas; {surface} widens it (per client or stdio session). | read | yes |  |
+| `request_tools` | More tools and params: no arguments lists your catalog; {tools: [names]} returns full schemas, every optional param included; {surface} widens it (per client or stdio session). | read | yes |  |
 
 ## entities
 
@@ -149,13 +149,13 @@ Every non-localOnly operation on the MCP surface: 161 tools across 25 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `context_pack` | MEMORY VERB (v1): core memory, budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. | read | yes |  |
-| `delta` | MEMORY VERB (v1): pages, facts, thread events changed since a cursor, zero LLM. | read | yes |  |
-| `entity` | MEMORY VERB (v1): person/company/account card, zero LLM. | read | yes |  |
-| `forget` | MEMORY VERB (v1): expire a remembered fact by its fact_id (never a page slug). | write | yes |  |
-| `recall` | MEMORY VERB (v1): read facts by entity, since or session_id; `query` also searches pages. | read | yes |  |
-| `remember` | MEMORY VERB (v1): save facts with provenance. | write | yes |  |
-| `synthesize` | [EXPENSIVE / SLOW: LLM calls, costs money] MEMORY VERB (v1): answer a broad question across pages with citations. | read | yes |  |
+| `context_pack` | Core memory, budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. | read | yes |  |
+| `delta` | Pages, facts, thread events changed since a cursor, zero LLM. | read | yes |  |
+| `entity` | Person/company/account card, zero LLM. | read | yes |  |
+| `forget` | Expire a remembered fact by its fact_id (never a page slug). | write | yes |  |
+| `recall` | Read facts by entity, since or session_id; `query` also searches pages. | read | yes |  |
+| `remember` | Save facts with provenance; set `entity` (the subject) or recall misses it. | write | yes |  |
+| `synthesize` | [EXPENSIVE / SLOW: LLM calls] Cited answer to a broad question across pages. | read | yes |  |
 
 ## ontology
 
@@ -197,6 +197,7 @@ Every non-localOnly operation on the MCP surface: 161 tools across 25 areas. **S
 | `revert_version` | Restore a page to an earlier version from its history (a new revision; history is kept). | write |  |  |
 | `unpurge_page` | Owner-only (`gbrain pages unpurge <slug>`). | admin |  |  |
 | `upload_page_part` | Send the next part of an upload: part equals next_part, the whole call within part_max_frame_bytes, cut between code points. | write |  |  |
+| `whois` | Exact identity lookup: entity pages whose email, title or declared alias equals an email address or name, ignoring case, accents and quotes. | read |  |  |
 
 ## questions
 

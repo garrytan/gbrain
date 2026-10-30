@@ -27,19 +27,17 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
 import { existsSync, realpathSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import { opError } from '../ops/contract.ts';
 import { resolveSlugForPath, unsyncableReason, type SyncableReason } from '../sync.ts';
 import { parseMarkdownHead } from '../markdown.ts';
 import { embeddingsDisabled } from '../embedding-disabled.ts';
-import { embeddingStateFix, DELETED_PAGE_PURGE_WINDOW_HOURS, type EmbeddingState } from '../embedding-state.ts';
+import { embeddingStateFix, type EmbeddingState } from '../embedding-state.ts';
+import { PAGE_SEARCHABLE, readPageSearchability } from '../page-searchability.ts';
 import { loadSyncEligibility, syncGit } from './sync-discovery.ts';
 import { readBlobContents } from './sync-blobs.ts';
 import { readGitHold } from './sync-holds.ts';
 import { persistenceEnabledForHealth } from './ownership.ts';
-import { budgetRowAppliesFilter } from '../page-size-policy.ts';
-import { chunkGenerationFilter } from '../search/safe-chunks.ts';
-import { quoteIdentifier } from '../search/embedding-column.ts';
-import { embeddingWriteTarget } from '../page-state/projections.ts';
 
 /** Paths one call resolves. */
 export const RESOLVE_PATHS_MAX = 200;
@@ -84,12 +82,8 @@ export interface ResolvedPaths {
 }
 
 const DOCS = 'docs/guides/resolve-paths.md';
-const SEARCHABLE: Record<EmbeddingState, true | 'keyword' | false> = { embedded: true, pending: 'keyword', keyword_only: 'keyword', quarantined: false, empty: false,
-  deleted_page_chunks: false, chunkless_healable: false };
 const PAGE_STATE: Record<Exclude<EmbeddingState, 'deleted_page_chunks'>, ResolvePathState> = { embedded: 'searchable', pending: 'pending_embedding',
   keyword_only: 'keyword_only', quarantined: 'quarantined', empty: 'empty', chunkless_healable: 'chunkless' };
-/** Worst first: a page with some chunks embedded and some pending reads as pending. */
-const PAGE_STATE_ORDER: EmbeddingState[] = ['quarantined', 'chunkless_healable', 'pending', 'keyword_only', 'empty', 'embedded'];
 
 interface TreeRow { path: string; oid: string; size: number }
 
@@ -121,6 +115,12 @@ export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, 
   const status = ['gbrain', 'sources', 'status', sourceId, '--json'];
   if (!source || source.archived) throw opError('not_found', `Source ${sourceId} is not registered or is archived.`, 'List the registered sources and pass one of their ids.',
     { fix: readFix('Lists the registered sources.', ['gbrain', 'sources', 'list', '--json'], ['gbrain', 'sources', 'list', '--json']) });
+  if (source.local_path && !isAbsolute(source.local_path)) throw opError('sync_anchor_relative', `Source ${sourceId} has a relative local_path, which names no fixed directory, so its paths cannot be resolved.`,
+    'Ask the user which directory holds the checkout, then run gbrain sources set-path on the host that holds it.',
+    { fix: { argv: ['gbrain', 'sources', 'set-path', sourceId, '<dir>'], consent: [], actor: 'user', ask_user: true, requires_exclusive: false,
+      inputs: [{ name: 'dir', how: "The absolute path of the directory that holds this source's checkout, from the user; never the current directory by default." }],
+      user_message: `Source "${sourceId}" has a relative path as its directory, so gbrain cannot tell which folder holds its files. Which directory holds them? I'll point the source there (gbrain sources set-path ${sourceId} <absolute-directory>).`,
+      why: 'Points the source at an absolute directory; it only updates the pointer, no file or page changes.', verify: { argv: status }, docs: DOCS } });
   if (!source.local_path || !existsSync(source.local_path)) throw opError('not_found', `Source ${sourceId} has no Git checkout on this host, so its paths cannot be resolved here.`,
     'Run this on the host that holds the checkout (gbrain sources status names its path).', { fix: readFix('Shows where the source checkout lives.', status, status) });
   const root = realpathSync(source.local_path);
@@ -149,32 +149,9 @@ export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, 
   const owners = new Map((await engine.executeRaw<{ slug: string; source_path: string | null }>(
     'SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND slug = ANY($2::text[])', [sourceId, slugs])).map(row => [row.slug, row]));
   const liveSlugs = [...new Set([...byOrigin.values()].filter(page => !page.deleted).map(page => page.slug))];
-  const rows = liveSlugs.length ? await engine.listEmbeddingStateRows({ sourceIds: [sourceId], slugs: liveSlugs, states: PAGE_STATE_ORDER, limit: liveSlugs.length * PAGE_STATE_ORDER.length,
-    purgeWindowHours: DELETED_PAGE_PURGE_WINDOW_HOURS }) : [];
-  const unembeddedBySlug = new Map<string, number>();
-  if (liveSlugs.length) {
-    const column = `cc.${quoteIdentifier((await embeddingWriteTarget(engine)).column.name)}`;
-    for (const row of await engine.executeRaw<{ slug: string; unembedded: number | string }>(
-      `SELECT p.slug, count(cc.id) AS unembedded FROM pages p JOIN content_chunks cc ON cc.page_id = p.id AND ${chunkGenerationFilter('p', 'cc')} AND ${column} IS NULL
-        WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND p.deleted_at IS NULL GROUP BY p.slug`, [sourceId, liveSlugs])) unembeddedBySlug.set(row.slug, Number(row.unembedded));
-  }
-  const embedding = new Map<string, { state: EmbeddingState; chunks: number; unembedded: number }>();
-  for (const row of rows) {
-    const prior = embedding.get(row.slug);
-    const state = prior && PAGE_STATE_ORDER.indexOf(prior.state) < PAGE_STATE_ORDER.indexOf(row.state) ? prior.state : row.state;
-    embedding.set(row.slug, { state, chunks: (prior?.chunks ?? 0) + Number(row.chunks), unembedded: unembeddedBySlug.get(row.slug) ?? 0 });
-  }
-  const keywordOnly = [...embedding].filter(([, emb]) => emb.state === 'keyword_only').map(([slug]) => slug);
-  const budgetHolds = new Map<string, NonNullable<ResolvedPath['embedding_hold']>>();
-  if (keywordOnly.length) {
-    for (const row of await engine.executeRaw<{ slug: string; state: 'held' | 'capped'; reason: string; updated_at: Date | string }>(
-      `SELECT p.slug, b.state, COALESCE(b.reason, 'awaiting_approval') AS reason, b.updated_at
-       FROM pages p JOIN page_embedding_budget b ON b.page_id = p.id
-      WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND p.deleted_at IS NULL AND ${budgetRowAppliesFilter('b', 'p')}
-        AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')`, [sourceId, keywordOnly])) {
-      budgetHolds.set(row.slug, { state: row.state, reason: row.reason, updated_at: new Date(row.updated_at).toISOString() });
-    }
-  }
+  const searchability = await readPageSearchability(engine, sourceId, liveSlugs);
+  const embedding = new Map([...searchability].filter(([, page]) => page.embedding_state).map(([slug, page]) => [slug, { state: page.embedding_state!, chunks: page.chunks, unembedded: page.unembedded }]));
+  const budgetHolds = new Map([...searchability].filter(([, page]) => page.embedding_hold).map(([slug, page]) => [slug, page.embedding_hold!]));
   const sync = ['gbrain', 'sync', '--source', sourceId, '--no-pull'];
   const syncStatus = ['gbrain', 'sync', 'status', '--source', sourceId, '--json'];
   const verify = (path: string) => ['gbrain', 'sources', 'resolve-path', sourceId, path, '--json'];
@@ -198,7 +175,7 @@ export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, 
       skipped: null as ResolvedPath['skipped'], hold: null as ResolvedPath['hold'], embedding_hold: null as ResolvedPath['embedding_hold'] };
     const push = (state: ResolvePathState, searchable: ResolvedPath['searchable'], why: string, fix: Action | null, extra: Partial<ResolvedPath> = {}) =>
       out.push({ ...base, state, searchable, why, fix, ...extra });
-    const liveSearch: ResolvedPath['searchable'] = emb ? SEARCHABLE[emb.state] : false;
+    const liveSearch: ResolvedPath['searchable'] = emb ? PAGE_SEARCHABLE[emb.state] : false;
     if (atHead && (current?.oid ?? null) !== (committed?.oid ?? null)) {
       push('not_synced_yet', live ? liveSearch : false, `The file at HEAD ${current ? (committed ? 'changed' : 'was added') : 'was removed'} after the last synced commit ${source.last_commit?.slice(0, 12) ?? '(none)'}; the next sync of the source takes it.`,
         readFix('Syncs the checkout as it is.', sync, verify(p.input)));

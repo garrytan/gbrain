@@ -108,6 +108,8 @@ export function laneClaim(): () => void {
   let released = false;
   return () => { if (!released) { released = true; claiming--; } };
 }
+/** The consumer claims `laneClaim` counts that have not released: a test that parks claims at `consumer:claiming` waits for the rest. */
+export function laneClaimsInFlight(): number { return claiming; }
 /** Counts a lane task from its head's claim until it settles; returns the release. */
 export function laneTask(state: LaneState): () => void {
   state.tasks++;

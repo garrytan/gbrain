@@ -49,7 +49,9 @@ timeout = 60_000
 # git-hermetic-preload: inject commit.gpgsign=false/tag.gpgsign=false via
 # GIT_CONFIG_COUNT env config so a dev box's global signing config can't
 # route test-repo commits through gpg-agent (which intermittently fails
-# under full-suite load). See test/helpers/git-hermetic-preload.ts.
+# under full-suite load). It first drops the repository-locating variables
+# gitChildEnv drops (#7451), so a run started from a git hook never writes
+# into the caller's repository. See test/helpers/git-hermetic-preload.ts.
 #
 # provider-keys-preload: strip ambient ANTHROPIC_API_KEY/OPENAI_API_KEY so
 # key-aware model routing (resolveTierDefault) resolves identically to

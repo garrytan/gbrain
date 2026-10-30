@@ -137,7 +137,7 @@ const deferredEmbeds = new Map<BrainEngine, DeferredEmbeds>();
  * runs, at most DEFERRED_EMBED_BUSY_MAX times in a row before `busy_override` drains beside it; `keyless` keeps the
  * backlog without a provider call or a timer.
  */
-export type DeferredEmbedDecision = { decision: 'drained' | 'retry' | 'busy' | 'busy_override' | 'keyless'; delayMs?: number; failures?: number };
+export type DeferredEmbedDecision = { decision: 'drained' | 'retry' | 'busy' | 'busy_override' | 'keyless' | 'no_sources'; delayMs?: number; failures?: number; ms?: number };
 export const deferredEmbedDecisions: DeferredEmbedDecision[] = [];
 const DEFERRED_EMBED_RETRY_TIERS = [1, 3, 12, 60];
 const DEFERRED_EMBED_BUSY_MAX = 3;
@@ -150,7 +150,10 @@ function deferredEmbedRetryMs(env: Record<string, string | undefined> = process.
   return Number.isFinite(value) && value >= 1 ? Math.floor(value) : 5_000;
 }
 
+/** Records the decision and logs it (GBRA-133: the drain is a concurrent actor beside searches, so every pass outcome is in the log). */
 function decideDeferredEmbed(entry: DeferredEmbedDecision): void {
+  log(`embed-drain decision=${entry.decision}${entry.delayMs !== undefined ? ` delay_ms=${entry.delayMs}` : ''}`
+    + `${entry.failures !== undefined ? ` failures=${entry.failures}` : ''}${entry.ms !== undefined ? ` ms=${entry.ms}` : ''}`);
   deferredEmbedDecisions.push(entry);
   if (deferredEmbedDecisions.length > 200) deferredEmbedDecisions.splice(0, deferredEmbedDecisions.length - 200);
 }
@@ -194,12 +197,17 @@ export function isDelegatedSyncRunning(): boolean {
  * payload; when present the start is asynchronous (one verification read).
  */
 export function startDelegatedSync(engine: BrainEngine, rawOptions: unknown, clientToken: string, opts?: { boundSourceId?: string }): SyncStartResponse;
-export function startDelegatedSync(engine: BrainEngine, rawOptions: unknown, clientToken: string, opts: { boundSourceId?: string; registration?: unknown }): SyncStartResponse | Promise<SyncStartResponse>;
+/**
+ * `opts.logLines` (in-process callers only, never the wire): also write the job's human lines to the serve log, for a
+ * run nobody polls (the resident notifier's background passes, #7243), whose phase and progress lines would otherwise
+ * reach only the job's line buffer.
+ */
+export function startDelegatedSync(engine: BrainEngine, rawOptions: unknown, clientToken: string, opts: { boundSourceId?: string; registration?: unknown; logLines?: boolean }): SyncStartResponse | Promise<SyncStartResponse>;
 export function startDelegatedSync(
   engine: BrainEngine,
   rawOptions: unknown,
   clientToken: string,
-  opts: { boundSourceId?: string; registration?: unknown } = {},
+  opts: { boundSourceId?: string; registration?: unknown; logLines?: boolean } = {},
 ): SyncStartResponse | Promise<SyncStartResponse> {
   // #6696 (A5): the client's admission origin scopes every write of the job (validated below; a client that sends none is background).
   const origin = (rawOptions as { origin?: unknown } | null)?.origin;
@@ -210,7 +218,7 @@ function startDelegatedSyncScoped(
   engine: BrainEngine,
   rawOptions: unknown,
   clientToken: string,
-  opts: { boundSourceId?: string; registration?: unknown },
+  opts: { boundSourceId?: string; registration?: unknown; logLines?: boolean },
 ): SyncStartResponse | Promise<SyncStartResponse> {
   if (typeof clientToken !== 'string' || clientToken.length === 0 || clientToken.length > 128) {
     return { ok: false, protocol: 2, error: 'invalid_options:clientToken' };
@@ -287,7 +295,7 @@ function startDelegatedSyncScoped(
   };
 
   if (opts.registration !== undefined) {
-    return startVerifiedDelegatedSync(engine, job, options, opts.registration as SyncStartRegistration, { settle, fail });
+    return startVerifiedDelegatedSync(engine, job, options, opts.registration as SyncStartRegistration, { settle, fail }, opts.logLines === true);
   }
 
   job.settled = withLegacySyncDelegation(async () => {
@@ -367,6 +375,7 @@ async function startVerifiedDelegatedSync(
   options: DelegatedSyncOptions,
   registration: SyncStartRegistration,
   hooks: { settle: () => void; fail: (e: unknown) => void },
+  logLines = false,
 ): Promise<SyncStartResponse> {
   const refuse = (e: unknown): SyncStartResponse => {
     hooks.fail(e);
@@ -382,6 +391,7 @@ async function startVerifiedDelegatedSync(
   }
   job.managed = true;
   const push = (text: string): void => {
+    if (logLines) log(`job=${job.id} ${text}`);
     job.lines.push({ seq: ++job.lineSeq, text });
     if (job.lines.length > LINE_BUFFER_MAX) job.lines.splice(0, job.lines.length - LINE_BUFFER_MAX);
   };
@@ -413,8 +423,10 @@ async function startVerifiedDelegatedSync(
         });
         job.result = toWireSyncResult(r);
         job.drain = r.drain;
+        let stopFields = '';
         if (managed) {
-          const { drainNext } = await import('./persistence/sync-drain.ts');
+          const { drainNext, drainStopFields } = await import('./persistence/sync-drain.ts');
+          stopFields = drainStopFields(r);
           const { managedSyncResumeArgs, syncResumeCommand } = await import('./sync-reconcile.ts');
           const id = sourceId ?? 'default';
           job.next = drainNext(r, syncResumeCommand(managedSyncResumeArgs({ sourceId: id, processingOptions: options })), id);
@@ -422,8 +434,9 @@ async function startVerifiedDelegatedSync(
         job.state = 'done';
         log(
           `done job=${job.id} status=${r.status} added=${r.added} modified=${r.modified} ` +
-          `deleted=${r.deleted}${r.drain ? ` drain=${r.drain.outcome}` : ''} in=${Math.round((Date.now() - job.startedAt) / 1000)}s`,
+          `deleted=${r.deleted}${r.drain ? ` drain=${r.drain.outcome}` : ''}${stopFields} in=${Math.round((Date.now() - job.startedAt) / 1000)}s`,
         );
+        if (stopFields && job.next) log(`next job=${job.id}: ${job.next.command} (${job.next.why})`);
         // GBRA-133 PR 2a.3: the post-run re-check (generation-checked); whatever is still due goes to this serve's notifier.
         if (!options.dryRun) await settleRunMarkers(engine, sourceId ?? 'default', markers, { pulled: !managed && !options.noPull, full: options.full === true }, { queue: false });
         if (!managed && !options.dryRun && !options.noEmbed && r.added + r.modified > 0) {
@@ -574,9 +587,11 @@ export async function maybeDrainDeferredEmbeds(engine: BrainEngine): Promise<voi
       for (const source of sources) if (!companyBrainProfile(source.config)) state.pending.add(source.id);
     }
     for (const source of [...state.pending]) if (source && await getCompanyBrainProfile(engine, source)) state.pending.delete(source);
-    if (!state.pending.size) return;
+    if (!state.pending.size) { decideDeferredEmbed({ decision: 'no_sources' }); return; }
     const { detectCapabilities } = await import('./capability.ts');
     if (!detectCapabilities().embeddings.available) { decideDeferredEmbed({ decision: 'keyless' }); return; }
+    const passStart = performance.now();
+    log(`embed-drain started sources=${state.pending.size}`);
     const { runEmbedCore } = await import('../commands/embed.ts');
     let failed = false;
     // Snapshot one fair pass. A source queued again during its own provider
@@ -584,21 +599,23 @@ export async function maybeDrainDeferredEmbeds(engine: BrainEngine): Promise<voi
     for (const sourceId of [...state.pending]) {
       if (state.stopped) break;
       state.pending.delete(sourceId);
+      const sourceStart = performance.now();
       try {
         const r = await runEmbedCore(engine, { stale: true, sourceId, signal: state.controller.signal, quiet: true });
-        log(`embed-drain embedded=${r.embedded} failures=${r.failures} source=${sourceId ?? 'all'}`);
+        log(`embed-drain embedded=${r.embedded} failures=${r.failures} source=${sourceId ?? 'all'} ms=${Math.round(performance.now() - sourceStart)}`);
         if (r.embedded !== 0 || r.failures !== 0) state.pending.add(sourceId);
         if (r.failures !== 0) failed = true;
       } catch (error) {
         state.pending.add(sourceId);
         failed = true;
-        log(`embed-drain failed: ${error instanceof Error ? error.message : String(error)}`);
+        log(`embed-drain failed: ${error instanceof Error ? error.message : String(error)} source=${sourceId ?? 'all'} ms=${Math.round(performance.now() - sourceStart)}`);
       }
     }
+    const ms = Math.round(performance.now() - passStart);
     state.failures = failed ? state.failures + 1 : 0;
-    if (!state.pending.size) { decideDeferredEmbed({ decision: 'drained' }); return; }
+    if (!state.pending.size) { decideDeferredEmbed({ decision: 'drained', ms }); return; }
     const delayMs = deferredEmbedRetryMs() * DEFERRED_EMBED_RETRY_TIERS[Math.max(0, Math.min(state.failures, DEFERRED_EMBED_RETRY_TIERS.length) - 1)]!;
-    decideDeferredEmbed({ decision: 'retry', delayMs, failures: state.failures });
+    decideDeferredEmbed({ decision: 'retry', delayMs, failures: state.failures, ms });
     armDeferredEmbeds(engine, state, delayMs);
   })().catch(error => { log(`embed-drain failed: ${error instanceof Error ? error.message : String(error)}`); });
   state.running = work;

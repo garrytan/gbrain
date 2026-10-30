@@ -18,6 +18,8 @@
  * with the production boost (no drift).
  */
 
+import { givenNameVariants } from '../entities/name-variants.ts';
+
 const MIN_CONTENT_TOKENS = 2;
 
 // Small, deliberately conservative English stopword set. CJK has no whitespace
@@ -87,6 +89,18 @@ export function isTitlePhraseMatch(query: string, title: string): boolean {
   const qContent = contentTokens(qTokens);
   if (qContent.length < MIN_CONTENT_TOKENS) return false;
   return containsTokenRun(tTokens, qTokens);
+}
+
+/**
+ * #7471: the query with its given name swapped for each common short or
+ * formal form ("Matt Example" -> "matthew example"), for the title arm and
+ * the T2 boost, so a short first name never counts against a title match.
+ * None when the query uses websearch operators (a quote, a leading-dash
+ * negation, a literal OR): a variant would drop them.
+ */
+export function titleNameVariants(query: string): string[] {
+  if (query.includes('"') || /(^|\s)-\S/.test(query) || /\bor\b/i.test(query)) return [];
+  return givenNameVariants(query);
 }
 
 /** A one-content-token title must be at least this long to count as mentioned. */

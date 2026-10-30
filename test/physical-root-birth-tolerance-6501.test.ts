@@ -162,7 +162,7 @@ for (const kind of testBackends()) describe(`physical root birth drift (${kind})
     expect(await put(f, 'notes/before-drift')).toBe('committed');
     for (const delta of [-50n, 47n, -1000n, 1000n]) {
       const stamped = drift(f, delta);
-      expect(await put(f, `notes/drift-${delta}`)).toBe('committed');
+      expect(await put(f, `notes/drift-${delta < 0n ? `minus${-delta}` : delta}`)).toBe('committed');
       expect(readJson(f.marker)).toEqual({ ...stamped, birth: (BigInt(stamped.birth) + delta).toString() });
       writeJson(f.marker, stamped);
     }
@@ -173,7 +173,7 @@ for (const kind of testBackends()) describe(`physical root birth drift (${kind})
     const binding = (await getWorktreeBinding(engine, f.source))!;
     for (const delta of [-1001n, 1001n, -5_000_000_000n]) {
       const stamped = drift(f, delta);
-      expect(await put(f, `notes/drift-${delta}`)).toBe('recovery_required/relocated-root-exit');
+      expect(await put(f, `notes/drift-${delta < 0n ? `minus${-delta}` : delta}`)).toBe('recovery_required/relocated-root-exit');
       const refused = await refusal(binding);
       expect(refused).toMatchObject({ code: 'recovery_required', detail: 'physical_root_directory_changed' });
       expect(refused!.suggestion).toContain(`gbrain sources writer transfer prepare ${f.source} --self-transfer --confirm-relocated-root`);

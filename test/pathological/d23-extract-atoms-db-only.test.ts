@@ -19,7 +19,9 @@ import { dirname, join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { ChatOpts, ChatResult } from '../../src/core/ai/gateway.ts';
 import { runPhaseExtractAtoms } from '../../src/core/cycle/extract-atoms.ts';
-import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
+import { disposePersistenceConsumer, waitForWrites } from '../../src/core/persistence/service.ts';
+import type { WriteRequest } from '../../src/core/persistence/model.ts';
+import type { GBrainConfig } from '../../src/core/config.ts';
 import { operations } from '../../src/core/operations.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { managedBrain, pathologicalArms } from './harness.ts';
@@ -38,6 +40,17 @@ function stubChat() {
       usage: { input_tokens: 10, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: 'anthropic:claude-haiku-4-5', providerId: 'anthropic' };
   };
   return { calls, chat };
+}
+
+/**
+ * A phase can return while a request it admitted is still publishing: a batch whose atom write was refused returns at that
+ * refusal, and its `__managed_atom_complete__` request runs afterwards. Stopping the consumer then races that request, so its
+ * requests are waited out first and the rows are read settled.
+ */
+async function settle(engine: BrainEngine): Promise<void> {
+  const pending = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id='default' AND state IN ('queued','running')");
+  await waitForWrites(engine, pending, { engine: engine.kind } as GBrainConfig, 60_000);
+  await disposePersistenceConsumer(engine);
 }
 
 const atomsFrom = (engine: BrainEngine, slug: string) => engine.executeRaw<{ slug: string }>(
@@ -124,7 +137,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
           return { ...r, text, blocks: [{ type: 'text' as const, text }] };
         };
         await runPhaseExtractAtoms(engine, { sourceId: 'default', _chat: sameTitle(stubChat().chat), _transcripts: [] });
-        await disposePersistenceConsumer(engine);
+        await settle(engine);
         const [atom] = await atomsFrom(engine, MEETING);
         const rel = `${atom!.slug}.md`;
         expect(existsSync(join(root, rel))).toBe(true);
@@ -133,12 +146,15 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         const snap = (await engine.readPageSnapshot(MEETING, { sourceId: 'default' }))!;
         await operations.find(o => o.name === 'put_page')!.handler(ctx, { slug: MEETING, expected_revision: snap.revision,
           content: `---\ntype: meeting\ntitle: Acme example sync\n---\n\n${prose('edited')}\n` });
-        await disposePersistenceConsumer(engine);
+        await settle(engine);
         await runPhaseExtractAtoms(engine, { sourceId: 'default', _chat: sameTitle(stubChat().chat), _transcripts: [] });
-        await disposePersistenceConsumer(engine);
-        const refusals = await engine.executeRaw<{ slug: string; error_code: string }>(
-          "SELECT slug, error_code FROM persistence_requests WHERE source_id='default' AND error_code IS NOT NULL");
-        expect(refusals).toEqual([{ slug: atom!.slug, error_code: 'source_changed' }]);
+        await settle(engine);
+        // The edited atom refuses; its batch's completion then refuses too (a member did not commit), so nothing is marked done.
+        const refusals = await engine.executeRaw<{ slug: string; error_code: string; error_message: string }>(
+          "SELECT slug, error_code, error_message FROM persistence_requests WHERE source_id='default' AND error_code IS NOT NULL ORDER BY sequence");
+        expect(refusals).toEqual([{ slug: atom!.slug, error_code: 'source_changed', error_message: expect.any(String) },
+          { slug: '__managed_atom_complete__', error_code: 'revision_conflict', error_message: 'The atom batch is not fully committed.' }]);
+        expect(await engine.executeRaw("SELECT 1 FROM persistence_requests WHERE source_id='default' AND state IN ('queued','running')")).toEqual([]);
         expect(readFileSync(join(root, rel), 'utf8')).toBe(edited);
       }, { databaseUrl, setup: async ({ engine, root }) => {
         writeFileSync(join(root, 'gbrain.yml'), 'storage:\n  db_only:\n    - meetings/\n');

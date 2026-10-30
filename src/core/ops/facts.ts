@@ -40,7 +40,8 @@ import { ENTITY_HINTS_CAP } from '../facts/extract.ts';
 import { parseTtlShorthand } from '../facts/ttl-parse.ts';
 import { MEMORY_VERBS_VERSION } from '../verbs.ts';
 import type { SearchResult } from '../types.ts';
-import type { BrainEngine, FactRow } from '../engine.ts';
+import { MAX_SEARCH_LIMIT, type BrainEngine, type FactRow } from '../engine.ts';
+import { collapseFactReads } from '../facts/capture-dedup.ts';
 import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
 import { hasScope } from '../scope.ts';
 import { renderTrustedText } from '../eligibility/labels.ts';
@@ -271,23 +272,23 @@ const recall: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: { retrieval: { localVerbatim: ['facts'] } },
-  description: 'MEMORY VERB (v1): read facts by entity, since or session_id; `query` also searches pages. Remote callers: world facts only. One card: entity; reasoning: synthesize.',
+  description: 'Read facts by entity, since or session_id; `query` also searches pages. Remote callers: world facts only. One card: entity; reasoning: synthesize.',
   params: {
     entity: { type: 'string', description: 'Entity slug; its facts.' },
     question: { type: 'string', description: 'Rank facts by relevance to it.' },
     query: { type: 'string', description: 'Also search pages (results[]).' },
     budget_tokens: { type: 'number', description: 'Token budget; facts pack first.' },
-    budget_policy: { type: 'string', enum: ['facts_first', 'query_first'], description: 'Default facts_first.' },
+    budget_policy: { type: 'string', enum: ['facts_first', 'query_first'], description: 'Default facts_first.', fullSurfaceOnly: true },
     source_id: { type: 'string', description: 'One readable source.' },
     since: { type: 'string', description: 'ISO 8601 or "8 hours ago".' },
     session_id: { type: 'string', description: "This session's facts." },
-    include_expired: { type: 'boolean', description: 'Also expired; question ranks them.' },
-    supersessions: { type: 'boolean', description: 'Supersession log only.' },
-    limit: { type: 'number', description: 'Per-arm max (default 50, cap 100).' },
-    grep: { type: 'string', description: 'Text substring.' },
-    include_pending: { type: 'boolean', description: 'Pending count.' },
-    return_unit: { type: 'string', enum: ['chunk', 'window', 'section', 'page', 'auto'], description: 'results[] unit (see search).' },
-    return_window: { type: 'number', description: 'Window 1-3.' },
+    include_expired: { type: 'boolean', description: 'Also expired; question ranks them.', fullSurfaceOnly: true },
+    supersessions: { type: 'boolean', description: 'Supersession log only.', fullSurfaceOnly: true },
+    limit: { type: 'number', description: 'Per-arm max (default 50, cap 100).', fullSurfaceOnly: true },
+    grep: { type: 'string', description: 'Text substring.', fullSurfaceOnly: true },
+    include_pending: { type: 'boolean', description: 'Pending count.', fullSurfaceOnly: true },
+    return_unit: { type: 'string', enum: ['chunk', 'window', 'section', 'page', 'auto'], description: 'results[] unit (see search).', fullSurfaceOnly: true },
+    return_window: { type: 'number', description: 'Window 1-3.', fullSurfaceOnly: true },
     min_trust: MIN_TRUST_PARAM,
   },
   scope: 'read',
@@ -344,7 +345,7 @@ const recall: Operation = {
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote); // #4352: fact and page arms alike
     const eligibility = await resolveReadEligibility(ctx, { minTrust: p.min_trust }); // #5575 floor + quarantine/rederive hiding
 
-    type FactRows = Awaited<ReturnType<typeof ctx.engine.listFactsByEntity>>;
+    type FactRows = Array<Awaited<ReturnType<typeof ctx.engine.listFactsByEntity>>[number] & { entity_slugs?: string[]; collapsed_count?: number }>;
     type FactRowItem = FactRows[number];
     // Per-arm merge key: each arm's engine query ORDERs by a different column
     // (supersessions by COALESCE(expired_at, valid_until) — #3014, entity by
@@ -363,7 +364,7 @@ const recall: Operation = {
         k: toTime(keyOf(r as unknown as Record<string, unknown>)),
       }));
       decorated.sort((a, b) => b.k - a.k);
-      return decorated.slice(0, limit).map(d => d.r);
+      return decorated.slice(0, MAX_SEARCH_LIMIT).map(d => d.r);
     };
     const byCreated = (rec: Record<string, unknown>) => rec.created_at ?? rec.since_date;
     // The since-arms below pass eventTime:true (COALESCE(valid_from,
@@ -396,7 +397,7 @@ const recall: Operation = {
     // LIMIT, so a hidden newest row never consumes a slot).
     const listOpts = {
       activeOnly: !includeExpired,
-      limit,
+      limit: MAX_SEARCH_LIMIT,
       visibility, excludePrivate,
       grep: grep ?? undefined,
       excludeAuditRows: true, eligibility,
@@ -429,7 +430,7 @@ const recall: Operation = {
       const { resolveEntitySlug } = await import('../entities/resolve.ts');
       const resolvedLists = await Promise.all(factSources.map(async (src) => {
         const entitySlug = entityParam ? ((await resolveEntitySlug(ctx.engine, src, entityParam)) ?? entityParam) : undefined;
-        const rows = await readEntityFacts(ctx, src, entitySlug, limit,
+        const rows = await readEntityFacts(ctx, src, entitySlug, MAX_SEARCH_LIMIT,
           s => ctx.engine.listFactsSince(src, since, { ...listOpts, eventTime: true, entitySlug: s, sessionId: sessionParam ?? undefined }));
         return { slug: entitySlug, rows };
       }));
@@ -439,7 +440,7 @@ const recall: Operation = {
       const { resolveEntitySlug } = await import('../entities/resolve.ts');
       const resolvedLists = await Promise.all(factSources.map(async (src) => {
         const slug = (await resolveEntitySlug(ctx.engine, src, entityParam)) ?? entityParam;
-        return { slug, rows: await readEntityFacts(ctx, src, slug, limit, s => ctx.engine.listFactsByEntity(src, s!, { ...listOpts, sessionId: sessionParam ?? undefined })) };
+        return { slug, rows: await readEntityFacts(ctx, src, slug, MAX_SEARCH_LIMIT, s => ctx.engine.listFactsByEntity(src, s!, { ...listOpts, sessionId: sessionParam ?? undefined })) };
       }));
       ambiguousEntity = await unlinkedNamesakes(ctx.engine, resolvedLists.map(l => l.rows.map(r => ({ ...r, entity_slug: l.slug }))));
       rows = ambiguousEntity ? [] : mergeNewest(resolvedLists.map(l => l.rows), (rec) => rec.valid_from ?? rec.created_at);
@@ -474,6 +475,8 @@ const recall: Operation = {
       rows = rows.filter(r => r.fact.toLowerCase().includes(grep));
     }
 
+    // #7043: copies of one claim (the fact arms read MAX_SEARCH_LIMIT rows) collapse after the visibility filters, before the limit cut.
+    if (!ranking) rows = (await collapseFactReads(ctx.engine, rows)).slice(0, limit);
     // v0.32: optional pending-consolidation count piggy-backed on the recall
     // response. Single round trip on thin-client; omitted when not requested
     // so existing callers see no shape change. Sums over the SAME factSources
@@ -609,6 +612,7 @@ const recall: Operation = {
         // is the protocol name for the stored source attribution.
         fact_id: String(r.id),
         provenance: r.source, ...(r.attributed_to ? { attributed_to: r.attributed_to } : {}),
+        ...(r.entity_slugs ? { entity_slugs: r.entity_slugs } : {}), ...(r.collapsed_count ? { collapsed_count: r.collapsed_count } : {}),
         ...(ranking ? { relevance: ranking.relevance.get(r.id) } : {}),
       })), f => f.id)),
       total: packedFacts.length,
@@ -700,13 +704,13 @@ const context_pack: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: { retrieval: { localVerbatim: ['facts'] } },
-  description: 'MEMORY VERB (v1): core memory, budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.',
+  description: 'Core memory, budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.',
   params: {
     entities: { type: 'string', description: 'Comma-separated names or slugs (max 8).' },
     budget_tokens: { type: 'number', description: 'Token budget; cards pack first.' },
-    since: { type: 'string', description: 'Open-thread events after this ISO time.' },
-    session_id: { type: 'string', description: 'Opaque session id.' },
-    include_private: { type: 'boolean', description: 'Local trusted callers only.' },
+    since: { type: 'string', description: 'Open-thread events after this ISO time.', fullSurfaceOnly: true },
+    session_id: { type: 'string', description: 'Opaque session id.', fullSurfaceOnly: true },
+    include_private: { type: 'boolean', description: 'Local trusted callers only.', fullSurfaceOnly: true },
     min_trust: MIN_TRUST_PARAM,
     include_quarantined: { type: 'boolean', description: 'Admin or memory_confirm: quarantined cards.', fullSurfaceOnly: true },
     counterparty: { type: 'string', description: 'Person or company (name or slug): adds a pulled brief of dated items about them.', fullSurfaceOnly: true },
@@ -937,15 +941,15 @@ const delta: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: { retrieval: { localVerbatim: ['facts'] } },
-  description: 'MEMORY VERB (v1): pages, facts, thread events changed since a cursor, zero LLM. Pass session_id, cursor or since.',
+  description: 'Pages, facts, thread events changed since a cursor, zero LLM. Pass session_id, cursor or since.',
   params: {
     since: { type: 'string', description: 'ISO 8601 start time.' },
-    since_slug: { type: 'string', description: 'Legacy: next_cursor.slug.' },
+    since_slug: { type: 'string', description: 'Legacy: next_cursor.slug.', fullSurfaceOnly: true },
     cursor: { type: 'string', description: 'next_cursor.cursor (exact).' },
-    entities: { type: 'string', description: 'Entities for thread events (max 8).' },
+    entities: { type: 'string', description: 'Entities for thread events (max 8).', fullSurfaceOnly: true },
     budget_tokens: { type: 'number', description: 'Token budget; pages pack first.' },
     session_id: { type: 'string', description: 'Session id; keeps a cursor.' },
-    include_private: { type: 'boolean', description: 'Local trusted callers only.' },
+    include_private: { type: 'boolean', description: 'Local trusted callers only.', fullSurfaceOnly: true },
     min_trust: MIN_TRUST_PARAM,
     beliefs: { type: 'boolean', fullSurfaceOnly: true, description: 'Add `beliefs`: each belief that changed in the window, before and after, with cause and evidence (belief ledger); entities narrows it.' },
   },

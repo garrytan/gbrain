@@ -10,7 +10,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { hybridSearch } from '../../src/core/search/hybrid.ts';
-import { type CollapseDecision, collapseResults, redirectTargetSlug } from '../../src/core/search/collapse.ts';
+import { type CollapseDecision, collapseResults, prefetchPageFacts, redirectTargetSlug } from '../../src/core/search/collapse.ts';
 import { fnv1a } from '../../src/eval/deterministic-embed.ts';
 import type { HybridSearchMeta, SearchResult } from '../../src/core/types.ts';
 import { installFixtureChunks } from '../helpers/page-projection.ts';
@@ -227,5 +227,43 @@ describe('look-alikes the review found (no false folds, no private slug)', () =>
     const stub = row(rows, 'concepts/quill-roster-old')!;
     const out = await collapseResults(engine, [{ ...stub, collapsed: undefined }]);
     expect(out.map(r => r.slug)).toEqual(['people/bram-example']);
+  });
+});
+
+describe('GBRA-156: page facts read ahead of the collapse', () => {
+  const factReads = (sent: string[]) => sent.filter(sql => sql.includes("frontmatter->>'redirect_to'")).length;
+  const recording = (sent: string[]) => new Proxy(engine, {
+    get(target, key, receiver) {
+      if (key === 'executeRaw') return (sql: string, params?: unknown[]) => { sent.push(sql); return target.executeRaw(sql, params); };
+      const value = Reflect.get(target, key, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  }) as PGLiteEngine;
+
+  test('a prefetch over every page (more than the collapse reads) gives the same rows and the collapse reads no facts itself', async () => {
+    await engine.setConfig('search.collapse', 'false');
+    const allIds = (await engine.executeRaw<{ id: number }>('SELECT id FROM pages')).map(r => Number(r.id));
+    for (const q of ['zephyr ledger', 'orbit talk', 'heron memo', 'lumen sync', 'kestrel plan', 'standup badge reader', 'quill roster']) {
+      const { rows } = await search(q);
+      const plain: string[] = [];
+      const ahead: string[] = [];
+      const before = await collapseResults(recording(plain), rows.map(r => ({ ...r })), {});
+      const after = await collapseResults(recording(ahead), rows.map(r => ({ ...r })), { prefetched: prefetchPageFacts(engine, allIds) });
+      expect({ q, rows: after }).toEqual({ q, rows: before });
+      expect({ q, reads: factReads(plain) }).toEqual({ q, reads: 1 });
+      expect({ q, reads: factReads(ahead) }).toEqual({ q, reads: 0 });
+    }
+  });
+
+  test('pages the prefetch does not cover are read as before, and a failed prefetch falls back to the collapse\'s own read', async () => {
+    await engine.setConfig('search.collapse', 'false');
+    const { rows } = await search('zephyr ledger');
+    const expected = await collapseResults(engine, rows.map(r => ({ ...r })), {});
+    const sent: string[] = [];
+    const partial = await collapseResults(recording(sent), rows.map(r => ({ ...r })), { prefetched: prefetchPageFacts(engine, [rows[0]!.page_id]) });
+    expect(partial).toEqual(expected);
+    expect(factReads(sent)).toBe(1);
+    const failed = await collapseResults(engine, rows.map(r => ({ ...r })), { prefetched: Promise.resolve(null) });
+    expect(failed).toEqual(expected);
   });
 });

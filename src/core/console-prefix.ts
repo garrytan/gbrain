@@ -61,6 +61,7 @@ const __prefixStore = new AsyncLocalStorage<string>();
 // onto the JSON-RPC channel. One direction only — never unset at runtime
 // (the serve process is stdio-MCP for its whole lifetime).
 let __stdoutLoggingRedirected = false;
+let __consoleBeforeRedirect: Pick<Console, 'log' | 'info' | 'debug'> | null = null;
 
 // CLI `--json` mode: stdout is reserved for the JSON envelope (and any JSON
 // status lines). Scoped, not process-wide: rebinding console.log here would
@@ -112,6 +113,8 @@ export function redirectStdoutLoggingToStderr(): void {
   if (__stdoutLoggingRedirected) return;
   __stdoutLoggingRedirected = true;
   // eslint-disable-next-line no-console
+  __consoleBeforeRedirect = { log: console.log, info: console.info, debug: console.debug };
+  // eslint-disable-next-line no-console
   const toStderr = (...args: unknown[]): void => console.error(...args);
   // eslint-disable-next-line no-console
   console.log = toStderr;
@@ -129,11 +132,16 @@ export function isStdoutLoggingRedirected(): boolean {
 }
 
 /**
- * Test-only reset. Does NOT restore the original console bindings (tests
- * that need those should snapshot them before calling the redirect).
+ * Test-only reset: clears the flag and puts back the console bindings the
+ * redirect replaced. Bun runs many test files in one process, so a reset that
+ * left console.log bound to stderr sent every later file's stdout logging to
+ * stderr.
  */
 export function _resetStdoutRedirectForTests(): void {
   __stdoutLoggingRedirected = false;
+  if (!__consoleBeforeRedirect) return;
+  Object.assign(console, __consoleBeforeRedirect);
+  __consoleBeforeRedirect = null;
 }
 
 /**

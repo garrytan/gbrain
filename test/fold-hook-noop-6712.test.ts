@@ -58,7 +58,7 @@ function transactionOf(records: StatementRecord[], marks: (sql: string) => boole
   for (const record of [...records].sort((a, b) => a.t - b.t)) {
     if (!isStatement(record)) continue;
     const sql = normalize(record.sql), lower = sql.toLowerCase();
-    if (lower === 'begin' || lower.startsWith('begin;')) { open.set(record.conn, [sql]); continue; }
+    if (lower === 'begin' || lower === 'begin read write' || lower.startsWith('begin;')) { open.set(record.conn, [sql]); continue; }
     const group = open.get(record.conn);
     if (!group) continue;
     group.push(sql);

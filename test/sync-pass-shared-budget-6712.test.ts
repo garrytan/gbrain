@@ -74,7 +74,7 @@ for (const backend of testBackends()) {
       // Lag as the thread's own CPU between timer runs: the stretches the read holds, not what a loaded VM adds.
       let level: Awaited<ReturnType<typeof readShadowLevel>>;
       let maxLag = 0;
-      const lag = watchLoopLag();
+      const lag = watchLoopLag({ reportAtMs: MAX_LAG_MS });
       try {
         level = await readShadowLevel(engine, { sourceId: 'default', context });
       } finally {

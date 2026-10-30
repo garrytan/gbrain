@@ -5,11 +5,26 @@
  * the shared-budget test read 156-257 ms; per-gap schedstat showed the excess as run-queue wait plus sleeps behind a
  * spawned Git that had not reached exec, with the thread's own CPU at 61-69 ms. `watchLoopLag` reads the thread's CPU.
  *
- * Forced probe (deterministic): the thread blocks 150 ms in a synchronous child process with a timer due, as it does
- * behind a spawned Git that has not reached exec. The wall clock reads it as 150 ms of lag; the thread's CPU clock, read
- * on both sides of the call, does not move (nothing else can run on the thread during a synchronous call, so work left
- * over from an earlier test file in the same process cannot land in the reading). The CPU clock still sees a stretch of
- * work, and two stretches in one turn, the regression the bounds exist to catch.
+ * Forced probe (deterministic): the thread blocks 150 ms with a timer due, as it does behind a spawned Git that has not
+ * reached exec. The wall clock reads it as 150 ms of lag; the thread's CPU clock, read on both sides of the block, does
+ * not move. The CPU clock still sees a stretch of work, and two stretches in one turn, the regression the bounds exist to
+ * catch.
+ *
+ * The block is Bun.sleepSync, a bare clock_nanosleep. Two earlier blocks charged their own work to the thread:
+ * - A synchronous child runs the spawn's setup on the thread (1-4 ms, about 20 ms for a process's first spawn), and on a
+ *   VM that charges host steal to the running thread those few ms read 30 ms once against the 25 ms bound (#7231).
+ * - Atomics.wait runs the allocator's idle work on the waiting thread: JavaScriptCore's waitSyncImpl calls mimalloc's
+ *   _mi_thread_idle_work, which purges freed page holes with madvise. A shard process carries the heap of every earlier
+ *   test file, so the 150 ms wait read 37 and 186 ms of thread CPU on #7304's full-suite (shard 4/22) and 79-111 ms
+ *   locally on that shard's first 47 files, where a symbolized strace showed 4,024 madvise calls from
+ *   mi_page_purge_holes_now < _mi_thread_idle_work < waitSyncImpl < atomicsFuncWait.
+ * With a 6M-object heap and 1.5M objects dropped before each of 40 blocks, Atomics.wait read up to 108 ms and
+ * Bun.sleepSync at most 0.3 ms.
+ * A collection the engine starts while the thread blocks charges its own pause to the reading: the collector stops the
+ * thread when the block returns, and that pause grows with the heap. Bun.sleepSync read 31 ms on #7383 (Bun 1.4.4).
+ * With a 4M-object heap, 50k objects dropped and an async collection requested before each of 12 blocks, one block per
+ * process read 45-64 ms of thread CPU and 193-213 ms of wall time, on Bun 1.4.3 and 1.4.4 (8 of 8 processes, a full
+ * collection's first pause); a full collection run before each block left at most 4 ms (8 of 8).
  */
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
@@ -19,8 +34,13 @@ import { threadCpuNow } from './helpers/cpu-time.ts';
 /** The bound the loop-lag tests hold. */
 const MAX_LAG_MS = 100;
 const turn = () => new Promise<void>(resolve => setTimeout(resolve, 20));
-/** Blocks the thread off the CPU for `ms` in a synchronous child; returns the thread CPU the call itself cost. */
-const offCpu = (ms: number) => { const start = threadCpuNow(); execFileSync('sleep', [String(ms / 1000)]); return threadCpuNow() - start; };
+/** Blocks the thread off the CPU for `ms`; returns the thread CPU the block cost. */
+const offCpu = (ms: number) => {
+  Bun.gc(true);
+  const start = threadCpuNow();
+  Bun.sleepSync(ms);
+  return threadCpuNow() - start;
+};
 
 test('a thread kept off the CPU with a timer due is not lag; the wall clock reads it as lag', async () => {
   let last = performance.now(), wallLag = 0;
@@ -30,7 +50,7 @@ test('a thread kept off the CPU with a timer due is not lag; the wall clock read
   await turn();
   clearInterval(wall);
   expect(Math.round(wallLag)).toBeGreaterThanOrEqual(MAX_LAG_MS + 40);
-  // The spawn itself costs a few ms of the thread's CPU (fork, pipes); the 150 ms off the CPU cost none.
+  // The 150 ms off the CPU cost none.
   expect(Math.round(cpu)).toBeLessThan(MAX_LAG_MS / 4);
 });
 

@@ -167,8 +167,10 @@ or a third of the remaining time. Pause both with
 
 The two new phases consolidate yesterday's conversations into long-term memory:
 
-**Synthesize phase (two-stage cascade):** reads transcripts from
-`dream.synthesize.session_corpus_dir`, then triages before it spends: a cheap
+**Synthesize phase (two-stage cascade):** reads the cycle source's transcripts from
+`dream.synthesize.session_corpus_dir` (another source's sessions wait for their own
+`gbrain dream --source <id> --phase synthesize`; unresolved or legacy files are held,
+already-extracted ones included, until `gbrain sweep --assign-corpus <source>`), then triages before it spends: a cheap
 utility-tier judge (`models.dream.triage`) scores every new file 0–1 for
 salience and pre-extracts candidate quotes + entities, cached in
 `dream_verdicts` with the judging model + prompt version (bounded per cycle
@@ -421,6 +423,13 @@ you to ask the user; relay it and stop. Never pass `--yes` on your own.
 For a long run (>1000 chunks), route the approved command through the
 durable ladder in `skills/minion-orchestrator/SKILL.md` instead of a bare
 background shell, which hides that exit 3 in a log file.
+
+To see what search cannot reach on one source, run
+`gbrain pages unsearchable --source <id> --json` (read-only). Read
+`semantic_unsearchable`, not only `unsearchable`: it adds `keyword_only`
+pages, which keyword search finds but vector search misses. `awaiting_sync`
+counts files sync still holds, which no embedding state includes; follow
+`gbrain sync status --source <id> --json` for those. Each row carries its `fix`.
 
 ### Security (RLS verification)
 Run `gbrain doctor --json` and check the RLS status.

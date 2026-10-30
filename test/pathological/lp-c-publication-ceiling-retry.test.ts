@@ -21,6 +21,15 @@
  *    discarded connection does (`PublicationDeadlineError`, CONNECTION_CLOSED). PGLite cannot cancel a running
  *    transaction (its signal is checked only before BEGIN), so the parked body's own rejection stands in for the
  *    discard there; on Postgres the signal also discards the connection. The charged hook brings each backoff forward.
+ *    The 300 ms ceiling applies only to publications the test parks: once it parks the last one it means to, the
+ *    publications after it run under the configured ceiling, so a retry slower than 350 ms on a loaded host (a worktree
+ *    publication writes and renames the page file inside its transaction) is not cancelled a second time. The ceiling runs
+ *    from the start of a publication, so on a loaded host it can cancel one before it reaches the park; that publication's
+ *    charge names it. So the bookkeeping (the next claim's ceiling, which members published together) happens at the
+ *    charge, which every cancelled publication reaches. Done only at the park, the head of a group the ceiling cancelled
+ *    early took its next claim under the 300 ms ceiling, was taken for the group again and was cancelled and charged a
+ *    second time (transient_interruptions 2 under load). The loaded-host cases stall a publication past the ceiling before
+ *    the park (Postgres only: PGLite cannot cancel a running transaction).
  *    A guard stops the overruns far above the cap, so an unbounded loop ends committed. PGLite always; Postgres with DATABASE_URL.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
@@ -48,6 +57,7 @@ import { pathologicalArms } from './harness.ts';
 const op = (name: string) => operations.find(o => o.name === name)!;
 const page = (title: string) => `---\ntitle: ${title}\ntype: note\n---\n# ${title}\n\nBody of ${title}.\n`;
 const CEILING_MS = 300, GRACE_MS = 50;
+const INJECTED = { ceilingMs: CEILING_MS, graceMs: GRACE_MS };
 /** Parked past the ceiling and its grace, when the owner has cancelled the publication. */
 const PARK_MS = CEILING_MS + GRACE_MS + 200;
 const GUARD = 14;
@@ -72,37 +82,60 @@ for (const { backend, databaseUrl } of pathologicalArms()) describe(`[${backend}
   const row = async (requestId: string): Promise<Row> => (await engine.executeRaw<{ j: Row | string }>(
     'SELECT to_jsonb(r) AS j FROM persistence_requests r WHERE request_id=$1::uuid', [requestId])).map(r => typeof r.j === 'string' ? JSON.parse(r.j) as Row : r.j)[0]!;
 
-  /** Every publication of claims `overruns(k)` parks past the ceiling and then fails as a discarded connection. */
-  function overrun(requestId: string, overruns: (claim: number) => boolean) {
-    const seen = { claims: 0, publications: 0, transient: [] as number[], preparation: [] as number[] };
+  /**
+   * Every publication of claims `overruns(k)` parks past the ceiling and then fails as a discarded connection; one the
+   * ceiling cancels before the park is counted at its charge (`publications` counts both). `stall(k)` is a loaded host:
+   * claim k's publication takes PARK_MS before its commit instead of parking, so the injected ceiling cancels it there.
+   */
+  function overrun(requestId: string, overruns: (claim: number) => boolean, stall: (claim: number) => boolean = () => false) {
+    const seen = { claims: 0, publications: 0, transient: [] as number[], preparation: [] as number[], charges: [] as string[] };
+    let parked = false;
     installFaultHook(async (point, detail) => {
       if (detail.requestId !== requestId) return;
       if (point === 'consumer:preparing') {
         seen.claims++;
+        parked = false;
         const current = await row(requestId);
         seen.transient.push(current.transient_interruptions ?? 0);
         seen.preparation.push(current.preparation_attempts);
         return;
       }
       if (point === 'persistence:interruption_charged' || point === 'persistence:recovery_interruption_charged') {
+        seen.charges.push(`claim ${seen.claims} ${point} ${JSON.stringify(detail.interruption ?? null)}`);
+        if (!parked) seen.publications++;
+        // The next claim reads its ceiling before it prepares: only a publication this hook will park keeps the injected one.
+        setTiming(overruns(seen.claims + 1) ? INJECTED : undefined);
         // Only a released row: one still held (the recovery route charges before it requeues) keeps its backoff, which the
         // owner's reclaim of a row it released itself must honour.
         await engine.executeRaw("UPDATE persistence_requests SET next_attempt_at=now() WHERE request_id=$1::uuid AND state='queued'", [requestId]).catch(() => undefined);
         return;
       }
-      if (point === 'publication:before_commit' && seen.claims <= GUARD && overruns(seen.claims)) {
-        seen.publications++;
-        await new Promise(resolve => setTimeout(resolve, PARK_MS));
-        throw discarded();
-      }
+      if (point !== 'publication:before_commit' || seen.claims > GUARD) return;
+      if (stall(seen.claims)) { await new Promise(resolve => setTimeout(resolve, PARK_MS)); return; }
+      if (!overruns(seen.claims)) return;
+      seen.publications++;
+      parked = true;
+      await new Promise(resolve => setTimeout(resolve, PARK_MS));
+      throw discarded();
     });
     return seen;
+  }
+
+  /** A claim count other than the expected one prints every charge (its cause and error) and the row, so a load-only failure names its cause. */
+  async function expectClaims(seen: { claims: number; transient: number[]; preparation: number[]; charges: string[] }, expected: number, requestId: string) {
+    if (seen.claims !== expected) console.error('lp-c unexpected claims', JSON.stringify({ expected, ...seen, row: await row(requestId).then(({ state, error_code, error_detail, preparation_attempts, transient_interruptions }) =>
+      ({ state, error_code, error_detail, preparation_attempts, transient_interruptions }), error => String(error)) }));
+    expect(seen.claims).toBe(expected);
+  }
+  /** The grouped tests' charge log: each member's charges with their cause and error, printed when a member is charged other than once. */
+  function recordCharge(charges: Map<string, string[]>, point: string, detail: { requestId?: string; interruption?: unknown }) {
+    if (point.endsWith('interruption_charged') && detail.requestId) charges.set(detail.requestId, [...charges.get(detail.requestId) ?? [], `${point} ${JSON.stringify(detail.interruption ?? null)}`]);
   }
 
   beforeAll(async () => {
     if (backend === 'pglite') { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }
     else { const pg = await isolatedPersistencePostgres(databaseUrl!); engine = pg.engine; closePostgres = pg.close; }
-    setTiming({ ceilingMs: CEILING_MS, graceMs: GRACE_MS });
+    setTiming(INJECTED);
   }, 120_000);
   afterAll(async () => {
     setTiming(undefined);
@@ -113,6 +146,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) describe(`[${backend}
   afterEach(async () => {
     installFaultHook(undefined);
     await disposePersistenceConsumer(engine);
+    setTiming(INJECTED);
     await engine.executeRaw("DELETE FROM config WHERE key IN ('persistence.max_transient_retries')");
     resetWriteSwitches();
   });
@@ -122,7 +156,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) describe(`[${backend}
     const seen = overrun(requestId, () => true);
     const outcome = await call({ slug, content: page(`Overrun ${n}`), request_id: requestId }).catch(error => error as { code?: string });
     installFaultHook(undefined);
-    expect(seen.claims).toBe(6);
+    await expectClaims(seen, 6, requestId);
     // One publication per claim: on Postgres a cancelled group of one is never published again under the same claim.
     expect(seen.publications).toBe(6);
     expect((outcome as { code?: string }).code).toBe('write_interrupted');
@@ -139,7 +173,29 @@ for (const { backend, databaseUrl } of pathologicalArms()) describe(`[${backend}
     const slug = `db/overrun-once-${++n}`, requestId = randomUUID();
     const seen = overrun(requestId, claim => claim === 1);
     expect(await call({ slug, content: page(`Once ${n}`), request_id: requestId })).toMatchObject({ state: 'committed' });
-    expect(seen.claims).toBe(2);
+    await expectClaims(seen, 2, requestId);
+    expect(seen.transient).toEqual([0, 1]);
+    expect(await engine.readPageSnapshot(slug, { sourceId: 'default' })).not.toBeNull();
+  }, 180_000);
+
+  (backend === 'postgres' ? test : test.skip)('on a loaded host, a publication the ceiling cancels before the park still counts as one of the max_transient_retries (5) retries', async () => {
+    const slug = `db/overrun-loaded-every-${++n}`, requestId = randomUUID();
+    const seen = overrun(requestId, () => true, claim => claim === 1);
+    const outcome = await call({ slug, content: page(`Loaded every ${n}`), request_id: requestId }).catch(error => error as { code?: string });
+    installFaultHook(undefined);
+    await expectClaims(seen, 6, requestId);
+    expect(seen.publications).toBe(6);
+    expect((outcome as { code?: string }).code).toBe('write_interrupted');
+    expect(seen.transient).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(await row(requestId)).toMatchObject({ state: 'failed', error_code: 'write_interrupted', transient_interruptions: 6 });
+  }, 180_000);
+
+  (backend === 'postgres' ? test : test.skip)('on a loaded host, where every publication outlasts the test ceiling, a single overrun is counted once and the retry commits under the configured ceiling', async () => {
+    const slug = `db/overrun-loaded-once-${++n}`, requestId = randomUUID();
+    const seen = overrun(requestId, claim => claim === 1, () => true);
+    expect(await call({ slug, content: page(`Loaded once ${n}`), request_id: requestId })).toMatchObject({ state: 'committed' });
+    await expectClaims(seen, 2, requestId);
+    expect(seen.publications).toBe(1);
     expect(seen.transient).toEqual([0, 1]);
     expect(await engine.readPageSnapshot(slug, { sourceId: 'default' })).not.toBeNull();
   }, 180_000);
@@ -170,7 +226,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) describe(`[${backend}
       const seen = overrun(requestId, () => true);
       const outcome = await call({ slug, content: page(`Next ${n}`), request_id: requestId, expected_revision: before!.revision }, sourceId).catch(error => error as { code?: string });
       installFaultHook(undefined);
-      expect(seen.claims).toBe(3);
+      await expectClaims(seen, 3, requestId);
       expect((outcome as { code?: string }).code).toBe('write_interrupted');
       expect(seen.transient).toEqual([0, 1, 2]);
       expect(await row(requestId)).toMatchObject({ state: 'failed', error_code: 'write_interrupted', transient_interruptions: 3, recovery: null,
@@ -217,22 +273,28 @@ for (const { backend, databaseUrl } of pathologicalArms()) describe(`[${backend}
       for (const { sourcePath } of files) expect(await engine.readPageSnapshot(sourcePath.replace(/\.md$/, ''), { sourceId })).toBeNull();
     }, 180_000);
 
-    test('a grouped import whose group publication overruns only as a whole publishes each member alone after one charged interruption, and both commit', async () => {
-      await engine.setConfig('persistence.max_transient_retries', '2');
-      resetWriteSwitches();
-      const dir = `grp-whole-${++n}`;
-      mkdirSync(join(brainDir, dir), { recursive: true });
-      const files = ['a', 'b'].map(name => {
-        const sourcePath = `${dir}/${name}.md`;
-        writeFileSync(join(brainDir, sourcePath), page(`Whole ${name} ${n}`));
-        return { filePath: join(brainDir, sourcePath), sourcePath };
-      });
-      // A publication overruns only while another member prepared in the same pass is still unpublished (a group of two):
-      // the members prepare together and then reach before_commit one after the other inside the one transaction.
-      const unpublished = new Set<string>(), claims = new Map<string, number>(), grouped: string[][] = [];
+    /**
+     * A grouped import whose group publication overruns only as a whole: a publication overruns only while another member
+     * prepared in the same pass is still unpublished (a group of two); the members prepare together and then reach
+     * before_commit one after the other inside the one transaction. The group publication is over at its first charge,
+     * wherever the ceiling ended it (at the park, or before it on a loaded host, when that charge names the group): each
+     * member's own publication after it runs under the configured ceiling. `chargePauseMs` pauses after each recovery
+     * charge; `stallMs` (a loaded host) stalls every member's file publication inside its transaction.
+     */
+    function overrunWholeGroup(opts: { chargePauseMs?: number; stallMs?: number } = {}) {
+      const unpublished = new Set<string>(), claims = new Map<string, number>(), grouped: string[][] = [], charges = new Map<string, string[]>();
       installFaultHook(async (point, detail) => {
         if (detail.sourceId !== sourceId) return;
+        recordCharge(charges, point, detail);
         if (point === 'consumer:preparing') { unpublished.add(detail.requestId!); claims.set(detail.requestId!, (claims.get(detail.requestId!) ?? 0) + 1); return; }
+        if (point.endsWith('interruption_charged')) {
+          if (unpublished.size > 1 && grouped.length < GUARD) grouped.push([...unpublished]);
+          unpublished.clear();
+          setTiming(undefined);
+          if (opts.chargePauseMs && point === 'persistence:recovery_interruption_charged') await new Promise(resolve => setTimeout(resolve, opts.chargePauseMs));
+          return;
+        }
+        if (point === 'publication:after_publication' && opts.stallMs) { await new Promise(resolve => setTimeout(resolve, opts.stallMs)); return; }
         if (point !== 'publication:before_commit') return;
         const together = unpublished.size;
         unpublished.delete(detail.requestId!);
@@ -241,62 +303,54 @@ for (const { backend, databaseUrl } of pathologicalArms()) describe(`[${backend}
         unpublished.clear();
         await new Promise(resolve => setTimeout(resolve, PARK_MS));
         throw discarded();
+      });
+      return { claims, grouped, charges };
+    }
+
+    /** Two pages of one grouped import under `dir`: their import results, the members' rows, and each member's commit. */
+    async function importWholeGroup(dir: string, overrun: ReturnType<typeof overrunWholeGroup>, title: string) {
+      mkdirSync(join(brainDir, dir), { recursive: true });
+      const files = ['a', 'b'].map(name => {
+        const sourcePath = `${dir}/${name}.md`;
+        writeFileSync(join(brainDir, sourcePath), page(`${title} ${name} ${n}`));
+        return { filePath: join(brainDir, sourcePath), sourcePath };
       });
       const results = await withEnv({ GBRAIN_HOME: home }, () => importManagedFiles(engine, files, { sourceId, noEmbed: true }));
       installFaultHook(undefined);
       expect(results.map(result => result.status === 'rejected' ? (result.reason as { code?: string }).code : result.status)).toEqual(['fulfilled', 'fulfilled']);
       // One group publication, cancelled at the ceiling; after it each member is claimed and published on its own.
-      expect(grouped.length).toBe(1);
+      expect(overrun.grouped.length).toBe(1);
       const rows = await engine.executeRaw<{ request_id: string; state: string; transient_interruptions: number }>(
         "SELECT request_id::text AS request_id,state,transient_interruptions FROM persistence_requests WHERE source_id=$1 AND intent->>'import_batch' IS NOT NULL AND slug LIKE $2 ORDER BY sequence",
         [sourceId, `${dir}/%`]);
       expect(rows.length).toBe(2);
       for (const member of rows) {
+        if (member.transient_interruptions !== 1 || overrun.claims.get(member.request_id) !== 2) console.error('lp-c unexpected member charges', JSON.stringify({ member, claims: overrun.claims.get(member.request_id), charges: overrun.charges.get(member.request_id) ?? [], grouped: overrun.grouped }));
         expect(member).toMatchObject({ state: 'committed', transient_interruptions: 1 });
-        expect(claims.get(member.request_id)).toBe(2);
+        expect(overrun.claims.get(member.request_id)).toBe(2);
       }
       for (const { sourcePath } of files) expect(await engine.readPageSnapshot(sourcePath.replace(/\.md$/, ''), { sourceId })).not.toBeNull();
+    }
+
+    test('a grouped import whose group publication overruns only as a whole publishes each member alone after one charged interruption, and both commit', async () => {
+      await engine.setConfig('persistence.max_transient_retries', '2');
+      resetWriteSwitches();
+      await importWholeGroup(`grp-whole-${++n}`, overrunWholeGroup(), 'Whole');
+    }, 180_000);
+
+    (backend === 'postgres' ? test : test.skip)('on a loaded host, where the ceiling cancels the group publication before the park, each member is still charged once and both commit', async () => {
+      await engine.setConfig('persistence.max_transient_retries', '2');
+      resetWriteSwitches();
+      await importWholeGroup(`grp-loaded-${++n}`, overrunWholeGroup({ stallMs: PARK_MS }), 'Loaded');
     }, 180_000);
 
     test('a member a group interruption charged is claimed and prepared again even when its backoff elapses before the pass ends', async () => {
       await engine.setConfig('persistence.max_transient_retries', '2');
       resetWriteSwitches();
-      const dir = `grp-slow-${++n}`;
-      mkdirSync(join(brainDir, dir), { recursive: true });
-      const files = ['a', 'b'].map(name => {
-        const sourcePath = `${dir}/${name}.md`;
-        writeFileSync(join(brainDir, sourcePath), page(`Slow ${name} ${n}`));
-        return { filePath: join(brainDir, sourcePath), sourcePath };
-      });
       // As above, and each member's charge is followed by a pause longer than the first backoff (1 s), as on a loaded host:
       // the first member's backoff has elapsed before the pass is done with the group, so only the charge itself keeps the
       // pass from taking that claim back and publishing its old preparation under it.
-      const unpublished = new Set<string>(), claims = new Map<string, number>(), grouped: string[][] = [];
-      installFaultHook(async (point, detail) => {
-        if (detail.sourceId !== sourceId) return;
-        if (point === 'consumer:preparing') { unpublished.add(detail.requestId!); claims.set(detail.requestId!, (claims.get(detail.requestId!) ?? 0) + 1); return; }
-        if (point === 'persistence:recovery_interruption_charged') { await new Promise(resolve => setTimeout(resolve, 1_200)); return; }
-        if (point !== 'publication:before_commit') return;
-        const together = unpublished.size;
-        unpublished.delete(detail.requestId!);
-        if (together < 2 || grouped.length >= GUARD) return;
-        grouped.push([...unpublished, detail.requestId!]);
-        unpublished.clear();
-        await new Promise(resolve => setTimeout(resolve, PARK_MS));
-        throw discarded();
-      });
-      const results = await withEnv({ GBRAIN_HOME: home }, () => importManagedFiles(engine, files, { sourceId, noEmbed: true }));
-      installFaultHook(undefined);
-      expect(results.map(result => result.status === 'rejected' ? (result.reason as { code?: string }).code : result.status)).toEqual(['fulfilled', 'fulfilled']);
-      expect(grouped.length).toBe(1);
-      const rows = await engine.executeRaw<{ request_id: string; state: string; transient_interruptions: number }>(
-        "SELECT request_id::text AS request_id,state,transient_interruptions FROM persistence_requests WHERE source_id=$1 AND intent->>'import_batch' IS NOT NULL AND slug LIKE $2 ORDER BY sequence",
-        [sourceId, `${dir}/%`]);
-      expect(rows.length).toBe(2);
-      for (const member of rows) {
-        expect(member).toMatchObject({ state: 'committed', transient_interruptions: 1 });
-        expect(claims.get(member.request_id)).toBe(2);
-      }
+      await importWholeGroup(`grp-slow-${++n}`, overrunWholeGroup({ chargePauseMs: 1_200 }), 'Slow');
     }, 180_000);
 
     test('a single overrun is retried, never a terminal storage_error (on Postgres the retried publish surfaces as a bare AbortError), and commits', async () => {
@@ -306,7 +360,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) describe(`[${backend}
       const requestId = randomUUID();
       const seen = overrun(requestId, claim => claim === 1);
       expect(await call({ slug, content: page(`Next ${n}`), request_id: requestId, expected_revision: before!.revision }, sourceId)).toMatchObject({ state: 'committed' });
-      expect(seen.claims).toBe(2);
+      await expectClaims(seen, 2, requestId);
       expect(seen.transient).toEqual([0, 1]);
       expect(readFileSync(join(brainDir, `${slug}.md`), 'utf8')).toContain(`Next ${n}`);
     }, 180_000);

@@ -13,8 +13,9 @@ import { markBeliefCommits } from '../belief/append.ts';
 import { linkStreamSlugs } from './page-purge.ts';
 import { identityDowngradePurgeHold } from '../sync-identity-downgrades.ts';
 import { atomRetirementPurgeHold } from './atom-retirement-hold.ts';
+import { derivedRetirementPurgeHold } from './derived-retirement-hold.ts';
 import { writerOnboardingPreflight } from './onboarding.ts';
-import { clearPurgePark, notePurgeSourceWriter, PURGE_PARK_LIMIT, purgeParkKey, prunePurgeParks, readPurgeParks, recordPurgeFailure, type PurgePark } from './purge-parks.ts';
+import { clearPurgePark, isParked, notePurgeSourceWriter, PURGE_PARK_LIMIT, purgeParkKey, prunePurgeParks, readPurgeParks, recordPurgeFailure, type PurgePark } from './purge-parks.ts';
 import { ItemRun, type ItemFailure } from '../item-failure.ts';
 import { readUnreviewedSyncTombstones, syncDeleteHeld } from './sync-delete-tombstones.ts';
 
@@ -83,7 +84,7 @@ interface RecordedTombstone { id: number; source_id: string; slug: string; delet
 async function recordedTombstones(engine: BrainEngine, hours: string): Promise<RecordedTombstone[]> {
   const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string; deleted_us: string }>(`SELECT p.id, p.source_id, p.slug,
       floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text AS deleted_us FROM pages p
-    WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${identityDowngradePurgeHold('p')} AND ${atomRetirementPurgeHold('p')}
+    WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${identityDowngradePurgeHold('p')} AND ${atomRetirementPurgeHold('p')} AND ${derivedRetirementPurgeHold('p')}
       AND EXISTS (SELECT 1 FROM belief_events e WHERE e.source_id = p.source_id AND e.subject_kind = 'coverage')
     ORDER BY p.deleted_at ASC, p.source_id ASC, p.slug ASC`, [hours]);
   const parks = rows.length ? await readPurgeParks(engine) : new Map<string, PurgePark>();
@@ -117,7 +118,7 @@ async function expireRecordedTombstones(engine: BrainEngine, olderThanHours: num
   const failures: Array<{ row: RecordedTombstone; failure: ItemFailure }> = [];
   for (const row of await recordedTombstones(engine, hours)) {
     if (held.has(row.id)) continue;
-    if (row.park && row.park.failures >= PURGE_PARK_LIMIT && !retryParked) {
+    if (isParked(row.park) && !retryParked) {
       out.parked++;
       out.exclude.push(row.id);
       out.blocked.push({ source_id: row.source_id, slug: row.slug, code: 'purge_parked', reason: parkedReason(row.park) });
@@ -129,7 +130,7 @@ async function expireRecordedTombstones(engine: BrainEngine, olderThanHours: num
         const slugs = [...new Set([row.slug, ...await linkStreamSlugs(tx, row.source_id, row.id)])].sort();
         await tx.lockPageKeys(slugs.map(slug => ({ sourceId: row.source_id, slug })));
         return withBeliefBatch(tx, { sourceId: row.source_id, slugs, publicationId, op: 'purge_deleted_pages', hardDeleteEvent: 'page.expired', report },
-          async () => (await tx.executeRaw(`DELETE FROM pages WHERE id = $1 AND deleted_at IS NOT NULL AND deleted_at < now() - ($2 || ' hours')::interval AND ${identityDowngradePurgeHold('pages')} AND ${atomRetirementPurgeHold('pages')} RETURNING id`,
+          async () => (await tx.executeRaw(`DELETE FROM pages WHERE id = $1 AND deleted_at IS NOT NULL AND deleted_at < now() - ($2 || ' hours')::interval AND ${identityDowngradePurgeHold('pages')} AND ${atomRetirementPurgeHold('pages')} AND ${derivedRetirementPurgeHold('pages')} RETURNING id`,
             [row.id, hours])).length > 0);
       });
       run.succeed();
@@ -189,7 +190,7 @@ export interface PurgeSelection {
 export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean; automatic?: boolean } = {}): Promise<PurgeSelection> {
   if (!await managedPersistenceEnabled(engine)) {
     const parked = (await recordedTombstones(engine, String(Math.max(0, Math.floor(olderThanHours)))))
-      .filter((row): row is RecordedTombstone & { park: PurgePark } => !!row.park && row.park.failures >= PURGE_PARK_LIMIT);
+      .filter((row): row is RecordedTombstone & { park: PurgePark } => isParked(row.park));
     const skipped = new Set(opts.retryParked ? [] : parked.map(row => row.id));
     const unreviewed = (await readUnreviewedSyncTombstones(engine, olderThanHours)).filter(row => !skipped.has(row.id));
     const kept = opts.automatic ? unreviewed : [];
@@ -205,7 +206,7 @@ export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours:
   const rows = await engine.executeRaw<{ id: number | string; source_id: string; slug: string; cutoff: string; deleted_us: string }>(
     `SELECT p.id, p.source_id, p.slug, (now() - ($1 || ' hours')::interval)::text AS cutoff,
       floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text AS deleted_us FROM pages p JOIN sources s ON s.id = p.source_id
-      WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND NOT s.archived AND ${identityDowngradePurgeHold('p')} AND ${atomRetirementPurgeHold('p')}
+      WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND NOT s.archived AND ${identityDowngradePurgeHold('p')} AND ${atomRetirementPurgeHold('p')} AND ${derivedRetirementPurgeHold('p')}
       ORDER BY p.deleted_at ASC, p.source_id ASC, p.slug ASC`, [String(hours)]);
   const states = new Map<string, { state: string; physical_error?: string }>();
   if (rows.length) for (const source of (await writerOnboardingPreflight(engine)).sources) states.set(source.source_id, source);
@@ -231,7 +232,7 @@ export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours:
     const key = purgeParkKey(row.source_id, row.slug, row.deleted_us);
     // A record marked while the writer was not active is dropped by this run (the rearm), so it does not count here.
     const park = parks.get(key)?.inactive_seen ? undefined : parks.get(key);
-    if (park && park.failures >= PURGE_PARK_LIMIT) {
+    if (isParked(park)) {
       selection.parked.push({ source_id: row.source_id, slug: row.slug, failures: park.failures, code: park.code, retried: opts.retryParked === true });
       if (!opts.retryParked) {
         selection.blocked.push({ source_id: row.source_id, slug: row.slug, code: 'purge_parked', reason: parkedReason(park) });

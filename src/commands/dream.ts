@@ -40,7 +40,7 @@ import { cliRenderContext, renderAction, shellQuote, type Action } from '../core
 import { codeEntry } from '../core/error-catalogue.ts';
 import { fetchSource } from '../core/sources-load.ts';
 import { existsSync } from 'fs';
-import { resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 
 interface DreamArgs {
   json: boolean;
@@ -350,7 +350,7 @@ async function resolveBrainDir(
   // source has a checkout on disk, use it so its filesystem phases can run.
   if (engine && resolvedSourceId) {
     const src = await fetchSource(engine, resolvedSourceId);
-    if (src?.local_path && existsSync(src.local_path)) {
+    if (src?.local_path && isAbsolute(src.local_path) && existsSync(src.local_path)) {
       return resolve(src.local_path);
     }
     // Explicit --source whose checkout isn't on disk → DB-only (skip FS phases).
@@ -364,7 +364,8 @@ async function resolveBrainDir(
 
   if (engine) {
     const configured = await engine.getConfig('sync.repo_path');
-    if (configured && existsSync(configured)) {
+    // #7630: a relative stored path names whatever directory gbrain runs from, so it is no checkout.
+    if (configured && isAbsolute(configured) && existsSync(configured)) {
       return resolve(configured);
     }
   }

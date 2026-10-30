@@ -361,7 +361,7 @@ export const mutationCountAnomaly: LintRule = (manifest, opts) => {
         severity: 'warning',
         message: `pack '${manifest.name}' has ${forPack.length} mutations in the last ${daysBack} days; consider committing pack.json to source control`,
         pack: manifest.name,
-        hint: `cd to your brain repo, git add the pack file, commit + push so the changes survive across machines`,
+        hint: `commit and push the pack file from your brain repo (gbrain git commit-push --path <brain repo> -m <msg> -- <pack file>) so the changes survive across machines`,
       });
     }
   } catch {

@@ -300,7 +300,9 @@ const sources_status: Operation = {
     const status = await getSourceStatus(ctx.engine, p.id as string);
     const { readCompanyBrainSourceStatus } = await import('../company-brain/status.ts');
     const ingestion = await readCompanyBrainSourceStatus(ctx.engine, p.id as string);
-    return ingestion ? { ...status, ingestion } : status;
+    const { readAppliedWatermark } = await import('../persistence/applied-watermark.ts');
+    const watermark = await readAppliedWatermark(ctx.engine, p.id as string, { remote: ctx.remote !== false }).catch(() => null);
+    return { ...status, ...(ingestion ? { ingestion } : {}), ...(watermark ? { watermark } : {}) };
   },
   cliHints: { name: 'sources_status', hidden: true },
 };

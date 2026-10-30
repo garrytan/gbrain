@@ -6,25 +6,27 @@
 import type { ModalityMode } from '../query-intent.ts';
 import { type AdaptiveReturnDecision, adaptiveReturnFromConfig, applyAdaptiveReturn, resolveAdaptiveReturn } from '../return-policy.ts';
 import { type AutocutDecision, applyAutocut } from '../autocut.ts';
-import { type ExactLookupOpts, applyExactLookupHits, applyExactLookupTier } from '../exact-lookup.ts';
+import { type ExactLookupOpts, applyExactLookupHits } from '../exact-lookup.ts';
 import { type FusionListEntry, type VectorArm, composeFusionLists } from '../fusion-lists.ts';
 import { type HybridRequest, applyIdentityBoosts, emitHybridMeta } from './request.ts';
 import type { KeywordArmConfidenceDecision } from '../arm-confidence.ts';
 import { type MetadataBoostGateDecision, decideMetadataBoosts, lexicalArmsVoted } from '../metadata-boost-gate.ts';
-import { type PostFusionOpts, RRF_K, cosineReScore, resolveWalkDedupCap, rrfFusionWeighted, runPostFusionStages, stampContentFlags, stampUnverifiedExtractions, textVectorArmNonEmpty } from '../hybrid.ts';
+import { startCosineReScore } from '../cosine-rescore.ts';
+import { type PostFusionOpts, RRF_K, resolveWalkDedupCap, rrfFusionWeighted, runPostFusionStages, stampContentFlags, stampUnverifiedExtractions, textVectorArmNonEmpty } from '../hybrid.ts';
 import { type RelationalEvidenceSlotDecision, ensureRelationalEvidenceSlot } from '../relational-recall.ts';
 import { type RelationalRerankPinDecision, pinRelationalRows } from '../relational-rerank-pin.ts';
 import { applyFeedbackStage } from '../feedback-boost.ts';
 import { capPerSession } from '../diverse-pool.ts';
-import { collapseResults } from '../collapse.ts';
+import { collapseResults, prefetchPageFacts } from '../collapse.ts';
+import { readGeneratedPages } from '../provenance-demotion.ts';
 import { applyRankPriors } from '../rank-priors.ts';
 import { type RerankFailedReason, type RerankPassThroughReason, type RerankSkipReason, applyReranker } from '../rerank.ts';
 import type { RerankMeta } from '../../ai/gateway.ts';
 import { applyEvidenceGate, recordRerankReceipts, startRerankShadow } from '../decide-stage.ts';
 import { rerankEgressDenied } from '../decide-retrieval.ts';
 import type { SearchResult } from '../../types.ts';
-import { applyAliasHop, applyAliasHopLookup } from '../alias-hop.ts';
-import { type IdentityLookups, type RerankGateMeta, prepareRerankGate } from './rerank-gate.ts';
+import { applyAliasHopLookup } from '../alias-hop.ts';
+import { type IdentityLookups, type RerankGateMeta, prepareRerankGate, readIdentityLookups } from './rerank-gate.ts';
 import { effectiveRrfK } from '../intent-weights.ts';
 import { enforceTokenBudget } from '../token-budget.ts';
 import { expandAnchors, hydrateChunks } from '../two-pass.ts';
@@ -143,24 +145,24 @@ export async function fuseArms(
 
   // issue #160: stamp unverified auto-extracted stubs across ALL candidate
   // arms BEFORE fusion so the compiled-truth authority boost skips them.
-  await stampUnverifiedExtractions(engine, allLists.flatMap((l) => l.list), opts);
-
-  const attribute = opts?.explain === true || trace !== undefined;
-  let fused = rrfFusionWeighted(allLists, ctBoost, attribute);
-
+  const candidates = allLists.flatMap((l) => l.list);
   // Cosine re-scoring before dedup so semantically better chunks survive.
   // v0.36 (D9): hydrate from the active embedding column so rescore happens
   // in the same vector space the HNSW just ranked in. Pre-v0.36 this
   // always pulled from `embedding` and silently corrupted alt-column ranks.
-  if (queryEmbedding) {
-    // Unified routing embedded the query with the multimodal model, so the
-    // rescore must hydrate the multimodal column, not the text column.
-    fused = await cosineReScore(
-      engine, fused, queryEmbedding, unifiedDone ? 'embedding_multimodal' : resolvedCol.name,
-      imageQueryEmbedding && !unifiedDone ? { queryEmbedding: imageQueryEmbedding, column: 'embedding_image' } : undefined,
-      attribute, () => { req.cosineRescore = 'js_fallback'; },
-    );
-  }
+  // Unified routing embedded the query with the multimodal model, so the
+  // rescore must hydrate the multimodal column, not the text column.
+  // GBRA-156: its reads start here, beside the stub stamp below.
+  const rescore = queryEmbedding ? startCosineReScore(
+    engine, candidates, queryEmbedding, unifiedDone ? 'embedding_multimodal' : resolvedCol.name,
+    imageQueryEmbedding && !unifiedDone ? { queryEmbedding: imageQueryEmbedding, column: 'embedding_image' } : undefined,
+    () => { req.cosineRescore = 'js_fallback'; },
+  ) : null;
+  await stampUnverifiedExtractions(engine, candidates, opts);
+
+  const attribute = opts?.explain === true || trace !== undefined;
+  let fused = rrfFusionWeighted(allLists, ctBoost, attribute);
+  if (rescore) fused = await rescore(fused, attribute);
 
   // Phase E3 (Cat 13): metadata boost gate — decided from the SAME lexical
   // lists composeFusionLists just fused (post relaxed-row demotion); image
@@ -177,12 +179,14 @@ export async function fuseArms(
   // boost surface. Salience and recency are independent axes — either,
   // both, or neither fires depending on resolved modes.
   if (fused.length > 0) await req.timer.stage('post_fusion', async () => {
+    const generatedRead = readGeneratedPages(engine, fused);
+    if (resolvedMode.collapse) req.collapsePrefetch = prefetchPageFacts(engine, fused.map(r => r.page_id));
     await runPostFusionStages(engine, fused, {
       ...postFusionOpts, skipMetadataBoosts: !metadataBoostGate.boosts_applied,
     });
     // v0.32.x search-lite: intent exact-match boost (entity/event intents).
     // No-op when boost factor is 1.0 (general intent or weighting disabled).
-    await applyIdentityBoosts(req, fused);
+    await applyIdentityBoosts(req, fused, generatedRead);
     fused.sort((a, b) => b.score - a.score);
   });
   trace?.observe('fused', fused);
@@ -264,6 +268,7 @@ export async function collapsePool(req: HybridRequest, rows: SearchResult[]): Pr
   return collapseResults(req.engine, rows, {
     ...req.aliasHopOpts,
     facts: req.collapseFacts,
+    prefetched: req.collapsePrefetch,
     onDecision: (d) => {
       if (d.twins + d.redirects + d.families + d.redirect_reads === 0) return;
       const prev = req.collapse ?? { twins: 0, redirects: 0, families: 0, redirect_reads: 0 };
@@ -321,10 +326,11 @@ export async function rerankAndPin(
   // decide.egress.deny_sources; such a query keeps fused order (egress_denied).
   const egressDenied = rerankerOpts.enabled && rerankEgressDenied(req.modeInput.decide, rerankerOpts.model ?? resolvedMode.reranker_model, deduped.slice(0, rerankerOpts.topNIn));
   if (egressDenied) { s1Failure = 'egress_denied'; pushDegraded(degraded, 'reranker_skipped', 'egress_denied'); }
-  // W3 rerank gate (no-op under `off`): grades a read-only view of `deduped`
-  // and reads the identity tiers without applying them, alongside the
-  // reranker call. The reranker's input is unchanged.
-  const gatePending = prepareRerankGate(req, { deduped, rerankerOpts, egressDenied, exactLookupOpts, multimodal });
+  // The identity tiers' reads run alongside the reranker call; sizeReturnPool
+  // applies them after it. W3 rerank gate (no-op under `off`): grades a
+  // read-only view of `deduped` with the same reads. The reranker's input is unchanged.
+  const identityPending = readIdentityLookups(req, exactLookupOpts);
+  const gatePending = prepareRerankGate(req, { deduped, rerankerOpts, egressDenied, lookups: identityPending, multimodal });
   const reranked = rerankerOpts.enabled && !egressDenied
     ? await applyReranker(query, deduped, {
         ...(rerankerOpts as any),
@@ -357,26 +363,24 @@ export async function rerankAndPin(
   const rerankPinned = reranked !== deduped && effectiveModality !== 'image'
     ? pinRelationalRows(ordered, relationalList, { max: resolvedMode.relational_rerank_pin, fusedOrder: deduped, onPin: (d) => { relationalRerankPin = d; } })
     : ordered;
-  return { rerankPinned: prioritize(req, rerankPinned), relationalRerankPin, rerankGate, identityLookups: gate.lookups };
+  return { rerankPinned: prioritize(req, rerankPinned), relationalRerankPin, rerankGate, identityLookups: await identityPending };
 }
 
 /** Alias hop + exact-lookup tier, evidence stamp, adaptive return, autocut and the relational evidence slot. */
 export async function sizeReturnPool(
   req: HybridRequest,
-  { rerankPinned, deduped, exactLookupOpts, relationalList, effectiveModality, identityLookups }: {
-    rerankPinned: SearchResult[]; deduped: SearchResult[]; exactLookupOpts: ExactLookupOpts;
+  { rerankPinned, deduped, relationalList, effectiveModality, identityLookups }: {
+    rerankPinned: SearchResult[]; deduped: SearchResult[];
     relationalList: SearchResult[]; effectiveModality: ModalityMode;
-    /** Lookups the rerank gate already read (gate not `off`): applied here, never re-read. */
-    identityLookups?: IdentityLookups;
+    /** Lookups rerankAndPin read alongside the reranker: applied here, never re-read. */
+    identityLookups: IdentityLookups;
   },
 ) {
   const { engine, query, opts, resolvedMode, cfgForColumn, limit, offset, suggestions, aliasHopOpts } = req;
-  // T3 — free-text alias hop. Runs AFTER rerank so a query that is a page's
+  // T3 — free-text alias hop. Applied AFTER rerank so a query that is a page's
   // declared chosen name reliably surfaces that page regardless of how the
   // reranker scored body chunks. Fail-open on pre-v110 brains.
-  const preExact = identityLookups
-    ? await applyAliasHopLookup(engine, rerankPinned, identityLookups.alias, aliasHopOpts)
-    : await applyAliasHop(engine, rerankPinned, query, aliasHopOpts);
+  const preExact = await applyAliasHopLookup(engine, rerankPinned, identityLookups.alias, aliasHopOpts);
 
   // #1663 — structural exact-lookup tier: a query that IS a page identity
   // (slug / exact normalized title) gets that page at rank-1 regardless of
@@ -384,9 +388,7 @@ export async function sizeReturnPool(
   // the already-fetched title arm (no extra queries); pure no-op for
   // non-lookup-shaped queries. Runs after the alias hop so all three
   // identity surfaces (alias, slug, title) share the same injection shape.
-  const aliasHopped = await collapsePool(req, identityLookups
-    ? applyExactLookupHits(preExact, identityLookups.exactHits)
-    : await applyExactLookupTier(engine, preExact, query, exactLookupOpts));
+  const aliasHopped = await collapsePool(req, applyExactLookupHits(preExact, identityLookups.exactHits));
 
   // T4 — stamp evidence + create_safety so the agent's don't-duplicate
   // decision keys off WHY a page matched, not a raw blended score. Stamp on

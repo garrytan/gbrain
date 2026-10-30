@@ -60,9 +60,9 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import type { FactNotabilityFilter } from './notability-filter.ts';
 import { intentContentOrigin } from '../trust/channel.ts';
 import { readTaintInputs, derivedWriteTrust, recordTaintEdges } from '../trust/taint.ts';
-import { applyGateDecision, derivedGateConfig, derivedGateInput, emptyGateTally, type GateTally } from '../trust/derived-gate.ts';
+import { applyGateDecision, derivedGateConfig, derivedGateInput, emptyGateTally, mergeGateTally, type GateTally } from '../trust/derived-gate.ts';
 import { decideFactWrite } from '../write-gate-store.ts';
-import { commitExtractionPlan, planExtraction, planSegmentedExtraction, readPageWatermark, type InputTruncated } from '../extraction-watermark.ts';
+import { commitExtractionPlan, planExtraction, readPageWatermark, type InputTruncated } from '../extraction-watermark.ts';
 
 // The notability-filter vocabulary lives in notability-filter.ts; re-exported for existing importers.
 export { NOTABILITY_FILTERS, coerceNotabilityFilter, type FactNotabilityFilter } from './notability-filter.ts';
@@ -591,19 +591,16 @@ async function runPipeline(
   ctx: FactsBackstopCtx,
   abortSignal?: AbortSignal,
 ): Promise<PipelineResult & { input_truncated?: InputTruncated }> {
+  if (parsedPage.segmentedPageId !== undefined) return runSegmentedPipeline(parsedPage, parsedPage.segmentedPageId, ctx, abortSignal);
   // Large pages A7: past the watermark the extractor reads only the appended
   // tail; without a usable one it reads the head and the receipt says so.
   const { MAX_TURN_TEXT_CHARS } = await import('./extract.ts');
   const { pageId, stored } = await readPageWatermark(ctx.engine, ctx.sourceId, parsedPage.slug, 'facts_backstop');
-  // A segmented page is planned over its segments; its whole body is never one string, so the turn text is the plan's.
-  const planOpts = { cap: MAX_TURN_TEXT_CHARS, pipeline: 'facts_backstop', emptyTail: 'skip' } as const;
-  const plan = parsedPage.segmentedPageId !== undefined
-    ? await planSegmentedExtraction(ctx.engine, parsedPage.segmentedPageId, stored, planOpts)
-    : planExtraction(parsedPage.compiled_truth, stored, planOpts);
+  const plan = planExtraction(parsedPage.compiled_truth, stored, { cap: MAX_TURN_TEXT_CHARS, pipeline: 'facts_backstop', emptyTail: 'skip' });
   if (!plan.text) return { inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], entity_slugs: [] };
   const result = await runPipelineWithBody(
     {
-      turnText: parsedPage.segmentedPageId !== undefined ? plan.text : parsedPage.compiled_truth,
+      turnText: parsedPage.compiled_truth,
       ...(plan.mode === 'full' ? {} : { extractText: plan.text }),
       isDreamGenerated: false,  // eligibility check already rejected dream pages
       ref: parsedPage.slug,
@@ -617,6 +614,27 @@ async function runPipeline(
   );
   if (pageId !== null && !result.skipped_reason && !abortSignal?.aborted) await commitExtractionPlan(ctx.engine, pageId, plan);
   return plan.truncated ? { ...result, input_truncated: plan.truncated } : result;
+}
+
+/**
+ * A segmented page (wave-b spec 8.2): the windows of its new occurrences only, newest first under the per-page spend
+ * cap (backstop-segments.ts), each through the pipeline as its own turn; the window results summed.
+ */
+async function runSegmentedPipeline(parsedPage: ParsedPageInput, pageId: number, ctx: FactsBackstopCtx, abortSignal?: AbortSignal): Promise<PipelineResult> {
+  const observationDate = resolveObservationDate({ slug: parsedPage.slug, frontmatter: parsedPage.frontmatter });
+  const { getFactsExtractionModel } = await import('./extract.ts');
+  const { runSegmentedBackstop } = await import('./backstop-segments.ts');
+  const { results } = await runSegmentedBackstop<PipelineResult>({ engine: ctx.engine, page: { id: pageId, body_storage: 'segmented' },
+    model: ctx.model ?? await getFactsExtractionModel(ctx.engine), observation: observationDate ? JSON.stringify(observationDate) : null, signal: abortSignal,
+    extract: text => runPipelineWithBody({ turnText: text, isDreamGenerated: false, ref: parsedPage.slug, pageSlug: parsedPage.slug, observationDate }, ctx, abortSignal) });
+  const sum = (a?: number, b?: number) => a === undefined && b === undefined ? undefined : (a ?? 0) + (b ?? 0);
+  return results.reduce<PipelineResult>((a, b) => ({
+    inserted: a.inserted + b.inserted, duplicate: a.duplicate + b.duplicate, superseded: a.superseded + b.superseded,
+    fact_ids: [...a.fact_ids, ...b.fact_ids], entity_slugs: [...new Set([...a.entity_slugs, ...b.entity_slugs])],
+    skipped_reason: a.skipped_reason ?? b.skipped_reason, write_gate: mergeGateTally(a.write_gate, b.write_gate),
+    fence_refused: sum(a.fence_refused, b.fence_refused), would_dedup_same_page: sum(a.would_dedup_same_page, b.would_dedup_same_page),
+    withdrawn_skipped: sum(a.withdrawn_skipped, b.withdrawn_skipped), refused: a.refused || b.refused ? [...a.refused ?? [], ...b.refused ?? []] : undefined,
+  }), { inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], entity_slugs: [] });
 }
 
 /**
@@ -736,7 +754,7 @@ async function runPipelineBodyInner(
   const derivation = await factsDerivation(ctx, input);
   const managed = await prepareManagedFactsSession(ctx, input, derivation);
   if (managed) {
-    managed.reportRefusals = true;
+    managed.reportRefusals = true; managed.entityMoveRetry = !ctx.requestId;
     const replay = await resumeManagedFacts(ctx.engine, managed);
     if (replay) return replay;
     const embedding = await resolveManagedFactsEmbedding(ctx.engine, managed.config);

@@ -9,8 +9,11 @@ import { execFileSync, spawn } from 'child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { acquireCommitLock, commitAndPush, commitPathsLocked, pullShared, readIntegrateConflict } from '../src/core/git/commit-push.ts';
+import { acquireCommitLock, commitAndPush, commitPathsLocked, pullShared, readIntegrateConflict, readPendingWriteThrough } from '../src/core/git/commit-push.ts';
 import { getLastPushOutcome } from '../src/core/brain-repo-durability.ts';
+import { runGit } from '../src/commands/git.ts';
+import { argvFromCommand } from '../src/core/agent-output.ts';
+import { legacyCommitStep } from '../src/core/fence-repair/uncommitted.ts';
 
 let root: string;
 
@@ -265,6 +268,105 @@ describe('integrate in memory', () => {
   });
 });
 
+describe('superseded remote blobs: a stale clone brings back a version this checkout replaced', () => {
+  const P = 'notes/alice-example.md';
+  const Q = 'notes/bob-example.md';
+
+  function commitFiles(dir: string, files: Record<string, string | null>, message: string): void {
+    for (const [f, body] of Object.entries(files)) {
+      if (body === null) { git(dir, 'rm', '-q', '--', f); continue; }
+      mkdirSync(join(dir, f, '..'), { recursive: true });
+      writeFileSync(join(dir, f), body);
+      git(dir, 'add', '--', f);
+    }
+    git(dir, 'commit', '-qm', message);
+  }
+
+  /**
+   * a publishes A for P and Q, then commits `ours` locally, one commit per step. b, still at A, commits `theirs`
+   * (with an unrelated y.md edit) on a side branch, as a stale writer replaying an old copy would, then
+   * merges it over an unrelated z.md commit and publishes the merge.
+   */
+  function staleMerge(ours: Array<Record<string, string | null>>, theirs: Record<string, string | null>) {
+    const { bare, a, b } = setup();
+    commitFiles(a, { [P]: 'A\n', [Q]: 'A\n' }, 'A');
+    git(a, 'push', '-q');
+    git(b, 'pull', '-q', '--ff-only');
+    ours.forEach((step, i) => commitFiles(a, step, `local ${i + 1}`));
+    git(b, 'checkout', '-qb', 'stale');
+    commitFiles(b, { ...theirs, 'y.md': 'stale writer\n' }, 'stale writer');
+    git(b, 'checkout', '-q', 'main');
+    commitFiles(b, { 'z.md': 'unrelated\n' }, 'unrelated');
+    git(b, 'merge', '-q', '--no-ff', '-m', 'merge stale', 'stale');
+    git(b, 'push', '-q', 'origin', 'main');
+    return { bare, a, b };
+  }
+
+  for (const fallback of [false, true]) {
+    test(`the remote's copy of an older blob this checkout replaced is resolved to ours and reported${fallback ? ' (git < 2.38 fallback)' : ''}`, () => {
+      if (fallback) process.env.GBRAIN_GIT_NO_MERGE_TREE = '1';
+      const { bare, a } = staleMerge([{ [P]: 'B\n' }, { [P]: 'C\n' }], { [P]: 'B\n' });
+      const r = commitAndPush({ repo: a, pushOnly: true, cwd: a });
+      expect(r).toMatchObject({ outcome: 'pushed', checkout: 'advanced', superseded_remote_paths: [P] });
+      expect(git(bare, 'show', `main:${P}`)).toBe('C');
+      expect(git(bare, 'show', 'main:y.md')).toBe('stale writer');
+      expect(git(bare, 'show', 'main:z.md')).toBe('unrelated');
+      expect(remoteHead(bare)).toBe(git(a, 'rev-parse', 'HEAD'));
+      expect(git(a, 'log', '-1', '--format=%B')).toContain(P);
+      expect(readIntegrateConflict(a)).toBeNull();
+    });
+  }
+
+  test('a blob this checkout never held at the path is still a two-sided conflict, reported as before', () => {
+    const { bare, a } = staleMerge([{ [P]: 'B\n' }, { [P]: 'C\n' }], { [P]: 'D\n' });
+    const tip = remoteHead(bare);
+    let error: { code?: string; detail?: string } = {};
+    try { commitAndPush({ repo: a, pushOnly: true, cwd: a }); } catch (e) { error = e as typeof error; }
+    expect(error.code).toBe('integrate_conflict');
+    const detail = JSON.parse(error.detail!);
+    expect(Object.keys(detail).sort()).toEqual(['local', 'paths', 'remote', 'structural']);
+    expect(detail).toEqual({ local: git(a, 'rev-parse', 'HEAD'), remote: tip, paths: [P], structural: [] });
+    expect(remoteHead(bare)).toBe(tip);
+  });
+
+  test('mixed: only the real conflict is reported; the --resolve run settles the superseded path to ours too', () => {
+    const { bare, a } = staleMerge([{ [P]: 'B\n', [Q]: 'B\n' }, { [P]: 'C\n', [Q]: 'C\n' }], { [P]: 'B\n', [Q]: 'D\n' });
+    const c = conflictOf(() => commitAndPush({ repo: a, pushOnly: true, cwd: a })) as ReturnType<typeof conflictOf> & { superseded?: string[] };
+    expect(c.paths).toEqual([Q]);
+    expect(c.superseded).toEqual([P]);
+    expect(c.fix).toContain(`--resolve ${Q}=ours|theirs`);
+    expect(c.fix).not.toContain(`--resolve ${P}=`);
+    expect(readIntegrateConflict(a)).toEqual(expect.objectContaining({ paths: [Q] }));
+    const r = commitAndPush({ repo: a, pushOnly: true, cwd: a, resolutions: new Map([[Q, { kind: 'theirs' }]]), expectRemote: c.remote });
+    expect(r).toMatchObject({ outcome: 'pushed', superseded_remote_paths: [P] });
+    expect(git(bare, 'show', `main:${P}`)).toBe('C');
+    expect(git(bare, 'show', `main:${Q}`)).toBe('D');
+  });
+
+  test('an explicit --resolve choice for a superseded path wins over the automatic one', () => {
+    const { bare, a } = staleMerge([{ [P]: 'B\n' }, { [P]: 'C\n' }], { [P]: 'B\n' });
+    const r = commitAndPush({ repo: a, pushOnly: true, cwd: a, resolutions: new Map([[P, { kind: 'theirs' }]]), expectRemote: remoteHead(bare) });
+    expect(r.outcome).toBe('pushed');
+    expect(r.superseded_remote_paths).toBeUndefined();
+    expect(git(bare, 'show', `main:${P}`)).toBe('B');
+  });
+
+  test('deletions: the remote deleting the path stays a conflict; a restored blob counts only when this checkout replaced it before deleting', () => {
+    const deleted = staleMerge([{ [P]: 'B\n' }, { [P]: 'C\n' }], { [P]: null });
+    expect(conflictOf(() => commitAndPush({ repo: deleted.a, pushOnly: true, cwd: deleted.a })).paths).toEqual([P]);
+    rmSync(root, { recursive: true, force: true }); root = mkdtempSync(join(tmpdir(), 'cp6530-'));
+
+    const heldThenDeleted = staleMerge([{ [P]: 'B\n' }, { [P]: null }], { [P]: 'B\n' });
+    expect(conflictOf(() => commitAndPush({ repo: heldThenDeleted.a, pushOnly: true, cwd: heldThenDeleted.a })).paths).toEqual([P]);
+    rmSync(root, { recursive: true, force: true }); root = mkdtempSync(join(tmpdir(), 'cp6530-'));
+
+    const replacedThenDeleted = staleMerge([{ [P]: 'B\n' }, { [P]: 'C\n' }, { [P]: null }], { [P]: 'B\n' });
+    const r = commitAndPush({ repo: replacedThenDeleted.a, pushOnly: true, cwd: replacedThenDeleted.a });
+    expect(r.superseded_remote_paths).toEqual([P]);
+    expect(git(replacedThenDeleted.bare, 'ls-tree', '--name-only', 'main', 'notes/')).toBe('notes/bob-example.md');
+  });
+});
+
 describe('advance is a compare-and-swap', () => {
   test('a lockless commit that lands while the push is in flight survives (never checkout -B)', () => {
     const { bare, a, b } = setup();
@@ -374,19 +476,28 @@ exec "${Bun.which('git')}" "$@"
     expect(existsSync(join(a, '.git', 'brain-publish.requested'))).toBe(false);
   }, 60_000);
 
-  test('write-through commits still land path-scoped when another writer holds the lock past the short budget', async () => {
+  test('write-through never commits without the lock: a holder past the short budget leaves the file pending, and the next locked write-through commits it', async () => {
     const { a } = setup();
     const lockPath = join(a, '.git', 'brain-commit.lock');
     writeFileSync(lockPath, '');
-    const holder = spawn('flock', [lockPath, 'sleep', '20'], { stdio: 'ignore' });
+    const holder = spawn('flock', ['-o', lockPath, 'sleep', '20'], { stdio: 'ignore' });
+    const head = git(a, 'rev-parse', 'HEAD');
     try {
       await new Promise(r => setTimeout(r, 300));
       writeFileSync(join(a, 'x.md'), 'page write\n');
       writeFileSync(join(a, 'y.md'), 'other writer\n');
-      expect(commitPathsLocked(a, [join(a, 'x.md')], 'gbrain: write-through x', { lockWaitMs: 200 })).not.toBeNull();
-      expect(git(a, 'show', 'HEAD:x.md')).toBe('page write');
-      expect(status(a)).toBe(' M y.md');
+      expect(() => commitPathsLocked(a, [join(a, 'x.md')], 'gbrain: write-through x', { lockWaitMs: 200 })).toThrow(expect.objectContaining({ code: 'commit_lock_busy' }));
+      expect(git(a, 'rev-parse', 'HEAD')).toBe(head);
+      expect(status(a)).toBe(' M x.md\n M y.md');
+      expect(readPendingWriteThrough(a).map(e => e.path)).toEqual(['x.md']);
     } finally { holder.kill('SIGKILL'); }
+    await new Promise(r => setTimeout(r, 200));
+    writeFileSync(join(a, 'z.md'), 'next page write\n');
+    expect(commitPathsLocked(a, [join(a, 'z.md')], 'gbrain: write-through z', { lockWaitMs: 2000 })).not.toBeNull();
+    expect(git(a, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort()).toEqual(['x.md', 'z.md']);
+    expect(git(a, 'show', 'HEAD:x.md')).toBe('page write');
+    expect(status(a)).toBe(' M y.md');
+    expect(readPendingWriteThrough(a)).toEqual([]);
   }, 30_000);
 });
 
@@ -474,4 +585,121 @@ describe('many writers, two clones, one remote', () => {
       expect(read(dir, `foreign-${dir === a ? 'a' : 'b'}.md`)).toBe('never committed\n');
     }
   }, 180_000);
+});
+
+describe('CLI: repeated -m, --path <subdir>, and the printed repair step', () => {
+  /** A checkout whose source root is the subdirectory brain/, cloned from a bare remote. */
+  function subdirSetup(): { bare: string; a: string; brain: string } {
+    const { bare, a } = setup();
+    mkdirSync(join(a, 'brain', 'notes'), { recursive: true });
+    for (const f of ['model.md', 'other.md']) writeFileSync(join(a, 'brain', 'notes', f), `${f} v1\n`);
+    git(a, 'add', 'brain'); git(a, 'commit', '-qm', 'brain'); git(a, 'push', '-q', 'origin', 'main');
+    return { bare, a, brain: join(a, 'brain') };
+  }
+
+  test('each -m is a new paragraph of the commit message, like git commit', async () => {
+    const { bare, a } = setup();
+    writeFileSync(join(a, 'x.md'), 'mine\n');
+    expect(await runGit(['commit-push', '--path', a, '-m', 'subject line', '-m', 'trailer-key: value', '--', 'x.md'])).toBe(0);
+    expect(git(bare, 'log', '-1', '--format=%B', 'main').startsWith('subject line\n\ntrailer-key: value')).toBe(true);
+    expect(git(bare, 'log', '-1', '--format=%(trailers:key=trailer-key,valueonly)', 'main')).toBe('value');
+  });
+
+  test('--path <subdir>: paths are relative to that directory (like git -C), not the checkout top', async () => {
+    const { bare, a, brain } = subdirSetup();
+    writeFileSync(join(brain, 'notes', 'model.md'), 'edited\n');
+    expect(await runGit(['commit-push', '--path', brain, '-m', 'edit model', '--', 'notes/model.md'])).toBe(0);
+    expect(git(bare, 'show', 'main:brain/notes/model.md')).toBe('edited');
+    expect(git(bare, 'log', '-1', '--format=%s', 'main')).toBe('edit model');
+    expect(status(a)).toBe('');
+  });
+
+  test('the legacy fence-repair commit step runs as printed: only that path, subject and trailer, on the remote', async () => {
+    const { bare, a, brain } = subdirSetup();
+    writeFileSync(join(brain, 'notes', 'model.md'), 'repaired\n');
+    writeFileSync(join(brain, 'notes', 'other.md'), 'another writer\n');
+    const step = legacyCommitStep(brain, 'notes/model.md', ['no_header'], 'llm');
+    expect(step).toBe(`gbrain git commit-push --path ${brain} -m 'gbrain: repair fence in notes/model.md (no_header)' -m 'gbrain-repair: invalid_fence llm high' -- notes/model.md`);
+    const argv = argvFromCommand(step)!;
+    expect(argv.slice(0, 2)).toEqual(['gbrain', 'git']);
+    expect(await runGit(argv.slice(2))).toBe(0);
+    expect(git(bare, 'log', '-1', '--format=%B', 'main').startsWith('gbrain: repair fence in notes/model.md (no_header)\n\ngbrain-repair: invalid_fence llm high')).toBe(true);
+    expect(git(bare, 'log', '-1', '--format=%(trailers:key=gbrain-repair,valueonly)', 'main')).toBe('invalid_fence llm high');
+    expect(git(bare, 'show', '--name-only', '--format=', 'main')).toBe('brain/notes/model.md');
+    expect(git(bare, 'show', 'main:brain/notes/model.md')).toBe('repaired');
+    expect(git(bare, 'show', 'main:brain/notes/other.md')).toBe('other.md v1');
+    expect(remoteHead(bare)).toBe(git(a, 'rev-parse', 'HEAD'));
+    expect(status(a)).toBe(' M brain/notes/other.md');
+  });
+});
+
+describe('a checkout with no Git remote', () => {
+  /** A local-only repository (no remotes) on main whose source root is brain/. */
+  function localOnly(): { repo: string; brain: string } {
+    const repo = join(root, 'local');
+    execFileSync('git', ['init', '-q', '-b', 'main', repo], { stdio: 'ignore', env: process.env });
+    git(repo, 'config', 'user.email', 'local@example.com'); git(repo, 'config', 'user.name', 'local');
+    mkdirSync(join(repo, 'brain', 'notes'), { recursive: true });
+    for (const f of ['model.md', 'other.md']) writeFileSync(join(repo, 'brain', 'notes', f), `${f} v1\n`);
+    git(repo, 'add', 'brain'); git(repo, 'commit', '-qm', 'seed');
+    return { repo, brain: join(repo, 'brain') };
+  }
+  const refusalOf = (fn: () => unknown): { code?: string; message?: string; fix?: unknown } => {
+    try { fn(); } catch (e) { return e as { code?: string; message?: string }; }
+    throw new Error('expected a refusal');
+  };
+
+  test('the printed legacy fence-repair step commits only the named path locally and says nothing was pushed', async () => {
+    const { repo, brain } = localOnly();
+    const seed = git(repo, 'rev-parse', 'HEAD');
+    writeFileSync(join(brain, 'notes', 'model.md'), 'repaired\n');
+    writeFileSync(join(brain, 'notes', 'other.md'), 'another writer\n');
+    const step = legacyCommitStep(brain, 'notes/model.md', ['no_header'], 'llm');
+    const printed: string[] = [];
+    const original = console.log;
+    console.log = (...parts: unknown[]) => { printed.push(parts.map(String).join(' ')); };
+    let code: number;
+    try { code = await runGit(argvFromCommand(step)!.slice(2)); } finally { console.log = original; }
+    expect(code).toBe(0);
+    expect(git(repo, 'rev-parse', 'HEAD^')).toBe(seed);
+    expect(git(repo, 'log', '-1', '--format=%s')).toBe('gbrain: repair fence in notes/model.md (no_header)');
+    expect(git(repo, 'log', '-1', '--format=%(trailers:key=gbrain-repair,valueonly)')).toBe('invalid_fence llm high');
+    expect(git(repo, 'show', '--name-only', '--format=', 'HEAD')).toBe('brain/notes/model.md');
+    expect(status(repo)).toBe(' M brain/notes/other.md');
+    expect(printed.join('\n')).toContain(`not pushed: ${repo} has no Git remote`);
+  });
+
+  test('commitAndPush reports committed_local with no_remote, then nothing_to_commit', () => {
+    const { repo, brain } = localOnly();
+    writeFileSync(join(brain, 'notes', 'model.md'), 'edited\n');
+    const r = commitAndPush({ repo: brain, cwd: brain, paths: ['notes/model.md'], message: 'edit' });
+    expect(r).toMatchObject({ outcome: 'committed_local', no_remote: true, branch: 'main', remote: '', paths: ['brain/notes/model.md'], checkout: 'unchanged' });
+    expect(r.sha).toBe(git(repo, 'rev-parse', 'HEAD'));
+    expect(commitAndPush({ repo: brain, cwd: brain, paths: ['notes/model.md'], message: 'again' })).toMatchObject({ outcome: 'nothing_to_commit', no_remote: true, sha: null });
+  });
+
+  test('a branch configured to a remote that does not exist still refuses git_unavailable and commits nothing', () => {
+    const { repo, brain } = localOnly();
+    const head = git(repo, 'rev-parse', 'HEAD');
+    git(repo, 'config', 'branch.main.remote', 'origin');
+    writeFileSync(join(brain, 'notes', 'model.md'), 'edited\n');
+    const err = refusalOf(() => commitAndPush({ repo: brain, cwd: brain, paths: ['notes/model.md'], message: 'edit' }));
+    expect(err.code).toBe('git_unavailable');
+    expect(String(err.message)).toContain('has no usable remote (origin); nothing was committed');
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(head);
+    expect(status(repo)).toBe(' M brain/notes/model.md');
+  });
+
+  test('publishing modes and paths-free commits refuse: there is no remote to publish to', () => {
+    const { repo, brain } = localOnly();
+    const head = git(repo, 'rev-parse', 'HEAD');
+    writeFileSync(join(brain, 'notes', 'model.md'), 'edited\n');
+    for (const opts of [{ pushOnly: true }, { pushOnly: true, keepCheckout: true }, { pending: true, message: 'm' }, { paths: ['notes/model.md'], message: 'm', advanceOnlyWhenClean: true }]) {
+      const err = refusalOf(() => commitAndPush({ repo: brain, cwd: brain, ...opts }));
+      expect(err.code).toBe('commit_paths_invalid');
+      expect(String(err.message)).toContain('has no Git remote, so there is nothing to publish to');
+    }
+    expect(refusalOf(() => commitAndPush({ repo: brain, cwd: brain, paths: [], message: 'm' })).code).toBe('commit_paths_invalid');
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(head);
+  });
 });

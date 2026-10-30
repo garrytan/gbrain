@@ -55,6 +55,9 @@ export interface ExtractAtomsDrainFailure {
   source: string;
   /** Bounded, sanitized failure reason (secrets/connection info redacted). */
   reason: string;
+  /** #7514: a write that did not commit: its request id (`gbrain write-request` explains it) and the refusal's own code. */
+  request_id?: string;
+  code?: string;
 }
 
 /**
@@ -111,7 +114,9 @@ export interface ExtractAtomsDrainDeps {
     providerFailure?: boolean;
     failureCount?: number;
     firstError?: string;
-    failures?: Array<{ source: string; reason: string }>;
+    failures?: Array<{ source: string; reason: string; request_id?: string; code?: string }>;
+    /** #7514: write failures that recorded a strike toward their hold this batch; a batch of them is progress, not a stall. */
+    writeStrikes?: number;
     budgetSkipped?: number;
     budget?: { spentUsd: number; capUsd: number };
     /** #6503: items the batch cut at `cycle.extract_atoms.max_input_chars` (partial disposition, not complete). */
@@ -349,7 +354,7 @@ export async function runExtractAtomsDrain(
           // (the #4539 shape) still contribute to the total via failureCount.
           const batchFailures = Array.isArray(r.failures)
             ? r.failures.filter(
-                (f): f is { source: string; reason: string } =>
+                (f): f is { source: string; reason: string; request_id?: string; code?: string } =>
                   f != null &&
                   typeof f === 'object' &&
                   typeof f.source === 'string' &&
@@ -367,6 +372,8 @@ export async function runExtractAtomsDrain(
               batch: batches,
               source: sanitizeFailureText(f.source, MAX_DRAIN_FAILURE_SOURCE_CHARS),
               reason: sanitizeFailureText(f.reason, MAX_DRAIN_FAILURE_REASON_CHARS),
+              ...(typeof f.request_id === 'string' ? { request_id: sanitizeFailureText(f.request_id, 64) } : {}),
+              ...(typeof f.code === 'string' ? { code: sanitizeFailureText(f.code, 64) } : {}),
             });
           }
           const representative = batchFailures[0];
@@ -417,7 +424,7 @@ export async function runExtractAtomsDrain(
             const after = await count();
             if (hard.signal.aborted) break;
             if (after !== null) lastCount = after;
-            if (after === null || before === null || after >= before) { stopped = 'no_progress'; break; }
+            if (after === null || before === null || (after >= before && !((r.writeStrikes ?? 0) > 0))) { stopped = 'no_progress'; break; }
           }
         }
 
@@ -543,29 +550,36 @@ export async function runExtractAtomsDrainForSource(
         // + pages_processed both 0 means every attempted `chat()` call threw —
         // items that succeed with 0 atoms still count as processed, so this
         // does not fire on "provider fine, nothing extractable").
-        const failures = Array.isArray(d.failures) ? d.failures : [];
+        const reported: unknown[] = Array.isArray(d.failures) ? d.failures : [];
+        // #7514: a write that did not commit (its record names the request id) never reached a provider, so
+        // `failures` is the provider side only: a write failure neither makes nor classes a provider failure.
+        const written = (f: unknown): f is { request_id: string; code?: unknown; strikes?: unknown } =>
+          f != null && typeof f === 'object' && typeof (f as { request_id?: unknown }).request_id === 'string';
+        const failures = reported.filter(f => !written(f));
         const itemsSucceeded =
           Number(d.transcripts_processed ?? 0) + Number(d.pages_processed ?? 0);
         // #4730: carry EVERY per-item failure up as a typed {source, reason}
         // record (the pure loop bounds + sanitizes them) instead of the
         // #4539 collapse to count + one representative error — a mixed
         // three-failure batch used to be unrecoverable from `--json`.
-        const typedFailures = failures
-          .filter(
-            (f): f is { source: string; error: string } =>
-              f != null &&
-              typeof f === 'object' &&
-              typeof (f as { source?: unknown }).source === 'string' &&
-              typeof (f as { error?: unknown }).error === 'string',
-          )
-          .map(({ source, error }) => ({ source, reason: error }));
+        const typed = reported.filter(
+          (f): f is { source: string; error: string } =>
+            f != null &&
+            typeof f === 'object' &&
+            typeof (f as { source?: unknown }).source === 'string' &&
+            typeof (f as { error?: unknown }).error === 'string',
+        );
+        const typedFailures: Array<{ source: string; reason: string; request_id?: string; code?: string }> = typed
+          .map(({ source, error }) => ({ source, reason: error }))
+          .map((f, i) => { const w = typed[i]; return written(w) ? { ...f, request_id: w.request_id, ...(typeof w.code === 'string' ? { code: w.code } : {}) } : f; });
         return {
           extracted: Number(d.atoms_extracted ?? 0),
           skipped: Number(d.duplicates_skipped ?? 0),
           providerFailure: failures.length > 0 && itemsSucceeded === 0,
-          providerFailureClass: batchProviderFailureClass(d.aborted_global_error, typedFailures),
-          failureCount: failures.length,
+          providerFailureClass: batchProviderFailureClass(d.aborted_global_error, typedFailures.filter(f => f.request_id === undefined)),
+          failureCount: reported.length,
           failures: typedFailures,
+          writeStrikes: reported.filter(f => written(f) && typeof f.strikes === 'number').length,
           budgetSkipped: Number(d.pages_skipped_budget ?? 0) + Number(d.transcripts_skipped_budget ?? 0),
           budget: { spentUsd: Number(d.estimated_spend_usd ?? 0), capUsd: Number(d.budget_usd ?? 0) },
           inputTruncated: Number(d.input_truncated ?? 0),

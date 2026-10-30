@@ -22,7 +22,8 @@
  * holds and receipts carry codes and slugs (Codex #11). Failure classes
  * mirror fence-repair/llm.ts: `llm_unavailable` (the provider threw;
  * transient, the attempt memo is not consumed), `llm_empty`, `llm_refused`
- * (a refusal or content-filter stop, or a prose refusal), `llm_malformed`
+ * (a refusal or content-filter stop, a prose refusal, or a provider error
+ * that refuses the request's own input), `llm_malformed`
  * (no single object, an unknown action, a canonical that is neither slug),
  * `llm_truncated` (any stop other than a normal end) and `llm_declined` (the
  * single word HOLD; the prompt asks for `needs_human` instead, but a model

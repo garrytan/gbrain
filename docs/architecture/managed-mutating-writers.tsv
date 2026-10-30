@@ -14,8 +14,8 @@ op	capture	coordinator	submitPageMutation admits a journaled page mutation.
 op	cancel_write_request	no_canonical_write	Cancels a queued journal request; no canonical row changes.
 op	add_tag	coordinator	submitPageMutation admits a journaled page mutation.
 op	remove_tag	coordinator	submitPageMutation admits a journaled page mutation.
-op	add_link	coordinator	coordinatedManualLinkWrite: durable authority, withCoordinatedWrite, both endpoint page keys locked; database-only.
-op	remove_link	coordinator	coordinatedManualLinkWrite, same boundary as add_link.
+op	add_link	coordinator	submitPageMutation admits a journaled page mutation of the from page's links fence; the edge is projected from it.
+op	remove_link	coordinator	submitPageMutation, same boundary as add_link; the apply also deletes the matching database-only edges.
 op	add_timeline_entry	coordinator	submitPageMutation admits a journaled page mutation.
 op	revert_version	coordinator	submitPageMutation admits a journaled page mutation.
 op	edit_page	coordinator	submitPageMutation admits a journaled page mutation; edits apply to the locked snapshot.

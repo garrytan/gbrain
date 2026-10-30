@@ -17,7 +17,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 import { readEntryState } from './entry-state.ts';
-import { openSegmentedBody, readBodyRange } from './read-range.ts';
+import { openSegmentedBody, readBodyRange, type BodyRow, type SegmentedBody } from './read-range.ts';
 import { readGarbageCollector, segmentedPassWork } from './segment-blocks.ts';
 import type { BodyRegion } from './types.ts';
 
@@ -77,4 +77,38 @@ export async function readSegmentedConversationInput(engine: BrainEngine, page: 
   const timeline = await regionText('timeline');
   const text = !truth ? timeline : !timeline ? truth : `${truth}\n\n${timeline}`;
   return window ? { body: text, window } : { body: text };
+}
+
+/** A live occurrence of a segmented page with the conversation context its entry state carries in (entry-state.ts). */
+export interface ConversationOccurrence { row: BodyRow; conversation: EntryStateConversation | null }
+type EntryStateConversation = { pattern: string | null; fallbackDate: string | null; lastDate: string | null; open: boolean };
+
+/**
+ * The live occurrences of a segmented page in parser-input order (truth, then timeline, as readSummaryBody joins them)
+ * with each one's conversation entry state: manifest metadata only, no segment text.
+ */
+export async function readConversationOccurrences(engine: BrainEngine, pageId: number): Promise<{ body: SegmentedBody; occurrences: ConversationOccurrence[] }> {
+  const body = await openSegmentedBody(engine, { pageId });
+  const states = new Map((await engine.executeRaw<{ seq: number; conversation: unknown }>(`SELECT seq, entry_state->'conversation' AS conversation
+      FROM page_body_manifest WHERE page_id=$1 AND staging_id IS NULL AND gen_from<=$2 AND (gen_to IS NULL OR gen_to>$2)`, [body.pageId, body.generation]))
+    .map(row => [Number(row.seq), (typeof row.conversation === 'string' ? JSON.parse(row.conversation) : row.conversation) as EntryStateConversation | null]));
+  const rows = [...body.rows.filter(row => row.region === 'truth'), ...body.rows.filter(row => row.region === 'timeline')];
+  return { body, occurrences: rows.map(row => ({ row, conversation: states.get(row.seq) ?? null })) };
+}
+
+/** Bytes conversation facts read to detect a page's grammar over the whole page (conversation-incremental.ts), apart from segmentedPassWork. */
+export const conversationDetectionWork = { bytes: 0 };
+
+/** One occurrence's trusted stored text: reads exactly its segment's bytes, counted in segmentedPassWork (conversationDetectionWork with `detection`). */
+export async function readOccurrenceText(engine: BrainEngine, body: SegmentedBody, row: BodyRow, opts: { detection?: boolean } = {}): Promise<string> {
+  const collect = readGarbageCollector();
+  const parts: Buffer[] = [];
+  for await (const piece of readBodyRange(engine, { pageId: body.pageId, space: 'stored', start: row.byteStart, end: row.byteStart + row.byteLen,
+    audience: 'trusted', region: row.region, body })) {
+    parts.push(piece.bytes);
+    if (opts.detection) conversationDetectionWork.bytes += piece.bytes.length;
+    else segmentedPassWork.bytes += piece.bytes.length;
+    collect(piece.bytes.length);
+  }
+  return Buffer.concat(parts).toString('utf8');
 }

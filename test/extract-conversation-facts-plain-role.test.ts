@@ -57,7 +57,9 @@ describe('plain role-prefixed transcripts', () => {
   test('extract-conversation-facts extracts from plain and bold transcripts alike', async () => {
     await seed('sessions/plain', PLAIN);
     await seed('sessions/bold', BOLD);
-    const result = await runExtractConversationFactsCore(engine, { sourceId: 'default', types: ['conversation'], sleepMs: 0, extractor: async () => [fact('The user lives in Lisbon')] });
+    // #7043: each page states its own claim; the very same claim on a second page is skipped as a duplicate.
+    let page = 0;
+    const result = await runExtractConversationFactsCore(engine, { sourceId: 'default', types: ['conversation'], sleepMs: 0, extractor: async () => [fact(`The user lives in Lisbon (page ${++page})`)] });
     expect(result.pages_skipped_unparsed).toBe(0);
     expect(result.pages_processed).toBe(2);
     expect(result.facts_inserted).toBeGreaterThanOrEqual(2);

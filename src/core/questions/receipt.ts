@@ -11,7 +11,7 @@ import type { Action, McpCall } from '../agent-output.ts';
 import { autopilotInstallIdPath, autopilotPaused } from '../autopilot-paths.ts';
 import { chatKeyFix } from '../interop-notices.ts';
 import { evaluateAnswer, newEvidenceSinceWatermark, type EvaluatedSentence } from './freshness.ts';
-import { chatKeyAvailable, resolveQuestionModel, type BlockedReason, type RefreshOutcome } from './refresh.ts';
+import { ANSWER_TOO_LONG_ERROR, MAX_OUTPUT_TOKENS_KEY, answerTooLongCap, chatKeyAvailable, resolveMaxOutputTokens, resolveQuestionModel, type BlockedReason, type RefreshOutcome } from './refresh.ts';
 import { pinId, pinScope, type PinRow } from './store.ts';
 import type { QuestionScope } from './identity.ts';
 
@@ -97,7 +97,16 @@ export function fixFor(pin: PinRow, blocked: BlockedReason | null, freshness: Fr
         user_message: 'Pinned-question refreshes hit their spending cap. Raise cycle.standing_questions.budget_usd, or wait for the next run?',
         verify: verifyStep(id), requires_exclusive: false,
       };
+    case 'answer_too_long':
+      return {
+        argv: ['gbrain', 'config', 'set', MAX_OUTPUT_TOKENS_KEY, '<tokens>'], consent: ['paid'], actor: 'user',
+        inputs: [{ name: 'tokens', how: `Ask the user for a larger output cap than the ${answerTooLongCap(pin.last_error) ?? 'current'} tokens the last refresh hit (each refresh may then spend up to that many output tokens).` }],
+        why: `The answer did not fit the refresh output cap of ${answerTooLongCap(pin.last_error) ?? 'the configured'} tokens, so the refresh failed and the previous answer is kept with its stale flags. The same cap fails the same way (a full refresh too), so scheduled refreshes skip this pin until ${MAX_OUTPUT_TOKENS_KEY} is raised; raising it is the owner's call.`,
+        user_message: `The answer to the pinned question "${pin.question.slice(0, 120)}" is longer than the refresh output cap. Raise ${MAX_OUTPUT_TOKENS_KEY}, or narrow the question?`,
+        verify: verifyStep(id), requires_exclusive: false,
+      };
     case 'refresh_failed':
+      if (answerTooLongCap(pin.last_error) !== null) return refreshAction(id, `The last refresh hit the old output cap; ${MAX_OUTPUT_TOKENS_KEY} has been raised since, so the next scheduled run retries it, or refresh it now.`);
       return refreshAction(id, `The last refresh failed (${pin.last_error}); the previous answer is kept with its stale flags. A full refresh recomputes it from current evidence.`, true);
     case 'no_worker':
       return refreshAction(id, 'Nothing runs scheduled refreshes on this brain (no standing_questions cycle phase in the last 2 days and no autopilot), so the answer stays as it is until something refreshes it. Refresh it now; a recurring cycle needs the owner to install autopilot (gbrain autopilot --install), which a pin never does.');
@@ -126,6 +135,7 @@ export async function buildReceipt(engine: BrainEngine, pin: PinRow, view: {
     const needsRefresh = freshness === 'stale' || freshness === 'awaiting_refresh';
     if (!chatKeyAvailable(await resolveQuestionModel(engine, pin))) blocked = needsRefresh || lastAttemptFailed(pin, 'no_model_key') ? 'no_model_key' : null;
     else if (lastAttemptFailed(pin, 'budget_exhausted')) blocked = 'budget_exhausted';
+    else if (lastAttemptFailed(pin, ANSWER_TOO_LONG_ERROR) && (answerTooLongCap(pin.last_error) ?? 0) >= await resolveMaxOutputTokens(engine)) blocked = 'answer_too_long';
     else if (lastAttemptFailed(pin, 'refresh_failed')) blocked = 'refresh_failed';
     else if ((needsRefresh || newEvidence) && !(await scheduledRefreshAvailable(engine))) blocked = 'no_worker';
   }

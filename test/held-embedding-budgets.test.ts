@@ -204,5 +204,16 @@ for (const backend of testBackends()) {
       expect(result.budget_limited!.by_source[0]!.fix.command).toMatch(/^gbrain embed --held --source default --max-usd \d+\.\d\d/);
       expect(await budgetLimitedField(engine, 'alpha', null)).toMatchObject({ budget_limited: { held: 1 } });
     }, 60_000);
+
+    test('#7193: an incomplete embed-backfill counts the held pages\' chunks in "N chunks remain" and names them', async () => {
+      await holdPageEmbedding(engine, await largePage('chats/held-remaining', 'default', 3), 'upgrade_backfill');
+      await holdPageEmbedding(engine, await largePage('chats/held-elsewhere', 'alpha', 2), 'upgrade_backfill');
+      const controller = new AbortController();
+      const job = { id: 1, name: 'embed-backfill', data: { sourceId: 'default' }, attempts_made: 0, signal: controller.signal, deadlineAtMs: null,
+        shutdownSignal: controller.signal, updateProgress: async () => {}, updateTokens: async () => {}, log: async () => {}, isActive: async () => true, readInbox: async () => [] } as unknown as MinionJobContext;
+      const handler = makeEmbedBackfillHandler(engine, { runStale: async () => ({ embedded: 0, chunksProcessed: 0, pagesProcessed: 0, invalidated: 0, lastCursor: null, done: true, aborted: false,
+        remaining: 2, blocked: 1, complete: false }) });
+      await expect(handler(job)).rejects.toThrow('embed-backfill: incomplete; 5 chunks remain (3 of them on 1 large page(s) held for approval or at their spend cap; gbrain embed --held --dry-run --source default lists them) and 1 projections are blocked.');
+    }, 60_000);
   });
 }

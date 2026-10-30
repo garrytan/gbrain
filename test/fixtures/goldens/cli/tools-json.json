@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 261997,
-    "stdoutSha256": "c8eb8149e1f40f0250f7d2f7f6772f2ac337fc0f137dc8f51a87e3116520eab8",
+    "stdoutBytes": 264563,
+    "stdoutSha256": "0d71d7f1367627c5f9c27d3d7a9b09513131117000012eed0d35ab9ede69095f",
     "toolNames": [
       "remember",
       "entity",
@@ -83,6 +83,7 @@
       "get_raw_data",
       "resolve_slugs",
       "get_chunks",
+      "whois",
       "log_ingest",
       "get_ingest_log",
       "get_usage",
@@ -190,7 +191,7 @@
     ],
     "tools": [
       {
-        "description": "MEMORY VERB (v1): save facts with provenance. Set `entity` (the subject) or recall misses it. Branch on `status` (inserted|duplicate|superseded); write_pending: poll get_write_request.",
+        "description": "Save facts with provenance; set `entity` (the subject) or recall misses it. Branch on `status`; write_pending: poll get_write_request.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -301,7 +302,7 @@
         "scope": "write"
       },
       {
-        "description": "MEMORY VERB (v1): person/company/account card, zero LLM. Previews are not evidence: fetch the page before stating status or dates. Miss: found:false with near matches (create_safety). Facts: recall.",
+        "description": "Person/company/account card, zero LLM. Previews are not evidence: fetch the page before stating status or dates. Miss: found:false with near matches (create_safety). Facts: recall.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -346,7 +347,7 @@
         "scope": "read"
       },
       {
-        "description": "[EXPENSIVE / SLOW: LLM calls, costs money] MEMORY VERB (v1): answer a broad question across pages with citations. For lookups use recall or entity.",
+        "description": "[EXPENSIVE / SLOW: LLM calls] Cited answer to a broad question across pages. Lookups: recall or entity.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -380,7 +381,7 @@
         "scope": "read"
       },
       {
-        "description": "MEMORY VERB (v1): expire a remembered fact by its fact_id (never a page slug). Idempotent; the audit trail is kept.",
+        "description": "Expire a remembered fact by its fact_id (never a page slug). Idempotent; the audit trail is kept.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -768,7 +769,7 @@
               "type": "boolean"
             },
             "limit": {
-              "description": "Max rows (default 50; remote max 100).",
+              "description": "Remote max 100.",
               "type": "number"
             },
             "offset": {
@@ -802,7 +803,7 @@
               "type": "string"
             },
             "updated_after": {
-              "description": "Pages updated after this ISO time.",
+              "description": "ISO time.",
               "type": "string"
             },
             "updated_after_slug": {
@@ -837,7 +838,7 @@
         "schema": {
           "properties": {
             "detach": {
-              "description": "Restore a page whose recorded canonical file is gone from the checkout as a database-only page: it forgets the file, so sync never deletes it again. Only accepted when a plain restore refuses with canonical_file_absent; ask the user first.",
+              "description": "Restore a page whose recorded canonical file is gone from the checkout as a database-only page: it forgets the file, so sync never deletes it again. Only accepted when a plain restore refuses with canonical_file_absent, or for a page under a declared storage.db_only dir whose recorded file left the checkout; ask the user first.",
               "type": "boolean"
             },
             "expected_revision": {
@@ -1064,7 +1065,7 @@
         "schema": {
           "properties": {
             "edits": {
-              "description": "1 to 50 {old_text, new_text} replacements.",
+              "description": "1-50 replacements.",
               "items": {
                 "additionalProperties": false,
                 "properties": {
@@ -1492,11 +1493,16 @@
         "mutating": false,
         "name": "get_write_request",
         "parameters": {
+          "applied": "boolean?",
           "request_id": "string"
         },
         "required_scopes": [],
         "schema": {
           "properties": {
+            "applied": {
+              "description": "Also return applied: searchable yet, the gap, the write watermark.",
+              "type": "boolean"
+            },
             "request_id": {
               "description": "The id you sent, or the receipt's.",
               "type": "string"
@@ -1620,6 +1626,7 @@
           "salience": "string?",
           "snippet_chars": "number?",
           "source_id": "string?",
+          "source_ids": "array?",
           "token_budget": "number?",
           "types": "array?",
           "where": "object?"
@@ -1716,6 +1723,13 @@
               "description": "One source, or '__all__'.",
               "type": "string"
             },
+            "source_ids": {
+              "description": "Narrow to these sources (omit or [] for all you can read).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
             "token_budget": {
               "description": "Default 6000.",
               "type": "number"
@@ -1772,6 +1786,7 @@
           "since": "string?",
           "snippet_chars": "number?",
           "source_id": "string?",
+          "source_ids": "array?",
           "symbol_kind": "string?",
           "token_budget": "number?",
           "types": "array?",
@@ -1920,6 +1935,13 @@
             "source_id": {
               "description": "One source, or '__all__'.",
               "type": "string"
+            },
+            "source_ids": {
+              "description": "Narrow to these sources (omit or [] for all you can read).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             },
             "symbol_kind": {
               "description": "Code symbol type.",
@@ -2378,7 +2400,7 @@
       },
       {
         "description": "Create a typed link (edge) from one page to another in the same source. Use when recording a relationship (works_at, invested_in, mentions); remote page writes already link [[wikilinks]] to existing pages as mentions (receipt auto_links), so add only typed links or ones the text lacks. Needs write scope; an explicit link_type must be declared by the active schema pack. On page_not_found: resolve both slugs with resolve_slugs.",
-        "idempotent": false,
+        "idempotent": true,
         "local_only": false,
         "mutating": true,
         "name": "add_link",
@@ -2387,6 +2409,7 @@
           "from": "string",
           "link_source": "string?",
           "link_type": "string?",
+          "request_id": "string?",
           "to": "string",
           "valid_from": "string?",
           "valid_until": "string?"
@@ -2408,6 +2431,10 @@
             },
             "link_type": {
               "description": "Link type (e.g., invested_in, works_at). When the active schema pack declares a link vocabulary, an explicit link_type must be one of its declared verbs (undeclared verbs are rejected, also under dry_run). Omitted = untyped edge.",
+              "type": "string"
+            },
+            "request_id": {
+              "description": "Reuse only to retry.",
               "type": "string"
             },
             "to": {
@@ -2433,7 +2460,7 @@
       },
       {
         "description": "Remove a link between two pages (optionally only one link_type or link_source). Use when a relationship was recorded wrongly. Needs write scope. On page_not_found: resolve both slugs with resolve_slugs.",
-        "idempotent": false,
+        "idempotent": true,
         "local_only": false,
         "mutating": true,
         "name": "remove_link",
@@ -2441,6 +2468,7 @@
           "from": "string",
           "link_source": "string?",
           "link_type": "string?",
+          "request_id": "string?",
           "to": "string"
         },
         "required_scopes": [],
@@ -2456,6 +2484,10 @@
             },
             "link_type": {
               "description": "Only remove edges of this link type (omit = all types)",
+              "type": "string"
+            },
+            "request_id": {
+              "description": "Reuse only to retry.",
               "type": "string"
             },
             "to": {
@@ -4051,6 +4083,43 @@
         "scope": "read"
       },
       {
+        "description": "Exact identity lookup: entity pages whose email, title or declared alias equals an email address or name, ignoring case, accents and quotes. Never fuzzy: empty matches means no exact match; ambiguous means several.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "whois",
+        "parameters": {
+          "query": "string",
+          "source_id": "string?",
+          "types": "array?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "query": {
+              "description": "Email address or name, e.g. 'alice@acme-example.com'.",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "One source; '__all__' spans your sources.",
+              "type": "string"
+            },
+            "types": {
+              "description": "Page types; default: the schema pack's entity types.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
         "description": "Record one ingestion event (source type, reference, pages updated, summary) in the brain's ingest log. Use after importing or enriching content. Needs write scope.",
         "idempotent": false,
         "local_only": false,
@@ -4332,6 +4401,7 @@
         "mutating": false,
         "name": "list_jobs",
         "parameters": {
+          "cursor": "string?",
           "fields": "array?",
           "finished_since": "string?",
           "limit": "number?",
@@ -4342,6 +4412,10 @@
         "required_scopes": [],
         "schema": {
           "properties": {
+            "cursor": {
+              "description": "next_cursor from the last job of the previous page (it carries truncated: true): returns the next older jobs.",
+              "type": "string"
+            },
             "fields": {
               "description": "Return only these job fields (e.g. [\"id\",\"name\",\"status\"]) to save tokens; omit for every field.",
               "items": {
@@ -4354,7 +4428,7 @@
               "type": "string"
             },
             "limit": {
-              "description": "Max results (default: 50)",
+              "description": "Max results (default 50); MCP callers are capped at 500 per call.",
               "type": "number"
             },
             "name": {
@@ -4673,6 +4747,7 @@
         "name": "find_orphans",
         "parameters": {
           "count_only": "boolean?",
+          "cursor": "string?",
           "include_pseudo": "boolean?",
           "limit": "number?",
           "mode": "string?",
@@ -4686,12 +4761,16 @@
               "description": "Return the totals with no rows.",
               "type": "boolean"
             },
+            "cursor": {
+              "description": "next_cursor from the previous page, with the same filters (instead of offset).",
+              "type": "string"
+            },
             "include_pseudo": {
               "description": "Include auto-generated and pseudo pages (default: false)",
               "type": "boolean"
             },
             "limit": {
-              "description": "Rows per page (default 100, max 1000); total_orphans counts every orphan and next_offset names the next page.",
+              "description": "Rows per page (default 100, max 1000); total_orphans counts every orphan, complete says whether this page holds the rest, and next_cursor (or next_offset) names the next page.",
               "type": "number"
             },
             "mode": {
@@ -5667,7 +5746,7 @@
         "scope": "read"
       },
       {
-        "description": "More tools: no arguments lists your catalog; {tools: [names]} returns schemas; {surface} widens it (per client or stdio session).",
+        "description": "More tools and params: no arguments lists your catalog; {tools: [names]} returns full schemas, every optional param included; {surface} widens it (per client or stdio session).",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
@@ -5680,7 +5759,7 @@
         "schema": {
           "properties": {
             "surface": {
-              "description": "Surface to widen to (stdio: this session only).",
+              "description": "stdio: this session only.",
               "enum": [
                 "verbs",
                 "starter",
@@ -5691,7 +5770,6 @@
             "tools": {
               "description": "Tool names to fetch.",
               "items": {
-                "description": "A tool name from the catalog.",
                 "type": "string"
               },
               "type": "array"
@@ -5718,11 +5796,11 @@
         "schema": {
           "properties": {
             "days": {
-              "description": "Window in days (default 14).",
+              "description": "Default 14.",
               "type": "number"
             },
             "limit": {
-              "description": "Max results (default 20).",
+              "description": "Default 20.",
               "type": "number"
             },
             "recency_bias": {
@@ -6557,7 +6635,7 @@
         "scope": "write"
       },
       {
-        "description": "MEMORY VERB (v1): read facts by entity, since or session_id; `query` also searches pages. Remote callers: world facts only. One card: entity; reasoning: synthesize.",
+        "description": "Read facts by entity, since or session_id; `query` also searches pages. Remote callers: world facts only. One card: entity; reasoning: synthesize.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -6673,7 +6751,7 @@
         "scope": "read"
       },
       {
-        "description": "MEMORY VERB (v1): core memory, budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
+        "description": "Core memory, budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -6775,7 +6853,7 @@
         "scope": "read"
       },
       {
-        "description": "MEMORY VERB (v1): pages, facts, thread events changed since a cursor, zero LLM. Pass session_id, cursor or since.",
+        "description": "Pages, facts, thread events changed since a cursor, zero LLM. Pass session_id, cursor or since.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -6887,6 +6965,7 @@
         "parameters": {
           "all_subjects": "boolean?",
           "confirm": "string?",
+          "continue": "boolean?",
           "dry_run": "boolean?",
           "expected_revision": "string?",
           "id": "number?",
@@ -6907,6 +6986,10 @@
             "confirm": {
               "description": "The confirmation token from the dry run (first 8 hex of the claim fingerprint).",
               "type": "string"
+            },
+            "continue": {
+              "description": "With status: first continue the purge's sweep of stored derivation results (derivation_sweep pending or stalled), then report.",
+              "type": "boolean"
             },
             "dry_run": {
               "description": "Return the receipt with would-remove counts and the confirmation token; changes nothing.",

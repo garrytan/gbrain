@@ -11,6 +11,8 @@ export interface ManagedRootRecord {
   source_incarnation?: string;
   worktree_id?: string;
   topology_generation?: string | number;
+  /** #7338: the brain's own database path, marked in its own directory: it is not a checkout, so no enclosing repository is marked. */
+  datastore?: true;
 }
 function registryDirectory(): string { return join(configDir(), 'persistence', 'managed-roots'); }
 function gitMetadataDirectory(root: string): string | null {
@@ -143,7 +145,8 @@ export function recordManagedRoots(brainId: string, records: ManagedRootRecord[]
       ...(modeEpoch !== undefined ? { mode_epoch: modeEpoch } : {}) });
     changed = writePrivateRecord(file, value) || changed;
     if (existsSync(root) && statSync(root).isDirectory()) {
-      const metadata = enclosingGitMetadata(root);
+      // #7338: a datastore is marked in its own directory, never in the metadata of a repository that happens to enclose it.
+      const metadata = record.datastore ? null : enclosingGitMetadata(root);
       const marker = metadata ? join(metadata, 'gbrain-managed.json') : join(root, '.gbrain-managed');
       if (!existsSync(marker)) writePrivateRecord(marker, JSON.stringify({ version: 1, managed: true, brain_id: brainId, ...(modeEpoch !== undefined ? { mode_epoch: modeEpoch } : {}) }));
     }

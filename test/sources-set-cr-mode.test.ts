@@ -11,7 +11,7 @@
  *   - Missing arguments → exit code 2 with usage
  */
 
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runSources } from '../src/commands/sources.ts';
@@ -29,8 +29,9 @@ describe('gbrain sources set-cr-mode', () => {
 
   afterAll(async () => {
     await engine.disconnect();
-    process.exit = origExit;
   });
+
+  afterEach(() => { process.exit = origExit; });
 
   beforeEach(async () => {
     await resetPgliteState(engine);

@@ -17,10 +17,12 @@ import { bigintToStringReplacer } from '../core/utils.ts';
 export const WRITER_HELP = `Usage:
   gbrain sources writer status [<source>] [--probe] [--json]
   gbrain sources writer failures <source> [--state all] [--group-by category] [--since 7d] [--limit 20] [--before <cursor>]
-    [--category <c>] [--code <c>] [--origin <o>|none] [--json]
+    [--category <c>] [--code <c>] [--origin <o>|none] [--operation <op>] [--json]
   gbrain sources writer movement [<source>] [--wait <dur>] [--warn-only] [--json]
   gbrain sources writer retry-effects <source> --request-id <uuid> [--admin-intent writer_retry_effects --expected-state <admin_state>] [--dry-run] [--json]
   gbrain sources writer retry-effects <source> --parked-pushes [--dry-run] [--json]
+  gbrain sources writer retry-effects <source> --parked-code <code> [--dry-run] [--json]
+  gbrain sources writer settle-effects <source> --request-id <uuid>|--parked-code <code> [--unsettle] [--dry-run | --apply --expect <plan_hash>] [--json]
   gbrain sources writer git-durability <source> --enable|--disable [--pat-file <path>] [administration options] [--dry-run] [--json]
   gbrain sources writer claim <source> --path <directory> [administration options] [--dry-run] [--json]
   gbrain sources writer activate --confirm-quiesced [--cleanup-dead-local-locks] [--shared-skills] [administration options] [--dry-run] [--json]
@@ -35,7 +37,8 @@ failures (read-only) lists the source's write receipts that ended without commit
 (failed, conflict, cancelled) plus any still holding a recovery record, newest first, each
 with its class, safe actions, whether a person decides, its disposition (superseded,
 already_written, duplicate or unknown), an inspect command and its fix. --group-by category
-groups them on code, origin and category, each group with its exact drill-down filter.
+groups them on code, origin and category (a sync_fault group also on its operation), each
+group with its exact drill-down filter; --operation <op> keeps one write operation.
 A full page prints truncated with the next command (--before <cursor>). Unresolved rows by
 default; --state all adds resolved and historical ones. Human table by default, JSON with --json.
 Inspect status first. movement proves that managed sync data moves over a window
@@ -98,6 +101,16 @@ retry-effects <source> --parked-pushes does the same without a credential change
 attempt per Git effect of the source's worktree parked on a push (git_push_unavailable,
 push_unconfirmed, integrate_conflict); a push the remote rejected because it moved publishes
 over the remote without moving the checkout (gbrain sources refresh brings remote files in).
+retry-effects <source> --parked-code <code> gives one more attempt to every Git effect of the
+source's worktree with a target parked on that code; doctor parked_effects and writer status list
+each parked code with its command. A target a .gitignore rule excludes parks at once as
+git_target_ignored, naming the rule: change the rule first, or the retry parks it again.
+settle-effects records a settled disposition on Git effects a retry can never move, only on an
+exact-target proof: the target is now declared db_only in gbrain.yml, or the effect belongs to a
+former canonical worktree and the fetched remote branch holds the current bytes a later pushed Git
+effect wrote (nothing is fetched). The failure, request and target bytes are kept; doctor and
+retries skip settled effects. Preview first; --apply needs the preview's --expect <plan_hash>.
+--unsettle (previewed and plan-bound the same way) reverses a settlement; both stay in history.
 lock sets an opt-in, brain-level writer admin lock (config key persistence.writer_admin_lock)
 and unlock clears it; both are local-only, idempotent and print the resulting state.
 While locked, writer claim, activate and transfer (prepare, accept and cancel) are refused with
@@ -139,7 +152,7 @@ export function adminHostConfig<T extends GBrainConfig>(config: T | null | undef
 
 type Group = 'writer' | 'local-writer';
 const GROUP_ARGV: Record<Group, string[]> = { writer: ['gbrain', 'sources', 'writer'], 'local-writer': ['gbrain', 'auth', 'local-writer'] };
-const BARE_FLAGS = ['--json', '--dry-run', '--replace', '--probe', '--confirm-quiesced', '--self-transfer', '--confirm-relocated-root', '--cleanup-dead-local-locks', '--shared-skills', '--enable', '--disable', '--parked-pushes'];
+const BARE_FLAGS = ['--json', '--dry-run', '--replace', '--probe', '--confirm-quiesced', '--self-transfer', '--confirm-relocated-root', '--cleanup-dead-local-locks', '--shared-skills', '--enable', '--disable', '--parked-pushes', '--apply', '--unsettle'];
 /** A CLI usage refusal: the exact usage in the suggestion, the group's help as the read-only fix. */
 function invalid(group: Group, message: string, suggestion: string) {
   return opError('invalid_params', message, suggestion, {
@@ -156,8 +169,8 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
     '--path': 'path', '--source': 'source_id', '--expected-epoch': 'expected_epoch', '--manifest': 'manifest',
     '--source-ids': 'source_ids', '--scopes': 'scopes', '--allowed-operations': 'allowed_operations',
     '--slug-prefixes': 'slug_prefixes', '--limit': 'limit', '--before': 'before',
-    '--admin-intent': 'admin_intent', '--expected-state': 'expected_state', '--request-id': 'request_id', '--pat-file': 'pat_file',
-    '--state': 'state', '--group-by': 'group_by', '--since': 'since', '--code': 'code', '--origin': 'origin', '--category': 'category',
+    '--admin-intent': 'admin_intent', '--expected-state': 'expected_state', '--request-id': 'request_id', '--pat-file': 'pat_file', '--parked-code': 'parked_code',
+    '--state': 'state', '--group-by': 'group_by', '--since': 'since', '--code': 'code', '--origin': 'origin', '--category': 'category', '--expect': 'expect', '--operation': 'operation',
   };
   const arrays = new Set(['source_ids', 'scopes', 'allowed_operations', 'slug_prefixes']);
   const seen = new Set<string>();
@@ -190,6 +203,7 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
     if (verb === 'status') operation = 'writer_status';
     else if (verb === 'failures') operation = 'writer_failures';
     else if (verb === 'retry-effects') operation = 'writer_retry_effects';
+    else if (verb === 'settle-effects') operation = 'writer_settle_effects';
     else if (verb === 'git-durability') operation = 'writer_git_durability';
     else if (verb === 'claim') operation = 'writer_claim';
     else if (verb === 'activate') operation = 'writer_activate';
@@ -201,7 +215,7 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
       if (phase !== 'prepare' && phase !== 'accept' && phase !== 'cancel') throw invalid(group, 'Transfer requires prepare or accept (or cancel, which ends a prepared transfer).',
         'Run gbrain sources writer transfer prepare on the current owner host first, then gbrain sources writer transfer accept on the successor with the epoch and manifest prepare printed; gbrain sources writer transfer cancel <source> --expected-epoch <n> on the owner host ends a transfer nobody will accept.');
       operation = phase === 'prepare' ? 'writer_transfer_prepare' : phase === 'accept' ? 'writer_transfer_accept' : 'writer_transfer_cancel';
-    } else throw invalid(group, 'Writer administration requires status, failures, movement, retry-effects, git-durability, claim, activate, deactivate, transfer, lock, or unlock.',
+    } else throw invalid(group, 'Writer administration requires status, failures, movement, retry-effects, settle-effects, git-durability, claim, activate, deactivate, transfer, lock, or unlock.',
       `Name the action after gbrain sources writer${verb ? ` instead of ${verb}` : ''}; start with gbrain sources writer status --json, which changes nothing.`);
     const source = positional.shift();
     if (source !== undefined) {

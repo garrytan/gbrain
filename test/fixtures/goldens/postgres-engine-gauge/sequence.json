@@ -195,7 +195,7 @@
           "direct": 1,
           "raw": 2,
           "reserved": 1,
-          "tx": 1
+          "tx": 2
         }
       },
       "step": "getBacklinkCounts released"

@@ -28,11 +28,11 @@
  * if precision@HIGH < 0.75; fail PR if < 0.50.
  */
 
+import { gbrainPath } from '../core/config.ts';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'fs';
 import { isInteractive, readLine } from '../core/interaction.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { join, resolve } from 'path';
-import { homedir } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 
 const DEFAULT_TARGETS = { high: 20, medium: 20, low: 10 } as const;
@@ -68,12 +68,12 @@ interface MineOpts {
 
 /** Resolve the path where mining writes its candidates JSONL. */
 export function defaultMiningOutPath(): string {
-  return join(homedir(), '.gbrain', 'eval', 'notability-mining-candidates.jsonl');
+  return gbrainPath('eval', 'notability-mining-candidates.jsonl');
 }
 
 /** Resolve the path where review writes confirmed cases. */
 export function defaultReviewOutPath(): string {
-  return join(homedir(), '.gbrain', 'eval', 'notability-real.jsonl');
+  return gbrainPath('eval', 'notability-real.jsonl');
 }
 
 /**

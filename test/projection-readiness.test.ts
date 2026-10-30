@@ -115,7 +115,7 @@ describe('canonical projection readiness', () => {
     } as any, { sourceId: "source-'quote", excludePrivate: true });
     expect(result.status).toBe('projection_pending');
     // Besides the probe, at most the cache's read-only generation read runs.
-    const probes = calls.filter(call => call.sql.includes('SELECT EXISTS'));
+    const probes = calls.filter(call => call.sql.includes('ORDER BY p.source_id, p.page_kind, p.slug LIMIT 1'));
     expect(probes).toHaveLength(1);
     expect(calls.length).toBeLessThanOrEqual(2);
     expect(probes[0].sql).toContain('IS DISTINCT FROM');
@@ -148,7 +148,7 @@ describe('projection readiness cache', () => {
   const counted = () => {
     let probes = 0;
     const wrapped = { executeRaw: async (sql: string, params?: unknown[]) => {
-      if (sql.includes('SELECT EXISTS')) probes++;
+      if (sql.includes('ORDER BY p.source_id, p.page_kind, p.slug LIMIT 1')) probes++;
       return engine.executeRaw(sql, params);
     } };
     return { engine: wrapped as unknown as PGLiteEngine, probes: () => probes };
@@ -194,7 +194,7 @@ describe('projection readiness cache', () => {
   test('an unknown answer is never reused, and GBRAIN_PROJECTION_READINESS_CACHE=0 always probes', async () => {
     let fail = true;
     const flaky = { executeRaw: async (sql: string, params?: unknown[]) => {
-      if (sql.includes('SELECT EXISTS') && fail) throw new Error('transient');
+      if (sql.includes('ORDER BY p.source_id, p.page_kind, p.slug LIMIT 1') && fail) throw new Error('transient');
       return engine.executeRaw(sql, params);
     } } as unknown as PGLiteEngine;
     expect((await probeProjectionReadiness(flaky)).status).toBe('unknown');
@@ -211,7 +211,7 @@ describe('projection readiness cache', () => {
   test('nothing is cached while a transaction is in flight', async () => {
     let probes = 0;
     const busy = { executeRaw: async (sql: string, params?: unknown[]) => {
-      if (sql.includes('SELECT EXISTS')) probes++;
+      if (sql.includes('ORDER BY p.source_id, p.page_kind, p.slug LIMIT 1')) probes++;
       const rows = await engine.executeRaw<Record<string, unknown>>(sql, params);
       return sql.includes('pg_current_snapshot') ? rows.map(row => ({ ...row, quiescent: false })) : rows;
     } } as unknown as PGLiteEngine;

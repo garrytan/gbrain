@@ -168,6 +168,10 @@ const MATRIX: Row[] = [
   { name: 'get_versions', mode: 'isolated', args: { slug: 'notes/beta-note' } },
   { name: 'get_raw_data', mode: 'isolated', args: { slug: 'notes/beta-note' } },
   { name: 'resolve_slugs', mode: 'isolated', args: { partial: 'beta' } },
+  // whois echoes its query, so the probe reads the matches.
+  { name: 'whois', mode: 'isolated', args: { query: 'BETAMARKER Person' },
+    controlSees: r => leakToken((r as any).matches) !== null,
+    expectScoped: r => { expect(leakToken((r as any).matches)).toBeNull(); } },
   { name: 'get_chunks', mode: 'isolated', args: { slug: 'notes/beta-note' } },
   { name: 'get_ingest_log', mode: 'isolated', args: { limit: 50 } },
   { name: 'find_orphans', mode: 'isolated', args: {} },

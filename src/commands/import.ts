@@ -79,10 +79,10 @@ export async function listConfiguredRoots(
       `SELECT local_path FROM sources WHERE id = $1`,
       [destinationSourceId],
     );
-    for (const row of rows) if (row.local_path) roots.push(resolve(row.local_path)); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- resolves REGISTERED roots to build the containment allowlist (#4388 guard)
+    for (const row of rows) if (row.local_path && isAbsolute(row.local_path)) roots.push(resolve(row.local_path)); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- resolves REGISTERED roots to build the containment allowlist (#4388 guard)
     if (destinationSourceId === 'default') {
       const legacyRoot = await engine.getConfig('sync.repo_path');
-      if (legacyRoot) roots.push(resolve(legacyRoot)); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- same: registered root canonicalization for the guard allowlist
+      if (legacyRoot && isAbsolute(legacyRoot)) roots.push(resolve(legacyRoot)); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- same: registered root canonicalization for the guard allowlist
     }
   } catch (error) {
     throw new Error(
@@ -1155,7 +1155,7 @@ export async function runImport(
       // only an import whose canonical target IS the registered local_path
       // may stamp. `dir` is already the canonical realpath (#1728).
       let coversRegisteredRoot = false;
-      if (row?.local_path) {
+      if (row?.local_path && isAbsolute(row.local_path)) {
         try {
           const { realpathSync } = await import('fs');
           coversRegisteredRoot = realpathSync(row.local_path) === dir;

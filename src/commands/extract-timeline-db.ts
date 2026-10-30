@@ -183,7 +183,7 @@ export async function extractTimelineFromDB(engine: BrainEngine, opts: TimelineD
     // A segmented body is read block by block (segmentedTimelineText), never as one string.
     const segmented = isSegmentedPage(page) ? await segmentedTimelineText(engine, page) : null;
     const fullContent = segmented ?? page.compiled_truth + '\n' + page.timeline;
-    if (!opts.dryRun) await retractRemovedTimelineEntries(engine, slug, source_id, fullContent);
+    if (!opts.dryRun) await retractRemovedTimelineEntries(engine, slug, source_id, fullContent, snapshot ? { expectedRevision: snapshot.revision } : {});
     let entries = segmented ? segmented.entries : parseTimelineEntries(page.compiled_truth + '\n' + page.timeline);
     // --infer-dates: pages with no in-body timeline line but a trustworthy
     // content date (frontmatter / filename) get one anchor entry at that date.

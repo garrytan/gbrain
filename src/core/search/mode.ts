@@ -425,7 +425,7 @@ export interface ModeBundle {
    * bundle. Override: `search.rank_priors` (boolean).
    */
   rank_priors: boolean;
-  /** #7175: keyword phrase factor (sql-ranking.ts KEYWORD_PHRASE_FACTOR). On in every bundle. Override: `search.keyword_phrase` (boolean). */
+  /** #7175: keyword phrase factor (sql-ranking.ts KEYWORD_PHRASE_FACTOR). Off in every bundle (opt-in). Override: `search.keyword_phrase` (boolean). */
   keyword_phrase: boolean;
   /**
    * Ranker wave (Phase E2, Cat 13) — arm-confidence-weighted fusion of the
@@ -536,7 +536,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     diverse_pool_depth: 0,
     collapse: true,
     rank_priors: true,
-    keyword_phrase: true,
+    keyword_phrase: false,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
@@ -608,7 +608,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     diverse_pool_depth: 0,
     collapse: true,
     rank_priors: true,
-    keyword_phrase: true,
+    keyword_phrase: false,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
@@ -680,7 +680,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     diverse_pool_depth: 0,
     collapse: true,
     rank_priors: true,
-    keyword_phrase: true,
+    keyword_phrase: false,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
@@ -1304,7 +1304,7 @@ export function knobsHash(
     // Collapse and rank priors (append-only, emitted only when turned off).
     ...(knobs.collapse === false ? ['col=0'] : []),
     ...(knobs.rank_priors === false ? ['rpr=0'] : []),
-    ...(knobs.keyword_phrase === false ? ['kph=0'] : []),
+    ...(knobs.keyword_phrase === true ? ['kph=1'] : []),
   ];
   // #5691 (append-only, no version bump): only a non-empty query prefix adds
   // a part, so every row written without one keeps its key.

@@ -31,8 +31,6 @@ import { opError } from '../core/ops/contract.ts';
 import { readFix } from '../core/ops/op-fix.ts';
 import { PAGE_MAX_BYTES } from '../core/page-size-policy.ts';
 import { isSegmentedPage } from '../core/page-body/page-shape.ts';
-import { openSegmentedBody } from '../core/page-body/read-range.ts';
-import { markdownHead, segmentedMarkdownDocument } from '../core/page-window/segmented.ts';
 
 /** Window size the thin client asks for while paging a whole page. */
 export const REMOTE_PAGE_WINDOW_BYTES = 512 * 1024;
@@ -231,6 +229,7 @@ export async function streamSegmentedGet(engine: BrainEngine, params: Record<str
   const { page, tags } = snapshot;
   const json = params.json === true;
   if (json && Number(page.body_bytes) > PAGE_MAX_BYTES) throw jsonTooLargeError(page.slug, page.source_id, Number(page.body_bytes));
+  const [{ openSegmentedBody }, { markdownHead, segmentedMarkdownDocument }] = await Promise.all([import('../core/page-body/read-range.ts'), import('../core/page-window/segmented.ts')]);
   const body = await openSegmentedBody(engine, { pageId: page.id, ledger: { withdrawals: snapshot.withdrawals, ...(snapshot.globalPurges ? { globalPurges: snapshot.globalPurges } : {}) },
     pin: { revision: snapshot.revision, generation: snapshot.bodyGeneration } });
   const doc = await segmentedMarkdownDocument(engine, body, markdownHead(page, tags), 'trusted');

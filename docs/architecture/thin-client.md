@@ -18,7 +18,7 @@ The generic `gbrain call` dispatcher is host-only and refuses before opening a
 local engine; use the named CLI command or an authorized MCP tool instead.
 
 **Surface posture:** thin CLI clients use the full MCP surface for remote
-command compatibility. Bootstrap pins `--surface full`; managed thin CLI grants
+command compatibility. Bootstrap pins `--surface starter --advertise verbs`; managed thin CLI grants
 for OpenClaw, Grok Bot, and Muse also select `full`. Surface visibility does not
 grant authority: profiles, token scopes, operation snapshots, sources, and write
 fences still restrict requests. A `memory-writer` thin client gains neither
@@ -48,6 +48,15 @@ Keep general-purpose thin-client OAuth rows at `full` (or NULL). Native MCP
 configurations can deliberately use starter/verbs to expose fewer tools. Stdio
 serves the server-resolved surface directly, without a client row; per-client
 surface ceilings (`effectiveSurfaceForClient`) apply only to OAuth HTTP.
+
+**Writes to a strict source:** a thin client's write is an ordinary remote
+journal request. On a source in git-canonical mode (`canonical: git`) the
+brain owner's door commits it to Git before the database row commits, and the
+receipt names the commit (`outcome.persistence.git_commit`). While the owner
+is down the call ends `write_pending` (exit 10) with its request id, and
+`gbrain write-request <id>` follows it; nothing is written to the
+database first. Design: `docs/designs/GIT_CANONICAL_MEMORY.md`, "Remote and
+hosted writes".
 
 Key files (per-file detail lives in each file's `KEY_FILES.md` entry; this doc
 carries the routing-seam picture):

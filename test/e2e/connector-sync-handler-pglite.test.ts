@@ -61,6 +61,8 @@ describe('connector-sync handler', () => {
   });
 
   test('no credential → returns auth_required (NOT thrown), releases the lock', async () => {
+    // #7515: a scheduled job runs only while auto_sync is on (test/connectors-hardening-7515.test.ts pins the skip).
+    await engine.setConfig('connectors.chatgpt.auto_sync', 'true');
     const handler = makeConnectorSyncHandler(engine);
     const r = (await handler(fakeJob({ provider: 'chatgpt', sourceId: 'default' }))) as { status: string };
     expect(r.status).toBe('auth_required');

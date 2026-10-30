@@ -28,6 +28,7 @@ import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { applyFactsReconcileBacklog, readFactsReconcileBacklog } from '../src/core/facts/reconcile-watermark.ts';
 import { acquirePageLock } from '../src/core/page-lock.ts';
+import { emptyFenceBlock } from '../src/core/generations/fence.ts';
 import { managedPersistenceEnabled } from '../src/core/persistence/ownership.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -121,7 +122,7 @@ for (const backend of testBackends()) {
     expect((await activeFacts(engine)).map(f => f.fact)).toEqual(['Claim one', 'Claim two']);
   }), 60_000);
 
-  test(`${backend}: removing the whole fence expires its rows; cli: facts and withdrawals survive`, () => brain(databaseUrl, async ({ engine }) => {
+  test(`${backend}: removing the whole fence holds its rows; the empty fence expires them; cli: facts and withdrawals survive`, () => brain(databaseUrl, async ({ engine }) => {
     await put(engine, 'people/alice-example', body(`${row(1, 'Claim one')}\n${row(2, 'Claim two')}`));
     await drainRun(engine);
     await engine.insertFacts( // gbrain-allow-direct-insert: test fixture for a conversation-origin row
@@ -131,6 +132,12 @@ for (const backend of testBackends()) {
     await engine.executeRaw(
       `INSERT INTO fact_withdrawals (source_id, visibility, subject, fact_hash) VALUES ('default', 'world', 'people/alice-example', 'abc123')`);
     await put(engine, 'people/alice-example', '# Page\n\nProse only now.');
+    const held = await drainRun(engine);
+    expect(held.factsDeleted).toBe(0);
+    expect((await activeFacts(engine)).map(f => f.fact)).toEqual(['Claim one', 'Claim two', 'Said in a meeting']);
+    const [hold] = await engine.executeRaw<{ held_reason: string }>("SELECT held_reason FROM derived_generations WHERE kind='fact_fence' AND state='held'");
+    expect(hold?.held_reason).toBe('fence_absent');
+    await put(engine, 'people/alice-example', `# Page\n\nProse only now.\n\n${emptyFenceBlock('facts')}`);
     const r = await drainRun(engine);
     expect(r.factsDeleted).toBe(2);
     expect(await activeFacts(engine)).toEqual([{ slug: 'people/alice-example', fact: 'Said in a meeting', row_num: 100 }]);

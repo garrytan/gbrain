@@ -85,7 +85,7 @@ describe('source resolution inside one request snapshot', () => {
         expect(live.value.source_id).toBe('source-a');
         expect(snapshot.value).toEqual(live.value);
         expect(sourceScans(live.sql).length).toBeGreaterThan(1);
-        expect(sourceScans(snapshot.sql)).toEqual(['SELECT id, local_path, archived, config FROM sources ORDER BY id']);
+        expect(sourceScans(snapshot.sql)).toEqual([`SELECT id, local_path, archived, config, EXISTS (SELECT 1 FROM pages WHERE source_id = 'default' AND deleted_at IS NULL) AS default_has_pages FROM sources ORDER BY id`]);
       });
     });
   }

@@ -54,6 +54,7 @@ const load_timeline = () => import('./ops/timeline.ts') as Promise<Record<string
 const load_transcripts = () => import('./ops/transcripts.ts') as Promise<Record<string, unknown>>;
 const load_trust = () => import('./ops/trust.ts') as Promise<Record<string, unknown>>;
 const load_usage = () => import('./ops/usage.ts') as Promise<Record<string, unknown>>;
+const load_whois = () => import('./ops/whois.ts') as Promise<Record<string, unknown>>;
 const load_verbs = () => import('./verbs.ts') as Promise<Record<string, unknown>>;
 
 export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<string, unknown>>, string]> = {
@@ -135,6 +136,7 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "get_raw_data": [load_raw_data, "rawDataOperations"],
   "resolve_slugs": [load_chunks, "chunksOperations"],
   "get_chunks": [load_chunks, "chunksOperations"],
+  "whois": [load_whois, "whoisOperations"],
   "log_ingest": [load_ingest_log, "ingestLogOperations"],
   "get_ingest_log": [load_ingest_log, "ingestLogOperations"],
   "get_usage": [load_usage, "usageOperations"],

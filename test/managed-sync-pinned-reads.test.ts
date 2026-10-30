@@ -142,7 +142,8 @@ async function dump(e: BrainEngine, root: string): Promise<Record<string, string
     takes: await rows('SELECT to_jsonb(k) - \'superseded_by\' AS r FROM takes k JOIN pages p ON p.id=k.page_id WHERE p.source_id=$1'),
     versions: await rows('SELECT to_jsonb(v) AS r FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.source_id=$1'),
     chronicle: await rows('SELECT to_jsonb(c) AS r FROM chronicle_page_state c WHERE source_id=$1'),
-    effects: await rows(`SELECT to_jsonb(e) - ARRAY['state','attempts','error_code','outcome','recovery','recovery_bytes'] AS r FROM persistence_effects e WHERE source_id=$1`),
+    // An effect may still be running when a round ends, so its lifecycle columns (and its claim's owner stamp, GBRA-133) are not compared.
+    effects: await rows(`SELECT to_jsonb(e) - ARRAY['state','attempts','error_code','outcome','recovery','recovery_bytes','claim_owner'] AS r FROM persistence_effects e WHERE source_id=$1`),
     receipts: await rows(`SELECT jsonb_build_object('intent',r.intent,'state',r.state,'error_code',r.error_code,'error_message',r.error_message,
         'outcome',r.outcome,'slug',r.slug,'page_id',r.page_id,'publication_started',r.publication_started,'compacted',r.compacted) AS r
       FROM persistence_requests r WHERE r.source_id=$1`),
@@ -164,7 +165,7 @@ function gitCounter(dir: string): GitCounter {
   const log = join(dir, 'git.log'), bin = join(dir, 'bin');
   mkdirSync(bin, { recursive: true });
   const real = REAL_GIT ??= execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8', timeout: 10_000, env: { ...process.env, PATH: PATH_AT_LOAD } }).trim();
-  writeFileSync(join(bin, 'git'), `#!/bin/sh\nprintf 'S %s %s %s\\n' "$$" "$(date +%s%N)" "$*" >> '${log}'\n'${real}' "$@"\ncode=$?\n`
+  writeFileSync(join(bin, 'git'), `#!/bin/sh\nprintf 'S %s %s %s\\n' "$$" "$(date +%s%N)" "$*" >> '${log}'\nPATH='${PATH_AT_LOAD ?? ''}' '${real}' "$@"\ncode=$?\n`
     + `printf 'E %s %s %s\\n' "$$" "$(date +%s%N)" "$code" >> '${log}'\nexit $code\n`);
   chmodSync(join(bin, 'git'), 0o755);
   const lines = () => existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : [];

@@ -176,7 +176,7 @@ process.stdin.on('end', () => {
       const pending = privacy.protectNewBackupPath(path, 'file');
       expect(callback).toBe(false);
       if (mode === 'success') await pending;
-      else await expect(pending).rejects.toMatchObject({ code: 'private_backup_path_unavailable' });
+      else await expect(pending).rejects.toMatchObject({ code: mode === 'timeout' ? 'private_backup_protection_timeout' : 'private_backup_path_unavailable' });
       expect(calls).toBe(1);
       expect(callback).toBe(true);
       expect(child).toBeDefined();

@@ -503,29 +503,30 @@ for (const kind of testBackends()) {
     }
 
     test('a mirror whose process dies mid-stream discards the partial file on recovery and publishes', async () => {
-      const recoveryState = async () => (await brain.engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM persistence_effects
-        WHERE source_id=$1 AND kind='withdrawal-mirror' AND state='queued' AND recovery IS NOT NULL`, [brain.sourceId]))[0]!.n;
       // The seam fires after each piece written to the in-progress file; on the third the process "dies". A death leaves
       // that file as it is, while the modelled one (a throw) lets the writer remove it, so its bytes are put back at the
-      // same path once the attempt has released its claim and before recovery runs: the state a death leaves.
+      // same path when recovery starts (seam effect_recovery:before_stage, after the attempt released its claim): the
+      // state a death leaves, whichever process (this test's pass or the background consumer) runs the recovery.
       let pieces = 0;
       let partial: { path: string; bytes: Buffer; stage: string } | null = null;
       let restored = false;
       installFaultHook(async (point, detail) => {
+        if (point === 'effect_recovery:before_stage') {
+          if (partial && !restored && !existsSync(partial.path)) {
+            writeFileSync(partial.path, partial.bytes, { flag: 'wx' });
+            restored = true;
+          }
+          return;
+        }
         if (point !== 'large_file:stage_streaming' || partial || ++pieces < 3) return;
         const [row] = await brain.engine.executeRaw<{ recovery: any }>('SELECT recovery FROM persistence_effects WHERE source_id=$1 AND recovery IS NOT NULL', [brain.sourceId]);
         const recovery = typeof row!.recovery === 'string' ? JSON.parse(row!.recovery) : row!.recovery;
         partial = { path: detail.path!, bytes: readFileSync(detail.path!), stage: recovery.staging.publication.path };
         throw new Error('modelled death mid-stream');
       });
-      const putBack = async () => {
-        if (!partial || restored || existsSync(partial.path) || !(await recoveryState())) return;
-        writeFileSync(partial.path, partial.bytes, { flag: 'wx' });
-        restored = true;
-      };
       resetWork();
       let receipt: Awaited<ReturnType<typeof purge>>;
-      try { receipt = await purge(brain, kind, SEGMENTED, STREAM_CLAIM, putBack); } finally { installFaultHook(undefined); }
+      try { receipt = await purge(brain, kind, SEGMENTED, STREAM_CLAIM); } finally { installFaultHook(undefined); }
       const work = { ...largeFileWork };
       const file = readFileSync(fileOf(brain, SEGMENTED));
 

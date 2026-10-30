@@ -268,7 +268,7 @@ export async function recoverEffectPublication(engine: BrainEngine, effect: Pers
     if (!snapshot || snapshot.page.id !== record.pageId || snapshot.revision !== record.revision) {
       if (streamed && forward) await cleanup();
       await clearRecovery(tx, current);
-      await tx.executeRaw(`UPDATE persistence_effects SET state='queued',execution_token=NULL,claim_expires_at=NULL,
+      await tx.executeRaw(`UPDATE persistence_effects SET state='queued',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,
         next_attempt_at=now(),error_code=NULL,updated_at=now() WHERE id=$1`, [current.id]);
       return;
     }

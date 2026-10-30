@@ -44,7 +44,7 @@ export async function resolveExtractAtomsInputCap(engine: BrainEngine): Promise<
 }
 
 export type ExtractAtomsItem =
-  | { kind: 'transcript'; filePath: string; content: string; contentHash: string }
+  | { kind: 'transcript'; filePath: string; content: string; contentHash: string; transcriptKey?: string }
   | ({ kind: 'page' } & AtomPageInput);
 
 export interface ExtractAtomsInput {

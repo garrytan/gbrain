@@ -28,7 +28,7 @@ src/commands/serve-http-registration.ts	1
 src/commands/serve-http-webhooks.ts	4
 src/commands/skillpack.ts	1
 src/commands/sources-retry-held.ts	2
-src/commands/upgrade.ts	7
+src/commands/upgrade.ts	1
 src/core/agent-install/entry.ts	1
 src/core/agent-install/shared-skills.ts	7
 src/core/ai/recipes/llama-server.ts	2
@@ -36,7 +36,7 @@ src/core/ai/recipes/lmstudio.ts	2
 src/core/backup/coverage.ts	11
 src/core/backup/repository.ts	1
 src/core/brainstorm/error-classify.ts	1
-src/core/connectors/sync.ts	8
+src/core/connectors/sync.ts	7
 src/core/context/hook-heartbeat.ts	2
 src/core/cycle/patterns.ts	1
 src/core/cycle/synthesize.ts	1

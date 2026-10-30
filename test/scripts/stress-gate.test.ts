@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { GitHubClient } from '../../scripts/lib/gh-issue.ts';
 import {
-  RACE_MAX_SHARDS, RACE_MIN_ITERATIONS, RACE_SHARD_BUDGET_MS, buildReport, loadExemptions, matchExemption, missingWork,
+  RACE_FLOOR_MAX_SHARDS, RACE_MAX_SHARDS, RACE_MIN_ITERATIONS, RACE_SHARD_BUDGET_MS, buildReport, loadExemptions, matchExemption, missingWork,
   parseExemptionBlocks, planGate, planRaceHunt, shardTimings, type GhIssue, type Plan, type StressFailure,
 } from '../../scripts/stress/gate.ts';
 import type { Weights } from '../../scripts/stress/plan.ts';
@@ -118,6 +118,17 @@ describe('race hunt plan', () => {
     const deep = (p: Plan) => p.files.filter(f => f.iterations > Math.min(...p.files.map(x => x.iterations))).map(f => f.file);
     expect(deep(monday)).not.toEqual(deep(tuesday));
     expect(monday.shards.every(s => s.estimateMs <= RACE_SHARD_BUDGET_MS)).toBe(true);
+  });
+
+  test('a 3-iteration floor past 12 shards runs every file in a second group of up to 24 shards', () => {
+    const root = armsRepo(20);
+    const plan = planRaceHunt(root, { day: 0 }, weights(Object.fromEntries(list(20).map(f => [f, 15 * 60_000]))));
+    expect(plan.unrun).toEqual([]);
+    expect(plan.files.map(f => f.file)).toEqual(list(20));
+    expect(plan.files.every(f => f.iterations === RACE_MIN_ITERATIONS)).toBe(true);
+    expect(plan.shards.length).toBeGreaterThan(RACE_MAX_SHARDS);
+    expect(plan.shards.length).toBeLessThanOrEqual(RACE_FLOOR_MAX_SHARDS);
+    expect(plan.shards.every(s => s.estimateMs <= RACE_SHARD_BUDGET_MS)).toBe(true);
   });
 
   test('a set that does not fit at 3 iterations fails "race hunt over budget" naming the unrun files', () => {

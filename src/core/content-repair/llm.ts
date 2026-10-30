@@ -24,12 +24,14 @@
  * `JUDGMENT_PROMPT_VERSION`: a verdict already given for these exact inputs
  * (rejected: `merge_into`, `needs_human`, an unusable answer) is returned at
  * $0 until one of them changes; `llm_unavailable` is transient and does not
- * consume it. A published `remove_slug` changes the bytes, so its memo never
+ * consume it, while a provider error that refuses this request's own input
+ * (`providerItemRefusal`) is `llm_refused` and does. A published `remove_slug` changes the bytes, so its memo never
  * matches again.
  *
  * Messages carry reason codes, slugs, hashes and dollar amounts only.
  */
 import type { BrainEngine } from '../engine.ts';
+import { providerItemRefusal } from '../ai/errors.ts';
 import { chat, isThinkingModel, THINKING_MODEL_MAX_OUTPUT_TOKENS, type ChatResult } from '../ai/gateway.ts';
 import { thinkingOffControl, thinkingOffMaxOutputTokens } from '../ai/thinking-off.ts';
 import { mergedProviderEnv } from '../ai/provider-env.ts';
@@ -121,7 +123,7 @@ export async function askJudgment(input: JudgmentInput, opts: { model: string; t
     result = await chat({ model: opts.model, system: typeof system!.content === 'string' ? system!.content : '', messages, maxTokens: budget.maxOutputTokens, allowFallback: false,
       thinking: 'off', purpose: 'content_repair', ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}), ...(opts.signal ? { abortSignal: opts.signal } : {}) });
   } catch (error) {
-    return { ok: false, reason: 'llm_unavailable', error: error instanceof Error ? error.name : 'Error' };
+    return { ok: false, reason: providerItemRefusal(error) ? 'llm_refused' : 'llm_unavailable', error: error instanceof Error ? error.name : 'Error' };
   }
   const parsed = parseJudgmentAnswer(result, { held: input.held.slug, named: input.named?.slug ?? null });
   if (!parsed.ok) return { ok: false, reason: parsed.reason, text: result.text, result };

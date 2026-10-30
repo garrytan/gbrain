@@ -13,7 +13,7 @@
 // a 4.6 GB one never reached it within 120 s.
 
 import { afterEach, describe, expect, it } from "bun:test";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { makeGitFixture } from "../helpers/git-fixture.ts";
@@ -61,7 +61,8 @@ describe("ci:ubicloud teardown", () => {
       throw new Error(`ci-ubicloud exited ${code} before the probe signal\n${await stdout}\n${await stderr}`);
     });
     await Promise.race([waitForEvent(api, /^created \S+-ci01/, 120_000), exitedEarly]);
-    await Promise.race([waitForEvent(api, /^create-start \S+-ci03/, 10_000), exitedEarly]);
+    // ci02 and ci03 are spawned together but their creates reach the API in either order, so wait for both.
+    for (const vm of [/^create-start \S+-ci02/, /^create-start \S+-ci03/]) await Promise.race([waitForEvent(api, vm, 10_000), exitedEarly]);
     exitedEarly.catch(() => {});
     expect(api.events.some((e) => /^created \S+-ci0[23]/.test(e))).toBe(false);
     child.kill(signal);
@@ -83,4 +84,57 @@ describe("ci:ubicloud teardown", () => {
     expect(out).toContain("teardown confirmed 3 VM(s) gone");
     expect(await stderr).not.toContain("WARNING");
   }, 180_000);
+});
+
+// A SIGTERM while batches run (a cancelled gate) kills those batches. They
+// are the teardown's doing, so the run reports an interrupt: no VM is
+// retired for "infrastructure errors" and nothing claims every VM failed.
+// scripts/ubicloud/ubi-runner.sh is replaced in the fixture by a stub whose
+// batches block until killed.
+const STUB_RUNNER = [
+  "#!/usr/bin/env bash",
+  "sub=$1; shift",
+  "case \"$sub\" in",
+  "  owner) echo probe;;",
+  "  pack) tar -C \"$1\" -cf - scripts 2>/dev/null;;",
+  "  unpack) cat >/dev/null;;",
+  "  down) sleep 2;;",
+  "  ssh) name=$1; shift; case \"$*\" in *ci-item.sh*) echo \"$name\" >> \"$UBI_RUNNER_STATE/batches\"; exec sleep 60;; *\"bash -s\"*) cat >/dev/null;; esac;;",
+  "esac",
+  "exit 0",
+].join("\n");
+
+describe("ci:ubicloud interrupt", () => {
+  it("SIGTERM while batches run reports an interrupt, not VM infrastructure errors", async () => {
+    dir = mkdtempSync(join(tmpdir(), "ci-ubicloud-interrupt-"));
+    const repo = join(dir, "repo");
+    mkdirSync(repo);
+    await makeGitFixture(repo);
+    cpSync(join(ROOT, "scripts"), join(repo, "scripts"), { recursive: true });
+    cpSync(join(ROOT, "docker-compose.ci.yml"), join(repo, "docker-compose.ci.yml"));
+    writeFileSync(join(repo, "scripts/ubicloud/ubi-runner.sh"), STUB_RUNNER, { mode: 0o755 });
+    mkdirSync(join(repo, "test"));
+    for (let i = 0; i < 12; i++) writeFileSync(join(repo, "test", `t${i}.test.ts`), "import { test } from 'bun:test';\ntest('x', () => {});\n");
+    const state = join(dir, "state");
+    mkdirSync(state);
+    const child = (proc = Bun.spawn(["bun", "run", "scripts/ci-ubicloud.ts", "--vms", "1", "--lanes", "unit"], {
+      cwd: repo,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dir, UBICLOUD_API_KEY: "test-token", UBI_RUNNER_STATE: state, UBI_OWNER: "probe" },
+      stdout: "pipe",
+      stderr: "pipe",
+    }));
+    const stdout = new Response(child.stdout).text();
+    const stderr = new Response(child.stderr).text();
+    for (let i = 0; i < 300 && !existsSync(join(state, "batches")); i++) await Bun.sleep(100);
+    expect(existsSync(join(state, "batches"))).toBe(true);
+    await Bun.sleep(500);
+    child.kill("SIGTERM");
+    expect(await child.exited).toBe(130);
+    const out = await stdout;
+    const err = await stderr;
+    expect(out).toContain("SIGTERM: tearing down");
+    expect(out).not.toContain("infrastructure errors");
+    expect(err).not.toContain("every VM failed");
+    expect(err).toMatch(/interrupted: \d+ item\(s\) did not run/);
+  }, 120_000);
 });

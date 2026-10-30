@@ -31,7 +31,7 @@
  *
  * PGLite here; Postgres through test/e2e/sync-entry-faults-6712-postgres.test.ts.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -45,6 +45,7 @@ import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readSyncStatus } from '../src/core/persistence/sync-status.ts';
 import { readBlockedManagedSyncs } from '../src/core/persistence/sync-blocked.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
+import { persistencePostgresTemplate } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -78,7 +79,10 @@ afterEach(() => installFaultHook(undefined));
 
 for (const backend of testBackends()) describe(`[${backend}] GBRA-133: one odd file never stops a managed source`, () => {
   const databaseUrl = backend === 'postgres' ? process.env.DATABASE_URL : undefined;
-  const brain = (run: Parameters<typeof managedBrain>[0]) => managedBrain(run, { ...(databaseUrl ? { databaseUrl } : {}), setup });
+  let template: Awaited<ReturnType<typeof persistencePostgresTemplate>> | undefined;
+  beforeAll(async () => { if (databaseUrl) template = await persistencePostgresTemplate(databaseUrl); }, 120_000);
+  afterAll(async () => { await template?.dispose(); });
+  const brain = (run: Parameters<typeof managedBrain>[0]) => managedBrain(run, { ...(template ? { open: template.clone } : {}), setup });
 
   test('S-39: a NUL byte in a Markdown file is held content_null_bytes naming the file and line; the rest syncs', () => brain(async ({ engine, root }) => {
     const first = await oddThenHealthy(engine, root, () => writeFileSync(join(root, 'notes/odd.md'), '---\ntitle: odd\n---\nfirst line\nbody\u0000here\n'));

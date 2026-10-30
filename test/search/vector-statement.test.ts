@@ -239,7 +239,7 @@ describe('source scope strategy: walk overfetch, walk skip and scope scan', () =
     expect(cte).toContain('AND cc.language = $4');
     expect(cte).toContain('AND (cc.model=$6 OR');
     expect(cte).not.toContain(MD5);
-    expect(cte).toContain('ORDER BY (cc."embedding" <=> $1::vector) + 0, cc.id');
+    expect(cte).toContain('ORDER BY (cc."embedding" <=> $1::text::vector) + 0, cc.id');
     expect(cte).toContain(`LIMIT $${stmt.innerLimitIdx + 1}\n`);
     expect(scan).toContain('JOIN content_chunks cc ON cc.id = scope_scan.id');
     expect(scoredCte(scan)).toContain('WHERE $6::text IS NULL OR hash_current');

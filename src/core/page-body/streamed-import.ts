@@ -48,6 +48,7 @@ import { BodyScanner, type BodyPiece, type BodyScan } from './body-scan.ts';
 import { FRONTMATTER_HEAD_MAX_BYTES, SEGMENT_MAX_BYTES, type PageBodyPolicy } from './limits.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 import { classifyImportHold, resolveParsedSubtype, type ParsedMarkdown } from '../markdown.ts';
+import { noncanonicalPrivateHold } from '../persistence/visibility-request.ts';
 import { loadImportSanityConfig, settleContentDisposition, stripGateOwnedMarkers } from '../import-screen.ts';
 import { JUNK_SAMPLE_CHARS } from '../content-sanity.ts';
 import { QUARANTINE_OVERRIDE_KEY } from '../quarantine-override.ts';
@@ -310,7 +311,7 @@ export async function importStreamedMarkdownFile(engine: BrainEngine, filePath: 
     return { slug: '', status: 'skipped', skip_reason: 'malformed_path', chunks: 0,
       error: `Path "${relativePath}" contains bracket or control characters and cannot be imported. Rename the file to import it.` };
   }
-  if (!opts.coordinated) await assertUnmanagedCanonicalWriter(engine, 'direct content import');
+  if (!opts.coordinated) await assertUnmanagedCanonicalWriter(engine, 'direct content import', { sourceId: opts.sourceId ?? 'default' });
   const expectedSlug = slugifyPath(relativePath);
   const file = await open(assertSourceFilePath(filePath), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
@@ -344,6 +345,9 @@ async function importScanned(engine: BrainEngine, input: { file: FileHandle; bom
   const parsed = { ...scan.parsed, compiled_truth: '', timeline: '' } as ParsedMarkdown;
   const frontmatterHold = classifyImportHold(parsed);
   if (frontmatterHold) return { slug: expectedSlug, status: 'skipped', chunks: 0, error: frontmatterHold.message, refusal: frontmatterHold, skip_reason: 'invalid_frontmatter' };
+  // #7848: a private request page privacy would not read is held; only an upload session (`content` plus `coordinated`) refuses it at its own guard.
+  const privateHold = opts.content && opts.coordinated ? null : noncanonicalPrivateHold('', parsed.frontmatter);
+  if (privateHold) return { slug: expectedSlug, status: 'skipped', chunks: 0, error: privateHold.message, refusal: privateHold, skip_reason: privateHold.code };
   let slug = expectedSlug;
   if (!expectedSlug || parsed.slug !== expectedSlug) {
     if (!expectedSlug ? !parsed.slug : slugifyPath(parsed.slug) !== expectedSlug) {

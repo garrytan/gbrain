@@ -57,16 +57,18 @@ export async function loadPageTrust(engine: Exec, refs: readonly PageRef[]): Pro
  * page's tier is labeled with the marker tier (origin `facts-fence`) and is
  * held to the floor at that tier. The floor is already applied inside every arm's SQL; this is
  * the backstop for rows a stage adds by slug (exact lookup, alias hop, graph
- * walk), so no row below the floor leaves the operation.
+ * walk), so no row below the floor leaves the operation. `pageTrust` is
+ * `loadPageTrust` started early over the rows these rows were copied from.
  */
-export async function stampPageTrust<T extends PageRef>(engine: Exec, rows: T[], floor?: TrustTier): Promise<T[]> {
+export async function stampPageTrust<T extends PageRef>(engine: Exec, rows: T[], floor?: TrustTier,
+  pageTrust?: ReturnType<typeof loadPageTrust>): Promise<T[]> {
   if (rows.length === 0) return rows;
   const factRows = rows.filter(row => typeof row.fact_row?.id === 'number');
   const factTrust = factRows.length ? await stampRowTrust(engine, 'facts', factRows, row => row.fact_row!.id) : [];
   factRows.forEach((row, i) => Object.assign(row, factTrust[i]));
   const pageRows = rows.filter(row => typeof row.fact_row?.id !== 'number');
   let found: Awaited<ReturnType<typeof loadPageTrust>> | null = null;
-  try { found = pageRows.length ? await loadPageTrust(engine, pageRows) : null; } catch { found = null; }
+  try { found = pageRows.length ? await (pageTrust ?? loadPageTrust(engine, pageRows)) : null; } catch { found = null; }
   for (const row of pageRows) {
     const fields = (typeof row.page_id === 'number' ? found?.byId.get(row.page_id) : undefined)
       ?? found?.byKey.get(key(row.source_id, row.slug))

@@ -34,6 +34,30 @@
     ".github/workflows/ci-health.yml": [
       "test/scripts/ci-cost-ledger.test.ts",
       "test/scripts/ci-health-report.test.ts"
+    ],
+    ".github/workflows/e2e.yml": [
+      "test/scripts/e2e-shard-budget.test.ts",
+      "test/scripts/e2e-wiring.test.ts",
+      "test/scripts/full-ci-workflow.test.ts"
+    ],
+    ".claude-plugin/plugin.json": [
+      "test/codex-plugin-manifest.test.ts",
+      "test/mcp-registration.test.ts"
+    ],
+    ".codex-plugin/plugin.json": [
+      "test/codex-plugin-manifest.test.ts"
+    ],
+    "plugin-variants/*/.claude-plugin/plugin.json": [
+      "test/codex-plugin-manifest.test.ts"
+    ],
+    "plugin-variants/*/.codex-plugin/plugin.json": [
+      "test/codex-plugin-manifest.test.ts"
+    ],
+    "test/migrations-v0_13_1-grandfather.test.ts": [
+      "test/migrations-v0_13_1.test.ts"
+    ],
+    "test/grandfather-capacity.test.ts": [
+      "test/grandfather-managed.test.ts"
     ]
   },
   "guards": [

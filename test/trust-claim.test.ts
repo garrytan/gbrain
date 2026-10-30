@@ -25,7 +25,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { renderAction, type Action } from '../src/core/agent-output.ts';
 import { __setConfirmationIoForTests } from '../src/core/trust/confirm.ts';
 import { frontmatterTrustCaps, frontmatterTrustCapsSql } from '../src/core/trust/channel.ts';
-import { claimSourcesFix, listClaimSources, liftClaimedSources, recordSourceClaims, readUnclaimedLegacySources } from '../src/core/trust/claim.ts';
+import { claimSourcesFix, hasUnclaimedLegacySources, listClaimSources, liftClaimedSources, recordSourceClaims, readUnclaimedLegacySources } from '../src/core/trust/claim.ts';
 import { TRUST_CLAIM_LIFTED_AT_KEY, TRUST_CLAIMED_AT_KEY } from '../src/core/trust/claim-state.ts';
 import { trustClaimUpgradeNotice } from '../src/core/trust/claim-notice.ts';
 import { runTrustBackfill } from '../src/core/trust/backfill.ts';
@@ -33,6 +33,7 @@ import { explainTrust } from '../src/core/trust/review.ts';
 import { TRUST_TIER_RANK } from '../src/core/trust/tier.ts';
 import { runTrustScan } from '../src/core/eligibility/scan.ts';
 import { runTrustClaimSources } from '../src/commands/trust-claim.ts';
+import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { runSetTrust } from '../src/commands/sources-trust.ts';
 import { trustSourcesUnclaimedEntry } from '../src/commands/doctor/checks/trust-sources-unclaimed.ts';
 import { trustScanEntry } from '../src/commands/doctor/checks/trust-scan.ts';
@@ -55,7 +56,7 @@ beforeAll(async () => {
   fresh = empty;
 }, 120_000);
 afterAll(async () => { await engine.disconnect(); await fresh.disconnect(); });
-afterEach(() => { __setConfirmationIoForTests(null); process.exitCode = 0; });
+afterEach(() => { __setConfirmationIoForTests(null); process.exitCode = 0; _resetCliExitVerdictForTests(); });
 
 const cli = { transport: 'cli' as const, isCallable: () => false, preapproved: () => true };
 const render = (fix: unknown) => renderAction(fix as Action, cli);
@@ -301,6 +302,18 @@ describe('the asks around claiming', () => {
     expect(fix.consent).toEqual([]);
     expect(fix.argv).toEqual(['gbrain', 'trust', 'scan']);
     expect(fix.user_message).toContain('claim');
+  });
+
+  test('the claim ask reads row tables only for unclaimed sources, and agrees with the doctor read', async () => {
+    const s = await seed();
+    expect(await hasUnclaimedLegacySources(engine)).toBe(true);
+    expect((await readUnclaimedLegacySources(engine)).unclaimed.map(u => u.id)).toContain(s.src);
+    const seen: string[] = [];
+    const allClaimed = { executeRaw: async (sql: string) => { seen.push(sql); return /FROM sources/.test(sql) ? [{ id: 'a', claimed: true, lifted: true }] as never[] : []; } };
+    expect(await hasUnclaimedLegacySources(allClaimed as never)).toBe(false);
+    expect(await readUnclaimedLegacySources(allClaimed as never)).toEqual({ unclaimed: [], pending: [] });
+    expect(seen.length).toBe(2);
+    expect(seen.some(sql => /\b(pages|facts|takes|timeline_entries)\b/.test(sql))).toBe(false);
   });
 
   test('post-upgrade and the behavior-change notice carry the tell_user_to_run block', async () => {

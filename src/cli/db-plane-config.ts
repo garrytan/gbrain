@@ -6,7 +6,8 @@
 import { buildGatewayConfig } from '../core/ai/build-gateway-config.ts';
 import { configureGateway, reconfigureGatewayWithEngine } from '../core/ai/gateway.ts';
 import { loadConfigWithEngine, type GBrainConfig } from '../core/config.ts';
-import { withRequestConfigSnapshot } from '../core/config-snapshot.ts';
+import { keepCommandStartupConfig, requestConfigRows, withRequestConfigSnapshot } from '../core/config-snapshot.ts';
+import { seedWriteSwitchSnapshot } from '../core/persistence/switches.ts';
 import type { BrainEngine } from '../core/engine.ts';
 
 export async function mergeDbPlaneConfig(engine: BrainEngine, config: GBrainConfig, MERGED_CONFIG_BY_ENGINE: WeakMap<BrainEngine, GBrainConfig>): Promise<void> {
@@ -52,6 +53,9 @@ export async function mergeDbPlaneConfig(engine: BrainEngine, config: GBrainConf
       // chat. Per Codex F3 — configureGateway is sync; this is the async
       // re-stamp seam after engine.connect() makes config reads possible.
       await reconfigureGatewayWithEngine(engine);
+      // GBRA-156: the same table read serves the command's source resolution and its write switches.
+      const rows = await requestConfigRows(engine);
+      if (rows) { keepCommandStartupConfig(engine, rows); seedWriteSwitchSnapshot(engine, rows); }
     });
   } catch {
     // Non-fatal. Pre-v39 brains may not have a usable config table yet.

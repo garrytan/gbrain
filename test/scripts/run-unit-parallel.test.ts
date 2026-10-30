@@ -74,14 +74,14 @@ afterAll(() => {
   if (TMPROOT) rmSync(TMPROOT, { recursive: true, force: true });
 });
 
-function runWrapper(extraArgs: string[] = []): { code: number; stdout: string; stderr: string } {
+function runWrapper(extraArgs: string[] = [], env: Record<string, string> = {}): { code: number; stdout: string; stderr: string } {
   const result = spawnSync(
     'bash',
     [join(TMPROOT, 'scripts', 'run-unit-parallel.sh'), '--shards', '2', ...extraArgs],
     // Shard-mechanics tests pin explicit --shards behavior with tiny
     // synthetic files; disable mem-adaptation so a RAM-limited runner (CI's
     // ~7GB) can't collapse 2 shards -> 1 and break the shard 1/2 expectations.
-    { cwd: TMPROOT, encoding: 'utf-8', env: { ...process.env, GBRAIN_TEST_NO_MEM_ADAPT: '1' } },
+    { cwd: TMPROOT, encoding: 'utf-8', env: { ...process.env, GBRAIN_TEST_NO_MEM_ADAPT: '1', ...env } },
   );
   return {
     code: result.status ?? -1,
@@ -101,6 +101,12 @@ describe('run-unit-parallel.sh exit-code propagation (a)', () => {
     try {
       const r = runWrapper();
       expect(r.code).toBe(0);
+      // #7448: an AI agent's environment switches Bun to failure-only output; the census still counts every passing file.
+      for (const agent of [{ CLAUDECODE: '1' }, { REPL_ID: 'repl-example' }, { AGENT: '1' }] as Record<string, string>[]) {
+        const quiet = runWrapper([], agent);
+        expect(quiet.stdout + quiet.stderr).not.toContain('incomplete');
+        expect(quiet.code).toBe(0);
+      }
     } finally {
       // Restore the failing fixture for any downstream tests in the same
       // describe block (afterAll cleans the whole tempdir; this is belt-

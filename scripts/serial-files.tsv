@@ -47,7 +47,7 @@ test/bootstrap-adopted-connection.serial.test.ts	R1	R1: mutates process.env (GBR
 test/bootstrap-dispatcher.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, CODEX_HOME, HOME, CLAUDE_CONFIG_DIR)
 test/bootstrap-harness-lifecycle.serial.test.ts	global-state	global-state: patches process stdout/stderr/console
 test/bootstrap-harness.serial.test.ts	global-state	global-state: patches process stdout/stderr/console
-test/bootstrap-hook-under-serve.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_SOURCE, GBRAIN_DATABASE_URL, DATABASE_URL (+3 more))
+test/bootstrap-hook-under-serve.serial.test.ts	exclusive	exclusive: pins a REAL serve's answer inside the hook's 1 s IPC client timeout (Pin 3 and Pin 3b need an ok round trip); pooled beside heavy files the serve's main thread is starved past it (Pin 3b timed out at 1,008 ms in #7409's full gate). Also mutates process.env (GBRAIN_HOME, GBRAIN_SOURCE, GBRAIN_DATABASE_URL, DATABASE_URL (+3 more))
 test/bootstrap-interview.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/bootstrap-opencode-door.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, XDG_CONFIG_HOME)
 test/bootstrap-plugin-lane.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, CODEX_HOME, CLAUDE_CONFIG_DIR, HOME)
@@ -204,6 +204,7 @@ test/fts-language-schema-replay.serial.test.ts	R1	R1: mutates process.env (GBRAI
 test/fts-language.serial.test.ts	R1	R1: mutates process.env (bracket or computed key)
 test/gateway-reconfigure-clobber.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/git-commit-push-6530.serial.test.ts	R1	R1: mutates process.env (GBRAIN_GIT_ALLOW_FILE_TRANSPORT, BRAIN_COMMIT_LOCK_HELD, GBRAIN_GIT_NO_MERGE_TREE, PATH for a racing git shim)
+test/git-writer-safety-7381.serial.test.ts	R1	R1: mutates process.env (GBRAIN_GIT_ALLOW_FILE_TRANSPORT, GBRAIN_GIT_NO_MERGE_TREE) for real git against local bare remotes and spawns the CLI and git hooks that read it
 test/git-listing-memo.serial.test.ts	R1	R1: puts a git-counting shim on process.env.PATH for every spawn in the process (git child processes inherit it, so withEnv cannot scope it)
 test/git-remote-durable.serial.test.ts	R1	R1: mutates process.env (GBRAIN_GIT_ALLOW_FILE_TRANSPORT)
 test/git-remote-pull-file-transport.serial.test.ts	R1	R1: mutates process.env (GBRAIN_GIT_ALLOW_FILE_TRANSPORT)
@@ -370,7 +371,7 @@ test/serve-head-watcher-managed.serial.test.ts	global-state	global-state: starts
 test/serve-http-head-watcher.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_SERVE_HEAD_POLL_MS); spies on global setInterval/clearInterval, emits SIGINT on the process and reads the process-wide cleanup registry
 test/serve-http-run-teardown.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/serve-http-status-mode.serial.test.ts	R1	R1: sets process.env.GBRAIN_HOME for the status marker reads; binds local servers/ports
-test/serve-idle-sweep-source.serial.test.ts	R2	R2: mock.module(../src/core/sweep.ts) replaces modules for every file in the process
+test/serve-idle-sweep-source.serial.test.ts	R2	R2: mock.module(../src/core/sweep.ts, facts/drain-scheduler.ts, persistence/sync-movement.ts, serve-head-watcher.ts) replaces modules for every file in the process
 test/serve-source-guard.serial.test.ts	R1	R1: mutates process.env (GBRAIN_SOURCE)
 test/serve-status-mode.serial.test.ts	global-state	global-state: binds local servers/ports
 test/serve-sync-embed-drain.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect; process-wide test seams __setEmbedTransportForTests, __resetDelegatedSyncForTests; configureGateway changes the process-wide AI gateway; patches process stdout/stderr/console
@@ -441,3 +442,8 @@ test/search-tune-apply-truthful.serial.test.ts	R2	R2: mock.module(../src/core/se
 test/search-cost.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests, __setRerankTransportForTests; configureGateway changes the process-wide AI gateway
 test/chat-usage-phases.serial.test.ts	global-state	global-state: process-wide test seams __setChatTransportForTests, __setEmbedTransportForTests, __setGenerateObjectTransportForTests; configureGateway changes the process-wide AI gateway; setChatUsageSink replaces the process-wide ledger sink; R1: mutates process.env (ANTHROPIC_API_KEY)
 test/doctor-only-sync-failures-7143.serial.test.ts	global-state	global-state: spawns the real gbrain CLI against a tmpdir PGLite brain and home (doctor --only sync_failures connects the brain)
+test/decide/triage-decide-recheck-7307.serial.test.ts	global-state	global-state: process-wide test seams __setDecideTransportForTests, __resetDecideStoreForTests; configureGateway changes the process-wide AI gateway
+test/sync-pass-phase-lines-7243.serial.test.ts	global-state	global-state: process-wide test seams __resetDelegatedSyncForTests (runs a resident pass through runnerStart)
+test/embed-once-per-content-version.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests (the forced probes hold the first provider call at the transport) and pageEmbeddingLeaseProbe (the module-wide lease contention hook); withEnv scopes GBRAIN_HOME
+test/page-embedding-lease.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests (each case swaps the embed transport, one to a refusing provider) and pageEmbeddingLeaseProbe (the module-wide lease contention hook); withEnv scopes GBRAIN_HOME
+test/migrate-search-path-best-effort.serial.test.ts	R2	R2: mock.module(v277 migration module) replaces modules for every file in the process

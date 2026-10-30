@@ -11,8 +11,9 @@
  *    rebuilt (withdrawal.ts bumps the revision and deletes the chunk rows;
  *    the rebuild rechunks from the overlaid text and reseals).
  * 2. Fails when: SEGMENTED_CHUNKER_VERSION drops below the safe-fence
- *    version (remote search and chunk windows withhold the page), or the
- *    seal indexes the raw lead (the withdrawn token is findable).
+ *    version (remote search and chunk windows withhold the page) or back to
+ *    the inline chunker's version (it names its own forced cuts since Wave B
+ *    PR 4), or the seal indexes the raw lead (the withdrawn token is findable).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -63,7 +64,7 @@ for (const kind of testBackends()) {
       expect(remote.map(h => h.slug)).toContain('notes/sealed');
       expect(remote.find(h => h.slug === 'notes/sealed')!.chunk_text).toContain('zzsealedneedle');
       expect(page).toEqual({ chunker_version: SEGMENTED_CHUNKER_VERSION, sealed: true });
-      expect(SEGMENTED_CHUNKER_VERSION).toBe(MARKDOWN_CHUNKER_VERSION);
+      expect(SEGMENTED_CHUNKER_VERSION).toBeGreaterThan(MARKDOWN_CHUNKER_VERSION);
       expect(SEGMENTED_CHUNKER_VERSION).toBeGreaterThanOrEqual(SAFE_FENCE_CHUNKER_VERSION);
     }, 240_000);
 

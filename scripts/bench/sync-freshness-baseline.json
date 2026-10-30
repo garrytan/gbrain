@@ -1,24 +1,24 @@
 {
   "schema": "gbrain-sync-freshness-baseline/1",
   "machine_class": "ubicloud-standard-4",
-  "measured_at": "2026-10-19",
+  "measured_at": "2026-10-23",
   "machine": {
     "cores": 4,
-    "ram_gb": 15,
-    "bun": "1.4.3",
-    "image": "ubuntu-noble (Ubicloud standard-4 VM)"
+    "ram_gb": 16,
+    "bun": "1.4.4",
+    "image": "ubuntu-noble (Ubicloud standard-4 runner)"
   },
-  "source": "first of 25 stress runs (vm1, run 1) on gbra133-pr2b-bench@61d0789e, product revision 4ba4c36f; the other 24 runs all passed against it",
+  "source": "first of 25 runs (runner 1, run 1; 5 fresh runners x 5 gate runs, workflow_dispatch runs=5) at gbra133-level-reuse-ijp@ef8a42c5a, on the PR 4b level pass with T and I-join-P reuse across passes; the other 24 runs all pass against it. The 2026-10-19 baseline (product revision 4ba4c36f) predates the PR 4b level pass.",
   "margin": 1.25,
   "cells": {
     "postgres-managed-serve-watch": {
-      "p50_ms": 452.1
+      "p50_ms": 501.6
     },
     "pglite-managed-serve-watch": {
-      "p50_ms": 442.1
+      "p50_ms": 733.5
     },
     "postgres-classic-serve-watch": {
-      "p50_ms": 401.4
+      "p50_ms": 301.9
     }
   }
 }

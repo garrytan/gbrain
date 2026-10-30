@@ -34,16 +34,15 @@ import type { AIGatewayConfig } from '../core/ai/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { OperationError, type OperationMeta } from '../core/ops/contract.ts';
 import { OPERATION_MANIFEST, cliOps } from './op-manifest.ts';
-import { loadOperation } from '../core/operation-load.ts';
 import { openRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { resolveSourceIdEngineFree } from '../core/source-resolver.ts';
 import { installCliRoutingFor } from './fix-routing-provider.ts';
-import { formatVolunteeredPage } from '../core/context/volunteer.ts';
 import type { Operation, OperationContext } from '../core/operations.ts';
 import { currentCliWriteWait } from '../core/persistence/write-wait.ts';
 import { isScopeErrorCode } from '../core/error-catalogue.ts';
 import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExitCode, setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { printCuratedHelp } from './help/render.ts';
+import { OWN_EQUALS_PARSERS, READER_ALIASES, findUnknownFlag, splitFlagEquals } from './flag-equals.ts';
 import { printHelp } from './top-help.ts';
 import { curatedFlagError } from './help/validate.ts';
 import { cliCommandOf, exitCliError, exitOnRepairFailed, unknownFlagError, usageError, writeCliError, writeCliNotice, writeFatalCliError } from './cli-error.ts';
@@ -51,12 +50,12 @@ import type { Notice } from '../core/agent-output.ts';
 import { opError, opOwnsSource } from '../core/ops/contract.ts';
 import { PAGE_MAX_BYTES } from '../core/page-size-policy.ts';
 import { opFlagValue, opParamValue, opStructuredValue } from './op-param-values.ts';
-import { SEGMENTED_STREAMED, formatGetPage, printPagedPage, remoteErrorCode, streamSegmentedGet, wantsWholePage } from './page-render.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from '../core/cli-options.ts';
 import { runCliPreflight } from '../core/cli-preflight.ts';
 import { isBooleanLiteral, isKnownOpFlag } from '../core/op-flag-tokens.ts';
 import { conceptNudge } from '../core/search/query-intent.ts';
 import { redactRetrievalOutput } from '../core/search/output-redaction.ts';
+import { pageCapLine } from '../core/search/remote-page-cap.ts';
 import { formatSearchExact } from './search-exact-format.ts';
 import { routeCommand } from './command-route.ts';
 import type { CliOptions } from '../core/cli-options.ts';
@@ -64,9 +63,9 @@ import { RemoteMcpError, extractResponseMeta } from '../core/remote-mcp-error.ts
 import { assertSingleSourceScopeFlag, checkHostHonoredParams, hintAmbientNarrowing, type AmbientSourceBinding } from './source-scope.ts';
 import { maybePromptForUpgrade } from '../core/thin-client-upgrade-prompt.ts';
 import { CLI_FLAG_REGISTRY } from '../core/cli-flag-registry.generated.ts';
-import { cliHelpRequested } from './subcommands.ts';
+import { SEARCH_SUBCOMMANDS, cliHelpRequested } from './subcommands.ts';
 import { printRouterHelp } from './router-help.ts';
-import { strictArgsRefusal } from './strict-args.ts';
+import { strictArgsRefusal, strictSpecFor } from './strict-args.ts';
 import { migrationCliArgumentError } from '../core/embedding-migration-cli.ts';
 import { VERSION } from '../version.ts';
 import { bigintToStringReplacer } from '../core/utils.ts';
@@ -365,8 +364,12 @@ async function main() {
   // #7191: `search --exact` -> search-exact, before any ranked-search flag is parsed (cli/command-route.ts).
   const routed = routeCommand(command, args.slice(1));
   command = routed.command;
-  const subArgs = routed.subArgs;
+  let subArgs = routed.subArgs;
   dispatchedCommand = command;
+  {
+    const { directPoolProfileForCommand, setDirectPoolProfile } = await import('../core/direct-pool-profile.ts');
+    setDirectPoolProfile(directPoolProfileForCommand(command, subArgs));
+  }
 
   // Local patch 2026-06-11 — mark one-shot CLI processes so the facts
   // backstop routes absorb work to the durable jobs worker instead of the
@@ -397,6 +400,12 @@ async function main() {
       printCliOnlyHelp(command);
       return;
     }
+  }
+  // #7619: after the help printers that run no handler, so a handler never sees an = token the gate refuses.
+  const flagArgs = await cliOnlyFlagArgs(command, subArgs);
+  if ('refusal' in flagArgs) exitCliError(flagArgs.refusal, command);
+  subArgs = flagArgs.args;
+  if (helpRequested) {
     // Self-help members whose handler answers --help before it touches the
     // engine. Without this they fall through to the normal dispatch, which
     // connects first — so `gbrain models --help` on a machine with no brain
@@ -512,7 +521,7 @@ async function main() {
   if (['search', 'query', 'get', 'recall'].includes(command) && await (await import('./cli-socket-client.ts')).maybeServeFromCliSocket(command, subArgs)) return; // warm serve socket (opt-in)
   // CLI-only commands
   if (CLI_ONLY.has(command)) {
-    await handleCliOnly(command, subArgs);
+    const endRead = (await import('./slow-read.ts')).beginCommandRead(command, subArgs); try { await handleCliOnly(command, subArgs); } finally { endRead(); }
     return;
   }
 
@@ -526,9 +535,11 @@ async function main() {
  * Split out of main() (refactor wave 1, W4 cli); order and exits unchanged.
  */
 async function runSharedOperation(command: string, subArgs: string[], cliOpts: CliOptions): Promise<void> {
+  (await import('../core/persistence/claim-phase.ts')).markOneShotCommand();
   // Shared operations (fall through to aliases, e.g. link-add -> add_link)
   const meta = cliOps.get(command) ?? cliAliases.get(command);
   if (!meta) exitCliError(usageError(`Unknown command: ${command}`, 'Run `gbrain --help` for available commands.', { code: 'unknown_command' }), command);
+  const { loadOperation } = await import('../core/operation-load.ts');
   const op = (await loadOperation(meta.name))!;
 
   // v0.31.1 (Issue #734, CDX-1): parse CLI args BEFORE engine connect so
@@ -648,6 +659,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
 
   try {
     const { withTimeout, OperationTimeoutError } = await import('../core/timeout.ts');
+    const { withRequestIdentityMemo } = await import('../core/persistence/identity.ts');
     const wallclockMs = getCliOptions().timeoutMs ?? READ_OP_TIMEOUT_MS;
     const onWallclockTimeout = (e: InstanceType<typeof OperationTimeoutError>) => {
       const hint = getCliOptions().timeoutMs
@@ -682,8 +694,10 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     if (op.scope === 'read') {
       try {
         rawResult = await withTimeout(
-          configSnapshot!.run(() => op.handler(ctx, params)).catch(async (e: unknown) => { // large pages: a segmented page streams to stdout
-            if (op.name === 'get_page' && await streamSegmentedGet(engine, params, e, writeStdoutFinal)) return SEGMENTED_STREAMED;
+          configSnapshot!.run(() => withRequestIdentityMemo(() => op.handler(ctx, params))).catch(async (e: unknown) => { // large pages: a segmented page streams to stdout
+            if (op.name !== 'get_page') throw e;
+            const { streamSegmentedGet, SEGMENTED_STREAMED } = await import('./page-render.ts');
+            if (await streamSegmentedGet(engine, params, e, writeStdoutFinal)) return SEGMENTED_STREAMED;
             throw e;
           }),
           wallclockMs,
@@ -697,10 +711,10 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
         throw e;
       }
     } else {
-      rawResult = await op.handler(ctx, params);
+      rawResult = await withRequestIdentityMemo(() => op.handler(ctx, params));
       if (op.mutating) await captureCapacityNotices(engine); // #6696 (A4)
     }
-    if (rawResult === SEGMENTED_STREAMED) return;
+    if (op.name === 'get_page' && rawResult === (await import('./page-render.ts')).SEGMENTED_STREAMED) return;
     captureRetrievalNotices(op.name, rawResult, lastRetrievalMeta, params, ctx.config);
     // ENG-2 (renderer parity by data shape): JSON-round-trip the local-engine
     // path's return value so renderers see the same shape they'd see on the
@@ -809,7 +823,9 @@ async function runThinClientRouted(
       signal: sigintController.signal,
       ...(op.mutating ? { writeWaitMs: currentCliWriteWait().waitMs } : {}),
     }).catch(async (e: unknown) => { // large pages: a page too big for one response is paged to its end, verified, then printed
-      if (op.name !== 'get_page' || remoteErrorCode(e) !== 'page_too_large_for_inline' || !wantsWholePage(params)) throw e;
+      if (op.name !== 'get_page') throw e;
+      const { printPagedPage, remoteErrorCode, wantsWholePage } = await import('./page-render.ts');
+      if (remoteErrorCode(e) !== 'page_too_large_for_inline' || !wantsWholePage(params)) throw e;
       await printPagedPage(async p => unpackToolResult(await callRemoteTool(cfg, 'get_page', p, { timeoutMs, signal: sigintController.signal })), params, writeStdoutFinal);
       return null;
     }));
@@ -1044,7 +1060,7 @@ export function resolveQueryImage(
   return { path: imagePath, base64, mime };
 }
 
-export function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
+export function parseOpArgs(op: OperationMeta, args: string[]): Record<string, unknown> {
   // `gbrain search --explain`: the CLI-local formatter flag also asks the op for score attribution.
   const params: Record<string, unknown> = (op.name === 'search' || op.name === 'query') && (getCliOptions().explain || args.includes('--explain')) ? { explain: true } : {};
   const positional = op.cliHints?.positional || [];
@@ -1313,25 +1329,19 @@ export function validateCommandFlags(command: string, subArgs: string[]): string
   return null; // unknown command — the dispatcher's own error handles it
 }
 
-/** CLI_ONLY lane: token scan against the generated legal set. */
-export function findUnknownFlag(args: string[], legal: ReadonlySet<string>): string | null {
-  for (const a of args) {
-    if (a === '--') break;
-    const m = /^--([a-z0-9][a-z0-9-]*)(?:=.*)?$/i.exec(a);
-    if (!m) continue;
-    // Casing typo = unknown flag: every handler in the repo is
-    // case-sensitive-lowercase, so `--MIGRATE-ONLY` passing validation would
-    // just be silently ignored downstream — the exact class this validator
-    // exists to kill.
-    if (/[A-Z]/.test(m[1])) return `--${m[1]}`;
-    const name = `--${m[1]}`;
-    if (legal.has(name)) continue;
-    // --no-<flag> negation of a known flag is legal.
-    if (name.startsWith('--no-') && legal.has(`--${name.slice(5)}`)) continue;
-    return name;
-  }
-  return null;
+/** #7619: the argv a CLI_ONLY handler receives, `--flag=value` split or refused (cli/flag-equals.ts); commands with their own `=`-aware parser keep it. */
+export async function cliOnlyFlagArgs(command: string, subArgs: string[]): Promise<{ args: string[] } | { refusal: OperationError }> {
+  const handParsedSearch = command === 'search' && (SEARCH_SUBCOMMANDS as readonly string[]).includes(subArgs[0] ?? ''), keyed = READER_ALIASES[command] ?? command;
+  if (!CLI_ONLY.has(command) && !handParsedSearch || equalsExempt(command, subArgs) || strictSpecFor(command, subArgs) || OWN_EQUALS_PARSERS.has(keyed) || OWN_EQUALS_PARSERS.has(`${keyed} ${subArgs[0]}`)) return { args: subArgs };
+  return splitFlagEquals(command, subArgs);
 }
+
+/** call and config set take arbitrary values, and eval brainbench refuses unknown tokens with its own exit code; every other validation-exempt path (jobs submit, config get and unset) reads exact tokens, apart from the consent values EQUALS_READERS keeps for jobs submit. */
+function equalsExempt(command: string, subArgs: string[]): boolean {
+  return command === 'call' || command === 'config' && subArgs[0] === 'set' || command === 'eval' && subArgs[0] === 'brainbench';
+}
+
+export { findUnknownFlag };
 
 /** Op lane: mirrors parseOpArgs so flag VALUES starting with '--' are skipped. */
 export function findUnknownOpFlag(op: OperationMeta, args: string[]): string | null {
@@ -1448,10 +1458,14 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
   const explicit = op && opOwnsSource(op) ? null : (params.source as string | undefined) ?? null;
   const { resolveSourceWithTier, localFederatedSourceIds, SourceTargetError } = await import('../core/source-resolver.ts');
   try {
-    const resolved = await resolveSourceWithTier(engine, explicit);
-    sourceId = resolved.source_id;
-    sourceImplicit = resolved.tier !== 'flag' && resolved.tier !== 'env' && resolved.tier !== 'dotfile';
-    localFederated = await localFederatedSourceIds(engine, resolved.source_id, resolved.tier);
+    // GBRA-156: the source resolution reads config through the table the connect-time merge already read.
+    const { commandStartupConfig, withRequestConfigSnapshot } = await import('../core/config-snapshot.ts');
+    await withRequestConfigSnapshot(engine, async () => {
+      const resolved = await resolveSourceWithTier(engine, explicit);
+      sourceId = resolved.source_id;
+      sourceImplicit = resolved.tier !== 'flag' && resolved.tier !== 'env' && resolved.tier !== 'dotfile';
+      localFederated = await localFederatedSourceIds(engine, resolved.source_id, resolved.tier);
+    }, commandStartupConfig(engine));
   } catch (err) {
     // #1712: an EXPLICIT --source that fails to resolve (invalid id, or a
     // source that doesn't exist) must error loudly — the blanket swallow
@@ -1630,9 +1644,10 @@ export function formatResult(
       }
       const pages = (r?.pages ?? []) as any[];
       if (!pages.length) return 'Nothing volunteered (no entity cleared the confidence gate).\n';
+      const { formatVolunteeredPage } = require('../core/context/volunteer.ts');
       return pages.map((p) => formatVolunteeredPage(p)).join('\n') + '\n';
     }
-    case 'get_page': return formatGetPage(result as Record<string, any>);
+    case 'get_page': return require('./page-render.ts').formatGetPage(result as Record<string, any>);
     case 'search_exact': return formatSearchExact(result as Parameters<typeof formatSearchExact>[0]);
     case 'list_pages': {
       const pages = result as any[];
@@ -1650,6 +1665,8 @@ export function formatResult(
       const { results, meta } = redactRetrievalOutput(result as any[], lastRetrievalMeta);
       const answerId = typeof meta?.answer_id === 'string' ? meta.answer_id : undefined;
       if (answerId && results.length > 0) process.stderr.write(`answer: ${answerId} (rate with: gbrain rate ${answerId} 1-5)\n`);
+      const capLine = pageCapLine(meta, '--limit');
+      if (capLine) process.stderr.write(capLine + '\n');
       if (params.json === true) {
         const incompleteNotice = retrievalIncompleteLine(meta);
         if (incompleteNotice) process.stderr.write(incompleteNotice);
@@ -1674,7 +1691,7 @@ export function formatResult(
         return formatResultsExplain(results, meta ?? undefined);
       }
       return retrievalIncompleteLine(meta) + results.map(r =>
-        `[${r.score?.toFixed(4) || '?'}] ${r.slug} -- ${r.chunk_text?.slice(0, 100) || ''}${r.stale ? ' (stale)' : ''}`,
+        `[${r.score?.toFixed(4) || '?'}] ${r.slug} -- ${require('../core/search/transcript-quote.ts').rowPreview(r, 100)}${r.stale ? ' (stale)' : ''}`,
       ).join('\n') + '\n';
     }
     case 'get_tags': {
@@ -2649,8 +2666,8 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
           return connectEngine();
         },
       });
-      const { runServe } = await import('../commands/serve.ts');
-      await runServe(degraded, args);
+      (await import('../core/serve-log.ts')).installServeLogSink({ http: args.includes('--http') });
+      await (await import('../commands/serve.ts')).runServe(degraded, args);
       return null; // serve doesn't disconnect
     }
     throw serveConnectError;

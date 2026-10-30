@@ -161,7 +161,7 @@ class TransactionalFakeEngine extends FakeEngine {
       this.fail.delete(injected[0]);
       throw injected[1];
     }
-    if (sql === 'BEGIN') { this.pending = []; return []; }
+    if (sql === 'BEGIN' || sql === 'BEGIN READ WRITE') { this.pending = []; return []; }
     if (sql === 'ROLLBACK') { this.pending = null; return []; }
     if (sql === 'COMMIT') {
       for (const id of this.pending ?? []) await super.executeRaw(`UPDATE pages`, [id]);

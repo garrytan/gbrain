@@ -8,7 +8,20 @@
  * bytes' blob id), presence on disk, the candidate dirtiness `Dp`, the page and its import record, the attestation of
  * its current revision, its hold, deletion marker, baseline blob and open work. Definitions (v3.1 §2.3, v3.2 §2.3):
  * `fileSame := L ∈ {r.blob_oid, r.disk_blob_oid}`, `dbSame := r.revision = page.revision`, `proof := dbSame ∨ att(R)`,
- * `obligation := ¬sameParser ∨ origin ≠ page.source_path ∨ episodeUnsatisfied`.
+ * `obligation := ¬sameParser ∨ origin ≠ page.source_path ∨ (episodeUnsatisfied ∧ ¬inPlace)`, where
+ * `inPlace := fileSame ∧ dbSame ∧ derivedCurrent ∧ no hold`: a page the open full episode has not re-imported yet
+ * satisfies it without a reparse when it already is the import of `L` and everything derived from it is current. The
+ * waiver only lifts the episode's term, so it can turn a `reparse` into `matched` and nothing else: any state that keeps
+ * a page from `matched` outside an episode (a stale parser, a moved origin, or any later force-import flag, which must
+ * defeat `matched` to force anything) still reparses it.
+ *
+ * G3 of git-canonical memory (docs/designs/GIT_CANONICAL_MEMORY.md): for a strict source (`config.canonical = "git"`) the
+ * classifier reads the commit alone and Git wins. The working tree is invisible (every path in `T` is clean, a path absent
+ * from `T` is absent), a page Git moved past or never matched imports the committed blob over the database, and a live
+ * page whose file a commit removed is deleted. A page Git never held stays as the database has it. Holds keep their rows
+ * (a hold at its level settles, a re-screened one re-runs Git's verdict); conversion resolves a source's holds before it
+ * turns strict. `gitWins` names the class the same path gets on a source that is not strict, so a preview can list what
+ * Git overwrote.
  */
 
 /** Candidate dirtiness of a committed-mode path in `T` (sync-git-stream.ts `probeDirtiness`). */
@@ -60,10 +73,21 @@ export interface SyncPathState {
   spelling: boolean | 'legacy';
   /** An open full episode has not re-imported this page yet. */
   episodeUnsatisfied: boolean;
+  /**
+   * Everything the page derives is current under this binary (sync-pass.ts `readPages`): an inline Markdown page chunked at
+   * the current chunker version, its text projection at its revision and its contextual mode stamped, so a reparse of the
+   * same bytes would change nothing. Absent: unknown, and an open episode reparses the page.
+   */
+  derivedCurrent?: boolean;
   /** `--full` or an open episode: every path, page-less ones included, owes a re-import (v3.1 §2.7). */
   fullObligation?: boolean;
   /** Under a `storage.keep_db` prefix, on a source that is not mirror-read-only. */
   keepDb: boolean;
+  /**
+   * #7324: a page under a declared `storage.db_only` dir: its database row is canonical, so an absent file is no deletion
+   * evidence. #8007: `unknown` while gbrain.yml's storage section is invalid; an absent file is then held, never deleted.
+   */
+  dbOnly?: boolean | 'unknown';
   /** Open work on the page or path (a queued/running/recovering request, a pending Git effect). */
   openWork: boolean;
   /**
@@ -88,8 +112,8 @@ export interface SyncClassified {
   /** `drift` and `delete_drift`: the hold's side. `deleted_edited`: its state. */
   side?: 'both' | 'unknown' | 'deleted';
   state?: 'tombstone_edited' | 'purged_differs' | 'file_gone';
-  /** #7130: a `delete_drift` whose file Git never committed (`never_committed`, also when that could not be read) or `.gitignore` excludes. */
-  uncommitted?: 'never_committed' | 'ignored';
+  /** #7130: a `delete_drift` whose file Git never committed (`never_committed`), `.gitignore` excludes, or whose history read did not answer (`origin_unknown`). */
+  uncommitted?: 'never_committed' | 'ignored' | 'origin_unknown' | 'storage_invalid';
   /** `db_ahead` `db_only` under keep_db: also gets the DB-wins write. */
   keepDbWrite?: true;
   /** `db_ahead` `db_only`/`unproven` under an open full obligation: excluded and counted (`full_skipped_db_ahead`). */
@@ -100,6 +124,12 @@ export interface SyncClassified {
   pending?: 'keep_db';
   /** #6712 PR 4b: a write `sync.admission` pauses (`paused_keep_db`, §8). */
   paused?: 'keep_db';
+  /** GBRA-133 (sync-held-deletions.ts): a held committed deletion `sync.apply_held_deletions` proved, deleted with this receipt. */
+  heldDeletion?: { commit: string; blob_oid: string };
+  /** GBRA-133: why that proof refused this held deletion; its hold records it at the page's revision. */
+  heldDeletionRefused?: string;
+  /** G3, a strict source: the class this path gets on a source that is not strict, when Git's verdict differs from it. */
+  gitWins?: SyncClass;
 }
 
 const CLEAN = new Set<SyncDirtiness | null>(['clean', 'clean_eol', 'clean_lfs']);
@@ -123,9 +153,9 @@ type Matched = Omit<SyncClassified, 'inFlight' | 'classAction'>;
  * in a class whose action says who finishes it. So a path with a hold row never settles in a later row (b2): unless the hold
  * is at its level and not re-screen due, the pass re-runs it (`held`, `rescreenDue`).
  */
-function firstMatch(s: SyncPathState): Matched {
+function firstMatch(s: SyncPathState, strict = false): Matched {
   if (s.hold && s.hold.atLevel && !s.hold.rescreenDue && !s.hold.retried) return { cls: 'held', settled: true, action: 'none' };
-  const rest = afterHold(s);
+  const rest = strict ? gitWins(s) : afterHold(s);
   // The re-run is the import the hold refused, where an import is what the level would get anyway (`import`) or changes
   // nothing (`matched`). A level that needs another action (a drift side, a delete proof, a reparse) keeps that class, so
   // its guard still applies; one that settles any other way (database ahead, a deleted page, an uncommitted edit, a legacy
@@ -141,14 +171,17 @@ function afterHold(s: SyncPathState): Matched {
   const fileSame = s.level !== null && !!s.record && s.record.blobOids.includes(s.level);
   const dbSame = !!s.page && !!s.record && s.record.revision !== null && s.record.revision === s.page.revision;
   const proof = dbSame || s.attested !== null;
-  const obligation = !s.record?.parserSame || !s.page?.originMatches || s.episodeUnsatisfied;
+  const inPlace = fileSame && dbSame && s.derivedCurrent === true && s.hold === null;
+  const obligation = !s.record?.parserSame || !s.page?.originMatches || (s.episodeUnsatisfied && !inPlace);
   if (s.spelling) return { cls: 'spelling', settled: s.spelling === 'legacy', action: s.spelling === 'legacy' ? 'none' : 'refuse' };
   if (s.mode === 'committed' && s.tree === null && !live) return { cls: 'untracked', settled: true, action: 'none' };
   if (live && s.level === null) {
     if (s.mode === 'committed' && s.present) return { cls: 'kept', settled: true, action: 'none' };
     if (!s.present) {
+      if (s.dbOnly === true) return { cls: 'kept', settled: true, action: 'none' };
+      if (s.dbOnly === 'unknown') return { cls: 'delete_drift', settled: false, action: 'hold', side: 'deleted', state: 'file_gone', uncommitted: 'storage_invalid' };
       if (s.originEvidence && s.originEvidence !== 'committed') return { cls: 'delete_drift', settled: false, action: 'hold', side: 'deleted', state: 'file_gone',
-        uncommitted: s.originEvidence === 'ignored' ? 'ignored' : 'never_committed' };
+        uncommitted: s.originEvidence === 'unknown' ? 'origin_unknown' : s.originEvidence };
       return proof ? { cls: 'delete', settled: false, action: 'delete' } : { cls: 'delete_drift', settled: false, action: 'hold', side: 'deleted', state: 'file_gone' };
     }
   }
@@ -183,9 +216,45 @@ function afterHold(s: SyncPathState): Matched {
   return { cls: 'drift', settled: false, action: 'hold', side: s.record?.revision != null ? 'both' : 'unknown' };
 }
 
-/** The class of one path (v3.2 §2.3), with the open-work overlay applied. */
-export function classifySyncPath(s: SyncPathState): SyncClassified {
-  const match = firstMatch(s);
+/**
+ * G3: a strict source's path as the commit alone shows it. Committed mode only (a strict pass never reads a working level):
+ * every path in `T` is clean with no disk bytes, a path absent from `T` is absent from disk, and keep_db does not apply.
+ */
+export function committedOnlyState(s: SyncPathState): SyncPathState {
+  return { ...s, present: s.tree !== null, dirty: s.tree === null ? null : 'clean', diskOid: null, published: false, keepDb: false };
+}
+
+/**
+ * G3: Git's verdict for a strict source, after its hold rows. Drift, a database version sync never saw (`db_ahead` that is
+ * not a pending door write, or a page no import record proves: `legacy_unverified`), keep_db and an edited tombstone import
+ * the committed blob. A live page whose file is absent
+ * from `T` waits for its origin evidence (sync-pass.ts reads it for every delete candidate), then is deleted when a commit
+ * held the file and left as the database has it otherwise.
+ */
+function gitWins(s: SyncPathState): Matched {
+  const verdict = gitVerdict(committedOnlyState(s));
+  const before = afterHold(s).cls;
+  return verdict.cls === before ? verdict : { ...verdict, gitWins: before };
+}
+
+function gitVerdict(state: SyncPathState): Matched {
+  const rest = afterHold(state);
+  const wins = (match: Matched): Matched => match;
+  switch (rest.cls) {
+    // G8a: a page no import record proves (legacy_unverified, typically the unknown side of a held drift) takes the commit too.
+    case 'drift': case 'keep_db': case 'deleted_edited': case 'legacy_unverified': return wins({ cls: 'import', settled: false, action: 'import' });
+    case 'db_ahead': return rest.sub === 'pending' ? rest : wins({ cls: 'import', settled: false, action: 'import' });
+    case 'delete': case 'delete_drift':
+      if (state.originEvidence === undefined || rest.uncommitted === 'storage_invalid') return rest;
+      if (state.originEvidence !== 'committed') return wins({ cls: 'kept', settled: true, action: 'none' });
+      return rest.cls === 'delete' ? rest : wins({ cls: 'delete', settled: false, action: 'delete' });
+    default: return rest;
+  }
+}
+
+/** The class of one path (v3.2 §2.3), with the open-work overlay applied; `strict` is Git's verdict (G3). */
+export function classifySyncPath(s: SyncPathState, opts: { strict?: boolean } = {}): SyncClassified {
+  const match = firstMatch(s, opts.strict === true && s.mode === 'committed');
   const inFlight = !match.settled && s.openWork;
   const classAction: SyncClassAction = inFlight || match.rescreenDue ? 'owner' : match.cls === 'dirty' ? (match.settled ? 'none' : 'repair') : syncClassAction(match.cls);
   return { ...match, inFlight, classAction };
@@ -210,6 +279,8 @@ export interface SyncPassKindInput {
   rescreenDueHold: boolean;
   /** `--full`. */
   full: boolean;
+  /** #7866: a full round asked for without an episode (SyncOpts.fullRound). */
+  fullRound?: boolean;
 }
 
 /** Full rounds run at least this often (v3.2 §2.2, [estimated]). */
@@ -224,7 +295,7 @@ export function syncPassKind(input: SyncPassKindInput): { kind: 'idle' | 'hold_o
   else {
     if (c.target !== input.head) blockers.push('target_moved');
     if (c.parserFp !== input.parserFp || c.pack !== input.pack || c.selectionFp !== input.selectionFp) blockers.push('fingerprint_changed');
-    if (c.passesSinceFull >= SYNC_FULL_ROUND_MAX_PASSES || input.now - c.lastFullAt >= SYNC_FULL_ROUND_MAX_MS) blockers.push('full_round_due');
+    if (input.fullRound || c.passesSinceFull >= SYNC_FULL_ROUND_MAX_PASSES || input.now - c.lastFullAt >= SYNC_FULL_ROUND_MAX_MS) blockers.push('full_round_due');
   }
   if (input.full || input.openEpisode) blockers.push('open_episode');
   if (input.owedTail) blockers.push('owed_tail');

@@ -25,7 +25,7 @@
  */
 import type { GBrainConfig } from './config.ts';
 import type { McpSurface } from '../mcp/surface.ts';
-import { REGISTRATION_SURFACE, stdioServeArgv } from './mcp-registration.ts';
+import { REGISTRATION_SURFACE, registrationAdvertise, stdioServeArgv } from './mcp-registration.ts';
 import { gbrainPath } from './config.ts';
 import type { BrainEngine } from './engine.ts';
 import { redactForTransport, type Action, type ActionInput, type Effect, type Transport } from './agent-output.ts';
@@ -411,15 +411,17 @@ const SURFACE_GLOSS: Record<McpSurface, string> = {
   full: 'every operation',
 };
 
-function stdioRegistration(h: ReadinessHarness, bin: string, surface: McpSurface = REGISTRATION_SURFACE): Action {
-  const serve = stdioServeArgv(bin, surface);
+function stdioRegistration(h: ReadinessHarness, bin: string, chosen?: McpSurface): Action {
+  const surface = chosen ?? REGISTRATION_SURFACE;
+  const advertise = registrationAdvertise({ userChoseSurface: chosen !== undefined });
+  const serve = stdioServeArgv(bin, surface, advertise);
   const argv = h === 'claude-code' ? ['claude', 'mcp', 'add', 'gbrain', '--', ...serve]
     : h === 'codex' ? ['codex', 'mcp', 'add', 'gbrain', '--', ...serve]
-      : ['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks', ...(surface === REGISTRATION_SURFACE ? [] : ['--surface', surface])];
+      : ['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks', ...(chosen ? ['--surface', chosen] : [])];
   const hooks = h === 'opencode' ? ' No lifecycle hooks are installed (--no-hooks); it must run inside an initialized agent workspace.' : ' No hooks, tool pre-approvals or tokens are added.';
   return {
     argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false,
-    why: `Registers gbrain as a stdio MCP server (${serve.join(' ')}, ${SURFACE_GLOSS[surface]}) in ${HARNESS_DESTINATION[h]}, so new ${HARNESS_LABEL[h]} sessions get memory tools.${hooks}`,
+    why: `Registers gbrain as a stdio MCP server (${serve.join(' ')}, ${advertise ? `listing ${SURFACE_GLOSS[advertise]} and request_tools; ${SURFACE_GLOSS[surface]} stays callable` : SURFACE_GLOSS[surface]}) in ${HARNESS_DESTINATION[h]}, so new ${HARNESS_LABEL[h]} sessions get memory tools.${hooks}`,
     user_message: `I'd like to add gbrain's memory tools to ${HARNESS_LABEL[h]} by writing one MCP server entry to ${HARNESS_DESTINATION[h]}. OK?`,
     verify: VERIFY('harness_wiring'), docs: MEMORY_VERBS_INSTALL,
   };
@@ -462,7 +464,7 @@ export function harnessWiringEntry(input: HarnessWiringInput): ReadinessEntry {
   if (harnesses.length === 0) {
     return { ...base, state: 'missing', reason: 'no_harness_detected', why: 'No agent harness was detected.',
       fix: { consent: ['persistent_install'], actor: 'user', requires_exclusive: false, docs: MEMORY_VERBS_INSTALL,
-        why: `Register \`<absolute path to gbrain> serve --surface ${input.surface ?? REGISTRATION_SURFACE}\` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw).`,
+        why: `Register \`${stdioServeArgv('<absolute path to gbrain>', input.surface ?? REGISTRATION_SURFACE, registrationAdvertise({ userChoseSurface: input.surface !== undefined })).join(' ')}\` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw).`,
         user_message: 'Which agent app should get gbrain memory? The install guide has a one-line command for each.' } };
   }
   if (lockOwner?.transport === 'http') {

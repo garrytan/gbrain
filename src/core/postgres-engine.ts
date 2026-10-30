@@ -18,11 +18,12 @@ import type { PageReadPolicy } from './types.ts';
 import { readRelationalFanout, readChainHop, readAliases, readBacklinkCounts, readAdjacencyBoosts, readContentFlags, readExtractionStates, readEffectiveDates, readSalienceScores } from './search/read-enrichment.ts';
 import postgres from '#postgres'
 import { reservedTransactions, type ReservedTransactions } from './postgres-engine/reserved-transactions.ts';
+import { holdSearchConnection } from './search/connection-budget.ts';
 import { traceSqlOptions } from './sql-trace.ts';
 import { hasPostgresCancellationCapability, postgresCancellationUnavailable, reserveWithCancellation } from './postgres-engine/cancellation.ts';
 import { runBoundedStatement } from './postgres-engine/bounded-statement.ts';
 import { needsJitOff, runJitOffStatement } from './postgres-engine/jit-off-statement.ts';
-import { schemaDiagnosticConnection, withSchemaLockTimeout } from './postgres-engine/schema-lock-timeout.ts';
+import { retrySchemaReplayOnDeadlock, schemaDiagnosticConnection, withSchemaLockTimeout } from './postgres-engine/schema-lock-timeout.ts';
 export { hasPostgresCancellationCapability } from './postgres-engine/cancellation.ts';
 import type {
   BrainEngine,
@@ -65,6 +66,7 @@ import type {
 } from './types.ts';
 import { DREAM_VERDICT_TTL_SECONDS, clampSearchLimit, type TransactionOptions } from './engine.ts';
 import { transactionAborted, withTransactionAbort, type Discardable } from './postgres-engine/transaction-abort.ts';
+import { readWriteTransactions, retryReadOnlyAutocommit } from './postgres-engine/read-write-transactions.ts';
 import { searchLimitCap } from './search/eval-pool-depth.ts';
 import { executeRawJsonb, type SqlValue } from './sql-query.ts';
 import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from './batch-rows.ts';
@@ -112,11 +114,13 @@ import * as db from './db.ts';
 import { ConnectionManager, DEFAULT_DIRECT_POOL_SIZE } from './connection-manager.ts';
 import { logConnectionEvent } from './connection-audit.ts';
 import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
+import { requestSignal, throwIfRequestAborted } from './request-signal.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns, keywordPhraseFactorSql } from './search/sql-ranking.ts';
 import { narrowedOrFallbackQuery } from './search/keyword-or-narrow.ts';
-import { buildKeywordChunkMatch, KEYWORD_RANK_CANDIDATES, KEYWORD_STATEMENT_SETTINGS } from './search/keyword-chunk-match.ts';
+import { RARE_TERM_CHUNK_CAP, rankOrFallbackByRarity, rareTermPagesSql, type RareTermPages } from './search/keyword-or-rarity.ts';
+import { buildKeywordChunkMatch, KEYWORD_RANK_CANDIDATES, KEYWORD_RANKED_ROWS_CTE, KEYWORD_STATEMENT_SETTINGS } from './search/keyword-chunk-match.ts';
 import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { readStoredEmbeddingIdentity } from './stored-embedding-identity.ts';
@@ -124,7 +128,7 @@ import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP, TRAVERSE_WALK_ROW_CAP } from 
 import { PageMissingError } from './engine-errors.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
 import { acquireInitSchemaAdvisoryLock } from './postgres-engine/init-schema-lock.ts';
-import { SEARCH_JIT_OFF, withSearchJitOff, withSearchSettings, type SearchSettings } from './postgres-engine/search-settings.ts';
+import { isPipelinableSearchRead, SEARCH_JIT_OFF, withSearchJitOff, withSearchSettings, type SearchSettings } from './postgres-engine/search-settings.ts';
 import { loadKeywordStatementTimeout } from './postgres-engine/keyword-statement-timeout.ts';
 import { applyPostgresForwardReferenceBootstrap } from './engine-sql/bootstrap.ts';
 import * as factsImpl from './engine-sql/facts.ts';
@@ -147,6 +151,7 @@ import * as chunksImpl from './engine-sql/chunks.ts';
 import * as pageBodyImpl from './engine-sql/page-body.ts';
 import type { BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyStagingState, ManifestRow, ManifestRowInput, SegmentChunkInput,
   SegmentedPageMeta, SegmentSweepOptions, SegmentSweepResult, SegmentTextInput } from './page-body/types.ts';
+import type { SegmentDerivationInput, SegmentDerivationKind, SegmentDerivationRow } from './page-body/derivations.ts';
 import { hasCJK } from './cjk.ts';
 import { searchKeywordCJK as searchKeywordCJKImpl } from './engine-sql/cjk-search.ts';
 import { KeywordTimeoutNegativeCache } from './postgres-engine/keyword-timeout-cache.ts';
@@ -369,8 +374,7 @@ export class PostgresEngine implements BrainEngine {
     } else if (sourceId) {
       scopesValue = sourceId;
     }
-    return this.transaction(async engine => {
-      const tx = (engine as PostgresEngine).sql;
+    return this.readTransaction(tx => {
       // One settings statement for the scope binding, JIT off and the
       // caller's settings (a thunk is read here, after BEGIN, so a deadline
       // budget is measured one round trip before the query). A savepoint in
@@ -388,7 +392,26 @@ export class PostgresEngine implements BrainEngine {
 
   /** An unscoped read in its own transaction with JIT off (search-settings.ts); a savepoint inside a caller's transaction. */
   private jitOffRead<T>(callback: (tx: ReturnType<typeof postgres>) => Promise<T>): Promise<T> {
-    return this.transaction(engine => withSearchJitOff((engine as PostgresEngine).sql, this._pageTransaction, () => callback((engine as PostgresEngine).sql)));
+    return this.readTransaction(tx => withSearchJitOff(tx, this._pageTransaction, () => callback(tx)));
+  }
+
+  /**
+   * GBRA-156: a top-level read transaction opens `BEGIN READ ONLY` (a write inside it fails, never commits) and answers when its read returns, without waiting for COMMIT's round trip.
+   * The driver keeps the connection reserved, and the gauge counts it, until COMMIT settles; a failed COMMIT cannot
+   * change rows already read, so it is not the caller's error. `run` lets its statement errors propagate (every read here does).
+   */
+  private readTransaction<T>(run: (tx: ReturnType<typeof postgres>) => Promise<T>): Promise<T> {
+    if (this._pageTransaction) return this.transaction(engine => run((engine as PostgresEngine).sql));
+    return new Promise<T>((resolve, reject) => {
+      let answered = false;
+      this.transaction(async engine => {
+        const tx = (engine as PostgresEngine).sql;
+        const result = await run(tx);
+        answered = true;
+        resolve(result);
+        return result;
+      }, { pipelineEarly: isPipelinableSearchRead, readOnly: true }).catch(error => { if (!answered) reject(error); });
+    });
   }
 
   // Lifecycle
@@ -598,7 +621,7 @@ export class PostgresEngine implements BrainEngine {
         // transaction pooler. Codex P1 finding from v0.36 dreamy-thompson wave.
         await this.applyForwardReferenceBootstrap(conn);
 
-        await withSchemaLockTimeout(conn, () => conn.unsafe(sqlText), { step: 'replay', diagnostic: schemaDiagnosticConnection(this._savedConfig?.database_url) }); // #5227: bounded wait, typed schema_lock_blocked
+        await retrySchemaReplayOnDeadlock(() => withSchemaLockTimeout(conn, () => conn.unsafe(sqlText), { step: 'replay', diagnostic: schemaDiagnosticConnection(this._savedConfig?.database_url) })); // #5227: bounded wait, typed schema_lock_blocked; #6143: a deadlock victim runs again
 
         // Run any pending migrations automatically
         const { applied } = await (await import('./migrate.ts')).runMigrations(this); // engine-dynamic-import-ok: initSchema only, keeps the ~220 migration modules off every connect
@@ -663,13 +686,23 @@ export class PostgresEngine implements BrainEngine {
   }
 
   private async transactionOn<T>(conn: ReturnType<typeof postgres>, fn: (engine: BrainEngine) => Promise<T>, opts?: TransactionOptions): Promise<T> {
+    // GBRA-156: a top-level read transaction inherits its request's signal (request-signal.ts), so a request nobody waits for gives its connection back.
+    const inherited = !opts?.signal && opts?.readOnly && !this._pageTransaction ? requestSignal() : undefined;
+    if (inherited) opts = { ...opts, signal: inherited };
     if (opts?.signal?.aborted) throw transactionAborted(opts.signal);
+    if (!opts?.readOnly) conn = readWriteTransactions(conn);
     // try/finally, not .finally on the chained promise: begin() can throw
     // SYNCHRONOUSLY (e.g. nested transaction on a tx clone whose conn has no
     // .begin), which would skip a chained .finally and leak the counter.
     if (!this._pageTransaction) this.checkoutGauge.acquire('tx');
     try {
-      return await withCommitChecks(checks => withTransactionAbort(opts?.signal, attach => withHeldPageKeys(this._pageTransaction ? this._heldPageKeys : null, held => conn.begin(async (handle) => {
+      // GBRA-156: the pool's begin takes `first`; a nested transaction's begin (a savepoint) takes only the callback.
+      const mode = opts?.readOnly ? { mode: 'read only' } : {};
+      const begin = (run: (handle: unknown) => Promise<unknown>) => this._pageTransaction ? conn.begin(run)
+        : opts?.pipelineEarly ? conn.begin({ ...mode, early: opts.pipelineEarly }, run)
+        : opts?.pipelineFirst ? conn.begin({ ...mode, first: opts.pipelineFirst }, run)
+        : opts?.readOnly ? conn.begin('read only', run) : conn.begin(run);
+      return await holdSearchConnection(() => withCommitChecks(checks => withTransactionAbort(opts?.signal, attach => withHeldPageKeys(this._pageTransaction ? this._heldPageKeys : null, held => begin(async (handle) => {
         attach(handle as Discardable);
         if (!this._pageTransaction) this.checkoutGauge.checkedOut();
         const tx = composablePostgresTransaction(handle);
@@ -682,7 +715,7 @@ export class PostgresEngine implements BrainEngine {
         Object.defineProperty(txEngine, 'sql', { get: () => tx });
         Object.defineProperty(txEngine, '_sql', { value: tx as unknown as ReturnType<typeof postgres>, writable: false });
         return fn(txEngine);
-      }) as Promise<T>), { cancelSettleMs: cancelSettleMs() }));
+      }) as Promise<T>), { cancelSettleMs: cancelSettleMs() })));
     } finally {
       if (!this._pageTransaction) this.checkoutGauge.release('tx');
     }
@@ -733,7 +766,7 @@ export class PostgresEngine implements BrainEngine {
           return rows as unknown as R[];
         },
       };
-      return await fn(Object.assign(conn, { transaction: <R>(run: (engine: BrainEngine) => Promise<R>) => this.transactionOn(reservedTransactions(reserved), run) } satisfies ReservedTransactions));
+      return await fn(Object.assign(conn, { transaction: <R>(run: (engine: BrainEngine) => Promise<R>, opts?: TransactionOptions) => this.transactionOn(reservedTransactions(reserved), run, opts) } satisfies ReservedTransactions));
     } finally {
       // Counter/gauge decrements run regardless of release() throwing
       // (double-release or socket error must not permanently leak a permit
@@ -894,7 +927,7 @@ export class PostgresEngine implements BrainEngine {
     mode: string,
     corpusGeneration: string | null,
   ): Promise<void> {
-    return pagesImpl.updatePageContextualRetrievalState(this.engineSql, slug, sourceId, mode, corpusGeneration);
+    return pagesImpl.updatePageContextualRetrievalState(this.engineSql, slug, sourceId, mode, corpusGeneration, (key, read) => transactionMemo(this, key, read));
   }
 
   async migrateFactsToCanonical(
@@ -1107,15 +1140,9 @@ export class PostgresEngine implements BrainEngine {
     const chunk = buildKeywordChunkMatch(ftsLang, opts?.excludePrivate);
     const rawQuery = `
       WITH ranked_chunks AS (
-        SELECT * FROM (SELECT *, count(*) OVER () AS bounded_rows, row_number() OVER (PARTITION BY page_id ORDER BY score DESC, chunk_id ASC) AS page_rank FROM (SELECT
-          p.slug, p.id as page_id, p.title, p.type, p.source_id,
-          p.effective_date, p.effective_date_source,
-          CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
-            THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
-          CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
-            THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
-          cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-          ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $${rankIdx + 1})) * ${keywordPhraseFactorSql(ftsLang, `$${rankIdx + 1}`, opts?.keywordPhrase !== false)} * ${sourceFactorCase} AS score
+        SELECT page_id, chunk_id, score, bounded_rows FROM (SELECT *, count(*) OVER () AS bounded_rows, row_number() OVER (PARTITION BY page_id ORDER BY score DESC, chunk_id ASC) AS page_rank FROM (SELECT
+          p.id as page_id, cc.id as chunk_id,
+          ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $${rankIdx + 1})) * ${keywordPhraseFactorSql(ftsLang, `$${rankIdx + 1}`, opts?.keywordPhrase === true)} * ${sourceFactorCase} AS score
         FROM ${chunk.from}
         JOIN pages p ON p.id = cc.page_id
         JOIN sources s ON s.id = p.source_id
@@ -1136,7 +1163,8 @@ export class PostgresEngine implements BrainEngine {
         ORDER BY score DESC, page_id ASC, chunk_id ASC
         LIMIT ${innerLimitParam}
       ),
-      ${buildBestPerPagePoolCte('ranked_chunks')}
+      ${KEYWORD_RANKED_ROWS_CTE},
+      ${buildBestPerPagePoolCte('ranked_rows')}
       SELECT slug, page_id, title, type, source_id,
         effective_date, effective_date_source,
         message_id, thread_id, source_subject,
@@ -1177,10 +1205,12 @@ export class PostgresEngine implements BrainEngine {
         const narrowed = await narrowedOrFallbackQuery((sql, p) => this.executeRaw(sql, p), query, ftsLang);
         rows = await runKeyword(narrowed ?? orQuery, true, orQuery);
         if (narrowed || Number(rows[0]?.bounded_rows) >= KEYWORD_RANK_CANDIDATES) opts?.onKeywordIncomplete?.('candidate_budget');
+        const ranked = await rankOrFallbackByRarity<Record<string, unknown>>({ query, rows, limit, offset, runRare: q => runKeyword(q, true, orQuery),
+          readTermPages: terms => this.executeRaw<RareTermPages>(rareTermPagesSql(ftsLang), [terms, RARE_TERM_CHUNK_CAP]) });
         // 2026-09 (#3617 follow-up): relaxed rows are TAGGED so hybrid's
         // fusion can demote them — an OR-of-common-terms match must not
         // outvote a healthy vector arm (SearchResult.keyword_relaxed doc).
-        return rows.map((r) => ({ ...rowToSearchResult(r), keyword_relaxed: true as const }));
+        return ranked.map((r) => ({ ...rowToSearchResult(r), keyword_relaxed: true as const }));
       }
     }
     if (Number(rows[0]?.bounded_rows) >= KEYWORD_RANK_CANDIDATES) opts?.onKeywordIncomplete?.('candidate_budget');
@@ -1206,7 +1236,7 @@ export class PostgresEngine implements BrainEngine {
       (read, settings) => this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, tx => read(scopedRead(this.engineSqlOn(tx))), { alwaysTransaction: true, jitOff: true, settings }),
       query,
       opts,
-      { statementTimeout: await this.keywordStatementTimeoutSetting(), relaxedPrefersIndex: true, staleProbe: false, chunkManifest: exec => chunkManifestReads(this, exec) },
+      { statementTimeout: await this.keywordStatementTimeoutSetting(), statementSettings: KEYWORD_STATEMENT_SETTINGS, relaxedPrefersIndex: true, staleProbe: false, chunkManifest: exec => chunkManifestReads(this, exec) },
     );
   }
 
@@ -1466,7 +1496,7 @@ export class PostgresEngine implements BrainEngine {
       const bound = [...stmt.params];
       bound[stmt.innerLimitIdx] = exact ? null : innerLimit;
       return run(tx, (scopeScan && stmt.scopeScanSql) || (walk && stmt.indexWalkSql) || (exact ? stmt.exactSql : stmt.sql), bound as Parameters<typeof tx.unsafe>[1]);
-    }, { alwaysTransaction: true, jitOff: true, settings: () => vectorScanSettings(iterative, innerLimit, maxScanTuples, deadline, opts?.hnswIterativeScan, walk ? shape.indexWalkOverfetch : undefined) });
+    }, { alwaysTransaction: true, jitOff: true, settings: () => vectorScanSettings(iterative, innerLimit, maxScanTuples, deadline, opts?.hnswIterativeScan, walk ? shape.indexWalkOverfetch : undefined, !!shape.indexWalkSql && !walk && !(scopeScan && shape.scopeScanSql) && !exact) });
   }
 
   async getEmbeddingsByChunkIds(ids: number[], column: string = 'embedding'): Promise<Map<number, Float32Array>> {
@@ -2343,6 +2373,13 @@ export class PostgresEngine implements BrainEngine {
   async openBodyStaging(input: BodyStagingInput): Promise<void> { return pageBodyImpl.openBodyStaging(this.engineSql, input); }
   async setBodyStagingState(id: string, state: BodyStagingState, opts?: { commitRequestId?: string | null }): Promise<void> { return pageBodyImpl.setBodyStagingState(this.engineSql, id, state, opts); }
   async sweepSegments(opts?: SegmentSweepOptions): Promise<SegmentSweepResult> { return pageBodyImpl.sweepSegments(this.engineSql, opts); }
+  async readSegmentDerivations(pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[] }): Promise<SegmentDerivationRow[]> {
+    return pageBodyImpl.readSegmentDerivations(unscopedExecutor(this.engineSql, 'page-body: page-id keyed internal read'), pageId, opts);
+  }
+  async upsertSegmentDerivations(rows: readonly SegmentDerivationInput[]): Promise<void> { return pageBodyImpl.upsertSegmentDerivations(this.engineSql, rows); }
+  async retireSegmentDerivations(pageId: number, liveOccurrenceIds: readonly number[], opts?: { kind?: SegmentDerivationKind }): Promise<number> {
+    return pageBodyImpl.retireSegmentDerivations(this.engineSql, pageId, liveOccurrenceIds, opts);
+  }
 
   // ============================================================
   // v0.28: Takes (typed/weighted/attributed claims) + synthesis_evidence
@@ -2863,7 +2900,7 @@ export class PostgresEngine implements BrainEngine {
     if (opts?.signal?.aborted) {
       throw new DOMException('aborted', 'AbortError');
     }
-    return (async () => {
+    return holdSearchConnection(async () => {
       const signal = opts?.signal;
       let reserved: postgres.ReservedSql | undefined;
       let pending: ReturnType<typeof conn.unsafe> | undefined;
@@ -2907,7 +2944,7 @@ export class PostgresEngine implements BrainEngine {
         try { cancellation = pending.cancel().catch(() => { retired = true; }); }
         catch { retired = true; }
       }
-    })();
+    });
   }
 
   async executeRaw<T = Record<string, unknown>>(
@@ -2918,6 +2955,7 @@ export class PostgresEngine implements BrainEngine {
     // try/finally (not .finally on the promise): runUnsafe throws
     // SYNCHRONOUSLY on a pre-aborted signal, which would skip a chained
     // .finally and leak the counter.
+    throwIfRequestAborted();
     this.checkoutGauge.acquire('raw');
     try {
       if (opts?.jitOff && await needsJitOff(this.sql, this._pageTransaction)) return await runJitOffStatement<T>(this.sql, this._pageTransaction, sql, params, opts, (c, s, p, o) => this.runUnsafe(c, s, p, o), () => this.checkoutGauge.checkedOut());
@@ -2925,7 +2963,7 @@ export class PostgresEngine implements BrainEngine {
       if (opts?.timeoutMs !== undefined && !this._pageTransaction) {
         return await runBoundedStatement<T>(this.sql, sql, params, { ...opts, timeoutMs: opts.timeoutMs }, () => this.checkoutGauge.checkedOut());
       }
-      return await this.runUnsafe<T>(this.sql, sql, params, opts);
+      return await retryReadOnlyAutocommit(this.sql, c => this.runUnsafe<T>(c, sql, params, opts));
     } finally {
       this.checkoutGauge.release('raw');
     }
@@ -2974,7 +3012,7 @@ export class PostgresEngine implements BrainEngine {
     // try/finally, not .finally — see executeRaw (sync throw on pre-aborted signal).
     this.checkoutGauge.acquire('direct');
     try {
-      return await this.runUnsafe<T>(conn, sql, params, opts);
+      return await retryReadOnlyAutocommit(conn, c => this.runUnsafe<T>(c, sql, params, opts));
     } finally {
       this.checkoutGauge.release('direct');
     }

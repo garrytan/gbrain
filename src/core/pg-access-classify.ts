@@ -43,7 +43,7 @@ import {
   deriveDirectUrl,
   deriveSessionPoolerUrl,
   isSupabasePoolerUrl,
-} from './connection-manager.ts';
+} from './supabase-pooler-url.ts';
 import { extractProjectRef } from './supabase-admin.ts';
 
 /**

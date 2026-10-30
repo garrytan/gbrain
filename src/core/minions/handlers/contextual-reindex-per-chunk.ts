@@ -129,7 +129,7 @@ export function makeContextualReindexHandler(opts: MakeContextualReindexHandlerO
 
   return async function contextualReindexHandler(
     ctx: MinionJobContext,
-  ): Promise<{ ok: true; mode_applied: string; chunks_embedded: number; skip_reason?: string }> {
+  ): Promise<{ ok: boolean; mode_applied: string; chunks_embedded: number; skip_reason?: string; next?: string }> {
     const data = parseJobData(ctx.data);
 
     // Load page row to derive the authoritative source_id (D27 P2-1).
@@ -281,7 +281,7 @@ function abortError(): Error {
 function classifyResult(
   pageSlug: string,
   result: ReembedPageResult,
-): { ok: true; mode_applied: string; chunks_embedded: number; skip_reason?: string } {
+): { ok: boolean; mode_applied: string; chunks_embedded: number; skip_reason?: string; next?: string } {
   switch (result.kind) {
     case 'success':
       return {
@@ -299,6 +299,9 @@ function classifyResult(
         chunks_embedded: result.chunks_embedded,
       };
     case 'skipped':
+      // A fact purge's pending derivation sweep blocks the page's paid synopsis: not done, and not a cap to raise.
+      if (result.reason === 'purge_sweep_pending') return { ok: false, mode_applied: 'skipped', chunks_embedded: 0, skip_reason: result.reason,
+        next: 'A fact purge\'s sweep of stored derivation results covers this page, so no synopsis was paid for. gbrain doctor --only derivation_purge_sweeps names the purge and the command that finishes its sweep (gbrain forget --purge --status --request-id <request_id> --continue); then run the reindex again.' };
       return { ok: true, mode_applied: 'skipped', chunks_embedded: 0, skip_reason: result.reason };
     case 'transient_error':
       // Throw so Minion retries. The queue's backoff policy handles

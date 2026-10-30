@@ -20,16 +20,44 @@ import { lstatSync } from 'node:fs';
 import { once } from 'node:events';
 import type { Writable } from 'node:stream';
 import { join } from 'node:path';
+import { envSafeDirectories, gitChildEnv, safeDirectoryEnv } from './git-env.ts';
 
 export const HARDENED_GIT_ARGS: readonly string[] = ['--no-pager', '--no-optional-locks', '--no-replace-objects',
   '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.untrackedCache=false',
   '-c', 'submodule.recurse=false', '-c', 'protocol.allow=never', '-c', 'credential.helper=',
   '-c', 'maintenance.auto=false', '-c', 'gc.auto=0'];
 
+const OPERATOR_CONFIG_TTL_MS = 30_000;
+let operatorConfig: { key: string; at: number; values: string[] } | null = null;
+
+/**
+ * #7584: the `safe.directory` entries in the operator's system and global Git config, in Git's order, read from `/` so no
+ * repository's config takes part. Re-read every 30 s, so a running server picks up an edit without a restart.
+ */
+function operatorConfigSafeDirectories(): string[] {
+  const key = ['HOME', 'XDG_CONFIG_HOME', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM', 'PATH'].map(name => process.env[name] ?? '').join('\0');
+  if (operatorConfig?.key === key && Date.now() - operatorConfig.at < OPERATOR_CONFIG_TTL_MS) return operatorConfig.values;
+  const run = spawnSync('git', ['config', '--includes', '--show-scope', '-z', '--get-all', 'safe.directory'],
+    { cwd: '/', env: { ...gitChildEnv(), LC_ALL: 'C' }, stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, maxBuffer: 1024 * 1024, killSignal: 'SIGKILL' });
+  const fields = run.status === 0 ? run.stdout.toString('utf8').split('\0') : [];
+  const values: string[] = [];
+  for (let i = 0; i + 1 < fields.length; i += 2) if (fields[i] === 'system' || fields[i] === 'global') values.push(fields[i + 1]!);
+  operatorConfig = { key, at: Date.now(), values };
+  return values;
+}
+
+export function __resetOperatorGitConfigForTests(): void { operatorConfig = null; }
+
+/**
+ * System and global config stay off and every `GIT_*` variable is dropped, except the operator's `safe.directory` entries
+ * (system, global, then environment, as Git orders them), carried as environment config (#7584). They relax only Git's
+ * ownership check for a repository owned by another user, which the operator allowed for their own `git` too.
+ */
 export function hardenedGitEnvironment(): NodeJS.ProcessEnv {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
   return { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0',
-    GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0', GIT_LFS_SKIP_SMUDGE: '1', LC_ALL: 'C' };
+    GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0', GIT_LFS_SKIP_SMUDGE: '1', LC_ALL: 'C',
+    ...safeDirectoryEnv([...operatorConfigSafeDirectories(), ...envSafeDirectories()]) };
 }
 
 export type HardenedGitResult = { ok: true; stdout: Buffer } | { ok: false; reason: 'exit' | 'timeout' | 'too_large' | 'unavailable'; status?: number };
@@ -45,6 +73,7 @@ const ALLOWED_OPTIONS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['cat-file', new Set(['--batch'])],
   ['hash-object', new Set(['--no-filters', '--stdin-paths'])],
   ['check-attr', new Set(['-z', '--stdin'])],
+  ['check-ignore', new Set(['-z', '--stdin'])],
   ['diff-index', new Set(['--cached', '--quiet'])],
   ['diff-tree', new Set(['-r', '-z', '--no-renames'])],
 ]);
@@ -107,12 +136,18 @@ export type HardenedGitInput = string | Buffer | Iterable<Buffer | string> | Asy
  * returns a promise holds stdout until it settles (a large read yields to the
  * event loop between chunks); a rejection fails the run like a throw.
  */
-export async function hardenedGitStream(root: string, args: string[],
+export function hardenedGitStream(root: string, args: string[],
   opts: { stdin?: HardenedGitInput; timeoutMs: number; maxBytes?: number; onChunk?: (chunk: Buffer) => void | Promise<void> }): Promise<HardenedGitStreamResult> {
-  assertHardenedGitArgs(args);
-  return await new Promise<HardenedGitStreamResult>((accept, reject) => {
+  try { assertHardenedGitArgs(args); } catch (error) { return Promise.reject(error); }
+  // GBRA-133: not an async function and no callback below names `opts`, so no timer or listener closes over the caller's
+  // options, and the chunk handler is dropped once the read settled. Before, an async function's parameters were captured by
+  // every callback here: the exited-stdout idle timer kept the caller's `onChunk` (and through it the whole pass that read)
+  // reachable for seconds after the read had ended.
+  const { stdin, timeoutMs, maxBytes } = opts;
+  let onChunk = opts.onChunk;
+  return new Promise<HardenedGitStreamResult>((accept, reject) => {
     const child = spawn('git', [...HARDENED_GIT_ARGS, '-C', root, ...args],
-      { env: hardenedGitEnvironment(), stdio: [opts.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'] });
+      { env: hardenedGitEnvironment(), stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'] });
     let bytes = 0;
     let last = -1;
     let stopped: 'timeout' | 'too_large' | undefined;
@@ -121,9 +156,9 @@ export async function hardenedGitStream(root: string, args: string[],
     let exited = false;
     let holding = false;
     let idle: ReturnType<typeof setTimeout> | undefined;
-    const settle = (outcome: () => void): void => { if (settled) return; settled = true; clearTimeout(timer); clearTimeout(idle); outcome(); };
+    const settle = (outcome: () => void): void => { if (settled) return; settled = true; onChunk = undefined; clearTimeout(timer); clearTimeout(idle); outcome(); };
     const fail = (error: unknown): void => { failure ??= { error }; child.kill('SIGKILL'); };
-    const timer = setTimeout(() => { stopped ??= 'timeout'; child.kill('SIGKILL'); }, opts.timeoutMs);
+    const timer = setTimeout(() => { stopped ??= 'timeout'; child.kill('SIGKILL'); }, timeoutMs);
     const watchIdle = (): void => {
       clearTimeout(idle);
       if (exited && !holding) idle = setTimeout(() => settle(() => failure ? reject(failure.error) : accept({ ok: false, reason: stopped ?? 'stalled' })), EXITED_STDOUT_IDLE_MS);
@@ -131,10 +166,10 @@ export async function hardenedGitStream(root: string, args: string[],
     child.stdout?.on('data', (chunk: Buffer) => {
       if (settled || stopped || failure) return;
       bytes += chunk.length;
-      if (opts.maxBytes !== undefined && bytes > opts.maxBytes) { stopped = 'too_large'; child.kill('SIGKILL'); return; }
+      if (maxBytes !== undefined && bytes > maxBytes) { stopped = 'too_large'; child.kill('SIGKILL'); return; }
       last = chunk[chunk.length - 1] ?? last;
       let held: void | Promise<void>;
-      try { held = opts.onChunk?.(chunk); } catch (error) { fail(error); return; }
+      try { held = onChunk?.(chunk); } catch (error) { fail(error); return; }
       if (held) { holding = true; child.stdout?.pause(); held.then(() => { holding = false; watchIdle(); child.stdout?.resume(); }, fail); }
       watchIdle();
     });
@@ -147,7 +182,7 @@ export async function hardenedGitStream(root: string, args: string[],
       else if (code !== 0) accept({ ok: false, reason: 'exit', ...(code === null ? {} : { status: code }) });
       else accept({ ok: true, exitCode: 0, signal: null, bytes, endsWithNul: last === 0 });
     }));
-    if (opts.stdin !== undefined && child.stdin) void feedStdin(child.stdin, opts.stdin, fail);
+    if (stdin !== undefined && child.stdin) void feedStdin(child.stdin, stdin, fail);
   });
 }
 

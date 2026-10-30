@@ -5,7 +5,7 @@
  * one result line. Both directions are size-bounded.
  */
 import type { Notice } from '../agent-output.ts';
-import { OperationError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
 import { isCliSocketIdentity, type CliSocketIdentity } from './identity.ts';
 
 export const CLI_SOCKET_PROTOCOL = 1;
@@ -19,6 +19,18 @@ export const REQUEST_READ_TIMEOUT_MS = 2_000;
 export const DEFAULT_READ_WALLCLOCK_MS = 180_000;
 /** The longest a CLI waits on one whole exchange (or its --timeout, when shorter) before running the call itself. */
 export const MAX_ROUND_TRIP_MS = 30_000;
+
+/**
+ * GBRA-156: a warm call that reached its round-trip cap answers with this retryable `timeout` error instead of
+ * running the call again on the cold path. The serve sends it after cancelling the request's remaining work; the CLI
+ * builds the same error when the serve never answered in time.
+ */
+export function warmRoundTripTimeout(command: string, ms: number, side: 'serve' | 'cli'): OperationError {
+  return opError('timeout', `gbrain ${command} did not finish within ${ms} ms on the warm CLI socket${side === 'serve' ? '; the serve cancelled it' : ' (the serve did not answer)'}.`,
+    'Retry the same command; pass --timeout <ms> to bound it. If it keeps timing out, look in the serve\'s stderr log for a request still running.',
+    { reason: 'cli_socket_round_trip_cap', retryable: true, docs: 'docs/guides/cli-socket.md',
+      why: `The warm CLI socket caps one call at ${ms} ms so a caller never waits on a request without a bound; the call returned this error instead of starting over on the slower cold path.` });
+}
 
 /** The read operations a serve answers over the socket. Everything else keeps the cold path. */
 export const CLI_SOCKET_OPS = ['search', 'query', 'get_page'] as const;
@@ -39,6 +51,16 @@ export type CliSocketRequest = {
   routing: CliSocketRouting;
   cli: { quiet: boolean; timeout_ms: number | null };
 } & ({ kind: 'op'; op: CliSocketOp; params: Record<string, unknown> } | { kind: 'recall'; args: string[] });
+
+/**
+ * GBRA-175: a handshake-only probe. The serve checks the identity exactly as for a request and answers the handshake
+ * line alone, running nothing, so `gbrain upgrade` can prove after a restart that the serve accepts this build.
+ */
+export interface CliSocketProbe { v: 1; kind: 'probe'; identity: CliSocketIdentity }
+
+export function isCliSocketProbe(value: unknown): value is CliSocketProbe {
+  return record(value) && value.v === CLI_SOCKET_PROTOCOL && value.kind === 'probe' && isCliSocketIdentity(value.identity);
+}
 
 /** A refusal for `identity_mismatch` names the identity part that differed in `mismatch` (cliSocketIdentityMismatch), never its value. */
 export type HandshakeFrame = { v: 1; accepted: true } | { v: 1; accepted: false; reason: string; mismatch?: string };

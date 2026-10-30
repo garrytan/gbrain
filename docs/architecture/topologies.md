@@ -207,6 +207,16 @@ Three storage paths in priority order:
    setup; mirrors how Supabase keys are stored today).
 3. macOS Keychain integration is not supported (roadmap item).
 
+The access token the thin client mints is cached in
+`~/.gbrain/remote-tokens/` (one 0600 file per client, bearer and expiry only,
+no secret) and reused by every `gbrain` command until 30 seconds before it expires, so a
+per-prompt hook mints about one token per token lifetime instead of one per
+command. Changing the client id or secret starts a fresh token; deleting the
+directory is always safe. Processes that start together with no cached token
+each mint one. The host still checks each request against the client's
+current grant, so narrowing or revoking the client takes effect on the cached
+token at once.
+
 ## Topology 3 — Split-engine, per-worktree code + remote artifacts
 
 ```
@@ -822,10 +832,12 @@ or rebases the checkout.
 <a id="files-that-are-not-pages"></a>**Files that are not pages.** The owner's
 Git effect commits only the page paths it wrote (`git commit --only`) and then
 pushes HEAD. Everything else in the checkout (`MEMORY.md`, daily notes,
-`AGENTS.md`, scripts) is the operator's: `git add` and `git commit` it with
-plain git in the checkout. Those commits reach the remote on the owner's next
-push, because the owner pushes HEAD, or sooner with a hand `git push` from the <!-- gbrain-allow-shared-tree-git: managed worktrees refuse gbrain git commit-push; a plain push of HEAD is the documented path for non-page files -->
-checkout; `gbrain sources push` refuses on a managed root and its secret scan
+`AGENTS.md`, scripts) is the operator's: commit it with
+`gbrain git commit-push -m "<msg>" -- <paths>`, which commits only those paths
+under the checkout's commit lock (`committed_local`) and never fetches, pushes
+or moves the checkout. Those commits reach the remote on the owner's next
+push, because the owner pushes HEAD, or sooner with
+`gbrain git commit-push --push-only --keep-checkout` from the checkout; `gbrain sources push` refuses on a managed root and its secret scan
 does not run on a hand push. A hand push and the owner's push race only by
 ordinary Git semantics (both push the same HEAD; a push the remote rejects is
 retried by the owner and, after repeated failures, parked, which

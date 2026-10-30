@@ -454,8 +454,11 @@ describe('delta p99 latency gate (v0.45.7 ambient recall)', () => {
 // F1: `entity names` with the reference fields and records, 50 names with two identity siblings each (150 target
 // pages). Gates: one batched referrer read per call (2 statements whatever the name count), and the reference phase
 // adds at most REFERENCES_ADDED_CEILING to the same call with every reference field off (the names lookup itself, 50
-// card resolutions, is the baseline; measured interleaved so runner load lands on both).
+// card resolutions, is the baseline; measured in pairs so runner load lands on both).
 const REFERENCES_ADDED_CEILING = 0.5;
+// Measured pairs. 40 CI runs (Oct 22-25) of the old wall-clock ratio of two medians of 10 read median 16.5%, a tail
+// to 38.5%, and one 51.8% failure: wall time counts time off the CPU. Thread CPU time in pairs reads 14-16% here.
+const NAMES_RECORDS_PAIRS = 20;
 describe('entity names with records (50 names, 150 target pages)', () => {
   it(`50 names with siblings: references add at most ${REFERENCES_ADDED_CEILING * 100}% and a constant number of referrer statements`, async () => {
     const { lookupEntityNames } = await import('../src/core/verbs/entity-names.ts');
@@ -484,33 +487,42 @@ describe('entity names with records (50 names, 150 target pages)', () => {
     const off = async () => { await engine.unsetConfig('entity.record_types'); await engine.setConfig('entity.names_references', 'false'); };
     try {
       for (let i = 0; i < 2; i++) { await on(); await lookupEntityNames(engine, 'default', names, { remote: true }); await off(); await lookupEntityNames(engine, 'default', names, { remote: true }); }
-      const withRefs: number[] = [];
-      const base: number[] = [];
+      // Each pair times both calls back to back on this thread's CPU (sample(): time spent off the CPU is not counted,
+      // a window the hypervisor stole from is timed again). The pair order alternates, and the gate is the median of
+      // the per-pair ratios.
+      const ratios: number[] = [];
+      const pairs: Array<{ refs: Sample; base: Sample }> = [];
       let last: Awaited<ReturnType<typeof lookupEntityNames>> | null = null;
       let statements = 0;
-      for (let i = 0; i < 10; i++) {
-        await on();
-        referrerStatements = 0;
-        let t0 = performance.now();
-        last = await lookupEntityNames(engine, 'default', names, { remote: true });
-        withRefs.push(performance.now() - t0);
-        statements += referrerStatements;
-        await off();
-        t0 = performance.now();
-        await lookupEntityNames(engine, 'default', names, { remote: true });
-        base.push(performance.now() - t0);
+      const timed = async (refsOn: boolean): Promise<Sample> => {
+        await (refsOn ? on() : off());
+        return sample(refsOn ? 'references' : 'base', async () => {
+          referrerStatements = 0;
+          const result = await lookupEntityNames(engine, 'default', names, { remote: true });
+          if (refsOn) last = result;
+        });
+      };
+      for (let i = 0; i < NAMES_RECORDS_PAIRS; i++) {
+        let refs: Sample, base: Sample;
+        if (i % 2 === 0) { refs = await timed(true); statements += referrerStatements; base = await timed(false); }
+        else { base = await timed(false); refs = await timed(true); statements += referrerStatements; }
+        pairs.push({ refs, base });
+        ratios.push(refs.cpu / base.cpu);
       }
-      withRefs.sort((a, b) => a - b);
-      base.sort((a, b) => a - b);
-      const added = percentile(withRefs, 50) / percentile(base, 50) - 1;
+      ratios.sort((a, b) => a - b);
+      const added = percentile(ratios, 50) - 1;
+      const median = (xs: number[]) => percentile([...xs].sort((a, b) => a - b), 50);
       // eslint-disable-next-line no-console
-      console.log(`[entity-names-records-perf] 50 names / 150 targets with references p50=${percentile(withRefs, 50).toFixed(2)}ms ` +
-        `| all reference fields off p50=${percentile(base, 50).toFixed(2)}ms | added=${(added * 100).toFixed(1)}% (ceiling ${REFERENCES_ADDED_CEILING * 100}%)`);
+      console.log(`[entity-names-records-perf] 50 names / 150 targets with references cpu p50=${median(pairs.map(x => x.refs.cpu)).toFixed(2)}ms ` +
+        `| all reference fields off cpu p50=${median(pairs.map(x => x.base.cpu)).toFixed(2)}ms | added=${(added * 100).toFixed(1)}% ` +
+        `(median of ${NAMES_RECORDS_PAIRS} paired ratios, ${(ratios[0]! * 100 - 100).toFixed(1)}%..${(ratios.at(-1)! * 100 - 100).toFixed(1)}%; ceiling ${REFERENCES_ADDED_CEILING * 100}%)`);
+      // eslint-disable-next-line no-console
+      console.log(`[entity-names-records-perf] slowest: ${slowest(pairs.flatMap(x => [x.refs, x.base]))}`);
       const rows = last!.results.flatMap(r => (r.found ? [r, ...(r.siblings ?? [])] : []));
       expect(rows).toHaveLength(150);
       expect(rows.every(r => typeof r.referenced_by_count === 'number' && Array.isArray(r.records))).toBe(true);
       expect(rows.reduce((n, r) => n + (r.records ?? []).reduce((m, g) => m + g.rows.length, 0), 0)).toBe(24);
-      expect(statements).toBe(10 * 2);
+      expect(statements).toBe(NAMES_RECORDS_PAIRS * 2);
       expect(added).toBeLessThanOrEqual(REFERENCES_ADDED_CEILING);
     } finally {
       engine.executeRaw = raw;

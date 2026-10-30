@@ -10,12 +10,16 @@
 
 import type { Operation } from './contract.ts';
 import { readPolicyOpts } from './context.ts';
+import { capRowList } from '../bounded-listing.ts';
 import {
   GET_RECENT_SALIENCE_DESCRIPTION,
   FIND_ANOMALIES_DESCRIPTION,
 } from '../operations-descriptions.ts';
 
 // --- v0.29: Salience + Anomaly Detection ---
+
+/** #7246: slugs listed per anomalous cohort (count always covers the whole cohort; page_slugs_complete: false marks a capped row). */
+export const ANOMALY_SLUG_DEFAULT_LIMIT = 20;
 
 const get_recent_salience: Operation = {
   name: 'get_recent_salience',
@@ -25,16 +29,18 @@ const get_recent_salience: Operation = {
   description: GET_RECENT_SALIENCE_DESCRIPTION,
   scope: 'read',
   params: {
-    days: { type: 'number', description: 'Window in days (default 14).' },
-    limit: { type: 'number', description: 'Max results (default 20).' },
+    days: { type: 'number', description: 'Default 14.' },
+    limit: { type: 'number', description: 'Default 20.' },
     slugPrefix: {
       type: 'string',
       description: 'Slug prefix.',
+      fullSurfaceOnly: true,
     },
     recency_bias: {
       type: 'string',
       enum: ['flat', 'on'],
       description: 'flat (default) or on (per-prefix decay).',
+      fullSurfaceOnly: true,
     },
   },
   handler: async (ctx, p) => {
@@ -74,10 +80,12 @@ const find_anomalies: Operation = {
     lookback_days: {
       type: 'number',
       description: 'Baseline days (default 30).',
+      fullSurfaceOnly: true,
     },
     sigma: {
       type: 'number',
       description: 'Threshold (default 3).',
+      fullSurfaceOnly: true,
     },
   },
   handler: async (ctx, p) => {
@@ -93,7 +101,8 @@ const find_anomalies: Operation = {
       ...await readPolicyOpts(ctx),
     });
 
-    return anomalies;
+    // #7246: a fixed per-cohort sample keeps the response bounded (count covers the whole cohort); the local CLI's --all lists every slug.
+    return anomalies.map(row => capRowList(row, 'page_slugs', ANOMALY_SLUG_DEFAULT_LIMIT));
   },
   // hidden: 'anomalies' is in CLI_ONLY (src/cli.ts) — runAnomalies owns the
   // CLI surface; the non-hidden hint was dead (CLI_ONLY wins at dispatch).

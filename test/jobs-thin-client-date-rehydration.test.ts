@@ -70,7 +70,7 @@ describe('thin-client unpack sites route through rehydrateJobDates (source audit
   const src = surfaceSource('jobs');
 
   test('list branch rehydrates', () => {
-    expect(src).toContain('unpackToolResult<MinionJob[]>(raw).map((j) => rehydrateJobDates(j))');
+    expect(src).toContain('jobs.push(rehydrateJobDates(job as MinionJob))');
   });
 
   test('get branch rehydrates', () => {

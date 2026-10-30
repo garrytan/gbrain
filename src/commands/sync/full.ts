@@ -38,6 +38,7 @@ import {
   type SlugRootMode,
 } from '../../core/sync-anchor.ts';
 import { buildPartialResult } from '../../core/sync-lock.ts';
+import { noteCommittedProgress } from '../../core/forward-progress.ts';
 import {
   MASS_RECONCILE_RATIO,
   planReconcileDeletes,
@@ -131,7 +132,10 @@ export async function performFullSync(
       // #5988: content refusals are held, not failed (never gating the bookmark).
       onFileResult: async (path, filePath, fileResult) => {
         noteScreenedImport(holds, path, fileResult);
-        return await holdRefusedImport(engine, holds, path, filePath, fileResult) ? 'held' : undefined;
+        if (await holdRefusedImport(engine, holds, path, filePath, fileResult)) return 'held';
+        // GBRA-133 PR 3a: an imported page is committed work, so the sync deadline extends while a full import lands pages.
+        if (fileResult.status === 'imported') noteCommittedProgress();
+        return undefined;
       },
     });
     if (opts.signal?.aborted) throw new ImportAbortError('interrupted', 1, result);

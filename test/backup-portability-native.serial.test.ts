@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import * as childProcess from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { AgentInstallError, checkedManagedPaths, confinedPath, privateWrite, readInstallReceipt, sha256, type AgentInstallReceipt } from '../src/core/agent-install/state.ts';
 import { extractPgliteDump, readBackupArchive, writeBackupArchive } from '../src/core/backup/archive.ts';
@@ -1149,4 +1149,37 @@ for (const failureCode of [null, 'EPERM', 'EIO'] as const) test(failureCode
     expect((await databaseState(into)).facts).toEqual(original.facts);
   }
   await expectOriginal();
+}, 120_000);
+
+test('restore flushes every restored cluster file in the tree sync before the ready receipt, none while extracting', async () => {
+  // win32-arm64 (2026-10-22, native-only probe runs): a per-file flush while extracting the cluster cost 11-22 s per
+  // restore, and the tree sync flushed every file again; the tree sync alone keeps the durability contract.
+  const into = join(temporary, 'single-flush');
+  const open = fs.openSync; const fsync = fs.fsyncSync;
+  const handles = new Map<number, { path: string; flags: string }>();
+  const extracted: string[] = [];
+  const treeSynced = new Set<string>();
+  const cluster = join('restored', '.gbrain', 'brain.pglite') + sep;
+  const opened = spyOn(fs, 'openSync').mockImplementation((path, flags, mode) => {
+    const fd = open(path, flags, mode);
+    const at = String(path).indexOf(cluster);
+    if (String(path).startsWith(join(into, '.restore-')) && at >= 0) handles.set(fd, { path: String(path).slice(at + cluster.length), flags: String(flags) });
+    return fd;
+  });
+  const synced = spyOn(fs, 'fsyncSync').mockImplementation(fd => {
+    const handle = handles.get(fd);
+    if (handle?.flags === 'wx') extracted.push(handle.path);
+    if (handle?.flags === 'r+') treeSynced.add(handle.path);
+    fsync(fd);
+  });
+  try { expect((await restorePgliteBackup({ archive, into })).root).toBe(into); }
+  finally { opened.mockRestore(); synced.mockRestore(); }
+  expect(JSON.parse(fs.readFileSync(join(into, 'restore-receipt.json'), 'utf8')).state).toBe('ready');
+  const published = (function walk(dir: string, prefix: string): string[] {
+    return fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory()
+      ? walk(join(dir, entry.name), prefix + entry.name + sep) : [prefix + entry.name]);
+  })(join(into, '.gbrain', 'brain.pglite'), '');
+  expect(published.length).toBeGreaterThan(100);
+  expect(extracted).toEqual([]);
+  expect(published.filter(path => !treeSynced.has(path))).toEqual([]);
 }, 120_000);

@@ -40,15 +40,16 @@ test('a planted bypass in a converted writer or a new file fails the census', ()
   const inventory = loadInventory();
   // test-reads-source-ok[structural]: the census is a source-text tripwire by design; the planted copy proves it flags a new bypass.
   const links = readFileSync(join(root, 'src/core/ops/links.ts'), 'utf8');
-  const concepts = readFileSync(join(root, 'src/core/cycle/synthesize-concepts.ts'), 'utf8');
-  expect(gapsFor([['src/core/ops/links.ts', links], ['src/core/cycle/synthesize-concepts.ts', concepts]], inventory)).toEqual([]);
+  // G6: the unmanaged concept write moved from synthesize-concepts.ts to concept-writes.ts with its ceiling.
+  const concepts = readFileSync(join(root, 'src/core/cycle/concept-writes.ts'), 'utf8');
+  expect(gapsFor([['src/core/ops/links.ts', links], ['src/core/cycle/concept-writes.ts', concepts]], inventory)).toEqual([]);
   expect(gapsFor([
     ['src/core/ops/links.ts', `${links}\nawait ctx.engine.addLink(a, b, '', '', 'manual');`],
-    ['src/core/cycle/synthesize-concepts.ts', `${concepts}\nawait importFromContent(engine, slug, md, { sourceId });`],
+    ['src/core/cycle/concept-writes.ts', `${concepts}\nawait importFromContent(engine, slug, md, { sourceId });`],
     ['src/core/cycle/new-writer.ts', 'await engine.putPage(slug, page);'],
   ], inventory)).toEqual([
-    'src/core/ops/links.ts: 5 write references; reviewed ceiling 4',
-    'src/core/cycle/synthesize-concepts.ts: 3 write references; reviewed ceiling 2',
+    'src/core/ops/links.ts: 4 write references; reviewed ceiling 3',
+    'src/core/cycle/concept-writes.ts: 3 write references; reviewed ceiling 2',
     'src/core/cycle/new-writer.ts: 1 write references; reviewed ceiling 0',
   ]);
 });

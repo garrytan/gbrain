@@ -843,7 +843,9 @@ describe('#4589: synthesize_concepts persists concept<->atom provenance edges', 
 
   test('a failed edge write is reported as warn, not swallowed; the concept page still lands', async () => {
     await seedMembers();
-    const orig = engine.addLinksBatch.bind(engine);
+    // Shadow the prototype method and delete the shadow afterwards: restoring a copy bound to the root engine would
+    // leave it pinned there, and the edges are now written inside a transaction (GBRA-161 PR 5), where a call through
+    // the root engine waits on the transaction's own connection.
     engine.addLinksBatch = async () => { throw new Error('links table unavailable'); };
     try {
       const result = await runPhaseSynthesizeConcepts(engine, { _atoms: memberAtoms });
@@ -853,7 +855,7 @@ describe('#4589: synthesize_concepts persists concept<->atom provenance edges', 
       expect(warnings.some((w) => w.concept === CONCEPT && /links table unavailable/.test(w.warning))).toBe(true);
       expect(await engine.getPage(CONCEPT_SLUG, { sourceId: 'default' })).not.toBeNull();
     } finally {
-      engine.addLinksBatch = orig;
+      delete (engine as { addLinksBatch?: unknown }).addLinksBatch;
     }
   });
 });

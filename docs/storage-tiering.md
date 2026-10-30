@@ -35,6 +35,7 @@ storage:
 Path requirements:
 
 - Each directory must end with `/` for canonical form. The validator auto-normalizes missing trailing slashes (one-time info note shows what changed).
+- A tier may also be a one-line flow list, `db_only: [media/x/, 'media/articles/']`. A flow list split over several lines, or a `db_only` key outside `storage:`, resolves no directory: `gbrain storage status` names it, and until it is fixed a managed sync keeps every live page whose file is gone (held as `file_drift` with reason `storage_invalid`) instead of deleting it, because it cannot tell which pages are database-only (#8007). A tier overlap holds them the same way, and so does a deprecated `supabase_only` list next to canonical keys, which canonical keys make gbrain ignore. `gbrain repair file-drift --prefer file` and `sync.apply_held_deletions` skip these pages while the config stays invalid. Fix `gbrain.yml`, commit it and sync again; the holds clear and each page is decided under the fixed config.
 - A directory cannot appear in both tiers — that's a tier-overlap error and `loadStorageConfig` throws `StorageConfigError`. Edit `gbrain.yml` to remove the overlap and try again.
 - Any other key under `storage:` is ignored with a warning naming it (a typo such as `kep_db` used to be ignored silently).
 
@@ -53,7 +54,7 @@ storage:
 When storage configuration is present, `gbrain sync` automatically manages `.gitignore` entries on every successful sync:
 
 - Adds missing `db_only` directory patterns to `.gitignore`.
-- A file under a `db_only` directory that git already tracked before the declaration stays tracked and shows as modified once the database updates it; untrack it with `git rm --cached <path>`.
+- A file under a `db_only` directory that git already tracked before the declaration stays tracked and shows as modified once the database updates it; untrack it with `git rm --cached <path>`. A managed sync never soft-deletes a live page under a declared `db_only` directory because its file left Git (untracked, ignored or gone): the database copy is canonical (#7324).
 - Idempotent — re-running adds no duplicate entries.
 - Stable comment header so the managed block is grep-able.
 - Skipped on `--dry-run` (don't mutate disk in preview mode).
@@ -215,6 +216,14 @@ machine) never makes a page database-only by itself: detaching is always an
 explicit choice. `--detach` is refused (`invalid_params`) when there is
 nothing to detach (the page is not soft-deleted, its file is in place, or the
 restore re-creates it).
+
+A page under a declared `db_only` directory is canonical in the database, so
+its `--detach` restore publishes database-only even on a managed checkout with
+`sync.write_through` on (#7324): it keeps its page id, content and history,
+forgets its recorded file, writes no file and leaves an ignored cache file
+untouched. Its recorded file must still be gone from the syncable tree. A plain
+restore of such a page keeps its recorded file and its cache file as before;
+sync no longer deletes it either way.
 
 Doctor `missing_recorded_files` warns about live pages whose recorded file is
 not among the files `gbrain sync --full` enumerates (for example a page

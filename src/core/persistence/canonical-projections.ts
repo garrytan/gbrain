@@ -5,16 +5,18 @@ import type { PageSnapshot } from '../page-state/types.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence } from '../takes-fence.ts';
-import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
+import { extractFactsFromFenceText, pageFactDate } from '../facts/extract-from-fence.ts';
 import { takesPreparation } from '../takes-write.ts';
-import { parseTimelineEntries } from '../link-extraction.ts';
+import { LINK_EXTRACTOR_VERSION_TS, parseTimelineEntries } from '../link-extraction.ts';
 import { eachStoredTimelineRow, extractTimelineFromContent, hasExtractorDetail, supersededCitationTimeline, TimelineKeySet,
   type ExtractedTimelineEntry } from '../timeline-extract.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { sanitizeForJsonb } from '../batch-rows.ts';
 import { bodyUnread } from '../page-body/page-shape.ts';
-import { bodyBlocks, detachedValue } from '../page-body/segment-blocks.ts';
-import { TakesFenceScan } from '../page-body/segment-takes.ts';
+import { bodyBlocks, detachedValue, type BodyBlock } from '../page-body/segment-blocks.ts';
+import { TakesFenceScan, takesFromRuns } from '../page-body/segment-takes.ts';
+import { openFenceRuns } from '../page-body/segment-facts.ts';
+import { derivationScope, readRuns, SegmentDerivationRaced, streamRuns, type DerivationScope, type DeriveRun } from '../page-body/segment-derive.ts';
 import type { BodyRegion } from '../page-body/types.ts';
 import { createHash } from 'node:crypto';
 import { materializedMarker, materializedMarkerHash, timelineKey, timelineKeyHash } from '../timeline-marker.ts';
@@ -25,6 +27,10 @@ import type { FenceSection } from '../fence-repair/types.ts';
 import { contestHeldRows, factsAboveWriter, guardFenceRows, guardFenceTakes, heldRows } from '../trust/fence-guard.ts';
 import { propagateFactLowering } from '../trust/propagation.ts';
 import { loadWriteGateConfig } from '../trust/gate-outcomes.ts';
+import { fenceOwnerKey, readFenceBlocks, TAKE_FENCE_KIND } from '../generations/fence.ts';
+import { projectFactFenceGeneration } from '../generations/adapters/fact-rows.ts';
+import { projectTakeFenceGeneration } from '../generations/adapters/take-rows.ts';
+import { linksFenceProjectionRows, projectLinksFence } from '../links-fence-projection.ts';
 
 const FENCE_PAIRS=[{begin:FACTS_FENCE_BEGIN,end:FACTS_FENCE_END},{begin:TAKES_FENCE_BEGIN,end:TAKES_FENCE_END}];
 
@@ -158,10 +164,10 @@ function timelineView(body: CanonicalBody, slug: string): TimelineView {
  * What a prior body says about the stored rows a write classifies, by the row's index in the rows read and its key:
  * a bullet (`entry`), a bullet a marker still matches (`marked`), a superseded citation reading (`superseded`).
  */
-interface PriorRows { entry(i: number, key: string): boolean; marked(i: number, key: string): boolean; superseded(i: number, key: string): boolean }
+export interface PriorRows { entry(i: number, key: string): boolean; marked(i: number, key: string): boolean; superseded(i: number, key: string): boolean }
 
 /** The views a prior snapshot contributes, plus its takes rows per field and whether either field's takes fence warns. */
-interface PriorView { rows: PriorRows; takeRows: Set<number>; takesWarn: boolean }
+export interface PriorView { rows: PriorRows; takeRows: Set<number>; takesWarn: boolean }
 
 function viewRows(view: TimelineView): PriorRows {
   return { entry: (_, key) => view.entries.has(key), marked: (_, key) => view.marked.has(key), superseded: (_, key) => view.superseded.has(key) };
@@ -182,7 +188,7 @@ const segmentedPriors = new WeakMap<object, { digest: string; view: PriorView }>
  * about are kept, one flag byte each, never the body's entries. A `###` dated entry's detail ends at its block. The
  * takes rows are parsed per field, as canonicalTakeRows does (page-body/segment-takes.ts), in the same pass.
  */
-async function segmentedPriorView(engine: BrainEngine, page: { id: number; slug: string; source_id: string }, slug: string, keys: readonly string[]): Promise<PriorView> {
+export async function segmentedPriorView(engine: BrainEngine, page: { id: number; slug: string; source_id: string }, slug: string, keys: readonly string[]): Promise<PriorView> {
   const digest = createHash('sha256').update(keys.join('\0')).digest('hex');
   const cached = segmentedPriors.get(page);
   if (cached?.digest === digest) return cached.view;
@@ -211,9 +217,129 @@ async function segmentedPriorView(engine: BrainEngine, page: { id: number; slug:
   return view;
 }
 
+/** The timeline keys one block of a segmented body yields, as segmentedPriorView and segmentedCanonicalCollector read them. */
+function blockTimeline(text: string, slug: string) {
+  const safe = sanitizeRemoteBody(text, { keepMaterializedMarkers: true });
+  return {
+    extracted: extractTimelineFromContent(safe, slug).map(t => [timelineKey(t), t] as const),
+    parsed: parseTimelineEntries(safe).map(t => [timelineKey({ ...t, source: t.source ?? 'markdown' }), { ...t, source: t.source ?? 'markdown', slug }] as const),
+    marked: markedTimeline(safe, slug),
+    superseded: supersededCitationTimeline(safe).map(t => timelineKey(t)),
+  };
+}
+
+/**
+ * What one run of a segmented body holds for the timeline (spec 8.2): the timelineDigest of the timelineKey of each
+ * entry its blocks yield (extracted, parsed; each in block order, repeats kept), of each materialized marker and of each
+ * superseded citation. Numbers, not entries, so a row and the read that builds it stay a small fraction of the run's
+ * text even when forced cuts join a whole timeline into one run.
+ */
+interface TimelineRunOutput { x: number[]; p: number[]; m: number[]; s: number[] }
+
+/** The first 52 bits of a timeline key's SHA-256, as an exact JS number. */
+const timelineDigest = (key: string) => Number.parseInt(createHash('sha256').update(key).digest('hex').slice(0, 13), 16);
+
+/**
+ * Each run's timeline row output, in page order, handed to `visit` (page-body/segment-derive.ts streamRuns); every block
+ * a due run is read for also goes to `onBlock`. Returns the scope, or null when the page is not segmented.
+ */
+async function eachTimelineRun(engine: BrainEngine, page: { id: number; slug: string; source_id: string }, slug: string,
+  visit: (run: DeriveRun, output: TimelineRunOutput) => void,
+  opts: { scope?: DerivationScope; onBlock?: (run: DeriveRun | null, block: BodyBlock) => void } = {}): Promise<DerivationScope | null> {
+  const scope = opts.scope ?? await derivationScope(engine, { id: Number(page.id), slug: page.slug, source_id: page.source_id });
+  if (!scope) return null;
+  const inputs = () => ({ slug, extractor: LINK_EXTRACTOR_VERSION_TS });
+  await streamRuns<TimelineRunOutput>(engine, 'timeline', scope, inputs, {
+    start: () => ({ x: [], p: [], m: [], s: [] }),
+    block: (out, block) => {
+      const safe = sanitizeRemoteBody(block.text, { keepMaterializedMarkers: true });
+      for (const t of extractTimelineFromContent(safe, slug)) out.x.push(timelineDigest(timelineKey(t)));
+      for (const t of parseTimelineEntries(safe)) out.p.push(timelineDigest(timelineKey({ ...t, source: t.source ?? 'markdown' })));
+      for (const key of markedTimeline(safe, slug)) out.m.push(timelineDigest(key));
+      for (const t of supersededCitationTimeline(safe)) out.s.push(timelineDigest(timelineKey(t)));
+    },
+  }, visit, opts.onBlock);
+  return scope;
+}
+
+const raced = (error: unknown): null => {
+  if (error instanceof SegmentDerivationRaced) return null;
+  throw error;
+};
+
+/**
+ * segmentedPriorView from the page's timeline and fences rows: only runs changed since their rows were written are read.
+ * Null (the caller takes the full pass) when the page is not segmented, a takes fence runs past the run it begins in,
+ * or the body moves during the read.
+ */
+export async function incrementalPriorView(engine: BrainEngine, page: { id: number; slug: string; source_id: string }, slug: string, keys: readonly string[]): Promise<PriorView | null> {
+  const index = new Map<number, number[]>();
+  keys.forEach((key, i) => { const digest = timelineDigest(key); const at = index.get(digest); if (at) at.push(i); else index.set(digest, [i]); });
+  const flags = new Uint8Array(keys.length);
+  const mark = (digest: number, bit: number) => { for (const i of index.get(digest) ?? []) flags[i]! |= bit; };
+  // One read serves both kinds: a run due for its fences row is scanned while the timeline reads it.
+  const fences = async () => {
+    const scope = await derivationScope(engine, { id: Number(page.id), slug: page.slug, source_id: page.source_id });
+    if (!scope) return null;
+    const runs = await openFenceRuns(engine, page, scope);
+    await eachTimelineRun(engine, page, slug, (_, out) => {
+      for (const digest of out.x) mark(digest, PRIOR_ENTRY);
+      for (const digest of out.p) mark(digest, PRIOR_ENTRY);
+      for (const digest of out.m) mark(digest, PRIOR_MARKED);
+      for (const digest of out.s) mark(digest, PRIOR_SUPERSEDED);
+    }, { scope, onBlock: runs.push });
+    return runs.finish();
+  };
+  const runs = await fences().catch(raced);
+  if (!runs) return null;
+  const fields = (['truth', 'timeline'] as const).map(region => takesFromRuns(runs.filter(({ run }) => run.region === region).map(({ output }) => output.takes)));
+  if (fields.some(field => field === null)) return null;
+  return {
+    rows: { entry: i => (flags[i]! & PRIOR_ENTRY) !== 0, marked: i => (flags[i]! & PRIOR_MARKED) !== 0, superseded: i => (flags[i]! & PRIOR_SUPERSEDED) !== 0 },
+    takeRows: new Set(fields.flatMap(field => field!.parsed.takes.map(t => t.rowNum))), takesWarn: fields.some(field => field!.parsed.warnings.length > 0),
+  };
+}
+
+/**
+ * segmentedCanonicalTimeline from the page's timeline rows: the entries no stored row records are found from the
+ * digests, and only the runs that last yield one of them are read for its entry (plus runs changed since their row was
+ * written). Null (the caller takes the full pass) when the page is not segmented or its body moves during the read.
+ */
+async function incrementalCanonicalTimeline(engine: BrainEngine, page: { id: number; slug: string; source_id: string }, slug: string): Promise<Map<string, ExtractedTimelineEntry> | null> {
+  const recorded = new TimelineKeySet();
+  await eachStoredTimelineRow(engine, Number(page.id), row => {
+    canonicalTimelineWork.storedRows++;
+    recorded.add(String(timelineDigest(timelineKey({ date: row.date_text, source: row.source, summary: row.summary }))));
+  });
+  // Each unrecorded digest's run of last occurrence, in first-occurrence order (the full pass's Map semantics).
+  const extracted = new Map<number, number>(), parsed = new Map<number, number>();
+  const scope = await eachTimelineRun(engine, page, slug, (run, out) => {
+    for (const digest of out.x) if (!recorded.has(String(digest))) extracted.set(digest, run.index);
+    for (const digest of out.p) if (!recorded.has(String(digest))) parsed.set(digest, run.index);
+  });
+  if (!scope) return null;
+  const entries = new Map<number, { x: Map<number, readonly [string, ExtractedTimelineEntry]>; p: Map<number, readonly [string, ExtractedTimelineEntry]> }>();
+  const wanted = new Set([...extracted.values(), ...parsed.values()]);
+  await readRuns(engine, scope, wanted, (run, block) => {
+    if (!run) return;
+    const into = entries.get(run.index) ?? { x: new Map(), p: new Map() };
+    entries.set(run.index, into);
+    const found = blockTimeline(block.text, slug);
+    for (const [key, entry] of found.extracted) if (extracted.get(timelineDigest(key)) === run.index) into.x.set(timelineDigest(key), [key, detachedValue(entry)]);
+    for (const [key, entry] of found.parsed) if (parsed.get(timelineDigest(key)) === run.index) into.p.set(timelineDigest(key), [key, detachedValue(entry)]);
+  });
+  const kept = new Map<string, ExtractedTimelineEntry>();
+  for (const [digest, at] of extracted) { const [key, entry] = entries.get(at)!.x.get(digest)!; kept.set(key, entry); }
+  for (const [digest, at] of parsed) { const [key, entry] = entries.get(at)!.p.get(digest)!; kept.set(key, entry); }
+  return kept;
+}
+
 /** The prior snapshot's view of `rows` (its stored timeline rows): from its strings, or streamed when its segmented body is unread. */
 async function priorView(engine: BrainEngine, page: PageSnapshot['page'], slug: string, rows: readonly StoredTimelineRow[]): Promise<PriorView> {
-  if (bodyUnread(page)) return segmentedPriorView(engine, page, slug, rows.map(row => timelineKey(row)));
+  if (bodyUnread(page)) {
+    const keys = rows.map(row => timelineKey(row));
+    return await incrementalPriorView(engine, page, slug, keys) ?? segmentedPriorView(engine, page, slug, keys);
+  }
   const fields = [page.compiled_truth, page.timeline ?? ''].map(field => parseTakesFence(field));
   return { rows: viewRows(timelineView(page, slug)),
     takeRows: new Set(fields.flatMap(field => field.takes.map(t => t.rowNum))), takesWarn: fields.some(field => field.warnings.length > 0) };
@@ -260,6 +386,11 @@ export const canonicalTimelineWork = { storedRows: 0, kept: 0 };
  * (TimelineKeySet), so the read keeps what an insert-only caller may add, never every entry the body yields.
  */
 async function segmentedCanonicalTimeline(engine: BrainEngine, page: { id: number; slug: string; source_id: string }, slug: string): Promise<Map<string, ExtractedTimelineEntry>> {
+  const incremental = await incrementalCanonicalTimeline(engine, page, slug).catch(raced);
+  if (incremental) {
+    canonicalTimelineWork.kept += incremental.size;
+    return incremental;
+  }
   const recorded = new TimelineKeySet();
   await eachStoredTimelineRow(engine, Number(page.id), row => {
     canonicalTimelineWork.storedRows++;
@@ -486,11 +617,11 @@ export async function reprojectTimelineRow(tx: BrainEngine, pageId: number, body
   return true;
 }
 
-export function compileCanonicalProjections(page: ParsedPage, slug: string, sourceId: string) {
+export function compileCanonicalProjections(page: ParsedPage, slug: string, sourceId: string, factDate: Date | null = null) {
   const scan=scanCanonicalFences(page);
   if(scan.defects.length) throw fenceOperationError(scan.defects[0]!, slug, sourceId);
   const fields:Array<[FenceSection,string]>=[['body',page.compiled_truth],['timeline',page.timeline ?? '']];
-  return { factRows: extractFactsFromFenceText(scan.facts,slug,sourceId), takes: scan.takes, sections: scan.sections, quoted: scan.quoting ? quotedFenceRows(fields) : null };
+  return { factRows: extractFactsFromFenceText(scan.facts,slug,sourceId,{ pageEffectiveDate: factDate }), takes: scan.takes, sections: scan.sections, quoted: scan.quoting ? quotedFenceRows(fields) : null };
 }
 
 /**
@@ -532,10 +663,16 @@ function takeCollision(rows: number[], sections: Map<number, FenceSection>, slug
  */
 export async function prepareCanonicalProjections(engine: BrainEngine, page: ParsedPage, slug: string, sourceId: string,
   prior: PageSnapshot | null, writer: ProjectionWriter, policy?: TimelineWritePolicy): Promise<(tx: BrainEngine, pageId?: number) => Promise<CanonicalProjectionResult>> {
-  const { factRows, takes, quoted, sections } = compileCanonicalProjections(page, slug, sourceId);
+  // #7247: a fence row without a valid_from takes the page's stated date, as extract_facts does, never the import time.
+  const factDate = pageFactDate({ slug, frontmatter: page.frontmatter, timeZone: await engine.getConfig('brain.timezone') });
+  const { factRows, takes, quoted, sections } = compileCanonicalProjections(page, slug, sourceId, factDate);
   // #6259: a page the content-quality gate hid as junk projects no facts or takes. Rows projected before it
   // was quarantined are left as they are (hiding them would need a new row state); only new projection stops.
   const projectFences = !isQuarantined(page.frontmatter);
+  // GBRA-161 PR 2: the incoming body's fences decide the fact and take generations; an absent one retires nothing.
+  const fenceReads = { facts: readFenceBlocks(page, 'facts'), takes: readFenceBlocks(page, 'takes') };
+  // G5: the links fence projects its own edges; a body with no fence (or one that does not parse) leaves them as they are.
+  const fenceLinks = projectFences && !bodyUnread(page) ? await linksFenceProjectionRows(engine, sourceId, page) : null;
   const storedRows = prior ? await storedTimeline(engine, prior.page.id) : [];
   const prior_ = prior ? await priorView(engine, prior.page, slug, storedRows) : null;
   const { timeline, exactIncoming, pinned } = classifyTimeline(storedRows, page, prior_?.rows ?? null, slug, writer, policy);
@@ -544,7 +681,14 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
   const refreshRows = pinned.filter(row => row.action === 'refresh_detail')
     .map(row => ({ id: row.id, detail: row.detail, next: exactIncoming.get(exactTimelineKey(row)) }))
     .filter(row => row.next !== row.detail);
-  const priorTakes = prior_?.takeRows ?? new Set<number>();
+  // GBRA-161 PR 2: a write that dropped the takes fence was held and left its rows stored; once a fence parses again it
+  // is compared with those rows, not with the fenceless body before it.
+  const heldTakeFence = !!prior && projectFences && fenceReads.takes.state === 'parsed' && (await engine.executeRaw(
+    `SELECT 1 FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='held' AND held_reason='fence_absent'`,
+    [sourceId, TAKE_FENCE_KIND, fenceOwnerKey(slug)])).length > 0;
+  const priorTakes = heldTakeFence
+    ? new Set([...(prior_?.takeRows ?? []), ...(await engine.executeRaw<{ row_num: number }>('SELECT row_num FROM takes WHERE page_id=$1', [prior!.page.id])).map(r => Number(r.row_num))])
+    : prior_?.takeRows ?? new Set<number>();
   // TE1 (#6188): when the prior takes fence does not parse, its stored rows count as prior canonical rows, so a
   // row Tier 1 normalized (same number, holder `system` -> `brain`) updates its stored take instead of colliding.
   const priorCanonical = prior && prior_?.takesWarn
@@ -609,7 +753,8 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
           r.valid_until::timestamptz,r.expired_at::timestamptz,r.source,r.confidence,r.claim_metric,r.claim_value,r.claim_unit,r.claim_period,r.attributed_to)`,
       [sourceId, slug, fieldRows]) : Promise.resolve([]);
     const checkTakes = () => refuseCollisions(tx, id);
-    const dropTakes = () => tx.executeRaw('DELETE FROM takes WHERE page_id=$1 AND row_num=ANY($2::integer[])', [id, takeRowsGone.filter(n => !heldRowNums.has(n))]);
+    const dropTakes = (held: boolean) => () => held ? Promise.resolve([])
+      : tx.executeRaw('DELETE FROM takes WHERE page_id=$1 AND row_num=ANY($2::integer[])', [id, takeRowsGone.filter(n => !heldRowNums.has(n))]);
     // A fence row's resolution cells are written as Markdown says, so a revert to a version that carries them restores
     // them. A row without resolution cells keeps the stored resolution (a database-only grade, e.g. unmanaged
     // grade_takes) unless its claim changed in place, which drops the old claim's grade. A held take keeps its grade:
@@ -656,15 +801,24 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
         const held = await step('held', contestHeld);
         return { timelineRowsRemoved: removedSummary(removedDates), ...(held.length ? { contested: held } : {}) };
       }
+      // GBRA-161 PR 2: the fact and take generations decide first. A held one (its fence absent from this body) retires and
+      // overwrites nothing, so its rows stay as they are; every row a published one retires is recorded with its before-state.
+      const factGeneration = await step('fact_generation', () => projectFactFenceGeneration(tx, { sourceId, slug, read: fenceReads.facts, incoming, rows: factRows,
+        writer: 'projection' }));
+      const factsHeld = factGeneration.state === 'held';
+      const takesHeld = (await step('take_generation', () => projectTakeFenceGeneration(tx, { sourceId, slug, pageId: id, read: fenceReads.takes,
+        takes: projectedTakes, gone: takeRowsGone.filter(n => !heldRowNums.has(n)), writer: 'projection' }))).state === 'held';
       // #5575: rows more trusted than the writer are never expired by it, and new rows pass the write gate (trust/fence-guard.ts).
-      // The timeline rows are independent of the fact and take rows, so they ride in the first pipeline.
-      const guard = await step('timeline', () => guardFenceRows(tx, { sourceId, slug, incoming, rows: factRows, cfg: loadWriteGateConfig },
-        () => pipelined(tx, [expireFacts, ...timelineRows])));
+      // The timeline rows are independent of the fact and take rows, so they ride in the first pipeline. The expire uses the
+      // generation's retire predicate under the page lock, so it runs only when that generation found rows to retire.
+      const guard = factsHeld ? { rows: [] as typeof factRows, finish: async () => [] as string[] } : await step('timeline', () => guardFenceRows(tx, { sourceId, slug, incoming, rows: factRows, cfg: loadWriteGateConfig },
+        () => pipelined(tx, factGeneration.retiring ? [expireFacts, ...timelineRows] : timelineRows)));
+      if (factsHeld) await step('timeline', () => pipelined(tx, timelineRows));
       if (guard.rows.length) await step('facts', () => tx.insertFacts(guard.rows, { source_id: sourceId })); // gbrain-allow-direct-insert: canonical fence projection shares the journal publication transaction
       const contested = await step('fact_trust', () => guard.finish(tx));
       // W1 #6783 §12 (b): a fence row's field rewrite can lower a more trusted fact (the tier trigger); what was derived from it follows.
       const above = factRows.length ? await factsAboveWriter(tx, sourceId, slug) : [];
-      await step('fact_fields', () => pipelined(tx, [factFields, checkTakes, dropTakes, clearChangedResolutions]));
+      await step('fact_fields', () => pipelined(tx, [factFields, checkTakes, dropTakes(takesHeld), clearChangedResolutions]));
       if (above.length) await propagateFactLowering(tx, above);
       if (projectedTakes.length) {
         await step('takes', async () => {
@@ -672,6 +826,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
           await resolveTakes();
         });
       }
+      if (fenceLinks) await step('links_fence', () => projectLinksFence(tx, { id, source_id: sourceId }, fenceLinks));
       const all = [...contested, ...await step('held', contestHeld)];
       return { timelineRowsRemoved: removedSummary(removedDates), ...(all.length ? { contested: all } : {}) };
     } finally {

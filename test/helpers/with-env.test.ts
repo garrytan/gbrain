@@ -92,4 +92,24 @@ describe('withEnv', () => {
     for (const tz of ['Asia/Tokyo', 'America/Los_Angeles', 'UTC']) await withEnv({ TZ: tz }, () => expect(zone()).toBe(tz));
     expect(zone()).toBe(before);
   });
+
+  test('overlapping calls that finish out of order leave the key as it was before either', async () => {
+    delete process.env[KEY];
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const first = withEnv({ [KEY]: 'first' }, () => gate);
+    const second = withEnv({ [KEY]: 'second' }, async () => { release(); await gate; });
+    await first;
+    expect(process.env[KEY]).toBe('second');
+    await second;
+    expect(process.env[KEY]).toBeUndefined();
+  });
+
+  test('un-awaited calls back to back leave the key as it was', async () => {
+    process.env[KEY] = 'original';
+    const calls = [withEnv({ [KEY]: 'a' }, () => {}), withEnv({ [KEY]: 'b' }, () => {})];
+    await Promise.all(calls);
+    expect(process.env[KEY]).toBe('original');
+    delete process.env[KEY];
+  });
 });

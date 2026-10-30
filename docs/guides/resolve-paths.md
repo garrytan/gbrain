@@ -64,3 +64,31 @@ committed sync receipts of the last 24 h and says `unknown`, never `ok`, when it
 `gbrain sync status` reads `blocked` only when the source cannot advance without a person or an operator, the same meaning as a
 sync run's drain outcome and a sync job's `blocked` progress. A file hold that waits on a person while the rest of the source
 keeps syncing reads `synced` with reason `held_needs_human`; `needs_human` and `next` still carry that decision.
+
+## Is my write searchable yet?
+
+`gbrain write-request <request_id> --applied --json` (MCP `get_write_request` with `applied: true`) carries `applied`, read live each time. It is opt-in, so a plain receipt poll costs no extra reads. The write's own reply stays frozen, so a same-request-id replay returns it unchanged; read the receipt for the live answer:
+
+| Field | Meaning |
+|---|---|
+| `searchable_yet` | `true` only when search finds the page by keyword and by vector |
+| `searchable`, `state` | the vocabulary above: `searchable`, `pending_embedding`, `chunkless`, `keyword_only`, `quarantined`, `empty`, plus `pending_write` (the request has not settled), `not_written` (it settled without committing) and `deleted` |
+| `page` | `{ slug, chunks, unembedded }`; `unembedded` counts visible chunks with no vector in the active embedding column |
+| `embedding_hold` | a large page's held or capped embedding budget, which waits for approval |
+| `gap` | `requests_ahead` (unsettled requests of the source queued before this one) and `unembedded_chunks` |
+| `sequence` | the request's journal sequence; the write has settled once it is at or below `watermark.committed_through_request` |
+| `watermark` | `indexed_through`, `committed_through_request` and `requests_pending` of the source (indexed reads only) |
+
+A receipt read whose watermark read fails leaves `applied` out.
+
+## The source watermark
+
+`gbrain sources status --json` (each source's `watermark`), MCP `sources_status` and `gbrain sync --json` (each synced source) carry the full watermark:
+
+- `indexed_through`: `{ commit, synced_at }`. The commit is the source's last synced commit, which only a finished sync pass moves. A pass stopped by its deadline, an abort or a page budget leaves it where it was. Files held at that commit are counted in `pending.held_files`.
+- `embedded_through`: `complete` (with `commit`) when every live page that is not `embed_skip` has a vector for each visible chunk; `partial` with `unembedded_pages`, `held_pages` (held and capped large pages count as not embedded) and `before`, the oldest `updated_at` among the pages still waiting, so every page written before it is embedded; or `embeddings_off`.
+- `committed_through_request`: a request sequence at or below which every request of the source has settled (committed, conflict, failed or cancelled): one below the oldest queued, running or recovering request, else the journal's newest sequence.
+- `pending`: `requests` (unsettled, with the oldest age), `commits_behind` and `files_behind` (on this host's checkout after the last synced commit), `held_files` and `deletes_withheld` (deletes a mass-delete cap withheld). `count` adds requests, files behind, held files and withheld deletes; `oldest_age_seconds` is the older of the oldest request and the oldest commit behind.
+- `writer_heartbeat`: the process holding the source's drain lease (`holder`: kind, id, host, PID), `heartbeat_age_seconds`, `last_progress_at` (its last committed sync write, cursor save or pass-row write), `progress_age_seconds` and `stalled` (no progress for 5 minutes). A remote caller sees the holder's kind and the times, never its host, PID or job id.
+
+A landing check that only needs "has this commit landed?" compares `indexed_through.commit` with its commit and reads `pending` for the rest.

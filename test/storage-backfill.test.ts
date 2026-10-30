@@ -71,6 +71,7 @@ function makeStorage(): { storage: StorageBackend; calls: string[] } {
   const uploaded = new Set<string>();
   const storage: StorageBackend = {
     upload: async (path: string) => { calls.push(`upload:${path}`); uploaded.add(path); },
+    uploadFile: async (path: string) => { calls.push(`uploadFile:${path}`); uploaded.add(path); },
     download: async (path: string) => { calls.push(`download:${path}`); return Buffer.from('content-for:' + path); },
     delete: async (path: string) => { calls.push(`delete:${path}`); uploaded.delete(path); },
     exists: async (path: string) => { calls.push(`exists:${path}`); return uploaded.has(path); },

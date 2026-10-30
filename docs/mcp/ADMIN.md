@@ -229,11 +229,23 @@ requests. Added scopes require a fresh token; refresh cannot widen the original
 token's scope ceiling. Native OAuth clients must reconnect and obtain fresh
 owner approval. TTL changes affect future tokens only.
 
-New `memory-reader`, `memory-writer` and `coding-agent` grants are callable and
-listed on the full surface; their operation snapshot is still the ceiling, so a
-reader still has no write operation. `delegating-agent` grants keep the starter
-surface. Clients granted before this keep their stored surface: no migration or
-repair changes it, and only an explicit `--profile` application regrants it.
+For one bot acting for several members of a shared brain, give each member a
+separate client or token restricted to that member's sources. The grant is the
+security boundary; a request's `source_ids` can only narrow inside it. See
+[a bot acting for many members](../guides/multi-source-brains.md#a-bot-acting-for-many-members).
+Access is per source, never per page, so lay sources out by who may read them
+([guide](../guides/multi-source-brains.md#lay-out-sources-by-who-may-read-them)).
+
+New `memory-reader`, `memory-writer` and `coding-agent` grants are callable on
+the full surface and list the seven memory verbs plus `request_tools`, which
+returns any other tool's schema (`gbrain auth clients` shows the surface as
+`full (set by install)`); `gbrain agent register` daily-driver and coding-agent
+clients without `--surface` do the same. Their operation snapshot is still the
+ceiling, so a reader still has no write operation. To list every tool, pin the
+surface: `gbrain auth rescope-client <client_id> --surface full`.
+`delegating-agent` grants keep the starter surface. Clients granted before this
+keep their stored surface and listing: no migration or repair changes it, and
+re-applying a profile to an operator-pinned client keeps its full listing.
 
 ### Grants that cannot reach new operations
 
@@ -564,7 +576,7 @@ registers `gbrain serve --access read-only` as its stdio MCP command.
 
 ```bash
 claude mcp add gbrain -- "$(command -v gbrain)" serve --access read-only
-gbrain serve --surface full --access read-only
+gbrain serve --access read-only   # bare serve: the full surface, read-only
 ```
 
 `--access read-only` intersects the selected `--surface` with operations that
@@ -575,7 +587,26 @@ drives `tools/list`, the `gbrain://capabilities` resource (`access:
 `unknown_tool` before any handler runs. It denies agent-requested
 mutations; owner maintenance on the same process (startup migrations, hook
 IPC banking) is a separate control. The default is `--access full`.
-`gbrain serve --http --access read-only` refuses: narrow HTTP access per token
+`--access=read-only` is the same flag; a repeated `--access` never widens a
+read-only value. `--surface=verbs` is likewise the same as `--surface verbs`, and a
+repeated `--surface` takes the narrowest value. An invalid value of either flag,
+in either form, refuses to start.
+
+On Postgres a read-only serve is also not a resident owner, because harnesses
+start one per session. It holds no session-lane (direct pool) connection, starts no
+persistence consumer, takes no on-commit notifier lease, runs no startup or idle
+sweep, facts drain or sync-movement watch (the one-time notice when a managed
+source's sync data stops moving), and refuses delegated sync and sweep requests;
+resolve, turn_context and context_pack still answer. A read-write `gbrain serve`,
+`gbrain jobs work` or the autopilot owns those duties. `gbrain doctor` reports
+when no process on the host holds the on-commit notifier (`commit_notifier`) or a
+persistence consumer (`two_consumers_on_host`), and `managed_sync_not_moving`
+still reports a source whose sync data stops moving. On PGLite a read-only serve keeps those duties: it is
+the process that owns the database file, so the CLI's reads and writes go
+through it.
+`gbrain serve --http --access read-only` refuses in either form, so an HTTP
+service started with `--access=read-only` (which earlier releases ignored on
+HTTP) no longer starts: remove the flag and narrow HTTP access per token
 with `gbrain auth rescope-token <name> --operations <op,...>` or
 `gbrain auth rescope-client <client_id> --allowed-operations <op,...>`
 (`all` removes a client's snapshot again).

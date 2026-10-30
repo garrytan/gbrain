@@ -60,9 +60,9 @@ const file_upload: Operation = {
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'file_upload', path: p.path };
 
-    const { readFileSync, statSync } = await import('fs');
+    const { statSync } = await import('fs');
     const { basename, extname } = await import('path');
-    const { createHash } = await import('crypto');
+    const { hashStorageFile, uploadUnchangedFile } = await import('../storage.ts');
 
     const filePath = p.path as string;
     const pageSlug = (p.page_slug as string) || null;
@@ -78,8 +78,7 @@ const file_upload: Operation = {
     validateFilename(filename);
 
     const stat = statSync(filePath);
-    const content = readFileSync(filePath);
-    const hash = createHash('sha256').update(content).digest('hex');
+    const hash = hashStorageFile(filePath);
     const storagePath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
 
     const MIME_TYPES: Record<string, string> = {
@@ -128,7 +127,7 @@ const file_upload: Operation = {
     }
 
     try {
-      await storage.upload(storagePath, content, mimeType || undefined);
+      await uploadUnchangedFile(storage, storagePath, filePath, hash, mimeType || undefined);
     } catch (uploadErr) {
       throw opError('storage_error', `Upload failed: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`,
         'Nothing was recorded. Check the storage backend (credentials, bucket, disk) with `gbrain doctor --json`, then upload again; the upload is keyed by content hash, so repeating it is safe.');

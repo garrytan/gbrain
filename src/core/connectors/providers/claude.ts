@@ -17,10 +17,14 @@
  * account-safe); every one is listed, and each conversation is fetched from
  * the org that listed it: stubs carry `orgId`, which the sync records with a
  * failed conversation so a later retry by id reaches the same org (#6387).
- * The list is paged with limit/offset (C-17).
+ * The list is paged with limit/offset (C-17). #7515 bounds: at most
+ * CLAUDE_MAX_ORGS organizations are listed (a listing cut there is never
+ * complete), at most CLAUDE_MAX_REQUESTS_PER_ORG requests go to one
+ * organization per run, and a page longer than LIST_PAGE_LIMIT is truncated.
  */
 
 import type { HostSpecTarget } from '../../bootstrap/host-specs.ts';
+import { ConnectorRunLimitError, probeFailure } from '../client.ts';
 import type { ConnectorClient } from '../client.ts';
 import { toIso } from './chatgpt.ts';
 import type {
@@ -52,12 +56,18 @@ export const CLAUDE_WEB_API_SPEC_TARGET: HostSpecTarget = {
     'not probed live in this repo; drift alarm (no array / no chat_messages) is the backstop.',
 };
 
-const memoOrgs = new WeakMap<ConnectorClient, string[]>();
+const memoOrgs = new WeakMap<ConnectorClient, { ids: string[]; dropped: number }>();
+/** Requests sent to each organization, per client (one run). */
+const memoOrgRequests = new WeakMap<ConnectorClient, Map<string, number>>();
 /** Conversation id → the org that listed it, per client. */
 const memoConversationOrg = new WeakMap<ConnectorClient, Map<string, string>>();
 
 const LIST_PAGE_LIMIT = 100;
 const MAX_LIST_PAGES = 500; // per org; never treat a truncated list as complete
+/** #7515: organizations listed per run; more makes the listing incomplete (partial run). */
+export const CLAUDE_MAX_ORGS = 10;
+/** #7515: requests (list pages and conversation fetches) sent to one organization per run. */
+export const CLAUDE_MAX_REQUESTS_PER_ORG = 5_000;
 
 interface OrgRow {
   uuid?: string;
@@ -77,19 +87,32 @@ interface MsgRow {
   content?: Array<{ type?: string; text?: string }>;
 }
 
-/** Every chat-capable org (an org that declares no capabilities counts). */
-async function resolveOrgs(client: ConnectorClient, signal?: AbortSignal): Promise<string[]> {
+/** Every chat-capable org (an org that declares no capabilities counts), the first CLAUDE_MAX_ORGS of them. */
+async function resolveOrgs(client: ConnectorClient, signal?: AbortSignal): Promise<{ ids: string[]; dropped: number }> {
   const cached = memoOrgs.get(client);
   if (cached) return cached;
   const orgs = await client.fetchJSON<OrgRow[]>('/api/organizations', { signal });
-  const ids = Array.isArray(orgs)
+  const all = Array.isArray(orgs)
     ? orgs
         .filter((o) => typeof o?.uuid === 'string' && (!Array.isArray(o.capabilities) || o.capabilities.includes('chat')))
         .map((o) => o.uuid as string)
     : [];
-  if (!ids.length) throw new Error('claude: /api/organizations returned no chat-capable org (shape drift)');
-  memoOrgs.set(client, ids);
-  return ids;
+  if (!all.length) throw new Error('claude: /api/organizations returned no chat-capable org (shape drift)');
+  const resolved = { ids: all.slice(0, CLAUDE_MAX_ORGS), dropped: Math.max(0, all.length - CLAUDE_MAX_ORGS) };
+  memoOrgs.set(client, resolved);
+  return resolved;
+}
+
+/** A request to one organization, counted against CLAUDE_MAX_REQUESTS_PER_ORG. */
+async function orgFetch<T>(client: ConnectorClient, org: string, path: string, signal?: AbortSignal): Promise<T> {
+  const counts = memoOrgRequests.get(client) ?? new Map<string, number>();
+  memoOrgRequests.set(client, counts);
+  const sent = counts.get(org) ?? 0;
+  if (sent >= CLAUDE_MAX_REQUESTS_PER_ORG) {
+    throw new ConnectorRunLimitError('max_requests', `claude: run stopped at the ${CLAUDE_MAX_REQUESTS_PER_ORG}-request limit for one organization`);
+  }
+  counts.set(org, sent + 1);
+  return client.fetchJSON<T>(`/api/organizations/${encodeURIComponent(org)}${path}`, { signal });
 }
 
 /** Assemble message text: prefer flat `text`, else join text-type content blocks. */
@@ -125,21 +148,14 @@ export const claudeProvider: ChatHistoryProvider = {
 
   async probe(client: ConnectorClient, signal?: AbortSignal): Promise<ProbeResult> {
     try {
-      const [org] = await resolveOrgs(client, signal);
-      const list = await client.fetchJSON<ConvRow[]>(
-        `/api/organizations/${encodeURIComponent(org)}/chat_conversations?limit=1`,
-        { signal },
-      );
+      const [org] = (await resolveOrgs(client, signal)).ids;
+      const list = await orgFetch<ConvRow[]>(client, org, '/chat_conversations?limit=1', signal);
       if (!Array.isArray(list)) {
         return { ok: false, kind: 'drift', detail: 'chat_conversations probe returned a non-array' };
       }
       return { ok: true };
     } catch (e) {
-      const name = (e as { name?: string }).name;
-      const msg = e instanceof Error ? e.message : String(e);
-      if (name === 'ConnectorAuthError') return { ok: false, kind: 'unauthorized', detail: msg };
-      if (name === 'ConnectorForbiddenError') return { ok: false, kind: 'forbidden_fingerprint', detail: msg };
-      return { ok: false, kind: 'network', detail: msg };
+      return probeFailure(e);
     }
   },
 
@@ -147,7 +163,7 @@ export const claudeProvider: ChatHistoryProvider = {
     client: ConnectorClient,
     opts: { signal?: AbortSignal; stopBefore?: string } = {},
   ): AsyncGenerator<ConversationStub> {
-    const orgs = await resolveOrgs(client, opts.signal);
+    const { ids: orgs, dropped } = await resolveOrgs(client, opts.signal);
     const conversationOrg = new Map<string, string>();
     memoConversationOrg.set(client, conversationOrg);
     const stubs: ConversationStub[] = [];
@@ -160,13 +176,11 @@ export const claudeProvider: ChatHistoryProvider = {
         if (page >= MAX_LIST_PAGES) {
           throw new Error(`claude: list hit the ${MAX_LIST_PAGES}-page cap; refusing to treat a truncated list as complete`);
         }
-        const rows = await client.fetchJSON<ConvRow[]>(
-          `/api/organizations/${encodeURIComponent(org)}/chat_conversations?limit=${LIST_PAGE_LIMIT}&offset=${offset}`,
-          { signal: opts.signal },
-        );
-        if (!Array.isArray(rows)) {
+        const res = await orgFetch<ConvRow[]>(client, org, `/chat_conversations?limit=${LIST_PAGE_LIMIT}&offset=${offset}`, opts.signal);
+        if (!Array.isArray(res)) {
           throw new Error('claude: chat_conversations returned a non-array (shape drift)');
         }
+        const rows = res.slice(0, LIST_PAGE_LIMIT);
         let fresh = 0;
         let allOlder = rows.length > 0;
         for (const r of rows) {
@@ -183,6 +197,9 @@ export const claudeProvider: ChatHistoryProvider = {
             orgId: org,
           });
         }
+        if (fresh === 0 && res.length > LIST_PAGE_LIMIT) {
+          throw new Error('claude: chat_conversations ignores offset and returns over-long pages; refusing to treat a truncated list as complete');
+        }
         if (fresh === 0 || allOlder) break;
         offset += rows.length;
       }
@@ -190,8 +207,11 @@ export const claudeProvider: ChatHistoryProvider = {
     // Sort newest-first by updated_at (the API order is not guaranteed).
     stubs.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
     for (const s of stubs) {
-      if (opts.stopBefore && s.updatedAt && s.updatedAt <= opts.stopBefore) return; // rest are older
+      if (opts.stopBefore && s.updatedAt && s.updatedAt <= opts.stopBefore) break; // rest are older
       yield s;
+    }
+    if (dropped) {
+      throw new Error(`claude: ${dropped} chat-capable organization(s) past the ${CLAUDE_MAX_ORGS}-organization cap were not listed; the listing is incomplete`);
     }
   },
 
@@ -200,10 +220,9 @@ export const claudeProvider: ChatHistoryProvider = {
     id: string,
     opts: { signal?: AbortSignal; orgId?: string } = {},
   ): Promise<Record<string, unknown>> {
-    const org = opts.orgId ?? memoConversationOrg.get(client)?.get(id) ?? (await resolveOrgs(client, opts.signal))[0];
-    const conv = await client.fetchJSON<Record<string, unknown>>(
-      `/api/organizations/${encodeURIComponent(org)}/chat_conversations/${encodeURIComponent(id)}?tree=True&rendering_mode=messages`,
-      { signal: opts.signal },
+    const org = opts.orgId ?? memoConversationOrg.get(client)?.get(id) ?? (await resolveOrgs(client, opts.signal)).ids[0];
+    const conv = await orgFetch<Record<string, unknown>>(
+      client, org, `/chat_conversations/${encodeURIComponent(id)}?tree=True&rendering_mode=messages`, opts.signal,
     );
     const rawMsgs = Array.isArray((conv as { chat_messages?: unknown }).chat_messages)
       ? ((conv as { chat_messages: MsgRow[] }).chat_messages)

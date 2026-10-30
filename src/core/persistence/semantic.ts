@@ -1,6 +1,6 @@
 import type { WriteRequest } from './model.ts';
 export const SEMANTIC_PAGE_OPERATIONS: ReadonlySet<string> = new Set([
-  'add_tag', 'remove_tag', 'add_timeline_entry', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve', 'takes_remove', 'remember',
+  'add_tag', 'remove_tag', 'add_timeline_entry', 'add_link', 'remove_link', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve', 'takes_remove', 'remember',
 ]);
 /**
  * Recompute only supported merges; caller-supplied stale replacements remain conflicts. #5385 [R13]: a merge submitted

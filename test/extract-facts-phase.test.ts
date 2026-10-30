@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import { parseFactsFence } from '../src/core/facts-fence.ts';
+import { emptyFenceBlock } from '../src/core/generations/fence.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { acquirePageLock } from '../src/core/page-lock.ts';
 import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
@@ -84,6 +85,32 @@ Body.
 ${rows}
 <!--- gbrain:facts:end -->
 `;
+
+
+/**
+ * GBRA-161 PR 2 (D4): a page whose facts fence is absent keeps its rows (the fact generation holds `fence_absent` and the
+ * owner decides); writing the empty fence is the deletion, and it retires every row (`fenceParsedEmpty`).
+ */
+async function expectAbsentHoldsThenEmptyFenceRetires(slug: string, write: (body: string) => Promise<void>, body: string): Promise<void> {
+  await write(body);
+  const held = await runExtractFacts(engine, { slugs: [slug] });
+  expect(held.factsDeleted).toBe(0);
+  expect(held.warnings.some(w => w.includes('FACTS_FENCE_BELOW_SENTINEL'))).toBe(false);
+  expect(held.warnings.filter(w => w.includes('FACTS_FENCE_HELD: fence_absent'))).toHaveLength(1);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const kept = await (engine as any).db.query(`SELECT COUNT(*) AS n FROM facts WHERE source_markdown_slug = $1 AND expired_at IS NULL AND row_num IS NOT NULL`, [slug]);
+  expect(Number(kept.rows[0].n)).toBe(1);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const holds = await (engine as any).db.query(`SELECT held_reason FROM derived_generations WHERE kind = 'fact_fence' AND owner_key = $1 AND state = 'held'`, ['page:' + slug]);
+  expect(holds.rows.map((row: { held_reason: string }) => row.held_reason)).toEqual(['fence_absent']);
+  await write(body + '\n' + emptyFenceBlock('facts'));
+  const retired = await runExtractFacts(engine, { slugs: [slug] });
+  expect(retired.factsDeleted).toBe(1);
+  expect(retired.warnings).toEqual([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rows = await (engine as any).db.query(`SELECT COUNT(*) AS n FROM facts WHERE source_markdown_slug = $1 AND (expired_at IS NULL OR row_num IS NOT NULL)`, [slug]);
+  expect(Number(rows.rows[0].n)).toBe(0);
+}
 
 describe('runExtractFacts — happy path', () => {
   test('reconciles fence facts into DB for a single page', async () => {
@@ -692,26 +719,14 @@ describe('runExtractFacts — happy path', () => {
     expect(rows.rows.map((row: { fact: string }) => row.fact)).toEqual(['Seeded']);
   });
 
-  test('page with no facts fence → its fence rows are expired and detached (empty fence reconciles to an empty active index)', async () => {
+  test('page with no facts fence → its fence rows are kept (held fence_absent); an empty fence reconciles to an empty active index', async () => {
     await putPage('people/alice', FACT_FENCE(
       `| 1 | seeded | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
     ));
     await runExtractFacts(engine, { slugs: ['people/alice'] });
 
-    // Now write a fact-less version of the page.
-    await putPage('people/alice', '# Just a page\n\nNo fence.\n');
-    const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
-
-    expect(r.pagesWithFacts).toBe(0);
-    expect(r.factsInserted).toBe(0);
-    expect(r.factsDeleted).toBe(1);
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rows = await (engine as any).db.query(
-      `SELECT COUNT(*) AS n FROM facts WHERE source_markdown_slug = 'people/alice'
-         AND (expired_at IS NULL OR row_num IS NOT NULL)`,
-    );
-    expect(Number(rows.rows[0].n)).toBe(0);
+    // Now write a fact-less version of the page: GBRA-161 PR 2 holds it; the empty fence is the deletion.
+    await expectAbsentHoldsThenEmptyFenceRetires('people/alice', body => putPage('people/alice', body), '# Just a page\n\nNo fence.\n');
   });
 
   test('#3625 / #6686: a lone Facts fence below the timeline sentinel reconciles from where it lives, not as a deleted fence', async () => {
@@ -767,18 +782,9 @@ describe('runExtractFacts — happy path', () => {
     ));
     await runExtractFacts(engine, { slugs: ['people/alice'] });
 
-    await putPageWithTimeline('people/alice', '# Just a page\n\nNo fence.\n', 'Some unrelated timeline prose.\n');
-    const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
-
-    expect(r.factsDeleted).toBe(1);
-    expect(r.warnings.some(w => w.includes('FACTS_FENCE_BELOW_SENTINEL'))).toBe(false);
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rows = await (engine as any).db.query(
-      `SELECT COUNT(*) AS n FROM facts WHERE source_markdown_slug = 'people/alice'
-         AND (expired_at IS NULL OR row_num IS NOT NULL)`,
-    );
-    expect(Number(rows.rows[0].n)).toBe(0);
+    // GBRA-161 PR 2: a truly absent fence now holds (fence_absent) instead of wiping; the empty fence is the deletion.
+    await expectAbsentHoldsThenEmptyFenceRetires('people/alice',
+      body => putPageWithTimeline('people/alice', body, 'Some unrelated timeline prose.\n'), '# Just a page\n\nNo fence.\n');
   });
 
   test('#3625 adversarial review finding: the marker merely mentioned inside a ```code block``` does not block a genuine deletion', async () => {
@@ -790,15 +796,10 @@ describe('runExtractFacts — happy path', () => {
     ));
     await runExtractFacts(engine, { slugs: ['people/alice'] });
 
-    await putPageWithTimeline(
-      'people/alice',
-      '# Alice\n\nThe real Facts fence was removed.\n',
-      '## Docs\n\n```markdown\n<!--- gbrain:facts:begin -->\nexample only\n```\n',
-    );
-    const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
-
-    expect(r.factsDeleted).toBe(1);
-    expect(r.warnings).toEqual([]);
+    // GBRA-161 PR 2: the mention is still not a fence (no FACTS_FENCE_BELOW_SENTINEL), so the page's fence is absent and
+    // holds; the empty fence, written beside the same mention, is the genuine deletion and is not blocked by it.
+    await expectAbsentHoldsThenEmptyFenceRetires('people/alice',
+      body => putPageWithTimeline('people/alice', body, '## Docs\n\n```markdown\n<!--- gbrain:facts:begin -->\nexample only\n```\n'), '# Alice\n\nThe real Facts fence was removed.\n');
   });
 
   test('#3625 adversarial review finding: the marker merely quoted in prose does not block a genuine deletion', async () => {
@@ -807,15 +808,10 @@ describe('runExtractFacts — happy path', () => {
     ));
     await runExtractFacts(engine, { slugs: ['people/alice'] });
 
-    await putPageWithTimeline(
-      'people/alice',
-      '# Alice\n\nThe real Facts fence was removed.\n',
-      '> Historical docs mention the token <!--- gbrain:facts:begin -->, but this is not a fence.\n',
-    );
-    const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
-
-    expect(r.factsDeleted).toBe(1);
-    expect(r.warnings).toEqual([]);
+    // GBRA-161 PR 2: the mention is still not a fence (no FACTS_FENCE_BELOW_SENTINEL), so the page's fence is absent and
+    // holds; the empty fence, written beside the same mention, is the genuine deletion and is not blocked by it.
+    await expectAbsentHoldsThenEmptyFenceRetires('people/alice',
+      body => putPageWithTimeline('people/alice', body, '> Historical docs mention the token <!--- gbrain:facts:begin -->, but this is not a fence.\n'), '# Alice\n\nThe real Facts fence was removed.\n');
   });
 
   test('#3625 control: a genuine unbalanced marker (own line, not inside a code block) still blocks deletion', async () => {
@@ -849,15 +845,10 @@ describe('runExtractFacts — happy path', () => {
     ));
     await runExtractFacts(engine, { slugs: ['people/alice'] });
 
-    await putPageWithTimeline(
-      'people/alice',
-      '# Alice\n\nThe real Facts fence was removed.\n',
-      '## Docs\r\n\r\n```markdown\r\n<!--- gbrain:facts:begin -->\r\nexample only\r\n```\r\n',
-    );
-    const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
-
-    expect(r.factsDeleted).toBe(1);
-    expect(r.warnings).toEqual([]);
+    // GBRA-161 PR 2: the mention is still not a fence (no FACTS_FENCE_BELOW_SENTINEL), so the page's fence is absent and
+    // holds; the empty fence, written beside the same mention, is the genuine deletion and is not blocked by it.
+    await expectAbsentHoldsThenEmptyFenceRetires('people/alice',
+      body => putPageWithTimeline('people/alice', body, '## Docs\r\n\r\n```markdown\r\n<!--- gbrain:facts:begin -->\r\nexample only\r\n```\r\n'), '# Alice\n\nThe real Facts fence was removed.\n');
   });
 
   test('#3625 adversarial review round 2: two identical code-block mentions of the marker do not false-positive', async () => {
@@ -867,15 +858,10 @@ describe('runExtractFacts — happy path', () => {
     await runExtractFacts(engine, { slugs: ['people/alice'] });
 
     const codeBlock = '```markdown\n<!--- gbrain:facts:begin -->\nexample only\n```\n';
-    await putPageWithTimeline(
-      'people/alice',
-      '# Alice\n\nThe real Facts fence was removed.\n',
-      `${codeBlock}\n${codeBlock}`,
-    );
-    const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
-
-    expect(r.factsDeleted).toBe(1);
-    expect(r.warnings).toEqual([]);
+    // GBRA-161 PR 2: the mention is still not a fence (no FACTS_FENCE_BELOW_SENTINEL), so the page's fence is absent and
+    // holds; the empty fence, written beside the same mention, is the genuine deletion and is not blocked by it.
+    await expectAbsentHoldsThenEmptyFenceRetires('people/alice',
+      body => putPageWithTimeline('people/alice', body, `${codeBlock}\n${codeBlock}`), '# Alice\n\nThe real Facts fence was removed.\n');
   });
 
   test('#3625 via the real MCP write path: a stray fence below the sentinel is preserved even when import-file.ts is in play', async () => {

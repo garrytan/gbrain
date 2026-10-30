@@ -109,6 +109,17 @@ describe('redirectStdoutLoggingToStderr', () => {
     expect(errCalls).toEqual([['bare progress line']]);
   });
 
+  test('the test reset puts back the console bindings the redirect replaced', () => {
+    const log = (..._args: unknown[]) => {};
+    console.log = log;
+    redirectStdoutLoggingToStderr();
+    expect(console.log).not.toBe(log);
+    _resetStdoutRedirectForTests();
+    expect(console.log).toBe(log);
+    expect(console.info).toBe(realInfo);
+    expect(console.debug).toBe(realDebug);
+  });
+
   test('idempotent: second call does not re-wrap (no double stderr emission)', () => {
     const errCalls: unknown[][] = [];
     console.error = (...args: unknown[]) => {

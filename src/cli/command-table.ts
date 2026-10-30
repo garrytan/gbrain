@@ -115,7 +115,18 @@ interface CliCommandBase {
   routes_source?: true | '--source-id';
   /** D3: lazy curated help module. */
   help?: () => Promise<{ help: CliHelpSpec }>;
+  /**
+   * A slow whole-brain read: the label its stderr heartbeat names for these arguments (`reading <label>`), or null
+   * when these arguments are not one (cli/slow-read.ts, core/read-heartbeat.ts).
+   */
+  slowRead?: (args: readonly string[]) => string | null;
 }
+
+const positional = (args: readonly string[]) => args.find(a => !a.startsWith('-'));
+const sourceArg = (args: readonly string[]) => {
+  const i = args.indexOf('--source');
+  return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('-') ? args[i + 1] : args.find(a => a.startsWith('--source='))?.slice(9);
+};
 
 export type CliCommandRecord =
   | (CliCommandBase & {
@@ -228,7 +239,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'apply-migrations', phase: 'pre-connect', thinClient: 'refuse', json: 'document', help: () => import('./help/apply-migrations.ts'), load: () => import('./commands/apply-migrations.ts') },
   { name: 'repair-jsonb', phase: 'pre-connect', thinClient: 'refuse', load: () => import('./commands/repair-jsonb.ts') },
   { name: 'skillpack-check', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/skillpack-check.ts') },
-  { name: 'doctor', phase: 'pre-connect-own-engine', thinClient: 'none', json: 'document', help: () => import('./help/doctor.ts'), load: () => import('./commands/doctor.ts') },
+  { name: 'doctor', phase: 'pre-connect-own-engine', thinClient: 'none', json: 'document',
+    slowRead: args => args.includes('--remediate') || args.includes('--fix') ? null : 'doctor checks', help: () => import('./help/doctor.ts'), load: () => import('./commands/doctor.ts') },
   // CLI_ONLY: cathedral-5: deterministic compiled-context views (engine-needing; refused on thin
   // clients; help answers engine-free).
   // selfHelp: cathedral-5: compile-context ships its own detailed usage (targets, check-mode exit
@@ -306,7 +318,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // selfHelp: v0.37 fix wave (Lane D.4 + CDX2-12): sync's --no-embed flag was unreachable via help
   // because the dispatcher's generic CLI-only short-circuit fired before runSync could print its own
   // usage block. Adding `sync` here routes `gbrain sync --help` into runSync.
-  { name: 'sync', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, json: 'document', routes_source: true, load: () => import('./commands/sync.ts') },
+  { name: 'sync', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, json: 'document', routes_source: true, slowRead: args => args.includes('status') ? `sync status for ${sourceArg(args) ? `source ${sourceArg(args)}` : 'the selected source'}` : null, load: () => import('./commands/sync.ts') },
   // selfHelp: #3834: extract ships detailed help for its mode-specific flags. Keep the generic
   // CLI-only stub from hiding that contract.
   { name: 'extract', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: '--source-id', load: () => import('./commands/extract.ts') },
@@ -324,14 +336,15 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // selfHelp: gbrain repair prints REPAIR_HELP (kinds + dry-run/apply contract).
   // thin client: Wave 2 repair core: repairs publish coordinated writes on the brain host.
   { name: 'repair', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/repair.ts') },
-  { name: 'orphans', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/orphans.ts') },
+  { name: 'diag', phase: 'post-connect', thinClient: 'refuse', json: 'document', read_only: true, slowRead: () => 'the diagnostic bundle', help: () => import('./help/diag.ts'), load: () => import('./commands/diag.ts') },
+  { name: 'orphans', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, slowRead: () => 'orphan pages', load: () => import('./commands/orphans.ts') },
   // selfHelp: maintain (#3015) prints its own usage block (modes + not-auto-applied list).
   { name: 'maintain', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/maintain.ts') },
   { name: 'reindex', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/reindex.ts') },
   { name: 'salience', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/salience.ts') },
-  { name: 'anomalies', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/anomalies.ts') },
+  { name: 'anomalies', phase: 'post-connect', thinClient: 'none', selfHelp: true, slowRead: () => 'anomalous cohorts', load: () => import('./commands/anomalies.ts') },
   { name: 'feedback', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/feedback.ts') },
-  { name: 'status', phase: 'post-connect', thinClient: 'none', help: () => import('./help/status.ts'), load: () => import('./commands/status.ts') },
+  { name: 'status', phase: 'post-connect', thinClient: 'none', slowRead: args => args.includes('--funnel') ? null : 'the brain status snapshot', help: () => import('./help/status.ts'), load: () => import('./commands/status.ts') },
   { name: 'advisor', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/advisor.ts') },
   { name: 'conversation-parser', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/conversation-parser.ts') },
   { name: 'edges-backfill', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/edges-backfill.ts') },
@@ -374,7 +387,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // top-level help's own SOURCES block promises `sources --help` as the place to find the long tail
   // (rename, default, attach, current, federate, set-cr-mode, webhook, harden, ...). That made the
   // pointer circular and those subcommands undiscoverable from the CLI in either direction.
-  { name: 'sources', phase: 'post-connect', thinClient: 'route-then-refuse', selfHelp: true, load: () => import('./commands/sources.ts') },
+  { name: 'sources', phase: 'post-connect', thinClient: 'route-then-refuse', selfHelp: true,
+    slowRead: args => args[0] === 'status' ? `source status for ${positional(args.slice(1)) ?? 'every source'}` : null, load: () => import('./commands/sources.ts') },
   // CLI_ONLY: Open-loop engine CLI (engine-bound; trusted-local op dispatch).
   { name: 'waiting', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/waiting.ts') },
   { name: 'loops', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/loops.ts') },

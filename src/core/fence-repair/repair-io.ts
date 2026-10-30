@@ -25,7 +25,7 @@
  * Every write carries the location-only receipt (actor fence-repair).
  */
 import { copyFileSync, existsSync, lstatSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { execFileSync } from '../spawn.ts';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError, type OperationContext } from '../ops/contract.ts';
@@ -98,7 +98,7 @@ export async function loadFenceSource(engine: BrainEngine, sourceId: string, opt
     }
   } else {
     const local = row.local_path ?? (sourceId === 'default' ? await engine.getConfig('sync.repo_path') : null);
-    root = local && existsSync(local) ? local : null;
+    root = local && isAbsolute(local) && existsSync(local) ? local : null;
   }
   const busy: RepairBusySet = managed ? await loadRepairBusySet(engine, sourceId, row.incarnation) : { paths: new Set(), slugs: new Set(), unknown: null };
   const config = await repairScreenConfig(engine, sourceId);

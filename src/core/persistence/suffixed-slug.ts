@@ -19,12 +19,22 @@
  * portable-slug.ts), naming the portable slug to write instead. A live page
  * already holding such a slug keeps accepting updates with an advisory, and a
  * replayed request never reaches this check.
+ *
+ * #7305: put_page and capture also refuse a new slug with a hyphen run or a
+ * segment-final hyphen (three hyphens between `notes/x-1900` and `2000-ab`, or `notes/x-`), naming the
+ * folded slug (`notes/x-1900-2000-ab`): import and sync derive that folded slug
+ * from the file, so the page would keep its identity only through the `slug:`
+ * line its file is stamped with (#5966), and a file rewritten without it forks
+ * a second page. A live page that already holds the exact slug keeps updating
+ * with an advisory, like the rules above; nothing is ever redirected to the
+ * folded slug's page.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { ContentRefusal } from '../import-screen.ts';
 import { opError, type OperationContext, type OperationError } from '../ops/contract.ts';
 import { opTransport, readFix } from '../ops/op-fix.ts';
 import { slugPortabilityProblem, type SlugPortabilityProblem } from '../portable-slug.ts';
+import { hyphenFoldedSlug } from '../sync.ts';
 
 const MARKDOWN_SUFFIX = /(\.mdx?)+$/i;
 
@@ -64,17 +74,39 @@ function portabilityRefusal(ctx: OperationContext, slug: string, problem: SlugPo
     });
 }
 
+function hyphenRunRefusal(ctx: OperationContext, operation: SlugAdmissionOperation, folded: string): OperationError {
+  const cli = opTransport(ctx) === 'cli';
+  return opError('invalid_params', 'New page slugs must not contain a hyphen run or end a segment in a hyphen.',
+    cli ? `Write the page as ${folded}: ${operation === 'capture' ? `gbrain capture --slug ${folded}` : `gbrain put ${folded}`}`
+      : `Call ${operation} again with slug "${folded}" and the same content.`, {
+      detail: 'slug_hyphen_run',
+      why: `A page is stored at <slug>.md, and import and sync derive a file's slug with every hyphen run folded to one hyphen, so this file would import as ${folded}. `
+        + 'The page would keep its identity only through the slug: line in its file; a copy of the file without that line forks a second page.',
+      fix: {
+        ...readFix('Checks whether the folded slug already holds a page before writing it there.',
+          { argv: ['gbrain', 'get', folded], mcp: { tool: 'get_page', arguments: { slug: folded } } }),
+        verify: { argv: ['gbrain', 'get', folded], mcp: { tool: 'get_page', arguments: { slug: folded } } },
+      },
+    });
+}
+
+type SlugAdmissionOperation = 'put_page' | 'capture';
+
 /**
- * Refuses a new suffixed or unportable slug; for a live exact-identity page
- * returns the advisory to attach to the response. Null for every other slug.
+ * Refuses a new slug that is suffixed, unportable (put_page only) or not
+ * hyphen-folded (put_page and capture); for a live exact-identity page returns
+ * the advisory to attach to the response. Null for every other slug.
  */
-export function suffixedSlugAdmission(ctx: OperationContext, slug: string, liveExactRow: boolean): string | null {
-  const bare = bareSlugOf(slug);
-  const problem = slugPortabilityProblem(bare ?? slug);
-  if (bare === null && problem === null) return null;
-  if (!liveExactRow) throw bare !== null ? refusal(ctx, bare) : portabilityRefusal(ctx, slug, problem!);
-  const target = problem?.suggestion ?? bare!;
-  const why = bare !== null ? 'ends in .md, which new pages cannot use' : 'is not a portable file name, which new pages need';
+export function suffixedSlugAdmission(ctx: OperationContext, slug: string, liveExactRow: boolean, operation: SlugAdmissionOperation = 'put_page'): string | null {
+  const bare = operation === 'put_page' ? bareSlugOf(slug) : null;
+  const problem = operation === 'put_page' ? slugPortabilityProblem(bare ?? slug) : null;
+  const folded = bare === null && problem === null ? hyphenFoldedSlug(slug) : null;
+  if (bare === null && problem === null && folded === null) return null;
+  if (!liveExactRow) throw bare !== null ? refusal(ctx, bare) : problem !== null ? portabilityRefusal(ctx, slug, problem) : hyphenRunRefusal(ctx, operation, folded!);
+  const target = problem?.suggestion ?? bare ?? folded!;
+  const why = bare !== null ? 'ends in .md, which new pages cannot use'
+    : problem !== null ? 'is not a portable file name, which new pages need'
+      : `has a hyphen run or a segment-final hyphen, which new pages cannot use: its file path imports as "${folded}", so the page keeps its identity only through the slug: line in its file`;
   return `This page's slug ${why}. To move it, put_page its content under "${target}", then delete_page "${slug}".`;
 }
 
@@ -85,10 +117,9 @@ async function liveExactRow(engine: BrainEngine, sourceId: string, slug: string)
 }
 
 /** Dry-run form: reads the exact `(source_id, slug)` row itself. */
-export async function suffixedSlugDryRun(ctx: OperationContext, sourceId: string, slug: string): Promise<void> {
-  const bare = bareSlugOf(slug);
-  if (bare === null && slugPortabilityProblem(slug) === null) return;
-  suffixedSlugAdmission(ctx, slug, await liveExactRow(ctx.engine, sourceId, slug.toLowerCase()));
+export async function suffixedSlugDryRun(ctx: OperationContext, sourceId: string, slug: string, operation: SlugAdmissionOperation = 'put_page'): Promise<void> {
+  if (suffixedSlugAdmission(ctx, slug, true, operation) === null) return;
+  suffixedSlugAdmission(ctx, slug, await liveExactRow(ctx.engine, sourceId, slug.toLowerCase()), operation);
 }
 
 /**

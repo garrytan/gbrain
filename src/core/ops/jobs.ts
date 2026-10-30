@@ -52,6 +52,7 @@ import { opError, type OperationError } from './contract.ts';
 import type { Action } from '../agent-output.ts';
 import { hostFix, invalidParam, readFix, scopeDeniedError } from './op-fix.ts';
 import { hasScope } from '../scope.ts';
+import { LIST_JOBS_DEFAULT_LIMIT, LIST_JOBS_REMOTE_MAX_LIMIT, pagingLimit, reportJobPage } from './read-paging.ts';
 import { SOURCE_ID_RE } from '../source-id.ts';
 import {
   assertEmbedBackfillQueueAdmission,
@@ -352,11 +353,11 @@ const submit_agent: Operation = {
   description: 'Submit an agent job (agent scope; tools and budget bound to your client). Poll get_agent_job.',
   params: {
     prompt: { type: 'string', description: 'Task prompt.', required: true },
-    model: { type: 'string', description: 'provider:model (default: subagent tier).' },
+    model: { type: 'string', description: 'provider:model (default: subagent tier).', fullSurfaceOnly: true },
     allowed_tools: { type: 'array', description: 'Subset of your bound tools.', items: { type: 'string' } },
-    allowed_slug_prefixes: { type: 'array', description: 'Subset of your write prefixes.', items: { type: 'string' } },
-    max_turns: { type: 'number', description: 'Default 20, max 100.' },
-    queue: { type: 'string', description: 'Default "default".' },
+    allowed_slug_prefixes: { type: 'array', description: 'Subset of your write prefixes.', items: { type: 'string' }, fullSurfaceOnly: true },
+    max_turns: { type: 'number', description: 'Default 20, max 100.', fullSurfaceOnly: true },
+    queue: { type: 'string', description: 'Default "default".', fullSurfaceOnly: true },
   },
   mutating: true,
   scope: 'agent',
@@ -679,7 +680,8 @@ const list_jobs: Operation = {
     status: { type: 'string', description: 'Filter by status (waiting, active, completed, failed, delayed, dead, cancelled)' },
     queue: { type: 'string', description: 'Filter by queue name' },
     name: { type: 'string', description: 'Filter by job type' },
-    limit: { type: 'number', description: 'Max results (default: 50)' },
+    limit: { type: 'number', description: `Max results (default ${LIST_JOBS_DEFAULT_LIMIT}); MCP callers are capped at ${LIST_JOBS_REMOTE_MAX_LIMIT} per call.` },
+    cursor: { type: 'string', description: 'next_cursor from the last job of the previous page (it carries truncated: true): returns the next older jobs.' },
     fields: { type: 'array', items: { type: 'string' }, description: 'Return only these job fields (e.g. ["id","name","status"]) to save tokens; omit for every field.' },
     finished_since: { type: 'string', description: 'Terminal-event cursor: an ISO time or the next_cursor of the previous call. Returns {jobs, next_cursor}: jobs that finished after it, oldest first.' },
   },
@@ -705,19 +707,26 @@ const list_jobs: Operation = {
         throw e;
       }
     }
-    const { MinionQueue } = await import('../minions/queue.ts');
-    const queue = new MinionQueue(ctx.engine);
-    const jobs = await queue.getJobs({
-      status: p.status as string | undefined,
-      queue: p.queue as string | undefined,
-      name: p.name as string | undefined,
-      limit: (p.limit as number) || 50,
-      // #4098: SQL-side ownership fence for agent-scoped callers.
-      ...(owner !== null ? { ownerClientId: owner } : {}),
-    } as Parameters<typeof queue.getJobs>[0]);
+    const { listJobPage, JobListCursorError } = await import('../minions/job-list-page.ts');
+    const { limit, clampedFrom } = pagingLimit(ctx, 'list_jobs', p.limit, LIST_JOBS_DEFAULT_LIMIT, LIST_JOBS_REMOTE_MAX_LIMIT);
+    let page: Awaited<ReturnType<typeof listJobPage>>;
+    try {
+      page = await listJobPage(ctx.engine, {
+        status: p.status as string | undefined, queue: p.queue as string | undefined, name: p.name as string | undefined, limit,
+        ...(p.cursor !== undefined && p.cursor !== null ? { cursor: String(p.cursor) } : {}),
+        // #4098: SQL-side ownership fence for agent-scoped callers.
+        ...(owner !== null ? { ownerClientId: owner } : {}),
+      });
+    } catch (e) {
+      if (e instanceof JobListCursorError) throw invalidParam(ctx, 'list_jobs', 'cursor', `list_jobs: ${e.message}`, { example: '1792000000000000:42' });
+      throw e;
+    }
     // private_queue_owner_token is a capability credential (lease renewal /
     // attach), not job data — never expose it over MCP envelopes.
-    return project(jobs);
+    const jobs = await project(page.jobs);
+    reportJobPage(ctx, p, { limit, clampedFrom, returned: jobs.length, nextCursor: page.next_cursor });
+    if (page.next_cursor === undefined || jobs.length === 0) return jobs;
+    return [...jobs.slice(0, -1), { ...jobs[jobs.length - 1], truncated: true, next_cursor: page.next_cursor }];
   },
 };
 

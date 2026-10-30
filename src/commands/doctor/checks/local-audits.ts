@@ -10,7 +10,7 @@
 import { applyExtractAtomsNoPricing, readExtractAtomsNoPricing } from '../../../core/cycle/extract-atoms-cost-gate.ts';
 import { applyFactsReconcileBacklog, readFactsReconcileBacklog } from '../../../core/facts/reconcile-watermark.ts';
 import { managedPersistenceEnabled } from '../../../core/persistence/ownership.ts';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { gbrainPath } from '../../../core/config.ts';
 import { multiSourceDriftCheck, multiSourceDriftNotVerified } from '../schema-pack-checks.ts';
 import { computeConversationFormatCoverageCheck } from './conversation-coverage.ts';
@@ -401,10 +401,27 @@ async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
   // unrelated that can shadow the real binary on PATH. Classify every
   // `gbrain` that `which -a` finds (pure helpers in
   // src/core/npm-squat-check.ts) and warn when an unrelated install wins on
-  // PATH or the entry is broken. Skips silently when gbrain isn't on PATH
-  // at all (e.g. running via `bun src/cli.ts`).
+  // PATH or the entry is broken. The `gbrain` packages under `npm root -g`
+  // and Bun's global dir are classified too, so an unrelated global install
+  // whose bin is not on PATH still warns when no real gbrain is. Skips
+  // silently when neither finds anything (e.g. running via `bun src/cli.ts`).
   try {
-    const { execSync } = await import('../../../core/spawn.ts');
+    const { execSync, execFileSync } = await import('../../../core/spawn.ts');
+    const { homedir } = await import('node:os');
+    const bunGlobalRoot = join(process.env.BUN_INSTALL || join(homedir(), '.bun'), 'install', 'global');
+    const globalPackages = [join(bunGlobalRoot, 'node_modules', 'gbrain')];
+    let npmRoot: string | undefined;
+    try {
+      npmRoot = execFileSync('npm', ['root', '-g'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 5000,
+        shell: process.platform === 'win32',
+      }).trim();
+      if (npmRoot) globalPackages.push(join(npmRoot, 'gbrain'));
+    } catch {
+      // No npm (or it failed): only Bun's global dir is checked.
+    }
     let candidates: string[] = [];
     try {
       candidates = execSync('which -a gbrain', {
@@ -419,12 +436,16 @@ async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
       // entirely on this platform) — nothing to check.
     }
     const { assessGbrainBinaries } = await import('../../../core/npm-squat-check.ts');
-    const assessment = assessGbrainBinaries(candidates);
+    const { fileURLToPath } = await import('node:url');
+    const assessment = assessGbrainBinaries(candidates, {
+      globalPackages, bunGlobalRoot, npmRoot, selfDir: dirname(fileURLToPath(import.meta.url)),
+    });
     if (assessment.status !== 'skip') {
       checks.push({
         name: 'npm_squat',
         status: assessment.status,
         message: assessment.message,
+        ...(assessment.fix ? { fix: assessment.fix } : {}),
       });
     }
   } catch {
@@ -493,6 +514,15 @@ async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
     // Best-effort filesystem-hygiene check; never block doctor (a missing/
     // unparseable config.json lands here and skips, same fail-open posture).
   }
+  // GBRA-108: cron lines (and scripts they run) that call gbrain without GBRAIN_HOME (doctor/checks/cron-gbrain-home.ts).
+  // No environment gate: a container can run cron too; without a crontab the check emits nothing.
+  try {
+    const { cronGbrainHomeCheck, readCrontab } = await import('./cron-gbrain-home.ts');
+    const cron = cronGbrainHomeCheck(readCrontab(), process.env.GBRAIN_HOME || undefined);
+    if (cron) checks.push(cron);
+  } catch {
+    // Best-effort: an unreadable crontab never blocks doctor.
+  }
   // Engine graduation state (filesystem only; src/commands/doctor/checks/engine-graduation.ts).
   try {
     const { graduationStateCheck } = await import('./engine-graduation.ts');
@@ -506,7 +536,7 @@ async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
 
 export const homeDirInWorktreeEntry: DoctorEntry = {
   name: 'home_dir_in_worktree',
-  emits: ['home_dir_in_worktree', 'npm_squat', 'pglite_leftovers', 'graduation_interrupted'],
+  emits: ['home_dir_in_worktree', 'npm_squat', 'pglite_leftovers', 'cron_gbrain_home', 'graduation_interrupted'],
   run: runHomeDirInWorktree,
 };
 
@@ -518,7 +548,9 @@ async function runDefaultSourcePath(ctx: DoctorContext): Promise<Check[]> {
   // default.local_path is the DESIGNED fallback topology (pages nest under
   // sync.repo_path), so this only warns when that fallback demonstrably
   // fails: file-backed default pages with no resolvable root, or a
-  // sync.repo_path the #2018 leak guard silently skips. Logic lives in
+  // sync.repo_path the #2018 leak guard silently skips. #7630: it also warns
+  // on any relative stored path (default local_path, sync.repo_path, or another
+  // source's local_path). Logic lives in
   // doctor/checks/default-source-path.ts (module-dir rule).
   if (engine !== null) try {
     const { defaultSourceLocalPathCheck } = await import('./default-source-path.ts');

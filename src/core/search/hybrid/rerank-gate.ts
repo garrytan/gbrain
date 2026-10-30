@@ -3,13 +3,14 @@
  * cross-encoder. Runs on the deduped candidates, before `rerankAndPin` calls
  * the reranker, only when `search.reranker.gate` is not `off`.
  *
- * It reads the identity tiers without applying them: the alias table read
- * (`lookupAliasHop`) and the structural exact lookup (`structuralExactLookup`)
- * return what the post-rerank tiers would apply, the grade reads them plus a
- * detached view of the candidates (`gradePreRerank`, pure), and
- * `sizeReturnPool` applies the same lookups at today's post-rerank position,
- * so each lookup runs once and the reranker's input is unchanged. `off`
- * returns nothing and the pipeline is untouched.
+ * It reads the identity tiers without applying them: `readIdentityLookups`
+ * (the alias table read and the structural exact lookup, started by
+ * `rerankAndPin` alongside the reranker whatever the gate mode) returns what
+ * the post-rerank tiers would apply, the grade reads them plus a detached
+ * view of the candidates (`gradePreRerank`, pure), and `sizeReturnPool`
+ * applies the same lookups at today's post-rerank position, so each lookup
+ * runs once and the reranker's input is unchanged. `off` returns nothing
+ * and the pipeline is untouched.
  */
 import type { SearchResult } from '../../types.ts';
 import type { HybridRequest } from './request.ts';
@@ -53,6 +54,15 @@ export interface IdentityLookups {
   exactHits: SearchResult[];
 }
 
+/** The identity tiers' reads; they depend on the query alone, so they run alongside the reranker. */
+export async function readIdentityLookups(req: HybridRequest, exactLookupOpts: ExactLookupOpts): Promise<IdentityLookups> {
+  const [alias, exactHits] = await Promise.all([
+    lookupAliasHop(req.engine, req.query, req.aliasHopOpts),
+    structuralExactLookup(req.engine, req.query, exactLookupOpts).catch(() => [] as SearchResult[]),
+  ]);
+  return { alias, exactHits };
+}
+
 /** True when the opt-in single-token alias hop has a candidate it would move (full-query alias absent). */
 function tokenHopWouldFire(lookup: AliasHopLookup, opts: HybridRequest['aliasHopOpts']): boolean {
   if ((lookup.aliasMap.get(lookup.qNorm)?.length ?? 0) > 0) return false;
@@ -76,11 +86,11 @@ async function pageTrust(req: HybridRequest, top: { slug: string; source_id: str
  */
 export async function prepareRerankGate(
   req: HybridRequest,
-  { deduped, rerankerOpts, egressDenied, exactLookupOpts, multimodal }: {
+  { deduped, rerankerOpts, egressDenied, lookups, multimodal }: {
     deduped: readonly SearchResult[]; rerankerOpts: Pick<RerankerOpts, 'enabled' | 'topNIn'>; egressDenied: boolean;
-    exactLookupOpts: ExactLookupOpts; multimodal: boolean;
+    lookups: Promise<IdentityLookups>; multimodal: boolean;
   },
-): Promise<{ meta?: RerankGateMeta; lookups?: IdentityLookups }> {
+): Promise<{ meta?: RerankGateMeta }> {
   const mode = req.resolvedMode.reranker_gate;
   if (mode === 'off') return {};
   const base = { mode, candidates: deduped.length, would_skip: false, provider_called: false } as const;
@@ -88,11 +98,8 @@ export async function prepareRerankGate(
   if (egressDenied) return { meta: { ...base, eligible: false, ineligible_reason: 'egress_denied' } };
   if (deduped.length === 0) return { meta: { ...base, eligible: false, ineligible_reason: 'no_candidates' } };
 
-  const { engine, query, aliasHopOpts, resolvedMode } = req;
-  const [alias, exactHits] = await Promise.all([
-    lookupAliasHop(engine, query, aliasHopOpts),
-    structuralExactLookup(engine, query, exactLookupOpts).catch(() => [] as SearchResult[]),
-  ]);
+  const { query, aliasHopOpts, resolvedMode } = req;
+  const { alias, exactHits } = await lookups;
   let grade = gradePreRerank({
     candidates: deduped,
     query,
@@ -122,5 +129,5 @@ export async function prepareRerankGate(
     would_skip: grade.strong && blocked === undefined,
     ...(blocked ? { skip_blocked: blocked } : {}),
   };
-  return { meta, lookups: { alias, exactHits } };
+  return { meta };
 }

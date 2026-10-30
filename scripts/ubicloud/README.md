@@ -14,7 +14,9 @@ matches an already-gated tree apart from the release stamp files needs no new
 gate). During development use `bun run ci:ubicloud:diff`, `--lanes` and
 targeted suites (`bun test --timeout=60000 <files>`). The gstack pregate remote stage
 (`scripts/pregate-remote-gate.sh`, `.gstack/pregate.json`'s `remote_gate`)
-runs the `:diff` form for the same reason. `:diff` narrows only doc-only
+runs the `:diff` form for the same reason, unless the clean tree already passed
+GitHub's full Test and E2E runs, when it reuses them and starts no VM
+([remote-gate reuse](../../docs/ci-event-parity.md#remote-gate-reuse)). `:diff` narrows only doc-only
 trees today (doc checks plus gitleaks); any other tree still runs every lane,
 so pick `--lanes` or targeted suites when the change is narrow. In a
 multi-lane wave, lanes run `ci:ubicloud:diff` or targeted suites, and only
@@ -146,7 +148,7 @@ runs every file in `test/postgres-unit-arms.txt` the way persistence-validation'
 `unit-postgres-arms` step does (`bun --no-env-file test --timeout=120000`,
 `GBRAIN_TEST_ALLOW_DATABASE_URL=1`, no timeout multiplier) against the slot's
 own empty `gbrain_arms_test` database. The summary takes the two-worker makespan of its
-measured durations over that job's `ARM_SHARDS` partition (11 shards, `ARM_WORKERS` = 2
+measured durations over that job's `ARM_SHARDS` partition (12 shards, `ARM_WORKERS` = 2
 files at a time), and a shard over the step's 20-minute timeout
 fails the run, since GitHub would cut that shard off mid-list. The committed
 weights must also fit each shard twice over with a minute to spare

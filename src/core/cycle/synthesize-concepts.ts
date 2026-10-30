@@ -20,19 +20,14 @@
 //      For T3/T4: deterministic stub narrative.
 //   6. Write concept-typed pages with the synthesis mode made explicit.
 
-import type { BrainEngine, LinkBatchInput } from '../engine.ts';
+import type { BrainEngine } from '../engine.ts';
 import { resolveModel } from '../model-config.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
-import { chat as gatewayChat, isAvailable, isThinkingModel, THINKING_MODEL_MAX_OUTPUT_TOKENS } from '../ai/gateway.ts';
+import { chat as gatewayChat, isThinkingModel, THINKING_MODEL_MAX_OUTPUT_TOKENS } from '../ai/gateway.ts';
 import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } from '../ai/errors.ts';
-// #2163: concept pages route through importFromContent (the same
-// parse→chunk→embed pipeline put_page uses) instead of a bare engine.putPage,
-// so they land in the retrieval surface (content_chunks + embeddings) where
-// source-boost's 1.3× 'concepts/' weighting can actually reach them.
-import { importFromContent } from '../import-file.ts';
 import { canonicalLookup, type ModelPricing } from '../model-pricing.ts';
 import { priceFor, type PricingOverrides } from '../budget/reservation-cost.ts';
 import { loadPricingOverrides } from '../budget/budget-tracker.ts';
@@ -44,9 +39,8 @@ import { privatePagesFilterFragment, strictestVisibility, type Visibility } from
 import { maintenancePreflight } from '../persistence/prepared-maintenance.ts';
 import { derivedWriteThrough, reportFileHolds } from './derived-write-through.ts';
 import { addSpellingRedirects, canonicalConceptStem, loadConceptRedirects, loadLiveConceptStems } from './concept-redirects.ts';
-import {
-  addManagedProvenanceLinks, CONCEPT_DEFERRAL_CODES, CONCEPT_HOLD_CODES, publishClassicConcept, publishManagedConcept, stripFenceSections,
-} from './concept-publication.ts';
+import { conceptProvenanceCovers, conceptPublicationHold, stripFenceSections } from './concept-publication.ts';
+import { conceptWriter, type ConceptWrite } from './concept-writes.ts';
 import { readPhaseConfigNumber, SYNTHESIZE_CONCEPTS_BUDGET_KEY, SYNTHESIZE_CONCEPTS_DEFAULT_BUDGET_USD } from './phase-config-values.ts';
 import { ConceptRetryBound, MAX_CONCEPT_ATTEMPTS } from './concept-retry-bound.ts';
 import { ConceptDriftSkips } from '../persistence/drift-conflicts.ts';
@@ -343,6 +337,14 @@ export async function runPhaseSynthesizeConcepts(
   const skippedRetryBound: string[] = [];
   const driftSkips = await ConceptDriftSkips.load(engine, opts.sourceId ?? 'default', !!maintenance?.binding, !!opts.dryRun);
   const skippedFileDrift = driftSkips.skipped;
+  const src = opts.sourceId ?? 'default';
+  const countWritten = () => {
+    conceptsWritten++;
+    // v0.41.19.0 (T4): one tick per concept group with running count.
+    opts.progress?.tick(1, `${conceptsWritten} concepts`);
+  };
+  const writer = conceptWriter({ engine, maintenance, sourceId: src, importSourceId: opts.sourceId, brainDir: opts.brainDir, writeThrough: conceptFiles !== null,
+    retries, publicationDeferred, publicationHeld, linkWarnings, written: countWritten });
   for (const group of atomGroups) {
     const conceptSlug = `concepts/${group.conceptSlug}`;
     // A concept page this phase did not write belongs to a human (or another
@@ -365,18 +367,30 @@ export async function runPhaseSynthesizeConcepts(
       .digest('hex').slice(0, 16);
     const narrativeBodies = group.atomBodies.map(stripFenceSections);
     const hashFor = (model: string): string => hashOf(model, narrativeBodies);
-    const memberHash = hashFor(synthModel);
+    // #7269: a T3 narrative is the deterministic template, which never calls the model, so its hash leaves the model out.
+    const hashModel = group.tier === 'T1' || group.tier === 'T2' ? synthModel : '';
+    const memberHash = hashFor(hashModel);
     const priorMode = existing?.frontmatter?.synthesis_mode;
     const realNarrative = priorMode === 'llm' || priorMode === 'deterministic_tier';
     if (existing?.frontmatter?.member_hash === memberHash && realNarrative) {
       skippedUnchanged.push(conceptSlug);
       continue;
     }
+    // #7269: rewriting a deterministic page to the template it already holds, at a visibility it already has, would
+    // publish nothing new (a page hashed with the model before the fix keeps its body and is not rewritten).
+    const priorVisibility: Visibility = existing?.frontmatter?.visibility === 'private' ? 'private' : 'world';
+    if (hashModel === '' && priorMode === 'deterministic_tier' && strictestVisibility([group.visibility, priorVisibility]) === priorVisibility
+      && stripFenceSections(existing!.compiled_truth).trim() === deterministicNarrative(group).trim()) {
+      skippedUnchanged.push(conceptSlug);
+      continue;
+    }
     // #6643 (B1): a drifted concept would only add a conflict receipt per publication; checked live before any spend.
     if (await driftSkips.skip(conceptSlug, existingSnapshot)) continue;
+    const held = existing && conceptPublicationHold(existing); // checked before any spend
+    if (held) { publicationHeld.push({ concept: group.conceptSlug, reason: held }); continue; }
     // A page hashed by the pre-D-N3 formula (full atom bodies) whose inputs are
     // provably unchanged keeps its narrative: only the hash is rewritten, no spend.
-    const grandfathered = realNarrative && existing?.frontmatter?.member_hash === hashOf(synthModel, group.atomBodies);
+    const grandfathered = realNarrative && existing?.frontmatter?.member_hash === hashOf(hashModel, group.atomBodies);
     if (!grandfathered) tierCounts[group.tier]++;
     let narrative: string;
     let synthesisMode: ConceptSynthesisMode, unverifiedClaims: UnverifiedClaim[] = [];
@@ -430,7 +444,6 @@ export async function runPhaseSynthesizeConcepts(
             ({ narrative, unverified: unverifiedClaims } = await groundConceptNarrative(engine, text, group));
             synthesisMode = 'llm';
             if (result.fallbackFrom) fallbackWriter = result.model;
-            retries.succeed(`${opts.sourceId ?? 'default'}:${conceptSlug}`);
           } else {
             failures.push({ concept: group.conceptSlug, error: stopped ? `output stopped before the end (stopReason=${result.stopReason})` : 'empty model response' });
             narrative = deterministicNarrative(group);
@@ -474,7 +487,7 @@ export async function runPhaseSynthesizeConcepts(
 
     if (!opts.dryRun) {
       // #5525: tighten-only — a concept already private stays private.
-      const prior = await engine.getPage(conceptSlug, { sourceId: opts.sourceId ?? 'default' });
+      const prior = await engine.getPage(conceptSlug, { sourceId: src });
       const visibility = strictestVisibility([group.visibility, prior?.frontmatter?.visibility === 'private' ? 'private' : 'world']);
       // #2163: serialize to markdown and import via the canonical pipeline so
       // the page is chunked (+ embedded when a provider is configured) —
@@ -490,90 +503,23 @@ export async function runPhaseSynthesizeConcepts(
         synthesized_by: 'synthesize_concepts-v0.41',
         visibility: pageVisibility, ...(unverifiedClaims.length ? { unverified_claims: unverifiedClaims.map(c => ({ ...c, sources: ['member atoms'], detected_at: synthesizedAt.slice(0, 10) })) } : {}),
       });
-      // Each managed publication is bound to the revision the narrative was
-      // synthesized from, then to the previous publication's result.
-      let conceptRevision = existingSnapshot?.revision ?? null;
-      // Unmanaged: the narrative the page held when synthesis started; a
-      // different narrative under the page lock defers the concept (D-N3).
-      let baseline = existing?.compiled_truth ?? '';
-      const publish = async (pageVisibility: Visibility): Promise<void> => {
-        if (maintenance) {
-          conceptRevision = await publishManagedConcept(engine, maintenance, conceptSlug, synthesized(pageVisibility), narrative,
-            conceptRevision, opts.brainDir, group.atomSlugs);
-          return;
-        }
-        // #4416: target the cycle's resolved source, not the 'default' literal.
-        baseline = await publishClassicConcept(engine, conceptSlug, opts.sourceId ?? 'default', synthesized(pageVisibility), narrative,
-          baseline, { writeThrough: conceptFiles !== null, members: group.atomSlugs, importPage: (markdown) => importFromContent(engine, conceptSlug, markdown, {
-            noEmbed: !isAvailable('embedding'), sourceId: opts.sourceId, preserveGateMarkers: true,
-          }) });
-      };
-      // A publication that lost a revision race or would lose canonical
-      // material is recorded and skipped; any other error stops the phase.
-      const publishOrRecord = async (pageVisibility: Visibility): Promise<boolean> => {
-        try { await publish(pageVisibility); return true; } catch (err) {
-          const code = (err as { code?: unknown }).code;
-          if (typeof code !== 'string') throw err;
-          const reason = `${code}: ${(err as Error).message}`;
-          if (CONCEPT_DEFERRAL_CODES.has(code)) publicationDeferred.push({ concept: group.conceptSlug, reason });
-          else if (CONCEPT_HOLD_CODES.has(code)) publicationHeld.push({ concept: group.conceptSlug, reason });
-          else throw err;
-          return false;
-        }
-      };
       // #5525: a world concept stays private until every member's provenance
       // edge is durable, because a later private flip reaches it through them.
-      if (!await publishOrRecord('private')) continue;
-      // #4589: bank concept<->member-atom provenance edges. The prompt forbids
-      // enumerating atoms in the body and no frontmatter field maps to a link
-      // verb, so without this every concept page lands with zero edges (graph
-      // orphan). Dedicated link_source keeps reconcile passes from pruning
-      // them; both endpoints sit in the cycle's source (an atom living in
-      // another source drops out of the batch JOIN — no cross-source edge).
-      // ON CONFLICT DO NOTHING makes re-runs idempotent, so a failure here is
-      // best-effort: recorded as a warn, the page write stands. Mirrors #3961.
-      const src = opts.sourceId ?? 'default';
-      const provenanceLinks: LinkBatchInput[] = [...new Set(group.atomSlugs)].flatMap((atomSlug) => [
-        { from_slug: conceptSlug, to_slug: atomSlug, link_type: 'synthesized_from', link_source: 'concept-provenance', context: 'member atom', from_source_id: src, to_source_id: src },
-        { from_slug: atomSlug, to_slug: conceptSlug, link_type: 'synthesizes', link_source: 'concept-provenance', context: 'concept synthesized from this atom', from_source_id: src, to_source_id: src },
-      ]);
-      try {
-        const inserted = maintenance ? await addManagedProvenanceLinks(engine, src, provenanceLinks)
-          : await engine.addLinksBatch(provenanceLinks, { auditSite: 'cycle.synthesize_concepts.provenance' }); // gbrain-allow-direct-insert: concept-provenance edges derived from the synthesis itself (no markdown body to reconcile from)
-        // Zero rows back with edges requested means every member atom fell
-        // out of the batch JOIN (not in this source) — unless a prior run
-        // already banked them (ON CONFLICT DO NOTHING also returns 0). A
-        // silent 'ok' here is a graph orphan with a clean receipt.
-        if (inserted === 0 && provenanceLinks.length > 0) {
-          const banked = (await engine.getLinks(conceptSlug, { sourceId: src }))
-            .some((l) => l.link_source === 'concept-provenance');
-          if (!banked) {
-            linkWarnings.push({ concept: group.conceptSlug, warning: `provenance links: 0 of ${provenanceLinks.length} edges landed (member atoms not in source '${src}'?)` });
-          }
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        linkWarnings.push({ concept: group.conceptSlug, warning: `provenance links failed: ${msg}` });
-        console.error(`[synthesize_concepts] provenance links failed for ${conceptSlug} (non-fatal): ${msg}`);
-      }
-      if (visibility === 'world') {
-        const members = [...new Set(group.atomSlugs)];
-        const [{ linked }] = await engine.executeRaw<{ linked: number }>(`SELECT COUNT(DISTINCT a.slug)::int AS linked FROM links l
-          JOIN pages c ON c.id=l.from_page_id JOIN pages a ON a.id=l.to_page_id
-          WHERE c.source_id=$1 AND c.slug=$2 AND a.slug=ANY($3::text[]) AND l.link_source='concept-provenance' AND l.link_type='synthesized_from'`,
-        [src, conceptSlug, members]);
-        if (Number(linked) === members.length && !await publishOrRecord('world')) continue;
-      }
-    }
-    conceptsWritten++;
-    // v0.41.19.0 (T4): one tick per concept group with running count.
-    opts.progress?.tick(1, `${conceptsWritten} concepts`);
+      // GBRA-60: one whose edges already cover every member publishes once, at
+      // world, so a strict source never commits an intermediate private page.
+      const covered = visibility === 'world' && await conceptProvenanceCovers(engine, src, conceptSlug, group.atomSlugs);
+      const write: ConceptWrite = { concept: group.conceptSlug, conceptSlug, atomSlugs: group.atomSlugs, visibility, covered, synthesisMode, synthesized, narrative,
+        revision: existingSnapshot?.revision ?? null, baseline: existing?.compiled_truth ?? '' };
+      // GBRA-60: a managed run's concepts publish in batches (concept-writes.ts), each one publication group on Postgres.
+      await (maintenance ? writer.queue(write) : writer.publish(write));
+    } else countWritten();
 
     // v0.41.19.0 (T3): replaced bare per-iteration fire with throttled
     // helper. Same hook, same cycle-lock refresh effect, just at the
     // right cadence (30s instead of every-group).
     await maybeYield();
   }
+  if (maintenance) await writer.flush();
 
   // v0.42 Wave B3: receipt + rollup for synthesize_concepts. Receipt/rollup
   // carry the cycle's resolved source (#4416, opts.sourceId); 'default'

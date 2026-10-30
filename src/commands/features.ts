@@ -5,6 +5,7 @@
  *   gbrain features [--json] [--auto-fix] [--help]
  */
 
+import { gbrainPath } from '../core/config.ts';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
@@ -60,7 +61,7 @@ export const RECIPE_META = [
 // --- Persistence ---
 
 function offersPath(): string {
-  return join(process.env.HOME || '', '.gbrain', 'feature-offers.json');
+  return gbrainPath('feature-offers.json');
 }
 
 function loadOffers(): FeatureOffersFile {
@@ -74,8 +75,7 @@ function loadOffers(): FeatureOffersFile {
 
 function saveOffers(offers: FeatureOffersFile) {
   try {
-    const dir = join(process.env.HOME || '', '.gbrain');
-    mkdirSync(dir, { recursive: true });
+    mkdirSync(gbrainPath(), { recursive: true });
     writeFileSync(offersPath(), JSON.stringify(offers, null, 2));
   } catch { /* best-effort */ }
 }

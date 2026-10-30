@@ -23,13 +23,12 @@
  * installed service's restart command (else the pid) and a verify. A serve
  * that predates heartbeats has no row; `consumers_without_heartbeat` names it.
  */
-import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import type { Check } from '../../doctor.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
 import { listHostConsumers, RESIDENT_CONSUMER_KINDS, type ListedConsumer } from '../../../core/persistence/consumer-heartbeat.ts';
 import { compareWriterVersions } from '../../../core/persistence/writer-versions.ts';
-import { launchdPlistPath, SERVE_LAUNCHD_LABEL, SERVE_SYSTEMD_UNIT, systemdUnitPath } from '../../../core/serve-service.ts';
+import { serveServiceRestartArgv } from '../../../core/serve-service.ts';
 import { VERSION } from '../../../version.ts';
 import { consumerOverlap, hostIdentityMismatches, ownersWithoutHeartbeat, OVERLAP_MIN_AGE_MS } from '../../../core/persistence/consumer-diagnostics.ts';
 import { localHostIdentity } from '../../../core/persistence/identity.ts';
@@ -110,9 +109,7 @@ export interface ServiceHost { platform: string; home: string; uid: number }
 
 /** The restart for one consumer: the installed serve service's own command, else stopping that pid for its supervisor or operator to start again. */
 export function restartArgv(row: Pick<ListedConsumer, 'kind' | 'pid'>, service: ServiceHost): string[] {
-  if (row.kind === 'serve' && service.platform === 'darwin' && existsSync(launchdPlistPath(service.home))) return ['launchctl', 'kickstart', '-k', `gui/${service.uid}/${SERVE_LAUNCHD_LABEL}`];
-  if (row.kind === 'serve' && service.platform === 'linux' && existsSync(systemdUnitPath(service.home))) return ['systemctl', '--user', 'restart', SERVE_SYSTEMD_UNIT];
-  return ['kill', String(row.pid)];
+  return (row.kind === 'serve' ? serveServiceRestartArgv(service) : null) ?? ['kill', String(row.pid)];
 }
 
 export async function serveBuildDriftCheck(engine: BrainEngine, hostId: string,

@@ -52,6 +52,9 @@
       "core": [
         "./commands/core.ts"
       ],
+      "diag": [
+        "./commands/diag.ts"
+      ],
       "edge-proposals": [
         "./commands/edge-proposals.ts"
       ],
@@ -180,6 +183,7 @@
         "./commands/salience.ts"
       ],
       "serve": [
+        "./core/serve-log.ts",
         "./commands/serve.ts"
       ],
       "skillopt": [

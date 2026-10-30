@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { pageQuarantinedNotice } from '../quarantine.ts';
+import { indexRestoredNotice } from './git-door.ts';
 import { fenceNormalizedNotice, type FencesNormalized } from '../fence-repair/report.ts';
 import { parseFenceRepairReceipt } from '../fence-repair/receipt.ts';
 import { realpathSync } from 'node:fs';
@@ -35,6 +36,7 @@ import { normalizeSubagentPageInput, undeclaredPageTypeWarning, type PageTypeWar
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { decideUnboundWrite, isUnboundSourcePage } from './unbound-source.ts';
 import { assertRestoreOrigin } from './detached-pages.ts';
+import { isSourceDbOnlySlug } from './source-storage.ts';
 import { colonSlugWindowsRefusal, isWindowsColonTarget } from './native-file-target.ts';
 import { publishesDatabaseOnly } from './page-prepare.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
@@ -160,8 +162,9 @@ async function resolveCaptureFile(ctx: OperationContext, sourceId: string, p: Re
   delete p.local_file;
   const [source] = await ctx.engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [sourceId]);
   const binding = await getWorktreeBinding(ctx.engine, sourceId);
-  const root = binding ? binding.owner_host_id === localHostId() && binding.local_path ? join(binding.local_path, binding.relative_path) : null
+  let root = binding ? binding.owner_host_id === localHostId() && binding.local_path ? join(binding.local_path, binding.relative_path) : null
     : source?.local_path || (sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
+  if (root && !isAbsolute(root)) root = null;
   let origin: string | null = null;
   try { if (root) origin = relative(realpathSync(root), realpathSync(file)); } catch { /* unreadable or absent root */ }
   if (!root || !origin || isAbsolute(origin) || origin === '..' || origin.startsWith(`..${sep}`) || !/\.mdx?$/i.test(origin)) {
@@ -198,13 +201,15 @@ export async function withLiveSearchable(ctx: OperationContext, response: Record
   return { ...settle(response), ...(receipt ? { write_request: settle(receipt) } : {}) };
 }
 
-/** #6188 (D21): a write whose fence Tier 1 rewrote carries one `fence_normalized` coaching notice. */
+/** #6188 (D21): a write whose fence Tier 1 rewrote carries one `fence_normalized` coaching notice; a strict write whose door restored a stale index entry carries `git_index_restored`. */
 export function emitFenceNotice(ctx: Pick<OperationContext, 'emitNotice'>, response: Record<string, unknown>, slug?: string): void {
   const report = response.fences_normalized as FencesNormalized | undefined;
   if (report) ctx.emitNotice?.(fenceNormalizedNotice(report, slug));
   // #6259: a write the content-quality gate quarantined says so (`quarantined` plus one safety notice).
   const quarantined = response.quarantined as { reason: string; detail: string } | undefined;
   if (quarantined && slug) ctx.emitNotice?.(pageQuarantinedNotice(slug, quarantined, 'write'));
+  const restored = (response.persistence as { git_index_restored?: string[] } | undefined)?.git_index_restored;
+  if (restored?.length) ctx.emitNotice?.(indexRestoredNotice(restored));
 }
 
 /** Owner-internal `put_page` kinds the trusted local file writers (import, frontmatter repair, quarantine clear) submit; every other caller is refused them. */
@@ -274,6 +279,12 @@ export async function preparePageAdmission(ctx: OperationContext,
   if (Object.hasOwn(input.params, 'fence_repair') && (input.operation !== 'put_page' || ctx.remote !== false || !parseFenceRepairReceipt(input.params.fence_repair))) {
     throw new OperationError('invalid_params', 'fence_repair is reserved for the trusted fence repair.',
       'Drop fence_repair and submit the page without it; gbrain repair fences records its own receipt on the brain host. To fix a malformed facts or takes fence, correct it in content (or write facts with remember and takes with takes_add); a held file is repaired by the brain host operator with gbrain repair fences, so ask the user to run it.');
+  }
+  // G6: the hidden-row merge of an untrusted capture's body (page-prepare.ts) is opted into only by the trusted local ingest_capture
+  // handler, whose caller never saw the page's non-world rows; a remote put_page has it already, through its authority.
+  if (Object.hasOwn(input.params, 'keep_hidden_rows') && (input.operation !== 'put_page' || ctx.remote !== false || input.params.keep_hidden_rows !== true)) {
+    throw new OperationError('invalid_params', 'keep_hidden_rows is reserved for trusted local ingestion.',
+      'Drop keep_hidden_rows and submit the page without it; a remote put_page already keeps the rows its caller could not read.');
   }
   // A body over the page ceiling can never be admitted: refuse it as a caller error before the journal
   // reserves intent bytes, so an oversized write never reads as retryable queue_capacity.
@@ -360,7 +371,8 @@ export async function preparePageAdmission(ctx: OperationContext,
   if (ctx.remote !== false) Object.assign(intent, { source_kind: `mcp:${input.operation}`, source_uri: null, ingested_via: `mcp:${input.operation}` });
   const [authority, , snapshot, boundAtStart, writeThroughSetting, repoPath] = await pipelined(ctx.engine, [
     () => submissionAuthority(ctx, input.operation, sourceId, source.incarnation, slug),
-    () => assertKnowledgePublicationAllowed(ctx.engine, { source_id: sourceId, source_incarnation: source.incarnation, slug }),
+    () => assertKnowledgePublicationAllowed(ctx.engine, { source_id: sourceId, source_incarnation: source.incarnation, slug, operation: input.operation,
+      intent: { purge: intent.purge, retention: intent.retention } }),
     () => ctx.engine.readPageSnapshot(slug, { sourceId, includeDeleted: true }),
     () => getWorktreeBinding(ctx.engine, sourceId),
     () => ctx.engine.getConfig('sync.write_through'),
@@ -370,8 +382,8 @@ export async function preparePageAdmission(ctx: OperationContext,
     await assertTimelineNotOmitted(ctx.engine, { intent, remote: ctx.remote !== false, writer: typeof p.expected_revision === 'string' ? 'editing' : 'preserving',
       slug, sourceId, content: intent.content, prior: snapshot });
   }
-  const slugAdvisory = input.operation === 'put_page' && input.managedFileImport !== true
-    ? suffixedSlugAdmission(ctx, slug, !!snapshot && !snapshot.page.deleted_at) : null;
+  const slugAdvisory = (input.operation === 'put_page' || input.operation === 'capture') && input.managedFileImport !== true
+    ? suffixedSlugAdmission(ctx, slug, !!snapshot && !snapshot.page.deleted_at, input.operation) : null;
   // #5616: typed edit refusals before admission; publication repeats them on the locked snapshot.
   if (input.operation === 'edit_page') {
     const { applyPageEdits, assertEditRevision, assertSegmentedEditFences, parseEditWithin, parsePageEdits } = await import('./page-edit.ts');
@@ -389,17 +401,22 @@ export async function preparePageAdmission(ctx: OperationContext,
   let binding = boundAtStart;
   const sandbox = ctx.viaSubagent === true && !(ctx.allowedSlugPrefixes?.length);
   const configuredWriteThrough = !/^(false|0|off|no)$/i.test(writeThroughSetting ?? 'true');
-  const writeThrough = configuredWriteThrough && !sandbox && !input.databaseOnly;
-  const root = source.local_path || repoPath;
+  const configuredRoot = source.local_path || repoPath;
+  const root = configuredRoot && isAbsolute(configuredRoot) ? configuredRoot : null;
+  // Checkout paths belong to a host binding; sources.local_path may name
+  // another host's original checkout after a verified ownership transfer.
+  const localRoot = binding ? binding.owner_host_id === localHostId() && binding.local_path
+    ? join(binding.local_path, binding.relative_path) : null : root;
+  // #7324: a declared db_only page is canonical in the database, so its detach restore publishes database-only even
+  // where write-through would re-create its file (a managed checkout); assertRestoreOrigin still requires the file gone.
+  const databaseOnly = input.databaseOnly ?? (input.operation === 'restore_page' && p.detach === true && localRoot
+    && isSourceDbOnlySlug(localRoot, slug, 'not_db_only') ? 'detached' : undefined);
+  const writeThrough = configuredWriteThrough && !sandbox && !databaseOnly;
   if (sandbox) authority.databaseOnlyReason = 'subagent_sandbox';
-  else if (input.databaseOnly) authority.databaseOnlyReason = input.databaseOnly;
+  else if (databaseOnly) authority.databaseOnlyReason = databaseOnly;
   else if (!configuredWriteThrough) authority.databaseOnlyReason = 'disabled_by_config';
   else if (!root && !binding) authority.databaseOnlyReason = 'no_repo_configured';
   if (p.local_dir !== undefined) {
-    // Checkout paths belong to a host binding; sources.local_path may name
-    // another host's original checkout after a verified ownership transfer.
-    const localRoot = binding ? binding.owner_host_id === localHostId() && binding.local_path
-      ? join(binding.local_path, binding.relative_path) : null : root;
     let matches = false;
     if (ctx.remote === false && typeof p.local_dir === 'string' && localRoot) {
       try { matches = realpathSync(resolve(p.local_dir)) === realpathSync(resolve(localRoot)); } catch { /* missing local binding */ }

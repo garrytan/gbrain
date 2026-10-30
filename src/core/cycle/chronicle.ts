@@ -35,6 +35,7 @@ import {
 } from '../chronicle/contract.ts';
 import { CHRONICLE_TYPES, RESCUE_SLUG_PREFIXES } from '../chronicle/eligibility.ts';
 import { claimChronicleRow, executeChronicleRow } from '../chronicle/execute.ts';
+import { retireOrphanedChronicleEvents } from '../chronicle/publish.ts';
 import { failExhaustedCampaignRows } from '../chronicle/campaign.ts';
 import { defaultJudge, type ChronicleDropReason, type ChronicleJudge } from '../chronicle/extract-events.ts';
 import {
@@ -156,6 +157,13 @@ export async function runPhaseChronicle(engine: BrainEngine, opts: ChroniclePhas
   details.sources = sources.length;
   for (const sourceId of sources) {
     await discover(engine, sourceId, { managed, enabled, activatedAt, settings, now: now(), dryRun });
+  }
+  if (!dryRun) {
+    // C-6: a deleted depth page's events retire through `originGone` (no model call, so no chat provider needed).
+    for (const sourceId of sources) {
+      try { details.events_retired += await retireOrphanedChronicleEvents(engine, sourceId); }
+      catch (error) { console.warn(`[chronicle] ${sourceId}: retiring the events of deleted pages failed (${error instanceof Error ? error.message : String(error)}); the next run retries.`); }
+    }
   }
   const queues = new Map<string, ChronicleLedgerRow[]>();
   for (const sourceId of sources) {

@@ -101,12 +101,16 @@ export function createGitCoalescingFixture(tag: string) {
     const root = join(repoTemplates, name), remote = join(repoTemplates, `${name}.git`);
     if (existsSync(remote)) return repoTemplates;
     mkdirSync(root); mkdirSync(remote);
+    // Git 2.55 starts a detached `git maintenance run --auto` after every commit and every push it receives; it creates
+    // and deletes objects/maintenance.lock (and, when a task runs, other object files) while makeRepo copies the template.
     git(root, 'init', '-q', '-b', 'main');
+    git(root, 'config', 'maintenance.auto', 'false');
     git(root, 'config', 'user.name', 'Example Writer');
     git(root, 'config', 'user.email', 'writer@example.invalid');
     writeFileSync(join(root, 'README.md'), `${name}\n`);
     git(root, 'add', 'README.md'); git(root, 'commit', '-q', '-m', 'Initial');
     git(remote, 'init', '-q', '--bare');
+    git(remote, 'config', 'maintenance.auto', 'false');
     git(root, 'remote', 'add', 'origin', remote); git(root, 'push', '-q', '-u', 'origin', 'main');
     return repoTemplates;
   }

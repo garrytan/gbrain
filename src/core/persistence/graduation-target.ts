@@ -106,7 +106,7 @@ type Query = <T>(sql: string, params?: unknown[]) => Promise<T[]>;
 
 /** Tables a fresh initSchema seeds, and the most rows the seed leaves in each. */
 const SEED_ROW_LIMITS: Readonly<Record<string, number>> = {
-  op_checkpoints: 1, page_generation_clock: 1, persistence_brain: 1, shared_skill_state: 1, sources: 1,
+  git_canonical_brain: 1, op_checkpoints: 1, page_generation_clock: 1, persistence_brain: 1, shared_skill_state: 1, sources: 1,
 };
 /** Each engine's own schema writes these; they never count against emptiness. */
 const SCHEMA_OWNED_TABLES = new Set(['config', 'file_migration_ledger', 'persistence_graduation', 'trust_policy_state']);

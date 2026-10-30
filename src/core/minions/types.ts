@@ -512,6 +512,20 @@ export function rowToMinionJob(row: Record<string, unknown>): MinionJob {
  * tool registry and provider config resolve via handler-side defaults + env,
  * not per-job data, so restart/replay uses the same behavior.
  */
+/** GBRA-60: the transcript a dream synthesis child's pages are verified against, and the stamp they carry. */
+export interface DreamOutputSpec {
+  /** The transcript path (or conversation-page URI) the cycle discovered; stamped as `raw_source`. */
+  raw_source: string;
+  /** sha256 of the transcript content the cycle discovered; a child that reads other bytes does not verify. */
+  transcript_hash: string;
+  /** The cycle date the prompt gave as today (`dream_cycle_date`, the verify `checkedAt`). */
+  cycle_date: string;
+  /** `dream.synthesize.quote_verify`; false stamps without verifying. */
+  quote_verify: boolean;
+  /** #4618: the capturing seat. */
+  seat?: string;
+}
+
 export interface SubagentHandlerData {
   /** Top-level user turn kicking off the loop. */
   prompt: string;
@@ -627,6 +641,30 @@ export interface SubagentHandlerData {
    * queued by older builds, which keep the allow-list derivation.
    */
   oneshot_task_prefixes?: string[];
+  /**
+   * GBRA-60: a managed dream synthesis child verifies and stamps each oneshot page against this transcript before it
+   * writes it (cycle/synthesize-child-verify.ts), so a strict source commits each output once. Trusted field
+   * (PROTECTED_JOB_NAMES); a delegated (remote-owned) job ignores it. Absent on jobs queued by older builds, whose
+   * outputs postprocessing verifies and republishes.
+   */
+  dream_output?: DreamOutputSpec;
+  /**
+   * #7850: the session-corpus file a dream synthesis child writes for, the corpus dir and the source incarnation discovery
+   * resolved it to. The child resolves the file again (read-only) before any model call and refuses
+   * (`session_source_changed: <reason>`) when the session no longer resolves to `source_id` or the incarnation changed; a
+   * child without it is re-checked from `dream_output.raw_source` and the configured corpus dir. Trusted field
+   * (PROTECTED_JOB_NAMES); a delegated (remote-owned) job ignores it.
+   */
+  corpus_source?: { raw_source: string; corpus_dir: string; incarnation: string };
+  /**
+   * GBRA-60: the agent loop's put_page stages each page instead of writing it (minions/tools/staged-put-page.ts): every
+   * check put_page runs before journaling still refuses, but the page lives only in this job's tool-execution ledger
+   * until the submitting phase publishes it (a managed patterns run grounds, stamps and publishes the staged pages as
+   * one maintenance batch, so a strict source commits each page once). Staged writes count for require_writes. Trusted
+   * field: 'subagent' is a PROTECTED_JOB_NAMES job, submit_agent never copies it, and a delegated (remote-owned) job
+   * ignores it. A replacement tool registry (SubagentDeps.toolRegistry) does not stage.
+   */
+  stage_writes?: boolean;
   /**
    * v0.41 Approach C: opt out of the auto-generated tool-usage preamble
    * that `buildSystemPrompt()` splices into `system`. Default behavior

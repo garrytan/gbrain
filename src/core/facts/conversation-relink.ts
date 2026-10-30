@@ -20,9 +20,11 @@
  * `fact_relink_attempts` (operational, like relink's model verdict memos), so
  * doctor `unlinked_facts` offers it the paid re-extraction fallback instead
  * of this relink again; conversation-memo.ts says which misses a new page
- * re-arms and how the paid attempt is remembered. Trusted local CLI only.
+ * re-arms and how the paid attempt is remembered. A row the assistant or a
+ * third party said is never linked (#7270): it is counted, left unlinked, and
+ * never picks a page for a run. Trusted local CLI only.
  */
-import type { BrainEngine } from '../engine.ts';
+import type { BrainEngine, FactAttribution } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteRequest } from '../persistence/model.ts';
@@ -39,6 +41,7 @@ import { AUDIT_ROW_SOURCES } from './audit-sources.ts';
 import { CONVERSATION_UNRESOLVED } from './relink-reasons.ts';
 import { conversationTriedSql } from './conversation-memo.ts';
 import { appendContextNote } from './subject-infer.ts';
+import { ENTITY_LINKABLE_SQL, entityLinkable } from './attribution.ts';
 import { inferConversationSubject } from './conversation-subject-infer.ts';
 
 export const CONVERSATION_RELINK_INTENT = 'managed_maintenance_conversation_relink';
@@ -51,13 +54,15 @@ export const derivedConversationRow = (audit: string) => `f.source LIKE 'cli:ext
 const ACTIVE = 'f.entity_slug IS NULL AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())';
 
 export interface ConversationRelinkRow { id: number; fact: string; entity_slug: string; context: string }
-interface PagePlan { slug: string; link: ConversationRelinkRow[]; misses: Array<{ id: number; reason: string }> }
+interface PagePlan { slug: string; link: ConversationRelinkRow[]; misses: Array<{ id: number; reason: string }>; notUserAttributed: number }
 export interface ConversationRelinkReport {
   source_id: string;
   dry_run: boolean;
-  pages: Array<{ slug: string; linked: number; unresolved: number; changed: number }>;
+  pages: Array<{ slug: string; linked: number; unresolved: number; changed: number; not_user_attributed: number }>;
   linked: number;
   unresolved: number;
+  /** #7270: rows the assistant or a third party said, left unlinked (never attached to an entity page). */
+  not_user_attributed: number;
   /** Planned links whose row moved before the write (left for the next run). */
   changed: number;
   /** Pages still holding unresolved rows: the paid re-extraction fallback names them. */
@@ -74,21 +79,22 @@ export async function conversationRelinkPages(engine: BrainEngine, sourceId: str
   const untried = await hasAttemptsTable(engine)
     ? `AND NOT ${conversationTriedSql}` : '';
   const rows = await engine.executeRaw<{ slug: string }>(
-    `SELECT f.source_markdown_slug AS slug FROM facts f WHERE f.source_id = $1 AND f.source_markdown_slug IS NOT NULL AND ${ACTIVE}
+    `SELECT f.source_markdown_slug AS slug FROM facts f WHERE f.source_id = $1 AND f.source_markdown_slug IS NOT NULL AND ${ACTIVE} AND ${ENTITY_LINKABLE_SQL}
         AND ${derivedConversationRow('$2')} ${untried}
       GROUP BY f.source_markdown_slug ORDER BY COUNT(*) DESC, f.source_markdown_slug LIMIT $3`, [sourceId, [...AUDIT_ROW_SOURCES], limit]);
   return rows.map(r => r.slug);
 }
 
 async function planPages(engine: BrainEngine, sourceId: string, slugs: string[]): Promise<PagePlan[]> {
-  const rows = await engine.executeRaw<{ id: number | string; fact: string; context: string | null; visibility: FactVisibility; slug: string }>(
-    `SELECT f.id, f.fact, f.context, f.visibility, f.source_markdown_slug AS slug FROM facts f
+  const rows = await engine.executeRaw<{ id: number | string; fact: string; context: string | null; visibility: FactVisibility; slug: string; attributed_to: FactAttribution | null }>(
+    `SELECT f.id, f.fact, f.context, f.visibility, f.source_markdown_slug AS slug, f.attributed_to FROM facts f
       WHERE f.source_id = $1 AND f.source_markdown_slug = ANY($2::text[]) AND ${ACTIVE} AND ${derivedConversationRow('$3')}
       ORDER BY f.source_markdown_slug, f.id`, [sourceId, slugs, [...AUDIT_ROW_SOURCES]]);
   const pages = new Map<string, PagePlan>();
   for (const row of rows) {
-    const page = pages.get(row.slug) ?? { slug: row.slug, link: [], misses: [] };
+    const page = pages.get(row.slug) ?? { slug: row.slug, link: [], misses: [], notUserAttributed: 0 };
     pages.set(row.slug, page);
+    if (!entityLinkable(row.attributed_to)) { page.notUserAttributed++; continue; }
     const inferred = await inferConversationSubject(engine, sourceId, row.visibility, row.fact);
     if (inferred.slug === null) page.misses.push({ id: Number(row.id), reason: inferred.reason });
     else page.link.push({ id: Number(row.id), fact: row.fact, entity_slug: inferred.slug, context: appendContextNote(row.context, `entity relinked from ${inferred.via}`) });
@@ -103,7 +109,7 @@ async function linkRows(tx: BrainEngine, sourceId: string, slug: string, rows: C
   for (const row of rows) {
     const done = await tx.executeRaw<{ id: number | string }>(
       `UPDATE facts f SET entity_slug = $4, context = $5 WHERE f.source_id = $1 AND f.id = $2 AND f.source_markdown_slug = $3 AND f.fact = $6
-          AND ${ACTIVE} AND ${derivedConversationRow('$7')}
+          AND ${ACTIVE} AND ${ENTITY_LINKABLE_SQL} AND ${derivedConversationRow('$7')}
           AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $4 AND p.deleted_at IS NULL) RETURNING f.id`,
       [sourceId, row.id, slug, row.entity_slug, row.context, row.fact, [...AUDIT_ROW_SOURCES]]);
     if (!done.length) continue;
@@ -144,7 +150,7 @@ export async function runConversationRelink(engine: BrainEngine, config: GBrainC
   opts: { sourceId: string; slugs?: string[]; dryRun?: boolean }): Promise<ConversationRelinkReport> {
   const slugs = opts.slugs?.length ? opts.slugs : await conversationRelinkPages(engine, opts.sourceId);
   const plans = await planPages(engine, opts.sourceId, slugs);
-  const report: ConversationRelinkReport = { source_id: opts.sourceId, dry_run: !!opts.dryRun, pages: [], linked: 0, unresolved: 0, changed: 0, reextract_slugs: [] };
+  const report: ConversationRelinkReport = { source_id: opts.sourceId, dry_run: !!opts.dryRun, pages: [], linked: 0, unresolved: 0, not_user_attributed: 0, changed: 0, reextract_slugs: [] };
   const authority = opts.dryRun ? null : await maintenancePreflight(engine, opts.sourceId);
   const memo = !opts.dryRun && await hasAttemptsTable(engine);
   for (const page of plans) {
@@ -159,9 +165,10 @@ export async function runConversationRelink(engine: BrainEngine, config: GBrainC
        ON CONFLICT (source_id, fact_id) DO UPDATE SET outcome = EXCLUDED.outcome, reason = EXCLUDED.reason, tier = 'mention',
          model = NULL, target_slug = NULL, run_id = NULL, attempted_at = EXCLUDED.attempted_at`, [opts.sourceId, miss.id, CONVERSATION_UNRESOLVED, miss.reason]);
     const changed = page.link.length - linked;
-    report.pages.push({ slug: page.slug, linked, unresolved: page.misses.length, changed });
+    report.pages.push({ slug: page.slug, linked, unresolved: page.misses.length, changed, not_user_attributed: page.notUserAttributed });
     report.linked += linked;
     report.unresolved += page.misses.length;
+    report.not_user_attributed += page.notUserAttributed;
     report.changed += changed;
     if (page.misses.length) report.reextract_slugs.push(page.slug);
   }

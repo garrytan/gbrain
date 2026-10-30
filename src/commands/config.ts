@@ -382,7 +382,7 @@ async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value:
   if (await setLineGrammarConfig(engine, key, value)) return;
   if (key === 'sync.admission') return (await import('./config/sync-admission-value.ts')).setSyncAdmissionValue(engine, value);
   if (key === 'sync.metafile_pages') return (await import('./config/sync-metafile-pages-value.ts')).setMetafilePagesValue(engine, value);
-  if (/^sync\.max_delete(s|_ratio)(\.source\..+)?$/.test(key) || key === 'purge.retention_hours') {
+  if (/^sync\.(max_delete(s|_ratio)|apply_held_deletions)(\.source\..+)?$/.test(key) || key === 'purge.retention_hours') {
     const err = (await import('../core/sync-reconcile.ts')).deleteSafetyConfigRefusal(key, value);
     if (err) { console.error(`[config] ${err}`); process.exit(1); }
   }
@@ -392,6 +392,7 @@ async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value:
     if (err) { console.error(`[config] ${err}`); process.exit(1); }
   }
   (await import('./config/enumerated-keys.ts')).refuseUnregisteredEnumeratedKey(key, force);
+  if (key.startsWith('generations.')) await (await import('./config/generations-values.ts')).refuseGenerationsValue(key, value);
   const searchRefusal = key.startsWith('search.') ? (await import('../core/search/config-values.ts')).searchConfigValueRefusal(key, value) : null;
   if (searchRefusal) {
     const { exitCliError, usageError } = await import('../cli/cli-error.ts');
@@ -407,6 +408,7 @@ async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value:
   if (key.startsWith('loops.')) (await import('./config/loops-values.ts')).refuseInvalidLoopsConfigValue(key, value);
   if (key === 'sync.slug_conflicts.auto_remove') { const err = (await import('../core/repair/slug-autoheal.ts')).slugAutoRemoveValueRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
   if (key === 'sync.origin_twins.auto_resolve') { const err = (await import('../core/repair/origin-twins-heal.ts')).originAutoResolveValueRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
+  if (key === 'sync.repo_path') { const err = (await import('../core/sync-config-keys.ts')).syncRepoPathRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
   if (key.startsWith('search.')) (await import('./config/keyword-timeout-value.ts')).refuseInvalidKeywordTimeoutValue(key, value);
   if (key === 'persistence.max_claim_ms') {
     const { validateMaxClaimConfigValue } = await import('../core/persistence/claim-phase.ts');

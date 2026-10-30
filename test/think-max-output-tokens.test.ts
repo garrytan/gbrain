@@ -1,8 +1,9 @@
 /**
  * Pins `maxOutputTokensFor` — the per-model output-token budget `runThink`
  * passes to `client.create`. Thinking-by-default Claude 5 models
- * (`anthropic:claude-*-5`), OpenAI reasoning models (gpt-5 family,
- * o-series), and the Anthropic Claude 4.x deep-tier family (gbrain#4375 —
+ * (`anthropic:claude-*-5`), OpenAI reasoning models (gpt-5 onward,
+ * o-series, behind any provider prefix — gbrain#7421), and the Anthropic
+ * Claude 4.x deep-tier family (gbrain#4375 —
  * the default `deep` alias is anthropic:claude-opus-4-7, whose JSON envelope
  * truncated at 4000) get 16000; everything else stays 4000.
  *
@@ -65,11 +66,34 @@ describe('maxOutputTokensFor — thinking-default headroom', () => {
     // Version/name boundaries: `gpt-50` and `o3foo` are not gpt-5 / o3.
     expect(maxOutputTokensFor('openai:gpt-50')).toBe(4000);
     expect(maxOutputTokensFor('openai:o3foo')).toBe(4000);
-    // Prefix must be the openai provider — a bare model name or another
-    // provider's gpt-5 spelling doesn't match.
+    // A bare model name (no provider prefix) doesn't match; think always
+    // passes a provider-qualified id (normalizeModelId).
     expect(maxOutputTokensFor('o3')).toBe(4000);
     expect(maxOutputTokensFor('gpt-5.2')).toBe(4000);
-    expect(maxOutputTokensFor('openrouter:openai/gpt-5.2')).toBe(4000);
+  });
+
+  test('gbrain#7421 — OpenAI reasoning ids from gpt-5 on get 16000 behind any provider prefix (LiteLLM, OpenRouter)', () => {
+    // A reasoning model reached through a proxy bills reasoning against
+    // max_tokens exactly as it does on openai:, so the route must not decide
+    // the budget; gpt-6 is the current reasoning generation.
+    expect(maxOutputTokensFor('litellm:gpt-6-luna')).toBe(16000);
+    expect(maxOutputTokensFor('litellm:openai/gpt-6-luna')).toBe(16000);
+    expect(maxOutputTokensFor('litellm:gpt-5.2')).toBe(16000);
+    expect(maxOutputTokensFor('litellm:o3')).toBe(16000);
+    expect(maxOutputTokensFor('openrouter:openai/gpt-5.2')).toBe(16000);
+    expect(maxOutputTokensFor('openrouter:openai/gpt-6.1-sol')).toBe(16000);
+    expect(maxOutputTokensFor('openrouter:openai/o4-mini')).toBe(16000);
+    expect(maxOutputTokensFor('openai:gpt-6-luna')).toBe(16000);
+    expect(maxOutputTokensFor('openai:gpt-6.1-sol')).toBe(16000);
+    expect(maxOutputTokensFor('openai:gpt-6-astra')).toBe(16000);
+    // The same exclusions hold behind a proxy: non-reasoning families, chat
+    // snapshots, version-boundary lookalikes and opaque proxy aliases.
+    expect(maxOutputTokensFor('litellm:gpt-4o')).toBe(4000);
+    expect(maxOutputTokensFor('openrouter:openai/gpt-4.1')).toBe(4000);
+    expect(maxOutputTokensFor('litellm:gpt-5-chat-latest')).toBe(4000);
+    expect(maxOutputTokensFor('litellm:gpt-60')).toBe(4000);
+    expect(maxOutputTokensFor('litellm:my-reasoner')).toBe(4000);
+    expect(maxOutputTokensFor('litellm:llama-3.3-70b')).toBe(4000);
   });
 
   test('gbrain#4172 — recipe-declared thinking-by-default models (DeepSeek v4) get 16000 via the capability layer', () => {

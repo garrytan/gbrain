@@ -614,12 +614,15 @@ export function isNestedSkipMetafile(path: string): boolean {
 }
 
 const METAFILE_PAGE_KEY_RE = /^(?:type|title|"type"|"title"|'type'|'title')[ \t]*:(?:[ \t]+(.*))?$/;
+const METAFILE_SLUG_KEY_RE = /^(?:slug|"slug"|'slug')[ \t]*:[ \t]+(.+)$/;
 
 /**
  * Whether the file at `path` (relative to its source root) is imported as a page although it is named like scaffolding:
  * a non-root `SYNC_SKIP_FILES` name under mode `typed` whose head opens with a closed frontmatter fence holding a
  * top-level `type:` or `title:` key with a value. `head` is the file's text (only the first `METAFILE_HEAD_BYTES`
  * characters are read); undefined (absent or unreadable) is bare. Every other path returns false.
+ * #7341: a top-level `slug:` naming another page (often the folder, `dir/x` for `dir/x/index.md`) keeps the file
+ * scaffolding, as before GBRA-150: importing it could only hold it `frontmatter_slug_conflict`.
  */
 export function metafileIsPage(path: string, head: string | undefined, mode: MetafilePagesMode): boolean {
   if (mode !== 'typed' || head === undefined || !isNestedSkipMetafile(path)) return false;
@@ -627,12 +630,16 @@ export function metafileIsPage(path: string, head: string | undefined, mode: Met
   let i = 0;
   while (i < lines.length && lines[i]!.trim() === '') i++;
   if (lines[i]?.trimEnd() !== '---') return false;
-  let typed = false;
+  let typed = false, foreignSlug = false;
+  const own = slugifyPath(path);
   for (i++; i < lines.length; i++) {
     const line = lines[i]!;
-    if (/^---[ \t]*$/.test(line)) return typed;
+    if (/^---[ \t]*$/.test(line)) return typed && !foreignSlug;
     const value = METAFILE_PAGE_KEY_RE.exec(line)?.[1]?.trim();
     if (value && !value.startsWith('#') && !/^(?:null|~)$/i.test(value)) typed = true;
+    const declared = METAFILE_SLUG_KEY_RE.exec(line)?.[1]?.trim().replace(/^(['"])(.*)\1$/, '$2');
+    // A source with a Git-root slug mode prefixes its scope, so the file's own slug may end the declared one.
+    if (declared && !declared.startsWith('#')) foreignSlug = slugifyPath(declared) !== own && !slugifyPath(declared).endsWith(`/${own}`);
   }
   return false;
 }
@@ -721,7 +728,7 @@ export const SLUG_SEGMENT_PATTERN = new RegExp(`[${SLUG_WORD_CHARS}._\\-]+`, 'u'
 const SLUGIFY_KEEP_RE = new RegExp(`[^${SLUG_WORD_CHARS}.\\s_\\-]`, 'gu');
 
 export function slugifySegment(segment: string): string {
-  return segment
+  return foldSegmentHyphens(segment
     .normalize('NFD')                     // Decompose accented chars
     .replace(/[\u0300-\u036f]/g, '')      // Strip accent marks
     // #3700: Hebrew niqqud (vowel points) + cantillation are optional
@@ -739,9 +746,22 @@ export function slugifySegment(segment: string): string {
     .replace(SLUG_VARIATION_SELECTORS_RE, '')
     .toLowerCase()
     .replace(SLUGIFY_KEEP_RE, '')         // Keep alnum, dots, spaces, _-, and CJK (v0.32.7)
-    .replace(/[\s]+/g, '-')              // Spaces → hyphens
-    .replace(/-+/g, '-')                 // Collapse multiple hyphens
-    .replace(/^-|-$/g, '');              // Strip leading/trailing hyphens
+    .replace(/[\s]+/g, '-'));           // Spaces → hyphens
+}
+
+/** Collapse hyphen runs and strip leading/trailing hyphens: slugifySegment's last step. */
+function foldSegmentHyphens(segment: string): string {
+  return segment.replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
+/**
+ * #7305: a slug with every segment's hyphen runs collapsed and its edge hyphens
+ * stripped, as slugifySegment does to a file name; null when nothing changes.
+ * put_page and capture refuse a new slug this changes, naming the result.
+ */
+export function hyphenFoldedSlug(slug: string): string | null {
+  const folded = slug.split('/').map(foldSegmentHyphens).join('/');
+  return folded === slug ? null : folded;
 }
 
 /**

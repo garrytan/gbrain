@@ -1,0 +1,128 @@
+name: TLA+ specs
+
+# Model-checks the TLA+ specs under spec/tla/ (spec/tla/README.md): TLC on every config, then every guard
+# mutant, in the model and in the code (scripts/spec/mutants.ts). Nightly, on dispatch, and on pull requests and
+# pushes that touch a spec, its runner, the code a spec models, or a test a mutant names.
+
+on:
+  pull_request:
+    branches: [master]
+    # Event parity (docs/ci-event-parity.md): path-gated named exception; covered by the nightly TLA+ specs schedule.
+    paths:
+      - 'spec/tla/**'
+      - 'scripts/spec/**'
+      - '.github/workflows/tla-spec.yml'
+      - 'src/core/persistence/sync-lease.ts'
+      - 'src/core/db-lock.ts'
+      - 'src/core/persistence/sync-pass-fold.ts'
+      - 'src/core/persistence/sync-prepare.ts'
+      - 'test/spec-drain-lease-constants.test.ts'
+      - 'test/persistence-sync-lease.test.ts'
+      - 'test/db-lock-auto-takeover.test.ts'
+      - 'test/db-lock-fencing.test.ts'
+      - 'test/sync-fenced-slices-gbra133.test.ts'
+      - 'test/e2e/drain-lease-fence-postgres.test.ts'
+      - 'test/drain-lease-guards.test.ts'
+      - 'test/e2e/drain-lease-guards-postgres.test.ts'
+      - 'test/drain-lease-stamp-fence.test.ts'
+      - 'test/e2e/drain-lease-stamp-fence-postgres.test.ts'
+      - 'test/drain-lease-key-share-7442.test.ts'
+      - 'test/e2e/drain-lease-key-share-7442-postgres.test.ts'
+      - 'test/helpers/managed-brain.ts'
+      - 'test/helpers/test-backends.ts'
+      - 'test/helpers/persistence-postgres.ts'
+  push:
+    branches: [master]
+    paths:  # the same list as pull_request (actionlint does not accept YAML aliases)
+      - 'spec/tla/**'
+      - 'scripts/spec/**'
+      - '.github/workflows/tla-spec.yml'
+      - 'src/core/persistence/sync-lease.ts'
+      - 'src/core/db-lock.ts'
+      - 'src/core/persistence/sync-pass-fold.ts'
+      - 'src/core/persistence/sync-prepare.ts'
+      - 'test/spec-drain-lease-constants.test.ts'
+      - 'test/persistence-sync-lease.test.ts'
+      - 'test/db-lock-auto-takeover.test.ts'
+      - 'test/db-lock-fencing.test.ts'
+      - 'test/sync-fenced-slices-gbra133.test.ts'
+      - 'test/e2e/drain-lease-fence-postgres.test.ts'
+      - 'test/drain-lease-guards.test.ts'
+      - 'test/e2e/drain-lease-guards-postgres.test.ts'
+      - 'test/drain-lease-stamp-fence.test.ts'
+      - 'test/e2e/drain-lease-stamp-fence-postgres.test.ts'
+      - 'test/drain-lease-key-share-7442.test.ts'
+      - 'test/e2e/drain-lease-key-share-7442-postgres.test.ts'
+      - 'test/helpers/managed-brain.ts'
+      - 'test/helpers/test-backends.ts'
+      - 'test/helpers/persistence-postgres.ts'
+  schedule:
+    - cron: '40 9 * * *'  # nightly, 09:40 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tla:
+    name: TLC and guard mutants
+    runs-on: ubicloud-standard-4-ubuntu-2404
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: gbrain_test
+          POSTGRES_PASSWORD: gbrain_test
+          POSTGRES_DB: gbrain_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U gbrain_test -d gbrain_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00  # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      # The runner context is not available at job level, so the scratch paths are set here.
+      - name: Scratch paths
+        run: |
+          echo "TLC_OUT=$RUNNER_TEMP/tlc" >> "$GITHUB_ENV"
+          echo "TLA_CACHE=$RUNNER_TEMP/tla-cache" >> "$GITHUB_ENV"
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
+      # TLA_JAR_DOWNLOAD_FAILED is a network failure (rerun the job); TLA_JAR_SHA_MISMATCH is never rerun.
+      - name: Fetch TLC (pinned in scripts/spec/tla-tools.env, checked against its sha256)
+        run: |
+          jar="$(bash scripts/spec/tla-jar.sh)" || exit "$?"
+          printf 'TLA2TOOLS=%s\n' "$jar" >> "$GITHUB_ENV"
+      - name: The configs match the code
+        run: bun test --timeout=60000 test/spec-drain-lease-constants.test.ts
+      - name: Model-check every config (the *Nightly.cfg ones on the schedule and on dispatch)
+        env:
+          TLC_NIGHTLY: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
+          TLC_TIMEOUT_S: '900'
+        run: bash scripts/spec/tlc.sh
+      # Only after the model check passed: a mutant means something only against a spec whose properties hold.
+      - name: Every guard mutant is caught, in the model and in the code
+        env:
+          DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
+          GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
+        run: bun scripts/spec/mutants.ts --require-postgres
+      - name: Keep the logs and counterexample traces
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: tla-spec-logs
+          path: ${{ runner.temp }}/tlc
+          if-no-files-found: ignore
+          retention-days: 14

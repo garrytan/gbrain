@@ -100,6 +100,7 @@
     "test:profile": "bash scripts/profile-tests.sh",
     "test:serial": "bash scripts/run-serial-tests.sh",
     "test:convergence": "GBRAIN_TEST_CONVERGENCE=1 bun --no-env-file test --timeout=3600000 test/sync-convergence.serial.test.ts",
+    "test:tla": "bash scripts/spec/tlc.sh && bun scripts/spec/mutants.ts",
     "ci:local": "bash scripts/ci-local.sh",
     "ci:local:diff": "bash scripts/ci-local.sh --diff",
     "ci:ubicloud": "bun run scripts/ci-ubicloud.ts",
@@ -163,6 +164,7 @@
     "check:schema-error-predicates": "bun scripts/check-schema-error-predicates.ts",
     "check:windows-hide": "bun scripts/check-windows-hide.ts",
     "check:engine-sql-ratchet": "bun scripts/check-engine-sql-ratchet.ts",
+    "check:derived-census": "bun scripts/check-derived-census.ts",
     "check:chunk-visibility": "bun scripts/check-chunk-visibility.ts",
     "check:page-body-readers": "bun scripts/check-page-body-readers.ts",
     "check:engine-sql-dynamic": "bun scripts/check-engine-sql-dynamic.ts",
@@ -224,7 +226,7 @@
     "pgvector": "^0.2.0",
     "tree-sitter-wasms": "0.1.13",
     "web-tree-sitter": "0.22.6",
-    "zod": "^4.3.6"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
@@ -241,21 +243,23 @@
     "@electric-sql/pglite"
   ],
   "engines": {
-    "bun": ">=1.4.0"
+    "bun": ">=1.4.4"
   },
   "license": "MIT",
-  "version": "0.60.360.0",
+  "version": "0.60.512.0",
   "overrides": {
     "@ai-sdk/provider-utils": "4.0.56",
     "@hono/node-server": "^2.0.5",
-    "fast-uri": "3.1.8",
-    "body-parser": "^2.3.0",
+    "fast-uri": "^3.1.9",
+    "body-parser": "^2.4.0",
     "fast-xml-builder": "^1.1.7",
     "fast-xml-parser": "^5.7.0",
     "form-data": "^4.0.6",
     "hono": "^4.13.11",
-    "ip-address": "^10.5.1",
-    "qs": "6.16.0",
-    "js-yaml": "^4.3.2"
+    "ip-address": "^10.7.4",
+    "qs": "6.16.1",
+    "js-yaml": "^4.3.2",
+    "undici": "^6.29.1",
+    "zod": "^4.6.6"
   }
 }

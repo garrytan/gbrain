@@ -199,6 +199,18 @@ describe('request_tools {tools: [...]} descriptor fetch (D5)', () => {
     const raw = res.content[0].text;
     expect(raw).not.toContain('no_such_tool_xyz');
   });
+
+  test('a starter ceiling still returns every parameter the starter tool list omits (GBRA-156)', async () => {
+    const res = await dispatchToolCall(engine, 'request_tools', { tools: ['get_page', 'capture', 'query'] }, {
+      ...HTTP, surfaceCeiling: 'starter',
+    });
+    const body = parsed(res);
+    const byName = new Map(body.tools.map((t: { name: string; inputSchema: { properties: Record<string, unknown> } }) => [t.name, t.inputSchema.properties]));
+    for (const name of ['get_page', 'capture', 'query']) {
+      const op = operations.find(o => o.name === name)!;
+      expect(Object.keys(byName.get(name) as Record<string, unknown>).sort(), name).toEqual(Object.keys(op.params).sort());
+    }
+  });
 });
 
 describe('D1: request_tools with an empty or unknown-only list returns the catalog', () => {

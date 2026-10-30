@@ -172,6 +172,13 @@ sync status names the last error and the trace file
 gbrain sync --source <id> --no-pull to see the error in the foreground, fix it,
 and the notifier resumes on its next retry.
 
+A run that committed pages counts as progress even before the source's last
+synced commit moves. When the last error is drain_holder_stalled, another
+process holds the source's drain lease and has made no commit or cursor save
+for five minutes; the notifier does not wait on it silently. sync status names
+the holder: stop it if it is wedged, then run the foreground sync, which follows
+the holder and takes the source over when its lease lapses.
+
 <a id="refresh-required"></a>
 ## refresh_required
 

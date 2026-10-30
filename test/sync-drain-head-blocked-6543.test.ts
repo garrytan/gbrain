@@ -54,10 +54,10 @@ describe('in-pass governor: head blocker classification', () => {
   });
 
   test('a live blocker (a foreground publication ahead) lasting several ticks never stops the drain; the pass completes', async () => {
-    let reads = 0;
+    let reads = 0, finish!: () => void;
     const result = await runDrain({ governMs: 10, noProgressMs: 60_000, publicationCeilingMs: 60_000,
-      probe: probeWith(async () => { reads++; return { head_state: 'queued', request_id: 'req-head', claim: null, claimable_here: false, blocked_by: hold }; }),
-      pass: () => new Promise<SyncResult>(resolve => setTimeout(() => resolve({ ...done, managedCursor: { index: 1, total: 1 } }), 150)) });
+      probe: probeWith(async () => { if (++reads === 3) finish(); return { head_state: 'queued', request_id: 'req-head', claim: null, claimable_here: false, blocked_by: hold }; }),
+      pass: () => new Promise<SyncResult>(resolve => { finish = () => setTimeout(() => resolve({ ...done, managedCursor: { index: 1, total: 1 } }), 20); }) });
     expect(reads).toBeGreaterThanOrEqual(3);
     expect(result.drain).toMatchObject({ outcome: 'synced' });
   });

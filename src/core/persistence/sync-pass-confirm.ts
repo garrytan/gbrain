@@ -41,6 +41,14 @@
  * without S1's snapshot (a stamp frozen before it was recorded) judges by `xmin` alone. `age` and
  * the `txid_*` snapshot functions exist on every supported Postgres and on PGLite, where one connection leaves S1's list
  * empty. More than 2^31 xids between S1's `xmin` and S2's `xmax` takes the full read (`age` would wrap).
+ *
+ * Across passes (GBRA-133 wave 4, `across`; GBRA-108 widened Q4 under the same standing approval): the next pass's first round
+ * reuses the `I⋈P` of the last round of a pass that ended synced in the same process (sync-tree-reuse.ts), with S1 that round's
+ * mark. Nothing is attributed: every `pages` row S1 does not prove unchanged, from any writer, and the page of every import
+ * record S1 does not prove unchanged are re-read, and the count of pages with an origin and the count of import records
+ * must equal what the patched table accounts for (a deletion leaves no `xmin`). Only `I⋈P` is reused: holds, markers, open
+ * work, the pass row, `A` and the Git level are read as every round reads them, and the round keeps no classification or
+ * domain from the last pass. The visibility arms, the xid span bound and the full read on any failed statement are the same.
  */
 import { GIT_HOLD_OP, GIT_HOLD_RETRY_OP, GIT_HOLD_SUMMARY_OP, SYNC_IMPORT_PROVENANCE_OP } from './sync-holds.ts';
 import { MANAGED_SYNC_PASS_OP, SYNC_DELETES_WITHHELD_OP, SYNC_ORIGIN_DELETED_OP } from './sync-pass-row.ts';
@@ -134,14 +142,14 @@ async function parallelProof(exec: Exec, sourceId: string, params: unknown[]): P
  * What the pass may reuse: the pages it wrote since S1 (`pages`, by id), which of them changed their import record
  * (`records`), the source's count of pages with an origin, and S2's mark for the next round; or why the full read.
  */
-export type ConfirmProof = { ok: true; mark: LevelMark; pages: string[]; records: Set<string>; pageCount: number; summary: boolean } | { ok: false; reason: string; mark: LevelMark | null };
+export type ConfirmProof = { ok: true; mark: LevelMark; pages: string[]; records: Set<string>; pageCount: number; summary: boolean; across?: true } | { ok: false; reason: string; mark: LevelMark | null };
 
 /**
  * Proves, in S2 (the round's snapshot), that every change since `base` (S1) to what the level read consumes is the pass's
  * own write (see the header). The counts still need the reused rows: `countsMatch` checks them after the delta read.
  */
 export async function proveConfirm(exec: Exec, input: { sourceId: string; incarnation: string; passId: string; base: LevelMark; recorded?: ReadonlySet<number>; postgres: boolean;
-  parallel?: boolean; self?: string }): Promise<ConfirmProof> {
+  parallel?: boolean; self?: string; across?: boolean }): Promise<ConfirmProof> {
   const scope = `${input.sourceId}:${input.incarnation}`;
   const params = [input.sourceId, CONFIRM_OPS, scope, input.base.xmin, input.passId, input.self ?? null, input.base.snapshot ?? null, input.base.own ?? null];
   // Two plain scans: compiling them (JIT, which the planner's cost picks at 600k) cost more than running them (about 200 ms).
@@ -151,6 +159,12 @@ export async function proveConfirm(exec: Exec, input: { sourceId: string; incarn
   await jit;
   const mark: LevelMark = { xmin: row!.xmin, ops: row!.ops ?? {}, holds: row!.holds, snapshot: row!.snapshot, own: row!.own };
   if (!(Number(row!.span) >= 0 && Number(row!.span) < 2 ** 31)) return { ok: false, reason: 'xid_span', mark };
+  if (input.across) {
+    // Across passes nothing is attributed: every changed page, and the page of every changed import record, is re-read.
+    const records = new Set(row!.ops_changed.filter(([op, fingerprint]) => op === SYNC_IMPORT_PROVENANCE_OP && fingerprint.startsWith(`${scope}:`))
+      .map(([, fingerprint]) => fingerprint.slice(scope.length + 1)));
+    return { ok: true, mark, pages: [...new Set([...row!.pages_changed.map(([id]) => id), ...records])], records, pageCount: Number(row!.pages), summary: false, across: true };
+  }
   const revisions = new Map<string, string>();
   for (const [id, ours, revision] of row!.pages_changed) {
     if (!ours) return { ok: false, reason: 'foreign_page_write', mark };
@@ -179,13 +193,13 @@ export async function proveConfirm(exec: Exec, input: { sourceId: string; incarn
 /**
  * The counts S2 must show: the reused rows plus the new pages the delta read (`pages`), and S1's op counts plus the import
  * records the pass inserted (`newRecords`), its pass row if S1 had none and the hold summary its holds created. Anything else
- * (a deletion) is a mismatch.
+ * (a deletion) is a mismatch. Across passes only the pages and the import records count: nothing else is reused.
  */
 export function countsMatch(base: LevelMark, proof: Extract<ConfirmProof, { ok: true }>, added: { pages: number; newRecords: number }): boolean {
   if (proof.pageCount !== added.pages) return false;
   for (const op of CONFIRM_OPS) {
     const before = base.ops[op] ?? 0, after = proof.mark.ops[op] ?? 0;
-    if (op === GIT_HOLD_OP) continue;
+    if (op === GIT_HOLD_OP || proof.across && op !== SYNC_IMPORT_PROVENANCE_OP) continue;
     // The pass row, and the hold summary a hold of the pass created, may be new.
     const created = before === 0 && after === 1 && (op === MANAGED_SYNC_PASS_OP || op === GIT_HOLD_SUMMARY_OP && proof.summary);
     if (op === SYNC_IMPORT_PROVENANCE_OP ? after !== before + added.newRecords : after !== before && !created) return false;

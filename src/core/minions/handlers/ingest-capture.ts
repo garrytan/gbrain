@@ -16,6 +16,9 @@
  *     improvement (would require routing through the put_page op AND
  *     extending OperationContext with the trust tag). See TODOs in the
  *     plan.
+ *   - G6: on a managed brain the capture is a local put_page through the
+ *     persistence door (a tombstone a delete_page), so its file is published
+ *     before its row; content_origin tool_output keeps it external_untrusted.
  *
  * Slug resolution (in order):
  *   1. `job.data.slug` if caller provided one
@@ -35,6 +38,11 @@ import type { IngestionEvent } from '../../ingestion/types.ts';
 import { validateIngestionEvent } from '../../ingestion/types.ts';
 import { importFromContent } from '../../import-file.ts';
 import { maintenanceTransaction } from '../../persistence/attribution.ts';
+import { managedPersistenceEnabled } from '../../persistence/ownership.ts';
+import { privateRequestRefusal } from '../../persistence/visibility-request.ts';
+import { parseMarkdown } from '../../markdown.ts';
+import { OperationError, type OperationContext } from '../../ops/contract.ts';
+import { submitPageMutation } from '../../persistence/page-mutations.ts';
 
 export interface IngestCaptureResult {
   slug: string;
@@ -197,12 +205,20 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       if (rows.length > 0) sourceId = event.source_id;
     }
 
+    // G6: a managed brain refuses direct writes, so its captures and tombstones go through the door (put_page /
+    // delete_page), which publishes the file before the row.
+    const managed = await managedPersistenceEnabled(engine);
+    const door = (operation: 'put_page' | 'delete_page', sid: string, params: Record<string, unknown>) => submitPageMutation(
+      { engine, config: { engine: engine.kind } as OperationContext['config'], remote: false, dryRun: false, sourceId: sid, logger: { info() {}, warn() {}, error() {} } },
+      { operation, params: { ...params, slug, source_id: sid } });
+
     // #3756: tombstone → reconciler-style soft-delete (deleted_at stamp, page
     // restorable), scoped to the resolved source — never unscoped, so a
     // same-slug page in another source is untouched. Idempotent: a missing or
     // already-deleted page reports 'skipped'.
     if (isTombstone) {
-      const deleted = await maintenanceTransaction(engine, tx => tx.softDeletePage(slug, { sourceId: sourceId ?? 'default' }));
+      const deleted = managed ? await managedTombstone(engine, slug, sourceId ?? 'default', door)
+        : await maintenanceTransaction(engine, tx => tx.softDeletePage(slug, { sourceId: sourceId ?? 'default' }));
       if (sourceFallback) {
         console.error(
           `[WARN] ingest_capture: requested source '${sourceFallback.requested}' unavailable ` +
@@ -236,7 +252,50 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       remote: untrustedPayload,
       // #5575 A3: webhook and ingestion-daemon captures are external content: stored external_untrusted and gated.
       writeGate: { tier: 'external_untrusted' as const, origin: { channel: `ingest:${event.source_kind}`, source_uri: event.source_uri ?? null, source_kind: event.source_kind }, requestId: null },
+      // #7880: a private request page privacy would not read is held, not stored world-readable (refused below).
+      holdNoncanonicalPrivate: true,
     };
+
+    if (managed) {
+      // The door's put_page strips gate-owned markers from every ordinary write (#1699/#6259), and content_origin
+      // tool_output stores and gates the capture external_untrusted (#5575 A3), as importOpts does unmanaged.
+      // A capture replaces the page as it stands, so it binds to the revision read just before (the door requires one to
+      // replace an existing page); a write landing in between refuses revision_conflict and the job retries.
+      const put = async (sid: string) => {
+        const snapshot = await engine.readPageSnapshot(slug, { sourceId: sid, includeDeleted: true });
+        return door('put_page', sid, { content: event.content, content_origin: 'tool_output', source_kind: event.source_kind, source_uri: event.source_uri,
+          ingested_via: 'ingest_capture', ...(snapshot ? { expected_revision: snapshot.revision } : {}),
+          // #2044/#4548: as `remote: untrustedPayload` does unmanaged, an untrusted body keeps the non-world facts rows and takes rows its sender could not see.
+          ...(untrustedPayload ? { keep_hidden_rows: true } : {}) });
+      };
+      let response: Record<string, unknown>;
+      try {
+        response = await put(sourceId ?? 'default');
+      } catch (err) {
+        // The door refuses a source that vanished or was archived after the pre-check (the managed form of the FK retry).
+        const vanished = sourceId !== undefined && err instanceof OperationError && err.code === 'source_changed'
+          ? await engine.executeRaw<{ archived: boolean | null }>('SELECT archived FROM sources WHERE id = $1', [sourceId]) : null;
+        if (!vanished || (vanished.length > 0 && vanished[0]?.archived !== true)) throw err;
+        sourceFallback = { requested: sourceId!, effective: 'default', reason: vanished.length ? 'archived' : 'fk_violation' };
+        response = await put('default');
+      }
+      if (sourceFallback) {
+        console.error(
+          `[WARN] ingest_capture: requested source '${sourceFallback.requested}' unavailable ` +
+          `(${sourceFallback.reason}); wrote under default`,
+        );
+      }
+      const outcome = (response.outcome ?? {}) as { noop?: boolean; chunks?: number };
+      return {
+        slug,
+        status: outcome.noop ? 'skipped' : 'imported',
+        chunks: Number(outcome.chunks ?? 0),
+        untrusted_payload: untrustedPayload,
+        source_kind: event.source_kind,
+        source_uri: event.source_uri,
+        ...(sourceFallback ? { source_fallback: sourceFallback } : {}),
+      };
+    }
 
     let result;
     try {
@@ -273,11 +332,16 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
         throw err;
       }
     }
+    const refused = result.refusal?.code === 'visibility_noncanonical';
     if (sourceFallback) {
       console.error(
         `[WARN] ingest_capture: requested source '${sourceFallback.requested}' unavailable ` +
-        `(${sourceFallback.reason}); wrote under default`,
+        `(${sourceFallback.reason}); ${refused ? 'refused' : 'wrote'} under default`,
       );
+    }
+    // #7880: nothing was stored; the job refuses visibility_not_applied without a retry, as the door's put_page refuses it on a managed brain.
+    if (refused) {
+      throw privateRequestRefusal({ slug: result.slug, source_id: sourceFallback ? 'default' : sourceId ?? 'default' }, parseMarkdown(event.content, `${result.slug}.md`).frontmatter);
     }
 
     return {
@@ -290,4 +354,18 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       ...(sourceFallback ? { source_fallback: sourceFallback } : {}),
     };
   };
+}
+
+/** A managed tombstone: delete_page through the door when the page is live in the source; a missing page is skipped. */
+async function managedTombstone(engine: BrainEngine, slug: string, sourceId: string,
+  door: (operation: 'delete_page', sid: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>): Promise<boolean> {
+  const snapshot = await engine.readPageSnapshot(slug, { sourceId });
+  if (!snapshot || snapshot.page.deleted_at) return false;
+  try {
+    await door('delete_page', sourceId, { expected_revision: snapshot.revision });
+    return true;
+  } catch (err) {
+    if (err instanceof OperationError && err.code === 'page_not_found') return false;
+    throw err;
+  }
 }

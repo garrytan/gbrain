@@ -24,7 +24,7 @@ gbrain search '"ZEBRA-42" OR "inventory sync"' --match keyword  # every page wit
 gbrain query "why did the launch move"                          # questions and concepts
 gbrain search "launch" --types '["meeting","person"]'           # only these page types
 gbrain query "launch" --since 2026-09-01 --until 2026-09-30     # date window (also --since 30d)
-gbrain search "launch" --source source-a --limit 5 --json 2>/dev/null | jq -r '.[].slug'
+gbrain search "launch" --source source-a --limit 5 --json | jq -r '.[].slug'
 gbrain get companies/acme-example                               # read the page a hit points to
 gbrain recall "Alice Example"                                   # facts saved with remember
 gbrain backlinks companies/acme-example --type meeting          # pages that link here (instead of grepping a slug)
@@ -40,7 +40,31 @@ gbrain list --type meeting --limit 50                           # enumerate by t
 - Without `--source`, a search reads the resolved source (a notice names it
   when it routes); `--source __all__` searches every source.
 - Notices and `[AGENT]` blocks go to stderr, so `--json` stdout is clean JSON.
-  Read a degraded notice before concluding the brain has nothing.
+  Read a degraded notice before concluding the brain has nothing. Never send
+  stderr to `/dev/null`: a refusal there (`no_brain`, `GBRAIN_DB_ACCESS`)
+  then reads as "no results". Check the exit code too.
+
+<a id="identity-exact-match"></a>
+## Identity needs an exact match
+
+Resolving an email sender, a calendar attendee or a contact to a person page is
+an identity decision, and a search's top hit is not one: ranking always returns
+something, so taking it files strangers onto known contacts. Use the exact
+lookup:
+
+```bash
+gbrain whois alice@acme-example.com --source-id __all__ --json   # an email address
+gbrain whois "Alice Example" --source-id __all__ --json          # a display name
+```
+
+`whois` returns the entity pages whose frontmatter email, title or declared
+alias equals the query, ignoring case, accents and quotes, and never anything
+fuzzy. Look up the email address first and the display name only when the
+address has no match. One match is the person. `matches: []` means no exact
+match: treat the sender as new or ask the user. `ambiguous: true` means
+several pages match: ask, or resolve by the email address. Never fall back to
+a search's top hit, a partial name or a similar address, and never merge a
+stranger into a known contact's page.
 
 ## Available GBrain Tools
 

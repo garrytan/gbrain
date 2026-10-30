@@ -43,6 +43,7 @@ import { RateLeaseUnavailableError } from './handlers/subagent.ts';
 import { SpendGroupRefusedError, type SpendRefusalEnvelope } from './spend-authorization.ts';
 import { LocalConfigurationError, isLocalConfigurationError } from './configuration-error.ts';
 import { basename, delimiter, resolve, win32 } from 'node:path';
+import { readProcessRss } from './proc-rss.ts';
 
 /** Grace between group-SIGTERM and group-SIGKILL on abort. Deliberately
  *  inside the worker's 30s force-evict window so the evict path stays a
@@ -387,6 +388,16 @@ export function captureChildCleanup(pid: number, groups: Set<number>): ChildClea
     groups: new Set(groups), observed,
     supported: groups.size > 0 && observed.every(entry => groups.has(entry.group)),
   };
+}
+
+/**
+ * GBRA-133: RssAnon + RssShmem summed over a job child's whole tree (the tini wrapper, the handler process and anything it
+ * spawned), in bytes; null where the process table cannot be read (non-Linux), so the caller applies no cap it cannot measure.
+ */
+export function childTreeRss(pid: number, groups: Set<number>, readRss: (pid: number) => number | null = readProcessRss): number | null {
+  const tree = captureChildCleanup(pid, groups).observed.filter(entry => entry.state !== 'Z' && entry.state !== 'X');
+  if (!tree.length) return null;
+  return tree.reduce((sum, entry) => sum + (readRss(entry.pid) ?? 0), 0);
 }
 
 export function confirmChildCleanup(snapshot: ChildCleanupSnapshot): boolean {

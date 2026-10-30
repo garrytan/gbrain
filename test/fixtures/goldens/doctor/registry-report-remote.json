@@ -272,6 +272,10 @@
       {
         "category": "ops",
         "name": "stale_embedding_effects"
+      },
+      {
+        "category": "brain",
+        "name": "fact_bulk_dates"
       }
     ],
     "early_returns_after": [

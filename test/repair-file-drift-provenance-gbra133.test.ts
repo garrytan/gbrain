@@ -108,7 +108,7 @@ for (const backend of testBackends()) describe(`[${backend}] GBRA-133: held gone
 
     const all = await run({ prefer: 'database' });
     expect(all.preview_hash).toBeTruthy();
-    expect(all.details!.provenance).toEqual({ deleted_by_commit: 1, never_committed: 1 });
+    expect(all.details!.provenance).toEqual({ deleted_by_commit: 1, deletion_uncommitted: 0, never_committed: 1, unknown: 0 });
     expect(pages(all).map(page => [page.slug, page.provenance?.kind, page.provenance?.subject])).toEqual([['notes/b', 'deleted_by_commit', 'cull b'], ['notes/w', 'never_committed', undefined]]);
     expect(pages(all).find(page => page.slug === 'notes/b')!.provenance!.commit).toBe(git(root, 'rev-parse', 'HEAD'));
     expect(all.listing!.find(entry => entry.item === 'default:notes/b')!.detail).toContain(`deleted by commit ${git(root, 'rev-parse', 'HEAD').slice(0, 12)}`);

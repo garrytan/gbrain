@@ -1,4 +1,4 @@
-import { maintenancePreflight, stampMaintenancePage, verifyMaintenanceOutputs, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
+import { maintenancePreflight, maintenanceStampFrontmatter, publishMaintenancePages, stampTarget, verifyMaintenanceOutputs, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { digest } from '../persistence/digest.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 /**
@@ -31,7 +31,7 @@ import { DEFAULT_PRIVATE_QUEUE_LEASE_MS, MinionQueue } from '../minions/queue.ts
 import { isQueueQuotaExceededError } from '../minions/admission.ts';
 import { waitForCompletionRenewing, TimeoutError } from '../minions/wait-for-completion.ts';
 import type { MinionJobInput, MinionJobStatus, SubagentHandlerData } from '../minions/types.ts';
-import { serializeMarkdown } from '../markdown.ts';
+import { parseMarkdown, serializeMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { truncateUtf8 } from '../text-safe.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 import type { Page, PageType } from '../types.ts';
@@ -52,7 +52,7 @@ import { throwIfAborted } from '../abort-check.ts';
 import { resolveCycleDate } from './cycle-date.ts';
 import { clearPatternsSourceDeaths, patternsBreakerSkip } from './dream-breaker.ts';
 import { dedupePatternClaimSources, withClaimSources } from './pattern-claim-sources.ts';
-import { publishOrHold } from '../persistence/accepted-pending.ts';
+import { publicationHold, publishOrHold } from '../persistence/accepted-pending.ts';
 import { derivedMaintenanceTransaction, isExternalTier, type DerivationDeclaration } from '../trust/taint.ts';
 import { storedTrustTier, type TaintInput } from '../trust/tier.ts';
 import { patternsDerivation, type Derivation } from './dream-taint.ts';
@@ -324,7 +324,7 @@ async function runPatternsPass(engine: BrainEngine, opts: PatternsPhaseOpts, con
       ...await patternsChildReadBudgetBytes(engine).then(bytes => bytes ? { read_budget_bytes: bytes } : {}), // #6297: get_page results past it come back summarized
       // #1586: scope every child tool call to the cycle's resolved source so
       // put_page writes land there instead of the hardcoded 'default'.
-      ...(opts.sourceId ? { source_id: opts.sourceId } : {}),
+      ...(opts.sourceId ? { source_id: opts.sourceId } : {}), ...(maintenance ? { stage_writes: true } : {}), // GBRA-60: managed pages stage, then publish as one batch
     };
     const submitOpts: Partial<MinionJobInput> = {
       ...(maintenance ? { idempotency_key: `dream:patterns:${digest({ source: maintenance.writer.sourceIncarnation,
@@ -417,10 +417,10 @@ async function runPatternsPass(engine: BrainEngine, opts: PatternsPhaseOpts, con
     // #4077: no post-abort derived-state writes (collection is a read, but
     // the reverse-write below dual-writes files).
     throwIfAborted(opts.signal, '[dream] patterns output');
-    const { putPageRefs, appends, writtenRefs, appendedUnverified } = await collectPatternOutputs(engine, job.id, cycleSourceId, config.outputSlugPrefix);
+    const { putPageRefs, staged, appends, writtenRefs, appendedUnverified } = await collectPatternOutputs(engine, job.id, cycleSourceId, config.outputSlugPrefix);
 
     // #6052: `finalized` leaves out outputs whose managed publication is held (pending or contended); `held` counts them.
-    const { quoteVerify, finalized, held, grounding } = await stampPatternOutputs(engine, maintenance, putPageRefs, appends, submitted, derivation, config, cycleSourceId, cycleDate, opts.signal);
+    const { quoteVerify, finalized, held, grounding } = await stampPatternOutputs(engine, maintenance, putPageRefs, staged, appends, submitted, derivation, config, cycleSourceId, cycleDate, opts.signal);
     const fileHolds: string[] = [];
     const reverseWriteCount = maintenance ? await verifyMaintenanceOutputs(engine, maintenance, finalized)
       : await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal, fileHolds);
@@ -703,16 +703,34 @@ When done, briefly list the pattern slugs you wrote/updated in your final messag
  * report (pattern-grounding.ts): a page whose grounding failed is neither stamped nor counted as written.
  */
 async function stampPatternOutputs(engine: BrainEngine, maintenance: MaintenanceAuthority | null, written: Array<{ slug: string; source_id: string }>,
-  appends: TimelineAppend[], reflections: ReflectionRef[], derivation: Derivation & { declaration: DerivationDeclaration },
+  staged: ReadonlyMap<string, string>, appends: TimelineAppend[], reflections: ReflectionRef[], derivation: Derivation & { declaration: DerivationDeclaration },
   config: { outputSlugPrefix: string; sourceSlugPrefix: string }, sourceId: string, cycleDate: string, signal?: AbortSignal) {
   const heldSlugs = new Set<string>();
   const run = await beginGroundingRun(engine, sourceId);
-  const pages = await groundPatternPages(engine, maintenance, written, reflections, config.outputSlugPrefix, sourceId, cycleDate, signal, heldSlugs, derivation, run);
+  // G6: on a managed brain a page this run grounds carries its provenance stamp in the same publication.
+  const stamp = { reason: `derived from reflections under ${config.sourceSlugPrefix}/; raw traces live on the cited reflection pages`, seat: sharedSeat(reflections) ?? null };
+  const pages = await groundPatternPages(engine, maintenance, written, reflections, config.outputSlugPrefix, sourceId, cycleDate, signal, heldSlugs, derivation, run, stamp, staged);
   const appended = await groundTimelineAppends(engine, maintenance, appends, reflections, sourceId, cycleDate, signal, heldSlugs, derivation, run);
   const grounding = await finishGroundingRun(engine, run);
   const outputs = [...written, ...[...new Set(appends.map(a => a.slug))].map(slug => ({ slug, source_id: sourceId }))]
     .filter(ref => ref.source_id !== sourceId || !grounding.failedSlugs.has(ref.slug));
-  await stampProvenance(engine, maintenance, outputs.filter(ref => ref.slug.startsWith(`${config.outputSlugPrefix}/`)), cycleDate, config.sourceSlugPrefix, sharedSeat(reflections), signal, heldSlugs, derivation);
+  const stamped = new Set(maintenance ? written.filter(ref => ref.source_id === sourceId && run.grounded.has(ref.slug)).map(ref => ref.slug) : []);
+  await stampProvenance(engine, maintenance, outputs.filter(ref => ref.slug.startsWith(`${config.outputSlugPrefix}/`) && !(ref.source_id === sourceId && stamped.has(ref.slug))),
+    cycleDate, stamp, signal, heldSlugs, derivation, staged);
+  // A staged page outside the output prefix is neither grounded nor stamped: it publishes as the child wrote it.
+  const elsewhere = maintenance ? [...staged].filter(([slug]) => !slug.startsWith(`${config.outputSlugPrefix}/`)) : [];
+  if (elsewhere.length) {
+    const pages = await Promise.all(elsewhere.map(async ([slug, content]) => ({ slug, content, derivation: derivation.declaration,
+      expectedRevision: (await engine.readPageSnapshot(slug, { sourceId }))?.revision ?? null })));
+    (await publishMaintenancePages(engine, maintenance!, pages)).forEach((outcome, i) => {
+      if (!('error' in outcome)) return;
+      if (!publicationHold(outcome.error)) throw outcome.error;
+      heldSlugs.add(pages[i]!.slug);
+    });
+  }
+  // GBRA-60: a staged page whose publication failed exists only in the child's ledger, so it is held too: the evidence
+  // watermark stays and the next cycle publishes it from the same completed child (its idempotency key coalesces).
+  for (const slug of staged.keys()) if (grounding.failedSlugs.has(slug)) heldSlugs.add(slug);
   // Holds are recorded for this cycle's source only, so a ref in any other source is never excused from verification.
   const finalized = outputs.filter(ref => ref.source_id !== sourceId || !heldSlugs.has(ref.slug));
   return { quoteVerify: pages ? { ...pages, ...(appended ? { timeline_appends: appended } : {}) } : null, finalized, held: heldSlugs.size, grounding };
@@ -780,18 +798,40 @@ function withGroundingRetry(result: PhaseResult, retried: AppendRetry): PhaseRes
     summary: `${result.summary}; timeline-append retry: ${report.details.grounding_failed.length} page(s) failed, ${retryHeld} held (details.grounding_failed, details.grounding_held)` };
 }
 
+/** The provenance stamp of a run's pattern outputs; a pattern earns a seat only while its reflections share one (null drops an earlier run's seat). */
+type PatternStamp = { reason: string; seat: string | null };
+
+/** GBRA-60: a page as the child's staged put_page leaves it: its staged markdown over the page's current revision (null: a new page). */
+function stagedSnapshot(content: string, slug: string, current: { page: Page; revision: string } | null): { page: Page; tags: string[]; revision: string | null } {
+  const parsed = parseMarkdown(content, `${slug}.md`);
+  return { page: { ...current?.page, slug, type: parsed.type, title: parsed.title, compiled_truth: parsed.compiled_truth, timeline: parsed.timeline,
+    frontmatter: parsed.frontmatter } as Page, tags: parsed.tags, revision: current?.revision ?? null };
+}
+
 async function stampProvenance(engine: BrainEngine, maintenance: MaintenanceAuthority | null,
-  refs: Array<{ slug: string; source_id: string }>, cycleDate: string, sourceSlugPrefix: string, seat: string | undefined, signal: AbortSignal | undefined,
-  heldSlugs: Set<string>, derivation: Derivation & { declaration: DerivationDeclaration }): Promise<void> {
-  const reason = `derived from reflections under ${sourceSlugPrefix}/; raw traces live on the cited reflection pages`;
-  // A pattern earns a seat only while its reflections share one, so a pattern without one drops a seat an earlier run stamped.
-  if (!maintenance) return stampDreamProvenance(engine, refs.map(ref => ({ ...ref, raw_trace_exempt_reason: reason, seat: seat ?? null, derivation })), cycleDate, signal);
-  for (const ref of refs) {
-    throwIfAborted(signal, '[dream] patterns provenance');
-    // A page whose grounding publish is held must not be stamped over the pending revision.
-    if (heldSlugs.has(ref.slug)) continue;
-    if (await publishOrHold(() => stampMaintenancePage(engine, maintenance, ref.slug, cycleDate, undefined, reason, seat ?? null, derivation.declaration))) heldSlugs.add(ref.slug);
+  refs: Array<{ slug: string; source_id: string }>, cycleDate: string, stamp: PatternStamp, signal: AbortSignal | undefined,
+  heldSlugs: Set<string>, derivation: Derivation & { declaration: DerivationDeclaration }, staged: ReadonlyMap<string, string>): Promise<void> {
+  if (!maintenance) return stampDreamProvenance(engine, refs.map(ref => ({ ...ref, raw_trace_exempt_reason: stamp.reason, seat: stamp.seat, derivation })), cycleDate, signal);
+  // A page whose grounding publish is held must not be stamped over the pending revision.
+  const due = refs.filter(ref => !heldSlugs.has(ref.slug));
+  if (!due.length) return;
+  throwIfAborted(signal, '[dream] patterns provenance');
+  const pages: Array<{ slug: string; content: string; expectedRevision: string | null; derivation: DerivationDeclaration }> = [];
+  for (const ref of due) {
+    const staging = staged.get(ref.slug);
+    const snapshot = staging !== undefined
+      ? stagedSnapshot(staging, ref.slug, await engine.readPageSnapshot(ref.slug, { sourceId: maintenance.writer.sourceId }))
+      : await stampTarget(engine, maintenance, ref.slug);
+    const page = { ...snapshot.page, frontmatter: maintenanceStampFrontmatter(snapshot.page.frontmatter, cycleDate, undefined, stamp.reason, stamp.seat) };
+    pages.push({ slug: ref.slug, content: serializePageToMarkdown(page, snapshot.tags), expectedRevision: snapshot.revision, derivation: derivation.declaration });
   }
+  // G6: the run's stamps are one maintenance batch (one publication group on Postgres).
+  const published = await publishMaintenancePages(engine, maintenance, pages);
+  published.forEach((outcome, i) => {
+    if (!('error' in outcome)) return;
+    if (!publicationHold(outcome.error)) throw outcome.error;
+    heldSlugs.add(pages[i]!.slug);
+  });
 }
 
 // ── Quote grounding ──────────────────────────────────────────────────
@@ -811,7 +851,7 @@ async function stampProvenance(engine: BrainEngine, maintenance: MaintenanceAuth
  */
 export async function groundPatternPages(engine: BrainEngine, maintenance: MaintenanceAuthority | null, refs: Array<{ slug: string; source_id: string }>,
   reflections: ReflectionRef[], outputSlugPrefix: string, sourceId: string, cycleDate: string, signal?: AbortSignal, heldSlugs?: Set<string>,
-  derivation?: Derivation & { declaration: DerivationDeclaration }, grounding?: GroundingRun):
+  derivation?: Derivation & { declaration: DerivationDeclaration }, grounding?: GroundingRun, stamp?: PatternStamp, staged?: ReadonlyMap<string, string>):
   Promise<{ pages: number; quarantined: number; repaired: number } | null> {
   const { dreamQuoteVerifyEnabled, groundSource, verifyBody } = await import('./synthesize-verify.ts');
   if (!await dreamQuoteVerifyEnabled(engine)) return null;
@@ -825,14 +865,23 @@ export async function groundPatternPages(engine: BrainEngine, maintenance: Maint
   const stats = { pages: 0, quarantined: 0, repaired: 0 };
   const { serializePageToMarkdown } = await import('../markdown.ts');
   const run = grounding ? new ItemRun('patterns.ground_pages') : null;
+  const fail = (slug: string, contentHash: string | null, error: unknown) => {
+    if (!run || !grounding) throw error;
+    grounding.failed.push({ ...run.fail(slug, error), content_hash: contentHash, timelineAppend: false });
+  };
+  // G6: a managed brain publishes the run's grounded pages as one maintenance batch, after every page is grounded.
+  const batch: Array<{ slug: string; contentHash: string | null; content: string; expectedRevision: string | null; derived?: Derivation & { declaration: DerivationDeclaration } }> = [];
   for (const slug of slugs) {
     throwIfAborted(signal, '[dream] patterns quote verify');
     let contentHash: string | null = null;
     try {
       const derived = derivation && refs.some(r => r.slug === slug) ? derivation : undefined;
-      const snapshot = await engine.readPageSnapshot(slug, { sourceId });
+      const current = await engine.readPageSnapshot(slug, { sourceId });
+      // GBRA-60: a page the child staged is grounded from its staged markdown, at the page's current revision.
+      const staging = staged?.get(slug);
+      const snapshot = staging !== undefined ? stagedSnapshot(staging, slug, current) : current;
       if (!snapshot) continue;
-      contentHash = snapshot.page.content_hash ?? null;
+      contentHash = current?.page.content_hash ?? null;
       const ct = verifyBody(snapshot.page.compiled_truth, sources, { checks: 'quotes' });
       const tl = verifyBody(snapshot.page.timeline ?? '', sources, { checks: 'quotes' });
       const quarantined = [...ct.quarantined, ...tl.quarantined];
@@ -840,19 +889,33 @@ export async function groundPatternPages(engine: BrainEngine, maintenance: Maint
       stats.quarantined += quarantined.length;
       stats.repaired += ct.normalized + ct.near + tl.normalized + tl.near;
       // #6236: the reflection list is stored once per page (lossless), not on every claim.
-      const { frontmatter } = withClaimSources({ ...snapshot.page.frontmatter, quote_verified_at: cycleDate },
+      // G6: a page this run wrote takes its provenance stamp in the grounded publication (managed only; stampProvenance skips it).
+      const stamped = maintenance && stamp && derived ? maintenanceStampFrontmatter(snapshot.page.frontmatter, cycleDate, undefined, stamp.reason, stamp.seat) : snapshot.page.frontmatter;
+      const { frontmatter } = withClaimSources({ ...stamped, quote_verified_at: cycleDate },
         quarantined.map(c => ({ ...c, detected_at: cycleDate })), sources.map(x => x.path));
       const page = { ...snapshot.page,
         compiled_truth: ct.body.trim() ? ct.body : (await import('./synthesize-verify.ts')).ALL_CLAIMS_QUARANTINED_BODY,
         timeline: tl.body, frontmatter };
-      await writeGroundedPage(engine, maintenance, snapshot, serializePageToMarkdown(page, snapshot.tags), sourceId, heldSlugs, derived);
+      const content = serializePageToMarkdown(page, snapshot.tags);
+      if (maintenance) { batch.push({ slug, contentHash, content, expectedRevision: snapshot.revision, derived }); continue; }
+      await writeGroundedPage(engine, maintenance, current!, content, sourceId, heldSlugs, derived);
       run?.succeed();
       grounding?.grounded.add(slug);
     } catch (error) {
-      if (!run || !grounding) throw error;
-      grounding.failed.push({ ...run.fail(slug, error), content_hash: contentHash, timelineAppend: false });
+      fail(slug, contentHash, error);
     }
   }
+  if (!maintenance || !batch.length) return stats;
+  const published = await publishMaintenancePages(engine, maintenance, batch.map(page => ({ slug: page.slug, content: page.content,
+    expectedRevision: page.expectedRevision, ...(page.derived ? { derivation: page.derived.declaration } : {}) })));
+  published.forEach((outcome, i) => {
+    const page = batch[i]!;
+    // A pending or contended publication is held for a later cycle (publicationHold); without `heldSlugs` every error propagates.
+    if ('error' in outcome && !(heldSlugs && publicationHold(outcome.error))) { fail(page.slug, page.contentHash, outcome.error); return; }
+    if ('error' in outcome) heldSlugs!.add(page.slug);
+    run?.succeed();
+    grounding?.grounded.add(page.slug);
+  });
   return stats;
 }
 
@@ -905,7 +968,11 @@ async function writeGroundedPage(engine: BrainEngine, maintenance: MaintenanceAu
     return result;
   };
   if (!derived) await (removedEntries.length ? engine.transaction(write) : write(engine));
-  else await derivedMaintenanceTransaction(engine, derived, async tx => ({ result: await write(tx), rows: [{ table: 'pages' as const, id: snapshot.page.id, sourceId }] }));
+  else await derivedMaintenanceTransaction(engine, derived, async tx => {
+    const [row] = await tx.executeRaw<{ trust_tier: string | null }>('SELECT trust_tier FROM pages WHERE id = $1', [snapshot.page.id]);
+    const prior = row ? { slug, tier: storedTrustTier(row.trust_tier), revision: snapshot.revision } : undefined;
+    return { result: await write(tx), rows: [{ table: 'pages' as const, id: snapshot.page.id, sourceId, ...(prior ? { prior } : {}) }] };
+  });
 }
 
 /**
@@ -1030,10 +1097,16 @@ async function collectChildPutPageSlugs(
  */
 async function collectPatternOutputs(engine: BrainEngine, jobId: number, sourceId: string, outputSlugPrefix: string) {
   const putPageRefs = await collectChildPutPageSlugs(engine, [jobId], sourceId);
+  // GBRA-60: a staging child's pages, the last staged markdown per page (minions/tools/staged-put-page.ts).
+  const staged = new Map((await engine.executeRaw<{ slug: string; content: string }>(
+    `SELECT DISTINCT ON (output->>'slug') output->>'slug' AS slug, COALESCE(output->>'content', input->>'content') AS content
+       FROM subagent_tool_executions
+      WHERE job_id = $1 AND tool_name = 'brain_put_page' AND status = 'complete' AND output->>'status' = 'staged'
+      ORDER BY output->>'slug', id DESC`, [jobId])).map(row => [row.slug, row.content]));
   const appends = (await collectChildTimelineAppends(engine, [jobId], sourceId))
     .filter(a => a.slug.startsWith(`${outputSlugPrefix}/`) && !putPageRefs.some(ref => ref.slug === a.slug));
   const writtenRefs = [...putPageRefs, ...[...new Set(appends.map(a => a.slug))].map(slug => ({ slug, source_id: sourceId }))];
-  return { putPageRefs, appends, writtenRefs, appendedUnverified: await countChildTimelineAppends(engine, [jobId]) };
+  return { putPageRefs, staged, appends, writtenRefs, appendedUnverified: await countChildTimelineAppends(engine, [jobId]) };
 }
 
 /** #6302: one entry a patterns child newly published with add_timeline_entry. */

@@ -417,8 +417,13 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
     // Routed-op lane (runThinClientRouted): connection refused surfaces the
     // RemoteMcpError network/unreachable rendering with the mcp_url named.
     const search = await spawn(['search', G3_MARKER, '--json'], clientHome);
-    // CLI_ONLY lane (runRecall's thin-client branch): the same RemoteMcpError
-    // class propagates with its raw discovery-failure message.
+    // CLI_ONLY lane (runRecall's thin-client branch) with the access token the
+    // earlier calls cached (#7360): no discovery runs, and the MCP connection
+    // itself is refused.
+    const recallCached = await spawn(['recall', '--grep', G3_MARKER, '--json'], clientHome);
+    // With no cached token the same RemoteMcpError class propagates with its
+    // raw discovery-failure message.
+    rmSync(join(clientHome, '.gbrain', 'remote-tokens'), { recursive: true, force: true });
     const recall = await spawn(['recall', '--grep', G3_MARKER, '--json'], clientHome);
     // Fail-fast bound: connection-refused returns in milliseconds; even the
     // routed default timeout is 30s. Anything near the 120s test timeout is
@@ -427,6 +432,9 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
     expect(search.exitCode, cliDiagnostic("thin-client CLI", search)).toBe(1);
     expect(JSON.parse(search.stdout)).toMatchObject({ code: expect.any(String), contract_version: 1 }); // D1: the error envelope, no results
     expect(search.stderr).toContain(`Cannot reach http://127.0.0.1:${serverPort}/mcp`);
+    expect(recallCached.exitCode, cliDiagnostic("thin-client CLI", recallCached)).toBe(1);
+    expect(JSON.parse(recallCached.stdout)).toMatchObject({ code: expect.any(String), contract_version: 1 });
+    expect(recallCached.stderr).toContain(`http://127.0.0.1:${serverPort}/mcp`);
     expect(recall.exitCode, cliDiagnostic("thin-client CLI", recall)).toBe(1);
     expect(JSON.parse(recall.stdout)).toMatchObject({ code: expect.any(String), contract_version: 1 }); // D1: the error envelope, no results
     expect(recall.stderr).toMatch(/OAuth discovery failed/);

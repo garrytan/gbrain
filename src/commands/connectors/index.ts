@@ -6,7 +6,7 @@
  *
  *   gbrain connectors auth <provider> [--cookie V|--token V] [--no-browser] [--try-oauth] [--force]
  *   gbrain connectors status [provider] [--json]
- *   gbrain connectors sync <provider>|--all [--full] [--dry-run] [--limit N] [--window-days N] [--source id] [--embed] [--background]
+ *   gbrain connectors sync <provider>|--all [--full] [--dry-run] [--limit N] [--window-days N] [--max-requests N] [--deadline D] [--source id] [--embed] [--background]
  *   gbrain connectors logout <provider>
  *   gbrain connectors providers
  */
@@ -32,8 +32,9 @@ function printHelp(): void {
       '                          --no-browser     print the authorize URL instead of opening',
       '                          --force          save even if the probe fails',
       '  status [provider]     Show credential/sync state (never prints secrets). --json',
-      '  sync <provider>|--all Fetch new conversations and ingest them.',
+      '  sync <provider>|--all Fetch new conversations and ingest them (--all: providers with auto_sync on).',
       '                          --full --dry-run --limit N --window-days N --source <id>',
+      '                          --max-requests N (at most 10000) --deadline <90s|30m|2h>',
       '                          --embed --background',
       '  logout <provider>     Delete a stored credential.',
       '  providers             List available connector providers.',

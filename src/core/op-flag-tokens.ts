@@ -9,7 +9,7 @@
  * defined once and imported cannot.
  */
 
-import type { Operation } from './operations.ts';
+import type { OperationMeta } from './ops/contract.ts';
 
 /**
  * #4602: the ONE definition of "a literal true/false value token" — parseOpArgs
@@ -37,7 +37,7 @@ export const isBooleanLiteral = (tok: string | undefined): boolean =>
  * markdown body opening with an em-dash, say) is not a known flag and stays a
  * value.
  */
-export const isKnownOpFlag = (op: Operation, tok: string | undefined): boolean => {
+export const isKnownOpFlag = (op: OperationMeta, tok: string | undefined): boolean => {
   if (!tok || !tok.startsWith('--') || tok === '--') return false;
   const eq = tok.indexOf('=');
   if (eq >= 0 && eq <= 2) return false; // `--=x` is junk, not a flag

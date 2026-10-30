@@ -41,6 +41,18 @@
 import { attributionCompatible } from './attribution.ts';
 import type { NewFact, FactKind, FactVisibility } from '../engine.ts';
 import type { ParsedFact } from '../facts-fence.ts';
+import { computeEffectiveDate } from '../effective-date.ts';
+
+/** #7247: the page dates that say when its content happened. A page's creation or import time is not one. */
+export const FACT_DATE_SOURCES: ReadonlySet<string> = new Set(['event_date', 'date', 'published', 'filename']);
+
+/** #7247: the fallback valid_from for a page's fence rows without a cell, or null when the page states no such date. */
+export function pageFactDate(page: { slug: string; frontmatter?: Record<string, unknown> | null; timeZone?: string | null }): Date | null {
+  const invalid = new Date(Number.NaN);
+  const { date, source } = computeEffectiveDate({ slug: page.slug, frontmatter: page.frontmatter ?? {}, filename: page.slug.split('/').pop() ?? null,
+    timeZone: page.timeZone ?? undefined, createdAt: invalid, updatedAt: invalid });
+  return date && source && FACT_DATE_SOURCES.has(source) ? date : null;
+}
 
 /**
  * Fence-extracted fact row. Structural superset of `NewFact` with the

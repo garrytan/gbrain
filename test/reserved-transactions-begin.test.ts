@@ -6,6 +6,7 @@
 import { describe, expect, test } from 'bun:test';
 import type postgres from '#postgres';
 import { reservedTransactions } from '../src/core/postgres-engine/reserved-transactions.ts';
+import { READ_WRITE_BEGIN } from '../src/core/postgres-engine/read-write-transactions.ts';
 
 /** A reserved connection that records each statement with whether BEGIN had been answered when it was sent. */
 function fakeReserved(maxPipeline: number, beginFails: boolean) {
@@ -13,7 +14,7 @@ function fakeReserved(maxPipeline: number, beginFails: boolean) {
   let beginAnswered = false;
   const statement = (text: string) => {
     sent.push({ text, beginAnswered });
-    const result: Promise<unknown> = text === 'begin'
+    const result: Promise<unknown> = text === READ_WRITE_BEGIN
       ? new Promise((resolve, reject) => setTimeout(() => {
           beginAnswered = true;
           beginFails ? reject(Object.assign(new Error('no server connection available'), { code: '08P01' })) : resolve(Object.assign([], { command: 'BEGIN' }));
@@ -42,12 +43,12 @@ describe('reserved transactions and BEGIN', () => {
   test('on a non-pipelining pool the body is sent only after BEGIN is answered', async () => {
     const { reserved, sent } = fakeReserved(0, false);
     expect(await begin(reserved)).toBe('ok');
-    expect(sent).toEqual([{ text: 'begin', beginAnswered: false }, { text: 'insert into t values (1)', beginAnswered: true }, { text: 'commit', beginAnswered: true }]);
+    expect(sent).toEqual([{ text: READ_WRITE_BEGIN, beginAnswered: false }, { text: 'insert into t values (1)', beginAnswered: true }, { text: 'commit', beginAnswered: true }]);
   });
 
   test('on a pipelining pool BEGIN still goes out with the body', async () => {
     const { reserved, sent } = fakeReserved(100, false);
     expect(await begin(reserved)).toBe('ok');
-    expect(sent.slice(0, 2)).toEqual([{ text: 'begin', beginAnswered: false }, { text: 'insert into t values (1)', beginAnswered: false }]);
+    expect(sent.slice(0, 2)).toEqual([{ text: READ_WRITE_BEGIN, beginAnswered: false }, { text: 'insert into t values (1)', beginAnswered: false }]);
   });
 });

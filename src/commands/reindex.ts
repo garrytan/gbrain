@@ -38,6 +38,7 @@ import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
 import { loadConfig } from '../core/config.ts';
 import { BudgetExhausted, BudgetTracker } from '../core/budget/budget-tracker.ts';
 import { withBudgetTracker } from '../core/ai/gateway.ts';
+import type { SegmentedRechunkReceipt } from '../core/page-body/rechunk.ts';
 
 interface ReindexOpts {
   /** Cap total pages reindexed. Useful for triage runs on huge brains. */
@@ -90,6 +91,7 @@ USAGE
   gbrain reindex --aliases    [--limit N] [--dry-run] [--json] [--source <id>]
   gbrain reindex --vectors    [--dry-run] [--json]
   gbrain reindex --oversized  [--limit N] [--dry-run] [--json] [--source <id>]
+  gbrain reindex --segmented  [--source <id>] [--slug <slug>] [--apply] [--json]
 
 TARGETS (exactly one required)
   --markdown        Re-chunk markdown pages whose chunker_version lags the
@@ -112,6 +114,13 @@ TARGETS (exactly one required)
                     with embeddings off and makes them keyword-searchable
                     now. Pages over 1 MiB wait for approval before any paid
                     embedding (gbrain embed --held). Resumable.
+  --segmented       Re-chunk pages over 1 MiB (segmented storage) whose chunks
+                    an older segmented chunker made: long passages now cut at
+                    sentence or line ends. Previews by default (pages, chunk
+                    counts, new chunk texts; writes nothing). --apply re-chunks
+                    only the segments that change, keeps the vectors of
+                    unchanged chunk texts and leaves new texts to the embed
+                    sweep (gbrain embed --stale). Never runs on upgrade.
 
 OPTIONS
   --type <t>        --markdown only: restrict to one page type
@@ -128,7 +137,9 @@ OPTIONS
                     --dry-run, --no-embed and a keyless brain never ask);
                     --multimodal skips its cost confirm
   --max-usd USD     --markdown: approve the paid run with this cost cap
-  --source <id>     --aliases and --oversized: restrict to one source
+  --source <id>     --aliases, --oversized and --segmented: restrict to one source
+  --slug <slug>     --segmented only: one page
+  --apply           --segmented only: apply the previewed re-chunk
   --repo PATH       --markdown only: brain repo override
   --json            Machine-readable output
   --help, -h        Show this help
@@ -173,6 +184,7 @@ export function validateReindexModeScope(args: string[]): string | null {
   if (args.includes('--multimodal')) return '--type is only supported with reindex --markdown, not --multimodal';
   if (args.includes('--aliases')) return '--type is only supported with reindex --markdown, not --aliases';
   if (args.includes('--oversized')) return '--type is only supported with reindex --markdown, not --oversized';
+  if (args.includes('--segmented')) return '--type is only supported with reindex --markdown, not --segmented';
   return null;
 }
 
@@ -627,4 +639,28 @@ async function reindexManaged(engine: BrainEngine, opts: ReindexOpts, type: stri
     for (const failure of failures) process.stderr.write(`[reindex] not re-chunked, its chunks stay withheld: ${failure}. Retry with: gbrain repair safe-chunks --apply\n`);
   }
   return { ...base, pendingAfter, reindexed, skipped: 0, failed };
+}
+
+/**
+ * `gbrain reindex --segmented`: preview (default) or `--apply` the re-chunk of sealed segmented pages an older
+ * segmented chunker made (core/page-body/rechunk.ts). Nothing on upgrade or migration runs it.
+ */
+export async function runReindexSegmented(engine: BrainEngine, args: string[]): Promise<SegmentedRechunkReceipt | null> {
+  args = normalizeReindexArgs(args);
+  const json = args.includes('--json');
+  const invalid = ['--source', '--slug'].find(flag => invalidRequiredValueFlag(args, flag));
+  if (invalid) {
+    const error = `invalid ${invalid}: expected a value`;
+    if (json) process.stdout.write(JSON.stringify({ error }) + '\n');
+    else process.stderr.write(`[reindex] ${error}\n`);
+    setCliExitVerdict(2);
+    return null;
+  }
+  const value = (flag: string) => { const at = args.indexOf(flag); return at >= 0 ? args[at + 1] : undefined; };
+  const { runSegmentedRechunk, formatSegmentedRechunkReceipt } = await import('../core/page-body/rechunk.ts');
+  const receipt = await runSegmentedRechunk(engine, { apply: args.includes('--apply'), sourceId: value('--source'), slug: value('--slug') });
+  if (json) process.stdout.write(JSON.stringify(receipt, null, 2) + '\n');
+  else for (const line of formatSegmentedRechunkReceipt(receipt)) console.log(line);
+  if (receipt.pages.some(page => page.state === 'failed')) setCliExitVerdict(1);
+  return receipt;
 }

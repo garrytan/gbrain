@@ -33,7 +33,7 @@ import { FACT_WITHDRAWAL_SCHEMA_STATEMENTS } from '../src/core/facts/withdrawal-
 import { GRANT_AUDIT_SCHEMA_SQL } from '../src/core/grants/schema.ts';
 import { LEASE_TOKEN_SCHEMA_SQL } from '../src/core/lease-schema.ts';
 import { LINK_TEMPORAL_SCHEMA_SQL } from '../src/core/link-temporal-schema.ts';
-import { PAGE_BODY_RLS_SQL, PAGE_BODY_SCHEMA_SQL, PAGE_GENERATION_BUMP_FN_SQL } from '../src/core/page-body/schema.ts';
+import { PAGE_BODY_RLS_SQL, PAGE_BODY_SCHEMA_SQL, PAGE_GENERATION_BUMP_FN_SQL, PAGE_SEGMENT_DERIVATIONS_SQL } from '../src/core/page-body/schema.ts';
 import { PAGE_PROJECTION_SCHEMA_SQL } from '../src/core/page-state/projection-schema.ts';
 import { PAGE_STATE_SCHEMA_SQL } from '../src/core/page-state/schema.ts';
 import { POSTGRES_CONCURRENT_PERSISTENCE_INDEXES, PERSISTENCE_SCHEMA_STATEMENTS } from '../src/core/persistence/schema.ts';
@@ -47,6 +47,8 @@ import { CORE_EDIT_NOTICES_SCHEMA_SQL } from '../src/core/core-memory-schema.ts'
 import { FACT_PURGE_LOOKUP_INDEX_SQL, MEMORY_PURGE_SCHEMA_SQL } from '../src/core/facts/purge-schema.ts';
 import { WRITE_GATE_SCHEMA_SQL } from '../src/core/write-gate-schema.ts';
 import { BELIEF_LEDGER_SCHEMA_SQL } from '../src/core/belief/schema.ts';
+import { GIT_CANONICAL_SCHEMA_SQL } from '../src/core/persistence/git-canonical-schema.ts';
+import { FUNCTION_SEARCH_PATH_HARDENING_SQL } from '../src/core/function-search-path.ts';
 
 const REPO = resolve(import.meta.dir, '..');
 export const SCHEMA_SQL_PATH = 'src/schema.sql';
@@ -88,6 +90,7 @@ export const FRAGMENTS: readonly Fragment[] = [
   },
   { source: 'src/core/lease-schema.ts', expr: 'LEASE_TOKEN_SCHEMA_SQL', postgres: LEASE_TOKEN_SCHEMA_SQL, pglite: LEASE_TOKEN_SCHEMA_SQL },
   { source: 'src/core/page-body/schema.ts', expr: 'PAGE_BODY_SCHEMA_SQL', postgres: PAGE_BODY_SCHEMA_SQL, pglite: PAGE_BODY_SCHEMA_SQL },
+  { source: 'src/core/page-body/schema.ts', expr: 'PAGE_SEGMENT_DERIVATIONS_SQL', postgres: PAGE_SEGMENT_DERIVATIONS_SQL, pglite: PAGE_SEGMENT_DERIVATIONS_SQL },
   // Capability rule: PGLite has no role system and enables RLS on no core table, so the segment tables' RLS block is Postgres-only.
   { source: 'src/core/page-body/schema.ts', expr: 'PAGE_BODY_RLS_SQL', postgres: PAGE_BODY_RLS_SQL, pglite: '' },
   { source: 'src/core/page-state/schema.ts', expr: 'PAGE_STATE_SCHEMA_SQL', postgres: PAGE_STATE_SCHEMA_SQL, pglite: PAGE_STATE_SCHEMA_SQL },
@@ -101,6 +104,7 @@ export const FRAGMENTS: readonly Fragment[] = [
     postgres: persistenceSql(PERSISTENCE_SCHEMA_STATEMENTS.filter((s) => !POSTGRES_CONCURRENT_PERSISTENCE_INDEXES.has(s))),
     pglite: persistenceSql(PERSISTENCE_SCHEMA_STATEMENTS),
   },
+  { source: 'src/core/persistence/git-canonical-schema.ts', expr: 'GIT_CANONICAL_SCHEMA_SQL', postgres: GIT_CANONICAL_SCHEMA_SQL, pglite: GIT_CANONICAL_SCHEMA_SQL },
   { source: 'src/core/page-state/projection-schema.ts', expr: 'PAGE_PROJECTION_SCHEMA_SQL', postgres: PAGE_PROJECTION_SCHEMA_SQL, pglite: PAGE_PROJECTION_SCHEMA_SQL },
   { source: 'src/core/persistence/topology-schema.ts', expr: 'PERSISTENCE_TOPOLOGY_SCHEMA_SQL', postgres: PERSISTENCE_TOPOLOGY_SCHEMA_SQL, pglite: PERSISTENCE_TOPOLOGY_SCHEMA_SQL },
   { source: 'src/core/persistence/worktree-refresh-schema.ts', expr: 'WORKTREE_REFRESH_SCHEMA_SQL', postgres: WORKTREE_REFRESH_SCHEMA_SQL, pglite: WORKTREE_REFRESH_SCHEMA_SQL },
@@ -115,6 +119,9 @@ export const FRAGMENTS: readonly Fragment[] = [
   { source: 'src/core/write-gate-schema.ts', expr: 'WRITE_GATE_SCHEMA_SQL', postgres: WRITE_GATE_SCHEMA_SQL, pglite: WRITE_GATE_SCHEMA_SQL },
   { source: 'src/core/questions/schema.ts', expr: 'PINNED_QUESTIONS_SCHEMA_SQL', postgres: PINNED_QUESTIONS_SCHEMA_SQL, pglite: PINNED_QUESTIONS_SCHEMA_SQL },
   { source: 'src/core/belief/schema.ts', expr: 'BELIEF_LEDGER_SCHEMA_SQL', postgres: BELIEF_LEDGER_SCHEMA_SQL, pglite: BELIEF_LEDGER_SCHEMA_SQL },
+  // Its region must stay the last statement of src/schema.sql (regions render where their markers sit, not in this
+  // array's order): a replay's CREATE OR REPLACE resets each function's search_path, so pg_temp is appended after every one (#7632).
+  { source: 'src/core/function-search-path.ts', expr: 'FUNCTION_SEARCH_PATH_HARDENING_SQL', postgres: FUNCTION_SEARCH_PATH_HARDENING_SQL, pglite: FUNCTION_SEARCH_PATH_HARDENING_SQL },
 ];
 
 const fragmentLabel = (f: Fragment) => `${f.source} (${f.expr})`;

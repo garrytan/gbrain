@@ -22,29 +22,45 @@ export interface VectorPoolAttempt {
 }
 
 /**
+ * Times the index walk widens its window (x4 each) when a full window held
+ * enough fresh chunks to fill the limit but too few pages: the nearest
+ * chunks crowd into a few long pages. 250 -> 1,000 -> 4,000 for a 50-row
+ * search. The joined statement the pool would run instead can plan the
+ * private-page rule as a full page filter rescanned per candidate (2-3 s per
+ * attempt at 50k pages), so its escalations ran into the 8 s vector deadline.
+ */
+export const INDEX_WALK_ESCALATIONS = 2;
+
+/**
  * Runs the statement's index walk, then its scope scan (each when present),
  * before the pool. Walk rows answer the search when its window is full and
- * they fill the limit; scope-scan rows when they fill the limit or the scope
- * ran out of eligible chunks (a short window). Otherwise, or past an
- * attempt's 2 s budget, this returns null and the caller runs the pool. The
- * walk may visit its whole over-fetched window, so its tuple budget covers it.
+ * they fill the limit; a full window whose fresh chunks could fill the limit
+ * but whose pages fall short widens (INDEX_WALK_ESCALATIONS). Scope-scan rows
+ * answer when they fill the limit or the scope ran out of eligible chunks (a
+ * short window). Otherwise, or past an attempt's 2 s budget, this returns
+ * null and the caller runs the pool. The walk may visit its whole
+ * over-fetched window, so its tuple budget covers it.
  */
 export async function searchIndexWalk(
   stmt: Pick<VectorSearchStatement, 'indexWalkSql' | 'scopeScanSql' | 'innerLimit' | 'indexWalkOverfetch'>,
   limit: number,
   run: (attempt: VectorPoolAttempt) => Promise<VectorPoolBatch>,
 ): Promise<Record<string, unknown>[] | null> {
-  const attempt = async (kind: { indexWalk: true } | { scopeScan: true }) => {
+  const attempt = async (kind: { indexWalk: true } | { scopeScan: true }, innerLimit = stmt.innerLimit) => {
     try {
-      return await run({ innerLimit: stmt.innerLimit, maxScanTuples: Math.max(2_000, stmt.innerLimit * stmt.indexWalkOverfetch), remainingMs: 2_000, exact: false, ...kind });
+      return await run({ innerLimit, maxScanTuples: Math.max(2_000, innerLimit * stmt.indexWalkOverfetch), remainingMs: 2_000, exact: false, ...kind });
     } catch (error) {
       if ((error as { code?: string }).code === '57014') return null;
       throw error;
     }
   };
   if (stmt.indexWalkSql) {
-    const batch = await attempt({ indexWalk: true });
-    if (batch && batch.candidatePool >= stmt.innerLimit && batch.rows.length >= limit) return batch.rows;
+    for (let innerLimit = stmt.innerLimit, escalations = 0; ; innerLimit *= 4, escalations++) {
+      const batch = await attempt({ indexWalk: true }, innerLimit);
+      if (!batch || batch.candidatePool < innerLimit) break;
+      if (batch.rows.length >= limit) return batch.rows;
+      if ((batch.eligiblePool ?? batch.candidatePool) < limit || escalations >= INDEX_WALK_ESCALATIONS) break;
+    }
   }
   if (stmt.scopeScanSql) {
     const batch = await attempt({ scopeScan: true });

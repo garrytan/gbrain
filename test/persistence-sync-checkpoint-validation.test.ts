@@ -241,7 +241,7 @@ test('#5762 a lock timeout in the validation stays transient contention', async 
   const f = await fixture(engine);
   const restore = failValidation(engine, 'lock');
   // The checkpoint as the pass left it, read under the pass's drain lease. A later attempt of the same request, after the
-  // pass released the lease, is refused revision_conflict (PASS_LEASE_LOST_MESSAGE) by design, so the row is not read afterwards.
+  // pass released the lease, is refused sync_pass_superseded (PASS_LEASE_LOST_MESSAGE) by design, so the row is not read afterwards.
   let result: Awaited<ReturnType<typeof performManagedSync>> | undefined;
   try { result = await performManagedSync(engine, f.opts); }
   finally { await disposePersistenceConsumer(engine); restore(); }
@@ -249,6 +249,33 @@ test('#5762 a lock timeout in the validation stays transient contention', async 
   expect(result).toMatchObject({ status: 'partial', reason: 'writer_pending', managedWrite: { write_error: 'write_pending', reason: 'database_contention' } });
   expect(['queued', 'running']).toContain(result!.managedWrite!.write_request.state);
   expect((await performManagedSync(engine, f.opts)).status).toBe('first_sync');
+}), 180_000);
+
+test('GBRA-133 PR 3a a pass checkpoint left pending when its pass ends is superseded: no resume advice, no terminal write failure', async () => each(async engine => {
+  const f = await fixture(engine);
+  const restore = failValidation(engine, 'lock');
+  let result: Awaited<ReturnType<typeof performManagedSync>> | undefined;
+  try { result = await performManagedSync(engine, f.opts); }
+  finally { await disposePersistenceConsumer(engine); restore(); }
+  const pending = result!.managedWrite!;
+  expect(pending).toMatchObject({ write_error: 'write_pending', reason: 'database_contention', disposition: 'superseded' });
+  expect(pending.suggestion).not.toContain('Re-run the same sync options to resume this request');
+  expect(pending.suggestion).toContain('the next sync pass re-reads the source and stamps its own checkpoint');
+  const requestId = pending.write_request.request_id;
+  // The next pass runs after the first one released its drain lease: the stale checkpoint is refused as superseded and the source converges.
+  expect((await performManagedSync(engine, f.opts)).status).toBe('first_sync');
+  await disposePersistenceConsumer(engine);
+  const [row] = await engine.executeRaw<{ state: string; error_code: string | null }>('SELECT state, error_code FROM persistence_requests WHERE request_id=$1::uuid', [requestId]);
+  expect(row).toEqual({ state: 'conflict', error_code: 'sync_pass_superseded' });
+  const { readTerminalFailures, readTerminalFailureSummary } = await import('../src/core/persistence/terminal-failures.ts');
+  const unresolved = await readTerminalFailures(engine, { sourceId: f.id });
+  expect(unresolved.status === 'ok' ? unresolved.rows!.map(r => r.request_id) : unresolved).toEqual([]);
+  const all = await readTerminalFailures(engine, { sourceId: f.id, state: 'all' });
+  expect(all.status === 'ok' ? all.rows!.filter(r => r.request_id === requestId).map(r => ({ code: r.code, disposition: r.disposition, historical: r.historical })) : all)
+    .toEqual([{ code: 'sync_pass_superseded', disposition: 'superseded', historical: true }]);
+  const summary = await readTerminalFailureSummary(engine, { sourceIds: [f.id] });
+  expect(summary.status === 'ok' ? summary.sources.map(s => ({ source_id: s.source_id, unresolved: s.unresolved.rows, blockers: s.active_blockers.length })) : summary)
+    .toEqual([{ source_id: f.id, unresolved: 0, blockers: 0 }]);
 }), 180_000);
 
 test('#5762 the hint names one of three index states and keeps the saved processing flags', async () => {
@@ -284,13 +311,13 @@ test('#5762 the hint names one of three index states and keeps the saved process
 });
 
 test('#5762 a dropped index reads as missing and the hint then names the rebuild command', async () => each(async engine => {
-  // #6511 and #6757 added the purge slug and request-id indexes to the online-built set; the default read lists them after the checkpoint pair.
-  expect((await readRequestIndexStates(engine)).map(index => index.state)).toEqual(['valid', 'valid', 'valid', 'valid']);
+  // #6511, #6757 and #7649 added the purge slug, request-id and foreground-commit indexes to the online-built set; the default read lists them after the checkpoint pair.
+  expect((await readRequestIndexStates(engine)).map(index => index.state)).toEqual(['valid', 'valid', 'valid', 'valid', 'valid']);
   await engine.executeRaw('DROP INDEX persistence_requests_sync_run_committed');
   try {
     expect(await readRequestIndexStates(engine)).toEqual([{ name: 'persistence_requests_sync_run_open', state: 'valid' },
       { name: 'persistence_requests_sync_run_committed', state: 'missing' }, { name: 'persistence_requests_slug_intent', state: 'valid' },
-      { name: 'persistence_requests_request_id', state: 'valid' }]);
+      { name: 'persistence_requests_request_id', state: 'valid' }, { name: 'persistence_requests_foreground_committed', state: 'valid' }]);
   } finally {
     const { PERSISTENCE_SYNC_RUN_COMMITTED_INDEX_SQL } = await import('../src/core/persistence/schema.ts');
     await engine.executeRaw(PERSISTENCE_SYNC_RUN_COMMITTED_INDEX_SQL);

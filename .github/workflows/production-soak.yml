@@ -1,0 +1,99 @@
+name: Production soak
+
+# Production-shaped scale soak (GBRA-174; harness and procedure in
+# scripts/bench/production-soak/README.md). One cell per injected latency, each on
+# its own ephemeral Ubicloud runner (torn down when the job ends): a
+# deterministic large personal brain with years of git history and
+# database-side drift, Postgres behind a session-mode PgBouncer capped at 25 and
+# a transaction-mode PgBouncer, toxiproxy latency, and the production topology
+# (one resident serve owning sync, a jobs worker, CLI and MCP readers, an
+# external writer, put/remember, extract/embed --stale) for N hours.
+# Writes a JSON scoreboard per cell. Every gate is record-only: this workflow
+# never fails on a gate; it fails only when the harness itself breaks.
+# Weekly (Monday 06:17 UTC, ahead of stable promotion) and on dispatch; never in
+# the PR tier. A gate flips to blocking only after #7355 closes and two
+# consecutive soaks are clean on it, as its own reviewed PR.
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      pages:
+        description: Fixture pages across the three sources (600000 is 2x the 300k bench)
+        type: string
+        default: '600000'
+      hours:
+        description: Soak duration per cell in hours
+        type: string
+        default: '2'
+      rtts:
+        description: Injected round-trip latencies in ms, comma-separated
+        type: string
+        default: '65,2'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 5
+    outputs:
+      rtts: ${{ steps.plan.outputs.rtts }}
+      pages: ${{ steps.plan.outputs.pages }}
+      hours: ${{ steps.plan.outputs.hours }}
+    steps:
+      - id: plan
+        env:
+          RTTS: ${{ inputs.rtts || '65,2' }}
+          PAGES: ${{ inputs.pages || '600000' }}
+          HOURS: ${{ inputs.hours || '2' }}
+        run: |
+          set -euo pipefail
+          [[ "$RTTS" =~ ^[0-9]+(,[0-9]+)*$ ]] || { echo "::error::rtts must be comma-separated integers, got '$RTTS'"; exit 1; }
+          [[ "$PAGES" =~ ^[0-9]+$ ]] && [ "$PAGES" -ge 2000 ] || { echo "::error::pages must be an integer >= 2000, got '$PAGES'"; exit 1; }
+          [[ "$HOURS" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "::error::hours must be a number, got '$HOURS'"; exit 1; }
+          {
+            echo "rtts=$(printf '%s' "$RTTS" | jq -Rc 'split(",") | map(tonumber)')"
+            echo "pages=$PAGES"
+            echo "hours=$HOURS"
+          } >> "$GITHUB_OUTPUT"
+
+  soak:
+    needs: plan
+    name: Soak (${{ matrix.rtt }} ms RTT)
+    runs-on: ubicloud-standard-16-ubuntu-2404
+    timeout-minutes: 600
+    strategy:
+      fail-fast: false
+      matrix:
+        rtt: ${{ fromJSON(needs.plan.outputs.rtts) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Bootstrap (Docker images, bun, frozen dependencies)
+        timeout-minutes: 20
+        run: bash scripts/bench/production-soak/vm-setup.sh
+      - name: Fixture, load and soak
+        env:
+          PAGES: ${{ needs.plan.outputs.pages }}
+          HOURS: ${{ needs.plan.outputs.hours }}
+          RTT: ${{ matrix.rtt }}
+        run: |
+          set -o pipefail
+          bash scripts/bench/production-soak/run.sh --pages "$PAGES" --rtt-ms "$RTT" --hours "$HOURS" --out "$RUNNER_TEMP/soak-out" --label "rtt$RTT"
+          cat "$RUNNER_TEMP/soak-out/scoreboard.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Stop the topology
+        if: always()
+        run: docker rm -f soak-pg soak-bouncer-session soak-bouncer-txn soak-toxiproxy >/dev/null 2>&1 || true
+      - name: Upload the scoreboard, events and logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: production-soak-rtt${{ matrix.rtt }}
+          path: ${{ runner.temp }}/soak-out
+          if-no-files-found: warn

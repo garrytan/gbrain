@@ -85,6 +85,7 @@ import { CONTENT_REPAIR_LANE_VERSION, contentRepairLaneCurrent } from '../persis
 import { lineDiff } from './frontmatter.ts';
 import { repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairPlanOptions, type RepairResult, type RepairScope } from './core.ts';
 import { gitChildEnv } from '../git-env.ts';
+import { commitPushCommand } from '../git/commit-push.ts';
 import { recordSlugLineAlias } from '../page-state/rename-alias.ts';
 import { canonicalOriginPage, originConflictMessage } from '../persistence/origin-guard.ts';
 
@@ -686,7 +687,7 @@ async function write(ctx: OperationContext, src: FenceSource, cand: Candidate, a
   const holdCleared = cand.hold ? await kept(await clearGitHold(engine, { sourceId: src.id, incarnation: src.incarnation, path: cand.path, observedAt: observedAt ?? new Date().toISOString() })) : false;
   if (parts.declared_alias) await recordSlugLineAlias(engine, src.id, parts.declared_alias, cand.slug);
   if (!edits) return { applied: true, outcome: 'repaired', detail: { ...detail, mode: 'legacy', imported: imported.status, hold_cleared: holdCleared, content_repair: receipt }, ...spend };
-  const commitStep = `git -C ${shellQuote([root])} add -- ${shellQuote([cand.path])} && git -C ${shellQuote([root])} commit -m ${shellQuote([contentRepairCommitSubject(cand.path)])} -m ${shellQuote([contentRepairTrailer(receipt)])} -- ${shellQuote([cand.path])}`;
+  const commitStep = commitPushCommand(root, [cand.path], [contentRepairCommitSubject(cand.path), contentRepairTrailer(receipt)]);
   return { applied: true, outcome: 'repaired', detail: { ...detail, mode: 'legacy', backup, imported: imported.status, hold_cleared: holdCleared, content_repair: receipt, committed: 'commit_step', commit_step: commitStep }, ...spend };
 }
 

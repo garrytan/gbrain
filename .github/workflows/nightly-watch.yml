@@ -51,10 +51,12 @@ on:
       - Scale tier
       - Convergence nightly
       - Sync freshness gate
+      - Production soak
       - macOS 26 validation
       - Semgrep
       - OSV-Scanner
       - CI health
+      - TLA+ specs
     types: [completed]
     branches: [master]
   workflow_dispatch:
@@ -99,7 +101,7 @@ jobs:
             scripts
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.4.3
+          bun-version: 1.4.4
       - id: target
         name: Resolve the target workflow and track
         env:
@@ -146,7 +148,7 @@ jobs:
             TODOS.md
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.4.3
+          bun-version: 1.4.4
       - name: Upsert the nightly-red or master-red issue
         env:
           GH_TOKEN: ${{ github.token }}

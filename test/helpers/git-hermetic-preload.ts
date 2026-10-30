@@ -25,9 +25,31 @@
  * entries, and skips entirely if signing keys are already injected — an
  * operator or a future signing-behavior test can override deliberately.
  *
+ * #7451: it first drops every variable production's `gitChildEnv` drops (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE,
+ * GIT_CONFIG_* and the rest of `git rev-parse --local-env-vars`). A run started from a git hook inherits the hook's
+ * repository through them, and a helper's `git -C <temp repo> config ...` then wrote into the caller's repository
+ * (`core.bare=true`, `user.name t`). Transport and credential variables pass through, as in production.
+ *
+ * Bun.spawn and Bun.spawnSync called without an `env` option give the child the environment the process started with,
+ * not process.env as edited here, so both are wrapped to default `env` to process.env (child_process already does).
+ * Without that, a helper's `Bun.spawnSync(['git', ...])` still saw the hook's GIT_DIR and none of the keys below.
+ *
  * Imported by `bunfig.toml` via
  * `preload = [..., "./test/helpers/git-hermetic-preload.ts"]`.
  */
+import { gitChildEnv } from '../../src/core/git-env.ts';
+
+for (const name of ['spawn', 'spawnSync'] as const) {
+  const original = Bun[name] as (...args: unknown[]) => unknown;
+  (Bun as unknown as Record<string, unknown>)[name] = (first: unknown, second?: object) => Array.isArray(first)
+    ? original(first, { env: process.env, ...second })
+    : original({ env: process.env, ...(first as object) });
+}
+
+const kept = gitChildEnv({}, process.env);
+for (const key of Object.keys(process.env)) if (!(key in kept)) delete process.env[key];
+Object.assign(process.env, kept);
+
 const base = Number(process.env.GIT_CONFIG_COUNT ?? '0') || 0;
 const existingKeys: string[] = [];
 for (let i = 0; i < base; i++) {

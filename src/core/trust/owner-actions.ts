@@ -37,6 +37,7 @@ import { formatTrustRef, pageRef, parseTrustRef, resolvePageRef, type TrustRef }
 import { storedTrustTier, trustLabel, type TrustTier } from './tier.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { getWriteGateHold, releaseWriteGateHold, type WriteGateHold } from '../write-gate-store.ts';
+import type { ParsedFact } from '../facts-fence.ts';
 import { withCoordinatedWrite, withTrustPromotion, withWriteAttribution, withWriteTrust } from '../persistence/context.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
@@ -103,8 +104,15 @@ export interface OwnerApplyOptions {
 const hash8 = (value: string): string => createHash('sha256').update(value).digest('hex').slice(0, 8);
 const bindingOf = (value: unknown): string => createHash('sha256')
   .update(JSON.stringify(value, (_key, v: unknown) => typeof v === 'bigint' ? v.toString() : v)).digest('hex');
+/** A hold's approved state; #7656: plus the fence cell fields an index-existing release raises (`releaseCellOf`). */
+const holdBinding = (hold: Pick<HoldRow, 'id' | 'status' | 'last_seen_at'>, cellFields: Record<string, unknown> | null = null): string =>
+  bindingOf({ id: hold.id, status: hold.status, last_seen_at: hold.last_seen_at, ...(cellFields ? { cell: cellFields } : {}) });
+/** One printable line: control and format characters (terminal escapes and bidi overrides included) and runs of whitespace become one space. */
+const printable = (text: unknown): string => String(text ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Cf}]/gu, ' ').replace(/\s+/g, ' ').trim();
+/** A free-text value in the preview: quoted and escaped, so a quote or comma in it cannot close its field and fake another. */
+const quoted = (text: unknown): string => JSON.stringify(printable(text));
 const snippet = (text: unknown, max = 80): string => {
-  const flat = String(text ?? '').replace(/\s+/g, ' ').trim();
+  const flat = printable(text);
   return flat.length > max ? `${flat.slice(0, max - 3)}...` : flat;
 };
 const trustCommand = (...args: string[]): string[] => ['gbrain', 'trust', ...args];
@@ -142,9 +150,14 @@ export interface HoldRow { id: number; kind: 'fact' | 'take'; source_id: string;
 export interface HoldStoreAdapter {
   get(engine: BrainEngine, id: number): Promise<HoldRow | null>;
   list(engine: BrainEngine, opts: { sourceId?: string; since?: Date }): Promise<HoldRow[]>;
-  /** Marks the hold released and publishes its payload at user_confirmed in `tx`; false when it was no longer held. */
-  release(tx: BrainEngine, id: number, by: string): Promise<boolean>;
+  /**
+   * Marks the hold released and publishes its payload at user_confirmed in `tx`; false when it was no longer held.
+   * #7657: `approved` re-checks the owner's preview binding on the locked hold and refuses `preview_changed` when it moved.
+   */
+  release(tx: BrainEngine, id: number, by: string, approved?: (hold: HoldRow) => Promise<boolean>): Promise<boolean>;
   drop(tx: BrainEngine, id: number, by: string): Promise<boolean>;
+  /** A managed release published through the page-mutation door (trust/release-publish.ts); null when the hold takes `release`. */
+  publish?(engine: BrainEngine, id: number, by: string, config?: GBrainConfig, approved?: string): Promise<boolean | null>;
 }
 async function holdTableExists(engine: BrainEngine): Promise<boolean> {
   const [row] = await engine.executeRaw<{ t: string | null }>(`SELECT to_regclass('write_gate_holds')::text AS t`);
@@ -171,11 +184,16 @@ const defaultHoldStore: HoldStoreAdapter = {
          AND ($2::timestamptz IS NULL OR last_seen_at >= $2) ORDER BY id LIMIT 1000`, [opts.sourceId ?? null, opts.since?.toISOString() ?? null]);
     return rows.map(holdRow);
   },
-  async release(tx, id, by) {
+  async release(tx, id, by, approved) {
+    await tx.executeRaw('SELECT id FROM write_gate_holds WHERE id = $1 FOR UPDATE', [id]);
     const held = await getWriteGateHold(tx, id);
     if (held?.kind === 'take') {
       throw opError('unavailable', `h${id} is a held take; releasing takes is not supported yet, so nothing was changed.`,
         `Drop it with gbrain trust drop h${id}, or add the take yourself with gbrain takes add.`);
+    }
+    if (approved && held?.status === 'held' && !(await approved((await defaultHoldStore.get(tx, id))!))) {
+      throw opError('preview_changed', `h${id} changed after you approved it; nothing was changed.`,
+        'Run the command again: it shows the current state and asks for a new confirmation.');
     }
     const hold = await releaseWriteGateHold(tx, id, by);
     if (!hold) return false;
@@ -183,10 +201,41 @@ const defaultHoldStore: HoldStoreAdapter = {
     return true;
   },
   async drop(tx, id, by) { return (await tx.executeRaw(decideHoldSql('dropped'), [id, by])).length === 1; },
+  async publish(engine, id, by, config, approved) {
+    const { submitTrustRelease, releaseCellFields } = await import('./release-publish.ts');
+    return submitTrustRelease(engine, id, by, config,
+      approved === undefined ? undefined : async (hold, cell) => {
+        const row = await defaultHoldStore.get(engine, hold.id);
+        return !!row && holdBinding(row, cell && releaseCellFields(cell)) === approved;
+      });
+  },
 };
+/** #7656: the fence cell an index-existing release of this hold indexes, with the fields it raises; null for every other hold. */
+async function releaseCellOf(engine: BrainEngine, hold: HoldRow): Promise<{ cell: ParsedFact; fields: Record<string, unknown> } | null> {
+  if (hold.kind !== 'fact' || typeof hold.payload.row_num !== 'number') return null;
+  const { releaseCell, releaseCellFields } = await import('./release-publish.ts');
+  const cell = await releaseCell(engine, hold);
+  return cell ? { cell, fields: releaseCellFields(cell) } : null;
+}
+/** #7656: what a fact release raises besides its text, for the preview: the fence cell an index-existing release indexes, else the held payload. */
+function releasedFields(hold: HoldRow, cell: ParsedFact | null): string {
+  const p = hold.payload;
+  const date = (v: unknown) => typeof v === 'string' && v ? v.slice(0, 10) : null;
+  const entries: Array<[string, unknown]> = cell
+    ? [['kind', cell.kind], ['visibility', cell.visibility], ['confidence', cell.confidence], ['notability', cell.notability], ['valid from', cell.validFrom],
+      ['valid until', cell.validUntil], ['metric', cell.claimMetric], ['value', cell.claimValue], ['unit', cell.claimUnit], ['period', cell.claimPeriod],
+      ['attributed to', cell.attributedTo], ['source', cell.source], ['context', cell.context]]
+    : [['kind', typeof p.kind === 'string' && p.kind ? p.kind : 'fact'], ['visibility', p.visibility === 'world' ? 'world' : 'private'], ['valid from', date(p.valid_from)],
+      ['valid until', date(p.valid_until)], ['source', p.source], ['context', p.context]];
+  const shown = entries.filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .map(([k, v]) => `${k} ${k === 'context' || /[",;]/.test(printable(v)) ? quoted(v) : printable(v)}`).join(', ');
+  return cell ? ` with fence row ${cell.rowNum} as it stands: ${shown}` : ` with ${shown}`;
+}
 /**
- * The released fact enters memory as the owner's confirmed row: database-only (the hold kept no fence
- * position; its embedding is filled by the usual backfill), stamped user_confirmed under the promotion capability.
+ * The transactional release: the fact enters memory as the owner's confirmed row, database-only (its embedding is
+ * filled by the usual backfill), stamped user_confirmed under the promotion capability. A managed brain takes it only
+ * for a hold with no entity slug or whose page is missing; every other managed fact release publishes its fence row
+ * through the door (`submitTrustRelease`, trust/release-publish.ts).
  */
 async function publishReleasedFact(tx: BrainEngine, hold: WriteGateHold): Promise<void> {
   const p = hold.payload;
@@ -314,11 +363,14 @@ async function previewHold(engine: BrainEngine, id: number, action: 'release' | 
   const hold = await holdStore.get(engine, id);
   if (!hold) throw notFound(label, 'held write');
   const text = hold.payload.fact ?? hold.payload.claim ?? '';
+  const entity = hold.kind === 'fact' && typeof hold.payload.entity_slug === 'string' && hold.payload.entity_slug ? ` for ${hold.source_id}/${hold.payload.entity_slug}` : '';
+  const cell = action === 'release' ? await releaseCellOf(engine, hold) : null;
   return { action, ref: label, token: label, command: trustCommand(action, label), raises: action === 'release',
-    binding: bindingOf({ id: hold.id, status: hold.status, last_seen_at: hold.last_seen_at }), tier: hold.tier,
+    binding: holdBinding(hold, cell?.fields ?? null), tier: hold.tier,
     ...(action === 'release' ? { target_tier: 'user_confirmed' as TrustTier } : {}),
     summary: action === 'release'
-      ? `Release held ${hold.kind} ${label} ("${snippet(text)}", ${hold.reason_families.join(', ') || 'detector error'}) into memory as "confirmed by you"`
+      ? `Release held ${hold.kind} ${label} (${hold.kind === 'fact' ? quoted(text) : `"${snippet(text)}"`}, ${hold.reason_families.join(', ') || 'detector error'})${printable(entity)} into memory as "confirmed by you"`
+        + (hold.kind === 'fact' ? releasedFields(hold, cell?.cell ?? null) : '')
       : `Drop held ${hold.kind} ${label} ("${snippet(text)}"); it stays out of memory` };
 }
 
@@ -463,7 +515,9 @@ export async function applyOwnerAction(engine: BrainEngine, input: OwnerActionIn
       }
       if (ref?.kind === 'proposal') return fromDecision('confirm', await decideTrustProposal(engine, ref.id, 'accept', decision));
       if (ref?.kind === 'hold') {
-        const released = await engine.transaction(tx => holdStore.release(tx, ref.id, principalLabel(by)));
+        const released = await holdStore.publish?.(engine, ref.id, principalLabel(by), opts.config, opts.binding)
+          ?? await engine.transaction(tx => holdStore.release(tx, ref.id, principalLabel(by),
+            async row => holdBinding(row, (await releaseCellOf(tx, row))?.fields ?? null) === opts.binding));
         if (!released) throw opError('preview_changed', `h${ref.id} was decided meanwhile; nothing was changed.`, 'Run gbrain trust review.');
         return { action: 'release', ref: preview.ref, status: 'released', tier: 'user_confirmed', prior_tier: preview.tier };
       }

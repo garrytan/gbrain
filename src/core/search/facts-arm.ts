@@ -23,8 +23,9 @@ import { resolveExcludePrivatePages } from './private-visibility.ts';
 import { admitted, collectFactCandidates, FACTS_ARM_COSINE_MIN, queryTerms, scoreFactCandidates, type FactCandidate as PoolCandidate, type FactPoolScope } from './fact-relevance.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
 import { enforceTokenBudget, resultTokens } from './token-budget.ts';
-import { factDateHeader } from './evidence-date.ts';
+import { configFlagOn, factDateHeader } from './evidence-date.ts';
 import type { TrustTier } from '../trust/tier.ts';
+import { conversationSignal } from './evidence-delivery.ts';
 
 export { queryTerms } from './fact-relevance.ts';
 
@@ -43,6 +44,19 @@ export const TEMPORAL_RESERVE_SHARE = 0.15;
 export const MAX_RESERVE_ROWS = 20;
 /** Share of the caller's row count reserved facts may take (at least one row). */
 export const TEMPORAL_RESERVE_ROW_SHARE = 0.3;
+
+/** GBRA-205 facts block (`search.query_facts_block`, default off): every budgeted query, ahead of the pages. */
+export const QUERY_FACTS_BLOCK_KEY = 'search.query_facts_block';
+/** Share of the caller's token budget the facts block may take (about 1,800 of 8,100, as the measured combined lane). */
+export const QUERY_FACTS_BLOCK_SHARE = 0.22;
+export const MAX_FACTS_BLOCK_ROWS = 40;
+
+/** GBRA-205 (`search.fact_source_pages`, default off): the conversations matched facts came from join the hits. */
+export const FACT_SOURCE_PAGES_KEY = 'search.fact_source_pages';
+export const MAX_FACT_SOURCE_PAGES = 2;
+/** Source pages go in after this many organic rows. */
+export const FACT_SOURCE_PAGE_RANK = 3;
+
 const MONTHS = 'january|february|march|april|may|june|july|august|september|october|november|december';
 const TEMPORAL_CUE = new RegExp(`\\b(when|before|after|since|until|till|during|ago|earlier|later|earliest|latest|first|last|previous|next|dates?|day|week|month|year|order|sequence|${MONTHS})\\b`
   + `|\\bhow (long|many (days|weeks|months|years))\\b|\\bwhat time\\b|\\b\\d{4}-\\d{2}-\\d{2}\\b`, 'i');
@@ -174,6 +188,18 @@ export async function applyFactsArm(engine: BrainEngine, query: string, results:
   }
 }
 
+interface ReservePolicy {
+  share: number;
+  maxRows: number;
+  /** Share of the caller's row count the facts may take (they replace the lowest page rows); null: they add rows. */
+  rowShare: number | null;
+  /** Where the facts go: after the pages (temporal reserve) or ahead of them (facts block). */
+  position: 'after' | 'before';
+}
+
+const TEMPORAL_RESERVE: ReservePolicy = { share: TEMPORAL_RESERVE_SHARE, maxRows: MAX_RESERVE_ROWS, rowShare: TEMPORAL_RESERVE_ROW_SHARE, position: 'after' };
+const FACTS_BLOCK: ReservePolicy = { share: QUERY_FACTS_BLOCK_SHARE, maxRows: MAX_FACTS_BLOCK_ROWS, rowShare: null, position: 'before' };
+
 /**
  * Temporal fact reserve: for a query with a temporal cue and a token budget,
  * the facts that best match the question (the shared scorer in
@@ -184,19 +210,34 @@ export async function applyFactsArm(engine: BrainEngine, query: string, results:
  * else the lowest page row) and pages fill the rest of the budget. No match or
  * any error: the results unchanged.
  */
-export async function applyTemporalFactReserve(engine: BrainEngine, query: string, results: SearchResult[], opts: FactsArmOpts & { budget: number }): Promise<SearchResult[]> {
+export function applyTemporalFactReserve(engine: BrainEngine, query: string, results: SearchResult[], opts: FactsArmOpts & { budget: number }): Promise<SearchResult[]> {
+  return applyFactReserve(engine, query, results, opts, TEMPORAL_RESERVE);
+}
+
+/**
+ * Facts block (GBRA-205): the same question-ranked, dated facts as the
+ * temporal reserve, for every budgeted query, up to QUERY_FACTS_BLOCK_SHARE
+ * of the budget and MAX_FACTS_BLOCK_ROWS rows, oldest first ahead of the
+ * pages. The facts add rows (every page row stays) and pages fill the rest of
+ * the budget. No match or any error: the results unchanged.
+ */
+export function applyFactsBlock(engine: BrainEngine, query: string, results: SearchResult[], opts: FactsArmOpts & { budget: number }): Promise<SearchResult[]> {
+  return applyFactReserve(engine, query, results, opts, FACTS_BLOCK);
+}
+
+async function applyFactReserve(engine: BrainEngine, query: string, results: SearchResult[], opts: FactsArmOpts & { budget: number }, policy: ReservePolicy): Promise<SearchResult[]> {
   try {
     const { candidates } = await collectFactCandidates(engine, query, await poolScope(engine, opts), opts.queryEmbedding,
-      { depth: { keyword: 50, cosine: 50, entity: MAX_RESERVE_ROWS }, cosineForAll: true });
+      { depth: { keyword: 50, cosine: 50, entity: policy.maxRows }, cosineForAll: true });
     const scored = scoreFactCandidates(query, candidates).filter(s => admitted(s, 'reserve')).map(s => ({ c: s.candidate }));
     if (!scored.length) return results;
     const rowCap = Math.max(results.length, (await opts.rowCap?.().catch(() => 0)) ?? 0);
+    const maxRows = policy.rowShare === null ? policy.maxRows : Math.min(policy.maxRows, Math.max(1, Math.floor(rowCap * policy.rowShare)));
     const pageSlugs = await readableEntityPages(engine, scored.map(x => x.c), opts.readScope).catch(() => new Set<string>());
-    const pagesFloor = results.reduce((m, r) => (Number.isFinite(r.score) && r.score < m ? r.score : m), results[0]?.score ?? 1);
-    let left = Math.floor(opts.budget * TEMPORAL_RESERVE_SHARE);
+    let left = Math.floor(opts.budget * policy.share);
     const chosen: Array<{ c: FactCandidate; row: SearchResult }> = [];
     for (const { c } of scored) {
-      if (chosen.length >= Math.min(MAX_RESERVE_ROWS, Math.max(1, Math.floor(rowCap * TEMPORAL_RESERVE_ROW_SHARE)))) break;
+      if (chosen.length >= maxRows) break;
       const row = factRow(c, 0, c.entity_slug && pageSlugs.has(`${c.source_id}\u0000${c.entity_slug}`) ? c.entity_slug : undefined);
       row.chunk_text = `${factDateHeader(c)}\n${c.fact}`;
       const cost = resultTokens(row);
@@ -206,12 +247,71 @@ export async function applyTemporalFactReserve(engine: BrainEngine, query: strin
     }
     if (!chosen.length) return results;
     chosen.sort((a, b) => new Date(a.c.valid_from).getTime() - new Date(b.c.valid_from).getTime() || Number(a.c.id) - Number(b.c.id));
-    const rows = chosen.map(({ row }, i) => ({ ...row, score: pagesFloor - (i + 1) * 1e-6 }));
-    let pages = results.slice(0, Math.max(0, Math.min(results.length, rowCap - rows.length))).map(r => ({ ...r }));
+    const pagesFloor = results.reduce((m, r) => (Number.isFinite(r.score) && r.score < m ? r.score : m), results[0]?.score ?? 1);
+    const pagesTop = results.reduce((m, r) => (Number.isFinite(r.score) && r.score > m ? r.score : m), results[0]?.score ?? 1);
+    const rows = policy.position === 'after'
+      ? chosen.map(({ row }, i) => ({ ...row, score: pagesFloor - (i + 1) * 1e-6 }))
+      : chosen.map(({ row }, i) => ({ ...row, score: pagesTop + (chosen.length - i) * 1e-6 }));
+    let pages = (policy.rowShare === null ? results : results.slice(0, Math.max(0, Math.min(results.length, rowCap - rows.length)))).map(r => ({ ...r }));
     if (opts.tokenBudget) pages = enforceTokenBudget(pages, Math.max(1, opts.tokenBudget - rows.reduce((n, r) => n + resultTokens(r), 0))).results;
-    const merged = [...pages, ...rows];
+    const merged = policy.position === 'after' ? [...pages, ...rows] : [...rows, ...pages];
     await stampSupersededClaims(engine, merged, chosen.map(x => x.c)).catch(() => undefined);
     return merged;
+  } catch {
+    return results;
+  }
+}
+
+/**
+ * Fact source pages (GBRA-205): the conversations the question's best-matching
+ * facts were extracted from (`facts.source_markdown_slug`, never the fact's
+ * own entity page), up to MAX_FACT_SOURCE_PAGES not already in the results,
+ * go in after the top FACT_SOURCE_PAGE_RANK rows, so evidence delivery can
+ * hand over the whole session. Each page is read through `getChunkWindows`
+ * under the caller's read scope, so an unreadable page is absent. The row
+ * count never grows (the lowest rows give way). No match or any error: the
+ * results unchanged.
+ */
+export async function applyFactSourcePages(engine: BrainEngine, query: string, results: SearchResult[], opts: FactsArmOpts): Promise<SearchResult[]> {
+  try {
+    const { candidates } = await collectFactCandidates(engine, query, await poolScope(engine, opts), opts.queryEmbedding,
+      { depth: { keyword: 50, cosine: 50, entity: MAX_RESERVE_ROWS }, cosineForAll: true });
+    const ranked = scoreFactCandidates(query, candidates).filter(s => admitted(s, 'reserve')).map(s => Number(s.candidate.id));
+    if (!ranked.length) return results;
+    const sources = await engine.executeRaw<{ id: number; page_id: number; slug: string; title: string | null; type: string | null }>(
+      `SELECT f.id, p.id AS page_id, p.slug, p.title, p.type FROM facts f
+       JOIN pages p ON p.source_id = f.source_id AND p.slug = f.source_markdown_slug AND p.deleted_at IS NULL
+       WHERE f.id = ANY($1::bigint[]) AND f.source_markdown_slug IS DISTINCT FROM f.entity_slug`, [ranked]);
+    const rank = new Map(ranked.map((id, i) => [id, i]));
+    const present = new Set(results.map(r => r.page_id));
+    const wanted: typeof sources = [];
+    for (const s of [...sources].sort((a, b) => rank.get(Number(a.id))! - rank.get(Number(b.id))!)) {
+      if (wanted.length >= MAX_FACT_SOURCE_PAGES) break;
+      if (present.has(Number(s.page_id)) || !conversationSignal({ type: s.type, slug: s.slug })) continue;
+      present.add(Number(s.page_id));
+      wanted.push(s);
+    }
+    if (!wanted.length) return results;
+    const windows = await engine.getChunkWindows(wanted.map((w, i) => ({ page_id: Number(w.page_id), from_index: 0, to_index: 0, priority: i })),
+      { sourceId: opts.readScope?.sourceId, sourceIds: opts.readScope?.sourceIds, excludePrivate: opts.readScope?.excludePrivate, requireSafeChunks: opts.readScope?.requireSafeChunks,
+        minTrust: opts.readScope?.minTrust, suppressFlagged: opts.readScope?.suppressFlagged, chunkSources: ['compiled_truth'], maxRows: wanted.length });
+    const byId = new Map(windows.map(w => [w.page_id, w]));
+    const at = Math.min(FACT_SOURCE_PAGE_RANK, results.length);
+    const above = results[at - 1]?.score ?? 1;
+    const added: SearchResult[] = [];
+    for (const w of wanted) {
+      const window = byId.get(Number(w.page_id));
+      const chunk = window?.chunks[0];
+      if (!window || !chunk) continue;
+      added.push({
+        page_id: Number(w.page_id), slug: window.slug, title: w.title ?? window.slug, type: window.type as SearchResult['type'], source_id: window.source_id,
+        chunk_text: chunk.chunk_text, chunk_index: chunk.chunk_index, chunk_id: chunk.id, chunk_source: chunk.chunk_source as SearchResult['chunk_source'],
+        score: above - (added.length + 1) * 1e-9, stale: false,
+      } as SearchResult);
+    }
+    if (!added.length) return results;
+    const rowCap = Math.max(results.length, (await opts.rowCap?.().catch(() => 0)) ?? 0);
+    return [...results.slice(0, at), ...added, ...results.slice(at)].slice(0, rowCap);
   } catch {
     return results;
   }
@@ -220,8 +320,26 @@ export async function applyTemporalFactReserve(engine: BrainEngine, query: strin
 /** `search.temporal_fact_reserve` is on ('true' | 'on' | '1' | 'yes'); off by default and on any read error. */
 export async function temporalFactReserveEnabled(engine: { getConfig(key: string): Promise<string | null> }): Promise<boolean> {
   try {
-    const raw = (await engine.getConfig(TEMPORAL_FACT_RESERVE_KEY))?.trim().toLowerCase();
-    return raw === 'true' || raw === 'on' || raw === '1' || raw === 'yes';
+    return configFlagOn(await engine.getConfig(TEMPORAL_FACT_RESERVE_KEY));
+  } catch {
+    return false;
+  }
+}
+
+/** `search.query_facts_block` is on by default; 'false' | 'off' | '0' | 'no' turns it off, and so does any read error. */
+export async function queryFactsBlockEnabled(engine: { getConfig(key: string): Promise<string | null> }): Promise<boolean> {
+  try {
+    const raw = (await engine.getConfig(QUERY_FACTS_BLOCK_KEY))?.trim().toLowerCase();
+    return !(raw === 'false' || raw === 'off' || raw === '0' || raw === 'no');
+  } catch {
+    return false;
+  }
+}
+
+/** `search.fact_source_pages` is on ('true' | 'on' | '1' | 'yes'); off by default and on any read error. */
+export async function factSourcePagesEnabled(engine: { getConfig(key: string): Promise<string | null> }): Promise<boolean> {
+  try {
+    return configFlagOn(await engine.getConfig(FACT_SOURCE_PAGES_KEY));
   } catch {
     return false;
   }

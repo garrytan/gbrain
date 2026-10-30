@@ -8,7 +8,7 @@ import { loadGbrainEnvFile } from './gbrain-env-file.ts';
 import { dotenvValuesForKey } from './env-trust.ts';
 import { REMOTE_PRIVATE_PAGES_KEY } from './search/private-visibility.ts';
 import { RUNTIME_READER_CONFIG_KEYS } from './config-runtime-keys.ts';
-import { mergeServeCliSocket } from './published-config.ts';
+import { mergeServeCliSocket, mergeServeVectorPrewarm } from './published-config.ts';
 export { MERGED_CONFIG_BY_ENGINE } from './published-config.ts';
 
 /**
@@ -284,6 +284,7 @@ export interface GBrainConfig {
    */
   self_upgrade?: {
     mode?: 'auto' | 'notify' | 'off';
+    channel?: 'latest' | 'stable';
     /** Set true once the upgrade-time consent prompt has been shown. */
     mode_prompted?: boolean;
     /** Quiet-hours window for the autopilot silent channel. */
@@ -312,6 +313,8 @@ export interface GBrainConfig {
   embedding_multimodal_model?: string;
   /** DB-plane `serve.cli_socket`: the serve opens the warm CLI socket without `--cli-socket` (see published-config.ts). */
   serve_cli_socket?: boolean;
+  /** DB-plane `serve.vector_prewarm`: the serve prewarms the HNSW indexes into shared_buffers once at start (core/vector-prewarm.ts), default off. */
+  serve_vector_prewarm?: boolean;
 
   /**
    * v0.42 (#1981) — Retrieval Reflex. The context engine's deterministic
@@ -1226,7 +1229,7 @@ export async function loadConfigWithEngine(
       : engine,
   );
 
-  return mergeServeCliSocket(merged, snapshot);
+  return mergeServeVectorPrewarm(mergeServeCliSocket(merged, snapshot), snapshot);
 }
 
 /**
@@ -1363,6 +1366,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.image_query.daily_budget_usd_per_client',
   'search.image_query.remote_max_bytes',
   'search.mcp_keyword_only',
+  'search.remote_page_cap', // GBRA-156: distinct-page cap of a remote search/query without limit (search/remote-page-cap.ts)
   REMOTE_PRIVATE_PAGES_KEY,
   'search.track_retrieval',
   // Retrieval feedback (feedback/settings.ts).
@@ -1432,9 +1436,13 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.auto_packing',
   'search.long_page_unit', 'search.long_page_min_chars', // F2: delivery unit for long (rendered body >= min_chars, default 20000) non-conversation hits under an implied auto: off (default) | window | section | page (search/evidence-delivery.ts)
   'search.evidence_date_header', // C1: one-line date header per delivered block (default off; search/evidence-date.ts)
+  'search.evidence_titles', 'search.query_budget_unit', // GBRA-205, default off: titles on page date headers and think <page> tags (search/evidence-date.ts); query token_budget as the delivery hard cap, chunk | auto (search/evidence-packing.ts)
+  'search.evidence_tail_trim', // GBRA-156: protected top-3 tail trim of auto conversation blocks (default off; search/evidence-tail-trim.ts)
   'search.entity_anchoring', // entity-anchored retrieval for entity-scoped current-state query/search (default off; search/entity-anchor.ts)
   'search.query_facts_arm', // query adds matching active facts as rows in spare capacity (default on; search/facts-arm.ts)
+  'search.saved_facts_supersede', // search saved_facts: a newer fact with a correction cue goes ahead of the fact it corrects, labelled corrected_by (default on; search/saved-facts-match.ts)
   'search.temporal_fact_reserve', // temporal-cue queries reserve up to 15% of the token budget for question-ranked dated facts (default off; search/facts-arm.ts)
+  'search.query_facts_block', 'search.fact_source_pages', // GBRA-205: a dated facts block (up to 22% of a query budget) ahead of the pages, default on; matched facts' source conversations join the hits, default off (search/facts-arm.ts)
   'search.page_rank_cut', // W5: whole_pages (default) | off — page unit + caller token_budget stops adding pages once their whole pages fill factor x the budget (search/page-rank-cut.ts)
   'search.page_rank_cut_factor', // W5: whole_pages target = factor x the budget (default 1.5)
   'think.return_unit',
@@ -1516,6 +1524,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // didn't specify one: 'private' (default) | 'world'. Resolved by
   // src/core/facts/visibility.ts; explicit caller values always win.
   'facts.default_visibility',
+  'storage.git_lfs', // G7a: a git-canonical door commit under a Git LFS rule commits the LFS pointer; default off refuses it (persistence/git-declared.ts)
   'visibility.honor_aliases', // remote page reads honor `access`/`confidentiality` aliases on pages without `visibility`; default on, false opts out (search/private-visibility.ts)
   'facts.entity_inference', // #5836: write-time subject inference kill switch (subject-infer.ts)
   'facts.candidate_fusion', // C2: 'rrf_free' (default, cosine arm) | 'interleave' (cosine + keyword; facts/single-prepare.ts)
@@ -1659,6 +1668,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'skillpack.nag_disabled',
   // Self-upgrade (v0.42; file plane, read on the hot path)
   'self_upgrade.mode',
+  'self_upgrade.channel',
   'self_upgrade.mode_prompted',
   'self_upgrade.quiet_hours',
   'self_upgrade.failed_versions',
@@ -1736,11 +1746,12 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'orphans.exclude_slugs',
   'sync.cost_gate_min_usd',
   'sync.admission', // #6712 PR 4b: normal | imports_only | classify_only, what a managed pass admits (persistence/sync-admission.ts)
-  'sync.max_deletes', 'sync.max_delete_ratio', // #7130: absolute caps on one managed pass's deletes (sync-reconcile.ts); per source: <key>.source.<id>
+  'sync.max_deletes', 'sync.max_delete_ratio', 'sync.apply_held_deletions', // #7130 delete caps (sync-reconcile.ts), GBRA-133 held-deletion switch (persistence/sync-held-deletions.ts); per source: <key>.source.<id>
   'purge.retention_hours', // #7130: hours a soft-deleted page waits before the autopilot purge phase may purge it (default 72)
   'sync.federated_v2',
   'sync.include_working_tree',
   'sync.metafile_pages', // GBRA-150: typed (default) | off, whether a nested folder-scaffolding file with type:/title: frontmatter is a page (core/sync.ts)
+  'sync.level_reuse', // GBRA-133 wave 4: true (default) | false, whether a resident pass patches the tree listing its last pass read (persistence/sync-tree-reuse.ts)
   // #5984: managed Postgres sync publishes pages in bulk groups (on by default; each page keeps its own request).
   'sync.bulk',
   'sync.bulk_size',
@@ -1767,6 +1778,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'fences.normalize', // #6188: inline Tier 1 fence normalization (fence-repair/config.ts); default on
   'fences.repair.enabled', 'fences.repair.llm', // #6188: the fence_repair cycle phase and its Tier 3 model step (fence-repair/config.ts); default on
   'fences.repair.max_usd_per_page', 'fences.repair.max_usd_per_day', // #6188: Tier 3 fence repair caps; 0 = no model spend
+  // GBRA-161: the generation primitive's restore window, shrink floor, item cap and retirement valve (generations/config.ts); PR 4 (#7065): synthesis retire_previous, default on
+  'generations.restore_days', 'generations.shrink_floor', 'generations.max_items', 'generations.valve.max_per_run', 'generations.valve.max_ratio', 'generations.synthesis.retire_previous',
   // #2179: clamp window for DCR-requested per-client token TTLs. Read by
   // `gbrain serve --http` at startup; unset min defaults to 300s, unset max
   // defaults fail-closed to max(--token-ttl, min).
@@ -1841,7 +1854,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'minions.',
   'pace.',              // pace.mode + PACE_MODE_CONFIG_KEYS (src/core/pace-mode.ts)
   'decide.',            // System One decide.* (validated by src/core/ai/decide/config.ts DECIDE_CONFIG_KEYS)
-  'sync.max_deletes.source.', 'sync.max_delete_ratio.source.', // #7130: per-source delete caps (sync-reconcile.ts readSyncDeleteCaps)
+  'sync.max_deletes.source.', 'sync.max_delete_ratio.source.', 'sync.apply_held_deletions.source.', // #7130 per-source delete caps, GBRA-133 per-source held-deletion switch
   'connectors.',        // chat-connectors: source_id, sync_floor_min, embed_kickoff_min_pages, doctor_stale_hours, <provider>.{auto_sync,last_sync_at,auth_error_at,watermark_iso} (no secrets — creds are file-plane)
 ];
 

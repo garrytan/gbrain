@@ -50,7 +50,7 @@ test('one refresh whose owner-start convergence fails unexpectedly is left for t
       await recoverSourceTopologies(f.engine);
     } finally { tx.mockRestore(); err.mockRestore(); }
     expect(failed).toBe(true);
-    expect(logged.some(line => line.includes('did not converge at owner start'))).toBe(true);
+    expect(logged.some(line => line.includes('did not converge in the owner\'s topology scan'))).toBe(true);
     expect(((await f.refreshRows()) as Array<{ state: string }>).map(row => row.state)).toEqual(interrupted.map(row => row.state));
     await recoverSourceTopologies(f.engine);
     expect(((await f.refreshRows()) as Array<{ state: string }>).map(row => row.state)).toEqual(['syncing']);

@@ -47,7 +47,7 @@
 
 import type { BrainEngine } from './engine.ts';
 import { isMissingSchemaObject } from './utils.ts';
-import { registerBackgroundWorkDrainer } from './background-work.ts';
+import { deferUntilResponse, registerBackgroundWorkDrainer } from './background-work.ts';
 
 let _trackRetrievalCache: { ts: number; enabled: boolean } | null = null;
 const TRACK_RETRIEVAL_CACHE_TTL_MS = 30_000;
@@ -197,6 +197,10 @@ export const BUMP_LAST_RETRIEVED_SQL = `INSERT INTO page_retrievals (page_id, la
  */
 export function bumpLastRetrievedAt(engine: BrainEngine, pageIds: number[]): void {
   if (pageIds.length === 0) return;
+  deferUntilResponse(() => startBump(engine, pageIds));
+}
+
+function startBump(engine: BrainEngine, pageIds: number[]): void {
   // Fire-and-forget on purpose for callers (MCP, internal). The CLI
   // path awaits the drain helper below before disconnecting, which
   // is how #1247/#1269/#1290 are fixed without exposing the IIFE

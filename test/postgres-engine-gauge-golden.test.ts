@@ -12,7 +12,8 @@
  *     domain calls that must not count at all;
  *   - `acquiresByCase`: per EO8 SQL-text case (12 W1 domains), how many times
  *     each gauge kind was acquired, plus the invariant that every acquire was
- *     released when the method settled.
+ *     released when the method settled (a read transaction's tx count when
+ *     its COMMIT, which the method does not wait for, settles: GBRA-156).
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -97,6 +98,8 @@ async function captureAcquiresByCase(): Promise<Record<string, Record<string, nu
       const gauge = new RecordingGauge();
       engine.checkoutGauge = gauge;
       await c.run(engine);
+      // GBRA-156: a top-level read transaction returns before its COMMIT; its tx count is released when COMMIT settles.
+      await new Promise((r) => setTimeout(r, 0));
       const leaked = Object.entries(gauge.snapshot()).filter(([, n]) => n !== 0);
       if (leaked.length) throw new Error(`${c.method}#${c.variant} leaked gauge counts: ${JSON.stringify(leaked)}`);
       out[`${c.method}#${c.variant}`] = gauge.acquired;

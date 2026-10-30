@@ -36,12 +36,21 @@ import { runTranscriptsIngest } from '../transcripts/ingest.ts';
 import type { TranscriptsIngestResult } from '../transcripts/ingest.ts';
 import { submitEmbedBackfill } from '../embed-backfill-submit.ts';
 import { runEmbedCore } from '../../commands/embed.ts';
-import { ConnectorAuthError, ConnectorClient, ConnectorForbiddenError } from './client.ts';
+import {
+  ConnectorAuthError,
+  ConnectorClient,
+  ConnectorCredentialFormatError,
+  ConnectorForbiddenError,
+  ConnectorHttpError,
+  ConnectorNetworkError,
+  ConnectorRateLimitedError,
+  ConnectorRunLimitError,
+} from './client.ts';
 import type { ConnectorFetch } from './client.ts';
 import { getConnectorProvider } from './registry.ts';
 import { resolveCredential } from './credentials.ts';
 import { CONNECTOR_SPOOL_BATCH, pruneSpool, removeSpool, writeSpool } from './spool.ts';
-import type { ChatHistoryProvider, ConnectorProviderName, ConversationStub } from './types.ts';
+import type { ChatHistoryProvider, ConnectorProviderName, ConversationStub, ProbeResult } from './types.ts';
 import { QUARANTINE_ATTEMPTS, fullSyncArgv, planConnectorFetch, readFailedLedger, recordFailedAttempt } from './failed-ledger.ts';
 import {
   authErrorAtKey,
@@ -61,6 +70,7 @@ export type ConnectorSyncStatus =
   | 'partial'
   | 'auth_required'
   | 'forbidden'
+  | 'rate_limited'
   | 'dry_run'
   | 'not_supported';
 
@@ -104,7 +114,41 @@ export interface ConnectorSyncResult {
   gone: string[];
   spoolPaths: string[];
   embedKickoff: EmbedKickoffOutcome;
+  /**
+   * Why the run stopped early: CONSECUTIVE_FETCH_FAILURE_LIMIT fetches failed in a row (#7482), or it reached its
+   * request ceiling or deadline (#7515: MAX_CONNECTOR_REQUESTS_PER_RUN, --max-requests, --deadline).
+   */
+  stopReason?: 'consecutive_fetch_failures' | 'max_requests' | 'deadline';
   hint?: string;
+}
+
+/**
+ * #7482: this many conversation fetches failing in a row on a provider-wide error (a 5xx or no response, each after
+ * its own bounded retries) stop the run. An item error such as a 404 says the provider is answering, so it resets the run.
+ */
+export const CONSECUTIVE_FETCH_FAILURE_LIMIT = 5;
+
+type TerminalStatus = 'auth_required' | 'forbidden' | 'rate_limited';
+
+/** Probe failures that end the run before listing; drift and network fall through to `partial`. */
+const PROBE_TERMINAL: Partial<Record<Exclude<ProbeResult, { ok: true }>['kind'], TerminalStatus>> = {
+  unauthorized: 'auth_required',
+  invalid_credential: 'auth_required',
+  forbidden_fingerprint: 'forbidden',
+  rate_limited: 'rate_limited',
+};
+
+/** What the user does about a run that ended on a terminal status. */
+function terminalHint(term: TerminalStatus, provider: ChatHistoryProvider): string {
+  if (term === 'rate_limited') {
+    return 'The provider is rate limiting this account; the sync stopped instead of retrying. Wait before the next ' +
+      'sync (an automatic schedule picks up where this run stopped).';
+  }
+  if (term === 'forbidden') {
+    return 'The provider blocked this request (bot/challenge). Use the cookie-capture lane or ' +
+      'the official export + `gbrain transcripts ingest`.';
+  }
+  return provider.sessionInstructions();
 }
 
 export interface ConnectorSyncDeps {
@@ -141,6 +185,10 @@ export interface ConnectorSyncOpts {
   windowDays?: number;
   /** Embed during ingest (default OFF — the kickoff catches up post-run). */
   embed?: boolean;
+  /** Request ceiling for this run, capped at MAX_CONNECTOR_REQUESTS_PER_RUN (#7515). */
+  maxRequests?: number;
+  /** Epoch ms after which the run starts no request (#7515). */
+  deadlineAt?: number;
   signal?: AbortSignal;
   onProgress?: (p: { phase: 'list' | 'fetch' | 'ingest'; listed: number; fetched: number; imported: number }) => void;
   deps?: ConnectorSyncDeps;
@@ -156,17 +204,17 @@ export function subtractDays(iso: string, days: number, now: () => number): stri
 function buildClient(
   provider: ChatHistoryProvider,
   cred: import('./types.ts').ConnectorCredential,
+  opts: ConnectorSyncOpts,
   deps: ConnectorSyncDeps,
 ): ConnectorClient {
   if (deps.client) return deps.client;
-  const fetchImpl = deps.fetchImpl;
   return new ConnectorClient({
     baseUrl: deps.baseUrlOverride ?? provider.baseUrl,
     headers: () => provider.authHeaders(cred),
-    refresh: provider.refreshAccessToken
-      ? () => provider.refreshAccessToken!(cred, fetchImpl ?? (fetch as unknown as ConnectorFetch))
-      : undefined,
-    fetchImpl,
+    refresh: provider.refreshAccessToken ? (client) => provider.refreshAccessToken!(cred, client) : undefined,
+    maxRequests: opts.maxRequests,
+    deadlineAt: opts.deadlineAt,
+    fetchImpl: deps.fetchImpl,
     sleep: deps.sleep,
     now: deps.now,
     log: deps.log,
@@ -214,24 +262,14 @@ export async function runConnectorSync(
     return { ...base, status: 'auth_required', hint: provider.sessionInstructions() };
   }
 
-  const client = buildClient(provider, resolved.cred, deps);
+  const client = buildClient(provider, resolved.cred, opts, deps);
 
   // Probe first: a dead credential must not burn a full list+fetch.
   const probe = await provider.probe(client, opts.signal);
   if (!probe.ok) {
-    if (probe.kind === 'unauthorized') {
-      await stampAuthError(engine, opts.provider, now);
-      return { ...base, status: 'auth_required', hint: provider.sessionInstructions() };
-    }
-    if (probe.kind === 'forbidden_fingerprint') {
-      return {
-        ...base,
-        status: 'forbidden',
-        hint:
-          'The provider blocked this request (bot/challenge). Use the cookie-capture lane or ' +
-          'the official export + `gbrain transcripts ingest`.',
-      };
-    }
+    const term = PROBE_TERMINAL[probe.kind];
+    if (term === 'auth_required') await stampAuthError(engine, opts.provider, now);
+    if (term) return { ...base, status: term, hint: probe.kind === 'invalid_credential' ? probe.detail : terminalHint(term, provider) };
     // drift / network → surface as forbidden-ish partial with the detail.
     return { ...base, status: 'partial', hint: `probe failed: ${probe.detail}` };
   }
@@ -260,10 +298,11 @@ export async function runConnectorSync(
     }
   } catch (e) {
     listErrored = true;
+    if (e instanceof ConnectorRunLimitError) base.stopReason = e.reason;
     const term = classifyThrow(e);
     if (term) {
       if (term === 'auth_required') await stampAuthError(engine, opts.provider, now);
-      return { ...base, status: term, hint: provider.sessionInstructions() };
+      return { ...base, status: term, hint: terminalHint(term, provider) };
     }
     log(`[connector] list error: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -316,10 +355,11 @@ export async function runConnectorSync(
   let allBatchesClean = true;
   let anyDrift = false;
   let aborted = false;
+  let consecutiveFetchFailures = 0;
 
   const spoolFormat = provider.spoolFormat; // capture: nested closures lose narrowing
   const batches = chunk(toFetch, CONNECTOR_SPOOL_BATCH);
-  for (let bi = 0; bi < batches.length && !aborted; bi++) {
+  for (let bi = 0; bi < batches.length && !aborted && !base.stopReason; bi++) {
     const batch = batches[bi];
     const convs: Array<Record<string, unknown>> = [];
     const convStubs: ConversationStub[] = [];
@@ -329,26 +369,29 @@ export async function runConnectorSync(
         convs.push(await provider.fetchConversation(client, stub.id, { signal: opts.signal, orgId: stub.orgId }));
         convStubs.push(stub);
         fetched++;
+        consecutiveFetchFailures = 0;
         opts.onProgress?.({ phase: 'fetch', listed: stubs.length, fetched, imported: importedTotal });
       } catch (e) {
-        // A cancelled run says nothing about the conversation: no strike.
+        // A cancelled run, or one at its request ceiling or deadline, says nothing about the conversation: no strike.
         if (opts.signal?.aborted) { aborted = true; break; }
+        if (e instanceof ConnectorRunLimitError) { base.stopReason = e.reason; break; }
         const term = classifyThrow(e);
-        if (term === 'auth_required') {
-          await stampAuthError(engine, opts.provider, now);
+        if (term) {
+          if (term === 'auth_required') await stampAuthError(engine, opts.provider, now);
           // Ingest whatever we already collected this batch before returning.
           if (convs.length) await ingestBatch();
           await saveLedgers();
-          return { ...base, status: 'auth_required', listed: stubs.length, fetched, fetchErrors, spoolPaths, hint: provider.sessionInstructions() };
-        }
-        if (term === 'forbidden') {
-          if (convs.length) await ingestBatch();
-          await saveLedgers();
-          return { ...base, status: 'forbidden', listed: stubs.length, fetched, fetchErrors, spoolPaths };
+          return { ...base, status: term, listed: stubs.length, fetched, fetchErrors, spoolPaths, hint: terminalHint(term, provider) };
         }
         fetchErrors++;
         const attempts = recordFailure(stub, null);
         log(`[connector] fetch error for ${stub.id} (attempt ${attempts}): ${e instanceof Error ? e.message : String(e)}`);
+        const providerWide = e instanceof ConnectorNetworkError || (e instanceof ConnectorHttpError && e.status >= 500);
+        consecutiveFetchFailures = providerWide ? consecutiveFetchFailures + 1 : 0;
+        if (consecutiveFetchFailures >= CONSECUTIVE_FETCH_FAILURE_LIMIT) {
+          base.stopReason = 'consecutive_fetch_failures';
+          break;
+        }
       }
     }
     if (convs.length) await ingestBatch();
@@ -428,7 +471,7 @@ export async function runConnectorSync(
 
   base.quarantined = quarantined;
   // Quarantined conversations no longer hold the watermark back.
-  const clean = !listErrored && blockingFailures === 0 && !capped && !opts.signal?.aborted;
+  const clean = !listErrored && blockingFailures === 0 && !capped && !opts.signal?.aborted && !base.stopReason;
 
   // Advance the watermark ONLY on a clean run.
   if (clean && maxUpdatedAt && maxUpdatedAt !== watermark) {
@@ -468,7 +511,7 @@ export async function runConnectorSync(
   base.unresolved = Object.keys(failed).length;
   base.hint = unresolvedHint(base, opts.provider, sourceId) ?? base.hint;
   base.status =
-    fetchErrors > 0 || capped || !allBatchesClean || listErrored || aborted || base.unresolved > 0 || base.pending.length > 0
+    fetchErrors > 0 || capped || !allBatchesClean || listErrored || aborted || base.stopReason || base.unresolved > 0 || base.pending.length > 0
       ? 'partial'
       : importedTotal === 0
         ? 'nothing_new'
@@ -479,6 +522,14 @@ export async function runConnectorSync(
 /** What the run left unarchived (failed or still publishing) and the command that shows it. */
 function unresolvedHint(base: ConnectorSyncResult, provider: ConnectorProviderName, sourceId: string): string | undefined {
   const parts: string[] = [];
+  if (base.stopReason === 'consecutive_fetch_failures') {
+    parts.push(`Stopped after ${CONSECUTIVE_FETCH_FAILURE_LIMIT} conversation fetches failed in a row; the provider may be ` +
+      'throttling or down. The next sync resumes from the same place.');
+  } else if (base.stopReason) {
+    parts.push(`Stopped at the run's ${base.stopReason === 'deadline' ? 'deadline' : 'request limit'} before every ` +
+      `conversation was fetched. Run \`gbrain connectors sync ${provider}\` again (without --full) to continue: conversations ` +
+      'already imported are skipped.');
+  }
   if (base.unresolved > 0) {
     parts.push(
       `${base.unresolved} conversation(s) not archived yet; sync retries them automatically ` +
@@ -559,9 +610,10 @@ async function stampAuthError(engine: BrainEngine, provider: ConnectorProviderNa
 }
 
 /** Map a thrown client error to a terminal sync status, or null if non-terminal. */
-function classifyThrow(e: unknown): 'auth_required' | 'forbidden' | null {
-  if (e instanceof ConnectorAuthError) return 'auth_required';
+function classifyThrow(e: unknown): TerminalStatus | null {
+  if (e instanceof ConnectorAuthError || e instanceof ConnectorCredentialFormatError) return 'auth_required';
   if (e instanceof ConnectorForbiddenError) return 'forbidden';
+  if (e instanceof ConnectorRateLimitedError) return 'rate_limited';
   return null;
 }
 

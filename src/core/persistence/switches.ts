@@ -81,6 +81,16 @@ export function readWriteSwitchSnapshot(viewed: SqlEngine, opts: { now?: () => n
   read.catch(() => { if (snapshots.get(engine)?.read === read) snapshots.delete(engine); });
   return read;
 }
+/**
+ * GBRA-156: a whole-table config read this process just took (the CLI's connect-time merge) is the switch snapshot as of
+ * that read, kept for SWITCH_TTL_MS like any other; a snapshot already held is left alone.
+ */
+export function seedWriteSwitchSnapshot(viewed: object, rows: Record<string, string>, now: number = Date.now()): void {
+  const engine = viewedEngine(viewed);
+  const held = snapshots.get(engine);
+  if (held && held.generation === generation && now - held.at < SWITCH_TTL_MS) return;
+  snapshots.set(engine, { at: now, generation, read: Promise.resolve(resolve(new Map(Object.entries(rows)))) });
+}
 /** The preparation budgets in effect (defaults when the read fails). */
 export async function readPreparationPolicy(engine: SqlEngine): Promise<PreparationPolicy> {
   return readWriteSwitchSnapshot(engine).then(snapshot => snapshot.preparation, () => ({ ...DEFAULT_PREPARATION_POLICY }));

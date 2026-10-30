@@ -24,11 +24,10 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { join, resolve } from 'path';
-import { homedir } from 'os';
 import type { BrainEngine } from './engine.ts';
 import type { EngineConfig } from './types.ts';
 import { GBrainError } from './types.ts';
-import { loadConfig, type GBrainConfig } from './config.ts';
+import { loadConfig, type GBrainConfig, gbrainPath } from './config.ts';
 
 /** Host brain id. Reserved — users cannot create a mount with this id. */
 export const HOST_BRAIN_ID = 'host';
@@ -46,7 +45,7 @@ const BRAIN_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 function getMountsPath(): string {
   const override = process.env.GBRAIN_MOUNTS_PATH;
   if (override) return override;
-  return join(homedir(), '.gbrain', 'mounts.json');
+  return gbrainPath('mounts.json');
 }
 
 /**

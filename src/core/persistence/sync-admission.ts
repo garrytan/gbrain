@@ -104,24 +104,51 @@ export async function writeSyncAdmission(engine: Pick<BrainEngine, 'transaction'
   });
 }
 
+/** `effective`'s two probes as SQL: `e` names the expressions they read (binds, or columns of an enclosing read). */
+function effectProbes(e: { lock: string; passOp: string; passKey: string; setAt: string; sourceId: string; incarnation: string; kinds: string }) {
+  return {
+    pinned: `EXISTS (SELECT 1 FROM op_checkpoints p JOIN gbrain_cycle_locks l ON l.id=${e.lock} AND l.ttl_expires_at > now()
+          AND l.acquisition_token::text = p.completed_keys->0->>'lease_token'
+        WHERE p.op=${e.passOp} AND p.fingerprint=${e.passKey} AND p.completed_keys->0->'telemetry'->>'outcome'='open'
+          AND (${e.setAt} IS NULL OR (p.completed_keys->0->'telemetry'->>'started_at')::timestamptz < ${e.setAt}))`,
+    destructive: `EXISTS (SELECT 1 FROM persistence_requests r WHERE r.source_id=${e.sourceId} AND r.source_incarnation=${e.incarnation}
+          AND r.state IN ('queued','running','recovering') AND r.intent->>'kind' = ANY(${e.kinds})
+          AND (${e.setAt} IS NULL OR r.created_at < ${e.setAt}))`,
+  };
+}
+
+/**
+ * GBRA-135: `effective`'s probes folded into a read that joins the setting (`syncAdmissionSettingSql`) and the source row
+ * `src`, as columns `admission_pinned` and `admission_destructive`: `sync status` reads them with its source, so a
+ * restricted value costs it no statement of its own. `$k`..`$k+2` bind `syncAdmissionEffectParams`. Both are null while
+ * the stored value reads as `normal` (the guard trims less than `parseSyncAdmission`, so any other value is probed).
+ */
+export function syncAdmissionEffectSql(k: number, src: string): string {
+  const setAt = "(CASE WHEN ao.completed_keys->0->>'value' = ac.value THEN (ao.completed_keys->0->>'set_at')::timestamptz END)";
+  const probes = effectProbes({ lock: `$${k}`, kinds: `$${k + 1}::text[]`, passOp: `$${k + 2}`, passKey: `${src}.id||':'||${src}.incarnation::text`, setAt,
+    sourceId: `${src}.id`, incarnation: `${src}.incarnation` });
+  const restricted = "COALESCE(btrim(ac.value), '') NOT IN ('', 'normal')";
+  return `CASE WHEN ${restricted} THEN ${probes.pinned} END AS admission_pinned, CASE WHEN ${restricted} THEN ${probes.destructive} END AS admission_destructive`;
+}
+export const syncAdmissionEffectParams = (sourceId: string) => [syncLockId(sourceId), [...SYNC_ADMISSION_DESTRUCTIVE_KINDS], MANAGED_SYNC_PASS_OP];
+
+/** A setting row with `effective`'s probes read beside it (`syncAdmissionEffectSql`). */
+export interface SyncAdmissionEffectRow extends SyncAdmissionSettingRow { pinned: boolean | null; destructive: boolean | null }
+
 /**
  * `sync status`'s `admission` of one source incarnation (design §8). `effective` is always true for `normal`; otherwise
  * it is false while the source's pass row is `open` with `started_at` before `set_at` and its `lease_token` holds the
  * live drain lease, or while a destructive request of the incarnation admitted before `set_at` is still queued,
- * running or recovering. `read` is the setting row a caller already read with `syncAdmissionSettingSql`.
+ * running or recovering. `read` is the setting row a caller already read with `syncAdmissionSettingSql`, and its probes
+ * when it read them too (`syncAdmissionEffectSql`).
  */
-export async function syncAdmissionStatus(engine: Exec, sourceId: string, incarnation: string, read?: SyncAdmissionSettingRow): Promise<SyncAdmissionStatus> {
+export async function syncAdmissionStatus(engine: Exec, sourceId: string, incarnation: string, read?: SyncAdmissionSettingRow | SyncAdmissionEffectRow): Promise<SyncAdmissionStatus> {
   const { value, raw_set_at } = read ? settingOf(read) : await readSetting(engine);
   const set_at = iso(raw_set_at);
   if (value === 'normal') return { value, set_at, effective: true };
-  const [row] = await engine.executeRaw<{ pinned: boolean; destructive: boolean }>(`SELECT
-      EXISTS (SELECT 1 FROM op_checkpoints p JOIN gbrain_cycle_locks l ON l.id=$1 AND l.ttl_expires_at > now()
-          AND l.acquisition_token::text = p.completed_keys->0->>'lease_token'
-        WHERE p.op=$2 AND p.fingerprint=$3 AND p.completed_keys->0->'telemetry'->>'outcome'='open'
-          AND ($4::timestamptz IS NULL OR (p.completed_keys->0->'telemetry'->>'started_at')::timestamptz < $4::timestamptz)) AS pinned,
-      EXISTS (SELECT 1 FROM persistence_requests r WHERE r.source_id=$5 AND r.source_incarnation=$6::uuid
-          AND r.state IN ('queued','running','recovering') AND r.intent->>'kind' = ANY($7::text[])
-          AND ($4::timestamptz IS NULL OR r.created_at < $4::timestamptz)) AS destructive`,
-    [syncLockId(sourceId), MANAGED_SYNC_PASS_OP, passFingerprint(sourceId, incarnation), raw_set_at, sourceId, incarnation, [...SYNC_ADMISSION_DESTRUCTIVE_KINDS]]);
+  const probes = effectProbes({ lock: '$1', passOp: '$2', passKey: '$3', setAt: '$4::timestamptz', sourceId: '$5', incarnation: '$6::uuid', kinds: '$7::text[]' });
+  const [row] = read && 'pinned' in read && read.pinned !== null && read.destructive !== null ? [read]
+    : await engine.executeRaw<{ pinned: boolean; destructive: boolean }>(`SELECT ${probes.pinned} AS pinned, ${probes.destructive} AS destructive`,
+      [syncLockId(sourceId), MANAGED_SYNC_PASS_OP, passFingerprint(sourceId, incarnation), raw_set_at, sourceId, incarnation, [...SYNC_ADMISSION_DESTRUCTIVE_KINDS]]);
   return { value, set_at, effective: !row?.pinned && !row?.destructive };
 }

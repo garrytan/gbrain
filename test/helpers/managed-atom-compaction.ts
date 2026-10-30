@@ -17,6 +17,8 @@ import { sha256 } from '../../src/core/persistence/digest.ts';
 import { withEnv } from './with-env.ts';
 import { waitFor } from './wait-for.ts';
 
+const requestsSql = "SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'kind' IS DISTINCT FROM 'managed_generation_activate' ORDER BY sequence";
+
 export const atomCompactionCases = ['all_failed', 'mixed_all', 'completion_only', 'failed_child_only', 'committed_child_only', 'changed_target', 'success', 'malformed'] as const;
 export const atomCompactionActions = ['resume', 'retry'] as const;
 
@@ -58,7 +60,7 @@ export async function exerciseAtomCompaction(engine: BrainEngine, scenario: type
       const first = await runPhaseExtractAtoms(observedEngine, opts);
       expect(first.status).toBe(scenario === 'success' ? 'ok' : 'warn');
       expect(calls).toBe(1);
-      const accepted = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 ORDER BY sequence', [sourceId]);
+      const accepted = await engine.executeRaw<WriteRequest>(requestsSql, [sourceId]);
       expect(accepted).toHaveLength(scenario === 'malformed' ? 1 : 3);
       const completion = await waitForWrite(observedEngine, accepted.at(-1)!, { engine: engine.kind });
       expect(completion.state).toBe(['success', 'malformed'].includes(scenario) ? 'committed' : 'conflict');
@@ -69,7 +71,9 @@ export async function exerciseAtomCompaction(engine: BrainEngine, scenario: type
         "SELECT 1 FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id WHERE r.source_id=$1 AND e.state IN ('queued','running')", [sourceId])).length === 0,
         { label: `${engine.kind}: ${scenario} ${action} atom effects settled` });
       await disposePersistenceConsumer(observedEngine);
-      const originals = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 ORDER BY sequence', [sourceId]);
+      const originals = await engine.executeRaw<WriteRequest>(requestsSql, [sourceId]);
+      expect(await engine.executeRaw("SELECT state FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_generation_activate'", [sourceId]))
+        .toEqual(scenario === 'malformed' ? [] : [{ state: scenario === 'success' ? 'committed' : 'failed' }]);
       if (scenario !== 'malformed') expect(originals.map(row => row.state)).toEqual(scenario === 'success' ? ['committed', 'committed', 'committed'] :
         scenario === 'all_failed' ? ['conflict', 'conflict', 'conflict'] : ['committed', 'conflict', 'conflict']);
       if (scenario === 'changed_target') {
@@ -87,7 +91,7 @@ export async function exerciseAtomCompaction(engine: BrainEngine, scenario: type
       const [counterBefore] = await engine.executeRaw<{ terminal_bytes: string }>("SELECT terminal_bytes::text FROM persistence_counters WHERE key='brain'");
       await engine.executeRaw("UPDATE persistence_requests SET completed_at=now()-interval '31 days' WHERE id=ANY($1::uuid[])", [compactIds]);
       expect(await compactWriteReceipts(engine)).toBe(compactIds.length);
-      const retained = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 ORDER BY sequence', [sourceId]);
+      const retained = await engine.executeRaw<WriteRequest>(requestsSql, [sourceId]);
       for (let i = 0; i < retained.length; i++) {
         expect(retained[i].compacted).toBe(compactIds.includes(retained[i].id));
         expect(retained[i].intent).toEqual(compactIds.includes(retained[i].id) ? null : originals[i].intent);
@@ -133,7 +137,7 @@ export async function exerciseAtomCompaction(engine: BrainEngine, scenario: type
       }
       await disposePersistenceConsumer(engine);
       expect(calls).toBe(action === 'resume' && scenario === 'malformed' ? 2 : 1);
-      expect(await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 ORDER BY sequence', [sourceId])).toEqual(retained);
+      expect(await engine.executeRaw<WriteRequest>(requestsSql, [sourceId])).toEqual(retained);
       expect(await engine.executeRaw('SELECT * FROM pages WHERE source_id=$1 ORDER BY id', [sourceId])).toEqual(pagesBefore);
       expect(await engine.executeRaw("SELECT * FROM op_checkpoints WHERE op='managed-atoms' AND completed_keys->0->>'sourceId'=$1 ORDER BY fingerprint", [sourceId])).toEqual(checkpointsBefore);
       expect(await engine.executeRaw<{ terminal_bytes: string }>("SELECT terminal_bytes::text FROM persistence_counters WHERE key='brain'")).toEqual([counterAfter]);

@@ -151,7 +151,7 @@ function classifier(cols: Columns, assumeClaimed: readonly string[] = [], ceilin
       WHEN ${kind} LIKE 'managed\\_sync\\_%' OR ${kind} IN ('managed_file_import','canonical_reconcile','managed_file_repair') THEN ${rank('operator_curated')}
       WHEN ${kind} LIKE 'managed\\_facts\\_%' OR ${kind} LIKE 'managed\\_atom\\_%' OR ${kind} LIKE 'managed\\_maintenance\\_%' THEN ${rank('agent_written')}
       WHEN ${r}.intent IS NOT NULL AND ${kind} IS NULL AND ${r}.operation IN ('put_page','capture','remember','edit_page','append_page','delete_page','restore_page',
-        'revert_version','add_tag','remove_tag','add_timeline_entry','takes_add','takes_update','takes_supersede','takes_resolve','takes_remove') THEN ${rank('agent_written')}
+        'revert_version','add_tag','remove_tag','add_timeline_entry','add_link','remove_link','takes_add','takes_update','takes_supersede','takes_resolve','takes_remove') THEN ${rank('agent_written')}
       END`;
   };
   const requestJoin = (table: string, column: string, alias: string, row: string) =>

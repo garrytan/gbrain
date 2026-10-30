@@ -62,7 +62,7 @@ export function publicationOf(records: StatementRecord[]): StatementRecord[] {
   for (const record of [...records].sort((a, b) => a.t - b.t)) {
     if (!isStatement(record)) continue;
     const text = flat(record.sql).toLowerCase();
-    if (text === 'begin') { open.set(record.conn, [record]); continue; }
+    if (text === 'begin' || text === 'begin read write') { open.set(record.conn, [record]); continue; }
     const group = open.get(record.conn);
     if (!group) continue;
     group.push(record);
@@ -74,7 +74,7 @@ export function publicationOf(records: StatementRecord[]): StatementRecord[] {
 }
 
 /** The folded stamp's first statement (its lease check) and its last when it publishes (the pass row write). */
-export const FOLD_LEASE_READ = 'SELECT 1 FROM gbrain_cycle_locks WHERE id=$1 AND acquisition_token=$2::uuid AND ttl_expires_at > now() FOR SHARE';
+export const FOLD_LEASE_READ = 'SELECT 1 FROM gbrain_cycle_locks WHERE id=$1 AND acquisition_token=$2::uuid AND ttl_expires_at > now() FOR KEY SHARE';
 export const FOLD_PASS_ROW_WRITE = /^INSERT INTO op_checkpoints\(op,fingerprint,completed_keys,updated_at\) VALUES\(\$1,\$2,jsonb_build_array\(\$3::text::jsonb\),now\(\)\)/;
 
 /**

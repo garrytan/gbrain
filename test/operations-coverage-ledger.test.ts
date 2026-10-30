@@ -107,6 +107,7 @@ const LEDGER: Record<string, string> = {
   put_raw_data: 'test/source-id-tx-regression.test.ts',
   get_raw_data: 'test/get-page-federated-scope.test.ts',
   resolve_slugs: 'test/local-federated-search-scope.test.ts',
+  whois: 'test/whois.test.ts',
   get_chunks: 'test/get-page-federated-scope.test.ts',
   log_ingest: 'test/e2e/v0_29-mcp-dispatch-pglite.test.ts',
   get_ingest_log: 'test/e2e/v0_29-mcp-dispatch-pglite.test.ts',

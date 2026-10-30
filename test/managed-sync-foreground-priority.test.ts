@@ -19,6 +19,7 @@ import { resetWriteSwitches } from '../src/core/persistence/switches.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { setClaimOwnerForTest } from '../src/core/persistence/claim-phase.ts';
+import { laneClaimsInFlight } from '../src/core/persistence/sync-lanes.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-fg-priority-'));
 let engine: BrainEngine | undefined;
@@ -91,7 +92,7 @@ afterAll(async () => {
  * Starts a drain, waits until it has sync groups queued that nobody claimed, then writes `slug` from another
  * process. Returns the queued sync rows admitted before the write, the drain's claims and the final rows.
  */
-async function writeDuringDrain(lanes: number, slug: (queued: Row[]) => string, laneHold = 0, preparingHoldMs = 0, force = false) {
+async function writeDuringDrain(lanes: number, slug: (queued: Row[]) => string, laneHold = 0, preparingHoldMs = 0, force = false, inFlight = false) {
   const e = engine!, source = await fixture(e, 64);
   const recorder = recordClaims(e);
   // Each sync page holds its group open a little before commit, so groups stay queued while the writer starts. With
@@ -101,12 +102,14 @@ async function writeDuringDrain(lanes: number, slug: (queued: Row[]) => string, 
   let laneOpen = 0, armed = false, holdStarts = false;
   const beside: boolean[] = [];
   const written = Promise.withResolvers<void>();
-  // Without `laneHold`, from the moment 4 unstarted rows are seen until `before` is read, the drain's process claims
-  // nothing (`consumer:claiming`): no lane takes another group, while the groups the lanes hold run on and commit, so the
-  // groups queued ahead of the write stay queued however long the write takes to be admitted. (Parking a lane at
-  // `lane:applied` of its next group instead let each lane past that point claim one more group first: with as many
-  // groups queued as lanes, both could start before the write was admitted.)
-  const counted = Promise.withResolvers<void>();
+  // Without `laneHold`, from the moment an unstarted sync group is seen until `before` is read, the drain's process claims
+  // nothing new (`consumer:claiming`): no lane takes another group, while the groups the lanes hold run on and commit, so the
+  // groups queued ahead of the write stay queued however long the write takes to be admitted. A claim already past that
+  // point when the test parks can still take a queued group (at the first commit only one is queued), so the test waits
+  // for those claims to finish, counts again and, if no group is left, lets the claims go and waits for the next.
+  // (Parking a lane at `lane:applied` of its next group instead let each lane past that point claim one more group
+  // first: with as many groups queued as lanes, both could start before the write was admitted.)
+  let gate = Promise.withResolvers<void>(), parkedClaims = 0;
   // `force` (forced probe of that race): the write is admitted only after every group running when the test parked has
   // committed and the lanes have had their chance to claim the queued ones, and the drain admits no new group meanwhile
   // (`sync:after_freeze`), so only the parking keeps groups queued ahead of the write.
@@ -115,8 +118,22 @@ async function writeDuringDrain(lanes: number, slug: (queued: Row[]) => string, 
   // its claims with another process's owner, so either way the write is claimed elsewhere and unpublished meanwhile.
   let heldHere: [number, number] | undefined;
   if (preparingHoldMs) setClaimOwnerForTest({ kind: 'mcp', pid: 1, version: 'test', nonce: 'another-process' });
+  // `inFlight` (forced probe of that claim): once this process has claimed a group, each lane head claim waits inside its
+  // claim transaction, past the parking point, until the test parks, and the test parks only while one waits.
+  let parked = Promise.withResolvers<void>(), pending = 0;
+  const recorded = e.executeRaw;
+  if (inFlight) e.executeRaw = async function (this: BrainEngine, sql: string, params?: unknown[], opts?: unknown) {
+    if (!holdStarts && recorder.claims.size > 0 && sql.includes("r.intent->>'lane'=$3")) {
+      pending++;
+      try { await parked.promise; } finally { pending--; }
+    }
+    return recorded.call(this, sql, params, opts as never) as never;
+  } as BrainEngine['executeRaw'];
   installFaultHook(async (point, detail) => {
-    if (!laneHold && holdStarts && point === 'consumer:claiming') await Promise.race([counted.promise, Bun.sleep(30_000)]);
+    if (!laneHold && holdStarts && point === 'consumer:claiming') {
+      parkedClaims++;
+      try { await Promise.race([gate.promise, Bun.sleep(30_000)]); } finally { parkedClaims--; }
+    }
     if (preparingHoldMs && point === 'consumer:preparing' && detail.operation === 'put_page' && !heldHere) {
       const start = Date.now();
       await Bun.sleep(preparingHoldMs);
@@ -129,7 +146,7 @@ async function writeDuringDrain(lanes: number, slug: (queued: Row[]) => string, 
       laneOpen++;
       try { await Promise.race([written.promise, Bun.sleep(laneHold)]); } finally { laneOpen--; }
     }
-    if (force && holdStarts && point === 'sync:after_freeze') await Promise.race([counted.promise, Bun.sleep(30_000)]);
+    if (force && holdStarts && point === 'sync:after_freeze') await Promise.race([gate.promise, Bun.sleep(30_000)]);
     if (!laneHold && point === 'publication:before_commit' && detail.operation === 'submit_job') await Bun.sleep(150);
   });
   try {
@@ -138,17 +155,32 @@ async function writeDuringDrain(lanes: number, slug: (queued: Row[]) => string, 
     // The writer process starts now and writes (the slug the go file names) once a sync group is queued that nobody has started.
     const go = join(home, `go-${randomUUID()}`);
     const finish = writer(source, [], 0, go, preparingHoldMs);
-    await until(async () => {
-      const all = await rows(e, source);
+    const unstarted = (all: Row[]) => {
       const begun = new Set(all.filter(row => row.state !== 'queued').map(row => row.request_id));
-      queued = all.filter(row => row.state === 'queued' && row.kind?.startsWith('managed_sync_') && !(row.grp && begun.has(row.grp)) && !begun.has(row.request_id));
+      return all.filter(row => row.state === 'queued' && row.kind?.startsWith('managed_sync_') && !(row.grp && begun.has(row.grp)) && !begun.has(row.request_id));
+    };
+    await until(async () => {
+      let all = await rows(e, source);
+      queued = unstarted(all);
       // With lanes the drain admits groups ahead; without them only the publishing group is out, so the write comes while one runs.
-      const ready = all.some(row => row.state === 'committed') && (lanes > 1 ? queued.length >= 4 : all.some(row => row.state === 'running' && row.kind?.startsWith('managed_sync_')));
-      if (ready && lanes > 1) {
-        for (const row of all) if (row.state === 'running' && row.kind?.startsWith('managed_sync_')) runningAtReady.add(row.grp ?? row.request_id);
-        holdStarts = true;
+      const ready = all.some(row => row.state === 'committed') && (!inFlight || pending > 0) && (lanes > 1 ? queued.length > 0 : all.some(row => row.state === 'running' && row.kind?.startsWith('managed_sync_')));
+      if (!ready || lanes === 1) return ready;
+      holdStarts = true;
+      parked.resolve();
+      if (!laneHold) {
+        await until(async () => laneClaimsInFlight() === parkedClaims);
+        all = await rows(e, source);
+        queued = unstarted(all);
+        if (!queued.length) {
+          holdStarts = false;
+          gate.resolve();
+          gate = Promise.withResolvers<void>();
+          parked = Promise.withResolvers<void>();
+          return false;
+        }
       }
-      return ready;
+      for (const row of all) if (row.state === 'running' && row.kind?.startsWith('managed_sync_')) runningAtReady.add(row.grp ?? row.request_id);
+      return true;
     });
     const target = slug(queued.length ? queued : await rows(e, source).then(all => all.filter(row => row.state === 'queued')));
     armed = true;
@@ -172,18 +204,18 @@ async function writeDuringDrain(lanes: number, slug: (queued: Row[]) => string, 
         && !(row.grp && started.has(row.grp)));
       return true;
     });
-    counted.resolve();
+    gate.resolve();
     const [written] = await finish();
     const result = await drain;
     return { source, target, before, written: written!, result, claims: recorder.claims, final: await rows(e, source), beside, held: heldHere ?? written!.held };
-  } finally { counted.resolve(); recorder.restore(); installFaultHook(undefined); setClaimOwnerForTest(undefined); }
+  } finally { gate.resolve(); e.executeRaw = recorded; recorder.restore(); installFaultHook(undefined); setClaimOwnerForTest(undefined); }
 }
 
-for (const [lanes, force] of [[2, false], [1, false], [2, true]] as const) {
-  test(`a write to a page no queued group names commits before another sync group starts (lanes ${lanes})${force ? ', forced probe: the lanes finish their groups before the write is admitted' : ''}`, async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_BULK_SIZE: '4' }, async () => {
+for (const [lanes, force, inFlight] of [[2, false, false], [1, false, false], [2, true, false], [2, true, true]] as const) {
+  test(`a write to a page no queued group names commits before another sync group starts (lanes ${lanes})${force ? ', forced probe: the lanes finish their groups before the write is admitted' : ''}${inFlight ? ', and a claim is past the parking point when the test parks' : ''}`, async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_BULK_SIZE: '4' }, async () => {
     if (!engine) return;
     resetWriteSwitches();
-    const run = await writeDuringDrain(lanes, () => `notes/foreground-${lanes}${force ? '-forced' : ''}`, 0, 0, force);
+    const run = await writeDuringDrain(lanes, () => `notes/foreground-${lanes}${force ? '-forced' : ''}${inFlight ? '-in-flight' : ''}`, 0, 0, force, inFlight);
     expect(run.written.state).toBe('committed');
     expect(run.result.status).toBe('first_sync');
     // With lanes, groups admitted ahead were queued when the write arrived; it still went first.

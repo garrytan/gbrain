@@ -121,7 +121,7 @@ import type { SearchOpts } from '../../src/core/types.ts';
       const hits = await engine.searchVector(query, { limit: 75, embeddingColumn: candidateColumn });
       const annMs = performance.now() - annStart;
       const captured = statements[firstStatement];
-      const exactSql = captured.sql.replace('ORDER BY cc."embedding_candidate_fixture" <=> $1::vector', 'ORDER BY (cc."embedding_candidate_fixture" <=> $1::vector) + 0');
+      const exactSql = captured.sql.replace('ORDER BY cc."embedding_candidate_fixture" <=> $1::text::vector', 'ORDER BY (cc."embedding_candidate_fixture" <=> $1::text::vector) + 0');
       expect(exactSql).not.toBe(captured.sql);
       const params = [...captured.params];
       params[1] = null;

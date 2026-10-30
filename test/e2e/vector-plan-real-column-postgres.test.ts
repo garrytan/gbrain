@@ -330,6 +330,41 @@ function axis(d: number): Float32Array {
     expect(events).toEqual([]);
   }, 60_000);
 
+  test('a full walk window crowded into a few long pages widens the walk instead of running the joined pool statement', async () => {
+    // 20 pages x 40 chunks along the (e_7, e_8) arc, each page's chunks
+    // contiguous: the first 100-row window holds 3 pages, the 400-row one 10.
+    const pages = 20, perPage = 40;
+    await seedEngine.executeRaw(`INSERT INTO pages (slug, source_id, type, title, compiled_truth, knowledge_revision, text_projection_revision, chunker_version)
+      SELECT 'long-page-' || k, 'default', 'note', 'long page ' || k, 'long', '00000000-0000-4000-8000-000000000001'::uuid,
+        '00000000-0000-4000-8000-000000000001'::uuid, 4
+      FROM generate_series(0, ${pages - 1}) k`);
+    await seedEngine.executeRaw(`INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source, model, embedded_text_hash, embedding)
+      SELECT p.id, j, 'long text ' || p.slug || ' ' || j, 'compiled_truth', '${MODEL}', md5('long text ' || p.slug || ' ' || j),
+        (SELECT array_agg(CASE WHEN d = 7 THEN cos(a) WHEN d = 8 THEN sin(a) ELSE 0 END ORDER BY d)::real[]::vector FROM generate_series(1, ${DIM}) d)
+      FROM pages p CROSS JOIN generate_series(0, ${perPage - 1}) j
+      CROSS JOIN LATERAL (SELECT (split_part(p.slug, '-', 3)::int * ${perPage} + j) * 0.0005 AS a) ang
+      WHERE p.slug LIKE 'long-page-%'`);
+    await seedEngine.executeRaw('ANALYZE content_chunks');
+    await seedEngine.executeRaw('ANALYZE pages');
+    const walks: number[] = [];
+    const original = vectorPool.searchIndexWalk;
+    const walkSpy = spyOn(vectorPool, 'searchIndexWalk').mockImplementation((stmt, limit, run) => original(stmt, limit, async attempt => {
+      walks.push(attempt.innerLimit);
+      return run(attempt);
+    }));
+    try {
+      const attempts = spyAttempts();
+      const events: PoolMeta[] = [];
+      const hits = await engine.searchVector(axis(7), { limit: 10, excludePrivate: true, embeddingColumn: column, onVectorPoolMeta: meta => events.push(meta) });
+      expect(hits.map(hit => hit.slug)).toEqual(Array.from({ length: 10 }, (_, k) => `long-page-${k}`));
+      expect(walks).toEqual([100, 400]);
+      expect(attempts).toEqual([]);
+      expect(events).toEqual([]);
+    } finally {
+      walkSpy.mockRestore();
+    }
+  }, 60_000);
+
   test('without iterative scan the exact fallback still returns only current chunks', async () => {
     const capability = engine as unknown as { vectorIterativeScan?: Promise<boolean> };
     const previous = capability.vectorIterativeScan;

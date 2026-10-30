@@ -65,7 +65,7 @@ export function refusalEnvelope(error: OperationError): { code: string; message:
 }
 
 /** #6697: the stored authority's refusal, or null while the original writer may still act. */
-async function storedAuthorityRefusal(tx: BrainEngine, request: WriteRequest, sourceId: string): Promise<OperationError | null> {
+export async function storedAuthorityRefusal(tx: BrainEngine, request: WriteRequest, sourceId: string): Promise<OperationError | null> {
   try {
     await authorizeStoredRequest(tx, request, true);
     const authority = await submissionAuthority({ engine: tx, remote: false, sourceId } as OperationContext,
@@ -113,15 +113,16 @@ async function ownerRevokedError(tx: BrainEngine, sourceId: string, request: Wri
  * Git and withdrawal effects (the credential-change retry).
  */
 export async function retryParkedEffects(engine: BrainEngine, sourceId: string, requestId: string, dryRun: boolean,
-  options: { internalId?: string; ownerHost?: boolean; parkedOnly?: boolean } = {}): Promise<Record<string, unknown> | null> {
+  options: { internalId?: string; ownerHost?: boolean; parkedOnly?: boolean; failedCodes?: readonly string[] } = {}): Promise<Record<string, unknown> | null> {
   const [request, ambiguous] = options.internalId
     ? await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 AND id=$2::uuid', [sourceId, options.internalId])
     : await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 AND request_id=$2::uuid LIMIT 2', [sourceId, requestId]);
   if (!request || ambiguous) return null;
   const tracked = await engine.executeRaw<PersistenceEffect>(`SELECT * FROM persistence_effects WHERE request_id=$1::uuid
     AND ((kind IN ('git','withdrawal-mirror') AND (data ? 'parked' OR data ? 'retried'))
-      OR (NOT $2::boolean AND (state='failed' AND (kind<>'embedding' OR error_code='source_changed') OR kind='embedding' AND data ? 'parked'))) ORDER BY kind`,
-  [request.id, options.parkedOnly === true]);
+      OR (NOT $2::boolean AND (state='failed' AND (kind<>'embedding' OR error_code='source_changed') OR kind='embedding' AND data ? 'parked'))
+      OR (kind='git' AND state='failed' AND error_code=ANY($3::text[]))) ORDER BY kind`,
+  [request.id, options.parkedOnly === true, [...options.failedCodes ?? []]]);
   if (!tracked.length) return null;
   const hostId = existingLocalHostId();
   if (!hostId) throw unregisteredHost(sourceId, requestId);
@@ -136,7 +137,8 @@ export async function retryParkedEffects(engine: BrainEngine, sourceId: string, 
       const parked = effect.data.parked ?? [];
       const summary = { kind: effect.kind, error_code: effect.error_code, parked_targets: parked.length, targets: parked.slice(0, 20), retried: effect.data.retried ?? 0 };
       const parkedState = effect.error_code === 'targets_parked' ? 'parked' : 'failed';
-      if (effect.state !== 'failed' || (parkedState === 'failed' && options.parkedOnly)) {
+      if (effect.state === 'failed' && effect.data.settled) { effects.push({ ...summary, state: parkedState, terminal: true, action: 'settled', settled: effect.data.settled }); continue; }
+      if (effect.state !== 'failed' || (parkedState === 'failed' && options.parkedOnly && !options.failedCodes?.includes(effect.error_code ?? ''))) {
         effects.push({ ...summary, state: effect.state, terminal: effect.state === 'committed', action: 'unchanged' });
         continue;
       }
@@ -155,7 +157,7 @@ export async function retryParkedEffects(engine: BrainEngine, sourceId: string, 
       const scanning = targetedWithdrawalEffect(effect) || effect.data.source_scan === true;
       const slugs = scanning ? [...new Set([...retrying, ...parked.flatMap(entry => entry.slug ? [entry.slug] : [])])] : [];
       const [updated] = await tx.executeRaw<{ state: string }>(`UPDATE persistence_effects SET state='queued',data=$2::text::jsonb,error_code=NULL,
-        next_attempt_at=now(),claim_expires_at=NULL,updated_at=now() WHERE id=$1 AND state='failed' AND error_code IS NOT DISTINCT FROM $3
+        next_attempt_at=now(),claim_expires_at=NULL,claim_owner=NULL,updated_at=now() WHERE id=$1 AND state='failed' AND error_code IS NOT DISTINCT FROM $3
         AND execution_token IS NULL AND recovery IS NULL RETURNING state`,
       [effect.id, JSON.stringify({ ...data, ...(slugs.length ? { retry_slugs: slugs } : {}), target_failures: PARK_AFTER_FAILURES - 1,
         ...(!scanning && (effect.data.slug ?? effect.data.relative_path) ? { failing_target: effect.data.slug ?? effect.data.relative_path } : {}),
@@ -168,14 +170,16 @@ export async function retryParkedEffects(engine: BrainEngine, sourceId: string, 
       effects.push({ ...summary, state: 'queued', terminal: false, action: 'retry_queued', ...retriedUnder });
     }
     const queued = effects.some(effect => effect.action === 'retry_queued');
+    const settled = effects.some(effect => effect.action === 'settled') && !effects.some(effect => effect.action === 'retry_queued' || effect.action === 'would_retry');
     const revoked = denied !== null && effects.some(effect => effect.action === 'owner_revoked');
     return { request_id: request.request_id, source_id: sourceId, dry_run: dryRun, effects,
       ...(denied ? { authority: { ok: false, code: refusal!.code, message: refusal!.message } } : {}),
       ...(revoked ? { action: 'owner_revoked', refusal: refusalEnvelope(denied!), fix: denied!.fix } : {}),
       next_action: revoked && !queued ? denied!.suggestion
-        : dryRun ? 'Fix the recorded cause, then run the same command without --dry-run to authorize one more attempt per parked target or failed effect.'
-          : queued ? 'The resident owner makes one more attempt per parked target or failed effect. Rerun this command with --dry-run to read the terminal state; a target that fails again parks again.'
-            : 'No parked target remains for this request.' };
+        : settled ? `This request's parked effects are settled; gbrain sources writer settle-effects ${sourceId} --request-id ${request.request_id} --unsettle --dry-run previews reversing it.`
+          : dryRun ? 'Fix the recorded cause, then run the same command without --dry-run to authorize one more attempt per parked target or failed effect.'
+            : queued ? 'The resident owner makes one more attempt per parked target or failed effect. Rerun this command with --dry-run to read the terminal state; a target that fails again parks again.'
+              : 'No parked target remains for this request.' };
   });
 }
 
@@ -193,7 +197,7 @@ export async function retryIndexLockParks(engine: BrainEngine, worktreeId: strin
   try {
     const requests = await engine.executeRaw<{ id: string; source_id: string; request_id: string }>(
       `SELECT DISTINCT r.id,r.source_id,r.request_id FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
-       WHERE e.worktree_id=$1::uuid AND e.kind='git' AND e.state='failed' AND e.error_code='targets_parked' AND e.data ? 'parked'
+       WHERE e.worktree_id=$1::uuid AND e.kind='git' AND e.state='failed' AND e.error_code='targets_parked' AND e.data ? 'parked' AND NOT (e.data ? 'settled')
        AND NOT EXISTS (SELECT 1 FROM persistence_effects o CROSS JOIN LATERAL jsonb_array_elements(COALESCE(o.data->'parked','[]'::jsonb)) AS p(target)
          WHERE o.request_id=e.request_id AND (o.state<>'committed' AND o.data ? 'parked') AND COALESCE(p.target->>'error_code','') <> ALL($2::text[]))
        LIMIT 100`, [worktreeId, INDEX_LOCK_PARK_CODES]);
@@ -309,7 +313,7 @@ export async function retryEmbeddingEffect(engine: BrainEngine, sourceId: string
       pending_chunks: pending.length, next_action: 'Run the same command without --dry-run to approve this bounded action.' };
     const [updated] = await tx.executeRaw<{ state: string }>(`UPDATE persistence_effects SET state=$4,
       data=CASE WHEN $4='queued' THEN $5::text::jsonb||jsonb_build_object('embedding_attempt_base',attempts,'embedding_retry_base',attempts) ELSE $5::text::jsonb END,
-      error_code=NULL,claim_expires_at=NULL,next_attempt_at=now(),updated_at=now(),
+      error_code=NULL,claim_expires_at=NULL,claim_owner=NULL,next_attempt_at=now(),updated_at=now(),
       outcome=CASE WHEN $4='committed' THEN '{"embedding":"reconciled"}'::jsonb ELSE NULL END
       WHERE id=$1 AND state='failed' AND execution_token IS NULL AND recovery IS NULL AND attempts=$2 AND source_incarnation=$3::uuid RETURNING state`,
     [effect.id, effect.attempts, effect.source_incarnation, complete ? 'committed' : 'queued', JSON.stringify(effect.data)]);

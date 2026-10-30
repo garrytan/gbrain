@@ -19,8 +19,9 @@
  *
  * Resolution: stdio GBRAIN_SURFACE > --surface flag > config `mcp_surface` >
  * 'full' (resolveStdioSurface); `serve --http` ignores GBRAIN_SURFACE. Why
- * default full: a bare `serve` keeps existing advanced tooling; the
- * registrations gbrain writes pin `starter` (src/core/mcp-registration.ts).
+ * default full: a bare `serve` keeps existing advanced tooling, and the
+ * registrations gbrain writes pin `REGISTRATION_SURFACE`
+ * (src/core/mcp-registration.ts) unless the user passes `--surface`.
  *
  * WP4 (D2 CEILING): on the OAuth HTTP transport the server-resolved surface is
  * a CEILING, not the final answer — each request resolves
@@ -31,13 +32,14 @@
  * an explicit `--surface` restart.
  */
 
-import type { OperationMeta } from '../core/ops/contract.ts';
+import type { OperationMeta, ParamDef } from '../core/ops/contract.ts';
 import type { Notice } from '../core/agent-output.ts';
 import type { GBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { VERB_NAMES } from '../core/verbs.ts';
 import { opError } from '../core/ops/contract.ts';
 import { BRAIN_TOOL_ALLOWLIST } from '../core/minions/tools/brain-tool-allowlist.ts';
+import { flagValues } from '../core/direct-pool-profile.ts';
 
 export type McpSurface = 'verbs' | 'starter' | 'full';
 
@@ -132,17 +134,38 @@ export const ALWAYS_INCLUDED_STARTER_OPS: ReadonlySet<string> = new Set([
   'join_brain', 'sync_brain_skills', 'leave_brain', 'put_skill', 'delete_skill',
 ]);
 
-/** Strict flag parser — unknown values reject loudly (parseStdioIdleTimeout pattern). */
+/**
+ * Strict flag parser — unknown values reject loudly (parseStdioIdleTimeout pattern). `--surface=verbs` is the same flag
+ * (`flagValues`), and a repeated flag takes the narrowest value, so it never widens the ceiling.
+ */
 export function parseSurfaceFlag(args: string[]): McpSurface | null {
-  const idx = args.indexOf('--surface');
-  if (idx < 0) return null;
-  const raw = args[idx + 1];
-  if (raw === undefined || raw.startsWith('--')) {
-    throw opError('invalid_params', `--surface requires a value: verbs | starter | full`, 'Pass --surface verbs, --surface starter or --surface full (default full).');
+  const values = flagValues(args, '--surface');
+  if (!values.length) return null;
+  for (const raw of values) {
+    if (!raw || raw.startsWith('--')) {
+      throw opError('invalid_params', `--surface requires a value: verbs | starter | full`, 'Pass --surface verbs, --surface starter or --surface full (default full).');
+    }
+    if (!isMcpSurface(raw)) {
+      throw opError('invalid_params', `Unknown --surface "${raw}". Use: verbs (the 7 memory verbs) | starter (the ~20 daily-driver ops) | full (all operations, default)`,
+        'Pass --surface verbs (the 7 memory verbs), --surface starter (the ~20 daily-driver ops) or --surface full (all operations, default).');
+    }
   }
-  if (!isMcpSurface(raw)) {
-    throw opError('invalid_params', `Unknown --surface "${raw}". Use: verbs (the 7 memory verbs) | starter (the ~20 daily-driver ops) | full (all operations, default)`,
-      'Pass --surface verbs (the 7 memory verbs), --surface starter (the ~20 daily-driver ops) or --surface full (all operations, default).');
+  return (values as McpSurface[]).reduce(minSurface);
+}
+
+/**
+ * `--advertise`: the surface tools/list shows, narrower than what is callable.
+ * Registrations gbrain writes pass `--advertise verbs` (REGISTRATION_ADVERTISE);
+ * absent, `mcp.advertised_surface` decides.
+ */
+export function parseAdvertiseFlag(args: string[]): McpSurface | null {
+  const inline = args.find(a => a.startsWith('--advertise='));
+  const idx = args.indexOf('--advertise');
+  if (inline === undefined && idx < 0) return null;
+  const raw = inline !== undefined ? inline.slice('--advertise='.length) : args[idx + 1];
+  if (raw === undefined || raw.startsWith('--') || !isMcpSurface(raw)) {
+    throw opError('invalid_params', `gbrain serve --advertise takes verbs, starter or full${raw === undefined || raw.startsWith('--') ? '' : ` (got "${raw}")`}`,
+      'Run gbrain serve --advertise verbs (list the 7 memory verbs and request_tools), gbrain serve --advertise starter or gbrain serve --advertise full. Every tool the surface allows stays callable.');
   }
   return raw;
 }
@@ -155,18 +178,18 @@ export function parseSurfaceFlag(args: string[]): McpSurface | null {
  * mutating, so discovery cannot widen it). It denies agent-requested
  * mutations; owner maintenance (startup migrations, hook IPC banking) is a
  * separate control. HTTP enforces per-token operation grants instead.
+ * `--access=read-only` is the same flag (`flagValues`); any read-only
+ * value wins, so a repeated flag never widens the ceiling.
  */
 export type McpAccess = 'full' | 'read-only';
 
 export function parseAccessFlag(args: string[]): McpAccess {
-  const idx = args.indexOf('--access');
-  if (idx < 0) return 'full';
-  const raw = args[idx + 1];
-  if (raw !== 'full' && raw !== 'read-only') {
+  const values = flagValues(args, '--access');
+  if (values.some(raw => raw !== 'full' && raw !== 'read-only')) {
     throw opError('invalid_params', '--access takes read-only or full (default full); see docs/mcp/ADMIN.md#read-only-stdio-serve',
       'Pass --access read-only or --access full (default full).', { docs: 'docs/mcp/ADMIN.md#read-only-stdio-serve' });
   }
-  return raw;
+  return values.includes('read-only') ? 'read-only' : 'full';
 }
 
 export function isReadOnlyOperation(op: Pick<OperationMeta, 'scope' | 'mutating' | 'requiredScopes'>): boolean {
@@ -222,10 +245,16 @@ export function filterOpsForSurface<T extends OperationMeta>(ops: T[], surface: 
   return ops.filter(op => STARTER_OPS.has(op.name)).map(starterParams);
 }
 
-/** Starter ops advertise every param except the full-surface-only ones. */
+/** Shared params a starter op leaves off its schema; the op keeps the shared definition, so every surface validates the same object. */
+const STARTER_HIDDEN_PARAMS: Readonly<Record<string, ReadonlySet<string>>> = { remember: new Set(['expected_revision', 'force']) };
+
+/** Starter ops advertise every param except the full-surface-only ones and their STARTER_HIDDEN_PARAMS. */
 function starterParams<T extends OperationMeta>(op: T): T {
-  if (!Object.values(op.params).some(p => p.fullSurfaceOnly)) return op;
-  return { ...op, params: Object.fromEntries(Object.entries(op.params).filter(([, p]) => !p.fullSurfaceOnly)) };
+  const hidden = STARTER_HIDDEN_PARAMS[op.name];
+  const keep = ([name, p]: [string, ParamDef]) => !p.fullSurfaceOnly && !hidden?.has(name);
+  const params = Object.entries(op.params);
+  if (params.every(keep)) return op;
+  return { ...op, params: Object.fromEntries(params.filter(keep)) };
 }
 
 /** The fail-closed allow-set handed to dispatchToolCall. */
@@ -336,7 +365,8 @@ export async function resolveDefaultClientSurface(
  * the advertised list is a context-cost choice. DB plane wins, file plane
  * falls back; unset or unrecognized = advertise the whole callable set.
  */
-export async function resolveAdvertisedSurface(engine: BrainEngine | null, config: GBrainConfig | null | undefined): Promise<McpSurface | null> {
+export async function resolveAdvertisedSurface(engine: BrainEngine | null, config: GBrainConfig | null | undefined, flag: McpSurface | null = null): Promise<McpSurface | null> {
+  if (flag) return flag;
   if (engine) {
     try {
       const dbVal = await engine.getConfig('mcp.advertised_surface');
@@ -348,11 +378,38 @@ export async function resolveAdvertisedSurface(engine: BrainEngine | null, confi
   return isMcpSurface(fileVal) ? fileVal : null;
 }
 
-/** The tools to list: the callable set narrowed to the advertised surface (never wider). */
+/**
+ * `oauth_clients.surface_set_by` for a surface an install default wrote (the
+ * `gbrain agent register` presets and the harness grant profiles), not an
+ * operator: the client calls that surface but lists only the memory verbs and
+ * `request_tools`, like a stdio registration with `--advertise verbs`.
+ */
+export const INSTALL_SURFACE_SET_BY = 'install';
+
+/**
+ * The advertised surface for one HTTP client. A client without its own
+ * surface gets the server's (`--advertise`, `mcp.advertised_surface`); one
+ * whose surface an install default wrote lists the verbs; one that chose its
+ * surface (an operator rescope, `request_tools {surface}`) lists it in full.
+ */
+export async function clientAdvertisedSurface(
+  auth: { surface?: unknown; surfaceSetBy?: string | null },
+  engine: BrainEngine | null, config: GBrainConfig | null | undefined, flag: McpSurface | null = null,
+): Promise<McpSurface | null> {
+  if (auth.surface) return auth.surfaceSetBy === INSTALL_SURFACE_SET_BY ? 'verbs' : null;
+  return resolveAdvertisedSurface(engine, config, flag);
+}
+
+/**
+ * The tools to list: the callable set narrowed to the advertised surface
+ * (never wider). A narrowed list always keeps request_tools when it is
+ * callable: it is how an agent reaches the unlisted tools (the verbs surface
+ * itself has none).
+ */
 export function advertisedOps<T extends OperationMeta>(callable: T[], callableSurface: McpSurface, advertised: McpSurface | null): T[] {
   if (!advertised || !surfaceWiderThan(callableSurface, advertised)) return callable;
   const listed = new Set(filterOpsForSurface(callable, advertised).map(op => op.name));
-  return callable.filter(op => listed.has(op.name));
+  return callable.filter(op => listed.has(op.name) || op.name === 'request_tools');
 }
 
 /**

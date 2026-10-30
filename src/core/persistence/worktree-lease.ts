@@ -17,7 +17,19 @@
  * `LEASE_TURN_MS` of continuous holding: lanes already claimed still join it,
  * but no new lane is claimed until it ends, so writers in other processes,
  * which cannot mark it, still get a turn.
+ *
+ * GBRA-133: across processes, every take of the native lock is a poll, so a
+ * process that releases the lock and takes it again at once (a sync drain's
+ * publications, one lane lease ending and the next starting) wins every race
+ * against an effect worker that tries between claims, and a catch-up of Git
+ * effects never runs. A background writer that waits therefore leaves a marker
+ * beside the lock (`<lock>.waiters/<pid>`, refreshed while it waits). Once the
+ * oldest live marker of another process has waited `FOREIGN_WAIT_GRACE_MS`,
+ * this process's lanes drain and its no-wait takes report busy, until that
+ * writer took its turn and removed its marker.
  */
+import { mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { NativeLockHandle } from './native-lock.ts';
 
 /** A lease stops admitting lanes after this long, so other processes get the native lock between turns. */
@@ -38,9 +50,77 @@ const deferred = new Map<string, number>();
 export const DEFER_WAIT_MS = 10_000;
 const DEFER_HOLD_MS = 5_000;
 
+/** How long another process's background writer waits before this process's lanes and no-wait takes yield to it. */
+export const FOREIGN_WAIT_GRACE_MS = 1_000;
+/** A marker its writer stopped refreshing this long ago is ignored (the writer gave up, or holds the lock now). */
+const WAITER_STALE_MS = 5_000;
+/** One directory read per worktree at most this often. */
+const WAITER_PROBE_MS = 100;
+
+/** This process's waiting background writers: since when each worktree's waits, as its marker says. */
+const ownWaits = new Map<string, number>();
+const written = new Map<string, number>();
+const probes = new Map<string, { at: number; ahead: boolean }>();
+const waiterDir = (path: string) => `${path}.waiters`;
+
+/** Records (or refreshes) that a background writer of this process waits for `path`'s lock; keeps its first `since`. */
+export function noteWaiting(path: string): void {
+  const now = Date.now(), since = ownWaits.get(path) ?? now;
+  ownWaits.set(path, since);
+  if (now - (written.get(path) ?? 0) < WAITER_STALE_MS / 5) return;
+  written.set(path, now);
+  try {
+    const dir = waiterDir(path), file = join(dir, String(process.pid));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(`${file}.tmp`, JSON.stringify({ since, at: Date.now() }));
+    renameSync(`${file}.tmp`, file);
+  } catch { /* the marker only lends priority; without it the writer competes as before */ }
+}
+
+/** The background writer of this process got its turn (or stopped waiting): other processes no longer yield to it. */
+export function clearWaiting(path: string): void {
+  written.delete(path);
+  if (!ownWaits.delete(path)) return;
+  try { unlinkSync(join(waiterDir(path), String(process.pid))); } catch { /* already gone */ }
+}
+
+function pidAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
+}
+
+/**
+ * Whether a background writer of another process waits for `path` ahead of this process: its live, fresh marker is the
+ * oldest, it has waited `FOREIGN_WAIT_GRACE_MS`, and this process waits for less long (an older own wait goes first).
+ */
+export function foreignWaiterAhead(path: string): boolean {
+  const now = Date.now(), probed = probes.get(path);
+  if (probed && now - probed.at < WAITER_PROBE_MS) return probed.ahead;
+  let oldest: { since: number; pid: number } | null = null;
+  let names: string[] = [];
+  try { names = readdirSync(waiterDir(path)); } catch { /* no waiter ever wrote here */ }
+  for (const name of names) {
+    const pid = Number(name);
+    if (!/^\d+$/.test(name) || pid === process.pid) continue;
+    let marker: { since?: unknown; at?: unknown };
+    try { marker = JSON.parse(readFileSync(join(waiterDir(path), name), 'utf8')); } catch { continue; }
+    if (typeof marker.since !== 'number' || typeof marker.at !== 'number' || now - marker.at > WAITER_STALE_MS) continue;
+    if (!pidAlive(pid)) { try { unlinkSync(join(waiterDir(path), name)); } catch { /* raced */ } continue; }
+    if (!oldest || marker.since < oldest.since || marker.since === oldest.since && pid < oldest.pid) oldest = { since: marker.since, pid };
+  }
+  const own = ownWaits.get(path);
+  const ahead = !!oldest && now - oldest.since >= FOREIGN_WAIT_GRACE_MS
+    && (own === undefined || oldest.since < own || oldest.since === own && oldest.pid < process.pid);
+  probes.set(path, { at: now, ahead });
+  return ahead;
+}
+
 /** Whether lanes of this worktree should stop: an exclusive writer waits, or the lease used up its turn. */
 export function leaseDraining(path: string): boolean {
   const lease = leases.get(path);
+  if (foreignWaiterAhead(path)) {
+    if (lease) lease.draining = true;
+    return true;
+  }
   const waiting = deferred.get(path);
   if (!lease) {
     if (waiting === undefined) return false;
@@ -89,6 +169,7 @@ export async function acquireShared(path: string, acquire: () => Promise<NativeL
   }
   const pending = opening.get(path);
   if (pending) { await pending; return acquireShared(path, acquire); }
+  if (foreignWaiterAhead(path)) return null;
   const attempt = acquire();
   opening.set(path, attempt.catch(() => null));
   let lock: NativeLockHandle | null;

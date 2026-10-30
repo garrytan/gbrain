@@ -32,6 +32,34 @@ export function onForwardProgress(listener: ForwardProgressListener): () => void
   return () => { listeners.delete(listener); };
 }
 
+const committedListeners = new Set<ForwardProgressListener>();
+
+/**
+ * GBRA-133 PR 3a: record committed work (a page written, deleted or renamed, or a sync cursor advanced). Screening a
+ * file that is unchanged, a held file and a legacy-sweep slice are forward progress at most, never committed work. A
+ * committed note is also a forward-progress note. The sync hard deadline extends only on these, so a run that screens
+ * for an hour and commits nothing stops as a stall instead of reading as "still progressing".
+ */
+let lastCommittedAt = 0;
+export function noteCommittedProgress(): void {
+  noteForwardProgress();
+  lastCommittedAt = lastProgressAt;
+  for (const listener of committedListeners) {
+    try { listener(); } catch { /* a listener must never break the work loop */ }
+  }
+}
+
+/** Wall-clock ms of the most recent committed-progress note in this process (0 = none yet). */
+export function lastCommittedProgressAt(): number {
+  return lastCommittedAt;
+}
+
+/** Subscribe to committed-progress notes; returns the unsubscribe function. */
+export function onCommittedProgress(listener: ForwardProgressListener): () => void {
+  committedListeners.add(listener);
+  return () => { committedListeners.delete(listener); };
+}
+
 /** Wall-clock ms of the most recent progress note in this process (0 = none yet). */
 export function lastForwardProgressAt(): number {
   return lastProgressAt;

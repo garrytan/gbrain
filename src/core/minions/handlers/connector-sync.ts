@@ -1,6 +1,12 @@
 /**
  * handlers/connector-sync.ts — the `connector-sync` minion handler.
  *
+ * #7515: a job runs only while `connectors.<p>.auto_sync` is on, rechecked
+ * when the job starts (autopilot checks it at enqueue time, but the owner may
+ * turn it off while the job waits); a job `connectors sync <provider>
+ * --background` queued (`explicit: true`) overrides it. Remote callers cannot
+ * submit this job.
+ *
  * Copies the embed-backfill skeleton: strict param parse, per-provider
  * single-flight DB lock (already_in_progress on contention, never a throw),
  * signal threading, progress → job.updateProgress, terminal auth/forbidden
@@ -17,6 +23,7 @@ import type { MinionJobContext } from '../types.ts';
 import { runConnectorSync } from '../../connectors/sync.ts';
 import type { ConnectorSyncDeps } from '../../connectors/sync.ts';
 import { isConnectorProviderName } from '../../connectors/registry.ts';
+import { autoSyncKey, isTruthy } from '../../connectors/config-keys.ts';
 import type { ConnectorProviderName } from '../../connectors/types.ts';
 
 /** 35-minute lock TTL (a shade over the 30-min handler wall budget). */
@@ -31,7 +38,13 @@ interface ConnectorSyncJobParams {
   sourceId: string;
   full?: boolean;
   limit?: number;
+  maxRequests?: number;
+  deadlineSec?: number;
+  /** Queued by an explicit `connectors sync <provider> --background`: runs even with auto_sync off. */
+  explicit: boolean;
 }
+
+const positive = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined);
 
 function parseParams(data: Record<string, unknown>): ConnectorSyncJobParams {
   const provider = typeof data.provider === 'string' ? data.provider : '';
@@ -44,6 +57,9 @@ function parseParams(data: Record<string, unknown>): ConnectorSyncJobParams {
     sourceId,
     full: data.full === true,
     limit: typeof data.limit === 'number' ? data.limit : undefined,
+    maxRequests: positive(data.maxRequests),
+    deadlineSec: positive(data.deadlineSec),
+    explicit: data.explicit === true,
   };
 }
 
@@ -55,11 +71,16 @@ export function makeConnectorSyncHandler(engine: BrainEngine, deps: ConnectorSyn
       return { status: 'already_in_progress', provider: params.provider };
     }
     try {
+      if (!params.explicit && !isTruthy(await engine.getConfig(autoSyncKey(params.provider)))) {
+        return { status: 'skipped', reason: 'auto_sync_off', provider: params.provider };
+      }
       const result = await runConnectorSync(engine, {
         provider: params.provider,
         sourceId: params.sourceId,
         full: params.full,
         limit: params.limit,
+        maxRequests: params.maxRequests,
+        deadlineAt: params.deadlineSec !== undefined ? (deps.now ?? Date.now)() + params.deadlineSec * 1000 : undefined,
         signal: job.signal,
         onProgress: (p) => {
           void job.updateProgress({

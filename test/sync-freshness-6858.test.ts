@@ -99,7 +99,7 @@ describe('sync freshness (#6858 ask 6)', () => {
       const f = await managedSource(engine, 60);
       const [fresh] = await readSyncFreshness(engine, { sourceIds: [f.id] });
       expect(fresh).toEqual({ source_id: f.id, window_hours: 24, commit_to_searchable: { samples: 0, p50_seconds: null, p95_seconds: null },
-        commit_to_embedded: { samples: 0, p50_seconds: null, p95_seconds: null, pending: 0 }, commits: 0, unresolved_commits: 0, behind: null });
+        commit_to_embedded: { samples: 0, p50_seconds: null, p95_seconds: null, pending: 0 }, commits: 0, unresolved_commits: 0, waiting_commits: null, behind: null });
       expect(formatSyncFreshness(fresh!)).toBe('no commit→searchable samples in the last 24 h');
       await engine.setConfig('sync.on_commit', 'true');
       expect(await doctor(engine)).toMatchObject({ name: 'managed_sync_latency', status: 'ok', message: expect.stringContaining('No commit→searchable samples') });
@@ -122,7 +122,7 @@ describe('sync freshness (#6858 ask 6)', () => {
       await receipt(engine, f, 5, { intent: { kind: 'managed_sync_delete' } });
       const [fresh] = await readSyncFreshness(engine, { sourceIds: [f.id] });
       // searchable: [10, 20, 30, 400] -> p50 25, p95 30 + 0.85 * 370; embedded: [18, 22] (the page waiting on a chunk is pending).
-      expect(fresh, name).toEqual({ source_id: f.id, window_hours: 24, commits: 1, unresolved_commits: 0,
+      expect(fresh, name).toEqual({ source_id: f.id, window_hours: 24, commits: 1, unresolved_commits: 0, waiting_commits: null,
         commit_to_searchable: { samples: 4, p50_seconds: 25, p95_seconds: 344.5 },
         commit_to_embedded: { samples: 2, p50_seconds: 20, p95_seconds: 21.8, pending: 1 }, behind: null });
       expect(formatSyncFreshness(fresh!)).toBe('commit→searchable p50 25s, p95 5.7m (4 page(s), last 24 h); commit→embedded p50 20s, p95 21.8s (2 page(s), 1 pending)');
@@ -161,6 +161,38 @@ describe('sync freshness (#6858 ask 6)', () => {
       const [kept] = await readSyncFreshness(engine, { sourceIds: [f.id], commitTimes });
       expect(kept!.commit_to_searchable.samples, name).toBe(3);
       expect(kept!.commit_to_embedded, name).toEqual({ samples: 0, p50_seconds: null, p95_seconds: null, pending: 0 });
+    }
+  }), 120_000);
+
+  test('#7604: a killed pass\'s receipts are read in one pass, not once per receipt', () => withEnv({ GBRAIN_HOME: home }, async () => {
+    const N = 300;
+    for (const { name, engine } of engines) {
+      await reset(engine);
+      const f = await managedSource(engine, 3600);
+      // One round of a pass killed mid-batch: N committed imports of one commit, none of them superseded yet.
+      await engine.executeRaw(`INSERT INTO persistence_requests(principal_kind,principal_id,request_id,operation,source_id,source_incarnation,slug,worktree_id,digest,authority,intent,intent_bytes,terminal_reservation,state,completed_at)
+        SELECT 'local_cli','cli:example',gen_random_uuid(),'submit_job',$1,$2::uuid,'notes/page-'||i,$3::uuid,'d','{}'::jsonb,
+          jsonb_build_object('kind','managed_sync_import','path','notes/page-'||i||'.md','target',$4::text,'from',$5::text,'runId',$6::text,'index',i,'total',$7::int),
+          1,16384,'committed',to_timestamp($8::double precision + i)
+        FROM generate_series(1,$7::int) i`, [f.id, f.incarnation, f.worktreeId, f.sha, FROM, randomUUID(), N, f.committedAt]);
+      const statements: Array<{ sql: string; params: unknown[] }> = [];
+      const run = engine.executeRaw;
+      engine.executeRaw = (async (sql: string, params?: unknown[]) => { statements.push({ sql, params: params ?? [] }); return run.call(engine, sql, params); }) as typeof engine.executeRaw;
+      let fresh;
+      try { [fresh] = await readSyncFreshness(engine, { sourceIds: [f.id] }); } finally { delete (engine as { executeRaw?: unknown }).executeRaw; }
+      expect(fresh!.commit_to_searchable.samples, name).toBe(N);
+      const aggregate = statements.find(s => s.sql.includes('percentile_cont'))!;
+      const [explained] = await engine.executeRaw<{ 'QUERY PLAN': unknown }>(`EXPLAIN (ANALYZE, FORMAT JSON) ${aggregate.sql}`, aggregate.params);
+      const raw = explained!['QUERY PLAN'];
+      const nodes: Array<Record<string, any>> = [];
+      const walk = (node: Record<string, any>) => { nodes.push(node); for (const child of node.Plans ?? []) walk(child); };
+      walk((typeof raw === 'string' ? JSON.parse(raw) : raw)[0].Plan);
+      const scans = nodes.filter(n => n['Relation Name'] === 'persistence_requests');
+      expect(scans.length, name).toBeGreaterThan(0);
+      // Each scan of the request table runs once, and together they read rows linear in the receipts, not N per receipt.
+      expect(scans.map(n => n['Actual Loops']), name).toEqual(scans.map(() => 1));
+      const read = scans.reduce((sum, n) => sum + (n['Actual Rows'] + (n['Rows Removed by Filter'] ?? 0)) * n['Actual Loops'], 0);
+      expect(read, name).toBeLessThanOrEqual(4 * N);
     }
   }), 120_000);
 
@@ -253,7 +285,8 @@ describe('sync freshness (#6858 ask 6)', () => {
       const json = JSON.parse((await capture(['--json'])).join('\n')) as Record<string, unknown>;
       const core = await readSyncStatus(engine, f.id, {});
       const added = Object.keys(json).filter(k => !(k in core)).sort();
-      expect(added).toEqual(['capacity', 'freshness', 'notifier', ...(json.notices ? ['notices'] : [])].sort());
+      // #7243: the CLI also adds `holds_summary` (every hold counted by code and state) beside the bounded hold list.
+      expect(added).toEqual(['capacity', 'freshness', 'holds_summary', 'notifier', ...(json.notices ? ['notices'] : [])].sort());
       expect(json.freshness).toMatchObject({ source_id: f.id, commit_to_searchable: { samples: 1, p50_seconds: 12, p95_seconds: 12 } });
       const human = await capture([]);
       expect(human.filter(l => l.startsWith('  freshness: '))).toEqual(['  freshness: commit→searchable p50 12s, p95 12s (1 page(s), last 24 h); commit→embedded no samples (0 page(s), 0 pending)']);
@@ -262,7 +295,7 @@ describe('sync freshness (#6858 ask 6)', () => {
   }), 120_000);
 
   test('gbrain status prints one freshness line per managed source with samples, and none for a source without', () => {
-    const sampled = { source_id: 'acme-example', window_hours: 24, commits: 2, unresolved_commits: 0,
+    const sampled = { source_id: 'acme-example', window_hours: 24, commits: 2, unresolved_commits: 0, waiting_commits: null,
       commit_to_searchable: { samples: 3, p50_seconds: 8, p95_seconds: 14 }, commit_to_embedded: { samples: 3, p50_seconds: 15, p95_seconds: 31, pending: 0 } };
     const quiet = { ...sampled, source_id: 'alice-example', commits: 0, commit_to_searchable: { samples: 0, p50_seconds: null, p95_seconds: null },
       commit_to_embedded: { samples: 0, p50_seconds: null, p95_seconds: null, pending: 0 } };

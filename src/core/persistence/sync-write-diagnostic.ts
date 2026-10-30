@@ -15,6 +15,7 @@ import { checkpointRetryCommand } from './checkpoint-validation.ts';
 import { readSyncFile } from './sync-discovery.ts';
 import { sha256 } from './digest.ts';
 import { classifyTerminal } from './terminal-classify.ts';
+import { SYNC_PASS_SUPERSEDED } from './sync-checkpoint-replaced.ts';
 
 export function managedSyncWriteDiagnostic(cursor: { sourceId: string; root: string; processingOptions?: SyncProcessingOptions; syncOptions: SyncCursorOptions | null },
   pending: { slug: string; intent: SyncIntent }, row: WriteRequest): ManagedSyncWriteDiagnostic {
@@ -23,7 +24,13 @@ export function managedSyncWriteDiagnostic(cursor: { sourceId: string; root: str
   const blockedReason = ['writer_busy', 'writer_pool_capacity', 'owner_unavailable', 'recovery_required', 'writer_lock_unavailable',
     'database_contention', 'consumer_stopping', 'revision_changed_repreparing', 'unexpected_file_bytes', 'unexpected_staging_bytes',
     'preparation_deadline', 'group_member_waiting', 'lane_lock_timeout', 'lane_statement_timeout'].includes(row.blocked_reason ?? '') ? row.blocked_reason! : 'write_pending';
-  const detail = terminal ? writeFailureDiagnostic(code, row.error_message) : {
+  // GBRA-133 PR 3a: a live pass's checkpoint (its stamp) publishes only under the pass that admitted it. A pass that stops with it
+  // pending has ended, so the next pass supersedes it: nothing to resume, nothing failed.
+  const superseded = pending.intent.kind === 'managed_sync_checkpoint' && !!pending.intent.passId && (!terminal || code === SYNC_PASS_SUPERSEDED);
+  const detail = terminal ? writeFailureDiagnostic(code, row.error_message) : superseded ? {
+    reason: blockedReason, message: 'This pass ended before its checkpoint published, so the checkpoint is superseded: it is bound to the pass that admitted it and never publishes after it.',
+    suggestion: 'Nothing to resume and nothing failed: the pages this pass committed stand, and the next sync pass re-reads the source and stamps its own checkpoint. Do not resubmit or cancel this request.',
+  } : {
     reason: blockedReason, message: 'The write is accepted but not committed; the sync checkpoint has not advanced.',
     suggestion: 'Re-run the same sync options to resume this request. Do not submit a replacement request or skip the pending write.',
   };
@@ -32,12 +39,12 @@ export function managedSyncWriteDiagnostic(cursor: { sourceId: string; root: str
     error_detail: row.error_detail ?? null, recovery: row.recovery, blocked_reason: row.blocked_reason, compacted: row.compacted, publication_started: row.publication_started,
     error_message: row.error_message, intent_kind: typeof row.intent?.kind === 'string' ? row.intent.kind : null }) : null;
   const diagnostic: ManagedSyncWriteDiagnostic = { source_id: cursor.sourceId, slug: pending.slug,
-    path: pending.intent.path, write_error: code, ...detail, ...(verdict ? { category: verdict.category, public_category: verdict.public_category } : {}),
+    path: pending.intent.path, write_error: code, ...detail, ...(verdict ? { category: verdict.category, public_category: verdict.public_category } : {}), ...(superseded ? { disposition: 'superseded' as const } : {}),
     write_request: publicWriteReceipt(receiptFor(row)) };
   // #6194: an import that lost to a database write the hold could not prove; the retry re-imports the Git version unless discovery's drift guard holds it.
   if (terminal && code === 'revision_conflict' && pending.intent.kind === 'managed_sync_import') diagnostic.suggestion = `The page changed in the database after this import was frozen. `
     + `Before retrying, compare the file and the page with gbrain sources reconcile ${cursor.sourceId} ${pending.slug} --preview (it writes nothing): a retry re-imports the Git version over the database one. ${diagnostic.suggestion}`;
-  if (terminal) diagnostic.suggestion += ` After repair, run ${checkpointRetryCommand({ sourceId: cursor.sourceId, processingOptions: cursor.processingOptions, syncOptions: cursor.syncOptions ?? null, repoPath: pending.intent.repoPath })} to retry it under a new request. Skipping failures cannot bypass a managed write.`;
+  if (terminal && !superseded) diagnostic.suggestion += ` After repair, run ${checkpointRetryCommand({ sourceId: cursor.sourceId, processingOptions: cursor.processingOptions, syncOptions: cursor.syncOptions ?? null, repoPath: pending.intent.repoPath })} to retry it under a new request. Skipping failures cannot bypass a managed write.`;
   if (diagnostic.reason === 'pinned_git_worktree_conflict' && pending.intent.path && pending.intent.content !== null) {
     try {
       const bytes = readSyncFile(cursor.root, pending.intent.path);

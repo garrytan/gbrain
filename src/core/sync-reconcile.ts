@@ -49,6 +49,7 @@ export function parseSyncDeleteCap(key: typeof SYNC_MAX_DELETES_KEY | typeof SYN
 /** `gbrain config set`'s refusal of an invalid #7130 delete-safety value (null: valid). */
 export function deleteSafetyConfigRefusal(key: string, value: string): string | null {
   if (key === 'purge.retention_hours') return parsePurgeRetentionHours(value) === null ? `purge.retention_hours must be a whole number of hours, at least ${MIN_PURGE_RETENTION_HOURS}; nothing was written.` : null;
+  if (key.startsWith('sync.apply_held_deletions')) return ['true', 'false'].includes(value.trim().toLowerCase()) ? null : `${key} must be true or false; nothing was written.`;
   const base = key.startsWith(SYNC_MAX_DELETES_KEY + '.') || key === SYNC_MAX_DELETES_KEY ? SYNC_MAX_DELETES_KEY : SYNC_MAX_DELETE_RATIO_KEY;
   if (parseSyncDeleteCap(base, value) !== null) return null;
   return base === SYNC_MAX_DELETES_KEY ? `${key} must be a whole number of pages, 0 or more; nothing was written.` : `${key} must be a number from 0 to 1 (a share of the source's file-backed pages); nothing was written.`;
@@ -295,12 +296,12 @@ export function resolveSyncHardDeadline(
  * and the stderr line announcing it.
  */
 export function syncWatchdogPlan(args: string[], res: HardDeadlineResolution): {
-  watchdog: { deadlineMs: number; graceMs: number; label: string; heartbeatMs: number; progressWindowMs?: number; stopNotice: string };
+  watchdog: { deadlineMs: number; graceMs: number; label: string; heartbeatMs: number; progressWindowMs?: number; stopNotice: string; progressSignal: 'committed'; stallNotice: string };
   armedLine: string;
 } {
   return {
     watchdog: { deadlineMs: res.deadlineMs, graceMs: res.graceMs, label: 'sync-watchdog', heartbeatMs: 60_000,
-      progressWindowMs: res.progressWindowMs, stopNotice: syncDeadlineStopNotice(args, res) },
+      progressWindowMs: res.progressWindowMs, stopNotice: syncDeadlineStopNotice(args, res), progressSignal: 'committed', stallNotice: syncDeadlineStallNotice(args, res) },
     armedLine: `[sync-watchdog] hard deadline armed: ${Math.round(res.deadlineMs / 1000)}s + ${Math.round(res.graceMs / 1000)}s grace (${res.reason})` +
       (res.progressWindowMs ? `; extends while the sync keeps progressing (stops after ${Math.round(res.progressWindowMs / 1000)}s without progress)` : '') +
       '; disable with --no-hard-deadline\n',
@@ -349,6 +350,30 @@ export function syncDeadlineStopNotice(args: string[], res: HardDeadlineResoluti
       progress_window_seconds: windowSec, cause, resume_command: resume, fix });
   }
   return `gbrain sync stopped (code=sync_deadline_stop): ${cause}. ${fix}`;
+}
+
+/**
+ * GBRA-133 PR 3a: the stdout notice the sync watchdog prints when a progress-aware deadline passes and the run committed
+ * nothing (no page written, deleted or renamed, no cursor advanced; screening unchanged files and legacy-sweep slices do
+ * not count). The run is a stall, not progress: `code`, `why` and an agent-operator `fix` (read-only sync status, which
+ * names what the run is stuck on) instead of the resume line, since rerunning the same way commits nothing again.
+ */
+export function syncDeadlineStallNotice(args: string[], res: HardDeadlineResolution): string {
+  const deadlineSec = Math.round(res.deadlineMs / 1000);
+  const source = args.find((_, i) => args[i - 1] === '--source');
+  const status = ['gbrain', 'sync', 'status', ...(source ? ['--source', source] : []), '--json'];
+  const resume = syncResumeCommand(args);
+  const message = `The ${deadlineSec}s sync deadline (${res.reason}) passed and the run committed nothing.`;
+  const why = 'No page was written, deleted or renamed and no sync cursor advanced before the deadline (screening unchanged files and legacy-sweep slices '
+    + 'are not progress), so the run stopped as a stall instead of extending. Rerunning the same way is unlikely to commit either; sync status names what '
+    + `the source is stuck on (read-only). Fix what it names, then rerun: ${resume}`;
+  const fix = { next: 'run', argv: status, command: status.join(' '), actor: 'agent', consent: [], requires_exclusive: false,
+    why: 'Read-only: the source\'s state, holds, last error and the next step.', verify: { argv: status } };
+  if (args.includes('--json')) {
+    return JSON.stringify({ status: 'stalled', code: 'sync_deadline_stalled', message, why, reason: res.reason, deadline_seconds: deadlineSec, committed: 0,
+      resume_command: resume, docs: 'docs/guides/error-codes.md#sync_deadline_stalled', fix });
+  }
+  return `gbrain sync stopped (code=sync_deadline_stalled): ${message} ${why} Fix: ${fix.command}`;
 }
 
 /**

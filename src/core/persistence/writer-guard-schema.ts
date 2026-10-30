@@ -7,9 +7,16 @@ const sqlList = (names: string[]) => names.map(name => `'${name}'`).join(',');
 /** The guard function alone: replacing it takes no table lock (v197). */
 export const MANAGED_WRITER_GUARD_FUNCTION_SQL = `
 CREATE OR REPLACE FUNCTION gbrain_require_managed_writer() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
-DECLARE target_source text; old_source text; row_data jsonb; old_data jsonb; allowed jsonb;
+DECLARE managed boolean; strict_count integer; seen integer; git boolean; unreadable text; target_source text; old_source text; row_data jsonb; old_data jsonb; allowed jsonb;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM persistence_brain WHERE singleton=1 AND enabled) THEN
+  -- #7636: init always writes the singleton, so a missing row means this role cannot read it (RLS), never "unmanaged".
+  SELECT enabled INTO managed FROM persistence_brain WHERE singleton=1;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+      TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+      DETAIL=jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','persistence_brain')::text;
+  END IF;
+  IF NOT managed THEN
     IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
   END IF;
   IF TG_TABLE_NAME='page_segment_texts' THEN
@@ -59,9 +66,19 @@ BEGIN
   IF TG_TABLE_NAME NOT IN (${sqlList(PAGE_CHILD_TABLES)}) THEN
     target_source := row_data->>'source_id'; old_source := old_data->>'source_id';
   END IF;
-  IF target_source IS NULL THEN SELECT source_id INTO target_source FROM pages WHERE id=(row_data->>'page_id')::integer; END IF;
+  IF target_source IS NULL THEN
+    SELECT source_id INTO target_source FROM pages WHERE id=(row_data->>'page_id')::integer;
+    IF NOT FOUND AND row_security_active('pages') THEN unreadable := 'pages'; END IF;
+  END IF;
   IF TG_OP='UPDATE' AND old_source IS NULL THEN
     SELECT source_id INTO old_source FROM pages WHERE id=(old_data->>'page_id')::integer;
+    IF NOT FOUND AND row_security_active('pages') THEN unreadable := 'pages'; END IF;
+  END IF;
+  -- A page row-level security hides is not a deleted parent (a cascade runs as the table owner, outside RLS).
+  IF unreadable IS NOT NULL THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+      TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+      DETAIL=jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state',unreadable)::text;
   END IF;
   -- Cascaded projection removal after the already-guarded parent deletion.
   IF target_source IS NULL AND TG_OP='DELETE' THEN RETURN OLD; END IF;
@@ -72,6 +89,26 @@ BEGIN
       DETAIL=jsonb_build_object('op',TG_OP,'relationship',CASE WHEN target_source IS NULL THEN 'missing_source'
         WHEN NOT (allowed ? target_source) THEN 'different_source' ELSE 'old_source_outside' END,
         'target_source',target_source,'old_source',old_source,'allowed',allowed)::text;
+  END IF;
+  -- G7a (git-canonical-schema.ts): a git-canonical source takes rows only from a writer that declares the git protocol.
+  IF COALESCE(current_setting('gbrain.git_protocol',true),'') <> '1' THEN
+    SELECT strict_sources INTO strict_count FROM git_canonical_brain WHERE singleton=1;
+    IF NOT FOUND THEN unreadable := 'git_canonical_brain';
+    ELSIF strict_count>0 THEN
+      SELECT count(*), COALESCE(bool_or(config->>'canonical'='git'),false) INTO seen, git FROM sources WHERE id IN (target_source, old_source);
+      IF seen < (CASE WHEN old_source IS NULL OR old_source=target_source THEN 1 ELSE 2 END) AND row_security_active('sources') THEN
+        unreadable := 'sources';
+      ELSIF git THEN
+        RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='git_protocol_required: this source is git-canonical and the writer does not declare the git protocol',
+          TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='git_canonical_fence:mutation',
+          DETAIL=jsonb_build_object('op',TG_OP,'target_source',target_source,'old_source',old_source)::text;
+      END IF;
+    END IF;
+    IF unreadable IS NOT NULL THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+        TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+        DETAIL=jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state',unreadable)::text;
+    END IF;
   END IF;
   IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
 END $fn$;

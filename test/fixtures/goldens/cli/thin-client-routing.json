@@ -207,7 +207,9 @@
     {
       "argv": "doctor",
       "exitCode": 1,
-      "stderr": [],
+      "stderr": [
+        "[gbrain] reading doctor checks; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready."
+      ],
       "stdout": [
         "",
         "GBrain Health Check (thin-client)",

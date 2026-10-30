@@ -7,9 +7,28 @@ import { isFrontmatterHoldMessage } from '../markdown.ts';
 import { fenceLocationFromMessage, fenceWhere } from '../fence-repair/refusal.ts';
 import { FACT_WITHDRAWN_SUGGESTION } from '../facts/withdrawal.ts';
 import { CHECKPOINT_MOVED_MESSAGE } from './sync-slug-mode.ts';
+import { PAGE_CHANGED_AFTER_READ_MESSAGE } from '../page-state/types.ts';
 
 /** The refusal of a fact-batch completion request whose per-entity requests did not all commit (facts-prepare.ts). */
 export const FACTS_BATCH_INCOMPLETE_MESSAGE = 'Some extracted facts have not committed.';
+/** facts-prepare.ts: an entity request admitted at a revision another write moved (or a deleted or replaced entity page). */
+export const FACTS_ENTITY_CHANGED_MESSAGE = 'The fact entity changed after extraction admission.';
+export const FACTS_ENTITY_CHANGED_IN_PREPARATION_MESSAGE = 'The fact entity changed during preparation.';
+export const FACTS_DEDUP_CHANGED_MESSAGE = 'The fact deduplication state changed before publication.';
+/** The coordinator's refusal when the page moved between preparation and publication (coordinator.ts, group-publish.ts), also
+ * thrown when a staged large file no longer matches its stage (large-file.ts); fact requests never stage large files. */
+export const PAGE_CHANGED_DURING_PREPARATION_MESSAGE = 'The page changed during preparation.';
+/**
+ * #7602: entity request refusals a follow-up batch re-admits at the entity's current revision (facts-maintenance.ts), and
+ * that `gbrain repair failed-writes` lists. Stored receipts are matched by this exact text, so never reword these messages.
+ * PAGE_CHANGED_AFTER_READ_MESSAGE is how a move during preparation was stored before the fix.
+ */
+export const FACTS_ENTITY_MOVED_MESSAGES: readonly string[] = [FACTS_ENTITY_CHANGED_MESSAGE, FACTS_ENTITY_CHANGED_IN_PREPARATION_MESSAGE, FACTS_DEDUP_CHANGED_MESSAGE,
+  PAGE_CHANGED_DURING_PREPARATION_MESSAGE, PAGE_CHANGED_AFTER_READ_MESSAGE];
+
+export function isEntityMovedRefusal(row: { error_code: string | null; error_message: string | null }): boolean {
+  return row.error_code === 'revision_conflict' && FACTS_ENTITY_MOVED_MESSAGES.includes(row.error_message ?? '');
+}
 
 const FRONTMATTER_SLUG_CONFLICT = /^The frontmatter slug "[^"\n]{1,300}" in [^/"\n][^"\n]{0,1000} conflicts with its path, which expects slug "[^"\n]{1,300}"\. Remove `slug:` or make it match the path\.$/;
 
@@ -19,17 +38,26 @@ export function frontmatterSlugConflictMessage(path: string, found: string, expe
 }
 
 /** #5988: the page's canonical file is held by sync; the code says why gbrain cannot import it. Location-free, so receipts may keep it. */
-const HELD_FILE = /^(?:The canonical file is held by sync|A file held by sync) \(([a-z_]+)\) (and differs from the page|occupies the canonical page path); the page is read-only for put_page until the file is repaired\.$/;
+const HELD_FILE = /^(?:The canonical file is held by sync|A file held by sync) \(([a-z_]+)\) (and differs from the page|occupies the canonical page path); the page is read-only for put_page until the file is repaired\.(?: Hold row: source ([^ ,]+), incarnation ([0-9a-f-]+)\.)?$/;
 
 /** #6693: the refusal of a page write whose file holds a committed Git change sync has not imported yet (pending-import.ts). */
 /** #6858: the receipt prefix of a write `gbrain repair stuck-recovery --keep disk` abandoned: its canonical file was kept as edited on disk. */
 export const KEEP_DISK_ABANDONED_PREFIX = 'Publication abandoned by gbrain repair stuck-recovery --keep disk';
 export const PENDING_IMPORT_MESSAGE = 'The canonical file holds a committed Git change that sync has not imported yet.';
+/**
+ * GBRA-133: who imports a pending commit. Every pending-import refusal says this instead of naming a sync to run: an agent
+ * that started one beside a live serve put a second sync owner on the source.
+ */
+export const PENDING_IMPORT_OWNER = 'Do not start a sync for it: the source\'s running sync owner (gbrain serve, autopilot or a sync job) imports the commit on its next pass, '
+  + 'and a second sync beside it competes with that owner. Read-only: gbrain sync status --source <source> --json shows when the source has imported it; '
+  + 'if it shows no owner running, ask the user to sync the source on its host.';
 
-export function heldFileMessage(kind: 'drift' | 'occupied', code: string): string {
-  return kind === 'drift'
+/** #7364: `row` names the hold row the refusal read (its source and incarnation, still location-free), so a refusal naming a row that `sources retry-held` does not list shows which. */
+export function heldFileMessage(kind: 'drift' | 'occupied', code: string, row?: { sourceId: string; incarnation: string }): string {
+  const held = kind === 'drift'
     ? `The canonical file is held by sync (${code}) and differs from the page; the page is read-only for put_page until the file is repaired.`
     : `A file held by sync (${code}) occupies the canonical page path; the page is read-only for put_page until the file is repaired.`;
+  return row ? `${held} Hold row: source ${row.sourceId}, incarnation ${row.incarnation}.` : held;
 }
 
 /** The diagnostic of a held-file refusal message (null for any other message); `sourceId` fills the commands when the caller knows it. */
@@ -44,7 +72,8 @@ export function heldFileDiagnostic(message: string | null | undefined, sourceId 
     suggestion: `Sync holds this page's file because gbrain cannot import it; gbrain sources status ${sourceId} names the file${held[1] === 'invalid_fence' ? ', fence and reason' : ', line and key'}. `
       + 'The page keeps its last good revision and refuses put_page until the file is repaired, so retrying this write refuses the same way. '
       + `On the source host, repair the file first (${repair}), `
-      + 'then submit the intended write with a new request_id. Neither copy was overwritten.' };
+      + 'then submit the intended write with a new request_id. Neither copy was overwritten.'
+      + (held[3] ? ` The refusal read the sync-hold row of source ${held[3]}, incarnation ${held[4]}; gbrain sources retry-held ${held[3]} --dry-run --json lists the rows it reads (hold_rows).` : '') };
 }
 
 export function writeFailureDiagnostic(code: string, message?: string | null): { reason: string; message: string; suggestion: string } {
@@ -60,7 +89,8 @@ export function writeFailureDiagnostic(code: string, message?: string | null): {
     };
     if (message === PENDING_IMPORT_MESSAGE) return {
       reason: 'pending_import', message: 'A committed Git change to the page\'s file has not been imported yet; neither copy was overwritten.',
-      suggestion: 'A refused remember is replayed once by the first managed sync that imports the file; do not save it again. Any other write: after the next gbrain sync --source <source> --no-pull, read the page again and resubmit with a new request_id.',
+      suggestion: `A refused remember is kept and replayed once by the first managed sync that imports the file; do not save it again. ${PENDING_IMPORT_OWNER}`
+        + ' Any other write: once that import shows, read the page again and resubmit with a new request_id.',
     };
     if (['Newer working-tree bytes and the current page disagree with this pinned Git import.',
       'Newer code file bytes disagree with the pinned import.', 'Canonical sanitization cannot overwrite newer working-tree bytes.'].includes(message ?? '')) return {
@@ -200,6 +230,8 @@ export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
       // #6188: the frozen v1 code stays; the fence refusal's reason, location and issues ride along additively.
       if (error.canonicalCode === 'invalid_fence') Object.assign(frozen, { reason: error.reason, fence: error.fence, fenceIssues: error.fenceIssues });
       if (error.withdrawn) frozen.withdrawn = error.withdrawn;
+      // GBRA-133: a pending import keeps its read-only status fix (a remember's renders `next: wait`), additively.
+      if (frozen.detail === 'pending_import' && error.fix) Object.assign(frozen, { docs: error.docs, fix: error.fix });
       throw frozen;
     }
     // #5575: the frozen wire code stays invalid_params; the envelope's canonical code is purged_content.

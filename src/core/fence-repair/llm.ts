@@ -15,8 +15,9 @@
  * wrapping code fence is tolerated; any other text outside the table is
  * `llm_malformed`. Failure classes: `llm_unavailable` (the provider threw:
  * timeout, rate limit, server error; transient, the attempt memo is not
- * consumed), `llm_empty`, `llm_refused` (refusal or content-filter stop, or a
- * prose refusal), `llm_malformed` (no single table, wrong header, prose),
+ * consumed), `llm_empty`, `llm_refused` (refusal or content-filter stop, a
+ * prose refusal, or a provider error that refuses this request's own input,
+ * `providerItemRefusal`: it fails the same way until the bytes change), `llm_malformed` (no single table, wrong header, prose),
  * `llm_truncated` (any stop other than a normal end, rejected even if the
  * text parses), `llm_declined` (the single word HOLD: a row has more than one
  * reasonable reading, so the model declines instead of guessing). A table
@@ -34,6 +35,7 @@
  * `spliceTier3`) do no I/O; `callTier3` is the one gateway call, testable
  * through the gateway's chat transport seam (`__setChatTransportForTests`).
  */
+import { providerItemRefusal } from '../ai/errors.ts';
 import { chat, isThinkingModel, THINKING_MODEL_MAX_OUTPUT_TOKENS, type ChatMessage, type ChatResult } from '../ai/gateway.ts';
 import { thinkingOffControl, thinkingOffMaxOutputTokens } from '../ai/thinking-off.ts';
 import { isSeparatorRow, parseRowCells } from '../fence-shared.ts';
@@ -285,7 +287,7 @@ export async function callTier3(req: Tier3Request, opts: Tier3CallOptions): Prom
     result = await chat({ model: opts.model, system: prompt.system, messages, maxTokens: budget.maxOutputTokens, allowFallback: false,
       thinking: 'off', purpose: 'fence_repair', ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}), ...(opts.signal ? { abortSignal: opts.signal } : {}) });
   } catch (error) {
-    return { ok: false, reason: 'llm_unavailable', error: error instanceof Error ? error.name : 'Error' };
+    return { ok: false, reason: providerItemRefusal(error) ? 'llm_refused' : 'llm_unavailable', error: error instanceof Error ? error.name : 'Error' };
   }
   if (result.stopReason === 'refusal' || result.stopReason === 'content_filter') return { ok: false, reason: 'llm_refused', text: result.text, result };
   if (result.stopReason !== 'end') return { ok: false, reason: result.text.trim() ? 'llm_truncated' : 'llm_empty', text: result.text, result };

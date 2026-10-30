@@ -137,6 +137,7 @@ const SWEEP: Record<string, Row> = {
   search: { args: { query: 'PLANTMARK note body', limit: 20 } },
   query: { args: { query: 'PLANTMARK note body', limit: 20 } },
   search_exact: { args: { phrase: 'PLANTMARK' } },
+  whois: { args: { query: planted('person') } },
   assemble_evidence: { args: { hits: [{ source_id: SRC, slug: 'notes/n1', chunk_id: 0 }], return_unit: 'page' } },
   search_by_image: { skip: 'needs image-embedding infra; cross-modal suites own it. Wrapper coverage is the registration test below.' },
   get_links: { args: { slug: 'notes/n1' } },

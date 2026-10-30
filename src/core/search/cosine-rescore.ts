@@ -43,63 +43,91 @@ export async function cosineReScore(
   attribute = false,
   onFallback?: () => void,
 ): Promise<SearchResult[]> {
+  return startCosineReScore(engine, results, queryEmbedding, column, imageSpace, onFallback)(results, attribute);
+}
+
+/**
+ * GBRA-156: start the cosine reads for `candidates` now and re-score later. Fusion only merges its input lists, so
+ * the fused rows' chunks are among the candidates' and hybrid search starts these reads beside the reads that run
+ * before fusion instead of a round trip after them. Only the re-scored rows' own cosines count, so the result is the
+ * one `cosineReScore` returns for those rows.
+ */
+export function startCosineReScore(
+  engine: BrainEngine,
+  candidates: SearchResult[],
+  queryEmbedding: Float32Array,
+  column: string = 'embedding',
+  imageSpace?: { queryEmbedding: Float32Array; column: string },
+  onFallback?: () => void,
+): (results: SearchResult[], attribute?: boolean) => Promise<SearchResult[]> {
   // 'both' mode: image-arm rows live in the image space (image column,
   // multimodal query vector); everything else in the text space.
   const inImageSpace = (r: SearchResult): boolean => imageSpace !== undefined && r.modality === 'image';
-  const idsFor = (image: boolean) => results
+  const idsFor = (rows: SearchResult[], image: boolean) => rows
     .filter(r => inImageSpace(r) === image)
     .map(r => r.chunk_id)
     .filter((id): id is number => id != null);
-  const chunkIds = idsFor(false);
-  const imageChunkIds = idsFor(true);
-
-  if (chunkIds.length === 0 && imageChunkIds.length === 0) return results;
-
-  let cosines = new Map<number, number>();
-  let imageCosines = new Map<number, number>();
-  try {
-    // v0.36 (D9): score in the active column so rescore happens in the
-    // same embedding space the HNSW just ranked in.
-    if (chunkIds.length > 0) {
-      try {
-        cosines = await sqlCosines(engine, chunkIds, column, queryEmbedding);
-      } catch (err) {
-        const sqlstate = (err as { code?: unknown } | null)?.code;
-        warnOncePerProcess('cosine-rescore-sql-fallback',
-          `[gbrain] cosine re-score in SQL failed (SQLSTATE ${typeof sqlstate === 'string' ? sqlstate : 'unknown'}); computing it in JavaScript for this process's failing searches.`);
-        onFallback?.();
-        cosines = await jsCosines(engine, chunkIds, column, queryEmbedding);
+  const reads = (async (): Promise<{ cosines: Map<number, number>; imageCosines: Map<number, number> } | null> => {
+    const chunkIds = idsFor(candidates, false);
+    const imageChunkIds = idsFor(candidates, true);
+    let cosines = new Map<number, number>();
+    let imageCosines = new Map<number, number>();
+    try {
+      // v0.36 (D9): score in the active column so rescore happens in the
+      // same embedding space the HNSW just ranked in.
+      if (chunkIds.length > 0) {
+        try {
+          cosines = await sqlCosines(engine, chunkIds, column, queryEmbedding);
+        } catch (err) {
+          const sqlstate = (err as { code?: unknown } | null)?.code;
+          warnOncePerProcess('cosine-rescore-sql-fallback',
+            `[gbrain] cosine re-score in SQL failed (SQLSTATE ${typeof sqlstate === 'string' ? sqlstate : 'unknown'}); computing it in JavaScript for this process's failing searches.`);
+          onFallback?.();
+          cosines = await jsCosines(engine, chunkIds, column, queryEmbedding);
+        }
       }
+      if (imageSpace && imageChunkIds.length > 0) {
+        imageCosines = await jsCosines(engine, imageChunkIds, imageSpace.column, imageSpace.queryEmbedding);
+      }
+    } catch {
+      // DB error is non-fatal: the rows come back without re-scoring
+      return null;
     }
-    if (imageSpace && imageChunkIds.length > 0) {
-      imageCosines = await jsCosines(engine, imageChunkIds, imageSpace.column, imageSpace.queryEmbedding);
-    }
-  } catch {
-    // DB error is non-fatal, return results without re-scoring
-    return results;
-  }
+    return { cosines, imageCosines };
+  })();
 
-  if (cosines.size === 0 && imageCosines.size === 0) return results;
+  return async (results, attribute = false) => {
+    const chunkIds = idsFor(results, false);
+    const imageChunkIds = idsFor(results, true);
+    if (chunkIds.length === 0 && imageChunkIds.length === 0) return results;
+    const read = await reads;
+    if (!read) return results;
+    const own = (all: Map<number, number>, ids: number[]) => new Map(ids.filter(id => all.has(id)).map(id => [id, all.get(id)!]));
+    const cosines = own(read.cosines, chunkIds);
+    const imageCosines = own(read.imageCosines, imageChunkIds);
 
-  // Normalize RRF scores to 0-1 for blending
-  const maxRrf = Math.max(...results.map(r => r.score));
+    if (cosines.size === 0 && imageCosines.size === 0) return results;
 
-  return results.map(r => {
-    // #3695: a row with no hydrated chunk embedding (the synthetic chunkless
-    // row for an embed_skip'd oversized page, or a chunk whose embedding did
-    // not hydrate) goes through the same blend with cosine 0, so it never
-    // keeps its raw post-RRF score next to rows on the blended [0, 1] scale.
-    const cosine = r.chunk_id != null ? ((inImageSpace(r) ? imageCosines : cosines).get(r.chunk_id) ?? 0) : 0;
-    const normRrf = maxRrf > 0 ? r.score / maxRrf : 0;
-    const blended = 0.7 * normRrf + 0.3 * cosine;
+    // Normalize RRF scores to 0-1 for blending
+    const maxRrf = Math.max(...results.map(r => r.score));
 
-    if (DEBUG) {
-      console.error(`[search-debug] ${r.slug}:${r.chunk_id} cosine=${cosine.toFixed(4)} norm_rrf=${normRrf.toFixed(4)} blended=${blended.toFixed(4)}`);
-    }
+    return results.map(r => {
+      // #3695: a row with no hydrated chunk embedding (the synthetic chunkless
+      // row for an embed_skip'd oversized page, or a chunk whose embedding did
+      // not hydrate) goes through the same blend with cosine 0, so it never
+      // keeps its raw post-RRF score next to rows on the blended [0, 1] scale.
+      const cosine = r.chunk_id != null ? ((inImageSpace(r) ? imageCosines : cosines).get(r.chunk_id) ?? 0) : 0;
+      const normRrf = maxRrf > 0 ? r.score / maxRrf : 0;
+      const blended = 0.7 * normRrf + 0.3 * cosine;
 
-    // v0.46.15: stamp the raw cosine — evidence + --explain read it.
-    return { ...r, score: blended, cosine, ...(attribute ? { blend_norm_rrf: normRrf } : {}) };
-  }).sort((a, b) => b.score - a.score);
+      if (DEBUG) {
+        console.error(`[search-debug] ${r.slug}:${r.chunk_id} cosine=${cosine.toFixed(4)} norm_rrf=${normRrf.toFixed(4)} blended=${blended.toFixed(4)}`);
+      }
+
+      // v0.46.15: stamp the raw cosine — evidence + --explain read it.
+      return { ...r, score: blended, cosine, ...(attribute ? { blend_norm_rrf: normRrf } : {}) };
+    }).sort((a, b) => b.score - a.score);
+  };
 }
 
 export function cosineSimilarity(a: Float32Array, b: Float32Array): number {

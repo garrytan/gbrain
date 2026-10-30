@@ -1,7 +1,8 @@
 /**
- * Large pages (Wave A): paging for the two by-slug row reads that used to
- * return everything, get_chunks (every chunk of a page) and get_versions
- * (every snapshot with its body). Both keep a bare array result, because
+ * Large pages (Wave A): paging for the row reads that used to return
+ * everything, get_chunks (every chunk of a page), get_versions (every
+ * snapshot with its body) and list_jobs (any limit a caller named, so one call
+ * could load and describe the whole job table on a serve). All keep a bare array result, because
  * deployed thin clients and agents parse an array; the paging facts travel
  * the way list_pages carries them:
  *
@@ -10,8 +11,9 @@
  *   rows remain, whose fix is the exact next call;
  * - one stderr line for the trusted local CLI when the caller named no limit
  *   and the default cut the result;
- * - get_chunks only: the last chunk of a cut list carries `truncated: true`
- *   and `next_from_index`, so a client that reads only the array (and ignores
+ * - get_chunks and list_jobs: the last row of a cut list carries
+ *   `truncated: true` and `next_from_index` (get_chunks) or `next_cursor`
+ *   (list_jobs), so a client that reads only the array (and ignores
  *   `_meta` and notices) still sees the list is incomplete. Additive fields on
  *   one element keep the array shape older clients parse.
  */
@@ -23,6 +25,9 @@ export const GET_CHUNKS_DEFAULT_LIMIT = 50;
 export const GET_CHUNKS_REMOTE_MAX_LIMIT = 500;
 export const GET_VERSIONS_DEFAULT_LIMIT = 20;
 export const GET_VERSIONS_REMOTE_MAX_LIMIT = 100;
+/** list_jobs: a serve never loads and describes an unbounded job table for one request; page with next_cursor. */
+export const LIST_JOBS_DEFAULT_LIMIT = 50;
+export const LIST_JOBS_REMOTE_MAX_LIMIT = 500;
 
 /**
  * The effective limit: the default when unset, an explicit value as given
@@ -89,4 +94,27 @@ export function reportVersionPage(ctx: OperationContext, p: Record<string, unkno
     consent: [], actor: 'agent', requires_exclusive: false,
     why: `Returns up to the newest ${GET_VERSIONS_REMOTE_MAX_LIMIT} versions.`,
   } : undefined);
+}
+
+/** list_jobs: meta, notice and local stderr when more jobs match than the page returned. */
+export function reportJobPage(ctx: OperationContext, p: Record<string, unknown>, page: { limit: number; clampedFrom?: number; returned: number; nextCursor?: string }): void {
+  ctx.emitResponseMeta?.('pagination', {
+    limit: page.limit, returned: page.returned,
+    ...(page.clampedFrom !== undefined ? { clamped_from: page.clampedFrom } : {}),
+    ...(page.nextCursor !== undefined ? { next_cursor: page.nextCursor } : {}),
+  });
+  if (page.nextCursor === undefined) return;
+  if (ctx.remote === false) {
+    if (p.limit === undefined || p.limit === null) {
+      console.error(`[list_jobs] showing the newest ${page.limit} jobs (default ${LIST_JOBS_DEFAULT_LIMIT}); older jobs match. Pass a larger limit, or cursor ${page.nextCursor} for the next page.`);
+    }
+    return;
+  }
+  const clamp = page.clampedFrom !== undefined ? ` (limit ${page.clampedFrom} was capped at ${page.limit})` : '';
+  const keep = Object.fromEntries(['status', 'queue', 'name', 'fields'].filter(k => p[k] !== undefined && p[k] !== null).map(k => [k, p[k]]));
+  emitTruncated(ctx, `Older jobs match than the newest ${page.returned} returned${clamp}, so this list is not complete.`, {
+    mcp: { tool: 'list_jobs', arguments: { ...keep, cursor: page.nextCursor, limit: page.limit } },
+    consent: [], actor: 'agent', requires_exclusive: false,
+    why: 'Fetches the next older jobs; every other parameter stays the same. Keep paging until no listing_truncated notice comes back.',
+  });
 }

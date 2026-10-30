@@ -22,6 +22,7 @@ import { importFromContent } from '../../src/core/import-file.ts';
 import type { GBrainConfig } from '../../src/core/config.ts';
 import { operations, type OperationContext } from '../../src/core/operations.ts';
 import { materializeSegmentedBody } from '../../src/core/page-body/ingest.ts';
+import { PAGE_BODY_RLS_TABLES as SCHEMA_PAGE_BODY_RLS_TABLES } from '../../src/core/page-body/schema.ts';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { conversationPage } from '../helpers/conversation-page.ts';
 import { withEnv } from '../helpers/with-env.ts';
@@ -34,7 +35,8 @@ const LEGACY = `gbrain_seg_rls_legacy_${tag}`;
 const WRITER = `gbrain_seg_rls_writer_${tag}`;
 const SOURCES = { 'src-a': 'alphaneedle', 'src-b': 'bravoneedle' } as const;
 const slugOf = (id: string) => `notes/ledger-${id}`;
-const PAGE_BODY_RLS_TABLES = ['page_body_manifest', 'page_body_staging_parts', 'page_body_staging_texts', 'page_body_stagings', 'page_segment_texts', 'page_view_digests'];
+const PAGE_BODY_RLS_TABLES = ['page_body_manifest', 'page_body_staging_parts', 'page_body_staging_texts', 'page_body_stagings', 'page_derivation_spend',
+  'page_segment_derivation_purge_pages', 'page_segment_derivation_purges', 'page_segment_derivations', 'page_segment_texts', 'page_view_digests'];
 /** What a search and a body read touch besides the recipe's tables, opened to the reader. */
 const SEARCH_SIDE_TABLES = ['config', 'timeline_entries'];
 
@@ -97,6 +99,7 @@ const sourcesOf = (hits: Array<{ source_id?: unknown }>) => [...new Set(hits.map
   });
 
   test('B1: every schema replay re-enables RLS on the segment tables, so a role with SELECT and no policy reads no segment row, as it reads no page', async () => {
+    expect(([...SCHEMA_PAGE_BODY_RLS_TABLES] as string[]).sort()).toEqual(PAGE_BODY_RLS_TABLES);
     for (const t of PAGE_BODY_RLS_TABLES) await engine.executeRaw(`ALTER TABLE ${t} DISABLE ROW LEVEL SECURITY`);
     await engine.initSchema();
     const state = await engine.executeRaw<{ relname: string; relrowsecurity: boolean }>(

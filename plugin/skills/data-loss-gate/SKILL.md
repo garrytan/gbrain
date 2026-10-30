@@ -77,6 +77,16 @@ Brain / database level (gbrain-specific):
   sweeps `delete_page` across a set of slugs. Deletes are soft (recoverable via
   `gbrain restore <slug>`) until purged — say so on the card, then gate anyway:
   a sweep that's wrong in bulk is expensive to un-wrong in bulk.
+- **`gbrain delete --purge`** — skips the 72-hour soft delete and removes the
+  page at once with its chunks, versions, takes, timeline, links, raw data and
+  the facts filed on it. `gbrain restore` cannot undo it. Every purge needs the
+  user's explicit go for that purge: a request to "scrub the repo", "clean up
+  the files" or "remove it from Git" is not a go to purge database pages. After
+  the go, purge one page at a time (never a parallel `xargs` or a background
+  loop), confirm each one is gone (`gbrain get <slug> --include-deleted` reports
+  `page_not_found`) before the next, and stop the batch at the first refusal. A purge batch that was
+  stopped (SIGTERM, a write freeze, a timeout) stays stopped: report what
+  finished and ask again before relaunching it.
 - **`gbrain pages purge-deleted`** — permanently removes soft-deleted pages
   from every source of the brain. This is the point of no return for the
   soft-delete safety net. Show the user `gbrain pages purge-deleted --dry-run --json`
@@ -185,7 +195,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 
 - A destructive command exits 3 (`confirmation_required`) or asks for `--confirm-destructive`: that flag confirms the agent is sure, not the user. Show the recoverability card and wait for the user's explicit yes.
 - `gbrain pages purge-deleted` removes soft-deleted pages for good, so `gbrain restore` cannot bring them back afterwards: say so on the card. Never promise physical erasure or a recovery you cannot verify.
-- A delete or forget returns `write_pending` (exit 10): poll the receipt before writing the deletion log entry.
+- A delete or forget returns `write_pending` (exit 10): it was accepted and is still pending, so it may still commit. It is not "not found" or "failed": poll the receipt (`gbrain write-request <request_id>`) before writing the deletion log entry, and never re-run the deletion or move to a wider one because of it.
 
 ## Anti-Patterns
 
@@ -196,6 +206,8 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - ❌ "I'll clean up and tell the user after" — the confirmation must come BEFORE the deletion
 - ❌ "It's only a soft delete" — a wrong sweep is still expensive to un-wrong in bulk, and purge makes it permanent
 - ❌ "The command already has --confirm-destructive" — the flag confirms the agent's intent, not the user's consent
+- ❌ "They asked me to scrub it from the repo, so I purged the pages" — a repository cleanup is not consent to delete database rows
+- ❌ Running purges in parallel, or reading a non-zero exit as "nothing happened" — exit 10 means the delete was accepted
 - ❌ Presenting deletion as the only option without listing alternatives
 
 ## Dedup (sharp boundaries)

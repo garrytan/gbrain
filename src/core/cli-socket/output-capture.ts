@@ -35,16 +35,16 @@ export class OutputCapture {
 }
 
 const store = new AsyncLocalStorage<OutputCapture>();
-let installed = false;
+let uninstall: (() => void) | undefined;
 
 /** Route console and stderr writes made inside a capture scope into it; outside a scope nothing changes. Idempotent. */
 export function installOutputCapture(): void {
-  if (installed) return;
-  installed = true;
+  if (uninstall) return;
   setWarnOnceScope(() => store.getStore()?.warned);
   setSourceNoteScope(() => store.getStore());
   setFallbackHopScope(() => store.getStore()?.fallbackHops);
   const methods = [['log', 'stdout'], ['info', 'stdout'], ['debug', 'stdout'], ['warn', 'stderr'], ['error', 'stderr']] as const;
+  const originals = methods.map(([method]) => [method, console[method]] as const);
   for (const [method, stream] of methods) {
     const original = console[method];
     console[method] = (...args: unknown[]): void => {
@@ -63,6 +63,23 @@ export function installOutputCapture(): void {
     if (callback) queueMicrotask(callback);
     return true;
   } as typeof process.stderr.write;
+  uninstall = () => {
+    for (const [method, original] of originals) console[method] = original;
+    process.stderr.write = originalWrite;
+    setWarnOnceScope(() => undefined);
+    setSourceNoteScope(() => undefined);
+    setFallbackHopScope(() => undefined);
+  };
+}
+
+/**
+ * Test-only: put console, stderr and the three per-request scopes back as they were before installOutputCapture.
+ * The capture is process-global, so a test file that starts a serve or installs it must call this from an after
+ * hook: otherwise every later file in the same bun process runs with the serve's routing (#7494).
+ */
+export function _uninstallOutputCaptureForTests(): void {
+  uninstall?.();
+  uninstall = undefined;
 }
 
 export function withOutputCapture<T>(capture: OutputCapture, fn: () => Promise<T>): Promise<T> {

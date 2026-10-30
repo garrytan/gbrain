@@ -149,7 +149,7 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       await b.put(slug, beliefPage({ facts: ['Acme sells widgets'], takes: [{ claim: 'Acme will IPO', who: 'world', weight: '0.4' }] }));
       const t0 = await at(b);
       await b.put('companies/newco-example', beliefPage({ title: 'Newco', facts: ['Newco signed SECRET-CONTRACT', 'Newco is public'], takes: [{ claim: 'Newco is privately loved', who: 'garry-example' }] }));
-      await b.put(slug, beliefPage({ facts: ['Acme sells widgets'] }));
+      await b.put(slug, beliefPage({ facts: ['Acme sells widgets'], takes: [] }));
       const t1 = await at(b);
       // Made private after the window: the window's events never mention the fact, so only the creation body could show it.
       await b.put('companies/newco-example', beliefPage({ title: 'Newco', facts: [{ claim: 'Newco signed SECRET-CONTRACT', visibility: 'private' }, 'Newco is public'],

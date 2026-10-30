@@ -5,8 +5,8 @@
 # key-gated jobs; when a secret is empty, the key-gated tests self-skip and
 # the job still goes green. The test preload (test/helpers/provider-keys-preload.ts)
 # also strips both keys from every test process unless the step that ran the
-# tests set GBRAIN_TEST_KEEP_PROVIDER_KEYS=1 (scripts/run-e2e.sh sets it; a
-# bare `bun test` step such as Tier 2 does not). The workflow passes this step
+# tests set GBRAIN_TEST_KEEP_PROVIDER_KEYS=1 (scripts/run-e2e.sh sets it, and
+# so does the keyed Tier 2 nightly step). The workflow passes this step
 # the value the test step had, so a run whose keys were stripped is never
 # reported as keyed. This step says what happened in the log (::warning::) and
 # the step summary. Exit 0 always: it reports, it does not gate.

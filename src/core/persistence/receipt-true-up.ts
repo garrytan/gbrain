@@ -20,7 +20,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { lockCounters } from './journal.ts';
 import { principalKey, type WriteRequest } from './model.ts';
-import { declarePersistenceProtocol } from './protocol.ts';
+import { declarePersistenceProtocol, isPersistenceDeclaration } from './protocol.ts';
 import { EFFECT_BYTES_SQL, retainedReceiptBytes, TRUE_UP_CLAMP_SQL } from './receipt-bytes.ts';
 
 type Candidate = Pick<WriteRequest, 'id' | 'intent' | 'authority' | 'outcome' | 'error_message' | 'error_detail' | 'client_request_id'
@@ -61,7 +61,7 @@ export async function trueUpRequests(engine: BrainEngine, requestIds: Iterable<s
       SELECT COALESCE(SUM(freed),0)::text AS freed FROM done`,
     [shrink.map(s => s.row.id), shrink.map(s => s.old), shrink.map(s => s.kept), shrink.map(s => s.row.effect_bytes)]);
     return Number(freed?.freed ?? 0);
-  });
+  }, { pipelineFirst: isPersistenceDeclaration });
 }
 
 /** Config row: the sequence the one-shot compacted-receipt sweep has walked through (`done` once it reached the end). */

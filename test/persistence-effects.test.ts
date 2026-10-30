@@ -164,7 +164,7 @@ test('withdrawal redacts a present db_only cache file and keeps it out of a dura
   expect(git(f.root, ['log', '--name-only', '--pretty=format:'])).not.toContain('conversations');
 });
 
-test('a withdrawal Git scan parks a failing target after five failures and still commits the rest (#5612)', async () => {
+test('a withdrawal Git scan parks a gitignored target at once and still commits the rest (#5612, GBRA-133)', async () => {
   const f = await fixture(body(), 'aa/page');
   await engine.putPage('page', page(body()), { sourceId: f.sourceId });
   const later = (await engine.readPageSnapshot('page', { sourceId: f.sourceId }))!;
@@ -181,7 +181,7 @@ test('a withdrawal Git scan parks a failing target after five failures and still
     await runPersistenceEffects(engine, config, { hostId, limit: 1 });
   }
   expect(await effect()).toMatchObject({ state: 'failed', error_code: 'targets_parked', data: { after_slug: 'page',
-    parked: [{ slug: 'aa/page', error_code: 'git_target_unsafe' }] } });
+    parked: [{ slug: 'aa/page', error_code: 'git_target_ignored', rule: '.gitignore:1: aa/' }] } });
   expect(git(f.root, ['log', '-1', '--name-only', '--pretty=format:'])).toBe('page.md');
   expect(await publicEffectsForRequest(engine, row.id)).toContainEqual({ kind: 'git', state: 'failed', reason: 'targets_parked' });
 });

@@ -35,6 +35,7 @@ import { clearLegacyHold, holdRefusedImport, holdRenameDestination, noteScreened
 import { classifyItemFailure } from '../../core/item-failure.ts';
 import { partial, noteTypeWarning, markCompleted } from './sync-run.ts';
 import type { SyncPlan, SyncRun, SyncProgress } from './sync-run.ts';
+import { noteCommittedProgress } from '../../core/forward-progress.ts';
 import { recordFallbackRename } from '../../core/belief/identity.ts';
 import { markBeliefCommits } from '../../core/belief/append.ts';
 
@@ -353,7 +354,7 @@ async function applyRename(
   // banking `to` would make the resume filter skip this rename on the
   // retry run — a permanent duplicate (reconcile) or a permanently
   // unimported target (import error) — the exact bug class being fixed.
-  if (!reconcileFailed && !importErrored) await markCompleted(run, to);
+  if (!reconcileFailed && !importErrored) { await markCompleted(run, to); noteCommittedProgress(); }
   progress.tick(1, newSlug);
   return undefined;
 }

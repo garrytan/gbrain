@@ -1,4 +1,5 @@
 import { type ManagedSyncFailure } from '../core/persistence/sync-failures.ts';
+import { startMemoryTrace } from '../core/memory-trace.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { DEFAULT_PARALLEL_SOURCES } from '../core/sync-concurrency.ts';
 import { withHumanLogsToStderr, withSourcePrefix } from '../core/console-prefix.ts';
@@ -75,6 +76,7 @@ export interface SyncResult {
   tail?: Omit<import('../core/persistence/sync-tail.ts').SyncTailReport, 'links'>;
   /** #5459 (P4.5): live pages a `--full` tree walk kept because their file is in the working tree and their import provenance is the working tree or unknown. */
   working_tree_kept?: number;
+  /** #8007: pages whose file is gone kept because gbrain.yml's storage section is invalid. */ storage_invalid_kept?: number;
   /**
    * Aggregated alias/undeclared explicit-type warnings (schema.type_warnings,
    * default on) — one entry per distinct non-canonical type this run.
@@ -201,6 +203,14 @@ export interface SyncOpts {
   capacityPreflight?: boolean;
   /** #6696: a runtime paid-work constraint (the cost gate deferred this run's embedding); never a processing option, never lifted by cursor adoption. */
   embedDeferred?: boolean;
+  /**
+   * G8 (persistence/git-conversion.ts): the conversion apply's strict-equivalent full pass, run before the source row says
+   * `canonical: git`. Internal: no CLI flag or MCP parameter sets it, it refuses a remote caller, and it cannot reach
+   * working-tree mode (resolveManagedSyncContext refuses `--working-tree` for a strict-classified pass).
+   */
+  canonicalOverride?: 'git';
+  /** #7866, internal (the conversion's strict passes): a full round without a `--full` episode, so a page equal to its blob is not re-imported. */
+  fullRound?: boolean;
   /**
    * v0.18.0 Step 5 — sync a specific named source. When set, sync reads
    * local_path + last_commit from the sources table (not the global
@@ -364,7 +374,7 @@ export interface SyncOpts {
    * breadcrumbs already cover that surface).
    */
   onProgress?: (p: { phase: string; bankedFiles?: number; total?: number; waived?: boolean; group?: number;
-    /** #5984 lanes (phase `managed_sync.lanes`). */ lanes?: { effective: number; stepDown: string | null; overlapped: number; fallbacks: number } }) => void;
+    /** #5984 lanes (phase `managed_sync.lanes`). */ lanes?: { effective: number; stepDown: string | null; overlapped: number; fallbacks: number }; /** #7243: a pass round (`managed_sync.round_level`, `managed_sync.round_admit`; #7866 `managed_sync.round_batch`: `batch` of `batches`, starting at candidate `base`). */ round?: { round: number; target: string; paths: number; read_ms?: number; imports?: number; deletes?: number; in_flight?: number; batch?: number; batches?: number; base?: number } }) => void;
   /**
    * #5984: managed sync only. Re-enter the single-pass managed sync until the
    * cursor is done, the caller's signal/deadline stops it, or it is blocked
@@ -429,9 +439,8 @@ export async function runSync(engine: BrainEngine, args: string[]) {
   // serr/progress are stderr already. The envelope (sync/run.ts emitJson) and
   // `sync status|unblock --json` (sync/operator.ts) write through
   // writeJsonDocument, the guard's only stdout path.
-  return args.includes('--json')
-    ? withHumanLogsToStderr(() => runSyncInner(engine, args))
-    : runSyncInner(engine, args);
+  const stopTrace = startMemoryTrace('sync');
+  try { return await (args.includes('--json') ? withHumanLogsToStderr(() => runSyncInner(engine, args)) : runSyncInner(engine, args)); } finally { stopTrace(); }
 }
 
 /**

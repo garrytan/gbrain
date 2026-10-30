@@ -22,9 +22,9 @@
  *   gbrain mounts add --mcp-url         — HTTP MCP transport + OAuth (PR 2)
  */
 
+import { configDir } from '../core/config.ts';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, renameSync } from 'fs';
 import { join, resolve } from 'path';
-import { homedir } from 'os';
 import {
   loadMounts,
   validateMountId,
@@ -37,7 +37,7 @@ import { findRepoRoot } from '../core/repo-root.ts';
 import { writeMountsCache, clearMountsCache } from '../core/mounts-cache.ts';
 import { GBrainError } from '../core/types.ts';
 
-function getMountsDir(): string { return join(homedir(), '.gbrain'); }
+function getMountsDir(): string { return configDir(); }
 // v0.40.3.0: GBRAIN_MOUNTS_PATH override exists for tests (libuv caches
 // homedir() at startup on some platforms; HOME mutation alone isn't
 // reliably picked up). Production callers don't set this.

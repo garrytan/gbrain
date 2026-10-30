@@ -12,6 +12,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
 import type { GBrainConfig } from '../config.ts';
 import { listRecipes } from '../ai/recipes/index.ts';
+import { mergedProviderEnv } from '../ai/provider-env.ts';
 
 /**
  * The GBRAIN_* variables that can change what a socket read (search, query,
@@ -71,19 +72,43 @@ function providerEnv(): string[] {
 
 const sha256 = (text: string): string => createHash('sha256').update(text).digest('hex');
 
+/**
+ * Provider variables that cannot reach any answer from this side: every name belongs only to providers that cannot
+ * authenticate here, because one of their required variables is absent from the provider environment the gateway
+ * builds (`mergedProviderEnv`: this environment plus the config file's provider fields) and none of their credential
+ * variables is set. A provider with no required variable (local servers) and the compatibility endpoints never count.
+ * The serve compares such a name only when the other side can use its provider, so a variable of a provider neither
+ * side can call (an Azure API version on a brain with no Azure endpoint) no longer sends a CLI to its cold path.
+ */
+function inertProviderEnv(merged: Record<string, string>): Set<string> {
+  const inert = new Set<string>();
+  const live = new Set<string>(EXTRA_PROVIDER_ENV);
+  for (const recipe of listRecipes()) {
+    const required = recipe.auth_env?.required ?? [];
+    const names = [...required, ...(recipe.auth_env?.optional ?? [])];
+    const callable = required.length === 0 || required.every(name => merged[name] !== undefined)
+      || names.some(name => SECRET_PROVIDER_ENV.test(name) && merged[name] !== undefined);
+    for (const name of names) (callable ? live : inert).add(name);
+  }
+  for (const name of live) inert.delete(name);
+  return inert;
+}
+
 /** The parts of the environment that change what a read answers or where its text goes, each value as a SHA-256 and credentials as names only. */
 export interface BehaviorEnv {
-  /** READ_BEHAVIOR_ENV names that are set, with the SHA-256 of each value; provider routing variables (base URLs, endpoints, deployments, ids) likewise. */
+  /** READ_BEHAVIOR_ENV names that are set, with the SHA-256 of each value; routing variables (base URLs, endpoints, deployments, ids) of providers this side can call likewise. */
   values: Record<string, string>;
-  /** The provider credentials that are set, by name (never the value). */
+  /** The provider credentials that are set, by name (never the value), for every provider. */
   credentials: string[];
 }
 
-export function behaviorEnv(env: Record<string, string | undefined>): BehaviorEnv {
+/** `fileConfig`: the config file's contents, whose provider fields (keys, the Azure endpoint and deployment) can make a provider callable. */
+export function behaviorEnv(env: Record<string, string | undefined>, fileConfig: GBrainConfig | null = null): BehaviorEnv {
   const values: Record<string, string> = {};
   for (const name of READ_BEHAVIOR_ENV) if (env[name] !== undefined) values[name] = sha256(env[name]!);
   const set = providerEnv().filter(name => env[name] !== undefined && env[name] !== '');
-  for (const name of set) if (!SECRET_PROVIDER_ENV.test(name)) values[name] = sha256(env[name]!);
+  const inert = inertProviderEnv(mergedProviderEnv(fileConfig, env));
+  for (const name of set) if (!SECRET_PROVIDER_ENV.test(name) && !inert.has(name)) values[name] = sha256(env[name]!);
   return { values, credentials: set.filter(name => SECRET_PROVIDER_ENV.test(name)) };
 }
 
@@ -118,8 +143,12 @@ function realpathOr(path: string): string {
   try { return realpathSync(path); } catch { return `absent:${path}`; }
 }
 
-function fileDigest(path: string): string {
-  try { return sha256(readFileSync(path, 'utf8')); } catch { return 'absent'; }
+function readConfigFile(path: string): { digest: string; config: GBrainConfig | null } {
+  let text: string;
+  try { text = readFileSync(path, 'utf8'); } catch { return { digest: 'absent', config: null }; }
+  let config: GBrainConfig | null = null;
+  try { const parsed: unknown = JSON.parse(text); if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) config = parsed as GBrainConfig; } catch { /* the digest still compares it */ }
+  return { digest: sha256(text), config };
 }
 
 export interface CliSocketIdentityInput {
@@ -146,6 +175,7 @@ export interface CliSocketIdentity {
 
 /** The brain id, the database target, the config home and file (realpath and content), the read-behavior env and the gbrain version. */
 export function cliSocketIdentity(input: CliSocketIdentityInput): CliSocketIdentity {
+  const file = readConfigFile(input.configFile);
   return {
     version: input.version,
     brain: input.brainId,
@@ -153,8 +183,8 @@ export function cliSocketIdentity(input: CliSocketIdentityInput): CliSocketIdent
     database: input.config.database_url ? databaseTarget(input.config.database_url) : null,
     config_dir: realpathOr(input.configDir),
     config_file: realpathOr(input.configFile),
-    config_sha256: fileDigest(input.configFile),
-    env: behaviorEnv(input.env),
+    config_sha256: file.digest,
+    env: behaviorEnv(input.env, file.config),
   };
 }
 

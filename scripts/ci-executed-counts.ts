@@ -488,9 +488,9 @@ export function compare(head: Side, base: Side | undefined, deltas: { rows: Delt
 
 /**
  * Whether head identity `to` executes what base identity `from` did: the same
- * arm, or another arm when the test's name pins its backend. The Bun 1.4.3
- * PostgreSQL-arm cell runs only the PostgreSQL side of testBackends() suites,
- * so their PGLite tests leave that lane (arm postgres) for the unit and serial
+ * arm, or another arm when the test's name pins its backend. A PostgreSQL-arm
+ * cell run with --postgres-only runs only the PostgreSQL side of testBackends()
+ * suites, so their PGLite tests leave that lane (arm postgres) for the unit and serial
  * lanes (no arm) and still run on PGLite there. A PostgreSQL test may change
  * arm only to another database arm: a lane with no arm has no database.
  */

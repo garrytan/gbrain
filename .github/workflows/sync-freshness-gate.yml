@@ -6,41 +6,61 @@ name: Sync freshness gate
 # 10k synthetic pages, on Postgres managed, PGLite managed and Postgres classic. The gate
 # value is the p50 of 10 reps after one discarded warm-up; a cell fails above the committed
 # baseline (scripts/bench/sync-freshness-baseline.json) + 25%. The baseline is valid only
-# on this runner class (Ubicloud standard-4). Nightly and on dispatch; never in the PR tier.
+# on this runner class (Ubicloud standard-4). Then the untimed level-reuse oracle (--oracle):
+# the managed cells with GBRAIN_SYNC_LEVEL_REUSE_VERIFY=1. Nightly and on dispatch; never in the PR tier.
 
 on:
   schedule:
     - cron: '29 9 * * *'
   workflow_dispatch:
+    inputs:
+      runs:
+        description: 'Gate runs on this runner (5 dispatches x 5 runs is the re-baseline sample; each run is uploaded)'
+        default: '1'
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # A sampling dispatch (runs > 1) is its own group, so five can run at once on fresh runners.
+  group: ${{ github.workflow }}-${{ github.ref }}${{ inputs.runs && inputs.runs != '1' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: false
 
 jobs:
   gate:
     name: Sync freshness gate (10k, watch, p50 of 10 vs baseline +25%)
     runs-on: ubicloud-standard-4-ubuntu-2404
-    timeout-minutes: 60
+    timeout-minutes: ${{ inputs.runs && inputs.runs != '1' && 240 || 60 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.4.3
+          bun-version: 1.4.4
       - name: Install dependencies (bounded, retried once)
         timeout-minutes: 8
         run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       - name: Run the gate (builds 10k-page brains, then 11 reps per cell)
-        timeout-minutes: 45
+        timeout-minutes: ${{ inputs.runs && inputs.runs != '1' && 200 || 45 }}
+        env:
+          RUNS: ${{ inputs.runs || '1' }}
         run: |
           set -o pipefail
           git config --global user.name "Bench Example"
           git config --global user.email bench@example.invalid
-          bun scripts/bench/sync-freshness-gate.ts --work-dir .context/bench/sync-freshness-gate --out .context/bench/sync-freshness-gate/run.json \
-            | tee -a "$GITHUB_STEP_SUMMARY"
+          failed=0
+          for i in $(seq 1 "$RUNS"); do
+            out=.context/bench/sync-freshness-gate/run.json
+            [ "$RUNS" = 1 ] || out=.context/bench/sync-freshness-gate/run-$i.json
+            bun scripts/bench/sync-freshness-gate.ts --work-dir .context/bench/sync-freshness-gate --out "$out" \
+              | tee -a "$GITHUB_STEP_SUMMARY" || failed=1
+          done
+          exit $failed
+      - name: Level-reuse oracle (every reused level read compared with a whole read; untimed)
+        if: always()
+        timeout-minutes: 30
+        run: |
+          set -o pipefail
+          bun scripts/bench/sync-freshness-gate.ts --oracle --work-dir .context/bench/sync-freshness-gate | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Stop harness containers and processes
         if: always()
         run: |
@@ -53,6 +73,7 @@ jobs:
           name: sync-freshness-gate
           path: |
             .context/bench/sync-freshness-gate/run.json
+            .context/bench/sync-freshness-gate/run-*.json
             .context/bench/sync-freshness-gate/results
           include-hidden-files: true
           if-no-files-found: warn

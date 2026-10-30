@@ -29,9 +29,9 @@ import { assertManagedFilesystemWrite, hasFilesystemPublication, managedFilesyst
  */
 
 import {
-  existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, rmSync, statSync, renameSync, appendFileSync,
+  existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, rmSync, statSync, renameSync, appendFileSync, realpathSync, readdirSync,
 } from 'fs';
-import { join, dirname, relative, isAbsolute } from 'path';
+import { join, dirname, relative, isAbsolute, sep } from 'path';
 import { execFileSync, execSync } from './spawn.ts';
 import { execFileBounded } from './bounded-child-exec.ts';
 import {
@@ -50,7 +50,7 @@ import { readFix } from './ops/op-fix.ts';
 // don't ship their own — see resolveFilingRules().
 import filingRulesDoc from '../../skills/_brain-filing-rules.json';
 import { gitChildEnv } from './git-env.ts';
-import { commitAndPush, commitPathsLocked, readIntegrateConflict } from './git/commit-push.ts';
+import { commitAndPush, commitPathsLocked, readIntegrateConflict, SOURCE_ROOT_CONFIG } from './git/commit-push.ts';
 
 export { execFileBounded, type BoundedExecOptions } from './bounded-child-exec.ts';
 
@@ -221,7 +221,7 @@ exit 0
 `;
 }
 
-function renderCommitPushHelper(): string {
+export function renderCommitPushHelper(): string {
   return `#!/usr/bin/env bash
 ${HELPER_BANNER}
 ${PROTOCOL_LINE}
@@ -274,12 +274,16 @@ _branch="$(git symbolic-ref --quiet --short HEAD)" || { echo "detached HEAD: che
 echo "[brain-commit-push] gbrain git commit-push unavailable; using the minimal locked commit + push" >&2
 _log="\${GBRAIN_HOME:-$HOME}/.gbrain/brain-push.log"
 mkdir -p "$(dirname "$_log")" 2>/dev/null || true
+# The absolute lock path, as gbrain spells it: the marker below must name this exact lock.
+_gp="$(git rev-parse --git-path brain-commit.lock)"
+_gd="$(cd "$(dirname "$_gp")" && pwd -P)"
+_lock="$_gd/brain-commit.lock"
 if command -v flock >/dev/null 2>&1; then
-  exec 8>"$(git rev-parse --git-path brain-commit.lock)"
+  exec 8>"$_lock"
   flock -w "\${GBRAIN_COMMIT_LOCK_WAIT_SECONDS:-\${GBRAIN_PUSH_LOCK_WAIT_SECONDS:-60}}" 8 || { echo "commit_lock_busy: another writer holds the commit lock" >&2; exit 1; }
-  exec 9>"$(git rev-parse --git-path gbrain-push.lock)"
+  exec 9>"$_gd/gbrain-push.lock"
   flock -w "\${GBRAIN_COMMIT_LOCK_WAIT_SECONDS:-\${GBRAIN_PUSH_LOCK_WAIT_SECONDS:-60}}" 9 || { echo "commit_lock_busy: another writer holds the push lock" >&2; exit 1; }
-  export BRAIN_COMMIT_LOCK_HELD=1
+  export BRAIN_COMMIT_LOCK_HELD="$_lock" GBRAIN_COMMIT_VIA="$_lock"
 else
   echo "[brain-commit-push] flock not found: committing without the writer lock (install gbrain or flock)" >&2
 fi
@@ -295,6 +299,13 @@ case "\${1:-}" in
     if git diff --cached --quiet -- "$@"; then echo "nothing to commit"; else git commit --only -m "$_msg" -- "$@"; fi ;;
 esac
 _head="$(git rev-parse HEAD)"
+# Never hold the commit lock across the network: release it and push under the publish lock, like gbrain.
+exec 9>&- 8>&-
+unset BRAIN_COMMIT_LOCK_HELD GBRAIN_COMMIT_VIA
+if command -v flock >/dev/null 2>&1; then
+  exec 7>"$_gd/brain-publish.lock"
+  flock -w "\${GBRAIN_PUBLISH_LOCK_WAIT_SECONDS:-300}" 7 || { echo "PUSH FAILED: another push held this checkout's publish lock; the commit is local-only. Run: gbrain git commit-push --push-only" >&2; exit 4; }
+fi
 if git push origin "$_head:refs/heads/$_branch" >>"$_log" 2>&1; then
   echo "$(date -u +%FT%TZ) [push] ok $_branch $(git rev-parse --short "$_head")" >>"$_log"; exit 0
 fi
@@ -306,20 +317,45 @@ exit 4
 
 // ── Managed AGENTS/RESOLVER block (taxonomy from filing rules; no drift) ─────
 
+/** Top-level folders that hold gbrain plumbing rather than filed content. */
+const NON_CONTENT_DIRS = new Set(['skills', 'scripts', 'node_modules']);
+
+/** Folder names rendered into the durability block: no dot-folders, markup, newlines or code-span breakers. */
+const SAFE_FOLDER_NAME = /^[A-Za-z0-9_][A-Za-z0-9_ .-]*$/;
+const MAX_DERIVED_FOLDERS = 50;
+
 /**
  * Resolve the filing-rules taxonomy for `repoPath`: prefer the repo's own
  * `skills/_brain-filing-rules.json`, then `_brain-filing-rules.json` at the
- * repo root, else the bundled default. Fails open — a missing or malformed
- * repo file must never break `sources harden`.
+ * repo root. Without one (#7629), a repo that already keeps content in
+ * top-level folders gets those folders, each bundled rule that lives under one
+ * keeping its kind; a repo with no content folder yet gets the bundled default,
+ * the convention a new brain starts from. Fails open — a missing or malformed
+ * repo file must never break `sources harden`. Only plain folder names are
+ * listed (at most 50), so repo content cannot add text to the block.
  */
-function resolveFilingRules(repoPath: string): FilingRulesDoc {
+function resolveFilingRules(repoPath: string): { rules: FilingRulesDoc; from: string } {
   for (const dir of [join(repoPath, 'skills'), repoPath]) {
     try {
       const rules = loadFilingRules(dir);
-      if (rules) return rules;
-    } catch { /* malformed — fall through to the bundled default */ }
+      if (rules) return { rules, from: dir === repoPath ? '`_brain-filing-rules.json`' : '`skills/_brain-filing-rules.json`' };
+    } catch { /* malformed — fall through */ }
   }
-  return filingRulesDoc as FilingRulesDoc;
+  const bundled = filingRulesDoc as FilingRulesDoc;
+  let folders: string[] = [];
+  try {
+    folders = readdirSync(repoPath, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && SAFE_FOLDER_NAME.test(d.name) && !NON_CONTENT_DIRS.has(d.name))
+      .map((d) => d.name)
+      .sort()
+      .slice(0, MAX_DERIVED_FOLDERS);
+  } catch { /* unreadable — use the bundled default */ }
+  if (folders.length === 0) return { rules: bundled, from: "gbrain's default taxonomy" };
+  const rules = folders.flatMap((folder) => {
+    const known = (bundled.rules ?? []).filter((r) => String(r.directory || '').split('/')[0] === folder);
+    return known.length > 0 ? known : [{ kind: 'existing folder', directory: `${folder}/` }];
+  });
+  return { rules: { ...bundled, rules }, from: "this repository's top-level folders" };
 }
 
 function renderTaxonomyLines(rules: FilingRulesDoc): string {
@@ -343,7 +379,7 @@ function renderTaxonomyLines(rules: FilingRulesDoc): string {
  * <source> --enable` (and `--pat-file`) regenerates it there.
  */
 function renderManagedBlock(repoPath: string, managed?: { sourceId: string }): string {
-  const rules = resolveFilingRules(repoPath);
+  const { rules, from } = resolveFilingRules(repoPath);
   const regeneratedBy = managed ? `gbrain sources writer git-durability ${managed.sourceId} --enable` : 'gbrain sources harden';
   const writeRules = managed ? `2. **Page writes go through gbrain, never through git.** This checkout is the
    managed canonical worktree of gbrain source \`${managed.sourceId}\`: the persistence
@@ -358,9 +394,11 @@ function renderManagedBlock(repoPath: string, managed?: { sourceId: string }): s
    HEAD and never pulls, so a pull, rebase, reset or checkout of page paths moves
    files under it. To bring in remote commits run
    \`gbrain sources refresh ${managed.sourceId}\`. Files that are not pages (this file,
-   \`MEMORY.md\`, daily notes) are yours: \`git add\` and \`git commit\` them with plain
-   git; they reach the remote on the owner's next push, or push them by hand
-   with \`git push\` (never \`--force\`).` : `2. **Every write is committed AND pushed — push is never deferred.** After any
+   \`MEMORY.md\`, daily notes) are yours: commit them with
+   \`gbrain git commit-push -m "<msg>" -- <paths>\`, which commits only those paths
+   under this checkout's commit lock and never fetches, pushes or moves the
+   checkout. They reach the remote on the owner's next push, or publish them with
+   \`gbrain git commit-push --push-only --keep-checkout\` (never \`git push --force\`).` : `2. **Every write is committed AND pushed — push is never deferred.** After any
    persistent write, run \`scripts/brain-commit-push.sh "<msg>" <path>\` (or
    \`gbrain git commit-push -m "<msg>" -- <path>\`). It commits only the paths you
    name, takes this checkout's writer lock, merges remote commits without
@@ -382,7 +420,7 @@ function renderManagedBlock(repoPath: string, managed?: { sourceId: string }): s
 ## Brain durability rules (always on)
 
 1. **Deterministic filing — never use /tmp as storage.** Every persistent output
-   goes to its taxonomy path (canonical, from \`skills/_brain-filing-rules.json\`):
+   goes to its taxonomy path (from ${from}):
 ${renderTaxonomyLines(rules)}
    Writing to /tmp, scratch dirs, or outside the repo is forbidden for anything
    meant to persist.
@@ -446,7 +484,7 @@ function pathContains(parent: string, child: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
-function resolveHooksDir(repoPath: string): { dir: string; tracked: boolean } {
+export function resolveHooksDir(repoPath: string): { dir: string; tracked: boolean } {
   let hooksPath = '';
   try {
     hooksPath = execFileSync('git', ['-C', repoPath, 'config', '--get', 'core.hooksPath'], {
@@ -465,7 +503,7 @@ function resolveHooksDir(repoPath: string): { dir: string; tracked: boolean } {
 }
 
 /** Ensure a repo-relative path is in the git exclude file so our hook stays untracked. */
-function ensureExcluded(repoPath: string, relPath: string): void {
+export function ensureExcluded(repoPath: string, relPath: string): void {
   const exclude = gitDirPath(repoPath, 'info/exclude');
   try {
     mkdirSync(dirname(exclude), { recursive: true });
@@ -589,13 +627,14 @@ export async function isDurabilityHardenedAsync(repoPath: string): Promise<boole
  * remote, froze `last_sync_at` (HEAD never moved), and a later `sync --full`
  * delete-reconcile treated the never-committed pages as disposable.
  *
- * #6530: commits only `<path>` (`commit --only`), under the checkout's commit
- * lock when it frees within a short budget; a writer that holds it longer
- * (a push on a slow network) does not stall the page write, and the commit
- * still lands path-scoped (the shared checkout only ever fast-forwards, so it
- * cannot be reverted by that writer). index.lock contention is retried
- * briefly. Never throws; returns false when nothing was committed — the DB
- * row and the on-disk file remain the durable sinks either way.
+ * #6530: commits only `<path>` (`commit --only`), always under the checkout's
+ * commit lock. GBRA-180: a writer that holds the lock past the short budget
+ * no longer gets a lockless commit racing it on the shared index; the page
+ * write stands, the file goes into the pending ledger, and the next locked
+ * write-through (or `gbrain git commit-push --pending`) commits it. A commit
+ * git refuses unstages the path again, so nothing is left staged for another
+ * writer's commit to sweep up. Never throws; returns false when nothing was
+ * committed — the DB row and the on-disk file remain the durable sinks.
  *
  * `git add -- <path>` stages a removal as readily as an edit, so
  * `deletePageThrough` reuses this helper with `action: 'delete write-through'`
@@ -863,7 +902,7 @@ export function durabilityJobStatus(
   }
   let logFresh: boolean | undefined;
   try {
-    const log = join(process.env.HOME || '', '.gbrain', 'brain-pull.log');
+    const log = join(gbrainHome(), 'brain-pull.log');
     if (existsSync(log)) {
       logFresh = Date.now() - statSync(log).mtimeMs <= 2 * intervalSec * 1000;
     }
@@ -900,7 +939,7 @@ function writeCronWrapper(sourceId: string, repoPath: string, branch: string): s
   return wrapper;
 }
 
-export function generateBrainPullPlist(label: string, wrapperPath: string, home: string, intervalSec: number): string {
+export function generateBrainPullPlist(label: string, wrapperPath: string, gbrainDir: string, intervalSec: number): string {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -909,8 +948,8 @@ export function generateBrainPullPlist(label: string, wrapperPath: string, home:
   <key>Label</key><string>${esc(label)}</string>
   <key>ProgramArguments</key><array><string>${esc(wrapperPath)}</string></array>
   <key>StartInterval</key><integer>${intervalSec}</integer>
-  <key>StandardOutPath</key><string>${esc(home)}/.gbrain/brain-pull.log</string>
-  <key>StandardErrorPath</key><string>${esc(home)}/.gbrain/brain-pull.err</string>
+  <key>StandardOutPath</key><string>${esc(gbrainDir)}/brain-pull.log</string>
+  <key>StandardErrorPath</key><string>${esc(gbrainDir)}/brain-pull.err</string>
 </dict>
 </plist>`;
 }
@@ -937,12 +976,11 @@ export function installDurabilityCron(
     };
   }
   const wrapper = dryRun ? cronWrapperPath(sourceId) : writeCronWrapper(sourceId, repoPath, branch);
-  const home = process.env.HOME || '';
   if (platform === 'darwin') {
     const plistPath = launchdPlistPath(sourceId);
     if (dryRun) return { status: 'fixed', detail: `would install launchd ${cronLabel(sourceId)} every ${intervalSec}s (dry-run)` };
     mkdirSync(dirname(plistPath), { recursive: true });
-    writeFileSync(plistPath, generateBrainPullPlist(cronLabel(sourceId), wrapper, home, intervalSec));
+    writeFileSync(plistPath, generateBrainPullPlist(cronLabel(sourceId), wrapper, gbrainHome(), intervalSec));
     try { execSync(`launchctl unload "${plistPath}" 2>/dev/null`, { stdio: 'ignore' }); } catch { /* */ }
     try { execSync(`launchctl load "${plistPath}"`, { stdio: 'ignore' }); } catch { /* loaded best-effort */ }
     return { status: 'fixed', detail: `launchd ${cronLabel(sourceId)} every ${intervalSec}s` };
@@ -1029,6 +1067,26 @@ function isGitRepo(repoPath: string): boolean {
  * the source dir while the enclosing repo owns `.git` — hardening must
  * assert/operate on the PARENT repo, not fail on the subdir's missing `.git`.
  */
+/**
+ * GBRA-180: a source whose root sits below the checkout toplevel (a brain folder inside a larger repository)
+ * records that root in `gbrain.sourceRoot`, so `gbrain git commit-push` refuses commits and publishes that
+ * change files outside it. A source at the toplevel records nothing unless another source already narrowed
+ * the checkout. Best-effort.
+ */
+function recordSourceRoot(top: string, sourcePath: string): void {
+  const run = (args: string[]) => execFileSync('git', ['-C', top, 'config', '--local', ...args], {
+    stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }) }).toString();
+  try {
+    const rel = relative(realpathSync(top), realpathSync(sourcePath)).split(sep).join('/');
+    if (rel.startsWith('..') || isAbsolute(rel)) return;
+    let current: string[] = [];
+    try { current = run(['--get-all', SOURCE_ROOT_CONFIG]).split('\n').map(v => v.trim()).filter(Boolean); } catch { /* unset */ }
+    const value = rel || '.';
+    if (current.includes(value) || (!rel && !current.length)) return;
+    run(['--add', SOURCE_ROOT_CONFIG, value]);
+  } catch { /* best-effort: without it commit-push treats the whole checkout as the root */ }
+}
+
 function resolveRepoRoot(path: string): string {
   try {
     return execFileSync('git', ['-C', path, 'rev-parse', '--show-toplevel'], {
@@ -1129,6 +1187,7 @@ export async function hardenBrainRepo(opts: HardenOpts): Promise<DurabilityRepor
       gitConfigSet(repoPath, 'merge.autoStash', 'false');
       gitConfigSet(repoPath, 'pull.ff', 'only');
     } catch { /* best-effort: the helper still resolves gbrain from PATH */ }
+    recordSourceRoot(repoPath, opts.repoPath);
   }
   // 4. committed helper
   push('helper', installHelper(repoPath, dryRun));
@@ -1174,7 +1233,7 @@ function commitScaffolding(repoPath: string, branch: string, redact: (s: string)
   const resolver = findResolverFile(repoPath);
   if (resolver) paths.push(relative(repoPath, resolver));
   try {
-    const r = commitAndPush({ repo: repoPath, paths, cwd: repoPath, message: 'chore(gbrain): install brain durability scaffolding' });
+    const r = commitAndPush({ repo: repoPath, paths, cwd: repoPath, message: 'chore(gbrain): install brain durability scaffolding', allowOutsideSourceRoot: true });
     if (r.branch !== branch) return { status: 'needs_attention', detail: `checkout is on ${r.branch}, not ${branch}` };
     if (r.outcome === 'nothing_to_commit') return { status: 'ok', detail: 'scaffolding already committed' };
     return { status: 'fixed', detail: `committed + pushed durability scaffolding${r.checkout === 'lagging' ? ` (checkout lagging: ${r.lagging_reason})` : ''}` };

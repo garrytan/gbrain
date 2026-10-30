@@ -36,6 +36,7 @@ import { currentCliWriteWait } from '../persistence/write-wait.ts';
 import { REPAIR_KINDS, runRepair, type RepairHandler, type RepairKind, type RepairResult, type RepairScope } from './core.ts';
 import { timelineRepair } from './timeline.ts';
 import { timelineCommentsRepair } from './timeline-comments.ts';
+import { timelineOrderRepair } from './timeline-order.ts';
 import { visibilityRepair } from './visibility.ts';
 import { safeChunksRepair } from './safe-chunks.ts';
 import { contextualModeRepair } from './contextual-mode.ts';
@@ -59,6 +60,7 @@ import { loopFactsRepair } from './loop-facts.ts';
 import { ontologyFactsRepair } from './ontology-facts.ts';
 import { factsRehomeRepair } from './facts-rehome.ts';
 import { consolidateTiesRepair } from './consolidate-ties.ts';
+import { duplicateFactsRepair } from './duplicate-facts.ts';
 import { orphanChildrenRepair } from './orphan-children.ts';
 import { failedWritesRepair } from './failed-writes.ts';
 import { frontmatterRepair } from './frontmatter.ts';
@@ -81,6 +83,10 @@ import { missingTablesRepair } from './missing-tables.ts';
 import { urlCloneFencesRepair } from './url-clone-fences.ts';
 import { segmentedMirrorRepair } from './segmented-mirror.ts';
 import { uncommittedDeletionsRepair, UNCOMMITTED_DELETIONS_CONSENT_TEXT } from './uncommitted-deletions.ts';
+import { factClaimDatesRepair } from './fact-claim-dates.ts';
+import { provenanceRepair } from './provenance.ts';
+import { generationsRepair, generationsSelectionArgv, type GenerationsSelection } from '../generations/repair.ts';
+import { restoreDaysHint } from '../generations/config.ts';
 import { ERROR_CATALOGUE, catalogueError } from '../error-catalogue.ts';
 import type { OperationError } from '../ops/contract.ts';
 import type { ProgressReporter } from '../progress.ts';
@@ -271,6 +277,22 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'facts back to open validity and keeps their consolidation mark; a fact that was expired, edited or reopened reports changed_since_preview. '
       + 'Database-only; no page is rewritten.',
   },
+  'duplicate-facts': {
+    handler: duplicateFactsRepair, embeds: 'effect', checks: [], explicit_only: true, preview_bound: true, consent: 'destructive',
+    consentText: {
+      what: 'Retire the previewed copies of duplicate facts, keeping a fenced row of each claim, else its oldest row',
+      why: 'The preview listed each group of active facts that state one claim (same fingerprint, source and visibility) with the row it keeps; applying it supersedes exactly the listed copies.',
+      risk: 'Copies are expired with superseded_by pointing at the kept row, never deleted or withdrawn, so the claim stays in recall and can be saved again. '
+        + 'Fenced copies are struck in their page as "superseded by #N" through a revision-bound page write. A row that changed since the preview is kept.',
+      user_message: 'Retire the previewed duplicate fact copies? Each claim keeps the row in its page\'s Facts table, else its oldest row; the copies are marked superseded by it, not deleted.',
+    },
+    summary: 'Retire exact copies of one active fact (#7043): in each group of active facts of one source and visibility that share their fingerprint, the '
+      + 'oldest fenced row (else the oldest row) is kept and every other row is superseded by it (expired_at set, superseded_by the kept row; never a withdrawal, so the claim stays '
+      + 'rememberable). Groups whose copies sit on other entities are listed as cross_entity and retired only with --include-cross-entity; the kept row keeps '
+      + 'its entity. Near duplicates are never touched. Fenced copies are struck in their page through a revision-bound put_page when the kept row is in the '
+      + 'same fence, listed as fence_kept_elsewhere otherwise, and kept as segmented_page on a segmented page. Preview-bound: --apply --expect <hash> --yes retires exactly the previewed set; a row that '
+      + 'changed since reports changed_since_preview. Runs only when named.',
+  },
   'orphan-children': {
     handler: orphanChildrenRepair, embeds: 'none', checks: ['child_table_orphans'], explicit_only: true,
     summary: 'Delete rows of page child tables (chunks, versions, tags, takes, raw data, timeline, links) whose page no longer exists, and clear dangling '
@@ -305,6 +327,21 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
     handler: timelineCommentsRepair, embeds: 'effect', checks: [], explicit_only: true,
     summary: 'Clean timeline rows filed from adjacent HTML comments (#6184): drop the materialized bullets that copied a section END marker into the page, '
       + 'delete rows that are only comment markup, and strip the markup from the rest. Each page whose bullets change is re-embedded by its publication.',
+  },
+  'timeline-order': {
+    handler: timelineOrderRepair, embeds: 'effect', checks: [], explicit_only: true, preview_bound: true, consent: 'destructive',
+    consentText: {
+      what: 'Rewrite the previewed pages so each timeline is in date order, without exact duplicate bullets, in one section',
+      why: 'The preview listed each page whose timeline bullets are out of date order, repeat a bullet exactly, or sit in more than one timeline section, with the page revision it read.',
+      risk: 'Only timeline bullets move; a later exact copy of a bullet is dropped and a later timeline section\'s bullets join the first. No other text changes and no timeline row is added or removed. A page that changed since the preview refuses the apply (preview_changed). Managed sources commit the file through the Git effect; undo with git revert or gbrain revert.',
+      user_message: 'Put the previewed timelines in date order? Exact duplicate bullets are dropped and split timeline sections are joined',
+    },
+    summary: 'Put existing timelines back in date order (#7247): bulk imports and hand edits appended - **YYYY-MM-DD** | bullets at the end, '
+      + 'copied one twice, or started a second ## Timeline section. Bullets move with their indented lines in the direction the page already uses '
+      + '(ascending unless mostly descending), stable for equal dates; prose, sub-headings and comments stay where they are. Exact duplicates in one '
+      + 'run keep the first copy; near duplicates are only counted. Later timeline sections join the first one only when nothing but bullets moves. A '
+      + 'page with a line the parser cannot place, or that would not read back with the same text and timeline rows, is listed needs_human. --slug '
+      + '<slug> narrows. Preview-bound: --apply --expect <hash> --yes rewrites exactly the previewed pages through revision-bound put_page; runs only when named.',
   },
   fences: {
     handler: fencesRepair, embeds: 'effect', checks: ['fence_integrity'], preview_bound: true, spends: 'llm',
@@ -503,6 +540,53 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'never deletes it again. Pages already purged cannot be restored by this command; only a backup (pg_dump, or gbrain backup create) can bring them back. '
       + 'Runs only when named; never on upgrade.',
   },
+  'fact-claim-dates': {
+    handler: factClaimDatesRepair, embeds: 'effect', checks: ['fact_bulk_dates'], explicit_only: true, preview_bound: true, consent: 'destructive',
+    consentText: {
+      what: 'Set the valid_from of the previewed facts to the date each one\'s claim states',
+      why: 'The preview listed each facts fence row and database-only fact dated with the day a bulk load ran whose claim states exactly one earlier date; that date replaces the load day.',
+      risk: 'Only the listed valid_from cells change; every other row and page stays as it is. Page edits publish through revision-bound put_page (a managed brain commits the file, so git revert undoes it; page history keeps the earlier revision). A page that changed since the preview is skipped.',
+      user_message: 'Move the previewed facts to the date their claim states? Only their valid_from changes',
+    },
+    summary: 'Give facts that a bulk load dated with the day it ran the date their claim states (#7247). Needs --source; --day YYYY-MM-DD names the '
+      + 'loaded day instead of the days doctor fact_bulk_dates detects (200+ active facts, 25%+ of the source, 20+ entities on one UTC day). Candidates '
+      + 'are active facts of that day whose claim holds exactly one ISO date, a real date from 1900 to the day before; facts with none, several or one out '
+      + 'of range are counted and kept. A fence row\'s valid_from cell is rewritten and the page published through revision-bound put_page, so the facts '
+      + 'row follows the file; a database-only fact is updated directly on an unmanaged brain and counted database_only_managed on a managed one. '
+      + 'Preview-bound and destructive: --apply --expect <hash> --yes recomputes the plan (preview_changed when it differs) and moves exactly the '
+      + 'previewed rows. Runs only when named; never on upgrade.',
+  },
+  provenance: {
+    handler: provenanceRepair, embeds: 'effect', checks: ['provenance_stamp_drift'], explicit_only: true, preview_bound: true, consent: 'destructive',
+    consentText: {
+      what: 'Restore the previewed provenance stamps and lowering markers, and lower each listed page to match',
+      why: 'The preview listed each page whose source_kind, ingested_via or ingested_at a remote write rewrote, or whose lowering marker it removed, before those stamps were server-owned (#7892), and each classified page whose file would re-read above its stored tier.',
+      risk: 'Only the three stamps and the trust_tier marker change, and a page is only lowered, never raised; each lowered page gets a lower_page proposal that gbrain trust review confirms or reverts. A page that changed since the preview refuses the apply (preview_changed). Managed sources commit the file through the Git effect; undo with gbrain trust review or git revert.',
+      user_message: 'Restore where the previewed pages came from and lower their trust to match? Only their provenance stamps and trust marker change, and you can undo each one in gbrain trust review',
+    },
+    summary: 'Restore provenance stamps (source_kind, ingested_via, ingested_at) and lowering markers that writes removed before #7892, and stamp the '
+      + 'trust marker on classified pages whose file would re-read above their stored tier (#7891, #7918). Remote damage is repaired; unattributed '
+      + 'damage only with --include-ambiguous; the owner\'s own edits and pages a later local write also changed are listed, never written. '
+      + 'Each change only lowers, and a lowered page files a lower_page proposal for gbrain trust review. --slug <slug> narrows. Preview-bound and '
+      + 'destructive: --apply --expect <hash> --yes writes exactly the previewed pages through the owner page write; local CLI only; never on upgrade.',
+  },
+  'generations': {
+    handler: generationsRepair, embeds: 'effect', checks: ['generation_retirements', 'generation_held', 'generation_pending'], explicit_only: true, preview_bound: true, consent: 'destructive',
+    consentText: {
+      what: 'Apply the previewed generations repair: restore each listed key to the generation it replaced, or publish each listed held result once',
+      why: 'The preview listed each key with what it revives, retires or publishes; the apply changes exactly that set and refuses a key that changed since.',
+      risk: 'A restore versions and retires the items the restored-from generation added (retired_by generation-restore, restorable for generations.restore_days) and revives the items it retired from their ledger preimages; a release publishes the held result, retiring what it no longer has the same way.',
+      user_message: 'Apply the previewed generations repair? Each listed key changes exactly as the preview showed',
+    },
+    summary: 'Undo or release a derived generation (GBRA-161): --kind <kind> names the ledger kind, --mode restore (default) republishes the item set the '
+      + 'selected live generation replaced from its ledger preimages and retires what it added, --mode release-held publishes a held result once '
+      + '(shrunk, valve, attempts_exhausted; oversize after raising generations.max_items; no_proof, fence_absent, tie and segmented_unsupported are refused; '
+      + 'a managed source releases atom page keys through its writer and restores retired atoms with atoms-restore), --mode cleanup lists, read-only, the members '
+      + 'an activated managed generation still waits on and the orphan candidates an activation that never happened left, each with its activation id. '
+      + 'One selector bounds the set: --run <id>, --since <ISO-8601|7d>, --key <owner>, --generation <id>, or --held (release-held). The preview lists each key '
+      + 'and saves the set under its hash; --apply --expect <hash> --yes applies exactly that set, refusing a key edited since or with no stored preimage. '
+      + 'Runs only when named; never on upgrade.',
+  },
 };
 
 export const REPAIR_REGISTRY: readonly RepairKindSpec[] = REPAIR_KINDS.map(kind => ({ kind, ...SPECS[kind] }));
@@ -536,7 +620,7 @@ export function repairSpec(kind: RepairKind, registry: readonly RepairKindSpec[]
 
 /** `gbrain repair <kind> [--source <id>]`, the read-only preview of one kind. */
 export function repairPreviewCommand(kind: RepairKind, opts: { source?: string } = {}): string {
-  return `gbrain repair ${kind}${opts.source ? ` --source ${opts.source}` : ''}`;
+  return `gbrain repair ${kind}${opts.source ? ` --source ${opts.source}` : ''}${kind === 'generations' ? ` --kind atom --since ${restoreDaysHint()}d` : ''}`;
 }
 
 /** How `--all`, the remediation plan and the banner report an explicit-only kind instead of running it. */
@@ -584,19 +668,19 @@ export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; 
      * `explicit`: the operator named `kind`; required for explicit-only kinds.
      * `maxLlmUsd`: what this run may spend on a paid chat model (`spends: 'llm'` kinds; undefined = no run cap).
      */
-    async run(kind: RepairKind, scope: RepairScope, run: { limit?: number; sourceFlag?: string; explicit?: boolean; expect?: string; includeAmbiguous?: boolean; only?: string[]; skip?: string[];
+    async run(kind: RepairKind, scope: RepairScope, run: { limit?: number; sourceFlag?: string; explicit?: boolean; expect?: string; includeAmbiguous?: boolean; includeCrossEntity?: boolean; only?: string[]; skip?: string[];
       slugs?: string[]; noLlm?: boolean; maxLlmUsd?: number; deadline?: number; stop?: AbortSignal; recordDatabaseStops?: boolean;
       prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string; held?: boolean; side?: string; state?: string; provenance?: string; cursor?: string; progress?: ProgressReporter;
-      keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean; afterPage?: number } = {}): Promise<RepairResult> {
+      keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean; afterPage?: number; generations?: GenerationsSelection; day?: string } = {}): Promise<RepairResult> {
       const ctx = { engine, config, logger, dryRun: !opts.apply, remote: false, sourceId: scope.source_ids[0], writeWaitMs } as OperationContext;
       const spec = repairSpec(kind, opts.registry);
       return runRepair(ctx, spec.handler, scope, { apply: opts.apply, limit: run.limit, embeddingModel, sourceFlag: run.sourceFlag, spec,
         embed: !opts.noEmbed && embeddingModel !== undefined, applyArgs: [...(opts.noEmbed && spec.embeds === 'inline' ? ['--no-embed'] : []),
           ...(run.olderThan ? ['--older-than', run.olderThan] : []), ...(run.includeFailures ? ['--include-failures'] : []), ...(run.force ? ['--force'] : []),
-          ...(run.afterPage !== undefined ? ['--after', String(run.afterPage)] : [])],
-        explicit: run.explicit, expect: run.expect, includeAmbiguous: run.includeAmbiguous, only: run.only, skip: run.skip, slugs: run.slugs, noLlm: run.noLlm,
+          ...(run.afterPage !== undefined ? ['--after', String(run.afterPage)] : []), ...(run.generations ? generationsSelectionArgv(run.generations) : []), ...(run.day ? ['--day', run.day] : [])],
+        explicit: run.explicit, expect: run.expect, includeAmbiguous: run.includeAmbiguous, includeCrossEntity: run.includeCrossEntity, only: run.only, skip: run.skip, slugs: run.slugs, noLlm: run.noLlm,
         maxLlmUsd: run.maxLlmUsd, deadline: run.deadline, ...(run.stop ? { stop: run.stop } : {}), ...(run.recordDatabaseStops ? { recordDatabaseStops: true } : {}), prefer: run.prefer, requests: run.requests, allDrifted: run.allDrifted, driftClass: run.driftClass, since: run.since,
-        held: run.held, side: run.side, state: run.state, provenance: run.provenance, cursor: run.cursor, progress: run.progress, keep: run.keep, requestId: run.requestId, olderThan: run.olderThan, includeFailures: run.includeFailures, force: run.force, from: run.from, close: run.close, afterPage: run.afterPage });
+        held: run.held, side: run.side, state: run.state, provenance: run.provenance, cursor: run.cursor, progress: run.progress, keep: run.keep, requestId: run.requestId, olderThan: run.olderThan, includeFailures: run.includeFailures, force: run.force, from: run.from, close: run.close, afterPage: run.afterPage, generations: run.generations, day: run.day });
     },
   };
 }

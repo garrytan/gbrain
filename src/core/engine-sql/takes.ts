@@ -323,10 +323,16 @@ export async function listTakes(exec: LegacyUnscopedRead, opts: TakesListOpts = 
           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
         )
+        AND (${opts.sinceOnOrBefore ?? null}::text IS NULL OR (t.since_date IS NOT NULL AND NOT (
+          t.since_date ~ '^[0-9]{4}-[0-9]{2}(-[0-9]{2})?$'
+          AND (CASE WHEN length(t.since_date) = 7 THEN t.since_date || '-15' ELSE t.since_date END) > ${opts.sinceOnOrBefore ?? null}::text)))
         ${sourceFilter}${takeEligibility(opts.eligibility)}
       ORDER BY
+        ${opts.ungradedFirst ? sqlFragment`EXISTS (SELECT 1 FROM take_grade_cache g WHERE g.take_id = t.id
+          AND g.prompt_version = ${opts.ungradedFirst.promptVersion} AND g.judge_model_id = ${opts.ungradedFirst.judgeModelId}),` : sqlFragment``}
+        CASE WHEN ${opts.sortBy ?? 'created_at'} = 'since_date' AND ${opts.oldestFirst ?? false}::boolean THEN t.since_date END ASC NULLS LAST,
         CASE WHEN ${opts.sortBy ?? 'created_at'} = 'weight'      THEN t.weight     END DESC NULLS LAST,
-        CASE WHEN ${opts.sortBy ?? 'created_at'} = 'since_date'  THEN t.since_date END DESC NULLS LAST,
+        CASE WHEN ${opts.sortBy ?? 'created_at'} = 'since_date' AND NOT ${opts.oldestFirst ?? false}::boolean THEN t.since_date END DESC NULLS LAST,
         CASE WHEN ${opts.sortBy ?? 'created_at'} = 'created_at'  THEN t.created_at END DESC NULLS LAST
       LIMIT ${limit} OFFSET ${offset}
     `)).rows;

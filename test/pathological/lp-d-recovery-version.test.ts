@@ -100,8 +100,9 @@ for (const kind of testBackends()) {
         const start = (await read()).attempts;
         // A reader that misreads the record may clear it; the wait ends then too, and the assertions below say so.
         await waitFor(async () => { await pass(); const row = await read(); return !row.recovery || row.attempts >= start + 7; }, { timeoutMs: 120_000, intervalMs: 100, label: 'seven recovery attempts' });
-        await waitFor(async () => (await read()).state !== 'running', { timeoutMs: 30_000, label: 'the effect released' });
-        const effect = await read();
+        // The row the wait read: the resident consumer may claim the effect again right after it is released.
+        let effect = await read();
+        await waitFor(async () => (effect = await read()).state !== 'running', { timeoutMs: 30_000, label: 'the effect released' });
         // Untouched: the record (byte for byte), its stage, the canonical file and the reserved capacity.
         expect(json(effect!.recovery)).toEqual(written);
         expect(existsSync(written.staging.publication.path)).toBe(true);

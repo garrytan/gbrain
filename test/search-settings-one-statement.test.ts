@@ -21,7 +21,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
-import { searchSettingsStatement, withSearchSettings } from '../src/core/postgres-engine/search-settings.ts';
+import { isPipelinableSearchRead, searchSettingsStatement, withSearchSettings } from '../src/core/postgres-engine/search-settings.ts';
 import { vectorScanSettings } from '../src/core/search/vector-settings.ts';
 
 const { default: Connection } = await import(new URL('../vendor/postgres/src/connection.js', import.meta.url).href) as {
@@ -51,6 +51,25 @@ describe('withSearchSettings', () => {
     }]);
     // The driver budgets the next statement by the timeout this one binds (#6543).
     expect(Connection.statementTimeoutChanges(statements[0]!.sql, statements[0]!.params)).toEqual([{ kind: 'set', local: true, ms: 8000 }]);
+  });
+
+  test('top level: the read is sent behind the settings statement without waiting for its answer', async () => {
+    const sent: string[] = [];
+    let answer!: () => void;
+    const tx = { unsafe: (sql: string) => { sent.push(sql); return new Promise<unknown[]>(resolve => { answer = () => resolve([]); }); } } as never;
+    let readStarted = false;
+    const pending = withSearchSettings(tx, false, { jit: 'off' }, async () => { readStarted = true; return 'rows'; });
+    await Promise.resolve();
+    expect(readStarted).toBe(true);
+    expect(sent).toEqual(["SELECT set_config('jit', $1, true)"]);
+    answer();
+    expect(await pending).toBe('rows');
+  });
+
+  test('top level: a refused settings statement is the error raised, ahead of the read that failed behind it', async () => {
+    const tx = { unsafe: async () => { throw new Error('settings sentinel'); } } as never;
+    await expect(withSearchSettings(tx, false, { jit: 'off' }, async () => { throw new Error('current transaction is aborted'); })).rejects.toThrow('settings sentinel');
+    await expect(withSearchSettings(tx, false, { jit: 'off' }, async () => 'rows')).rejects.toThrow('settings sentinel');
   });
 
   test("nested: reads the caller's values, sets its own, restores the caller's (fallback for an unloaded extension setting)", async () => {
@@ -98,13 +117,16 @@ describe('PostgresEngine.searchKeyword: statements per search transaction', () =
   /** An engine over a fake pool whose transactions record their statements; every query returns no rows. */
   function recordingEngine() {
     const transactions: Statement[][] = [];
+    const options: unknown[] = [];
     const handle = (into: () => Statement[]) => Object.assign(
       async (strings: TemplateStringsArray, ...params: unknown[]) => { into().push({ sql: strings.join('$'), params }); return []; },
       { unsafe: async (sql: string, params: unknown[] = []) => { into().push({ sql, params }); return []; } },
     );
     const pool: Statement[] = [];
     const sql = Object.assign(handle(() => pool), {
-      begin: async (fn: (tx: unknown) => Promise<unknown>) => {
+      begin: async (first: unknown, second?: (tx: unknown) => Promise<unknown>) => {
+        const fn = (second ?? first) as (tx: unknown) => Promise<unknown>;
+        options.push(second ? first : undefined);
         const statements: Statement[] = [];
         transactions.push(statements);
         return fn(Object.assign(handle(() => statements), { savepoint: (inner: (tx: unknown) => Promise<unknown>) => inner(handle(() => statements)) }));
@@ -116,7 +138,7 @@ describe('PostgresEngine.searchKeyword: statements per search transaction', () =
     priv._connectionStyle = 'instance';
     priv._savedConfig = { keyword_statement_timeout_ms: 8000 };
     priv.registerBeforeDisconnect = () => () => {};
-    return { engine, transactions };
+    return { engine, transactions, options };
   }
 
   test('strict attempt: settings then query; OR fallback: the same two, with enable_seqscan off in the one settings statement (work_mem in both, GBRA-156)', async () => {
@@ -130,5 +152,52 @@ describe('PostgresEngine.searchKeyword: statements per search transaction', () =
     expect(transactions[0]![0]!.params).toEqual(['off', '8000ms', '32MB']);
     expect(transactions[1]![0]!.sql).toBe("SELECT set_config('jit', $1, true), set_config('statement_timeout', $2, true), set_config('enable_seqscan', $3, true), set_config('work_mem', $4, true)");
     expect(transactions[1]![0]!.params).toEqual(['off', '8000ms', 'off', '32MB']);
+  });
+
+  test('GBRA-156: every search read transaction sends its settings and its read behind BEGIN, before BEGIN\'s answer', async () => {
+    const { engine, transactions, options } = recordingEngine();
+    await engine.searchKeyword('alpha beta', { orFallback: true });
+    await engine.searchTitles('alpha beta', { requireSafeChunks: true, excludePrivate: true });
+    expect(transactions.length).toBeGreaterThanOrEqual(4);
+    for (const [i, statements] of transactions.entries()) {
+      const early = (options[i] as { early?: (statement: string) => boolean } | undefined)?.early;
+      expect(early).toBe(isPipelinableSearchRead);
+      expect(statements.map(s => ({ head: s.sql.trim().slice(0, 40), sent: early!(s.sql) })))
+        .toEqual(statements.map(s => ({ head: s.sql.trim().slice(0, 40), sent: true })));
+    }
+  });
+});
+
+describe('isPipelinableSearchRead', () => {
+  test('accepts the settings statement and single reads', () => {
+    expect(isPipelinableSearchRead(searchSettingsStatement({ jit: 'off', statement_timeout: '8000ms', 'app.scopes': 'a,b', work_mem: '32MB' }).sql)).toBe(true);
+    expect(isPipelinableSearchRead('WITH top_pages AS (SELECT p.updated_at, p.deleted_at FROM pages p) SELECT * FROM top_pages')).toBe(true);
+    expect(isPipelinableSearchRead('  select 1')).toBe(true);
+  });
+
+  test('refuses writes, locks, sequences, session settings, notifications and more than one statement', () => {
+    for (const statement of [
+      'INSERT INTO page_retrievals VALUES (1)',
+      'UPDATE pages SET title = $1',
+      'WITH gone AS (DELETE FROM pages RETURNING id) SELECT * FROM gone',
+      'WITH m AS (MERGE INTO pages p USING x ON true WHEN MATCHED THEN DELETE) SELECT 1',
+      'SELECT 1 FROM pages FOR UPDATE',
+      'SELECT 1 FROM pages FOR NO KEY UPDATE',
+      'SELECT 1 FROM pages FOR SHARE',
+      'SELECT 1 FROM pages FOR KEY SHARE',
+      "SELECT nextval('page_generation_clock_seq')",
+      'SELECT pg_advisory_xact_lock(1)',
+      'SELECT pg_try_advisory_lock(1)',
+      "SELECT pg_notify('x', 'y')",
+      "SELECT set_config('jit', $1, false)",
+      "SELECT set_config('jit', 'off', true)",
+      'SELECT txid_current()',
+      'SELECT 1; SELECT 2',
+      'COMMIT',
+      'SAVEPOINT s0',
+      'TRUNCATE pages',
+      'LOCK TABLE pages',
+      'CALL do_something()',
+    ]) expect({ statement, accepted: isPipelinableSearchRead(statement) }).toEqual({ statement, accepted: false });
   });
 });

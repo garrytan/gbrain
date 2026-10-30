@@ -69,6 +69,7 @@ export function __resetPowerShellWarmupForTests(): void { warmed = null; }
 
 export async function protectNewBackupPath(path: string, kind: 'directory' | 'file'): Promise<void> {
   if (process.platform !== 'win32') return;
+  let timedOut = false;
   try {
     await warmPowerShell();
     assertNoSymlinks(path);
@@ -80,7 +81,10 @@ export async function protectNewBackupPath(path: string, kind: 'directory' | 'fi
         ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(protect, 'utf16le').toString('base64')], {
           env: { ...process.env, GBRAIN_BACKUP_PRIVATE_PATH: path, GBRAIN_BACKUP_PRIVATE_KIND: kind },
           encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024, windowsHide: true,
-        }, (error, stdout) => error || inputFailed ? reject(error ?? new Error('Private path input failed')) : resolve(stdout));
+        }, (error, stdout) => {
+          if (error?.killed && !inputFailed) timedOut = true;
+          if (error || inputFailed) reject(error ?? new Error('Private path input failed')); else resolve(stdout);
+        });
       const inputFailure = () => { inputFailed = true; child.kill(); };
       if (!child.stdin) { inputFailure(); return; }
       child.stdin.once('error', inputFailure);
@@ -92,6 +96,9 @@ export async function protectNewBackupPath(path: string, kind: 'directory' | 'fi
       || before.birthtimeNs !== after.birthtimeNs
       || (kind === 'directory' ? readdirSync(path).length !== 0 : after.size !== 0n || after.nlink !== 1n)) throw new Error('Private path verification failed');
   } catch {
+    // A protection launch killed at its 15 s bound says nothing about this destination's permissions: Windows
+    // PowerShell did not start in time (a cold runner's first starts measured 30 s and more, after the warm-up).
+    if (timedOut) throw new AgentInstallError('private_backup_protection_timeout', "Windows PowerShell did not start within 15 seconds, so GBrain could not establish owner-only access (plus SYSTEM) on this new path. No payload was written to it. This is usually a slow first start of PowerShell on this machine; run the backup again. Existing files and parent permissions were not changed.");
     // #5312 B(i): the text names what was observed (protection attempted and verified by the script above, and it
     // did not hold here), not a categorical rule about drive roots; the user profile is the destination that works.
     throw new AgentInstallError('private_backup_path_unavailable', "This destination's permissions prevented GBrain from establishing owner-only access (plus SYSTEM); use a new path inside your user profile. No payload was written to this new path. The destination must be on a local filesystem with Windows ACL support, with built-in Windows PowerShell available and permitted. Existing files and parent permissions were not changed.");

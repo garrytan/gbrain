@@ -2150,6 +2150,9 @@ export class MinionQueue {
     // override; the worker sweep resolves from env/default.
     const graceMs = graceMsOverride ?? resolveStallReclaimGraceMs();
     return this.engine.transaction(async (tx) => {
+      // GBRA-133: a drain-lease holder record whose lease lock is gone or expired outlived a killed holder; nothing else removes it.
+      await tx.executeRaw(`DELETE FROM minion_jobs b WHERE b.queue = '${LEASE_BEACON_QUEUE}' AND b.status = 'active' AND b.lock_until < now()
+        AND NOT EXISTS (SELECT 1 FROM gbrain_cycle_locks l WHERE l.acquisition_token::text = b.lock_token AND l.ttl_expires_at > now())`);
       const candidates = await tx.executeRaw<{ id: number; parent_job_id: number | null; stalled_counter: number; max_stalled: number }>(
         `SELECT id, parent_job_id, stalled_counter, max_stalled
            FROM minion_jobs

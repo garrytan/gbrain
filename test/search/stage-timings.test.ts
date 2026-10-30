@@ -43,6 +43,32 @@ describe('SearchTimings attribution', () => {
     expect(sum(s.stages_ms) + s.other_ms).toBe(s.total_ms);
   });
 
+  test('parts split a stage into sequential steps without changing its booking; a nested part takes the clock', async () => {
+    const c = manualClock();
+    const t = new SearchTimings(c.now);
+    await t.stage('response', async () => {
+      await t.part('response', 'evidence', async () => { c.tick(3); });
+      await t.part('response', 'trust', async () => { c.tick(1); });
+      await t.part('response', 'meta', async () => {
+        c.tick(2);
+        await t.part('response', 'keyword_count', async () => { c.tick(4); });
+        c.tick(1);
+      });
+      c.tick(2);
+    });
+    expect(t.snapshot()).toEqual({ total_ms: 13, stages_ms: { response: 13 }, other_ms: 0, parts_ms: { response: { evidence: 3, trust: 1, meta: 3, keyword_count: 4 } } });
+  });
+
+  test('a part still running at the snapshot is booked up to it; a part that throws keeps its time', async () => {
+    const c = manualClock();
+    const t = new SearchTimings(c.now);
+    await expect(t.part('response', 'evidence', async () => { c.tick(5); throw new Error('fetch failed'); })).rejects.toThrow('fetch failed');
+    let inside: ReturnType<SearchTimings['snapshot']> | undefined;
+    await t.part('response', 'meta', async () => { c.tick(2); inside = t.snapshot(); });
+    expect(inside!.parts_ms).toEqual({ response: { evidence: 5, meta: 2 } });
+    expect(t.snapshot().parts_ms).toEqual({ response: { evidence: 5, meta: 2 } });
+  });
+
   test('repeated stages (retries, a discarded escalation) accumulate', async () => {
     const c = manualClock();
     const t = new SearchTimings(c.now);
@@ -209,6 +235,11 @@ describe('--explain line', () => {
   test('formatTimingsSummary names every stage, other, and the overlapped arms', () => {
     expect(formatTimingsSummary(timings)).toBe('timings: 142ms total — setup 3, lexical 12, embed 30, response 4, other 2 (overlapped: keyword_arm 11, title_arm 9)');
     expect(formatTimingsSummary(undefined)).toBeNull();
+  });
+
+  test('formatTimingsSummary lists stage parts after the overlapped work', () => {
+    expect(formatTimingsSummary({ ...timings, parts_ms: { response: { evidence: 1, meta: 2 } } }))
+      .toBe('timings: 142ms total — setup 3, lexical 12, embed 30, response 4, other 2 (overlapped: keyword_arm 11, title_arm 9) (parts: response.evidence 1, response.meta 2)');
   });
 
   test('formatResultsExplain prints the timings line in its header', () => {

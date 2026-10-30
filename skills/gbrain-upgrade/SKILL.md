@@ -118,6 +118,37 @@ rather than blocking — the version numbers alone are enough to decide.
   stops nagging for this version until it expires or a newer version ships.
 - **Never** → `gbrain config set self_upgrade.mode off`
 
+## Always-on hosts: pause, drain, upgrade, verify, resume
+
+A host that runs autopilot, a jobs worker or a serve must end the upgrade with
+every process on the new build, and a job that starts mid-swap can run half on
+each. A large or production brain follows the stable channel
+(`gbrain config set self_upgrade.channel stable`, or `gbrain upgrade --channel stable`
+once), which offers only releases that passed the production-shaped soak.
+With the operator's go-ahead, upgrade in this order:
+
+1. `gbrain autopilot pause --reason "upgrade"` so no new cycle starts.
+2. Wait for a quiet queue: `gbrain jobs list --status active --json` returns
+   no jobs (`gbrain jobs stats --json` for the totals). Let running jobs
+   finish; don't cancel them to hurry.
+3. Preview the restart: `gbrain upgrade --restart-only --dry-run --json` lists
+   every gbrain process on the host, its build and how it restarts.
+4. `gbrain upgrade` on every install that touches the brain (`which -a gbrain`
+   lists the installs on PATH; a harness, cron wrapper or service may run
+   another by absolute path). It restarts serve, autopilot and the jobs
+   supervisor onto the new build and verifies one build runs. A process it
+   cannot restart (one started by hand, a running `gbrain sync`, an MCP server
+   a harness started) refuses with `restart_refused` (exit 3) before anything
+   installs: relay the step it names; `--stop-mcp` only after the user agrees.
+5. Verify: `gbrain --version` per install, and
+   `gbrain doctor --only runtime_build_skew,serve_build_drift --json` ok. On a
+   managed brain, `gbrain sources writer movement` must exit 0
+   ([restart and verify](https://github.com/garrytan/gbrain/blob/master/docs/guides/upgrades-auto-update.md#restart-and-verify)).
+6. `gbrain autopilot resume`.
+
+Report the version every process runs, not just the version the upgrade
+printed.
+
 ## When it fails
 
 Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:

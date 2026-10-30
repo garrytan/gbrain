@@ -213,6 +213,20 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       }, { databaseUrl, setup: ({ engine }) => seedOrphans(engine, ['notes/ghost-a', 'notes/ghost-b']) });
     }, 120_000);
 
+    test('A-1 #6808: failures come back in drain order even when a later page fails first', async () => {
+      await managedBrain(async ({ engine }) => {
+        const read = engine.readPageSnapshot;
+        engine.readPageSnapshot = (async function (this: BrainEngine, slug: string, opts?: unknown) {
+          if (slug === 'notes/ghost-a') await Bun.sleep(300);
+          return read.call(this, slug, opts as never);
+        }) as BrainEngine['readPageSnapshot'];
+        try {
+          const result = await expectUnitNotAborted(() => runAll(engine));
+          expect((result.failures ?? []).map(f => f.slug)).toEqual(['notes/ghost-a', 'notes/ghost-b']);
+        } finally { engine.readPageSnapshot = read; }
+      }, { databaseUrl, setup: ({ engine }) => seedOrphans(engine, ['notes/ghost-a', 'notes/ghost-b']) });
+    }, 120_000);
+
     test('A-1 breaker per source: a deleted source whose every page fails stops only that source', async () => {
       await managedBrain(async ({ engine }) => {
         const before = await snapshotItems(engine, 'default');

@@ -19,6 +19,8 @@ import { assertReconcileOutputPath, assertReconcileSize, manageReconcileBackups,
 import type { LocalGrant } from './identity.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
+import { liveFileDrift } from './drift-conflicts.ts';
+import { clearGitHold, GIT_HOLD_OP, gitHoldFingerprint, outOfAttemptsHold, readGitHold } from './sync-holds.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 
@@ -151,8 +153,26 @@ export async function runReconcileApply(engine: BrainEngine, params: Record<stri
   const artifact = validateReconcileArtifact(params.preview);
   artifact.decisions = reconcileDecisions(artifact.decisions);
   const requestId = requireUuid(params.request_id as string);
-  return admitReconcileArtifact(engine, { sourceId, slug, authority, artifact, requestId, keepFileBytes: params.keep_file_bytes === true },
-    async (row, replayed) => writeResponse(replayed && isTerminal(row) ? row : await waitForWrite(engine, row, await config(engine))));
+  return admitReconcileArtifact(engine, { sourceId, slug, authority, artifact, requestId, keepFileBytes: params.keep_file_bytes === true }, async (row, replayed) => {
+    const settled = replayed && isTerminal(row) ? row : await waitForWrite(engine, row, await config(engine));
+    const cleared = settled.state === 'committed' ? await clearAgreedStallHold(engine, sourceId, slug) : null;
+    return { ...writeResponse(settled), ...(cleared ? { cleared_hold: cleared } : {}) };
+  });
+}
+
+/**
+ * #7364: a committed reconcile whose page and canonical file now agree clears that file's out-of-attempts hold
+ * (`preparation_stalled`, `write_interrupted`: the write owner stalled, not the file), which no other repair path clears.
+ * A file that still differs keeps its hold, and so does a hold written after the one this read.
+ */
+async function clearAgreedStallHold(engine: BrainEngine, sourceId: string, slug: string): Promise<{ op: string; fingerprint: string; code: string } | null> {
+  const live = await liveFileDrift(engine, sourceId, slug);
+  if (live.still_present !== false || !live.path) return null;
+  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
+  const hold = source ? await readGitHold(engine, sourceId, source.incarnation, live.path) : null;
+  if (!hold || !outOfAttemptsHold(hold.code)) return null;
+  const cleared = await engine.transaction(tx => clearGitHold(tx, { sourceId, incarnation: source!.incarnation, path: hold.path, observedAt: hold.observed_at }));
+  return cleared ? { op: GIT_HOLD_OP, fingerprint: gitHoldFingerprint(sourceId, source!.incarnation, hold.path), code: hold.code } : null;
 }
 
 /**

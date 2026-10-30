@@ -110,8 +110,11 @@ start, the upgrade exits non-zero and prints recovery: `bun upgrade`, then
 rolled back automatically, and the autopilot channel records that version as
 failed.
 
-Tag-pinned package installs (`github:garrytan/gbrain#v<x>`) stay pinned through
-`bun update`, so `gbrain upgrade` prints a reinstall instead. Every printed
+Tag- or commit-pinned package installs (`github:garrytan/gbrain#v<x>`, `#<sha>`)
+stay pinned through `bun update`, so `gbrain upgrade` replaces them itself when a
+newer release tag is published (`bun remove -g gbrain`, then `bun add -g` the tag,
+restoring the previous release if the add fails), and otherwise prints a
+reinstall. Every printed
 reinstall checks that the release tag exists before `bun remove -g gbrain`
 runs, and ends with the line that restores the previous version if the add
 fails. The target is the newest published release tag: master's `VERSION` is
@@ -132,6 +135,35 @@ install (`github:garrytan/gbrain#latest-stable`) gets from `bun update`, moved
 only after the release checks pass and the assets publish. Master's `VERSION`
 is never offered: the next PR stamps it before release.yml tags it, and a
 superseded version never gets a tag (#6718, #6828).
+
+<a id="stable-channel"></a>
+**The stable channel.** A large or production brain can follow a slower line:
+the newest release a maintainer promoted after the production-shaped soak
+passed on that release's exact git tree. Promotion is weekly or manual, through
+the maintainer-only `Promote stable` workflow
+([RELEASING.md](../RELEASING.md#stable-channel-promotion)), which moves the
+`stable` tag to the release commit and records the soak scoreboard link in the
+tag message (`git show stable`).
+
+```bash
+gbrain upgrade --channel stable                 # one run on the stable channel
+gbrain config set self_upgrade.channel stable   # make stable the default for this brain home
+gbrain config set self_upgrade.channel latest   # back to every published release
+```
+
+With `self_upgrade.channel stable`, every update surface above reads `VERSION`
+at the `stable` tag instead of `latest-stable`, so the marker, `check-update`,
+`self-upgrade` and the `auto` channel only ever offer the stable release.
+`gbrain upgrade` resolves it from `git ls-remote` (the `v<version>` tag on the
+commit `stable` peels to) and installs exactly that release: a bun install is
+reinstalled pinned to `#v<version>` (remove, then add; it restores the
+previous release if the add fails), a bun-link clone fast-forwards to the
+release commit (never backward or across a fork), and the binary install
+downloads that release's asset. A build already at or above the stable release
+changes nothing: the stable channel never downgrades. A ClawHub install follows
+ClawHub's own line and is refused with the reinstall command. When no release
+has been promoted yet, or the remote cannot be read, the upgrade stops with
+`stable_channel_unresolved` and changes nothing.
 
 A swap is a swap only when the version changed. When `gbrain upgrade` finds
 the same version running after the install step (`bun update` on a tag whose
@@ -197,20 +229,81 @@ restart them for you, so they run on the new Bun. Hosts still running a
 release from before this check do not run it, so a Bun floor raise reaches
 them only after they have upgraded past this release.
 
+<a id="restart"></a>
+### Restart: one build on the host
+
+A long-running gbrain process keeps the code it started with, so an upgrade
+that restarts nothing leaves serve, the jobs supervisor and its worker,
+autopilot and every MCP server on the old build while one-shot commands and job
+children run the new one. `gbrain upgrade` therefore restarts every gbrain
+process this brain runs on the host, or refuses before it installs anything:
+
+1. **Before the swap** it lists the processes (`ps`, on Linux only processes
+   whose `GBRAIN_HOME` is this brain's, with the build each one loaded from
+   the consumer heartbeat rows on Postgres, the supervisor PID file and the
+   worker registry; a record whose pid `ps` does not show as gbrain is stale
+   and ignored) and checks that each one can be restarted: serve and autopilot
+   through their installed services when the service's own process runs them,
+   a process that starts from a separate Bun global copy (for example one the
+   serve service points at, pinned to a commit) has that copy replaced first
+   (`bun remove -g` then `bun add -g` the release tag under its `BUN_INSTALL`),
+   and one that starts from another kind of install refuses with its commands;
+   the supervisor with `gbrain jobs supervisor stop` then `start --detach` with
+   the queue, concurrency and PID file it was launched with (its worker, under
+   tini or not, restarts with it). A serve or worker started by hand, an
+   autopilot without its service, a running `gbrain sync`, or an MCP server an agent
+   harness started refuses the upgrade with `restart_refused` (exit 3), naming
+   the exact step for each process; nothing is installed. For MCP servers the
+   fix asks the user, then reruns with `--stop-mcp`: the upgrade stops them
+   (each pid only while `ps` still shows the same MCP server) and
+   each harness starts the new build when gbrain is reconnected (Claude Code:
+   `/mcp`, then reconnect; other harnesses: a new session).
+2. **After the swap and migrations** the new build runs
+   `gbrain upgrade --restart-only`: serve first, then autopilot, then the
+   supervisor, then the MCP servers `--stop-mcp` named. It then polls for up to
+   three minutes until no old pid is alive, every process reports the installed
+   build (a process that records no build must have started after the restart
+   from an install that holds it; a compiled binary's build is inferred from
+   its start time and listed as such), each restarted role and the supervisor's
+   worker came back, and, when serve had a warm CLI socket, the
+   socket accepts this build (a handshake-only probe). Anything short of that is
+   `restart_unverified` with the processes still on another build.
+
+```bash
+gbrain upgrade --restart-only --dry-run --json   # read-only: every gbrain process, its build and how it restarts
+gbrain upgrade --restart-only                    # restart onto the installed build and verify (doctor's runtime_build_skew fix)
+gbrain upgrade --no-restart                      # install only; doctor fails runtime_build_skew until the restart runs
+```
+
+On an always-on host, start with `gbrain autopilot pause --reason "upgrade"`
+and wait until `gbrain jobs list --status active --json` returns no jobs, so no
+job runs half on each build; resume with `gbrain autopilot resume` once the
+checks below pass ([the order](../../skills/gbrain-upgrade/SKILL.md#always-on-hosts-pause-drain-upgrade-verify-resume)).
+
+The autopilot `--swap-only` channel exits for its own supervisor to relaunch.
+Once the relaunched autopilot runs the new build, it checks the serve that the
+installed serve service runs (`com.gbrain.serve` under launchd,
+`gbrain-serve.service` under systemd). If that serve is on an older build, the
+autopilot restarts it through the service and verifies that it came back on
+the new build. It does this once per autopilot process, under the swap's own
+auto-mode, quiet-hours and idle gates, and records it in the self-upgrade
+audit as `restart_serve` (`applied`, or `skipped` with `manual` or
+`unverified`). It leaves alone a serve that the service does not run (one
+started by hand or from another install), the jobs supervisor and MCP
+servers. For those, doctor's `runtime_build_skew` fails while two builds run,
+and `gbrain upgrade --restart-only` is its fix.
+
 <a id="restart-and-verify"></a>
 ### Restart and verify: a deploy ends with data movement
 
-`gbrain upgrade` swaps the binary and runs `post-upgrade`; it never restarts a
-running `gbrain serve`, jobs worker or autopilot, and the autopilot `--swap-only`
-channel exits for its supervisor to relaunch. So an upgrade is not finished when
-the new version starts: a managed brain whose processes stay alive while no page
-commits reads healthy on `/health`, on the pid and on `sync_running: true`. Both
-`upgrade` and `post-upgrade` end by printing the supervisor's step, bare, so it
-inherits the default window:
+An upgrade is not finished when the new version starts: a managed brain whose
+processes stay alive while no page commits reads healthy on `/health`, on the
+pid and on `sync_running: true`. Both `upgrade` and `post-upgrade` end by
+printing the supervisor's step, bare, so it inherits the default window:
 
 ```bash
-# on the brain host, after the swap
-systemctl restart gbrain-serve gbrain-jobs gbrain-autopilot   # or your supervisor's equivalent: every resident gbrain process
+# on the brain host, after the swap (gbrain upgrade has restarted every process; with --no-restart run:)
+gbrain upgrade --restart-only            # every resident gbrain process onto the installed build, verified
 gbrain sources writer movement           # waits one window (max(300 s, preparation budget + 60 s)); exit 0 only when pending work moved or nothing is pending
 gbrain doctor --json                     # managed_sync_not_moving, two_consumers_on_host, consumers_without_heartbeat, host_identity_mismatch all ok
 ```

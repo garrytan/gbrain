@@ -10,6 +10,7 @@
  * `put_pages` with only `request_id` reads the batch status without resending
  * any content.
  */
+import { randomUUID } from 'node:crypto';
 import { pageQuarantinedNotice } from '../quarantine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { fenceNormalizedNotice, mergeFencesNormalized, type FencesNormalized } from '../fence-repair/report.ts';
@@ -23,8 +24,10 @@ import { pageBatchChildRequestId, pageBatchChildRequestIds } from './page-batch-
 
 export { pageBatchChildRequestId };
 import { isTerminal, type WriteRequest } from './model.ts';
-import { estimatedRetryAfterMs, waitForWrites, writeResponse } from './service.ts';
-import { initializeLocalPersistence, pageMutationSource, preparePageAdmission, requestPrincipalForContext, withBatchAdmission } from './page-mutations.ts';
+import { estimatedRetryAfterMs, waitForWrite, waitForWrites, writeResponse } from './service.ts';
+import { emitFenceNotice, initializeLocalPersistence, pageMutationSource, pendingAwareResponse, preparePageAdmission, requestPrincipalForContext, withBatchAdmission,
+  withLiveSearchable } from './page-mutations.ts';
+import { throwIfHeld } from '../trust/gate-outcomes.ts';
 import type { PageTypeWarning } from './page-input.ts';
 import { clientRequestIdOf, parseWriteRequestId } from './preconditions.ts';
 import { parseWireWriteWaitMs } from './write-wait.ts';
@@ -180,7 +183,7 @@ function batchReceipt(ctx: OperationContext, batchId: string, sourceId: string, 
 export async function admitBatch(ctx: OperationContext, batchId: string, admissions: WriteAdmission[]): Promise<WriteRequest[]> {
   const groups = new Map<string, number[]>();
   admissions.forEach((admission, index) => {
-    const key = digest(admission.authority);
+    const key = digest([admission.operation, admission.authority]);
     groups.set(key, [...(groups.get(key) ?? []), index]);
   });
   return retryWriteAdmission(`batch ${batchId}`, remaining => ctx.engine.transaction(async tx => {
@@ -307,3 +310,38 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
   return batchReceipt(ctx, batchId, sourceId, results, await batchLinks(ctx, sourceId, results), clientRequestIdOf(params.request_id));
 }
 
+/**
+ * G6: a trusted writer's page mutations (`put_page` and `add_timeline_entry`, one per page) as one batch: every
+ * request is prepared and admitted, in one transaction, before any is waited on, and each carries the batch marker,
+ * so the owner publishes them in groups of up to PAGE_BATCH_GROUP_MAX on Postgres (journal.ts publicationGroupKey).
+ * Each entry settles on its own: its reply as submitPageMutation returns it, or the error that refused it.
+ */
+export async function submitPageMutations(ctx: OperationContext, inputs: Array<{ operation: 'put_page' | 'add_timeline_entry'; params: Record<string, unknown> }>):
+  Promise<Array<{ response: Record<string, unknown> } | { error: unknown }>> {
+  const slugs = inputs.map(input => String(input.params.slug).toLowerCase());
+  if (new Set(slugs).size !== slugs.length) throw new TypeError('A page mutation batch writes each page once.');
+  const batchId = randomUUID();
+  const prepared = await withBatchAdmission(ctx, async (own, shared) => {
+    const out: Array<Awaited<ReturnType<typeof preparePageAdmission>> | { error: unknown }> = [];
+    for (const [index, input] of inputs.entries()) {
+      try {
+        out.push(await preparePageAdmission(index === 0 ? own : shared, { ...input,
+          batch: { id: batchId, index, size: inputs.length, requestId: pageBatchChildRequestId(batchId, index) } }));
+      } catch (error) { out.push({ error }); }
+    }
+    return out;
+  });
+  const admissions = prepared.flatMap(entry => 'admission' in entry && entry.admission ? [entry.admission] : []);
+  const admitted = admissions.length ? await admitBatch(ctx, batchId, admissions) : [];
+  let next = 0;
+  const rows = prepared.map(entry => 'error' in entry ? null : entry.prior ?? admitted[next++]!);
+  return Promise.all(prepared.map(async (entry, index) => {
+    if ('error' in entry) return { error: entry.error };
+    try {
+      const row = await waitForWrite(ctx.engine, rows[index]!, ctx.config, ctx.writeWaitMs);
+      const response = await withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, row), false));
+      emitFenceNotice(ctx, response, row.slug);
+      return { response };
+    } catch (error) { return { error }; }
+  }));
+}

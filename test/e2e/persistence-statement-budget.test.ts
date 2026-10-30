@@ -76,7 +76,7 @@ function classify(records: TraceRecord[]) {
   for (const record of sorted) {
     const text = flat(record.sql).toLowerCase();
     const group = open.get(record.conn);
-    if (text === 'begin' && record.kind === 'simple') { open.set(record.conn, [record]); continue; }
+    if ((text === 'begin' || text === 'begin read write') && record.kind === 'simple') { open.set(record.conn, [record]); continue; }
     if (!group) { standalone.push(record); continue; }
     group.push(record);
     if (text === 'commit' || text === 'rollback') {

@@ -53,11 +53,14 @@ notice). User guide: [core memory](../../guides/core-memory.md).
   hook and OpenClaw `assemble()`.
 - `src/core/remember-batch.ts`: `remember` with `items[]` (all-or-none
   validation, deterministic child request ids, per-item status; #7248: an
-  item still publishing is `pending` with its `target`, not `failed`).
+  item still publishing is `pending` with its `target`, not `failed`; #7432:
+  every item field but `fact` and `replaces`, `entity`, `content_origin` and
+  `valid_from` included, is also a top-level default an item's own value overrides).
 - `src/commands/core.ts` (`gbrain core`), `src/commands/doctor/checks/core-memory.ts`
   (`core_memory`), schema `src/core/core-memory-schema.ts` + migration v213.
 - Tests: `test/core-memory.test.ts`, `test/core-guard.test.ts`,
   `test/core-cli.test.ts`, `test/compile-context-core.serial.test.ts`,
   `test/context-pressure.test.ts`, `test/remember-batch.test.ts`,
+  `test/remember-batch-entity-7432.test.ts`,
   `test/trust-cache-invalidation.test.ts` (core lane after trust transitions),
   `test/e2e/core-memory-locks-postgres.test.ts`.

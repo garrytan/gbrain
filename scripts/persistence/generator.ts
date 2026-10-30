@@ -3,7 +3,7 @@
  * sequence mixes the real write ops across two sources whose slugs overlap,
  * a local CLI principal and one authenticated remote agent per source, stale
  * revisions (competing writers), caller-bound replays and concurrent groups.
- * The five irreducible cross-boundary sequences are always present
+ * The irreducible cross-boundary sequences are always present
  * (`crossBoundarySequences`); random sequences add breadth around them.
  */
 import { createHash } from 'node:crypto';
@@ -49,7 +49,9 @@ class Builder {
  * by a stale publication; two sources with overlapping slugs; competing
  * writers on one page; an authority change while effects are pending
  * (writer revoked mid-sequence); sync and connector publish racing a direct
- * write. Caller-bound replay runs beside them as its own sequence.
+ * write; a full overwrite that drops a page's Facts and takes sections, then
+ * the parsed fences coming back. Caller-bound replay runs beside them as its
+ * own sequence.
  */
 export function crossBoundarySequences(topology: GeneratorTopology, seed = 1): Schedule[] {
   const [a, b] = topology.sources;
@@ -128,6 +130,18 @@ export function crossBoundarySequences(topology: GeneratorTopology, seed = 1): S
     const racing = s.next('put_page', 'local', gh, { slug: CONNECTOR_SLUG, content: pageBody(CONNECTOR_SLUG, s.marker()), expected_revision: '$current' }, [first.id]);
     s.groups.push([again.id, racing.id]);
     out.push({ seed, ops: s.ops, groups: s.groups, label: 'sync_and_connector_race_direct_write' });
+  }
+  {
+    const s = new Builder(seed, 'fd'); const slug = 'notes/alpha';
+    const p = s.put('local', a, slug);
+    s.next('remember', 'local', a, { fact: `Alpha holds ${s.marker()}`, entity: slug }, [p.id]);
+    const take = s.next('takes_add', 'local', a, { slug, claim: `Alpha claim ${s.marker()}`, kind: 'take', holder: 'world' }, [p.id]);
+    // A full overwrite without the Facts and takes sections holds both fences and keeps their rows (GBRA-161 PR 2, B-5);
+    // republishing the bytes read after the take puts the parsed fences back, and the rows must match them again.
+    const dropped = s.put('local', a, slug, '$current', [take.id]);
+    s.next('takes_supersede', 'local', a, { slug, row_num: { $ref: take.id, field: 'row_num' }, claim: `Alpha revised ${s.marker()}` }, [dropped.id]);
+    s.next('put_page', 'local', a, { slug, content: '$stale_content', stale_of: take.id, expected_revision: '$current' }, [dropped.id]);
+    out.push({ seed, ops: s.ops, groups: s.groups, label: 'fence_dropped_then_restored' });
   }
   return out;
 }

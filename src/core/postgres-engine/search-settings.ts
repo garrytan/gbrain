@@ -18,7 +18,12 @@
  * `SELECT set_config(...), set_config(...)`: each separate statement was a
  * round trip in series with the query, about 30 ms each to a remote pooler.
  * At the top level nothing is read first or restored after: `set_config(...,
- * true)` ends with the transaction. Inside a caller's transaction the read
+ * true)` ends with the transaction, and the read is sent behind the settings
+ * statement without waiting for its answer (one round trip for both: the
+ * transaction pins its connection, the driver sends in order and budgets the
+ * read by the `statement_timeout` it just sent). A failed settings statement
+ * aborts the transaction, so the read fails behind it and the settings error
+ * is the one raised. Inside a caller's transaction the read
  * runs in a savepoint, and a released savepoint keeps the settings, so one
  * statement reads the caller's values first and one restores them after; a
  * failed read rolls the savepoint back, which reverts them too.
@@ -54,6 +59,22 @@ export function searchSettingsStatement(settings: SearchSettings): { sql: string
   };
 }
 
+const SETTINGS_STATEMENT = /^SELECT set_config\('[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)?', \$\d+, true\)(, set_config\('[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)?', \$\d+, true\))*$/;
+const READ_START = /^\s*(--[^\n]*\n\s*)*(select|with)\b/i;
+const NOT_A_PLAIN_READ = /;|\b(insert|update|delete|merge|truncate|copy|lock|call|do|nextval|setval|set_config|pg_notify|pg_advisory\w*|pg_try_advisory\w*|txid_current|pg_current_xact_id|lo_\w+|dblink\w*)\b|\bfor\s+(no\s+key\s+|key\s+)?share\b/i;
+
+/**
+ * GBRA-156: what a search read transaction may send behind BEGIN before BEGIN's answer (`TransactionOptions.pipelineEarly`).
+ * If BEGIN fails, an accepted statement runs in autocommit, so this accepts the settings statement
+ * `searchSettingsStatement` builds (transaction-local, a no-op outside a transaction) and single SELECT or WITH
+ * statements (after any leading line comments) that name no write, lock, sequence, notification or session-setting keyword. A refusal costs only the
+ * round trip: the statement waits for BEGIN's answer, as every statement did before.
+ */
+export function isPipelinableSearchRead(statement: string): boolean {
+  if (SETTINGS_STATEMENT.test(statement)) return true;
+  return READ_START.test(statement) && !NOT_A_PLAIN_READ.test(statement);
+}
+
 /** `SELECT current_setting('<name>', true) AS "<name>", …`: the caller's values, one row. */
 function currentSettingsStatement(keys: string[]): string {
   return `SELECT ${keys.map(name => `current_setting('${name}', true) AS "${name}"`).join(', ')}`;
@@ -77,8 +98,14 @@ export async function withSearchSettings<T>(
   if (keys.length === 0) return run();
   const previous = nested ? (await tx.unsafe(currentSettingsStatement(keys)))[0] as Record<string, string | null> : undefined;
   const set = searchSettingsStatement(settings);
-  await tx.unsafe(set.sql, set.params);
-  const result = await run();
+  const applied = tx.unsafe(set.sql, set.params);
+  if (previous) await applied;
+  else applied.catch(() => undefined);
+  const result = await run().catch(async error => {
+    await applied;
+    throw error;
+  });
+  await applied;
   if (previous) {
     const restore = searchSettingsStatement(Object.fromEntries(keys.map(name => [name, previous[name] ?? fallback[name] ?? ''])));
     await tx.unsafe(restore.sql, restore.params);

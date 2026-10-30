@@ -26,6 +26,7 @@ import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { readGitHold, SYNC_IMPORT_PROVENANCE_OP, writeGitHold } from '../src/core/persistence/sync-holds.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
+import { __resetTreeReuseForTests } from '../src/core/persistence/sync-tree-reuse.ts';
 import { RECOVERY_VERSION } from '../src/core/markdown.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -63,6 +64,8 @@ async function pass(engine: BrainEngine, between: () => Promise<void> = async ()
     if (point === 'sync:level_read') verdicts.push({ round: detail.round!, confirm: detail.level?.confirm ?? null });
   });
   try {
+    // These are one pass's own rounds: round 1 reads whole, as in a new process (GBRA-133 cross-pass reuse is test/sync-level-reuse-across-gbra133.test.ts).
+    __resetTreeReuseForTests();
     const result = await performManagedSync(engine, OPTS);
     return { status: result.status, held: (result.held ?? []).map(hold => [hold.path, hold.code]), verdicts };
   } finally { installFaultHook(undefined); }

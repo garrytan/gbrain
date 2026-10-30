@@ -115,6 +115,36 @@ behave as you'd expect — every page appears in search.
 
 Flip later with `gbrain sources federate <id>` / `unfederate <id>`.
 
+### An unscoped connection whose sources hold no pages
+
+A remote token minted without `--sources`, or an agent stdio connection with
+no binding, has no source grant: it reads the `default` source plus every
+federated source. Because a new source is not federated, a brain whose pages
+all live in such sources would answer that connection's every search with an
+empty result that reads like a clean miss.
+
+So an unscoped `search`, `query`, `recall` or `list_pages` from such a
+connection that comes back empty is refused with `sources_not_readable` when
+the sources it reads hold no page at all (for `recall` and `query`, no world fact either)
+while other sources on the brain hold pages. The refusal
+never names a source the connection cannot read. Its fix is host-side: the
+user picks the source these connections should read and the brain host runs
+`gbrain sources federate <source>`, or grants the connection its sources
+(`gbrain auth rescope --token <name> --sources <ids>`).
+
+Nothing else changes. A read whose sources hold pages but match nothing
+answers empty, as does a brain where no source holds a page. A token granted
+sources, an OAuth client, a bound connection and a read that names
+`source_id` or `source_ids` are never refused: the refusal only ever stops a
+call, never widens what it reads. Federating a source never shows its
+`visibility: private` pages to a remote connection.
+
+On a brain that is not managed, `gbrain sources add` without `--federated` or `--no-federated` warns on stderr that the new source is not federated, and
+when the sources an unscoped connection reads hold no page it also prints the
+next step on stdout (`next: gbrain sources federate <id>`), and as `next`
+(`command`, `argv`, `why`) under `--json`. A managed brain's `sources add`
+prints its lifecycle receipt instead, without the warning or the next step.
+
 ### Explicit reads from a bound agent connection
 
 An agent connection started with `GBRAIN_SOURCE=<id>` (or inside a
@@ -136,6 +166,84 @@ still go to the bound source only.
 `search_by_image`, `open_loops` and the code-intel tools keep their stricter
 rule: an explicit `source_id` must be inside the connection's own source or
 grant.
+
+### Narrow one request with `source_ids`
+
+`search` and `query` take `source_ids`, a list of source ids (CLI:
+`--source-ids source-a,source-b`). The request reads only those sources:
+
+- Each id is checked exactly like an explicit `source_id`. A remote agent
+  naming a source outside its grant gets `permission_denied` for the whole
+  request, and a removed or archived source gets `unknown_source`. So the
+  list can narrow a request but never widen it.
+- Omitting `source_ids`, or passing `[]` or a blank string, reads every
+  source the caller can read, as before.
+- With `source_id` as well, the request reads the sources in both
+  (`source_id: "__all__"` keeps the list). If none are left, nothing is
+  searched: the result is empty with an `empty_retrieval` notice, never a
+  fallback to the wider scope.
+- `__all__` and malformed ids in the list are `invalid_params`.
+
+Every part of the request reads the narrowed sources: keyword, vector and
+title matches, other names, entity anchoring, saved facts, the CRAG re-run,
+think escalation and evidence delivery.
+
+**Say to your agent:** *"Search my brain for the acme-example renewal, but
+only in source-a."*
+
+### A bot acting for many members
+
+A shared brain often holds one source per member or project, with one bot
+answering for several people. Give each member their own token, granted only
+the sources that member may read, and send each member's requests with that
+member's token. This is the supported production setup today: one
+`serve-http` API key per member, each with its own source grant. The server
+never learns who is asking from the request itself.
+
+```bash
+gbrain auth create bot-alice-example
+gbrain auth rescope --token bot-alice-example --sources source-a
+# OAuth client instead of a bearer token:
+gbrain auth rescope --client <client_id> --sources source-a
+```
+
+The token's grant is the security boundary: the server scopes every call to
+the grant of the token that made it, whatever the call's arguments say.
+`source_ids` is a convenience inside that boundary. A bot holding one token
+granted several sources can pass `source_ids` to keep one request to the
+current member's sources, but a prompt-injected or buggy bot can omit it, so
+it does not separate members who must not see each other's pages. Use
+per-member tokens for that, and `source_ids` to narrow further.
+
+### Lay out sources by who may read them
+
+gbrain enforces access per source, never per page. Two pages in one source are
+readable by exactly the same tokens. So put content in sources by who may read
+it, before any member's bot connects:
+
+- **One source per channel, team or member.** Give a channel's pages a source
+  of their own (`channel-a`), a team's documents theirs (`team-a`), and each
+  member a private one (`private-alice-example`). Content everyone may read
+  goes in a shared source (`public`).
+- **One grant per member.** Grant each member's token or client every source
+  that member may read, and nothing else:
+
+  ```bash
+  gbrain auth rescope --token bot-alice-example --sources private-alice-example,channel-a,team-a,public
+  gbrain auth rescope --client <client_id> --sources private-alice-example,channel-a,team-a,public
+  ```
+
+  The first id is the token's write source, so a member's saved memories land
+  in their own private source.
+
+> **Warning: one shared source has no boundary inside it.** A bot that answers
+> everyone with one unscoped token over a single source exposes everything in
+> that source to every requester. Neither `source_ids` nor a search limit can
+> narrow a read inside one source: `source_ids` chooses whole sources, and a
+> limit only shortens a ranked list, which can still start with a page the
+> requester should not see. Semantic search makes this more visible, because
+> it returns related pages that a keyword search would not match. Split the
+> content into sources first, then grant per member.
 
 ### Links, backlinks and the graph across sources
 
@@ -210,7 +318,7 @@ recorded mode (preview it first without `--apply`; see
 
 
 ```
-gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
+gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force] [--json]
                                Register a source. id: [a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?
                                --path must be a git repo (or a subdirectory of one) — see
                                "The git requirement for --path sources" below. --force
@@ -240,7 +348,42 @@ gbrain sources mirror-readonly <id>
 gbrain sources mirror-writable <id>
 gbrain sources refresh <id> [--dry-run] [--resume|--abandon]   Managed brains: fast-forward the checkout and sync.
 gbrain sources set-strategy <id> <markdown|code|auto>
+gbrain sources set-sync <id> <on|off> [--dry-run] [--expect <on|off>]
+                               Include or exclude the source from automatic sync
+                               (config.syncEnabled; an explicit gbrain sync --source
+                               still runs). --dry-run prints the apply command, which
+                               carries --expect; a moved state refuses preview_changed.
+gbrain sources host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>]
+                               Managed brains: host a new, empty source in a bare
+                               repository under <path> (see below). Previews without --expect.
+gbrain sources canonical <id> --to git|mixed [--dry-run | --apply --expect <hash>] [--json]
+                               Managed brains: convert a source to git-canonical or back
+                               to mixed. Previews without --apply; the apply prints progress
+                               on stderr and, if stopped, where it stopped
+                               (docs/designs/GIT_CANONICAL_MEMORY.md#conversion).
 ```
+
+### Hosted repositories
+
+`gbrain sources host-repo` gives a new, empty source its own bare repository
+(`<path>/repo.git`) that people clone and fetch from, and checks it out once
+as a linked worktree gbrain owns (`<path>/worktree`), claimed as the source's
+canonical worktree like any other. The source becomes git-canonical
+(`canonical: git`), so every page write, remote ones included, commits there
+through the door before the database indexes it. A pre-receive hook refuses
+every push into the repository; `--push-remote` names a repository of your own
+that the push effect publishes to once Git durability is enabled
+(`gbrain sources writer git-durability <id> --enable`).
+
+It runs only from the trusted local CLI on the brain host. The preview says in
+words that the source becomes strict and prints the apply command with its
+`--expect <plan_hash>`; a plan that moved refuses `preview_changed`. It refuses
+a source that is bound or already has pages (moving existing pages into a
+hosted repository is conversion, a later wave), and a directory that is not
+empty or sits inside a checkout or another source's directory. On a hosted
+source the preview reports the hook and the worktree link, and the apply
+reinstalls a missing or changed hook. An agent runs it on a production brain
+only with the user's explicit yes, one source at a time.
 
 ### Read-only mirror sources
 

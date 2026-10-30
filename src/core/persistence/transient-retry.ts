@@ -52,6 +52,12 @@ export function transientInterruption(error: unknown): TransientInterruption | n
   return code === '57014' ? { cause: 'statement_cancel', sqlstate: '57014' } : null;
 }
 
+/** The `*_interruption_charged` fault-point detail: the charge and the error it was charged for. */
+export function chargedInterruptionDetail(interruption: TransientInterruption | null, error: unknown) {
+  const e = error as { name?: unknown; code?: unknown; message?: unknown } | null;
+  return interruption ? { interruption: { ...interruption, error: `${String(e?.name ?? 'Error')} ${String(e?.code ?? '')} ${String(e?.message ?? error).slice(0, 200)}` } } : {};
+}
+
 /**
  * Counts one transient interruption on a claim this owner still holds and schedules its next claim. Token-fenced; run it
  * in the transaction that releases or finishes the claim, so a crash never counts an interruption twice. Returns the count.

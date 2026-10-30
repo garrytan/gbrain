@@ -45,6 +45,8 @@ export interface SessionStartPackResult {
   pack: ContextPackResponse | null;
   /** The wait ran out before a serve answered. */
   serveNotReady: boolean;
+  /** A serve's secret exists but its round trip failed or outlasted the client timeout. */
+  ipcUnavailable?: boolean;
 }
 
 /**
@@ -72,7 +74,7 @@ export async function requestSessionStartPack(
       }, { timeoutMs: Math.min(CONTEXT_PACK_CLIENT_TIMEOUT_MS, remaining) })
       : IPC_UNAVAILABLE;
     if (res !== IPC_UNAVAILABLE) return { pack: 'degraded' in res ? null : res as ContextPackResponse, serveNotReady: false };
-    if (!opts.awaitServe) return { pack: null, serveNotReady: false };
+    if (!opts.awaitServe) return { pack: null, serveNotReady: false, ...(secret ? { ipcUnavailable: true } : {}) };
     await new Promise((r) => setTimeout(r, POLL_MS));
   }
 }

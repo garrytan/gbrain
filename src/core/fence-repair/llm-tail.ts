@@ -26,6 +26,7 @@
  */
 import { chat, isThinkingModel, THINKING_MODEL_MAX_OUTPUT_TOKENS, type ChatMessage, type ChatResult } from '../ai/gateway.ts';
 import { thinkingOffControl, thinkingOffMaxOutputTokens } from '../ai/thinking-off.ts';
+import { providerItemRefusal } from '../ai/errors.ts';
 import { extractRawRows, primaryFence } from './raw-rows.ts';
 import { sectionsOf } from './page-checks.ts';
 import { tailAmbiguous, trailingLines } from './structure.ts';
@@ -144,7 +145,7 @@ export async function callTailClassifier(req: TailRequest, opts: { model: string
     result = await chat({ model: opts.model, system: prompt.system, messages, maxTokens: budget.maxOutputTokens, allowFallback: false,
       thinking: 'off', purpose: 'fence_repair', ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}), ...(opts.signal ? { abortSignal: opts.signal } : {}) });
   } catch (error) {
-    return { ok: false, reason: 'llm_unavailable', error: error instanceof Error ? error.name : 'Error' };
+    return { ok: false, reason: providerItemRefusal(error) ? 'llm_refused' : 'llm_unavailable', error: error instanceof Error ? error.name : 'Error' };
   }
   if (result.stopReason === 'refusal' || result.stopReason === 'content_filter') return { ok: false, reason: 'llm_refused', text: result.text, result };
   if (result.stopReason !== 'end') return { ok: false, reason: result.text.trim() ? 'llm_truncated' : 'llm_empty', text: result.text, result };

@@ -73,7 +73,7 @@ export async function requeueGitDurabilityCatchUp(tx: SqlEngine, binding: Pick<W
   if (!ids.length) return [];
   await declarePersistenceProtocol(tx);
   const rows = await tx.executeRaw<{ id: string }>(`
-    UPDATE persistence_effects SET state='queued',execution_token=NULL,claim_expires_at=NULL,error_code=NULL,outcome=NULL,
+    UPDATE persistence_effects SET state='queued',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,error_code=NULL,outcome=NULL,
            next_attempt_at=now(),updated_at=now(),data=data||jsonb_build_object('durability_catch_up',COALESCE((data->>'durability_catch_up')::int,0)+1)
      WHERE id=ANY($1::text[]::bigint[]) AND kind='git' AND state='committed' AND outcome->>'reason'=$4 AND worktree_id=$2::uuid AND source_incarnation=$3::uuid
        AND recovery IS NULL AND execution_token IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}

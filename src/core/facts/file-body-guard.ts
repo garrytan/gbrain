@@ -132,9 +132,13 @@ function fileHeldBy(fileBytes: string, slug: string, state: StoredState): boolea
  *
  * `expectedFileBytes` is what the caller passes to `writePageThrough` (null: the file must still be absent), so a file
  * that changes between this check and the write is refused there too.
+ *
+ * `alsoHeldAs` (GBRA-133, #7292): other bytes the file stands for, or null. A connector passes the file with the live
+ * page's `## Facts` fence put back: that fence is gbrain's own content, which the provider's render never had, so a
+ * file that lacks only it holds no edit the database lacks.
  */
-export async function replaceableFile(engine: BrainEngine, sourceId: string, slug: string, filePath: string):
-  Promise<{ ok: true; expectedFileBytes: string | null } | { ok: false }> {
+export async function replaceableFile(engine: BrainEngine, sourceId: string, slug: string, filePath: string,
+  alsoHeldAs?: (fileBytes: string) => string | null): Promise<{ ok: true; expectedFileBytes: string | null } | { ok: false }> {
   if (!existsSync(filePath)) return { ok: true, expectedFileBytes: null };
   const bytes = readFileSync(filePath, 'utf-8');
   const states = await engine.executeRaw<StoredState>(
@@ -145,5 +149,7 @@ export async function replaceableFile(engine: BrainEngine, sourceId: string, slu
      (SELECT v.compiled_truth, v.timeline, v.frontmatter, v.title, v.type, v.tags FROM page_versions v JOIN pages p ON p.id = v.page_id
        WHERE p.source_id = $1 AND p.slug = $2 AND v.compiled_truth IS NOT NULL ORDER BY v.id DESC LIMIT ${HISTORY_ROWS})`,
     [sourceId, slug]);
-  return states.some(state => fileHeldBy(bytes, slug, state)) ? { ok: true, expectedFileBytes: bytes } : { ok: false };
+  const candidate = alsoHeldAs?.(bytes) ?? null;
+  return states.some(state => fileHeldBy(bytes, slug, state) || candidate !== null && fileHeldBy(candidate, slug, state))
+    ? { ok: true, expectedFileBytes: bytes } : { ok: false };
 }

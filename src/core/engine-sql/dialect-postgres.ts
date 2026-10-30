@@ -24,6 +24,7 @@
 import type postgres from '#postgres';
 import type { CheckoutGauge } from '../pool-gauge.ts';
 import { renderFragment, type SqlFragment } from './fragment.ts';
+import { readWriteTransactions } from '../postgres-engine/read-write-transactions.ts';
 import {
   isJsonbParam,
   type DialectCapabilities,
@@ -87,7 +88,7 @@ export function postgresExecutor(conn: PgConn, deps: PostgresExecutorDeps): SqlE
       return envelope<R>(await conn.unsafe(sql, bind(conn, params) as never[]));
     },
     transaction<T>(fn: (tx: SqlExecutor) => Promise<T>): Promise<T> {
-      return conn.begin((tx) => fn(postgresExecutor(tx as unknown as PgConn, deps))) as Promise<T>;
+      return readWriteTransactions(conn).begin((tx) => fn(postgresExecutor(tx as unknown as PgConn, deps))) as Promise<T>;
     },
   };
 }

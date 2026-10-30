@@ -141,6 +141,30 @@ function sameGivenName(a: string, b: string): boolean {
   return false;
 }
 
+/** Alternate forms that are English stopwords: full-text search drops them, so a variant would lose its given name. */
+const STOPWORD_GIVEN_FORMS: ReadonlySet<string> = new Set(['will', 'don']);
+
+/**
+ * #7471: the name with its given name (the first word after any leading
+ * titles) swapped for each other form in the given name's nickname groups,
+ * in group order and capped: "Matt Example" -> ["matthew example"]. Empty
+ * unless the name has 2-4 words and a surname after the given name.
+ */
+export function givenNameVariants(name: string, max = 6): string[] {
+  const words = nameWords(name);
+  if (words.length < 2 || words.length > 4) return [];
+  let i = 0;
+  while (i < words.length - 1 && NAME_TITLE_TOKENS.has(words[i]!)) i++;
+  if (i >= words.length - 1) return [];
+  const forms = new Set<string>();
+  for (const g of NICKNAMES.get(words[i]!) ?? []) {
+    for (const form of NICKNAME_GROUPS[g]!.split(' ')) {
+      if (form !== words[i] && !STOPWORD_GIVEN_FORMS.has(form)) forms.add(form);
+    }
+  }
+  return [...forms].slice(0, max).map(form => [...words.slice(0, i), form, ...words.slice(i + 1)].join(' '));
+}
+
 /** Optimal-string-alignment distance, capped: returns cap + 1 once the distance exceeds cap. */
 export function editDistance(a: string, b: string, cap = 1): number {
   if (Math.abs(a.length - b.length) > cap) return cap + 1;

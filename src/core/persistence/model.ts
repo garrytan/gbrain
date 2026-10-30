@@ -46,6 +46,8 @@ export interface FileRecoveryRecord {
   after?: string | null;
   /** Absent on recovery records created by older binaries. */
   staging?: import('./staging.ts').RecoveryStaging;
+  /** G2 (git-door.ts): a strict source's publication, which commits before its database row; the checkout and the HEAD it started from. */
+  door?: { root: string; head: string | null };
 }
 export interface BundleRecoveryRecord {
   version: 2;

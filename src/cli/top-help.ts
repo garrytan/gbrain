@@ -26,6 +26,7 @@ SETUP
   migrate --to <postgres|pglite>     Move the brain between engines (PGLite -> Postgres graduates: plan, then --yes --expect)
   migrate embeddings --to <p:model>  Re-embed onto another embedding provider
   embeddings enable --embedding-model <p:model>  Turn on embeddings in place (keeps pages/facts)
+  embeddings prewarm [--dry-run]     Load the vector indexes into shared_buffers when they fit (Postgres)
   upgrade                            Self-update
   check-update [--json]              Check for new versions
   repair [<kind>] [--apply]          Preview/apply residual repairs (timeline, visibility, safe-chunks)
@@ -205,6 +206,8 @@ ADMIN
     --surface verbs|starter|full     Tool surface: the 7 memory verbs, the ~20-op
                                      starter set, or every op (default full).
                                      On --http this is the per-client CEILING.
+    --advertise verbs|starter|full   List only this surface in tools/list (plus
+                                     request_tools); the rest stays callable.
     --access read-only|full          stdio: list and dispatch only read operations
   serve --http [--port N]            HTTP MCP server with OAuth 2.1
     --token-ttl N                    Access token TTL in seconds, 60-7776000 (default: 3600)

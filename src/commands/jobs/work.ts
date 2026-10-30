@@ -142,9 +142,9 @@ export async function runJobsWork({ args, engine, queue }: JobsCommandContext): 
     childTiniPath = detectTini();
     if (maxRssMb > 0) {
       console.error(
-        '[gbrain jobs] note: with process isolation on, the --max-rss watchdog covers the ' +
-        'WORKER process only — handler memory now lives in job children. Per-child caps are ' +
-        'a filed follow-up; size host memory for concurrency x handler footprint.',
+        `[gbrain jobs] note: with process isolation on, --max-rss ${maxRssMb} MB applies to the worker and to each ` +
+        'job child\'s process tree separately; a child past it is stopped and its attempt fails. ' +
+        'Size host memory for (concurrency + 1) x the cap.',
       );
     }
   }

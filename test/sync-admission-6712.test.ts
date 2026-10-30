@@ -36,6 +36,8 @@ async function reset(): Promise<void> {
   await engine.unsetConfig(SYNC_ADMISSION_KEY);
   await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=ANY($1::text[])', [[SYNC_ADMISSION_SET_OP, 'managed-sync-pass']]);
   await engine.executeRaw('DELETE FROM gbrain_cycle_locks WHERE id=$1', [syncLockId(SOURCE)]);
+  // A shared Postgres keeps earlier files' requests for this source, and their effects reference them.
+  await engine.executeRaw('DELETE FROM persistence_effects WHERE request_id IN (SELECT id FROM persistence_requests WHERE source_id=$1)', [SOURCE]);
   await engine.executeRaw('DELETE FROM persistence_requests WHERE source_id=$1', [SOURCE]);
 }
 
@@ -74,7 +76,12 @@ async function admitRequest(kind: string, createdAgo: string): Promise<string> {
   [id, SOURCE, incarnation, `notes/alice-example-${id.slice(0, 8)}`, randomUUID(), kind, createdAgo]);
   return id;
 }
-const status = () => syncAdmissionStatus(engine, SOURCE, incarnation);
+/** The standalone read; `sync status` folds the same probes into its source read (GBRA-135) and must agree with it. */
+async function status() {
+  const standalone = await syncAdmissionStatus(engine, SOURCE, incarnation);
+  expect((await readSyncStatus(engine, SOURCE, { detail: false })).admission).toEqual(standalone);
+  return standalone;
+}
 async function setManaged(enabled: boolean) {
   await engine.transaction(async tx => {
     await declarePersistenceProtocol(tx);
@@ -90,7 +97,8 @@ for (const backend of testBackends()) describe(backend, () => {
     await engine.initSchema();
     incarnation = (await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [SOURCE]))[0]!.incarnation;
   }, 120_000);
-  afterAll(async () => { await engine.disconnect(); });
+  // A shared Postgres keeps no restricted value for the next file (it cost sync status a statement, GBRA-135).
+  afterAll(async () => { await reset(); await engine.disconnect(); });
   beforeEach(reset);
 
   test('config set sync.admission refuses a value outside the three and writes nothing, --force included', async () => {

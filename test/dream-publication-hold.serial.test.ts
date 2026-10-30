@@ -21,6 +21,8 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 const PATTERN_A = 'wiki/personal/patterns/acme-example-rhythm';
 const PATTERN_B = 'wiki/personal/patterns/acme-example-drift';
 const WATERMARK = 'dream.patterns.last_evidence_ts';
+/** Frontmatter key the mocked stamp adds, so a batch publication shows which pages it stamps. */
+const STAMP = 'mock_stamped';
 
 /** Per-slug failure each mocked publication throws; a slug absent here publishes. */
 const failures = new Map<string, unknown>();
@@ -44,6 +46,17 @@ mock.module('../src/core/persistence/prepared-maintenance.ts', () => ({
   maintenancePreflight: async () => ({ writer: { sourceId: 'default' } }),
   publishMaintenancePage: async (_engine: unknown, _authority: unknown, slug: string) => { calls.publish.push(slug); failFor(slug); return {}; },
   stampMaintenancePage: async (_engine: unknown, _authority: unknown, slug: string) => { calls.stamp.push(slug); failFor(slug); },
+  // G6: patterns publishes a run's grounded pages (stamp folded in) and its remaining stamps as one batch each.
+  stampTarget: async (_engine: unknown, _authority: unknown, slug: string) => ({
+    page: { slug, type: 'note', title: slug, compiled_truth: 'Planning slips every week.', timeline: '', frontmatter: {} }, tags: [], revision: 'r0',
+  }),
+  maintenanceStampFrontmatter: (frontmatter: Record<string, unknown>) => ({ ...frontmatter, [STAMP]: true }),
+  publishMaintenancePages: async (_engine: unknown, _authority: unknown, pages: Array<{ slug: string; content: string }>) => pages.map(page => {
+    if (page.content.includes('quote_verified_at')) calls.publish.push(page.slug);
+    try { failFor(page.slug); } catch (error) { return { error }; }
+    if (page.content.includes(`${STAMP}: true`)) calls.stamp.push(page.slug);
+    return { receipt: {} };
+  }),
   verifyMaintenanceOutputs: async (_engine: unknown, _authority: unknown, refs: Array<{ slug: string }>) => {
     calls.verify.push(refs.map(ref => ref.slug));
     return refs.length;

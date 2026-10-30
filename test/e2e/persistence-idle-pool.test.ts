@@ -92,7 +92,7 @@ describe.skipIf(!direct)('idle persistence consumer on PostgreSQL', () => {
     try {
       await withConsumer(db.url, async () => {
         const backends = async () => Number((await db.admin.unsafe(
-          'SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=$1', [db.name]))[0]!.n);
+          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=$1 AND backend_type='client backend'", [db.name]))[0]!.n);
         expect(await backends()).toBeGreaterThanOrEqual(3);
         const started = performance.now();
         // The pool drains idle_timeout (20 s) after its last pooled statement. The consumer's start-up fan-out and its
@@ -123,7 +123,7 @@ describe.skipIf(!direct)('idle persistence consumer on PostgreSQL', () => {
     try {
       await withConsumer(db.url, async engine => {
         const backends = async () => Number((await db.admin.unsafe(
-          'SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=$1', [db.name]))[0]!.n);
+          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=$1 AND backend_type='client backend'", [db.name]))[0]!.n);
         await Bun.sleep(10_000);
         await engine.executeRaw('SELECT 1');
         const late = performance.now();
@@ -178,7 +178,7 @@ describe.skipIf(!direct)('#5233 / #6317 idle lane with a direct/session route co
         await Bun.sleep(IDLE_DRAIN_MS);
         const rows = await db.admin.unsafe<{ direct: number; total: number }[]>(`SELECT
           count(*) FILTER (WHERE application_name = 'gbrain_5233_direct_route')::int AS direct, count(*)::int AS total
-          FROM pg_stat_activity WHERE datname = $1`, [db.name]);
+          FROM pg_stat_activity WHERE datname = $1 AND backend_type = 'client backend'`, [db.name]);
         expect(rows[0]!.direct).toBeGreaterThanOrEqual(1);
         expect(rows[0]!.total - rows[0]!.direct).toBe(0);
         expect(engine.getPoolDiagnostics()?.tracked.reserved ?? 0).toBe(0);

@@ -24,16 +24,16 @@
  * Only writeMountsCache touches disk.
  */
 
+import { gbrainPath } from './config.ts';
 import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync, renameSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
 import { parseResolverEntries } from './check-resolvable.ts';
 import { loadSkillTriggerIndex } from './skill-trigger-index.ts';
 import { HOST_BRAIN_ID, type MountEntry } from './brain-registry.ts';
 
 /** Default location of the aggregated cache directory. */
 function getMountsCacheDir(): string {
-  return join(homedir(), '.gbrain', 'mounts-cache');
+  return gbrainPath('mounts-cache');
 }
 
 /** A composed resolver entry with full provenance for audit + dispatch. */

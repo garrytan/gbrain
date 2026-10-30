@@ -110,7 +110,7 @@ function settleInTransaction(engine: BrainEngine, candidate: Pick<EmbeddingCandi
     }
     const commit = async (outcome: Record<string, unknown>): Promise<boolean> => {
       if (opts.dryRun) return true;
-      const rows = await tx.executeRaw(`UPDATE persistence_effects SET state='committed', error_code=NULL, claim_expires_at=NULL,
+      const rows = await tx.executeRaw(`UPDATE persistence_effects SET state='committed', error_code=NULL, claim_expires_at=NULL,claim_owner=NULL,
           outcome=$3::text::jsonb, data=data-'repair_requeued_at', updated_at=now()
         WHERE id=$1 AND state=$2 AND attempts=$4 AND execution_token IS NULL AND recovery IS NULL RETURNING id`,
       [effect.id, effect.state, JSON.stringify(outcome), effect.attempts]);
@@ -201,7 +201,7 @@ async function queueRetry(tx: BrainEngine, effect: PersistenceEffect, opts: { dr
   const data = { ...effect.data, repair_requeued_at: now,
     ...(effect.state === 'failed' ? { embedding_attempt_base: effect.attempts, embedding_retry_base: effect.attempts } : {}),
     ...(grantId ? { repair_authorizations: [...grants, grantId] } : {}) };
-  const rows = await tx.executeRaw(`UPDATE persistence_effects SET state='queued', data=$3::text::jsonb, error_code=NULL, claim_expires_at=NULL,
+  const rows = await tx.executeRaw(`UPDATE persistence_effects SET state='queued', data=$3::text::jsonb, error_code=NULL, claim_expires_at=NULL,claim_owner=NULL,
       next_attempt_at=now(), outcome=NULL, updated_at=now()
     WHERE id=$1 AND state=$2 AND attempts=$4 AND execution_token IS NULL AND recovery IS NULL RETURNING id`,
   [effect.id, effect.state, JSON.stringify(data), effect.attempts]);

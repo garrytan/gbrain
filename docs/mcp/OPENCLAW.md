@@ -55,21 +55,80 @@ OpenClaw keeps MCP servers under `mcp.servers` in `~/.openclaw/openclaw.json`
 (`openclaw config schema` shows the key path). Register gbrain with the CLI:
 
 ```bash
-openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --env GBRAIN_HOME=$HOME
+openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs --env GBRAIN_HOME=$HOME
 ```
 
 Use an absolute `--command` path: the launchd-started gateway's `PATH` does
 not include `~/.bun/bin`, so a bare `gbrain` fails to spawn. `--env` is
 optional: a PGLite brain needs no `DATABASE_URL`
 (`--env DATABASE_URL=postgresql://...` for Postgres), and `GBRAIN_HOME` only
-matters when the brain home isn't `~/.gbrain`. For the seven-verb memory
-protocol ([MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)) instead of the
-full operation catalog, pass `--surface verbs` as additional `--arg` values
-(check `openclaw mcp add --help` for your version's spelling).
+matters when the brain home isn't `~/.gbrain`. `--surface starter --advertise verbs`
+lists the seven-verb memory protocol ([MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md))
+plus `request_tools`, which reaches every other tool; drop the
+`--advertise verbs` values to list the starter set (`full` for the whole catalog) (check
+`openclaw mcp add --help` for your version's `--arg` spelling).
 
 Leave `GBRAIN_SOURCE` unset in the MCP env unless you deliberately want
 single-source retrieval: a pin scopes every tool (search, `get_brain_identity`
 counts, …) to that one source, and nothing warns on reads.
+
+## Brain-first instructions
+
+Registering the server only makes the tools available. Agents seldom call a
+brain nobody told them about, so finish either option with:
+
+```bash
+gbrain setup openclaw   # --dry-run previews; --workspace <dir> picks the agent
+```
+
+It writes one short marked block into the workspace `AGENTS.md` (from
+`OPENCLAW_CONFIG_PATH` or `~/.openclaw/openclaw.json`: a sole agent's
+workspace, else `agents.defaults.workspace`, else `~/.openclaw/workspace`; with
+several agents, pass `--workspace`). Text outside the markers is never touched,
+a re-run upgrades the block in place, `--no-instructions` opts out and is
+remembered, and `--remove` takes it out. A thin-client install puts the same
+block at the top of `GBRAIN-INSTRUCTIONS.md`.
+
+A rule in `AGENTS.md` reaches the system prompt only, so setup also puts it next
+to every user turn with a hook-only OpenClaw plugin, `gbrain-turn-rule`: its
+`before_prompt_build` handler returns the rule as `prependContext`. The plugin is
+self-contained (the rule text is in its code; it reads and calls nothing) and
+lives in `<OpenClaw state dir>/gbrain/gbrain-turn-rule`. Setup installs it with
+OpenClaw's own CLI:
+
+```bash
+openclaw plugins install --link <state dir>/gbrain/gbrain-turn-rule --force --accept-capabilities
+openclaw plugins enable gbrain-turn-rule
+openclaw config set plugins.entries.gbrain-turn-rule.hooks.allowConversationAccess true
+```
+
+OpenClaw requires `allowConversationAccess` before a non-bundled plugin's
+`before_prompt_build` runs. With no `openclaw` on PATH, setup writes the plugin
+and prints those commands to run on the OpenClaw host; restart a running gateway
+afterwards. `--no-instructions` and `--remove` uninstall the plugin and delete
+its directory. A re-run after an upgrade rewrites the plugin with the new text.
+
+OpenClaw lists no gbrain tool after `openclaw mcp set`: the model reaches them
+only through `tool_search`, whose results it frames as external data. With an
+MCP connection the rule therefore names the tools (`recall`, `entity`, `search`,
+`query`) and says to find them with `tool_search` and run them with `tool_call`.
+With `openclaw` on PATH, setup runs
+`openclaw plugins inspect gbrain-turn-rule --runtime --json` and exits non-zero
+with `turn_hook_not_loaded` unless the plugin shows as loaded with
+`before_prompt_build` ([repair](../guides/repair.md#turn-hook-not-loaded)).
+
+## Scheduled jobs and workspace scripts
+
+OpenClaw cron jobs, workspace scripts and hooks run with another `HOME` and
+environment than the gateway's MCP server. Route every one of them through a
+single wrapper that sets `GBRAIN_HOME`, loads the brain's env file and runs the
+installed `gbrain` by absolute path; log its stderr and check its exit code
+([the wrapper and its rules](../guides/cron-schedule.md#calling-gbrain-unattended)).
+On a managed brain, scripts commit the files they write with
+`gbrain git commit-push -- <paths>` (never plain `git commit`); a scheduled
+`gbrain sources refresh <id>`
+keeps it current
+([scripts and the managed checkout](../guides/shared-checkout-git.md#scripts-and-the-managed-checkout)).
 
 ## Verify
 

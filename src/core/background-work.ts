@@ -52,7 +52,40 @@
  * risks a cycle. The warn below is a local once-per-process Set, not
  * utils.warnOncePerProcess, for exactly that reason.
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
 export type BackgroundWorkDrainMode = 'exit' | 'disconnect';
+
+/**
+ * GBRA-156: search-time writes (the page_retrievals bump, the eval_candidates
+ * insert, the semantic-cache store) start after the response inside a request
+ * that owns a deferral scope (the warm CLI socket), instead of mid-request,
+ * where they competed with the response stage for the search's connections.
+ * Outside a scope (a cold CLI, which drains them before exit), they start at
+ * once, as before. node:async_hooks is a builtin, so this module stays a leaf.
+ */
+interface Deferral { released: boolean; queue: Array<() => void> }
+const responseDeferral = new AsyncLocalStorage<Deferral | null>();
+
+/** Start `start` after the enclosing request's response, or now when no request defers (or its response already went). */
+export function deferUntilResponse(start: () => void): void {
+  const scope = responseDeferral.getStore();
+  if (scope && !scope.released) scope.queue.push(start); else start();
+}
+
+/** Runs `fn` with a deferral scope; `release` starts every write it deferred and returns how many. */
+export async function withResponseDeferral<T>(fn: () => Promise<T>): Promise<{ value: T; release: () => number }> {
+  const scope: Deferral = { released: false, queue: [] };
+  const value = await responseDeferral.run(scope, fn);
+  return {
+    value,
+    release: () => responseDeferral.run(null, () => {
+      scope.released = true;
+      const started = scope.queue.splice(0);
+      for (const start of started) { try { start(); } catch { /* a deferred sink never throws into the caller */ } }
+      return started.length;
+    }),
+  };
+}
 
 /**
  * Shared teardown budgets (#4284). This module is the natural home: it is the

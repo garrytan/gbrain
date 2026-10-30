@@ -438,17 +438,57 @@ describe('USD budget gate (C-13)', () => {
     }
   }, 60_000);
 
-  test('a submission whose estimate crosses dream.synthesize.budget_usd is deferred before any spend', async () => {
+  /** The meter's estimate for one seeded file under the default cap (a throwaway rig on the shared engine). */
+  async function oneFileEstimate(name: string): Promise<number> {
     const rig = await setupRig();
     try {
       await rig.engine.setConfig('models.dream.synthesize', 'anthropic:claude-sonnet-4-6');
-      await rig.engine.setConfig('dream.synthesize.budget_usd', '0.0001');
+      await seedPassingFile(rig, name);
+      return (await runPhase(rig) as CapDetails & { estimated_spend_usd: number }).estimated_spend_usd;
+    } finally {
+      await rig.cleanup();
+      await resetPgliteState(engine);
+      await engine.setConfig('version', schemaVersion);
+    }
+  }
+
+  test('a submission whose estimate crosses dream.synthesize.budget_usd is deferred before any spend', async () => {
+    // #7307 audit: two files that each fit the cap but not together (a file over the cap alone is skipped, below).
+    const each = await oneFileEstimate('2026-08-11-a.txt');
+    expect(each).toBeGreaterThan(0);
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('models.dream.synthesize', 'anthropic:claude-sonnet-4-6');
+      await rig.engine.setConfig('dream.synthesize.budget_usd', (each * 1.5).toFixed(6));
       await seedPassingFile(rig, '2026-08-11-a.txt');
       await seedPassingFile(rig, '2026-08-12-b.txt');
       const details = await runPhase(rig) as CapDetails & { budget_deferred_transcripts: string[] };
-      expect(details.children_submitted).toBe(0);
-      expect(details.budget_deferred_transcripts.sort()).toEqual(['2026-08-11-a.txt', '2026-08-12-b.txt']);
+      expect(details.children_submitted).toBe(1);
+      expect(details.budget_deferred_transcripts).toEqual(['2026-08-12-b.txt']);
       expect(await rig.engine.getConfig('dream.synthesize.last_completion_ts')).toBeNull();
+    } finally {
+      await rig.cleanup();
+    }
+  }, 60_000);
+
+  test('#7307 audit: a transcript over the cap on its own is skipped with its reason, and later transcripts still submit', async () => {
+    const small = await oneFileEstimate('2026-08-12-small.txt');
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('models.dream.synthesize', 'anthropic:claude-sonnet-4-6');
+      await rig.engine.setConfig('dream.synthesize.budget_usd', (small * 1.2).toFixed(6));
+      const bigName = '2026-08-01-big.txt';
+      const big = `conversation in ${bigName} with a long planning thread for acme-example\n`.repeat(4000);
+      const bigPath = join(rig.corpusDir, bigName);
+      writeFileSync(bigPath, big);
+      await rig.engine.putDreamVerdict(bigPath, createHash('sha256').update(big, 'utf8').digest('hex'), {
+        worth_processing: true, reasons: ['seed'], score: 0.9, content_type: null, segments: [], entities: [], model: TIER_DEFAULTS.utility, triage_version: TRIAGE_VERSION,
+      });
+      await seedPassingFile(rig, '2026-08-12-small.txt');
+      const details = await runPhase(rig) as CapDetails & { budget_deferred_transcripts: string[] };
+      expect({ submitted: details.children_submitted, deferred: details.budget_deferred_transcripts }).toEqual({ submitted: 1, deferred: [] });
+      const skip = details.skips.find(s => s.filePath === bigPath);
+      expect(skip?.reason).toMatch(/^over_budget_alone: \$[0-9.]+ > \$[0-9.]+$/);
     } finally {
       await rig.cleanup();
     }

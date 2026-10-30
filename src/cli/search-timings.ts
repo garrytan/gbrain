@@ -44,6 +44,8 @@ export interface CliSearchTimings {
   stages?: Record<string, number>;
   /** Work that ran alongside the critical path (parallel lexical arms, the vector side before its join). */
   overlapped?: Record<string, number>;
+  /** Sequential parts of a stage (`response`: evidence, trust, meta, keyword_count, feedback); the stage keeps its own total. */
+  parts?: Partial<Record<string, Record<string, number>>>;
   /** CLI time in no phase: result normalization, notices, formatting. */
   cli_other: number;
 }
@@ -58,6 +60,7 @@ export function cliSearchTimings(op: SearchTimingsMeta | undefined): CliSearchTi
     out.op = op.total_ms;
     out.stages = { ...op.stages_ms, other: op.other_ms };
     if (op.overlapped_ms) out.overlapped = op.overlapped_ms;
+    if (op.parts_ms) out.parts = op.parts_ms;
   }
   const accounted = (out.startup ?? 0) + [...phases.values()].reduce((sum, v) => sum + v, 0) + (out.remote === undefined ? op?.total_ms ?? 0 : 0);
   out.cli_other = Math.max(0, ms(total - accounted));

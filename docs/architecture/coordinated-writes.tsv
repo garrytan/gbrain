@@ -1,0 +1,44 @@
+# G5 census of direct coordinated database writes (git-canonical plan, wave G5).
+# `withCoordinatedWrite` / `coordinatedDatabaseWrite` commit rows with no file and no receipt. Every call site needs a row;
+# test/coordinated-write-census.test.ts enforces it. Authored memory content has no class: it goes through the page-mutation door.
+# path	function	sites	class	reason
+# class: door (the page-mutation door's own publication), projection (rebuilt from committed markdown),
+#        operational (source, sync and retention bookkeeping), metadata (trust tier beside a row),
+#        removal (deletes rows only, moving the database toward git), generated (producer output its producer regenerates),
+#        facts_lane (facts, withdrawals and ontology rows; G4 gives them a file form).
+src/commands/reindex-aliases.ts	derivedWrite	1	projection	Rebuilds page_aliases from each page's frontmatter aliases and mention policy; the committed page text is the input, so the indexer reproduces every row.
+src/core/bootstrap/verify.ts	removeProbes	1	removal	Deletes the verify probe's fence facts after the probe page and its file were purged through the door; it only removes rows whose file is already gone.
+src/core/cycle/concept-publication.ts	replaceConceptProvenanceLinks	1	generated	Concept-provenance edges are the synthesis output bound to the concept page revision; the next synthesis regenerates them. G6 moves concept publication through the door.
+src/core/enrichment-service.ts	writeManagedEntities	2	metadata	Only trust metadata runs here: the derived-tier lowering of an extract_entities page and of an unknown-tier timeline row. The stub, the timeline bullet and its backlink (the bullet's derived markdown edge) are door mutations of the entity page.
+src/core/facts/purge.ts	submitPurgeFactMutation	1	facts_lane	purge_fact physical erasure waits on the G4 product ruling (erasure versus git history, GBRA-190); until then it stays a database write paired with its mirror commit.
+src/core/mentions/pass.ts	aliasWrite	1	projection	Mention-pass alias and mention-edge rows are derived from committed page text; a re-run of the pass over the same tree reproduces them.
+src/core/ops/chronicle.ts	handler	1	facts_lane	ontology_propose observations are database-only until G4 (GBRA-190) gives ontology observations a page home.
+src/core/page-body/ingest.ts	segmentWriteScope	1	projection	Segment texts, manifest rows and sweeps are the stored form of a page body the door already published; they are rebuilt from that body.
+src/core/page-state/materialize.ts	materializePageSnapshot	1	facts_lane	Materializes the withdrawal overlay into the stored body; G4 (GBRA-190) turns forget into fence edits and retires the withdrawal mirror.
+src/core/persistence/connector-path.ts	clearConnectorLocalPath	1	operational	Clears a connector source's stale local_path pointer, or any source's relative one, on the sources row; source configuration, not memory content.
+src/core/persistence/connector-sync.ts	stampFreshness	1	operational	Stamps last_sync_at/newest_content_at freshness on the sources row for a skipped checkpoint save; sync bookkeeping, not memory content.
+src/core/persistence/coordinator.ts	publishMutation	2	door	The page-mutation door itself: the prepared publication and its after-effects commit here after the file is in place.
+src/core/persistence/group-publish.ts	publishGroup	1	door	Group publication of door requests: the same prepared publications as publishMutation, committed as one group.
+src/core/persistence/links-maintenance.ts	derive	1	projection	Re-derives markdown, frontmatter and mention edges from each page's current text, bound to the revision it read; the indexer reproduces them.
+src/core/persistence/memory-mutations.ts	submitForgetMutation	1	facts_lane	forget/forget_fact withdrawals; G4 (GBRA-190) makes them fence edits and derives the withdrawal ledger on import.
+src/core/persistence/source-lifecycle.ts	runManagedSourceLifecycle	1	operational	Source topology changes (remove, purge, archive) on the sources and binding rows; source administration, not memory content.
+src/core/persistence/sync-pass-run.ts	stampIdlePass	1	operational	An idle sync pass stamps last_sync_at and its pass row; sync bookkeeping, not memory content.
+src/core/persistence/sync-pass-run.ts	stampUnchangedPass	1	operational	An unchanged sync pass stamps last_sync_at and its converged watermark; sync bookkeeping, not memory content.
+src/core/persistence/sync-run.ts	runManagedSync	1	operational	A sync that found nothing stamps the freshness heartbeat and releases holds for paths that left the source; sync bookkeeping, not memory content.
+src/core/persistence/topology-recovery.ts	finishTopologyClone	1	operational	Finishes a recorded source topology clone under its native lock; source administration, not memory content.
+src/core/repair/aliases.ts	apply	1	removal	Deletes alias and redirect rows whose target page has no row at all; the page is gone from git too, so the delete only brings the database to git.
+src/core/repair/consolidate-ties.ts	apply	1	projection	The pre-#6023 consolidation writeback closed these facts in the database only, never in the fence; reopening them makes each row equal what its fence row imports to.
+src/core/repair/duplicate-facts.ts	databaseWrite	1	facts_lane	Retires duplicate database-only facts; fenced copies are struck through the fence. Unfenced facts move into fences in G4 (GBRA-190).
+src/core/repair/facts-rehome.ts	apply	1	facts_lane	Moves database-only facts of a page-less entity; G4 (GBRA-190) gives unfenced facts a fence home.
+src/core/repair/frontmatter-keys.ts	apply	1	projection	Strips parser-reserved keys older imports stored in pages.frontmatter; they never render, so the stripped row equals what the file parses to.
+src/core/repair/ontology-facts.ts	apply	1	facts_lane	Restores ontology-observation facts; G4 (GBRA-190) gives ontology observations a page home.
+src/core/repair/segmented-mirror.ts	admitRemirror	1	door	Admits a journaled re-mirror request and queues its withdrawal-mirror and Git effects, which rewrite the canonical file.
+src/core/repair/timeline-comments.ts	cleanRows	1	projection	Rewrites or deletes timeline rows still carrying markup so they equal the tuple the parser reads from the page text.
+src/core/shared-skills/publication.ts	validate	1	operational	Prunes retained shared-skill revisions inside a skill-bundle publication; retention bookkeeping, the bundle files are published separately.
+src/core/shared-skills/retention.ts	pruneSharedSkillRevisions	1	operational	Prunes retained shared-skill revisions past the retention limits; retention bookkeeping, not memory content.
+src/core/timeline-extract.ts	retractCoordinated	1	projection	Retracts timeline rows the page text no longer supports, against the text read in the same transaction; the indexer reproduces the result.
+src/core/trust/backfill.ts	relowerClaimedRows	2	metadata	Lowers trust tiers a claim lifted and propagates the lowering; trust tier is metadata beside the row, never content of record.
+src/core/trust/backfill.ts	runTrustBackfill	1	metadata	Backfills trust tiers computed from page rules; trust tier is metadata beside the row, never content of record.
+src/core/trust/held-removals.ts	acceptHeldRemoval	1	projection	An accepted held removal re-derives the take from its fence row or the timeline row from the page body; the rows follow the text.
+src/core/trust/owner-actions.ts	publishReleasedFact	1	facts_lane	A released held fact with no entity slug, or whose entity page is missing, is inserted database-only (G4, GBRA-190, owns that class); every other managed fact release publishes its fence row through the door as a journaled trust_release request (trust/release-publish.ts).
+src/core/trust/page-handlers.ts	setRowTier	1	metadata	An owner trust decision sets trust_tier and its owner_decision note on a fact, take or page row; trust tier is metadata, page content changes go through trust_owner_page.

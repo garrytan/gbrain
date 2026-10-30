@@ -30,10 +30,15 @@ on email_batch(emails):
     #   Refuses on stale google sources by design — run the sync it names first
 
     for email in emails:
-        # Step 1: Search sender BEFORE reading the email body
-        #   Brain context makes triage 10x better
-        sender_page = gbrain search "{email.sender_name}"
-        if sender_page:
+        # Step 1: Resolve the sender BEFORE reading the email body
+        #   Brain context makes triage 10x better. Identity is an exact match:
+        #   the address in a person page's email frontmatter, else a person
+        #   page whose title equals the display name. A search's top hit is
+        #   NOT the sender; no exact match = unknown sender.
+        sender_page = gbrain whois "{email.sender_address}" --source-id __all__ --json
+        if not sender_page.matches:
+            sender_page = gbrain whois "{email.sender_name}" --source-id __all__ --json
+        if len(sender_page.matches) == 1:   # ambiguous or empty = unknown sender
             context = gbrain get <sender_slug>
             #   Now you know: who they are, relationship history,
             #   what they care about, open threads
@@ -67,9 +72,9 @@ on email_batch(emails):
 on upcoming_meeting(meeting):
     briefing = {}
     for attendee in meeting.attendees:
-        # Search brain for each attendee
-        results = gbrain search "{attendee.name}"
-        if results:
+        # Resolve each attendee by exact email, else exact title (as above)
+        results = gbrain whois "{attendee.email}" --source-id __all__ --json
+        if len(results.matches) == 1:
             page = gbrain get <attendee_slug>
             briefing[attendee] = {
                 "compiled_truth": page.compiled_truth,
@@ -123,10 +128,11 @@ on schedule_request(meeting):
 ## Tricky Spots
 
 1. **Search sender BEFORE reading the email.** This is counterintuitive but critical. Loading brain context first means you know who they are, what you're working on together, and what they care about -- before you even see the subject line. The triage is informed, not mechanical.
-2. **Unknown senders with no brain page are almost always noise.** If `gbrain search` returns nothing for a sender, they're probably not important. Classify as low priority unless the email content signals otherwise.
-3. **Meeting prep is the highest-leverage EA workflow.** The user walks into every meeting already briefed on each attendee: last interaction, open threads, relationship history. This is the difference between "you have a meeting at 3" and "you have a meeting at 3 with alice-example -- last time you discussed the Series B, she was concerned about burn rate."
-4. **Post-inbox brain updates are where the brain compounds.** Every email is signal. If you clear the inbox without updating brain pages, the information is lost. This is the step most agents skip.
-5. **Scheduling nudges require timeline data.** "You haven't met with charlie-example in 6 weeks" only works if meeting pages have been ingested with proper entity propagation (see meeting-ingestion guide).
+2. **Identity is an exact match, never a top hit.** Accept a person page for a sender or attendee only when `gbrain whois` returns exactly one match for the address (or, with no address match, the name) ([identity rule](../../skills/conventions/brain-first.md#identity-exact-match)). A semantic search always returns something, so taking the first hit files strangers as known contacts and loads the wrong relationship into the reply.
+3. **Unknown senders with no brain page are almost always noise.** If no person page matches a sender exactly, they're probably not important. Classify as low priority unless the email content signals otherwise.
+4. **Meeting prep is the highest-leverage EA workflow.** The user walks into every meeting already briefed on each attendee: last interaction, open threads, relationship history. This is the difference between "you have a meeting at 3" and "you have a meeting at 3 with alice-example -- last time you discussed the Series B, she was concerned about burn rate."
+5. **Post-inbox brain updates are where the brain compounds.** Every email is signal. If you clear the inbox without updating brain pages, the information is lost. This is the step most agents skip.
+6. **Scheduling nudges require timeline data.** "You haven't met with charlie-example in 6 weeks" only works if meeting pages have been ingested with proper entity propagation (see meeting-ingestion guide).
 
 ## How to Verify
 

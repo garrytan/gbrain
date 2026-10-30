@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 /** The calling thread's CPU time, in milliseconds from an arbitrary origin. */
 export function threadCpuNow(): number {
   const used = process.threadCpuUsage();
@@ -17,10 +19,41 @@ export function spinCpuMs(ms: number): void {
  * on a starved helper thread or on a spawned child that has not reached exec yet. On a 4-vCPU CI shard a 60 ms
  * stretch read 133 ms that way (#6712 PR 4b, test/sync-pass-shared-budget-6712.test.ts).
  */
-export function watchLoopLag(intervalMs = 5): { stop(): { maxLag: number; ticks: number } } {
-  let last = threadCpuNow(), maxLag = 0, ticks = 0;
-  const timer = setInterval(() => { const now = threadCpuNow(); maxLag = Math.max(maxLag, now - last); last = now; ticks++; }, intervalMs);
-  return { stop: () => { clearInterval(timer); return { maxLag: Math.max(maxLag, threadCpuNow() - last), ticks }; } };
+export function watchLoopLag(opts: { intervalMs?: number; reportAtMs?: number } = {}): { stop(): { maxLag: number; ticks: number } } {
+  const { intervalMs = 5, reportAtMs } = opts;
+  // With reportAtMs, a worst stretch at or past it prints its wall time and the kernel's schedstat for the thread (time on
+  // a CPU, time runnable but waiting), so a CI failure says whether the thread worked longer, ran slower or waited.
+  const sched = reportAtMs === undefined ? null : schedstat();
+  const snap = () => ({ cpu: threadCpuNow(), wall: performance.now(), ...(sched ? schedstat() : null) });
+  let last = snap(), maxLag = 0, ticks = 0, worst = '';
+  const take = () => {
+    const now = snap();
+    if (now.cpu - last.cpu > maxLag) {
+      maxLag = now.cpu - last.cpu;
+      if (reportAtMs !== undefined) worst = `${maxLag.toFixed(1)} ms thread CPU, ${(now.wall - last.wall).toFixed(1)} ms wall`
+        + (sched && now.run !== undefined && last.run !== undefined ? `, schedstat ${(now.run - last.run).toFixed(1)} ms on a CPU and ${(now.wait! - last.wait!).toFixed(1)} ms runnable waiting` : '');
+    }
+    last = now;
+  };
+  const timer = setInterval(() => { take(); ticks++; }, intervalMs);
+  return {
+    stop: () => {
+      clearInterval(timer);
+      take();
+      if (reportAtMs !== undefined && Math.round(maxLag) >= reportAtMs) console.error(`[watchLoopLag] worst stretch: ${worst}`);
+      return { maxLag, ticks };
+    },
+  };
+}
+
+/** The calling thread's /proc schedstat in ms (Linux): time on a CPU and time runnable but waiting; null elsewhere. */
+function schedstat(): { run: number; wait: number } | null {
+  try {
+    const [run, wait] = readFileSync('/proc/thread-self/schedstat', 'utf8').split(' ').map(Number);
+    return Number.isFinite(run) && Number.isFinite(wait) ? { run: run! / 1e6, wait: wait! / 1e6 } : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

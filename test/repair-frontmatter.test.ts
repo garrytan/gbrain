@@ -392,7 +392,7 @@ test('legacy brain: the apply backs the file up, writes it, imports it, clears i
     expect((await engine.getPage('notes/post', { sourceId: id }))?.title).toBe('alice-example post 4\nsecond line of post 4');
     const detail = applied.outcome_items!.find(o => o.detail?.path === 'notes/roundup.md')!.detail!;
     expect(detail).toMatchObject({ path: 'notes/roundup.md', written: true, imported: 'imported', committed: 'commit_step' });
-    expect(String(detail.commit_step)).toContain(`git -C ${root} add -- notes/roundup.md`);
+    expect(detail.commit_step).toBe(`gbrain git commit-push --path ${root} -m 'fix(frontmatter): repair notes/roundup.md' -- notes/roundup.md`);
     expect(readFileSync(String(detail.backup), 'utf8')).toBe(QUOTABLE);
     expect(s.read('notes/roundup.md')).toContain('author: "alice-example');
     expect((await engine.getPage('notes/roundup', { sourceId: id }))?.frontmatter.author).toBe('alice-example (citing acme-example) (original: https://example.invalid/a)');

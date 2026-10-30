@@ -311,7 +311,7 @@ async function main() {
 
   const bunVersion = process.env.GBRAIN_CI_BUN_TAG
     ?? /oven\/bun:\$\{GBRAIN_CI_BUN_TAG:-([^}]+)\}/.exec(readFileSync(join(ROOT, "docker-compose.ci.yml"), "utf8"))?.[1]
-    ?? "1.4.3";
+    ?? "1.4.4";
 
   // ── Teardown on every exit path ──────────────────────────────────────────
   const owner = sh("bash", [RUNNER, "owner"]).trim();
@@ -422,7 +422,8 @@ async function main() {
       const done = new Set(parsed.map((r) => r.file));
       for (const result of parsed) record(vm, slot, result);
       const lost = batch.filter((item) => !done.has(item.file));
-      if (lost.length) {
+      // The teardown killed this batch: its lost items say nothing about the VM.
+      if (lost.length && !interrupted) {
         vm.infraErrors++;
         log(`batch on ${vm.name} slot ${slot} ended (exit ${code}) with ${lost.length} unfinished item(s); log ${logPath}`);
         for (const item of lost) {
@@ -529,6 +530,7 @@ async function main() {
   try {
     await Promise.race([Promise.all(vms.map((vm, i) => vmLifecycle(vm, i))), recorded]);
     if (control.length && !controlDone) throw new Error("no VM became ready to run gitleaks/verify/exclusive items");
+    if (interrupted) throw new Error(`interrupted: ${totalItems - results.size} item(s) did not run`);
     if (queue.length) throw new Error(`${queue.length} items never ran: every VM failed`);
   } catch (error) {
     console.error(`ci-ubicloud: ${error instanceof Error ? error.message : String(error)}`);
@@ -568,7 +570,7 @@ async function main() {
 
   // The pg-arms lane's proof that unit-postgres-arms fits: each shard of the
   // workflow's own partition, its ARM_WORKERS workers' makespan over this run's
-  // measured file durations (both arms, as the Bun 1.4.0 cell runs them).
+  // measured file durations (both arms, as this lane runs them).
   const armShardReport = opts.lanes.has("pg-arms")
     ? armShards(ROOT, arms.files, ARM_SHARDS).map((files, i) => ({
       shard: i + 1,

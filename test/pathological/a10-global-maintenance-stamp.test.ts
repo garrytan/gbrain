@@ -5,7 +5,8 @@
  *
  * Authoring gate:
  * 1. Protects: a pass stamps past a phase that failed with the same code in
- *    three earlier passes (budget, deferral and child blockers never do), the
+ *    three earlier passes (budget and child blockers never do; a triage
+ *    deferral does once its count stops shrinking for three passes, #7307), the
  *    failing phase backs off, the back-off resets on a version change, a new
  *    blocker key and `gbrain autopilot --retry-global`, doctor reports
  *    `global_maintenance_stalled`, and `autopilot --status` exits 1 on it.
@@ -156,20 +157,136 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       expect(Date.parse(streak.retry_at) - Date.parse(streak.last_at)).toBe(4 * 60 * 60_000);
     }, 120_000);
 
-    test('budget, deferral and child blockers never stop withholding the stamp', async () => {
-      const cases: Array<[string, Outcome, string]> = [
-        ['synthesize', { status: 'ok', details: { reason: 'insufficient_cycle_budget' } }, 'budget'],
-        ['synthesize', { status: 'ok', details: { triage: { deferred: 2 } } }, 'deferred'],
-        ['patterns', { status: 'warn', details: { child_outcome: 'timeout' } }, 'child:timeout'],
+    test('a budget skip as a job\'s first phase, a shrinking deferral and child blockers never stop withholding the stamp', async () => {
+      // #7307: a deferral stops withholding only when its backlog stops shrinking; this one shrinks every pass.
+      const cases: Array<[string, (n: number) => Outcome, string]> = [
+        ['synthesize', () => ({ status: 'ok', details: { reason: 'insufficient_cycle_budget' } }), 'budget'],
+        ['synthesize', (n) => ({ status: 'ok', details: { triage: { deferred: 10 - 2 * n } } }), 'deferred'],
+        ['patterns', () => ({ status: 'warn', details: { child_outcome: 'timeout' } }), 'child:timeout'],
       ];
       for (const [phase, outcome, key] of cases) {
         await resetState();
-        outcomes = { [phase]: outcome };
         for (let n = 0; n < 5; n++) {
+          outcomes = { [phase]: outcome(n) };
           const result = await expectUnitNotAborted(() => pass(['orphans', phase]));
           expect({ key, n, stamped: await stamped(), bypassed: result.pass_completed_with_failing_phase ?? null }).toEqual({ key, n, stamped: null, bypassed: null });
         }
         expect((await progress()).failures[phase]).toMatchObject({ key });
+      }
+    }, 120_000);
+
+    test('#7307: a triage deferral that stops shrinking for three passes stops withholding the stamp; doctor names dream retriage', async () => {
+      const deferring = (deferred: number) => { outcomes = { synthesize: { status: 'ok', details: { triage: { deferred } } } }; };
+      const run = async (counts: number[]) => {
+        const out: Array<{ deferred: number; stamped: boolean }> = [];
+        for (const deferred of counts) {
+          await engine.executeRaw('DELETE FROM config WHERE key = $1', [LAST_GLOBAL_AT_KEY]);
+          deferring(deferred);
+          await expectUnitNotAborted(() => pass(['orphans', 'synthesize']));
+          out.push({ deferred, stamped: (await stamped()) !== null });
+        }
+        return out;
+      };
+      expect(await run([7, 7, 7, 7])).toEqual([
+        { deferred: 7, stamped: false }, { deferred: 7, stamped: false }, { deferred: 7, stamped: false }, { deferred: 7, stamped: true }]);
+      const streak = (await progress()).failures.synthesize;
+      expect(streak).toMatchObject({ key: 'deferred', count: 4, deferred: 7, stalled: 3 });
+      expect(streak.retry_at).toBeUndefined();
+
+      const check = await stalledCheck();
+      expect(check.status).toBe('warn');
+      expect(check.message).toContain('synthesize');
+      expect(check.message).toContain('gbrain dream retriage --dry-run');
+      expect(check.fix).toMatchObject({ argv: ['gbrain', 'dream', 'retriage'], consent: ['paid'], preview_argv: ['gbrain', 'dream', 'retriage', '--dry-run', '--json'] });
+
+      await resetState();
+      expect((await run([9, 9, 9, 8, 8, 8, 8])).map(r => r.stamped)).toEqual([false, false, false, false, false, false, true]);
+      await resetState();
+      expect((await run([5, 6, 7, 8])).map(r => r.stamped)).toEqual([false, false, false, true]);
+      const pastResult = await (async () => { deferring(8); return pass(['orphans', 'synthesize']); })();
+      expect(pastResult.pass_completed_with_failing_phase).toEqual([expect.objectContaining({ phase: 'synthesize', key: 'deferred', fix: 'gbrain dream retriage' })]);
+    }, 120_000);
+
+    test('#7307: a shrinking triage backlog keeps withholding the stamp, and a stale stamp names dream retriage, not the phase rerun', async () => {
+      for (const deferred of [30, 20, 10]) {
+        outcomes = { synthesize: { status: 'ok', details: { triage: { deferred } } } };
+        await pass(['orphans', 'synthesize']);
+      }
+      expect(await stamped()).toBeNull();
+      await engine.setConfig(LAST_GLOBAL_AT_KEY, new Date(Date.now() - 24 * 60 * 60_000).toISOString());
+      const check = await stalledCheck();
+      expect(check.status).toBe('warn');
+      expect(check.message).toContain('10 transcript(s) left untriaged');
+      expect((check.fix as { argv: string[] }).argv).toEqual(['gbrain', 'dream', 'retriage']);
+    }, 120_000);
+
+    test('a contained run-scoped phase failure (42P01, write_quota_exhausted) is the phase\'s blocker: later phases run, the streak bypasses and backs off', async () => {
+      for (const code of ['42P01', 'write_quota_exhausted']) {
+        await resetState();
+        calls = [];
+        outcomes = { purge: fail(code) };
+        for (let n = 1; n <= 3; n++) {
+          const result = await expectUnitNotAborted(() => pass(['orphans', 'purge', 'embed']));
+          expect({ code, n, embedRan: calls.filter(p => p === 'embed').length, stamped: await stamped(), status: result.status })
+            .toEqual({ code, n, embedRan: n, stamped: null, status: 'partial' });
+        }
+        const fourth = await expectUnitNotAborted(() => pass(['orphans', 'purge', 'embed']));
+        expect({ code, stamped: (await stamped()) !== null, embedRan: calls.filter(p => p === 'embed').length, purgeRan: purgeRuns() })
+          .toEqual({ code, stamped: true, embedRan: 4, purgeRan: 3 });
+        expect(fourth.pass_completed_with_failing_phase).toEqual([expect.objectContaining({ phase: 'purge', key: `fail:${code}`, count: 3 })]);
+        expect(Date.parse((await progress()).failures.purge.retry_at)).toBeGreaterThan(Date.now());
+        const check = await stalledCheck();
+        expect({ code, status: check.status, phase: check.message.includes('purge'), key: check.message.includes(code) }).toEqual({ code, status: 'warn', phase: true, key: true });
+        expect(JSON.stringify(check.fix)).toContain('"dream","--phase","purge"');
+      }
+    }, 120_000);
+
+    test('a retryable run-scoped phase failure stops the job and the next job retries it first, three jobs at most; then it is the blocker and the pass goes on', async () => {
+      outcomes = { purge: fail('08006') };
+      for (let n = 1; n <= 3; n++) await expect(pass(['orphans', 'purge', 'embed'])).rejects.toBeDefined();
+      expect({ next: (await progress()).next_phase, streak: (await progress()).failures.purge ?? null, embedRan: calls.filter(p => p === 'embed').length })
+        .toEqual({ next: 'purge', streak: null, embedRan: 0 });
+      const fourth = await expectUnitNotAborted(() => pass(['orphans', 'purge', 'embed']));
+      expect({ status: fourth.status, embedRan: calls.filter(p => p === 'embed').length, streak: (await progress()).failures.purge?.key })
+        .toEqual({ status: 'partial', embedRan: 1, streak: 'fail:08006' });
+      for (let n = 0; n < 3; n++) await expectUnitNotAborted(() => pass(['orphans', 'purge', 'embed']));
+      expect(await stamped()).not.toBeNull();
+      delete outcomes.purge;
+      await patchStreak('purge', { retry_at: new Date(Date.now() - 1000).toISOString() });
+      await pass(['orphans', 'purge', 'embed']);
+      expect({ runStops: (await progress()).run_stops?.purge ?? null, streak: (await progress()).failures.purge ?? null }).toEqual({ runStops: null, streak: null });
+    }, 120_000);
+
+    test('a phase budget-skipped after another phase ran in the job moves to a fresh job instead of blocking the stamp forever', async () => {
+      const MIN = 60_000;
+      const realNow = Date.now;
+      let clock = realNow();
+      Date.now = () => clock;
+      try {
+        const budgeted = async (_engine: BrainEngine, opts: { phases?: string[]; deadlineAtMs?: number }): Promise<CycleReport> => {
+          const phase = opts.phases![0]!;
+          calls.push(phase);
+          let result: PhaseResult;
+          if (phase === 'synthesize') { clock += 25 * MIN; result = { phase, status: 'ok', duration_ms: 25 * MIN, summary: 'ok', details: {} } as PhaseResult; }
+          else if (phase === 'patterns' && opts.deadlineAtMs! - clock < 15 * MIN) {
+            clock += 5;
+            result = { phase, status: 'skipped', duration_ms: 5, summary: 'budget', details: { reason: 'insufficient_cycle_budget' } } as PhaseResult;
+          } else { clock += phase === 'patterns' ? 12 * MIN : 5_000; result = { phase, status: 'ok', duration_ms: 1, summary: 'ok', details: { child_outcome: 'completed' } } as PhaseResult; }
+          return { schema_version: '1', timestamp: new Date(clock).toISOString(), duration_ms: 1, status: 'ok', phases: [result], totals: {} } as unknown as CycleReport;
+        };
+        const job = () => makeAutopilotGlobalMaintenanceHandler(engine, { runCycle: budgeted as never })(
+          { id: ++jobId, attempts_made: 0, signal: undefined, deadlineAtMs: clock + 30 * MIN, data: { phases: ['synthesize', 'patterns', 'purge'], repoPath: null } } as never) as Promise<any>;
+        const first = await job();
+        expect({ resume: first.report.resume_phase, streak: (await progress()).failures.patterns ?? null, stamped: await stamped() })
+          .toEqual({ resume: 'patterns', streak: null, stamped: null });
+        expect((await progress()).durations.patterns).toBeUndefined();
+        clock += 60 * MIN;
+        await job();
+        expect({ patternsOk: calls.filter(p => p === 'patterns').length, stamped: (await stamped()) !== null, streak: (await progress()).failures.patterns ?? null })
+          .toEqual({ patternsOk: 2, stamped: true, streak: null });
+        expect((await progress()).durations.patterns).toBe(1);
+      } finally {
+        Date.now = realNow;
       }
     }, 120_000);
 

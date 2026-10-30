@@ -50,6 +50,8 @@ Running a production brain.
 | Guide | What It Covers |
 |-------|---------------|
 | [Reference Cron Schedule](guides/cron-schedule.md) | 20+ recurring jobs, quiet hours, dream cycle |
+| [Call gbrain through one wrapper](guides/cron-schedule.md#calling-gbrain-unattended) | Cron, workspace scripts and hooks: `GBRAIN_HOME`, logged stderr, exit codes, clean stdout, timeouts, env files |
+| [Scripts and the managed checkout](guides/shared-checkout-git.md#scripts-and-the-managed-checkout) | Write through gbrain, scheduled `sources refresh`, history rewrites, gitignored paths |
 | [Cron via Minions](../skills/conventions/cron-via-minions.md) | Why scheduled work runs as Minion jobs, not `agentTurn`. Built-in handlers are rewritten by the `v0_11_0` migration orchestrator (`gbrain apply-migrations`); host-specific handlers use the plugin contract below. |
 | [Plugin Handlers](guides/plugin-handlers.md) | Registering host-specific Minion handlers via code (no data-file exec surface). |
 | [Minions fix](guides/minions-fix.md) | Repairing a half-migrated Minions install. |

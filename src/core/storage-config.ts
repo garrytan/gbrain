@@ -17,6 +17,11 @@ export interface StorageConfig {
    * the database copy by the trusted local maintenance worker on the canonical owner host (repair/keep-db-policy.ts).
    */
   keep_db?: string[];
+  /**
+   * #8007: a deprecated `supabase_only` list sat next to canonical keys and was ignored (canonical wins), so which pages
+   * are database-only is ambiguous; a caller deciding whether a missing file deletes its page holds it instead.
+   */
+  deprecated_db_only_ignored?: true;
 }
 
 export type StorageTier = 'db_tracked' | 'db_only' | 'unspecified';
@@ -105,10 +110,11 @@ function parseStorageYaml(content: string, unknown: string[] = []): RawStorage |
     const key = indented.slice(0, colon).trim();
     if (STORAGE_KEYS.has(key)) {
       currentList = key as keyof RawStorage;
-      // Inline empty list: `db_only: []`.
-      const remainder = indented.slice(colon + 1).trim();
-      if (remainder === '[]' && !raw[currentList]) {
-        raw[currentList] = [];
+      // Inline flow list on one line: `db_only: []` or `db_only: [dir/, 'other/']`.
+      const flow = /^\[(.*)\]$/.exec(indented.slice(colon + 1).trim());
+      if (flow && !/[[\]]/.test(flow[1]!)) {
+        const values = [...flow[1]!.matchAll(/\s*("[^"]*"|'[^']*'|[^,]*)\s*(?:,|$)/g)].map((m) => m[1]!.replace(/^["']|["']$/g, '').trim()).filter(Boolean);
+        raw[currentList] = [...(raw[currentList] ?? []), ...values];
       }
       continue;
     }
@@ -167,6 +173,7 @@ function normalizeStorageConfig(raw: RawStorage): StorageConfig {
       db_tracked: raw.db_tracked ?? [],
       db_only: raw.db_only ?? [],
       ...keep,
+      ...(raw.supabase_only?.length ? { deprecated_db_only_ignored: true as const } : {}),
     };
   }
 
@@ -347,7 +354,8 @@ export function normalizeAndValidateStorageConfig(input: StorageConfig): Storage
     }
   }
 
-  return { db_tracked: tracked.normalized, db_only: dbonly.normalized, ...(keep ? { keep_db: keep.normalized } : {}) };
+  return { db_tracked: tracked.normalized, db_only: dbonly.normalized, ...(keep ? { keep_db: keep.normalized } : {}),
+    ...(input.deprecated_db_only_ignored ? { deprecated_db_only_ignored: true as const } : {}) };
 }
 
 /**
@@ -395,11 +403,11 @@ export function isKeepDbSlug(slug: string, keepDb: readonly string[]): boolean {
 /**
  * True when gbrain.yml has a `db_only` (or deprecated `supabase_only`) key
  * line but no db_only directory resolved from it. `loadStorageConfig` warns
- * and resolves nothing for syntax the narrow parser does not handle (e.g.
- * flow-style `db_only: [dir/]`), so a caller that must not guess a tier
- * refuses instead. Only YAML key lines count, not comments or prose that
- * mention the word. Known false positive: an intentionally empty
- * `db_only: []` also counts, since it resolves to the same empty config.
+ * and resolves nothing for syntax the narrow parser does not handle (e.g. a
+ * flow list split over several lines, or a key outside the storage section),
+ * so a caller that must not guess a tier refuses instead. Only YAML key lines
+ * count, not comments or prose that mention the word; an explicit empty
+ * `db_only: []` declares no directory and does not count.
  */
 export function hasUnresolvedDbOnlyDeclaration(repoPath: string, config: StorageConfig | null): boolean {
   if (config && config.db_only.length > 0) return false;
@@ -409,7 +417,8 @@ export function hasUnresolvedDbOnlyDeclaration(repoPath: string, config: Storage
   return yamlContent.split('\n').some((line) => {
     const trimmed = line.trim();
     if (trimmed.startsWith('#')) return false;
-    return /^(db_only|supabase_only)\s*:/.test(trimmed);
+    const key = /^(db_only|supabase_only)\s*:(.*)$/.exec(trimmed.replace(/\s+#.*$/, ''));
+    return key !== null && key[2]!.replace(/\s+/g, '') !== '[]';
   });
 }
 

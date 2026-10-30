@@ -11,8 +11,17 @@ import { readFix } from '../ops/op-fix.ts';
 import { readLineGrammarSettings, type LineGrammarSettings } from '../line-grammar.ts';
 import { primeRelationSemantics } from '../link-semantics-pack.ts';
 import { bodyUnread, isSegmentedPage } from '../page-body/page-shape.ts';
-import { extractSegmentedPageLinks, segmentedRoleText } from '../page-body/segment-links.ts';
+import { extractSegmentedPageLinks, openSegmentedLinkSession, segmentedRoleText } from '../page-body/segment-links.ts';
+import { SegmentDerivationRaced } from '../page-body/segment-derive.ts';
 import { temporalBodyOf, type TemporalBody } from '../link-temporal-apply.ts';
+import { linksFenceProjectionRows, projectLinksFence } from '../links-fence-projection.ts';
+import { isQuarantined } from '../quarantine.ts';
+
+/** A body that moved under an incremental read: null, so the caller takes the full pass. */
+const raced = (error: unknown): null => {
+  if (error instanceof SegmentDerivationRaced) return null;
+  throw error;
+};
 
 async function liveSlugAliases(engine: BrainEngine, sourceId: string, targets: string[]): Promise<Map<string, string>> {
   if (!targets.length) return new Map();
@@ -80,8 +89,9 @@ export const LINK_ENDPOINTS_SQL = `WITH own AS (
 /**
  * `primeSemantics`: install the pack relation semantics now, during preparation, so apply's
  * replacement does not read them again inside the publication transaction.
- * A stored segmented page (its body unread) is extracted block by block (page-body/segment-links.ts),
- * and its temporal inputs are collected here; publication never reads a segmented body.
+ * A stored segmented page (its body unread) is extracted block by block (page-body/segment-links.ts), incrementally:
+ * only the runs whose inputs changed are read, the rest come from their page_segment_derivations rows; a body that moves
+ * during the read falls back to the full pass. Its temporal inputs are collected here; publication never reads a segmented body.
  */
 export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
   page: Pick<ParsedPage, 'type' | 'compiled_truth' | 'timeline' | 'frontmatter'> & { id?: number }, sourceId: string, primeSemantics = false) {
@@ -96,10 +106,19 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
   if (!opts.pack || !settings) return { pageKeys: [{ sourceId, slug }], attendanceComplete: true, settings,
     apply: async () => ({ created: 0, removed: 0, errors: 1, unresolved_count: 1 }) };
   const segmented = bodyUnread(page) ? { id: Number(page.id), slug, source_id: sourceId, type: page.type, frontmatter: page.frontmatter } : null;
-  const roleText = segmented ? await segmentedRoleText(engine, segmented) : undefined;
-  const extract = (o: ExtractPageLinksOptions & { temporal?: boolean }): Promise<PageLinksResult & { temporalBody?: TemporalBody }> => segmented
-    ? extractSegmentedPageLinks(engine, segmented, resolver, { ...o, roleText })
-    : extractPageLinks(slug, `${page.compiled_truth}\n${page.timeline}`, page.frontmatter, page.type, resolver, o);
+  // G5: re-derivation also restores the page's links fence edges (a body with no readable fence leaves them alone).
+  const fenceLinks = segmented || isQuarantined(page.frontmatter) ? null : await linksFenceProjectionRows(engine, sourceId, page);
+  let session = segmented ? await openSegmentedLinkSession(engine, segmented, resolver, opts).catch(raced) : null;
+  let roleText: string | undefined;
+  const extract = async (o: ExtractPageLinksOptions & { temporal?: boolean }): Promise<PageLinksResult & { temporalBody?: TemporalBody }> => {
+    if (!segmented) return extractPageLinks(slug, `${page.compiled_truth}\n${page.timeline}`, page.frontmatter, page.type, resolver, o);
+    const targetType = o.targetType;
+    const incremental = session && await (targetType ? session.finish({ ...o, targetType }) : session.targets(o)).catch(raced);
+    if (incremental) return incremental;
+    session = null;
+    roleText ??= await segmentedRoleText(engine, segmented);
+    return extractSegmentedPageLinks(engine, segmented, resolver, { ...o, roleText });
+  };
   const referenced = new Set([slug]);
   const initial = await extract({ ...opts, onResolvedFrontmatterTarget: target => referenced.add(target) });
   // A link written against a renamed page's old slug follows its slug alias, like get_page does.
@@ -147,6 +166,11 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
       const result = await tx.replaceDerivedLinks({ slug, sourceId, expectedRevision: snapshot.revision,
         sourceIncarnation: snapshot.sourceIncarnation, snapshot }, rows, { preserveExisting: true, semanticsPrimed: primeSemantics, lineGrammar: settings, wanted: { ...wanted, producers: [...wanted.producers] },
         expectedEndpoints: capturedLinkEndpoints(rows, metadata, { slug, sourceId }), ...stored });
+      if (fenceLinks) {
+        const fence = await projectLinksFence(tx, snapshot.page, fenceLinks);
+        result.created += fence.created;
+        result.removed += fence.removed;
+      }
       return { ...result, errors: 0, unresolved_count: unresolved.length, skipped_cross_source: skippedCrossSource, wanted_count: wanted.rows.length,
         ...(wanted.rows.length ? { wanted: wanted.rows.slice(0, 10).map(row => ({ slug: row.target_ref, source_id: row.target_source_id })),
           wanted_message: 'These link targets have no page yet; each edge is created when its page is. Create the page if it is real, or fix the link if it is a typo.',

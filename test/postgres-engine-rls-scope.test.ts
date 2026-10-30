@@ -41,14 +41,16 @@ function makeFakeSql() {
   );
   const sql = handle('pool') as unknown as Record<string, unknown> & {
     (strings: TemplateStringsArray, ...params: unknown[]): Promise<unknown[]>;
-    begin: (cb: (tx: unknown) => Promise<unknown>) => Promise<unknown>;
+    begin: (first: unknown, second?: (tx: unknown) => Promise<unknown>) => Promise<unknown>;
   };
   const tx = handle('transaction') as unknown as Record<string, unknown>;
   tx.savepoint = async (cb: (tx: unknown) => Promise<unknown>) => {
     savepointCalls++; const prior = scopes;
     try { return await cb(tx); } catch (error) { scopes = prior; throw error; }
   };
-  sql.begin = async (cb: (t: unknown) => Promise<unknown>) => {
+  // The pool's begin also takes options first (GBRA-156: `{ early }` on search reads).
+  sql.begin = async (first: unknown, second?: (t: unknown) => Promise<unknown>) => {
+    const cb = (second ?? first) as (t: unknown) => Promise<unknown>;
     beginCalls++;
     const prior = scopes;
     try { return await cb(tx); } finally { scopes = prior; }

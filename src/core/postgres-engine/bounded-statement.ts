@@ -4,7 +4,7 @@
  * so a preparation read outside the publication transaction had no
  * server-side bound and a relation lock held elsewhere pinned its connection
  * for as long as the lock lasted. A reserved connection runs `BEGIN; SET LOCAL
- * statement_timeout`, the statement and `COMMIT` as one pipelined round trip:
+ * statement_timeout` (`BEGIN READ WRITE`, #7183), the statement and `COMMIT` as one pipelined round trip:
  * the pooler pins the transaction to one server connection, `SET LOCAL` ends
  * with it, and a statement past the bound ends server-side with 57014 (a lock
  * wait counts toward it). `COMMIT` after a failed statement is a rollback,
@@ -21,6 +21,7 @@
  */
 import type postgres from '#postgres';
 import { reserveWithCancellation } from './cancellation.ts';
+import { READ_WRITE_BEGIN } from './read-write-transactions.ts';
 
 type Sql = ReturnType<typeof postgres>;
 export type RunStatement = <T>(conn: Sql, sql: string, params: unknown[] | undefined, opts: { signal?: AbortSignal; prepare?: boolean }) => Promise<T[]>;
@@ -37,7 +38,7 @@ export async function runBoundedStatement<T>(conn: Sql, sql: string, params: unk
     settings.push(`SET LOCAL statement_timeout = ${ms}`);
   }
   try {
-    const open = reserved.unsafe(['BEGIN', ...settings].join('; ')).simple().execute();
+    const open = reserved.unsafe([READ_WRITE_BEGIN, ...settings].join('; ')).simple().execute();
     // A cancellable statement is issued through `run`, which awaits the query and so enqueues it a microtask
     // later than `execute()` would: COMMIT then waits for it to settle instead of being pipelined ahead of it.
     const cancellable = opts.timeoutMs === undefined && opts.signal && run;

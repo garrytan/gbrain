@@ -3,6 +3,7 @@ import type { Operation } from './contract.ts';
 import { WRITE_REQUEST_PARAM, WRITE_WAIT_PARAM, PAGE_MUTATION_PARAMS } from '../persistence/params.ts';
 import { PAGE_BATCH_MAX_BYTES, PAGE_BATCH_MAX_PAGES, submitPageBatch } from '../persistence/page-batch.ts';
 import { pageMutationSource } from '../persistence/page-mutations.ts';
+import { enforceSubagentSlugFence } from './context.ts';
 
 const put_pages: Operation = {
   name: 'put_pages',
@@ -33,6 +34,8 @@ const put_pages: Operation = {
   area: 'pages',
   handler: async (ctx, p) => {
     pageMutationSource(ctx, p, 'put_pages');
+    // GBRA-60: a subagent's batch (a dream synthesis child's oneshot write) is fenced per page, as put_page is.
+    if (Array.isArray(p.pages)) for (const page of p.pages) if (typeof page?.slug === 'string') enforceSubagentSlugFence(ctx, page.slug, 'put_pages');
     if (ctx.dryRun) return { dry_run: true, action: 'put_pages', pages: Array.isArray(p.pages) ? p.pages.length : 0 };
     return submitPageBatch(ctx, p);
   },

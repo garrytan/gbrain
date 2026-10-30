@@ -38,6 +38,17 @@ describe('search surfaces remembered facts', () => {
     const text = extra(await call('search', { query: 'Numbat Labs invoices email' }));
     expect(text).not.toContain('prefers invoices by email');
   });
+  test('an older fact matching every term is not crowded out by newer facts matching one', async () => {
+    // 250 newer world facts share only "lanternfish"; the one fact naming all three terms is the oldest.
+    await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, valid_from)
+      VALUES ('default', 'notes/ledger-example', 'The lanternfish quibble ledger was reconciled by Example Person.', 'fact', 'world', 'user update', now() - interval '400 days')`);
+    await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, valid_from)
+      SELECT 'default', 'notes/school-' || g, 'A lanternfish school was sighted on survey ' || g || '.', 'fact', 'world', 'user update', now() - (g || ' minutes')::interval
+      FROM generate_series(1, 250) AS g`);
+    const text = extra(await call('search', { query: 'lanternfish quibble ledger' }));
+    expect(text).toContain('reconciled by Example Person');
+    expect(text).not.toContain('school was sighted');
+  });
   test('a query sharing too few words returns no facts block', async () => {
     const text = extra(await call('search', { query: 'Numbat roadmap webinar dashboard filters' }));
     expect(text).not.toContain('Saved facts');

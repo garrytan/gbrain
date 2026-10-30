@@ -17,7 +17,6 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import type { BrainEngine } from '../engine.ts';
@@ -169,7 +168,7 @@ export function defaultGraduationDeps(): GraduationDeps {
       }
     },
     hostId: () => localHostId(),
-    mountsPath: () => process.env.GBRAIN_MOUNTS_PATH || join(homedir(), '.gbrain', 'mounts.json'),
+    mountsPath: () => process.env.GBRAIN_MOUNTS_PATH || join(configDir(), 'mounts.json'),
   };
 }
 

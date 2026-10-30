@@ -142,7 +142,7 @@ export async function withFileBeliefBrain(sourceId: string, run: (brain: FileBel
   } finally { rmSync(home, { recursive: true, force: true }); }
 }
 
-/** A page body with a facts fence, a takes fence, prose and wikilinks. */
+/** A page body with a facts fence, a takes fence, prose and wikilinks. A fence is written when its list is given, so an empty list writes the empty fence that retires the stored rows (GBRA-161 PR 2: an omitted fence holds them). */
 export function beliefPage(o: { title?: string; type?: string; prose?: string; facts?: Array<string | { claim: string; context?: string; confidence?: string; visibility?: string }>;
   takes?: Array<string | { claim: string; weight?: string; since?: string; who?: string }>; links?: string[]; frontmatter?: Record<string, string> } = {}): string {
   const fm = { type: o.type ?? 'company', title: o.title ?? 'Acme Example', ...o.frontmatter };
@@ -150,11 +150,11 @@ export function beliefPage(o: { title?: string; type?: string; prose?: string; f
   const takes = (o.takes ?? []).map(t => typeof t === 'string' ? { claim: t } : t);
   const parts = [`---\n${Object.entries(fm).map(([k, v]) => `${k}: ${v}`).join('\n')}\n---`,
     `${o.prose ?? 'Draft.'}${(o.links ?? []).map(l => ` See [[${l}]].`).join('')}`];
-  if (facts.length) parts.push(['<!--- gbrain:facts:begin -->', '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |',
+  if (o.facts) parts.push(['<!--- gbrain:facts:begin -->', '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |',
     '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|',
     ...facts.map((f, i) => `| ${i + 1} | ${f.claim} | fact | ${f.confidence ?? '1.0'} | ${f.visibility ?? 'world'} | medium | 2026-01-01 |  | remember | ${f.context ?? ''} |`),
     '<!--- gbrain:facts:end -->'].join('\n'));
-  if (takes.length) parts.push(['<!--- gbrain:takes:begin -->', '| # | claim | kind | who | weight | since | source |', '|---|-------|------|-----|--------|-------|--------|',
+  if (o.takes) parts.push(['<!--- gbrain:takes:begin -->', '| # | claim | kind | who | weight | since | source |', '|---|-------|------|-----|--------|-------|--------|',
     ...takes.map((t, i) => `| ${i + 1} | ${t.claim} | take | ${t.who ?? 'brain'} | ${t.weight ?? '0.5'} | ${t.since ?? '2026-07'} | notes |`), '<!--- gbrain:takes:end -->'].join('\n'));
   return `${parts.join('\n\n')}\n`;
 }

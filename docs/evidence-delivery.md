@@ -142,6 +142,15 @@ Think reads `think.return_unit` (default `auto`) and never
 Under `auto`, think renders conversation pages whole and keeps its usual
 excerpts for every other page.
 
+### Query budgets (GBRA-205)
+
+`query`'s `token_budget` without a `return_unit` keeps its chunk-mode
+meaning by default. `gbrain config set search.query_budget_unit auto` makes
+it the same hard cap `search` uses: conversations come back whole or cut,
+packed by `search.auto_packing`. A budget below 32 is then refused.
+`search.evidence_titles` (default off) appends each page block's title to
+its date header line when date headers are on.
+
 ### Date headers
 
 With `search.evidence_date_header` on (default off), every delivered block,
@@ -173,9 +182,26 @@ header never presents when a fact was written as when it became true. An open
 validity end reads `unknown`. The setting
 applies to `search`, `query`, `recall`, `think` and `assemble_evidence`.
 
+### Tail trim
+
+With `search.evidence_tail_trim` on (default off), an `auto` delivery for
+`search` or `query` drops whole-conversation blocks past the top 3 whose
+search score is under half of rank one's. A block that holds the query's terms
+nearly as fully as rank one (at least 80% of rank one's share of them) is kept:
+a low-scoring session can restate the asked fact with an earlier value, which
+an update question needs. Ranked chunks, saved facts and long pages are never
+dropped, and a delivery without a usable score on every row is unchanged.
+`delivery.tail_trim` reports `{ dropped, kept_by_query_terms }` and
+`dropped_reasons.tail_trim` counts the dropped blocks. On LongMemEval-S
+(development evidence), the trim cut delivered tokens by about 36% on the
+questions it touched, with no measurable loss on three reader models
+([gbrain-evals#185](https://github.com/garrytan/gbrain-evals/pull/185)). The
+library `assembleEvidenceForHits` runs it when the call passes `query` and
+each hit's `score`.
+
 Config keys: `search.return_unit`, `search.return_window`,
 `search.return_budget_default`, `search.return_budget_conversation`,
-`search.return_budget_max_remote`, `search.evidence_date_header`, `search.auto_packing`,
+`search.return_budget_max_remote`, `search.evidence_date_header`, `search.evidence_titles`, `search.evidence_tail_trim`, `search.auto_packing`, `search.query_budget_unit`,
 `search.page_rank_cut`, `search.page_rank_cut_factor`, `think.return_unit`. Kill switch:
 `gbrain config set search.return_unit chunk` and
 `gbrain config set think.return_unit chunk` (or pass `return_unit: "chunk"`
@@ -288,7 +314,9 @@ When the caller passes a budget (`token_budget` on `query`, `search` and
 `assemble_evidence`, `budget_tokens` on `recall`) and the unit is `auto`, the
 budget is a hard cap on the delivered evidence: the recount of every result's
 title plus `chunk_text` (the evidence, its omission lines, cut markers and
-snippet markers) never exceeds it. JSON fields outside those two (`delivered`,
+snippet markers) never exceeds it, except that a quoted conversation row at
+rank one is kept when its quote fence alone exceeds a very small budget (see
+[Response shape](#response-shape-additive)). JSON fields outside those two (`delivered`,
 spans, scores, the `delivery` meta) are not counted. The four operations share
 one rule:
 
@@ -390,6 +418,18 @@ the returned `chunk_text`, computed after every text transformation (sanitizing,
 cuts, omission lines and secret redaction). The text carries no inline markers.
 A hit whose chunk cannot be located is listed in `unmapped_chunk_ids` instead.
 
+A conversation page's row (type `conversation`) is returned as a quoted
+excerpt (#7600, `search/transcript-quote.ts`): tool-call blocks become a
+one-line summary, then a marker line and a code fence wrap the text. Its
+`match_spans` index that returned text (a span inside a summarized block
+covers the summary), and its `tokens`, the meta `tokens_delivered` and
+`budget_used` and `evidenceFingerprint` count or hash the fenced text. An
+explicit `snippet_chars` caps the text inside the fence, so the row can run
+longer than the cap by the marker and fence lines. Under `auto` an explicit
+budget pays for the fence, except that a rank-one row is kept when the fence
+alone exceeds a very small budget; budgets under other units do not count it.
+With `date_header`, the header stays the first line of the row, ahead of the marker and the fence.
+
 One result is returned per expanded page, at the page's best rank. `chunk_id`,
 `chunk_index`, `score` and the other ranking fields stay those of the page's
 best-ranked hit (anchor provenance).
@@ -413,6 +453,7 @@ Response meta (`_meta.retrieval.delivery` over MCP; top-level `delivery` on
   "fallbacks": ["budget_clamped"], // distinct non-fatal problem codes, never silent
   "budget_clamped": { "requested": 50000, "max": 32000 },
   "date_header": true,             // only when search.evidence_date_header is on
+  "tail_trim": { "dropped": 1, "kept_by_query_terms": 0 }, // only when search.evidence_tail_trim ran
   "auto_packing": "cap_only"       // explicit auto budgets only: the packing that ran
 }
 ```

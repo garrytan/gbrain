@@ -17,7 +17,7 @@ const edit_page: Operation = {
     expected_revision: { type: 'string', required: true, description: 'From get_page include_content:true.' },
     edits: {
       type: 'array', required: true,
-      description: `1 to ${EDIT_PAGE_MAX_EDITS} {old_text, new_text} replacements.`,
+      description: `1-${EDIT_PAGE_MAX_EDITS} replacements.`,
       items: {
         type: 'object',
         properties: {

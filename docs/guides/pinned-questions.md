@@ -77,6 +77,7 @@ Every pin, list, status and refresh returns the same fields:
 | `awaiting_consent` | The pin was made over MCP (or imported from `dream.auto_think`) and is not active | The owner runs `gbrain questions pin --id <id>` |
 | `no_model_key` | No chat-model key is configured | The user adds an Anthropic or OpenAI key (`gbrain providers list` shows how) |
 | `budget_exhausted` | This run's refresh budget is spent | Raise `cycle.standing_questions.budget_usd`, or wait for the next run |
+| `answer_too_long` | The answer did not fit the refresh output cap, so the last refresh failed (a full refresh fails the same way); scheduled refreshes skip the pin until the cap is raised | The owner raises `cycle.standing_questions.max_output_tokens`, or narrows the question |
 | `refresh_failed` | The last refresh failed; the previous answer is kept with its stale flags | `questions_refresh {id, full: true}` |
 | `no_worker` | Nothing runs scheduled refreshes (no `standing_questions` phase in two days, no autopilot) | `questions_refresh {id}`; recurring refreshes need autopilot, which a pin never installs |
 
@@ -113,8 +114,11 @@ from scratch. A refresh publishes only if nothing it cited changed while it
 ran; otherwise the previous answer stays, still flagged, and the next refresh
 tries again. A model reply with no parseable answer is retried once with a
 JSON-only reminder (both calls count toward spend); if that also fails, the
-refresh fails with `refresh_failed:model_output_not_json`. A failed refresh
-never removes the previous answer.
+refresh fails with `refresh_failed:model_output_not_json`. A reply cut off at
+the output cap is not retried: the refresh fails with
+`refresh_failed:answer_too_long:<cap>`, and the cycle does not try that pin
+again until `cycle.standing_questions.max_output_tokens` is raised. A failed
+refresh never removes the previous answer.
 
 Question pages, synthesis pages, pages that copy a published answer, and
 quarantined pages (with the facts extracted from them) are never used as
@@ -159,6 +163,7 @@ Scheduled refreshes run in the `standing_questions` cycle phase (part of
 | `cycle.standing_questions.budget_usd` | `1.00` | Spend cap per run (`0` spends nothing) |
 | `cycle.standing_questions.max_per_cycle` | `5` | Refreshes per run |
 | `cycle.standing_questions.cooldown_days` | `1` | Minimum days between scheduled refreshes of one pin |
+| `cycle.standing_questions.max_output_tokens` | `2000` | Output cap of one refresh call; an answer longer than this fails `answer_too_long` |
 | `cycle.standing_questions.allow_unpriced` | `false` | Let a model with no known price run uncapped |
 | `cycle.standing_questions.enabled` | `true` | `false` stops the phase |
 | `models.standing_questions` | deep tier | The answer model |

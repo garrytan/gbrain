@@ -10,6 +10,14 @@
 import type { WriteRequest } from './model.ts';
 
 export const SYNC_CURSOR_REPLACED = 'sync_cursor_replaced';
+/**
+ * GBRA-133 PR 3a: a live pass's checkpoint (its stamp) is bound to the drain lease and pass row that admitted it. Once that pass
+ * ended (its lease released) or another pass started, the checkpoint can never publish: the next pass re-reads the source and
+ * stamps its own. Its refusal is `sync_pass_superseded` (receipt state `conflict`), it records no failure, and the terminal-failure
+ * readers classify it `superseded`. A pass that stops while its checkpoint is still pending says so (`disposition: 'superseded'`),
+ * never "resume this request".
+ */
+export const SYNC_PASS_SUPERSEDED = 'sync_pass_superseded';
 
 /**
  * The classification of a checkpoint whose durable cursor names another run: the refusal code with its receipt message
@@ -21,7 +29,7 @@ export function checkpointCursorReplaced(p: { kind: string; runId: string }, cur
     cause: `Another sync run of ${sourceId} replaced the cursor this checkpoint belongs to, so the checkpoint had nothing left to publish; the replacing run covers the source.` };
 }
 
-/** The terminal receipt of a checkpoint another run superseded: nothing to record, nothing to convert. */
+/** The terminal receipt of a checkpoint another run or pass superseded: nothing to record, nothing to convert. */
 export function checkpointSuperseded(pending: { intent: { kind: string } }, done: Pick<WriteRequest, 'error_code'>): boolean {
-  return pending.intent.kind === 'managed_sync_checkpoint' && done.error_code === SYNC_CURSOR_REPLACED;
+  return pending.intent.kind === 'managed_sync_checkpoint' && (done.error_code === SYNC_CURSOR_REPLACED || done.error_code === SYNC_PASS_SUPERSEDED);
 }

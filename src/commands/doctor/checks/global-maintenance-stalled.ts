@@ -4,7 +4,9 @@
  * than three global intervals while its jobs failed or a phase kept blocking
  * the stamp (warn), for a week or more (fail), or passes stamp past a phase
  * that keeps failing (warn). Names the phase, its blocker key and the command
- * that runs it in the foreground; without a phase streak, the failed job to
+ * that runs it in the foreground (for a synthesize triage deferral,
+ * `gbrain dream retriage`, #7307, since a foreground rerun stops at the same
+ * `dream.triage.max_ms` window); without a phase streak, the failed job to
  * inspect. The verdict comes from core/minions/global-maintenance-stall.ts,
  * which also drives the `gbrain autopilot --status` exit code.
  */
@@ -20,8 +22,12 @@ async function runGlobalMaintenanceStalled(ctx: DoctorContext): Promise<Check[]>
   const checks: Check[] = [];
   try {
     const verdict = await assessGlobalMaintenanceStall(connectedEngine(ctx));
-    const phase = verdict.fix?.[0] === 'gbrain' && verdict.fix[1] === 'dream' ? verdict.fix[3]! : null;
-    const fix = verdict.status === 'ok' || !verdict.fix ? undefined : phase
+    const retriage = verdict.fix?.[1] === 'dream' && verdict.fix[2] === 'retriage';
+    const phase = !retriage && verdict.fix?.[0] === 'gbrain' && verdict.fix[1] === 'dream' ? verdict.fix[3]! : null;
+    const fix = verdict.status === 'ok' || !verdict.fix ? undefined : retriage
+      ? agentFix(verdict.fix, 'Judges every transcript triage keeps deferring in one run, without the dream.triage.max_ms window, so the next pass finds them cached; it pays for one triage call per file, so ask the user first (the preview lists the files without a judge call).', 'global_maintenance_stalled',
+        { consent: ['paid'], docs: DOCS, preview_argv: [...verdict.fix, '--dry-run', '--json'] })
+      : phase
       ? agentFix(verdict.fix, `Runs phase ${phase} in the foreground so its error is visible; LLM and embedding phases spend tokens, so ask the user first.`, 'global_maintenance_stalled',
         { consent: ['paid'], docs: DOCS, then: agentFix(phaseRetryCommand(phase).split(' '), 'Ends the phase back-off so the next autopilot pass runs it again.', 'global_maintenance_stalled') })
       : agentFix(verdict.fix, 'Shows the failed maintenance job and its error; it changes nothing.', 'global_maintenance_stalled', { docs: DOCS });

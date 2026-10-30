@@ -154,7 +154,10 @@ interface RunFlags {
 }
 
 /** No-value switches that may also trail the prompt and get hoisted out (#1738). */
-const BOOLEAN_TAIL_FLAGS = new Set(['--follow', '--no-follow', '--detach']);
+export const BOOLEAN_TAIL_FLAGS = new Set(['--follow', '--no-follow', '--detach']);
+
+/** Flags parseRunFlags reads with their value in the next argument (the CLI entry's = scan reads the flag zone through this). */
+export const RUN_VALUE_FLAGS = new Set(['--subagent-def', '--model', '--max-turns', '--tools', '--timeout-ms', '--source', '--fanout-manifest']);
 
 function applyBooleanFlag(flags: RunFlags, a: string): void {
   if (a === '--follow') flags.follow = true;

@@ -19,6 +19,7 @@ import { managedBrain, readAllSourceHolds } from '../connectors/item-holds-store
 import type { ItemHoldRecord } from '../connectors/item-holds.ts';
 import { fenceAutoRepairFor, gitHoldItem, readGitHoldListing, readSyncConversions, readSyncHoldPolicy, type GitHoldItem, type SyncConversion } from './sync-holds.ts';
 import { holdLine } from '../../commands/sync-diagnostics.ts';
+import { pageSortedRows, type ListingRequest } from '../bounded-listing.ts';
 
 /** Fix wave 4: `sources status` lists this many held items per source, then "+N more". */
 export const HELD_STATUS_LIMIT = 10;
@@ -176,6 +177,39 @@ export async function readGitHoldStatuses(engine: Pick<BrainEngine, 'executeRaw'
       sync_argv: ['gbrain', 'sync', '--source', sourceId, ...(managed ? ['--no-pull'] : [])] });
   }
   return out;
+}
+
+/**
+ * #7326: what `sources status --json` lists of a source's held files. `summary` (the default): the count, the
+ * counts per code with one example each, and the first HELD_STATUS_LIMIT items; `all` (`--holds`): every item read;
+ * `page` (`--limit` / `--cursor`): one keyset page of items ordered by path.
+ */
+export type GitHoldListing = { mode: 'summary' } | { mode: 'all' } | { mode: 'page'; request: ListingRequest };
+
+/** Held items per code, largest first, each with its first item as the example (its fix and docs apply to the rest). */
+function holdsByCode(items: readonly GitHoldItem[]): Array<{ code: string; count: number; example: GitHoldItem }> {
+  const groups = new Map<string, { code: string; count: number; example: GitHoldItem }>();
+  for (const item of items) {
+    const group = groups.get(item.code);
+    if (group) group.count++;
+    else groups.set(item.code, { code: item.code, count: 1, example: item });
+  }
+  return [...groups.values()].sort((a, b) => b.count - a.count || (a.code < b.code ? -1 : 1));
+}
+
+/** A source's `git_holds` for `sources status --json`, summary first and items last, bounded by `listing`. */
+export function gitHoldStatusJson(sourceId: string, status: GitHoldStatus, listing: GitHoldListing) {
+  const { items, ...rest } = status;
+  const head = { ...rest, by_code: holdsByCode(items) };
+  if (listing.mode === 'all') return { ...head, items };
+  if (listing.mode === 'page') {
+    const page = pageSortedRows(items, item => [item.path], listing.request, `sources_status_git_holds:${sourceId}`);
+    const next = page.next_cursor === null ? null
+      : ['gbrain', 'sources', 'status', sourceId, '--json', '--limit', String(page.limit), '--cursor', page.next_cursor];
+    return { ...head, returned: page.returned, limit: page.limit, complete: page.complete, next_cursor: page.next_cursor, next_command: next, items: page.rows };
+  }
+  if (items.length <= HELD_STATUS_LIMIT) return { ...head, items };
+  return { ...head, items_complete: false, items_command: ['gbrain', 'sources', 'status', sourceId, '--json', '--holds'], items: items.slice(0, HELD_STATUS_LIMIT) };
 }
 
 /** Held files: up to HELD_STATUS_LIMIT per source with each one's next step, then the re-screen and retry commands; then recent conversions. */

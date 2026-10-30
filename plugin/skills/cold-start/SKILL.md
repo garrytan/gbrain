@@ -317,7 +317,9 @@ brain/daily/calendar/
 ### Entity enrichment
 
 For each event with attendees:
-1. Look up each attendee in the brain (they should exist from Phase 2)
+1. Look up each attendee in the brain (they should exist from Phase 2), by
+   exact match only (`gbrain whois <email or name> --json`)
+   ([identity rule](../conventions/brain-first.md#identity-exact-match))
 2. Add a timeline entry to their page: met at [event title] on [date]
 3. If an attendee has no brain page and appears in 3+ events, create one
 4. Link attendees who appear in the same meeting

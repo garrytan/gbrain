@@ -309,23 +309,27 @@ for (const backend of testBackends()) describe(`#6885 repair legacy-twins (${bac
     expect((await pageRow(f.sourceId, f.ids.twin))!.deleted).toBe(false);
   }), 180_000);
 
-  test('why the repair exists: a hand delete of the twin withdraws the file, and a tombstone that keeps its origin is never purged', () => fixture(async f => {
+  test('why the repair exists: a hand delete of the twin withdraws the file, and a tombstone that keeps its origin is purged database-only (#7311)', () => fixture(async f => {
     const bytes = readFileSync(join(f.root, FILE), 'utf8');
     const ctx = { engine, sourceId: f.sourceId, remote: false, config: { engine: engine.kind, embedding_disabled: true } as never, dryRun: false, logger } as OperationContext;
     // The legacy page records nothing, so the twin's file has no other claimant: delete_page removes it (#6885).
     await submitPageMutation(ctx, { operation: 'delete_page', params: { slug: TWIN, expected_revision: (await pageRow(f.sourceId, f.ids.twin))!.revision, request_id: randomUUID() } });
     expect(existsSync(join(f.root, FILE))).toBe(false);
-    // Put the file back and let the legacy page record it, but leave the twin's tombstone recording it too: the retention purge refuses it as a shared origin, every run.
+    // Put the file back and let the legacy page record it, but leave the twin's tombstone recording it too. Master refused
+    // its retention purge as a shared origin, every run (#7311); it is removed database-only: the file and the legacy page stay.
     writeFileSync(join(f.root, FILE), bytes);
     await raw(async () => {
       await engine.executeRaw('UPDATE pages SET source_path=$2 WHERE id=$1', [f.ids.legacy, FILE]);
       await engine.executeRaw('UPDATE pages SET source_path=$2 WHERE id=$1', [f.ids.twin, FILE]);
       await engine.executeRaw("UPDATE pages SET deleted_at=now() - interval '73 hours' WHERE id=$1", [f.ids.twin]);
     });
+    const legacyBefore = await pageRow(f.sourceId, f.ids.legacy);
+    const purges = Number((await engine.executeRaw<{ n: string }>('SELECT count(*)::text AS n FROM page_purges WHERE source_id=$1', [f.sourceId]))[0]!.n);
     const purged = await purgeDeletedPagesCoordinated(engine, 72);
-    expect(purged.count).toBe(0);
-    expect(purged.blocked.map(entry => ({ slug: entry.slug, code: entry.code }))).toEqual([{ slug: TWIN, code: 'source_changed' }]);
-    expect(purged.blocked[0]!.reason).toContain('shared with another live page');
+    expect({ count: purged.count, blocked: purged.blocked, error: purged.error }).toEqual({ count: 1, blocked: [], error: undefined });
+    expect(await pageRow(f.sourceId, f.ids.twin)).toBeUndefined();
+    expect(await pageRow(f.sourceId, f.ids.legacy)).toEqual(legacyBefore);
+    expect(Number((await engine.executeRaw<{ n: string }>('SELECT count(*)::text AS n FROM page_purges WHERE source_id=$1', [f.sourceId]))[0]!.n)).toBe(purges);
     expect(readFileSync(join(f.root, FILE), 'utf8')).toBe(bytes);
   }), 180_000);
 

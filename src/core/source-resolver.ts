@@ -15,7 +15,7 @@
 
 import { readFileSync, lstatSync, type Stats } from 'fs';
 import { syncDispatchRow } from './sync-dispatch-read.ts';
-import { join, dirname, resolve } from 'path';
+import { join, dirname, isAbsolute, resolve } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { requestSnapshotRead } from './config-snapshot.ts';
 import type { ExplicitReadBinding } from './ops/contract.ts';
@@ -125,6 +125,7 @@ async function resolveRegisteredPathMatch(
   registered: RegisteredSource[],
   cwd: string,
 ): Promise<{ id: string; path: string; pathLen: number } | null> {
+  registered = registered.filter(r => isAbsolute(r.local_path));
   if (registered.length === 0) return null;
   const [cwdResolved, resolvedPaths] = await Promise.all([
     realpathOrResolveAsync(cwd),
@@ -149,6 +150,16 @@ async function resolveRegisteredPathMatch(
     if (best) return best;
   }
   return null;
+}
+
+/**
+ * Tier 4 alone: the active registered source whose local_path contains `cwd` (deepest wins, an archived registration
+ * never shadows an active parent), or null. The deferred corpus-session resolution accepts only this evidence (#7868).
+ */
+export async function resolveRegisteredLocalPathSource(engine: BrainEngine, cwd: string): Promise<string | null> {
+  const registered = await listRegisteredLocalPathSources(engine);
+  const best = await resolveRegisteredPathMatch(registered, cwd);
+  return best && registered.find(r => r.id === best.id)?.archived !== true ? best.id : null;
 }
 
 export async function resolveSourceId(
@@ -336,14 +347,15 @@ async function listRegisteredLocalPathSources(
 /**
  * Every source row in one statement, once per request config snapshot (#7147): a CLI read or an MCP request resolves
  * its source through tier 4, tier 5.5 and the federated set, three reads of a table that does not change under one
- * read. Undefined without an open snapshot (no await, so a live read keeps its timing) and null on a brain older than
+ * read. Each row also carries tier 5.5's emptiness guard (`default_has_pages`), so the request pays one round trip.
+ * Undefined without an open snapshot (no await, so a live read keeps its timing) and null on a brain older than
  * the `archived` column; the callers then read live.
  */
 function requestSourceRows(
   engine: BrainEngine,
-): Promise<Array<{ id: string; local_path: string | null; archived: boolean; config: unknown }> | null> | undefined {
-  return requestSnapshotRead(engine, 'sources', () => engine.executeRaw<{ id: string; local_path: string | null; archived: boolean; config: unknown }>(
-    `SELECT id, local_path, archived, config FROM sources ORDER BY id`,
+): Promise<Array<{ id: string; local_path: string | null; archived: boolean; config: unknown; default_has_pages: boolean }> | null> | undefined {
+  return requestSnapshotRead(engine, 'sources', () => engine.executeRaw<{ id: string; local_path: string | null; archived: boolean; config: unknown; default_has_pages: boolean }>(
+    `SELECT id, local_path, archived, config, EXISTS (SELECT 1 FROM pages WHERE source_id = 'default' AND deleted_at IS NULL) AS default_has_pages FROM sources ORDER BY id`,
   ).catch(() => null));
 }
 
@@ -354,12 +366,15 @@ async function pickSoleNonDefaultSource(
   // archived column was added in v34 (v0.26.5). Older brains may not have
   // it — fall back to the un-archived query in that case via try/catch.
   const pending = requestSourceRows(engine);
-  // GBRA-133: the emptiness guard's read is sent with the listing (one round trip); it is used only for a sole candidate.
-  const defaultPagesRead = engine.executeRaw<{ one: number }>(
-    `SELECT 1 AS one FROM pages WHERE source_id = 'default' AND deleted_at IS NULL LIMIT 1`,
-  );
-  defaultPagesRead.catch(() => {});
   const request = pending && await pending;
+  // GBRA-133: the emptiness guard's read is sent with the listing (one round trip); it is used only for a sole candidate.
+  // The request's rows carry its answer already.
+  const defaultHasPages = request
+    ? Promise.resolve(request.some(row => row.default_has_pages))
+    : engine.executeRaw<{ one: number }>(
+      `SELECT 1 AS one FROM pages WHERE source_id = 'default' AND deleted_at IS NULL LIMIT 1`,
+    ).then(found => found.length > 0);
+  defaultHasPages.catch(() => {});
   let rows: Array<{ id: string }> = request ? request.filter(row => row.local_path !== null && row.id !== 'default' && row.archived === false) : [];
   if (!request) {
     try {
@@ -375,8 +390,7 @@ async function pickSoleNonDefaultSource(
   if (rows.length !== 1) return null;
   // #3070 emptiness guard: fire only when 'default' holds no active pages.
   try {
-    const defaultPages = await defaultPagesRead;
-    if (defaultPages.length > 0) {
+    if (await defaultHasPages) {
       // The flip must not be silent: one stray page in 'default' reroutes
       // every bare command away from the sole side-source, and the user
       // hunts for "lost" writes. One stderr line names both sides so the
@@ -660,16 +674,40 @@ export async function assessUnscopedDefaultWrite(
 async function assertSourceExists(engine: BrainEngine, id: string): Promise<void> {
   // GBRA-133: inside a CLI sync's routing scope the source's routing row answers this (sync-dispatch-read.ts).
   const routing = await syncDispatchRow(engine, id);
-  const rows = routing ? (routing.id !== null && routing.archived === false ? [routing] : []) : await engine.executeRaw<{ id: string }>(
-    `SELECT id FROM sources WHERE id = $1 AND archived = false`,
-    [id],
-  );
+  // GBRA-156: inside a request snapshot the request's source rows answer it.
+  const pending = routing ? undefined : requestSourceRows(engine);
+  const request = pending && await pending;
+  const rows = routing ? (routing.id !== null && routing.archived === false ? [routing] : [])
+    : request ? request.filter(row => row.id === id && row.archived === false)
+    : await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources WHERE id = $1 AND archived = false`,
+      [id],
+    );
   if (rows.length === 0) {
+    const nearest = await nearestSourceId(engine, id);
     throw new SourceTargetError(
       `Source "${id}" not found or is archived. Available active sources: ` +
       `run \`gbrain sources list\` to see registered sources, ` +
-      `or create/restore "${id}" before retrying.`,
+      `or create/restore "${id}" before retrying.${nearest ? ` Did you mean "${nearest}"?` : ''}`,
     );
+  }
+}
+
+/**
+ * #7193: the active source an unknown id most likely meant: the one whose id or name it names exactly or is the only
+ * prefix of (`notes` for `notes-brain`), else the nearest id by edit distance (levenshtein.ts). Never throws.
+ */
+async function nearestSourceId(engine: BrainEngine, id: string): Promise<string | null> {
+  try {
+    const sources = await engine.executeRaw<{ id: string; name: string | null }>('SELECT id, name FROM sources WHERE archived = false ORDER BY id');
+    const named = sources.filter(s => s.name === id);
+    if (named.length === 1) return named[0]!.id;
+    const prefixed = sources.filter(s => s.id.startsWith(id) || (s.name ?? '').startsWith(id));
+    if (prefixed.length === 1) return prefixed[0]!.id;
+    const { suggestNearest } = await import('./levenshtein.ts');
+    return suggestNearest(id, sources.map(s => s.id));
+  } catch {
+    return null;
   }
 }
 
@@ -730,6 +768,7 @@ export async function resolveSourceForRepoPath(
   const dirResolved = realpathOrResolve(dir);
   let best: { id: string; path: string; pathLen: number } | null = null;
   for (const r of registered) {
+    if (!isAbsolute(r.local_path)) continue;
     const p = realpathOrResolve(r.local_path);
     if (dirResolved === p || dirResolved.startsWith(p + '/')) {
       if (!best || p.length > best.pathLen) {
@@ -864,6 +903,9 @@ async function resolveSourceWithTierChain(
   // 4. Registered source whose local_path contains CWD.
   //    #3880 active-over-archived tiering + parallel realpath both live in
   //    the shared resolveRegisteredPathMatch helper.
+  // GBRA-156: tier 5's config read is sent with the listing, as in resolveSourceIdChain.
+  const defaultRead = engine.getConfig('sources.default');
+  defaultRead.catch(() => {});
   const best = await resolveRegisteredPathMatch(await listRegisteredLocalPathSources(engine), cwd);
   if (best) {
     await assertSourceExists(engine, best.id);
@@ -871,7 +913,7 @@ async function resolveSourceWithTierChain(
   }
 
   // 5. Brain-level default. Silent-fallback (P1-F) like tier 5 in resolveSourceId.
-  const globalDefault = await engine.getConfig('sources.default');
+  const globalDefault = await defaultRead;
   if (globalDefault && isValidSourceId(globalDefault)) {
     await assertSourceExists(engine, globalDefault);
     return { source_id: globalDefault, tier: 'brain_default', detail: 'sources.default config' };

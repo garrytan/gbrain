@@ -25,7 +25,9 @@ import { OperationError } from './ops/contract.ts';
 import { clientRequestIdOf, parseWriteRequestId } from './persistence/preconditions.ts';
 
 export const REMEMBER_BATCH_MAX = 20;
-const ITEM_KEYS = new Set(['fact', 'provenance', 'entity', 'infer_entity', 'kind', 'ttl', 'visibility', 'replaces']);
+const ITEM_KEYS = new Set(['fact', 'provenance', 'entity', 'infer_entity', 'kind', 'ttl', 'visibility', 'content_origin', 'valid_from', 'replaces']);
+/** #7432: every per-item field but the claim and `replaces` is also a top-level default (an item's own value wins); `source_id` is top-level only. */
+const SHARED_KEYS = [...ITEM_KEYS].filter(key => key !== 'fact' && key !== 'replaces').concat('source_id');
 
 /** Deterministic UUID for child `index` of a batch request (stable across replays). */
 export function childRequestId(requestId: string, index: number): string {
@@ -61,12 +63,12 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
   // #6280: an unusable request_id refuses the batch before any write (F6 accepts a UUID or a printable client id).
   if (p.request_id !== undefined) parseWriteRequestId(p.request_id);
   const shared: Record<string, unknown> = {};
-  for (const key of ['provenance', 'source_id', 'kind', 'ttl', 'visibility', 'infer_entity']) if (p[key] !== undefined) shared[key] = p[key];
+  for (const key of SHARED_KEYS) if (p[key] !== undefined) shared[key] = p[key];
   const normalized = items.map((raw, index) => {
     // A bare string is the common shorthand for one fact.
     if (typeof raw === 'string') return { ...shared, fact: raw };
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-      throw verbError('invalid_params', `items[${index}] must be an object.`, 'Each item is { "fact": "...", optional entity, kind, ttl, visibility, provenance }.');
+      throw verbError('invalid_params', `items[${index}] must be an object.`, 'Each item is { "fact": "...", optional entity, kind, ttl, visibility, provenance, content_origin, valid_from }.');
     }
     const extra = Object.keys(raw).filter(k => !ITEM_KEYS.has(k));
     if (extra.length) throw verbError('invalid_params', `items[${index}] has unknown field(s): ${extra.join(', ')}.`, `Allowed item fields: ${[...ITEM_KEYS].join(', ')}.`);

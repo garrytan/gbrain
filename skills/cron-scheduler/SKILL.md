@@ -28,6 +28,9 @@ This skill guarantees:
 - Thin job prompts: jobs say "Read skills/X/SKILL.md and run it" (no inline 3000-word prompts)
 - Idempotency: jobs can run twice without duplicate side effects
 - Results saved as reports: `reports/{job-name}/{YYYY-MM-DD-HHMM}.md`
+- One entry point: every job, workspace script and hook calls gbrain through
+  one wrapper that sets `GBRAIN_HOME` and keeps stderr and the exit code
+  ([the wrapper](https://github.com/garrytan/gbrain/blob/master/docs/guides/cron-schedule.md#calling-gbrain-unattended))
 
 ## Phases
 
@@ -41,6 +44,18 @@ This skill guarantees:
    - Morning contact releases the backlog
 4. **Register with host scheduler.** OpenClaw cron, Railway cron, crontab, or process manager. **Each registered entry should execute via Minions, not `agentTurn`.** See `skills/conventions/cron-via-minions.md` for the rewrite pattern (PGLite uses `--follow`, Postgres uses fire-and-forget + `--idempotency-key` on the cycle slot). GBrain's v0.11.0 migration auto-rewrites entries for built-in handlers; host-specific handlers need a code-level registration per `docs/guides/plugin-handlers.md`.
 5. **Write thin prompt.** Job prompt is one line: "Read skills/{name}/SKILL.md and run it."
+6. **Call gbrain through the wrapper.** Cron runs with another `HOME` and
+   environment than your shell, so a bare `gbrain` (or `bun run src/cli.ts`)
+   can find no database (every lookup silently empty) or act as a second host
+   (`refresh_not_owner`). Register `gbrain-run <args>`, the wrapper in
+   [cron-schedule.md](https://github.com/garrytan/gbrain/blob/master/docs/guides/cron-schedule.md#calling-gbrain-unattended):
+   it sets `GBRAIN_HOME` (never `HOME`), loads the brain's env file and runs
+   the installed binary. Log stderr to a file, check the exit code, keep hook
+   output off stdout, and give each call a timeout of at least 10 s.
+   The lines below write `gbrain-run`; doctor prints the bare command.
+   `gbrain doctor --only cron_gbrain_home` warns about any crontab line or
+   script that runs `src/cli.ts` directly or calls gbrain without the brain's
+   `GBRAIN_HOME`.
 
 ## Idempotency Requirement
 
@@ -62,7 +77,7 @@ cron line instead of N per-source entries.
 **Preferred (multi-source)**:
 
 ```cron
-*/5 * * * * gbrain sync --all --parallel 4 --workers 4 --skip-failed
+*/5 * * * * gbrain-run sync --all --parallel 4 --workers 4 --skip-failed >> /tmp/gbrain-cron.log 2>&1
 ```
 
 This replaces N per-source lines AND auto-picks-up future sources without
@@ -92,7 +107,7 @@ On a managed brain, install this line instead, on the host that owns the
 sources:
 
 ```cron
-*/15 * * * * gbrain sources refresh <id>; gbrain sync --all --no-pull --hard-deadline 13m
+*/15 * * * * gbrain-run sources refresh <id> >> /tmp/gbrain-cron.log 2>&1; gbrain-run sync --all --no-pull --hard-deadline 13m >> /tmp/gbrain-cron.log 2>&1
 ```
 
 - `gbrain sources refresh <id>` is the only way a managed checkout takes
@@ -100,6 +115,13 @@ sources:
   the sources on that checkout). Add one refresh per checkout that tracks a
   remote, with its real source id; drop it for checkouts with no remote. The
   `;` is deliberate: the sync still runs when a refresh refuses.
+- `refresh_diverged`: the checkout has commits its upstream lacks, so
+  something commits outside gbrain (usually a script that writes files and
+  runs `git commit` in the checkout). Fix that writer so it commits with
+  `gbrain git commit-push -- <paths>`, then reconcile as the refusal says
+  (`gbrain git commit-push --push-only --keep-checkout`, after the user
+  agrees); never force the checkout
+  ([scripts and the managed checkout](https://github.com/garrytan/gbrain/blob/master/docs/guides/shared-checkout-git.md#scripts-and-the-managed-checkout)).
 - `--hard-deadline 13m` stays under the 15-minute interval. Managed sync takes
   no per-source lock, so a run that outlives the interval would overlap the
   next tick. A run stopped at its deadline ends `resumable` and the next tick
@@ -128,6 +150,11 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - `writer_coordinator_required` from a scheduled sync: the brain is managed. Replace the line with the [managed brain](#managed-brain) recipe; never retry with `--skip-failed` or without `--no-pull`.
 - `sync_in_progress` from `gbrain sources refresh`: a managed sync cursor is unfinished, and the refresh never waits on it. Run the `gbrain sync --source <id> --no-pull …` command the refusal prints; the next tick's refresh then runs.
 - `worktree_refreshing` from a sync: a refresh is draining or merging that checkout. Leave it; the next tick syncs it.
+- A job's lookups all come back empty, or its log shows `no_brain` or `GBRAIN_DB_ACCESS no_url`: the job runs without the brain's config. Call gbrain through the wrapper; an empty result from a job whose stderr went to `/dev/null` is not evidence of "no notes".
+- `refresh_not_owner` from cron while the same refresh works by hand: the job resolves another gbrain home, so it is another host. The refusal names the identity file, `HOME` and `GBRAIN_HOME` it read; set the owner's `GBRAIN_HOME` in the wrapper. Never copy or delete a `host.json`.
+- A `--json` caller fails to parse gbrain's output: something the wrapper runs prints to stdout. Send that hook's output to a log file.
+- Calls time out in the job but finish by hand: a cold start takes seconds. Raise the timeout to at least 10 s in both the shell and the runtime that spawns it, and use the [warm CLI socket](https://github.com/garrytan/gbrain/blob/master/docs/guides/cli-socket.md).
+- Exit 10 from a scheduled write: it was accepted and is still pending, not lost or "not found". Poll `gbrain write-request <request_id>` before retrying or reporting it.
 
 ## Anti-Patterns
 
@@ -136,6 +163,13 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - Running cron jobs without testing on 3-5 items first
 - Jobs that produce different output on re-run (not idempotent)
 - Sending notifications during quiet hours (save to held queue instead)
+- A bare `gbrain` or `bun run src/cli.ts` in a cron line, script or hook
+  instead of the wrapper; a wrapper that sets `HOME` instead of `GBRAIN_HOME`
+- `2>/dev/null` on a gbrain call, or ignoring its exit code
+- A script that writes files and runs plain `git commit` in a managed checkout
+  instead of `gbrain git commit-push -- <paths>`
+- Printing `env` or a process environment into a log or transcript while
+  debugging (it holds the database URL and keys)
 - Separate per-source `gbrain sync --source <id>` cron entries when
   `gbrain sync --all --parallel N --workers N` would replace them with
   one line that auto-picks-up future sources.

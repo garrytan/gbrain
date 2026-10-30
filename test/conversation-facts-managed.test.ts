@@ -63,16 +63,20 @@ async function putPage(brain: ManagedBrain, content: string, slug = SLUG): Promi
   await disposePersistenceConsumer(brain.engine);
 }
 
-/** One extraction run on the page with a counting extractor; `fact` shapes the returned fact. */
+/**
+ * One extraction run on the page with a counting extractor; `fact` shapes the returned fact, `factFor` per page from
+ * its turn text (#7043: a second page returning the very same claim is skipped as a duplicate, so multi-page runs
+ * give each page its own claim).
+ */
 async function extract(engine: BrainEngine, calls: { n: number }, opts: { force?: boolean; segmentLimit?: number; fact?: Partial<ExtractedFact>;
-  slugs?: string[]; onCall?: (turnText: string) => Promise<void> } = {}) {
+  factFor?: (turnText: string) => Partial<ExtractedFact>; slugs?: string[]; onCall?: (turnText: string) => Promise<void> } = {}) {
   return runExtractConversationFactsCore(engine, { sourceId: 'default', slugs: opts.slugs ?? [SLUG], sleepMs: 0, overrideDisabled: true,
     force: opts.force, segmentLimit: opts.segmentLimit,
     extractor: async ({ turnText }) => {
       calls.n++;
       await opts.onCall?.(turnText);
       return [{ fact: 'Owner Example sends the quarterly plan on Thursday', kind: 'commitment', confidence: 0.9, entity_slug: null,
-        source: 'test', notability: 'high', ...opts.fact } as ExtractedFact];
+        source: 'test', notability: 'high', ...opts.fact, ...opts.factFor?.(turnText) } as ExtractedFact];
     } });
 }
 
@@ -85,6 +89,12 @@ async function extractorRows(engine: BrainEngine) {
 const PROSE = (title: string) => ['---', `title: ${title}`, 'type: meeting', 'date: 2026-09-28', '---',
   '**Date:** 2026-09-28', '**Attendees:** Alice Example, Owner Example', '', '## Notes', 'Hiring, the support backlog and the launch dates.', ''].join('\n');
 const titled = (title: string) => transcript().replace('title: Plan sync', `title: ${title}`);
+const PLAN = 'Owner Example sends the quarterly plan on Thursday';
+/** #7043: the numbered plan syncs state their own claim, so no page's fact is an exact copy of another's. */
+const numbered = (turnText: string): Partial<ExtractedFact> => {
+  const n = /Plan sync (two|three)/.exec(turnText)?.[1];
+  return n ? { fact: `${PLAN} (${n})` } : {};
+};
 
 async function factsOf(engine: BrainEngine, slug: string) {
   return (await engine.executeRaw<{ fact: string }>(`SELECT fact FROM facts WHERE source_id='default' AND source_markdown_slug=$1
@@ -192,6 +202,17 @@ for (const backend of testBackends()) {
     }, { databaseUrl });
   }, 120_000);
 
+  test(`${backend}: facts from a private transcript publish private on a world-default brain`, async () => {
+    await managedBrain(async brain => {
+      const { engine } = brain;
+      await engine.setConfig('facts.default_visibility', 'world');
+      await putPage(brain, transcript().replace('date: 2026-09-28', 'date: 2026-09-28\nvisibility: private'));
+      const calls = { n: 0 };
+      await extract(engine, calls);
+      expect({ calls: calls.n, visibility: [...new Set((await extractorRows(engine)).map(row => row.visibility))] }).toEqual({ calls: 1, visibility: ['private'] });
+    }, { databaseUrl });
+  });
+
   test(`${backend}: a crash after admission replays the stored batch with zero model calls`, async () => {
     await managedBrain(async brain => {
       const { engine } = brain;
@@ -204,20 +225,20 @@ for (const backend of testBackends()) {
       const restore = __setMaintenanceWriteWaitForTests(300);
       const calls = { n: 0 };
       try {
-        const first = await extract(engine, calls, { slugs: [SLUG, OTHER] });
+        const first = await extract(engine, calls, { slugs: [SLUG, OTHER], factFor: numbered });
         expect(first).toMatchObject({ pages_pending: 2, facts_inserted: 0 });
         expect(calls.n).toBe(2);
         __setMaintenanceWriteWaitForTests(20_000);
         setTimeout(release, 300);
         // The first page waits for the batch and replays its receipt; the second is then complete already.
-        const second = await extract(engine, calls, { slugs: [SLUG, OTHER] });
+        const second = await extract(engine, calls, { slugs: [SLUG, OTHER], factFor: numbered });
         expect(second).toMatchObject({ pages_processed: 1, pages_skipped_completed: 1, facts_inserted: 1 });
         expect(calls.n).toBe(2);
       } finally { release(); restore(); }
       expect(await factsOf(engine, SLUG)).toEqual(['Owner Example sends the quarterly plan on Thursday', 'EXTRACTION_COMPLETE']);
-      expect(await factsOf(engine, OTHER)).toEqual(['Owner Example sends the quarterly plan on Thursday', 'EXTRACTION_COMPLETE']);
+      expect(await factsOf(engine, OTHER)).toEqual([`${PLAN} (two)`, 'EXTRACTION_COMPLETE']);
       expect((await requests(engine)).map(r => r.state)).toEqual(['committed']);
-      const third = await extract(engine, calls, { slugs: [SLUG, OTHER] });
+      const third = await extract(engine, calls, { slugs: [SLUG, OTHER], factFor: numbered });
       expect(third).toMatchObject({ pages_skipped_completed: 2 });
       expect(calls.n).toBe(2);
     }, { databaseUrl });
@@ -235,7 +256,7 @@ for (const backend of testBackends()) {
         extractor: async ({ turnText }) => {
           calls.n++;
           const kind = bad && !turnText.includes('Plan sync two') ? 'not-a-kind' : 'commitment';
-          return [{ fact: 'Owner Example sends the quarterly plan on Thursday', kind, confidence: 0.9, entity_slug: null, source: 'test' } as unknown as ExtractedFact];
+          return [{ fact: PLAN, kind, confidence: 0.9, entity_slug: null, source: 'test', ...numbered(turnText) } as unknown as ExtractedFact];
         } });
       const first = await run();
       expect(first).toMatchObject({ pages_blocked: 1, pages_processed: 1, pages_failed: 0 });
@@ -339,7 +360,7 @@ for (const backend of testBackends()) {
       await putPage(brain, titled('Plan sync three'), LAST);
       const calls = { n: 0 };
       let edited = false;
-      const first = await extract(engine, calls, { slugs: [SLUG, MOVED, NOTES, LAST], onCall: async text => {
+      const first = await extract(engine, calls, { slugs: [SLUG, MOVED, NOTES, LAST], factFor: numbered, onCall: async text => {
         // MOVED's entry is already in the batch when LAST is extracted; edit it before the batch publishes.
         if (!edited && text.includes('Plan sync three')) { edited = true; await putPage(brain, titled('Plan sync two').replace('Thursday', 'Friday'), MOVED); }
       } });
@@ -349,10 +370,10 @@ for (const backend of testBackends()) {
       expect((await requests(engine)).map(r => r.state)).toEqual(['committed']);
       expect(await factsOf(engine, MOVED)).toEqual([]);
       expect(await factsOf(engine, NOTES)).toEqual(['EXTRACTION_NOT_APPLICABLE']);
-      const second = await extract(engine, calls, { slugs: [SLUG, MOVED, NOTES, LAST] });
+      const second = await extract(engine, calls, { slugs: [SLUG, MOVED, NOTES, LAST], factFor: numbered });
       expect(second).toMatchObject({ pages_processed: 1, pages_skipped_completed: 2, pages_skipped_non_extractable: 1 });
       expect(calls.n).toBe(4);
-      expect(await factsOf(engine, MOVED)).toEqual(['Owner Example sends the quarterly plan on Thursday', 'EXTRACTION_COMPLETE']);
+      expect(await factsOf(engine, MOVED)).toEqual([`${PLAN} (two)`, 'EXTRACTION_COMPLETE']);
     }, { databaseUrl });
   }, 120_000);
 

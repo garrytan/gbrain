@@ -58,6 +58,19 @@ const BUDGET_MS = Number(process.env.GBRAIN_WRITE_GATE_P95_MS ?? '5');
  */
 const QUIET_REFERENCE_P95_MS = 1.95;
 const QUIET_TOLERANCE = 1.25;
+/**
+ * Whether a round's reference ran at quiet speed everywhere the gate's p95 can see. The gate p95 sits below its top
+ * `n - 1 - p95Index` samples (3 of 60), so only a burst that slows one more gate sample than that moves it. Gate and
+ * reference samples alternate, so that burst slows at least as many reference samples as the gate p95 skips: the round
+ * is loaded when the reference's sample one rank above its own p95 is past the quiet bound. The reference p95 alone
+ * skips that many slow samples too, and missed a burst that slowed 4 gate samples and 3 reference samples (#7310
+ * full CI, test (7, 8): gate p95 5.72 ms in a round whose reference p95 read 2.32 ms).
+ */
+function quietRound(r: Round): boolean {
+  const sorted = [...r.samples.reference].sort((x, y) => x - y);
+  const p95Index = Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1);
+  return sorted[Math.min(sorted.length - 1, p95Index + 1)]! <= QUIET_REFERENCE_P95_MS * QUIET_TOLERANCE;
+}
 let engine: PGLiteEngine;
 
 function walk(dir: string, ext: string, out: string[] = []): string[] {
@@ -163,9 +176,9 @@ describe('write gate p95 (assessment + receipt insert)', () => {
         + `reference p50 ${r.reference.p50.toFixed(2)} / p95 ${r.reference.p95.toFixed(2)} ms; ratio p50 ${(r.gate.p50 / r.reference.p50).toFixed(2)} / p95 ${(r.gate.p95 / r.reference.p95).toFixed(2)}`);
     }
     if (process.env.PERF_CALIBRATE) return;
-    const quiet = rounds.filter(r => r.reference.p95 <= QUIET_REFERENCE_P95_MS * QUIET_TOLERANCE);
+    const quiet = rounds.filter(quietRound);
     if (quiet.length) withRoundSamples(rounds, () => expect(Math.min(...quiet.map(r => r.gate.p95))).toBeLessThan(BUDGET_MS));
-    else console.log(`[write-gate perf] absolute ${BUDGET_MS} ms check skipped for load: reference p95 above ${(QUIET_REFERENCE_P95_MS * QUIET_TOLERANCE).toFixed(2)} ms in every round`);
+    else console.log(`[write-gate perf] absolute ${BUDGET_MS} ms check skipped for load: the reference ran above ${(QUIET_REFERENCE_P95_MS * QUIET_TOLERANCE).toFixed(2)} ms where the gate p95 can see it in every round`);
     const [{ verdict }] = await engine.executeRaw<{ verdict: string }>('SELECT verdict FROM write_gate_receipts');
     expect(verdict).toBe('flag'); // the shipped default (write_gate.external_mode=flag since the paid eval); quarantine costs the same assessment and receipt
   }, 120_000);
@@ -182,6 +195,18 @@ describe('write gate p95 (assessment + receipt insert)', () => {
     let passed = true;
     try { withRoundSamples(rounds, () => expect(3.78).toBeLessThan(BUDGET_MS)); } catch { passed = false; }
     expect(passed).toBe(true);
+  });
+
+  test('a load burst that slows 4 gate samples and 3 reference samples marks its round loaded (#7310 full CI round 1)', () => {
+    const round = (gate: number[], reference: number[]): Round => ({ gate: stats(gate), reference: stats(reference), samples: { gate, reference } });
+    const ci = round([1.91, 2.13, 2.19, 2.06, 1.94, 2.12, 2.10, 2.74, 1.99, 2.05, 2.07, 2.32, 2.11, 2.10, 2.04, 2.09, 2.05, 1.99, 1.90, 2.01, 8.66, 18.86, 8.52, 5.72, 2.18, 2.90, 2.09, 2.04, 4.59, 2.01, 2.53, 2.19, 2.15, 2.05, 2.31, 1.96, 1.97, 2.02, 2.02, 2.09, 2.18, 2.25, 3.84, 1.93, 1.88, 2.01, 1.85, 2.11, 1.90, 2.16, 2.11, 3.69, 2.21, 2.11, 2.15, 2.73, 2.00, 1.87, 1.90, 2.00], [1.46, 1.58, 1.54, 1.54, 1.63, 1.57, 1.46, 1.49, 1.58, 1.47, 1.48, 1.57, 1.47, 2.32, 1.50, 1.51, 1.65, 1.49, 1.48, 1.46, 1.47, 7.88, 9.82, 4.78, 1.70, 2.21, 1.57, 1.46, 1.52, 1.61, 1.89, 1.46, 1.56, 1.80, 1.64, 1.56, 1.45, 1.52, 1.45, 1.52, 1.56, 1.45, 1.51, 1.65, 1.59, 1.50, 1.55, 1.53, 1.48, 1.90, 1.53, 1.53, 1.49, 1.45, 1.73, 2.16, 1.45, 1.46, 1.45, 1.46]);
+    expect(ci.gate.p95).toBeGreaterThan(BUDGET_MS);
+    expect(ci.reference.p95).toBeLessThanOrEqual(QUIET_REFERENCE_P95_MS * QUIET_TOLERANCE);
+    expect(quietRound(ci)).toBe(false);
+    // A slow gate on a quiet machine is still judged: the reference stays quiet, so the round counts and the check fails.
+    const slowGate = round(Array.from({ length: 60 }, () => 6), [...Array.from({ length: 58 }, () => 1.5), 7.9, 9.8]);
+    expect(quietRound(slowGate)).toBe(true);
+    expect(slowGate.gate.p95).toBeGreaterThan(BUDGET_MS);
   });
 
   test('300 KB of agent-instruction-dense docs (worst realistic prose) is reported', async () => {

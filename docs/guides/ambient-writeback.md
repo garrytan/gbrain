@@ -371,10 +371,41 @@ active set on the first read after the migration (facts-health counts step
 accordingly). Nothing is deleted or mutated; the doctor's
 `validity_lapsed_facts` count sizes the shift.
 
+## Hot memory and other sessions
+
+Hot memory (the recent facts the turn hook and the session-start pack inject)
+reads the current session's own facts first. A session with no facts of its
+own gets the source's newest facts from the last 24 hours instead, and those
+can come from other sessions. To keep each session to its own facts, turn on
+`context.hot_memory.session_only` (DB plane, off by default):
+
+```bash
+gbrain config set context.hot_memory.session_only true
+```
+
+**Say to your agent:** *"Only show me facts from this session in hot memory."*
+Your agent runs the command above.
+
+The serve reads the key on every `turn_context` and `context_pack` request, so
+the change applies on the next turn without a restart. With it on, a session
+with no facts of its own, or a request with no session id, gets no hot facts;
+entity cards, volunteered pages and `recall` are unchanged, and so is the
+`_meta.brain_hot_memory` block on MCP tool calls. `gbrain config unset
+context.hot_memory.session_only` restores the fallback.
+
 ## Privacy and visibility
 
+- **What the assistant said** is saved as its own fact, never as yours. The
+  lanes that read session transcripts (the compaction harvest and the
+  SessionEnd corpus sweep) keep a claim the assistant made (a recommendation,
+  answer, plan or research result) phrased "Assistant said …" with
+  `attributed_to: assistant`, so recall can answer what the assistant told
+  you. `gbrain facts relink` never attaches such a fact, or a named third
+  party's, to an entity page, core pages included (#7270). Speaker
+  attribution is on by default; `gbrain config set facts.attribution false`
+  turns it off.
 - **What is never saved:** greetings, acknowledgements, fact-free questions,
-  the assistant's own inferences/diagnoses/speculation, tool output, quoted
+  the assistant's plan narration, tool output, quoted
   third-party material, pasted/imported text (unless the user explicitly asks;
   see [Pasted content](#pasted-content)), gbrain's own claude-cli calls,
   raw transcripts, and — in every mode — secrets/credentials (banked turns are

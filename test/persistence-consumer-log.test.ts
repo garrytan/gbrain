@@ -47,6 +47,10 @@ describe('persistence consumer stderr line', () => {
     const line = stderr.find(entry => entry.startsWith('[persistence] phase='));
     expect(line).toBeDefined();
     expect(line).toContain('reason=53300');
+    // GBRA-133: the pooler's client cap names itself and the pool-sizing fix ahead of the writer-status pointer.
+    expect(line).toContain('reason=53300 cause=pool_exhausted ');
+    expect(line).toContain('fix: gbrain sources writer status --json; pool: every gbrain process on this database shares the pooler');
+    expect(line).toContain('(docs/ENGINES.md#pool-sizing); docs: docs/ENGINES.md#persistence-consumer-log');
     expect(line).toContain('message="(EMAXCONNSESSION) max clients reached in session mode - pool_size: 15 for ');
     expect(line).not.toContain('secret-pw');
     expect(line).toContain('fix: gbrain sources writer status --json');

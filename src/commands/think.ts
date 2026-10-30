@@ -263,8 +263,9 @@ prints what would have been the input (exit 0).
 
   // F8: keyless-by-design output carries its explanation as an info notice.
   if (result.synthesis_status === 'no_llm') captureOpNotice(keylessThinkNotice());
+  const { persist_base: _persistBase, ...visible } = result;
   const { result: jsonDoc, stderr: noticeText } = applyCliOpNotices({
-    ...result,
+    ...visible,
     cost_usd: costUsd ?? null,
     saved_slug: savedSlug ?? null,
     evidence_inserted: evidenceInserted,

@@ -1,7 +1,7 @@
 /**
  * #7175: a rare exact phrase in one chunk of a long page ranked below short pages that merely repeat the
- * phrase's words, in keyword mode too, because ts_rank has no phrase term. The keyword arm now multiplies a
- * chunk that matches the query as a phrase (KEYWORD_PHRASE_FACTOR).
+ * phrase's words, in keyword mode too, because ts_rank has no phrase term. With the opt-in search.keyword_phrase,
+ * the keyword arm multiplies a chunk that matches the query as a phrase (KEYWORD_PHRASE_FACTOR). Off by default.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
@@ -27,33 +27,33 @@ beforeAll(async () => {
 afterAll(async () => { if (engine) await engine.disconnect(); });
 
 describe('#7175 keyword phrase factor', () => {
-  test('the keyword arm ranks the chunk holding the exact phrase first', async () => {
-    const rows = await engine.searchKeyword('copper lantern protocol', { limit: 10 });
+  test('opted in, the keyword arm ranks the chunk holding the exact phrase first', async () => {
+    const rows = await engine.searchKeyword('copper lantern protocol', { limit: 10, keywordPhrase: true });
     expect(rows[0]?.slug).toBe('meetings/2026-01-05-acme-example-sync');
   });
 
-  test('keyword mode (match: keyword pages) ranks it first too', async () => {
-    const st = buildKeywordPagesStatement('copper lantern protocol', undefined, { limit: 10 })!;
+  test('opted in, keyword mode (match: keyword pages) ranks it first too', async () => {
+    const st = buildKeywordPagesStatement('copper lantern protocol', { keywordPhrase: true }, { limit: 10 })!;
     const rows = await engine.executeRaw<{ slug: string }>(st.sql, st.params);
     expect(rows[0]?.slug).toBe('meetings/2026-01-05-acme-example-sync');
   });
 
-  test('search.keyword_phrase false restores the old order on the engine and through match: keyword', async () => {
-    const off = await engine.searchKeyword('copper lantern protocol', { limit: 10, keywordPhrase: false });
+  test('off by default; search.keyword_phrase true turns it on through match: keyword', async () => {
+    const off = await engine.searchKeyword('copper lantern protocol', { limit: 10 });
     expect(off[0]?.slug.startsWith('notes/inventory-')).toBe(true);
     const ctx = { engine, remote: false, sourceId: 'default', config: { engine: 'pglite', embedding_disabled: true }, dryRun: false,
       logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
-    const on = await operationsByName.search.handler(ctx, { query: 'copper lantern protocol', match: 'keyword' }) as Array<{ slug: string }>;
-    expect(on[0]?.slug).toBe('meetings/2026-01-05-acme-example-sync');
-    await engine.setConfig('search.keyword_phrase', 'false');
+    const byDefault = await operationsByName.search.handler(ctx, { query: 'copper lantern protocol', match: 'keyword' }) as Array<{ slug: string }>;
+    expect(byDefault[0]?.slug.startsWith('notes/inventory-')).toBe(true);
+    await engine.setConfig('search.keyword_phrase', 'true');
     try {
       const rows = await operationsByName.search.handler(ctx, { query: 'copper lantern protocol', match: 'keyword' }) as Array<{ slug: string }>;
-      expect(rows[0]?.slug.startsWith('notes/inventory-')).toBe(true);
-    } finally { await engine.setConfig('search.keyword_phrase', 'true'); }
+      expect(rows[0]?.slug).toBe('meetings/2026-01-05-acme-example-sync');
+    } finally { await engine.setConfig('search.keyword_phrase', 'false'); }
   });
 
   test('a one-word query keeps its order: every match gets the same factor', async () => {
-    const rows = await engine.searchKeyword('lantern', { limit: 10 });
+    const rows = await engine.searchKeyword('lantern', { limit: 10, keywordPhrase: true });
     expect(rows[0]?.slug.startsWith('notes/inventory-')).toBe(true);
   });
 });

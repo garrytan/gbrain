@@ -21,6 +21,13 @@ import { listWriterVersions } from './writer-versions.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 
+async function writerStatusCheckouts(bindings: Array<{ source_id: string; local_path: string | null }>) {
+  const { readCheckoutState } = await import('./checkout-state.ts');
+  const roots = new Map<string, string[]>();
+  for (const { source_id, local_path } of bindings) if (local_path) roots.set(local_path, [...roots.get(local_path) ?? [], source_id]);
+  return [...roots].map(([root, source_ids]) => ({ source_ids, ...readCheckoutState(root) }));
+}
+
 export const invalid = (message: string, suggestion: string, fix?: Action) =>
   opError('invalid_params', message, suggestion, fix ? { fix } : {});
 const sourcesListFix = (why: string) => readFix(why, { argv: ['gbrain', 'sources', 'list', '--json'] });
@@ -100,19 +107,20 @@ export const CLAIM_BEFORE_ACTIVATION_NOTICE = 'Persistence is not activated. Aft
 function writerFailuresQuery(sourceId: string, params: Record<string, unknown>): import('./terminal-failures.ts').TerminalFailureQuery {
   const bad = (key: string, pattern: RegExp) => params[key] !== undefined && (typeof params[key] !== 'string' || !pattern.test(params[key] as string));
   if (bad('state', /^(all|unresolved)$/)) throw invalid('Invalid --state value.', 'Pass --state all to include resolved and historical receipts, or leave it out for the unresolved ones.');
-  if (bad('group_by', /^category$/)) throw invalid('Invalid --group-by value.', 'Pass --group-by category (groups on code, origin and category), or leave it out to list receipts.');
+  if (bad('group_by', /^category$/)) throw invalid('Invalid --group-by value.', 'Pass --group-by category (groups on code, origin and category, and a sync fault on its operation too), or leave it out to list receipts.');
   if (bad('since', /^[1-9]\d{0,3}d$/)) throw invalid('Invalid --since value.', 'Pass --since as whole days, e.g. --since 7d; the window is clamped to persistence.receipt_retention_days.');
   if (bad('before', /^\d{1,19}$/)) throw invalid('Invalid --before value.', 'Pass --before exactly as the previous page\'s next_cursor.');
   if (bad('code', /^[a-z][a-z0-9_]{0,63}$/)) throw invalid('Invalid --code value.', 'Pass --code as a snake_case code a group names, e.g. --code storage_error.');
   if (bad('origin', /^[a-z][a-z0-9_]{0,63}$/)) throw invalid('Invalid --origin value.', 'Pass --origin as an origin a group names, or none for receipts with no recorded origin.');
+  if (bad('operation', /^[a-z][a-z0-9_]{0,63}$/)) throw invalid('Invalid --operation value.', 'Pass --operation as the operation a group names, e.g. --operation put_page or --operation canonical_reconcile.');
   if (bad('category', /^[a-z][a-z_]{0,63}$/)) throw invalid('Invalid --category value.', 'Pass --category as a category a group names, e.g. --category knock_on.');
   if (params.limit !== undefined && !(typeof params.limit === 'number' && Number.isInteger(params.limit) && params.limit >= 1 && params.limit <= 100)) {
     throw invalid('Invalid --limit value.', 'Pass --limit as a whole number from 1 to 100 (default 20).');
   }
-  const p = params as { state?: 'all' | 'unresolved'; group_by?: string; since?: string; limit?: number; before?: string; code?: string; origin?: string; category?: string };
+  const p = params as { state?: 'all' | 'unresolved'; group_by?: string; since?: string; limit?: number; before?: string; code?: string; origin?: string; category?: string; operation?: string };
   return { sourceId, ...(p.state ? { state: p.state } : {}), ...(p.group_by ? { groupBy: 'category' as const } : {}), ...(p.since ? { sinceDays: Number(p.since.slice(0, -1)) } : {}),
     ...(p.limit !== undefined ? { limit: p.limit } : {}), ...(p.before ? { before: p.before } : {}), ...(p.code ? { code: p.code } : {}), ...(p.origin ? { origin: p.origin } : {}),
-    ...(p.category ? { category: p.category } : {}) };
+    ...(p.category ? { category: p.category } : {}), ...(p.operation ? { operation: p.operation } : {}) };
 }
 
 /** GBRA-130 A-59: writer status's movement, or a `not_read` with its code and a read-only fix; a failed read never reads as no movement. */
@@ -188,7 +196,14 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     return runGitDurabilityAdministration(engine, params);
   }
   if (operation === 'writer_retry_effects') {
-    keys(params, ['source_id', 'request_id', 'dry_run', 'admin_intent', 'expected_state', 'parked_pushes']);
+    keys(params, ['source_id', 'request_id', 'dry_run', 'admin_intent', 'expected_state', 'parked_pushes', 'parked_code']);
+    if (params.parked_code !== undefined) {
+      if (typeof params.parked_code !== 'string' || !/^[a-z][a-z0-9_]*$/.test(params.parked_code) || params.parked_pushes !== undefined || params.request_id !== undefined
+        || params.admin_intent !== undefined || params.expected_state !== undefined) throw invalid(
+        '--parked-code retries every Git effect of the source parked on one error code; it takes no --request-id, --parked-pushes or admin intent.',
+        'Run gbrain sources writer retry-effects <source> --parked-code <code> [--dry-run]; doctor parked_effects lists each parked code with its command.');
+      return (await import('./git-durability-administration.ts')).retrySourceParkedCode(engine, source(params.source_id), params.parked_code, params.dry_run === true);
+    }
     if (params.parked_pushes === true) {
       if (params.request_id !== undefined || params.admin_intent !== undefined || params.expected_state !== undefined) throw invalid(
         '--parked-pushes retries every parked push of the source; it takes no --request-id or admin intent.',
@@ -204,6 +219,21 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     const ownerHost = params.admin_intent !== undefined || params.expected_state !== undefined;
     if (ownerHost) await requireWriterAdminIntent(engine, 'writer_retry_effects', params);
     return (await import('./effect-retry.ts')).retryRequestEffects(engine, source(params.source_id), params.request_id, params.dry_run === true, config, embeddingRetryPolicy, ownerHost);
+  }
+  if (operation === 'writer_settle_effects') {
+    keys(params, ['source_id', 'request_id', 'parked_code', 'unsettle', 'apply', 'expect', 'dry_run']);
+    bool(params, 'unsettle'); bool(params, 'apply');
+    if (params.apply === true && params.dry_run === true) throw invalid('settle-effects takes --dry-run or --apply, not both.',
+      'Preview with --dry-run, then run the apply_command it prints (--apply --expect <plan_hash>) after the user agrees.');
+    if (params.parked_code !== undefined && (typeof params.parked_code !== 'string' || !/^[a-z][a-z0-9_]*$/.test(params.parked_code))) throw invalid('Invalid --parked-code value.',
+      'Pass --parked-code as a snake_case code doctor parked_effects names, e.g. --parked-code git_target_unsafe.');
+    if (params.expect !== undefined && (typeof params.expect !== 'string' || !/^ph_[0-9a-f]{24}$/.test(params.expect))) throw invalid('Invalid --expect value.',
+      'Pass --expect exactly as the plan_hash the settle-effects preview printed (ph_ followed by 24 hex digits).');
+    const sourceId = source(params.source_id);
+    const requestId = params.request_id === undefined ? undefined : uuid(params.request_id, 'A valid original write request UUID is required.',
+      'Pass --request-id with the request id doctor parked_effects or gbrain sources writer status lists for the effect.');
+    return (await import('./effect-settle.ts')).settleEffects(engine, { sourceId, requestId, parkedCode: params.parked_code as string | undefined,
+      unsettle: params.unsettle === true, apply: params.apply === true, expect: params.expect as string | undefined });
   }
   if (operation === 'source_add' || operation === 'source_lifecycle') {
     const { managedPersistenceEnabled } = await import('./ownership.ts');
@@ -235,7 +265,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       remoteUrl:params.remote_url as string|undefined,createDirectory:params.create_directory as boolean|undefined,expiredOnly:params.expired_only as boolean|undefined});
   }
   if (operation === 'writer_failures') {
-    keys(params, ['source_id', 'state', 'group_by', 'since', 'limit', 'before', 'code', 'origin', 'category']);
+    keys(params, ['source_id', 'state', 'group_by', 'since', 'limit', 'before', 'code', 'origin', 'category', 'operation']);
     const sourceId = source(params.source_id);
     const [known] = await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id=$1 AND archived IS NOT TRUE', [sourceId]);
     if (!known) throw invalid(`No active source ${sourceId}.`, 'Name an active source; archived sources are not inspected.', sourcesListFix('Lists the active source ids, read-only.'));
@@ -280,10 +310,15 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       local_markers: await cleanupRetiredManagedMarkers(engine),
       host_id: existingLocalHostId(), local_host_id: existingLocalHostId(), bindings, admin_state: adminState,
       admin_lock: { locked: adminLock.locked, set_at: adminLock.set_at, host_id: adminLock.host_id }, blocking_effects: blockingEffects,
+      // GBRA-133: effects that have waited on a busy canonical worktree for over 10 minutes.
+      stalled_catchups: await (await import('./effect-catchup.ts')).readStalledCatchups(engine, params.source_id ? [params.source_id as string] : undefined),
+      parked_groups: await (await import('./parked-groups.ts')).readParkedGroups(engine, params.source_id ? [params.source_id as string] : undefined),
       writer_versions: writerVersions, onboarding, shared_skills: sharedSkills, ...(native ? { native_lock: native } : {}),
       // #6317 (B3): every process holding a consumer on this host, from the heartbeat rows (kind, pid, nonce, mode, age, wedge report).
       host: { host_id: existingLocalHostId(), ...await (await import('./consumer-diagnostics.ts')).hostConsumersReport(engine, existingLocalHostId()) },
       worktree_refreshes: await (await import('./worktree-refresh.ts')).activeWorktreeRefreshes(engine, params.source_id as string | undefined),
+      // Q1: each canonical checkout on this host against its last fetched upstream: commits it holds that the upstream lacks, and its porcelain.
+      checkouts: await writerStatusCheckouts(bindings as Array<{ source_id: string; local_path: string | null }>),
       // #6317 (B4): per managed source, whether sync data moves (shares the reader of sources status, doctor and writer movement).
       movement: await writerStatusMovement(engine, params.source_id === undefined ? undefined : source(params.source_id)) };
   }

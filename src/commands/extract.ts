@@ -39,6 +39,7 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
+import { classifyItemFailure } from '../core/item-failure.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { ATTENDANCE_REPAIR_HELP, isAttendanceRepairRequest } from './extract-attendance-repair.ts';
 import { join, relative, dirname } from 'path';
@@ -52,7 +53,7 @@ import { readLineGrammarSettings, statedRelationTypes } from '../core/line-gramm
 import { effectiveLinkExtractorWatermark, linkExtractorWatermarkFor } from '../core/link-extraction-watermark.ts';
 import { concurrentWriteSkipLine, replaceDerivedLinksBatchOrReplay, replaceDerivedLinksDeferringConflicts, settingsChangedSkipLine, unknownSourceSkipLine, type DerivedLinkBatchItem, type UnknownSourceSkip } from '../core/derived-links.ts';
 import { pageSnapshotKey } from '../core/page-snapshot-batch.ts';
-import type { PageSnapshot } from '../core/page-state/types.ts';
+import { PageRevisionConflictError, type PageSnapshot } from '../core/page-state/types.ts';
 import { LostWrites, extractionWrite, timelineSnapshotRefs } from '../core/extract-watermark.ts';
 export { reconcileSourceLinks, type SourceLinkReconciliationResult } from '../core/link-reconciliation.ts';
 export { extractMarkdownLinks } from '../core/link-extraction.ts';
@@ -723,6 +724,8 @@ export interface ExtractOpts {
    * `autopilot.incremental_extract_include_frontmatter` (default off).
    */
   includeFrontmatter?: boolean;
+  /** GBRA-133: on a managed brain, stop the stale-page pass after this long (the cycle's drain budget); unset runs to the end. */
+  timeBudgetMs?: number;
 }
 
 /**
@@ -761,7 +764,7 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
   if (!dryRun && opts.mode === 'all' && opts.slugs?.length !== 0 && await managedPersistenceEnabled(engine)) {
     const { extractManagedStaleLinks } = await import('../core/persistence/links-maintenance.ts');
     const progress = createProgress(cliOptsToProgressOptions(getCliOptions())); progress.start('extract.links_fs', opts.slugs?.length);
-    const r = await extractManagedStaleLinks(engine, { sourceId: opts.sourceId, slugs: opts.slugs, signal: opts.signal, maxPages: opts.slugs?.length });
+    const r = await extractManagedStaleLinks(engine, { sourceId: opts.sourceId, slugs: opts.slugs, signal: opts.signal, maxPages: opts.slugs?.length, timeBudgetMs: opts.timeBudgetMs });
     progress.finish(); return { links_created: r.created, timeline_entries_created: r.timeline, pages_processed: r.pages };
   }
   // #5904: a timeline-only pass on a managed brain publishes each page's canonical timeline through the coordinator.
@@ -866,6 +869,9 @@ Extraction:
   --since DATE filters on updated_at — the page row's last DB-write time
   ("touched since"): import, sync, enrich, and extraction stamps all advance
   it. It is NOT the content's authored/effective date.
+
+  --type, --since and --infer-dates filter synced pages, so they need
+  --source db; the default --source fs walk refuses them (exit 2).
 
 Incremental sweep:
 ${ATTENDANCE_REPAIR_HELP}
@@ -1156,6 +1162,19 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
   if (fromMeetings && subcommand !== 'timeline' && subcommand !== 'all') {
     console.error(
       `--from-meetings is a timeline-pass only. Re-run as 'gbrain extract timeline --from-meetings' or 'gbrain extract all --from-meetings'.`,
+    );
+    process.exit(2);
+  }
+  // #7394: the file walk reads files, not page rows, so it cannot apply a page-row filter. Refuse rather than walk
+  // every file and report it as a filtered pass.
+  const rowFilters = [typeFilter !== undefined && `--type ${typeFilter}`, since !== undefined && `--since ${since}`, inferDates && '--infer-dates'].filter((f): f is string => !!f);
+  if (rowFilters.length && source === 'fs') {
+    console.error(
+      `${rowFilters.map(f => f.split(' ')[0]).join(', ')} ${rowFilters.length > 1 ? 'filter synced pages, so they require' : 'filters synced pages, so it requires'} --source db ` +
+      `(currently --source fs, which walks every file and would ignore ${rowFilters.length > 1 ? 'them' : 'it'}). Re-run as:\n\n` +
+      `  gbrain extract ${subcommand} --source db ${rowFilters.join(' ')}` +
+      (sourceIdFilter ? ` --source-id ${sourceIdFilter}` : '') +
+      (dryRun ? ' --dry-run' : '') + (jsonMode ? ' --json' : '') + '\n',
     );
     process.exit(2);
   }
@@ -2214,6 +2233,7 @@ export async function extractStaleFromDB(
   // from a genuinely missing target.
   let skippedCrossSource = 0, skippedChanged = 0, skippedConcurrentWrite = 0;
   const unknownSource: UnknownSourceSkip[] = [];
+  const contentFailures: string[] = [];
 
   const wantedEnabled = await isWantedPagesEnabled(engine);
   const plannerTick = await plannerStatsForLinkDrain(engine, async () => totalStale);
@@ -2258,9 +2278,16 @@ export async function extractStaleFromDB(
             page.source_id, allSlugs, slugToSources, federatedSourceIds.has(page.source_id), { crossSource, defaultSourceId: linkDefaultSourceId });
           return !resolved.ok ? undefined : targetSlug === page.slug && resolved.toSourceId === page.source_id ? snapshot.page.type : targetMetadata.get(`${resolved.toSourceId}\0${targetSlug}`)?.type;
         } };
-        const extracted: Awaited<ReturnType<typeof extractSegmentedPageLinks>> = fullContent === null
-          ? await extractSegmentedPageLinks(engine, { ...withoutBody(snapshot.page), id: Number(snapshot.page.id), slug: page.slug, source_id: page.source_id }, resolver, { ...pageLinkOpts, temporal: true })
-          : await extractPageLinks(page.slug, fullContent, snapshot.page.frontmatter, snapshot.page.type, resolver, pageLinkOpts);
+        // #7357: a page whose own content the reader refuses (a run over the block bound) is reported and stays stale; the sweep goes on.
+        const extracted: Awaited<ReturnType<typeof extractSegmentedPageLinks>> | null = await (fullContent === null
+          ? extractSegmentedPageLinks(engine, { ...withoutBody(snapshot.page), id: Number(snapshot.page.id), slug: page.slug, source_id: page.source_id }, resolver, { ...pageLinkOpts, temporal: true })
+          : extractPageLinks(page.slug, fullContent, snapshot.page.frontmatter, snapshot.page.type, resolver, pageLinkOpts)).catch((error: unknown) => {
+          const f = classifyItemFailure(error);
+          if (f.scope !== 'item' || f.class !== 'content') throw error;
+          contentFailures.push(`${page.source_id}:${page.slug}: ${f.code}: ${f.message.slice(0, 500)}`);
+          return null;
+        });
+        if (!extracted) continue;
         if (!extracted.attendanceComplete) {
           skippedAttendanceIncomplete++;
           attendanceBlocked.push({ slug: page.slug, source_id: page.source_id, revision: snapshot.revision });
@@ -2295,7 +2322,7 @@ export async function extractStaleFromDB(
         if ('unknownSource' in written) { unknownSource.push({ slug: page.slug, source_id: page.source_id, missing_source: written.unknownSource }); continue; }
         linksCreated += written.created;
         const timelineText = fullContent ?? await segmentedTimelineText(engine, snapshot.page);
-        await retractRemovedTimelineEntries(engine, page.slug, page.source_id, timelineText);
+        await retractRemovedTimelineEntries(engine, page.slug, page.source_id, timelineText, { expectedRevision: snapshot.revision });
         for (const entry of typeof timelineText === 'string' ? parseTimelineEntries(timelineText) : timelineText.entries) {
           // #3957: carry the parsed source label — omitting it wrote source=''
           // while the FS path wrote the split label, so the same bullet
@@ -2354,6 +2381,7 @@ export async function extractStaleFromDB(
     if (skippedChanged) log(settingsChangedSkipLine(skippedChanged));
     if (skippedConcurrentWrite) log(concurrentWriteSkipLine(skippedConcurrentWrite));
     if (unknownSource.length) log(unknownSourceSkipLine(unknownSource));
+    if (contentFailures.length) log(`${contentFailures.length} page(s) failed link extraction and stay stale; the other pages were derived:\n  ${contentFailures.slice(0, 20).join('\n  ')}`);
     if (skippedMissingTarget > 0) {
       log(`Skipped ${skippedMissingTarget} candidate(s) whose target page doesn't exist (references to non-pages are never persisted).`);
     }
@@ -2372,10 +2400,11 @@ export async function extractStaleFromDB(
       ...(skippedAttendanceIncomplete ? { skipped_attendance_incomplete: skippedAttendanceIncomplete } : {}), ...(skippedChanged ? { skipped_changed: skippedChanged } : {}),
       ...(skippedConcurrentWrite ? { skipped_concurrent_write: skippedConcurrentWrite } : {}),
       ...(unknownSource.length ? { skipped_unknown_source: unknownSource.length, unknown_source_pages: unknownSource.slice(0, 20) } : {}), ...mentionJsonFields(mentions), ...counts,
+      ...(contentFailures.length ? { failed: contentFailures.length, failures: contentFailures.slice(0, 20) } : {}),
     }) + '\n');
   }
   return { linksCreated, timelineCreated, pagesProcessed, staleRemaining, skippedMissingTarget, skippedCrossSource,
-    ...(skippedAttendanceIncomplete ? { skippedAttendanceIncomplete } : {}), ...(skippedChanged ? { skippedChanged } : {}), ...(skippedConcurrentWrite ? { skippedConcurrentWrite } : {}), ...(unknownSource.length ? { skippedUnknownSource: unknownSource.length } : {}), mentions };
+    ...(skippedAttendanceIncomplete ? { skippedAttendanceIncomplete } : {}), ...(skippedChanged ? { skippedChanged } : {}), ...(skippedConcurrentWrite ? { skippedConcurrentWrite } : {}), ...(unknownSource.length ? { skippedUnknownSource: unknownSource.length } : {}), ...(contentFailures.length ? { linkFailed: contentFailures.length } : {}), mentions };
 }
 
 /**
@@ -2521,6 +2550,8 @@ async function extractMentionsFromDb(
   }
 
   for (const { slug, source_id } of remaining) {
+    // GBRA-161 PR 5 (L-6): the revision the rebuild scans, read before the body; the sweep runs only at it.
+    const scannedRevision = rebuild ? (await engine.readPageSnapshot(slug, { sourceId: source_id }))?.revision ?? null : null;
     const page = await engine.getPage(slug, { sourceId: source_id });
     // v0.41.19.0 (T5 — codex fix #4): even when we skip a page (filter
     // miss, missing row, empty body, no mentions), MARK IT COMPLETED so
@@ -2566,6 +2597,9 @@ async function extractMentionsFromDb(
         let pageRemoved = 0;
         let pageCreated = 0;
         await engine.transaction(async (tx) => {
+          const [current] = await tx.executeRaw<{ revision: string }>(
+            'SELECT knowledge_revision::text AS revision FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL FOR SHARE', [source_id, slug]);
+          if (current?.revision !== scannedRevision) throw new PageRevisionConflictError(scannedRevision, current?.revision ?? null);
           pageRemoved = await tx.removeLinksByPagesAndSource(
             [{ slug, source_id }],
             {

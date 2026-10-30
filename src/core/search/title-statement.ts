@@ -11,6 +11,7 @@ import { searchLimitCap } from './eval-pool-depth.ts';
 import { getFtsLanguage } from '../fts-language.ts';
 import { chunkGenerationFilter, requiresSafeChunks } from './safe-chunks.ts';
 import { normalizeAlias } from './alias-normalize.ts';
+import { titleNameVariants } from './title-match.ts';
 import { frontmatterWhereSql } from './frontmatter-where.ts';
 import { resolveBoostMap, resolveHardExcludes } from './source-boost.ts';
 import {
@@ -41,14 +42,6 @@ export interface SearchTitlesStatement {
   safeChunks: boolean;
 }
 
-/**
- * Label every lexeme of a tsquery's text form with weight A
- * (`'acm' & !'secret'` → `'acm':A & !'secret':A`; prefix `'acm':*` →
- * `'acm':*A`). Lexemes are single-quoted with `''` escapes in that form.
- */
-const WEIGHT_A_QUERY = (ftsLang: string): string =>
-  `regexp_replace(websearch_to_tsquery('${ftsLang}', gbrain_fts_input($1))::text, '(''(?:[^'']|'''')*'')(?::(\\*))?', '\\1:\\2A', 'g')::tsquery`;
-
 export function buildSearchTitlesStatement(query: string, opts: SearchOpts | undefined, dialect: SearchTitlesDialect): SearchTitlesStatement {
   const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
   const offset = opts?.offset || 0;
@@ -62,12 +55,18 @@ export function buildSearchTitlesStatement(query: string, opts: SearchOpts | und
   // FTS config name (e.g. 'english', 'pt_br'). Validated by getFtsLanguage()
   // — safe to interpolate into raw SQL.
   const ftsLang = getFtsLanguage();
-  const tsq = `websearch_to_tsquery('${ftsLang}', gbrain_fts_input($1))`;
+  const params: unknown[] = [boundWebsearchQuery(query), normalizeAlias(query), limit, offset];
+  // #7471: each given-name variant ("matthew example" for "Matt Example") is
+  // ORed into the query as its own websearch query, so a title that spells the
+  // given name another way still matches every word. The OR fallback rebinds
+  // only $1; a variant matches nothing there (the strict query found no page).
+  const tsqueries = ['$1', ...titleNameVariants(query).map(v => `$${params.push(v)}`)]
+    .map(p => `websearch_to_tsquery('${ftsLang}', gbrain_fts_input(${p}))`);
+  const tsq = tsqueries.length === 1 ? tsqueries[0] : `(${tsqueries.join(' || ')})`;
   const titleOnly = safeChunks || dialect.relaxed === true;
-  const matchSql = titleOnly ? `p.search_vector @@ ${WEIGHT_A_QUERY(ftsLang)}` : `p.search_vector @@ ${tsq}`;
+  const matchSql = titleOnly ? `ts_filter(p.search_vector, '{a}') @@ ${tsq}` : `p.search_vector @@ ${tsq}`;
   const rankSql = titleOnly ? `ts_rank_cd(ts_filter(p.search_vector, '{a}'), ${tsq})` : `ts_rank_cd(p.search_vector, ${tsq})`;
 
-  const params: unknown[] = [boundWebsearchQuery(query), normalizeAlias(query), limit, offset];
   let filters = '';
   if (opts?.type) {
     params.push(opts.type);

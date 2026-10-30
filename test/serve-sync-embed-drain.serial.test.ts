@@ -55,11 +55,17 @@ test('pending sources are retained separately for each engine', async () => fixt
   await seed(a.engine, 'alpha'); await seed(a.engine, 'beta'); await seed(b.engine, 'alpha');
   scheduleDeferredSyncEmbeds(a.engine, 'alpha'); scheduleDeferredSyncEmbeds(a.engine, 'beta');
   scheduleDeferredSyncEmbeds(b.engine, 'alpha');
-  const stdout: unknown[][] = [], originalLog = console.log;
+  const stdout: unknown[][] = [], stderr: string[] = [], originalLog = console.log, originalWrite = process.stderr.write.bind(process.stderr);
   console.log = (...args: unknown[]) => { stdout.push(args); };
+  process.stderr.write = ((chunk: string | Uint8Array) => { stderr.push(String(chunk)); return true; }) as typeof process.stderr.write;
   try { await maybeDrainDeferredEmbeds(a.engine); }
-  finally { console.log = originalLog; }
+  finally { console.log = originalLog; process.stderr.write = originalWrite; }
   expect(stdout).toEqual([]); // The resident stdio owner's protocol stays clean.
+  // GBRA-133: the pass logs its start, each source's duration and its decision with the pass duration.
+  const lines = stderr.join('').split('\n').filter(line => line.startsWith('[serve-sync] embed-drain'));
+  expect(lines[0]).toBe('[serve-sync] embed-drain started sources=2');
+  expect(lines.filter(line => /^\[serve-sync\] embed-drain embedded=\d+ failures=0 source=(alpha|beta) ms=\d+$/.test(line))).toHaveLength(2);
+  expect(lines.at(-1)).toMatch(/^\[serve-sync\] embed-drain decision=(drained|retry)( delay_ms=\d+ failures=\d+)? ms=\d+$/);
   expect(await embedded(a.engine, 'alpha')).toBe(true);
   expect(await embedded(a.engine, 'beta')).toBe(true);
   expect(await embedded(b.engine, 'alpha')).toBe(false);

@@ -277,7 +277,9 @@ const READ_ONLY_SUBCOMMANDS = new Set(['config get', 'sources list', 'sources st
   // #6803: the stale-extraction preview returns before any write and reports the terminal counts (actionable, mention_due).
   'extract --stale --dry-run',
   // #7179: per-page search state; reads page, chunk, budget and hold rows plus Git objects, writes nothing.
-  'pages status']);
+  'pages status',
+  // G1/G7a: the git-gap census reads pages and Git objects in read-only transactions and writes nothing.
+  'sources git-gap']);
 
 function tsFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];

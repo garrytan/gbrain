@@ -7,7 +7,7 @@
  * written to stdout. A real PGLite + stub chat case covers the acceptance
  * path end to end (start serve, write after startup, restart with a backlog).
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,6 +27,8 @@ import type { ChatResult } from '../src/core/ai/gateway.ts';
 import { configureGateway, resetGateway, __setChatTransportForTests } from '../src/core/ai/gateway.ts';
 
 const settle = () => new Promise<void>(r => setTimeout(r, 0));
+// runServe's stdio path redirects console to stderr for the process; put it back after every test.
+afterEach(() => _resetStdoutRedirectForTests());
 const fakeResult = (owner: FactsDrainRunResult['owner']) => ({ owner, outcome: 'drained' } as FactsDrainRunResult);
 
 function intervalStub() {

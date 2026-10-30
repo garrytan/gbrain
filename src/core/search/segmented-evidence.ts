@@ -24,7 +24,8 @@
  * The windows are read at the revision getChunkWindows authorized the page at
  * (`page.revision`): a page that changed since (a visibility flip, a new
  * body, a delete) refuses the read, and the assembler falls back to the hit's
- * chunk.
+ * chunk. The windows (and the segments unspanned hits are matched in) are read
+ * at once; the revision is confirmed after every read has answered.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { ChunkWindowPage } from './chunk-windows.ts';
@@ -52,7 +53,7 @@ interface Located extends EvidenceSpan { row: number; text: string }
 export async function readSegmentedWindows(engine: BrainEngine, page: ChunkWindowPage,
   hits: ReadonlyArray<{ chunk_id: number; chunk_index: number; text: string }>,
   opts: { unit: 'window' | 'section' | 'page'; radius: number; includeTimeline: boolean }): Promise<SegmentedWindows> {
-  const body = await openSegmentedBody(engine, { pageId: page.page_id, pin: { revision: page.revision } });
+  const body = await openSegmentedBody(engine, { pageId: page.page_id, pin: { revision: page.revision }, expect: { slug: page.slug, sourceId: page.source_id } });
   const layout = await projectedLayout(engine, body);
   const region = opts.includeTimeline ? undefined : 'truth' as const;
   const bytes = region && layout.timelineByte >= 0 ? layout.timelineByte - Buffer.byteLength(TIMELINE_SEPARATOR, 'utf8') : layout.totalBytes;
@@ -72,14 +73,23 @@ export async function readSegmentedWindows(engine: BrainEngine, page: ChunkWindo
 
   const placedBytes = new Map<number, { start: number; end: number }>();
   const homes: Array<{ start: number; end: number; chunkIndex: number; row: number }> = [];
-  for (const hit of hits) {
-    const own = located.find(l => l.id === hit.chunk_id);
-    if (own) { homes.push({ ...own, chunkIndex: own.chunk_index }); continue; }
+  const unspanned = (hit: typeof hits[number]) => {
+    if (located.some(l => l.id === hit.chunk_id)) return undefined;
     const chunk = page.chunks.find(c => c.id === hit.chunk_id);
     const row = chunk && chunk.projected_byte_start == null ? rowAt(chunk.occurrence_id) : undefined;
+    return row !== undefined && hit.text.trim().length >= 16 ? row : undefined;
+  };
+  const segments = await Promise.all(hits.map(hit => {
+    const row = unspanned(hit);
+    return row === undefined ? undefined : readLines(engine, body, region, layout.rowStart[row]!, rowEnd(row), bytes);
+  }));
+  for (const [k, hit] of hits.entries()) {
+    const own = located.find(l => l.id === hit.chunk_id);
+    if (own) { homes.push({ ...own, chunkIndex: own.chunk_index }); continue; }
+    const row = unspanned(hit);
     const needle = hit.text.trim();
-    if (row !== undefined && needle.length >= 16) {
-      const segment = (await readLines(engine, body, region, layout.rowStart[row]!, rowEnd(row), bytes)).bytes.toString('utf8');
+    if (row !== undefined) {
+      const segment = segments[k]!.bytes.toString('utf8');
       const at = segment.indexOf(needle);
       if (at >= 0 && segment.lastIndexOf(needle) === at) {
         const start = layout.rowStart[row]! + Buffer.byteLength(segment.slice(0, at), 'utf8');
@@ -109,8 +119,8 @@ export async function readSegmentedWindows(engine: BrainEngine, page: ChunkWindo
 
   const runs: SegmentedWindows['runs'] = [];
   const placed: SegmentedWindows['placed'] = new Map();
-  for (const w of merged) {
-    const read = await readLines(engine, body, region, w.start, w.end, bytes);
+  const reads = await Promise.all(merged.map(w => readLines(engine, body, region, w.start, w.end, bytes)));
+  for (const read of reads) {
     const runEnd = read.start + read.bytes.length;
     if (read.bytes.length === 0) continue;
     const text = read.bytes.toString('utf8');

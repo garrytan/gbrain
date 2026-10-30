@@ -9,6 +9,12 @@
  * host file-plane embedding model and dimensions and clears the keyless
  * marker. Pages, facts and keyword search are untouched; chunks and facts
  * without vectors stay queued for `gbrain embed --stale`.
+ *
+ * `gbrain embeddings prewarm`: load a Postgres brain's HNSW indexes into
+ * shared_buffers when they fit (core/vector-prewarm.ts). It lives here because
+ * this is the command group for a brain's vector side that opens the selected
+ * brain's own engine and that thin clients already refuse; `gbrain search`
+ * takes a free-text query, so `search prewarm` would be a search.
  */
 import { existsSync } from 'node:fs';
 import { loadConfigFileOnly, saveConfig, toEngineConfig, type GBrainConfig } from '../core/config.ts';
@@ -24,8 +30,10 @@ import { opError, OperationError } from '../core/ops/contract.ts';
 import { renderCliError, type Action } from '../core/agent-output.ts';
 import { recordAgentContractEvent } from '../core/agent-contract-log.ts';
 import { setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
+import { runVectorPrewarm, vectorPrewarmUnsupported } from '../core/vector-prewarm.ts';
 
 const USAGE = `Usage: gbrain embeddings enable --embedding-model <provider:model> [--embedding-dimensions <N>] [--brain <id>] [--json]
+       gbrain embeddings prewarm [--dry-run] [--brain <id>] [--json]
 
 Turn on embeddings for the selected brain in place. Pages, facts and keyword
 search are kept; chunks and facts without vectors stay queued for
@@ -36,6 +44,13 @@ the brain holds vectors from another model.
 
 Effects: writes ~/.gbrain/config.json; later embedding calls use the provider
 key (paid). Needs the brain's single-writer lock (stop a running gbrain serve).
+
+prewarm (Postgres): load the brain's HNSW vector indexes into shared_buffers
+with pg_prewarm, so the first searches after a restart skip their cold index
+reads. Refuses before reading anything when the indexes exceed half of
+shared_buffers (effective_cache_size is reported, never used: it is a planner
+hint) or the pg_prewarm extension is missing. --dry-run prints the fit only.
+\`gbrain config set serve.vector_prewarm true\` runs it once at each serve start.
 `;
 
 interface EnableOpts { model: string; dims?: number; json: boolean }
@@ -142,6 +157,29 @@ async function enable(opts: EnableOpts): Promise<Record<string, unknown>> {
   }
 }
 
+async function writePrewarm(args: string[], json: boolean): Promise<void> {
+  const unknown = args.find(a => a !== '--json' && a !== '--dry-run');
+  if (unknown) throw opError('invalid_params', `Unknown option '${unknown}' for gbrain embeddings prewarm.`, 'Run `gbrain embeddings --help` for the accepted options.');
+  const host = loadConfigFileOnly();
+  if (!host) throw opError('config_error', 'No gbrain config file found.', 'Run `gbrain init` first.');
+  if (host.remote_mcp) throw opError('config_error', 'This is a thin-client install; prewarm runs on the brain host.', 'Run this command on the brain host.');
+  const target = targetConfig(host, resolveBrainId(getCliOptions().brain));
+  if (target.engine !== 'postgres') throw vectorPrewarmUnsupported();
+  const engine = await createEngine(toEngineConfig(target));
+  await engine.connect(toEngineConfig(target));
+  try {
+    const r = await runVectorPrewarm(engine, { dryRun: args.includes('--dry-run') });
+    const mb = (bytes: number) => `${Math.ceil(bytes / (1024 * 1024))} MB`;
+    const blocks = r.loaded.reduce((sum, l) => sum + l.blocks, 0);
+    await writeStdoutFinal(json ? `${JSON.stringify(r, null, 2)}\n`
+      : `Vector indexes: ${r.indexes.length}, ${mb(r.total_bytes)}; prewarm budget ${mb(r.budget_bytes)} (half of shared_buffers ${mb(r.shared_buffers_bytes)}${r.effective_cache_size_bytes === null ? '' : `; effective_cache_size ${mb(r.effective_cache_size_bytes)}, not used`}).\n` +
+        (r.dry_run ? `Fits. Dry run: nothing read${r.extension_version ? '' : '; pg_prewarm is not created yet (CREATE EXTENSION IF NOT EXISTS pg_prewarm)'}.\n`
+          : `Loaded ${mb(blocks * 8192)} into shared_buffers in ${(r.elapsed_ms / 1000).toFixed(1)} s.\n`));
+  } finally {
+    await engine.disconnect().catch(() => {});
+  }
+}
+
 export async function runEmbeddings(args: string[]): Promise<void> {
   const [sub, ...rest] = args;
   if (!sub || sub === '--help' || sub === '-h' || sub === 'help' || rest.includes('--help')) {
@@ -150,7 +188,8 @@ export async function runEmbeddings(args: string[]): Promise<void> {
   }
   const json = args.includes('--json');
   try {
-    if (sub !== 'enable') throw opError('invalid_params', `Unknown embeddings subcommand '${sub}'.`, 'The only subcommand is enable: `gbrain embeddings enable --embedding-model <provider:model>`.');
+    if (sub === 'prewarm') return await writePrewarm(rest, json);
+    if (sub !== 'enable') throw opError('invalid_params', `Unknown embeddings subcommand '${sub}'.`, 'The subcommands are enable (`gbrain embeddings enable --embedding-model <provider:model>`) and prewarm.');
     const result = await enable(parseEnableArgs(rest));
     const next = (result.next_command as string[]).join(' ');
     await writeStdoutFinal(json ? `${JSON.stringify(result, null, 2)}\n`

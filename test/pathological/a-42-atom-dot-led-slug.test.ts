@@ -7,7 +7,8 @@
  * The inventory's second leg (the page's one atom batch fails `invalid_params` and the page's other atoms are lost)
  * does not reproduce on master: the managed batch commits both atoms. The item case pins that both land.
  * The legacy case pins the upgrade path: an atom minted dot-led by an older build is retired by the next
- * extraction of its page (a delete of a stored legacy slug is admitted, #6212), and the page does not wedge.
+ * extraction of its page (a delete of a stored legacy slug is admitted, #6212), and the page does not wedge. The legacy
+ * atom carries the extractor's stamp and version, the producer evidence a pre-ledger atom needs to be retired (GBRA-161).
  * PGLite; Postgres when DATABASE_URL is set.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -69,7 +70,8 @@ for (const backend of testBackends()) {
       }, { databaseUrl, setup: async ({ engine }) => {
         await seedSource({ engine });
         await engine.putPage('atoms/2026-10-16/.example-domains-grew-10-in-q3-5fba9d3d', { type: 'atom', title: DOT_LED.title, compiled_truth: DOT_LED.body,
-          frontmatter: { atom_type: 'insight', source_slug: SOURCE_PAGE, source_hash: 'stale-hash-0000', dream_generated: true } }, { sourceId: 'default' });
+          frontmatter: { atom_type: 'insight', source_slug: SOURCE_PAGE, source_hash: 'stale-hash-0000', dream_generated: true, extracted_by: 'extract_atoms-v0.41.2.1' } }, { sourceId: 'default' });
+        await engine.createVersion('atoms/2026-10-16/.example-domains-grew-10-in-q3-5fba9d3d', { sourceId: 'default' });
       } });
     }, 120_000);
   });

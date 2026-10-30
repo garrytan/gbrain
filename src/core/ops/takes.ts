@@ -385,7 +385,7 @@ const think: Operation = {
     const { recordThinkAnswer, feedbackMetaFields } = await import('../feedback/record.ts');
     const feedbackMeta = feedbackMetaFields(await recordThinkAnswer(ctx, 'think', result));
     delete result.feedback_evidence; delete result.taint_refs;
-    const { persist: _persist, ...visible } = result;
+    const { persist: _persist, persist_base: _persistBase, ...visible } = result;
     return {
       ...visible,
       ...feedbackMeta,

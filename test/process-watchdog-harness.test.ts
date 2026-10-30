@@ -93,6 +93,30 @@ describe('progress-aware deadline integration (Bun-pinned)', () => {
   }, 15000);
 });
 
+// GBRA-133 PR 3a: the sync watchdog counts only committed work. A run that screens for its whole deadline and commits
+// nothing is stopped at the deadline with the stall notice, never extended as "still progressing".
+describe('committed-progress deadline integration (Bun-pinned)', () => {
+  test('a run that only screens (forward progress, no commit) is stopped at the deadline with the stall notice', async () => {
+    const r = await runHarness('screen-only', 300, 150, 6000, 400);
+    expect(r.killedByTest).toBe(false);
+    expect(r.signalled).toBe(true);
+    expect(r.stdout).toContain('STALL-NOTICE');
+    expect(r.stdout).not.toContain('STOP-NOTICE');
+    expect(r.stdout).not.toContain('COMPLETED');
+    expect(r.stderr).toContain('committed nothing');
+    expect(r.stderr).not.toContain('still progressing');
+  }, 15000);
+
+  test('a run that keeps committing past the deadline is never stopped', async () => {
+    const r = await runHarness('commit-with', 300, 150, 6000, 400);
+    expect(r.killedByTest).toBe(false);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('COMPLETED');
+    expect(r.stdout).not.toContain('STALL-NOTICE');
+    expect(r.stderr).toContain('still progressing');
+  }, 15000);
+});
+
 describe('loop-stall watchdog integration (Bun-pinned, #4281)', () => {
   test('starved loop with a SIGTERM listener is SIGTERMed then SIGKILLed around stall+grace', async () => {
     // stall 300 + grace 250 = ~550ms expected death (plus worker boot). The

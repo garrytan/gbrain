@@ -28,6 +28,7 @@ import { estimateTokens as cl100kTokens, cl100kAvailable } from '../chunkers/tok
 import { estimateTokens as heuristicTokens } from './token-budget.ts';
 import { redactRetrievalOutput } from './output-redaction.ts';
 import { buildSnippetMarker } from './snippet-cap.ts';
+import { deliveredQuoteText, fenceTranscriptRows, neutralizeTranscriptRows } from './transcript-quote.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
 import { chunkGenerationFilter, chunkManifestReads, currentTextProjectionFilter, safeChunksFilter, requiresSafeChunks } from './safe-chunks.ts';
 import { resolveExcludePrivatePages } from './private-visibility.ts';
@@ -37,13 +38,14 @@ import { DEFAULT_INLINE_BODY_BYTES, locateChunksByStoredSpans, projectPageText, 
 import { readSegmentedWindows } from './segmented-evidence.ts';
 import { stripChunkHeader } from '../chunkers/code.ts';
 import { OperationError } from '../ops/contract.ts';
-import { blockDateHeaders, evidenceDateHeaderEnabled } from './evidence-date.ts';
+import { blockDateHeaders, evidenceDateHeaderEnabled, evidenceTitlesEnabled } from './evidence-date.ts';
 import { cutWholePages, resolvePageRankCut, type PageRankCut, type PageRankCutMeta } from './page-rank-cut.ts';
+import { evidenceTailTrimEnabled, trimEvidenceTail, type TailTrimMeta } from './evidence-tail-trim.ts';
 export { pagePlanHits } from './page-plan-hits.ts';
 import { applyEffectiveDate } from '../utils.ts';
 import { configPacking, MIN_EXPLICIT_AUTO_BUDGET, parseAutoPacking, type AutoPacking } from './evidence-packing.ts';
 
-export { AUTO_PACKINGS, AUTO_PACKING_CONFIG_KEY, DEFAULT_AUTO_PACKING, MIN_EXPLICIT_AUTO_BUDGET, autoPackingValueProblem, parseAutoPacking, type AutoPacking } from './evidence-packing.ts';
+export { AUTO_PACKINGS, AUTO_PACKING_CONFIG_KEY, DEFAULT_AUTO_PACKING, MIN_EXPLICIT_AUTO_BUDGET, QUERY_BUDGET_UNIT_CONFIG_KEY, autoPackingValueProblem, parseAutoPacking, queryBudgetUsesAuto, type AutoPacking } from './evidence-packing.ts';
 
 export const RETURN_UNITS = ['chunk', 'window', 'section', 'page', 'auto'] as const;
 export type ReturnUnit = typeof RETURN_UNITS[number];
@@ -115,10 +117,14 @@ export interface DeliveryMeta {
   budget_clamped?: { requested: number; max: number };
   /** Present (true) when every block starts with its one-line date header (`search.evidence_date_header`). */
   date_header?: true;
+  /** Present (true) when page block headers also carry the page title (`search.evidence_titles`). */
+  title_header?: true;
   /** Present only when an explicit budget engaged the cap: the packing that ran. */
   auto_packing?: AutoPacking;
   /** W5: present when `search.page_rank_cut` cut the page candidates (page-rank-cut.ts). */
   page_rank_cut?: PageRankCutMeta;
+  /** Present when `search.evidence_tail_trim` ran on this delivery (evidence-tail-trim.ts). */
+  tail_trim?: TailTrimMeta;
 }
 
 export type DeliveredSearchResult = SearchResult & { delivered: DeliveredEvidence };
@@ -137,10 +143,14 @@ export interface EvidencePlan {
   budgetClamped?: { requested: number; max: number };
   /** `search.evidence_date_header` is on: each block starts with its date header line. */
   dateHeader?: true;
+  /** `search.evidence_titles` is on with the date header: page block header lines end with the page title. */
+  titleHeader?: true;
   /** F2: set only by the search/query caller (withLongPagePolicy); recall, think and assemble_evidence never carry it. */
   longPage?: LongPagePolicy;
   /** W5: page unit + caller budget + `search.page_rank_cut: whole_pages` (page-rank-cut.ts). */
   rankCut?: PageRankCut;
+  /** `auto` with `search.evidence_tail_trim` on: low-scoring conversation blocks past the top 3 are dropped (evidence-tail-trim.ts). */
+  tailTrim?: true;
 }
 
 /** The cap runs only under `auto`, with a budget the caller passed and a packing other than `off`. */
@@ -275,6 +285,7 @@ export async function resolveEvidencePlan(engine: BrainEngine, input: ResolvePla
     }
   }
   const rankCut = unit === 'page' && budgetExplicit ? await resolvePageRankCut(engine, budget) : undefined;
+  const dateHeader = await evidenceDateHeaderEnabled(engine);
   return {
     requestedUnit: unit,
     unit,
@@ -284,8 +295,10 @@ export async function resolveEvidencePlan(engine: BrainEngine, input: ResolvePla
     budgetExplicit,
     packing,
     ...(budgetClamped ? { budgetClamped } : {}),
-    ...(await evidenceDateHeaderEnabled(engine) ? { dateHeader: true as const } : {}),
+    ...(dateHeader ? { dateHeader: true as const } : {}),
+    ...(dateHeader && await evidenceTitlesEnabled(engine) ? { titleHeader: true as const } : {}),
     ...(rankCut ? { rankCut } : {}),
+    ...(unit === 'auto' && await evidenceTailTrimEnabled(engine) ? { tailTrim: true as const } : {}),
   };
 }
 
@@ -1164,6 +1177,8 @@ export interface DeliverOptions {
   timeoutMs?: number;
   /** F2: the long pages selectLongPages chose for these hits (search/query only). */
   longPages?: LongPageSelection;
+  /** The request's query: the tail trim's query-term guard reads it, and the trim never runs without it. */
+  query?: string;
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -1263,8 +1278,13 @@ export async function deliverEvidence(
     for (const h of g.hits) passthrough.push({ rank: hits.indexOf(h), hit: h, reason: 'long_page_chunk' });
   };
 
+  const unit = plan.unit === 'auto' ? 'page' : plan.unit;
+  const segmentedReads = new Map(groups.flatMap(g => {
+    const page = !fetchFailure && g.reason !== 'long_page' && g.pageId !== null ? pages?.get(g.pageId) : undefined;
+    return page?.segmented ? [[g, planSegmentedBlock(engine, page, g.hits, unit, plan.window, scope.detail !== 'low').catch(() => null)] as const] : [];
+  }));
   // C1 date headers: one line per block (passthrough rows included), paid for inside the budget like the title.
-  const headerFor = plan.dateHeader ? await blockDateHeaders(engine, hits, () => fallbacks.add('date_header_unavailable')) : () => '';
+  const headerFor = plan.dateHeader ? await blockDateHeaders(engine, hits, () => fallbacks.add('date_header_unavailable'), { titles: plan.titleHeader === true }) : () => '';
 
   const planned: Block[] = [];
   for (const g of groups) {
@@ -1287,8 +1307,7 @@ export async function deliverEvidence(
     } else {
       const page = pages?.get(g.pageId);
       if (!page) { dropped.not_readable = (dropped.not_readable ?? 0) + 1; continue; }
-      const unit = plan.unit === 'auto' ? 'page' : plan.unit;
-      const read = page.segmented ? await planSegmentedBlock(engine, page, g.hits, unit, plan.window, scope.detail !== 'low').catch(() => null) : planBlock(page, g.hits, unit, plan.window, scope.detail !== 'low');
+      const read = page.segmented ? await segmentedReads.get(g)! : planBlock(page, g.hits, unit, plan.window, scope.detail !== 'low');
       if (!read && opts.liveHits === false) { dropped.not_readable = (dropped.not_readable ?? 0) + 1; continue; }
       b = read ?? fallbackBlock(g.hits[0], g.hits, 'segment_read_failed');
     }
@@ -1356,6 +1375,11 @@ export async function deliverEvidence(
     results = ranked.sort((a, b) => a.rank - b.rank).map(x => x.r);
   }
 
+  let tailTrim: TailTrimMeta | undefined;
+  if (plan.tailTrim && opts.query) {
+    ({ results, meta: tailTrim } = trimEvidenceTail(results, opts.query));
+    if (tailTrim.dropped > 0) dropped.tail_trim = tailTrim.dropped;
+  }
   const tokensDelivered = results.reduce((n, r) => n + r.delivered.tokens, 0);
   const budgetUsed = tokensDelivered + results.reduce((n, r) => n + countEvidenceTokens(r.title ?? '', tokenizer), 0);
   const droppedTotal = Object.values(dropped).reduce((n, v) => n + v, 0);
@@ -1375,7 +1399,9 @@ export async function deliverEvidence(
     ...(plan.budgetClamped ? { budget_clamped: plan.budgetClamped } : {}),
     ...(capped ? { auto_packing: plan.packing } : {}),
     ...(plan.dateHeader ? { date_header: true as const } : {}),
+    ...(plan.titleHeader ? { title_header: true as const } : {}),
     ...(rankCutMeta ? { page_rank_cut: rankCutMeta } : {}),
+    ...(tailTrim ? { tail_trim: tailTrim } : {}),
   };
   return { results: capped ? capEvidenceToBudget(results, delivery) : results, delivery };
 }
@@ -1436,9 +1462,11 @@ function redactDelivered(results: DeliveredSearchResult[], tokenizer: 'cl100k' |
  * EVIDENCE_CUT_MARKER when a body still fits (rank one always is), otherwise
  * dropped as `budget_recount`. `budget_used`, `tokens_delivered`, `blocks`
  * and `dropped` are rewritten from the recount. Runs only when the delivery
- * carries `auto_packing`; everything else is returned as is.
+ * carries `auto_packing`; everything else is returned as is. With `quote`
+ * (search/query and assemble_evidence) a conversation row counts inside its
+ * quote fence (#7600); deliverEvidence's own cap (recall) counts the text as returned.
  */
-export function capEvidenceToBudget<T extends SearchResult & { delivered?: DeliveredEvidence }>(results: T[], delivery: DeliveryMeta): T[] {
+export function capEvidenceToBudget<T extends SearchResult & { delivered?: DeliveredEvidence }>(results: T[], delivery: DeliveryMeta, quote = false): T[] {
   if (!delivery.auto_packing) return results;
   const tokenizer = delivery.tokenizer;
   const count = (text: string | undefined) => countEvidenceTokens(text ?? '', tokenizer);
@@ -1447,24 +1475,36 @@ export function capEvidenceToBudget<T extends SearchResult & { delivered?: Deliv
   let lost = 0;
   const out: T[] = [];
   for (const r of results) {
+    const asDelivered = (text: string) => (quote ? deliveredQuoteText(r, text, delivery.date_header === true) : text);
     const titleTok = count(r.title);
-    const textTok = count(r.chunk_text);
+    const textTok = count(asDelivered(r.chunk_text));
     if (titleTok + textTok <= remaining) {
       remaining -= titleTok + textTok;
       out.push(!r.delivered || r.delivered.tokens === textTok ? r : { ...r, delivered: { ...r.delivered, tokens: textTok } });
       continue;
     }
-    if (out.length > 0 && remaining - titleTok - cutTok < CUT_BODY_MIN) { lost++; continue; }
-    const title = titleTok > Math.max(0, remaining - cutTok - CUT_BODY_MIN) ? sliceToTokenCount(r.title ?? '', Math.max(0, remaining - cutTok - CUT_BODY_MIN), tokenizer) : r.title ?? '';
     const source = (r.chunk_text ?? '').endsWith(EVIDENCE_CUT_MARKER) ? (r.chunk_text ?? '').slice(0, -EVIDENCE_CUT_MARKER.length) : r.chunk_text ?? '';
-    const body = sliceToTokenCount(source, Math.max(0, remaining - count(title) - cutTok), tokenizer).replace(/\s+$/, '');
-    const text = body + EVIDENCE_CUT_MARKER;
-    remaining -= count(title) + count(text);
+    const quoted = asDelivered(source) !== source;
+    const fenceTok = quoted ? count(asDelivered(source)) - count(source) : 0;
+    if (out.length > 0 && remaining - titleTok - cutTok - fenceTok < CUT_BODY_MIN) { lost++; continue; }
+    const titleRoom = Math.max(0, remaining - cutTok - fenceTok - CUT_BODY_MIN);
+    const title = titleTok > titleRoom ? sliceToTokenCount(r.title ?? '', titleRoom, tokenizer) : r.title ?? '';
+    let room = remaining - count(title) - cutTok - fenceTok;
+    let body = '';
+    let text = '';
+    for (;;) {
+      body = sliceToTokenCount(source, Math.max(0, room), tokenizer).replace(/\s+$/, '');
+      text = body + EVIDENCE_CUT_MARKER;
+      const over = count(title) + count(asDelivered(text)) - remaining;
+      if (!quoted || over <= 0 || room <= 0) break;
+      room -= over;
+    }
+    remaining -= count(title) + count(asDelivered(text));
     const row = { ...r, title, chunk_text: text } as T;
     if (r.delivered) {
       const spans = r.delivered.match_spans.filter(s => s.start < body.length).map(s => ({ ...s, end: Math.min(s.end, body.length) }));
       const unmapped = [...new Set([...(r.delivered.unmapped_chunk_ids ?? []), ...r.delivered.match_spans.map(s => s.chunk_id).filter(id => !spans.some(s => s.chunk_id === id))])];
-      row.delivered = { ...r.delivered, match_spans: spans, tokens: count(text), truncated: true, ...(unmapped.length > 0 ? { unmapped_chunk_ids: unmapped } : {}) };
+      row.delivered = { ...r.delivered, match_spans: spans, tokens: count(asDelivered(text)), truncated: true, ...(unmapped.length > 0 ? { unmapped_chunk_ids: unmapped } : {}) };
     }
     out.push(row);
   }
@@ -1559,7 +1599,8 @@ export function unsupportedDelivery(plan: EvidencePlan, reason: string): Deliver
 // Frozen-candidate interface (gbrain-evals E1/E3 parity)
 // ---------------------------------------------------------------------------
 
-export interface FrozenHit { source_id: string; slug: string; chunk_id: number }
+/** `score` (library only): the hit's search score, so the tail trim can run on a frozen list. */
+export interface FrozenHit { source_id: string; slug: string; chunk_id: number; score?: number }
 
 export interface AssembleEvidenceInput {
   hits: FrozenHit[];
@@ -1574,6 +1615,8 @@ export interface AssembleEvidenceInput {
    * evaluation can compare packings on one frozen hit list.
    */
   auto_packing?: AutoPacking;
+  /** Library only: the query the hits answered (the tail trim's guard reads it). */
+  query?: string;
 }
 
 export interface AssembleEvidenceOutput {
@@ -1632,7 +1675,7 @@ export async function resolveFrozenHits(
       chunk_source: (r.chunk_source ?? 'compiled_truth') as SearchResult['chunk_source'],
       chunk_id: r.chunk_id == null ? 0 : Number(r.chunk_id),
       chunk_index: r.chunk_index == null ? 0 : Number(r.chunk_index),
-      score: 0,
+      score: Number.isFinite(h.score) ? h.score! : 0,
       stale: false,
     };
     // The page date, normalized exactly as live search rows are, so frozen
@@ -1676,12 +1719,12 @@ export async function assembleEvidenceForHits(engine: BrainEngine, input: Assemb
   });
   const { rows, unresolved } = await resolveFrozenHits(engine, input.hits, scope);
   if (!plan) {
-    const out = redactRetrievalOutput(rows, {});
-    return { results: out.results, delivery: null, unresolved };
+    const out = redactRetrievalOutput(neutralizeTranscriptRows(rows), {});
+    return { results: fenceTranscriptRows(out.results), delivery: null, unresolved };
   }
-  const d = await deliverEvidence(engine, rows, plan, scope, { liveHits: true });
-  const out = redactRetrievalOutput(d.results, d.delivery);
-  return { results: capEvidenceToBudget(out.results, out.meta), delivery: out.meta, unresolved };
+  const d = await deliverEvidence(engine, rows, plan, scope, { liveHits: true, ...(input.query ? { query: input.query } : {}) });
+  const out = redactRetrievalOutput(neutralizeTranscriptRows(d.results, d.delivery.date_header === true), d.delivery);
+  return { results: fenceTranscriptRows(capEvidenceToBudget(out.results, out.meta, true), { count: text => countEvidenceTokens(text, out.meta.tokenizer), delivery: out.meta }), delivery: out.meta, unresolved };
 }
 
 /** SHA-256 over the delivered evidence (see docs/evidence-delivery.md). */

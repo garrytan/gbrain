@@ -52,6 +52,14 @@ describe('formatResult with --timings', () => {
     expect(t.remote).toBeUndefined();
   });
 
+  test('the op\'s stage parts ride along as parts', () => {
+    setCliOptions({ ...DEFAULT_CLI_OPTIONS, timings: true });
+    captureRetrievalMeta('retrieval', { ...META, timings: { ...META.timings, parts_ms: { response: { evidence: 1, meta: 2 } } } });
+    const t = JSON.parse(formatResult('search', [], { json: true })).timings_ms;
+    expect(t.parts).toEqual({ response: { evidence: 1, meta: 2 } });
+    expect(t.stages).toEqual({ setup: 5, lexical: 20, embed: 10, response: 3, other: 2 });
+  });
+
   test('a phase that did not run is absent, and a missing cost reads as zero calls', () => {
     setCliOptions({ ...DEFAULT_CLI_OPTIONS, timings: true });
     const doc = JSON.parse(formatResult('query', [], { json: true }));

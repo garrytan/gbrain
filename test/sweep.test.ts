@@ -27,6 +27,7 @@ import { _resetStdoutRedirectForTests } from '../src/core/console-prefix.ts';
 import type { CapabilityReport } from '../src/core/capability.ts';
 import { __setChatTransportForTests, type ChatResult } from '../src/core/ai/gateway.ts';
 import { runServe, type ServeOptions } from '../src/commands/serve.ts';
+import { beginForegroundRequest, _resetForegroundActivityForTests } from '../src/core/foreground-activity.ts';
 import { spoolPath } from './helpers/corpus-spool.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { runExtract } from '../src/commands/extract.ts';
@@ -849,6 +850,35 @@ describe('serve.ts idle sweep wiring [ENG-5]', () => {
     const code = await h.exited;
     expect(code).toBe(0);
     expect(h.timers.cleared).toContain(handle);
+  });
+
+  test('a warm CLI socket request (foreground-activity.ts) counts as activity: a tick after one, or during one, skips the sweep', async () => {
+    _resetForegroundActivityForTests();
+    const sweepCalls: BrainEngine[] = [];
+    const h = makeServeHarness({ sweepEnabled: true, sweep: async (e) => { sweepCalls.push(e); } });
+    await runServe(h.engineStub, [], h.serveOpts);
+    const { fn } = h.timers.registered[0];
+    fn(); // attach listener
+    await new Promise(r => setTimeout(r, 5));
+    beginForegroundRequest()();
+    fn();
+    await settle();
+    expect(sweepCalls.length).toBe(0);
+    const finish = beginForegroundRequest();
+    await new Promise(r => setTimeout(r, 5));
+    fn();
+    await settle();
+    expect(sweepCalls.length).toBe(0);
+    finish();
+    await new Promise(r => setTimeout(r, 5));
+    fn(); // the window still saw the request finish
+    await settle();
+    expect(sweepCalls.length).toBe(0);
+    fn(); // a quiet window
+    await settle();
+    expect(sweepCalls.length).toBe(1);
+    h.stdin.emit('end');
+    expect(await h.exited).toBe(0);
   });
 
   test('a rejecting sweep never kills the serve', async () => {

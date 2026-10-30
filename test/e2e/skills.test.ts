@@ -1,14 +1,19 @@
 /**
  * E2E Skill Tests — Tier 2 (requires API keys + openclaw)
  *
- * Tests gbrain skills via OpenClaw agent CLI invocations.
- * Asserts on DB state changes, not LLM output text.
+ * Tests gbrain skills via OpenClaw agent CLI invocations. Each test requires
+ * that the agent called a gbrain MCP tool: OpenClaw exits 0 and prints text
+ * even when it never reached gbrain (no MCP server configured, a rejected
+ * model key), so exit code and output alone prove nothing (#8002).
  *
  * Requires:
  *   - DATABASE_URL
  *   - OPENAI_API_KEY
  *   - ANTHROPIC_API_KEY
  *   - openclaw CLI installed with at least one agent configured
+ *   - GBRAIN_TEST_TIER2_MCP_TAP_LOG: the JSON-RPC log of gbrain's MCP server, which
+ *     scripts/ci-openclaw-mcp.sh registers with OpenClaw behind
+ *     scripts/ci-mcp-tap.sh
  *
  * Skips gracefully if any dependency is missing.
  * Run: source ~/.zshrc && DATABASE_URL=... bun test test/e2e/skills.test.ts
@@ -16,7 +21,9 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { join } from 'path';
+import { existsSync, readFileSync, statSync } from 'fs';
 import { hasDatabase, setupDB, teardownDB, importFixtures, getEngine } from './helpers.ts';
+import { tapToolCalls } from '../../scripts/mcp-tap-calls.ts';
 
 // Detect the default openclaw agent
 function detectAgent(): string | null {
@@ -42,6 +49,7 @@ function hasTier2Deps(): { ok: boolean; reason?: string; agent?: string } {
   if (!hasDatabase()) return { ok: false, reason: 'DATABASE_URL not set' };
   if (!process.env.OPENAI_API_KEY) return { ok: false, reason: 'OPENAI_API_KEY not set' };
   if (!process.env.ANTHROPIC_API_KEY) return { ok: false, reason: 'ANTHROPIC_API_KEY not set' };
+  if (!process.env.GBRAIN_TEST_TIER2_MCP_TAP_LOG) return { ok: false, reason: 'GBRAIN_TEST_TIER2_MCP_TAP_LOG not set (run scripts/ci-openclaw-mcp.sh)' };
 
   // Check if openclaw is installed
   try {
@@ -110,13 +118,24 @@ function runOpenClaw(prompt: string, timeoutMs = 120_000) {
   };
 }
 
+/** The gbrain MCP tools the agent called while `run` ran, read from the tap log. */
+function gbrainToolCalls<T>(run: () => T): { result: T; calls: string[] } {
+  const log = process.env.GBRAIN_TEST_TIER2_MCP_TAP_LOG!;
+  const start = existsSync(log) ? statSync(log).size : 0;
+  const result = run();
+  const calls = existsSync(log) ? tapToolCalls(readFileSync(log).subarray(start).toString('utf8')) : [];
+  return { result, calls };
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Ingest Skill
 // ─────────────────────────────────────────────────────────────────
 
 describeT2('E2E Tier 2: Ingest Skill', () => {
-  // Note: the agent uses its own configured DB, not the test DB.
-  // We verify the agent responds, not DB state changes.
+  beforeAll(async () => {
+    await setupDB();
+  }, 30_000);
+  afterAll(teardownDB);
 
   test('ingest a meeting transcript creates person pages and links', async () => {
     const transcript = `
@@ -130,16 +149,14 @@ Decision: Hire VP Sales by end of Q2.
 Action: Sarah to draft VP Sales job description by April 7.
     `.trim();
 
-    const { text, exitCode, durationMs } = runOpenClaw(
-      `Ingest this meeting transcript into gbrain. Create or update pages for each person mentioned. Add timeline entries for today's date. Here is the transcript:\n\n${transcript}`,
+    const { result: { text, exitCode, durationMs }, calls } = gbrainToolCalls(() => runOpenClaw(
+      `Using the gbrain MCP tools, ingest this meeting transcript into gbrain. Create or update pages for each person mentioned. Add timeline entries for today's date. Here is the transcript:\n\n${transcript}`,
       180_000,
-    );
+    ));
 
-    console.log(`  Ingest skill completed in ${durationMs}ms`);
+    console.log(`  Ingest skill completed in ${durationMs}ms; gbrain tool calls: ${calls.join(', ') || 'none'}`);
 
-    // The agent runs against its own configured gbrain DB, not our test DB.
-    // We can't assert on test DB state. Instead, verify the agent responded
-    // with content indicating it processed the transcript.
+    expect(calls.length, `the agent never called a gbrain MCP tool; it said: ${text.slice(0, 500)}`).toBeGreaterThan(0);
     expect(text.length).toBeGreaterThan(0);
     expect(exitCode).toBe(0);
   }, 240_000);
@@ -157,14 +174,14 @@ describeT2('E2E Tier 2: Query Skill', () => {
   afterAll(teardownDB);
 
   test('query skill returns results for known topic', async () => {
-    const { text, exitCode, durationMs } = runOpenClaw(
-      'Search gbrain for "NovaMind" and tell me what you found.',
+    const { result: { text, exitCode, durationMs }, calls } = gbrainToolCalls(() => runOpenClaw(
+      'Use the gbrain MCP search tool to search gbrain for "NovaMind" and tell me what you found.',
       180_000,
-    );
+    ));
 
-    console.log(`  Query skill completed in ${durationMs}ms`);
+    console.log(`  Query skill completed in ${durationMs}ms; gbrain tool calls: ${calls.join(', ') || 'none'}`);
 
-    // The agent should have responded with something
+    expect(calls.length, `the agent never called a gbrain MCP tool; it said: ${text.slice(0, 500)}`).toBeGreaterThan(0);
     expect(text.length).toBeGreaterThan(0);
     expect(exitCode).toBe(0);
   }, 240_000);
@@ -182,13 +199,14 @@ describeT2('E2E Tier 2: Health Skill', () => {
   afterAll(teardownDB);
 
   test('health skill reports brain status', async () => {
-    const { text, exitCode, durationMs } = runOpenClaw(
-      'Run gbrain doctor --json and tell me the results.',
+    const { result: { text, exitCode, durationMs }, calls } = gbrainToolCalls(() => runOpenClaw(
+      'Use the gbrain MCP tools to report the brain\'s status: call whoami and list_pages, then tell me what you found.',
       180_000,
-    );
+    ));
 
-    console.log(`  Health skill completed in ${durationMs}ms`);
+    console.log(`  Health skill completed in ${durationMs}ms; gbrain tool calls: ${calls.join(', ') || 'none'}`);
 
+    expect(calls.length, `the agent never called a gbrain MCP tool; it said: ${text.slice(0, 500)}`).toBeGreaterThan(0);
     expect(text.length).toBeGreaterThan(0);
     expect(exitCode).toBe(0);
   }, 240_000);

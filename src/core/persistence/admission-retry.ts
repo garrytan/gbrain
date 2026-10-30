@@ -1,5 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { OperationError, opError } from '../ops/contract.ts';
+import { markNotAdmitted, OperationError, opError } from '../ops/contract.ts';
 import { getCode, isConnectionLoss } from '../retry-matcher.ts';
 
 /** #6355: how many times an admission attempt is re-run after the session dropped under it, and the pauses before each re-run. */
@@ -56,7 +56,8 @@ export async function retryWriteAdmission<T>(requestId: string, attempt: (remain
           `Retry the same operation, arguments, and request_id ${requestId}. No queued receipt has been confirmed.`);
         unavailable.writeError = 'storage_error';
         unavailable.detail = 'database_contention';
-        throw unavailable;
+        unavailable.reason = 'database_contention';
+        throw markNotAdmitted(unavailable);
       }
       // The transaction has rolled back and released its connection before any
       // backoff. Jitter keeps independent ingress processes from retrying in step.

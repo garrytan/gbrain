@@ -18,6 +18,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
 import { listCorePages, loadCoreBlock } from '../src/core/core-memory.ts';
 import { runCore } from '../src/commands/core.ts';
+import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { coreMemoryCheck } from '../src/commands/doctor/checks/core-memory.ts';
 
 let engine: PGLiteEngine;
@@ -73,7 +74,7 @@ async function cli(args: string[]): Promise<{ out: string; err: string }> {
   console.log = (...a: unknown[]) => { out.push(a.join(' ')); };
   console.error = (...a: unknown[]) => { err.push(a.join(' ')); };
   try { await withVerifiedLocalRegistration(engine, cliRegistration, () => runCore(engine, args)); }
-  finally { console.log = log; console.error = error; }
+  finally { console.log = log; console.error = error; _resetCliExitVerdictForTests(); process.exitCode = 0; }
   return { out: out.join('\n'), err: err.join('\n') };
 }
 

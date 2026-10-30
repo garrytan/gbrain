@@ -35,6 +35,8 @@ const EXEMPT = {
   'src/core/persistence/connector-google-receipts.ts': 'connector receipt rows, not page text',
   'src/core/persistence/projection-reindex.ts': 'rebuilds derived projections; page text is unchanged',
   'src/core/persistence/noop-kernel.ts': 'decides that nothing would change; publishes nothing',
+  'src/core/generations/repair.ts': 'the managed restore of a database-only generation (chronicle event pages, never core pages) revives and retires derived items through the adapter inside the coordinated request',
+  'src/core/generations/managed.ts': 'the generation activation flips the derived ledger; it writes no page text (its member page writes go through preparePageMutation)',
   'src/core/persistence/consumer.ts': 'dispatches to preparers; no page content of its own',
   'src/core/persistence/coordinator.ts': 'takes the ordered source lock from exclusiveSources; prepares nothing itself',
   'src/core/persistence/effect-journal.ts': 'post-publication effects; no page text',
@@ -54,6 +56,7 @@ const EXEMPT = {
   'src/core/cycle/extract-takes.ts': 'takes reextract writes take rows only; page text is unchanged',
   'src/core/persistence/upload-streamed.ts': 'an upload over the single-string ceiling refuses when the page is or would become always-loaded core (the guard renders it whole); smaller uploads go through preparePageMutation',
   'src/core/persistence/page-edit.ts': 'segmented edit_page splices through page-append.ts prepareSegmentedSpliceMutation, which declines an always-loaded core page to preparePageMutation; the splice never changes frontmatter',
+  'src/core/trust/release-publish.ts': 'append mode publishes the page write prepareFenceFactAppend builds with preparePageMutation (core guard and exclusiveSources spread into the result); index-existing indexes a fence row the file already holds and changes no page text',
   'src/core/repair/take-supersession.ts': 'reprojection writes takes.superseded_by only; fence edits go through put_page (preparePageMutation)',
 };
 

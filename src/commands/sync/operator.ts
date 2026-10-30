@@ -12,7 +12,9 @@ import type { BrainEngine } from '../../core/engine.ts';
 import { cliRenderContext, renderAction } from '../../core/agent-output.ts';
 import { writeJsonDocument } from '../../core/cli-force-exit.ts';
 import { opError } from '../../core/ops/contract.ts';
-import { readSyncStatus, unblockSync, type SyncStatus } from '../../core/persistence/sync-status.ts';
+import { readSyncStatus, unblockSync, type SyncStatus, type SyncStatusHold } from '../../core/persistence/sync-status.ts';
+import { pageSortedRows, topCounts } from '../../core/bounded-listing.ts';
+import { nextListingCommand, parseListingFlags } from '../../core/bounded-listing-cli.ts';
 import { HOLD_ATTEMPTS_NEEDS_HUMAN, HOLD_ESCALATE_MS } from '../../core/persistence/sync-fault-class.ts';
 import { CONTENT_REPAIR_HOLD_KINDS } from '../../core/repair/content-lane.ts';
 import { resolveSourceIdEngineFree } from '../../core/source-resolver.ts';
@@ -20,8 +22,14 @@ import { resolveSourceIdEngineFree } from '../../core/source-resolver.ts';
 /** The hold codes the content-repair lane clears today, for the help text. */
 const CONTENT_HOLD_CODES = Object.entries(CONTENT_REPAIR_HOLD_KINDS).filter(([, kind]) => kind).map(([code]) => code).join(', ');
 
+/** #7243: how the text status names what superseded a last error. */
+const SUPERSEDED_TEXT: Record<NonNullable<NonNullable<SyncStatus['last_error']>['superseded']>['by'] & string, string> = {
+  commit: 'the sync committed a page', admission: 'a later sync admitted a page', level_read: 'a later pass read the source', pin: 'a later pass started',
+};
+
 export function printSyncStatusHelp(): void {
   console.log(`Usage: gbrain sync status --source <id> [--detail] [--json]
+                          [--limit <n>] [--cursor <next_cursor>] [--all] [--hold-state <state>]
 
 Where a managed catch-up stands and what to do next, for an operator agent:
 the newest sync pass (convergence: outcome, round, candidates, settled,
@@ -56,6 +64,17 @@ action (who finishes it):
           spelling, deletes_withheld
 Committed mode reads a file's working-copy dirtiness only for candidates, so
 dirty counts only paths sync would otherwise admit.
+
+Every status names last_commit (the commit sync applied through) and live (the
+process holding the drain lease, a serve pass included, with its heartbeat and
+progress; null when nothing holds it).
+
+Holds are bounded: holds_summary counts every hold by code and by state
+(needs_human | actionable | held), then holds lists the first ${PLAIN_STATUS_HOLDS}
+(needs_human first). With --detail the list pages (100 per page): holds_page
+carries returned, limit, complete, next_cursor and next_command; --limit <n>
+sets the page size, --cursor <next_cursor> prints the next page, --all prints
+every hold, and --hold-state <state> lists only that state.
 
 Decision table: docs/guides/sync-unblock-runbook.md
 `);
@@ -132,10 +151,39 @@ function sourceOf(args: string[]): string {
   return source;
 }
 
+/** #7243: the holds a plain status lists (the rest are counted in `holds_summary`; `--detail` pages through them). */
+export const PLAIN_STATUS_HOLDS = 20;
+const HOLD_STATES = ['needs_human', 'actionable', 'held'] as const;
+type HoldState = typeof HOLD_STATES[number];
+/** A hold's state: a person decides, `sync unblock` has a safe action for it, or it stays held (by design or until its file changes). */
+const holdState = (hold: SyncStatusHold): HoldState => hold.needs_human ? 'needs_human' : hold.safe_actions[0] !== 'none' ? 'actionable' : 'held';
+
+/**
+ * #7243: the holds of one status read as a bounded listing: counts by code and state over every hold, then one page,
+ * needs-human first (a plain status lists the first `PLAIN_STATUS_HOLDS`; `--detail`, `--limit`, `--cursor` and `--all` page).
+ * A first page that holds every hold keeps the earlier shape (`holds` only, beside the summary).
+ */
+function holdsListing(holds: readonly SyncStatusHold[], args: string[], sourceId: string) {
+  const { request, rest } = parseListingFlags(args, 'gbrain sync status');
+  const stateAt = rest.indexOf('--hold-state');
+  const state = stateAt >= 0 ? rest[stateAt + 1] : undefined;
+  if (stateAt >= 0 && !HOLD_STATES.includes(state as HoldState)) {
+    throw opError('invalid_params', `--hold-state must be one of ${HOLD_STATES.join(', ')} (got "${state ?? ''}").`, `Example: gbrain sync status --source ${sourceId} --detail --hold-state needs_human --json`);
+  }
+  const sized = args.some(a => a === '--all' || a === '--limit' || a.startsWith('--limit='));
+  const page = pageSortedRows(state ? holds.filter(hold => holdState(hold) === state) : holds, hold => [String(HOLD_STATES.indexOf(holdState(hold))), hold.path],
+    args.includes('--detail') || sized ? request : { ...request, limit: PLAIN_STATUS_HOLDS }, `sync_status_holds:${sourceId}:${state ?? 'all'}`);
+  const summary = { total: holds.length, by_code: topCounts(holds, hold => hold.code, 20), by_state: topCounts(holds, holdState, 20) };
+  const paging = page.complete && request.cursor === undefined ? null
+    : { returned: page.returned, limit: page.limit, complete: page.complete, next_cursor: page.next_cursor, next_command: nextListingCommand(['gbrain', 'sync', 'status', ...rest], page) };
+  return { summary, paging, rows: page.rows };
+}
+
 export async function runSyncStatus(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) return printSyncStatusHelp();
   const sourceId = sourceOf(args);
   const status = await readSyncStatus(engine, sourceId, { detail: args.includes('--detail') });
+  const listing = holdsListing(status.holds, args, sourceId);
   const ctx = cliRenderContext();
   // #6696 (A4): the capacity picture rides every status read (unthrottled), from the 60 s snapshot.
   // #6803 C4: one bounded wait per status read, shared with its notices; a slow snapshot reads unknown for this call only.
@@ -150,22 +198,43 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
   const notifierBlock = await readNotifierBlock(engine, sourceId).catch(() => null);
   const notifier = notifierBlock && { ...notifierBlock, fix: notifierBlock.fix ? renderAction(notifierBlock.fix, ctx) : null };
   const read = (r: typeof status.cursors_read) => r.status === 'read' ? r : { ...r, fix: renderAction(r.fix, ctx) };
-  const rendered = { ...status, holds: status.holds.map(hold => ({ ...hold, fix: renderAction(hold.fix, ctx) })),
-    git_push_holds: status.git_push_holds.map(hold => ({ ...hold, fix: renderAction(hold.fix, ctx) })), next: status.next ? renderAction(status.next, ctx) : null,
+  const { holds: _holds, ...shown } = status;
+  const rendered = { ...shown,
+    git_push_holds: status.git_push_holds.map(hold => ({ ...hold, fix: renderAction(hold.fix, ctx) })),
+    fence_holds: status.fence_holds.map(hold => ({ ...hold, fix: renderAction(hold.fix, ctx) })), next: status.next ? renderAction(status.next, ctx) : null,
     checkpoint_blockers_read: read(status.checkpoint_blockers_read), cursors_read: read(status.cursors_read), terminal_failures_read: read(status.terminal_failures_read),
     landing_read: read(status.landing_read), landing: status.landing?.status === 'ok' ? { ...status.landing, pages: status.landing.pages.map(page => ({ ...page, fix: page.fix ? renderAction(page.fix, ctx) : null })) } : status.landing,
-    capacity: { status: snapshot.status, pause_pct: snapshot.pause_pct, low: snapshot.low, paused: snapshot.paused }, freshness, notifier, ...(notices.length ? { notices } : {}) };
+    capacity: { status: snapshot.status, pause_pct: snapshot.pause_pct, low: snapshot.low, paused: snapshot.paused }, freshness, notifier, ...(notices.length ? { notices } : {}),
+    // #7243: the holds come last, summary first, so a reader can stop before the rows.
+    holds_summary: listing.summary, ...(listing.paging ? { holds_page: listing.paging } : {}), holds: listing.rows.map(hold => ({ ...hold, fix: renderAction(hold.fix, ctx) })) };
   if (args.includes('--json')) return writeJsonDocument(JSON.stringify(rendered, null, 2));
   const c = status.cursor;
   console.log(syncStatusHeadline(status));
   console.log(`  ${c ? c.done ? `last run finished at ${c.index}/${c.total} (pinned ${c.pinned_target?.slice(0, 8) ?? '?'})` : `cursor ${c.index}/${c.total} at pinned target ${c.pinned_target?.slice(0, 8) ?? '?'}`
     + `${c.last_advance_at ? `, last advance ${c.last_advance_at}` : ''}` : 'no managed cursor'}`);
   console.log(`  committed in the last 10 minutes: ${status.committed_last_10m}${status.rate_pages_per_min !== null ? `, ${status.rate_pages_per_min} pages/min` : ''}`);
+  // #7243: the applied-through commit, the job doing the work, and what the newest pass pinned against what a stamp backs.
+  console.log(`  last synced commit: ${status.last_commit?.slice(0, 8) ?? 'none yet'}`);
+  console.log(`  last converged: ${status.last_sync_at ?? 'never'}; last committed write: ${status.last_committed_at ?? 'none yet'}${status.last_committed_at && (!status.last_sync_at || status.last_committed_at > status.last_sync_at) ? ' (still importing since it last converged)' : ''}`);
+  const live = status.live;
+  console.log(`  live: ${live ? `${live.kind}${live.job_id !== null ? ` job #${live.job_id}` : live.id ? ` ${live.id}` : ''}${live.pid ? ` (PID ${live.pid})` : ''} holds the drain lease since ${live.started_at ?? '?'}`
+    + `${live.progress ? `, ${live.progress.committed} page(s) committed since` : ''}${live.stalled ? ', STALLED (no commit or save for the stall window)' : ''}` : 'nothing holds the drain lease'}`);
+  const cut = status.interrupted;
+  if (cut) console.log(`  INTERRUPTED: pass ${cut.pass_id.slice(0, 8)} stopped before it ended (last write ${cut.since})${cut.holder ? `; its holder ${cut.holder.kind}${cut.holder.pid ? ` (PID ${cut.holder.pid})` : ''} stopped renewing the lease at ${cut.holder.last_heartbeat_at ?? '?'}${cut.holder.progress ? ` after committing ${cut.holder.progress.committed} page(s)` : ''}` : ''}`);
+  const pass = status.convergence?.dry_run === false ? status.convergence : null;
+  if (pass) console.log(`  newest pass: ${pass.outcome}${pass.stop_reason ? ` (${pass.stop_reason})` : ''}, round ${pass.round}, pinned ${pass.target.slice(0, 8)}; `
+    + `${pass.converged_target ? `last converged at ${pass.converged_target.slice(0, 8)} (${pass.converged_at})` : 'no converged stamp stored'}`);
   if (freshness) console.log(`  freshness: ${formatSyncFreshness(freshness)}`);
   if (notifierBlock) console.log(`  ${formatNotifierBlock(sourceId, notifierBlock)}`);
   console.log(`  holds: ${status.holds.length}${status.holds.length ? ` (${status.holds.filter(h => h.needs_human).length} need a person)` : ''}; last error: ${status.last_error ? `${status.last_error.code} [${status.last_error.class}]` : 'none'}`);
-  for (const hold of status.holds) console.log(`    ${hold.path}${hold.slug ? ` (${hold.slug})` : ''}: ${hold.code} [${hold.class}] safe: ${hold.safe_actions.join(',')}${hold.needs_human ? ` NEEDS HUMAN: ${hold.human_reason}` : ''}${hold.attempts > 1 ? ` (held ${hold.attempts} times)` : ''}`);
-  if (status.last_error) console.log(`    ${status.last_error.path ?? ''}: ${status.last_error.code}${status.last_error.superseded ? ` (superseded: the sync committed a page at ${status.last_error.superseded.at}, after this error)` : ` safe: ${status.last_error.safe_actions.join(',')}${status.last_error.needs_human ? ` NEEDS HUMAN: ${status.last_error.human_reason}` : ''}`}`);
+  for (const hold of listing.rows) console.log(`    ${hold.path}${hold.slug ? ` (${hold.slug})` : ''}: ${hold.code} [${hold.class}] safe: ${hold.safe_actions.join(',')}${hold.needs_human ? ` NEEDS HUMAN: ${hold.human_reason}` : ''}${hold.attempts > 1 ? ` (held ${hold.attempts} times)` : ''}`);
+  if (listing.paging && !listing.paging.complete) {
+    const codes = Object.entries(listing.summary.by_code.counts).map(([code, n]) => `${code} ${n}`).join(', ');
+    console.log(`    ... ${status.holds.length - listing.rows.length} more not listed here (${codes}${listing.summary.by_code.other ? `, other ${listing.summary.by_code.other}` : ''}); `
+      + `${listing.paging?.next_command ? listing.paging.next_command.join(' ') : `gbrain sync status --source ${sourceId} --detail --json`} lists them`);
+  }
+  const superseded = status.last_error?.superseded;
+  if (status.last_error) console.log(`    ${status.last_error.path ?? ''}: ${status.last_error.code}${superseded ? ` (superseded: ${SUPERSEDED_TEXT[superseded.by ?? 'commit']} at ${superseded.at}, after this error${superseded.age_seconds !== undefined ? `, recorded ${Math.round(superseded.age_seconds / 60)} min ago` : ''})` : ` safe: ${status.last_error.safe_actions.join(',')}${status.last_error.needs_human ? ` NEEDS HUMAN: ${status.last_error.human_reason}` : ''}`}`);
   const ob = status.oldest_blocker;
   console.log(`  oldest unfinished request: ${ob.status === 'unknown' ? `unknown (${ob.reason})` : ob.request ? `${ob.request.request_id} (${ob.request.state}${ob.request.step ? `, step ${ob.request.step}` : ''}${ob.request.blocked_by ? `, blocked by ${ob.request.blocked_by.predicate}` : ''})` : 'none'}`
     + `; recovery records: ${status.recovery.status === 'unknown' ? `unknown (${status.recovery.reason})` : status.recovery.count}`);
@@ -185,6 +254,7 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
       + `${landing.gaps ? ` (${Object.entries(landing.by_state).map(([state, n]) => `${state} ${n}`).join(', ')})` : ''}`);
     for (const page of landing.pages) console.log(`    ${page.slug}: ${page.state}, synced ${page.age_seconds} s ago${page.fix?.argv ? `; fix: ${page.fix.argv.join(' ')}` : ''}`);
   } else if (landing) console.log(`  synced but not searchable: ${landing.status} (${landing.reason})`);
+  for (const hold of status.fence_holds) console.log(`  ${hold.kind} held (${hold.reason}) on ${hold.slug}: ${hold.rows} row(s) kept live; ASK THE USER: ${hold.fix.user_message ?? hold.fix.why}`);
   for (const hold of status.git_push_holds) console.log(`  git backups not pushed: ${hold.retrying} retrying, ${hold.parked} parked (${hold.codes.join(', ')}) since ${hold.oldest_at}${hold.conflict ? `; CONFLICT in ${hold.conflict.paths.join(', ')} needs a person` : ''}`);
   const connector = status.connector_last_error;
   if (connector) console.log(`  connector: ${connector.stopped ? 'STOPPED, ' : ''}the last ${connector.consecutive} run(s) ended on ${connector.code}${connector.slug ? ` at ${connector.slug}` : ''}: ${connector.message}`);
@@ -211,6 +281,8 @@ export function syncStatusHeadline(status: Pick<SyncStatus, 'source_id' | 'state
     case 'head_blocked': return `Source ${status.source_id} is blocked: its oldest write waits on something only an operator clears.`;
     case 'recovery_blocked': return `Source ${status.source_id} is blocked: a write's recovery record found changed bytes on disk.`;
     case 'pass_unfinished': return `Source ${status.source_id} is resumable: the newest sync pass did not finish; the next sync continues it.`;
+    case 'pass_interrupted': return `Source ${status.source_id} is resumable: the newest sync pass stopped before it ended and no process owns it (killed, crashed or stopped by an unrecorded error); the next sync continues it.`;
+    case 'pass_abandoned': return `Source ${status.source_id} is blocked: its sync passes keep stopping before they end; another plain sync will not change that (report what doctor shows).`;
     case 'not_converged': return `Source ${status.source_id} is resumable: the newest sync pass ran out of rounds before every path settled.`;
     case 'settle_mismatch': return `Source ${status.source_id} is resumable: a path keeps settling without reading settled; three passes in a row hold it.`;
     case 'deletes_withheld': return `Source ${status.source_id} is blocked: sync withheld a mass delete; the rest of the source is synced.`;

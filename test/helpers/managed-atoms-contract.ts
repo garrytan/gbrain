@@ -470,7 +470,10 @@ export async function exerciseManagedAtomRetirement(engine: BrainEngine, scenari
           const written = await writeSource(bodies[1]);
           for (const [name, hash] of [['legacy-prefix', written.content_hash!.slice(0, 16)], ['legacy-full', written.content_hash!]] as const) {
             await engine.putPage(`atoms/2026-01-01/${name}`, { type: 'atom', title: name, compiled_truth: `Legacy atom ${name}.`,
-              frontmatter: { source_slug: slug, source_hash: hash } }, { sourceId });
+              frontmatter: { source_slug: slug, source_hash: hash, extracted_by: 'extract_atoms-v0.41.2.1' } }, { sourceId });
+            // GBRA-161: an atom from before the generation ledger retires only on retained extractor evidence (a page
+            // version the extractor wrote, unedited since), which a real earlier extraction of the older content leaves.
+            if (name === 'legacy-full') await engine.createVersion(`atoms/2026-01-01/${name}`, { sourceId });
           }
           return written;
         });
@@ -623,11 +626,12 @@ export async function exerciseManagedAtomBatch(engine: BrainEngine, scenario: ty
       expect(first.status).toBe('warn');
       expect(first.details?.atoms_extracted).toBe(0);
       expect(calls).toBe(1);
-      const accepted = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 ORDER BY sequence', [sourceId]);
+      const accepted = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'kind' IS DISTINCT FROM 'managed_generation_activate' ORDER BY sequence", [sourceId]);
       expect(accepted).toHaveLength(3);
+      expect(await engine.executeRaw("SELECT state FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_generation_activate'", [sourceId])).toHaveLength(1);
       const completion = await waitForWrite(observedEngine, accepted[2], { engine: engine.kind });
       expect(completion.state).toBe(scenario === 'completion_rollback' ? 'failed' : 'conflict');
-      const originals = await engine.executeRaw('SELECT request_id,state,outcome,error_code,error_message FROM persistence_requests WHERE source_id=$1 ORDER BY sequence', [sourceId]);
+      const originals = await engine.executeRaw("SELECT request_id,state,outcome,error_code,error_message FROM persistence_requests WHERE source_id=$1 AND intent->>'kind' IS DISTINCT FROM 'managed_generation_activate' ORDER BY sequence", [sourceId]);
       expect(originals[0].state).toBe('committed');
       expect(originals[1].state).toBe(scenario === 'partial_publication' ? 'conflict' : 'committed');
       if (scenario !== 'partial_publication') expect(injected).toBe(true);
@@ -645,7 +649,7 @@ export async function exerciseManagedAtomBatch(engine: BrainEngine, scenario: ty
       const replay = await runPhaseExtractAtoms(observedEngine, { ...opts, _chat: providerFree });
       expect(replay.status).toBe('warn');
       expect(calls).toBe(1);
-      expect(await engine.executeRaw('SELECT request_id,state,outcome,error_code,error_message FROM persistence_requests WHERE source_id=$1 ORDER BY sequence', [sourceId])).toEqual(originals);
+      expect(await engine.executeRaw("SELECT request_id,state,outcome,error_code,error_message FROM persistence_requests WHERE source_id=$1 AND intent->>'kind' IS DISTINCT FROM 'managed_generation_activate' ORDER BY sequence", [sourceId])).toEqual(originals);
       if (scenario.endsWith('_after_provenance')) {
         await expect(retryManagedAtomBatch(observedEngine, sourceId, completion.request_id, 'reviewed-retry')).rejects.toMatchObject({ code: 'page_identity_changed' });
         expect(await countExtractAtomsBacklog(engine, sourceId)).toBe(1);

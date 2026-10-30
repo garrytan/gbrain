@@ -95,7 +95,7 @@ const REQUEST_SIGNAL = (pr: string) => `CASE
   WHEN ${pr}.intent->>'kind' LIKE 'connector_%' OR ${pr}.intent->>'kind' LIKE 'managed_connector_%' THEN 'external_untrusted'
   WHEN ${pr}.authority->>'remote' = 'true' THEN 'agent_written'
   WHEN ${pr}.intent->>'kind' LIKE 'managed_sync_%' OR ${pr}.intent->>'kind' IN ('managed_file_import','managed_file_repair','canonical_reconcile','managed_grandfather') THEN 'operator_curated'
-  WHEN ${pr}.operation IN ('put_page','capture','edit_page','append_page','remember','takes_add','takes_update','takes_supersede','add_timeline_entry','extract_facts','restore_page','revert_version') THEN 'agent_written'
+  WHEN ${pr}.operation IN ('put_page','capture','edit_page','append_page','remember','takes_add','takes_update','takes_supersede','add_timeline_entry','add_link','remove_link','extract_facts','restore_page','revert_version') THEN 'agent_written'
   END`;
 
 /** Fact provenance tags of agent writes and derivers (extraction, backstop, hooks): capped at agent_written. */

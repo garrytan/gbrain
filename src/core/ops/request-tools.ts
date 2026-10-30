@@ -159,20 +159,20 @@ const request_tools: Operation = {
   name: 'request_tools',
   idempotent: false,
   outputRedaction: 'no_stored_text',
-  description: 'More tools: no arguments lists your catalog; {tools: [names]} returns schemas; {surface} widens it (per client or stdio session).',
+  description: 'More tools and params: no arguments lists your catalog; {tools: [names]} returns full schemas, every optional param included; {surface} widens it (per client or stdio session).',
   area: 'discovery',
   // FOV-4: callable by read OR agent scope — discovery for every token class.
   agentCallable: true,
   params: {
     tools: {
       type: 'array',
-      items: { type: 'string', description: 'A tool name from the catalog.' },
+      items: { type: 'string' },
       description: 'Tool names to fetch.',
     },
     surface: {
       type: 'string',
       enum: ['verbs', 'starter', 'full'],
-      description: 'Surface to widen to (stdio: this session only).',
+      description: 'stdio: this session only.',
     },
   },
   scope: 'read',
@@ -315,7 +315,10 @@ const request_tools: Operation = {
     // ── descriptor branch (D5: read-only) ───────────────────────────────
     if (p.tools !== undefined) {
       const requested = (p.tools as unknown[]).filter((t): t is string => typeof t === 'string');
-      const byName = new Map(visible.map(o => [o.name, o]));
+      // Registry definitions, not the surface-filtered ones: dispatch accepts a starter op's full-surface-only params, so the details path names them.
+      const { operations } = await import('../operations.ts');
+      const visibleSet = new Set(visible.map(o => o.name));
+      const byName = new Map(operations.filter(o => visibleSet.has(o.name)).map(o => [o.name, o]));
       const picked: Operation[] = [];
       const seen = new Set<string>();
       for (const name of requested) {

@@ -13,12 +13,15 @@ import { join } from 'path';
 import { loadPreferences } from '../core/preferences.ts';
 import { registerCleanup } from '../core/process-cleanup.ts';
 import { dispatchAutopilotTick, sleepWatchingHeads } from './autopilot-dispatch.ts';
+import { readTickHealth } from './autopilot-health.ts';
+import type { BrainHealth } from '../core/types.ts';
 import { writeAutopilotHeartbeat } from '../core/autopilot-heartbeat.ts';
 import { runNightlyQualityProbeStep, runParserProbeStep } from './autopilot-probes.ts';
 import { resolveChildCliInvocation } from '../core/minions/job-isolation.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import {
   attemptAutopilotSelfUpgrade,
+  computeAutopilotIdle,
   autopilotEngineIdentity,
   chatBootWarning,
   classifyReconnectError,
@@ -30,6 +33,7 @@ import {
   resolveGbrainCliPath,
   shouldSpawnAutopilotWorker,
 } from './autopilot.ts';
+import { restartServeAfterSelfUpgrade } from './upgrade-restart.ts';
 
 /**
  * Mutable daemon state shared by the tick loop, the shutdown path and the tick
@@ -319,21 +323,23 @@ export async function runAutopilotDaemon(engine: BrainEngine, args: string[]): P
     if (configurationBlocked()) continue;
     await attemptAutopilotSelfUpgrade(engine, engineType, lockPath, () => !configurationBlocked());
     if (configurationBlocked()) continue;
+    await restartServeAfterSelfUpgrade(() => computeAutopilotIdle(engine, engineType));
+    if (configurationBlocked()) continue;
 
     // --no-worker peer-liveness probe (v0.19.1). Runs every cycle, cheap
     // (single SELECT). See the NO_WORKER_WARN_TICKS comment for caveats.
     if (noWorker && useMinionsDispatch) await probeNoWorkerPeer(engine, state, baseInterval);
 
-    const cycleOk = useMinionsDispatch
+    const tick = useMinionsDispatch
       ? await dispatchAutopilotTick(engine, state, { repoPath, baseInterval, jsonMode })
-      : await runInlineCycle(engine, state, repoPath, shutdownAbort, jsonMode);
+      : { cycleOk: await runInlineCycle(engine, state, repoPath, shutdownAbort, jsonMode) };
 
     if (configurationBlocked()) continue;
-    // 4. Health check + adaptive interval (same for both paths)
-    const interval = await adaptiveInterval(engine, baseInterval, cycleStart, jsonMode);
+    // 4. Adaptive interval; a dispatch tick hands over the health it routed on (#7236), the inline path reads it now.
+    const interval = await adaptiveInterval(engine, baseInterval, cycleStart, jsonMode, tick.health);
 
     if (configurationBlocked()) continue;
-    if (cycleOk) {
+    if (tick.cycleOk) {
       state.consecutiveErrors = 0;
     } else {
       state.consecutiveErrors++;
@@ -652,18 +658,22 @@ async function runInlineCycle(
   return cycleOk;
 }
 
-/** 4. Health check + adaptive interval (same for both paths); returns the next interval in seconds. */
-async function adaptiveInterval(engine: BrainEngine, baseInterval: number, cycleStart: number, jsonMode: boolean): Promise<number> {
+/**
+ * 4. Adaptive interval; returns the next interval in seconds. Routes on `tickHealth` when the tick already read it
+ * (#7236), else reads it once; an unknown score (degraded read) keeps the base interval.
+ */
+export async function adaptiveInterval(engine: BrainEngine, baseInterval: number, cycleStart: number, jsonMode: boolean, tickHealth?: BrainHealth | null): Promise<number> {
   let interval = baseInterval;
   try {
-    const health = await engine.getHealth();
-    const score = (health as any).brain_score ?? 50;
-    interval = score >= 90 ? baseInterval * 2
+    const health = tickHealth === undefined ? await readTickHealth(engine, jsonMode) : tickHealth;
+    const score = health?.brain_score ?? null;
+    interval = score === null ? baseInterval
+             : score >= 90 ? baseInterval * 2
              : score < 70 ? Math.max(Math.floor(baseInterval / 2), 60)
              : baseInterval;
 
     const elapsed = ((Date.now() - cycleStart) / 1000).toFixed(0);
-    const line = `[cycle] score=${score} elapsed=${elapsed}s next=${interval}s`;
+    const line = `[cycle] score=${score ?? 'unknown'} elapsed=${elapsed}s next=${interval}s`;
     if (jsonMode) {
       process.stderr.write(JSON.stringify({ event: 'cycle', brain_score: score, elapsed_s: Number(elapsed), next_s: interval }) + '\n');
     } else {

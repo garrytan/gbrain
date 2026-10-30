@@ -162,7 +162,8 @@ export const persistenceOperations: Operation[] = [
     idempotent: true,
     outputRedaction: 'no_stored_text',
     description: 'Your write\'s receipt by request_id (after write_pending or a lost reply). Poll at retry_after_ms until final.',
-    params: { request_id: requestParam },
+    params: { request_id: requestParam,
+      applied: { type: 'boolean', fullSurfaceOnly: true, description: 'Also return applied: searchable yet, the gap, the write watermark.' } },
     scope: 'write', mutating: false, area: 'pages',
     cliHints: { name: 'write-request', positional: ['request_id'] },
     handler: async (ctx, params) => {
@@ -171,7 +172,10 @@ export const persistenceOperations: Operation[] = [
       const { getWriteRequest, writeHealthFacts } = await import('../persistence/journal.ts');
       const row = await getWriteRequest(ctx.engine, principal, id);
       if (!row || !await visible(ctx, row)) throw missing(callerSource(ctx));
-      return publicReceipt(ctx, row, (await writeHealthFacts(ctx.engine, [row])).get(row.id));
+      const receipt = await publicReceipt(ctx, row, (await writeHealthFacts(ctx.engine, [row])).get(row.id));
+      if (params.applied !== true) return receipt;
+      const applied = await (await import('../persistence/write-applied.ts')).readWriteApplied(ctx.engine, row).catch(() => null);
+      return applied ? { ...receipt, applied } : receipt;
     },
   },
   {
@@ -181,7 +185,7 @@ export const persistenceOperations: Operation[] = [
     description: 'Your write receipts in one source, newest first (for a lost request_id).',
     params: {
       source_id: { type: 'string', description: 'Default: yours.' },
-      limit: { type: 'number', default: 25, description: '1-100 (default 25).' },
+      limit: { type: 'number', default: 25, description: '1-100 (default 25).', fullSurfaceOnly: true },
       before: { type: 'string', description: "Previous page's next cursor." },
     },
     scope: 'write', mutating: false, area: 'pages',

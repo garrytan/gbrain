@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { POOL_MAX_SCAN_TUPLES, readVectorPool, searchIndexWalk, searchVectorPool, type VectorPoolAttempt, type VectorPoolBatch } from '../../src/core/search/vector-pool.ts';
+import { INDEX_WALK_ESCALATIONS, POOL_MAX_SCAN_TUPLES, readVectorPool, searchIndexWalk, searchVectorPool, type VectorPoolAttempt, type VectorPoolBatch } from '../../src/core/search/vector-pool.ts';
 import { supportsHnswIterativeScan } from '../../src/core/vector-index.ts';
 import type { SearchOpts } from '../../src/core/types.ts';
 
@@ -175,6 +175,34 @@ describe('first attempts: index walk, then scope scan', () => {
     expect(exhausted.result).toHaveLength(3);
     expect(exhausted.kinds).toEqual(['scan']);
     expect(exhausted.attempts[0]).toMatchObject({ scopeScan: true, exact: false });
+  });
+
+  test('a full walk window whose fresh chunks crowd into too few pages widens the walk before any pool attempt', async () => {
+    const windows: number[] = [];
+    const result = await searchIndexWalk({ indexWalkSql: 'w', innerLimit: 250, indexWalkOverfetch: 2 }, 50, async attempt => {
+      windows.push(attempt.innerLimit);
+      expect(attempt).toMatchObject({ indexWalk: true, maxScanTuples: Math.max(2_000, attempt.innerLimit * 2), remainingMs: 2_000, exact: false });
+      return { rows: rows(attempt.innerLimit >= 1_000 ? 50 : 49), candidatePool: attempt.innerLimit, eligiblePool: attempt.innerLimit };
+    });
+    expect(result).toHaveLength(50);
+    expect(windows).toEqual([250, 1_000]);
+  });
+
+  test('the walk widens at most INDEX_WALK_ESCALATIONS times, and never for a stale-short or short window', async () => {
+    const widen = async (batch: (innerLimit: number) => VectorPoolBatch, scopeScanSql?: string) => {
+      const windows: number[] = [];
+      const result = await searchIndexWalk({ indexWalkSql: 'w', ...(scopeScanSql ? { scopeScanSql } : {}), innerLimit: 250, indexWalkOverfetch: 2 }, 50, async attempt => {
+        if (attempt.scopeScan) return { rows: rows(50), candidatePool: 250 };
+        windows.push(attempt.innerLimit);
+        return batch(attempt.innerLimit);
+      });
+      return { result, windows };
+    };
+    expect(INDEX_WALK_ESCALATIONS).toBe(2);
+    expect(await widen(n => ({ rows: rows(10), candidatePool: n, eligiblePool: n }))).toEqual({ result: null, windows: [250, 1_000, 4_000] });
+    expect(await widen(n => ({ rows: rows(10), candidatePool: n, eligiblePool: 40 }))).toEqual({ result: null, windows: [250] });
+    expect(await widen(() => ({ rows: rows(10), candidatePool: 200, eligiblePool: 200 }))).toEqual({ result: null, windows: [250] });
+    expect((await widen(n => ({ rows: rows(10), candidatePool: n, eligiblePool: n }), 's')).result).toHaveLength(50);
   });
 
   test('a full scan window that stale rows left short, or a timed-out attempt, falls back to the pool', async () => {

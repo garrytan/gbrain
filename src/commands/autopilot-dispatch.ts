@@ -5,6 +5,7 @@
  * submits. Called by runAutopilotDaemon (src/commands/autopilot-daemon.ts).
  */
 import type { BrainEngine } from '../core/engine.ts';
+import type { BrainHealth } from '../core/types.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
 import { loadAllSources, parseSourceConfig, sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning, type SourceRow } from '../core/sources-load.ts';
 import { isConnectorSourceKind } from '../core/persistence/connector-identity.ts';
@@ -22,18 +23,23 @@ import {
 } from './autopilot-remediation-policy.ts';
 import type { AutopilotDaemonState } from './autopilot-daemon.ts';
 import { logError } from './autopilot.ts';
+import { readTickHealth } from './autopilot-health.ts';
 import { readCheckoutHead } from '../core/checkout-head.ts';
 import { SYNC_ON_COMMIT_KEY } from '../core/sync-config-keys.ts';
 import { autopilotPaused } from '../core/autopilot-paths.ts';
 import { cooldownMinForCount, resolveFailureCooldownOpts } from './autopilot-fanout.ts';
 
-/** Returns cycleOk: false only when the dispatch itself threw. */
+/**
+ * cycleOk is false only when the dispatch itself threw. health is the snapshot the plan routed on (null: the bounded
+ * read timed out), for the daemon's adaptive interval (#7236); absent when the tick threw before reading it.
+ */
 export async function dispatchAutopilotTick(
   engine: BrainEngine,
   state: AutopilotDaemonState,
   { repoPath, baseInterval, jsonMode }: { repoPath: string; baseInterval: number; jsonMode: boolean },
-): Promise<boolean> {
+): Promise<{ cycleOk: boolean; health?: BrainHealth | null }> {
   let cycleOk = true;
+  let health: BrainHealth | null | undefined;
   // v0.36+ brain-health-100 wave (T8): targeted-submit loop.
   //
   // Pre-fix: every tick submitted ONE autopilot-cycle job, full phase
@@ -69,7 +75,9 @@ export async function dispatchAutopilotTick(
 
     await dispatchFreshnessSyncs(engine, queue, { baseInterval, slot, timeoutMs, jsonMode, freshnessHeads: state.freshnessHeads });
     await dispatchAutoDrain(engine, queue, { timeoutMs, jsonMode });
-    const { score, plan, estTotal } = await computeAutopilotPlan(engine, repoPath);
+    const autopilotPlan = await computeAutopilotPlan(engine, repoPath, jsonMode);
+    health = autopilotPlan.health;
+    const { score, plan, estTotal } = autopilotPlan;
 
     // Track time since last full cycle for the 60-min floor.
     const minutesSinceLastFull = (Date.now() - state.lastFullCycleAt) / 60000;
@@ -232,7 +240,7 @@ export async function dispatchAutopilotTick(
       }
     }
   } catch (e) { logError('dispatch', e); cycleOk = false; }
-  return cycleOk;
+  return { cycleOk, health };
 }
 
 const connectorNoticePrinted = new Set<string>();
@@ -398,8 +406,8 @@ export async function dispatchFreshnessSyncs(
         if (skip?.reason !== 'sync_disabled') reportAutomaticSyncSkip(src.id, skip, 'freshness_sync_skipped', jsonMode, (l) => process.stderr.write(l + '\n'));
         if (skip) decisions.push({ source_id: src.id, outcome: 'skipped' });
         if (skip) continue;
-        // A local_path this machine cannot use — relative (#3696: cwd is
-        // launchd's, not the registering shell's) or absent on disk and
+        // A local_path this machine cannot use — relative (#3696, #7630: it
+        // names whatever directory the daemon runs from) or absent on disk and
         // not a managed clone sync can re-create — would sync a phantom
         // path. Skip loudly (sourceLocalPathSkipWarning carries the
         // fix); under --json the skip is an NDJSON event like every
@@ -758,11 +766,11 @@ export async function submitAutoDrains(
   if (next !== pointer) await engine.setConfig(AUTO_DRAIN_NEXT_KIND_KEY, next);
 }
 
-/** The remediation plan autopilot routes on (brain score + doctor/onboard recommendations). */
-async function computeAutopilotPlan(engine: BrainEngine, repoPath: string) {
+/** The remediation plan autopilot routes on (brain score + doctor/onboard recommendations); score null when health is degraded. */
+async function computeAutopilotPlan(engine: BrainEngine, repoPath: string, jsonMode: boolean) {
   const { computeRecommendations, embeddingProviderConfigured, HOSTED_EMBED_KEY_CONFIG, chatApiKeyConfigured } = await import('../core/brain-score-recommendations.ts');
-  // Cheap path: engine.getHealth() is a single SQL count query.
-  const health = await engine.getHealth();
+  const health = await readTickHealth(engine, jsonMode);
+  if (!health) return { health, score: null, plan: [], estTotal: 0 };
   const score = health.brain_score;
   // v0.40.x: recipe-aware embedding-provider check shared with doctor.ts.
   // Resolve the configured model (gateway → DB fallback), then pre-await
@@ -822,5 +830,5 @@ async function computeAutopilotPlan(engine: BrainEngine, repoPath: string) {
   }
   const plan = computeRecommendations(health, ctx, extraRemediations).filter((r) => r.status === 'remediable');
   const estTotal = plan.reduce((s, r) => s + r.est_seconds, 0);
-  return { score, plan, estTotal };
+  return { health, score, plan, estTotal };
 }

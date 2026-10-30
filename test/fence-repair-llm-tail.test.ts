@@ -169,4 +169,15 @@ describe('the tail tier through runTier3 (#6377)', () => {
     const memo = await attemptStore(engine).read({ sourceId: 'default', incarnation, key: 'slug:tail/down' });
     expect(memo?.state).not.toBe('rejected');
   });
+
+  test('a provider refusal raised as an error is held as llm_refused and consumes the memo: the same bytes are never sent again', async () => {
+    const refusal = Object.assign(new Error('Bad Request'), { name: 'AI_APICallError', statusCode: 400, responseBody: JSON.stringify({ error: { code: 'content_policy_violation', message: 'flagged' } }) });
+    const first = await attempt('tail/policy', 'private', [refusal]);
+    expect(first.calls).toHaveLength(1);
+    expect(first.out).toMatchObject({ ok: false, reason: 'llm_refused' });
+    expect(await attemptStore(engine).read(attemptCandidate(first.target, incarnation))).toMatchObject({ state: 'rejected', reason: 'llm_refused' });
+    const again = await attempt('tail/policy', 'private', [result('{"tail":"prose"}')]);
+    expect(again.calls).toHaveLength(0);
+    expect(again.out).toMatchObject({ ok: false, reason: 'llm_refused', memoHit: true, spentUsd: 0 });
+  });
 });

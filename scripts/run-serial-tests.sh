@@ -88,7 +88,7 @@ fi
 # (machine-global state or contention-critical timing). They run sequentially
 # AFTER the pool drains, without the wall-clock kill (a SIGKILL
 # mid-registration could strand a real scheduled job). Growth guard:
-# test/scripts/serial-files.test.ts fails when this list grows past 3
+# test/scripts/serial-files.test.ts fails when this list grows past 4
 # entries — every addition needs a justification comment like the entries
 # below.
 # ──────────────────────────────────────────────────────────────────────────
@@ -110,6 +110,12 @@ EXCLUSIVE_FILES=(
   # restores master-era timing until the probe learns to retry ref-lock
   # contention.
   "test/brain-repo-durability.serial.test.ts"
+  # Pins a REAL serve's answer inside the hook's 1 s IPC client timeout (Pin 3
+  # and Pin 3b need an `ok` round trip). The serve answers in ~10 ms on an
+  # idle machine; pooled beside three heavy files its main thread is starved
+  # (160-1,200 ms with the file pinned to one core beside three CPU hogs), and
+  # Pin 3b timed out at 1,008 ms in #7409's full gate.
+  "test/bootstrap-hook-under-serve.serial.test.ts"
 )
 
 is_exclusive() {

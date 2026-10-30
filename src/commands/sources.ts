@@ -20,6 +20,9 @@
  *   gbrain sources unfederate <id> — sources.config.federated = false
  *   gbrain sources mirror-readonly|mirror-writable <id> — sources.config.mirror_read_only (#5409)
  *   gbrain sources refresh <id> — drained worktree-wide ff-only refresh on a managed brain (F0)
+ *   gbrain sources git-gap <id> — read-only census of the database against the commit at HEAD (sources-git-gap.ts)
+ *   gbrain sources reindex <id> --from-git — a strict source's re-derive from Git, preview then apply (sources-reindex.ts)
+ *   gbrain sources canonical <id> --to git|mixed — convert a source to git-canonical or back, preview then apply (sources-canonical.ts)
  *   gbrain sources push [<id>|--path <dir>] — scan-gated add→commit→pull→push
  *                               (agent-bootstrap; core in src/core/workspace-push.ts)
  *
@@ -56,6 +59,7 @@ import {
 import { isValidRepoName } from '../core/github-source.ts';
 import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
 import { defaultGoogleAddTuning, parseGoogleAddFlag } from './sources-google-flags.ts';
+import { noGrantFloorNext } from './sources-add-next.ts';
 import {
   resolveSourceWithTier,
   SOURCE_TIER_NAMES,
@@ -145,7 +149,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   if (!id) {
     console.error(
       'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github|google] ' +
-        '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force]\n' +
+        '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force] [--json]\n' +
         '       github kind: [--token-env <env>] [--scope auto|repos] ' +
         '[--repos owner/name,...] [--dir <path>] ' +
         '[--app-id <n> --app-pem <path>] [--app-install <n>]\n' +
@@ -164,6 +168,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let patFile: string | undefined;
   let noHarden = false;
   let force = false;
+  let json = false;
   // v0.46 github-kind flags.
   let ghKind = false;
   let ghTokenEnv: string | undefined;
@@ -193,6 +198,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     if (a === '--pat-file') { patFile = args[++i]; continue; }
     if (a === '--no-harden') { noHarden = true; continue; }
     if (a === '--force') { force = true; continue; }
+    if (a === '--json') { json = true; continue; }
     if (a === '--kind') {
       const kind = args[++i];
       if (kind === 'github') {
@@ -443,17 +449,21 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     : created.local_path
       ? ` → ${created.local_path}`
       : '';
-  console.log(
+  const say = json ? console.error : console.log;
+  say(
     `Created source "${id}"${displayName && displayName !== id ? ` (name: ${displayName})` : ''}${tail}`,
   );
   if (finalRemoteUrl) {
-    console.log(`  clone path: ${created.local_path}`);
+    say(`  clone path: ${created.local_path}`);
   }
-  console.log(
+  say(
     `  federated: ${fed}${fed ? ' — appears in cross-source default search' : ' — only searched when explicitly named via --source'}`,
   );
+  if (!fed && federated === null) console.error(`Warning: source "${id}" is not federated. A remote token or agent connection with no source grant cannot read its pages, so its searches leave them out. Run \`gbrain sources federate ${id}\` to let every such connection read it, or grant one token with \`gbrain auth rescope --token <name> --sources ${id}\`.`);
+  const next = !fed && federated === null ? await noGrantFloorNext(engine, id).catch(() => null) : null;
+  if (next) say(`  next: ${next.command} — ${next.why}`);
   if (ghKind || gKind) {
-    console.log(`  sync: run \`gbrain sync --source ${id}\` once; after its first sync, autopilot keeps it synced on the autopilot interval.`);
+    say(`  sync: run \`gbrain sync --source ${id}\` once; after its first sync, autopilot keeps it synced on the autopilot interval.`);
   }
 
   // v0.42.44 — auto-harden managed clones for git durability the moment a brain
@@ -485,6 +495,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
       console.error(`         Run \`gbrain sources harden ${id}\` to retry.`);
     }
   }
+  if (json) console.log(JSON.stringify({ id, name: created.name, local_path: created.local_path, remote_url: finalRemoteUrl ?? null, federated: fed, ...(next ? { next } : {}) }));
 }
 
 /**
@@ -1204,8 +1215,15 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
 }
 
 // ── v0.40 sources status (D12) ──────────────────────────────
-async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
-  const json = args.includes('--json'), only = args.find(arg => !arg.startsWith('-'));
+async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> {
+  const { parseListingFlags } = await import('../core/bounded-listing-cli.ts');
+  const { request, rest: args } = parseListingFlags(rawArgs.filter(arg => arg !== '--holds'), 'gbrain sources status');
+  const paged = rawArgs.some(arg => /^--(limit|cursor)(=|$)/.test(arg));
+  const json = args.includes('--json'), only = args.find((arg, i) => !arg.startsWith('-') && args[i - 1] !== '--limit');
+  if (request.cursor !== undefined && !only) {
+    throw opError('invalid_params', '--cursor pages the held files of one source.', 'Rerun with the id of the source the cursor came from right after status, keeping the same --limit.');
+  }
+  const holdListing = paged ? { mode: 'page' as const, request } : rawArgs.includes('--holds') || request.limit === null ? { mode: 'all' as const } : { mode: 'summary' as const };
   const { loadAllSources } = await import('../core/sources-load.ts');
   const { computeAllSourceMetrics } = await import('../core/source-health.ts');
   const statusView = await import('../core/persistence/connector-status.ts');
@@ -1251,7 +1269,7 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   // #6317 (B4): whether managed sync data moves, beside sync_running (a live lock is not progress); the writer-status command rides along.
   const movementView = await import('../core/persistence/sync-movement.ts');
   const movement = new Map((await movementView.readSourceMovement(engine, { sourceIds: sources.map(source => source.id) }).catch(() => [])).map(m => [m.source_id, m]));
-  const upstreamView = await import('../core/sync-upstream-rewrite.ts'), upstream = new Map((await upstreamView.readUpstreamDivergences(engine, sources.map(source => source.id))).map(u => [u.source_id, upstreamView.renderUpstreamDivergence(u)]));
+  const upstreamView = await import('../core/sync-upstream-rewrite.ts'), upstream = new Map((await upstreamView.readUpstreamDivergences(engine, sources.map(source => source.id))).map(u => [u.source_id, upstreamView.renderUpstreamDivergence(u)])); const watermarkView = await import('../core/persistence/applied-watermark.ts'), watermarks = new Map(await Promise.all(sources.map(async source => [source.id, await watermarkView.readAppliedWatermark(engine, source.id).catch(() => null)] as const)));
   if (json) {
     const enriched = metrics.map((m) => ({
       ...m,
@@ -1262,11 +1280,11 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
       ...(backlog.get(m.source_id) ? { managed_backlog: backlog.get(m.source_id) } : {}),
       ...(movement.get(m.source_id) ? { data_moving: movement.get(m.source_id)!.data_moving, not_moving_since: movement.get(m.source_id)!.not_moving_since,
         movement_state: movement.get(m.source_id)!.movement_state, movement: movement.get(m.source_id) } : {}),
-      ...(gitHolds.get(m.source_id) ? { git_holds: gitHolds.get(m.source_id) } : {}), ...(upstream.get(m.source_id) ? { upstream: upstream.get(m.source_id) } : {}),
+      ...(gitHolds.get(m.source_id) ? { git_holds: statusView.gitHoldStatusJson(m.source_id, gitHolds.get(m.source_id)!, holdListing) } : {}), ...(upstream.get(m.source_id) ? { upstream: upstream.get(m.source_id) } : {}),
       ...(sharedSkills.get(m.source_id) ? { shared_skills: sharedSkills.get(m.source_id) } : {}),
-      ...(uncommitted.get(m.source_id) ? { fence_repairs_uncommitted: uncommitted.get(m.source_id) } : {}),
+      ...(uncommitted.get(m.source_id) ? { fence_repairs_uncommitted: uncommitted.get(m.source_id) } : {}), ...(watermarks.get(m.source_id) ? { watermark: watermarks.get(m.source_id) } : {}),
     }));
-    console.log(JSON.stringify({ schema_version: 1, sources: enriched }, null, 2));
+    console.log(JSON.stringify((await import('../core/read-heartbeat.ts')).withReadMeta({ schema_version: 1, sources: enriched }), null, 2));
     return;
   }
 
@@ -1305,7 +1323,7 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   for (const [sourceId, status] of connectors) for (const line of statusView.connectorStatusLines(sourceId, status)) console.log(line);
   for (const [sourceId, status] of gitHolds) for (const line of statusView.gitHoldStatusLines(sourceId, status)) console.log(line);
   for (const b of backlog.values()) console.log(`  ${drainMod.formatManagedSyncBacklog(b)}`);
-  for (const m of movement.values()) { const line = movementView.formatSourceMovement(m); if (line) console.log(`  ${line}`); }
+  for (const m of movement.values()) { const line = movementView.formatSourceMovement(m); if (line) console.log(`  ${line}`); } for (const w of watermarks.values()) if (w) console.log(`  ${watermarkView.formatAppliedWatermark(w)}`);
   for (const [sourceId, notices] of uncommitted) for (const line of uncommittedView.uncommittedFenceRepairLines(sourceId, notices)) console.log(line);
   for (const view of sharedSkills.values()) if (view && (only || view.configured === false || view.parked)) for (const line of sharedSkillsView.sharedSkillsStatusLines(view)) console.log(`  ${line}`);
   for (const m of metrics) {
@@ -1898,7 +1916,12 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'mirror-readonly': case 'mirror-writable': return (await import('./sources-mirror.ts')).runMirrorMode(engine, rest, sub === 'mirror-readonly');
     case 'set-strategy': return (await import('./sources-strategy.ts')).runSetStrategy(engine, rest);
     case 'set-pull-strategy': return (await import('./sources-pull-strategy.ts')).runSetPullStrategy(engine, rest);
+    case 'set-sync':   return (await import('./sources-sync-enabled.ts')).runSetSync(engine, rest);
     case 'refresh':    return (await import('./sources-refresh.ts')).runSourcesRefresh(engine, rest);
+    case 'git-gap':    return (await import('./sources-git-gap.ts')).runSourcesGitGap(engine, rest);
+    case 'host-repo':  return (await import('./sources-host-repo.ts')).runHostRepo(engine, rest);
+    case 'reindex':    return (await import('./sources-reindex.ts')).runSourcesReindex(engine, rest);
+    case 'canonical':  return (await import('./sources-canonical.ts')).runSourcesCanonical(engine, rest);
     case 'archive':    return runArchive(engine, rest);
     case 'restore':    return runRestore(engine, rest);
     case 'purge':      return runPurge(engine, rest);
@@ -1950,7 +1973,7 @@ Subcommands:
   connect <path> --brain <id> --source <id> [--profile company-brain] [--yes] [--json]
                                     Preview, approve, import and verify a new company source; --plan <file> reuses a saved inspection.
   demo company-brain [--json]        Run a fictional company through the real import and graph pipeline offline.
-  add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
+  add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force] [--json]
                                     Register a new source. --path must be a git repo
                                     with committed files; --force skips that check.
   list [--json]                     List registered sources with page counts.
@@ -1969,7 +1992,10 @@ Subcommands:
                                     next command; recent blocked-cursor conversions).
                                     <id> filters to that source.
                                     --json emits {schema_version:1, ...} on
-                                    stdout for monitoring pipelines.
+                                    stdout for monitoring pipelines; git_holds
+                                    lists counts per code with one example and
+                                    10 items (--holds: every item; --limit <n>
+                                    [--cursor <c>]: one page, by path).
   archived [--json]                 List soft-deleted sources and their expiry.
   purge [<id>] [--confirm-destructive]
                                     Permanently delete archived sources.
@@ -1995,10 +2021,19 @@ Subcommands:
   mirror-writable <id> [--dry-run]  Undo mirror-readonly. --dry-run previews either and writes nothing.
   set-strategy <id> <markdown|code|auto>  Persist the sync strategy every sync of the source uses (PR #5955).
   set-pull-strategy <id> <rebase|merge>   How pulls reconcile local commits with origin (#5429); default rebase.
+  set-sync <id> <on|off> [--dry-run] [--expect <on|off>]   Include or exclude the source from automatic sync (config.syncEnabled).
+  host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>]
+                                    Managed brains: host an empty source in a new bare repository with a gbrain-owned worktree; it becomes git-canonical.
   refresh <id> [--dry-run] [--wait-drain <s>] [--fetch-timeout-ms <ms>] [--resume|--abandon] [--json]
                                     Managed brains: drain writes to the source's worktree, fast-forward
                                     it to its upstream (git merge --ff-only) and sync every source bound
                                     to it. --dry-run fetches and previews only.
+  git-gap <id> [--sample <n>] [--json]
+                                    Read-only: how far the database is from the commit at HEAD, page by page.
+  reindex <id> --from-git [--dry-run | --apply --expect <hash>] [--json]
+                                    Strict source: preview, then apply, the full pass where Git wins.
+  canonical <id> --to git|mixed [--dry-run | --apply --expect <hash>] [--json]
+                                    Managed brains: convert the source to git-canonical (or back), preview first.
   set-cr-mode <id> <none|title|per_chunk_synopsis>
                                     Per-source contextual retrieval mode
                                     override (v0.40.3.0). Pass "unset" or
@@ -2023,7 +2058,7 @@ Subcommands:
   shared-skills <id> on|off|status [--json]
                                     Opt a source out of (or back into) shared-skills adoption; status explains its effective policy.
   set-path <id> --clear             Clear a connector source's (google, github)
-                                    stale local_path; takes no path.
+                                    stale local_path, or any source's relative one.
   webhook <set|show|rotate|clear> <id> [options]
                                     v0.40 — per-source webhook secret management.
                                     Run 'sources webhook --help' for subcommand detail.

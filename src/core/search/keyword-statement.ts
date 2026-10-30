@@ -62,7 +62,7 @@ export function buildKeywordMatch(query: string, opts: SearchOpts | undefined): 
     const tsq = `websearch_to_tsquery('${getFtsLanguage()}', $${params.length})`;
     predicate = `cc.search_vector @@ ${tsq}`;
     const textParam = `$${params.length}`;
-    rank = () => `ts_rank(cc.search_vector, ${tsq}) * ${keywordPhraseFactorSql(getFtsLanguage(), textParam, opts?.keywordPhrase !== false)}`;
+    rank = () => `ts_rank(cc.search_vector, ${tsq}) * ${keywordPhraseFactorSql(getFtsLanguage(), textParam, opts?.keywordPhrase === true)}`;
   }
   const add = (value: unknown, clause: (n: string) => string): string => { params.push(value); return ` AND ${clause(`$${params.length}`)}`; };
   let filters = '';

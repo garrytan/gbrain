@@ -11,7 +11,8 @@ import { performSync } from '../src/commands/sync/perform.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { DRAIN_LEASE_TTL_MINUTES, HOLDER_STALL_MS, LEASE_BEACON_QUEUE, followStopAt, readDrainHolder, withDrainLease } from '../src/core/persistence/sync-lease.ts';
+import { DRAIN_LEASE_TTL_MINUTES, HOLDER_STALL_MS, LEASE_BEACON_QUEUE, followStopAt, holderStalled, readDrainHolder, withDrainLease } from '../src/core/persistence/sync-lease.ts';
+import { writeGitHold } from '../src/core/persistence/sync-holds.ts';
 import { drainNext } from '../src/core/persistence/sync-drain.ts';
 import { liveSyncJob } from '../src/core/persistence/sync-movement.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
@@ -155,6 +156,24 @@ test('a holder that heartbeats but makes no progress for the stall window stops 
   const next = drainNext(result, `gbrain sync --source ${id} --no-pull`, id);
   expect(next).toMatchObject({ code: 'drain_stalled', cause: 'no_progress', safe_to_loop: false });
   expect(next?.why).toContain('--break-lock');
+  await holder.release();
+}), 120_000);
+
+test('#7327: a holder writing only holds is progressing; the follower waits instead of stopping drain_stalled', async () => isolated(async engine => {
+  const id = await fixture(engine);
+  const holder = hold(engine, id, 'job');
+  await holder.ready;
+  await engine.executeRaw(`UPDATE gbrain_cycle_locks SET acquired_at=now()-make_interval(secs => $2) WHERE id=$1`, [syncLockId(id), HOLDER_STALL_MS / 1000 + 60]);
+  const [binding] = await engine.executeRaw<{ incarnation: string }>('SELECT source_incarnation::text AS incarnation FROM persistence_source_bindings WHERE source_id=$1', [id]);
+  await engine.transaction(tx => writeGitHold(tx, { source_id: id, incarnation: binding!.incarnation, path: 'linked/a.md', source_path: 'linked/a.md', slug: 'linked/a', page_id: null,
+    code: 'file_unreadable', message: 'Sync did not read linked/a.md: it is a symlink.', upstream_version: null, observed_at: new Date().toISOString(), run_id: 'run-1', mode: 'managed',
+    meta: { reason: 'symlink_dangling', recovery_version: 1 } } as Parameters<typeof writeGitHold>[1]));
+  const seen = await readDrainHolder(engine, id);
+  expect(seen?.progress?.committed).toBe(0);
+  expect(Date.now() - Date.parse(seen!.progress!.last_progress_at!)).toBeLessThan(HOLDER_STALL_MS);
+  expect(holderStalled(seen)).toBe(false);
+  const result = await performSync(engine, plain(id, { followDrainLease: true, deadlineAtMs: Date.now() + 3_000 }));
+  expect(result.drain).toMatchObject({ outcome: 'resumable', stop_reason: 'drain_lease_held' });
   await holder.release();
 }), 120_000);
 

@@ -18,6 +18,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { runDreamRetriage } from '../src/commands/dream-retriage.ts';
+import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { runDream } from '../src/commands/dream.ts';
 import { TRIAGE_VERSION, CHARS_PER_TOKEN } from '../src/core/cycle/synthesize.ts';
 import { canonicalLookup } from '../src/core/model-pricing.ts';
@@ -143,6 +144,7 @@ async function withoutAnthropicKey<T>(body: () => Promise<T>): Promise<T> {
 
 afterEach(() => {
   process.exitCode = 0;
+  _resetCliExitVerdictForTests();
 });
 
 describe('dream retriage — dispatch + usage', () => {

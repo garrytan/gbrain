@@ -6,7 +6,8 @@
  * after it, SHOW in the same transaction and session gives what it gave before; the proof's verdict equals the plain
  * proof's, for an unchanged source and for a foreign page write. A server that refuses the setting (the
  * `sync:confirm_parallel` seam) aborts only the savepoint: the proof runs without the settings, gives the same verdict, and
- * the transaction stays usable; a pass's round 2 still confirms. PGLite never sets them (no savepoint, no seam).
+ * the transaction stays usable; a pass's round 2 still confirms, and so does a next pass whose round 1 reuses the kept
+ * read across passes (GBRA-133), its proof refused too. PGLite never sets them (no savepoint, no seam).
  *
  * PGLite and Postgres here; Postgres also through test/e2e/sync-pass-confirm-parallel-6712-postgres.test.ts.
  */
@@ -19,6 +20,7 @@ import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { proveConfirm, readLevelMark, type LevelMark } from '../src/core/persistence/sync-pass-confirm.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
+import { __resetTreeReuseForTests } from '../src/core/persistence/sync-tree-reuse.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
@@ -106,10 +108,12 @@ for (const backend of testBackends()) {
 
     test('a pass round 2 confirms with the parallel proof, and with a server that refuses it; PGLite never sets it', () => brain(async ({ engine, root }) => {
       expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
-      const run = async (refuse: boolean) => {
-        const seen = { seam: 0, confirm: null as unknown };
+      const run = async (refuse: boolean, keep = false) => {
+        if (!keep) __resetTreeReuseForTests();
+        const seen = { seam: 0, confirm: null as unknown, across: null as unknown };
         installFaultHook(async (point, detail) => {
           if (point === 'sync:confirm_parallel') { seen.seam++; if (refuse) throw new Error('the server refuses the setting'); }
+          if (point === 'sync:level_read' && detail.round === 1) seen.across = detail.level?.confirm?.across ?? null;
           if (point === 'sync:level_read' && detail.round === 2) seen.confirm = detail.level?.confirm ?? null;
         });
         try { return { status: (await performManagedSync(engine, OPTS)).status, ...seen }; } finally { installFaultHook(undefined); }
@@ -118,9 +122,12 @@ for (const backend of testBackends()) {
       const plain = await run(false);
       writeFileSync(join(root, 'notes/b.md'), note('notes/b', 'A committed change of notes/b.')); commit(root, 'change b');
       const refused = await run(true);
+      writeFileSync(join(root, 'notes/c.md'), note('notes/c', 'A committed change of notes/c.')); commit(root, 'change c');
+      const across = await run(true, true);
       const seam = backend === 'postgres' ? 1 : 0;
-      expect(plain).toEqual({ status: 'synced', seam, confirm: { taken: true, reason: null, rows: 1, narrow: 'taken' } });
-      expect(refused).toEqual({ status: 'synced', seam, confirm: { taken: true, reason: null, rows: 1, narrow: 'taken' } });
+      expect(plain).toEqual({ status: 'synced', seam, confirm: { taken: true, reason: null, rows: 1, narrow: 'taken' }, across: null });
+      expect(refused).toEqual({ status: 'synced', seam, confirm: { taken: true, reason: null, rows: 1, narrow: 'taken' }, across: null });
+      expect(across).toMatchObject({ status: 'synced', seam: 2 * seam, across: true, confirm: { taken: true, reason: null, rows: 1, narrow: 'taken' } });
     }), 120_000);
   });
 }

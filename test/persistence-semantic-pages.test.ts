@@ -10,6 +10,7 @@ import type { OperationContext } from '../src/core/ops/contract.ts';
 import { renderFactsTable } from '../src/core/facts-fence.ts';
 import { renderTakesFence } from '../src/core/takes-fence.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
+import { emptyFenceBlock } from '../src/core/generations/fence.ts';
 
 let engine: PGLiteEngine;
 const root = mkdtempSync(join(tmpdir(), 'gbrain-semantic-pages-'));
@@ -100,10 +101,19 @@ test('canonical replacement and revert restore facts, takes and timeline from co
   const before=(await engine.readPageSnapshot('projections',{sourceId}))!;
   expect(await engine.executeRaw('SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND expired_at IS NULL',[sourceId,'projections'])).toHaveLength(2);
   expect(await engine.executeRaw('SELECT id FROM takes WHERE page_id=$1',[before.page.id])).toHaveLength(2);
+  // GBRA-161 PR 2: a replacement without the fences holds both fence generations (fence_absent) and keeps their rows;
+  // the empty fences are the proof that retires them.
   await submit('put_page',{slug:'projections',content:'---\ntitle: Replacement\ntype: note\n---\nReplacement body',expected_revision:before.revision});
+  expect(await engine.executeRaw('SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND expired_at IS NULL',[sourceId,'projections'])).toHaveLength(2);
+  expect(await engine.executeRaw('SELECT id FROM takes WHERE page_id=$1',[before.page.id])).toHaveLength(2);
+  expect((await engine.executeRaw<{kind:string;held_reason:string}>("SELECT kind,held_reason FROM derived_generations WHERE source_id=$1 AND owner_key=$2 AND state='held' ORDER BY kind",
+    [sourceId,'page:projections'])).map(row=>[row.kind,row.held_reason])).toEqual([['fact_fence','fence_absent'],['take_fence','fence_absent']]);
+  expect(await engine.getTimeline('projections',{sourceId})).toHaveLength(0);
+  const replaced=(await engine.readPageSnapshot('projections',{sourceId}))!;
+  await submit('put_page',{slug:'projections',content:`---\ntitle: Replacement\ntype: note\n---\nReplacement body\n\n${emptyFenceBlock('facts')}\n${emptyFenceBlock('takes')}`,expected_revision:replaced.revision});
   expect(await engine.executeRaw('SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND expired_at IS NULL',[sourceId,'projections'])).toHaveLength(0);
   expect(await engine.executeRaw('SELECT id FROM takes WHERE page_id=$1',[before.page.id])).toHaveLength(0);
-  expect(await engine.getTimeline('projections',{sourceId})).toHaveLength(0);
+  expect(await engine.executeRaw("SELECT 1 FROM derived_generations WHERE source_id=$1 AND owner_key=$2 AND state='held'",[sourceId,'page:projections'])).toHaveLength(0);
   const [version]=await engine.executeRaw<{id:number}>('SELECT id FROM page_versions WHERE page_id=$1 AND knowledge_revision=$2::uuid',[before.page.id,before.revision]);
   const current=(await engine.readPageSnapshot('projections',{sourceId}))!;
   await submit('revert_version',{slug:'projections',version_id:version.id,expected_revision:current.revision});

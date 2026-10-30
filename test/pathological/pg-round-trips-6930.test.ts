@@ -165,7 +165,7 @@ describe('#6930 unit: scripted server', () => {
     const server = await serverFor();
     const engine = await engineOn(server.url('?prepare=false'), 1);
     await engine.executeRaw('SELECT 1 AS bounded', [], { timeoutMs: 5000 });
-    const sent = server.arrivals.filter(a => /^BEGIN; SET LOCAL statement_timeout|^SELECT 1 AS bounded$|^COMMIT$/.test(a.sql));
+    const sent = server.arrivals.filter(a => /^BEGIN READ WRITE; SET LOCAL statement_timeout|^SELECT 1 AS bounded$|^COMMIT$/.test(a.sql));
     expect(sent.map(a => a.unanswered)).toEqual([0, 1, 2]);
   }));
 

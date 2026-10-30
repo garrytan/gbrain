@@ -57,6 +57,20 @@ function looksLikeCloudflareChallenge(body: string): boolean {
 }
 
 /**
+ * #7482: markers only an interactive challenge carries. Bare "cloudflare" is left out: Cloudflare's own 5xx error
+ * pages name it, and a transient origin error must stay retryable.
+ */
+const CHALLENGE_ONLY_MARKERS = ['just a moment', 'cf-browser-verification', 'cf-chl', 'challenge-platform', 'attention required'];
+
+/** A challenge served on a non-2xx status other than 403: a redirect to one, or a challenge page. */
+function challengeOnOtherStatus(res: ClassifiableResponse, bodyText: string): boolean {
+  const location = res.headers.get('location')?.toLowerCase() ?? '';
+  if (res.status >= 300 && res.status < 400 && (location.includes('/cdn-cgi/') || location.includes('__cf_chl'))) return true;
+  const head = bodyText.slice(0, 2048).toLowerCase();
+  return looksLikeHtml(res.headers.get('content-type'), bodyText) && CHALLENGE_ONLY_MARKERS.some((m) => head.includes(m));
+}
+
+/**
  * Classify a response given its status, headers, and the body text already
  * read. `nowMs` is injectable so Retry-After HTTP-date parsing is deterministic
  * in tests.
@@ -67,6 +81,14 @@ export function classifyResponse(
   nowMs: number = Date.now(),
 ): Classification {
   const { status } = res;
+
+  // Cloudflare sets `cf-mitigated: challenge` on every challenge response, whatever its status.
+  if (res.headers.get('cf-mitigated')?.trim().toLowerCase() === 'challenge') {
+    return { kind: 'forbidden_fingerprint', detail: `HTTP ${status} with cf-mitigated: challenge — server-side fetch blocked` };
+  }
+  if (status !== 403 && (status < 200 || status >= 300) && challengeOnOtherStatus(res, bodyText)) {
+    return { kind: 'forbidden_fingerprint', detail: `HTTP ${status} with a bot challenge — server-side fetch blocked` };
+  }
 
   if (status === 429) {
     const retryAfterMs = parseRetryAfterMs(res.headers.get('retry-after'), nowMs) ?? undefined;

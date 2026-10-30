@@ -25,6 +25,7 @@ import { flushDecideWrites } from '../src/core/ai/decide/store.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import * as staleEmbedding from '../src/core/embed-stale.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { freezeCorpusSessions } from './helpers/frozen-corpus.ts';
 import { childCommittedOrdinaryCycle, interruptAfterChild, laterQuote, managedSynthesisFixture, outputSlug, type SynthesisFixture } from './helpers/managed-synthesis-fixture.ts';
 
 const backends = testBackends();
@@ -109,6 +110,21 @@ test('managed native synthesis quarantines interpretations around valid evidence
       }
     }
   }, 1, [supported, ...unsupported, 'Related context: [[people/example]].'].join('\n\n'));
+}, 120_000);
+
+test('GBRA-60: a child that verifies and stamps writes each output once; postprocessing counts its repair and publishes nothing', async () => {
+  await managedSynthesisFixture(engines, async ({ engine, sourceId, opts }) => {
+    const report = await runPhaseSynthesize(engine, opts);
+    expect(report.status).toBe('ok');
+    expect((report.details.synthesis as { quote_verify: { pages_repaired: number } }).quote_verify.pages_repaired).toBe(1);
+    const slug = await outputSlug(engine, sourceId);
+    const page = (await engine.readPageSnapshot(slug, { sourceId }))!.page;
+    expect({ stamped: page.frontmatter.dream_generated, invented: page.compiled_truth.includes('"an entirely invented') }).toEqual({ stamped: true, invented: false });
+    const [{ n: versions }] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.source_id=$1 AND p.slug=$2', [sourceId, slug]);
+    const [{ n: postprocessed }] = await engine.executeRaw<{ n: number }>(
+      "SELECT count(*)::int AS n FROM persistence_requests WHERE source_id=$1 AND slug=$2 AND intent->>'kind'='managed_maintenance_page'", [sourceId, slug]);
+    expect({ versions, postprocessed }).toEqual({ versions: 0, postprocessed: 0 });
+  }, 1, undefined, true);
 }, 120_000);
 
 /**
@@ -529,6 +545,7 @@ test('#5854: a postprocess publish still pending after its wait is deferred, the
     const corpus = join(root, '..', 'corpus');
     mkdirSync(corpus);
     writeFileSync(join(corpus, basename(opts.inputFile)), readFileSync(opts.inputFile));
+    freezeCorpusSessions(corpus, sourceId);
     await engine.setConfig('dream.synthesize.session_corpus_dir', corpus);
     const ordinary = { brainDir: root, sourceId, dryRun: false };
     await interruptAfterChild(engine, sourceId, ordinary);

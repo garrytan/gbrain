@@ -2,7 +2,7 @@
  * #6188 (T2): "uncommitted fence repair" notices. A legacy (unmanaged)
  * source has no Git effect, so when the fence repair rewrites one of its
  * files it backs the file up, imports it, and records a notice here naming
- * the path, the backup and the exact `git add` / `git commit` step. The
+ * the path, the backup and the exact `gbrain git commit-push` step. The
  * notice stays until that path is committed: every read checks
  * `git status --porcelain -- <path>` and drops the notices whose path is
  * clean. `gbrain sources status` and doctor `fence_integrity` show them.
@@ -15,7 +15,7 @@
 import { execFileSync } from '../spawn.ts';
 import { existsSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
-import { shellQuote } from '../agent-output.ts';
+import { commitPushCommand } from '../git/commit-push.ts';
 import type { FenceRepairReceipt } from './receipt.ts';
 import { fenceRepairCommitSubject } from './receipt.ts';
 import { gitChildEnv } from '../git-env.ts';
@@ -38,9 +38,9 @@ export interface UncommittedFenceRepair {
 
 const fingerprint = (sourceId: string, incarnation: string, path: string) => `${sourceId}:${incarnation}:${path}`;
 
-/** The commit step printed for a legacy repair: stage only this path and commit it with the fence-repair subject and the `gbrain-repair:` trailer the Git effect would write. */
+/** The commit step printed for a legacy repair: commit and push only this path with the fence-repair subject and the `gbrain-repair:` trailer the Git effect would write. */
 export function legacyCommitStep(root: string, path: string, classes: readonly string[], tier: FenceRepairReceipt['tier'] = 'deterministic'): string {
-  return `git -C ${shellQuote([root])} add -- ${shellQuote([path])} && git -C ${shellQuote([root])} commit -m ${shellQuote([fenceRepairCommitSubject(path, classes)])} -m ${shellQuote([`gbrain-repair: invalid_fence ${tier} high`])} -- ${shellQuote([path])}`;
+  return commitPushCommand(root, [path], [fenceRepairCommitSubject(path, classes), `gbrain-repair: invalid_fence ${tier} high`]);
 }
 
 export async function recordUncommittedFenceRepair(engine: Exec, notice: UncommittedFenceRepair): Promise<void> {

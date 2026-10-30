@@ -1905,7 +1905,7 @@
             "via": "unsafe"
           },
           {
-            "paramCount": 2,
+            "paramCount": 5,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -5012,7 +5012,7 @@
       "listTakes": {
         "default": [
           {
-            "paramCount": 20,
+            "paramCount": 25,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -5023,7 +5023,7 @@
         ],
         "sourceId": [
           {
-            "paramCount": 21,
+            "paramCount": 26,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -5034,7 +5034,7 @@
         ],
         "sourceIds+excludePrivate": [
           {
-            "paramCount": 21,
+            "paramCount": 26,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

@@ -6,7 +6,8 @@ import { LANE_BUSY, PersistenceConsumer, type PersistenceConsumerLike, type Prep
 import { WaiterOnlyConsumer, type ElectedOwner } from './consumer-election.ts';
 import { RESIDENT_CONSUMER_KINDS, startConsumerHeartbeat, type ConsumerHeartbeat } from './consumer-heartbeat.ts';
 import { enginePoolStats } from '../postgres-engine/pool-stats.ts';
-import { claimOwnerKind } from './claim-phase.ts';
+import { claimOwnerKind, isOneShotCommand } from './claim-phase.ts';
+import { noteDirectPoolLease } from '../direct-pool-profile.ts';
 import { preparePageMutation } from './page-prepare.ts';
 import { prepareSemanticPageMutation } from './semantic-pages.ts';
 import { getWriteRequestById, getWriteRequestProgress, receiptFor, type WriteRequestProgress } from './journal.ts';
@@ -86,6 +87,9 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
     throw new OperationError('unsupported_mutation_protocol', 'No compatible skill mutation preparer is registered.', `Request ${row.request_id} (${row.operation}) was accepted by a gbrain version whose preparer this one lacks, so it has not run. Run gbrain upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);
   }
   if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_atom_')) return (await import('./atom-maintenance.ts')).prepareManagedAtomMutation(e, row, cfg);
+  if (row.operation === 'submit_job' && row.intent?.kind === 'managed_generation_activate') return (await import('../generations/managed.ts')).prepareGenerationActivation(e, row);
+  if (row.operation === 'submit_job' && row.intent?.kind === 'managed_generation_restore') return (await import('../generations/repair.ts')).prepareGenerationRestore(e, row);
+  if (row.operation === 'submit_job' && row.intent?.kind === 'managed_generation_retire') return (await import('../generations/managed-retire.ts')).prepareGenerationRetireMember(e, row, cfg);
   if (row.operation === 'extract_facts' && String(row.intent?.kind).startsWith('managed_facts_')) return (await import('./facts-prepare.ts')).prepareManagedFactsMutation(e, row, cfg);
   if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('connector_v2_')) return (await import('./connector-sync.ts')).prepareConnectorMutation(e, row);
   if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_connector_')) return (await import('./connector-sync.ts')).prepareOutdatedConnectorMutation(e, row);
@@ -100,9 +104,11 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
   if (row.operation === 'loops_close' && row.intent?.kind === 'retire_loop_fact') return (await import('./loop-fact-retirement.ts')).prepareLoopFactRetirement(e, row, cfg);
   if (row.operation === 'decide_proposal') return (await import('../facts/proposal-supersede.ts')).prepareProposalMutation(e, row, cfg);
   if (row.operation === 'trust_owner_page') return (await import('../trust/page-handlers.ts')).prepareTrustOwnerPageMutation(e, row, cfg);
+  if (row.operation === 'trust_release') return (await import('../trust/release-publish.ts')).prepareTrustReleaseMutation(e, row, cfg);
   if (row.operation === 'relink_facts') return (await import('../facts/relink-publish.ts')).prepareRelinkMutation(e, row, cfg);
   if (['takes_add','takes_update','takes_supersede','takes_resolve','takes_remove'].includes(row.operation)) return (await import('./takes-prepare.ts')).prepareTakesMutation(e,row,cfg);
   if (['add_tag','remove_tag','add_timeline_entry'].includes(row.operation)) return prepareSemanticPageMutation(e, row, cfg);
+  if (row.operation === 'add_link' || row.operation === 'remove_link') return (await import('./manual-links.ts')).prepareManualLinkMutation(e, row, cfg);
   if (row.operation === 'append_page') return (await import('./page-upload.ts')).withStagedBodyIf(e, row, async () => (await import('./page-append.ts')).prepareAppendMutation(e, row, cfg, signal, clock));
   if (['put_page','capture','delete_page','restore_page','revert_version','edit_page'].includes(row.operation)) return preparePageMutation(e, row, cfg, undefined, signal,
     { coordinated: await writeSwitchOn(e, 'single_write_group').catch(() => true), clock, boundedChunkWrites: true });
@@ -123,9 +129,11 @@ export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConf
     }
     return prior.consumer;
   }
-  const full = () => new PersistenceConsumer(engine, config, preparePersistedMutation,
-    { drainNotice: claimOwnerKind() === 'serve', onSettled: row => { recordSettlement(engine); rememberSettled(engine, row.id); for (const listener of settledWaiters.get(engine)?.get(row.id) ?? []) listener(row); } });
+  noteDirectPoolLease();
   const kind = claimOwnerKind();
+  const oneShot = isOneShotCommand() && kind !== 'serve' && !RESIDENT_CONSUMER_KINDS.includes(kind) ? { waiting: () => (settledWaiters.get(engine)?.size ?? 0) > 0 } : undefined;
+  const full = () => new PersistenceConsumer(engine, config, preparePersistedMutation,
+    { drainNotice: kind === 'serve', oneShot, onSettled: row => { recordSettlement(engine); rememberSettled(engine, row.id); for (const listener of settledWaiters.get(engine)?.get(row.id) ?? []) listener(row); } });
   const service: Service = kind !== 'serve' && RESIDENT_CONSUMER_KINDS.includes(kind) && engine.kind === 'postgres'
     ? { consumer: new WaiterOnlyConsumer(engine, config, full, { kind, hostId: localHostId(), pool: () => enginePoolStats(engine) }), stopping: false }
     : (() => { const consumer = full(); return { consumer, stopping: false, heartbeat: startConsumerHeartbeat(engine, consumer.hostId,
@@ -151,6 +159,8 @@ export async function stopPersistenceConsumer(engine: BrainEngine): Promise<void
   service.stopping = true;
   const pending = [...(receiptReads.get(engine)?.values() ?? [])];
   for (const entry of pending) entry.abort.abort();
+  // GBRA-156: a one-shot command's housekeeping runs here, after its reply and before its consumer stops.
+  if (service.consumer instanceof PersistenceConsumer) await service.consumer.runOneShotHousekeeping();
   await service.consumer.stop();
   await service.heartbeat?.stop();
   await Promise.all(pending.map(entry => entry.read));

@@ -30,7 +30,8 @@ import { resolveModel } from '../model-config.ts';
 import type { DreamPhaseResult } from './auto-think.ts';
 import { maintenancePreflight, publishMaintenancePage } from '../persistence/prepared-maintenance.ts';
 import { serializeMarkdown } from '../markdown.ts';
-import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { OperationError } from '../ops/contract.ts';
+import { DRIFT_REPORT_KIND, publishSinglePage } from '../generations/adapters/single-page.ts';
 import { publishOrHold, type PublicationHold } from '../persistence/accepted-pending.ts';
 
 export interface DriftPhaseOpts {
@@ -336,6 +337,7 @@ export async function runPhaseDrift(
   const judge = opts.judge ?? defaultDriftJudge;
   const cutoffIso = shiftCalendarDate(cycleDate, -config.lookbackDays);
 
+  const reportRevision = maintenance ? null : (await engine.readPageSnapshot(`reports/drift-${cycleDate}`, { sourceId: 'default', includeDeleted: true }))?.revision ?? null;
   const judged: JudgedCandidate[] = [];
   let budgetExhausted = false;
   let failed = 0;
@@ -379,12 +381,14 @@ export async function runPhaseDrift(
         { expectedRevision: snapshot?.revision ?? null, file: false }));
       if (reportHold) reportSlug = undefined;
     } else {
-      await maintenanceTransaction(engine, tx => tx.putPage(reportSlug!, {
-        type: 'note',
-        frontmatter: { report_type: 'drift' },
-        title: `Drift report ${cycleDate}`,
-        compiled_truth: buildReportBody(judged, config, modelId),
-      }));
+      try {
+        await publishSinglePage(engine, { kind: DRIFT_REPORT_KIND, sourceId: 'default', slug: reportSlug, expectedRevision: reportRevision,
+          page: { type: 'note', frontmatter: { report_type: 'drift' }, title: `Drift report ${cycleDate}`, compiled_truth: buildReportBody(judged, config, modelId) } });
+      } catch (e) {
+        if (!(e instanceof OperationError && e.code === 'generation_fenced')) throw e;
+        process.stderr.write(`[drift] ${reportSlug} changed while this run composed it, so it was left as it is; the next cycle writes it.\n`);
+        reportSlug = undefined;
+      }
     }
   }
 

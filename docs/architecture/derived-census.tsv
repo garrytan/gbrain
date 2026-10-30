@@ -1,0 +1,28 @@
+# Derived-retirement census (GBRA-161 PR 1a). Enforced by scripts/check-derived-census.ts (bun run check:derived-census, in verify).
+# Rows: path<TAB>ceiling<TAB>class<TAB>note. Ceilings only shrink (--prune lowers them); a new soft-delete site needs a reviewed row.
+# class: primitive | engine | canonical | pending:inventory (a derived or mixed writer each later GBRA-161 PR reviews onto the generation primitive).
+src/commands/sync/deletes.ts	1	canonical	sync deletes a page whose canonical file was removed
+src/core/company-brain/profile.ts	1	pending:inventory	derived or mixed writer not yet on the generation primitive; reviewed in a later GBRA-161 PR
+src/core/cycle/phantom-redirect.ts	1	pending:inventory	derived or mixed writer not yet on the generation primitive; reviewed in a later GBRA-161 PR
+src/core/engine-sql/pages.ts	5	engine	the shared soft-delete SQL both engines delegate to
+src/core/engine.ts	3	engine	BrainEngine interface declarations of softDeletePage/softDeletePages
+src/core/facts/derivation-inputs.ts	1	pending:inventory	derived or mixed writer not yet on the generation primitive; reviewed in a later GBRA-161 PR
+src/core/generations/adapters/atoms.ts	1	primitive	the unmanaged atom adapter retires through retireDerivedPagesInTransaction inside the generation activation (publish.ts)
+src/core/generations/adapters/chronicle-events.ts	1	primitive	the Life Chronicle event adapter retires dropped events (with their timeline projection rows) through retireDerivedPagesInTransaction inside the generation activation (publish.ts, managed.ts; GBRA-161 PR 3)
+src/core/generations/adapters/single-page.ts	1	primitive	the single-item page adapter (dream_summary, think_synthesis, drift_report) retires only through retireDerivedPagesInTransaction inside the generation activation (publish.ts); a publish replaces its one page in place and never retires it (GBRA-161 PR 5)
+src/core/generations/adapters/synthesis.ts	1	primitive	the synthesis adapter retires matched earlier outputs of a re-synthesized transcript (synthesis-resynthesis) and operator-approved cleanup retirements (synthesis-cleanup) through retireDerivedPagesInTransaction inside the generation activation (publish.ts; GBRA-161 PR 4, #7065)
+src/core/minions/handlers/ingest-capture.ts	1	pending:inventory	derived or mixed writer not yet on the generation primitive; reviewed in a later GBRA-161 PR
+src/core/ops/extraction.ts	1	pending:inventory	derived or mixed writer not yet on the generation primitive; reviewed in a later GBRA-161 PR
+src/core/page-body/segment-rewrite.ts	1	pending:inventory	derived or mixed writer not yet on the generation primitive; reviewed in a later GBRA-161 PR
+src/core/persistence/connector-sync.ts	1	canonical	connector sync applies an upstream deletion of a connected item
+src/core/persistence/derived-retirement-hold.ts	4	primitive	retireDerivedPagesInTransaction: versions, soft-deletes and stamps retired_by; the helper every generation adapter retires through
+src/core/persistence/page-prepare.ts	2	canonical	coordinated delete_page preparation (an operator or agent deletion)
+src/core/persistence/sync-image.ts	1	canonical	sync image publication applies a committed file deletion
+src/core/persistence/sync-prepare.ts	1	canonical	managed sync prepares the soft delete of a page whose file was removed
+src/core/persistence/twin-merge.ts	1	canonical	origin-twin merge retires the losing duplicate of one canonical file
+src/core/pglite-engine.ts	4	engine	PGLite engine soft-delete methods
+src/core/postgres-engine.ts	4	engine	Postgres engine soft-delete methods
+src/core/repair/ghost-pages.ts	1	canonical	repair ghost-pages soft-deletes a live page whose canonical file is gone, after operator agreement
+src/core/repair/rename-identity.ts	2	canonical	repair rename-identity closes the old page of a rename pair, after operator agreement
+src/core/schema-pack/page-to-alias.ts	1	pending:inventory	derived or mixed writer not yet on the generation primitive; reviewed in a later GBRA-161 PR
+src/core/schema-pack/page-to-link.ts	1	pending:inventory	derived or mixed writer not yet on the generation primitive; reviewed in a later GBRA-161 PR

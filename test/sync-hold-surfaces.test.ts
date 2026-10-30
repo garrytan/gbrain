@@ -138,6 +138,19 @@ describe('sources status and retry-held on Git sources', () => {
     });
   });
 
+  test('#7326: sources status --limit / --cursor page the held files of one source by path; --cursor needs the source and --limit is never read as a source id', async () => {
+    const first = JSON.parse(await captured(() => runSources(engine, ['status', 'notes-git', '--json', '--limit', '1']))).sources[0].git_holds;
+    expect(first).toMatchObject({ count: 2, returned: 1, limit: 1, complete: false });
+    expect(first.by_code.map((group: { code: string }) => group.code).sort()).toEqual(['file_too_large', 'invalid_frontmatter']);
+    expect(first.next_command).toEqual(['gbrain', 'sources', 'status', 'notes-git', '--json', '--limit', '1', '--cursor', first.next_cursor]);
+    const second = JSON.parse(await captured(() => runSources(engine, ['status', 'notes-git', '--json', '--limit', '1', '--cursor', first.next_cursor]))).sources[0].git_holds;
+    expect(second).toMatchObject({ returned: 1, complete: true, next_cursor: null });
+    expect([...first.items, ...second.items].map((item: { path: string }) => item.path)).toEqual(['notes/huge.md', 'notes/stale.md']);
+    const unnamed = JSON.parse(await captured(() => runSources(engine, ['status', '--json', '--limit', '5'])));
+    expect(unnamed.sources.find((s: { source_id: string }) => s.source_id === 'notes-git').git_holds.returned).toBe(2);
+    await expect(runSources(engine, ['status', '--json', '--cursor', first.next_cursor])).rejects.toThrow(/one source/);
+  });
+
   test('sources status <unknown id> refuses with not_found and the list command', async () => {
     await expect(runSources(engine, ['status', 'missing-src'])).rejects.toMatchObject({ code: 'not_found',
       fix: { argv: ['gbrain', 'sources', 'list', '--json'] } });
@@ -213,7 +226,7 @@ describe('a page whose file is held refuses put_page naming the hold', () => {
     await writeGitHold(engine, hold(sourceId, await incarnationOf(engine, sourceId), 'notes/held.md', { page_id: Number(snapshot.page.id) }));
     let error: any;
     try { await prepareFileTarget(engine, row, snapshot, 'Replacement'); } catch (e) { error = e; }
-    expect(error).toMatchObject({ code: 'source_changed', detail: 'file_database_drift', message: heldFileMessage('drift', 'invalid_frontmatter'),
+    expect(error).toMatchObject({ code: 'source_changed', detail: 'file_database_drift', message: heldFileMessage('drift', 'invalid_frontmatter', { sourceId, incarnation: await incarnationOf(engine, sourceId) }),
       fix: { argv: ['gbrain', 'repair', 'frontmatter', '--source', sourceId, '--include-ambiguous'] } });
     expect(error.suggestion).toContain('Sync holds notes/held.md in source held-drift (invalid_frontmatter, needs_interpretation at line 2, key "title")');
     expect(error.suggestion).toContain('read-only for put_page until the file is repaired');
@@ -227,7 +240,7 @@ describe('a page whose file is held refuses put_page naming the hold', () => {
     await writeGitHold(engine, hold(sourceId, await incarnationOf(engine, sourceId), 'notes/held-remote.md', { page_id: Number(snapshot.page.id) }));
     let error: any;
     try { await prepareFileTarget(engine, row, snapshot, 'Replacement', undefined, { remote: true }); } catch (e) { error = e; }
-    expect(error).toMatchObject({ code: 'source_changed', detail: 'file_database_drift', message: heldFileMessage('drift', 'invalid_frontmatter'),
+    expect(error).toMatchObject({ code: 'source_changed', detail: 'file_database_drift', message: heldFileMessage('drift', 'invalid_frontmatter', { sourceId, incarnation: await incarnationOf(engine, sourceId) }),
       fix: { actor: 'host_admin', argv: ['gbrain', 'repair', 'frontmatter', '--source', sourceId] } });
     const text = JSON.stringify({ message: error.message, suggestion: error.suggestion, fix: error.fix });
     expect(text).toContain('read-only for put_page until the brain host operator repairs the file');
@@ -242,7 +255,7 @@ describe('a page whose file is held refuses put_page naming the hold', () => {
     await expect(prepareFileTarget(engine, row, null, 'Rendered')).rejects.toMatchObject({ message: 'An unindexed file already occupies the canonical page path.' });
     await writeGitHold(engine, hold(sourceId, await incarnationOf(engine, sourceId), 'notes/new-held.md'));
     await expect(prepareFileTarget(engine, row, null, 'Rendered')).rejects.toMatchObject({ code: 'source_changed',
-      message: heldFileMessage('occupied', 'invalid_frontmatter'), suggestion: expect.stringContaining('does not exist yet') });
+      message: heldFileMessage('occupied', 'invalid_frontmatter', { sourceId, incarnation: await incarnationOf(engine, sourceId) }), suggestion: expect.stringContaining('does not exist yet') });
   });
 
   test('receipts keep only the location-free message; the diagnostic maps it to the same reasons with the repair command', () => {
@@ -279,7 +292,7 @@ describe('Git holds and writer mode changes (X14)', () => {
     const suggestion = String(refused!.suggestion);
     expect(suggestion).toContain('gbrain repair frontmatter --source default');
     expect(suggestion).toContain('retrying this write refuses the same way');
-    expect(refused).toMatchObject({ code: 'source_changed', detail: 'file_database_drift', message: heldFileMessage('drift', 'invalid_frontmatter') });
+    expect(refused).toMatchObject({ code: 'source_changed', detail: 'file_database_drift', message: heldFileMessage('drift', 'invalid_frontmatter', { sourceId: 'default', incarnation }) });
     expect(JSON.stringify(refused)).not.toContain('sources reconcile');
 
     const gmailIncarnation = await incarnationOf(engine, 'gmail-x');

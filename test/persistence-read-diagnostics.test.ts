@@ -145,6 +145,8 @@ describe('bounded read diagnostics', () => {
       await diagnostics.read(0, 0, async () => {
         await Promise.all([engine.searchKeyword('fixture'), engine.searchTitles('fixture')]);
       });
+      // A search read hands back its rows before its COMMIT settles (GBRA-156), so the root transaction records settle after the read.
+      for (const deadline = Date.now() + 10_000; diagnostics.transactions.idle.records.some(r => r.outcome === 'pending') && Date.now() < deadline;) await Bun.sleep(5);
       expect(diagnostics.transactions.idle.total).toBe(2);
       expect(diagnostics.transactions.idle.records.every(r => r.query_index === 0 && r.outcome === 'fulfilled' && r.callback_ms !== null)).toBe(true);
       await engine.transaction(async tx => {

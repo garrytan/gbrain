@@ -14,7 +14,7 @@ import type { SearchResult } from '../../src/core/types.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { serializeMarkdown } from '../../src/core/markdown.ts';
-import { cosineReScore, cosineSimilarity } from '../../src/core/search/cosine-rescore.ts';
+import { cosineReScore, cosineSimilarity, startCosineReScore } from '../../src/core/search/cosine-rescore.ts';
 import { _resetWarnOnceForTests } from '../../src/core/utils.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
@@ -115,6 +115,18 @@ for (const kind of testBackends()) {
       expect(by['notes/zero']!.cosine).toBe(0);
       expect(by['notes/missing']!.cosine).toBe(0);
       expect(by['notes/deleted']!.cosine).toBe(0);
+    });
+
+    test('GBRA-156: reads started for a wider candidate set re-score the fused rows exactly as cosineReScore does', async () => {
+      const candidates = rows(['notes/random-a', 'notes/random-b', 'notes/near-floor', 'notes/zero', 'notes/missing', 'notes/deleted']);
+      for (const fused of [candidates.slice(0, 3), [candidates[3]!, candidates[1]!], candidates.slice(4)]) {
+        const direct = await cosineReScore(engine, fused, v.query);
+        const started = await startCosineReScore(engine, candidates, v.query)(fused);
+        expect(started).toEqual(direct);
+      }
+      // A fused set none of whose chunks hydrate comes back untouched, though other candidates hydrated.
+      const unhydrated = candidates.slice(4);
+      expect(await startCosineReScore(engine, candidates, v.query)(unhydrated)).toBe(unhydrated);
     });
 
     test('the all-missing set and a chunkless row come back untouched', async () => {

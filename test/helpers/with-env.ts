@@ -45,34 +45,42 @@ import { join } from 'node:path';
  *     expect(process.env.K).toBe('outer');
  *   });
  */
+type EnvFrame = { prior: string | undefined };
+const activeFrames = new Map<string, EnvFrame[]>();
+
+function setEnv(key: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[key];
+  else process.env[key] = value;
+}
+
 export async function withEnv<T>(
   overrides: Record<string, string | undefined>,
   fn: () => T | Promise<T>,
 ): Promise<T> {
-  const keys = Object.keys(overrides);
-  const prior: Record<string, string | undefined> = {};
-  for (const key of keys) {
-    prior[key] = process.env[key];
-  }
-  // Bun keeps the last explicitly set zone when TZ is deleted (bun test pins
-  // UTC without setting TZ), so restore an absent TZ as the zone in effect.
-  if ('TZ' in overrides && prior.TZ === undefined) prior.TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const frames = Object.keys(overrides).map(key => {
+    // Bun keeps the last explicitly set zone when TZ is deleted (bun test pins
+    // UTC without setting TZ), so restore an absent TZ as the zone in effect.
+    const prior = key === 'TZ' && process.env.TZ === undefined ? Intl.DateTimeFormat().resolvedOptions().timeZone : process.env[key];
+    const frame: EnvFrame = { prior };
+    const stack = activeFrames.get(key) ?? [];
+    stack.push(frame);
+    activeFrames.set(key, stack);
+    return [key, stack, frame] as const;
+  });
   try {
-    for (const [key, value] of Object.entries(overrides)) {
-      if (value === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = value;
-      }
-    }
+    for (const [key, value] of Object.entries(overrides)) setEnv(key, value);
     return await fn();
   } finally {
-    for (const [key, value] of Object.entries(prior)) {
-      if (value === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = value;
-      }
+    // Overlapping calls (Promise.all, an un-awaited withEnv) can finish out of
+    // order. The last frame restores; an earlier one hands its prior to the
+    // frame that captured its override, so the key ends at the value it had
+    // before the first call instead of a value one of them set.
+    for (const [key, stack, frame] of frames) {
+      const at = stack.indexOf(frame);
+      if (at === stack.length - 1) setEnv(key, frame.prior);
+      else stack[at + 1]!.prior = frame.prior;
+      stack.splice(at, 1);
+      if (stack.length === 0) activeFrames.delete(key);
     }
   }
 }

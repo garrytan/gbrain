@@ -123,14 +123,14 @@ Once OpenClaw is running, installation is two commands — one in the brain repo
 gbrain init --supabase
 
 # In the AGENT WORKSPACE repo (where OpenClaw runs):
-gbrain skillpack scaffold --all
+gbrain skillpack scaffold --harness openclaw --workspace .
 ```
 
 `gbrain init --supabase` walks a short wizard that asks for your Supabase connection string and creates the schema. You'll get that connection string in Step 7 — read 7a and 7b first so you paste the right one (the transaction pooler, not the direct connection). If you'd rather try things locally before paying for a database, `gbrain init --pglite` gives you a zero-config embedded engine instead; you can move it to Supabase later with `gbrain migrate --to postgres` ([guide](../guides/move-to-postgres.md)).
 
-`gbrain skillpack scaffold --all` copies the 50+ bundled skills into your agent workspace as first-class files you can edit freely.
+`gbrain skillpack scaffold --harness openclaw` copies the five brain-first skills (`query`, `brain-ops`, `capture`, `data-loss-gate`, `resolve-before-asking`) into your agent workspace as first-class files you can edit freely. OpenClaw lists every workspace skill in every prompt, so add the others by name as the agent needs them (`--skill meeting-ingestion`), or all 50+ with `--all`.
 
-From this point, the agent has working memory and access to every skill.
+From this point, the agent has working memory and the core skills.
 
 ---
 

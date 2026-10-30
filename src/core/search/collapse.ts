@@ -130,26 +130,52 @@ export interface PageFacts { target: string | null; body: string | null; bodyCha
 
 /**
  * Per page id: the frontmatter redirect target, the body's length (bounded prefix: a body under the bound is whole),
- * and, for the head, an identity hash of a substantial body and its leading words. Ids already in `cache` are not read again.
+ * and, for `bodyIds`, an identity hash of a substantial body and its leading words. Every id gets an entry: a page
+ * the read does not return has no facts.
  */
-async function readPageFacts(engine: Pick<BrainEngine, 'executeRaw'>, allIds: number[], bodyIds: number[], cache: Map<number, PageFacts>): Promise<Map<number, PageFacts>> {
+async function readFactRows(engine: Pick<BrainEngine, 'executeRaw'>, ids: number[], bodyIds: number[]): Promise<Map<number, PageFacts>> {
+  const body = `btrim(COALESCE(${boundedBodyPrefixSql('p')}, ''))`;
+  const rows = await engine.executeRaw<{ id: number; target: string | null; body: string | null; body_chars: number | null; lead: string | null }>(
+    `SELECT p.id,
+            COALESCE(NULLIF(btrim(p.frontmatter->>'redirect_to'), ''), NULLIF(btrim(p.frontmatter->>'redirect'), ''),
+                     NULLIF(btrim(p.frontmatter->>'merged_into'), ''),
+                     CASE WHEN ${STATUS_REDIRECT} THEN NULLIF(btrim(p.frontmatter->>'superseded_by'), '') END) AS target,
+            length(${body}) AS body_chars,
+            CASE WHEN p.id = ANY($2::int[]) AND length(${body}) >= ${IDENTICAL_BODY_MIN_CHARS} THEN md5(${body}) END AS body,
+            CASE WHEN p.id = ANY($2::int[]) THEN left(${body}, ${OVERLAP_PREFIX_CHARS}) END AS lead
+       FROM pages p WHERE p.id = ANY($1::int[])`,
+    [ids, bodyIds],
+  );
+  const facts = new Map<number, PageFacts>(ids.map(id => [id, { target: null, body: null, bodyChars: null, words: null }]));
+  for (const r of rows) facts.set(Number(r.id), { target: r.target, body: r.body, bodyChars: r.body_chars === null ? null : Number(r.body_chars), words: wordSet(r.lead) });
+  return facts;
+}
+
+/**
+ * GBRA-156: the facts of every page in `ids`, body identity included, read now. Hybrid search starts it for the fused
+ * pages beside the post-fusion reads; collapseResults then takes its pages' entries from it (body identity only for
+ * the pages it compares, as its own read would) instead of a round trip of its own. Null when the read fails.
+ */
+export function prefetchPageFacts(engine: Pick<BrainEngine, 'executeRaw'>, ids: number[]): Promise<Map<number, PageFacts> | null> {
+  const valid = [...new Set(ids)].filter(id => Number.isSafeInteger(id) && id > 0);
+  return valid.length ? readFactRows(engine, valid, valid).catch(() => null) : Promise.resolve(null);
+}
+
+/** The facts of `allIds` into `cache` (ids already there are not read again; `prefetched` entries are not read at all). */
+async function readPageFacts(engine: Pick<BrainEngine, 'executeRaw'>, allIds: number[], bodyIds: number[], cache: Map<number, PageFacts>,
+  prefetched?: Promise<Map<number, PageFacts> | null>): Promise<Map<number, PageFacts>> {
   const ids = allIds.filter(id => !cache.has(id));
   if (ids.length === 0) return cache;
-  const body = `btrim(COALESCE(${boundedBodyPrefixSql('p')}, ''))`;
+  const early = prefetched ? await prefetched : null;
+  const bodies = new Set(bodyIds);
+  for (const id of ids) {
+    const known = early?.get(id);
+    if (known) cache.set(id, bodies.has(id) ? known : { ...known, body: null, words: null });
+  }
+  const unread = ids.filter(id => !cache.has(id));
+  if (unread.length === 0) return cache;
   try {
-    const rows = await engine.executeRaw<{ id: number; target: string | null; body: string | null; body_chars: number | null; lead: string | null }>(
-      `SELECT p.id,
-              COALESCE(NULLIF(btrim(p.frontmatter->>'redirect_to'), ''), NULLIF(btrim(p.frontmatter->>'redirect'), ''),
-                       NULLIF(btrim(p.frontmatter->>'merged_into'), ''),
-                       CASE WHEN ${STATUS_REDIRECT} THEN NULLIF(btrim(p.frontmatter->>'superseded_by'), '') END) AS target,
-              length(${body}) AS body_chars,
-              CASE WHEN p.id = ANY($2::int[]) AND length(${body}) >= ${IDENTICAL_BODY_MIN_CHARS} THEN md5(${body}) END AS body,
-              CASE WHEN p.id = ANY($2::int[]) THEN left(${body}, ${OVERLAP_PREFIX_CHARS}) END AS lead
-         FROM pages p WHERE p.id = ANY($1::int[])`,
-      [ids, bodyIds],
-    );
-    for (const id of ids) cache.set(id, { target: null, body: null, bodyChars: null, words: null });
-    for (const r of rows) cache.set(Number(r.id), { target: r.target, body: r.body, bodyChars: r.body_chars === null ? null : Number(r.body_chars), words: wordSet(r.lead) });
+    for (const [id, facts] of await readFactRows(engine, unread, bodyIds)) cache.set(id, facts);
   } catch {
     // fail-open: no frontmatter redirects or body identity this call
   }
@@ -200,7 +226,7 @@ async function readTarget(engine: BrainEngine, sourceId: string, slug: string, s
 export async function collapseResults(
   engine: BrainEngine,
   results: SearchResult[],
-  opts: IdentityTierOpts & { onDecision?: (d: CollapseDecision) => void; facts?: Map<number, PageFacts> } = {},
+  opts: IdentityTierOpts & { onDecision?: (d: CollapseDecision) => void; facts?: Map<number, PageFacts>; prefetched?: Promise<Map<number, PageFacts> | null> } = {},
 ): Promise<SearchResult[]> {
   if (results.length === 0) return results;
   const pages = new Map<string, SearchResult[]>();
@@ -216,7 +242,7 @@ export async function collapseResults(
   const slugCount = new Map<string, number>();
   for (const rows of pages.values()) slugCount.set(rows[0].slug, (slugCount.get(rows[0].slug) ?? 0) + 1);
   const compared = [...pages.keys()].filter((k, i) => i < FAMILY_HEAD || slugCount.get(pages.get(k)![0].slug)! > 1);
-  const facts = await readPageFacts(engine, [...pages.keys()].map(idOf).filter(valid), compared.map(idOf).filter(valid), opts.facts ?? new Map());
+  const facts = await readPageFacts(engine, [...pages.keys()].map(idOf).filter(valid), compared.map(idOf).filter(valid), opts.facts ?? new Map(), opts.prefetched);
   const decision: CollapseDecision = { twins: 0, redirects: 0, families: 0, redirect_reads: 0 };
 
   // Redirect stubs and their targets (same source).

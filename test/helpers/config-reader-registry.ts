@@ -116,6 +116,7 @@ export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   { file: 'src/core/feedback/settings.ts', expr: 'key', why: P },
   { file: 'src/core/fence-repair/config.ts', expr: 'key', why: P },
   { file: 'src/core/fence-repair/config.ts', expr: 'key', why: P },
+  { file: 'src/core/generations/config.ts', expr: 'bound.key', why: 'readGenerationsConfig walk over GENERATION_BOUNDS (the five generations.* keys, each registered in KNOWN_CONFIG_KEYS)' },
   { file: 'src/core/import-file.ts', expr: 'key', why: P },
   { file: 'src/core/import-screen.ts', expr: 'key', why: P },
   { file: 'src/core/line-grammar.ts', expr: 'key', why: P },

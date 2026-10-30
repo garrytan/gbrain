@@ -40,6 +40,26 @@ function load(root: string): StorageConfig | null {
 }
 
 /**
+ * #8007: whether a page slug is database-only at this source root, or `unknown` when gbrain.yml cannot be read, its tiers
+ * overlap, it declares db_only in syntax resolving nothing, or a deprecated `supabase_only` list was ignored next to canonical keys. A caller deciding whether a missing file deletes its page
+ * holds the page on `unknown` instead of guessing.
+ */
+export function sourceDbOnlyVerdict(root: string, slug: string): boolean | 'unknown' {
+  try {
+    const config = load(root);
+    return isDeclaredDbOnlySlug(slug, config) || (config?.deprecated_db_only_ignored ? 'unknown' : false);
+  } catch {
+    return 'unknown';
+  }
+}
+
+/** #7423: the declared `storage.db_only` dir this page slug falls under at this source root, or null; an invalid gbrain.yml refuses (`storage_error`). */
+export function sourceDbOnlyDir(root: string, slug: string): string | null {
+  const config = load(root);
+  return config?.db_only.find(dir => isDeclaredDbOnlySlug(slug, { ...config, db_only: [dir] })) ?? null;
+}
+
+/**
  * Whether a page slug falls under a `storage.db_only` dir declared in the
  * gbrain.yml at this source root. A gbrain.yml that cannot be read, whose
  * tiers overlap, or that declares db_only in syntax resolving nothing is

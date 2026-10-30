@@ -2,7 +2,8 @@
  * The managed dream-synthesis fixture shared by test/managed-synthesis-postprocess.test.ts and the GBRA-130
  * pathological probes (test/pathological/a4-synthesize-postprocess.test.ts).
  */
-import { expect } from 'bun:test';
+import { expect, spyOn } from 'bun:test';
+import * as childVerify from '../../src/core/cycle/synthesize-child-verify.ts';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,6 +16,7 @@ import { disposePersistenceConsumer } from '../../src/core/persistence/service.t
 import { configureGateway, __setChatTransportForTests, __setEmbedTransportForTests, __setDecideTransportForTests } from '../../src/core/ai/gateway.ts';
 import { flushDecideWrites } from '../../src/core/ai/decide/store.ts';
 import { withEnv } from './with-env.ts';
+import { freezeCorpusSessions } from './frozen-corpus.ts';
 
 export const laterQuote = 'a legitimate later quotation from a completely different interview';
 
@@ -27,9 +29,15 @@ export interface SynthesisFixture {
 /**
  * A managed source per engine with one transcript and a stubbed provider: triage scores it 0.9 and the oneshot
  * child writes `outputCount` reflection pages (`outputBody`, or a body with one invented quotation).
+ *
+ * GBRA-60: a managed child verifies and stamps its pages before writing them (synthesize-child-verify.ts), which leaves
+ * postprocessing nothing to do. Unless `childVerifies` is set the fixture's child cannot verify (as a job queued by an
+ * older build, or a worker that cannot read the transcript), so these probes exercise postprocessing's backstop path.
  */
-export async function managedSynthesisFixture(engines: BrainEngine[], run: (f: SynthesisFixture) => Promise<void>, outputCount = 1, outputBody?: string) {
-  for (const engine of engines) {
+export async function managedSynthesisFixture(engines: BrainEngine[], run: (f: SynthesisFixture) => Promise<void>, outputCount = 1, outputBody?: string,
+  childVerifies = false) {
+  const unverified = childVerifies ? null : spyOn(childVerify, 'verifyChildPages').mockResolvedValue(null);
+  try { for (const engine of engines) {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-synth-postprocess-'));
     const root = join(dir, 'brain');
     mkdirSync(root);
@@ -88,7 +96,7 @@ export async function managedSynthesisFixture(engines: BrainEngine[], run: (f: S
       await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
       rmSync(dir, { recursive: true, force: true });
     }
-  }
+  } } finally { unverified?.mockRestore(); }
 }
 
 export async function outputSlug(engine: BrainEngine, sourceId: string): Promise<string> {
@@ -112,6 +120,7 @@ export async function childCommittedOrdinaryCycle({ engine, sourceId, root, opts
   const corpus = join(root, '..', 'corpus');
   mkdirSync(corpus);
   writeFileSync(join(corpus, basename(opts.inputFile)), readFileSync(opts.inputFile));
+  freezeCorpusSessions(corpus, sourceId);
   await engine.setConfig('dream.synthesize.session_corpus_dir', corpus);
   const ordinary = { brainDir: root, sourceId, dryRun: false };
   await interruptAfterChild(engine, sourceId, ordinary);

@@ -574,6 +574,7 @@ CREATE INDEX IF NOT EXISTS idx_links_from ON links(from_page_id);
 CREATE INDEX IF NOT EXISTS idx_links_to ON links(to_page_id);
 CREATE INDEX IF NOT EXISTS idx_links_source ON links(link_source);
 CREATE INDEX IF NOT EXISTS idx_links_origin ON links(origin_page_id);
+CREATE INDEX IF NOT EXISTS idx_links_supersedes_to ON links (to_page_id) WHERE link_type = 'supersedes';
 
 -- Wanted pages (migration wanted_links): authored links whose target page does
 -- not exist. A live target updated after checked_at makes the origin stale for
@@ -1169,6 +1170,8 @@ CREATE INDEX IF NOT EXISTS idx_file_migration_ledger_status
 ALTER TABLE pages ADD COLUMN IF NOT EXISTS search_vector tsvector;
 
 CREATE INDEX IF NOT EXISTS idx_pages_search ON pages USING GIN(search_vector);
+-- GBRA-156 (v267): the title arm's title-only predicate reads the weight-A slice (the title alone).
+CREATE INDEX IF NOT EXISTS idx_pages_title_search ON pages USING GIN (ts_filter(search_vector, '{a}'));
 
 -- Function to rebuild search_vector for a page
 -- #2704: compiled_truth (unbounded whole-page body) deliberately NOT
@@ -1943,6 +1946,83 @@ CREATE TABLE IF NOT EXISTS extract_atoms_page_state (
 CREATE INDEX IF NOT EXISTS extract_atoms_page_state_tombstoned_idx
   ON extract_atoms_page_state (source_incarnation, content_hash, page_id) WHERE tombstoned;
 CREATE INDEX IF NOT EXISTS extract_atoms_page_state_page_idx ON extract_atoms_page_state (page_id);
+
+-- GBRA-161: the generation ledger (src/core/generations/, docs/architecture/generations.md).
+CREATE TABLE IF NOT EXISTS derived_generations (
+  id BIGSERIAL PRIMARY KEY,
+  source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  owner_key TEXT NOT NULL,
+  generation INTEGER NOT NULL DEFAULT 0,
+  state TEXT NOT NULL CHECK (state IN ('live','held','superseded')),
+  run_id TEXT,
+  operation_id TEXT NOT NULL,
+  hold_id TEXT,
+  input_pin TEXT,
+  input_size BIGINT,
+  completeness JSONB NOT NULL DEFAULT '{}',
+  item_set_hash TEXT NOT NULL,
+  held_reason TEXT CHECK (held_reason IS NULL OR held_reason IN ('shrunk','oversize','valve','no_proof','fence_absent','attempts_exhausted','segmented_unsupported','tie')),
+  held_context JSONB,
+  proposal JSONB,
+  proposal_bytes INTEGER,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  superseded_by BIGINT,
+  restore_of BIGINT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  locator TEXT,
+  activation_id TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS derived_generations_one_live ON derived_generations (source_id, kind, owner_key) WHERE state = 'live';
+CREATE UNIQUE INDEX IF NOT EXISTS derived_generations_one_hold ON derived_generations (source_id, kind, owner_key) WHERE state = 'held';
+CREATE INDEX IF NOT EXISTS derived_generations_operation ON derived_generations (operation_id);
+CREATE INDEX IF NOT EXISTS derived_generations_state_created ON derived_generations (state, created_at);
+CREATE TABLE IF NOT EXISTS derived_generation_items (
+  generation_id BIGINT NOT NULL REFERENCES derived_generations(id) ON DELETE CASCADE,
+  item_key TEXT NOT NULL,
+  identity_hash TEXT NOT NULL,
+  action TEXT NOT NULL CHECK (action IN ('published','retired','revived','kept','adopted')),
+  preimage JSONB,
+  preimage_bytes INTEGER,
+  pending BOOLEAN NOT NULL DEFAULT false,
+  PRIMARY KEY (generation_id, item_key)
+);
+CREATE INDEX IF NOT EXISTS derived_generation_items_key ON derived_generation_items (item_key);
+CREATE INDEX IF NOT EXISTS derived_generation_items_pending ON derived_generation_items (generation_id) WHERE pending;
+CREATE TABLE IF NOT EXISTS derived_generation_valve (
+  source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  window_key TEXT NOT NULL,
+  retired INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, kind, window_key)
+);
+CREATE TABLE IF NOT EXISTS derived_generation_attempts (
+  hold_id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  owner_key TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  codes JSONB NOT NULL DEFAULT '[]',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS derived_generation_attempts_key ON derived_generation_attempts (source_id, kind, owner_key);
+CREATE TABLE IF NOT EXISTS derived_generation_activations (
+  id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  owner_key TEXT NOT NULL,
+  expected_generation INTEGER NOT NULL,
+  input_pin TEXT,
+  item_set_hash TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('pending','activated')),
+  generation_id BIGINT REFERENCES derived_generations(id) ON DELETE SET NULL,
+  members JSONB NOT NULL DEFAULT '[]',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS derived_generation_activations_key ON derived_generation_activations (source_id, kind, owner_key, state);
 -- (migration v246) Per-page embedding spend ledger for large pages
 -- (page-embedding-budget.ts): held pages wait for approval, capped pages are
 -- partially embedded up to embed.max_usd_per_page.
@@ -2127,12 +2207,109 @@ CREATE TABLE IF NOT EXISTS page_body_staging_texts (
 CREATE INDEX IF NOT EXISTS page_body_staging_texts_text ON page_body_staging_texts (source_id, sha256);
 -- END GENERATED from src/core/page-body/schema.ts (PAGE_BODY_SCHEMA_SQL)
 
+-- Wave B per-segment derivation watermarks (migration v273; src/core/page-body/derivations.ts).
+-- BEGIN GENERATED from src/core/page-body/schema.ts (PAGE_SEGMENT_DERIVATIONS_SQL). Edit that file, then run: bun run build:schema
+CREATE TABLE IF NOT EXISTS page_segment_derivations (
+  page_id          INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  pipeline         TEXT    NOT NULL CHECK (pipeline IN ('links','mentions','timeline','fences','conversation_facts','facts_backstop','synopsis')),
+  occurrence_id    BIGINT  NOT NULL,
+  pipeline_version INTEGER NOT NULL CHECK (pipeline_version >= 0),
+  segment_sha256   BYTEA   NOT NULL CHECK (octet_length(segment_sha256) = 32),
+  context_hash     BYTEA   NOT NULL CHECK (octet_length(context_hash) = 32),
+  state            TEXT    NOT NULL CHECK (state IN ('done','partial','failed','skipped')),
+  output           JSONB,
+  receipt          JSONB,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (page_id, pipeline, occurrence_id)
+);
+CREATE INDEX IF NOT EXISTS page_segment_derivations_unsettled ON page_segment_derivations (pipeline, page_id) WHERE state IN ('partial','failed');
+CREATE TABLE IF NOT EXISTS page_derivation_spend (
+  page_id      INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  family       TEXT    NOT NULL CHECK (family IN ('facts','synopsis')),
+  spent_usd    DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (spent_usd >= 0),
+  reserved_usd DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (reserved_usd >= 0),
+  reserved_at  TIMESTAMPTZ,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (page_id, family)
+);
+CREATE TABLE IF NOT EXISTS page_segment_derivation_purges (
+  request_id        UUID      PRIMARY KEY,
+  source_id         TEXT      NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  needles           TEXT[]    NOT NULL,
+  patterns          TEXT[]    NOT NULL,
+  page_ids          INTEGER[] NOT NULL DEFAULT '{}',
+  phase             TEXT      NOT NULL DEFAULT 'sweep' CHECK (phase IN ('sweep','verify','recheck')),
+  recheck           INTEGER[],
+  found             INTEGER   NOT NULL DEFAULT 0 CHECK (found >= 0),
+  cursor_page       INTEGER,
+  cursor_pipeline   TEXT,
+  cursor_occurrence BIGINT,
+  batch_rows        INTEGER   CHECK (batch_rows >= 1),
+  stalled_at        TIMESTAMPTZ,
+  stalled_reason    TEXT      CHECK (stalled_reason IN ('statement_timeout','paid_row_unreadable')),
+  pending_reason    TEXT      CHECK (pending_reason IN ('scope_lock_busy')),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS page_segment_derivation_purges_source ON page_segment_derivation_purges (source_id, created_at);
+CREATE TABLE IF NOT EXISTS page_segment_derivation_purge_pages (
+  request_id UUID    NOT NULL,
+  page_id    INTEGER NOT NULL,
+  PRIMARY KEY (request_id, page_id)
+);
+CREATE OR REPLACE FUNCTION gbrain_mark_derivation_scope_entry() RETURNS trigger SET search_path = pg_catalog, public AS $func$
+DECLARE
+  src TEXT;
+  page INTEGER;
+BEGIN
+  IF TG_TABLE_NAME = 'pages' THEN
+    src := NEW.source_id;
+    page := NEW.id;
+  ELSE
+    src := OLD.source_id;
+    page := OLD.page_id;
+  END IF;
+  PERFORM pg_advisory_xact_lock_shared(hashtextextended('gbrain:derivation-scope:' || src, 0));
+  INSERT INTO page_segment_derivation_purge_pages (request_id, page_id)
+    SELECT x.request_id, page FROM page_segment_derivation_purges x WHERE x.source_id = src ON CONFLICT DO NOTHING;
+  RETURN NULL;
+END
+$func$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS page_body_manifest_derivation_scope_retire ON page_body_manifest;
+CREATE TRIGGER page_body_manifest_derivation_scope_retire AFTER UPDATE OF gen_to ON page_body_manifest
+  FOR EACH ROW WHEN (OLD.gen_to IS NULL AND NEW.gen_to IS NOT NULL AND OLD.staging_id IS NULL) EXECUTE FUNCTION gbrain_mark_derivation_scope_entry();
+DROP TRIGGER IF EXISTS page_body_manifest_derivation_scope_delete ON page_body_manifest;
+CREATE TRIGGER page_body_manifest_derivation_scope_delete AFTER DELETE ON page_body_manifest
+  FOR EACH ROW WHEN (OLD.gen_to IS NULL AND OLD.staging_id IS NULL) EXECUTE FUNCTION gbrain_mark_derivation_scope_entry();
+DROP TRIGGER IF EXISTS pages_derivation_scope_delete ON pages;
+CREATE TRIGGER pages_derivation_scope_delete AFTER UPDATE OF deleted_at ON pages
+  FOR EACH ROW WHEN (OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL) EXECUTE FUNCTION gbrain_mark_derivation_scope_entry();
+CREATE OR REPLACE FUNCTION gbrain_refuse_purging_derivation() RETURNS trigger SET search_path = pg_catalog, public AS $func$
+BEGIN
+  IF EXISTS (SELECT 1 FROM page_segment_derivation_purges x JOIN pages p ON p.source_id = x.source_id
+    WHERE p.id = NEW.page_id AND (NEW.page_id = ANY(x.page_ids::int[]) OR p.deleted_at IS NOT NULL OR NOT EXISTS (SELECT 1 FROM page_body_manifest m
+    WHERE m.page_id = NEW.page_id AND m.occurrence_id = NEW.occurrence_id AND m.gen_to IS NULL AND m.staging_id IS NULL AND m.sha256 = NEW.segment_sha256))
+      AND CASE WHEN replace(translate(lower(COALESCE(NEW.output::text, '') || ' ' || COALESCE(NEW.receipt::text, '')), 'ς', 'σ'), 'i̇', 'i') LIKE ANY (x.patterns::text[]) THEN EXISTS (SELECT 1 FROM (VALUES (NEW.output), (NEW.receipt)) doc(j),
+    LATERAL (SELECT jsonb_path_query(doc.j, 'strict $.** ? (@.type() == "string")') #>> '{}' AS t
+      UNION ALL SELECT jsonb_path_query(doc.j, 'strict $.** ? (@.type() == "object").keyvalue().key') #>> '{}') s
+    WHERE CASE WHEN replace(translate(lower(s.t), 'ς', 'σ'), 'i̇', 'i') LIKE ANY (x.patterns::text[]) THEN EXISTS (SELECT 1 FROM unnest(x.needles::text[]) k(n)
+      WHERE strpos(' ' || replace(translate(gbrain_fact_normalize(s.t), 'ς', 'σ'), 'i̇', 'i') || ' ', k.n) > 0) ELSE false END) ELSE false END) THEN
+    RETURN NULL;
+  END IF;
+  RETURN NEW;
+END
+$func$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS page_segment_derivations_refuse_purging ON page_segment_derivations;
+CREATE TRIGGER page_segment_derivations_refuse_purging BEFORE INSERT OR UPDATE OF output, receipt ON page_segment_derivations
+  FOR EACH ROW EXECUTE FUNCTION gbrain_refuse_purging_derivation();
+-- END GENERATED from src/core/page-body/schema.ts (PAGE_SEGMENT_DERIVATIONS_SQL)
+
 -- BEGIN GENERATED from src/core/page-body/schema.ts (PAGE_BODY_RLS_SQL). Edit that file, then run: bun run build:schema
 DO $rls$
 DECLARE target TEXT;
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    FOREACH target IN ARRAY ARRAY['page_segment_texts','page_body_manifest','page_body_stagings','page_body_staging_parts','page_view_digests','page_body_staging_texts'] LOOP
+    FOREACH target IN ARRAY ARRAY['page_segment_texts','page_body_manifest','page_body_stagings','page_body_staging_parts','page_view_digests','page_body_staging_texts','page_segment_derivations','page_derivation_spend','page_segment_derivation_purges','page_segment_derivation_purge_pages'] LOOP
       IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                  WHERE n.nspname = current_schema() AND c.relname = target AND c.relkind = 'r' AND NOT c.relrowsecurity) THEN
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', target);
@@ -2265,9 +2442,16 @@ CREATE TABLE IF NOT EXISTS persistence_consumers (
   );
 
 CREATE OR REPLACE FUNCTION gbrain_require_managed_writer() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
-DECLARE target_source text; old_source text; row_data jsonb; old_data jsonb; allowed jsonb;
+DECLARE managed boolean; strict_count integer; seen integer; git boolean; unreadable text; target_source text; old_source text; row_data jsonb; old_data jsonb; allowed jsonb;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM persistence_brain WHERE singleton=1 AND enabled) THEN
+  -- #7636: init always writes the singleton, so a missing row means this role cannot read it (RLS), never "unmanaged".
+  SELECT enabled INTO managed FROM persistence_brain WHERE singleton=1;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+      TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+      DETAIL=jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','persistence_brain')::text;
+  END IF;
+  IF NOT managed THEN
     IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
   END IF;
   IF TG_TABLE_NAME='page_segment_texts' THEN
@@ -2317,9 +2501,19 @@ BEGIN
   IF TG_TABLE_NAME NOT IN ('tags','timeline_entries','takes') THEN
     target_source := row_data->>'source_id'; old_source := old_data->>'source_id';
   END IF;
-  IF target_source IS NULL THEN SELECT source_id INTO target_source FROM pages WHERE id=(row_data->>'page_id')::integer; END IF;
+  IF target_source IS NULL THEN
+    SELECT source_id INTO target_source FROM pages WHERE id=(row_data->>'page_id')::integer;
+    IF NOT FOUND AND row_security_active('pages') THEN unreadable := 'pages'; END IF;
+  END IF;
   IF TG_OP='UPDATE' AND old_source IS NULL THEN
     SELECT source_id INTO old_source FROM pages WHERE id=(old_data->>'page_id')::integer;
+    IF NOT FOUND AND row_security_active('pages') THEN unreadable := 'pages'; END IF;
+  END IF;
+  -- A page row-level security hides is not a deleted parent (a cascade runs as the table owner, outside RLS).
+  IF unreadable IS NOT NULL THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+      TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+      DETAIL=jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state',unreadable)::text;
   END IF;
   -- Cascaded projection removal after the already-guarded parent deletion.
   IF target_source IS NULL AND TG_OP='DELETE' THEN RETURN OLD; END IF;
@@ -2330,6 +2524,26 @@ BEGIN
       DETAIL=jsonb_build_object('op',TG_OP,'relationship',CASE WHEN target_source IS NULL THEN 'missing_source'
         WHEN NOT (allowed ? target_source) THEN 'different_source' ELSE 'old_source_outside' END,
         'target_source',target_source,'old_source',old_source,'allowed',allowed)::text;
+  END IF;
+  -- G7a (git-canonical-schema.ts): a git-canonical source takes rows only from a writer that declares the git protocol.
+  IF COALESCE(current_setting('gbrain.git_protocol',true),'') <> '1' THEN
+    SELECT strict_sources INTO strict_count FROM git_canonical_brain WHERE singleton=1;
+    IF NOT FOUND THEN unreadable := 'git_canonical_brain';
+    ELSIF strict_count>0 THEN
+      SELECT count(*), COALESCE(bool_or(config->>'canonical'='git'),false) INTO seen, git FROM sources WHERE id IN (target_source, old_source);
+      IF seen < (CASE WHEN old_source IS NULL OR old_source=target_source THEN 1 ELSE 2 END) AND row_security_active('sources') THEN
+        unreadable := 'sources';
+      ELSIF git THEN
+        RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='git_protocol_required: this source is git-canonical and the writer does not declare the git protocol',
+          TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='git_canonical_fence:mutation',
+          DETAIL=jsonb_build_object('op',TG_OP,'target_source',target_source,'old_source',old_source)::text;
+      END IF;
+    END IF;
+    IF unreadable IS NOT NULL THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+        TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+        DETAIL=jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state',unreadable)::text;
+    END IF;
   END IF;
   IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
 END $fn$;
@@ -2346,6 +2560,46 @@ BEGIN
 END $body$;
 ;
 -- END GENERATED from src/core/persistence/schema.ts (PERSISTENCE_SCHEMA_STATEMENTS)
+
+-- BEGIN GENERATED from src/core/persistence/git-canonical-schema.ts (GIT_CANONICAL_SCHEMA_SQL). Edit that file, then run: bun run build:schema
+CREATE TABLE IF NOT EXISTS git_canonical_brain (
+  singleton INTEGER PRIMARY KEY DEFAULT 1 CHECK (singleton = 1),
+  strict_sources INTEGER NOT NULL DEFAULT 0 CHECK (strict_sources >= 0)
+);
+CREATE OR REPLACE FUNCTION gbrain_count_git_canonical_sources() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+BEGIN
+  -- #7636: a count over the rows row-level security lets this role see would undercount and could switch G7a off.
+  IF row_security_active('sources') THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+      TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+      DETAIL=jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','sources')::text;
+  END IF;
+  INSERT INTO git_canonical_brain(singleton, strict_sources)
+    VALUES (1, (SELECT count(*) FROM sources WHERE config->>'canonical' = 'git'))
+    ON CONFLICT (singleton) DO UPDATE SET strict_sources = EXCLUDED.strict_sources;
+  RETURN NULL;
+END $fn$;
+DROP TRIGGER IF EXISTS git_canonical_sources_count_insert ON sources;
+CREATE TRIGGER git_canonical_sources_count_insert AFTER INSERT ON sources
+  FOR EACH ROW WHEN (NEW.config->>'canonical' = 'git') EXECUTE FUNCTION gbrain_count_git_canonical_sources();
+DROP TRIGGER IF EXISTS git_canonical_sources_count_update ON sources;
+CREATE TRIGGER git_canonical_sources_count_update AFTER UPDATE ON sources
+  FOR EACH ROW WHEN (OLD.config->>'canonical' IS DISTINCT FROM NEW.config->>'canonical') EXECUTE FUNCTION gbrain_count_git_canonical_sources();
+DROP TRIGGER IF EXISTS git_canonical_sources_count_delete ON sources;
+CREATE TRIGGER git_canonical_sources_count_delete AFTER DELETE ON sources
+  FOR EACH ROW WHEN (OLD.config->>'canonical' = 'git') EXECUTE FUNCTION gbrain_count_git_canonical_sources();
+INSERT INTO git_canonical_brain(singleton, strict_sources)
+  VALUES (1, (SELECT count(*) FROM sources WHERE config->>'canonical' = 'git'))
+  ON CONFLICT (singleton) DO UPDATE SET strict_sources = EXCLUDED.strict_sources;
+DO $rls$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper))
+    AND EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = current_schema() AND c.relname = 'git_canonical_brain' AND c.relkind = 'r' AND NOT c.relrowsecurity) THEN
+    ALTER TABLE git_canonical_brain ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+-- END GENERATED from src/core/persistence/git-canonical-schema.ts (GIT_CANONICAL_SCHEMA_SQL)
 -- Verified text projection work (migration 153).
 -- BEGIN GENERATED from src/core/page-state/projection-schema.ts (PAGE_PROJECTION_SCHEMA_SQL). Edit that file, then run: bun run build:schema
 DROP TRIGGER IF EXISTS trg_pages_search_vector ON pages;
@@ -2581,6 +2835,7 @@ CREATE OR REPLACE FUNCTION gbrain_guard_request_protocol() RETURNS trigger LANGU
     IF TG_OP='DELETE' THEN target:=OLD.target_kind; version:=OLD.protocol_version;
     ELSE target:=NEW.target_kind; version:=NEW.protocol_version; END IF;
     SELECT writer_protocol_floor,skill_bundles_enabled INTO floor,active FROM persistence_brain WHERE singleton=1 FOR SHARE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'writer_coordinator_required: writer state is unreadable to this database role' USING ERRCODE='42501'; END IF;
     PERFORM gbrain_require_persistence_protocol(GREATEST(floor,version,CASE WHEN target='skill_bundle' THEN 2 ELSE 1 END));
     IF TG_OP='DELETE' THEN RETURN OLD; END IF;
     IF TG_OP='UPDATE' AND (NEW.target_kind<>OLD.target_kind OR NEW.protocol_version<>OLD.protocol_version) THEN
@@ -2619,6 +2874,7 @@ CREATE OR REPLACE FUNCTION gbrain_guard_effect_protocol() RETURNS trigger LANGUA
   DECLARE floor integer;
   BEGIN
     SELECT writer_protocol_floor INTO floor FROM persistence_brain WHERE singleton=1 FOR SHARE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'writer_coordinator_required: writer state is unreadable to this database role' USING ERRCODE='42501'; END IF;
     PERFORM gbrain_require_persistence_protocol(floor);
     IF TG_OP='DELETE' THEN RETURN OLD; END IF;
     RETURN NEW;
@@ -2633,6 +2889,10 @@ CREATE OR REPLACE FUNCTION gbrain_guard_protocol_activation() RETURNS trigger LA
     END IF;
     IF NEW.writer_protocol_floor>OLD.writer_protocol_floor OR (NEW.skill_bundles_enabled AND NOT OLD.skill_bundles_enabled) THEN
       PERFORM gbrain_require_persistence_protocol(2);
+      IF row_security_active('persistence_requests') OR row_security_active('persistence_effects') OR row_security_active('persistence_worktrees')
+        OR row_security_active('persistence_source_bindings') OR row_security_active('sources') THEN
+        RAISE EXCEPTION 'writer_coordinator_required: writer state is unreadable to this database role' USING ERRCODE='42501';
+      END IF;
       IF COALESCE(current_setting('gbrain.writer_quiesced',true),'')<>'true' OR NOT NEW.enabled OR NEW.writer_protocol_floor<>2
         OR EXISTS (SELECT 1 FROM persistence_requests WHERE state IN ('queued','running','recovering') OR recovery IS NOT NULL)
         OR EXISTS (SELECT 1 FROM persistence_effects WHERE state='running' OR recovery IS NOT NULL)
@@ -3384,3 +3644,20 @@ CREATE TABLE IF NOT EXISTS sync_notifier_sources (
   owner_seen_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Last statement: pg_temp ends every gbrain function's pinned search_path (#7632), after any CREATE OR REPLACE above reset it.
+-- BEGIN GENERATED from src/core/function-search-path.ts (FUNCTION_SEARCH_PATH_HARDENING_SQL). Edit that file, then run: bun run build:schema
+DO $harden$
+DECLARE f RECORD;
+BEGIN
+  FOR f IN SELECT p.oid::regprocedure AS sig, substr(c.setting, 13) AS path
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace CROSS JOIN LATERAL unnest(p.proconfig) AS c(setting)
+    WHERE n.nspname = 'public' AND p.prokind = 'f' AND c.setting IN ('search_path=pg_catalog, public', 'search_path=pg_catalog')
+      AND p.proname IN ('auto_enable_rls', 'bump_page_generation_clock_fn', 'bump_page_generation_fn', 'enforce_minion_queue_protocol', 'gbrain_advance_page_revision', 'gbrain_advance_tag_revision', 'gbrain_bump_trust_generation', 'gbrain_clear_atom_page_state', 'gbrain_count_git_canonical_sources', 'gbrain_count_modifications', 'gbrain_forget_page_retrievals', 'gbrain_fts_input', 'gbrain_graduation_fence', 'gbrain_guard_effect_protocol', 'gbrain_guard_inserted_facts', 'gbrain_guard_protocol_activation', 'gbrain_guard_request_protocol', 'gbrain_guard_skill_publication', 'gbrain_lease_shared_skill_delivery', 'gbrain_mark_derivation_scope_entry', 'gbrain_preserve_fact_withdrawal', 'gbrain_queue_page_projection', 'gbrain_refuse_purged_fact', 'gbrain_refuse_purged_page', 'gbrain_refuse_purged_take', 'gbrain_refuse_purging_derivation', 'gbrain_require_managed_writer', 'gbrain_require_persistence_protocol', 'gbrain_snapshot_version_trust', 'gbrain_stamp_revision_attribution', 'gbrain_stamp_trust_tier', 'gbrain_stamp_version_attribution', 'gbrain_stamp_write_attribution', 'gbrain_try_jsonb', 'notify_minion_job_change', 'update_chunk_search_vector', 'update_page_search_vector')
+      AND pg_has_role(current_user, p.proowner, 'USAGE')
+    ORDER BY 1
+  LOOP
+    EXECUTE format('ALTER FUNCTION %s SET search_path = %s, pg_temp', f.sig, f.path);
+  END LOOP;
+END $harden$;
+-- END GENERATED from src/core/function-search-path.ts (FUNCTION_SEARCH_PATH_HARDENING_SQL)

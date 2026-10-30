@@ -53,8 +53,11 @@ function engineMigrationFix(m: EngineMigrationSide, why: string): Action {
 }
 
 /** Refuse unsupported multi-stage writers before providers, files or git change. */
-export async function assertUnmanagedCanonicalWriter(engine: SqlEngine, operation: string, opts: { migration?: EngineMigrationSide } = {}): Promise<void> {
-  if (!await readManagedMode(engine)) return;
+export async function assertUnmanagedCanonicalWriter(engine: SqlEngine, operation: string, opts: { migration?: EngineMigrationSide; sourceId?: string } = {}): Promise<void> {
+  if (!await readManagedMode(engine)) {
+    if (opts.sourceId !== undefined) await assertNotStrictSource(engine, opts.sourceId, operation);
+    return;
+  }
   const message = `${operation} cannot mutate a managed brain through the legacy writer.`;
   const why = 'This brain is managed: every write goes through its writer coordinator, which the legacy writer bypasses.';
   if (opts.migration) {
@@ -67,6 +70,21 @@ export async function assertUnmanagedCanonicalWriter(engine: SqlEngine, operatio
     { why, reason: 'managed_brain', fix: { consent: [], actor: 'agent', requires_exclusive: false, verify: DOCTOR_VERIFY,
       why: `${why} Each gbrain command that changes sources or imports content takes the coordinated path on a managed brain, so the same command run again uses it; nothing was written.`,
       user_message: `gbrain stopped ${operation} because your brain switched to managed writes while it ran. Nothing was written; running the same command again uses the managed path.` } });
+}
+
+/**
+ * G6 (git-canonical memory): a strict source (`config.canonical = "git"`) is written only through the door, which
+ * commits each file before its row and runs in managed persistence. The legacy writer of an unmanaged brain writes the
+ * row first, so it refuses such a source instead of putting content in the database that git does not have.
+ */
+async function assertNotStrictSource(engine: SqlEngine, sourceId: string, operation: string): Promise<void> {
+  const [row] = await engine.executeRaw<{ strict: boolean }>(`SELECT COALESCE(config->>'canonical','')='git' AS strict FROM sources WHERE id=$1`, [sourceId]);
+  if (row?.strict !== true) return;
+  const why = `Source ${sourceId} is git-canonical: its pages are committed to Git before the database indexes them, and only managed persistence (the writer coordinator) does that. This brain is not managed, so ${operation} would write the database first.`;
+  throw opError('strict_requires_managed', `${operation} cannot write git-canonical source ${sourceId} on an unmanaged brain.`,
+    `Nothing was written. Ask the user whether to turn on managed persistence for this brain (the supported way to make a source git-canonical), or to remove canonical: git from source ${sourceId}.`,
+    { why, docs: 'docs/designs/GIT_CANONICAL_MEMORY.md', fix: { consent: [], actor: 'user', requires_exclusive: false, verify: DOCTOR_VERIFY, why,
+      user_message: `Source ${sourceId} is set to git-canonical, which only a managed brain can serve, so gbrain wrote nothing. Should this brain move to managed writes, or should ${sourceId} stop being git-canonical?` } });
 }
 
 /** The legacy engine copier cannot transfer permanent IDs, withdrawals, ownership or the belief ledger. */

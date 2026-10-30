@@ -57,15 +57,18 @@ export function formatMentionSummary(r: MentionPassResult): string | null {
     return r.removed ? `Mentions: linking is off (auto_link or mentions.auto_link); removed ${r.removed} mention link(s).` : null;
   }
   if (!r.pages && !r.removed && !r.remaining && !r.aliasPages) return null;
+  const failed = r.failed ?? 0;
   return `Mentions: ${r.created} link(s) added, ${r.removed} removed from ${r.pages} page(s)` +
     (r.aliasPages ? `; derived names refreshed on ${r.aliasPages} entity page(s)` : '') +
-    (r.remaining ? `; ${r.remaining} page(s) still due — re-run 'gbrain extract --stale' (or pass --catch-up) to continue.` : '.');
+    (r.remaining > failed ? `; ${r.remaining} page(s) still due — re-run 'gbrain extract --stale' (or pass --catch-up) to continue.` : '.') +
+    (failed ? `\n${failed} page(s) could not be scanned for mentions and stay due until they change; the other pages were scanned${failed > (r.failures?.length ?? 0) ? ` (first ${r.failures?.length ?? 0} listed)` : ''}:` +
+      (r.failures ?? []).map(f => `\n  ${f.source_id}:${f.slug}: ${f.code}: ${f.message}`).join('') : '');
 }
 
 export function mentionJsonFields(r: MentionPassResult): Record<string, unknown> {
   return {
     mention_pages: r.pages, mention_links_created: r.created, mention_links_removed: r.removed,
     mention_alias_pages: r.aliasPages, mention_due_remaining: r.remaining, mention_state: r.state,
-    ...(r.error ? { mention_error: r.error } : {}),
+    ...(r.error ? { mention_error: r.error } : {}), ...(r.failed ? { mention_failed: r.failed, mention_failures: r.failures ?? [] } : {}),
   };
 }

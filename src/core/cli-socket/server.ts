@@ -17,8 +17,10 @@ import { executeCliSocketRequest, type ExecutedRequest } from './execute.ts';
 import { CliSocketUnsafeError, cliSocketDir, cliSocketPath, ensurePrivateDir, privateSocketProblem, socketPathFits, verifyBoundSocket } from './fs-guard.ts';
 import { cliSocketIdentity, cliSocketIdentityMismatch, type CliSocketIdentity } from './identity.ts';
 import { installOutputCapture } from './output-capture.ts';
+import { refusalCounter } from './refusals.ts';
+import { beginForegroundRequest } from '../foreground-activity.ts';
 import { peerCredSupport, peerUid, type PeerCredSupport } from './peer-cred.ts';
-import { FrameReader, isCliSocketRequest, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, MAX_ROUND_TRIP_MS, REQUEST_READ_TIMEOUT_MS,
+import { FrameReader, isCliSocketProbe, isCliSocketRequest, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, MAX_ROUND_TRIP_MS, REQUEST_READ_TIMEOUT_MS,
   type CliSocketRequest, type HandshakeFrame, type ResultFrame } from './protocol.ts';
 
 const MAX_CONNECTIONS = 32;
@@ -35,7 +37,7 @@ export interface CliSocketServerOptions {
   identity?: CliSocketIdentity;
   uid?: () => number | undefined;
   brainId?: () => string;
-  execute?: (request: CliSocketRequest) => Promise<ExecutedRequest>;
+  execute?: (request: CliSocketRequest, signal: AbortSignal) => Promise<ExecutedRequest>;
   /** After this long a request whose work has not settled is logged once (its slot is still held). */
   stuckAfterMs?: number;
 }
@@ -125,7 +127,7 @@ export async function startCliSocketServer(opts: CliSocketServerOptions): Promis
   const identity = opts.identity ?? cliSocketIdentity({
     config: { engine: 'postgres', database_url: databaseUrl }, brainId, configDir: home, configFile: configPath(), version: VERSION, env: process.env,
   });
-  const execute = opts.execute ?? ((request: CliSocketRequest) => executeCliSocketRequest(opts.engine, request));
+  const execute = opts.execute ?? ((request: CliSocketRequest, signal: AbortSignal) => executeCliSocketRequest(opts.engine, request, signal));
   installOutputCapture();
 
   const sockets = new Set<Socket>();
@@ -133,6 +135,7 @@ export async function startCliSocketServer(opts: CliSocketServerOptions): Promis
   let closing = false;
   const rejectedUids = new Set<number | null>();
   const loggedMismatches = new Set<string>();
+  const refusals = refusalCounter(dir);
   const server = net.createServer(socket => {
     socket.on('error', () => {});
     if (closing || sockets.size >= MAX_CONNECTIONS) { socket.destroy(); return; }
@@ -158,23 +161,39 @@ export async function startCliSocketServer(opts: CliSocketServerOptions): Promis
       void (async () => {
         let request: unknown;
         try { request = JSON.parse(frames[0]!); } catch { request = null; }
+        if (isCliSocketProbe(request)) {
+          const mismatch = cliSocketIdentityMismatch(identity, request.identity);
+          socket.end(frame(mismatch ? { v: 1, accepted: false, reason: 'identity_mismatch', mismatch } : { v: 1, accepted: true }));
+          return;
+        }
         if (!isCliSocketRequest(request)) { socket.end(frame({ v: 1, accepted: false, reason: 'malformed_request' })); return; }
         const mismatch = cliSocketIdentityMismatch(identity, request.identity);
         if (mismatch) {
           if (!loggedMismatches.has(mismatch)) { loggedMismatches.add(mismatch); log(`refused a CLI call: identity_mismatch (${mismatch} differs from this serve's); that CLI takes its cold path.`); }
+          refusals.record(mismatch);
           socket.end(frame({ v: 1, accepted: false, reason: 'identity_mismatch', mismatch }));
           return;
         }
         if (active >= MAX_ACTIVE_REQUESTS) { socket.end(frame({ v: 1, accepted: false, reason: 'busy' })); return; }
         // Active until the request's own work settles, not until it answered: a timed-out handler still holds its slot.
         active++;
+        const finishForeground = beginForegroundRequest();
         const started = performance.now();
         let settled: Promise<unknown> = Promise.resolve();
+        // GBRA-156: a client that goes away before its answer cancels the request's remaining work and frees its connections.
+        const cancel = new AbortController();
+        let answered = false;
+        socket.once('close', () => {
+          if (answered || cancel.signal.aborted) return;
+          cancel.abort(new Error('client_disconnected'));
+          log(`a ${request.command} request's client disconnected after ${Math.round(performance.now() - started)} ms; its remaining work is cancelled.`);
+        });
         try {
           socket.write(frame({ v: 1, accepted: true }));
           let result: ResultFrame;
-          try { ({ frame: result, settled } = await execute(request)); }
+          try { ({ frame: result, settled } = await execute(request, cancel.signal)); }
           catch { result = { v: 1, kind: 'fallback', reason: 'serve_error' }; }
+          answered = true;
           if (!socket.destroyed) socket.end(frame(result));
         } finally {
           let done = false;
@@ -182,7 +201,7 @@ export async function startCliSocketServer(opts: CliSocketServerOptions): Promis
             if (!done) log(`a ${request.command} request is still running ${Math.round((performance.now() - started) / 1000)} s after it started; its slot stays held until it finishes (${active} of ${MAX_ACTIVE_REQUESTS} in use).`);
           }, Math.max(0, (opts.stuckAfterMs ?? MAX_ROUND_TRIP_MS) - (performance.now() - started)));
           stuck.unref();
-          void settled.then(() => { done = true; clearTimeout(stuck); active--; }, () => { done = true; clearTimeout(stuck); active--; });
+          void settled.then(() => { done = true; clearTimeout(stuck); active--; finishForeground(); }, () => { done = true; clearTimeout(stuck); active--; finishForeground(); });
         }
       })();
     });
@@ -203,6 +222,8 @@ export async function startCliSocketServer(opts: CliSocketServerOptions): Promis
   const close = () => {
     if (closing) return;
     closing = true;
+    process.off('exit', close);
+    refusals.flush();
     server.close();
     for (const socket of sockets) socket.destroy();
     try { if (lstatSync(path).ino === inode) unlinkSync(path); } catch { /* already gone */ }

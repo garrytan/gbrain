@@ -15,7 +15,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { mkdtempSync, existsSync, readdirSync, statSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, existsSync, readdirSync, statSync, rmSync } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { join } from 'path';
 
@@ -149,3 +149,61 @@ describe('GBRAIN_HOME write-side isolation', () => {
     }
   });
 });
+
+// GBRA-133: the writers that used to build paths from homedir() run in a child
+// process whose HOME is a scratch dir (so homedir() really is that dir, with no
+// libuv homedir cache from this process) and whose GBRAIN_HOME is another one.
+// Every file must land under <GBRAIN_HOME>/.gbrain and nothing under $HOME/.gbrain.
+describe('GBRA-133: HOME=<tmp> with GBRAIN_HOME set writes nothing under $HOME/.gbrain', () => {
+  test('routed writers and default paths follow GBRAIN_HOME', () => {
+    const home = fresh();
+    const parent = fresh();
+    const gb = join(parent, '.gbrain');
+    const src = join(import.meta.dir, '..', 'src');
+    const script = `
+      const out = {};
+      const { recordUpgradeError } = await import('${src}/commands/upgrade.ts');
+      recordUpgradeError({ phase: 'probe', fromVersion: '0.0.1', toVersion: '0.0.2', error: 'e', hint: 'h' });
+      const mounts = await import('${src}/commands/mounts.ts');
+      mounts.__testing.writeMountsFile({ version: 1, mounts: [] });
+      out.mounts = mounts.__testing.getMountsPath();
+      const registry = await import('${src}/core/brain-registry.ts');
+      out.registryMounts = registry.__testing.getMountsPath();
+      const { writeMountsCache } = await import('${src}/core/mounts-cache.ts');
+      out.cache = writeMountsCache(process.env.SKILLS_DIR, []).resolverPath;
+      const { appendPushLog } = await import('${src}/core/brain-repo-durability.ts');
+      appendPushLog('ok', 'main', 'abcdef0123');
+      const { localHostId, existingLocalHostId } = await import('${src}/core/persistence/identity.ts');
+      out.host = localHostId() === existingLocalHostId();
+      out.pid = (await import('${src}/core/minions/supervisor.ts')).DEFAULT_PID_FILE;
+      out.captures = (await import('${src}/core/skillopt/held-out.ts')).capturesDir();
+      out.patterns = (await import('${src}/core/transcripts/render.ts')).defaultUserPatternsPath();
+      const eval_ = await import('${src}/commands/notability-eval.ts');
+      out.mining = eval_.defaultMiningOutPath();
+      out.review = eval_.defaultReviewOutPath();
+      console.log(JSON.stringify(out));
+    `;
+    try {
+      const skills = join(parent, 'skills');
+      mkdirSync(skills, { recursive: true });
+      const env: Record<string, string> = { ...process.env as Record<string, string>, HOME: home, GBRAIN_HOME: parent, SKILLS_DIR: skills };
+      for (const k of ['GBRAIN_MOUNTS_PATH', 'GBRAIN_SUPERVISOR_PID_FILE', 'GBRAIN_AUDIT_DIR', 'USERPROFILE']) delete env[k];
+      const proc = Bun.spawnSync([process.execPath, '-e', script], { env, cwd: parent });
+      expect(proc.stderr.toString()).not.toContain('error:');
+      expect(proc.exitCode).toBe(0);
+      const out = JSON.parse(proc.stdout.toString().trim().split('\n').pop()!);
+      expect(out.host).toBe(true);
+      for (const key of ['mounts', 'registryMounts', 'cache', 'pid', 'captures', 'patterns', 'mining', 'review']) {
+        expect(out[key].startsWith(gb + '/')).toBe(true);
+      }
+      for (const file of ['upgrade-errors.jsonl', 'mounts.json', 'mounts-cache/RESOLVER.md', 'brain-push.log', 'persistence/host.json']) {
+        expect(existsSync(join(gb, file))).toBe(true);
+      }
+      expect(existsSync(join(home, '.gbrain'))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+});
+

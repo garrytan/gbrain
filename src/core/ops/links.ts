@@ -1,4 +1,7 @@
-import { coordinatedManualLinkWrite } from '../persistence/manual-links.ts';
+import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { submitPageMutation } from '../persistence/page-mutations.ts';
+import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
+import { MANAGED_LINK_SOURCES } from '../links-fence.ts';
 import { backlinkTypeFilter, readBacklinkPage, withLinkPageStatus } from './backlinks-paged.ts';
 import { cutLinkPage, finishLinkPage, linkId, parseLinkListing, reportLinkPage } from './link-paging.ts';
 /**
@@ -58,9 +61,10 @@ import {
  * tagged 'frontmatter' with no origin_page_id would be a phantom that put_page
  * reconciliation (link_source='frontmatter' AND origin_page_id=written_page)
  * never cleans (see src/schema.sql). `manual` is intentionally absent — it IS
- * the user-facing provenance and the default for omitted link_source.
+ * the user-facing provenance and the default for omitted link_source. The list
+ * lives in links-fence.ts, whose rows cannot carry these provenances either.
  */
-export const MANAGED_LINK_SOURCES = ['markdown', 'frontmatter', 'mentions', 'wikilink-resolved', 'mcp-remote-mention'];
+export { MANAGED_LINK_SOURCES };
 
 /** add_link valid_from / valid_until: calendar dates on a dated relation type. Null when neither is given. */
 function validateLinkDates(ctx: OperationContext, p: Record<string, unknown>, linkType: string): { validFrom?: string; validUntil?: string } | null {
@@ -87,10 +91,11 @@ function validateLinkDates(ctx: OperationContext, p: Record<string, unknown>, li
 
 const add_link: Operation = {
   name: 'add_link',
-  idempotent: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description: 'Create a typed link (edge) from one page to another in the same source. Use when recording a relationship (works_at, invested_in, mentions); remote page writes already link [[wikilinks]] to existing pages as mentions (receipt auto_links), so add only typed links or ones the text lacks. Needs write scope; an explicit link_type must be declared by the active schema pack. On page_not_found: resolve both slugs with resolve_slugs.',
   params: {
+    request_id: WRITE_REQUEST_PARAM,
     from: { type: 'string', required: true, description: "Slug of the page the link originates from (the edge renders on this page), e.g. 'people/alice-example'. These are page slugs — there is no `source`/`target` pair." },
     to: { type: 'string', required: true, description: "Slug of the page the link points to, e.g. 'companies/acme-example'." },
     link_type: { type: 'string', description: 'Link type (e.g., invested_in, works_at). When the active schema pack declares a link vocabulary, an explicit link_type must be one of its declared verbs (undeclared verbs are rejected, also under dry_run). Omitted = untyped edge.' },
@@ -143,20 +148,21 @@ const add_link: Operation = {
     // #4109: per-endpoint source-boundary diagnostics before the mutation.
     await requireWritablePage(ctx, p.from as string, 'add_link', 'from');
     await requireWritablePage(ctx, p.to as string, 'add_link', 'to');
+    // G5: on a managed brain the edge is a row of the from page's links fence, written through the page-mutation door.
+    if (await managedPersistenceEnabled(ctx.engine)) {
+      await submitPageMutation(ctx, { operation: 'add_link', params: { ...(p.request_id !== undefined ? { request_id: p.request_id } : {}),
+        slug: p.from, to: p.to, link_type: linkType, link_source: linkSource, context: (p.context as string) || '',
+        ...(dates?.validFrom ? { valid_from: dates.validFrom } : {}), ...(dates?.validUntil ? { valid_until: dates.validUntil } : {}) } });
+      return { status: 'ok' };
+    }
     try {
-      // #5280: a managed brain takes the coordinated database-only path.
-      const managed = await coordinatedManualLinkWrite(ctx, 'add_link', p.from as string, p.to as string, async (engine, sourceId) => {
-        await engine.addLink(p.from as string, p.to as string, (p.context as string) || '', linkType, linkSource, undefined, undefined, // gbrain-allow-direct-insert: coordinated manual link inside withCoordinatedWrite
-          { fromSourceId: sourceId, toSourceId: sourceId, originSourceId: sourceId });
-        if (dates) await writeManualTransitions(engine, { from: p.from as string, to: p.to as string, linkType, sourceId }, dates);
-      });
-      if (!managed && !dates) await ctx.engine.addLink( // gbrain-allow-direct-insert: add_link MCP op is the explicit canonical surface for manual link creation; auto-link reconciliation runs separately via auto_link post-hook
+      if (!dates) await ctx.engine.addLink( // gbrain-allow-direct-insert: add_link MCP op is the explicit canonical surface for manual link creation; auto-link reconciliation runs separately via auto_link post-hook
         p.from as string, p.to as string,
         (p.context as string) || '', linkType,
         linkSource, undefined, undefined,
         linkOpts,
       );
-      if (!managed && dates) {
+      if (dates) {
         const sourceId = ctx.sourceId ?? 'default';
         await maintenanceTransaction(ctx.engine, async tx => {
           await tx.addLink(p.from as string, p.to as string, (p.context as string) || '', linkType, linkSource, undefined, undefined, // gbrain-allow-direct-insert: add_link with dated manual evidence, one maintenance transaction
@@ -179,10 +185,11 @@ const add_link: Operation = {
 
 const remove_link: Operation = {
   name: 'remove_link',
-  idempotent: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description: 'Remove a link between two pages (optionally only one link_type or link_source). Use when a relationship was recorded wrongly. Needs write scope. On page_not_found: resolve both slugs with resolve_slugs.',
   params: {
+    request_id: WRITE_REQUEST_PARAM,
     from: { type: 'string', required: true, description: 'Slug of the page the link originates from (same endpoint order as add_link).' },
     to: { type: 'string', required: true, description: 'Slug of the page the link points to.' },
     link_type: { type: 'string', description: 'Only remove edges of this link type (omit = all types)' },
@@ -213,11 +220,16 @@ const remove_link: Operation = {
     // #4527: report how many edges actually died — an unconditional
     // `{ status: 'ok' }` made a zero-match delete (typo'd slug, wrong
     // link_type, already removed) indistinguishable from a real removal.
-    // #5280: a managed brain takes the coordinated database-only path.
-    const managed = await coordinatedManualLinkWrite(ctx, 'remove_link', p.from as string, p.to as string,
-      (engine, sourceId) => remove(engine, { fromSourceId: sourceId, toSourceId: sourceId }));
-    const removed = managed ? managed.value : await remove(ctx.engine, linkOpts);
-    return { status: 'ok', removed };
+    // G5: a managed brain removes the from page's links fence rows through the page-mutation door, and with them
+    // the matching database-only edges (persistence/manual-links.ts). A missing from page has no edges to remove.
+    if (await managedPersistenceEnabled(ctx.engine)) {
+      if (!await ctx.engine.getPage(p.from as string, { sourceId: ctx.sourceId || 'default' })) return { status: 'ok', removed: 0 };
+      const result = await submitPageMutation(ctx, { operation: 'remove_link', params: { ...(p.request_id !== undefined ? { request_id: p.request_id } : {}),
+        slug: p.from, to: p.to, ...(p.link_type ? { link_type: p.link_type } : {}), ...(p.link_source ? { link_source: p.link_source } : {}) } });
+      return { status: 'ok', removed: Number(result.removed ?? 0),
+        ...(Array.isArray(result.derived_from_text) ? { derived_from_text: result.derived_from_text, message: result.derived_message } : {}) };
+    }
+    return { status: 'ok', removed: await remove(ctx.engine, linkOpts) };
   },
   cliHints: { name: 'unlink', aliases: ['link-rm'], positional: ['from', 'to'] },
 };
@@ -229,6 +241,7 @@ const LINK_SOURCE_ID_PARAM = {
 const LINK_ALL_SOURCES_PARAM = {
   type: 'boolean',
   description: 'Same as source_id __all__.',
+  fullSurfaceOnly: true,
 } as const;
 const LINK_LIMIT_PARAM = { type: 'number', description: `Rows per call (default ${LINK_READ_DEFAULT_LIMIT}, max ${LINK_READ_MAX_LIMIT}).` } as const;
 const LINK_CURSOR_PARAM = { type: 'string', description: 'next_cursor from the previous call (same filters).' } as const;

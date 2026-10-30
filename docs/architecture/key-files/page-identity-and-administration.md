@@ -60,18 +60,15 @@ package installation, post-upgrade and migration orchestration. It skips service
 installation and unit rewrites, not unrelated migration work. Paid reindexing
 has its own `GBRAIN_NO_REEMBED=1` control.
 
-The grandfathering batch in `src/commands/migrations/v0_13_1.ts` changes only
-`frontmatter.validate`. It holds canonical page guards and row locks, rechecks
-eligibility, and advances the text seal only for already-sealed snapshots.
-An unsealed page stays unsealed. This preserves keyword retrieval after a
-metadata-only upgrade without bypassing revision safety. The verify phase
-checks only the pages this run grandfathered, keyed on `pages.id` and the
-revision each write produced: a page a concurrent writer (such as a connector
-re-import) rewrote or deleted since is reported as `rewritten_concurrently`,
-and only a page still at that revision without `validate: false` fails the
-phase. The installed-lifecycle
-test and `test/e2e/grandfather-projection-postgres.test.ts` cover the actual
-upgrade consequence and engine parity respectively.
+`src/commands/migrations/v0_13_1.ts` writes nothing (#7814). It used to stamp
+`validate: false` into every page's frontmatter, which an upgrade ran on any
+brain whose ledger never recorded v0.13.1 and which moved every content_hash.
+The orchestrator now records completion only, and a queued
+`managed_grandfather` request from an older binary ends `conflict` without
+writing (`src/core/persistence/grandfather.ts`).
+`test/upgrade-preserves-pages-7814.slow.test.ts` (PGLite) and
+`test/e2e/upgrade-preserves-pages-7814-postgres.test.ts` upgrade a
+v0.59.2.0-shaped brain, repo-less and repo, and assert no page changes.
 
 ## Write request ids
 
@@ -79,6 +76,7 @@ upgrade consequence and engine parity respectively.
 
 ## Suffixed slugs
 
-- `src/core/persistence/suffixed-slug.ts` — `.md`/`.mdx`-suffixed slugs (#4807). `preparePageAdmission` refuses a new put_page/put_pages slug ending in `.md`/`.mdx` before any journal row (`invalid_params`, why, suggestion naming the bare slug, read-only `get_page` fix and verify); a live page with that exact (source_id, slug) still updates and the put_page response carries `slug_advisory` (put under the bare slug, then delete_page). `suffixedSlugDryRun` serves put_page dry runs; `suffixedFrontmatterSlugHold` holds a file import whose frontmatter `slug:` identity ends in `.md` as `frontmatter_slug_conflict`. The same admission refuses a NEW slug with a Windows reserved device segment or a segment over 240 bytes (`slug_not_portable`, suggestion from `portable-slug.ts`); a live page with that slug still updates and gets a `slug_advisory` naming the move. `:` stays valid slug grammar. `validateSlug` and path-derived import slugs are unchanged. Tests: `test/ingestion/put-page-write-through.test.ts`, `test/pathological/b5-export-unsafe-slugs.test.ts`, `test/pathological/b12-slug-segment-bytes.test.ts`.
+- `src/core/persistence/suffixed-slug.ts` — `.md`/`.mdx`-suffixed slugs (#4807). `preparePageAdmission` refuses a new put_page/put_pages slug ending in `.md`/`.mdx` before any journal row (`invalid_params`, why, suggestion naming the bare slug, read-only `get_page` fix and verify); a live page with that exact (source_id, slug) still updates and the put_page response carries `slug_advisory` (put under the bare slug, then delete_page). `suffixedSlugDryRun` serves put_page dry runs; `suffixedFrontmatterSlugHold` holds a file import whose frontmatter `slug:` identity ends in `.md` as `frontmatter_slug_conflict`. The same admission refuses a NEW slug with a Windows reserved device segment or a segment over 240 bytes (`slug_not_portable`, suggestion from `portable-slug.ts`); a live page with that slug still updates and gets a `slug_advisory` naming the move. `:` stays valid slug grammar. #7305: put_page and capture (the `operation` argument; capture checks only this rule) refuse a NEW slug that `sync.ts` `hyphenFoldedSlug` changes (a hyphen run or a segment-final hyphen, which slugifySegment folds) with detail `slug_hyphen_run` and the folded slug as suggestion and read-only fix; a live exact page keeps updating with a `slug_advisory`; `suffixedSlugDryRun` serves both dry runs. `validateSlug` and path-derived import slugs are unchanged. Tests: `test/ingestion/put-page-write-through.test.ts`, `test/pathological/b5-export-unsafe-slugs.test.ts`, `test/pathological/b12-slug-segment-bytes.test.ts`, `test/hyphen-run-slugs-7305.test.ts`.
+- `src/commands/doctor/checks/slug-path-mismatch.ts` — #7305 doctor `slug_path_mismatch` (BRAIN, after `origin_twins`): live file-backed pages of unarchived sources (scoped by `doctorSourceIds`) whose slug `resolveSlugForPath(source_path)` does not reproduce, such as a hyphen run the path rule folds. One read of candidate rows (slug regex prefilter, id order, `SLUG_PATH_SCAN_LIMIT` 20,000), then at most `SLUG_PATH_FILE_LIMIT` (200) recorded files read on this host (bound worktree, else `local_path`, else `sync.repo_path` for default) to tell a file stamped with the page's `slug:` line from an unstamped one. Unstamped files warn with counts, up to 5 samples (no `source_path` for a remote caller) and an `agentFix` naming the read-only `gbrain repair frontmatter --source <id> --json` preview; a hit bound with nothing unstamped is the #7145 bounded unknown; stamped, missing or not-checked-out files are ok. Read-only. Test: `test/doctor-slug-path-mismatch-7305.test.ts` (PGLite + Postgres via `test/e2e/doctor-slug-path-mismatch-7305-postgres.test.ts`).
 
 - `src/core/portable-slug.ts` — the one slug portability rule (GBRA-130 B-5/B-12): `FILE_NAME_MAX_BYTES` (240, a name's byte budget; a leaf also reserves `.json`), `RESERVED_DEVICE_NAME` (con, prn, aux, nul, com1-9, lpt1-9, alone or before an extension), `truncateUtf8`, `portableSegment` (a reserved name gets `-<suffix>`, an over-budget segment is cut at a code point boundary) and `slugPortabilityProblem` (reason, first segment, suggested slug). Used by `persistence/suffixed-slug.ts` admission; `enrichment-service.ts` `slugifyEntity` uses its parts, so a reserved entity name mints `people/con-person` or `companies/com1-company` and an over-budget one ends in a hash of the full name. `enrichEntity` reuses a page at a slug another entity also maps to (`Aux Company` at `companies/aux-company`) only when its title names the entity, preferring the matching legacy page (or, for a long name, the untagged cut slug an older gbrain minted, when its title maps to the same full slug), else uses the hash-tagged slug or skips with `entity_slug_taken` (F8, `test/pathological/b5-enrich-entity-identity.test.ts`).

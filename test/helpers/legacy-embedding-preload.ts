@@ -1,6 +1,7 @@
 import {
   configureGateway,
   getEmbeddingDimensions,
+  requireConfig,
   __setGatewayResetBaselineForTests,
 } from '../../src/core/ai/gateway.ts';
 import { beforeEach } from 'bun:test';
@@ -9,12 +10,24 @@ import { beforeEach } from 'bun:test';
 // fixture is baked under the exact shape this preload pins.
 import { LEGACY_EMBEDDING_CONFIG as LEGACY_CONFIG } from './legacy-embedding-config.ts';
 
+// The env snapshot of the last baseline this preload installed. A reset inside
+// a withEnv scope snapshots that scope's keys; once the scope restores
+// process.env, the snapshot is stale and must not reach later tests or files.
+let baselineEnv: Record<string, string | undefined> | undefined;
+
 function legacyGatewayConfig() {
+  baselineEnv = { ...process.env };
   return {
     embedding_model: LEGACY_CONFIG.embedding_model,
     embedding_dimensions: LEGACY_CONFIG.embedding_dimensions,
-    env: { ...process.env },
+    env: baselineEnv,
   };
+}
+
+function staleBaseline(): boolean {
+  const live = requireConfig().env;
+  if (live !== baselineEnv) return false;
+  return [...new Set([...Object.keys(live), ...Object.keys(process.env)])].some((k) => live[k] !== process.env[k]);
 }
 
 function applyLegacy() {
@@ -56,6 +69,7 @@ beforeEach(() => {
     // own beforeAll get to keep it — we only restore the legacy
     // default when the slot is empty.
     getEmbeddingDimensions();
+    if (staleBaseline()) applyLegacy();
   } catch {
     applyLegacy();
   }

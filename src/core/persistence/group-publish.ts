@@ -2,8 +2,9 @@
  * Grouped publication: one transaction publishes a claimed run of consecutive
  * requests of one worktree that share a group key (journal.ts
  * `publicationGroupKey`): the database-only pages of a bulk managed sync
- * (#5984, ENG-A3/A4) or the pages of one `put_pages` batch, files included
- * (#6007).
+ * (#5984, ENG-A3/A4), the pages of one `put_pages` batch, files included
+ * (#6007), or (G6) one maintenance run's page publications and one managed
+ * atom generation's members and activation.
  *
  * Every member keeps its own request row, authorization, page guard,
  * visibility check, revision check, attribution, effects and receipt; only
@@ -32,6 +33,7 @@
  * marker, so its request identity and replay are unchanged; when the group
  * does not commit it takes `publishMutation` like any other member.
  */
+import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { authorizeStoredRequest, storedAuthorizationReads } from './authority.ts';
@@ -54,6 +56,8 @@ import { timePublicationStep } from './publication-timing.ts';
 import { assertUnboundPublication, classifyUnboundPage } from './unbound-source.ts';
 import { boundPublication, declarePublication, publicationLeaseMs, publicationTransaction, type PublicationBound } from './publication-deadline.ts';
 import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
+import { commitThroughDoor, doorMarker, sourceCanonicalGit, strictChanged } from './git-door.ts';
+import { assertNoPrivateCommit, declareStrictPublication } from './git-declared.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
 import { withFilesystemPublication } from './filesystem-guard.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
@@ -63,7 +67,7 @@ import { sharedReadFailure } from './bounded-reads.ts';
 import { chargedInterruption, decoratePublicationOutcome, finishPreparationStalled, finishUnpublishedFailure, pageRecoveryRecord, persistenceFileHash, preparationAbortReason,
   publicationPostimage, publishMutation, publishPersistenceFile, recoverPublication, releaseChargedInterruption, type PreparedMutation, type PublicationHooks } from './coordinator.ts';
 import { withAttempt } from './publication-failure.ts';
-import { transientInterruption, type TransientInterruption } from './transient-retry.ts';
+import { chargedInterruptionDetail, transientInterruption, type TransientInterruption } from './transient-retry.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { jsonBytes } from './digest.ts';
 import { EFFECT_BYTES_SQL, retainedReceiptBytes, TRUE_UP_CLAMP_SQL } from './receipt-bytes.ts';
@@ -78,6 +82,7 @@ import { importGroupReads, type ImportGroupReads } from './import-reads.ts';
 import { withScreeningPaths } from './screening-paths.ts';
 import { publicationBeliefOptions, withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
+import { PAGE_CHANGED_DURING_PREPARATION_MESSAGE } from './verb-errors.ts';
 
 /** A `put_pages` or managed import group publishes at most this many pages per transaction, so one commit stays a few seconds long. */
 export const PAGE_BATCH_GROUP_MAX = 8;
@@ -99,6 +104,24 @@ export function groupable(row: WriteRequest, prepared: PreparedMutation): boolea
   // A streamed file (large-file.ts) is staged before its publication transaction, which only publishMutation does.
   if (isStreamedContent(prepared.file?.content)) return false;
   return independentGroup(publicationGroupKey(row)) || singleWrite(row);
+}
+
+/**
+ * G6: the index of the first member that writes a page or file an earlier member of the group writes (a generation
+ * that deletes and rewrites one path, a batch naming a page twice), or null. Its preparation read the state before the
+ * earlier write, so the group ends before it (executeClaimedGroup). Compared case-insensitively, as a case-insensitive
+ * checkout would. The generation activation journals under a pseudo slug and writes no page, so only its file counts.
+ */
+export function firstSharedTarget(rows: WriteRequest[], prepared: Array<PreparedMutation | undefined>): number | null {
+  const seen = new Set<string>();
+  for (const [i, row] of rows.entries()) {
+    const file = prepared[i]?.file;
+    const page = row.intent?.kind === 'managed_generation_activate' ? [] : [`page:${row.slug.toLowerCase()}`];
+    const targets = [...page, ...(file ? [`file:${file.path.toLowerCase()}`] : [])];
+    if (targets.some(target => seen.has(target))) return i;
+    for (const target of targets) seen.add(target);
+  }
+  return null;
 }
 
 const flattened = new Map<string, string>();
@@ -255,7 +278,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
   if (lane) lane.coordinationPath ??= binding.coordination_path;
   let releaseCapacity: (() => void) | null = null;
   const recorded = new Map<number, { row: WriteRequest; record: FileRecoveryRecord; bytes: number }>();
-  let committed = false;
+  let committed = false, strict = false;
   const timed: { apply: ReturnType<typeof laneApplyBegin> | null } = { apply: null };
   try {
     // The recovery check and the journal limits the recovery record is sized against go out together.
@@ -282,6 +305,9 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
       if (file.expectedBeforeHash !== undefined && member.record.beforeHash !== file.expectedBeforeHash) return none;
       files.set(i, member);
     }
+    // G2 (git-door.ts): a strict source's members are committed together before the transaction commits.
+    strict = files.size > 0 && binding.canonical_git === true;
+    if (strict) { const door = await doorMarker(binding.local_path); for (const member of files.values()) member.record.door = door; }
     if (files.size) {
       await prepareRecoveries(engine, [...files.values()], transaction, limits);
       for (const [i, member] of files) recorded.set(i, member);
@@ -307,16 +333,19 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
         () => members.length ? tx.executeRaw(`UPDATE persistence_requests r SET publication_started=true FROM unnest($1::uuid[],$2::uuid[]) AS t(id,token)
           WHERE r.id=t.id AND r.execution_token=t.token AND r.state='running' RETURNING r.id`, [members.map(row => row.id), members.map(row => row.execution_token)]) : Promise.resolve([]),
         () => prepared.some(member => member.file) ? sourceMirrorReadOnly(tx, head.source_id, true) : Promise.resolve(false),
+        // A group prepared strict rechecks its flag under the source lock; one prepared without it publishes as before.
+        () => strict ? sourceCanonicalGit(tx, head.source_id, true) : Promise.resolve(false),
         () => tx.lockPageKeys(keys),
         // The owner's host binding every file member's Git effect records (a STABLE_IN_GROUP read), fetched with the guards.
         () => prepared.some(member => member.file && !member.noop) ? tx.executeRaw(HOST_BINDING_SQL, [head.worktree_id]) : Promise.resolve([]),
         ...storedAuthorizationReads(tx, rows, true),
       ]).then(results => {
-        const [, live, started, readOnly] = results as [unknown, Awaited<ReturnType<typeof guardOwnership>>, unknown[], boolean];
+        const [, live, started, readOnly, strictNow] = results as [unknown, Awaited<ReturnType<typeof guardOwnership>>, unknown[], boolean, boolean];
         if (String(live?.owner_epoch) !== String(binding.owner_epoch)) throw new OperationError('owner_unavailable', 'Owner epoch changed before publication.', 'Inspect the source owner with gbrain sources writer status; do not claim or transfer the source to push this write.');
         if (started.length !== members.length) throw new OperationError('write_claim_lost', 'Execution claim changed before publication.', 'Another worker holds the request; inspect it rather than resubmitting.');
         // A file target prepared before the source became a read-only mirror is never published (as in publishMutation, noop included).
         if (readOnly) throw new OperationError('source_changed', 'The source became a read-only mirror after this write was prepared.', 'The members publish one at a time.');
+        if (strictNow !== strict) throw strictChanged(head.source_id);
       });
       // The coordinated write's settings statement follows that pipeline. When the pipeline fails first, the
       // transaction reports that failure (postgres.js names the cause of a 25P02 abort), not the settings statement's abort.
@@ -350,13 +379,15 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
                 await authorizePageVisibility(tx, row.authority, row.slug);
                 if ((snapshot?.page.id ?? null) !== row.page_id) throw new OperationError('page_identity_changed', 'The accepted page was deleted or recreated.', 'Read the page again and submit a new intent with a new request_id.');
                 await assertUnboundPublication(tx, row, snapshot?.page.source_path);
-                if ((snapshot?.revision ?? null) !== member.observedRevision) throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
+                if ((snapshot?.revision ?? null) !== member.observedRevision) throw new OperationError('revision_conflict', PAGE_CHANGED_DURING_PREPARATION_MESSAGE, 'Read its current revision and submit the updated intent with a new request_id.');
                 return snapshot;
               },
               async () => { if (sync) await member.validate?.(tx); },
               async () => { if (!file && attribute) await setMemberAttribution(tx, publicationAttribution(row, member.trust)); },
             ]) as [unknown, Awaited<ReturnType<BrainEngine['readPageSnapshot']>>];
             if (!sync) await member.validate?.(tx);
+            // G7a (git-declared.ts): a strict member never writes or commits a private page's bytes; one refusal rolls the group back.
+            await assertNoPrivateCommit(tx, row, member, snapshot, binding);
             if (file) {
               if (persistenceFileHash(file.record.path) !== file.record.beforeHash) throw new OperationError('unexpected_file_bytes', 'The canonical file changed during preparation.', 'The members publish one at a time.');
               await seam('before_publication', row);
@@ -370,10 +401,11 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
             await classifyUnboundPage(tx, row);
             if (member.databaseOnlyReason === 'mirror_read_only') await classifyMirrorPage(tx, row);
             const final = await publicationPostimage(tx, row, member);
+            await declareStrictPublication(tx, row, member, snapshot, final, binding);
             decoratePublicationOutcome(row, member, outcome, final, file ? 1 : 0, false);
             effects = async () => {
               await recordPublicationFenceTrend(tx, row, outcome);
-              await timePublicationStep('effects', row.slug, () => queuePublicationEffects(tx, row, final, outcome, member, singleWrite(row) ? {} : { deferBatchReconcile: true }));
+              await timePublicationStep('effects', row.slug, () => queuePublicationEffects(tx, row, final, outcome, member, { deferBatchReconcile: !singleWrite(row), pushOnly: strict && !!file }));
             };
             outcomes.push(outcome);
           } catch (error) { throw tag(error, i); }
@@ -382,6 +414,17 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
       }, publicationAttribution(head, prepared[0]!.trust));
       // #5984 lanes: applied concurrently, committed in manifest order.
       if (lane) { timed.apply?.turn(); await faultPoint('lane:applied', { requestId: head.request_id, sourceId: head.source_id, operation: head.operation }); await awaitLaneTurn(tx, lane, rows); timed.apply?.turned(); }
+      // G2: one path-only commit for every member's file, in commit order, before the rows commit; a shared lease never reclaims an index lock.
+      if (strict && recorded.size) {
+        const commit = await commitThroughDoor(binding.local_path!, [...recorded].map(([i, member]) => ({ path: member.record.path, planned: member.record.afterHash, note: prepared[i]!.file?.commit })), lane || joined ? undefined : lock,
+          paths => {
+            for (const [i, member] of recorded) {
+              const rel = relative(binding.local_path!, member.record.path).split(sep).join('/');
+              if (paths.includes(rel)) Object.assign(outcomes[i]!.persistence as object, { git_index_restored: [rel] });
+            }
+          });
+        for (const i of recorded.keys()) Object.assign(outcomes[i]!.persistence as object, { git_state: 'committed', git_commit: commit });
+      }
       const done = await completeGroup(tx, rows, outcomes);
       // Every member is complete in this transaction: the batch's last page re-arms the batch's mention links once.
       const last = rows[rows.length - 1]!;
@@ -394,7 +437,6 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
     // One post-commit observation for every member (docs/designs/BELIEF_LEDGER.md 5.3).
     if (beliefReport.appended) await markBeliefCommits(engine, done.map(row => row.id)).catch(() => undefined);
     for (const row of done) await seam('after_commit', row);
-    hooks.committed?.(done);
     if (recorded.size) {
       try { await clearResolvedRecoveries(engine, done, transaction); }
       catch {
@@ -404,6 +446,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
         }
       }
     }
+    hooks.committed?.(done);
     return { done, requeued: [] };
   } catch (error) {
     if (committed || !recorded.size) {
@@ -418,7 +461,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
     for (const { row } of recorded.values()) {
       try {
         const charged = await chargedInterruption(engine, row, error);
-        if (charged) await faultPoint('persistence:recovery_interruption_charged', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation });
+        if (charged) await faultPoint('persistence:recovery_interruption_charged', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation, ...chargedInterruptionDetail(transientInterruption(error), error) });
         const failure = charged?.failure ? withAttempt(charged.failure, 'publication') : undefined;
         await markRecovering(engine, row, failure ? 'publication_failed' : 'publication_not_started', failure);
         const recovered = await recoverPublication(engine, row.id, hostId, true, failure, true);
@@ -764,6 +807,13 @@ export async function executeClaimedGroup(engine: BrainEngine, rows: WriteReques
       run.publication!.onOverdue?.();
     } }) : publish();
     const live = rows.map((row, i) => ({ row, i })).filter(({ row }) => !released.has(row.id));
+    // G6: a member writing a page or file an earlier member writes is prepared again after that write publishes: the group
+    // ends before it, and it and the members after it go back to the queue in order.
+    const shared = ordered ? null : firstSharedTarget(live.map(({ row }) => row), live.map(({ i }) => { const p = prepared[i]; return p && 'ok' in p ? p.ok : undefined; }));
+    for (const { row } of shared === null ? [] : live.splice(shared)) {
+      held.delete(row.id); released.add(row.id);
+      await releaseUnpublishedClaim(engine, row, 'group_member_waiting');
+    }
     if (!live.length) return progressed;
     const liveRows = live.map(({ row }) => row);
     if (run.publication) await holdClaimForPublication(lease, () => renewGroupClaims(engine, liveRows, publicationLeaseMs(run.publication!.ceilingMs), undefined,

@@ -31,7 +31,7 @@ export function postUpgradeNotice(from: string | undefined, to: string = VERSION
 /** The last upgrade gbrain recorded (`~/.gbrain/upgrade-state.json`, written by `gbrain upgrade`). */
 function lastUpgrade(): { from?: string; to?: string } | null {
   try {
-    const path = join(process.env.HOME || '', '.gbrain', 'upgrade-state.json');
+    const path = gbrainPath('upgrade-state.json');
     if (!existsSync(path)) return null;
     const state = JSON.parse(readFileSync(path, 'utf8')) as { last_upgrade?: { from?: string; to?: string } };
     return state.last_upgrade ?? null;

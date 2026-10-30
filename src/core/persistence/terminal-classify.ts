@@ -338,8 +338,41 @@ function schemaMissingVerdict(input: TerminalInput, code: string, origin: string
       why: `The write needed ${what}. Read-only: when doctor's schema_version reports the schema behind, run gbrain apply-migrations --yes as the database role that owns the gbrain tables and resubmit; when it is at head, its schema_missing_tables check names what is missing (gbrain repair missing-tables previews it).` } };
 }
 
+/** #7630: the caller-submitted page and memory writes a caller resubmits; no sync replays them. */
+const RESUBMITTED_WRITES = new Set(['put_page', 'put_pages', 'capture', 'delete_page', 'restore_page', 'revert_version', 'edit_page', 'append_page', 'remember', 'forget', 'forget_fact',
+  'add_tag', 'remove_tag', 'add_link', 'remove_link', 'add_timeline_entry', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve', 'takes_remove']);
+
+/**
+ * #7630: the operation a fault's fix depends on. A reconcile or managed write (import, repair, quarantine clear,
+ * grandfather) is stored as `put_page` under its own intent kind, which names it while the intent survives.
+ */
+export function faultOperation(operation: string, intentKind: string | null | undefined): string {
+  return operation === 'put_page' && intentKind && (intentKind === 'canonical_reconcile' || intentKind.startsWith('managed_')) ? intentKind : operation;
+}
+
+/**
+ * #7630: a sync write, a maintenance job and a recorded sync fault (read as one) are stored as `submit_job`; their
+ * retry is the sync. A foreground write (`remember`, `put_page`, ...) is resubmitted by its caller, and a managed write
+ * by rerunning the command that wrote it. Any other operation (`extract_facts`, writer administration) is neither:
+ * writer status names what holds it.
+ */
 function faultAction(code: string, input: TerminalInput): Action {
   const v = classifySyncFault({ code });
+  const operation = faultOperation(input.operation, input.intent_kind);
+  if (v.safe_actions[0] === 'retry' && operation.startsWith('managed_')) {
+    return inspect(input.source_id, `The ${operation} write ended ${code}; it was not part of a sync, so a sync does not retry it. `
+      + 'Writer status names the step it stopped at and what held it, read-only. Once that clears, rerun the command that wrote it (an import, repair, quarantine clear or grandfather).');
+  }
+  if (v.safe_actions[0] === 'retry' && operation === 'canonical_reconcile') {
+    return syncRetry(input.source_id, `The canonical reconcile recorded ${code} (${v.class}); the next sync re-admits a keep_db reconcile, and a \`gbrain sources reconcile\` run is retried by running it again.`);
+  }
+  if (v.safe_actions[0] === 'retry' && input.operation !== 'submit_job' && !RESUBMITTED_WRITES.has(input.operation)) {
+    return inspect(input.source_id, `The ${input.operation} operation ended ${code}; it was not part of a sync, so a sync does not retry it. Writer status names what holds it, read-only.`, v.human_reason);
+  }
+  if (v.safe_actions[0] === 'retry' && input.operation !== 'submit_job') {
+    return inspect(input.source_id, `The ${input.operation} write ended ${code}; it was not part of a sync, so a sync does not retry it. `
+      + `Writer status names the step it stopped at and what held it, read-only. Once that clears, resubmit the same ${input.operation} with a new request_id (for a page an import or repair wrote, rerun that command).`);
+  }
   if (v.safe_actions[0] === 'retry') return syncRetry(input.source_id, `The sync recorded ${code} (${v.class}); a rerun holds or retries it.`);
   return inspect(input.source_id, `The write ended ${code}; writer status names what holds it, read-only.`, v.human_reason);
 }

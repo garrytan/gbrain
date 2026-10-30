@@ -6,8 +6,8 @@
  *   (`passResumeArgs`), so a scheduled re-screen does not drop the `--no-embed --no-extract` the episode carries;
  * - a drain that ends on a pass result reports `drain.remaining` from that pass (`result.pass.remaining`), not from a
  *   cursor the pass never returns;
- * - a delegated sync's progress-aware deadline extends while the owner's passes settle paths (`result.pass.settled`),
- *   as it did while a cursor index advanced.
+ * - a delegated sync's progress-aware deadline extends while the owner's passes commit pages, as it did while a cursor
+ *   index advanced; GBRA-133 PR 3a: a pass that only settled paths (screened them unchanged) is not progress.
  * Synthetic content only.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
@@ -56,9 +56,9 @@ describe('#6712 PR 4b lane C: cursor readers on the pass', () => {
     expect(result.drain).toMatchObject({ outcome: 'resumable', stop_reason: 'deadline', passes: 1, remaining: 6 });
   });
 
-  test('a delegated deadline extends while the owner\'s passes settle paths, and stops once they settle none', async () => {
+  test('a delegated deadline extends while the owner\'s passes commit pages, and stops once they settle paths without committing', async () => {
     const lines: string[] = [];
-    // A 600 ms deadline with a 400 ms progress window: a slice that settles paths at 450 ms carries the run past 600 ms (to 850 ms).
+    // A 600 ms deadline with a 400 ms progress window: a slice that commits a page at 450 ms carries the run past 600 ms (to 850 ms).
     const deadline = new DelegatedSyncDeadline(600, 400, line => lines.push(line));
     try {
       await new Promise(resolve => setTimeout(resolve, 450));
@@ -66,7 +66,8 @@ describe('#6712 PR 4b lane C: cursor readers on the pass', () => {
       await new Promise(resolve => setTimeout(resolve, 350));
       expect(deadline.stop.signal.aborted).toBe(false);
       expect(lines.join('\n')).toContain('still progressing');
-      deadline.noteSlice(passResult(0, 5));
+      // GBRA-133 PR 3a: this slice settled paths but committed none (screened unchanged): no extension.
+      deadline.noteSlice({ ...passResult(3, 2), added: 0 });
       await new Promise(resolve => setTimeout(resolve, 500));
       expect(deadline.stop.signal.aborted).toBe(true);
     } finally { deadline.dispose(); }

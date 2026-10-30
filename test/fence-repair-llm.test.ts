@@ -207,7 +207,7 @@ describe('runTier3: the re-ask and the decline', () => {
   });
   afterAll(async () => { await engine.disconnect(); });
 
-  async function attempt(slug: string, answers: ChatResult[]) {
+  async function attempt(slug: string, answers: Array<ChatResult | Error>) {
     const page = { compiled_truth: rowLevel, timeline: '' };
     const target: FenceTarget = { mode: 'db', sourceId: 'default', key: slug, slug, path: null, sourcePath: null, page, content: null, before: pageSha(page), snapshot: null, hold: null,
       ctx: { pageVisibility: 'private' } } as FenceTarget;
@@ -246,7 +246,25 @@ describe('runTier3: the re-ask and the decline', () => {
     expect(again.calls).toHaveLength(0);
     expect(again.out).toMatchObject({ ok: false, reason: 'llm_declined', memoHit: true, spentUsd: 0 });
   });
+
+  test('a provider refusal raised as an error is held as llm_refused and consumes the memo; a plain provider error stays transient', async () => {
+    const first = await attempt('t3/policy', [policyRefusal()]);
+    expect(first.calls).toHaveLength(1);
+    expect(first.out).toMatchObject({ ok: false, reason: 'llm_refused' });
+    const again = await attempt('t3/policy', [result(fixed)]);
+    expect(again.calls).toHaveLength(0);
+    expect(again.out).toMatchObject({ ok: false, reason: 'llm_refused', memoHit: true, spentUsd: 0 });
+    expect((await attempt('t3/down', [Object.assign(new Error('rate limited'), { status: 429 })])).out).toMatchObject({ ok: false, reason: 'llm_unavailable' });
+    const retried = await attempt('t3/down', [result(fixed)]);
+    expect(retried.calls).toHaveLength(1);
+    expect(retried.out.ok).toBe(true);
+    expect(await reasonOf(residualOf(rowLevel).requests[0]!, Object.assign(new Error('This model maximum context length is 8192 tokens'), { status: 400 }))).toBe('llm_refused');
+  });
 });
+
+function policyRefusal(): Error {
+  return Object.assign(new Error('Bad Request'), { name: 'AI_APICallError', statusCode: 400, responseBody: JSON.stringify({ error: { code: 'content_policy_violation', message: 'flagged' } }) });
+}
 
 async function reasonOf(req: Parameters<typeof callTier3>[0], answer: ChatResult | Error): Promise<string> {
   stub([answer]);

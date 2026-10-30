@@ -66,6 +66,8 @@ test('freshness reports the commits on HEAD that have not synced yet and the old
   writeFileSync(join(root, 'carol-example.md'), note('Carol.')); commit(root, 'three', now - 60);
   const [after] = await readSyncFreshness(engine, { sourceIds: [id] });
   expect(after!.behind!.commits).toBe(2);
+  // GBRA-133 (#7243): the backlog is named beside unresolved_commits, which counts only synced commits git cannot date.
+  expect(after!.waiting_commits).toBe(2);
   expect(after!.behind!.oldest_seconds).toBeGreaterThanOrEqual(3600);
   expect(after!.behind!.oldest_seconds).toBeLessThan(3600 + 300);
   expect(formatSyncFreshness(after!)).toMatch(/; 2 commit\(s\) not synced yet, oldest 6\d(\.\d)?m old$/);

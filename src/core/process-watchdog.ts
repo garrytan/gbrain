@@ -37,7 +37,7 @@
 import { Worker } from 'node:worker_threads';
 // Zero-import teardown-budget leaf — safe edge, no cycle (it imports nothing).
 import { MAX_TIMER_DELAY_MS } from './background-work.ts';
-import { lastForwardProgressAt, onForwardProgress } from './forward-progress.ts';
+import { lastCommittedProgressAt, lastForwardProgressAt, onCommittedProgress, onForwardProgress } from './forward-progress.ts';
 
 export type WatchdogAction = 'wait' | 'sigterm' | 'sigkill';
 
@@ -62,16 +62,18 @@ export type ProgressDeadlineAction = 'wait' | 'extend' | 'stop';
  * stopped: once the deadline passes, the deadline extends for as long as the
  * last progress note is younger than `windowMs`, and stops the run only after
  * a full window with no progress. `windowMs <= 0` keeps the plain wall-clock
- * deadline.
+ * deadline. GBRA-133 PR 3a: `progressed` false (a run that must commit to
+ * count, and has committed nothing) gets one window from its start, never an
+ * extension from a later note: past the deadline and that window, it stops.
  *   elapsed < deadline                       -> 'wait'
  *   deadline passed, progress within window  -> 'extend'
  *   deadline passed, no progress for window  -> 'stop' (SIGTERM, then SIGKILL after grace)
  */
 export function progressDeadlineDecision(
-  elapsedMs: number, deadlineMs: number, sinceProgressMs: number, windowMs: number,
+  elapsedMs: number, deadlineMs: number, sinceProgressMs: number, windowMs: number, progressed = true,
 ): ProgressDeadlineAction {
   if (elapsedMs < deadlineMs) return 'wait';
-  if (windowMs > 0 && sinceProgressMs < windowMs) return 'extend';
+  if (windowMs > 0 && (progressed ? sinceProgressMs : elapsedMs) < windowMs) return 'extend';
   return 'stop';
 }
 
@@ -100,6 +102,15 @@ export interface ProcessWatchdogOpts {
    * stderr line and an exit status.
    */
   stopNotice?: string;
+  /**
+   * GBRA-133 PR 3a: which notes count as progress. `committed` listens to
+   * `noteCommittedProgress()` only (pages written, a cursor advanced), and a
+   * run that has committed nothing gets one window from its start and no
+   * extension, and stops past its deadline and that window; `stallNotice` is then written instead of
+   * `stopNotice`. Default `forward`.
+   */
+  progressSignal?: 'forward' | 'committed';
+  stallNotice?: string;
 }
 
 export interface WatchdogHandle {
@@ -158,12 +169,13 @@ const INERT: WatchdogHandle = { dispose() {}, get active() { return false; } };
 const WORKER_SRC = `
 const { parentPort, workerData } = require('node:worker_threads');
 const { writeSync } = require('node:fs');
-const { deadlineMs, graceMs, label, heartbeatMs, progressWindowMs, stopNotice } = workerData;
+const { deadlineMs, graceMs, label, heartbeatMs, progressWindowMs, stopNotice, stallNotice, requireProgress } = workerData;
 const t0 = Date.now();
 let lastProgress = t0;
+let progressed = !requireProgress;
 let extended = false;
 function w(m) { try { writeSync(2, '[' + label + '] ' + m + '\\n'); } catch (e) {} }
-if (progressWindowMs > 0 && parentPort) parentPort.on('message', () => { lastProgress = Date.now(); });
+if (progressWindowMs > 0 && parentPort) parentPort.on('message', () => { lastProgress = Date.now(); progressed = true; });
 if (heartbeatMs > 0) {
   const hb = setInterval(() => {
     const elapsed = Math.round((Date.now() - t0) / 1000);
@@ -181,6 +193,16 @@ if (heartbeatMs > 0) {
   if (typeof hb.unref === 'function') hb.unref();
 }
 function stop() {
+  if (!progressed) {
+    w('deadline reached (' + Math.round(deadlineMs/1000) + 's) and the run committed nothing — a stall, not progress; sending SIGTERM for graceful shutdown');
+    if (stallNotice) { try { writeSync(1, stallNotice + '\\n'); } catch (e) {} }
+    try { process.kill(process.pid, 'SIGTERM'); } catch (e) {}
+    setTimeout(() => {
+      w('grace expired — sending SIGKILL (event loop was starved; this is the orphan-pileup backstop)');
+      try { process.kill(process.pid, 'SIGKILL'); } catch (e) {}
+    }, graceMs);
+    return;
+  }
   if (progressWindowMs > 0) {
     w('deadline reached (' + Math.round(deadlineMs/1000) + 's) and no progress for ' + Math.round((Date.now() - lastProgress) / 1000) + 's — sending SIGTERM for graceful shutdown');
   } else {
@@ -199,7 +221,9 @@ function check() {
   // mirrors progressDeadlineDecision
   if (now - t0 < deadlineMs) { setTimeout(check, deadlineMs - (now - t0)); return; }
   if (progressWindowMs > 0 && since < progressWindowMs) {
-    if (!extended) w('deadline reached (' + Math.round(deadlineMs/1000) + 's) but the run is still progressing (last progress ' + Math.round(since / 1000) + 's ago) — extending; it stops after ' + Math.round(progressWindowMs / 1000) + 's without progress');
+    if (!extended) w(progressed
+      ? 'deadline reached (' + Math.round(deadlineMs/1000) + 's) but the run is still progressing (last progress ' + Math.round(since / 1000) + 's ago) — extending; it stops after ' + Math.round(progressWindowMs / 1000) + 's without progress'
+      : 'deadline reached (' + Math.round(deadlineMs/1000) + 's) before the run committed anything; it stops as a stall unless it commits within ' + Math.round(progressWindowMs / 1000) + 's of its start');
     extended = true;
     setTimeout(check, progressWindowMs - since);
     return;
@@ -227,13 +251,15 @@ export function installProcessWatchdog(opts: ProcessWatchdogOpts): WatchdogHandl
   const heartbeatMs = Math.max(0, Math.floor(opts.heartbeatMs ?? 0));
   const progressWindowMs = Math.min(MAX_WATCHDOG_TIMER_MS, Math.max(0, Math.floor(Number.isFinite(opts.progressWindowMs) ? opts.progressWindowMs! : 0)));
   const stopNotice = opts.stopNotice ?? '';
+  const committed = opts.progressSignal === 'committed';
+  const stallNotice = opts.stallNotice ?? stopNotice;
 
   if (!Number.isFinite(deadlineMs) || deadlineMs <= 0) return INERT;
 
   try {
     const worker = new Worker(WORKER_SRC, {
       eval: true,
-      workerData: { deadlineMs, graceMs, label, heartbeatMs, progressWindowMs, stopNotice },
+      workerData: { deadlineMs, graceMs, label, heartbeatMs, progressWindowMs, stopNotice, stallNotice, requireProgress: committed && progressWindowMs > 0 },
     });
     // Don't let the watchdog keep the process alive past clean completion.
     (worker as unknown as { unref?: () => void }).unref?.();
@@ -244,7 +270,7 @@ export function installProcessWatchdog(opts: ProcessWatchdogOpts): WatchdogHandl
     // traffic when the worker only compares against a window of minutes.
     const throttleMs = Math.max(10, Math.min(1000, Math.floor(progressWindowMs / 4)));
     let lastPost = 0;
-    const unsubscribe = progressWindowMs > 0 ? onForwardProgress(() => {
+    const unsubscribe = progressWindowMs > 0 ? (committed ? onCommittedProgress : onForwardProgress)(() => {
       const now = Date.now();
       if (now - lastPost < throttleMs) return;
       lastPost = now;
@@ -272,14 +298,17 @@ export function installProcessWatchdog(opts: ProcessWatchdogOpts): WatchdogHandl
     let term: ReturnType<typeof setTimeout>;
     const check = () => {
       const now = Date.now();
-      const since = now - Math.max(t0, lastForwardProgressAt());
-      const action = progressDeadlineDecision(now - t0, deadlineMs, since, progressWindowMs);
+      const last = committed ? lastCommittedProgressAt() : lastForwardProgressAt();
+      const progressed = !committed || progressWindowMs <= 0 || last > t0;
+      const since = now - Math.max(t0, last);
+      const action = progressDeadlineDecision(now - t0, deadlineMs, since, progressWindowMs, progressed);
       if (action !== 'stop') {
         term = setTimeout(check, action === 'wait' ? deadlineMs - (now - t0) : progressWindowMs - since);
         (term as unknown as { unref?: () => void }).unref?.();
         return;
       }
-      if (stopNotice) { try { process.stdout.write(stopNotice + '\n'); } catch { /* */ } }
+      const notice = progressed ? stopNotice : stallNotice;
+      if (notice) { try { process.stdout.write(notice + '\n'); } catch { /* */ } }
       try { process.kill(process.pid, 'SIGTERM'); } catch { /* */ }
       kill = setTimeout(() => { killed = true; try { process.kill(process.pid, 'SIGKILL'); } catch { /* */ } }, graceMs);
       (kill as unknown as { unref?: () => void }).unref?.();

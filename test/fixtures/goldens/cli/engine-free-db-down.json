@@ -193,9 +193,9 @@
         "            --status              Gate: exits nonzero until required answers exist.",
         "            --show                Read-back payload (all answers + confirm hash).",
         "            --confirm <hash>      Record the human's confirmation of the read-back.",
-        "  render [--force] [--only F] [--minimal]",
+        "  render [--force] [--only F] [--minimal] [--host openclaw|generic|auto]",
         "                                  Render identity files from the confirmed answers.",
-        "                                  Never clobbers; --force backs up first.",
+        "                                  Never clobbers; --force backs up first. OpenClaw: SCHEDULES.md.",
         "  contract [--repair]             Audit the same-turn GBrain write-back contract.",
         "                                  --repair appends it additively and backs up AGENTS.md.",
         "  hooks [--harness claude-code|codex|opencode] [--repair] [--no-hooks] [--gbrain-bin <path>]",
@@ -339,11 +339,12 @@
       "argv": "status",
       "exitCode": 1,
       "stderr": [
+        "[gbrain] reading the brain status snapshot; large brains can take minutes. Progress prints here every <dur>; the result prints on stdout when it is ready.",
         "GBRAIN_DB_ACCESS conn_refused",
         "Error [database_error]: Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check the database URL; `gbrain engine status --probe` names where it comes from (environment variable or the config file under GBRAIN_HOME)",
         "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. Run: gbrain db-repair"
       ],
-      "stderrFirstLine": "GBRAIN_DB_ACCESS conn_refused",
+      "stderrFirstLine": "[gbrain] reading the brain status snapshot; large brains can take minutes. Progress prints here every <dur>; the result prints on stdout when it is ready.",
       "stdout": [],
       "stdoutFirstLine": null,
       "url": "config"

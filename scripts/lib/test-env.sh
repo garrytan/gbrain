@@ -9,6 +9,12 @@
 # (test/scripts/run-unit-parallel.test.ts symlinks a minimal PATH with no
 # sysctl/nproc/vm_stat/timeout and no package.json).
 
+# #7448: Bun switches `bun test` to failure-only output when it detects an AI agent
+# (CLAUDECODE or REPL_ID set, or AGENT=1). A passing file then prints no header and
+# the runners' file census marks it incomplete. Bun reads AGENT first, and AGENT=0
+# keeps the full output whatever the caller's environment.
+export AGENT=0
+
 # ──────────────────────────────────────────────────────────────────────────
 # CPU detection: Apple Silicon perf cores → Mac total physical → nproc → 4.
 # Returns a single positive integer.

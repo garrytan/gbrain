@@ -293,6 +293,10 @@ export async function resolveFailureCooldownOpts(engine: BrainEngine): Promise<C
  * the exact failures that drive the storm. Engine-parity-safe via executeRaw
  * (one query, both engines); cutoff is precomputed in JS to avoid INTERVAL
  * portability concerns. codex #6: rows with a null source_id are excluded.
+ * #7188: a cycle that ran but had a failed phase ends `failed` with
+ * `job_outcome: 'phase_failed'` and does not count: only a whole-cycle failure
+ * (a thrown handler, a timeout or stall, `blocked_by_failures`) backs a source off,
+ * so one failing phase never stops the source's sync.
  */
 export async function readRecentSourceFailures(
   engine: BrainEngine,
@@ -310,6 +314,7 @@ export async function readRecentSourceFailures(
          FROM minion_jobs
         WHERE name = 'autopilot-cycle'
           AND status IN ('dead','failed')
+          AND (result->>'job_outcome' IS NULL OR result->>'job_outcome' <> 'phase_failed')
           AND data->>'source_id' IS NOT NULL
           AND finished_at IS NOT NULL
           AND finished_at > $1`;

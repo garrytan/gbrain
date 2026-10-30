@@ -52,14 +52,14 @@ describe('statementTimeoutChanges: what one statement does to the connection sta
 });
 
 describe('poolHealthOptions: one budget caps both silence and total age', () => {
-  test('inflight_max equals inflight_timeout, inflight_grace is the grace in seconds, and grace off disables both', () => {
-    withEnv({ GBRAIN_PG_STUCK_GRACE_MS: '2000' }, () => {
+  test('inflight_max equals inflight_timeout, inflight_grace is the grace in seconds, and grace off disables both', async () => {
+    await withEnv({ GBRAIN_PG_STUCK_GRACE_MS: '2000' }, () => {
       const options = poolHealthOptions(undefined, '3000');
       expect(options.inflight_timeout).toBe(5);
       expect(options.inflight_max).toBe(5);
       expect(options.inflight_grace).toBe(2);
     });
-    withEnv({ GBRAIN_PG_STUCK_GRACE_MS: 'off' }, () => {
+    await withEnv({ GBRAIN_PG_STUCK_GRACE_MS: 'off' }, () => {
       const options = poolHealthOptions(undefined, '3000');
       expect(options.inflight_timeout).toBeNull();
       expect(options.inflight_max).toBeNull();

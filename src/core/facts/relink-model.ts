@@ -25,6 +25,7 @@ const SYSTEM = [
   'Reply with JSON only: {"subjects":[{"i":<number>,"subject":<string|null>}]}.',
 ].join(' ');
 
+/** #7389: strict structured-output backends require every property required and `additionalProperties: false` on each object. */
 const RESPONSE_SCHEMA = {
   name: 'fact_subjects',
   schema: {
@@ -36,10 +37,12 @@ const RESPONSE_SCHEMA = {
           type: 'object',
           properties: { i: { type: 'integer' }, subject: { type: ['string', 'null'] } },
           required: ['i', 'subject'],
+          additionalProperties: false,
         },
       },
     },
     required: ['subjects'],
+    additionalProperties: false,
   },
 };
 

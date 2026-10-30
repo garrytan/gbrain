@@ -85,6 +85,7 @@ import { brainMembershipOperations } from './ops/brain-membership.ts';
 import { syncStatusOperations } from './ops/sync-status.ts';
 import { rawDataOperations } from './ops/raw-data.ts';
 import { chunksOperations } from './ops/chunks.ts';
+import { whoisOperations } from './ops/whois.ts';
 import { ingestLogOperations } from './ops/ingest-log.ts';
 import { usageOperations } from './ops/usage.ts';
 import { filesOperations } from './ops/files.ts';
@@ -170,8 +171,8 @@ export const operations: Operation[] = [
   ...syncStatusOperations,
   // Raw data (put_raw_data, get_raw_data) — ops/raw-data.ts
   ...rawDataOperations,
-  // Resolution & chunks (resolve_slugs, get_chunks) — ops/chunks.ts
-  ...chunksOperations,
+  // Resolution & chunks (resolve_slugs, get_chunks) — ops/chunks.ts; whois — ops/whois.ts
+  ...chunksOperations, ...whoisOperations,
   // Ingest log (log_ingest, get_ingest_log) — ops/ingest-log.ts
   ...ingestLogOperations,
   // Usage accounting (get_usage, #4218) — ops/usage.ts

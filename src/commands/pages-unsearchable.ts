@@ -5,12 +5,20 @@
  * the state's protocol fix. States and their exits: src/core/embedding-state.ts.
  * Without `--state` every state but `embedded` is listed. The listing is
  * bounded (`--limit`, default 50); `complete: false` means more rows exist.
+ *
+ * #7193: `unsearchable` keeps its doctor meaning; `semantic_unsearchable` adds
+ * the `keyword_only` units vector search cannot reach, and the headline leads
+ * with it. `awaiting_sync` counts files no state can see yet: the source's
+ * held files (new files with no page, pages whose newer file is held) and its
+ * sync freshness, when a resident reports it.
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { cliRenderContext, renderAction } from '../core/agent-output.ts';
 import { opError } from '../core/ops/contract.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
 import { embeddingsDisabled } from '../core/embedding-disabled.ts';
+import { readHeldCoverage } from '../core/persistence/held-reads.ts';
+import { readSourceFreshness } from '../core/notifier/status.ts';
 import {
   DELETED_PAGE_PURGE_WINDOW_HOURS, EMBEDDING_STATE_DOCS, EMBEDDING_STATES, embeddingStateFix, readEmbeddingState,
   type EmbeddingState, type EmbeddingStateRow,
@@ -77,12 +85,22 @@ export async function runPagesUnsearchable(engine: BrainEngine, args: string[]):
     };
   });
   const complete = found.length <= parsed.limit;
+  const semanticUnsearchable = summary.unsearchable === null ? null : summary.unsearchable + (summary.counts.keyword_only ?? 0);
+  const [held] = await readHeldCoverage(engine, { sourceId });
+  const [freshness] = await readSourceFreshness(engine, { sourceId }, held ? [held] : []);
+  const awaitingSync = { held_files: (held?.missing ?? 0) + (held?.stale ?? 0), new_files: held?.missing ?? 0, stale_pages: held?.stale ?? 0,
+    sync_state: freshness?.state ?? 'not_reported' };
   if (parsed.json) {
     console.log(JSON.stringify({ source_id: sourceId, state: parsed.state, limit: parsed.limit, complete, active_column: summary.active_column,
-      counts: summary.counts, unsearchable: summary.unsearchable, rows }, null, 2));
+      counts: summary.counts, unsearchable: summary.unsearchable, semantic_unsearchable: semanticUnsearchable, awaiting_sync: awaitingSync, rows }, null, 2));
     return;
   }
-  console.log(`Source ${sourceId} (active column '${summary.active_column}'): ${summary.unsearchable} unsearchable; ${EMBEDDING_STATES.map(s => `${s} ${summary.counts[s] ?? 0}`).join(', ')}.`);
+  console.log(`Source ${sourceId} (active column '${summary.active_column}'): ${semanticUnsearchable} not reachable by vector search (${summary.unsearchable} unsearchable + `
+    + `${summary.counts.keyword_only ?? 0} keyword_only); ${EMBEDDING_STATES.map(s => `${s} ${summary.counts[s] ?? 0}`).join(', ')}.`);
+  if (awaitingSync.held_files > 0 || awaitingSync.sync_state === 'behind') {
+    console.log(`Not yet in any state: ${awaitingSync.held_files} file(s) held by sync (${awaitingSync.new_files} new, ${awaitingSync.stale_pages} newer than their page); sync ${awaitingSync.sync_state}. `
+      + `gbrain sync status --source ${sourceId} --json shows why.`);
+  }
   if (rows.length === 0) { console.log(parsed.state ? `No pages in state ${parsed.state}.` : 'Nothing unsearchable.'); return; }
   for (const row of rows) {
     console.log(`  ${row.state.padEnd(20)} ${row.slug}  chunks=${row.chunks} bytes=${row.bytes}  ${row.reason}`);

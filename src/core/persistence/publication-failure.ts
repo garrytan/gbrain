@@ -5,6 +5,7 @@ import type { FenceFailureDetail } from '../fence-repair/refusal.ts';
 import type { WithdrawalFailureDetail } from '../facts/withdrawal.ts';
 import type { Action } from '../agent-output.ts';
 import { classifyPgAccessError } from '../pg-access-classify.ts';
+import { READ_ONLY_SQLSTATE } from '../postgres-engine/read-write-transactions.ts';
 
 /**
  * #5974: a database refusal during preparation or publication becomes a
@@ -64,6 +65,8 @@ export interface PublicationFailure { code: string; message: string; detail?: Pu
 const IDENT = /^[A-Za-z_][A-Za-z0-9_.:-]{0,79}$/;
 const ident = (value: unknown) => typeof value === 'string' && IDENT.test(value) ? value : undefined;
 const GUARD_PREFIX = 'writer_coordinator_required:';
+/** G7a (writer-guard-schema.ts): the guard's refusal of a git-canonical source's row from a writer without the git protocol. */
+const GIT_PROTOCOL_PREFIX = 'git_protocol_required:';
 /** trust/schema.ts: the tier trigger's refusal of a raise without owner confirmation. */
 const TRUST_PREFIX = 'trust_raise_refused:';
 const PURGED_PREFIX = 'purged_content:';
@@ -73,6 +76,7 @@ const RELATIONSHIP_TEXT: Record<string, string> = {
   old_source_outside: 'a row moved from a source this publication does not own',
   checkpoint_outside_owner: 'a source sync checkpoint outside owner publication',
   topology_outside_administration: 'a source topology change outside writer administration',
+  unreadable_state: 'writer state this database role cannot read (row-level security hides it, or its row is missing)',
 };
 
 function guardDetail(raw: unknown): Pick<PublicationFailureDetail, 'op' | 'relationship' | 'sources'> {
@@ -124,6 +128,8 @@ export function databaseRefusal(error: unknown): PublicationFailure | null {
   if (sqlstate && SCHEMA_MISSING_SQLSTATES.has(sqlstate) && classifyPgAccessError(error).reason === 'schema_missing') {
     return schemaMissing(sqlstate, typeof e.message === 'string' && e.routine !== 'exec_stmt_raise' ? e.message : '');
   }
+  if (sqlstate === READ_ONLY_SQLSTATE) return { code: 'connection_inherited_read_only', detail: { origin: 'database', sqlstate },
+    message: `The database refused this write as read-only (SQLSTATE ${sqlstate}${typeof e.message === 'string' ? `: ${e.message}` : ''}), so nothing was committed: the server connection defaults to read-only transactions (pooler session state left by another client, a role or database default, or a read-only server).` };
   if (sqlstate !== 'P0001' && sqlstate !== GRADUATION_SQLSTATE) return null;
   const where = typeof e.where === 'string' ? e.where : '';
   const raiser = ident(/PL\/pgSQL function (?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*)[( ]/.exec(where)?.[1]);
@@ -139,6 +145,10 @@ export function databaseRefusal(error: unknown): PublicationFailure | null {
   }
   if (message.startsWith(PURGED_PREFIX)) return { code: 'purged_content', message: `${message.slice(PURGED_PREFIX.length).trim()}. Nothing was committed.`,
     detail: { origin: 'database_trigger', sqlstate, ...(raiser ? { raiser } : {}), ...(table ? { table } : {}) } };
+  if (message.startsWith(GIT_PROTOCOL_PREFIX) || constraint.startsWith('git_canonical_fence')) {
+    return { code: 'git_protocol_required', detail: { origin: 'database_guard', sqlstate, raiser: raiser ?? 'gbrain_require_managed_writer', ...(table ? { table } : {}), ...guardDetail(e.detail) },
+      message: `The git-canonical database fence refused a write${table ? ` on ${table}` : ''}: the source is git-canonical and this gbrain process does not declare the git protocol (an older gbrain). Nothing was committed.` };
+  }
   if (message.startsWith(GUARD_PREFIX) || constraint.startsWith('managed_writer_guard')) {
     const branch = constraint.startsWith('managed_writer_guard:') ? ident(constraint.slice('managed_writer_guard:'.length)) : undefined;
     const detail: PublicationFailureDetail = { origin: 'database_guard', sqlstate, raiser: raiser ?? 'gbrain_require_managed_writer',

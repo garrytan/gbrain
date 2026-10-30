@@ -22,10 +22,7 @@ export async function runJobsList({ args, queue, engine }: JobsCommandContext): 
   const cfg = loadConfig();
   let jobs: MinionJob[];
   if (isThinClient(cfg)) {
-    const raw = await callRemoteTool(cfg!, 'list_jobs', {
-      status, queue: queueName, limit,
-    }, { timeoutMs: 30_000 });
-    jobs = unpackToolResult<MinionJob[]>(raw).map((j) => rehydrateJobDates(j));
+    jobs = await listRemoteJobs(cfg!, { status, queue: queueName, limit });
   } else {
     try { await queue.ensureSchema(); }
     catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
@@ -52,6 +49,22 @@ export async function runJobsList({ args, queue, engine }: JobsCommandContext): 
   console.log('  ' + '─'.repeat(100));
   for (const job of jobs) console.log(`${formatJob(job)} ${insightCell(job, job as MinionJob & JobInsight)}`.trimEnd());
   console.log(`\n  ${jobs.length} jobs shown`);
+}
+
+/**
+ * The host returns at most one page per call (500 jobs over MCP); follow next_cursor, carried on the last job of a
+ * cut page, until the requested limit is met. A host without paging returns one page and no cursor.
+ */
+async function listRemoteJobs(cfg: NonNullable<ReturnType<typeof loadConfig>>, opts: { status?: string; queue?: string; limit: number }): Promise<MinionJob[]> {
+  const jobs: MinionJob[] = [];
+  let cursor: string | undefined;
+  do {
+    const raw = await callRemoteTool(cfg, 'list_jobs', { ...opts, limit: opts.limit - jobs.length, ...(cursor ? { cursor } : {}) }, { timeoutMs: 30_000 });
+    const page = unpackToolResult<Array<MinionJob & { truncated?: boolean; next_cursor?: string }>>(raw);
+    cursor = page[page.length - 1]?.next_cursor;
+    for (const { truncated: _t, next_cursor: _c, ...job } of page) jobs.push(rehydrateJobDates(job as MinionJob));
+  } while (cursor && jobs.length < opts.limit);
+  return jobs;
 }
 
 /**

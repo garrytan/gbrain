@@ -24,6 +24,10 @@ import {
   type CooldownOpts,
 } from '../src/commands/autopilot-fanout.ts';
 import type { SourceRow } from '../src/core/engine.ts';
+import { MinionQueue } from '../src/core/minions/queue.ts';
+import { MinionWorker } from '../src/core/minions/worker.ts';
+import type { MinionJob } from '../src/core/minions/types.ts';
+import { waitFor } from './helpers/wait-for.ts';
 
 const OPTS: CooldownOpts = { baseMin: 10, capMin: 120 };
 
@@ -147,5 +151,66 @@ describe('readRecentSourceFailures + isSourceInCooldown (PGLite)', () => {
     expect(await isSourceInCooldown(engine, 'repo-dis')).toBe(false);
     const opts = await resolveFailureCooldownOpts(engine);
     expect(opts.baseMin).toBe(0);
+  });
+});
+
+describe('#7188: a cycle with one failed phase does not back off its source', () => {
+  let engine: PGLiteEngine;
+  let queue: MinionQueue;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    queue = new MinionQueue(engine);
+  }, 30000);
+  afterAll(async () => { await engine.disconnect(); });
+  async function freshSource(): Promise<void> {
+    await engine.executeRaw('DELETE FROM minion_jobs');
+    await engine.executeRaw(`DELETE FROM sources WHERE id = 'repo-phase'`);
+    await engine.executeRaw(`INSERT INTO sources (id, name, config, created_at) VALUES ('repo-phase', 'r', '{}'::jsonb, now())`, []);
+  }
+  beforeEach(freshSource);
+
+  const cycleWithFailedPhase = {
+    partial: true, status: 'partial',
+    report: { status: 'partial', phases: [{ phase: 'sync', status: 'ok' }, { phase: 'extract', status: 'fail', summary: 'extract failed' }] },
+  };
+
+  /** Run `cycles` autopilot-cycle jobs for repo-phase through a worker whose handler does `handler`. */
+  async function runCycles(cycles: number, handler: () => Promise<Record<string, unknown>>): Promise<MinionJob[]> {
+    const jobs: MinionJob[] = [];
+    for (let i = 0; i < cycles; i++) jobs.push(await queue.add('autopilot-cycle', { source_id: 'repo-phase' }, { max_attempts: 1 }));
+    const worker = new MinionWorker(engine, { pollInterval: 25 });
+    worker.register('autopilot-cycle', handler);
+    const running = worker.start();
+    try {
+      await waitFor(async () => {
+        const rows = await Promise.all(jobs.map(j => queue.getJob(j.id)));
+        return rows.every(r => r && ['completed', 'failed', 'dead'].includes(r.status));
+      }, { timeoutMs: 15_000, label: 'cycles terminal' });
+    } finally {
+      worker.stop();
+      await running;
+    }
+    return (await Promise.all(jobs.map(j => queue.getJob(j.id)))) as MinionJob[];
+  }
+
+  test('N cycles each ending failed on one phase leave the source dispatchable', async () => {
+    const jobs = await runCycles(4, async () => cycleWithFailedPhase);
+    for (const job of jobs) {
+      expect(job.status).toBe('failed');
+      expect(job.result).toMatchObject({ job_outcome: 'phase_failed', failed_phase: 'extract' });
+    }
+    expect((await readRecentSourceFailures(engine, { sinceMin: 120 })).has('repo-phase')).toBe(false);
+    expect(await isSourceInCooldown(engine, 'repo-phase')).toBe(false);
+  });
+
+  test('a whole-cycle failure still backs the source off: a thrown handler, or blocked_by_failures', async () => {
+    await runCycles(1, async () => { throw new Error('cycle crashed'); });
+    expect(await isSourceInCooldown(engine, 'repo-phase')).toBe(true);
+    await freshSource();
+    const [blocked] = await runCycles(1, async () => ({ status: 'blocked_by_failures', reason: 'held_files' }));
+    expect(blocked.result).toMatchObject({ job_outcome: 'failed' });
+    expect(await isSourceInCooldown(engine, 'repo-phase')).toBe(true);
   });
 });

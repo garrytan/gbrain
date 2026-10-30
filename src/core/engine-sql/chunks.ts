@@ -1095,8 +1095,8 @@ export function cosineByChunkIdsStatement(ids: number[], column: string, query: 
   const col = trustedSql(`cc.${quoteIdentifier(column)}`);
   const q = `[${Array.from(query).join(',')}]`;
   return renderFragment(sqlFragment`
-    SELECT cc.id, CASE WHEN vector_dims(${col}::vector) <> ${query.length}::int OR vector_norm(${col}::vector) = 0 OR vector_norm(${q}::vector) = 0
-                       THEN 0::float8 ELSE 1 - (${col}::vector <=> ${q}::vector) END AS cosine
+    SELECT cc.id, CASE WHEN vector_dims(${col}::vector) <> ${query.length}::int OR vector_norm(${col}::vector) = 0 OR vector_norm(${q}::text::vector) = 0
+                       THEN 0::float8 ELSE 1 - (${col}::vector <=> ${q}::text::vector) END AS cosine
       FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
      WHERE cc.id = ANY(${ids}::int[]) AND ${col} IS NOT NULL AND ${trustedSql(chunkVisibleFilter('p', 'cc'))}
   `);

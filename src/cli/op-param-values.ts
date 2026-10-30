@@ -7,11 +7,11 @@
  * `validateParams` (types + enums) for the CLI parser.
  */
 import { inertText } from '../core/agent-output.ts';
-import type { Operation, ParamDef } from '../core/ops/contract.ts';
+import type { OperationMeta, ParamDef } from '../core/ops/contract.ts';
 import { usageError } from './cli-error.ts';
 
 /** Coerce one raw CLI token for `op.params[key]`; `positional` labels a positional slot instead of a flag. */
-export function opParamValue(op: Operation, key: string, def: ParamDef | undefined, raw: string, positional = false): unknown {
+export function opParamValue(op: OperationMeta, key: string, def: ParamDef | undefined, raw: string, positional = false): unknown {
   if (!def) return raw;
   const name = positional ? `<${key}>` : `--${key.replace(/_/g, '-')}`;
   const usage = `gbrain ${op.cliHints?.name ?? op.name}`;
@@ -34,7 +34,7 @@ export function opParamValue(op: Operation, key: string, def: ParamDef | undefin
  * (`--where key=value`) collects every repetition into a list that
  * `opStructuredValue` turns into the object; every other flag is one value.
  */
-export function opFlagValue(op: Operation, key: string, def: ParamDef | undefined, raw: string, prev: unknown): unknown {
+export function opFlagValue(op: OperationMeta, key: string, def: ParamDef | undefined, raw: string, prev: unknown): unknown {
   if (def?.cliKeyValue) return [...(Array.isArray(prev) ? prev : []), raw];
   return opParamValue(op, key, def, raw);
 }

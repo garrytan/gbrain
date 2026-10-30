@@ -7,7 +7,7 @@
  */
 import type { Check } from '../../doctor.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
-import { PURGE_PARK_LIMIT, readPurgeParks } from '../../../core/persistence/purge-parks.ts';
+import { isParked, PURGE_PARK_LIMIT, readPurgeParks } from '../../../core/persistence/purge-parks.ts';
 import { checkError, doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 
@@ -17,7 +17,7 @@ const SAMPLE = 20;
 export async function checkPurgeParkedPages(engine: BrainEngine): Promise<Check> {
   let parked;
   try {
-    parked = [...(await readPurgeParks(engine)).values()].filter(park => park.failures >= PURGE_PARK_LIMIT);
+    parked = [...(await readPurgeParks(engine)).values()].filter(isParked);
   } catch (error) {
     return checkError(NAME, 'read the parked page purges', error);
   }

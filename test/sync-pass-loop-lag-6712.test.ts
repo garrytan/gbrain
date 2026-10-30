@@ -50,7 +50,7 @@ describe('#6712 PR 4b ruling 4: a level read yields to the event loop', () => {
     for (let read = 0; read < READS; read++) {
       let level: Awaited<ReturnType<typeof readShadowLevel>>;
       let maxLag = 0, ticks = 0;
-      const lag = watchLoopLag();
+      const lag = watchLoopLag({ reportAtMs: MAX_LAG_MS });
       try {
         level = await readShadowLevel(engine, { sourceId: 'default', context });
       } finally {

@@ -18,6 +18,7 @@ import { pushDegraded, stampBudgetStage } from './degraded.ts';
 import { stampEvidence } from '../evidence.ts';
 import { applyEvidenceGate } from '../decide-stage.ts';
 import { collapsePool, prioritize } from './rank.ts';
+import { readGeneratedPages } from '../provenance-demotion.ts';
 import { warnOncePerProcess } from '../../utils.ts';
 
 /** No embedding provider (and no multimodal route): keyword + title + relational only. */
@@ -52,8 +53,9 @@ export async function searchWithoutEmbeddings(
     noEmbedResults = rrfFusionWeighted(noEmbedLists, ctBoost, opts?.explain === true || trace !== undefined);
   }
   if (noEmbedResults.length > 0) {
+    const generatedRead = readGeneratedPages(engine, noEmbedResults);
     await runPostFusionStages(engine, noEmbedResults, postFusionOpts);
-    await applyIdentityBoosts(req, noEmbedResults);
+    await applyIdentityBoosts(req, noEmbedResults, generatedRead);
     noEmbedResults.sort((a, b) => b.score - a.score);
     noEmbedResults = await applyFeedbackStage(engine, noEmbedResults, { reranked: false });
   }
@@ -175,8 +177,9 @@ export async function searchVectorFallback(
     fallbackResults = rrfFusionWeighted(fallbackLists, ctBoost, opts?.explain === true || trace !== undefined);
   }
   if (fallbackResults.length > 0) {
+    const generatedRead = readGeneratedPages(engine, fallbackResults);
     await runPostFusionStages(engine, fallbackResults, postFusionOpts);
-    await applyIdentityBoosts(req, fallbackResults);
+    await applyIdentityBoosts(req, fallbackResults, generatedRead);
     fallbackResults.sort((a, b) => b.score - a.score);
     fallbackResults = await applyFeedbackStage(engine, fallbackResults, { reranked: false });
   }

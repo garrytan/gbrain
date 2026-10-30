@@ -136,6 +136,19 @@ for (const kind of testBackends()) {
       for (const [key, value] of Object.entries(after)) expect([key, value]).toEqual([key, prior[key] ?? [0, 0]]);
     }, 600_000);
 
+    for (const [label, head, close] of [['Visibility: Private', 'Visibility: Private\n', '---'], ['a duplicate visibility key', 'visibility: private\nvisibility: world\n', '---'],
+      ['an unparseable block', 'visibility: private\nfoo: [unclosed\n', '---'], ['a block closed with dots', 'visibility: private\n', '...']] as const) {
+      test(`a 25 MiB upload that asks for visibility: private as ${label} is refused and nothing is stored (#7841)`, async () => {
+        await setConfig('write_gate.agent_mode', 'off');
+        const slug = `notes/huge-private-request-${label.replace(/\W+/g, '-').toLowerCase()}`;
+        const text = `---\ntitle: Huge private request\ntype: note\n${head}${close}\n${conversation(25 * MiB, 'private')}`;
+        const id = await staged(text, slug);
+        const refused = await commitRefusal({ upload_id: id });
+        expect(refused.code).toBe(label === 'Visibility: Private' ? 'visibility_not_applied' : 'invalid_params');
+        expect(await engine.readPageSnapshot(slug, { sourceId: 'default' })).toBeNull();
+      }, 600_000);
+    }
+
     test('a replace above 24 MiB commits at its expected_revision and refuses with revision_changed after the page moved', async () => {
       const slug = 'notes/huge-conversation';
       const v2 = conversation(25.5 * MiB, 'replace');

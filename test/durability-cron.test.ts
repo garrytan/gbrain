@@ -40,7 +40,7 @@ describe('renderCronWrapper (D2 DB-free)', () => {
 });
 
 describe('generateBrainPullPlist (D12 launchd)', () => {
-  const plist = generateBrainPullPlist('com.gbrain.brain-pull.wiki', '/home/u/.gbrain/brain-pull-wiki.sh', '/home/u', 1800);
+  const plist = generateBrainPullPlist('com.gbrain.brain-pull.wiki', '/home/u/.gbrain/brain-pull-wiki.sh', '/home/u/.gbrain', 1800);
 
   test('is periodic (StartInterval), not a KeepAlive daemon', () => {
     expect(plist).toContain('<key>StartInterval</key><integer>1800</integer>');
@@ -124,7 +124,7 @@ describe('durabilityJobStatus — presence + liveness [D7]', () => {
     writeFileSync(log, 'old\n');
     const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
     utimesSync(log, old, old);
-    await withEnv({ PATH: empty, HOME: home }, async () => {
+    await withEnv({ PATH: empty, HOME: home, GBRAIN_HOME: home }, async () => {
       const s = durabilityJobStatus('wiki', 1800, 'linux');
       expect(s.logFresh).toBe(false);
     });

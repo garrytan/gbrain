@@ -1,14 +1,13 @@
 # Testing (gbrain repo)
 
-This is the contributor reference for how gbrain is tested: which lanes exist,
-what each one proves, how CI runs them, and the guards that keep those claims
-honest. It describes current behavior and invariants only. Release history
-lives in `CHANGELOG.md`; per-file detail lives in the test files and in
+How gbrain is tested: which lanes exist, what each proves, how CI runs them and
+the guards that keep those claims honest. Current behavior and invariants only:
+history lives in `CHANGELOG.md`, per-file detail in the tests and
 `docs/architecture/KEY_FILES.md`.
 
 ## Quick start
 
-Prerequisites: Bun 1.4.0 or newer (CI pins 1.4.3), Git, and bash. E2E needs
+Prerequisites: Bun 1.4.4 or newer (CI pins 1.4.4), Git, and bash. E2E needs
 Docker for a `pgvector/pgvector:pg16` container and Python 3 on `PATH` (the E2E
 runner validates Bun's JUnit reports with the standard-library XML parser).
 
@@ -16,12 +15,11 @@ runner validates Bun's JUnit reports with the standard-library XML parser).
 bun install --frozen-lockfile && bun run test && bun run verify
 ```
 
-`bun run test` is the parallel unit loop plus the serial pass (a few minutes on
-a laptop); `bun run verify` is CI's guard battery (about a minute). For E2E,
-follow [E2E test DB lifecycle](#e2e-test-db-lifecycle-always-follow-this) and
+`bun run test` is the parallel unit loop plus the serial pass; `bun run verify`
+is CI's guard battery (about a minute). For E2E, follow [E2E test DB lifecycle](#e2e-test-db-lifecycle-always-follow-this) and
 run `DATABASE_URL=postgresql://postgres:postgres@localhost:5434/gbrain_test bun run test:e2e`.
 `bun run ci:local` runs the whole CI gate in Docker; `bun run ci:ubicloud` runs
-it on ephemeral VMs in about five minutes.
+it on ephemeral VMs.
 
 A failing `bun run test` writes every failure block to
 `.context/test-failures.log`, one line per shard to `.context/test-summary.txt`
@@ -52,7 +50,7 @@ not grant access. No Ubicloud API token is passed to workflow jobs.
 | Workload | Runner | Capacity |
 | --- | --- | --- |
 | Unit shards, slow and eval jobs, BrainBench, admin browser, shared-skills compatibility, persistence soak, reconciliation crashes and read latency, native Linux cells, OpenClaw startup, JSONB parity, PR serial pool, E2E backend matrix, Tier 2, coverage reports and Semgrep | `ubicloud-standard-4-ubuntu-2404` | 4 vCPU, 16 GB RAM |
-| Nightly coverage serial pool, `verify`, PgBouncer/RLS deployment matrix | `ubicloud-standard-8-ubuntu-2404` | 8 vCPU, 32 GB RAM |
+| Nightly coverage serial pool, `verify`, PgBouncer/RLS deployment matrix, E2E graduation shards | `ubicloud-standard-8-ubuntu-2404` | 8 vCPU, 32 GB RAM |
 | E2E Tier 1 (its CLI `init` spawns exceed their timeouts on 4 vCPUs), label-gated and nightly heavy-tests jobs | `ubicloud-standard-16-ubuntu-2404` | 16 vCPU, 64 GB RAM |
 | Label-gated heavy test suite | `ubicloud-standard-30-ubuntu-2404` | 30 vCPU, 120 GB RAM |
 | Native ARM64 glibc and musl tests | `ubicloud-standard-4-arm-ubuntu-2404` | 4 vCPU |
@@ -72,9 +70,9 @@ VMs a unit shard takes the same time on 4, 8 and 16 vCPUs; the serial pool and
 `verify` take the same time on 8 and 16 vCPUs (serial shard 2: 222s and 224s;
 277s on 4); the 2,500-write PGLite soak averages 1.3-1.8 busy cores and takes
 523s on 4 vCPUs and 500s on 16. Selected E2E workers run one file at a time and
-fit on 2 vCPUs. Re-measure with `scripts/ubicloud/ubi-runner.sh run -s standard-N`
-before resizing a runner: more CPU does not shorten a single-process job, and
-the decision rule is critical path first, vCPU-minutes second.
+fit on 2 vCPUs. Re-measure (`ubi-runner.sh run -s standard-N`) before resizing a
+runner: more CPU does not shorten a single-process job; critical path
+comes first, vCPU-minutes second.
 `test/scripts/ci-runner-routing.test.ts` pins capacity and platform routing;
 `.github/actionlint.yaml` declares the exact custom runner labels.
 
@@ -215,6 +213,7 @@ JSONB, locking and pooler behavior are not established by a PGLite pass.
 | Keyless behavior, structural guards and shared contracts | Unit shards and `verify` in `test.yml`; process-isolated serial and dedicated slow lanes where required | Real PostgreSQL, native activation or compiled behavior |
 | PostgreSQL behavior and engine parity | Selected E2E and named jobs in `e2e.yml`; the complete nightly runner corpus | Execution of key-gated or native-door assertions merely because their files were discovered |
 | Durable publication and recovery under sustained load | `persistence-validation.yml` and `scripts/persistence/README.md` | Power-loss safety, production authentication or equivalence to two smaller databases |
+| All interleavings of a TLA+ model | `tla-spec.yml`, `spec/tla/README.md` | Behavior outside the model |
 | Native lock ABI and compiled-process exclusion | `native-locks.yml`, compiled smoke and release validation | All compiled CLI features or native-harness activation |
 | Browser journeys | Required `admin-browser` job and `admin/e2e/*.pw.ts` | Vendor-native agent behavior |
 | Native agent doors and heavier operational scenarios | Explicit jobs in `heavy-tests.yml` | A passing skipped door or generic protocol test is not native activation |
@@ -236,7 +235,7 @@ Recorded ownership changes:
 
 - `test/e2e/reconcile-crash.test.ts` and `test/e2e/reconcile-crash-unactivated.test.ts`:
   the PR owner is `persistence-validation.yml`, called from `test.yml` on every
-  PR on both supported Bun versions against pg16. Its "Require all
+  PR on every supported Bun version against pg16. Its "Require all
   reconciliation crash boundaries" step runs both files by name and uploads the
   crash manifests, unchanged. Both files are in `E2E_EXCLUSIONS`
   (`PERSISTENCE_VALIDATION_OWNED` in `scripts/e2e-matrix.ts`), so PR
@@ -416,9 +415,9 @@ Test command tiers, each with a clear scope:
 | `bun run verify` | CI's authoritative pre-test gate set, fanned out by `scripts/run-verify-parallel.sh` through a bounded worker pool (default `detect_cpus`; override `GBRAIN_VERIFY_MAX_PARALLEL`) with the heavy checks ordered first (typecheck, the two compile-embed checks, admin build, fuzz bundles, whole-tree greps), then the self-timed `SOLO_CHECKS` alone ([why](operations/verify-and-nightly-e2e.md#verify-solo-checks)). Two evals ride the unit lane instead ([why](operations/verify-and-nightly-e2e.md#evals-in-the-unit-lane)). The `CHECKS` array in that script is the single source of truth — CI literally calls `bun run verify` in a dedicated job. | ~65-85s | Before pushing; before `/ship`. |
 | `bun run test:full` | `verify && bun run test && bun run test:slow && [smart e2e]`. Smart e2e runs only when `DATABASE_URL` is set and propagates its failure; otherwise it prints a skip notice to stderr. Use `ci:local` to provision the databases and require PgBouncer execution. | ~3-5min depending on slow + e2e | Pre-merge sanity, before opening a PR. |
 | `bun run ci:local` | Independent host gitleaks scans, then frozen dependencies, guards/typecheck, the complete serial and slow lanes, and four unit/E2E shards inside Docker. Each E2E shard has its own pgvector database; selected PgBouncer tests must execute against the transaction-mode pooler. Unit, serial, and slow lanes have database URL overrides unset. Any failed stage fails the command. Complete shard logs survive container teardown under `.context/ci-local-shards/`. `ci:local:diff` runs only gitleaks and the doc checks on a doc-only diff and the full gate otherwise; `--no-shard` runs unit/E2E sequentially. Doc-only diffs still require successful gitleaks scans. | Depends on the full corpus | Full local gate before shipping. |
-| `bun run ci:ubicloud` | The `ci:local` lanes (gitleaks, guards/typecheck, serial, slow, unit, all E2E with required PgBouncer execution) fanned out across ephemeral Ubicloud VMs from one heaviest-first work queue; `ci:ubicloud:diff` takes the same doc-only fast path as `ci:local:diff`. Needs `UBICLOUD_API_KEY` or `UBICLOUD_API_TOKEN`, no local Docker. See "Ubicloud fan-out" below. | ~5 min | Full gate before shipping when a Ubicloud token is available. |
+| `bun run ci:ubicloud` | The `ci:local` lanes (gitleaks, guards/typecheck, serial, slow, unit, all E2E with required PgBouncer execution) fanned out across ephemeral Ubicloud VMs; `ci:ubicloud:diff` takes the same doc-only fast path as `ci:local:diff`. Needs `UBICLOUD_API_KEY` or `UBICLOUD_API_TOKEN`, no local Docker. See "Ubicloud fan-out" below. | ~5 min | Full gate before shipping when a Ubicloud token is available. |
 | `bun run test:slow` | Just the `*.slow.test.ts` set (intentional cold-path correctness checks). | seconds-to-minutes | When touching slow-path code. |
-| `bun run test:serial` | The `*.serial.test.ts` set listed in `scripts/serial-files.tsv`, one Bun process per file, run through a pool of concurrent per-file processes (`min(detect_cpus, 4)`, memory-adapted) heaviest-first from `scripts/serial-weights.json` (absent weights fall back to the corpus p75; scheduling only). The `EXCLUSIVE_FILES` in `scripts/run-serial-tests.sh` (machine-global state, at most 3) run sequentially after the pool, on shard 1 only. Per-test timeout 120s; each pooled file is killed at 300s. `SHARD=N/M` partitions pooled files by duration. Externally killed files get one sequential rescue run. Knobs: `GBRAIN_SERIAL_POOL=N` (`1` is fully sequential), `GBRAIN_SERIAL_FILE_TIMEOUT`. | a few minutes at pool=4 | Debugging quarantined files; CI's serial-tests job. |
+| `bun run test:serial` | The `*.serial.test.ts` set listed in `scripts/serial-files.tsv`, one Bun process per file, run through a pool of concurrent per-file processes (`min(detect_cpus, 4)`, memory-adapted) heaviest-first from `scripts/serial-weights.json` (absent weights fall back to the corpus p75; scheduling only). The `EXCLUSIVE_FILES` in `scripts/run-serial-tests.sh` (machine-global state or timing, at most 4) run sequentially after the pool, on shard 1 only. Per-test timeout 120s; each pooled file is killed at 300s. `SHARD=N/M` partitions pooled files by duration. Externally killed files get one sequential rescue run. Knobs: `GBRAIN_SERIAL_POOL=N` (`1` is fully sequential), `GBRAIN_SERIAL_FILE_TIMEOUT`. | a few minutes at pool=4 | Debugging quarantined files; CI's serial-tests job. |
 | `bun run test:e2e` | Real Postgres E2E. Requires Docker + `DATABASE_URL`. Sequential within a shard; `SHARD=N/M` fans out against separate databases (ci-local runs 4 containers). Activates the PGLite snapshot like every other runner (per-file cold-path opt-outs where the test asserts the path TO post-initSchema state), exporting it as an ABSOLUTE path so CLI children spawned with varying cwd still find it. | ~5-10min | Pre-ship; nightly. |
 | `bun run test:compile-smoke` | Self-update integrity verify under a REAL `bun build --compile` binary, offline; also runs unconditionally in the serial lane. The unit suite mocks the network seams; this proves the dependency-free crypto/base64/JSON verify path survives compilation — the failure mode `sigstore-js` would have hit. | under 1s (one small compile) | When touching `src/core/binary-self-update.ts`; pre-ship on self-update changes. |
 | `bun run regen:all` | Regenerates every generated artifact (schema, migrations registry, error-code docs, protocol blocks, tool catalog, skills manifest, structural suites, `llms.txt` last, and the others in `scripts/regen-all.ts`) offline and keyless, and lists what changed; a second run changes nothing. `--check` is read-only and runs in `verify` as `check:regen-all`. `--goldens` also regenerates the offline contract goldens, a deliberate act each PR justifies; Postgres goldens are named with their own commands. | about a minute | After any change a freshness check flags; before `/ship`. |
@@ -460,9 +459,7 @@ from one heaviest-first work queue; every VM is destroyed on exit. VM setup, sch
 and flags are in [scripts/ubicloud/README.md](../scripts/ubicloud/README.md).
 
 VMs are named `ubirun-<owner>-<epoch>-<suffix>`; set `UBI_OWNER` to your thread
-code. Teardown destroys every VM the run asked for, including creates still in
-flight, and stale-VM sweeps run only with `UBI_GC_HOURS` set and only on your
-own VMs. `scripts/ubicloud/ubi-runner.sh usage` shows vCPUs by owner.
+code. `scripts/ubicloud/ubi-runner.sh usage` shows vCPUs by owner.
 A sleeping machine kills the run with no signal, so teardown never runs: on Capy, run
 `ci:ubicloud` as a watched background operation. After any interrupted run, check
 `ubi-runner.sh list --mine` and reap leftovers with `down NAME` (or `gc HOURS`, own VMs only).
@@ -470,6 +467,9 @@ A sleeping machine kills the run with no signal, so teardown never runs: on Capy
 The project quota is 512 vCPUs, shared with PR CI; a full gate takes 64, or 160 when it is free.
 In a multi-lane wave, lanes run `ci:ubicloud:diff` or targeted suites (`bun
 test <files>`, `--lanes`); only the integrator runs the full gate.
+GitHub full-ci is the source of truth: `scripts/pregate-remote-gate.sh` takes its receipt
+from the passed Test and E2E full runs of the identical clean tree; any other
+tree runs the gate ([remote-gate reuse](ci-event-parity.md#remote-gate-reuse)).
 
 ### E2E backend matrix
 
@@ -740,7 +740,7 @@ Selected E2E direct-only run would duplicate it), persistence-validation.yml and
 owner. Locally, `ci:local:diff` and `ci:ubicloud:diff` run gitleaks and
 `scripts/ci-doc-checks.sh` (llms freshness, KEY_FILES byte caps, documented
 paths, skill references, privacy guards) on a doc-only diff and the full gate
-otherwise, printing "E2E narrowing is retired".
+otherwise.
 
 ### Refactor wave 1 goldens
 
@@ -1269,7 +1269,7 @@ there even though they pass on Linux and macOS.
 
 ### CI vs local: intentionally divergent file sets
 
-- **CI matrix** (`.github/workflows/test.yml`) runs 22 `scripts/test-shard.sh` shards, two per runner, split by weight-aware LPT bin-packing (`scripts/sharding.ts`; unweighted files get the p75 weight) and includes `*.slow.test.ts` files without a dedicated job, plus keyless-allowlisted `evals/**/*.test.ts` (`test/scripts/evals-collection.test.ts`). Shards keep planned file order (`test-shard.sh --dry-run-list <i> 18`) and print their predicted weight (`sharding.ts --sum`). Every Bun job activates the PGLite schema snapshot (built in-runner, cached across jobs; the runner's hash check is authoritative). Serial files run across four `serial-tests` workers via `bun run test:serial`; `verify`, `typecheck` and the BrainBench memory-conformance gate (`scripts/ci-brainbench-gate.sh`, compared against `evals/brainbench/baselines/main.json`) have their own jobs, all aggregated by `test-status`. `e2e.yml` aggregates through `e2e-status`, with jsonb-parity gating Tier 2's token spend; scheduled runs also require the full-corpus lanes. Both aggregates reject failures, cancellations and unexpected skips. Only a master push reuses results: those of a passed full-suite run of its exact tree (`scripts/ci-reuse.ts`). CI is the ground truth for "did everything pass."
+- **CI matrix** (`.github/workflows/test.yml`) runs 22 `scripts/test-shard.sh` shards, two per runner, split by weight-aware LPT bin-packing (`scripts/sharding.ts`; unweighted files get the p75 weight) and includes `*.slow.test.ts` files without a dedicated job, plus keyless-allowlisted `evals/**/*.test.ts` (`test/scripts/evals-collection.test.ts`). Shards keep planned file order (`test-shard.sh --dry-run-list <i> 18`) and print their predicted weight (`sharding.ts --sum`). Every Bun job activates the PGLite schema snapshot (built in-runner, cached across jobs; the runner's hash check is authoritative). Serial files run across four `serial-tests` workers via `bun run test:serial`; `verify`, `typecheck` and the BrainBench memory-conformance gate (`scripts/ci-brainbench-gate.sh`, compared against `evals/brainbench/baselines/main.json`) have their own jobs, all aggregated by `test-status`. `e2e.yml` aggregates through `e2e-status`, with jsonb-parity gating Tier 2's token spend; scheduled runs also require the full-corpus lanes. Both aggregates reject failures, cancellations and unexpected skips. Only a master push and the remote gate reuse results: those of a passed full run of the exact tree (`scripts/ci-reuse.ts`). CI is the ground truth for "did everything pass."
 - **Local fast loop** (`scripts/run-unit-shard.sh` via the parallel wrapper) uses the same weighted partitioner as CI and EXCLUDES `*.slow.test.ts` AND `*.serial.test.ts`. Each shard runs its complete ordered selection with a fresh Bun process per file, without adding workers. Later groups still run after failures; missing summaries or file-completion evidence fail the shard. Local trades coverage for inner-loop speed; CI catches what local skips.
 
 `test/scripts/run-unit-shard.test.ts` pins what the local loop includes, and
@@ -1390,7 +1390,7 @@ Triage rule: a `warn-pass` EXIT-HANG line in `.context/test-summary.txt` is NOT 
 
 - `*.test.ts`: the parallel unit loop.
 - `*.slow.test.ts`: `bun run test:slow` only (intentional cold-path or long workloads that would dominate the fast loop). In CI they run in named slow jobs or inside the unit shards.
-- `*.serial.test.ts`: `bun run test:serial` after the parallel pass, one Bun process per file (`--max-concurrency=1` in a shared process still leaks `mock.module` through the module registry), with those processes pooled. Each file is listed with its class and reason in `scripts/serial-files.tsv` (see [When to quarantine](#when-to-quarantine-instead-of-fix)); machine-global files (launchd/cron) run on the sequential `EXCLUSIVE_FILES` lane, at most three. Do not put parallelism back on a serial file without fixing the contention root cause.
+- `*.serial.test.ts`: `bun run test:serial` after the parallel pass, one Bun process per file (`--max-concurrency=1` in a shared process still leaks `mock.module` through the module registry), with those processes pooled. Each file is listed with its class and reason in `scripts/serial-files.tsv` (see [When to quarantine](#when-to-quarantine-instead-of-fix)); machine-global or timing-bound files run on the sequential `EXCLUSIVE_FILES` lane, at most four. Do not put parallelism back on a serial file without fixing the contention root cause.
 - `test/e2e/*.test.ts`: real-Postgres E2E, skipped when `DATABASE_URL` is unset. `test/phantom-redirect-engine-parity.test.ts` also rides this lane (its PGLite arm lives in `test/`; its Postgres arm needs a `DATABASE_URL` lane). `run-e2e.sh` wraps each file in a hard outer timeout (default 180s, `GBRAIN_E2E_FILE_TIMEOUT=<seconds>` overrides) because a blocking PGLite WASM call can outlive Bun's timer-based `--timeout`; LLM-bound Tier 2 files get four times the cap.
 - `tests/heavy/*.sh`: ops-shape shell scripts (pg_upgrade matrix, RSS budget, read latency under sync, sync lock regression) costing minutes; `bun run test:heavy` or the nightly `heavy-tests.yml`. Files prefixed `_` are helpers the runner skips. `tests/heavy/README.md` says when a script belongs here instead of `*.slow.test.ts`.
 - `test/fuzz/*.test.ts`: property-based fuzzing in the default loop (about 3s). Targets in `pure-validators.test.ts` must pass `scripts/check-fuzz-purity.sh` (in `verify`), which bundles each target and rejects `node:fs`, `node:child_process` and engine imports; others live in `mixed-validators.test.ts` or `filesystem-validators.test.ts`.
@@ -1459,9 +1459,10 @@ cross-subsystem duplicate entries, and byte caps for the entry docs and referenc
 | **R2** | `mock.module(...)` anywhere in the file | `*.serial.test.ts` |
 | **R3** | `new PGLiteEngine(` outside ~50 lines after a `beforeAll(` line | The canonical block (below) in `beforeAll(` |
 | **R4** | `new PGLiteEngine(` without `engine.disconnect(` in an `afterAll(` block | `afterAll(() => engine.disconnect())` |
-| **R5** | `configureGateway(` with no `resetGateway(` (comments ignored): the global gateway leaks to later files | `afterAll(() => resetGateway())`; a child-script-only call takes `isolation-lint: R5-subprocess-only` |
+| **R5** | `configureGateway(` with no `resetGateway(`: the gateway leaks to later files | `afterAll(() => resetGateway())`; a child-script-only call takes `isolation-lint: R5-subprocess-only` |
 | **R6** | `currentExitCode(` with no verdict reset outside an after-hook | `beforeEach(() => _resetCliExitVerdictForTests())` |
-| **R7** | `__unconfigureGatewayForTests(` or `_clearGatewayForTests(` with no `resetGateway(` in an `afterEach`/`afterAll` hook (comments ignored): an empty gateway leaks into the next file, and an inline restore does not survive a throw or a `-t` filter | `afterEach(() => resetGateway())` (#6514) |
+| **R7** | `__unconfigureGatewayForTests(` or `_clearGatewayForTests(` with no `resetGateway(` in an after-hook: an inline restore does not survive a throw or a `-t` filter | `afterEach(() => resetGateway())` (#6514) |
+| **R9** | A process-global hook (see the script) with no undo in an after-hook | Its undo in `afterEach` |
 
 Files that violated these rules at the lint baseline are listed in `scripts/check-test-isolation.allowlist`. **The allow-list MUST shrink over time**: never add entries.
 
@@ -1771,7 +1772,7 @@ existing fence and timeline suites.
 
 `test/guarded-http.test.ts` and `test/guarded-http-tls.serial.test.ts` cover DNS,
 TLS identity and ports, redirects, deadlines, body limits, and cleanup. CI runs
-these boundaries on Bun 1.4.0 and 1.4.3, audits root and admin dependencies, and
+these boundaries on Bun 1.4.4, audits root and admin dependencies, and
 executes `scripts/test-gitleaks-config.sh` to prove fixture exceptions still
 report an unrelated secret in the same file. `scripts/scan-worktree-secrets.sh`
 scans tracked files plus new files eligible for commit; tracked ignored files

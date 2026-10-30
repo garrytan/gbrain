@@ -38,6 +38,22 @@ describe('remember items[] batch', () => {
     expect(writes[1].request_id).toBe(childRequestId(rid, 1));
   });
 
+  test("a top-level entity reaches validation and admission; an item's own entity wins (#7432)", async () => {
+    const validated: unknown[] = [];
+    const admitted: unknown[] = [];
+    await runRememberBatch(ctx, {
+      entity: 'people/alice-example',
+      provenance: 'session',
+      items: [{ fact: 'Prefers tea' }, 'Ships weekly', { fact: 'Prefers coffee', entity: 'people/bob-example' }, { fact: 'An unscoped note', entity: null }],
+    }, async (c, p) => {
+      (c.dryRun ? validated : admitted).push(p.entity);
+      return { status: 'saved' };
+    }, ve);
+    const expected = ['people/alice-example', 'people/alice-example', 'people/bob-example', null];
+    expect(validated).toEqual(expected);
+    expect(admitted).toEqual(expected);
+  });
+
   test('an unusable request_id refuses the batch before any write (#6280)', async () => {
     for (const request_id of ['', 42, null, 'has space', 'x'.repeat(129)]) {
       const { handler, writes } = fakeSingle();

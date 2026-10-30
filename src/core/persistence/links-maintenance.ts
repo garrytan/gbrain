@@ -161,7 +161,8 @@ export async function extractManagedStaleLinks(engine: BrainEngine,
   // that source and reports it in `systemic`. Nothing of a tripped source is recorded.
   const width = engine.kind === 'postgres' ? MANAGED_LINK_EXTRACTION_WIDTH : 1;
   const runs = new Map<string, ItemRun>();
-  const failed: Array<ItemFailure & { slug: string; source_id: string; revision: string | null }> = [];
+  const failed: Array<ItemFailure & { slug: string; source_id: string; revision: string | null; order: number }> = [];
+  let taken = 0;
   const tripped = new Map<string, OperationError>();
   let stop: { error: unknown } | null = null;
   const each = async (items: ReadonlyArray<{ slug: string; sourceId: string; stamp?: string }>) => {
@@ -169,6 +170,7 @@ export async function extractManagedStaleLinks(engine: BrainEngine,
     const settled = await Promise.allSettled(Array.from({ length: Math.min(width, items.length) }, async () => {
       while (!stop && next < items.length && budget()) {
         const { slug, sourceId, stamp } = items[next++]!;
+        const order = taken++;
         if (tripped.has(sourceId)) continue;
         try { opts.signal?.throwIfAborted(); } catch (error) { stop ??= { error }; break; }
         started++;
@@ -180,7 +182,7 @@ export async function extractManagedStaleLinks(engine: BrainEngine,
           run.succeed();
           await yieldToEventLoop();
         } catch (error) {
-          try { failed.push({ ...run.fail(`${sourceId}:${slug}`, error), slug, source_id: sourceId, revision: read.revision }); } catch (stopped) {
+          try { failed.push({ ...run.fail(`${sourceId}:${slug}`, error), slug, source_id: sourceId, revision: read.revision, order }); } catch (stopped) {
             if (stopped !== error && !opts.sourceId) tripped.set(sourceId, stopped as OperationError);
             else stop ??= { error: stopped };
           }
@@ -202,6 +204,8 @@ export async function extractManagedStaleLinks(engine: BrainEngine,
     await each(rows.filter(row => !done.has(`${row.source_id}\0${row.slug}`)).map(row => ({ slug: row.slug, sourceId: row.source_id,
       stamp: row.updated_at.getTime() >= Date.parse(versionTs) ? row.updated_at_iso : versionTs })));
   }
+  // Concurrent Postgres workers fail in completion order; report failures in drain order, as PGLite's single worker does.
+  failed.sort((a, b) => a.order - b.order);
   // Holds are counted only for sources whose failures look like their pages' own (ItemRun.systemic).
   const recorded = await recordLinkExtractionFailures(engine, versionTs,
     failed.filter(f => f.class === 'content' && !tripped.has(f.source_id) && !runs.get(f.source_id)!.systemic()));

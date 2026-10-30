@@ -7,7 +7,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { isTitlePhraseMatch, tokenizeTitle } from '../../src/core/search/title-match.ts';
+import { isTitlePhraseMatch, titleNameVariants, tokenizeTitle } from '../../src/core/search/title-match.ts';
 
 describe('isTitlePhraseMatch — positive (the incident)', () => {
   const MINGTANG = 'The Mingtang (明堂) — Indoor Greek Amphitheater for Adversarial Debate';
@@ -61,5 +61,17 @@ describe('tokenizeTitle', () => {
   });
   test('keeps CJK runs as tokens', () => {
     expect(tokenizeTitle('明堂 hall')).toEqual(['明堂', 'hall']);
+  });
+});
+
+describe('titleNameVariants (#7471)', () => {
+  test('a short name query gets its formal given name and back', () => {
+    expect(titleNameVariants('Matt Examplesurname')).toEqual(['matthew examplesurname']);
+    expect(titleNameVariants('robert samplename')).toContain('bob samplename');
+  });
+  test('websearch operator queries get none (a variant would drop the operator)', () => {
+    expect(titleNameVariants('"Matt Examplesurname"')).toEqual([]);
+    expect(titleNameVariants('Matt -Examplesurname')).toEqual([]);
+    expect(titleNameVariants('Matt or Examplesurname')).toEqual([]);
   });
 });

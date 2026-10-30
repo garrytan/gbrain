@@ -70,6 +70,10 @@ const DELEGATED_MODULES: Record<string, string[]> = {
   // `forget --purge` (and forget --help) hand the argv to runForgetPurge, which
   // parses --dry-run itself; a plain forget refuses --dry-run (recall.ts).
   forget: ['src/commands/forget-purge.ts'],
+  // `upgrade --restart-only --dry-run` is parsed by restartDryRun in
+  // upgrade-restart.ts, which refuses --dry-run without --restart-only;
+  // post-upgrade shares upgrade.ts and never takes it.
+  upgrade: ['src/commands/upgrade-restart.ts'],
 };
 
 /**
@@ -84,9 +88,14 @@ const DELEGATED_MODULES: Record<string, string[]> = {
  * declares both flags in its own source. strict-args.ts is the strict-argument
  * table for several commands' destructive subcommands (#6114): its literals
  * belong to pages, cache, schema, integrity and search, each of which reads
- * its own flags in its own source.
+ * its own flags in its own source. flag-equals.ts (#7619) names flags as
+ * arity data for the `=` split; each handler reads its own flags.
+ * direct-pool-profile.ts reads other commands'
+ * argv to pick the process's pool profile (`sync --watch`, `serve --access`):
+ * serve imports it for the read-only check, and its `--watch` made
+ * `gbrain serve --watch` pass validation.
  */
-const EXCLUDED_MODULES = ['thin-client-routing.ts', 'persistence-delegate.ts', 'job-isolation.ts', 'strict-args.ts'];
+const EXCLUDED_MODULES = ['thin-client-routing.ts', 'persistence-delegate.ts', 'job-isolation.ts', 'strict-args.ts', 'direct-pool-profile.ts', 'flag-equals.ts'];
 
 function isExcludedModule(p: string): boolean {
   // Basename comparison is path-separator agnostic: on Windows p ends in

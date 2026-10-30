@@ -155,7 +155,7 @@ async function run(h: Harness, script: string, env: Record<string, string> = {})
     calls: readFileSync(h.argvLog, 'utf8').split('\n').filter(Boolean),
     fetched: JSON.parse(/FETCHED (.*)/.exec(out)?.[1] ?? '[]') as string[],
     cache: existsSync(cachePath) ? readFileSync(cachePath, 'utf8').trim() : null,
-    upgradeState: existsSync(join(h.root, '.gbrain', 'upgrade-state.json')),
+    upgradeState: existsSync(join(h.home, '.gbrain', 'upgrade-state.json')),
     justUpgraded: existsSync(join(h.home, '.gbrain', 'just-upgraded-from')),
   };
 }

@@ -1,5 +1,6 @@
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
 import { suffixedFrontmatterSlugHold } from './persistence/suffixed-slug.ts';
+import { noncanonicalPrivateHold } from './persistence/visibility-request.ts';
 import { maintenanceBeliefTransaction } from './belief/writers.ts';
 import { withUnmanagedBeliefs } from './belief/projection-point.ts';
 import { maintenanceTransaction, ownerSourceGateInput, suppliedTrustMarkerView, trustMarkerChanged, writeTrustOfGate } from './persistence/attribution.ts';
@@ -12,6 +13,7 @@ import { basename, extname, resolve } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine, FileSpec } from './engine.ts';
 import { classifyImportHold, parseMarkdown, resolveParsedSubtype, type ParseOpts, type ParsedMarkdown } from './markdown.ts';
+import { alignWithStored } from './persistence/align-stored.ts';
 import { CODE_FILE_MAX_BYTES, isLargePageBytes } from './page-size-policy.ts';
 import { importSizeLimit, MAX_FILE_SIZE, screenImportContent, settleContentDisposition, stripGateOwnedMarkers, type ContentRefusal, type FenceScreen } from './import-screen.ts';
 import type { WriteGateAssessment, WriteGateInput } from './write-gate.ts';
@@ -344,6 +346,8 @@ export async function importFromContent(
     overrideTier?: unknown;
     /** #5575: the caller's trust tier and origin for this write; absent skips the write gate (owner paths). */
     writeGate?: WriteGateInput;
+    /** #7880: external content (ingest_capture, connector and company-brain files) asking for `visibility: private` in a spelling page privacy does not read refuses `visibility_noncanonical` (`screenImportContent`); nothing is stored. */
+    holdNoncanonicalPrivate?: boolean;
     beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>;
     onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void;
   } & ImportFenceOptions = {},
@@ -363,12 +367,12 @@ export async function importFromContent(
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
   // so the network path behaves identically to the file path.
-  const screen = screenImportContent({ content, path: slug + '.md', ...(opts.activePack ? { activePack: opts.activePack } : {}), ...(opts.fenceScreen === undefined ? { fences: opts.fences ?? 'lenient' } : {}) });
+  const screen = screenImportContent({ content, path: slug + '.md', ...(opts.activePack ? { activePack: opts.activePack } : {}), ...(opts.fenceScreen === undefined ? { fences: opts.fences ?? 'lenient' } : {}), ...(opts.holdNoncanonicalPrivate ? { holdNoncanonicalPrivate: true } : {}) });
   if (screen.status === 'refused') {
     return { slug, status: screen.refusal.code === 'file_too_large' ? 'skipped' : 'error', chunks: 0, error: screen.refusal.message, refusal: screen.refusal, skip_reason: screen.refusal.code };
   }
   const parsed = (screen as { parsed: ParsedMarkdown }).parsed;
-  if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct content import');
+  if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct content import', { sourceId: sourceId ?? 'default' });
   // Canonicalize only free-prose fields before protected-fence parsing, hidden
   // row merging, hashing and indexing. Frontmatter identities stay untouched.
   parsed.title = sanitizeText(parsed.title);
@@ -477,11 +481,9 @@ export async function importFromContent(
   // means "preserve the stored type", not "re-infer". Pre-fix, a round-trip
   // put (get_page → edit body → put_page without `type:`) silently regressed
   // a curated type to the path-inferred default ('concept' for bare slugs).
-  // Explicit frontmatter type stays an override; new pages still infer.
-  if (parsed.typeExplicit !== true && existing) {
-    parsed.type = existing.type;
-  }
-  resolveParsedSubtype(parsed, existing);
+  // Explicit frontmatter type stays an override; new pages still infer. The stored subtype and grandfather stamp are kept too.
+  if (existing) alignWithStored(parsed, existing, false);
+  else resolveParsedSubtype(parsed, existing);
   // Alias-footgun visibility: an explicit frontmatter `type:` that is an
   // ALIAS of a canonical pack type (or entirely undeclared) is stored
   // literally and never re-normalized — different agents can silently file
@@ -1084,6 +1086,8 @@ export async function importFromFile(
   if (preInferenceHold) {
     return { slug: slugifyPath(relativePath), status: 'skipped', chunks: 0, error: preInferenceHold.message, refusal: preInferenceHold, skip_reason: 'invalid_frontmatter' };
   }
+  const privateHold = noncanonicalPrivateHold(content, preInferenceParsed.frontmatter);
+  if (privateHold) return { slug: slugifyPath(relativePath), status: 'skipped', chunks: 0, error: privateHold.message, refusal: privateHold, skip_reason: privateHold.code };
   const recovery = { quoted: !!preInferenceParsed.errors?.some(e => e.code === 'YAML_PARSE' && e.recoverable),
     comment_value: !!preInferenceParsed.warnings?.some(w => w.code === 'FRONTMATTER_COMMENT_VALUE') };
 
@@ -1231,7 +1235,7 @@ export async function importCodeFile(
   opts: { noEmbed?: boolean; force?: boolean; sourceId?: string;
     prepare?: (prepared: import('./persistence/prepared-import.ts').PreparedContentImport) => Promise<ImportResult> } = {},
 ): Promise<ImportResult> {
-  if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct file import');
+  if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct file import', { sourceId: opts.sourceId ?? 'default' });
   if (opts.prepare && !opts.noEmbed) throw new Error('Coordinated code import requires provider-free preparation.');
   const slug = slugifyCodePath(relativePath);
   const lang = detectCodeLanguage(relativePath) || 'unknown';
@@ -1865,7 +1869,7 @@ export async function importImageFile(
   relativePath: string,
   opts: ImportImageOptions = {},
 ): Promise<ImportResult> {
-  if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct file import');
+  if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct file import', { sourceId: opts.sourceId ?? 'default' });
   // Defense-in-depth: reject symlinks before reading bytes.
   const lstat = lstatSync(filePath);
   if (lstat.isSymbolicLink()) {

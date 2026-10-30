@@ -197,7 +197,7 @@ describe('runFeatures behavior', () => {
     writeFileSync(join(dir, 'heartbeat.jsonl'), JSON.stringify({ ts: new Date().toISOString(), event: 'setup_complete' }) + '\n');
   }
 
-  const offersFile = () => join(home, '.gbrain', 'feature-offers.json');
+  const offersFile = () => join(gbrainHome, '.gbrain', 'feature-offers.json');
 
   async function features(env: Record<string, string | undefined> = {}) {
     const lines: string[] = [];
@@ -229,7 +229,7 @@ describe('runFeatures behavior', () => {
 
     const saved = JSON.parse(readFileSync(offersFile(), 'utf-8'));
     expect(saved.lastVersion).toBe(VERSION);
-    expect(existsSync(join(gbrainHome, '.gbrain', 'feature-offers.json'))).toBe(false);
+    expect(existsSync(join(home, '.gbrain', 'feature-offers.json'))).toBe(false);
   });
 
   it('a healthy, fully configured brain recommends nothing and writes no offers file', async () => {
@@ -278,7 +278,7 @@ describe('runFeatures behavior', () => {
   it('a declined priority-2 offer is suppressed for the current version; priority-1 offers are always pitched', async () => {
     await seedPages(6);
     await seedChunks('notes/feature-0', [false]);
-    mkdirSync(join(home, '.gbrain'), { recursive: true });
+    mkdirSync(join(gbrainHome, '.gbrain'), { recursive: true });
     const declinedAt = { at: '2026-01-01', version: VERSION };
     writeFileSync(offersFile(), JSON.stringify({
       lastVersion: VERSION, lastScan: '', accepted: {},

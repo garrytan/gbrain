@@ -83,10 +83,10 @@ Configure the agent you are using:
 
 ```bash
 # Claude Code
-claude mcp add gbrain -- "$(command -v gbrain)" serve --surface full
+claude mcp add gbrain -- "$(command -v gbrain)" serve --surface starter --advertise verbs
 
 # Codex
-codex mcp add gbrain -- "$(command -v gbrain)" serve --surface full
+codex mcp add gbrain -- "$(command -v gbrain)" serve --surface starter --advertise verbs
 ```
 
 These launch a local stdio MCP process. Use the same intended brain and source

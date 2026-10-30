@@ -20,6 +20,7 @@
  * Seams: pre-fix rows are seeded with the extractor's provenance (no
  * gateway), extraction runs the Core with an injected extractor.
  */
+import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -91,7 +92,7 @@ async function capture(run: () => Promise<unknown>): Promise<{ out: string; exit
   console.error = () => {};
   process.stdout.write = ((chunk: string | Uint8Array) => { lines.push(String(chunk)); return true; }) as typeof process.stdout.write;
   try { await run(); return { out: lines.join('\n'), exitCode: process.exitCode }; }
-  finally { console.log = log; console.error = error; process.stdout.write = stdout; process.exitCode = previous ?? 0; }
+  finally { console.log = log; console.error = error; process.stdout.write = stdout; process.exitCode = previous ?? 0; _resetCliExitVerdictForTests(); }
 }
 async function repair(engine: BrainEngine, args: string[]): Promise<RepairJson> {
   const { out } = await capture(() => runRepairCommand(engine, ['conversation-labels', ...args, '--json']));

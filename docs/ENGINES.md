@@ -205,6 +205,44 @@ took 103 s on 16 vCPU with 12 GB and 8 workers. Measured, not shipped:
 (m 16, ef_construction 64, `vector`). Measurements and method:
 [`docs/eval/hnsw-scale-bench.md`](eval/hnsw-scale-bench.md).
 
+### Vector index prewarm
+
+<a id="vector-index-prewarm"></a>
+
+After a Postgres restart or a cache eviction, the first searches walk HNSW
+pages nobody has read yet: on a brain whose index is bigger than the cache,
+an unseen query reads 2,000 to 4,500 index pages and spends 1.2 to 2.7 s in
+the vector stage. `gbrain embeddings prewarm` loads every HNSW index of the
+brain into `shared_buffers` once with `pg_prewarm(<index>, 'buffer')`, so
+those pages are already cached. It is opt-in and local to the brain host: a
+CLI-only command (no MCP tool, refused by thin clients), and
+`gbrain config set serve.vector_prewarm true` runs it once in the
+background each time `gbrain serve` starts (off by default; a refusal is
+logged and the serve carries on).
+
+`shared_buffers` decides whether it runs. The indexes must total at most
+half of it, read with `current_setting('shared_buffers')`; past that the
+prewarm would evict the heap and keyword-index pages every other read needs.
+`effective_cache_size` is printed but never decides: it is a planner hint
+the operator sets, not memory the server holds. The check reads only catalog
+rows and file sizes, so a refusal reads no index page.
+
+| Command | Does |
+|---|---|
+| `gbrain embeddings prewarm --dry-run --json` | Index sizes, `shared_buffers`, `effective_cache_size`, the budget and the fit; reads nothing |
+| `gbrain embeddings prewarm` | Prewarms when the indexes fit and `pg_prewarm` exists |
+| `gbrain config set serve.vector_prewarm true` | Prewarms at each serve start (restart the serve) |
+
+Refusals, each with a fix: `vector_prewarm_wont_fit` (raise
+`shared_buffers` to at least twice the index size and restart Postgres; a
+managed database sizes it with the instance), `vector_prewarm_extension_missing`
+(`CREATE EXTENSION IF NOT EXISTS pg_prewarm;` as a role that may create
+extensions) and `vector_prewarm_unsupported_engine` (PGLite has no server
+cache to fill). Prewarmed pages stay cached until Postgres restarts or other
+reads evict them; pg_prewarm's own `autoprewarm` worker
+(`shared_preload_libraries = 'pg_prewarm'`) can reload them after a restart
+without gbrain.
+
 ### Opt-in RLS source-scope binding (`GBRAIN_RLS_SCOPE_BINDING`)
 
 Defense-in-depth layer for Postgres deployments that want the database itself
@@ -253,8 +291,11 @@ live in `test/postgres-engine-rls-scope.test.ts`.
 keeps its text in `page_segment_texts`, its layout and headings in
 `page_body_manifest`, uploads in progress in `page_body_stagings` /
 `page_body_staging_parts` (with the segment texts each one holds in
-`page_body_staging_texts`), and view sizes in `page_view_digests`. gbrain
-enables RLS on all six on every schema replay, as it does on `pages` and
+`page_body_staging_texts`), view sizes in `page_view_digests`, and per-segment
+derivation results (link candidates, window anchors) in `page_segment_derivations`,
+with each page's derivation spend in `page_derivation_spend` and derivation purges
+in progress in `page_segment_derivation_purges` / `page_segment_derivation_purge_pages`.
+gbrain enables RLS on all ten on every schema replay, as it does on `pages` and
 `content_chunks`, so with no policy a role that does not bypass RLS reads no row
 of them. Title search, the source-scoped vector scan, the chunk windows search
 reads around its hits, `get_chunks` and get_page check a chunk of a page stored
@@ -297,9 +338,23 @@ CREATE POLICY page_body_staging_parts_scope_filter ON page_body_staging_parts
 CREATE POLICY page_view_digests_scope_filter ON page_view_digests
   USING (current_setting('app.scopes', true) = '*'
          OR EXISTS (SELECT 1 FROM pages p WHERE p.id = page_id));
+CREATE POLICY page_segment_derivations_scope_filter ON page_segment_derivations
+  USING (current_setting('app.scopes', true) = '*'
+         OR EXISTS (SELECT 1 FROM pages p WHERE p.id = page_id));
 CREATE POLICY content_chunks_scope_filter ON content_chunks
   USING (current_setting('app.scopes', true) = '*'
          OR EXISTS (SELECT 1 FROM pages p WHERE p.id = page_id));
+-- A write role books segmented derivation spend and records derivation purges
+-- here; without a policy those writes are refused.
+CREATE POLICY page_derivation_spend_scope_filter ON page_derivation_spend
+  USING (current_setting('app.scopes', true) = '*'
+         OR EXISTS (SELECT 1 FROM pages p WHERE p.id = page_id));
+CREATE POLICY page_segment_derivation_purges_scope_filter ON page_segment_derivation_purges
+  USING (current_setting('app.scopes', true) = '*'
+         OR source_id = ANY(string_to_array(current_setting('app.scopes', true), ',')));
+CREATE POLICY page_segment_derivation_purge_pages_scope_filter ON page_segment_derivation_purge_pages
+  USING (current_setting('app.scopes', true) = '*'
+         OR EXISTS (SELECT 1 FROM page_segment_derivation_purges r WHERE r.request_id = page_segment_derivation_purge_pages.request_id));
 
 -- A read role that searches and reads pages. The other tables it reads
 -- (config, timeline_entries, facts, ...) need policies of their own.
@@ -313,6 +368,10 @@ ALTER TABLE page_body_stagings FORCE ROW LEVEL SECURITY;
 ALTER TABLE page_body_staging_parts FORCE ROW LEVEL SECURITY;
 ALTER TABLE page_body_staging_texts FORCE ROW LEVEL SECURITY;
 ALTER TABLE page_view_digests FORCE ROW LEVEL SECURITY;
+ALTER TABLE page_segment_derivations FORCE ROW LEVEL SECURITY;
+ALTER TABLE page_derivation_spend FORCE ROW LEVEL SECURITY;
+ALTER TABLE page_segment_derivation_purges FORCE ROW LEVEL SECURITY;
+ALTER TABLE page_segment_derivation_purge_pages FORCE ROW LEVEL SECURITY;
 ALTER TABLE content_chunks FORCE ROW LEVEL SECURITY;
 ```
 <!-- gbrain:segmented-rls-recipe:end -->
@@ -322,7 +381,7 @@ default (`ALTER ROLE <reader-role> SET app.scopes = 'source-a,source-b'`). The
 policies read `app.scopes` only; the app-layer source filters stay layer 1.
 
 A write role that does not own the tables needs `SELECT, INSERT, UPDATE, DELETE`
-on all six, as on any table a migration adds, even while no page is segmented:
+on all ten, as on any table a migration adds, even while no page is segmented:
 purging soft-deleted pages, fact withdrawal (`forget_fact`, `purge_fact`), the
 maintenance sweep's facts pass, doctor's credential check and the segment
 storage sweep name them. Its ordinary writes (`put_page`, `remember`, sync
@@ -330,6 +389,33 @@ imports, their embedding and the unchanged-file check) do not, while it sees no
 segmented chunk (`test/e2e/segmented-switch-off-write-role.test.ts`). With the
 policies above it creates segmented pages and sees only its sources' rows
 (`test/e2e/segmented-rls-scope.test.ts`).
+
+**Purge and withdrawal guards.** The guards that refuse purged content and keep withdrawn
+facts withdrawn run as the writing role (`SECURITY INVOKER`) and read their ledgers
+(`fact_purges`, `fact_withdrawals`, `take_purges`, `page_purges` and the derivation purge
+tables) under that role's RLS. Every gbrain function that pins a search_path ends it with
+`pg_temp` (migration v277, #7632), so a session's temp table or view named like a ledger
+cannot hide it from a guard; before, any session, the owner included, could store purged
+content that way. A write role with no policy on a ledger still reads it empty, so its
+purged or withdrawn writes still go through: give a scoped write role a `SELECT` policy on
+the ledgers of the sources it writes (gbrain#7659 tracks the fix). Where the migrating role
+does not own a function, v277 names it on stderr and leaves it; `gbrain doctor`
+(`function_search_path`) prints the `ALTER FUNCTION` to run as its owner
+(`test/e2e/function-search-path-postgres.test.ts`).
+
+**Writer-protocol fences.** The managed-writer guard, the persistence protocol floor, protocol
+activation and the Git-canonical source counter also run as the writing role and read their state
+under its RLS. Since migration v278 (#7636) they fail closed: a role that cannot see the
+`persistence_brain` row is refused with `writer_coordinator_required` (relationship
+`unreadable_state`) on every guarded write, managed brain or not, instead of being treated as
+unmanaged. On a managed brain the same refusal covers a hidden `git_canonical_brain` row or
+Git-canonical source row (for a writer without the git protocol) and a hidden page row behind a tag,
+timeline entry or take. Protocol activation (row-level security on `sources`, `persistence_requests`,
+`persistence_effects`, `persistence_worktrees` or `persistence_source_bindings`) and a change to
+which sources are Git-canonical (row-level security on `sources`) refuse any role it applies to,
+whatever its policies; only the table owner (without `FORCE ROW LEVEL SECURITY`) or a role that
+bypasses RLS passes them ([write refusals](guides/write-refusals.md#writer-coordinator-required);
+`test/writer-fence-fail-closed-7636.test.ts`).
 
 **In engine-sql.** A read in a migrated domain takes a `ScopedRead` when it
 runs through this helper and a `LegacyUnscopedRead` when it runs on the pool
@@ -625,8 +711,13 @@ Worked examples:
    migrations run. If the blob gains an index, FK, trigger or view that references a column an
    older brain may lack, add that column's probe and `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`
    to the forward-reference bootstrap both engines run (`src/core/engine-sql/bootstrap.ts`:
-   probe, gap, DDL). A column only defined in a
+   probe, gap, DDL). A partial index's `WHERE` predicate and `INCLUDE` list count as references (an
+   index filtering on a column a later migration adds wedges the replay). A column only defined in a
    `CREATE TABLE` needs no bootstrap entry. `test/schema-bootstrap-coverage.test.ts` names any gap.
+   The schema-history upgrade tests (`test/schema-history-upgrade.slow.test.ts` on PGLite,
+   `test/e2e/schema-history-upgrade.test.ts` on Postgres) upgrade a stored fresh brain of each release
+   from schema v260 on (`test/fixtures/schema-history/`, written by
+   `scripts/capture-schema-history-fixture.ts`) and compare the result with a fresh install.
 
 ## Engine detection and access repair
 
@@ -780,7 +871,7 @@ Size the pooler for every process at once:
 
 ```
 long-running processes x GBRAIN_POOL_SIZE
-  + processes whose direct route lands on this pooler x GBRAIN_DIRECT_POOL_SIZE (default 3)
+  + processes whose direct route lands on this pooler x their direct pool (see below)
   + one-shot commands running at the same time x their pool (a full `gbrain sync` is one too)
   + parallel import workers x 2 (an unmanaged sync of more than 100 files, `--workers N`, or the sync a serve runs)
   <= the pooler's client limit (Supabase Supavisor: the project's pool_size)
@@ -794,6 +885,21 @@ port 5432, its session port, even when the main URL uses transaction mode
 defaults (10 + 3 each) already pass a client limit of 25, so a scheduled
 `gbrain sync` next to a `gbrain serve` on the same session port can exhaust it.
 `GBRAIN_MAX_CONNECTIONS` caps a sync's worker fan-out to fit a budget.
+
+<a id="direct-pool-by-command"></a>The direct pool's size follows the command.
+`gbrain serve`, `gbrain jobs`, `gbrain autopilot` and `gbrain sync --watch`
+open up to 3 direct connections. A command that exits but owns writes or takes
+a lease (`sync`, `put`, `import`, `dream`, `cycle`, `sources`, `mcp`,
+`migrate-graduation`) and the diagnostics that report the route (`doctor`,
+`engine`) open 1. Every other command routes nothing through the direct pool:
+its statements use the ordinary pool, as with `GBRAIN_DISABLE_DIRECT_POOL=1`.
+Two exceptions keep the direct route for it: applying pending schema
+migrations (one connection, for the session advisory lock and the 30-minute
+statement timeout), and taking a lease such as an embed or extract lock
+(the command then opens 1, so the lease heartbeat keeps its own connection).
+`GBRAIN_DIRECT_POOL_SIZE` still sets the size wherever a direct pool opens.
+`GBRAIN_DIRECT_POOL_BY_COMMAND=0` restores the earlier behavior: every command
+may open the full 3-connection direct pool.
 
 When the sum does not fit, run fewer long-running processes (for example one
 shared `gbrain serve --http` instead of one stdio `serve` per agent session),

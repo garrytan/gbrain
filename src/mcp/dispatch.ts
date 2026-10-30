@@ -23,8 +23,10 @@ import { hostFix, scopeDeniedError } from '../core/ops/op-fix.ts';
 import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTests, type NoticeLedger, type NoticeAudience } from '../core/notice-ledger.ts';
 import { logVerbUsage, recordsFiring, type RecordsFiring } from '../core/verbs/usage-log.ts';
 import { searchCountLine } from '../core/search/keyword-paging.ts';
+import { pageCapLine } from '../core/search/remote-page-cap.ts';
 import { dateLabelLine } from '../core/search/date-labels.ts';
-import { hiddenTakesNotice, localTranscriptsNotice, recallInteropNotices, wantsTranscriptHint } from '../core/interop-notices.ts';
+import { emptyRead, hiddenTakesNotice, localTranscriptsNotice, recallInteropNotices, wantsTranscriptHint } from '../core/interop-notices.ts';
+import { assertUnscopedReadReachesPages } from '../core/sources-not-readable.ts';
 import { hiddenToolHint, hiddenToolNext, hiddenToolRoute, type ToolConnection } from './hidden-tool-hint.ts';
 import { opAllowedForBoundClient } from '../core/ops/context.ts';
 import { takePostUpgradeMcpNotice } from '../core/post-upgrade-notice.ts';
@@ -47,8 +49,10 @@ import { maybeRefreshBackupStatusInProcess } from '../core/backup/coverage.ts';
 import { operationScopesAllowed } from '../core/scope.ts';
 import { enforceReadTrustFloor } from '../core/eligibility/registry.ts';
 import { invalidateHotMemoryForEngine } from '../core/facts/meta-hook.ts';
+import { withSearchConnectionBudget } from '../core/search/connection-budget.ts';
+import { isEngineDegraded } from '../core/degraded-marker.ts';
 import { admittedPendingReceipt, type WriteReceipt } from '../core/persistence/types.ts';
-import { currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter, withVerifiedLocalRegistration } from '../core/persistence/identity.ts';
+import { currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter, withRequestIdentityMemo, withVerifiedLocalRegistration } from '../core/persistence/identity.ts';
 import { frameOverCap, resultTooLargeError } from '../core/egress-budget.ts';
 
 // WP3: normalization + validation moved to validate-params.ts (direct unit
@@ -390,7 +394,7 @@ export function summarizeMcpParams(opName: string, params: unknown): ParamSummar
 /**
  * Model-visible notices the search/query ops attach to `_meta.retrieval`: the
  * D8 empty-retrieval diagnosis, a reconciled type filter, other names declared in the evidence, and saved
- * facts that match the query, search's keyword count line and the row-date label. Each rides as its own text block after the
+ * facts that match the query, search's keyword count line, the remote page cap line and the row-date label. Each rides as its own text block after the
  * results (content[0] stays the bare result array for thin clients).
  */
 export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): string[] {
@@ -399,7 +403,7 @@ export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): stri
   const r = retrieval as {
     type_filter_notice?: unknown;
     other_names?: Array<{ name: string; alias: string; slug: string }>;
-    saved_facts?: Array<{ fact: string; entity_slug: string | null; valid_from: string; source: string; linked_from?: string }>;
+    saved_facts?: Array<{ fact: string; entity_slug: string | null; valid_from: string; source: string; linked_from?: string; corrected_by?: number }>;
     answer_id?: unknown;
     feedback?: { rateable?: boolean; how_to_rate?: string };
   };
@@ -412,13 +416,15 @@ export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): stri
   }
   if (r.saved_facts?.length) {
     const { text, more } = wholeItemsWithin('Saved facts (remember): about the entity this query names (newest first), then facts those point to, then matches for its words; recall returns more:\n',
-      r.saved_facts.map(f => `- ${f.fact} [entity: ${f.entity_slug ?? 'none'}; saved ${String(f.valid_from).slice(0, 10)}; provenance: ${f.source}${f.linked_from ? `; named in a saved fact about ${f.linked_from}` : ''}]`),
+      r.saved_facts.map(f => `- ${f.fact} [entity: ${f.entity_slug ?? 'none'}; saved ${String(f.valid_from).slice(0, 10)}; provenance: ${f.source}${f.linked_from ? `; named in a saved fact about ${f.linked_from}` : ''}${f.corrected_by ? '; corrected by a newer saved fact above' : ''}]`),
       '\n', SAVED_FACTS_NOTICE_MAX_CHARS);
     blocks.push(more ? `${text}\n(+${more} more; recall returns them)` : text);
   }
   // F2: which set the rows are and which set the keyword count covers, on every search call.
   const countLine = searchCountLine(result, retrieval);
   if (countLine) blocks.push(countLine);
+  const capLine = pageCapLine(retrieval);
+  if (capLine) blocks.push(capLine);
   // F4: what each row's effective_date is (document, event or fallback date), never contractual validity.
   const dateLine = dateLabelLine(result);
   if (dateLine) blocks.push(dateLine);
@@ -872,10 +878,18 @@ export async function dispatchToolCall(
 ): Promise<ToolResult> {
   // #6721: a read op answers every config read from one snapshot of the table
   // (config-snapshot.ts); a write reads config live, so it sees its own writes.
-  const run = () => dispatchResolvedCall(engine, name, params, opts);
+  // GBRA-156: and reads the brain identity and each local writer's credential once for its pre-submission checks.
+  const run = () => withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, params, opts));
+  if (name === 'search' || name === 'query') return withSearchConnectionBudget(() => withRequestConfigSnapshot(engine, run));
   return operations.find(o => o.name === name)?.mutating === false
     ? withRequestConfigSnapshot(engine, run)
     : withoutRequestConfigSnapshot(run);
+}
+
+/** The response-meta hook's keys, or its failure message; never rejects (a hook failure degrades to no keys). */
+async function runMetaHook(hook: NonNullable<DispatchOpts['metaHook']>, name: string, ctx: OperationContext): Promise<{ meta?: Record<string, unknown>; failure?: string }> {
+  try { return { meta: await hook(name, ctx) }; }
+  catch (metaErr) { return { failure: metaErr instanceof Error ? metaErr.message : String(metaErr) }; }
 }
 
 async function dispatchResolvedCall(
@@ -1063,6 +1077,8 @@ async function dispatchResolvedCall(
     enforceBoundClientOpAllowList(ctx.auth, op);
     // #5575 CEO-18: a floored connection only reaches read ops that enforce its floor.
     enforceReadTrustFloor(ctx.auth, op);
+    // GBRA-156: a read op does not change what the hook reads, so it runs beside the handler (a degraded engine's reconnect stays the handler's).
+    const earlyMeta = opts.metaHook && op.mutating === false && !isEngineDegraded(engine) ? runMetaHook(opts.metaHook, name, ctx) : undefined;
     const sharedStdio = ctx.transport === 'stdio' && !ctx.auth &&
       (op.requiredScopes?.length || ['list_skills', 'get_skill', 'get_skill_asset', 'list_brain_skillpack'].includes(name));
     let registration: Awaited<ReturnType<typeof readLocalWriter>> | undefined;
@@ -1081,6 +1097,7 @@ async function dispatchResolvedCall(
         return op.handler(ctx, safeParams);
       })
       : await op.handler(ctx, safeParams);
+    if (emptyRead(name, result)) await assertUnscopedReadReachesPages(name, safeParams, ctx);
     // Hot memory built before a write (forget, remember, …) is never served after it, on every transport;
     // #6696 (A4): the write's receipt carries the capacity notices (60 s snapshot, at most hourly per scope).
     if (op.mutating) { invalidateHotMemoryForEngine(engine); notices.push(...await writeReceiptCapacityNotices(engine, ctx)); }
@@ -1154,13 +1171,9 @@ async function dispatchResolvedCall(
     // helper crash degrades to no hook keys rather than flipping the whole
     // tool call to error.
     if (opts.metaHook) {
-      try {
-        const meta = await opts.metaHook(name, ctx);
-        if (meta && Object.keys(meta).length > 0) out._meta = { ...(out._meta ?? {}), ...meta };
-      } catch (metaErr) {
-        const msg = metaErr instanceof Error ? metaErr.message : String(metaErr);
-        ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${msg}; degrading to no hook keys`);
-      }
+      const { meta, failure } = await (earlyMeta ?? runMetaHook(opts.metaHook, name, ctx));
+      if (meta && Object.keys(meta).length > 0) out._meta = { ...(out._meta ?? {}), ...meta };
+      if (failure !== undefined) ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${failure}; degrading to no hook keys`);
     }
     // Large pages: the egress backstop measures the final frame; a read over the connection's cap is refused whole, never cut.
     const over = op.mutating ? null : await frameOverCap(out, { remote: ctx.remote, transport: ctx.transport, engine, config: ctx.config });

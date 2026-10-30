@@ -103,10 +103,13 @@ function activeSnapshot(engine: object): RequestSnapshot | undefined {
   return store && !store.live && store.held.open && store.held.engine === engine ? store.held : undefined;
 }
 
-/** Run `fn` with one config snapshot of `engine`; an enclosing snapshot of the same engine is reused. */
-export async function withRequestConfigSnapshot<T>(engine: BulkConfigReader, fn: () => Promise<T>): Promise<T> {
+/**
+ * Run `fn` with one config snapshot of `engine`; an enclosing snapshot of the same engine is reused. `seed` (GBRA-156) is
+ * a whole-table read this command already took (`commandStartupConfig`), which the snapshot answers from instead of reading again.
+ */
+export async function withRequestConfigSnapshot<T>(engine: BulkConfigReader, fn: () => Promise<T>, seed?: Record<string, string>): Promise<T> {
   if (activeSnapshot(engine)) return fn();
-  const snapshot = openRequestConfigSnapshot(engine);
+  const snapshot = openRequestConfigSnapshot(engine, seed);
   try {
     return await snapshot.run(fn);
   } finally {
@@ -123,8 +126,8 @@ export async function withRequestConfigSnapshot<T>(engine: BulkConfigReader, fn:
  */
 export interface RequestConfigSnapshot { run<T>(fn: () => Promise<T>): Promise<T>; close(): void }
 
-export function openRequestConfigSnapshot(engine: BulkConfigReader): RequestConfigSnapshot {
-  const held: RequestSnapshot = { engine, open: true, rows: null, reads: new Map() };
+export function openRequestConfigSnapshot(engine: BulkConfigReader, seed?: Record<string, string>): RequestConfigSnapshot {
+  const held: RequestSnapshot = { engine, open: true, rows: seed ? Promise.resolve(new Map(Object.entries(seed))) : null, reads: new Map() };
   return {
     run: fn => activeSnapshot(engine) ? fn() : requestSnapshot.run({ held, live: false }, fn),
     close: () => { held.open = false; },
@@ -168,6 +171,22 @@ export async function requestConfigRows(engine: BulkConfigReader): Promise<Recor
   if (!held) return undefined;
   const rows = await snapshotRows(engine, held);
   return rows ? Object.fromEntries(rows) : undefined;
+}
+
+/**
+ * GBRA-156: the whole config table as the CLI's connect-time merge read it (cli/db-plane-config.ts), kept per engine so the
+ * same command's next read-only resolution (makeContext's source resolution) answers from it instead of reading again.
+ * Taken once: a later resolution reads live, as before.
+ */
+const startupRows = new WeakMap<object, { at: number; rows: Record<string, string> }>();
+export const STARTUP_CONFIG_MAX_AGE_MS = 5_000;
+export function keepCommandStartupConfig(engine: object, rows: Record<string, string>, now: number = Date.now()): void {
+  startupRows.set(engine, { at: now, rows });
+}
+export function commandStartupConfig(engine: object, now: number = Date.now()): Record<string, string> | undefined {
+  const kept = startupRows.get(engine);
+  startupRows.delete(engine);
+  return kept && now - kept.at < STARTUP_CONFIG_MAX_AGE_MS ? kept.rows : undefined;
 }
 
 /** Keep an open snapshot of `engine` equal to a write the engine just made (value null = key removed). */

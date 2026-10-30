@@ -49,3 +49,6 @@ a3140831d22a944947ef9cbd72ff7129a3541951:test/large-pages/credential-reseal-segm
 # generic-api-key; the tree now builds them at runtime. These history-only fingerprints are not secrets.
 fb1cee45c18357eb43d537715b2a8dc43fafc70f:test/google-api-access-cmd-7073.serial.test.ts:generic-api-key:37
 fb1cee45c18357eb43d537715b2a8dc43fafc70f:test/google-api-access-cmd-7073.serial.test.ts:generic-api-key:55
+# #7483 (GBRA-190): the dummy header marker in test/connectors-header-redaction-7483.test.ts (commit e670a328) read as
+# generic-api-key; the tree now names it MARKER. This history-only fingerprint is not a secret.
+e670a32809a7038c9a63d9dfbf4480f8ab545db2:test/connectors-header-redaction-7483.test.ts:generic-api-key:25

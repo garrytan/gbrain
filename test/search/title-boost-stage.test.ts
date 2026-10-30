@@ -54,3 +54,21 @@ describe('applyTitleBoost', () => {
     expect(r.score).toBe(0.8);
   });
 });
+
+describe('applyTitleBoost — given-name variants (#7471)', () => {
+  test('a short first name counts as a title match for the formal title, and back', () => {
+    const formal = mk('people/matthew-examplesurname', 'Matthew Examplesurname', 0.8);
+    applyTitleBoost([formal], 'Matt Examplesurname', DEFAULT_TITLE_BOOST);
+    expect(formal.title_match_boost).toBe(1.25);
+    const short = mk('people/bob-samplename', 'Bob Samplename', 0.8);
+    applyTitleBoost([short], 'Robert Samplename', DEFAULT_TITLE_BOOST);
+    expect(short.title_match_boost).toBe(1.25);
+  });
+
+  test('another person with the same first name gets no boost', () => {
+    const other = mk('people/matt-otherperson', 'Matt Otherperson', 0.8);
+    applyTitleBoost([other], 'Matt Examplesurname', DEFAULT_TITLE_BOOST);
+    expect(other.score).toBe(0.8);
+    expect(other.title_match_boost).toBeUndefined();
+  });
+});

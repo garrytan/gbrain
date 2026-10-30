@@ -27,6 +27,7 @@ import { writeOriginDeletedMarker } from '../src/core/persistence/sync-markers.t
 import { waitFor } from './helpers/wait-for.ts';
 import { readShadowLevel, type ShadowLevel } from '../src/core/persistence/sync-pass.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
+import { __resetTreeReuseForTests } from '../src/core/persistence/sync-tree-reuse.ts';
 import { mixSetup, seedMix } from '../scripts/bench/sync-convergence-seeded.ts';
 import { rebuildPendingPageProjections } from '../src/core/page-state/projections.ts';
 import { dropOriginIndex } from './helpers/origin-index.ts';
@@ -109,6 +110,8 @@ async function compared(engine: BrainEngine, { force = false, also }: { force?: 
       open: narrowed.paths.filter(entry => entry.state.openWork).map(entry => entry.path) });
   };
   try {
+    // These are one pass's own rounds: round 1 reads whole, as in a new process (GBRA-133 cross-pass reuse is test/sync-level-reuse-across-gbra133.test.ts).
+    __resetTreeReuseForTests();
     const result = await performManagedSync(engine, OPTS);
     expect(mismatches).toEqual([]);
     return { status: result.status, rounds, confirms };

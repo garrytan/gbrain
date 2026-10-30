@@ -22,6 +22,12 @@ import type { WriteReceipt } from './types.ts';
 import { MAX_DETERMINISTIC_FAILURES, writeAtomPageState } from '../cycle/extract-atoms-page-state.ts';
 import { effectiveVisibility } from '../search/private-visibility.ts';
 import { declareDerivation, deriveTrust, lowerToDerivedTier, recordTaintEdges } from '../trust/taint.ts';
+import type { DerivedRetiredBy } from './derived-retirement-hold.ts';
+import type { GenerationKey, HeldReason } from '../generations/contract.ts';
+import { atomGenerationAdapter, atomPagePin, type AtomGenerationContext } from '../generations/adapters/atoms.ts';
+import { markdownItem } from '../generations/adapters/page.ts';
+import { assertMemberPending, GENERATION_ACTIVATE_SLUG, listPendingMembers, memberRequestId, planManagedGeneration,
+  recordActivation, settleMember, type ActivationIntent } from '../generations/managed.ts';
 
 export interface AtomOrigin {
   kind: 'page' | 'transcript';
@@ -63,6 +69,16 @@ export interface AtomIntent extends Record<string, unknown> {
   failure?: string;
   checkpointKey?: string;
   expectedCheckpoint?: unknown;
+  /** GBRA-161 PR 1b: the generation activation this member belongs to (absent on a batch admitted before the ledger). */
+  activationId?: string;
+  /** A page member: create (a new identity, admitted before the activation) or overwrite (after it, pending on it). */
+  phase?: 'create' | 'overwrite';
+  /** A retirement member's stamp (the extractor's, or stale-atoms for an approved repair). */
+  retiredBy?: DerivedRetiredBy;
+  /** The generation key the batch publishes, so a retry republishes under the same key. */
+  generationKey?: GenerationKey;
+  /** #7514: a hold completion records the strike count it holds at instead of counting one more failure. */
+  attempts?: number;
 }
 
 const ownerStatusFix = (sourceId: string): Action => readFix(
@@ -280,6 +296,175 @@ function atomRequestId(key: string, slug: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
+/** The input pin an origin was read at, as the atom adapter reads it under the activation's locks. */
+export function atomOriginPin(origin: AtomOrigin): string {
+  return origin.kind === 'page'
+    ? atomPagePin(origin.contentHash, origin.pageId !== null && origin.revision ? { pageId: origin.pageId, revision: origin.revision } : undefined)
+    : origin.textHash;
+}
+const originInput = (origin: AtomOrigin, content: string | null) => ({ pin: atomOriginPin(origin), size: Buffer.byteLength(content ?? '') });
+
+export interface ManagedAtomGeneration {
+  key: GenerationKey;
+  /** The origin text the model read (its size is the input size the floor scales by). */
+  content: string | null;
+  context?: AtomGenerationContext;
+  runId?: string;
+  /** A transcript key's current file. */
+  locator?: string | null;
+  /** A previewed operator retirement (gbrain repair stale-atoms): retires exactly these atoms; no extraction is completed. */
+  approved?: { retire: string[]; retiredBy: DerivedRetiredBy; expect?: Record<string, string> };
+  /** An operator release of the held row this result matches (gbrain repair generations --mode release-held). */
+  release?: { holdId: string; reason: HeldReason };
+}
+
+export type ManagedAtomPublication =
+  | { state: 'held'; reason: string; holdId: string; receipts: WriteReceipt[] }
+  | { state: 'admitted' | 'unchanged'; receipts: WriteReceipt[]; activationId?: string };
+
+/**
+ * GBRA-161 PR 1b: publishes one origin's atoms as a managed generation (generations/managed.ts). A held result admits
+ * nothing (no completion either, so the input is not marked done; the extractor skips it while the hold stands). An
+ * unchanged empty result completes the extraction only. Otherwise one admission transaction records the activation and
+ * admits, in order: create page members (new identities), the managed_generation_activate request, overwrite page
+ * members, retire delete members and the completion; every member id is digest(activation id, slug, action).
+ */
+export async function publishManagedAtomGeneration(engine: BrainEngine, session: ManagedAtomSession, origin: AtomOrigin,
+  atoms: Array<{ slug: string; content: string; links: LinkBatchInput[] }>, generation: ManagedAtomGeneration): Promise<ManagedAtomPublication> {
+  const context: AtomGenerationContext = { ...generation.context, ...(origin.kind === 'transcript' ? { locator: origin.locator, verifyFile: true } : {}) };
+  const claim = atomClaim(session, origin);
+  const plan = await planManagedGeneration(engine, atomGenerationAdapter, { key: generation.key, items: atoms.map(atom => markdownItem(atom.slug, atom.content)),
+    input: generation.approved ? undefined : originInput(origin, generation.content), partial: Boolean(origin.partialInputChars), context, runId: generation.runId,
+    approved: generation.approved, release: generation.release }, { retiredBy: ATOM_RETIRED_BY_REEXTRACT, scope: generation.approved ? null : claim.runKey, locator: generation.locator ?? (origin.kind === 'transcript' ? origin.locator : null) });
+  if (plan.kind === 'held') return { state: 'held', reason: plan.outcome.reason, holdId: plan.outcome.holdId, receipts: [] };
+  if (plan.kind === 'unchanged') return { state: 'unchanged', receipts: generation.approved ? [] : await publishManagedAtoms(engine, session, origin, []) };
+  const runKey = generation.approved ? digest(['managed-atoms-approved', plan.intent.activationId]) : claim.runKey;
+  const advance = !generation.approved && claim.checkpointKey ? { checkpointKey: claim.checkpointKey, expectedCheckpoint: claim.expectedCheckpoint ?? null } : {};
+  const { activationId } = plan.intent;
+  const bySlug = new Map(atoms.map(atom => [atom.slug, atom]));
+  type Admission = { slug: string; pageId: number | null; requestId: string; intent: Record<string, unknown>; child: boolean };
+  const inputs: Admission[] = [];
+  const later: Admission[] = [];
+  for (const member of plan.members) {
+    await authorizeWrite(engine, session.authority, member.action === 'retire' ? 'delete_page' : 'put_page', member.slug);
+    const snapshot = await engine.readPageSnapshot(member.slug, { sourceId: session.sourceId, includeDeleted: true });
+    const requestId = memberRequestId(activationId, member.slug, member.action);
+    const shared = { runKey, origin, activationId, generationKey: generation.key, ...advance };
+    if (member.action === 'retire') {
+      if (!snapshot || snapshot.page.deleted_at) throw opError('page_identity_changed', 'An atom the generation retires changed before admission.',
+        `Atom ${member.slug} in source ${session.sourceId} was removed after the generation was planned; nothing was admitted. Run the producer again.`, { fix: pageFix(session.sourceId, member.slug) });
+      later.push({ slug: member.slug, pageId: snapshot.page.id, requestId, child: true, intent: { kind: 'managed_atom_delete', ...shared,
+        expected_revision: snapshot.revision, retiredBy: plan.intent.retiredBy } });
+      continue;
+    }
+    const atom = bySlug.get(member.slug)!;
+    if (snapshot && ((snapshot.page.deleted_at && !snapshot.page.frontmatter.retired_by) || snapshot.page.type !== 'atom' ||
+      (origin.kind === 'page' ? snapshot.page.frontmatter.source_slug !== origin.locator : snapshot.page.frontmatter.source_path !== origin.locator))) {
+      throw opError('page_identity_changed', 'The atom target belongs to another origin or was removed.',
+        `Atom slug ${member.slug} in source ${session.sourceId} is held by a page this extraction does not own (another origin, a non-atom page or a deleted page); nothing was admitted. Read that page; whether to move or remove it is the user's decision.`,
+        { fix: pageFix(session.sourceId, member.slug) });
+    }
+    const entry: Admission = { slug: member.slug, pageId: snapshot?.page.id ?? null, requestId, child: true, intent: { kind: 'managed_atom_page', ...shared, phase: member.action,
+      ...(snapshot ? { expected_revision: snapshot.revision } : {}), content: atom.content, links: atom.links } };
+    (member.action === 'create' ? inputs : later).push(entry);
+  }
+  const activation: ActivationIntent = { ...plan.intent, runKey };
+  inputs.push({ slug: GENERATION_ACTIVATE_SLUG, pageId: null, requestId: activationId, child: false, intent: activation });
+  inputs.push(...later);
+  const rows = await engine.transaction(async tx => {
+    await recordActivation(tx, plan.intent);
+    const children: string[] = [];
+    const accepted: WriteRequest[] = [];
+    const complete: Admission[] = generation.approved ? [] : [{ slug: '__managed_atom_complete__', pageId: null, requestId: atomRequestId(runKey, '__managed_atom_complete__'), child: false,
+      intent: { kind: 'managed_atom_complete', runKey, origin, children, activationId, generationKey: generation.key, ...advance } }];
+    for (const input of [...inputs, ...complete]) {
+      const row = await admitWriteInTransaction(tx, { principal: session.authority.principal, authority: session.authority,
+        operation: 'submit_job', sourceId: session.sourceId, sourceIncarnation: session.incarnation,
+        worktreeId: session.binding?.worktree_id, topologyGeneration: session.binding?.topology_generation,
+        slug: input.slug, pageId: input.pageId, requestId: input.requestId, callerIntent: input.intent, intent: input.intent });
+      accepted.push(row);
+      if (input.child) children.push(row.id);
+    }
+    return accepted;
+  });
+  return { state: 'admitted', activationId, receipts: await waitAtomReceipts(engine, session, rows) };
+}
+
+async function waitAtomReceipts(engine: BrainEngine, session: ManagedAtomSession, rows: WriteRequest[]): Promise<WriteReceipt[]> {
+  const receipts: WriteReceipt[] = [];
+  for (const row of rows) {
+    const finished = session.wait.observe(await waitForWrite(engine, row, session.config, session.wait.ms()));
+    try { writeResponse(finished); }
+    catch (error) {
+      // #5601: an accepted batch still publishing is progress; its deterministic request ids resume it next run.
+      const pending = acceptedPendingReceipt(error);
+      if (!pending) throw error;
+      receipts.push(pending);
+      continue;
+    }
+    receipts.push(receiptFor(finished));
+  }
+  return receipts;
+}
+
+export interface ResumedMember { slug: string; activation_id: string; action: 'overwrite' | 'retire'; outcome: 'waited' | 'resubmitted' | 'kept_edited' | 'unrecoverable' | 'held_session_source'; reason?: string }
+
+/**
+ * GBRA-161 PR 1b: finishes what a crash after an activation left pending in this source. A member request still queued
+ * is waited on; one that ended without committing (or was never journaled) is submitted again under a fresh id bound to
+ * the failed one, unless its page changed since the activation planned it (then the page keeps its content and the mark
+ * clears: a person's edit wins). A transcript member whose session no longer resolves to this source (#7870: a generation
+ * planned before session routing) is held instead: not resubmitted, its page and pending mark left as they are, reported
+ * with the reason. Returns one entry per pending member.
+ */
+export async function resumeManagedGenerationMembers(engine: BrainEngine, session: ManagedAtomSession,
+  opts: { corpusDir: string | null }): Promise<ResumedMember[]> {
+  const pending = await listPendingMembers(engine, [session.sourceId], atomGenerationAdapter.kind);
+  const resumed: ResumedMember[] = [];
+  for (const member of pending) {
+    let row = await getWriteRequest(engine, session.authority.principal, memberRequestId(member.activation_id, member.slug, member.action));
+    if (row && ['queued', 'running', 'recovering'].includes(row.state)) {
+      row = session.wait.observe(await waitForWrite(engine, row, session.config, session.wait.ms()));
+      if (row.state === 'committed') { resumed.push({ slug: member.slug, activation_id: member.activation_id, action: member.action, outcome: 'waited' }); continue; }
+    }
+    if (row?.state === 'committed') continue;
+    const origin = (row?.intent as AtomIntent | null | undefined)?.origin;
+    const hold = origin?.kind === 'transcript'
+      ? await (await import('../cycle/synthesize-source-routing.ts')).transcriptSourceHold(engine, origin.locator, { corpusDir: opts.corpusDir, sourceId: session.sourceId })
+      : null;
+    if (hold) { resumed.push({ slug: member.slug, activation_id: member.activation_id, action: member.action, outcome: 'held_session_source', reason: hold.reason }); continue; }
+    resumed.push({ slug: member.slug, activation_id: member.activation_id, action: member.action, outcome: await resubmitMember(engine, session, member, row) });
+  }
+  return resumed;
+}
+
+async function resubmitMember(engine: BrainEngine, session: ManagedAtomSession, member: Awaited<ReturnType<typeof listPendingMembers>>[number],
+  failed: WriteRequest | null): Promise<ResumedMember['outcome']> {
+  const [planned] = await engine.executeRaw<{ before: string | null }>(
+    `SELECT m->>'before' AS before FROM derived_generation_activations a CROSS JOIN LATERAL jsonb_array_elements(a.members) m WHERE a.id=$1 AND m->>'slug'=$2`,
+    [member.activation_id, member.slug]);
+  const snapshot = await engine.readPageSnapshot(member.slug, { sourceId: session.sourceId });
+  const rows = snapshot ? await atomGenerationAdapter.readItems(engine, { kind: member.kind, sourceId: member.source_id, ownerKey: member.owner_key }, [member.slug]) : new Map();
+  const current = rows.get(member.slug);
+  const before = member.action === 'retire' ? member.identity : planned?.before ?? null;
+  if (!snapshot || !current?.live || (current.identityHash !== before && current.identityHash !== member.identity)) {
+    await engine.transaction(tx => settleMember(tx, member.activation_id, member.slug));
+    return 'kept_edited';
+  }
+  const prior = failed?.intent as AtomIntent | null | undefined;
+  if (!prior?.origin || (member.action === 'overwrite' && typeof prior.content !== 'string')) return 'unrecoverable';
+  const intent: Record<string, unknown> = { ...prior, expected_revision: snapshot.revision };
+  delete intent.checkpointKey;
+  delete intent.expectedCheckpoint;
+  const requestId = memberRequestId(member.activation_id, member.slug, `${member.action}:after:${failed?.id ?? 'missing'}`);
+  const row = await engine.transaction(tx => admitWriteInTransaction(tx, { principal: session.authority.principal, authority: session.authority,
+    operation: 'submit_job', sourceId: session.sourceId, sourceIncarnation: session.incarnation,
+    worktreeId: session.binding?.worktree_id, topologyGeneration: session.binding?.topology_generation,
+    slug: member.slug, pageId: snapshot.page.id, requestId, callerIntent: intent, intent }));
+  await waitAtomReceipts(engine, session, [row]);
+  return 'resubmitted';
+}
+
 async function atomBatchRows(engine: BrainEngine, session: ManagedAtomSession, key: string): Promise<WriteRequest[]> {
   const completionId = atomRequestId(key, '__managed_atom_complete__');
   const completion = await getWriteRequest(engine, session.authority.principal, completionId);
@@ -386,7 +571,7 @@ export interface ManagedAtomRetirement {
 
 export async function publishManagedAtoms(engine: BrainEngine, session: ManagedAtomSession, origin: AtomOrigin,
   atoms: Array<{ slug: string; content: string; links: LinkBatchInput[]; expectedTarget?: { pageId: number | null; revision: string | null } }>,
-  failure?: string, reviewedRetirements?: ManagedAtomRetirement[]): Promise<WriteReceipt[]> {
+  failure?: string, reviewedRetirements?: ManagedAtomRetirement[], heldAttempts?: number): Promise<WriteReceipt[]> {
   const claim = atomClaim(session, origin);
   const key = claim.runKey;
   const advance = claim.checkpointKey ? { checkpointKey: claim.checkpointKey, expectedCheckpoint: claim.expectedCheckpoint ?? null } : {};
@@ -433,7 +618,7 @@ export async function publishManagedAtoms(engine: BrainEngine, session: ManagedA
     const children: string[] = [];
     const accepted: WriteRequest[] = [];
     for (const input of [...inputs, { slug: '__managed_atom_complete__', pageId: null,
-      intent: { kind: 'managed_atom_complete', runKey: key, origin, children, ...(failure ? { failure } : {}), ...advance } as AtomIntent }]) {
+      intent: { kind: 'managed_atom_complete', runKey: key, origin, children, ...(failure ? { failure } : {}), ...(heldAttempts ? { attempts: heldAttempts } : {}), ...advance } as AtomIntent }]) {
       const requestId = atomRequestId(key, input.slug);
       const row = await admitWriteInTransaction(tx, { principal: session.authority.principal, authority: session.authority,
         operation: 'submit_job', sourceId: session.sourceId, sourceIncarnation: session.incarnation,
@@ -460,6 +645,39 @@ export async function publishManagedAtoms(engine: BrainEngine, session: ManagedA
   return receipts;
 }
 
+const UNCOMMITTED_OP = 'managed-atoms-uncommitted';
+export interface AtomWriteFailure { error: string; request_id: string; code: string; strikes?: number; held?: boolean }
+
+/**
+ * #7514: an atom batch whose write ended without committing (conflict, failed, cancelled) is a write failure with
+ * the request id and refusal code of that write, never a provider failure. On the drain (not an explicit retry) each
+ * time it is met counts one strike for the failed batch, with no model call: a failed batch is not re-extracted on
+ * its own. At MAX_DETERMINISTIC_FAILURES strikes a journaled failure completion holds the origin (held_failed), so it
+ * leaves the backlog and doctor lists it with its receipt and the reviewed retry. Null for any other error.
+ */
+export async function atomWriteFailure(engine: BrainEngine, session: ManagedAtomSession, origin: AtomOrigin, error: unknown): Promise<AtomWriteFailure | null> {
+  const receipt = error instanceof OperationError ? error.writeRequest : undefined;
+  if (!(error instanceof OperationError) || !receipt || !['conflict', 'failed', 'cancelled'].includes(receipt.state)) return null;
+  const failure: AtomWriteFailure = { error: error.message, request_id: receipt.request_id, code: error.code };
+  if (session.retry) return failure;
+  const runKey = atomClaim(session, origin).runKey;
+  const [strike] = await engine.executeRaw<{ strikes: number }>(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
+      VALUES('${UNCOMMITTED_OP}',$1,jsonb_build_array(jsonb_build_object('requestId',$2::text,'code',$3::text,'strikes',1)))
+    ON CONFLICT(op,fingerprint) DO UPDATE SET updated_at=now(), completed_keys=jsonb_build_array(jsonb_build_object('requestId',$2::text,'code',$3::text,
+      'strikes',COALESCE((op_checkpoints.completed_keys->0->>'strikes')::integer,0)+1))
+    RETURNING (completed_keys->0->>'strikes')::integer AS strikes`, [runKey, receipt.request_id, failure.code]);
+  const strikes = Number(strike?.strikes ?? 1);
+  if (strikes < MAX_DETERMINISTIC_FAILURES) return { ...failure, strikes, error: `${failure.error} (write did not commit: strike ${strikes} of ${MAX_DETERMINISTIC_FAILURES} on this content)` };
+  const key = drainKey(session, origin);
+  const checkpoint = await readAtomCheckpoint(engine, key);
+  (session.attempts ??= new Map()).set(key, { runKey: digest([runKey, 'uncommitted-hold', checkpoint]), checkpointKey: key, expectedCheckpoint: checkpoint });
+  const receipts = await publishManagedAtoms(engine, session, origin, [],
+    `write did not commit: ${failure.code} (request ${receipt.request_id}): ${failure.error}`.slice(0, 500), undefined, strikes);
+  const held = receipts.every(row => row.state === 'committed');
+  if (held) await engine.executeRaw(`DELETE FROM op_checkpoints WHERE op='${UNCOMMITTED_OP}' AND fingerprint=$1`, [runKey]);
+  return { ...failure, strikes, held, error: `${failure.error} (write did not commit ${strikes} times on this content${held ? '; held: doctor extract_atoms_held_failed lists it' : ''})` };
+}
+
 export async function prepareManagedAtomMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
   const p = row.intent as AtomIntent | null;
   if (!p || !['managed_atom_page', 'managed_atom_delete', 'managed_atom_complete'].includes(p.kind) || !p.origin || row.authority.remote) {
@@ -467,13 +685,19 @@ export async function prepareManagedAtomMutation(engine: BrainEngine, row: Write
       `Request ${row.request_id} in source ${row.source_id} is not an atom maintenance intent the trusted local writer can publish, so the coordinator refused it before any change. Atom extraction runs only from the gbrain CLI on the brain host; inspect the owner before resubmitting anything.`,
       { fix: ownerStatusFix(row.source_id) });
   }
-  const validate = async (tx: BrainEngine) => {
+  // GBRA-161 PR 1b: an overwrite or retirement member runs only after its activation: the activation rechecked the input
+  // and the planned identities under the locks, so the member checks its item is pending on that live generation instead.
+  // G6: that check runs under the publication locks only. A member is prepared before its activation publishes when both
+  // are claimed in one generation group (journal.ts publicationGroupKey), where the activation applies first in the same transaction.
+  const gated = Boolean(p.activationId) && (p.kind === 'managed_atom_delete' || p.phase === 'overwrite');
+  const validate = async (tx: BrainEngine, publishing = true) => {
     // A connector preflighted as unbound publishes database-only; one claimed since then must use its owner.
     if (row.authority.databaseOnlyReason === 'connector_database' && await getWorktreeBinding(tx, row.source_id)) {
       throw opError('source_changed', 'The connector source gained a canonical owner after atom preflight; the next run extracts through its owner.',
         `Connector source ${row.source_id} was claimed by a canonical owner after this database-only atom run started; request ${row.request_id} changed nothing. Run the atom drain on the owning host.`,
         { fix: ownerStatusFix(row.source_id) });
     }
+    if (gated) { if (publishing) await assertMemberPending(tx, row, p.activationId!, 'atom'); return; }
     if (p.origin.kind === 'transcript') {
       if (sha256(readFileSync(p.origin.locator)) !== p.origin.textHash) throw opError('source_changed', 'The accepted atom transcript changed.',
         `The transcript behind atom request ${row.request_id} in source ${row.source_id} was edited after acceptance, so the request published nothing. Run the atom drain again to extract the current file.`,
@@ -488,24 +712,25 @@ export async function prepareManagedAtomMutation(engine: BrainEngine, row: Write
       }
     }
   };
-  await validate(engine);
+  await validate(engine, false);
   const additionalPageKeys = p.origin.kind === 'page' ? [{ sourceId: row.source_id, slug: p.origin.locator }] : [];
   if (p.kind === 'managed_atom_delete') {
-    await replacementPublished(engine, row, p);
+    if (!p.activationId) await replacementPublished(engine, row, p);
     await authorizeWrite(engine, row.authority, 'delete_page', row.slug);
     const prepared = await preparePageMutation(engine, { ...row, operation: 'delete_page' }, config, undefined, undefined, { allowMissingFile: true });
     return { ...prepared, additionalPageKeys, validate: async tx => {
       await validate(tx);
-      await replacementPublished(tx, row, p);
+      if (!p.activationId) await replacementPublished(tx, row, p);
       await authorizeWrite(tx, row.authority, 'delete_page', row.slug);
       await prepared.validate?.(tx);
     }, apply: async tx => {
       const result = await prepared.apply(tx);
       if (!prepared.noop) {
         await tx.executeRaw(`UPDATE pages SET frontmatter=frontmatter||jsonb_build_object('retired_by',$1::text,'retired_at',$2::text)
-          WHERE id=$3 AND source_id=$4 AND deleted_at IS NOT NULL`, [ATOM_RETIRED_BY_REEXTRACT, new Date().toISOString(), row.page_id, row.source_id]);
+          WHERE id=$3 AND source_id=$4 AND deleted_at IS NOT NULL`, [p.retiredBy ?? ATOM_RETIRED_BY_REEXTRACT, new Date().toISOString(), row.page_id, row.source_id]);
+        if (p.activationId) await settleMember(tx, p.activationId, row.slug);
         if (p.origin.kind === 'page' && p.origin.pageId !== null) {
-          await bumpAtomGeneration(tx, row.source_id, row.source_incarnation, p.origin.pageId, p.origin.contentHash);
+          await bumpAtomGeneration(tx, row.source_id, row.source_incarnation, p.origin.pageId, p.origin.contentHash || null);
         }
       }
       return { ...result, atom_run_key: p.runKey, atom_kind: p.kind };
@@ -526,6 +751,12 @@ export async function prepareManagedAtomMutation(engine: BrainEngine, row: Write
           AND atom.knowledge_revision::text=r.outcome->>'revision' AND atom.deleted_at IS NULL)
           OR (COALESCE(r.intent->>'kind',r.outcome->>'atom_kind')='managed_atom_delete'
           AND atom.id=r.page_id AND atom.deleted_at IS NOT NULL))`, [children, row.source_incarnation, p.runKey]);
+      if (p.activationId) {
+        const [activation] = await tx.executeRaw<{ state: string }>('SELECT state FROM derived_generation_activations WHERE id=$1', [p.activationId]);
+        if (activation?.state !== 'activated') throw opError('revision_conflict', 'The atom batch\'s generation was not activated.',
+          `Activation ${p.activationId} of atom batch ${row.request_id} in source ${row.source_id} did not commit (another generation of its origin landed first, or an atom changed), so the batch was not marked complete; atoms it created are listed as orphan candidates and kept. The next atom drain extracts the source again.`,
+          { fix: receiptFix(p.activationId) });
+      }
       if (committed.length !== children.length) throw opError('revision_conflict', 'The atom batch is not fully committed.',
         `Some atom pages in batch ${row.request_id} for source ${row.source_id} did not commit or changed afterwards, so the batch was not marked complete. Read the batch receipt; the next atom drain extracts the source again.`,
         { fix: receiptFix(row.request_id) });
@@ -541,7 +772,7 @@ export async function prepareManagedAtomMutation(engine: BrainEngine, row: Write
       }
       // #6325: one strike per completed failure of this content, counted on the checkpoint it advances.
       const prior = Array.isArray(p.expectedCheckpoint) ? p.expectedCheckpoint[0] as AtomCheckpoint | undefined : undefined;
-      const attempts = (prior?.failure ? Number(prior.attempts ?? 1) : 0) + 1;
+      const attempts = p.attempts ?? (prior?.failure ? Number(prior.attempts ?? 1) : 0) + 1;
       const checkpoint = JSON.stringify([{ sourceId: row.source_id, incarnation: row.source_incarnation, requestId: row.request_id,
         kind: p.origin.kind, locator: p.origin.locator, pageId: p.origin.pageId, contentHash: p.origin.contentHash,
         ...(p.failure ? { failure: p.failure, attempts, ...(attempts >= MAX_DETERMINISTIC_FAILURES ? { held: true } : {}) }
@@ -572,6 +803,7 @@ export async function prepareManagedAtomMutation(engine: BrainEngine, row: Write
     config, undefined, undefined, { allowMissingFile: true });
   return { ...prepared, trust: derivation.trust, additionalPageKeys, validate: async tx => { await validate(tx); await authorizeWrite(tx, row.authority, 'put_page', row.slug); await prepared.validate?.(tx); }, apply: async tx => {
     const result = await prepared.apply(tx);
+    if (gated) await settleMember(tx, p.activationId!, row.slug);
     if (p.links?.length) await tx.addLinksBatch(p.links, { auditSite: 'cycle.extract_atoms.provenance' });
     const [atom] = await tx.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [row.source_id, row.slug]);
     if (atom) {
@@ -612,10 +844,18 @@ export function managedAtomCompletedSql(page: { sourceId: string; slug: string; 
     AND ac.completed_keys->0->>'failure' IS NULL`;
 }
 
-/** #6325: discovery and the backlog skip a page whose current content completed or is held after repeated failures. */
-export const MANAGED_ATOM_DISCOVERY_SQL = `AND NOT EXISTS (SELECT 1 FROM op_checkpoints ac
+/**
+ * #6325: discovery and the backlog skip a page whose current content completed or is held after repeated failures.
+ * #7391: given the current input cap, a partial checkpoint recorded below it (one `releasePartialDispositions` clears) is not skipped.
+ */
+export function managedAtomDiscoverySql(maxInputChars?: string): string {
+  return `AND NOT EXISTS (SELECT 1 FROM op_checkpoints ac
   WHERE ${managedAtomIdentitySql({ sourceId: 'p.source_id', slug: 'p.slug', pageId: 'p.id', contentHash: 'p.content_hash' })}
-    AND (ac.completed_keys->0->>'failure' IS NULL OR ac.completed_keys->0->>'held'='true'))`;
+    AND (ac.completed_keys->0->>'failure' IS NULL OR ac.completed_keys->0->>'held'='true')${maxInputChars ? `
+    AND (ac.completed_keys->0->>'partial' IS NULL OR (ac.completed_keys->0->>'partial')::integer >= ${maxInputChars})` : ''})`;
+}
+
+export const MANAGED_ATOM_DISCOVERY_SQL = managedAtomDiscoverySql();
 
 export interface HeldManagedAtom {
   source_id: string;

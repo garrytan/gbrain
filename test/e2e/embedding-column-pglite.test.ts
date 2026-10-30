@@ -343,7 +343,7 @@ describe('upsertChunks — model provenance uses gateway-resolved model, not com
 });
 
 describe('buildVectorCastFragment — engine SQL composer (D3)', () => {
-  test('vector descriptor emits $1::vector', () => {
+  test('vector descriptor emits $1::text::vector', () => {
     const r: ResolvedColumn = {
       name: 'embedding',
       type: 'vector',
@@ -352,10 +352,10 @@ describe('buildVectorCastFragment — engine SQL composer (D3)', () => {
     };
     const { col, castSql } = buildVectorCastFragment(r);
     expect(col).toBe('"embedding"');
-    expect(castSql).toBe('$1::vector');
+    expect(castSql).toBe('$1::text::vector');
   });
 
-  test('halfvec descriptor emits $1::halfvec(N) with parenthesized N', () => {
+  test('halfvec descriptor emits $1::text::halfvec(N) with parenthesized N', () => {
     const r: ResolvedColumn = {
       name: 'embedding_fixture',
       type: 'halfvec',
@@ -364,6 +364,6 @@ describe('buildVectorCastFragment — engine SQL composer (D3)', () => {
     };
     const { col, castSql } = buildVectorCastFragment(r);
     expect(col).toBe('"embedding_fixture"');
-    expect(castSql).toBe('$1::halfvec(2560)');
+    expect(castSql).toBe('$1::text::halfvec(2560)');
   });
 });

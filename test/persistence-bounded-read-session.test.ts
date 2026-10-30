@@ -26,6 +26,7 @@ import { startClaimPhase } from '../src/core/persistence/claim-phase.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
+import { SYNC_IMPORT_PROVENANCE_OP } from '../src/core/persistence/sync-holds.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -52,7 +53,7 @@ test('a session runs its bounded reads in one transaction; unbounded statements 
     await reads.executeRaw('SELECT 3 AS c');
     await session.executeRaw('SELECT 4 AS unbounded');
   });
-  expect(conn.slice(0, 2)).toEqual(['BEGIN', expect.stringMatching(/^SET LOCAL statement_timeout = (5\d{4}|60000)$/)]);
+  expect(conn.slice(0, 2)).toEqual(['BEGIN READ WRITE', expect.stringMatching(/^SET LOCAL statement_timeout = (5\d{4}|60000)$/)]);
   expect(conn.slice(2)).toEqual(['SELECT 1 AS a', 'SELECT 2 AS b', 'SELECT 3 AS c', 'COMMIT']);
   expect(direct).toEqual([{ sql: 'SELECT 4 AS unbounded', timeoutMs: undefined }]);
   // A read issued after the session settled (an abandoned preparation) runs on its own bounded transaction.
@@ -68,7 +69,7 @@ test('the bound in force is set again once it differs from a read\'s own bound b
     await session.executeRaw('SELECT 3', [], { timeoutMs: 10_000 - BOUNDED_SESSION_SLACK_MS - 1 });
     await session.executeRaw('SELECT 4', [], { timeoutMs: 20_000 });
   });
-  expect(conn).toEqual(['BEGIN', 'SET LOCAL statement_timeout = 10000', 'SELECT 1', 'SELECT 2',
+  expect(conn).toEqual(['BEGIN READ WRITE', 'SET LOCAL statement_timeout = 10000', 'SELECT 1', 'SELECT 2',
     `SET LOCAL statement_timeout = ${10_000 - BOUNDED_SESSION_SLACK_MS - 1}`, 'SELECT 3', 'SET LOCAL statement_timeout = 20000', 'SELECT 4', 'COMMIT']);
 });
 
@@ -86,7 +87,7 @@ test('a failed read rolls the transaction back, the reads it aborted run again, 
     expect(queued).toEqual({ status: 'fulfilled', value: [{ sql: 'SELECT queued' }] });
     expect(await reads.executeRaw('SELECT after')).toEqual([{ sql: 'SELECT after' }]);
   });
-  expect(conn.filter(sql => /^(BEGIN|ROLLBACK|COMMIT)$/.test(sql))).toEqual(['BEGIN', 'ROLLBACK', 'BEGIN', 'COMMIT']);
+  expect(conn.filter(sql => /^(BEGIN READ WRITE|ROLLBACK|COMMIT)$/.test(sql))).toEqual(['BEGIN READ WRITE', 'ROLLBACK', 'BEGIN READ WRITE', 'COMMIT']);
   expect(conn.filter(sql => sql === 'SELECT queued')).toHaveLength(2);
 });
 
@@ -102,7 +103,7 @@ test('a screen inside a waiver run\'s session joins it: one transaction for both
     await withBoundedReadSession(run, async screen => { expect(screen).toBe(run); await screen.executeRaw('SELECT 2', [], { timeoutMs: 10_000 }); });
   });
   expect(reserved).toBe(1);
-  expect(conn).toEqual(['BEGIN', 'SET LOCAL statement_timeout = 10000', 'SELECT 1', 'SELECT 2', 'COMMIT']);
+  expect(conn).toEqual(['BEGIN READ WRITE', 'SET LOCAL statement_timeout = 10000', 'SELECT 1', 'SELECT 2', 'COMMIT']);
   expect(prepared).toEqual([true, true]);
 });
 
@@ -164,6 +165,14 @@ test('on Postgres: one backend and one transaction per session, each statement b
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const OPTS = { noPull: true, noEmbed: true, noExtract: true };
 
+/**
+ * A full episode admits an already-current page in place (sync-classify.ts `inPlace`), so unchanged files reach the
+ * waiver only while a reparse is owed: here their import records name an older parser, as after a parser upgrade.
+ */
+const olderParserRecords = (engine: BrainEngine, sourceId: string) => engine.executeRaw(
+  `UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,parser,parser_version}','"an-older-parser"'::jsonb) WHERE op=$1 AND starts_with(fingerprint, $2 || ':')`,
+  [SYNC_IMPORT_PROVENANCE_OP, sourceId]);
+
 test('a full re-sync\'s waiver screens run their bounded reads on the waiver run\'s session, not one bounded transaction per read', () => withEnv({ GBRAIN_HOME: home }, async () => {
   for (const engine of engines) {
     const id = `brs-${randomUUID().replace(/-/g, '').slice(0, 16)}`, root = join(home, id);
@@ -175,6 +184,7 @@ test('a full re-sync\'s waiver screens run their bounded reads on the waiver run
     await claimWorktree(engine, id, root);
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
     expect((await performManagedSync(engine, { sourceId: id, ...OPTS })).status).toBe('first_sync');
+    await olderParserRecords(engine, id);
     await disposePersistenceConsumer(engine);
     let perRead = 0, sessions = 0;
     const counted = new Proxy(engine, { get(target, key) {

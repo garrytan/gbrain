@@ -23,6 +23,7 @@ const purge_fact: Operation = {
     expected_revision: { type: 'string', description: 'The expected_revision from the dry run; refuses when the target set changed since.' },
     match: { type: 'string', description: 'List candidate fact ids whose text contains this; never purges.' },
     status: { type: 'boolean', description: 'Report the stored receipt and completion of the purge named by request_id.' },
+    continue: { type: 'boolean', description: 'With status: first continue the purge\'s sweep of stored derivation results (derivation_sweep pending or stalled), then report.' },
     vacuum: { type: 'boolean', description: 'PGLite only: VACUUM the touched tables after the purge.' },
     source_id: { type: 'string', description: 'Source holding the fact (default: the routed source).' },
   },

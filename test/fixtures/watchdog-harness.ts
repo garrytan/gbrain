@@ -32,10 +32,17 @@
  *                     after the last progress note, after printing the
  *                     STOP-NOTICE stop notice on stdout.
  *
+ * Committed-progress modes (GBRA-133 PR 3a) — argv[5] is the progress window in ms;
+ * the watchdog counts only noteCommittedProgress:
+ *   screen-only — report forward progress only (screening) for 4x the deadline.
+ *                 Must be SIGTERMed at the deadline after printing STALL-NOTICE.
+ *   commit-with — report committed progress for 4x the deadline. Must NOT be
+ *                 stopped; prints COMPLETED.
+ *
  * Safety net: the busy loop self-exits after 8s so a failed test kill can't hang CI.
  */
 import { installProcessWatchdog, installLoopStallWatchdog } from '../../src/core/process-watchdog.ts';
-import { noteForwardProgress } from '../../src/core/forward-progress.ts';
+import { noteCommittedProgress, noteForwardProgress } from '../../src/core/forward-progress.ts';
 
 const mode = process.argv[2] ?? 'starve-with';
 const deadlineMs = Number(process.argv[3] ?? 300);
@@ -94,6 +101,16 @@ if (mode.startsWith('progress-')) {
   if (mode === 'progress-with') { process.stdout.write('COMPLETED\n'); process.exit(0); }
   while (Date.now() - t0 < 8000) await sleep(25);
   process.stdout.write('SURVIVED\n');
+  process.exit(0);
+}
+
+if (mode === 'screen-only' || mode === 'commit-with') {
+  const progressWindowMs = Number(process.argv[5] ?? 400);
+  installProcessWatchdog({ deadlineMs, graceMs, label: 'test-wd', progressWindowMs, stopNotice: 'STOP-NOTICE', progressSignal: 'committed', stallNotice: 'STALL-NOTICE' });
+  const note = mode === 'commit-with' ? noteCommittedProgress : noteForwardProgress;
+  const t0 = Date.now();
+  while (Date.now() - t0 < deadlineMs * 4) { note(); await new Promise((r) => setTimeout(r, 25)); }
+  process.stdout.write('COMPLETED\n');
   process.exit(0);
 }
 

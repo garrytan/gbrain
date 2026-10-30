@@ -12,7 +12,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadConfig } from './config.ts';
+import { loadConfig, gbrainPath } from './config.ts';
 import { readAllSelfUpgrades } from './audit/self-upgrade-audit.ts';
 import { CRASH_ON_LAUNCH_REASON_PREFIX, SWAPPED_REASON } from './self-upgrade.ts';
 
@@ -79,7 +79,7 @@ export function neverInstalledFailedVersions(
 /** `last_upgrade` from `~/.gbrain/upgrade-state.json` (where `gbrain upgrade` writes it), or null. */
 function readLastUpgrade(): LastUpgrade | null {
   try {
-    const path = join(process.env.HOME || '', '.gbrain', 'upgrade-state.json');
+    const path = gbrainPath('upgrade-state.json');
     if (!existsSync(path)) return null;
     const u = (JSON.parse(readFileSync(path, 'utf8')) as { last_upgrade?: Record<string, unknown> }).last_upgrade;
     return u && typeof u.from === 'string' && typeof u.to === 'string' && typeof u.ts === 'string' ? { from: u.from, to: u.to, ts: u.ts } : null;

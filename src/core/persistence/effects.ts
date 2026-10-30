@@ -6,7 +6,7 @@ import { targetedWithdrawalEffect, upgradeWithdrawalEffect } from './effect-targ
 import { existsSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
-import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
+import { isPersistenceDeclaration, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError, opError } from '../ops/contract.ts';
@@ -30,14 +30,15 @@ import { EMBEDDING_ZERO_NORM, isEmbeddingZeroNormError, type EmbeddingZeroNormEr
 import { isAIInvocationPolicyError, withAIInvocationPreflight } from '../ai/invocation-guard.ts';
 import { quoteIdentifier } from '../search/embedding-column.ts';
 import type { ResolvedColumn } from '../types.ts';
-import { acquireWorktree, getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
+import { acquireWorktree, acquireWorktreeWaiting, getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
+import { clearWaiting } from './worktree-lease.ts';
 import { persistenceFileHash, transientDatabaseFailure } from './coordinator.ts';
 import { sha256 } from './digest.ts';
 import { prepareFileTarget, unreadPageFile } from './page-prepare.ts';
 import { isStreamedContent, type StreamedFileContent } from './large-file.ts';
 import { atomicStagingPath } from '../atomic-write.ts';
 import { isSourceDbOnlySlug } from './source-storage.ts';
-import { advanceEffectCursor, claimCoalescedGitEffects, claimPersistenceEffect, completeEffect, effectClaimKeeper, failEffect, hasRearmableTargets, mirrorGates, parkEffect, rearmWithheldTargets, renewPersistenceEffectClaim, requeueEffect, retryEffect, singleFileGitEffect, type MirrorGate } from './effect-journal.ts';
+import { advanceEffectCursor, claimCoalescedGitEffects, claimPersistenceEffect, completeEffect, effectClaimStamp, effectClaimKeeper, failEffect, hasRearmableTargets, mirrorGates, parkEffect, rearmWithheldTargets, renewPersistenceEffectClaim, requeueEffect, retryBusyEffect, retryEffect, singleFileGitEffect, type MirrorGate } from './effect-journal.ts';
 import { guardEffectSource, recoverEffectPublication, reserveEffectRecovery } from './effect-recovery.ts';
 import { commitGitTargets, DURABILITY_NOT_ENABLED, gitRootAhead, publishGitEffect, pushGitRoot, type GitEffectOwner } from './effect-git.ts';
 import { retryIndexLockParks } from './effect-retry.ts';
@@ -58,6 +59,7 @@ import { nativeFileTarget } from './native-file-target.ts';
 import { sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { isLockOpenFailure, type NativeLockHandle } from './native-lock.ts';
 import { planPageEmbedding } from '../page-embedding-budget.ts';
+import { acquirePageEmbeddingLease, pageEmbeddingLeaseUnavailable } from '../page-embedding-lease.ts';
 import { chunkGenerationFilter, chunkManifestReads } from '../search/safe-chunks.ts';
 import { classifyItemFailure, ItemRun } from '../item-failure.ts';
 
@@ -86,6 +88,10 @@ export interface EffectWorkerOptions {
   /** Failure boundary injection; production never supplies this. */
   boundary?: (name: 'before_mirror_file' | 'after_mirror_file' | 'before_mirror_commit') => Promise<void>;
   embedding?: { signature: string; model: string; embed: typeof embedBatch };
+  /** GBRA-133: owner keys the consumer proved dead (`deadOwnerClaims`); their running effects are claimed before the lease lapses. */
+  deadOwners?: readonly string[];
+  /** How long a pass waits for a contended worktree (default EFFECT_LOCK_WAIT_MS); production never supplies this. */
+  lockWaitMs?: number;
 }
 
 export async function selectedEffectPage(engine: BrainEngine, effect: PersistenceEffect): Promise<PageSnapshot | null> {
@@ -451,6 +457,13 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
   const segmented = await readSegmentedEmbedPage(engine, { id: snapshot.page.id });
   if (segmented) { await embedSegmentedEffect(engine, config, effect, snapshot, segmented, signature, opts); return; }
   await faultPoint('effect:embedding:page_read', { effectId: effect.id, requestId: effect.request_id, sourceId: effect.source_id });
+  // A stale drain or another worker embedding this page finishes first; the projection read below then finds its chunks complete.
+  await using pageLease = await acquirePageEmbeddingLease(engine, snapshot.page.id, { signal: opts.signal, whileWaiting: async () => {
+    if (!await renewPersistenceEffectClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, effect)) throw opError('write_claim_lost', 'The embedding claim changed.',
+      `Another worker took over the embedding of ${snapshot.page.slug} in source ${effect.source_id}; this attempt stops without installing vectors and the owning claim finishes it.`,
+      { fix: effectStatusFix(effect) });
+  } });
+  if (pageLease.busy) throw pageEmbeddingLeaseUnavailable(snapshot.page.id, false);
   // A write that committed after the page read above leaves no projection at this revision to wait for: the effect is
   // superseded, as when the page read already saw the newer revision; only the effect's own revision still unsealed retries.
   const projection = await readEmbeddingEffectProjection(engine, effect, snapshot, opts.hostId, signature, opts.embedding?.model).catch(async error => {
@@ -524,6 +537,7 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
       await tx.executeRaw("SELECT key FROM config WHERE key='embedding_disabled' FOR SHARE");
       await assertEmbeddingEffectEnabled(tx, config);
       signal.throwIfAborted();
+      await pageLease.assertHeld(tx);
       // A partially refused page keeps its signature unstamped so `gbrain embed --stale` finds the refused chunks.
       // A partial install (the page changed under the provider call) keeps the vectors whose chunk and input
       // still match and settles like a superseded one: the newer revision's own effect embeds the rest.
@@ -582,6 +596,7 @@ async function embedSegmentedEffect(engine: BrainEngine, config: GBrainConfig, e
     { fix: effectStatusFix(effect) });
   const embed = opts.embedding?.embed ?? embedBatch;
   const result = await embedSegmentedPage(engine, page, { signature, signal: opts.signal, occurrenceIds: effect.data.occurrence_ids,
+    whileWaiting: async () => { if (!await renewPersistenceEffectClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, effect)) throw claimLost(); },
     embedFn: (texts, o) => withAIInvocationPreflight(async () => {
       opts.signal?.throwIfAborted();
       if (!await renewPersistenceEffectClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, effect)) throw claimLost();
@@ -595,6 +610,7 @@ async function embedSegmentedEffect(engine: BrainEngine, config: GBrainConfig, e
     } });
   if (result.stopped === 'budget') { await completeEffect(engine, effect, { embedding: 'skipped', reason: 'budget_capped' }); return; }
   if (result.stopped === 'page_moved') { await completeEffect(engine, effect, { embedding: 'superseded', reason: 'revision_changed' }); return; }
+  if (result.stopped === 'busy') throw pageEmbeddingLeaseUnavailable(page.id, false);
   const stamp = await resolveProvenanceStamp(engine, signature);
   if (stamp) await stampIfPageProvenanceComplete(engine, page.slug, page.source_id, stamp);
   await finishPage(engine, effect, snapshot);
@@ -668,6 +684,7 @@ async function recordFailure(engine: BrainEngine, effect: PersistenceEffect, err
       : transientBackoffMs(attempt - 1);
     await retryEffect(engine, effect, reason, delay); return;
   }
+  if (code === 'writer_busy') { await retryBusyEffect(engine, effect); return; }
   if (CONTENTION_CODES.includes(code)) { await retryEffect(engine, effect, code, 250); return; }
   // A lost connection, a failed transaction or an abort is never the effect's own failure (GBRA-130); for links and
   // facts-backstop effects neither is a run-scoped refusal.
@@ -686,6 +703,8 @@ async function recordFailure(engine: BrainEngine, effect: PersistenceEffect, err
   }
   const [current] = await engine.executeRaw<{ recovering: boolean }>('SELECT recovery IS NOT NULL AS recovering FROM persistence_effects WHERE id=$1', [effect.id]);
   if (current?.recovering) { await retryEffect(engine, effect, code, 30_000); return; }
+  // GBRA-133: a target a .gitignore rule excludes fails the same way on every attempt; it parks at once, naming the rule.
+  if (code === 'git_target_ignored') { await parkEffectTarget(engine, effect, code, target, (error as OperationError).detail); return; }
   // A retried parked target has exactly one authorized attempt; otherwise the
   // counter only accumulates while the same target keeps failing.
   const prior = target !== undefined && effect.data.retry_slugs?.includes(target) ? PARK_AFTER_FAILURES - 1
@@ -735,10 +754,10 @@ const DEPENDENCY_CODES = ['recovery_required', 'owner_unavailable', 'write_claim
  * or a failure outside any target, parks the whole effect. Parked work stays
  * retained until `gbrain sources writer retry-effects` authorizes another attempt.
  */
-async function parkEffectTarget(engine: BrainEngine, effect: PersistenceEffect, code: string, target: string | undefined): Promise<void> {
+async function parkEffectTarget(engine: BrainEngine, effect: PersistenceEffect, code: string, target: string | undefined, rule?: string): Promise<void> {
   const { target_failures: _failures, failing_target: _target, retry_slugs: retrying = [], ...data } = effect.data;
   const scanning = target !== undefined && (targetedWithdrawalEffect(effect) || effect.data.source_scan === true);
-  const parked = [...(effect.data.parked ?? []), { ...(target ?? effect.data.slug ? { slug: target ?? effect.data.slug } : {}), error_code: code }];
+  const parked = [...(effect.data.parked ?? []), { ...(target ?? effect.data.slug ? { slug: target ?? effect.data.slug } : {}), error_code: code, ...(rule ? { rule } : {}) }];
   if (!scanning) { await parkEffect(engine, effect, { ...data, ...(retrying.length ? { retry_slugs: retrying } : {}), parked }); return; }
   const remaining = retrying.filter(slug => slug !== target);
   // An embedding scan's next page starts with a full attempt budget, as when the cursor advances.
@@ -747,6 +766,8 @@ async function parkEffectTarget(engine: BrainEngine, effect: PersistenceEffect, 
     ...(remaining.length ? { retry_slugs: remaining, target_failures: PARK_AFTER_FAILURES - 1 } : {}) }, code, 0);
 }
 
+/** GBRA-133: how long one effect pass waits for a contended worktree before its effects back off as writer_busy. */
+const EFFECT_LOCK_WAIT_MS = 5_000;
 /** #5530: at most this many single-file Git effects share one commit. */
 const GIT_GROUP_SIZE = 100;
 /** A short Git group yields to queued publications at most this many claims, GIT_YIELD_MS apart. */
@@ -763,8 +784,9 @@ export async function claimAndRecoverEffect(engine: BrainEngine, id: string | nu
   hooks: Parameters<typeof recoverEffectPublication>[3] = {}): Promise<PersistenceEffect | undefined> {
   let claimed: PersistenceEffect | undefined;
   try {
-    [claimed] = await engine.executeRaw<PersistenceEffect>(`UPDATE persistence_effects SET state='running',execution_token=$2::uuid,
-      claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now() WHERE id=$1 AND recovery IS NOT NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING *`, [id, randomUUID()]);
+    const token = randomUUID();
+    [claimed] = await engine.executeRaw<PersistenceEffect>(`UPDATE persistence_effects SET state='running',execution_token=$2::uuid,claim_owner=$3::text::jsonb,
+      claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now() WHERE id=$1 AND recovery IS NOT NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING *`, [id, token, effectClaimStamp(token)]);
     if (claimed) await recoverEffectPublication(engine, claimed, hostId, { ...hooks, between: hooks.between ?? effectClaimKeeper(engine, claimed, effectRenewalIntervalMs) });
   } catch (error) { if (claimed) await recordFailure(engine, claimed, error); }
   return claimed;
@@ -778,8 +800,10 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
   // #6696 (A1): every request whose effect this pass claimed is trued up after the pass, outside the settling transactions.
   const touched = new Set<string>();
   const derived: DerivedFailures = { run: new ItemRun('effects.derived_retry_budget'), counted: [] };
-  try { return await runEffectPass(engine, config, opts, touched, derived); }
+  const waited = new Set<string>();
+  try { return await runEffectPass(engine, config, opts, touched, derived, waited); }
   finally {
+    for (const path of waited) clearWaiting(path);
     await settleDerivedFailures(engine, derived).catch(() => { /* an unsettled claim expires and the effect is claimed again */ });
     await (async () => { if (await hasRearmableTargets(engine, [...touched])) await engine.transaction(tx => rearmWithheldTargets(tx, [...touched])); })()
       .catch(() => { /* idempotent; the next pass touching the request retries it */ });
@@ -787,8 +811,20 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
   }
 }
 
-async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: EffectWorkerOptions, touched: Set<string>, derived: DerivedFailures): Promise<number> {
+async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: EffectWorkerOptions, touched: Set<string>, derived: DerivedFailures,
+  waited: Set<string>): Promise<number> {
   const limit = Math.max(1, Math.min(opts.limit ?? 2, 20));
+  // GBRA-133: a Git or mirror effect waits for a contended worktree (other processes yield to it after a grace) instead of
+  // trying once per claim; a root this pass already waited out is tried once, so one busy root costs the pass one wait.
+  const stalled = new Set<string>();
+  const takeLock = async (binding: WorktreeBinding) => {
+    const path = binding.coordination_path ?? '';
+    if (stalled.has(path)) return acquireWorktree(binding, 0, undefined, engine);
+    waited.add(path);
+    const lock = await acquireWorktreeWaiting(binding, engine, opts.lockWaitMs ?? EFFECT_LOCK_WAIT_MS, opts.signal);
+    if (!lock) stalled.add(path);
+    return lock;
+  };
   await resumeGatedMirrors(engine, opts.hostId);
   const recoveries = await selectEffectRecoveries(engine, opts.hostId, limit);
   let attempted = 0;
@@ -814,7 +850,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
     try {
       if (effect.worktree_id && !['embedding', 'facts-backstop', 'links'].includes(effect.kind)) {
         if (!binding) throw ownerUnavailable(effect);
-        lock = await acquireWorktree(binding, 0, undefined, engine);
+        lock = await takeLock(binding);
         if (!lock) throw writerBusy(effect);
         if (recordOnly) { await lock.release(); lock = null; }
       }
@@ -824,7 +860,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
           const blocked = await tx.executeRaw('SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL LIMIT 1', [effect.worktree_id]);
           if (blocked.length) throw recoveryFirst(effect);
         }
-      });
+      }, { pipelineFirst: isPersistenceDeclaration });
       effect = await upgradeWithdrawalEffect(engine, effect, opts.hostId);
       if (effect.kind === 'git' || effect.kind === 'embedding') attempt.gate = (await mirrorGates(engine, [effect.request_id])).get(effect.request_id);
       if (effect.kind === 'withdrawal-mirror') await mirrorPage(engine, effect, binding, opts, attempt);
@@ -865,7 +901,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
       const [pending] = await engine.executeRaw<{ pending: boolean }>(`SELECT EXISTS(SELECT 1 FROM persistence_requests
         WHERE worktree_id=$1::uuid AND state IN ('queued','running')) AS pending`, [effects[0]!.worktree_id]);
       if (pending?.pending) {
-        await engine.executeRaw(`UPDATE persistence_effects e SET state='queued',execution_token=NULL,claim_expires_at=NULL,error_code='publication_pending',
+        await engine.executeRaw(`UPDATE persistence_effects e SET state='queued',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,error_code='publication_pending',
           next_attempt_at=now()+($2::double precision*interval '1 millisecond'),updated_at=now()
           FROM jsonb_to_recordset($1::text::jsonb) AS t(id bigint,token uuid)
           WHERE e.id=t.id AND e.execution_token=t.token AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
@@ -877,13 +913,15 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
     let gates: Map<string, MirrorGate>;
     try {
       gates = await mirrorGates(engine, effects.map(effect => effect.request_id));
-      lock = await acquireWorktree(binding, 0, undefined, engine);
+      lock = await takeLock(binding);
       if (!lock) throw writerBusy(effects[0]!);
     } catch (error) {
       for (const effect of effects) await recordFailure(engine, effect, error, opts.signal);
       return;
     }
     const targets: { effect: PersistenceEffect; path: string; attempt: EffectAttempt }[] = [];
+    // G2 (git-door.ts): a strict source's file was committed with its publication; its effect only joins the push.
+    const committedAtPublication: PersistenceEffect[] = [];
     let reclaimed = false;
     try {
       for (const effect of effects) {
@@ -899,6 +937,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
           if (!own?.local_path || own.local_path !== binding.local_path) throw opError('source_changed', 'The effect canonical binding changed.',
             `Source ${effect.source_id}'s canonical checkout no longer matches the worktree this Git group is committing, so its file was left out. Check the owner; the effect resumes under the current binding.`,
             { fix: effectStatusFix(effect) });
+          if (effect.data.push_only === true) { committedAtPublication.push(effect); continue; }
           const path = await singleFileGitTarget(engine, effect, { ...own, local_path: own.local_path }, attempt);
           if (path !== null) targets.push({ effect, path, attempt });
         } catch (error) { await recordFailure(engine, effect, error, opts.signal, attempt.target); }
@@ -917,6 +956,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
         else if (outcome.reason === 'target_absent' && !ahead) await completeEffect(engine, effect, outcome);
         else pending.items.push({ effect, outcome, target: attempt.target });
       }
+      for (const effect of committedAtPublication) pending.items.push({ effect, outcome: { git: 'committed', at: 'publication' } });
       if (pending.items.length) unpushed.set(binding.local_path, pending);
     } catch (error) {
       for (const { effect, attempt } of targets) await recordFailure(engine, effect, error, opts.signal, attempt.target);
@@ -959,7 +999,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
           const blocked = await tx.executeRaw('SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL LIMIT 1', [effect.worktree_id]);
           if (blocked.length) throw recoveryFirst(effect);
           return null;
-        }).catch(error => error ?? new Error('effect guard failed')));
+        }, { pipelineFirst: isPersistenceDeclaration }).catch(error => error ?? new Error('effect guard failed')));
         if (guards.get(key)) throw guards.get(key);
         if (!binding.local_path) { await completeEffect(engine, effect, { git: 'skipped', reason: 'no_repo_configured' }); continue; }
         if (!mirrors.has(effect.source_id)) mirrors.set(effect.source_id, await sourceMirrorReadOnly(engine, effect.source_id));
@@ -973,7 +1013,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
       await engine.executeRaw(`UPDATE persistence_effects e SET
         state=CASE WHEN jsonb_array_length(COALESCE(e.data->'parked','[]'::jsonb))>0 THEN 'failed' ELSE 'committed' END,
         error_code=CASE WHEN jsonb_array_length(COALESCE(e.data->'parked','[]'::jsonb))>0 THEN 'targets_parked' END,
-        data=e.data-'retry_slugs'-'target_failures'-'failing_target',execution_token=NULL,claim_expires_at=NULL,
+        data=e.data-'retry_slugs'-'target_failures'-'failing_target'-'busy_retries'-'busy_since'-'busy_at',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,
         outcome=$2::text::jsonb,updated_at=now()
         FROM jsonb_to_recordset($1::text::jsonb) AS t(id bigint,token uuid)
         WHERE e.id=t.id AND e.execution_token=t.token AND e.recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
@@ -984,7 +1024,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
   // or work unblocked by an earlier effect) is claimable again after the flush.
   for (;;) {
     while (attempted < limit && !opts.signal?.aborted) {
-      const effect = await claimPersistenceEffect(engine, opts.hostId);
+      const effect = await claimPersistenceEffect(engine, opts.hostId, opts.deadOwners);
       if (!effect) break;
       attempted++;
       touched.add(effect.request_id);
@@ -997,7 +1037,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
         // #5182: the binding's recorded setting decides; the legacy hook probe only when nothing is recorded (fail-closed).
         if (!probes.has(root)) probes.set(root, gitDurabilityPolicy(binding, root).then(policy => ({ durable: policy.durable }), error => ({ error })));
         const group = singleFileGitEffect(effect) && effect.worktree_id
-          ? [effect, ...await claimCoalescedGitEffects(engine, opts.hostId, effect.worktree_id, GIT_GROUP_SIZE - 1)] : [effect];
+          ? [effect, ...await claimCoalescedGitEffects(engine, opts.hostId, effect.worktree_id, GIT_GROUP_SIZE - 1, opts.deadOwners)] : [effect];
         for (const member of group) touched.add(member.request_id);
         deferred.push({ effects: group, binding, hardened: probes.get(root)! });
       } else await run(effect, binding);
@@ -1026,7 +1066,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
     let failure: unknown;
     let lock: Awaited<ReturnType<typeof acquireWorktree>> = null;
     try {
-      lock = await acquireWorktree(binding, 0, undefined, engine);
+      lock = await takeLock(binding);
       if (!lock) throw writerBusy(items[0]!.effect);
       pushed = await pushGitRoot(root, opts.signal);
     } catch (error) { failure = error; } finally { await lock?.release(); }

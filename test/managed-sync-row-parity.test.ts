@@ -17,7 +17,8 @@ import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { performSync } from '../src/commands/sync/perform.ts';
-import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { disposePersistenceConsumer, persistenceConsumerConfig } from '../src/core/persistence/service.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const dumpFile = process.env.GBRAIN_TEST_PARITY_DUMP;
@@ -151,6 +152,16 @@ async function dump(e: BrainEngine, source: string): Promise<Record<string, unkn
   };
 }
 
+/**
+ * A sync returns once its pages publish; their effects run on this process's consumer afterwards (consumer.ts
+ * `drainEffects`), so an effect it claimed holds `claim_owner` until it completes or releases the claim. Stopping the
+ * consumer is the barrier: `stop()` awaits the effect worker, whose claimed effect settles or releases before it ends.
+ */
+async function settledDump(e: BrainEngine, source: string): Promise<Record<string, unknown[]>> {
+  await disposePersistenceConsumer(e);
+  return dump(e, source);
+}
+
 beforeAll(async () => {
   if (!process.env.DATABASE_URL) return;
   const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL, 'instance', 12); engine = pg.engine; closePostgres = pg.close;
@@ -175,7 +186,7 @@ test('lanes and --no-lanes publish the same rows, effects and receipts over impo
     expect(b.drain).toMatchObject({ outcome: 'synced', bulk: { lanes: { configured: 1 } } });
     if (round === 0) expect(a.drain!.bulk!.lanes.overlapped_groups).toBeGreaterThan(0);
   }
-  const left = await dump(engine, laned.id), right = await dump(engine, serial.id);
+  const left = await settledDump(engine, laned.id), right = await settledDump(engine, serial.id);
   if (dumpFile) writeFileSync(dumpFile, JSON.stringify(left, null, 1));
   for (const table of ['pages', 'chunks', 'page_aliases', 'slug_aliases', 'tags', 'links', 'timeline', 'facts', 'takes', 'versions', 'chronicle', 'effects', 'receipts', 'provenance', 'reserved'] as const) {
     expect(left[table]!.length).toBeGreaterThan(0);
@@ -193,3 +204,28 @@ test('lanes and --no-lanes publish the same rows, effects and receipts over impo
   expect(live).not.toContain(`notes/n${pad(5)}`);
   expect(live).toHaveLength(COUNT - 3 + 6 + 3);
 }), 600_000);
+
+test('GBRA-133 probe: an embedding effect still claimed when the sync returns is settled before the rows are read', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  if (!engine) return;
+  const probe = await fixture(engine, { 'meetings/m0.md': meeting(0) });
+  let parked!: () => void;
+  const atRelease = new Promise<void>(resolve => { parked = resolve; });
+  let read = false;
+  // Holds the worker at its release seam (completeEffect), claim held, until the rows are read or the consumer stops.
+  installFaultHook(async (point, detail) => {
+    if (point !== 'effect:embedding:mid' || detail.sourceId !== probe.id) return;
+    parked();
+    while (!read && persistenceConsumerConfig(engine!)) await Bun.sleep(5);
+  });
+  try {
+    const result = await performSync(engine, { sourceId: probe.id, noPull: true, noEmbed: false, drain: true, lanes: 1 });
+    expect(result.drain).toMatchObject({ outcome: 'synced' });
+    await atRelease;
+    const claimed = await engine.executeRaw('SELECT 1 FROM persistence_effects WHERE source_id=$1 AND claim_owner IS NOT NULL', [probe.id]);
+    expect(claimed).toHaveLength(1);
+    const rows = await settledDump(engine, probe.id);
+    read = true;
+    expect(rows.effects!.length).toBeGreaterThan(0);
+    expect((rows.effects as string[]).filter(row => (JSON.parse(row) as { claim_owner: unknown }).claim_owner !== null)).toEqual([]);
+  } finally { read = true; installFaultHook(undefined); }
+}), 120_000);

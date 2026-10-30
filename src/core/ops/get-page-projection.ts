@@ -64,6 +64,8 @@ export interface GetPageProjectionOpts {
   timeline_entries?: unknown;
   /** A held source file (sync could not import it); present in both shapes so an editor sees it. */
   file_held?: unknown;
+  /** GBRA-161 PR 2: the page's held facts or takes fence (`fence_absent`), each with its ask-the-user fix; present in both shapes. */
+  fence_held?: unknown;
   /** #6259: the page is quarantined; `body_omitted` drops compiled_truth, timeline and `content`. */
   quarantined?: QuarantinedView | null;
   /** #5575 A6: the page's trust tier and short write origin. */
@@ -94,6 +96,7 @@ export function projectGetPage(page: Page, o: GetPageProjectionOpts) {
     ...(quarantined ? { quarantined } : {}),
     ...(o.timeline_entries !== undefined ? { timeline_entries: o.timeline_entries } : {}),
     ...(o.file_held !== undefined ? { file_held: o.file_held } : {}),
+    ...(o.fence_held !== undefined ? { fence_held: o.fence_held } : {}),
     ...(resolved_slug ? { resolved_slug } : {}), ...(content_flag ? { content_flag } : {}),
   };
   if (o.includeContent && o.contentOnly) {

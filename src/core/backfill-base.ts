@@ -27,6 +27,7 @@ import { GBrainError } from './types.ts';
 import { redactConnectionInfo } from './audit/redact-connection-info.ts';
 import { classifyItemFailure, ItemRun } from './item-failure.ts';
 import { OperationError } from './ops/contract.ts';
+import { READ_WRITE_BEGIN } from './postgres-engine/read-write-transactions.ts';
 import { heldUnchanged, noteSkip, parseSkipLedger, readSkipLedgerRaw, reportSkips, restoreSkipLedger, rowRevision, type BackfillSkip } from './backfill-skips.ts';
 
 function brief(err: unknown): string {
@@ -293,7 +294,7 @@ export async function runBackfill<TRow = Record<string, unknown>>(
   const writeBatch = async (computedUpdates: Array<{ id: number; updates: Record<string, unknown> }>): Promise<number> => {
     if (opts.dryRun || computedUpdates.length === 0) return 0;
     return engine.withReservedConnection(async conn => {
-      await conn.executeRaw(`BEGIN`);
+      await conn.executeRaw(engine.kind === 'postgres' ? READ_WRITE_BEGIN : 'BEGIN');
       let batchUpdated = 0;
       let stage: 'setup' | 'update' | 'commit' = 'setup';
       try {

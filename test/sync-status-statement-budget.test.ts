@@ -9,6 +9,10 @@
  * about 87), not by the size of the journal.
  * Fails when: a status read turns per row (or per receipt), or the plain
  * status grows past its budget.
+ * GBRA-135: a stored `sync.admission` other than `normal` (left by another test
+ * on a shared local database) cost the plain status a 16th statement, its
+ * `effective` probe; the probe now rides the source read. The second test
+ * stores `imports_only` and fails with that statement (16 on Postgres before).
  * Seams: the PGLite statement counter; Postgres through the wire trace in
  * test/e2e/sync-status-statement-budget-postgres.test.ts.
  */
@@ -20,6 +24,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { vacuumPersistenceQueues } from '../src/core/persistence/journal.ts';
+import { SYNC_ADMISSION_KEY, SYNC_ADMISSION_SET_OP, syncAdmissionStatus, writeSyncAdmission } from '../src/core/persistence/sync-admission.ts';
 import { readSyncStatus } from '../src/core/persistence/sync-status.ts';
 import { countPgliteStatements, readSqlTrace, type StatementRecord } from './helpers/statement-counter.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -29,6 +34,8 @@ import { withEnv } from './helpers/with-env.ts';
 const PLAIN_BUDGET = { pglite: 11, postgres: 15 } as const;
 const home = mkdtempSync(join(tmpdir(), 'gbrain-status-budget-'));
 afterAll(() => rmSync(home, { recursive: true, force: true }));
+
+const statements = (records: StatementRecord[]) => records.filter(record => record.kind === 'execute' || record.kind === 'simple').length;
 
 /** `rows` terminal receipts of managed imports: most committed, one in fifty failed, the newest within the last ten minutes. */
 async function seed(engine: BrainEngine, sourceId: string, rows: number) {
@@ -75,7 +82,6 @@ for (const backend of testBackends()) {
     });
 
     test('a 61,000-receipt source costs the same statements as a 1,000-receipt one, within budget', async () => {
-      const statements = (records: StatementRecord[]) => records.filter(record => record.kind === 'execute' || record.kind === 'simple').length;
       const measured: Record<string, { plain: number; detail: number }> = {};
       for (const rows of [1_000, 61_000]) {
         const sourceId = `status-budget-${backend}-${rows}`;
@@ -87,6 +93,25 @@ for (const backend of testBackends()) {
       }
       expect(measured[61_000]).toEqual(measured[1_000]!);
       expect(measured[61_000]!.plain).toBeLessThanOrEqual(PLAIN_BUDGET[backend]);
+    }, 300_000);
+
+    test('a restricted sync.admission costs the plain status no statement of its own', async () => {
+      const sourceId = `status-budget-${backend}-admission`;
+      sources.push(sourceId);
+      await seed(engine, sourceId, 1_000);
+      const normal = statements(await counted(() => readSyncStatus(engine, sourceId, { detail: false })));
+      await writeSyncAdmission(engine, 'imports_only');
+      try {
+        let admission: Awaited<ReturnType<typeof readSyncStatus>>['admission'] | undefined;
+        const restricted = statements(await counted(async () => { admission = (await readSyncStatus(engine, sourceId, { detail: false })).admission; }));
+        const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
+        expect(admission).toEqual(await syncAdmissionStatus(engine, sourceId, incarnation!));
+        expect(admission).toMatchObject({ value: 'imports_only', effective: true });
+        expect(restricted).toBe(normal);
+      } finally {
+        await engine.unsetConfig(SYNC_ADMISSION_KEY);
+        await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1', [SYNC_ADMISSION_SET_OP]);
+      }
     }, 300_000);
   });
 }

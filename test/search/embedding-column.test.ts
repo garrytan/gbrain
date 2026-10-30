@@ -273,18 +273,18 @@ describe('D12 — defense-in-depth validation', () => {
 });
 
 describe('D3 — buildVectorCastFragment + quoteIdentifier', () => {
-  test('vector type emits $1::vector cast', () => {
+  test('vector type emits $1::text::vector cast', () => {
     const r: ResolvedColumn = { name: 'embedding', type: 'vector', dimensions: 1536, embeddingModel: '' };
     const { col, castSql } = buildVectorCastFragment(r);
     expect(col).toBe('"embedding"');
-    expect(castSql).toBe('$1::vector');
+    expect(castSql).toBe('$1::text::vector');
   });
 
-  test('halfvec type emits $1::halfvec(N) cast', () => {
+  test('halfvec type emits $1::text::halfvec(N) cast', () => {
     const r: ResolvedColumn = { name: 'embedding_fixture', type: 'halfvec', dimensions: 2560, embeddingModel: 'fixture-provider:embedding-v1' };
     const { col, castSql } = buildVectorCastFragment(r);
     expect(col).toBe('"embedding_fixture"');
-    expect(castSql).toBe('$1::halfvec(2560)');
+    expect(castSql).toBe('$1::text::halfvec(2560)');
   });
 
   test('quoteIdentifier wraps in double quotes', () => {

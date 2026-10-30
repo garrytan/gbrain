@@ -18,15 +18,18 @@ import type { PhaseResult } from '../cycle.ts';
 import type { DiscoveredTranscript } from './transcript-discovery.ts';
 import { transcriptDerivation } from './dream-taint.ts';
 import { declareDerivation, readDerivationDeclaration } from '../trust/taint.ts';
-import { emptyQuoteVerifyStats, groundSource, isDreamOwnedPage, resolveVerifyPrior, verifyDreamPage, type GroundedSource, type GroundingPass } from './synthesize-verify.ts';
+import { addGroundingCounts, addVerifyStats, type ChildVerification } from './synthesize-child-verify.ts';
+import { storedPageTier } from '../trust/page-write.ts';
+import { emptyQuoteVerifyStats, groundSource, isDreamOwnedPage, resolveVerifyPrior, verifyDreamPage, type GroundedSource } from './synthesize-verify.ts';
 import { attributionChecksEnabled } from './attribution-checks.ts';
-import { resolveGroundingDecide } from './grounding-decide.ts';
+import { resolveGroundingDecide, type GroundingDecide } from './grounding-decide.ts';
 import { resolveCycleDate } from './cycle-date.ts';
 import { DEFERRED_READ_LABEL, isPostprocessReadTimeout, pendingOutputsFor, readPostprocessDeferrals, recordPostprocessPass,
   type DeferredRead, type PendingOutput, type PostprocessDeferral } from './synthesize-postprocess-deferral.ts';
 
 interface OutputRef { slug: string; source_id: string; raw_source?: string; seat?: string; first_write_at?: Date; }
-export interface RetainedOutput { job_id: number | bigint; job_key: string; input_slug: string; request: WriteRequest; }
+/** `verification` (GBRA-60): the child verified and stamped the page it wrote (synthesize-child-verify.ts). */
+export interface RetainedOutput { job_id: number | bigint; job_key: string; input_slug: string; request: WriteRequest; verification?: ChildVerification }
 /**
  * An output postprocessing leaves alone for good and reports once (GBRA-130 A-4): a later non-maintenance write
  * moved its page (#6360, revision_conflict), its postprocess request ended without committing (the request's
@@ -74,7 +77,7 @@ export async function loadCommittedSynthesisOutputs(engine: BrainEngine, authori
   return committedRequestsFor(engine, authority, await retainedPutPageCalls(engine, childIds));
 }
 
-interface RetainedCall { job_id: number | bigint; job_key: string; input_slug: string; slug: string; requestId: string; revision: string; started_at?: string }
+interface RetainedCall { job_id: number | bigint; job_key: string; input_slug: string; slug: string; requestId: string; revision: string; started_at?: string; verification?: ChildVerification }
 
 async function retainedPutPageCalls(engine: BrainEngine, childIds: number[]): Promise<RetainedCall[]> {
   if (!childIds.length) return [];
@@ -88,9 +91,11 @@ async function retainedPutPageCalls(engine: BrainEngine, childIds: number[]): Pr
     let requestId: string | undefined;
     try { requestId = parseWriteRequestId(t.input?.request_id); } catch { return []; }
     const startedAt = t.started_at ? new Date(t.started_at) : null;
+    const verification = t.input?.dream_verify as ChildVerification | undefined;
     return requestId && typeof inputSlug === 'string' && typeof revision === 'string'
       ? [{ job_id: t.job_id, job_key: t.job_key, input_slug: inputSlug, slug: journaledPageSlug(inputSlug), requestId, revision,
-        ...(startedAt && !Number.isNaN(startedAt.getTime()) ? { started_at: startedAt.toISOString() } : {}) }] : [];
+        ...(startedAt && !Number.isNaN(startedAt.getTime()) ? { started_at: startedAt.toISOString() } : {}),
+        ...(typeof verification?.transcript_hash === 'string' ? { verification } : {}) }] : [];
   });
 }
 
@@ -109,7 +114,7 @@ async function committedRequestsFor(engine: BrainEngine, authority: MaintenanceA
     [[...new Set(calls.map(c => c.requestId))], authority.writer.sourceId, authority.writer.sourceIncarnation]);
   return requests.flatMap(({ request }) => calls
     .filter(c => c.requestId === String(request.request_id) && c.slug === request.slug && c.revision === request.outcome?.revision)
-    .map(c => ({ job_id: c.job_id, job_key: c.job_key, input_slug: c.input_slug, request })));
+    .map(c => ({ job_id: c.job_id, job_key: c.job_key, input_slug: c.input_slug, request, ...(c.verification ? { verification: c.verification } : {}) })));
 }
 
 /** Child outputs for postprocessing, or the outputs to carry when the committed-outputs read hit the statement timeout (#6757). */
@@ -165,7 +170,7 @@ export async function postprocessManagedSynthesis(
   childIds: number[],
   jobRawSource: Map<number, string>,
   transcripts: DiscoveredTranscript[],
-  opts: { cycleDate: string; quoteVerify: boolean; sinceByTranscript: Map<string, Date>; signal?: AbortSignal; grounding?: GroundingPass;
+  opts: { cycleDate: string; quoteVerify: boolean; sinceByTranscript: Map<string, Date>; signal?: AbortSignal; grounding?: GroundingDecide;
     /** The child outputs slug discovery already loaded (loadCommittedOutputsOrDefer). */
     committedOutputs?: CommittedOutputs;
     /** #5575 I2: files under it are third-party speech; their outputs publish external_untrusted. */
@@ -297,7 +302,7 @@ export async function postprocessManagedSynthesis(
       }
     }
     await authorizeStoredRequest(engine, output.request);
-    let content: string;
+    let content: string, unchanged = false;
     if (prior) {
       if (prior.intent?.kind !== 'managed_maintenance_page' || prior.intent.expected_revision !== base || typeof prior.intent.content !== 'string') {
         settled.push(outputRequestId);
@@ -311,11 +316,18 @@ export async function postprocessManagedSynthesis(
       if (!snapshot) throw new Error(`synthesis postprocess: no snapshot for ${ref.slug}`);
       const firstDate = snapshot.page.frontmatter.dream_created_cycle_date || snapshot.page.frontmatter.dream_cycle_date || opts.cycleDate;
       const since = ref.first_write_at ?? opts.sinceByTranscript.get(transcript.filePath);
-      let page = isDreamOwnedPage(snapshot.page, since) ? { ...snapshot.page, frontmatter: { ...snapshot.page.frontmatter, dream_generated: true,
+      // GBRA-60: the child stamped (and, with quote_verify, verified) this page against the same transcript and nothing
+      // moved it since, so its stamp stands, as a committed postprocess would on a replay, and its stats count.
+      const child = output.verification?.transcript_hash === hash && snapshot.revision === revision ? output.verification : undefined;
+      let page = !child && isDreamOwnedPage(snapshot.page, since) ? { ...snapshot.page, frontmatter: { ...snapshot.page.frontmatter, dream_generated: true,
         dream_cycle_date: firstDate, dream_created_cycle_date: firstDate, raw_source: path, ...(transcript.seat ? { seat: transcript.seat } : {}) } } : snapshot.page;
       if (opts.quoteVerify) {
-        const prior = since ? await resolveVerifyPrior(engine, snapshot.page, ref.source_id, since) : null;
-        if (prior === 'unchanged') stats.skipped_unchanged++;
+        const prior = child?.quote_verify ? 'child' : since ? await resolveVerifyPrior(engine, snapshot.page, ref.source_id, since) : null;
+        if (prior === 'child') {
+          addVerifyStats(stats, child!.stats);
+          if (opts.grounding && child!.grounding) addGroundingCounts(opts.grounding.stats, child!.grounding);
+        }
+        else if (prior === 'unchanged') stats.skipped_unchanged++;
         else {
           if (prior) stats.preexisting_diffed++;
           const source = grounded?.path === transcript.filePath ? grounded : (grounded = groundSource(transcript.filePath, transcript.content));
@@ -326,12 +338,21 @@ export async function postprocessManagedSynthesis(
         }
       }
       content = serializePageToMarkdown(page, snapshot.tags);
+      unchanged = content === serializePageToMarkdown(snapshot.page, snapshot.tags);
     }
     throwIfAborted(opts.signal, '[dream] synthesis postprocessing');
     // #5575 I2: the page publishes at its transcript's tier (lowered even when the content is unchanged), with its input edges.
     // A retained request replays the declaration it was admitted with (none for one admitted before tiers).
     const derivation = prior ? readDerivationDeclaration(prior.intent?.derivation) ?? undefined
       : await transcriptDerivation(engine, transcript, opts.meetingTranscriptsDir).then(d => declareDerivation(d.trust, d.inputs));
+    // GBRA-60: a page the child already wrote verified and stamped, at the transcript's tier with no input edges to
+    // record, has nothing left to publish; skipping keeps a strict source at one commit per output.
+    if (unchanged && derivation && !derivation.inputs.length && await storedPageTier(engine, ref.source_id, ref.slug) === derivation.tier) {
+      settled.push(outputRequestId);
+      writtenRefs.push(finalizedRef);
+      finalizedRefs.push(finalizedRef);
+      return;
+    }
     try {
       await publishMaintenancePage(engine, authority, ref.slug, content, { requestId, expectedRevision: base, derivation });
     } catch (error) {

@@ -9,6 +9,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { renderFactsTable } from '../src/core/facts-fence.ts';
 import { renderTakesFence } from '../src/core/takes-fence.ts';
+import { emptyFenceBlock } from '../src/core/generations/fence.ts';
 
 /**
  * The canonical projection mirrors the body's fences into the takes and facts
@@ -87,6 +88,10 @@ test('a code example beside the real fence does not block ordinary writes', asyn
 
   await put('deleted', `${example}\n${fences('Example belief', 'Example fact')}`);
   await put('deleted', example);
+  expect(await rows('deleted')).toEqual({ takes: 1, facts: 1 });
+  expect(await engine.executeRaw("SELECT kind, held_reason FROM derived_generations WHERE owner_key='page:deleted' AND state='held' ORDER BY kind"))
+    .toEqual([{ kind: 'fact_fence', held_reason: 'fence_absent' }, { kind: 'take_fence', held_reason: 'fence_absent' }]);
+  await put('deleted', `${example}\n${emptyFenceBlock('takes')}\n${emptyFenceBlock('facts')}`);
   expect(await rows('deleted')).toEqual({ takes: 0, facts: 0 });
 });
 

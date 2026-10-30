@@ -29,13 +29,14 @@ const list_skills: Operation = {
   description: LIST_SKILLS_DESCRIPTION,
   publishGateKey: 'mcp.publish_skills',
   params: {
-    schema_version: { type: 'number', description: '2 for the source-qualified catalog.' },
+    schema_version: { type: 'number', description: '2 for the source-qualified catalog.', fullSurfaceOnly: true },
     limit: { type: 'number', description: 'Page size or rank cap (1-100).' },
-    cursor: { type: 'string', description: 'Version 2 cursor.' },
-    source_id: { type: 'string', description: 'Version 2: one source.' },
+    cursor: { type: 'string', description: 'Version 2 cursor.', fullSurfaceOnly: true },
+    source_id: { type: 'string', description: 'Version 2: one source.', fullSurfaceOnly: true },
     section: {
       type: 'string',
       description: 'Only this routing section.',
+      fullSurfaceOnly: true,
     },
     query: {
       type: 'string',
@@ -81,12 +82,12 @@ const get_skill: Operation = {
   description: GET_SKILL_DESCRIPTION,
   publishGateKey: 'mcp.publish_skills',
   params: {
-    schema_version: { type: 'number', description: '2 for an exact canonical revision.' },
-    qualified_id: { type: 'string', description: 'Version 2 skill id.' },
-    expected_brain_id: { type: 'string', description: 'Brain id to assert.' },
-    source_incarnation: { type: 'string', description: 'From discovery.' },
-    pack_id: { type: 'string', description: 'Pack id.' },
-    revision: { type: 'string', description: 'Exact revision (default: head).' },
+    schema_version: { type: 'number', description: '2 for an exact canonical revision.', fullSurfaceOnly: true },
+    qualified_id: { type: 'string', description: 'Version 2 skill id.', fullSurfaceOnly: true },
+    expected_brain_id: { type: 'string', description: 'Brain id to assert.', fullSurfaceOnly: true },
+    source_incarnation: { type: 'string', description: 'From discovery.', fullSurfaceOnly: true },
+    pack_id: { type: 'string', description: 'Pack id.', fullSurfaceOnly: true },
+    revision: { type: 'string', description: 'Exact revision (default: head).', fullSurfaceOnly: true },
     name: {
       type: 'string',
       description: 'Skill name from list_skills.',
@@ -109,8 +110,7 @@ const get_skill: Operation = {
     // skill (confined to that source's pack root) rather than the host catalog.
     if (typeof p.source_id === 'string' && p.source_id.length > 0) {
       const brl = await import('../skillpack/brain-resident-locate.ts');
-      const slug = typeof p.name === 'string' ? p.name : '';
-      return brl.getResidentSkillDetail(ctx, p.source_id, slug);
+      return brl.getResidentSkillDetail(ctx, p.source_id, typeof p.name === 'string' ? p.name : '');
     }
     const override = await sc.readMcpSkillsDir(ctx);
     const { dir } = sc.resolveSkillsDir(ctx, override);
@@ -145,11 +145,11 @@ const get_skill_asset: Operation = {
   outputRedaction: { exempt: 'skill catalog files are installed instructions read verbatim; redaction would corrupt approved revisions' },
   scope: 'read', publishGateKey: 'mcp.publish_skills',
   cliHints: { name: 'skill-asset', positional: [] },
-  params: { source_id: sharedSkillKeyParams.source_id, source_incarnation: sharedSkillKeyParams.source_incarnation,
+  params: { source_id: sharedSkillKeyParams.source_id, source_incarnation: { ...sharedSkillKeyParams.source_incarnation, fullSurfaceOnly: true },
     name: { type: 'string', description: 'Skill name.' },
-    pack_id: { type: 'string', description: 'Pack id.' },
-    qualified_id: { type: 'string', description: 'Version 2 skill id.' },
-    expected_brain_id: { type: 'string', description: 'Brain id to assert.' },
+    pack_id: { type: 'string', description: 'Pack id.', fullSurfaceOnly: true },
+    qualified_id: { type: 'string', description: 'Version 2 skill id.', fullSurfaceOnly: true },
+    expected_brain_id: { type: 'string', description: 'Brain id to assert.', fullSurfaceOnly: true },
     revision: { type: 'string', required: true, description: 'Revision from get_skill.' },
     path: { type: 'string', required: true, description: 'Path in that revision manifest.' } },
   handler: async (ctx, p) => (await import('../shared-skills/catalog.ts')).getSharedSkillAsset(ctx, { ...sharedSkillReadSelector(p), path: String(p.path ?? '') }),

@@ -132,6 +132,32 @@ describe('gbrain pages unsearchable', () => {
     await expect(run(['--limit', '0'])).rejects.toMatchObject({ code: 'invalid_params' });
   });
 
+  test('#7193: semantic_unsearchable adds keyword_only to unsearchable, and the headline leads with it', async () => {
+    const out = JSON.parse(await run(['--source', 'default', '--json'])) as Listing & { semantic_unsearchable: number };
+    expect(out.unsearchable).toBe(4);
+    expect(out.semantic_unsearchable).toBe(5);
+    expect(await run(['--source', 'default'])).toContain('5 not reachable by vector search (4 unsearchable + 1 keyword_only)');
+  });
+
+  test('#7193: files held behind sync are counted in awaiting_sync, which no embedding state sees', async () => {
+    const before = JSON.parse(await run(['--source', 'default', '--json'])) as { awaiting_sync: Record<string, unknown> };
+    expect(before.awaiting_sync).toEqual({ held_files: 0, new_files: 0, stale_pages: 0, sync_state: 'not_reported' });
+    const [src] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text AS incarnation FROM sources WHERE id = 'default'");
+    await engine.executeRaw(`INSERT INTO op_checkpoints(op, fingerprint, completed_keys) VALUES ('sync-hold-summary', $1,
+      jsonb_build_array(jsonb_build_object('source_id', 'default', 'incarnation', $2::text, 'count', 3, 'stale', 1)))`, [`default:${src!.incarnation}`, src!.incarnation]);
+    const held = JSON.parse(await run(['--source', 'default', '--json'])) as { awaiting_sync: Record<string, unknown>; counts: Record<string, number> };
+    expect(held.awaiting_sync).toMatchObject({ held_files: 3, new_files: 2, stale_pages: 1 });
+    expect(held.counts.pending).toBe(3);
+    expect(await run(['--source', 'default'])).toContain('3 file(s) held by sync (2 new, 1 newer than their page)');
+  });
+
+  test('#7193: an unknown --source suggests the source it most likely meant', async () => {
+    await engine.executeRaw("INSERT INTO sources(id,name) VALUES('notes-brain','notes-brain') ON CONFLICT DO NOTHING");
+    await expect(run(['--source', 'notes'])).rejects.toThrow('Did you mean "notes-brain"?');
+    await expect(run(['--source', 'defalt'])).rejects.toThrow('Did you mean "default"?');
+    await expect(run(['--source', 'zzzzzzzz'])).rejects.toThrow(/not found or is archived\. Available active sources: run `gbrain sources list` to see registered sources, or create\/restore "zzzzzzzz" before retrying\.$/);
+  });
+
   test('human output names each row and its fix', async () => {
     const out = await run(['--source', 'default']);
     expect(out).toContain('pending');

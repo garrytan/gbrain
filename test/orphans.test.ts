@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import {
   shouldExclude,
   deriveDomain,
@@ -9,6 +9,21 @@ import {
   type OrphanResult,
 } from '../src/commands/orphans.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+
+// --- findOrphans setup failure ---
+
+describe('findOrphans setup failure', () => {
+  test('a policy read that fails starts no heartbeat (nothing keeps writing to stderr after the throw)', async () => {
+    const intervals = spyOn(globalThis, 'setInterval');
+    try {
+      const engine = { getConfig: async () => { throw new Error('config read failed'); }, executeRaw: async () => [] };
+      await expect(findOrphans(engine as never)).rejects.toThrow('config read failed');
+      expect(intervals).not.toHaveBeenCalled();
+    } finally {
+      intervals.mockRestore();
+    }
+  });
+});
 
 // --- shouldExclude ---
 

@@ -38,6 +38,8 @@ export const RACE_SHARD_BUDGET_MS = 55 * 60_000;
 export const RACE_BASE_SHARDS = 6;
 export const RACE_MAX_SHARDS = 12;
 export const RACE_MIN_ITERATIONS = 3;
+/** The 3-iteration floor alone may spill past RACE_MAX_SHARDS into a second group that queues behind the first (stress.yml max-parallel 12). */
+export const RACE_FLOOR_MAX_SHARDS = 24;
 export const EXEMPTION_LABELS = ['master-red', 'flake', 'nightly-red'];
 const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 const BOT = 'github-actions[bot]';
@@ -152,8 +154,10 @@ export function raceHuntHelperImporters(root: string, since = '26 hours ago'): {
  * The race hunt: every listed Postgres arm at 10 iterations within 6 shards
  * of 55 minutes, growing to 12 shards; past that, every file runs at least 3
  * iterations nightly and the spare capacity rotates by day so each file still
- * reaches 10 within the week. Files are never dropped: what does not fit is
- * `unrun` and the job fails "race hunt over budget".
+ * reaches 10 within the week. When even 3 iterations do not fit 12 shards,
+ * every file runs 3 in up to 24 shards, the second 12 queued behind the
+ * first. Files are never dropped: what does not fit is `unrun` and the job
+ * fails "race hunt over budget".
  */
 export function planRaceHunt(root: string, opts: { day: number; extra?: string[]; diagnostic?: boolean }, weights = loadWeights(root)): Plan {
   const list = readArmsList(root);
@@ -178,9 +182,9 @@ export function planRaceHunt(root: string, opts: { day: number; extra?: string[]
       }
     } else {
       depth = new Map();
-      let used = 0;
+      const floor: typeof stress = [];
       for (const f of stress) {
-        if (used + per(f) * RACE_MIN_ITERATIONS <= capacity) { depth.set(f.file, RACE_MIN_ITERATIONS); used += per(f) * RACE_MIN_ITERATIONS; } else unrun.push(f.file);
+        if (planShards([...floor, f], RACE_MIN_ITERATIONS, RACE_SHARD_BUDGET_MS).length <= RACE_FLOOR_MAX_SHARDS) { floor.push(f); depth.set(f.file, RACE_MIN_ITERATIONS); } else unrun.push(f.file);
       }
     }
   }
@@ -398,8 +402,8 @@ export function buildReport(r: ReportInput): { summary: string; errors: string[]
     errors.push(`${missing.length} planned work item(s) left no receipt (shards: ${r.shardsResult}). Why: an unrun iteration is not a pass. Next: read the shard logs and re-run. Docs: ${docs}`);
   }
   if (plan.unrun.length) {
-    lines.push('### Race hunt over budget', '', `These files did not fit ${RACE_MAX_SHARDS} shards × ${RACE_SHARD_BUDGET_MS / 60_000} minutes at ${RACE_MIN_ITERATIONS} iterations and did not run:`, ...plan.unrun.map(f => `- \`${f}\``), '', `Next: speed up the slowest listed files or split the race hunt into a second scheduled run. Docs: ${docs}`, '');
-    errors.push(`race hunt over budget: ${plan.unrun.length} file(s) did not run (${plan.unrun.slice(0, 5).join(', ')}${plan.unrun.length > 5 ? ', …' : ''}). Why: files are never dropped silently. Next: speed up the slowest files or add a second scheduled shard group. Docs: ${docs}`);
+    lines.push('### Race hunt over budget', '', `These files did not fit ${RACE_FLOOR_MAX_SHARDS} shards × ${RACE_SHARD_BUDGET_MS / 60_000} minutes at ${RACE_MIN_ITERATIONS} iterations and did not run:`, ...plan.unrun.map(f => `- \`${f}\``), '', `Next: speed up the slowest listed files or add a third shard group (RACE_FLOOR_MAX_SHARDS). Docs: ${docs}`, '');
+    errors.push(`race hunt over budget: ${plan.unrun.length} file(s) did not run (${plan.unrun.slice(0, 5).join(', ')}${plan.unrun.length > 5 ? ', …' : ''}). Why: files are never dropped silently. Next: speed up the slowest files or add a third shard group (RACE_FLOOR_MAX_SHARDS). Docs: ${docs}`);
   }
   if (plan.notStressed.length) { lines.push('### Not stressed', ''); for (const n of plan.notStressed) lines.push(`- \`${n.file}\`: ${n.reason}`); lines.push(''); }
   const runtimeSkips = r.manifests.flatMap(m => m.files.filter(f => f.status === 'not-stressed'));
@@ -460,8 +464,13 @@ async function main(argv: string[]): Promise<number> {
     let timings: ReturnType<typeof shardTimings> | undefined;
     if (client && process.env.GITHUB_RUN_ID) {
       try {
-        const jobs = await client.request<{ jobs: JobTiming[] }>('GET', `repos/{repo}/actions/runs/${process.env.GITHUB_RUN_ID}/attempts/${process.env.GITHUB_RUN_ATTEMPT ?? 1}/jobs?per_page=100`);
-        timings = shardTimings(jobs.jobs);
+        const jobs: JobTiming[] = [];
+        for (let page = 1; ; page++) {
+          const batch = await client.request<{ total_count: number; jobs: JobTiming[] }>('GET', `repos/{repo}/actions/runs/${process.env.GITHUB_RUN_ID}/attempts/${process.env.GITHUB_RUN_ATTEMPT ?? 1}/jobs?per_page=100&page=${page}`);
+          jobs.push(...batch.jobs);
+          if (batch.jobs.length < 100 || jobs.length >= batch.total_count) break;
+        }
+        timings = shardTimings(jobs);
       } catch { /* timings are informational */ }
     }
     const artifact = process.env.GITHUB_SERVER_URL && repo && process.env.GITHUB_RUN_ID ? `${process.env.GITHUB_SERVER_URL}/${repo}/actions/runs/${process.env.GITHUB_RUN_ID}` : '';

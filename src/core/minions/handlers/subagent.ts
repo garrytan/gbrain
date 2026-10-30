@@ -38,7 +38,7 @@ import type {
 import type { BrainEngine } from '../../engine.ts';
 import type { GBrainConfig } from '../../config.ts';
 import { loadConfig, isConfigTruthy } from '../../config.ts';
-import { buildBrainTools, selectAllowedTools } from '../tools/brain-allowlist.ts';
+import { buildBrainPutPagesTool, buildBrainTools, selectAllowedTools } from '../tools/brain-allowlist.ts';
 import {
   acquireLease,
   releaseLease,
@@ -330,6 +330,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     if (!data.prompt || typeof data.prompt !== 'string') {
       throw new Error('subagent job data.prompt is required (string)');
     }
+    if (!submitted) await (await import('../../cycle/synthesize-source-routing.ts')).refuseChangedSessionSource(engine, data); // #7850
 
     // v0.38 (S1.5 + S1.7) — capability-based gate replaces the v0.31.12
     // Anthropic-only check. The handler now routes between two paths:
@@ -472,7 +473,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       brainId: data.brain_id,
       allowedSlugPrefixes: data.allowed_slug_prefixes,
       // #1586: cycle-resolved source scope for tool-call OperationContexts.
-      sourceId: data.source_id, readBudgetBytes: data.read_budget_bytes,
+      sourceId: data.source_id, readBudgetBytes: data.read_budget_bytes, stageWrites: data.stage_writes === true && !submitted, // GBRA-60: trusted local jobs only
     });
     const selectedTools = selectAllowedTools(registry, data.allowed_tools);
     const guardTools = (tools: ToolDef[], deferEmbeds = false) => guardDelegatedTools(engine, config, submitted, ctx.id, tools, deps.toolRegistry !== undefined, deferEmbeds);
@@ -531,7 +532,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       if (dispatchOneshot) {
         // Rebuild put_page with deferEmbeds so the embed network call leaves
         // the model path (the standing embed machinery backfills).
-        const oneshotRegistry = deps.toolRegistry ?? buildBrainTools({
+        const oneshotToolOpts = {
           subagentId: ctx.id,
           engine,
           config,
@@ -539,7 +540,8 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           allowedSlugPrefixes: data.allowed_slug_prefixes,
           sourceId: data.source_id,
           deferEmbeds: true, readBudgetBytes: data.read_budget_bytes,
-        });
+        };
+        const oneshotRegistry = deps.toolRegistry ?? buildBrainTools(oneshotToolOpts);
         // Honor allowed_tools EXACTLY like the loop registry — a submitter
         // that scoped its job read-only must not gain write capability by
         // setting mode: oneshot (put_page filtered out → no_put_page_tool
@@ -554,6 +556,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           maxOutputTokens,
           turnTimeoutMs,
           putPageTool: oneshotTools.find(t => t.name === 'brain_put_page'),
+          putPagesTool: data.dream_output && !submitted && !deps.toolRegistry && oneshotTools.some(t => t.name === 'brain_put_page') ? buildBrainPutPagesTool(oneshotToolOpts) : undefined,
           leaseKey: gatewayLeaseKey,
           maxConcurrent,
           leaseTtlMs,

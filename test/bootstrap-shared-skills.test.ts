@@ -9,6 +9,7 @@ import { installSharedSkillsConnection } from '../src/core/harness/shared-skills
 import type { SharedSkillsToolCaller } from '../src/core/shared-skills/adapter.ts';
 import { operations } from '../src/core/operations.ts';
 import { HARNESS_CLEANUP_PENDING_EXIT_CODE } from '../src/core/exit-codes.ts';
+import { BRAIN_FIRST_BEGIN, BRAIN_FIRST_END } from '../src/core/setup/brain-first.ts';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -112,7 +113,10 @@ test('fresh parent follows the catalog with an owned native router and a registr
   expect(adapter.native_registration).toBe('installed');
   expect(readFileSync(adapter.native_router_path, 'utf8')).toContain('configured MCP connection "gbrain"');
   expect(readFileSync(adapter.native_router_path, 'utf8')).toContain('sync_brain_skills');
-  expect(readFileSync(join(f.root, 'codex', 'AGENTS.md'), 'utf8')).toBe('Preserve this agent identity.');
+  const agents = readFileSync(join(f.root, 'codex', 'AGENTS.md'), 'utf8');
+  expect(agents.split(BRAIN_FIRST_BEGIN)).toHaveLength(2);
+  expect(agents.slice(0, agents.indexOf(BRAIN_FIRST_BEGIN)).trimEnd()).toBe('Preserve this agent identity.');
+  expect(agents.slice(agents.indexOf(BRAIN_FIRST_END) + BRAIN_FIRST_END.length).trim()).toBe('');
   expect(statSync(join(entry.root, 'credentials.json')).mode & 0o777).toBe(0o600);
   expect(JSON.stringify(r)).not.toContain(mint.token);
   expect(f.output.join('\n')).toContain('native activation remains unverified');

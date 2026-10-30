@@ -104,6 +104,18 @@ export function enterClaimStep(clock: ClaimPhaseClock | undefined, step: string,
   if (clock.step !== step) { clock.step = step; clock.stepSince = now; }
   clock.waitingOn = waitingOn;
 }
+/**
+ * #7436: runs a wait on something other than the database (a Git child process) inside the current step, with the
+ * stamp's `waiting_on` naming it until it ends; the step keeps its name, so a stall reads `step=link_resolution
+ * waiting_on=git` instead of blaming the last statement. Checks the preparation's cancellation first, like a step boundary.
+ */
+export async function waitingOnWhile<T>(clock: ClaimPhaseClock | undefined, waitingOn: WaitingOn, run: () => Promise<T>): Promise<T> {
+  clock?.signal?.throwIfAborted();
+  if (!clock) return run();
+  const prior = clock.waitingOn;
+  clock.waitingOn = waitingOn;
+  try { return await run(); } finally { if (clock.waitingOn === waitingOn) clock.waitingOn = prior; }
+}
 /** #6317: the label of a raw statement for the stamp: its first keyword and the first table it names; never text or parameters. */
 export function sqlLabel(sql: string): string {
   const text = sql.replace(/\s+/g, ' ').trim();
@@ -126,7 +138,7 @@ export function isOwnerThisProcess(owner: Pick<ClaimOwner, 'pid' | 'nonce'> | nu
   return claimOwnerIsThisProcess(owner);
 }
 
-const OWNER_COMMANDS = new Set(['sync', 'serve', 'jobs', 'autopilot', 'mcp', 'dream', 'cycle', 'sources', 'migrate-graduation', 'put', 'import']);
+export const OWNER_COMMANDS: ReadonlySet<string> = new Set(['sync', 'serve', 'jobs', 'autopilot', 'mcp', 'dream', 'cycle', 'sources', 'migrate-graduation', 'put', 'import']);
 let ownerOverride: ClaimOwner | undefined;
 /** The gbrain command this process runs (`cli` when none is recognisable). */
 export function claimOwnerKind(): string {
@@ -134,6 +146,14 @@ export function claimOwnerKind(): string {
   const command = process.argv.slice(2).find(arg => !arg.startsWith('-'));
   return command && OWNER_COMMANDS.has(command) ? command : 'cli';
 }
+let oneShotCommand = false;
+/**
+ * GBRA-156: set by the CLI's shared-operation dispatch, which runs one operation and exits. The consumer such a process
+ * starts (service.ts) leaves its housekeeping off the write's path and rations it per host (housekeeping-turn.ts), and its
+ * pool opens a second connection beside the first (db.ts).
+ */
+export function markOneShotCommand(on = true): void { oneShotCommand = on; }
+export function isOneShotCommand(): boolean { return oneShotCommand; }
 /** The owning process for the stamp: the gbrain command this process runs (`cli` when none is recognisable), its pid, nonce, pid namespace and build. */
 export function claimOwner(): ClaimOwner {
   if (ownerOverride) return ownerOverride;

@@ -5,7 +5,7 @@
  */
 import { expect } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
@@ -13,6 +13,7 @@ import { submitPageMutation } from '../../src/core/persistence/page-mutations.ts
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { runPersistenceEffects } from '../../src/core/persistence/effects.ts';
 import { retryParkedEffects, retryRequestEffects } from '../../src/core/persistence/effect-retry.ts';
+import { retrySourceParkedCode } from '../../src/core/persistence/git-durability-administration.ts';
 import { compactWriteReceipts } from '../../src/core/persistence/journal.ts';
 import { declarePersistenceProtocol } from '../../src/core/persistence/protocol.ts';
 import { localHostId } from '../../src/core/persistence/identity.ts';
@@ -43,24 +44,33 @@ async function resetEffect(engine: BrainEngine, id: number, data: Record<string,
       claim_expires_at=NULL,error_code=NULL,outcome=NULL WHERE id=$1`, [id, JSON.stringify(data)]);
   });
 }
-/** Runs one effect attempt at a time with every other effect deferred. */
-async function runOnly(engine: BrainEngine, ctx: OperationContext, id: number, times = 1) {
+/** Runs one effect attempt at a time with every other effect deferred; `lockWaitMs` shortens a contended worktree wait. */
+async function runOnly(engine: BrainEngine, ctx: OperationContext, id: number, times = 1, lockWaitMs?: number) {
   await disposePersistenceConsumer(engine);
   for (let i = 0; i < times; i++) {
     await engine.transaction(async tx => {
       await declarePersistenceProtocol(tx);
       await tx.executeRaw("UPDATE persistence_effects SET next_attempt_at=CASE WHEN id=$1 THEN now() ELSE now()+interval '1 hour' END", [id]);
     });
-    await runPersistenceEffects(engine, ctx.config, { hostId: localHostId(), limit: 1 });
+    await runPersistenceEffects(engine, ctx.config, { hostId: localHostId(), limit: 1, lockWaitMs });
   }
 }
+const gitRepo = (root: string) => { writeFileSync(join(root, '.gitignore'), '\n'); durableGitRepo(root, ['.gitignore']); };
 const ignoredPages = (root: string) => { writeFileSync(join(root, '.gitignore'), 'aa/\n'); durableGitRepo(root, ['.gitignore']); };
 const unignore = (root: string) => { writeFileSync(join(root, '.gitignore'), '\n'); git(root, 'commit', '-q', '-am', 'Stop ignoring aa/'); };
 const committed = (root: string) => git(root, 'log', '--name-only', '--pretty=format:');
+/** A target Git cannot stage (`git_target_unsafe`, counted toward parking): its page file replaced by a directory. Returns the repair. */
+function unstageable(root: string, slug: string): () => void {
+  const file = join(root, `${slug}.md`);
+  const bytes = readFileSync(file);
+  rmSync(file); mkdirSync(file);
+  return () => { rmSync(file, { recursive: true }); writeFileSync(file, bytes); };
+}
 
 export async function singleTargetParksAndRetries(databaseUrl?: string) {
   await managedBrain(async ({ engine, ctx, root }) => {
-    await put(ctx, 'aa/page', 'Ignored by Git.');
+    await put(ctx, 'aa/page', 'Unstageable by Git.');
+    const restore = unstageable(root, 'aa/page');
     const effect = await gitEffect(engine, 'aa/page');
     await resetEffect(engine, effect.id, { slug: 'aa/page', page_id: effect.data.page_id, relative_path: effect.data.relative_path, expected_hash: effect.data.expected_hash });
     await runOnly(engine, ctx, effect.id, 4);
@@ -72,11 +82,12 @@ export async function singleTargetParksAndRetries(databaseUrl?: string) {
     expect((await gitEffect(engine, 'aa/page')).attempts).toBe(5);
 
     const doctor = await checkParkedEffects(engine);
-    expect(doctor).toMatchObject({ status: 'warn', details: { parked_effects: 1, exact: true, truncated: false } });
-    expect(doctor.message).toContain(`gbrain sources writer retry-effects default --request-id ${effect.request_id} --dry-run`);
-    expect(doctor.message).toContain('aa/page (git_target_unsafe)');
+    expect(doctor).toMatchObject({ status: 'warn', details: { parked_effects: 1, exact: true, truncated: false,
+      parked_groups: [{ source_id: 'default', code: 'git_target_unsafe', effects: 1, targets: 1 }] } });
+    expect(doctor.message).toContain('default git_target_unsafe: 1 target(s) in 1 Git effect(s)');
+    expect(doctor.message).toContain('gbrain sources writer retry-effects default --parked-code git_target_unsafe --dry-run');
 
-    unignore(root);
+    restore();
     expect(await retryParkedEffects(engine, 'default', effect.request_id, true)).toMatchObject({ dry_run: true,
       effects: [{ kind: 'git', parked_targets: 1, state: 'parked', action: 'would_retry' }] });
     expect(await gitEffect(engine, 'aa/page')).toMatchObject({ state: 'failed', error_code: 'targets_parked' });
@@ -94,6 +105,33 @@ export async function singleTargetParksAndRetries(databaseUrl?: string) {
     expect(await retryRequestEffects(engine, 'default', effect.request_id, true, ctx.config)).toMatchObject({ kind: 'embedding',
       parked_effects: [{ kind: 'git', state: 'committed', terminal: true }] });
     expect(await checkParkedEffects(engine)).toMatchObject({ status: 'ok', details: { parked_effects: 0 } });
+  }, { databaseUrl, setup: ({ root }) => gitRepo(root) });
+}
+
+/** GBRA-133: a target a .gitignore rule excludes parks at once as git_target_ignored, naming the rule, and retries in bulk once the rule changes. */
+export async function ignoredTargetParksAtOnce(databaseUrl?: string) {
+  await managedBrain(async ({ engine, ctx, root }) => {
+    await put(ctx, 'aa/page', 'Ignored by Git.');
+    const effect = await gitEffect(engine, 'aa/page');
+    await resetEffect(engine, effect.id, { slug: 'aa/page', page_id: effect.data.page_id, relative_path: effect.data.relative_path, expected_hash: effect.data.expected_hash });
+    await runOnly(engine, ctx, effect.id, 3);
+    expect(await gitEffect(engine, 'aa/page')).toMatchObject({ state: 'failed', error_code: 'targets_parked', attempts: 1,
+      data: { parked: [{ slug: 'aa/page', error_code: 'git_target_ignored', rule: '.gitignore:1: aa/' }] } });
+
+    const doctor = await checkParkedEffects(engine);
+    expect(doctor.details).toMatchObject({ parked_effects: 1, parked_groups: [{ source_id: 'default', code: 'git_target_ignored', effects: 1, targets: 1,
+      rule: '.gitignore:1: aa/', command: ['gbrain', 'sources', 'writer', 'retry-effects', 'default', '--parked-code', 'git_target_ignored', '--dry-run'] }] });
+    expect(doctor.message).toContain('Git ignores these files (.gitignore:1: aa/), so a retry parks them again while the rule stands');
+    expect(doctor.message).not.toContain('--request-id');
+
+    expect(await retrySourceParkedCode(engine, 'default', 'git_target_ignored', true)).toMatchObject({ code: 'git_target_ignored', dry_run: true, requests: 1, queued: 1, refused: [] });
+    expect(await gitEffect(engine, 'aa/page')).toMatchObject({ state: 'failed', error_code: 'targets_parked' });
+    unignore(root);
+    expect(await retrySourceParkedCode(engine, 'default', 'git_target_ignored', false)).toMatchObject({ requests: 1, queued: 1, refused: [] });
+    await runOnly(engine, ctx, effect.id);
+    expect(await gitEffect(engine, 'aa/page')).toMatchObject({ state: 'committed', error_code: null });
+    expect(committed(root)).toContain('aa/page.md');
+    expect((await checkParkedEffects(engine)).details).toMatchObject({ parked_effects: 0, parked_groups: [] });
   }, { databaseUrl, setup: ({ root }) => ignoredPages(root) });
 }
 
@@ -102,9 +140,9 @@ export async function scanParksOneTargetAndContinues(databaseUrl?: string) {
     for (const slug of ['aa/page', 'bb', 'cc']) await put(ctx, slug, `Body of ${slug}.`);
     const scan = await gitEffect(engine, 'bb');
     await resetEffect(engine, scan.id, { source_scan: true });
-    await runOnly(engine, ctx, scan.id, 5);
+    await runOnly(engine, ctx, scan.id);
     expect(await gitEffect(engine, 'bb')).toMatchObject({ state: 'queued', data: { after_slug: 'aa/page',
-      parked: [{ slug: 'aa/page', error_code: 'git_target_unsafe' }] } });
+      parked: [{ slug: 'aa/page', error_code: 'git_target_ignored', rule: '.gitignore:1: aa/' }] } });
     await runOnly(engine, ctx, scan.id, 3);
     expect(await gitEffect(engine, 'bb')).toMatchObject({ state: 'failed', error_code: 'targets_parked', data: { after_slug: 'cc' } });
     expect(committed(root)).toContain('cc.md');
@@ -120,19 +158,21 @@ export async function scanParksOneTargetAndContinues(databaseUrl?: string) {
 }
 
 export async function failuresDoNotCarryToAnotherTarget(databaseUrl?: string) {
-  await managedBrain(async ({ engine, ctx }) => {
+  await managedBrain(async ({ engine, ctx, root }) => {
     for (const slug of ['aa/first', 'aa/second', 'cc']) await put(ctx, slug, `Body of ${slug}.`);
+    const [restoreFirst] = ['aa/first', 'aa/second'].map(slug => unstageable(root, slug));
     const scan = await gitEffect(engine, 'cc');
     await resetEffect(engine, scan.id, { source_scan: true });
     await runOnly(engine, ctx, scan.id, 4);
     expect((await gitEffect(engine, 'cc')).data).toMatchObject({ target_failures: 4, failing_target: 'aa/first' });
+    restoreFirst!();
     const first = (await engine.readPageSnapshot('aa/first', { sourceId: 'default' }))!;
     await submitPageMutation(ctx, { operation: 'delete_page', params: { slug: 'aa/first', request_id: randomUUID(), expected_revision: first.revision, purge: true } });
     await runOnly(engine, ctx, scan.id);
-    expect(await gitEffect(engine, 'cc')).toMatchObject({ state: 'queued', error_code: 'git_target_unsafe',
+    expect(await gitEffect(engine, 'cc')).toMatchObject({ state: 'queued', error_code: 'storage_error',
       data: { target_failures: 1, failing_target: 'aa/second' } });
     expect((await gitEffect(engine, 'cc')).data.parked).toBeUndefined();
-  }, { databaseUrl, setup: ({ root }) => ignoredPages(root) });
+  }, { databaseUrl, setup: ({ root }) => gitRepo(root) });
 }
 
 export async function healthyScanAndContentionNeverPark(databaseUrl?: string) {
@@ -142,7 +182,7 @@ export async function healthyScanAndContentionNeverPark(databaseUrl?: string) {
     const scan = await gitEffect(engine, slugs[0]);
     await resetEffect(engine, scan.id, { source_scan: true });
     const lock = await acquireWorktree((await getWorktreeBinding(engine, 'default', localHostId()))!);
-    try { await runOnly(engine, ctx, scan.id, 7); }
+    try { await runOnly(engine, ctx, scan.id, 7, 50); }
     finally { await lock!.release(); }
     const busy = await gitEffect(engine, slugs[0]);
     expect(busy).toMatchObject({ state: 'queued', error_code: 'writer_busy' });

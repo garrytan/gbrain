@@ -8,8 +8,12 @@
  *   gbrain git commit-push --push-only [--keep-checkout] [--path <dir>] [--expect-remote <sha> --resolve <p>=ours|theirs|file:<f>…]
  *   gbrain git commit-push --pull [--path <dir>] [--require-clean]
  *   gbrain git commit-push --dry-run [--path <dir>] [-m <msg>] [--] <paths…>
+ *   gbrain git commit-push --pending [--path <dir>] [-m <msg>]
+ *   gbrain git guard [--install | --uninstall] [--path <dir>] [--json]
  */
+import { realpathSync } from 'node:fs';
 import { commitAndPush, checkoutRoot, pullShared, scopePaths, COMMIT_LOCK_NAME, type Resolution } from '../core/git/commit-push.ts';
+import { guardStatus, installGuard, uninstallGuard } from '../core/git/commit-guard.ts';
 import { appendPushLog } from '../core/brain-repo-durability.ts';
 import { opError } from '../core/ops/contract.ts';
 import { writeCliError } from '../cli/cli-error.ts';
@@ -22,15 +26,22 @@ const HELP = `Usage: gbrain git commit-push [--path <dir>] -m <msg> [--json] [--
        gbrain git commit-push --push-only [--path <dir>] [--branch <b>]
        gbrain git commit-push --push-only [--keep-checkout] [--path <dir>] --expect-remote <sha> --resolve <path>=ours|theirs|file:<file>...
        gbrain git commit-push --pull [--path <dir>] [--require-clean]
+       gbrain git commit-push --pending [--path <dir>] [-m <msg>]
+       gbrain git guard [--install | --uninstall] [--path <dir>] [--json]
 
 Commit only the named paths and push them, safely, in a checkout other agents
 share: a short commit lock and a separate push lock per checkout, no
 rebase/stash/reset of the working tree, remote commits merged in memory, and the
-checkout advanced fast-forward only.
+checkout advanced fast-forward only. In a managed canonical worktree it only
+commits the named paths (committed_local): no fetch, merge, push or checkout
+move; the owner's next Git publish, or --push-only --keep-checkout, pushes it.
+In a checkout with no Git remote it also only commits the named paths
+(committed_local, no_remote); the publishing modes are refused there.
 
 Flags:
   --path <dir>        Checkout to act on (default: the checkout containing the cwd).
-  -m, --message <m>   Commit message (required unless --push-only or --pull).
+  -m, --message <m>   Commit message (required unless --push-only or --pull); repeat it, like git
+                      commit, for more paragraphs (a second -m <trailer> is the body).
   --push-only         Publish commits already on the branch; commit nothing.
   --branch <name>     With --push-only: publish HEAD to this remote branch (one exact name).
   --keep-checkout     With --push-only: never move the checkout and skip its pre-push hook. The one
@@ -43,21 +54,34 @@ Flags:
   --resolve <p>=<v>   After integrate_conflict: which side wins for path p (ours, theirs, file:<merged copy>).
   --expect-remote <sha>  Required with --resolve: the remote commit the choice was made against
                       (printed by integrate_conflict); a remote that moved since is reported again.
+  --pending           Commit the write-through files gbrain wrote but could not commit (the pending
+                      ledger doctor's dirty_age reports), then push.
+  --allow-outside-source-root  Commit and publish files outside the checkout's source root(s)
+                      (git config gbrain.sourceRoot); only after the user agrees.
   --dry-run           Print the paths, branch and lock that would be used; take no lock, write nothing.
   --json              One JSON result (or the error envelope) on stdout.
 
 Paths are relative to --path when it is given (like git -C), else to the current
-directory. Exit 0 on pushed, nothing_to_commit, push_deferred and
+directory. Exit 0 on pushed, committed_local, nothing_to_commit, push_deferred and
 pushed_checkout_lagging (a notice names the blocking files); 4 when the commit is local but no push was
-confirmed (push_unconfirmed); 1 on other failures, each with an "Error [<code>]" line. Guide: docs/guides/shared-checkout-git.md`;
+confirmed (push_unconfirmed); 1 on other failures, each with an "Error [<code>]" line. Guide: docs/guides/shared-checkout-git.md
+
+gbrain git guard [--install | --uninstall]: the opt-in commit guard, a local
+prepare-commit-msg hook that refuses commits in this checkout not made through
+gbrain (git commit, -a and --no-verify included; merges and commits that finish a
+merge, cherry-pick, revert or rebase pass). A person bypasses it once with
+GBRAIN_COMMIT_GUARD=off git <command>. Without a flag it prints whether the guard
+is installed.`;
 
 interface Parsed {
   sub?: string; path?: string; message?: string; branch?: string; expectRemote?: string; json: boolean; pushOnly: boolean; pull: boolean;
   requireClean: boolean; dryRun: boolean; help: boolean; keepCheckout: boolean; paths: string[]; resolve: string[];
+  pending: boolean; allowOutside: boolean; install: boolean; uninstall: boolean;
 }
 
 function parse(args: string[]): Parsed {
-  const p: Parsed = { json: false, pushOnly: false, pull: false, requireClean: false, dryRun: false, help: false, keepCheckout: false, paths: [], resolve: [] };
+  const p: Parsed = { json: false, pushOnly: false, pull: false, requireClean: false, dryRun: false, help: false, keepCheckout: false, paths: [], resolve: [],
+    pending: false, allowOutside: false, install: false, uninstall: false };
   let rest = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -77,8 +101,12 @@ function parse(args: string[]): Parsed {
     else if (a === '--pull') p.pull = true;
     else if (a === '--require-clean') p.requireClean = true;
     else if (a === '--dry-run') p.dryRun = true;
+    else if (a === '--pending') p.pending = true;
+    else if (a === '--allow-outside-source-root') p.allowOutside = true;
+    else if (a === '--install') p.install = true;
+    else if (a === '--uninstall') p.uninstall = true;
     else if (a === '--path' || a.startsWith('--path=') || a === '--repo' || a.startsWith('--repo=')) p.path = take('--path');
-    else if (a === '-m' || a === '--message' || a.startsWith('--message=')) p.message = take('--message');
+    else if (a === '-m' || a === '--message' || a.startsWith('--message=')) { const m = take('--message'); p.message = p.message === undefined ? m : `${p.message}\n\n${m}`; }
     else if (a === '--resolve' || a.startsWith('--resolve=')) p.resolve.push(take('--resolve'));
     else if (a === '--branch' || a.startsWith('--branch=')) p.branch = take('--branch');
     else if (a === '--expect-remote' || a.startsWith('--expect-remote=')) p.expectRemote = take('--expect-remote');
@@ -114,13 +142,16 @@ export async function runGit(args: string[]): Promise<number> {
     const p = parse(args);
     json = p.json;
     if (p.help || !p.sub) { console.log(HELP); return p.sub || p.help ? 0 : 2; }
+    if (p.sub === 'guard') return runGuard(p);
     if (p.sub !== 'commit-push') throw opError('commit_paths_invalid', `Unknown subcommand: gbrain git ${p.sub}.`, HELP.split('\n')[0]);
+    if (p.install || p.uninstall) throw opError('commit_paths_invalid', '--install and --uninstall belong to gbrain git guard.', 'Run gbrain git guard --install.');
     const repo = checkoutRoot(p.path ?? process.cwd());
-    const cwd = p.path ? repo : process.cwd();
+    const cwd = p.path ? realpathSync(p.path) : process.cwd();
     if ((p.pull && p.pushOnly) || (p.pull && (p.message || p.paths.length || p.resolve.length || p.branch))
-      || (p.pushOnly && (p.message || p.paths.length)) || ((p.resolve.length || p.branch || p.expectRemote || p.keepCheckout) && !p.pushOnly)) {
+      || (p.pushOnly && (p.message || p.paths.length)) || ((p.resolve.length || p.branch || p.expectRemote || p.keepCheckout) && !p.pushOnly)
+      || (p.pending && (p.pull || p.pushOnly || p.paths.length)) || (p.allowOutside && p.pull)) {
       throw opError('commit_paths_invalid', 'These flags do not combine.',
-        'Use one mode: -m <msg> -- <paths> (commit + push), --push-only [--keep-checkout] [--branch <b>] [--expect-remote <sha> --resolve ...], or --pull [--require-clean].');
+        'Use one mode: -m <msg> -- <paths> (commit + push), --pending [-m <msg>], --push-only [--keep-checkout] [--branch <b>] [--expect-remote <sha> --resolve ...], or --pull [--require-clean].');
     }
     if (Boolean(p.resolve.length) !== Boolean(p.expectRemote) || (p.expectRemote && !/^[0-9a-f]{7,64}$/i.test(p.expectRemote))) {
       throw opError('commit_paths_invalid', '--resolve and --expect-remote <sha> go together.',
@@ -145,13 +176,25 @@ export async function runGit(args: string[]): Promise<number> {
     }
 
     const result = commitAndPush({
-      repo, cwd, paths: p.paths, message: p.message, pushOnly: p.pushOnly, advanceOnlyWhenClean: p.requireClean,
+      repo, cwd, paths: p.paths, pushOnly: p.pushOnly, advanceOnlyWhenClean: p.requireClean,
+      message: p.pending ? p.message ?? 'gbrain: commit pending write-through files' : p.message,
+      ...(p.pending ? { pending: true } : {}),
+      ...(p.allowOutside ? { allowOutsideSourceRoot: true } : {}),
       ...(p.keepCheckout ? { keepCheckout: true } : {}),
       ...(p.branch ? { branch: p.branch } : {}),
       ...(p.resolve.length ? { resolutions: parseResolutions(p.resolve), expectRemote: p.expectRemote } : {}),
     });
     if (result.outcome === 'push_deferred') {
       emit(json, { ...result, repo }, `push deferred: another push is running in ${repo} and will publish HEAD too`);
+      return 0;
+    }
+    if (result.no_remote) {
+      emit(json, { ...result, repo }, result.committed ? `committed ${result.committed.slice(0, 7)} on ${result.branch}; not pushed: ${repo} has no Git remote (add one with git remote add origin <url>, then gbrain git commit-push --push-only)`
+        : `nothing to commit; not pushed: ${repo} has no Git remote`);
+      return 0;
+    }
+    if (result.outcome === 'committed_local') {
+      emit(json, { ...result, repo }, `committed ${result.sha!.slice(0, 7)} on ${result.branch}; not pushed: this is a managed checkout, so the owner's next Git publish pushes it (or gbrain git commit-push --push-only --keep-checkout)`);
       return 0;
     }
     appendPushLog(result.outcome === 'nothing_to_commit' || result.confirmed === 'remote' ? 'nothing' : result.integrated ? 'ok-after-merge' : 'ok',
@@ -161,13 +204,19 @@ export async function runGit(args: string[]): Promise<number> {
     emit(json, { ...result, repo },
       result.outcome === 'nothing_to_commit' ? `nothing to commit; ${result.remote}/${result.branch} at ${short}`
         : `pushed ${short} to ${result.remote}/${result.branch}${result.integrated ? `; merged ${result.integrated} remote commit(s)` : ''}; checkout ${result.checkout}`);
+    if (result.quarantined && !json) {
+      process.stderr.write(`[gbrain notice] quarantine: the remote also changed ${result.quarantined.paths.join(', ')}; its version was published and this machine's version is kept under ${result.quarantined.ref}. gbrain doctor lists it (quarantined_changes).\n`);
+    }
+    if (result.superseded_remote_paths && !json) {
+      process.stderr.write(`[gbrain notice] kept this machine's version of ${result.superseded_remote_paths.join(', ')}: the remote held a version this checkout had already replaced. See docs/guides/shared-checkout-git.md#conflicts.\n`);
+    }
     if (result.outcome === 'pushed_checkout_lagging' && !json) {
       process.stderr.write(`[gbrain notice] the push landed but this checkout was not advanced: ${result.lagging_reason}. The next commit-push or --pull catches it up.\n`);
     }
     return 0;
   } catch (e) {
     const code = (e as { code?: string }).code;
-    if (code === 'push_unconfirmed' || code === 'integrate_conflict') {
+    if (code === 'push_unconfirmed' || code === 'integrate_conflict' || code === 'commit_outside_source_root') {
       try {
         const bi = args.indexOf('--branch');
         const branch = bi !== -1 && args[bi + 1] ? args[bi + 1].replace(/^refs\/heads\//, '') : currentBranchOf(args);
@@ -176,6 +225,16 @@ export async function runGit(args: string[]): Promise<number> {
     }
     return writeCliError(e, 'git commit-push', { json });
   }
+}
+
+function runGuard(p: Parsed): number {
+  if (p.install && p.uninstall) throw opError('commit_paths_invalid', '--install and --uninstall do not combine.', 'Pass one of them, or neither for the status.');
+  const repo = checkoutRoot(p.path ?? process.cwd());
+  const s = p.install ? installGuard(repo) : p.uninstall ? uninstallGuard(repo) : { ...guardStatus(repo), changed: false };
+  emit(p.json, { ...s }, p.install ? `commit guard ${s.changed ? 'installed' : 'already current'}: ${s.hook}`
+    : p.uninstall ? (s.changed ? `commit guard removed: ${s.hook}` : 'commit guard was not installed')
+    : s.installed ? `commit guard installed: ${s.hook}` : s.foreign ? `not installed; ${s.hook} is another tool's hook` : 'commit guard not installed (gbrain git guard --install)');
+  return 0;
 }
 
 function currentBranchOf(args: string[]): string {

@@ -2,7 +2,7 @@
  * #7160: name-variant matching for entity lookup (pure). Synthetic names only.
  */
 import { describe, expect, test } from 'bun:test';
-import { editDistance, hasLeadingTitle, matchNameVariant, parsePersonName, probeWords } from '../src/core/entities/name-variants.ts';
+import { editDistance, givenNameVariants, hasLeadingTitle, matchNameVariant, parsePersonName, probeWords } from '../src/core/entities/name-variants.ts';
 
 describe('matchNameVariant', () => {
   const cases: Array<[string, string, string | null]> = [
@@ -54,5 +54,29 @@ describe('helpers', () => {
   });
   test('probeWords keeps core words of three or more letters', () => {
     expect(probeWords('Dr. A. Example')).toEqual(['example']);
+  });
+});
+
+describe('givenNameVariants (#7471)', () => {
+  test('swaps the given name for each other form in its groups', () => {
+    expect(givenNameVariants('Matt Examplesurname')).toEqual(['matthew examplesurname']);
+    expect(givenNameVariants('Matthew Examplesurname')).toEqual(['matt examplesurname']);
+    expect(givenNameVariants('Bob Samplename')).toEqual(['robert samplename', 'rob samplename', 'bobby samplename', 'robbie samplename', 'bert samplename']);
+  });
+  test('keeps leading titles and swaps the word after them', () => {
+    expect(givenNameVariants('Dr. Matt Examplesurname')).toEqual(['dr matthew examplesurname']);
+  });
+  test('skips forms full-text search drops as stopwords', () => {
+    expect(givenNameVariants('Bill Example')).not.toContain('will example');
+    expect(givenNameVariants('Donald Example')).toEqual(['donnie example']);
+  });
+  test('needs 2-4 words, a surname after the given name and a known given name', () => {
+    expect(givenNameVariants('Matt')).toEqual([]);
+    expect(givenNameVariants('Dr Matt')).toEqual([]);
+    expect(givenNameVariants('Matt and the quarterly planning notes')).toEqual([]);
+    expect(givenNameVariants('Acme Example')).toEqual([]);
+  });
+  test('caps the variants', () => {
+    expect(givenNameVariants('Bob Samplename', 2)).toEqual(['robert samplename', 'rob samplename']);
   });
 });

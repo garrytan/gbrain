@@ -1,7 +1,7 @@
 /**
  * Driver for the crash robot phase of the persistence gate. For each
- * schedule (the five cross-boundary sequences first, then seeded random
- * sequences until the time budget runs out) it runs a counting pass that
+ * schedule (the cross-boundary sequences first, then the fixed list of seeded
+ * random sequences, ROBOT_RANDOM_SEEDS plus any exploration seeds) it runs a counting pass that
  * finds every seam the schedule reaches, then one process-separated run per
  * chosen crash point: a worker freezes at the seam, the driver SIGKILLs it,
  * and a fresh worker recovers, resubmits the interrupted requests and
@@ -29,11 +29,24 @@ export const PROCESS_FAULTS: ProcessFault[] = ['stale_index_lock', 'hung_git', '
  * owner's claim lease (requests 30 s, effects 2 minutes): a publication seam
  * does when the dead owner also held an effect claim, and the pooler
  * disconnect fault holds its run for about two minutes. A Postgres run with a
- * budget under FULL_ROBOT_SECONDS skips them and lists them in the manifest
+ * run of the `pr` scope skips them and lists them in the manifest
  * (`lease_bound_seams_skipped`, `lease_bound_faults_skipped`); full runs
  * (master, nightly, manual) crash every seam and run every fault.
  */
-export const FULL_ROBOT_SECONDS = 300;
+export type RobotScope = 'pr' | 'full';
+/**
+ * The random sequences every run executes, whatever its event, so two runs of
+ * one tree cover the same schedules and a passed run can be reused for an
+ * identical tree. 5108, 5109, 5113, 5115 and 5116 are the shrunk
+ * fence_absent fixtures of #7435.
+ */
+export const ROBOT_RANDOM_SEEDS: readonly number[] = [5105, 5106, 5107, 5108, 5109, 5113, 5115, 5116];
+/** Seeds from 5109 to 5116 not in ROBOT_RANDOM_SEEDS: the nightly runs one of them each night. */
+export const ROBOT_ROTATION_SEEDS: readonly number[] = [5110, 5111, 5112, 5114];
+/** The nightly's exploration seeds for a UTC day number: one rotation seed (each within four nights) and one never run before. */
+export function explorationSeeds(day: number): number[] {
+  return [ROBOT_ROTATION_SEEDS[day % ROBOT_ROTATION_SEEDS.length]!, 5117 + day];
+}
 const LEASE_BOUND_PUBLICATION_SEAMS: readonly FaultPoint[] = ['publication:prepared', 'publication:before_publication', 'publication:after_publication'];
 export function leaseBoundSeam(point: FaultPoint): boolean {
   return point.startsWith('effect:') || point === 'consumer:prepared' || LEASE_BOUND_PUBLICATION_SEAMS.includes(point);
@@ -64,7 +77,12 @@ export function runFailed(run: RobotRun): boolean {
   return run.violations.length > 0 || run.hook_error !== undefined || (run.fault_not_reached === true && !unreachedAllowed(run));
 }
 export interface RobotOptions {
+  /** `seconds` is the ceiling: a run past it is reported `over_budget`. */
   engine: 'pglite' | 'postgres'; seed: number; seconds: number; scratch: string; home: string;
+  /** `full` (default) crashes every seam; `pr` skips the Postgres lease-bound ones. */
+  scope?: RobotScope;
+  /** Random seeds run after ROBOT_RANDOM_SEEDS (the nightly's explorationSeeds). */
+  extraSeeds?: readonly number[];
   admin?: ReturnType<typeof postgres>; databaseUrl?: string; databases: string[];
   /** A transaction-mode PgBouncer URL: Postgres workers then connect through it (prepared statements off). */
   pooledUrl?: string;
@@ -170,13 +188,14 @@ export async function runRobotPhase(o: RobotOptions) {
   }
 
   const rand = random(o.seed);
-  const budgetMs = o.seconds * 1000;
-  const over = () => performance.now() - started > budgetMs;
+  const scope = o.scope ?? 'full';
   // Every cross-boundary sequence runs uncrashed, then each seam it reaches is crashed once,
   // seams first covered across sequences (a seam no run has crashed yet goes first).
   const fixed = crossBoundarySequences(ROBOT_TOPOLOGY, o.seed);
   const plan: { schedule: Schedule; point: FaultPoint; count: number }[] = [];
-  const skipLease = o.engine === 'postgres' && o.seconds < FULL_ROBOT_SECONDS;
+  const skipLease = o.engine === 'postgres' && scope === 'pr';
+  // A full PGLite run crashes every seam of every sequence; Postgres and pull requests crash each seam once.
+  const everySeam = scope === 'full' && o.engine === 'pglite';
   const skipped = new Set<string>();
   for (const schedule of fixed) {
     const counted = await execute(schedule, 'count'); record(counted);
@@ -190,9 +209,7 @@ export async function runRobotPhase(o: RobotOptions) {
   plan.sort((x, y) => x.point.localeCompare(y.point) || turn(x) - turn(y));
   const firsts = plan.filter((x, i) => plan.findIndex(y => y.point === x.point) === i);
   const ordered = [...firsts, ...plan.filter(x => !firsts.includes(x))];
-  for (const [i, item] of ordered.entries()) {
-    const mandatory = i < firsts.length;
-    if (!mandatory && over()) break;
+  for (const item of everySeam ? ordered : firsts) {
     record(await execute(item.schedule, 'run', { fault: { point: item.point, nth: 1 + Math.floor(rand() * item.count) } }));
   }
   const skippedFaults = new Set<ProcessFault>();
@@ -204,16 +221,19 @@ export async function runRobotPhase(o: RobotOptions) {
   // serve killed right after the facts-absorb job's extraction commits; the job then runs again.
   record(await execute({ ...fixed[1], ops: [], groups: [] }, 'run', { process: 'facts_absorb_kill',
     fault: { point: 'publication:after_commit', nth: 1, operation: 'extract_facts' } }));
-  // Random sequences fill the rest of the budget.
-  for (let i = 0; !over(); i++) {
-    const schedule = randomSchedule(ROBOT_TOPOLOGY, (o.seed + 1 + i) >>> 0, 24);
+  // The fixed random sequences, each counted and crashed once. On Postgres the crash avoids the lease-bound
+  // seams: the cross-boundary sequences already crash each of them once.
+  for (const seed of [...ROBOT_RANDOM_SEEDS, ...(o.extraSeeds ?? [])]) {
+    const schedule = randomSchedule(ROBOT_TOPOLOGY, seed >>> 0, 24);
     const counted = await execute(schedule, 'count'); record(counted);
-    const points = (Object.entries(counted.counts ?? {}) as [FaultPoint, number][]).filter(([point]) => !(skipLease && leaseBoundSeam(point)));
-    if (!points.length || over()) continue;
+    const points = (Object.entries(counted.counts ?? {}) as [FaultPoint, number][]).filter(([point]) => !(o.engine === 'postgres' && leaseBoundSeam(point)));
+    if (!points.length) continue;
     const [point, count] = points[Math.floor(rand() * points.length)];
     record(await execute(schedule, 'run', { fault: { point, nth: 1 + Math.floor(rand() * count) } }));
   }
-  return { ...summarize(runs, started, o), lease_bound_seams_skipped: [...skipped].sort(), lease_bound_faults_skipped: [...skippedFaults].sort() };
+  const summary = summarize(runs, started, o);
+  return { ...summary, scope, over_budget: o.seconds > 0 && summary.duration_ms > o.seconds * 1000,
+    lease_bound_seams_skipped: [...skipped].sort(), lease_bound_faults_skipped: [...skippedFaults].sort() };
 }
 
 function summarize(runs: RobotRun[], started: number, o: RobotOptions) {

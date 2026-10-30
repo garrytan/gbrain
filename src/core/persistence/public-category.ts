@@ -50,10 +50,12 @@ export const PUBLIC_BY_CODE: Readonly<Record<string, PublicCategory>> = {
   write_capacity_backpressure: 'transient', capacity_paused: 'transient', sync_drain_lease_held: 'transient', graduation_in_progress: 'transient',
   storage_error: 'storage', recovery_required: 'storage',
   permission_denied: 'permission',
+  connection_inherited_read_only: 'config',
   owner_unavailable: 'config', writer_coordinator_required: 'config', write_quota_exhausted: 'config', write_quota_insufficient: 'config', plan_stale: 'config',
   slug_root_mode_mismatch: 'config', invalid_params: 'config',
   // GBRA-133 (#6712 PR 4b lane F): a file whose text holds NUL bytes, and a committed file whose Git object is gone.
   content_null_bytes: 'content_refused', git_object_missing: 'storage', path_not_utf8: 'content_refused',
+  visibility_noncanonical: 'content_refused',
 };
 
 /** A registry code's class, for a code neither table names. */

@@ -32,7 +32,7 @@ import {
 /** Journaled verbs an agent (remote or local) calls directly; their rows are agent_written unless lowered. */
 export const AGENT_WRITE_OPERATIONS: readonly string[] = [
   'put_page', 'put_pages', 'capture', 'edit_page', 'append_page', 'delete_page', 'restore_page', 'revert_version', 'remember',
-  'add_tag', 'remove_tag', 'add_timeline_entry', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve',
+  'add_tag', 'remove_tag', 'add_timeline_entry', 'add_link', 'remove_link', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve',
   'takes_remove', 'loops_close', 'relink_facts', 'decide_proposal',
 ];
 
@@ -95,7 +95,7 @@ export function requestChannelTrust(row: Pick<WriteRequest, 'id' | 'operation' |
     return effectiveWriteTrust({ channel: 'agent_written', lowerTo: lowered ? [lowered] : [], origin });
   }
   if (kind.startsWith('managed_sync_') || kind.startsWith('managed_maintenance_') || kind.startsWith('managed_facts_')
-    || kind.startsWith('managed_atom_') || OWNER_SOURCE_KINDS.includes(kind)) return undefined;
+    || kind.startsWith('managed_atom_') || kind.startsWith('managed_generation_') || OWNER_SOURCE_KINDS.includes(kind)) return undefined;
   if (AGENT_WRITE_OPERATIONS.includes(row.operation)) {
     const lowered = intentContentOrigin(row.intent);
     return effectiveWriteTrust({ channel: 'agent_written', lowerTo: lowered ? [lowered] : [], origin });

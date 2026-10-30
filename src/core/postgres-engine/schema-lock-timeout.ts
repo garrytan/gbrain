@@ -141,3 +141,24 @@ export async function withSchemaLockTimeout<T>(conn: Queryable, run: () => Promi
     await conn.unsafe(`SET lock_timeout = '${previous.replace(/'/g, '')}'`).catch(() => {});
   }
 }
+
+
+/** #6143: attempts of the schema replay when Postgres aborts it as a deadlock victim. */
+const SCHEMA_REPLAY_DEADLOCK_ATTEMPTS = 3;
+
+/**
+ * #6143: the base-schema replay is one implicit transaction that takes ACCESS EXCLUSIVE locks as it goes (pages'
+ * triggers long before sources' managed_writer_guard), while live readers (the resident consumer's probe, serve queries)
+ * lock tables in their own order, so a reader holding sources that then reads pages deadlocks with it. Postgres aborts
+ * the replay, which waited first, and rolls all of it back, so running it again is safe.
+ */
+export async function retrySchemaReplayOnDeadlock<T>(run: () => Promise<T>, attempt = 1): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if ((error as { code?: unknown }).code !== '40P01' || attempt >= SCHEMA_REPLAY_DEADLOCK_ATTEMPTS) throw error;
+    process.stderr.write(`  Schema replay deadlocked with a concurrent query (40P01); nothing was applied, retrying (${attempt + 1}/${SCHEMA_REPLAY_DEADLOCK_ATTEMPTS})\n`);
+    await new Promise(resolve => setTimeout(resolve, 250 * attempt));
+    return retrySchemaReplayOnDeadlock(run, attempt + 1);
+  }
+}

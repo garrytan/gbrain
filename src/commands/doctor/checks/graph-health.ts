@@ -305,29 +305,45 @@ export const staleMentionsEntry: DoctorEntry = {
 };
 
 async function runTimelineHistory(ctx: DoctorContext): Promise<Check[]> {
-  const { orphanRatioSourceId, progress } = ctx;
+  const { orphanRatioSourceId, progress, only } = ctx;
   const engine = connectedEngine(ctx);
   const checks: Check[] = [];
 
   // 9d. Wave 2 residual-state signals (#5567, #5525): database-only timeline
   // rows and derived pages without explicit visibility. Bounded, never throw.
+  // #7343: under --only, run just the named checks of this entry.
   progress.heartbeat('timeline_history');
   {
-    const { timelineHistoryCheck } = await import('./timeline-history.ts');
-    const { derivedVisibilityCheck } = await import('./derived-visibility.ts');
-    checks.push(await timelineHistoryCheck(engine, orphanRatioSourceId), await derivedVisibilityCheck(engine, orphanRatioSourceId));
+    if (!only || only.has('timeline_history')) {
+      const { timelineHistoryCheck } = await import('./timeline-history.ts');
+      checks.push(await timelineHistoryCheck(engine, orphanRatioSourceId));
+    }
     // Wave checks registered in doctor/wave-checks.ts rather than inline here.
     const { runWaveChecks } = await import('../wave-checks.ts');
-    for (const finding of await runWaveChecks(engine, { only: 'wave', sourceIds: orphanRatioSourceId ? [orphanRatioSourceId] : undefined })) checks.push(finding.check);
+    for (const finding of await runWaveChecks(engine, { only: 'wave', ids: only ?? undefined, sourceIds: orphanRatioSourceId ? [orphanRatioSourceId] : undefined })) checks.push(finding.check);
   }
   return checks;
 }
+
+/** #7276: the privacy check is its own entry, run before the full scans, so its answer never waits on the wave checks' budget. */
+async function runDerivedVisibility(ctx: DoctorContext): Promise<Check[]> {
+  ctx.progress.heartbeat('derived_visibility');
+  const { derivedVisibilityCheck } = await import('./derived-visibility.ts');
+  const checks: Check[] = [];
+  checks.push(await derivedVisibilityCheck(connectedEngine(ctx), ctx.orphanRatioSourceId));
+  return checks;
+}
+
+export const derivedVisibilityEntry: DoctorEntry = {
+  name: 'derived_visibility',
+  emits: ['derived_visibility'],
+  run: runDerivedVisibility,
+};
 
 export const timelineHistoryEntry: DoctorEntry = {
   name: 'timeline_history',
   emits: [
     'timeline_history',
-    'derived_visibility',
     'safe_index_pending',
     'credential_projection_pending',
     'connector_checkpoints',
@@ -353,11 +369,15 @@ export const timelineHistoryEntry: DoctorEntry = {
     'google_calendar_readable',
     'google_api_access',
     'atom_retirements_restorable',
+    'generation_retirements',
+    'generation_held',
+    'generation_pending',
     'extractor_facts_expired',
     'conversation_label_facts',
     'conversation_outcomes_stale',
     'captured_facts_active',
     'facts_redaction_marker',
+    'fact_bulk_dates',
     'loop_facts_drift',
     'ontology_facts_fenced',
     'stale_frontmatter_keys',

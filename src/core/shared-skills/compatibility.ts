@@ -35,7 +35,7 @@ export async function getLegacySharedSkill(ctx: OperationContext, name: unknown,
     throw new OperationError('invalid_params', 'A legacy skill request requires name.', 'Pass name exactly as list_skills returned it.');
   }
   const skill = await getSharedSkill(ctx, { name, source_id: sourceId });
-  if (sourceId) return { source_id: skill.source_id, pack_name: skill.pack_id, slug: skill.name, description: skill.description, body: skill.body };
+  if (sourceId) return { source_id: skill.source_id, pack_name: skill.pack_id, name: skill.name, description: skill.description, body: skill.body };
   const fm = parseSkillFrontmatter(skill.body);
   const tools = skill.requirements.filter(r => r.startsWith('tool:')).map(r => r.slice(5));
   const { sharedSkillToolAccess } = await import('./tool-access.ts');
@@ -62,7 +62,7 @@ export async function listLegacySharedPacks(ctx: OperationContext): Promise<Resi
         active_schema_pack: null, schema_pack_match: null, skills: [], scaffold_spec: null, installed: false };
       packs.push(pack);
     }
-    pack.skills.push({ slug: skill.name, description: skill.description });
+    pack.skills.push({ name: skill.name, description: skill.description });
   }
   return { packs };
 }

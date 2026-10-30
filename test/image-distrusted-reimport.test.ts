@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importImageFile, _resetOcrRunBudgetForTests } from '../src/core/import-file.ts';
-import { embedStaleImages } from '../src/core/embed-stale-images.ts';
+import { embedStaleImages, runEmbedStaleImagesCli } from '../src/core/embed-stale-images.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { configureGateway, resetGateway, __setGenerateTextTransportForTests } from '../src/core/ai/gateway.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -127,6 +127,24 @@ for (const backend of backends) {
         expect(await remoteImageHits(engine)).not.toContain(slug);
       }, 120_000);
     }
+
+    test('#7193: an explicit --images sweep that rebuilds none of its candidates fails and says why', async () => {
+      const engine = await freshEngine(backend);
+      await distrustedImage(engine);
+      const logs: string[] = [];
+      const origLog = console.log;
+      console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+      let swept: Awaited<ReturnType<typeof runEmbedStaleImagesCli>>;
+      try {
+        swept = await withEnv({ GBRAIN_EMBEDDING_MULTIMODAL: 'true', GBRAIN_EMBEDDING_IMAGE_OCR: 'false' }, () =>
+          runEmbedStaleImagesCli(engine, ['--stale', '--images', '--json']));
+      } finally { console.log = origLog; }
+      expect(swept).toMatchObject({ rebuilt: 0, ocr_required: 1, missingFile: 0, status: 'nothing_rebuilt' });
+      expect(swept.candidates).toBeGreaterThan(0);
+      expect(swept.failures).toBe(swept.candidates);
+      expect(swept.reason).toContain('1 need a fresh OCR pass (GBRAIN_EMBEDDING_IMAGE_OCR=true)');
+      expect(JSON.parse(logs.at(-1)!)).toMatchObject({ status: 'nothing_rebuilt', failures: swept.candidates });
+    }, 120_000);
 
     test('a successful fresh OCR pass attests the image again', async () => {
       const engine = await freshEngine(backend);

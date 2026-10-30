@@ -116,7 +116,8 @@ describe('test.yml dependency-audit scope', () => {
 
 describe('ci-dependency-audit.sh', () => {
   const audit = (blocking: string, auditExit: number) => withDir(dir => {
-    writeFileSync(join(dir, 'bun'), `#!/usr/bin/env bash\nexit ${auditExit}\n`);
+    // bun audit's own report when it finds advisories; a silent non-zero exit is a failed audit, not advisories.
+    writeFileSync(join(dir, 'bun'), `#!/usr/bin/env bash\n${auditExit ? 'echo "1 vulnerability (1 high)"' : ''}\nexit ${auditExit}\n`);
     chmodSync(join(dir, 'bun'), 0o755);
     return spawnSync('bash', [join(root, 'scripts/ci-dependency-audit.sh')], {
       cwd: root, encoding: 'utf8', env: { PATH: `${dir}:${process.env.PATH}`, BLOCKING: blocking, REASON: 'r' },

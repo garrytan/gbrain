@@ -65,7 +65,7 @@ describe('native lock distribution integrity', () => {
     }
   });
 
-  test('required CI executes every declared target at both supported Bun versions', () => {
+  test('required CI executes every declared target at every supported Bun version', () => {
     type NativeJob = {
       'runs-on': string;
       strategy: { matrix: { bun: string[]; target: string[] } };
@@ -80,6 +80,10 @@ describe('native lock distribution integrity', () => {
         expect(job.steps.some(step => step.run?.includes('test/openclaw-context-engine-native.serial.test.ts'))).toBe(true);
         continue;
       }
+      if (name === 'heartbeat-finalize') {
+        expect(job.steps.some(step => step.run === 'bun scripts/native/heartbeat-finalize.ts')).toBe(true);
+        continue;
+      }
       if (name === 'windows-backup-console') {
         expect(job.steps.some(step => step.run?.includes('Windows backup console controls:'))).toBe(true);
         expect(job.steps.some(step => step.run === 'bun scripts/native/verify.ts')).toBe(true);
@@ -91,7 +95,7 @@ describe('native lock distribution integrity', () => {
         continue;
       }
       const matrix = job.strategy.matrix;
-      expect(matrix.bun).toEqual(['1.4.0', '1.4.3']);
+      expect(matrix.bun).toEqual(['1.4.4']);
       const script = job.steps.map(step => step.run ?? '').join('\n');
       expect(script).toContain('bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts');
       const lockTests = script.split('\n').find(line => /\bbun test\b/.test(line) && line.includes('test/native-lock.test.ts'));
@@ -108,7 +112,7 @@ describe('native lock distribution integrity', () => {
       }
     }
     expect(pairs.sort()).toEqual(Object.keys(manifest.artifacts)
-      .flatMap(target => ['1.4.0', '1.4.3'].map(bun => `${target}/${bun}`)).sort());
-    expect(new Set(pairs).size).toBe(16);
+      .flatMap(target => ['1.4.4'].map(bun => `${target}/${bun}`)).sort());
+    expect(new Set(pairs).size).toBe(8);
   });
 });

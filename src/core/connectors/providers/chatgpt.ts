@@ -13,11 +13,13 @@
  *   GET /backend-api/conversation/{id}         → export-shaped conversation
  *
  * The durable credential is the raw Cookie header; the accessToken is a
- * ~week-lived bearer re-minted from the cookie on 401 (refreshAccessToken).
+ * ~week-lived bearer re-minted from the cookie on 401 (refreshAccessToken),
+ * through the shared client (#7515).
  */
 
 import type { HostSpecTarget } from '../../bootstrap/host-specs.ts';
-import type { ConnectorClient, ConnectorFetch } from '../client.ts';
+import { probeFailure } from '../client.ts';
+import type { ConnectorClient } from '../client.ts';
 import type {
   ChatHistoryProvider,
   ConnectorCredential,
@@ -59,7 +61,7 @@ export const CHATGPT_OAUTH: OAuthPkceConfig = {
   redirectPort: 1455,
 };
 
-const LIST_PAGE_LIMIT = 28; // the UI's max page size
+const LIST_PAGE_LIMIT = 28; // the UI's max page size; a longer page is truncated to it (#7515)
 const MAX_LIST_PAGES = 500; // safety cap PER PASS; never treat a truncated list as complete
 
 interface SessionResponse {
@@ -128,7 +130,11 @@ async function* listPass(
         `chatgpt: conversations list${archived ? ' (archived)' : ''} returned no items array (shape drift)`,
       );
     }
-    const total = typeof res.total === 'number' ? res.total : offset + res.items.length;
+    // #7515: a page longer than asked for is cut to the page size and the walk continues from there. One that also
+    // brings nothing new is ignoring offset, and truncating it would silently drop the rest.
+    const items = res.items.slice(0, LIST_PAGE_LIMIT);
+    const overLong = res.items.length > LIST_PAGE_LIMIT;
+    const total = typeof res.total === 'number' ? res.total : offset + items.length;
     if (lastTotal !== undefined && total < lastTotal && offset > 0) {
       offset = Math.max(0, offset - (lastTotal - total));
       lastTotal = total;
@@ -138,13 +144,15 @@ async function* listPass(
       continue;
     }
     lastTotal = total;
-    for (const it of res.items) {
+    let fresh = 0;
+    for (const it of items) {
       const id = typeof it.id === 'string' ? it.id : '';
       if (!id) continue;
       const updatedAt = toIso(it.update_time) || toIso(it.create_time);
       if (stopBefore && updatedAt && updatedAt <= stopBefore) return; // rest are older
       if (seen.has(id)) continue;
       seen.add(id);
+      fresh++;
       yield {
         id,
         title: typeof it.title === 'string' ? it.title : undefined,
@@ -152,8 +160,11 @@ async function* listPass(
         createdAt: toIso(it.create_time) || undefined,
       };
     }
-    offset += res.items.length;
-    if (res.items.length === 0 || offset >= total) break;
+    if (overLong && fresh === 0 && offset > 0) {
+      throw new Error(`chatgpt: conversations list${archived ? ' (archived)' : ''} ignores offset and returns over-long pages; refusing to treat a truncated list as complete`);
+    }
+    offset += items.length;
+    if (items.length === 0 || offset >= total) break;
     pages++;
     if (pages >= MAX_LIST_PAGES) {
       throw new Error(
@@ -178,24 +189,21 @@ export const chatgptProvider: ChatHistoryProvider = {
     return h;
   },
 
-  async refreshAccessToken(cred: ConnectorCredential, fetchImpl: ConnectorFetch): Promise<boolean> {
+  /**
+   * #7515: the session request goes through the shared client (same origin only, redirects refused, paced, counted)
+   * with the cookie alone, and never refreshes itself. A refusal throws the client's terminal error (forbidden,
+   * rate limited, auth) instead of being swallowed; a session with no token returns false.
+   */
+  async refreshAccessToken(cred: ConnectorCredential, client: ConnectorClient): Promise<boolean> {
     if (!cred.cookie) return false; // nothing durable to re-mint from
-    try {
-      const res = await fetchImpl(`${CHATGPT_BASE_URL}/api/auth/session`, {
-        headers: { cookie: cred.cookie, accept: 'application/json' },
-      });
-      if (!res.ok) return false;
-      const body = (await res.json()) as SessionResponse;
-      if (!body.accessToken) return false;
-      cred.accessToken = body.accessToken;
-      if (body.expires) {
-        const ms = Date.parse(body.expires);
-        if (Number.isFinite(ms)) cred.expiresAt = ms;
-      }
-      return true;
-    } catch {
-      return false;
+    const body = await client.fetchJSON<SessionResponse>('/api/auth/session', { headers: { cookie: cred.cookie }, refresh: false });
+    if (!body?.accessToken) return false;
+    cred.accessToken = body.accessToken;
+    if (body.expires) {
+      const ms = Date.parse(body.expires);
+      if (Number.isFinite(ms)) cred.expiresAt = ms;
     }
+    return true;
   },
 
   async probe(client: ConnectorClient, signal?: AbortSignal): Promise<ProbeResult> {
@@ -209,11 +217,7 @@ export const chatgptProvider: ChatHistoryProvider = {
       }
       return { ok: true };
     } catch (e) {
-      const name = (e as { name?: string }).name;
-      const msg = e instanceof Error ? e.message : String(e);
-      if (name === 'ConnectorAuthError') return { ok: false, kind: 'unauthorized', detail: msg };
-      if (name === 'ConnectorForbiddenError') return { ok: false, kind: 'forbidden_fingerprint', detail: msg };
-      return { ok: false, kind: 'network', detail: msg };
+      return probeFailure(e);
     }
   },
 

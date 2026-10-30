@@ -54,8 +54,8 @@ for (const kind of testBackends()) {
       await engine.executeRaw('DELETE FROM pages');
     });
 
-    async function page(slug: string, title: string, body: string, timeline = '') {
-      await engine.putPage(slug, { type: 'note', title, compiled_truth: body, timeline });
+    async function page(slug: string, title: string, body: string, timeline = '', type = 'note') {
+      await engine.putPage(slug, { type, title, compiled_truth: body, timeline });
       await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_text: body, chunk_source: 'compiled_truth' }]);
     }
 
@@ -117,6 +117,72 @@ for (const kind of testBackends()) {
         const rows = await engine.searchTitles('Acme Zebra Quokka', { limit: 50 });
         expect(rows.length).toBeGreaterThan(0);
         expect(rows.every((r) => r.keyword_relaxed === true)).toBe(true);
+      }, 120_000);
+    });
+
+    describe('#7471 full-name query with a short first name', () => {
+      const SURNAMES = ['Alder', 'Birch', 'Cedar', 'Dunmore', 'Ellery', 'Fairley', 'Garnet', 'Holloway', 'Ingram', 'Jasper',
+        'Keswick', 'Lowell', 'Marlow', 'Norwood', 'Oakley', 'Pemberton', 'Quill', 'Radley', 'Sutter', 'Thorne',
+        'Upton', 'Vance', 'Whitby', 'Yardley', 'Zeller', 'Ashby', 'Brook', 'Carver', 'Dale', 'Elwood'];
+      const CASES = [
+        ['Matt Examplesurname', 'people/matthew-examplesurname'],
+        ['Bob Samplename', 'people/robert-samplename'],
+      ] as const;
+
+      async function seedNamesakes() {
+        for (const s of SURNAMES) {
+          await page(`people/matt-${s.toLowerCase()}`, `Matt ${s}`, `Matt ${s} works in sales.`, '', 'person');
+          await page(`people/bob-${s.toLowerCase()}`, `Bob ${s}`, `Bob ${s} reviews contracts.`, '', 'person');
+        }
+        for (let i = 1; i <= 20; i++) {
+          await page(`archive/email-${i}`, `Re: invoice batch ${i}`, `Thanks, Matt Examplesurname. Regards, Bob Samplename.`);
+        }
+        await page('companies/acme-example', 'Acme Example', 'Team: Matthew Examplesurname (product), Matt Otherperson (advisor).', '', 'company');
+        // The person pages come last, so they hold the highest page ids and lose every page-id tie break.
+        await page('people/matthew-examplesurname', 'Matthew Examplesurname', 'Product lead at Acme Example.', '', 'person');
+        await page('people/robert-samplename', 'Robert Samplename', 'Runs operations at Beta Example.', '', 'person');
+      }
+
+      for (const [query, slug] of CASES) {
+        test(`"${query}" finds ${slug} in the title arm and ranks it first`, async () => {
+          await seedNamesakes();
+          for (const [label, opts] of [['local', LOCAL], ['remote', REMOTE]] as const) {
+            const titles = await engine.searchTitles(query, { ...opts, limit: 20 });
+            expect({ label, slug: titles[0]?.slug, relaxed: titles[0]?.keyword_relaxed }).toEqual({ label, slug, relaxed: undefined });
+            const results = await hybridSearch(engine, query, { ...opts, limit: 5, expansion: false });
+            expect({ label, slug: results[0]?.slug }).toEqual({ label, slug });
+          }
+        }, 120_000);
+      }
+
+      test('the formal first name still ranks the person page first', async () => {
+        await seedNamesakes();
+        const results = await hybridSearch(engine, 'Matthew Examplesurname', { limit: 5, expansion: false });
+        expect(results[0]?.slug).toBe('people/matthew-examplesurname');
+      }, 120_000);
+
+      test('a page titled exactly like the query outranks the name variant', async () => {
+        await seedNamesakes();
+        await page('people/matt-examplesurname', 'Matt Examplesurname', 'A different person.', '', 'person');
+        for (const opts of [LOCAL, REMOTE]) {
+          expect((await engine.searchTitles('Matt Examplesurname', { ...opts, limit: 20 }))[0]?.slug).toBe('people/matt-examplesurname');
+          const results = await hybridSearch(engine, 'Matt Examplesurname', { ...opts, limit: 5, expansion: false });
+          expect(results[0]?.slug).toBe('people/matt-examplesurname');
+          expect(results[0]?.exact_lookup).toBe('title');
+          expect(results.map((r) => r.slug)).toContain('people/matthew-examplesurname');
+        }
+      }, 120_000);
+
+      test('in the OR fallback a title with the rare query word outranks titles with only the common one', async () => {
+        await seedSyncPages('notes');
+        await page('projects/quokka', 'Quokka', 'Unrelated body.');
+        // No title holds both words, so the arm re-runs as OR; 64 titles hold "acme", one holds "quokka".
+        for (const opts of [LOCAL, REMOTE]) {
+          const rows = await engine.searchTitles('Acme Quokka', { ...opts, limit: 20 });
+          expect(rows[0]?.slug).toBe('projects/quokka');
+          expect(rows.every((r) => r.keyword_relaxed === true)).toBe(true);
+          expect(rows.length).toBe(20);
+        }
       }, 120_000);
     });
 

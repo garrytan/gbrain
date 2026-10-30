@@ -59,7 +59,8 @@ export interface NotifierSource {
 }
 export interface SkippedSource { sourceId: string; reason: string }
 export type StartResult = { jobId: string } | { busy: true } | { refused: string };
-export interface JobStatus { state: 'running' | 'aborting' | 'done' | 'error'; outcome?: 'synced' | 'resumable' | 'blocked'; reason?: string; error?: string }
+/** `committed`: the run wrote pages or advanced its cursor (GBRA-133 PR 3a), which is progress even while `last_commit` stays put. */
+export interface JobStatus { state: 'running' | 'aborting' | 'done' | 'error'; outcome?: 'synced' | 'resumable' | 'blocked'; reason?: string; error?: string; committed?: boolean }
 export interface StartRequest { intent: MarkerIntent; sliceSeconds: number | null; first: boolean }
 
 /** A recorded scheduling decision (tests and the notifier block read these instead of wall-clock timing). */
@@ -109,7 +110,8 @@ export interface CommitNotifierOptions {
   revParse: (root: string) => Promise<string>;
   quiet?: (source: NotifierSource) => boolean;
   syncRunning?: () => boolean | Promise<boolean>;
-  drainHeld?: (sourceId: string) => Promise<boolean>;
+  /** Whether another process holds the source's drain lease; `stalled` when that holder made no commit or cursor save for the stall window. */
+  drainHeld?: (sourceId: string) => Promise<boolean | 'stalled'>;
   startSync: (sourceId: string, req: StartRequest) => Promise<StartResult>;
   jobStatus: (jobId: string) => JobStatus | null;
   watch?: (source: NotifierSource, onChange: () => void) => (() => void) | null;
@@ -210,6 +212,8 @@ function notifierKit(opts: CommitNotifierOptions) {
     logged.add(key);
     log(line);
   };
+  /** A source that made progress logs its next stall again. */
+  const forgetLog = (key: string) => { logged.delete(key); };
   const guard = async <T>(what: string, fn: () => Promise<T>, fallback: T): Promise<T> => {
     try { return await fn(); } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -222,7 +226,7 @@ function notifierKit(opts: CommitNotifierOptions) {
     decisions.push({ at: now(), source, decision, ...extra });
     if (decisions.length > DECISIONS_CAP) decisions.splice(0, decisions.length - DECISIONS_CAP);
   };
-  return { pollMs, quietMs, heartbeatMs, leaseMs, cap, now, pid, ownerId, forcePoll, setTimer, clearTimer, log, logOnce, guard, decisions, decide };
+  return { pollMs, quietMs, heartbeatMs, leaseMs, cap, now, pid, ownerId, forcePoll, setTimer, clearTimer, log, logOnce, forgetLog, guard, decisions, decide };
 }
 
 const closeWatch = (rt: Rt) => { if (rt.watchClose) { try { rt.watchClose(); } catch { /* best effort */ } rt.watchClose = null; } };
@@ -298,7 +302,7 @@ async function readOwedMarkers(opts: CommitNotifierOptions, guard: ReturnType<ty
 }
 
 export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier {
-  const { pollMs, quietMs, heartbeatMs, leaseMs, cap, now, pid, ownerId, forcePoll, setTimer, clearTimer, log, logOnce, guard, decisions, decide } = notifierKit(opts);
+  const { pollMs, quietMs, heartbeatMs, leaseMs, cap, now, pid, ownerId, forcePoll, setTimer, clearTimer, log, logOnce, forgetLog, guard, decisions, decide } = notifierKit(opts);
 
   let enabled = false;
   let excluded = new Set<string>();
@@ -416,7 +420,8 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
     if (!rt) return;
     const lastCommit = await guard(`reading the last synced commit of ${rt.sourceId}`, () => opts.lastCommit(rt.sourceId), rt.lastCommit);
     rt.lastCommit = lastCommit;
-    const progressed = lastCommit !== job.lastCommit;
+    const progressed = lastCommit !== job.lastCommit || st?.committed === true;
+    if (progressed) forgetLog(`stalled\u0000${rt.sourceId}`);
     if (st?.state === 'done' && st.outcome === 'blocked') {
       rt.blockedKey = markerKey(rt);
       const tracePath = trace(rt, { event: 'blocked', reason: st.reason ?? null });
@@ -475,7 +480,9 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
         decide(rt.sourceId, 'converged', { detail: 'covered by another run' });
         continue;
       }
-      if (opts.drainHeld && await guard(`reading the drain lease of ${rt.sourceId}`, () => opts.drainHeld!(rt.sourceId), true)) { decide(rt.sourceId, 'defer_drain_lease'); continue; }
+      // GBRA-133 PR 3a: a holder that commits nothing is a failed attempt, so the retry tiers run to notifier_stalled (a foreground sync follows it and takes over).
+      const held = opts.drainHeld ? await guard(`reading the drain lease of ${rt.sourceId}`, () => opts.drainHeld!(rt.sourceId), true) : false;
+      if (held) { if (held === 'stalled') await failure(rt, 'drain_holder_stalled', 'the process holding the drain lease has made no commit or cursor save for 5 minutes', false); else decide(rt.sourceId, 'defer_drain_lease'); continue; }
       if (opts.syncRunning && await opts.syncRunning()) { decide(rt.sourceId, 'defer_busy'); return; }
       if (leased && fence !== null && !await guard('checking the notifier lease', () => opts.store.holdsLease(opts.hostId, ownerId, fence!), false)) {
         owner = false; fence = null; decide(rt.sourceId, 'not_owner');

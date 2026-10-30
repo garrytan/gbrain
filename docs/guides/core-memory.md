@@ -120,8 +120,10 @@ Two pieces cover that:
 
 - `remember` takes `items`: up to 20 facts in one call, each with the usual
   fields (`fact`, optional `entity`, `kind`, `ttl`, `visibility`,
-  `provenance`). Every item is validated before anything is written; each item
-  is then saved as its own write and reported with its own status, and
+  `provenance`, `content_origin`, `valid_from`); the same top-level fields
+  are the defaults for items that omit them. Every item is validated before
+  anything is written; each item is then saved as its own write and reported
+  with its own status, and
   `partial: true` marks a batch where some items failed. Replaying the same
   `request_id` replays the same per-item outcomes.
 - When a session's context is about 80% full, or sooner when it is growing

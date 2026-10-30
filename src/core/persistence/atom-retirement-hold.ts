@@ -11,7 +11,9 @@
  *     generation replaced it;
  *   - `latest`: its hash is the hash of the origin's most recently retired `managed-reextract` atom, so an older
  *     generation that a later extraction replaced is never revived.
- * `restorable` is `origin_live AND NOT replaced AND latest`. The query is set-based (each CTE reads `pages` once,
+ * `restorable` is `origin_live AND NOT replaced AND latest`. GBRA-161 PR 1b: `ledger_generation` is the live atom generation
+ * whose ledger records the retirement (null for a legacy stamp alone); doctor reports a covered atom once, through the
+ * ledger (`generation_retirements`), and `atoms-restore` still restores it on a managed brain. The query is set-based (each CTE reads `pages` once,
  * joined on source and origin), so its cost grows linearly with the atoms in scope.
  *
  * The purge (engine bulk delete and preview, the belief-ledger expiry, the managed selection) holds a restorable
@@ -33,8 +35,8 @@ const notImported = (alias: string) => `NULLIF(${alias}.frontmatter->>'imported_
 /**
  * SQL: every re-extraction retirement whose page `p` satisfies `scope` (a predicate over the `pages` alias `p`; it
  * also narrows the live atoms the replacement check reads, so scope by source or by origin, never by atom), with
- * columns id, source_id, slug, origin_kind, origin, origin_page_id, hash, retired_at, origin_live, replaced, latest
- * and restorable.
+ * columns id, source_id, slug, origin_kind, origin, origin_page_id, hash, retired_at, origin_live, replaced, latest,
+ * restorable and ledger_generation.
  */
 export function atomRetirementsSql(scope = 'true'): string {
   return `WITH retired AS (
@@ -58,7 +60,9 @@ export function atomRetirementsSql(scope = 'true'): string {
            (lv.hashes IS NOT NULL AND NOT (lv.hashes <@ ARRAY[r.hash])) AS replaced,
            COALESCE(l.hash = r.hash, false) AS latest,
            (r.okey IS NOT NULL AND (r.origin_slug IS NULL OR o.id IS NOT NULL) AND NOT COALESCE(lv.hashes IS NOT NULL AND NOT (lv.hashes <@ ARRAY[r.hash]), false)
-             AND COALESCE(l.hash = r.hash, false)) AS restorable
+             AND COALESCE(l.hash = r.hash, false)) AS restorable,
+           (SELECT g.id FROM derived_generation_items i JOIN derived_generations g ON g.id=i.generation_id
+             WHERE g.source_id=r.source_id AND g.kind='atom' AND g.state='live' AND i.item_key=r.slug AND i.action='retired' ORDER BY g.id DESC LIMIT 1) AS ledger_generation
       FROM retired r
       LEFT JOIN pages o ON o.source_id=r.source_id AND o.slug=r.origin_slug AND o.deleted_at IS NULL
       LEFT JOIN live lv ON lv.source_id=r.source_id AND lv.okey=r.okey
