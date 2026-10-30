@@ -7,7 +7,9 @@
 import { describe, expect, test } from 'bun:test';
 import { loadConfigWithEngine, DB_MERGED_PROVIDER_KEY_FIELDS, type GBrainConfig } from '../src/core/config.ts';
 import { FILE_PLANE_API_KEYS } from '../src/commands/config.ts';
+import { buildGatewayConfig } from '../src/core/ai/build-gateway-config.ts';
 import { adaptiveReturnFromConfig } from '../src/core/search/return-policy.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 interface FakeEngine {
   getConfig(key: string): Promise<string | null | undefined>;
@@ -417,17 +419,23 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
   // precedence. embedding_model/embedding_dimensions stay file-plane-only
   // forever (#4287 plane-split safety).
   describe('#2119 read-side: provider keys / models / chain / cycle.*', () => {
-    test('drift guard: every FILE_PLANE_API_KEYS credential participates in the DB read-side merge', () => {
+    test('drift guard: only Vertex execution settings are excluded from the DB read-side merge', () => {
       // The write side routes these to ~/.gbrain/config.json; the read side
       // must still honor a DB row for each (pre-routing writes, direct
-      // engine.setConfig, remote setups). A key added to one list but not
-      // the other reopens the silent-no-op class.
-      for (const key of FILE_PLANE_API_KEYS) {
-        expect(
-          (DB_MERGED_PROVIDER_KEY_FIELDS as readonly string[]).includes(key),
-          `${key} is file-plane-routed but missing from DB_MERGED_PROVIDER_KEY_FIELDS`,
-        ).toBe(true);
-      }
+      // engine.setConfig, remote setups). Vertex project, location, account,
+      // and gcloud executable instead select a local execution identity, so
+      // they must remain file/environment-only.
+      const dbExcludedFilePlaneKeys = [
+        'google_vertex_project',
+        'google_vertex_location',
+        'google_vertex_account',
+        'google_vertex_gcloud_path',
+      ];
+      const dbMergedFields = DB_MERGED_PROVIDER_KEY_FIELDS as readonly string[];
+      expect(FILE_PLANE_API_KEYS.filter((key) => !dbMergedFields.includes(key)).sort())
+        .toEqual(dbExcludedFilePlaneKeys.sort());
+      expect(FILE_PLANE_API_KEYS.filter((key) => !dbExcludedFilePlaneKeys.includes(key)).sort())
+        .toEqual([...dbMergedFields].sort());
     });
 
     test('every provider key field fills from DB when file/env are silent', async () => {
@@ -437,6 +445,35 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
       for (const field of DB_MERGED_PROVIDER_KEY_FIELDS) {
         expect((merged as Record<string, unknown> | null)?.[field], field).toBe(`db-${field}`);
       }
+    });
+
+    test('Vertex execution settings from DB never enter the merged config or gateway environment', async () => {
+      await withEnv({
+        GOOGLE_VERTEX_PROJECT: undefined,
+        GOOGLE_VERTEX_LOCATION: undefined,
+        GOOGLE_VERTEX_ACCOUNT: undefined,
+        GOOGLE_VERTEX_GCLOUD_PATH: undefined,
+      }, async () => {
+        const merged = await loadConfigWithEngine(
+          makeEngine({
+            google_vertex_project: 'db-project',
+            google_vertex_location: 'db-location',
+            google_vertex_account: 'db@example.test',
+            google_vertex_gcloud_path: '/bin/echo',
+          }),
+          { engine: 'pglite' },
+        );
+
+        expect(merged?.google_vertex_project).toBeUndefined();
+        expect(merged?.google_vertex_location).toBeUndefined();
+        expect(merged?.google_vertex_account).toBeUndefined();
+        expect(merged?.google_vertex_gcloud_path).toBeUndefined();
+        const gateway = buildGatewayConfig(merged!);
+        expect(gateway.env.GOOGLE_VERTEX_PROJECT).toBeUndefined();
+        expect(gateway.env.GOOGLE_VERTEX_LOCATION).toBeUndefined();
+        expect(gateway.env.GOOGLE_VERTEX_ACCOUNT).toBeUndefined();
+        expect(gateway.env.GOOGLE_VERTEX_GCLOUD_PATH).toBeUndefined();
+      });
     });
 
     test('file plane wins over DB for credentials (env is folded into the base by loadConfig)', async () => {

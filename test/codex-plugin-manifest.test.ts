@@ -107,6 +107,10 @@ describe('codex mcp.json', () => {
     // shape but are not env vars. Each entry names its real role.
     derived.delete('NO_ANTHROPIC_API_KEY'); // gateway error CODE, not an env name
     const declared = new Set<string>(server.env_vars);
+    // Vertex OAuth deliberately rejects this ambient SDK selector because it
+    // can choose Express mode. It is never a plugin-forwarded credential.
+    derived.delete('GOOGLE_VERTEX_API_KEY');
+    expect(declared.has('GOOGLE_VERTEX_API_KEY')).toBe(false);
     const missing = [...derived].filter(name => !declared.has(name)).sort();
     expect(missing).toEqual([]);
     // And the list stays sorted so diffs are reviewable.

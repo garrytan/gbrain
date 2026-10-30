@@ -4,7 +4,7 @@
  * Recipe-coverage and standalone-shell parity are checked in agent-install tests. */
 export const AGENT_PROVIDER_ENV_PREFIXES = [
   'ANTHROPIC_', 'AZURE_OPENAI_', 'DASHSCOPE_', 'DEEPSEEK_', 'GEMINI_',
-  'GOOGLE_GENERATIVE_AI_', 'GROQ_', 'LITELLM_', 'LLAMA_SERVER_', 'LMSTUDIO_',
+  'GOOGLE_GENERATIVE_AI_', 'GOOGLE_VERTEX_', 'GROQ_', 'LITELLM_', 'LLAMA_SERVER_', 'LMSTUDIO_',
   'MINIMAX_', 'MISTRAL_', 'MOONSHOT_', 'NAN_', 'NVIDIA_', 'OLLAMA_',
   'OPENAI_', 'OPENROUTER_', 'PERPLEXITY_', 'TOGETHER_', 'VOYAGE_',
   'ZHIPUAI_',

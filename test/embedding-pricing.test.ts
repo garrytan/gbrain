@@ -49,6 +49,24 @@ describe('lookupEmbeddingPrice — first-class providers', () => {
     if (r.kind === 'known') expect(r.pricePerMTok).toBe(0.15);
   });
 
+  test('Vertex gemini-embedding-001 has its own $0.15/MTok row', () => {
+    const r = lookupEmbeddingPrice('vertex:gemini-embedding-001');
+    expect(r.kind).toBe('known');
+    if (r.kind === 'known') {
+      expect(r.pricePerMTok).toBe(0.15);
+      expect(r.key).toBe('vertex:gemini-embedding-001');
+    }
+  });
+
+  test('Vertex gemini-embedding-2 has its own $0.20/MTok text row', () => {
+    const r = lookupEmbeddingPrice('vertex:gemini-embedding-2');
+    expect(r.kind).toBe('known');
+    if (r.kind === 'known') {
+      expect(r.pricePerMTok).toBe(0.20);
+      expect(r.key).toBe('vertex:gemini-embedding-2');
+    }
+  });
+
   test('Google gemini-embedding-2 at $0.20/MTok (text rate, not shared with -001)', () => {
     const r = lookupEmbeddingPrice('google:gemini-embedding-2');
     expect(r.kind).toBe('known');

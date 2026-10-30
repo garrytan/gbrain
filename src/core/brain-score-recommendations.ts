@@ -28,12 +28,22 @@ import { getGatewayAnthropicKeySnapshot } from './ai/anthropic-key.ts';
  * before `buildGatewayConfig` folds the merged config into the gateway env,
  * so a key that reads "configured" via `engine.getConfig()` is genuinely
  * usable by the gateway on any path that runs the DB merge.
+ *
+ * Vertex's project, location, account and gcloud executable are non-secret
+ * local execution settings. They are trusted-file-only: DB values cannot
+ * configure or override this process's gcloud identity. The gateway folds
+ * those file settings into its immutable environment snapshot, so they belong
+ * in this map for the file-only doctor and autopilot closures.
  */
 export const HOSTED_EMBED_KEY_CONFIG: Record<string, string> = {
   OPENAI_API_KEY: 'openai_api_key',
   VOYAGE_API_KEY: 'voyage_api_key',
   GOOGLE_GENERATIVE_AI_API_KEY: 'google_api_key',
   DASHSCOPE_API_KEY: 'dashscope_api_key',
+  GOOGLE_VERTEX_PROJECT: 'google_vertex_project',
+  GOOGLE_VERTEX_LOCATION: 'google_vertex_location',
+  GOOGLE_VERTEX_ACCOUNT: 'google_vertex_account',
+  GOOGLE_VERTEX_GCLOUD_PATH: 'google_vertex_gcloud_path',
 };
 
 /**

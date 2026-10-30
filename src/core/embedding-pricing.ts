@@ -85,6 +85,10 @@ export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
   // $6.50 audio, $12.00 video). Same convention as voyage-multimodal-3 above:
   // the TEXT rate is the row, pixel/audio token pricing is out of scope here.
   'google:gemini-embedding-2':     { pricePerMTok: 0.20 },
+  // Vertex AI (https://cloud.google.com/vertex-ai/generative-ai/pricing,
+  // verified 2026-09-30). Same Gemini embedding model, native Vertex route.
+  'vertex:gemini-embedding-001':   { pricePerMTok: 0.15 },
+  'vertex:gemini-embedding-2':     { pricePerMTok: 0.20 },
 };
 
 export type PriceLookupResult =
