@@ -55,17 +55,18 @@ OpenClaw keeps MCP servers under `mcp.servers` in `~/.openclaw/openclaw.json`
 (`openclaw config schema` shows the key path). Register gbrain with the CLI:
 
 ```bash
-openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --env GBRAIN_HOME=$HOME
+openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs --env GBRAIN_HOME=$HOME
 ```
 
 Use an absolute `--command` path: the launchd-started gateway's `PATH` does
 not include `~/.bun/bin`, so a bare `gbrain` fails to spawn. `--env` is
 optional: a PGLite brain needs no `DATABASE_URL`
 (`--env DATABASE_URL=postgresql://...` for Postgres), and `GBRAIN_HOME` only
-matters when the brain home isn't `~/.gbrain`. For the seven-verb memory
-protocol ([MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)) instead of the
-full operation catalog, pass `--surface verbs` as additional `--arg` values
-(check `openclaw mcp add --help` for your version's spelling).
+matters when the brain home isn't `~/.gbrain`. `--surface starter --advertise verbs`
+lists the seven-verb memory protocol ([MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md))
+plus `request_tools`, which reaches every other tool; drop the
+`--advertise verbs` values to list the starter set (`full` for the whole catalog) (check
+`openclaw mcp add --help` for your version's `--arg` spelling).
 
 Leave `GBRAIN_SOURCE` unset in the MCP env unless you deliberately want
 single-source retrieval: a pin scopes every tool (search, `get_brain_identity`

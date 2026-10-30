@@ -780,6 +780,7 @@
         "recoverFrontmatter",
         "resolvePageFilePath",
         "resolveParsedSubtype",
+        "resolveRecordedSourceFilePath",
         "resolveSourceLocalFilePath",
         "serializeMarkdown",
         "serializePageToMarkdown",

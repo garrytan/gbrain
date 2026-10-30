@@ -1547,6 +1547,16 @@ Reasons: `symlink_in_repo`, `symlink_outside_root`, `symlink_dangling`, `symlink
 
 More: [docs/guides/write-refusals.md#file_unreadable](../../docs/guides/write-refusals.md#file_unreadable)
 
+### file_wins_rewrite
+
+<a id="file_wins_rewrite"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain repair file-drift --prefer file refused a page because keeping its file would need a full re-render of the file, not only appended protected parts; nothing was written. | File wins keeps the canonical file's bytes and adds only what reconcile's protections keep from the database: protected frontmatter keys the file lacks and database-only timeline rows, appended. A result that also changes a value, a tag, the title or the body would re-render the whole file (keys reordered, lists re-emitted, rules and headings rewritten), which is not the file winning. | Show the user the page's exceptions in the preview. Commit the database-only differences into the file through the door (`gbrain git commit-push`) and preview again, or preview `--prefer database` if the database copy should win. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#file_wins_rewrite](../../docs/guides/write-refusals.md#file_wins_rewrite)
+
 ### fix_not_writable
 
 <a id="fix_not_writable"></a>

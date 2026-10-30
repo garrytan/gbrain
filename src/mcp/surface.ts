@@ -154,6 +154,23 @@ export function parseSurfaceFlag(args: string[]): McpSurface | null {
 }
 
 /**
+ * `--advertise`: the surface tools/list shows, narrower than what is callable.
+ * Registrations gbrain writes pass `--advertise verbs` (REGISTRATION_ADVERTISE);
+ * absent, `mcp.advertised_surface` decides.
+ */
+export function parseAdvertiseFlag(args: string[]): McpSurface | null {
+  const inline = args.find(a => a.startsWith('--advertise='));
+  const idx = args.indexOf('--advertise');
+  if (inline === undefined && idx < 0) return null;
+  const raw = inline !== undefined ? inline.slice('--advertise='.length) : args[idx + 1];
+  if (raw === undefined || raw.startsWith('--') || !isMcpSurface(raw)) {
+    throw opError('invalid_params', `gbrain serve --advertise takes verbs, starter or full${raw === undefined || raw.startsWith('--') ? '' : ` (got "${raw}")`}`,
+      'Run gbrain serve --advertise verbs (list the 7 memory verbs and request_tools), gbrain serve --advertise starter or gbrain serve --advertise full. Every tool the surface allows stays callable.');
+  }
+  return raw;
+}
+
+/**
  * #4768: stdio access ceiling. `--access read-only` intersects the selected
  * surface with operations that are read-scoped, non-mutating and need no
  * capability scope, so tools/list, the capabilities resource, skill
@@ -348,7 +365,8 @@ export async function resolveDefaultClientSurface(
  * the advertised list is a context-cost choice. DB plane wins, file plane
  * falls back; unset or unrecognized = advertise the whole callable set.
  */
-export async function resolveAdvertisedSurface(engine: BrainEngine | null, config: GBrainConfig | null | undefined): Promise<McpSurface | null> {
+export async function resolveAdvertisedSurface(engine: BrainEngine | null, config: GBrainConfig | null | undefined, flag: McpSurface | null = null): Promise<McpSurface | null> {
+  if (flag) return flag;
   if (engine) {
     try {
       const dbVal = await engine.getConfig('mcp.advertised_surface');
@@ -360,11 +378,38 @@ export async function resolveAdvertisedSurface(engine: BrainEngine | null, confi
   return isMcpSurface(fileVal) ? fileVal : null;
 }
 
-/** The tools to list: the callable set narrowed to the advertised surface (never wider). */
+/**
+ * `oauth_clients.surface_set_by` for a surface an install default wrote (the
+ * `gbrain agent register` presets and the harness grant profiles), not an
+ * operator: the client calls that surface but lists only the memory verbs and
+ * `request_tools`, like a stdio registration with `--advertise verbs`.
+ */
+export const INSTALL_SURFACE_SET_BY = 'install';
+
+/**
+ * The advertised surface for one HTTP client. A client without its own
+ * surface gets the server's (`--advertise`, `mcp.advertised_surface`); one
+ * whose surface an install default wrote lists the verbs; one that chose its
+ * surface (an operator rescope, `request_tools {surface}`) lists it in full.
+ */
+export async function clientAdvertisedSurface(
+  auth: { surface?: unknown; surfaceSetBy?: string | null },
+  engine: BrainEngine | null, config: GBrainConfig | null | undefined, flag: McpSurface | null = null,
+): Promise<McpSurface | null> {
+  if (auth.surface) return auth.surfaceSetBy === INSTALL_SURFACE_SET_BY ? 'verbs' : null;
+  return resolveAdvertisedSurface(engine, config, flag);
+}
+
+/**
+ * The tools to list: the callable set narrowed to the advertised surface
+ * (never wider). A narrowed list always keeps request_tools when it is
+ * callable: it is how an agent reaches the unlisted tools (the verbs surface
+ * itself has none).
+ */
 export function advertisedOps<T extends OperationMeta>(callable: T[], callableSurface: McpSurface, advertised: McpSurface | null): T[] {
   if (!advertised || !surfaceWiderThan(callableSurface, advertised)) return callable;
   const listed = new Set(filterOpsForSurface(callable, advertised).map(op => op.name));
-  return callable.filter(op => listed.has(op.name));
+  return callable.filter(op => listed.has(op.name) || op.name === 'request_tools');
 }
 
 /**

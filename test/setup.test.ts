@@ -81,7 +81,7 @@ describe('gbrain setup claude-code: install lifecycle', () => {
     expect(first.doc.consent.providers).toMatchObject({ value: 'declined', source: 'default' });
     expect(readJson(join(b.gbrainHome, '.gbrain', 'config.json')).embedding_disabled).toBe(true);
     const entry = readJson(claudeJson(b)).mcpServers.gbrain;
-    expect(entry).toEqual({ type: 'stdio', command: b.bin, args: ['serve', '--surface', 'starter'], env: { GBRAIN_HOME: b.gbrainHome } });
+    expect(entry).toEqual({ type: 'stdio', command: b.bin, args: ['serve', '--surface', 'starter', '--advertise', 'verbs'], env: { GBRAIN_HOME: b.gbrainHome } });
     expect(Object.keys(readJson(settings(b)).hooks).sort()).toEqual(['SessionStart', 'UserPromptSubmit']);
     expect(readJson(receipt(b)).status).toBe('installed');
     const [bundle] = first.doc.notices;
@@ -314,11 +314,32 @@ describe('gbrain setup: setup migrations on the brain it creates (Cat 41 run 4)'
 });
 
 describe('gbrain setup claude-code: target first', () => {
+  test('an explicit --surface full lists every operation, and a later run without flags keeps that registration as it is', async () => {
+    const b = box();
+    const first = await setup(b, ['claude-code', '--surface', 'full', '--json']);
+    expect(first.exitCode).toBe(0);
+    expect(first.doc.target.advertise).toBeUndefined();
+    const listedFull = { type: 'stdio', command: b.bin, args: ['serve', '--surface', 'full'], env: { GBRAIN_HOME: b.gbrainHome } };
+    expect(readJson(claudeJson(b)).mcpServers.gbrain).toEqual(listedFull);
+    const again = await setup(b, ['claude-code', '--json']);
+    expect(again.exitCode).toBe(0);
+    expect(again.doc.steps.find((s: any) => s.step === 'mcp').action).toBe('keep');
+    expect(readJson(claudeJson(b)).mcpServers.gbrain).toEqual(listedFull);
+  });
+
+  test('--dry-run on a new install shows the verbs listing over the starter surface', async () => {
+    const b = box();
+    const r = await setup(b, ['claude-code', '--dry-run', '--json']);
+    expect(r.exitCode).toBe(0);
+    expect(r.doc.target).toMatchObject({ surface: 'starter', advertise: 'verbs' });
+  });
+
   test('--dry-run prints the target and writes nothing; GBRAIN_SURFACE is honoured', async () => {
     const b = box();
     const r = await setup(b, ['claude-code', '--dry-run', '--json'], { GBRAIN_SURFACE: 'starter' });
     expect(r.exitCode).toBe(0);
     expect(r.doc.target).toMatchObject({ transport: 'local-stdio', surface: 'starter', registration_owner: 'none', launcher: b.bin });
+    expect(r.doc.target.advertise).toBeUndefined();
     expect(r.doc.steps.find((s: any) => s.step === 'brain').detail).toContain('--no-embedding');
     expect(existsSync(claudeJson(b))).toBe(false);
     expect(existsSync(join(b.gbrainHome, '.gbrain'))).toBe(false);
@@ -526,7 +547,7 @@ describe('gbrain setup codex: install lifecycle', () => {
     expect(first.doc.capability).toMatchObject({ harness: 'codex', setup: 'supported', push: 'native-verified', read_events: ['SessionStart', 'UserPromptSubmit'] });
     expect(first.doc.consent.capture).toMatchObject({ value: 'declined', source: 'default' });
     expect(readJson(join(b.gbrainHome, '.gbrain', 'config.json')).embedding_disabled).toBe(true);
-    expect(toml(b).mcp_servers.gbrain).toEqual({ command: b.bin, args: ['serve', '--surface', 'starter'], env: { GBRAIN_HOME: b.gbrainHome } });
+    expect(toml(b).mcp_servers.gbrain).toEqual({ command: b.bin, args: ['serve', '--surface', 'starter', '--advertise', 'verbs'], env: { GBRAIN_HOME: b.gbrainHome } });
     expect(Object.keys(readJson(hooksJson(b)).hooks).sort()).toEqual(['SessionStart', 'UserPromptSubmit']);
     expect(groups(b, 'UserPromptSubmit')).toEqual([{ hooks: [{ type: 'command', timeout: 15,
       command: `env GBRAIN_HOOK_LANE=setup GBRAIN_HOME=${b.gbrainHome} ${b.bin} hook user-prompt --harness codex` }] }]);

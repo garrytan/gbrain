@@ -641,10 +641,10 @@ describe('MCP registration verification [FIX7]', () => {
   const serveTail = (argv: string[]) => argv.slice(argv.indexOf('--') + 2);
   const adds = (calls: string[][]) => calls.filter((c) => c[1] === 'mcp' && c[2] === 'add');
 
-  test('a fresh registration pins the registration surface (starter)', async () => {
+  test('a fresh registration pins the registration surface (starter) and lists the verbs (GBRA-199)', async () => {
     const { runner, calls } = mcpHost({ initialReg: null });
     expect((await runHooks(runner)).result).toBe(0);
-    expect(serveTail(adds(calls)[0])).toEqual(['serve', '--surface', 'starter']);
+    expect(serveTail(adds(calls)[0])).toEqual(['serve', '--surface', 'starter', '--advertise', 'verbs']);
   }, 30_000);
 
   test('never narrow: a replaced entry keeps its pinned surface, a bare serve stays bare, --surface wins', async () => {

@@ -10,6 +10,150 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.503.0] - 2026-10-30
+
+**New harness and bot registrations list the seven memory verbs plus `request_tools`, and every tool they could call before stays callable.**
+
+`gbrain setup claude-code|codex`, `gbrain bootstrap hooks` and the readiness and `gbrain init` registration lines now write `serve --surface starter --advertise verbs`. The agent's tool list shows `recall`, `remember`, `entity`, `synthesize`, `forget`, `context_pack`, `delta` and `request_tools`, and the rest of the starter surface stays callable. `request_tools` lists the other tools, returns their full schemas and adds a described tool to the session's list. The initialize instructions follow the listed tools, so they point agents at `recall` instead of `search`. `gbrain mcp expose` runs `serve --http --surface full --advertise verbs`. A new `gbrain mcp provision` grant with the memory-reader, memory-writer or coding-agent profile, and a new `gbrain agent register` daily-driver or coding-agent client, keep the full callable surface but list the same tools. The harness eval measured no pass-rate cost, no cross-scope reads and recall about three times faster than search.
+
+### What to do after upgrading
+
+- Nothing. Existing registrations, exposures and OAuth clients keep their listing and are never rewritten.
+- To list a whole surface, pass it explicitly: `--surface full` (or `starter`, or `verbs`) lists everything it serves. `gbrain auth rescope-client <client_id> --surface full` does the same for a remote client.
+
+### Itemized changes
+
+- New `gbrain serve --advertise <verbs|starter|full>` (stdio and `--http`) sets the listing per server and wins over config `mcp.advertised_surface`. A listing narrower than the callable set always includes `request_tools`.
+- `src/core/mcp-registration.ts`: `REGISTRATION_ADVERTISE` (`verbs`), `stdioServeArgv` writes `--advertise` only when it is narrower than the surface, and `registrationAdvertise`/`registeredAdvertise` keep an existing registration's own listing. A surface the user chose (flag or `GBRAIN_SURFACE`) is listed in full.
+- Grants: the memory-reader, memory-writer and coding-agent provision profiles and the agent-register presets set the listing with `surface_set_by='install'`; `auth list-clients` shows `full (set by install)`.
+- doctor `harness_wiring`'s surface note says new installs list the memory verbs.
+- Install docs, harness guides and the agent-operator protocol show the new registration commands.
+
+## [0.60.502.0] - 2026-10-30
+
+**The secret scanner now catches OpenRouter, Groq, xAI, Perplexity and Replicate API keys.**
+
+A raw OpenRouter key (`sk-or-v1-` plus 64 hex) slipped past every lane: the bare OpenAI rule stops at the dash after `sk-or`, so the key didn't block `gbrain sources push`, wasn't replaced with `<REDACTED:…>` in search, recall or transcript import, and wasn't counted by `gbrain transcripts audit-secrets`, which left doctor's `transcript_secret_exposure` reading clean. Groq (`gsk_`), xAI (`xai-`), Perplexity (`pplx-`) and Replicate (`r8_`) keys had the same gap. Each now has its own rule with the provider's published fixed length and a hard right edge, so a longer run of the same characters is never cut into a false key. Anthropic (`sk-ant-`), project-scoped OpenAI (`sk-proj-`) and Google (`AIza`) keys were already caught and are unchanged.
+
+### What to do after upgrading
+
+- A push that worked before can now stop with `rule [openrouter] blocks pushes since gbrain v0.60.502.0` (or groq, xai, perplexity, replicate). Rotate the key with the provider and remove it from the page. Don't allowlist a live key.
+- `gbrain doctor` asks for a fresh transcript audit once, because the audit's detectors changed. Run `gbrain transcripts audit-secrets --json` to list conversation pages that still hold such a key (slugs and line numbers, never values).
+
+### Itemized changes
+
+- `src/core/secret-scan.ts`: five vendor rules (`openrouter`, `groq`, `xai`, `perplexity`, `replicate`) with `since` `PROVIDER_KEYS_SINCE`, placed with the vendor rules ahead of the catch-alls, so `Bearer <key>` keeps the vendor name. No existing rule changed or moved.
+- `src/core/transcripts/secret-audit.ts`: `TRANSCRIPT_SECRET_AUDIT_VERSION` 1 → 2, so a clean audit cached by the old detectors no longer reads ok.
+- Tests build every key at runtime (`test/helpers/provider-keys.ts`) and pin each rule through the scanner, retrieval redaction, transcript import, the audit and the push gate, plus near misses (one character short or long, wrong case or separator, the prefix inside a longer word) that fire no rule.
+
+Reported by @lelle-bot (#7959). Contributed by @Masashi-Ono0611 (#7961), who proposed the OpenRouter rule.
+
+Supersedes #7961
+
+## [0.60.501.0] - 2026-10-29
+
+**`gbrain repair file-drift` can now resolve the `file_drift` holds that no command could clear before, and `--prefer file` keeps the file exactly as written.**
+
+Four hold shapes used to stay stuck: a page with no file origin (a URL or capture-label source URI) whose file appeared at its slug path; a page whose file uses another spelling of its slug, such as `README.md` for slug `readme`; a hold whose page and file already agree; and a page a read-only mirror stored database-only after its source became writable again (part 1 of #7931). File wins now adopts the slug-path file and records its path. An agreeing hold previews as `release_hold`; applying it writes nothing and schedules a re-screen, so the next sync releases it. A sync with no new commit now also re-screens holds whose page moved. `--prefer file` used to re-render the whole file whenever it kept a protected frontmatter key or a database-only timeline row, which reordered keys, re-emitted lists and rewrote the body. It now keeps the file's bytes and only inserts the missing protected keys before the closing `---` and appends the database-only timeline rows. Any other difference refuses with the new code `file_wins_rewrite`, in both the preview and the apply, and writes nothing. When Git durability is off, the preview reminds you to commit the files it appended to.
+
+### How to use it
+
+```bash
+gbrain repair file-drift --source <id> --held --prefer file          # preview: release_hold rows and the file-wins plan
+gbrain repair file-drift --source <id> --held --prefer file --apply --expect <hash>
+gbrain sync --source <id> --no-pull                                  # releases the agreeing holds
+```
+
+### Itemized changes
+
+- `src/core/persistence/unbound-pages.ts`: `recordsNoFileOrigin` treats only a `file:` source URI as a file origin; `slugPathFile` finds the one file discovery imports as the slug (several candidates still refuse `slug_path_ambiguous`).
+- `src/core/persistence/sync-pass-run.ts`: the pass-kind gate counts `movedDriftHolds`.
+- `src/core/repair/file-drift.ts`: `release_hold` rows re-check the pinned revision and file hash and call `requestGitHoldRetry`; `file_appended` warns when Git durability is off.
+- `src/core/persistence/file-wins-content.ts` (new): byte-preserving file wins, read back against the reviewed result; `file_wins_rewrite` refusal in `prepareDriftPage` and `reconcile-prepare`.
+- `src/core/persistence/mirror-read-only.ts`: `staleMirrorPage` reconciles a stale `mirror_read_only` page on a writable source against its slug-path file; the page upsert and reconcile clear the stamp once a source path is recorded.
+- Docs: `docs/guides/repair.md`, `docs/guides/write-refusals.md`, `docs/error-codes.md`, key-files `canonical-reconciliation.md`.
+- Tests: `test/sync-holds-wave-gbra133.test.ts` (new, PGLite and Postgres).
+
+## [0.60.499.0] - 2026-10-29
+
+**The install docs now lead with hosted GBrain at gbrain.io, the fastest way to use GBrain with any harness, and `gbrain doctor` catches the unrelated npm `gbrain` package even when it is not on your PATH.**
+
+README, docs/INSTALL.md and INSTALL_FOR_AGENTS.md open with one box: install the `gbrainio` CLI, connect your terminal, create a workspace in the browser, and add `https://gbrain.io/mcp` to Claude Code or Codex. Self-hosting follows under "Here's how to self-host it" and is much shorter. GBrain stays MIT-licensed and free to self-host, and the self-host install line now uses `#latest-stable`, the gated release ref, instead of master. The graph-recall claim now gives the production number, R@5 0.6626 to 0.7241 on BrainBench relationship questions; 0.9791 appears only as the labeled `graph-oracle-parse` upper bound. `gbrain doctor`'s `npm_squat` check now also reads the global npm and Bun package directories, so an unrelated `gbrain` package that is installed but not on PATH warns, and the warning carries the command that removes it when npm or Bun installed it (and reinstalls the real one only when no gbrain is left), each one asked first. `gbrain sources harden` on a source with no `_brain-filing-rules.json` now lists the folders that source actually has in its AGENTS.md filing rule, instead of gbrain's default folders.
+
+### How to use it
+
+```bash
+gbrain doctor --only npm_squat --json   # names an unrelated npm gbrain package and the command that removes it
+bun install -g github:garrytan/gbrain#latest-stable
+```
+
+### Itemized changes
+
+- README Install, docs/INSTALL.md, INSTALL_FOR_AGENTS.md and AGENTS.md: hosted gbrain.io box first, with the public gbrain.io/cli commands and a note to read the shell installer before running it; shorter self-host sections; the npm-trap and #218 recovery text is shorter and kept in sync.
+- README, docs/architecture/RETRIEVAL.md and docs/guides/capabilities.md: production relationship-retrieval R@5 (0.6626 to 0.7241, 45 of 435 runs better, none worse) replaces the oracle number as the headline.
+- `src/core/npm-squat-check.ts`: scans `npm root -g` and Bun's global dir; a warn from an unrelated package carries an `ask_user` fix (`npm uninstall -g gbrain` or `bun remove -g gbrain`, only for a package in that tool's own global dir; a package from pnpm, yarn or another prefix is the user's step), then the #218 reinstall only when no gbrain is left at all.
+- `src/core/brain-repo-durability.ts`: without a filing-rules file, Rule 1 lists the source's top-level content folders (plain names only, at most 50; skipping dot-folders, `skills/`, `scripts/`, `node_modules/`), else the bundled default (#7629).
+- Tests: `test/npm-squat-check.test.ts`, `test/doctor-npm-squat.test.ts` (new), `test/filing-rules-resolution.serial.test.ts`.
+
+## [0.60.498.0] - 2026-10-29
+
+**The Claude Code and Codex plugins now put gbrain's brain-first rule beside every turn, the same way `gbrain setup` does.**
+
+The gbrain plugins (gbrain, gbrain-coding, gbrain-daily) now declare the `UserPromptSubmit` hook `gbrain setup` writes. It runs through the plugin's own launcher with `GBRAIN_HOOK_LANE=plugin`: on Claude Code it's `hook user-prompt` with a 3 s timeout, and on Codex it's `hook user-prompt --harness codex` with 15 s. While a brain-first block is installed, it adds the one-line rule to each turn, plus the read-context block when a serve is running. When setup, `gbrain bootstrap` or a workspace install already wires the event, the plugin's hook exits with no output, so a turn gets it once. Codex skips plugin hooks until you trust them: open `/hooks` and trust it once. A plugin-only install has no block yet. doctor `harness_wiring` and `gbrain post-upgrade` now warn about that and name the one command that adds it.
+
+### How to use it
+
+```bash
+gbrain setup claude-code --instructions-only   # or codex: writes only the brain-first block, which turns the plugin's per-turn rule on
+GBRAIN_HOOKS=0                                 # turns every gbrain hook off, the plugin's included (so does a recorded `gbrain setup <harness> --no-hooks`)
+```
+
+### Itemized changes
+
+- `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json` and the generated persona variants declare the hook. Codex's inline form keeps the hooks.json `hooks` wrapper, since codex-cli ignores a bare event map.
+- `src/core/bootstrap/plugin-lanes.ts` `pluginHookYields`: the plugin hook yields to a gbrain-marked or harness-lane entry in the Claude Code user or project settings, or to a setup or bootstrap group in `CODEX_HOME/hooks.json`, and stays off when that harness's setup receipt records `--no-hooks`. An unreadable file counts as not wired.
+- doctor `harness_wiring` checks the default instruction file of each plugin-served harness. `gbrain post-upgrade` prints the `--instructions-only` command for a missing or stale block (`src/core/setup/brain-first-upgrade-notice.ts`).
+- Tests: `test/plugin-turn-hook.test.ts` (new), `test/doctor-harness-wiring-plugin.test.ts`.
+
+## [0.60.497.0] - 2026-10-29
+
+**`gbrain pages ghosts` and `gbrain repair ghost-pages` no longer flag live code pages as ghosts, so applying the repair can no longer soft-delete a synced `.json` (or any other code or image) page whose file is right there.**
+
+Before, the ghost check looked for a code page's file at `<slug>.md`, because the path resolver it shared with Markdown pages rejected every recorded path that did not end in `.md` or `.mdx`. A synced `projects/example/decisions.active.json` page was looked for at `projects-example-decisions-active-json.md`, found missing, and proposed for soft-delete; the repair's own recheck used the same path, so it agreed. Applying the repair removed live pages, and after the 72-hour purge they were gone for good. Now a page that records a non-Markdown file is checked at that file, both in the scan and in the recheck the repair runs before each soft delete.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A code or image page whose recorded file exists | listed as a ghost (missing `<slug>.md`); the apply soft-deleted it | not a ghost |
+| A code or image page whose recorded file is gone and no `<slug>.md` exists | listed at `<slug>.md` | listed at its recorded path; the apply soft-deletes it on managed and unmanaged brains |
+| A page whose recorded non-Markdown path names no file inside the source (absolute, `..`) | checked at `<slug>.md` and proposed for soft-delete | never a ghost, never removed; listed apart as `recorded_path_unresolvable` by doctor, `gbrain pages ghosts` and the preview |
+| `gbrain repair uncommitted-deletions` on a soft-deleted code page | read Git evidence for `<slug>.md` | reads it for the recorded file |
+
+### How to get it
+
+Upgrade. If you previewed `gbrain repair ghost-pages` on an older version, preview again before applying: the apply rechecks every page and keeps a code page whose file is present (`file_restored`).
+
+Reported by @Kkkkkuro (#7736).
+
+## [0.60.496.0] - 2026-10-29
+
+**Doctor now finds pages that lost the record of where they came from, and `gbrain repair provenance` puts it back. The repair only ever lowers trust.**
+
+Before v0.60.486.0 (#7892), a remote write could change or drop a page's provenance stamps (`source_kind`, `ingested_via`, `ingested_at`) or its lowering `trust_tier` marker. A page captured from a webhook could then read as your own notes the next time its file was re-read. The new read-only doctor check `provenance_stamp_drift` counts those pages per source from page history and write receipts, split by who made the write, and also counts classified pages whose file would re-read above their stored tier (#7918). `gbrain repair provenance --source <id>` previews each page with its stamps, marker and tier before and after, and writes nothing. After you agree, `--apply --expect <hash> --yes` restores the stamps, stamps the lower marker, lowers the page and files a `lower_page` proposal you can confirm or revert in `gbrain trust review`. Your own edits are never written, and writes with no recorded writer only with `--include-ambiguous`. It runs only when you name it.
+
+Maintenance writes that lower a page now tell you (#7917). A dream or patterns publication over a page you wrote (such as a grounding repair outside the output prefix) still lowers it, and now files a `lower_page` proposal, so it shows up in `gbrain trust review`. A maintenance write whose derivation declaration is present but unreadable now publishes at `unknown`, with an `unknown` marker in the file, instead of taking the write channel's tier (#7918).
+
+### Itemized changes
+
+- `src/core/trust/provenance-drift.ts` (new): the detector (`analyzePageDrift`, `scanProvenanceDrift`, `readPageDrift`), bounded at 50,000 pages per source in doctor.
+- `src/commands/doctor/checks/provenance-stamp-drift.ts` (new): doctor `provenance_stamp_drift`, read-only; its fix previews the repair (`ask_user`).
+- `src/core/repair/provenance.ts` (new): repair kind `provenance`, explicit-only, preview-bound and destructive; `--slug` narrows, `--include-ambiguous` widens.
+- `src/core/trust/page-handlers.ts`: owner page mode `restore_provenance` (local CLI only, bound to the previewed revision and change). On a classic checkout, both repair modes (`restore_provenance` and `repair_marker`, which `gbrain trust backfill --repair-unknown-markers` also uses) write the repaired page to its file in the same transaction; a page whose file holds an edit sync has not imported, or whose checkout cannot be written, is listed `needs_review` and left alone.
+- `src/core/trust/page-write.ts`, `src/core/persistence/prepared-maintenance.ts`, `src/core/trust/taint.ts`, `src/core/cycle/patterns.ts`: maintenance lowerings file `lower_page` on managed and repo-less brains; an unreadable derivation declaration rates the write `unknown`.
+- Two `BEHAVIOR_CHANGES` rows; docs: `docs/guides/repair.md#provenance`, `docs/architecture/key-files/security.md`.
+- Tests: `test/provenance-drift-7891.test.ts` and `test/maintenance-lowering-7917-7918.test.ts` (PGLite and Postgres; classic repository, managed repository and repo-less brains).
+
 ## [0.60.495.0] - 2026-10-29
 
 **Every harness install now tells the agent to check gbrain first, and the rule rides each turn, not just the system prompt.**

@@ -24,9 +24,9 @@ Before it writes anything, setup resolves and prints:
 |---|---|
 | Brain | This install's config (`GBRAIN_HOME`). With none, a new keyless PGLite brain from `gbrain init --pglite --no-embedding`. |
 | Source | `--source`, else `GBRAIN_SOURCE`, else unpinned (the server uses the brain's default source). |
-| Transport | Local stdio: the harness starts `<launcher> serve --surface <surface>`. |
+| Transport | Local stdio: the harness starts `<launcher> serve --surface <surface>`, plus `--advertise verbs` on a new registration that chose no surface. |
 | Launcher | `--gbrain-bin`, else the absolute `gbrain` on `PATH` (GUI-launched hosts inherit no `PATH`, so a bare name is never written). |
-| Surface | `--surface`, else `GBRAIN_SURFACE`, else the surface already registered, else `starter` (`--surface full` is the opt-in for every tool; an existing registration keeps its surface). |
+| Surface | `--surface`, else `GBRAIN_SURFACE`, else the surface already registered, else `starter`, listing only the seven memory verbs and `request_tools` (`--advertise verbs`). A chosen surface is listed in full; `--surface full` is the opt-in for every tool; an existing registration keeps its surface and listing. |
 | Owner | Who owns the MCP name now: nobody, this setup (its receipt), or the gbrain Claude Code or Codex plugin (setup then adds hooks only). |
 
 It refuses with a coded error, before any write, when the target is not safe:

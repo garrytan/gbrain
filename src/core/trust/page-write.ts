@@ -19,7 +19,10 @@
  *   is gated per row (CEO-27).
  * - CEO-12: an agent write that replaces the body of a higher-tier page lowers
  *   the page and files one `lower_page` trust proposal per page (later edits
- *   fold into it) with the prior owner version to revert to.
+ *   fold into it) with the prior owner version to revert to. #7917: so does a
+ *   derived page publication that lowers a page.
+ * - #7918: a derivation declaration that is present but unreadable (a malformed
+ *   input, a missing origin) rates the write `unknown`, never the source default.
  */
 import type { BrainEngine } from '../engine.ts';
 import { queuePageProjection } from '../page-state/projections.ts';
@@ -40,11 +43,20 @@ export function isFenceEditWrite(row: Pick<WriteRequest, 'operation' | 'intent'>
   return FENCE_EDIT_OPERATIONS.includes(row.operation) || row.intent?.kind === 'managed_facts_entity';
 }
 
+/** The write carries a derivation declaration, readable or not. */
+const declaresDerivation = (intent: WriteRequest['intent'] | null | undefined) => intent?.derivation !== undefined && intent?.derivation !== null;
+
+/** The declared tier of a derived write; `unknown` when the declaration is present but unreadable (#7918), undefined when absent. */
+export function derivationWriteTrust(intent: WriteRequest['intent'] | null | undefined): WriteTrust | undefined {
+  if (!declaresDerivation(intent)) return undefined;
+  const derivation = readDerivationDeclaration(intent!.derivation);
+  return derivation ? declaredWriteTrust(derivation) : effectiveWriteTrust({ channel: 'unknown', origin: { channel: 'derivation_unreadable' } });
+}
+
 /** The tier of one journaled page write, or undefined when the request's channel declares none. */
 export function pageWriteTrust(row: Pick<WriteRequest, 'id' | 'operation' | 'authority' | 'intent'>, frontmatter: Record<string, unknown> | null | undefined): WriteTrust | undefined {
   // A managed derived page (atoms, synthesis, concepts, chronicle) carries its derivation declaration (trust/taint.ts).
-  const derivation = readDerivationDeclaration(row.intent?.derivation);
-  const channel = derivation ? declaredWriteTrust(derivation) : requestChannelTrust(row);
+  const channel = derivationWriteTrust(row.intent) ?? requestChannelTrust(row);
   if (!channel || isFenceEditWrite(row)) return channel;
   const caps = frontmatterTrustCaps(frontmatter);
   return caps.length ? effectiveWriteTrust({ channel: channel.tier, lowerTo: caps, origin: channel.origin ?? { channel: row.operation } }) : channel;
@@ -78,7 +90,7 @@ export async function storedPageTier(engine: BrainEngine, sourceId: string, slug
 export function stampPageTrustMarker(row: Pick<WriteRequest, 'operation' | 'intent'>, frontmatter: Record<string, unknown>, trust: WriteTrust | undefined, stored: TrustTier | null,
   storedFrontmatter?: Record<string, unknown> | null): void {
   if (!trust || isFenceEditWrite(row)) return;
-  if (!CONTENT_OPERATIONS.includes(row.operation) && !readDerivationDeclaration(row.intent?.derivation)) return;
+  if (!CONTENT_OPERATIONS.includes(row.operation) && !declaresDerivation(row.intent)) return;
   const prior = stored && stored !== 'unknown' ? [stored] : frontmatterTrustCaps(storedFrontmatter);
   const tier = minTrust(trust.tier, ...prior);
   const stamped = stampTrustMarker(frontmatter, tier);
@@ -89,10 +101,13 @@ export function stampPageTrustMarker(row: Pick<WriteRequest, 'operation' | 'inte
  * CEO-12, inside the publication transaction after the page write: when the
  * write lowered a page's tier, file (or refresh) its `lower_page` proposal.
  * `prior` is the tier and revision read under the page lock before the write.
+ * Content writes and derived page publications (#7917) file it; another writer
+ * that lowers a page on purpose names itself in `proposer`.
  */
-export async function recordAgentPageLowering(tx: BrainEngine, row: Pick<WriteRequest, 'operation' | 'source_id' | 'slug'>,
-  prior: { tier: TrustTier; revision: string | null } | null): Promise<{ proposal_ref: string } | null> {
-  if (!prior || !CONTENT_OPERATIONS.includes(row.operation)) return null;
+export async function recordAgentPageLowering(tx: BrainEngine, row: Pick<WriteRequest, 'operation' | 'source_id' | 'slug'> & { intent?: WriteRequest['intent'] | null },
+  prior: { tier: TrustTier; revision: string | null } | null, proposer?: string): Promise<{ proposal_ref: string } | null> {
+  const derived = !CONTENT_OPERATIONS.includes(row.operation) && declaresDerivation(row.intent);
+  if (!prior || !(proposer || CONTENT_OPERATIONS.includes(row.operation) || derived)) return null;
   const snapshot = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
   const [page] = snapshot ? await tx.executeRaw<{ trust_tier: string }>('SELECT trust_tier FROM pages WHERE id = $1', [snapshot.page.id]) : [];
   if (!snapshot || !page) return null;
@@ -111,7 +126,7 @@ export async function recordAgentPageLowering(tx: BrainEngine, row: Pick<WriteRe
   const [version] = await tx.executeRaw<{ id: number }>(
     'SELECT id FROM page_versions WHERE page_id = $1 AND trust_tier = $2 ORDER BY id DESC LIMIT 1', [pageId, prior.tier]);
   const proposal = await insertTrustProposal(tx, {
-    action: 'lower_page', sourceId: row.source_id, target: { table: 'pages', id: pageId }, proposer: `agent_page_edit:${row.operation}`,
+    action: 'lower_page', sourceId: row.source_id, target: { table: 'pages', id: pageId }, proposer: proposer ?? (derived ? `derived_page:${row.operation}` : `agent_page_edit:${row.operation}`),
     before: { slug: row.slug, prior_tier: prior.tier, prior_revision: prior.revision, version_id: version ? Number(version.id) : null }, after,
   });
   if (!proposal.created) await updatePendingTrustProposalAfter(tx, proposal.id, after);

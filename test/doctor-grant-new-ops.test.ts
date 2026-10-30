@@ -43,7 +43,7 @@ const writerProfile = () => resolveGrantProfile({ profile: 'memory-writer', sour
 async function legacyWriter(name: string): Promise<string> {
   const profile = writerProfile();
   const created = await provider.registerClientManual(name, ['client_credentials'], 'read write', [], 'default', undefined, undefined, undefined,
-    { ...profile, surface: 'starter', allowedOperations: profile.allowedOperations!.filter(op => op !== 'put_pages') });
+    { ...profile, surface: 'starter', surfaceSetBy: 'operator', allowedOperations: profile.allowedOperations!.filter(op => op !== 'put_pages') });
   await engine.executeRaw("UPDATE oauth_grant_audit SET after_grant = after_grant - 'catalogProvenance' WHERE client_id = $1", [created.clientId]);
   return created.clientId;
 }

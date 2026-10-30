@@ -21,7 +21,7 @@ brain contract loads with zero extra configuration.
 ## Register (recommended)
 
 ```bash
-opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface starter
+opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface starter --advertise verbs
 ```
 
 `--surface starter` lists the daily-driver tools: the seven memory verbs

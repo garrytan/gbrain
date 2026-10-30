@@ -24,17 +24,29 @@ Vector search alone underdelivers on real personal-knowledge queries. This doc e
 BrainBench (corpus + harness in the sibling [gbrain-evals](https://github.com/garrytan/gbrain-evals) repo) measures retrieval P@5, R@5, MRR, nDCG@5 on a 240-page Opus-generated rich-prose corpus. (This is the retrieval-ranking benchmark; the in-repo `gbrain eval brainbench` suite — [`docs/eval/BRAINBENCH.md`](../eval/BRAINBENCH.md) — gates the memory behaviors *above* retrieval: unprompted context push, write-back fidelity, cross-session continuity.)
 
 The [September 9, 2026 refresh](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-09-09-retrieval-refresh.md) (gbrain v0.48.4.0, three ingestion
-orders, fixed-denominator P@5) measured the 145 relationship questions:
+orders, fixed-denominator P@5) measured the 145 relationship questions two ways.
+
+**The production pipeline.** One switch, `search.relational_retrieval`, over a
+shared index with everything else held fixed: mean R@5 rose from **0.6626 to
+0.7241**, better on 45 of 435 question runs and worse on none; investor
+questions moved most, attendance not at all
+([production relationship retrieval](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-09-09-retrieval-refresh.md#production-relationship-retrieval-one-switch)).
+On reworded one-hop questions the same switch measured 0.411 to 0.537
+(development data, not a held-out set; [N9](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-10-01-n9-multi-hop.md)).
+
+**Whole-system adapters**, including an oracle upper bound:
 
 | Adapter | Mean P@5 | Mean R@5 |
 |---|---:|---:|
-| Specialized `gbrain` (recognizes four question templates, follows the fixture graph) | **0.3421** | **0.9791** |
+| `graph-oracle-parse` (knows the four question templates in advance, follows the fixture graph; upper bound, not a product score) | 0.3421 | 0.9791 |
 | Reference hybrid | 0.1917 | 0.6874 |
 | Keyword ranker | 0.1710 | 0.6244 |
 | Vector only | 0.1076 | 0.4069 |
 
-The specialized adapter is strong on the templates it understands, but this is a
-comparison between whole systems. The refresh found that the older headline
+`graph-oracle-parse` was called `gbrain` in these tables until September 28,
+2026; the gbrain-evals `gbrain` adapter now runs the product's hybrid search
+with relationship retrieval. The oracle is strong on the templates it parses,
+but this is a comparison between whole systems. The refresh found that the older headline
 (P@5 49.1%, "+31.4 points over graph-disabled") was not a graph-only effect and
 used metric helpers since corrected; do not cite it. On the fuzzy and externally
 authored families the keyword and vector paths win some comparisons. None of

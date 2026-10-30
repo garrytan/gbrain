@@ -33,7 +33,7 @@ import { buildToolDefs } from '../mcp/tool-defs.ts';
 import {
   filterOpsForSurface,
   advertisedOps,
-  resolveAdvertisedSurface,
+  clientAdvertisedSurface,
   clampSurface,
   minSurface,
   resolveClientRowSurface,
@@ -209,7 +209,7 @@ function createMcpRequestServer(
   // F1: the contract for THIS token's callable set + readiness tail, resolved at initialize.
   installInstructionsResolver(server, async () => resolveMcpInstructions(config, process.env, {
     writeback: writebackOpts,
-    tools: await httpInstructionTools(engine, config, { ops: mcpOperations, surface, auth: authInfo, allowedOps: surfaceAllowedOps, cache: ctx.readinessCache }),
+    tools: await httpInstructionTools(engine, config, { ops: mcpOperations, surface, auth: authInfo, allowedOps: surfaceAllowedOps, cache: ctx.readinessCache, advertise: ctx.advertise ?? null }),
     ...await readInstructionContent(engine),
   }));
   installCapabilitiesResource(server, async () => {
@@ -246,7 +246,7 @@ async function listMcpTools(ctx: ServeHttpContext, state: McpRequestState) {
   const [gateDisabled, strictParamsMode, advertised] = await Promise.all([
     disabledOpsForPublishGates(engine, config),
     resolveStrictParamsMode(engine, config),
-    resolveAdvertisedSurface(engine, config),
+    clientAdvertisedSurface(authInfo, engine, config, ctx.advertise ?? null),
   ]);
   // FOV-4: `agent` deliberately implies only itself, which would strand
   // agent-only tokens with ZERO discovery — ops flagged `agentCallable`
@@ -268,7 +268,7 @@ async function listMcpTools(ctx: ServeHttpContext, state: McpRequestState) {
   const strictParams = strictParamsMode === 'reject';
   // mcp.advertised_surface narrows the list only; dispatch below keeps the callable set (request_tools reaches the rest).
   // A client that chose its own surface (request_tools {surface}, an operator rescope) gets that surface listed in full.
-  const tools = buildToolDefs(authInfo.surface ? visibleOps : advertisedOps(visibleOps, surface, advertised), { strictParams });
+  const tools = buildToolDefs(advertisedOps(visibleOps, surface, advertised), { strictParams });
   // v0.28.10: log every JSON-RPC method, not just successful tools/call.
   // Pre-fix, /admin/api/requests showed nothing for clients that only
   // ever called tools/list, and the v0.26.3 persistence regression test
@@ -416,7 +416,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
       // WP4 (D2): request_tools bounds its catalog + persist by this.
       surfaceCeiling,
       // D2: a callable tool the advertised surface leaves out of tools/list (same rule as listMcpTools).
-      isListed: async op => !!authInfo.surface || advertisedOps([op], surface, await resolveAdvertisedSurface(engine, ctx.config)).length > 0,
+      isListed: async op => advertisedOps([op], surface, await clientAdvertisedSurface(authInfo, engine, ctx.config, ctx.advertise ?? null)).length > 0,
       resultRows,
       ...(thinClient ? { thinClient: true } : {}),
       // v0.31 follow-up fix: thread auth so the whoami op (and any

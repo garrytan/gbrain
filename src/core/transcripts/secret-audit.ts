@@ -17,7 +17,7 @@ import type { BrainEngine } from '../engine.ts';
 import { scanText } from '../secret-scan.ts';
 
 /** Bump when the transcript-lane detectors change, so doctor asks for a fresh audit. */
-export const TRANSCRIPT_SECRET_AUDIT_VERSION = 1;
+export const TRANSCRIPT_SECRET_AUDIT_VERSION = 2;
 export const TRANSCRIPT_SECRET_AUDIT_KEY = 'transcripts.secret_audit';
 const BATCH = 25;
 const LINES_PER_PAGE = 20;

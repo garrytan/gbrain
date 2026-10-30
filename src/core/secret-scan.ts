@@ -174,6 +174,12 @@ interface CorePattern {
 const SECURITY_WAVE_SINCE = '0.60.31.0';
 
 /**
+ * `since` for the AI-provider key rules added by #7959 (`openrouter`, `groq`,
+ * `xai`, `perplexity`, `replicate`).
+ */
+const PROVIDER_KEYS_SINCE = '0.60.502.0';
+
+/**
  * Placeholder passwords in documentation URLs: `<password>`, `${VAR}`,
  * `$VAR`, all-`*` and all-`x` masks. Never a live credential, so
  * `url_credentials` leaves them alone.
@@ -242,6 +248,15 @@ const CORE_PATTERNS: ReadonlyArray<CorePattern> = [
   // DigitalOcean personal access (dop_), OAuth (doo_) and refresh (dor_)
   // tokens: v1 + 64 lowercase hex, hard right edge.
   { name: 'digitalocean', source: 'do[opr]_v1_[a-f0-9]{64}(?![A-Za-z0-9])', since: SECURITY_WAVE_SINCE },
+  // AI-provider keys (#7959): each a fixed-length body with a hard right edge,
+  // so a longer run of the same characters is never cut into a false key.
+  // OpenRouter: v1 + 64 lowercase hex. The dashes after `sk-or` and `v1` stop
+  // the bare sk- rule above, which is why it needs its own entry.
+  { name: 'openrouter', source: 'sk-or-v1-[a-f0-9]{64}(?![A-Za-z0-9])', since: PROVIDER_KEYS_SINCE },
+  { name: 'groq', source: 'gsk_[A-Za-z0-9]{52}(?![A-Za-z0-9])', since: PROVIDER_KEYS_SINCE },
+  { name: 'xai', source: 'xai-[A-Za-z0-9_]{80}(?![A-Za-z0-9_])', since: PROVIDER_KEYS_SINCE },
+  { name: 'perplexity', source: 'pplx-[A-Za-z0-9]{48}(?![A-Za-z0-9])', since: PROVIDER_KEYS_SINCE },
+  { name: 'replicate', source: 'r8_[A-Za-z0-9_-]{37}(?![A-Za-z0-9_-])', since: PROVIDER_KEYS_SINCE },
   // gbrain's own tokens: generateToken (core/utils.ts) mints 'gbrain_' plus an
   // optional OAuth infix (at_ access / rt_ refresh / cs_ client secret /
   // code_ auth code) plus 32 random bytes hex. Without this entry the scanner

@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { PLUGIN_SURFACE, REGISTRATION_SURFACE, registeredSurface, stdioServeArgv } from '../src/core/mcp-registration.ts';
+import { PLUGIN_SURFACE, REGISTRATION_ADVERTISE, REGISTRATION_SURFACE, registeredAdvertise, registeredSurface, registrationAdvertise, stdioServeArgv } from '../src/core/mcp-registration.ts';
 import { harnessWiringEntry } from '../src/core/readiness.ts';
 import { registerClaudeMcp, registerCodexMcp } from '../src/core/bootstrap/hooks.ts';
 import { resolveSurfaceWithSource } from '../src/mcp/surface.ts';
@@ -33,6 +33,28 @@ describe('REGISTRATION_SURFACE and stdioServeArgv', () => {
     expect(stdioServeArgv(BIN, null)).toEqual([BIN, 'serve']);
   });
 
+  test('new registrations list the memory verbs; --advertise is written only when narrower than the surface', () => {
+    expect(REGISTRATION_ADVERTISE).toBe('verbs');
+    expect(stdioServeArgv(BIN, REGISTRATION_SURFACE, REGISTRATION_ADVERTISE)).toEqual([BIN, 'serve', '--surface', 'starter', '--advertise', 'verbs']);
+    expect(stdioServeArgv(BIN, 'starter', 'verbs')).toEqual([BIN, 'serve', '--surface', 'starter', '--advertise', 'verbs']);
+    expect(stdioServeArgv(BIN, 'verbs', 'verbs')).toEqual([BIN, 'serve', '--surface', 'verbs']);
+    expect(stdioServeArgv(BIN, null, 'verbs')).toEqual([BIN, 'serve']);
+  });
+
+  test('registrationAdvertise: a chosen surface lists in full, an existing registration keeps its listing, a new one lists the verbs', () => {
+    expect(registrationAdvertise({ userChoseSurface: false })).toBe('verbs');
+    expect(registrationAdvertise({ userChoseSurface: true })).toBeNull();
+    expect(registrationAdvertise({ userChoseSurface: false, prior: {} })).toBeNull();
+    expect(registrationAdvertise({ userChoseSurface: false, prior: { advertise: 'starter' } })).toBe('starter');
+    expect(registrationAdvertise({ userChoseSurface: true, prior: { advertise: 'verbs' } })).toBeNull();
+  });
+
+  test('registeredAdvertise reads an existing registration\'s listing', () => {
+    expect(registeredAdvertise(`${BIN} serve --surface full --advertise verbs`)).toBe('verbs');
+    expect(registeredAdvertise('Args: serve --surface full --advertise=starter')).toBe('starter');
+    expect(registeredAdvertise(`${BIN} serve --surface full`)).toBeNull();
+  });
+
   test('registeredSurface reads a pinned value, a bare serve, or nothing', () => {
     expect(registeredSurface(`gbrain:\n  Command: ${BIN}\n  Args: serve --surface full\n`)).toBe('full');
     expect(registeredSurface(`${BIN} serve --surface=verbs --source-guard`)).toBe('verbs');
@@ -43,17 +65,24 @@ describe('REGISTRATION_SURFACE and stdioServeArgv', () => {
 
 describe('every stdio registration path builds from REGISTRATION_SURFACE', () => {
   test('readiness harness_wiring: Claude Code and Codex pin the surface; opencode runs bootstrap hooks', () => {
-    expect(wiring('claude-code')?.argv).toEqual(['claude', 'mcp', 'add', 'gbrain', '--', ...stdioServeArgv(BIN)]);
-    expect(wiring('codex')?.argv).toEqual(['codex', 'mcp', 'add', 'gbrain', '--', ...stdioServeArgv(BIN)]);
+    expect(wiring('claude-code')?.argv).toEqual(['claude', 'mcp', 'add', 'gbrain', '--', ...stdioServeArgv(BIN, REGISTRATION_SURFACE, REGISTRATION_ADVERTISE)]);
+    expect(wiring('codex')?.argv).toEqual(['codex', 'mcp', 'add', 'gbrain', '--', ...stdioServeArgv(BIN, REGISTRATION_SURFACE, REGISTRATION_ADVERTISE)]);
     expect(wiring('opencode')?.argv).toEqual(['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks']);
-    expect(wiring('claude-code')?.why).toContain(`${BIN} serve --surface starter`);
+    expect(wiring('claude-code')?.why).toContain(`${BIN} serve --surface starter --advertise verbs`);
   });
 
   test('init --surface reaches the readiness fix (the quickstart line and the first-run harness decision read it)', () => {
     expect(wiring('claude-code', 'starter')?.argv).toEqual(['claude', 'mcp', 'add', 'gbrain', '--', BIN, 'serve', '--surface', 'starter']);
     expect(wiring('opencode', 'verbs')?.argv).toEqual(['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks', '--surface', 'verbs']);
     const missing = harnessWiringEntry({ transport: 'cli', harnesses: [], lockOwner: null, gbrainBin: BIN }).fix;
-    expect(missing?.why).toContain('serve --surface starter');
+    expect(missing?.why).toContain('serve --surface starter --advertise verbs');
+  });
+
+  test('bootstrap hooks: registerClaudeMcp and registerCodexMcp write --advertise when given', () => {
+    const claude = registerClaudeMcp({ gbrainBin: BIN, scope: 'user', sourceId: 'workspace', advertise: 'verbs' })[0];
+    const codex = registerCodexMcp({ gbrainBin: BIN, sourceId: 'workspace', advertise: 'verbs' })[0];
+    expect(claude.slice(claude.indexOf('--') + 1)).toEqual([BIN, 'serve', '--surface', 'starter', '--advertise', 'verbs']);
+    expect(codex.slice(codex.indexOf('--') + 1)).toEqual([BIN, 'serve', '--surface', 'starter', '--advertise', 'verbs']);
   });
 
   test('bootstrap hooks: registerClaudeMcp and registerCodexMcp default to the surface and carry an existing form', () => {
@@ -118,6 +147,22 @@ describe('S0: README, docs/mcp, INSTALL, BOOTSTRAP, push-context and the manifes
         }
       });
     }
+    expect(offenders).toEqual([]);
+  });
+
+  test('every harness registration command in the install docs lists the memory verbs (--advertise verbs)', () => {
+    const offenders: string[] = [];
+    let commands = 0;
+    for (const file of DOCS) {
+      readFileSync(join(ROOT, file), 'utf8').split('\n').forEach((line, i) => {
+        for (const m of line.matchAll(/\bmcp add\b[^`\n|]*?\bserve\b([^`\n|]*)/g)) {
+          commands++;
+          if (/--access[\s=]+read-only/.test(m[1])) continue;
+          if (!new RegExp(`--advertise(?:[\\s=]+|\\s+--arg\\s+)${REGISTRATION_ADVERTISE}\\b`).test(m[1])) offenders.push(`${file}:${i + 1}: ${line.trim()}`);
+        }
+      });
+    }
+    expect(commands).toBeGreaterThan(10);
     expect(offenders).toEqual([]);
   });
 

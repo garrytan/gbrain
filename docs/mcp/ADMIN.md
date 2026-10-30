@@ -236,11 +236,16 @@ security boundary; a request's `source_ids` can only narrow inside it. See
 Access is per source, never per page, so lay sources out by who may read them
 ([guide](../guides/multi-source-brains.md#lay-out-sources-by-who-may-read-them)).
 
-New `memory-reader`, `memory-writer` and `coding-agent` grants are callable and
-listed on the full surface; their operation snapshot is still the ceiling, so a
-reader still has no write operation. `delegating-agent` grants keep the starter
-surface. Clients granted before this keep their stored surface: no migration or
-repair changes it, and only an explicit `--profile` application regrants it.
+New `memory-reader`, `memory-writer` and `coding-agent` grants are callable on
+the full surface and list the seven memory verbs plus `request_tools`, which
+returns any other tool's schema (`gbrain auth clients` shows the surface as
+`full (set by install)`); `gbrain agent register` daily-driver and coding-agent
+clients without `--surface` do the same. Their operation snapshot is still the
+ceiling, so a reader still has no write operation. To list every tool, pin the
+surface: `gbrain auth rescope-client <client_id> --surface full`.
+`delegating-agent` grants keep the starter surface. Clients granted before this
+keep their stored surface and listing: no migration or repair changes it, and
+re-applying a profile to an operator-pinned client keeps its full listing.
 
 ### Grants that cannot reach new operations
 

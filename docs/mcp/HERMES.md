@@ -11,8 +11,13 @@ no token needed. Works with both PGLite and Supabase engines.
 ## Register (recommended)
 
 ```bash
-printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve
+printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve --surface starter --advertise verbs
 ```
+
+The tool list shows the seven memory verbs (`recall`, `remember`, `entity`, …)
+plus `request_tools`; every other operation stays callable, and `request_tools`
+lists it and returns its schema. Drop `--advertise verbs` to list every
+operation.
 
 `hermes mcp add` performs a real MCP handshake and tool discovery at add time,
 then prompts `Enable all N tools? [Y/n/select]:`. Three gotchas, all observed:
@@ -81,6 +86,10 @@ mcp_servers:
     command: gbrain
     args:
       - serve
+      - --surface
+      - full
+      - --advertise
+      - verbs
     env:
       GBRAIN_HOME: /home/alice-example
     connect_timeout: 60.0

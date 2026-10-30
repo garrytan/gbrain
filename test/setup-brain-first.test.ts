@@ -401,12 +401,22 @@ describe('brain-first block: full setup and the installer lanes', () => {
     const doc = JSON.parse(first.stdout);
     expect(doc.instructions).toMatchObject({ action: 'write', path: join(b.home, '.claude', 'CLAUDE.md') });
     expect(read(join(b.home, '.claude', 'CLAUDE.md'))).toContain('the `gbrain` MCP server');
+    expect(read(join(b.home, '.claude', 'CLAUDE.md'))).toContain('`recall` for what was said or decided');
     const second = JSON.parse((await runCli(['setup', 'claude-code', '--json', '--gbrain-bin', b.bin], { env: b.env })).stdout);
     expect(second.steps.map((s: any) => s.action)).toEqual(['keep', 'keep', 'keep']);
     expect(second.instructions.action).toBe('keep');
     const rm = JSON.parse((await runCli(['setup', 'claude-code', '--remove', '--json', '--gbrain-bin', b.bin], { env: b.env })).stdout);
     expect(rm.instructions.action).toBe('remove');
     expect(existsSync(join(b.home, '.claude', 'CLAUDE.md'))).toBe(false);
+  });
+
+  test('the block names the tools the registration lists: recall on the default verbs listing, search on an explicit --surface full', async () => {
+    const b = box();
+    expect((await runCli(['setup', 'codex', '--json', '--gbrain-bin', b.bin], { env: b.env })).exitCode).toBe(0);
+    expect(read(join(b.home, '.codex', 'AGENTS.md'))).toContain('`recall` for what was said or decided');
+    const c = box();
+    expect((await runCli(['setup', 'codex', '--surface', 'full', '--json', '--gbrain-bin', c.bin], { env: c.env })).exitCode).toBe(0);
+    expect(read(join(c.home, '.codex', 'AGENTS.md'))).toContain('`search` for names and phrases');
   });
 
   test('gbrain setup codex --no-instructions wires MCP and hooks but no block', async () => {

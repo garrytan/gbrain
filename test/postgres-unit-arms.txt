@@ -231,6 +231,7 @@ test/link-preparation-shared-index.test.ts
 test/links-attendance-blocked.test.ts
 test/links-extraction-yield.test.ts
 test/list-jobs-row-bound.test.ts
+test/maintenance-lowering-7917-7918.test.ts
 test/maintenance-trust-marker-7905.test.ts
 test/managed-cycle-pull-upstream.test.ts
 test/managed-facts-withdrawal-recovery-6506.test.ts
@@ -413,6 +414,7 @@ test/persistence-write-interrupted.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
 test/physical-root-birth-tolerance-6501.test.ts
+test/provenance-drift-7891.test.ts
 test/provenance-stamps-7873.test.ts
 test/purge-fact.test.ts
 test/purge-global-marker.test.ts
@@ -483,6 +485,7 @@ test/sync-full-untracked-import-5459.test.ts
 test/sync-group-member-order.test.ts
 test/sync-handler-drain-6706.test.ts
 test/sync-holds-only-converge-7327.test.ts
+test/sync-holds-wave-gbra133.test.ts
 test/sync-import-provenance-disk.test.ts
 test/sync-inexact-rename-6729.test.ts
 test/sync-landing-gaps.test.ts
