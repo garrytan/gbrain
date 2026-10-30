@@ -25,7 +25,7 @@ import { boundedProjectedPrefix } from '../page-window/document.ts';
 import { overlaidBoundedRows, pageLeadSource } from '../page-window/bounded-lead.ts';
 import type { Page, SearchResult } from '../types.ts';
 import { DEFAULT_PAGES_BUDGET, PAGES_BLOCK_EXCERPT_FLOOR_CHARS, type PagesBudget } from './pages-budget.ts';
-import { filterPagesToWindow, type TemporalWindow } from './temporal-window.ts';
+import { filterPagesToWindow, resolvePageDateMs, type TemporalWindow } from './temporal-window.ts';
 import { pageContentDate } from './temporal-context.ts';
 import { sanitizeQueryForPrompt } from '../search/expansion.ts';
 import { evidenceTitle } from '../search/evidence-date.ts';
@@ -118,6 +118,30 @@ function fuseRanked<T>(
     .map(s => s.item);
 }
 
+/** Preserve a bounded temporal reserve without discarding either stream's rank order. */
+function selectWindowEvidence(kept: SearchResult[], hybrid: SearchResult[], limit: number): SearchResult[] {
+  const identity = (page: SearchResult) => `${page.source_id ?? 'default'}\0${page.slug}`;
+  const hybridKeys = new Set(hybrid.map(identity));
+  const ranked = kept.filter(page => hybridKeys.has(identity(page)));
+  const floor = kept.filter(page => !hybridKeys.has(identity(page)));
+  if (floor.length === 0) return ranked.slice(0, limit);
+  const capacity = Math.floor(limit * 0.25);
+  const head = ranked.slice(0, Math.max(0, limit - capacity));
+  const selected = new Set(head.map(identity));
+  const datedTail = ranked.slice(head.length).filter(page => resolvePageDateMs(page) !== null);
+  const floorCount = Math.min(floor.length, Math.ceil(capacity / 2));
+  const datedCount = Math.min(datedTail.length, capacity - floorCount);
+  const extraFloor = Math.min(capacity - floorCount - datedCount, floor.length - floorCount);
+  for (const page of [...datedTail.slice(0, datedCount), ...floor.slice(0, floorCount + extraFloor)]) {
+    selected.add(identity(page));
+  }
+  for (const page of [...ranked, ...floor]) {
+    if (selected.size >= limit) break;
+    selected.add(identity(page));
+  }
+  return kept.filter(page => selected.has(identity(page))).slice(0, limit);
+}
+
 /**
  * Run the four-stream gather. Each stream is wrapped in a try/catch so a
  * single retriever failure doesn't crash the whole pipeline — synthesis
@@ -163,16 +187,22 @@ export async function runGather(
 
   let windowDiagnostic: ThinkGatherResult['diagnostics']['window'];
 
+  const pageIdentity = (page: Pick<SearchResult, 'slug' | 'source_id'>) =>
+    `${page.source_id ?? 'default'}\0${page.slug}`;
+
   // Stream 1: hybrid page search (existing primitive).
   // Both legs opt out of the reader-facing trims (autocut #4561, adaptive
   // return #5890): each cuts BEFORE the limit slice, so an evidence gather
   // sized for breadth (default 40) could collapse to 1-6 pages and starve
   // synthesis. Precision trimming is the synth prompt's job here.
+  // Disable the later search-layer token pack too; renderPagesBlock owns its
+  // separate character budget, so long notes must not erase short evidence.
   const pagesPromise = (window ? Promise.all([
     hybridSearch(engine, opts.question, {
       limit: Math.min(gatherLimit * 4, 200),
       expansion: false,
       ...INTERNAL_BREADTH_SEARCH_OPTS,
+      tokenBudget: 0,
       ...pageScope,
       decide,
     }),
@@ -191,14 +221,18 @@ export async function runGather(
     }),
   ]).then(([hybrid, floor]) => {
     const seen = new Set<string>();
-    const combined = [...hybrid, ...floor].filter(page => !seen.has(page.slug) && !!seen.add(page.slug));
+    const combined = [...hybrid, ...floor].filter(page => {
+      const identity = pageIdentity(page);
+      return !seen.has(identity) && !!seen.add(identity);
+    });
     const filtered = filterPagesToWindow(combined, window);
     windowDiagnostic = { dropped: filtered.droppedOutOfWindow, undatedKept: filtered.undatedKept };
-    return filtered.kept.slice(0, gatherLimit);
+    return selectWindowEvidence(filtered.kept, hybrid, gatherLimit);
   }) : hybridSearch(engine, opts.question, {
     limit: gatherLimit,
     expansion: false,
     ...INTERNAL_BREADTH_SEARCH_OPTS,
+    tokenBudget: 0,
     ...pageScope,
     decide,
   })).catch((e) => {
