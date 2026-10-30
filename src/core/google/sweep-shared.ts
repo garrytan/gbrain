@@ -65,6 +65,8 @@ export interface GoogleSyncDeps {
   engine: BrainEngine;
   sourceId: string;
   cfg: GoogleSourceConfig;
+  /** Selected by this source only; default false. */
+  importAutomated?: boolean;
   opts: SyncOpts;
   entry: CredentialEntry;
   log: (msg: string) => void;

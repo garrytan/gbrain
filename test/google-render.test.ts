@@ -310,6 +310,31 @@ describe('renderThreadPage', () => {
     expect(page!.relPath).toBe(threadRelPath(twoMessageThread()));
   });
 
+  test('an all-automated thread is dropped by default and imported with automated: true when enabled', () => {
+    const claim = thread([
+      msg({
+        from: 'Example Insurer <DoNotReply-MemberComm@email.example.com>',
+        fromAddress: 'donotreply-membercomm@email.example.com',
+        subject: 'Important update about your claim',
+        bodyText: 'Your claim was not approved.',
+      }),
+    ]);
+    expect(renderThreadPage(claim)).toBeNull();
+    const page = renderThreadPage(claim, { importAutomated: true });
+    expect(page).not.toBeNull();
+    expect(page!.markdown).toContain('automated: true');
+    expect(page!.markdown).toContain('Your claim was not approved.');
+  });
+
+  test('a thread with any human sender never carries automated: true', () => {
+    const mixed = thread([
+      msg({ from: 'Robot <noreply@example.com>', fromAddress: 'noreply@example.com' }),
+      msg({ id: '18c2f4a9b3d21e09', from: 'A Example <a@example.com>', fromAddress: 'a@example.com' }),
+    ]);
+    expect(renderThreadPage(mixed)!.markdown).not.toContain('automated: true');
+    expect(renderThreadPage(mixed, { importAutomated: true })!.markdown).not.toContain('automated: true');
+  });
+
   test('participants are sorted', () => {
     const md = renderThreadPage(twoMessageThread())!.markdown;
     expect(md).toContain(

@@ -1483,3 +1483,29 @@ describe('google-source secondary calendar', () => {
     }
   });
 });
+
+// The renderer/resolver units cannot catch a sweep that forgets to pass the
+// resolved option. Use the existing fake provider and check persisted pages
+// and loop exclusion without a new production seam.
+test.each([
+  { source: true, imported: true },
+  { source: false, imported: false },
+  { source: undefined, imported: false },
+])('automated import source=$source persists=$imported', async ({ source, imported }) => {
+  const dir = mkdtempSync(join(tmpdir(), 'gsrc-automated-'));
+  const fx = emptyFx();
+  fx.messages.push(gmsg('18c2f4a9b3d21e04', T_N, daysAgoMs(1), {
+    headers: { From: 'Notifier <noreply@example.com>', To: 'a@example.com', Subject: 'Claim decision' },
+    body: 'Your claim decision is available.',
+  }));
+  try {
+    await insertGoogleSource(dir);
+    const cfg = { ...cfgFor(dir, 'gmail'), ...(source !== undefined ? { importAutomated: source } : {}) };
+    await withHome(() => runGoogleSync(engine, 'gsrc', cfg,
+      { sourceId: 'gsrc', noEmbed: true, noExtract: true }, buildFetch(fx), makeVault()));
+    const emails = await slugsWhere("slug LIKE 'emails/%'");
+    expect(emails).toHaveLength(imported ? 1 : 0);
+    if (imported) expect(readFileSync(join(dir, `${emails[0]}.md`), 'utf8')).toContain('automated: true');
+    expect(await engine.executeRaw("SELECT thread_id FROM open_loops WHERE source_id='gsrc'")).toEqual([]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

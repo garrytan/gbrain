@@ -43,6 +43,7 @@ export function parseGoogleSourceConfig(
     account,
     services: services.length > 0 ? services : [...ALL_GOOGLE_SERVICES],
     historyDays,
+    ...(config.g_import_automated !== undefined ? { importAutomated: enabled(config.g_import_automated) } : {}),
     ...(futureDays !== undefined ? { futureDays } : {}),
     ...(loopsExcludeLabels.length > 0 ? { loopsExcludeLabels } : {}),
     calendarId,
@@ -83,3 +84,5 @@ export function googleTuningConfig(google: { calendarId?: string; contactsDir?: 
     ...(google.loopsExcludeLabels && google.loopsExcludeLabels.length > 0 ? { g_loops_exclude_labels: google.loopsExcludeLabels.join(',') } : {}),
   };
 }
+
+function enabled(value: unknown): boolean { return value === true || value === 'true' || value === '1' || value === 'on'; }
