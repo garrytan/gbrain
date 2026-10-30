@@ -27,7 +27,7 @@ import { managedSyncAuthority, validateManagedSyncOptions, validateSyncAuthority
 import type { PreparedContentImport } from './prepared-import.ts';
 import { persistenceFileHash, type PreparedMutation } from './coordinator.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
-import { databaseOnlyPublication, prepareFileTarget } from './page-prepare.ts';
+import { databaseOnlyPublication, prepareFileTarget, preparePrivateTransition } from './page-prepare.ts';
 import { sourceCanonicalGit } from './git-door.ts';
 import { isPrivatePage } from '../search/private-visibility.ts';
 import { assertPhysicalRoot } from './physical-root.ts';
@@ -229,6 +229,9 @@ function stableId(value: unknown): string {
 
 async function connectorFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'>,
   snapshot: PageSnapshot | null, content: string | null, sourcePath: string | null, root: string | null): Promise<PreparedMutation['file']> {
+  if (content !== null && await strictPrivateImport(engine, row.source_id, content, sourcePath ?? `${row.slug}.md`, snapshot)) {
+    return snapshot ? preparePrivateTransition(engine, row, snapshot) : undefined;
+  }
   if (!row.worktree_id || snapshot || !sourcePath || !root) return prepareFileTarget(engine, row, snapshot, content);
   const path = resolve(root, sourcePath);
   if (!isWriteTargetContained(path, root)) throw opError('source_changed', 'The canonical file target is outside its registered source.',
@@ -244,7 +247,8 @@ async function connectorFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 
 /**
  * G6: on a strict (canonical: git) source a private page is a declared database-only class and is never committed
  * (docs/designs/GIT_CANONICAL_MEMORY.md), so a connector import of one (a calendar event the provider marks private,
- * or a re-render of a page already private) publishes no file. Submission and publication decide it the same way.
+ * or a re-render of a page already private) publishes no content file. A prior canonical file must instead be removed
+ * through preparePrivateTransition, with the same path/hash binding at submission and publication.
  */
 async function strictPrivateImport(engine: BrainEngine, sourceId: string, content: string, sourcePath: string, snapshot: PageSnapshot | null): Promise<boolean> {
   const parsed = parseMarkdown(content, sourcePath);
@@ -916,8 +920,7 @@ export class ManagedConnectorSync {
       extra.googleReceipts = ownedGoogleReceipts(snapshot, (this.identity.config as GoogleSourceConfig).account, extra.googleReceipts!);
       sourcePath = snapshot!.page.source_path!;
     }
-    const file = kind === 'connector_v2_checkpoint' || kind === 'connector_v2_import' && sourcePath && typeof extra.content === 'string'
-      && await strictPrivateImport(this.engine, this.sourceId, extra.content, sourcePath, snapshot) ? undefined : await connectorFileTarget(this.engine,
+    const file = kind === 'connector_v2_checkpoint' ? undefined : await connectorFileTarget(this.engine,
       { source_id: this.sourceId, worktree_id: this.binding?.worktree_id ?? null, slug }, snapshot, extra.content ?? null, sourcePath, this.canonicalRoot);
     if (file && sourcePath && resolve(file.path) !== resolve(this.canonicalRoot!, sourcePath)) {
       throw opError('source_changed', 'The connector source path no longer names its canonical file.',
@@ -1195,8 +1198,7 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
   const project = await prepareCanonicalProjections(engine, ready.parsedPage, row.slug, row.source_id, snapshot, 'preserving');
   const tags = [...new Set([...(snapshot?.tags ?? []), ...ready.parsedPage.tags])].sort();
   const page: Page = { ...(snapshot?.page ?? { id: 0, slug: row.slug, source_id: row.source_id, created_at: new Date(row.created_at), updated_at: new Date(row.created_at) }), ...ready.parsedPage };
-  const target = await strictPrivateImport(engine, row.source_id, p.content, p.sourcePath, snapshot) ? undefined
-    : await connectorFileTarget(engine, row, snapshot, serializePageToMarkdown(page, tags), p.sourcePath, p.canonicalRoot);
+  const target = await connectorFileTarget(engine, row, snapshot, serializePageToMarkdown(page, tags), p.sourcePath, p.canonicalRoot);
   // Google pages hold private mail: derived here from the stored connector, never submitted, so request ids are unchanged.
   const file = target && p.connector === 'google' ? { ...target, publishMode: 0o600 } : target;
   if (file && (file.path !== p.filePath || file.expectedBeforeHash !== p.fileBeforeHash)) throw connectorPublicationRefusal('source_changed', 'The connector canonical file changed during preparation.', row,
