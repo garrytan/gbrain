@@ -5,7 +5,8 @@
  * builder, so a count can never include a page the rows could not return.
  *
  * The match is `engine.searchKeyword`'s strict match, never its OR-of-terms
- * retry: `websearch_to_tsquery` over `content_chunks.search_vector` (the CJK
+ * retry: `websearch_to_tsquery` over `content_chunks.search_vector`, plus
+ * exact full-slug/tail identity for one handle or a pure OR of handles (the CJK
  * branch: every term as a LIKE/ILIKE substring), text chunks only, with the
  * same page filters (type/types, exclude_slugs, language/symbol kind, dates,
  * source scope, hard-excluded prefixes) and the same visibility predicate
@@ -39,6 +40,22 @@ interface KeywordMatch { where: string; score: string; params: unknown[]; whereP
 
 const FROM = `content_chunks cc JOIN pages p ON p.id = cc.page_id JOIN sources s ON s.id = p.source_id`;
 
+/** Only a single positive identity or a pure OR list can add slug matches.
+ * Do not discard phrase, AND or negative constraints to probe individual words.
+ */
+function handleIdentities(query: string): string[] {
+  if (query.length > 4096) return [];
+  const parts = query.trim().split(/\s+OR\s+/i);
+  if (parts.length > 32) return [];
+  const identities: string[] = [];
+  for (const part of parts) {
+    const token = part.startsWith('"') && part.endsWith('"') ? part.slice(1, -1) : part;
+    if (!/^[\p{L}\p{N}]+(?:[-_/][\p{L}\p{N}]+)+$/u.test(token)) return [];
+    identities.push(token);
+  }
+  return [...new Set(identities)];
+}
+
 /** The shared match: WHERE text (with leading predicate) and the chunk score, or null when nothing can match. */
 export function buildKeywordMatch(query: string, opts: SearchOpts | undefined): KeywordMatch | null {
   const params: unknown[] = [];
@@ -62,6 +79,19 @@ export function buildKeywordMatch(query: string, opts: SearchOpts | undefined): 
     const tsq = `websearch_to_tsquery('${getFtsLanguage()}', $${params.length})`;
     predicate = `cc.search_vector @@ ${tsq}`;
     rank = () => `ts_rank(cc.search_vector, ${tsq})`;
+    const identities = handleIdentities(query);
+    if (identities.length) {
+      const full = `$${params.push(identities)}`;
+      const tails = `$${params.push(identities.filter(identity => !identity.includes('/')))}`;
+      const identity = `(p.slug = ANY(${full}::text[]) OR regexp_replace(p.slug, '^.*/', '') = ANY(${tails}::text[]))`;
+      // Resolve page IDs once, allowing the chunk page_id index alongside the
+      // FTS index rather than evaluating a slug expression over every chunk.
+      const candidates = `ARRAY(SELECT ip.id FROM pages ip WHERE ip.slug = ANY(${full}::text[]) OR regexp_replace(ip.slug, '^.*/', '') = ANY(${tails}::text[]))`;
+      predicate = `(${predicate} OR cc.page_id = ANY(${candidates}))`;
+      // Identity-only rows need a stable nonzero score for evidence delivery and
+      // keyset paging. Keep all admission filters outside the OR, including seals.
+      rank = () => `GREATEST(ts_rank(cc.search_vector, ${tsq}), CASE WHEN ${identity} THEN 1.0 ELSE 0.0 END)`;
+    }
   }
   const add = (value: unknown, clause: (n: string) => string): string => { params.push(value); return ` AND ${clause(`$${params.length}`)}`; };
   let filters = '';
