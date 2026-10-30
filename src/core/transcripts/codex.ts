@@ -32,6 +32,7 @@ import type {
   TranscriptMessage,
 } from './types.ts';
 import { TRANSCRIPT_JSONL_HARD_CAP, utcTimestamp } from './types.ts';
+import { hasZstdMagic, isCompressedJsonlPath, readZstdBounded } from './zstd.ts';
 
 /**
  * Head window kept when a rollout exceeds the parse budget. Only needs to
@@ -179,6 +180,7 @@ export const codexAdapter: TranscriptAdapter = {
   specTarget: CODEX_SPEC_TARGET,
 
   detect(path: string, sample: Buffer): boolean {
+    if (isCompressedJsonlPath(path)) return hasZstdMagic(sample);
     if (!path.endsWith('.jsonl')) return false;
     const firstLine = sample.toString('utf8').split('\n', 1)[0]?.trim();
     if (!firstLine || !firstLine.startsWith('{')) return false;
@@ -197,11 +199,17 @@ export const codexAdapter: TranscriptAdapter = {
 
   async *parse(path: string, opts: ParseSessionsOpts = {}): AsyncGenerator<ParsedSession, FileDiagnostics> {
     const budget = Math.max(1, Math.floor(opts.maxBytes ?? TRANSCRIPT_JSONL_HARD_CAP));
-    const size = statSync(path).size;
+    const compressed = isCompressedJsonlPath(path);
+    const size = compressed ? 0 : statSync(path).size;
     let raw: string;
     let bytesRead: number;
     let truncated = false;
-    if (size <= budget) {
+    if (compressed) {
+      // Budget decompressed bytes using the same head + tail shape as plain rollouts.
+      ({ raw, bytesRead, truncated } = await readZstdBounded(
+        path, budget, Math.min(CODEX_HEAD_WINDOW_BYTES, Math.floor(budget / 4)),
+      ));
+    } else if (size <= budget) {
       raw = readFileSync(path, 'utf8');
       bytesRead = size;
     } else {
@@ -285,7 +293,7 @@ export const codexAdapter: TranscriptAdapter = {
     let sessions = 0;
     if (messages.length > 0) {
       sessions = 1;
-      const sid = sessionId || basename(path, '.jsonl');
+      const sid = sessionId || basename(path).replace(/\.jsonl(\.zst)?$/, '');
       yield {
         meta: {
           harness: 'codex',
