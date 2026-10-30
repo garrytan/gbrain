@@ -117,7 +117,7 @@ import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
 import { requestSignal, throwIfRequestAborted } from './request-signal.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns, keywordPhraseFactorSql } from './search/sql-ranking.ts';
 import { narrowedOrFallbackQuery } from './search/keyword-or-narrow.ts';
 import { RARE_TERM_CHUNK_CAP, rankOrFallbackByRarity, rareTermPagesSql, type RareTermPages } from './search/keyword-or-rarity.ts';
 import { buildKeywordChunkMatch, KEYWORD_RANK_CANDIDATES, KEYWORD_RANKED_ROWS_CTE, KEYWORD_STATEMENT_SETTINGS } from './search/keyword-chunk-match.ts';
@@ -1142,7 +1142,7 @@ export class PostgresEngine implements BrainEngine {
       WITH ranked_chunks AS (
         SELECT page_id, chunk_id, score, bounded_rows FROM (SELECT *, count(*) OVER () AS bounded_rows, row_number() OVER (PARTITION BY page_id ORDER BY score DESC, chunk_id ASC) AS page_rank FROM (SELECT
           p.id as page_id, cc.id as chunk_id,
-          ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $${rankIdx + 1})) * ${sourceFactorCase} AS score
+          ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $${rankIdx + 1})) * ${keywordPhraseFactorSql(ftsLang, `$${rankIdx + 1}`, opts?.keywordPhrase === true)} * ${sourceFactorCase} AS score
         FROM ${chunk.from}
         JOIN pages p ON p.id = cc.page_id
         JOIN sources s ON s.id = p.source_id
