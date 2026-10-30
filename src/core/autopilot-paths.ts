@@ -251,9 +251,7 @@ export function resolveAutopilotJob(opts: { mint?: boolean } = {}): AutopilotJob
     suffix = id ? id.slice(0, 8) : null;
     kind = suffix ? 'suffixed' : 'unassigned';
   }
-  const logs = process.platform === 'darwin'
-    ? autopilotLaunchdHostPaths(homeDir, autopilotLaunchdLabel(suffix))
-    : { viaBash: false, logPath: join(homeDir, 'autopilot.log'), errPath: join(homeDir, 'autopilot.err') };
+  const logs = autopilotLaunchdHostPaths(homeDir, autopilotLaunchdLabel(suffix), homedir(), process.platform === 'darwin' ? undefined : () => 0);
   return {
     kind,
     suffix,
@@ -285,9 +283,10 @@ export function autopilotLaunchdHostPaths(
 ): { viaBash: boolean; logPath: string; errPath: string } {
   let external = false;
   try { external = dev(homeDir) !== dev(hostHome); } catch { /* unreadable: keep the brain-home layout */ }
-  if (!external) return { viaBash: false, logPath: join(homeDir, 'autopilot.log'), errPath: join(homeDir, 'autopilot.err') };
-  const logDir = join(hostHome, 'Library', 'Logs', 'gbrain');
-  return { viaBash: true, logPath: join(logDir, `${label}.log`), errPath: join(logDir, `${label}.err`) };
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- hostHome is this user's home directory and the rest are fixed segments.
+  const [logDir, base] = external ? [join(hostHome, 'Library', 'Logs', 'gbrain'), label] : [homeDir, 'autopilot'];
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- logDir is the brain's own config dir or ~/Library/Logs/gbrain; label passed autopilotLaunchdLabel's [A-Za-z0-9._-] grammar, which rejects separators and '..'.
+  return { viaBash: external, logPath: join(logDir, `${base}.log`), errPath: join(logDir, `${base}.err`) };
 }
 
 /**
