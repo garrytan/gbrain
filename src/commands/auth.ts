@@ -1350,6 +1350,9 @@ Usage:
      --may-act-for <list|none>                            Shared agents: member ids, group:<id>, guest or * the
                                                           harness may name as a request's audience
                                                           (X-Gbrain-On-Behalf-Of or _meta.on_behalf_of)
+     --attest-actor <qm|none> [--attest-ops <op,...>]     A client-credentials client or member-less token may name
+                                                          the person a QM call serves (x-qm-actor; linked with gbrain
+                                                          access member link); ops default memory_recall,memory_write
      --private-pages <granted-sources|none>               Remote reads see visibility: private pages in the
                                                           sources this grant names explicitly (never the
                                                           no-grant floor, federation, a client's bound source

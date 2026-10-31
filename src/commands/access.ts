@@ -2,6 +2,7 @@
  * GBRA-218: `gbrain access`, the operator surface for per-member read access.
  *
  *   gbrain access member add|disable|enable|rm|list <id> [--name N] [--groups a,b] [--bind-token <name>]
+ *   gbrain access member link <id> --qm <canonical id> | unlink --qm <canonical id> | links [--member <id>]
  *   gbrain access group add|rm|list <group> [--members a,b]
  *   gbrain access who-can-read <slug> [--source <id>]
  *   gbrain access check --token <name>|--client <id> [--as a,b]
@@ -21,6 +22,7 @@ import { resolveTokenGrant } from '../core/grants/legacy-token.ts';
 import { isPrivacyPrivatePage } from '../core/search/private-visibility.ts';
 import { identityFor, normalizePrincipal, normalizeReaders, readersAllow } from '../core/access/principals.ts';
 import { mayActForCovers, singleMemberAudience, type AudiencePrincipal } from '../core/access/audience.ts';
+import { linkMember, listMemberLinks, unlinkMember } from '../core/access/actor.ts';
 import {
   addGroup, addMember, assertAccessId, disableMember, enableMember, getMember, legacyTokenByName, listGroups, listMembers,
   parseIdList, previewRemoveGroup, previewRemoveMember, removeGroup, removeGroupMembers, removeMember, type MemberRecord,
@@ -34,6 +36,10 @@ Members and groups:
   gbrain access member enable <id>
   gbrain access member rm <id> [--yes]       Preview first; --yes removes for good (the id is never reused)
   gbrain access member list [--all]          --all includes removed ids
+  gbrain access member link <id> --qm <canonical id> [--dry-run]
+                                             An attested QM call naming that person reads and writes as <id>
+  gbrain access member unlink --qm <canonical id> [--dry-run]
+  gbrain access member links [--member <id>] Canonical ids are compared exactly (no case folding)
   gbrain access group add <group> [--members a,b]
   gbrain access group rm <group> [--members a,b] [--yes]
                                              With --members, removes those members; otherwise previews
@@ -73,7 +79,7 @@ function flagValue(args: string[], name: string): string | undefined {
   return v;
 }
 
-const VALUE_FLAGS = new Set(['--name', '--groups', '--bind-token', '--members', '--source', '--token', '--client', '--as']);
+const VALUE_FLAGS = new Set(['--name', '--groups', '--bind-token', '--members', '--source', '--token', '--client', '--as', '--qm', '--member']);
 
 function positionals(args: string[]): string[] {
   const out: string[] = [];
@@ -223,9 +229,28 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
       const members = await listMembers(engine, { includeRemoved: args.includes('--all') });
       return print(json, { members }, () => members.length ? ['Members:', ...members.map(memberLine)] : ['No members. Add one: gbrain access member add <id>']);
     }
+    case 'link':
+    case 'unlink':
+    case 'links':
+      return memberLinksCmd(engine, sub, args, json, id);
     default:
-      throw usageError(`Unknown access member subcommand: ${sub ?? '(none)'}.`, 'Use add, disable, enable, rm or list (gbrain access --help).');
+      throw usageError(`Unknown access member subcommand: ${sub ?? '(none)'}.`, 'Use add, disable, enable, rm, list, link, unlink or links (gbrain access --help).');
   }
+}
+
+/** GST-359 C1: links from a trusted system's canonical person ids to members (database only, repo-less or not). */
+async function memberLinksCmd(engine: BrainEngine, sub: 'link' | 'unlink' | 'links', args: string[], json: boolean, id: string | undefined): Promise<void> {
+  if (sub === 'links') {
+    const member = flagValue(args, '--member');
+    const links = await listMemberLinks(engine, member ? { member: assertAccessId(member) } : {});
+    return print(json, { links }, () => links.length ? ['Links:', ...links.map(l => `  ${l.system}:${l.external_id} -> ${l.member_id}`)] : ['No links. Add one: gbrain access member link <id> --qm <canonical id>']);
+  }
+  const externalId = flagValue(args, '--qm');
+  if (externalId === undefined) throw usageError(`access member ${sub} needs --qm <canonical id>.`, sub === 'link' ? 'gbrain access member link <id> --qm <canonical id> [--dry-run]' : 'gbrain access member unlink --qm <canonical id> [--dry-run]');
+  const dryRun = args.includes('--dry-run');
+  const r = sub === 'link' ? await linkMember(engine, id, 'qm', externalId, { dryRun }) : await unlinkMember(engine, 'qm', externalId, { dryRun });
+  return print(json, r, () => [`${r.applied ? (sub === 'link' ? 'Linked' : 'Unlinked') : `Would ${sub}`} ${r.link.system}:${r.link.external_id} ${sub === 'link' ? '->' : 'from'} ${r.link.member_id}`,
+    r.applied ? 'Takes effect on the next attested call.' : `Apply without --dry-run.`]);
 }
 
 async function groupCmd(engine: BrainEngine, sub: string | undefined, args: string[], json: boolean): Promise<void> {
