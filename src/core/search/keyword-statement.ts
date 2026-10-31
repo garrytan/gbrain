@@ -17,7 +17,11 @@
  * (no global chunk cap: one page with hundreds of matching chunks cannot
  * crowd the others out) and orders pages by (score DESC, page_id ASC), the
  * keyset the cursor resumes from. Scores are float8 so a cursor's score
- * round-trips through JSON exactly.
+ * round-trips through JSON exactly. It pages those (page_id, chunk_id, score)
+ * rows first and only then reads the page and chunk rows it returns (#7082):
+ * the joins are inner primary-key lookups with no filter of their own, so the
+ * rows are the same, and a broad term no longer fetches a chunk row for every
+ * matching page.
  */
 import type { SearchOpts } from '../types.ts';
 import { escapeLikePattern, hasCJK, cjkMatchTerms } from '../cjk.ts';
@@ -112,15 +116,18 @@ export function buildKeywordPagesStatement(query: string, opts: SearchOpts | und
         SELECT cc.page_id, cc.id AS chunk_id, ${m.score} AS score FROM ${FROM} WHERE ${m.where}
       ), best AS (
         SELECT DISTINCT ON (page_id) page_id, chunk_id, score FROM matched ORDER BY page_id, score DESC, chunk_id ASC
+      ), kept AS (
+        SELECT b.page_id, b.chunk_id, b.score FROM best b
+        ${after}
+        ORDER BY b.score DESC, b.page_id ASC
+        LIMIT $${params.length - 1} OFFSET $${params.length}
       )
       SELECT p.slug, p.id AS page_id, p.title, p.type, p.source_id, p.effective_date, p.effective_date_source,
         CASE WHEN ${messageId} THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
         CASE WHEN ${messageId} THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
-        cc.id AS chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, b.score, false AS stale
-      FROM best b JOIN pages p ON p.id = b.page_id JOIN content_chunks cc ON cc.id = b.chunk_id
-      ${after}
-      ORDER BY b.score DESC, b.page_id ASC
-      LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        cc.id AS chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, k.score, false AS stale
+      FROM kept k JOIN pages p ON p.id = k.page_id JOIN content_chunks cc ON cc.id = k.chunk_id
+      ORDER BY k.score DESC, k.page_id ASC`,
     params,
   };
 }
