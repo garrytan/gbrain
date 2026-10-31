@@ -10,6 +10,23 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Purging a fact can no longer take the conversation-facts outcome rows with it, `audit-secrets` again catches a password glued to a redaction marker by punctuation, and a ghost-page repair of a code page now acts on the page's real file. Persistence protocol refusals now say what went wrong and what to do (#7831, #8034, #7967, #7777, #7780).**
+
+This is the data-integrity half of the persistence/door follow-up wave (#8124). Each fix has a regression test that fails on master.
+
+### Itemized changes
+
+- **Facts purge (#7831).** `gbrain forget <id> --purge` on a claim whose text is exactly `EXTRACTION_COMPLETE` or `EXTRACTION_NOT_APPLICABLE` no longer deletes the outcome rows with the same text. The receipt, `--status` and a restore replay skip them too, so those pages aren't extracted (and paid for) again.
+- **Secret audit (#8034).** `audit-secrets` and re-scans again report a password glued to a redaction marker by punctuation (`<REDACTED:x>,<password>`). Punctuation ends a marker only before whitespace or the end of the line. Import-time redaction is unchanged.
+- **Fence markers in code (#8020).** A fence marker inside markdown code no longer counts as a fence for concept republication, the Google connector's fence carry, `repair connector-fences` or `repair take-supersession`. This matches how the fence readers already read the page, so no stored page reads differently.
+- **Ghost code pages (#7967).** `gbrain repair ghost-pages` retires a code or image page at its recorded file instead of at `<slug>.md`. A recorded file restored after preparation now keeps the page, and on a git-canonical source the door commits the file's removal, so HEAD no longer keeps the file of a page the database deleted.
+- **Dream write-through (#8092).** After a refused commit, rewrites of existing atom and concept files and removals of retired atoms' files are retried on the next run. Before, only new files were. The rollback runs under the commit lock and takes its paths out of the pending ledger, so a later hand edit there is never swept into a gbrain commit. A busy commit lock no longer freezes the worker's event loop.
+- **Provenance repair (#7960 item 1).** When `gbrain repair provenance --apply` (or `trust backfill --repair-unknown-markers`) fails in the database after writing the page file, it puts the file back and reverts its commit, so a failed apply changes nothing.
+- **Protocol guard refusals (#7777).** A write refused during publication by a persistence protocol guard now fails with the guard's own code (`writer_upgrade_required`, `writer_not_quiesced`, `unsupported_mutation_protocol`, or `writer_coordinator_required` with `unreadable_state`) and that guard's remedy. Before, it surfaced as an "unexpected owner exception" `storage_error`. Ordinary permission denial is unchanged. Contributed by @javieraldape (#7913, rewritten on master).
+- **`unreadable_state` (#7780).** The refusal now says the role "cannot fully read" the writer state, which is true for all four triggers. Its receipt suggests a role that can read that state instead of an upgrade, and `gbrain sources writer status` names the table in the owner-only `recent_failures[].error_detail.state`.
+
 ## [0.60.529.0] - 2026-10-31
 
 **A pull request that adds a file to the PGLite snapshot inputs no longer gets stopped at gstack's pregate secrets check by its own workflow cache keys (#8107).**

@@ -18,10 +18,9 @@ import { conceptPreservationHold } from '../cycle/concept-publication.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, replaceOrInsertFactsFence } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence } from '../takes-fence.ts';
 import { segmentedRegionContains } from '../page-body/segment-lines.ts';
+import { countOutsideCode, locateOutsideCode } from '../fence-scan.ts';
 import { SEGMENTED_SAMPLE } from './timeline.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairScope, type RepairCursor } from './core.ts';
-
-const count = (text: string, marker: string) => text.split(marker).length - 1;
 
 /**
  * The page with every below-sentinel fence moved into its body, or null when
@@ -32,10 +31,10 @@ export function relocateTimelineFences(page: { compiled_truth: string | null; ti
   let timeline = page.timeline ?? '';
   let moved = false;
   for (const [begin, end] of [[FACTS_FENCE_BEGIN, FACTS_FENCE_END], [TAKES_FENCE_BEGIN, TAKES_FENCE_END]] as const) {
-    if (!timeline.includes(begin) && !timeline.includes(end)) continue;
-    if (count(timeline, begin) !== 1 || count(timeline, end) !== 1 || count(body, begin) || count(body, end)) return null;
-    const start = timeline.indexOf(begin);
-    const stop = timeline.indexOf(end, start);
+    const inTimeline = [countOutsideCode(timeline, begin), countOutsideCode(timeline, end)];
+    if (!inTimeline[0] && !inTimeline[1]) continue;
+    if (inTimeline[0] !== 1 || inTimeline[1] !== 1 || countOutsideCode(body, begin) || countOutsideCode(body, end)) return null;
+    const { beginIdx: start, endIdx: stop } = locateOutsideCode(timeline, begin, end);
     if (stop === -1) return null;
     const block = timeline.slice(start, stop + end.length);
     timeline = `${timeline.slice(0, start)}${timeline.slice(stop + end.length)}`.replace(/\n{3,}/g, '\n\n').trim();

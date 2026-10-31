@@ -406,9 +406,16 @@ does not own a function, v277 names it on stderr and leaves it; `gbrain doctor`
 **Writer-protocol fences.** The managed-writer guard, the persistence protocol floor, protocol
 activation and the Git-canonical source counter also run as the writing role and read their state
 under its RLS. Since migration v278 (#7636) they fail closed: a role that cannot see the
-`persistence_brain` row is refused with `writer_coordinator_required` (relationship
-`unreadable_state`) on every guarded write, managed brain or not, instead of being treated as
-unmanaged. On a managed brain the same refusal covers a hidden `git_canonical_brain` row or
+`persistence_brain` row is refused on every guarded write, managed brain or not, instead of being
+treated as unmanaged. The message is `writer_coordinator_required: writer state is unreadable to
+this database role`: the managed-writer guard raises it as P0001, the request, effect and
+activation guards of the persistence protocol as SQLSTATE 42501. During a coordinated write's
+publication either one is stored on the receipt as `writer_coordinator_required` (relationship
+`unreadable_state`, the role remedy, and the owner-only `error_detail.state` naming the table; since
+#7777 for the protocol guards, #7780 for the state and remedy). A protocol guard's
+refusal outside publication (write admission, protocol activation) reaches the command as that
+database error, which gbrain's generic database output labels `permission_denied` with grant
+advice: the code at the start of the message names the refusal. On a managed brain the same refusal covers a hidden `git_canonical_brain` row or
 Git-canonical source row (for a writer without the git protocol) and a hidden page row behind a tag,
 timeline entry or take. Protocol activation (row-level security on `sources`, `persistence_requests`,
 `persistence_effects`, `persistence_worktrees` or `persistence_source_bindings`) and a change to
@@ -811,7 +818,7 @@ names — reasons may be added, never renamed or removed). All 16:
 | `no_url` | nothing configured at all — `gbrain init --prefer-postgres` (or `gbrain init` for PGLite) |
 | `env_shadowed` | a cwd-.env `DATABASE_URL` exists but the cwd-.env guard excludes it — export `GBRAIN_DATABASE_URL` |
 | `auth_failed` | password/role rejected (28P01) — reset credentials, then `gbrain init --url <conn>` |
-| `permission_denied` | 28000/42501 — the role lacks a GRANT or hits RLS |
+| `permission_denied` | 28000/42501 — the role lacks a GRANT or hits RLS; a 42501 whose message starts with a writer code (`writer_coordinator_required:`, `writer_upgrade_required:`, `writer_not_quiesced:`, `unsupported_mutation_protocol:`) is a persistence protocol guard's refusal ([write refusals](guides/write-refusals.md#protocol-guard)) |
 | `tenant_not_found` | Supavisor rejected the tenant — pooler usernames are `postgres.<project-ref>`; also raised by paused projects |
 | `ssl_required` | the server demands SSL — `?sslmode=require` rewrite (rewrite tier) |
 | `pool_exhausted` | 53300 / session-slot exhaustion — [pool sizing](#pool-sizing) guidance: `export GBRAIN_POOL_SIZE=6` per long-running process, fewer processes |

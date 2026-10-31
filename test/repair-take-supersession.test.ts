@@ -215,4 +215,17 @@ for (const backend of testBackends()) {
       });
     } finally { rmSync(home, { recursive: true, force: true }); }
   }, 120_000);
+
+  test(`${backend}: #8020: a page that quotes the takes marker in code is repaired, not skipped as unparsed`, async () => {
+    await managedBrain(async ({ engine, ctx }) => {
+      const quoted = page('Quoted', CHAIN).replace('Prose.', 'Writers quote the opener as `<!--- gbrain:takes:begin -->` when they explain the format.');
+      await submit(ctx, 'put_page', { slug: 'notes/quoted', content: quoted });
+      expect(parseTakesFence((await engine.readPageSnapshot('notes/quoted', { sourceId: 'default' }))!.page.compiled_truth).takes).toHaveLength(4);
+      const preview = await repair(engine, false);
+      expect(preview).toMatchObject({ mode: 'dry_run', affected: 1, residuals: { links: 2, unparsed_pages: 0 } });
+      expect(await repair(engine, true)).toMatchObject({ applied: 1, outcomes: { repaired: 1 } });
+      expect((await takeRows(engine, 'default', 'notes/quoted')).map(r => r.superseded_by)).toEqual([2, 3, null, null]);
+      expect((await engine.readPageSnapshot('notes/quoted', { sourceId: 'default' }))!.page.compiled_truth).toContain('`<!--- gbrain:takes:begin -->`');
+    }, { databaseUrl });
+  }, 120_000);
 }
