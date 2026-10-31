@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A fix wave for code intelligence, links and runtime follow-ups (#8128): child-folder links survive DB extraction, top-level and Elixir code gets call edges, the compiled supervisor starts, new Supabase keys use the right header, and brainstorm stops bloating config reads.**
+
+- **`gbrain extract links --source db` keeps links to child pages (#6983).** A markdown link like `[note](notes/first.md)` now resolves from the linking page's own folder first, then its parent folders, the way `--source fs` and Markdown readers do. Links from index pages to their child pages used to be dropped. If no page exists at that path, gbrain still falls back to the root-relative page, so wiki-style links keep working, and the write-time link check agrees with the graph.
+- **`code-callers` finds calls from top-level code (#5001).** Calls inside anonymous default exports, top-level `if`/`for`/`try` blocks, Python's `if __name__ == "__main__":` block and runs of `const x = setup()` lines now land on the file's `__module__` chunk, and that code is indexed for `code-refs` too. TypeScript, TSX, JavaScript, Python and Ruby files re-chunk once on the next sync.
+- **Elixir works with `code-def`, `code-callers` and `code-callees` (#7080).** Modules and `def`/`defp` functions get their own named chunks (`MyApp.Accounts.register`), and calls between functions are recorded. Elixir files re-chunk on the next sync, with no forced reindex.
+- **`gbrain jobs supervisor start --detach` works with the compiled binary (#7532).** The background supervisor used to get the binary's internal entry path as its first argument, so it exited at once with "unknown command" while the start message said it was running. Installs that run through bun or node behave as before.
+- **Supabase Storage sends new-format keys only in the `apikey` header (#7205).** Publishable and secret keys (`sb_publishable_…`, `sb_secret_…`) aren't JWTs, and Supabase says not to send them as a Bearer token. Legacy JWT service-role keys keep both headers.
+- **`gbrain brainstorm` and `gbrain lsd` stop storing the slug-prefix list in config (#7838).** Every command reads the config table, so on large brains the cached list rode along with every call as database egress. The list is now cached in memory per process, keyed by the full source scope so federated and unscoped runs no longer share an entry, and the old row is removed the next time brainstorm runs.
+
 ## [0.60.529.0] - 2026-10-31
 
 **A pull request that adds a file to the PGLite snapshot inputs no longer gets stopped at gstack's pregate secrets check by its own workflow cache keys (#8107).**
