@@ -2,6 +2,7 @@ import type { BrainEngine } from '../engine.ts';
 import { getCompanyBrainProfile } from '../company-brain/profile.ts';
 import { parseSourceConfig } from '../sources-load.ts';
 import { OperationError } from '../ops/contract.ts';
+import { sourceMirrorReadOnly } from '../persistence/mirror-read-only.ts';
 
 export const SHARED_SKILLS_OPT_OUT_DOCS = 'docs/guides/shared-brain-skills.md#choose-which-sources-adopt-shared-skills';
 
@@ -19,6 +20,8 @@ export async function sharedSkillSourcePolicy(engine: BrainEngine, sourceId: str
       `Source ${sourceId} is archived or not registered; choose an active content source (gbrain sources list --json shows them).`);
   }
   const config = parseSourceConfig(source.config);
+  if (await sourceMirrorReadOnly(engine, sourceId)) return { mode: 'preserve_files',
+    reason: `source_mirror_read_only: this read-only mirror is not a shared-skill write target. Preserve its files and use a separate content source for shared skills (${SHARED_SKILLS_OPT_OUT_DOCS}).` };
   // A source can decline adoption implicitly by being connector-managed or an
   // unapproved external repo (below), or explicitly with
   // `gbrain sources shared-skills <id> off` when it already delivers skills
