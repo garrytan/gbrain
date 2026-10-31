@@ -77,7 +77,8 @@ commitments with direction ("I'll send the deck by Friday" →
 `commitment_owed_by_me`, counterparty, due date, verbatim quote) and pending
 decisions. One extractor, three projections per item:
 
-- the `open_loops` row itself
+- the `open_loops` row itself, one per thread, direction and verbatim quote,
+  so a later pass that words the same sentence differently updates that loop
 - a `facts` row (`kind=commitment`, fence-first, deduped) — so `entity`,
   `context_pack`, and `recall` see it through existing read paths
 - a typed edge thread-page → person-page (`owes_to` / `awaiting_reply_from`)
