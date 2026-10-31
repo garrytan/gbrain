@@ -132,6 +132,18 @@ gbrain access who-can-read notes/renewal-notes    # the members and groups a pag
 
 A remote caller whose credential is bound to a listed member (directly or through a group) reads the page on every read path; every other remote caller, including an unbound token, an unbound stdio server, a bot with `--private-pages granted-sources` and an operator escape hatch (`GBRAIN_REMOTE_PRIVATE_PAGES=1`, `search.remote_private_pages=visible`), gets the same `not_found` as for a page that does not exist. `readable_by` only narrows: a `visibility: private` page stays private to a listed member unless the member's credential also has `--private-pages granted-sources`. A malformed `readable_by` reads as nobody. A page derived from a restricted page (an extracted atom, a synthesized concept, a chronicle event) is readable by no remote caller. The local CLI is unchanged; `--as <member>` previews one member's view. Pages that already carried `readable_by` before you upgraded read as nobody until `gbrain repair access` (preview, then `--apply`) derives their readers. This works the same on a repo-less brain: members, groups and bindings live in the database.
 
+**Folder rules: keep a whole folder to some members.** Instead of tagging every page, give a prefix its readers. On a repo-less brain (the default install) the rules live in the database:
+
+```bash
+gbrain access rule add --prefix partners/alice-example/ --readers alice-example,group:team-a --source team-a   # preview
+gbrain access rule add --prefix partners/alice-example/ --readers alice-example,group:team-a --source team-a --yes
+gbrain access rule list --source team-a           # store, revisions, applied rules, anything held or pending
+```
+
+A remote read of a page under a rule needs the caller's member to be on every rule covering it and on the page's own `readable_by`; hatches, grants and `--as` never relax it. Narrowing applies at once. Moving a rule's prefix restricts the new folder at once and keeps the old folder under the old readers until approval. A change that widens (removing a rule or a reader, or releasing a moved rule's old folder) is held until `gbrain access apply --source team-a` previews who would gain access and `gbrain access apply --source team-a --yes --expect <plan_hash>` approves it. If an apply stops halfway, its prefixes read as nobody until `gbrain access resume --source team-a`. `gbrain access rule history` and `rule revert --to <revision>` work over the revision log, and `gbrain export` carries the applied rules so `gbrain import` installs them before any page.
+
+On a git-backed source the same rules live in `.gbrain/access.yml`: `rule add|rm` commit it through `gbrain git commit-push`, a hand edit takes effect when you commit it and run `gbrain sync`, and a widening commit stays held until `gbrain access apply` approves it (recorded in `.gbrain/access.approved`). A source keeps the store it had when its first rule was created; `gbrain access rule migrate --source <id>` (preview, then `--yes`) moves the rules when you attach or remove a repo. Remote callers cannot write `.gbrain/`.
+
 For most company-brain installs (10+ teammates each with their own AI client), Model A is the right starting point. If you're running the fat-agent-serves-everyone pattern from the personal-brain tutorial, Model B is genuinely simpler. You can also mix: separate sources for the obviously-different ones (customer notes vs internal-only) AND a `partners/<slug>/` convention inside the shared source for per-person workspace.
 
 ### Per-person folder structure inside each source

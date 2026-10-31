@@ -372,7 +372,7 @@ export interface FenceScreen {
 }
 
 /** The Tier 1 context a screen knows without the database: page visibility and the pack's takes kinds. */
-export function screenFenceCtx(page: Pick<ParsedMarkdown, 'type' | 'frontmatter'>, activePack?: ParseOpts['activePack']): FenceCtx {
+export function screenFenceCtx(page: Pick<ParsedMarkdown, 'type' | 'frontmatter'> & { folder_restricted?: boolean }, activePack?: ParseOpts['activePack']): FenceCtx {
   const kinds = (activePack as { takes_kinds?: readonly string[] } | undefined)?.takes_kinds;
   return { pageVisibility: effectiveVisibility({ kind: 'page', page }), ...(kinds?.length ? { takesPackKinds: kinds } : {}) };
 }

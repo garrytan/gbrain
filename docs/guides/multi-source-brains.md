@@ -226,8 +226,9 @@ per-member tokens for that, and `source_ids` to narrow further.
 Source grants are the coarse boundary: without page readers, two pages in one
 source are readable by exactly the same tokens. Inside one source, a page that
 names readers in frontmatter `readable_by` is read only by credentials bound to
-a listed member ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape));
-it only narrows a grant, never widens it. Either way, put content in sources by
+a listed member, and a folder rule (`gbrain access rule add`) does the same for
+a whole prefix ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape));
+both only narrow a grant, never widen it. Either way, put content in sources by
 who may read it, before any member's bot connects:
 
 - **One source per channel, team or member.** Give a channel's pages a source

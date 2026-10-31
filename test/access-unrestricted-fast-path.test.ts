@@ -47,7 +47,7 @@ describe('unrestricted fast path (pglite, repo-less)', () => {
     const short = withCallerAccess({ restricted: false }, () => accessAllowedSql('p', ['member:alice-example']));
     expect(full).toContain('gbrain_access_origin_restricted');
     expect(short).not.toContain('gbrain_access_origin_restricted');
-    expect(short).toBe('(p.page_readers IS NULL)');
+    expect(short).toBe('(p.page_readers IS NULL AND p.folder_rule_ids IS NULL)');
     expect(accessAllowedSql('p', [])).toContain('gbrain_access_origin_restricted');
   });
 

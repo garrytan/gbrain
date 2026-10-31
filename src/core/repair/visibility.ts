@@ -32,7 +32,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
-import { derivationPrivateSql, effectiveVisibility, privacyAliasSql, privateSnapshotFilterFragment, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
+import { derivationPrivateSql, effectiveVisibility, folderRestrictedSql, privacyAliasSql, privateSnapshotFilterFragment, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
 import { strikeFenceRow } from '../facts/forget.ts';
 import { opError } from '../ops/contract.ts';
 import { authorizeWrite } from '../persistence/authority.ts';
@@ -49,10 +49,10 @@ import { createProgress, startHeartbeat } from '../progress.ts';
 import { cliOptsToProgressOptions, getCliOptions } from '../cli-options.ts';
 
 interface DerivedRow { id: number; source_id: string; slug: string; type: string; visibility: string | null; chars: number }
-interface AtomRow extends DerivedRow { source_slug: string | null; origin_id: number | null; origin_type: string | null; origin_frontmatter: Record<string, unknown> | null }
+interface AtomRow extends DerivedRow { source_slug: string | null; origin_id: number | null; origin_type: string | null; origin_frontmatter: Record<string, unknown> | null; origin_folder_restricted: boolean }
 interface InputRow { concept_id: number; atom_id: number; linked: boolean }
 
-interface EventRow extends DerivedRow { origin_id: number | null; origin_type: string | null; origin_frontmatter: Record<string, unknown> | null }
+interface EventRow extends DerivedRow { origin_id: number | null; origin_type: string | null; origin_frontmatter: Record<string, unknown> | null; origin_folder_restricted: boolean }
 
 export interface VisibilityChange { id: number; source_id: string; slug: string; phase: 0 | 1 | 2 | 3; from: string | null; to: Visibility }
 
@@ -98,7 +98,8 @@ async function planLineage(engine: BrainEngine, sourceIds: string[], only?: { id
   const atomIds = only === undefined ? null : only.type === 'atom' ? [only.id] : inputs.map(row => Number(row.atom_id));
   const atoms = atomIds?.length === 0 ? [] : await engine.executeRaw<AtomRow>(`SELECT a.id,a.source_id,a.slug,a.type,a.frontmatter->>'visibility' AS visibility,
       length(a.compiled_truth) AS chars, a.frontmatter->>'source_slug' AS source_slug,
-      o.id AS origin_id,o.type AS origin_type,o.frontmatter AS origin_frontmatter
+      o.id AS origin_id,o.type AS origin_type,o.frontmatter AS origin_frontmatter,
+      (o.id IS NOT NULL AND ${folderRestrictedSql('o')}) AS origin_folder_restricted
     FROM pages a LEFT JOIN pages o ON o.source_id=a.source_id AND o.slug=a.frontmatter->>'source_slug' AND o.deleted_at IS NULL
     WHERE a.type='atom' AND a.deleted_at IS NULL AND a.source_id=ANY($1::text[])
       AND ($2::integer[] IS NULL OR a.id=ANY($2::integer[])) ORDER BY a.id`, [sourceIds, atomIds], bounded);
@@ -107,7 +108,7 @@ async function planLineage(engine: BrainEngine, sourceIds: string[], only?: { id
   const atomVisibility = new Map<number, Visibility>();
   let originGone = 0;
   for (const atom of atoms) {
-    const origin = atom.source_slug ? { kind: 'page' as const, page: atom.origin_id == null ? null : { type: atom.origin_type, frontmatter: atom.origin_frontmatter } }
+    const origin = atom.source_slug ? { kind: 'page' as const, page: atom.origin_id == null ? null : { type: atom.origin_type, frontmatter: atom.origin_frontmatter, folder_restricted: atom.origin_folder_restricted } }
       : { kind: 'transcript' as const };
     const target = effectiveVisibility(origin);
     const next = tightened(atom.visibility, target);
@@ -130,7 +131,8 @@ async function planLineage(engine: BrainEngine, sourceIds: string[], only?: { id
 /** Life Chronicle events whose origin is private now. */
 async function planEvents(engine: BrainEngine, sourceIds: string[], only?: number) {
   const events = await engine.executeRaw<EventRow>(`SELECT e.id,e.source_id,e.slug,e.type,e.frontmatter->>'visibility' AS visibility,
-      length(e.compiled_truth) AS chars,o.id AS origin_id,o.type AS origin_type,o.frontmatter AS origin_frontmatter
+      length(e.compiled_truth) AS chars,o.id AS origin_id,o.type AS origin_type,o.frontmatter AS origin_frontmatter,
+      (o.id IS NOT NULL AND ${folderRestrictedSql('o')}) AS origin_folder_restricted
     FROM pages e LEFT JOIN pages o ON o.source_id=e.source_id AND o.slug=e.frontmatter->'event'->>'depth' AND o.deleted_at IS NULL
     WHERE e.type='event' AND e.frontmatter->>'captured_via' LIKE 'life-chronicle:%' AND e.deleted_at IS NULL
       AND COALESCE(e.frontmatter->>'visibility','world')<>'private'
@@ -139,7 +141,7 @@ async function planEvents(engine: BrainEngine, sourceIds: string[], only?: numbe
   let originGone = 0;
   for (const event of events) {
     if (event.origin_id == null) { originGone++; continue; }
-    if (effectiveVisibility({ kind: 'page', page: { type: event.origin_type, frontmatter: event.origin_frontmatter } }) !== 'private') continue;
+    if (effectiveVisibility({ kind: 'page', page: { type: event.origin_type, frontmatter: event.origin_frontmatter, folder_restricted: event.origin_folder_restricted } }) !== 'private') continue;
     changes.push({ id: Number(event.id), source_id: event.source_id, slug: event.slug, phase: 2, from: event.visibility, to: 'private' });
   }
   return { changes, rows: events, residuals: { events_origin_gone: originGone } };

@@ -263,6 +263,9 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       -- The v230 trust generation trigger's WHEN reads pages.source_id, slug and
       -- deleted_at; a pre-v0.18 brain predates it (v230 recreates it).
       DROP TRIGGER IF EXISTS trust_generation_update ON pages;
+      -- The v282 folder-rule stamp trigger fires on UPDATE OF slug, source_id;
+      -- a pre-v0.18 brain predates it (v282 recreates it).
+      DROP TRIGGER IF EXISTS pages_access_stamp_folder_rules ON pages;
       ALTER TABLE pages DROP COLUMN IF EXISTS source_id;
       DROP TABLE IF EXISTS sources CASCADE;
 
@@ -432,6 +435,9 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       -- The v230 trust generation trigger's WHEN reads pages.source_id, slug and
       -- deleted_at; a pre-v0.18 brain predates it (v230 recreates it).
       DROP TRIGGER IF EXISTS trust_generation_update ON pages;
+      -- The v282 folder-rule stamp trigger fires on UPDATE OF slug, source_id;
+      -- a pre-v0.18 brain predates it (v282 recreates it).
+      DROP TRIGGER IF EXISTS pages_access_stamp_folder_rules ON pages;
       ALTER TABLE pages DROP COLUMN IF EXISTS source_id;
       DROP TABLE IF EXISTS sources CASCADE;
       DROP INDEX IF EXISTS idx_links_source;
@@ -1202,6 +1208,9 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'access_tokens.may_act_for',
   'oauth_clients.member_id',
   'oauth_clients.may_act_for',
+  // GBRA-218 A2 (migration v282) - folder rules. Same posture as v281: absent from both schema blobs; the migration
+  // creates the folder_rule_ids trigger and functions itself, and no index or function in either blob references it.
+  'pages.folder_rule_ids',
   // Wave B segmented page storage (migration v248). Deliberately absent from
   // both schema blobs so fresh and upgraded brains share their ordinals; no
   // index in either blob references them (content_chunks_occurrence_idx is

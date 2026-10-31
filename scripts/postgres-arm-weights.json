@@ -1,6 +1,9 @@
 {
   "test/access-as.test.ts": 4460,
   "test/access-binding.test.ts": 4260,
+  "test/access-folder-lock-order.test.ts": 1420,
+  "test/access-folder-multiconn.test.ts": 4110,
+  "test/access-folder-rules.test.ts": 18830,
   "test/access-members.test.ts": 3930,
   "test/access-writes.test.ts": 4950,
   "test/activation-unbound-rooted-6449.test.ts": 4525,

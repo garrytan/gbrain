@@ -237,7 +237,9 @@ Grants are per source, so lay sources out by who may read them
 ([guide](../guides/multi-source-brains.md#lay-out-sources-by-who-may-read-them)).
 Inside one source, bind each member's credential with `gbrain auth rescope
 --token <name> --member <id>` (or `--client`) and put `readable_by` on the pages
-only some members may read; `gbrain access check --token <name>` shows the
+only some members may read, or keep a whole folder to them with `gbrain access
+rule add --prefix <folder>/ --readers <members> --source <id>`;
+`gbrain access check --token <name>` shows the
 result ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape)).
 
 New `memory-reader`, `memory-writer` and `coding-agent` grants are callable on

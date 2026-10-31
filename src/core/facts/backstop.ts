@@ -380,8 +380,8 @@ export async function runFactsBackstop(
       : { mode: 'inline', inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], skipped };
   }
   // Facts extracted from a private page stay private, whatever the caller or the brain default says.
-  const { tightenToPage } = await import('./visibility.ts');
-  if (tightenToPage('world', parsedPage) === 'private') ctx = { ...ctx, visibility: 'private' };
+  const { tightenToStoredPage } = await import('./visibility.ts');
+  if (await tightenToStoredPage(ctx.engine, ctx.sourceId, 'world', parsedPage) === 'private') ctx = { ...ctx, visibility: 'private' };
   const { managedPersistenceEnabled } = await import('../persistence/ownership.ts');
   if (await managedPersistenceEnabled(ctx.engine)) {
     if (mode !== 'inline') {

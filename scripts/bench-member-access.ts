@@ -8,9 +8,11 @@
  * the member may read that contain every query word, known by construction
  * (the synthetic corpus gives each page distinct words; capped at 10). PGLite is in-process, so
  * runs on two revisions are directly comparable; on a revision without member
- * tables only the 0% cell runs.
+ * tables only the 0% cell runs. --rules adds that many folder rules (A2) on
+ * prefixes no page lives under, so the cell measures what the folder layer
+ * costs a brain whose pages it does not restrict.
  *
- * Usage: bun scripts/bench-member-access.ts [--pages 5000] [--queries 60] [--json]
+ * Usage: bun scripts/bench-member-access.ts [--pages 5000] [--queries 60] [--shares 0,0.2,0.8] [--rules 0] [--json]
  */
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
@@ -27,6 +29,7 @@ const PAGES = arg('--pages', 5000);
 const QUERIES = arg('--queries', 60);
 const JSON_MODE = process.argv.includes('--json');
 const SHARES = (process.argv.includes('--shares') ? process.argv[process.argv.indexOf('--shares') + 1] : '0,0.2,0.8').split(',').map(Number);
+const RULES = (process.argv.includes('--rules') ? process.argv[process.argv.indexOf('--rules') + 1] : '0').split(',').map(Number);
 const DIMS = 1536;
 const SRC = 'bench-src';
 const SYLLABLES = 'ba ce di fo gu ha je ki lo mu na pe qi ro su ta ve wi xo yu za'.split(' ');
@@ -69,11 +72,16 @@ async function seed(engine: PGLiteEngine, share: number): Promise<void> {
   }
 }
 
-async function runCell(share: number) {
+async function runCell(share: number, rules: number) {
   const engine = await newEngine();
   const hasMembers = (await engine.executeRaw<{ t: string | null }>("SELECT to_regclass('access_members')::text AS t"))[0]?.t != null;
-  if (share > 0 && !hasMembers) { await engine.disconnect(); return null; }
+  const hasRules = (await engine.executeRaw<{ t: string | null }>("SELECT to_regclass('access_rules')::text AS t"))[0]?.t != null;
+  if ((share > 0 && !hasMembers) || (rules > 0 && !hasRules)) { await engine.disconnect(); return null; }
   await seed(engine, share);
+  if (rules > 0) {
+    const { proposeRevision } = await import('../src/core/access/policy.ts');
+    await proposeRevision(engine, SRC, Array.from({ length: rules }, (_, k) => ({ id: `r-${k}`, prefix: `restricted/r-${k}/`, readable_by: ['member:alice-example'] })), { origin: 'cli', store: 'database' });
+  }
 
   // Share 0 is a brain with no restriction at all (no member, no readers), the case nearly every brain is in; its
   // "member" token is a second unbound token. Restricted shares create the member and bind it.
@@ -122,7 +130,7 @@ async function runCell(share: number) {
       }
     }
     for (const who of ['unbound', 'member'] as const) {
-      cells.push({ share, who, match, p50: +pct(times[who], 0.5).toFixed(2), p95: +pct(times[who], 0.95).toFixed(2),
+      cells.push({ share, rules, who, match, p50: +pct(times[who], 0.5).toFixed(2), p95: +pct(times[who], 0.95).toFixed(2),
         ...(who === 'member' && possible ? { hit_at_10: +(hits / possible).toFixed(3) } : {}) });
     }
   }
@@ -134,8 +142,10 @@ configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_d
 __setEmbedTransportForTests((async ({ values }: { values: string[] }) => ({ embeddings: values.map(vectorFor) })) as never);
 const all: Record<string, unknown>[] = [];
 for (const share of SHARES) {
-  const cells = await runCell(share);
-  if (cells) all.push(...cells);
+  for (const rules of RULES) {
+    const cells = await runCell(share, rules);
+    if (cells) all.push(...cells);
+  }
 }
 if (JSON_MODE) console.log(JSON.stringify({ pages: PAGES, queries: QUERIES, cells: all }));
 else console.table(all);

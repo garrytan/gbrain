@@ -23,15 +23,19 @@ identifiers and attribution are available in the pre-removal Git revision
 | A `visibility: private` page that also names readers | hidden remotely | still hidden from a listed member unless that member's credential also has `--private-pages granted-sources` |
 | Atoms, concepts and chronicle events derived from a restricted page | followed the origin's visibility | readable by no remote caller |
 | Members and groups | | `gbrain access member add\|disable\|enable\|rm\|list`, `gbrain access group add\|rm\|list`, `gbrain access who-can-read <slug>`, `gbrain access check --token\|--client <name>`; `--member` and `--may-act-for` on `auth create`, `auth rescope` and `auth register-client`; config `mcp.stdio_member` for a stdio server; `--as <member>` previews one member's view from the local CLI; `whoami` and `grant_diagnosis` show member and groups |
-| Doctor | | `access_readers_malformed`, `access_unknown_readers`, `access_recent_narrowings`, `access_page_readers_backfill` |
+| Doctor | | `access_readers_malformed`, `access_unknown_readers`, `access_recent_narrowings`, `access_page_readers_backfill`, `access_policy_pending`, `access_policy_widening_held`, `access_policy_invalid`, `access_policy_store_mismatch` |
+| Folder rules | | `gbrain access rule add\|rm\|list\|status\|history\|revert\|export\|import\|migrate`, `gbrain access apply` and `gbrain access resume` keep whole folders of a source to named members; a page under a rule is read remotely only by a member listed on every rule covering it and on its own `readable_by`. Rules live in the database on a repo-less source and in `.gbrain/access.yml` on a git-backed one |
+| Changing folder rules | | narrowing applies at once; widening is held until `gbrain access apply --source <id>` previews it and `--yes --expect <plan_hash>` approves it; an unfinished apply reads as nobody remotely until `gbrain access resume --source <id>` |
+| `gbrain export` and `gbrain import` | pages only | an export carries each source's applied folder rules under `.gbrain/`, and import installs them before publishing any page (`--access-policy <source>` maps a multi-source export) |
 
 ### What to watch for after you upgrade
 
 - A page that already carried `readable_by` before this release reads as nobody remotely until you run `gbrain repair access` (preview) and then `gbrain repair access --apply`. Doctor's `access_page_readers_backfill` lists them.
 - On a brain with any restriction, the escape hatches no longer turn the remote read filter off, and secondary surfaces (proactive brief, retrieval reflex, entity resolution, known-as-of) hide restricted pages from every remote caller, listed members included.
 - A credential bound to a disabled or removed member is refused at verification (`access_member_disabled`).
-- Works the same on a repo-less brain: members, groups and bindings live in the database.
-- The member-access SQL functions end their pinned `search_path` with `pg_temp`, like every other gbrain function (#7632), and frontmatter recovery never guesses a duplicated `readable_by` key: the file is held until a person fixes it.
+- Works the same on a repo-less brain: members, groups, bindings and folder rules live in the database. A source records which store holds its folder rules when its first rule is created, and only `gbrain access rule migrate --source <id>` moves them; doctor `access_policy_store_mismatch` names it when the filesystem changes.
+- The member-access and folder-rule SQL functions end their pinned `search_path` with `pg_temp`, like every other gbrain function (#7632), and frontmatter recovery never guesses a duplicated `readable_by` key: the file is held until a person fixes it.
+- Remote callers can no longer write pages under `.gbrain/`.
 
 ## [0.60.527.0] - 2026-10-31
 

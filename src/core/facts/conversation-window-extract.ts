@@ -17,7 +17,7 @@ import { CONVERSATION_FACTS_SOURCE_PREFIX, type ConversationFactRow } from './co
 import { inferConversationSubjects } from './conversation-subject-infer.ts';
 import type { ConversationSegment } from './conversation-types.ts';
 import { extractFactsFromTurnWithOutcome, type ExtractInput, type ExtractedFact } from './extract.ts';
-import { tightenToPage, type FactVisibility } from './visibility.ts';
+import { tightenToStoredPage, type FactVisibility } from './visibility.ts';
 
 /** What one window's extraction needs from the run. */
 export interface ConversationWindowRun {
@@ -84,7 +84,7 @@ export async function extractConversationWindow(run: ConversationWindowRun, page
       + `entity resolution failed for ${JSON.stringify(raw)}: ${message}; preserving fact without an entity target\n`);
   });
   if (extracted.length === 0) return { extracted: 0, rows: [], resolution };
-  const visibility = tightenToPage(run.factVisibility, page);
+  const visibility = await tightenToStoredPage(run.engine, run.sourceId, run.factVisibility, page);
   const rows = await inferConversationSubjects(run.engine, run.sourceId, visibility, extracted.map((fact, i) => ({ // #6764
     ...fact, visibility,
     row_num: rowNum + i,

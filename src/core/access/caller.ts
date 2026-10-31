@@ -13,7 +13,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { AuthInfo } from '../ops/contract.ts';
-import { readRemotePolicyNow, remotePrivacyRelaxed, type CallerAccess } from '../search/private-visibility.ts';
+import { readRemotePolicyNow, remotePrivacyRelaxed, type CallerAccess, type FolderCoverage } from '../search/private-visibility.ts';
 import { ACCESS_ID_RE, identityFor, normalizePrincipal } from './principals.ts';
 
 /** Config key binding a local stdio MCP server to one member. */
@@ -65,6 +65,23 @@ export async function stdioMemberIdentity(engine: BrainEngine): Promise<string[]
   return member ? liveIdentity(engine, '$1', member) : [];
 }
 
+/**
+ * GBRA-218 (A2): the folder-rule part of a caller's record, read live from the applied rulebook: the
+ * source-qualified ids of the rules `identity` satisfies, and every prefix that reads as nobody (a narrowing being
+ * stamped, an invalid policy file). An unreadable rulebook satisfies nothing and covers everything (fail closed).
+ */
+export async function folderAccessFor(engine: Pick<BrainEngine, 'executeRaw'>, identity: readonly string[]): Promise<{ satisfiedRuleIds: string[]; folderCoverage: FolderCoverage[] }> {
+  try {
+    const rules = identity.length
+      ? await engine.executeRaw<{ source_id: string; rule_id: string }>('SELECT source_id, rule_id FROM access_rules WHERE readable_by && $1::text[]', [[...identity]])
+      : [];
+    const coverage = await engine.executeRaw<{ source_id: string; prefix: string }>('SELECT DISTINCT source_id, prefix FROM access_pending_coverage ORDER BY source_id, prefix');
+    return { satisfiedRuleIds: rules.map(r => `${r.source_id}:${r.rule_id}`).sort(), folderCoverage: coverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })) };
+  } catch {
+    return { satisfiedRuleIds: [], folderCoverage: [{ source_id: '!unreadable', prefix: '' }] };
+  }
+}
+
 /** The CallerAccess fields for a remote operation (identity, privacy relaxation and the GBRA-156 private-readable set). */
 export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | undefined, privateSources: readonly string[] | undefined, transport?: string): Promise<Partial<CallerAccess>> {
   const [relaxed, remotePolicy] = await Promise.all([remotePrivacyRelaxed(engine), readRemotePolicyNow(engine)]);
@@ -74,6 +91,7 @@ export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | u
     : await memberIdentityFor(engine, auth);
   return {
     identity,
+    ...(restricted ? await folderAccessFor(engine, identity) : { satisfiedRuleIds: [], folderCoverage: [] }),
     privateReadableSources: privateSources ?? [],
     hidePrivate: !relaxed,
     applyRemoteReadPolicy: false,
