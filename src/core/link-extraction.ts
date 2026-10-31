@@ -2201,8 +2201,8 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
       } else {
         const chineseMatch = TIMELINE_LINE_RE_CN.exec(lines[i]);
         if (!chineseMatch) { i++; continue; }
-        // Normalize Chinese date to YYYY-MM-DD.
-        date = `${chineseMatch[1]}-${chineseMatch[2].padStart(2, '0')}-${chineseMatch[3].padStart(2, '0')}`;
+        // Normalize the CJK date to YYYY-MM-DD; NFKC folds full-width digits.
+        date = chineseMatch.slice(1, 4).map(s => s.normalize('NFKC').padStart(2, '0')).join('-');
         separator = chineseMatch[4];
         summary = chineseMatch[5].trim();
       }
@@ -2237,7 +2237,7 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
     let j = i + 1;
     while (j < lines.length) {
       const next = lines[j];
-      if (TIMELINE_LINE_RE.test(next) || TIMELINE_HEADING_RE.test(next)) break;
+      if (isDatedTimelineLine(next) || TIMELINE_HEADING_RE.test(next)) break;
       if (/^#{1,6}\s/.test(next) || isMaterializedMarkerLine(next)) break; // #5567: a marker opens the next bullet
       if (next.trim().length === 0 && detailLines.length === 0) {
         // skip leading blank line; if we hit a blank after detail content

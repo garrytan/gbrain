@@ -13,9 +13,11 @@ const LEGACY_CITATION_RE = /^(.+?),\s*(\d{4}-\d{2}-\d{2})$/s;
 /**
  * Dated timeline bullets (`- **YYYY-MM-DD** | …`, and the `YYYY年M月D日` form)
  * the database-side bullet parser reads; its inline-citation pass skips them.
+ * The CJK form also takes full-width digits and a trailing weekday as Japanese
+ * and Chinese notes write it: `（木）`, `(木曜日)`, `（火・祝）`, `（周四）`.
  */
 export const TIMELINE_LINE_RE = /^\s*(?:-\s*)?\*\*(\d{4}-\d{2}-\d{2})\*\*\s*([|\-–—]+)\s*(.+?)\s*$/;
-export const TIMELINE_LINE_RE_CN = /^\s*(?:-\s*)?(?:\*\*)?(\d{4})年(\d{1,2})月(\d{1,2})日?(?:\*\*)?\s*([|\-–—]+)\s*(.+?)\s*$/;
+export const TIMELINE_LINE_RE_CN = /^\s*(?:-\s*)?(?:\*\*)?([0-9０-９]{4})年([0-9０-９]{1,2})月([0-9０-９]{1,2})日?(?:\s*[（(](?:[月火水木金土日](?:曜日?)?(?:・祝)?|周[一二三四五六日天]|星期[一二三四五六日天])[）)])?(?:\*\*)?\s*([|\-–—]+)\s*(.+?)\s*$/;
 export const isDatedTimelineLine = (line: string): boolean => TIMELINE_LINE_RE.test(line) || TIMELINE_LINE_RE_CN.test(line);
 
 /**
