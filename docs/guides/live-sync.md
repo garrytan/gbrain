@@ -507,7 +507,8 @@ vars — incident-time escape hatches, not everyday knobs.
    last good revision and is read-only for `put_page` until the file is
    repaired. A hold clears when the file changes, is deleted, or a newer
    gbrain can read it; `gbrain sync --dry-run` lists would-be holds
-   (`would_hold`) without writing anything. The backlog fix is one previewed,
+   (`would_hold`) and counts the files the run would add, modify, soft-delete
+   and rename, without writing anything. The backlog fix is one previewed,
    hash-bound command per kind of hold:
 
    ```bash

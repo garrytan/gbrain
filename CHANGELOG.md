@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Managed sync and source checks fixes from the sync/refresh wave (#8123 part C): `sync.write_through=false` keeps sync's frontmatter corrections out of the checkout, a page with an impossible timeline date no longer blocks sync, images with punctuation in their names sync, `sync --dry-run` previews what it would do, and a missing source directory is no longer reported clean.**
+
+- With `sync.write_through` off, a managed sync keeps its canonical correction of a file (the frontmatter, title or tags a page keeps when an upstream edit drops them) in the database and never rewrites the checkout. Before, it wrote the rendering into the working tree and left it uncommitted, including into a read-only mirror's checkout reached through the `default` source's `sync.repo_path` fallback (#7084, #8118).
+- A timeline bullet or heading dated with an impossible day (`2026-02-30`, month 13) is no longer extracted as a timeline row. It used to reach the database's date cast and fail the page's publication, which blocked a managed sync and aborted a whole `repair file-drift` preview batch (#8049). The text stays in the page.
+- Managed image sync now gives an image the importer's identity (path lowercased, punctuation kept), so `notes/Photo+A.png` imports as `notes/photo+a.png` instead of being refused, and stays distinct from `notes/PhotoA.png` (#7107).
+- A managed `gbrain sync --dry-run` reports and prints how many files the run would add, modify, soft-delete and rename. It used to report zero, or repeat the previous run's counts (#7087).
+- `gbrain sources list` marks archived sources with `⚠ archived` and `--json` carries `archived` per source (#7701).
+- A registered source whose directory is missing is reported `missing` by the frontmatter audit and both frontmatter doctor checks, with the path and the restore or `sources set-path` step, instead of clean (#7889).
+
 ## [0.60.529.0] - 2026-10-31
 
 **A pull request that adds a file to the PGLite snapshot inputs no longer gets stopped at gstack's pregate secrets check by its own workflow cache keys (#8107).**

@@ -218,4 +218,32 @@ describe('managed sync imports images when multimodal embedding is on (#5493 hel
         expect(await heldPaths(engine, sourceId)).toEqual([]);
       }
     }), 240_000);
+  // Value: protects=managed sync gives an image the importer's punctuation-preserving identity, so it imports, renames and
+  // stays distinct from a look-alike name (#7107); fails_when=resolveSlugForPath folds image paths like Markdown and the
+  // prepared slug disagrees with the requested one; why_new=the cases above use plain names; seam=performManagedSync;
+  // no_claim=Markdown and code slugs, which keep their folding.
+  test('an image name with punctuation keeps the importer identity through import and rename (#7107)', async () =>
+    withEnv(env, async () => {
+      for (const engine of engines) {
+        const { sourceId, root, head } = await managedSource(engine, { 'notes/plain.md': NOTE, 'notes/Photo+A.png': PNG,
+          'notes/PhotoA.png': Buffer.concat([PNG, Buffer.from([1])]), 'notes/Legacy+Photo.png': Buffer.concat([PNG, Buffer.from([2])]) });
+        const first = await performManagedSync(engine, { sourceId, noPull: true });
+        expect(first.status).toBe('first_sync');
+        expect(first.failedFiles ?? 0).toBe(0);
+        expect(first.added).toBe(4);
+        expect(await lastCommit(engine, sourceId)).toBe(head);
+        expect(await imagePage(engine, sourceId, 'notes/photo+a.png')).toMatchObject({ source_path: 'notes/Photo+A.png', has_vector: true });
+        expect(await imagePage(engine, sourceId, 'notes/photoa.png')).toMatchObject({ source_path: 'notes/PhotoA.png', has_vector: true });
+
+        git(root, 'mv', 'notes/Legacy+Photo.png', 'notes/Moved+Photo.png');
+        const next = commit(root, 'rename image');
+        const renamed = await performManagedSync(engine, { sourceId, noPull: true });
+        expect(renamed.status).toBe('synced');
+        expect(renamed.renamed).toBe(1);
+        expect(await lastCommit(engine, sourceId)).toBe(next);
+        expect(await imagePage(engine, sourceId, 'notes/legacy+photo.png')).toBeNull();
+        expect(await imagePage(engine, sourceId, 'notes/moved+photo.png')).toMatchObject({ source_path: 'notes/Moved+Photo.png' });
+        expect((await performManagedSync(engine, { sourceId, noPull: true })).status).toBe('up_to_date');
+      }
+    }), 240_000);
 });

@@ -110,7 +110,8 @@ export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = p
       write(`  ${result.added} file(s) imported, ${result.chunksCreated} chunks${result.embedded > 0 ? `, ${result.embedded} pages embedded` : ''}`);
       break;
     case 'dry_run':
-      break; // already printed in performSync
+      if (result.managedCursor) write(`Sync dry run${result.toCommit ? ` to ${result.toCommit.slice(0, 8)}` : ''}: would add ${result.added}, modify ${result.modified}, soft-delete ${result.deleted}, rename ${result.renamed}${result.added + result.modified + result.deleted + result.renamed === 0 ? ' (no syncable changes)' : ''}.`);
+      break;
     case 'blocked_by_failures': {
       if (result.runId || (result.pass && result.failures?.length)) {
         write(result.runId ? `Sync BLOCKED at ${result.toCommit}: committed counts are cumulative for run ${result.runId}.`
