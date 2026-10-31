@@ -13,8 +13,8 @@
  * sends.
  *
  * Routes whose option turns reasoning off keep the requested cap:
- *   - native Anthropic (`anthropic`) and DeepSeek (`deepseek`; thinking is on
- *     by default for v4): `thinking: { type: 'disabled' }`
+ *   - native Anthropic: model-specific controls below (Opus 5.5 keeps
+ *     reasoning); DeepSeek (`deepseek`): `thinking: { type: 'disabled' }`
  *   - OpenRouter-hosted DeepSeek (`openrouter` with a `deepseek/` model): same
  *   - Gemini 2.5 Flash and Flash-Lite: `thinkingConfig: { thinkingBudget: 0 }`
  *   - OpenAI models that accept `reasoningEffort: 'none'` (gpt-5.1, 5.2, 5.4,
@@ -58,6 +58,20 @@ export interface ThinkingOffControl {
 }
 
 const THINKING_DISABLED: Record<string, unknown> = { thinking: { type: 'disabled' } };
+
+// Pin low effort so configured xhigh/max cannot invalidate Sonnet/Haiku's
+// lowest thinking setting. Opus always reasons and needs output headroom.
+const ANTHROPIC_55_CONTROLS: Readonly<Record<string, ThinkingOffControl>> = {
+  sonnet: { set: { namespace: 'anthropic', options: { thinking: { type: 'between_tools' }, effort: 'low' } }, disables: true },
+  opus: { set: { namespace: 'anthropic', options: { thinking: { type: 'adaptive' }, effort: 'low' } }, disables: false },
+  haiku: { set: { namespace: 'anthropic', options: { thinking: { type: 'disabled' }, effort: 'low' } }, disables: true },
+};
+
+function anthropicControl(model: string): ThinkingOffControl {
+  const match = /^claude-(sonnet|opus|haiku)-5-5(?:-\d{8})?$/.exec(model);
+  return (match && ANTHROPIC_55_CONTROLS[match[1]!])
+    || { set: { namespace: 'anthropic', options: THINKING_DISABLED }, disables: true };
+}
 
 const GEMINI_ID_RE = /^gemini-(\d+(?:\.\d+)?)-(flash-lite|flash|pro)(?:-|$)/;
 const GEMINI_NON_CHAT_RE = /-(?:image|tts|audio|live|transcribe|computer-use)(?:-|$)/;
@@ -113,7 +127,8 @@ export function thinkingOffControl(modelStr: string): ThinkingOffControl | undef
   const { provider, model: rawModel } = splitProviderModelId(modelStr);
   if (!provider) return undefined;
   const model = rawModel.trim().toLowerCase();
-  if (provider === 'anthropic' || provider === 'deepseek') return { set: { namespace: provider, options: THINKING_DISABLED }, disables: true };
+  if (provider === 'anthropic') return anthropicControl(model);
+  if (provider === 'deepseek') return { set: { namespace: provider, options: THINKING_DISABLED }, disables: true };
   if (provider === 'openrouter') return model.startsWith('deepseek/') ? { set: { namespace: provider, options: THINKING_DISABLED }, disables: true } : undefined;
   if (provider === 'google') return googleControl(model);
   if (provider === 'openai') return openaiControl(model);
