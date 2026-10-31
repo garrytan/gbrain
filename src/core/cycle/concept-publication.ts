@@ -12,7 +12,7 @@ import type { BrainEngine, LinkBatchInput } from '../engine.ts';
 import { preservedConceptSections, stripPreservedConceptSections } from './concept-sections.ts';
 import type { Page } from '../types.ts';
 import { assertInlineBody, isSegmentedPage, pageBodySegmentedError } from '../page-body/page-shape.ts';
-import { serializeMarkdown, parseMarkdown } from '../markdown.ts';
+import { serializeMarkdown, parseMarkdown, splitBody } from '../markdown.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, replaceOrInsertFactsFence, stripFactsFence } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence, stripTakesFence } from '../takes-fence.ts';
 import { isDbOnly, loadStorageConfig } from '../storage-config.ts';
@@ -169,7 +169,9 @@ export function preserveCanonicalFences(page: Pick<Page, 'compiled_truth' | 'tim
   const hold = conceptPreservationHold(page);
   if (hold) throw conceptHoldError(hold);
   const body = page.compiled_truth ?? '';
-  let compiled = stripPreservedConceptSections(stripTakesFence(stripFactsFence(replacement))).trim();
+  // The model owns prose only; discard history using the same boundaries as publication.
+  const narrative = splitBody(replacement).compiled_truth;
+  let compiled = stripPreservedConceptSections(stripTakesFence(stripFactsFence(narrative))).trim();
   const sections = preservedConceptSections(body);
   if (sections.length) compiled = [compiled, ...sections].join('\n\n');
   const facts = fenceBlock(body, FACTS_FENCE_BEGIN, FACTS_FENCE_END);
