@@ -77,7 +77,8 @@ commitments with direction ("I'll send the deck by Friday" →
 `commitment_owed_by_me`, counterparty, due date, verbatim quote) and pending
 decisions. One extractor, three projections per item:
 
-- the `open_loops` row itself
+- the `open_loops` row itself, one per thread, direction and verbatim quote,
+  so a later pass that words the same sentence differently updates that loop
 - a `facts` row (`kind=commitment`, fence-first, deduped) — so `entity`,
   `context_pack`, and `recall` see it through existing read paths
 - a typed edge thread-page → person-page (`owes_to` / `awaiting_reply_from`)
@@ -313,8 +314,9 @@ rule withheld (`loop_withheld_senders`: reason, count, last time; at most
 thread of up to 500 senders with open reply-owed loops, so the record covers
 older loops. `gbrain waiting` then prints how many open reply-owed loops come
 from those senders and the exact `gbrain loops drop sender <email> --source
-<id> --dry-run` to preview for each (JSON and the `open_loops` grouped view:
-`withheld_noise`). Nothing is closed automatically. The sync log prints
+<id> --dry-run` to preview for each: the 10 senders with the most loops,
+then a count of the rest. `gbrain waiting --json` and the `open_loops` grouped
+view list every sender in `withheld_noise`. Nothing is closed automatically. The sync log prints
 `[google] reply-owed loops withheld: automated_mail=N`.
 
 **Opt-in: Updates mail needs reciprocity.** With

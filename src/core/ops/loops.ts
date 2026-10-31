@@ -173,7 +173,7 @@ async function withheldNoise(ctx: OperationContext, sources: GoogleSourceFreshne
     }
     if (!senders.length) return null;
     senders.sort((a, b) => b.open_loops - a.open_loops || a.email.localeCompare(b.email));
-    return { loop_count: senders.reduce((n, x) => n + x.open_loops, 0), sender_count: senders.length, senders: senders.slice(0, 10) };
+    return { loop_count: senders.reduce((n, x) => n + x.open_loops, 0), sender_count: senders.length, senders };
   } catch {
     return null;
   }

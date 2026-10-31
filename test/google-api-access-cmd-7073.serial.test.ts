@@ -42,6 +42,7 @@ const mockFetch = (async (input: string | URL | Request) => {
   if (url.pathname.endsWith('/users/me/profile')) return disabledApis.has('gmail') ? disabled('gmail.googleapis.com', 'Gmail API') : json({ emailAddress: ACCOUNT, historyId: '1' });
   if (url.pathname.endsWith('/calendars/primary')) return disabledApis.has('calendar') ? disabled('calendar-json.googleapis.com', 'Google Calendar API') : json({ id: ACCOUNT });
   if (url.pathname.endsWith('/people/me')) return disabledApis.has('people') ? disabled('people.googleapis.com', 'People API') : json({ emailAddresses: [{ value: ACCOUNT, metadata: { primary: true } }] });
+  if (url.pathname.endsWith('/people/me/connections')) return disabledApis.has('people') ? disabled('people.googleapis.com', 'People API') : json({ connections: [] });
   throw new Error(`unexpected fetch in test: ${url}`);
 }) as typeof fetch;
 

@@ -158,6 +158,28 @@ describe('isNoiseSender', () => {
     expect(isNoiseSender('replies-welcome@example.com')).toBe(false);
   });
 
+  test('#7856: separator and localized no-reply local parts are noise', () => {
+    for (const address of [
+      'no_reply@example.com', 'no.reply@example.com', 'do_not_reply@example.com', 'do.not.reply@example.com',
+      'noresponder@example.com', 'no-responder@example.com', 'no_responder@example.com',
+      'notificaciones@example.com', 'notificacoes@example.com', 'banco-notificaciones@example.com',
+      'ne-pas-repondre@example.com', 'nepasrepondre@example.com', 'ne_pas_repondre@example.com',
+      'keine-antwort@example.com', 'keineantwort@example.com', 'alerts.no_reply@example.com', 'NO_REPLY@EXAMPLE.COM',
+    ]) {
+      expect([address, isNoiseSender(address)]).toEqual([address, true]);
+    }
+  });
+
+  test('#7856: a person whose name or domain merely contains a fragment stays a person', () => {
+    for (const address of [
+      'noah@example.com', 'nora.reply@example.com', 'juno.reply@example.com', 'notifications-team-lead@example.com',
+      'notificaciones-lead@example.com', 'alice@noresponder.example.com', 'alice@notificaciones.example.com',
+      'alice@keine-antwort.example.com', 'bob@ne-pas-repondre.example.com', 'keinemann@example.com',
+    ]) {
+      expect([address, isNoiseSender(address)]).toEqual([address, false]);
+    }
+  });
+
   test('#5103: Google system senders match by exact address, never by substring', () => {
     expect(isNoiseSender('gemini-notes@google.com')).toBe(true);
     expect(isNoiseSender('Gemini-Notes@Google.com')).toBe(true);
