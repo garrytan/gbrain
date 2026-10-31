@@ -159,11 +159,16 @@ export interface GitHubTokenProvider {
   refresh(): Promise<string>;
 }
 
+/** Per-request budget (headers and body). A request past it is transient: retried like a rate-limit
+ *  response, then failed as unreachable, so one hung response cannot stall a sweep or webhook job. */
+export const GITHUB_REQUEST_TIMEOUT_MS = 60_000;
+
 export class GitHubClient {
   constructor(
     private readonly token: string | GitHubTokenProvider,
     private readonly fetchImpl: FetchImpl = fetch,
     public readonly log: (msg: string) => void = () => {},
+    private readonly requestTimeoutMs: number = GITHUB_REQUEST_TIMEOUT_MS,
   ) {}
 
   private rate: RateInfo = { remaining: null, resetAt: null };
@@ -218,14 +223,20 @@ export class GitHubClient {
     const retries = opts.retries ?? 1;
     for (let attempt = 0; attempt <= retries; attempt++) {
       await this.waitForBucket(opts.signal);
+      const timeout = AbortSignal.timeout(this.requestTimeoutMs);
+      const timedOut = (err: unknown): Error => {
+        if (!timeout.aborted || opts.signal?.aborted) throw err;
+        return new Error(`GitHub API unreachable on ${pathOrUrl}: no response within ${this.requestTimeoutMs / 1000}s`);
+      };
       const res = await this.fetchImpl(url, {
         headers: {
           accept: 'application/vnd.github+json',
           authorization: `Bearer ${await this.tokenValue()}`,
           'x-github-api-version': '2022-11-28',
         },
-        signal: opts.signal,
-      });
+        signal: opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout,
+      }).catch(timedOut);
+      if (res instanceof Error) { if (attempt < retries) { this.log(`[github] ${res.message}; retrying`); continue; } throw res; }
       this.trackRate(res);
       if (res.status === 401 && typeof this.token !== 'string' && attempt < retries) {
         // Installation tokens expire hourly; a 401 mid-run means the minted
@@ -261,7 +272,7 @@ export class GitHubClient {
       if (!res.ok) {
         throw new Error(`GitHub API HTTP ${res.status} on ${pathOrUrl}`);
       }
-      return { data: (await res.json()) as T, link: res.headers.get('link') };
+      return { data: (await res.json().catch((err: unknown) => { throw timedOut(err); })) as T, link: res.headers.get('link') };
     }
     throw new Error(`GitHub API unreachable on ${pathOrUrl}`);
   }
