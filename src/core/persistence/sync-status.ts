@@ -230,7 +230,7 @@ export interface SyncStatus {
   landing_read: SyncStatusRead;
 }
 export type SyncStatusState = 'synced' | 'resumable' | 'blocked';
-type RefreshProbeRow = { id: string; worktree_id: string; state: import('./worktree-refresh-schema.ts').WorktreeRefreshState; source_ids: string[]; outcome: Record<string, unknown>; updated_at: string; owner_host_id: string | null };
+type RefreshProbeRow = { id: string; worktree_id: string; state: import('./worktree-refresh-schema.ts').WorktreeRefreshState; source_ids: string[]; outcome: Record<string, unknown>; old_head: string; target_head: string; updated_at: string; owner_host_id: string | null };
 /** Why the source is in its state; one closed list. */
 export const SYNC_STATUS_REASONS = ['nothing_pending', 'held_by_design', 'held_needs_human', 'cursor_unfinished', 'live_job', 'last_error', 'holds_actionable', 'recovery_pending', 'request_pending',
   'status_unknown', 'needs_human', 'head_blocked', 'recovery_blocked',
@@ -341,7 +341,7 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
       (SELECT r.request_id::text FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id WHERE e.kind='git' AND e.state='failed' AND NOT (e.data ? 'settled')
         AND e.request_id IN (SELECT id::uuid FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(p.completed_keys->0->'obligations'->'converged'->'writeback')='array'
           THEN p.completed_keys->0->'obligations'->'converged'->'writeback' ELSE '[]'::jsonb END) AS w(id)) ORDER BY e.id LIMIT 1) AS writeback_failed,
-      (SELECT row_to_json(f) FROM (SELECT r.id,r.worktree_id,r.state,r.source_ids,r.outcome,r.updated_at,w.owner_host_id FROM persistence_worktree_refreshes r
+      (SELECT row_to_json(f) FROM (SELECT r.id,r.worktree_id,r.state,r.source_ids,r.outcome,r.old_head,r.target_head,r.updated_at,w.owner_host_id FROM persistence_worktree_refreshes r
         LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id WHERE s.id=ANY(r.source_ids) AND r.state IN ${ACTIVE_REFRESH_STATES_SQL} LIMIT 1) f) AS refresh FROM sources s
       LEFT JOIN op_checkpoints p ON p.op=$2 AND p.fingerprint=s.id||':'||s.incarnation::text
       LEFT JOIN op_checkpoints w ON w.op=$3 AND w.fingerprint=s.id||':'||s.incarnation::text
@@ -662,8 +662,8 @@ function workingHashOf(root: string, path: string): { workingHash?: string } {
 /**
  * #6712 PR 2 (L4): before a `worktree_dirty` hold is called abandoned, its uncommitted bytes are read from the checkout
  * now; bytes that changed since the hold last looked are a live editor (`edited_at` refreshed, no attempt counted), so a
- * hold escalates only when nobody touched the edit for a day. Holds that would not escalate are not read. Status, unblock
- * and the soak sweep all look through this.
+ * hold escalates only when nobody touched the edit for a day. Holds that would not escalate are not read, and a hold whose
+ * bytes match the hash it already records costs no statement (#7339). Status, unblock and the soak sweep all look through this.
  */
 export async function observeDirtyEditors(engine: BrainEngine, sourceId: string, incarnation: string, holds: GitHoldRecord[], now = Date.now()): Promise<GitHoldRecord[]> {
   const due = holds.filter(hold => hold.code === 'worktree_dirty' && classifySyncFault({ code: hold.code, ...holdEscalation(hold, now) }).needs_human);
@@ -673,7 +673,7 @@ export async function observeDirtyEditors(engine: BrainEngine, sourceId: string,
   const fresh = new Map<string, GitHoldRecord>();
   for (const hold of due) {
     const { workingHash } = workingHashOf(context.root, hold.path);
-    const updated = workingHash === undefined ? null : await noteHoldEdit(engine, { sourceId, incarnation, path: hold.path, workingHash });
+    const updated = workingHash === undefined || workingHash === hold.meta.working_hash ? null : await noteHoldEdit(engine, { sourceId, incarnation, path: hold.path, workingHash });
     if (updated) fresh.set(hold.path, updated);
   }
   return holds.map(hold => fresh.get(hold.path) ?? hold);

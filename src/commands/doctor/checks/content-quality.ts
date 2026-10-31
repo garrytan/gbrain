@@ -406,7 +406,8 @@ async function runFrontmatter(ctx: DoctorContext): Promise<Check[]> {
       frontmatterOnly: true,
     });
 
-    if (report.total === 0 && !report.partial) {
+    const missing = report.per_source.filter(src => src.status === 'missing');
+    if (report.total === 0 && !report.partial && !missing.length) {
       const sources = report.per_source.length;
       checks.push({
         name: 'frontmatter_integrity',
@@ -420,6 +421,10 @@ async function runFrontmatter(ctx: DoctorContext): Promise<Check[]> {
       // skipped so the user can tell which sources weren't checked.
       const sourceMessages: string[] = [];
       for (const src of report.per_source) {
+        if (src.status === 'missing') {
+          sourceMessages.push(`${src.source_id}: NOT SCANNED (its directory ${src.source_path} is missing)`);
+          continue;
+        }
         if (src.status === 'skipped') {
           // Codex adversarial #1: `gbrain frontmatter validate` takes a
           // filesystem PATH, not a source id. Pre-fix the hint pointed users
@@ -450,14 +455,16 @@ async function runFrontmatter(ctx: DoctorContext): Promise<Check[]> {
       const repairHint = 'Fix: gbrain repair frontmatter --source <id> previews the line fix for every file it can repair (and names the manual fix for the rest, '
         + 'such as a missing opening ---); on an unmanaged checkout gbrain frontmatter validate <source-path> --fix applies the same safe fixes';
       const sourcesWithIssues = report.per_source.filter(src => src.total > 0).map(src => src.source_id);
-      const fixHint = report.partial
+      const missingHint = missing.length ? `Restore the missing directory, or point the source at its checkout with gbrain sources set-path <id> <path>. ` : '';
+      const fixHint = missingHint + (report.partial
         ? `Raise GBRAIN_DOCTOR_FM_TIMEOUT_MS or run \`gbrain frontmatter validate <source-path>\` directly. ${repairHint}`
-        : repairHint;
+        : repairHint);
       checks.push({
         name: 'frontmatter_integrity',
         status: 'warn',
         // #7145: a partial walk is a floor with health unknown past it, readable without parsing the message.
-        details: { count: report.total, partial: report.partial, exact: !report.partial,
+        details: { count: report.total, partial: report.partial, exact: !report.partial && !missing.length,
+          ...(missing.length ? { missing_sources: missing.map(src => src.source_id) } : {}),
           ...(report.partial ? { ...boundUnknownDetails('time'), limit: fmTimeoutMs } : {}) },
         message:
           `${report.total} frontmatter issue(s)` +
@@ -465,7 +472,7 @@ async function runFrontmatter(ctx: DoctorContext): Promise<Check[]> {
           `. ${sourceMessages.join('; ')}. ${fixHint}`,
         ...(sourcesWithIssues.length === 1 ? { fix: agentFix(['gbrain', 'repair', 'frontmatter', '--source', sourcesWithIssues[0]!],
           'Previews the line fix for each file the repair can fix and names the manual fix for the rest; it writes nothing.', 'frontmatter_integrity',
-          { docs: 'docs/guides/repair.md#frontmatter' }) } : {}),
+          { docs: 'docs/guides/repair.md#frontmatter' }) } : missing.length ? { fix_unavailable_reason: 'operator_judgement' as const } : {}),
       });
     }
     checks.push(frontmatterRepairableFromReport(report, fmTimeoutMs));

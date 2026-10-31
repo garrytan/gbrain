@@ -5,9 +5,11 @@ import { mkdtempSync, rmSync, statSync, writeFileSync, readFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { OperationError } from '../src/core/ops/contract.ts';
+import { printRefreshOutcome } from '../src/commands/sources-refresh.ts';
+import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import {
   PERSISTENCE_IPC_MAX_BYTES, PersistenceIpcTransportError,
-  persistenceSocketPathForConfig, requestPersistenceCapabilities, requestPersistenceOperation,
+  persistenceSocketPathForConfig, requestPersistenceAdministration, requestPersistenceCapabilities, requestPersistenceOperation,
   startPersistenceIpcServer, type PersistenceIpcBinding, type PersistenceIpcRequest,
 } from '../src/core/persistence/ipc.ts';
 
@@ -219,5 +221,37 @@ describe('dedicated persistence IPC', () => {
     writeFileSync(path, 'keep');
     await expect(startPersistenceIpcServer(path, { brainId: BRAIN, dispatch: async () => ({}) })).rejects.toThrow('not a socket');
     expect(readFileSync(path, 'utf8')).toBe('keep');
+  });
+  test('#7707, #8130: a refusal\'s structured fix, why and reason survive the owner socket, so a delegated sources refresh prints the direct path\'s v1 fix', async () => {
+    // Value: protects=a refusal delegated to a resident owner keeps its structured fix (argv, actor, ask_user) instead of falling back to the
+    // prose suggestion; fails_when=remoteOperationError drops `fix`; why_new=test 4e reads the direct path only; seam=an owner whose
+    // administration throws the refusal; no_claim=a real resident refresh.
+    const path = socketPath();
+    const refusal = () => {
+      const error = new OperationError('refresh_diverged', 'The checkout HEAD is not an ancestor of origin/main.', 'Publish the local commits first.');
+      error.fix = { argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', '/tmp/brain-example', '--json'], consent: [], actor: 'user',
+        ask_user: true, requires_exclusive: false, why: 'HEAD has a local commit the upstream lacks.', user_message: 'Push the local commit of source-a?',
+        docs: 'docs/guides/write-refusals.md#refresh_diverged' };
+      error.why = 'The checkout holds a commit the upstream lacks.';
+      error.reason = 'local_commits';
+      error.contractVersion = 1;
+      return error;
+    };
+    const result = await startPersistenceIpcServer(path, { brainId: BRAIN, dispatch: async () => ({}), administer: async () => { throw refusal(); } });
+    bindings.push(result!);
+    const delegated = await requestPersistenceAdministration(path, { version: 1, kind: 'administration', brain_id: BRAIN, operation: 'writer_refresh',
+      params: { source_id: 'source-a' }, registration: REGISTRATION }).then(() => null, error => error);
+    expect(delegated).toBeInstanceOf(OperationError);
+    const printed = (error: OperationError) => {
+      const out: string[] = [];
+      const log = console.log;
+      console.log = (line: string) => { out.push(line); };
+      try { printRefreshOutcome({ error }, true); } finally { console.log = log; _resetCliExitVerdictForTests(); process.exitCode = 0; }
+      return JSON.parse(out.join('\n'));
+    };
+    const direct = printed(refusal()).fix;
+    expect(direct).toMatchObject({ argv: refusal().fix!.argv, next: 'ask_user', actor: 'user' });
+    expect(printed(delegated as OperationError).fix).toEqual(direct);
+    expect((delegated as OperationError).toJSON()).toMatchObject({ why: 'The checkout holds a commit the upstream lacks.', reason: 'local_commits', contract_version: 1 });
   });
 });
