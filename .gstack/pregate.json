@@ -138,5 +138,36 @@
       "pattern": "pglite-snapshot-(?:default-)?\\$\\{\\{ runner\\.os \\}\\}-\\$\\{\\{ hashFiles\\('(?:src|test|scripts)(?:/[a-z*][a-z*_-]*(?:\\.[a-z]+)?)+'(?:, '(?:src|test|scripts)(?:/[a-z*][a-z*_-]*(?:\\.[a-z]+)?)+')*\\) \\}\\}$",
       "reason": "GitHub Actions PGLite snapshot cache keys: the whole value is pglite-snapshot-[default-]${{ runner.os }}-${{ hashFiles(<args>) }} and every argument is a lowercase path or glob under src/, test/ or scripts/; an argument with digits, capitals or a ./ prefix is not covered and stays flagged"
     }
-  ]
+  ],
+  "run_profiles": {
+    "test": {
+      "workflow": "test.yml",
+      "events": [
+        "workflow_dispatch",
+        "push"
+      ],
+      "jobs": [
+        "full-suite"
+      ],
+      "artifact": "full-suite-tree"
+    },
+    "e2e": {
+      "workflow": "e2e.yml",
+      "events": [
+        "workflow_dispatch",
+        "push"
+      ],
+      "jobs": [
+        "e2e-full-suite"
+      ],
+      "artifact": "e2e-full-suite-tree"
+    }
+  },
+  "remote_gate_runs": {
+    "profiles": [
+      "test",
+      "e2e"
+    ],
+    "inventory": "bash scripts/pregate-remote-gate.sh --list"
+  }
 }
