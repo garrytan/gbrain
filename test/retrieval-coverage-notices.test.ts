@@ -312,7 +312,7 @@ describe('MCP dispatch: one stdio session', () => {
     const first = await dispatchToolCall(engine, 'search', { query: 'zzqv-absent-term' }, opts) as any;
     const second = await dispatchToolCall(engine, 'search', { query: 'zzqv-absent-term' }, opts) as any;
     expect(blocks(first)).toContain('[gbrain notice degraded_recall');
-    expect(blocks(first)).toContain('recently written pages are not in the search index yet (1 of 1 pending page(s) could match this query)');
+    expect(blocks(first)).toContain('recently written pages are being indexed and are not in the search index yet (1 of 1 pending page(s) could match this query)');
     expect(blocks(second)).not.toContain('[gbrain notice degraded_recall');
     expect(second._meta.retrieval.degraded).toContainEqual({ stage: 'projection_pending' });
     expect(second._meta.retrieval.coverage).toEqual({ pending_projection: 1, could_affect: { pending_projection: 1 } });

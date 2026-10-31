@@ -1585,13 +1585,13 @@ function describeEmptyRetrieval(): string {
     parts.push(`retrieved ${m.retrieved_count} before trimming`);
   }
   // Ranking-only stages (a skipped reranker) never cause a miss — keep the
-  // "clean miss" verdict honest.
+  // "retrieval healthy" verdict honest.
   const stages = Array.isArray(m.degraded)
     ? [...new Set((m.degraded as Array<{ stage?: string }>).filter(affectsRecall).map(d => d?.stage).filter(Boolean))]
     : [];
   parts.push(stages.length > 0
     ? `degraded: ${stages.join(', ')}`
-    : 'clean miss — no retrieval degradation');
+    : 'retrieval healthy; try the display name or --match hybrid before concluding the brain has nothing');
   return ` (${parts.join('; ')})`;
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { narrowOrFallbackTokens, OR_FALLBACK_MATCH_CAP, type OrTokenShare } from '../../src/core/search/keyword-or-narrow.ts';
+import { commonOrTokens, narrowOrFallbackTokens, OR_FALLBACK_MATCH_CAP, type OrTokenShare } from '../../src/core/search/keyword-or-narrow.ts';
 
 const t = (token: string, share: number | null, lexemes = 1): OrTokenShare => ({ token, lexemes, share });
 
@@ -29,5 +29,15 @@ describe('narrowOrFallbackTokens', () => {
   test('the cap is a row count', () => {
     expect(narrowOrFallbackTokens([t('a1', 0.01), t('b2', 0.01)], OR_FALLBACK_MATCH_CAP * 100)).toEqual(['a1']);
     expect(narrowOrFallbackTokens([t('a1', 0.01), t('b2', 0.01)], OR_FALLBACK_MATCH_CAP * 50)).toBeNull();
+  });
+});
+
+describe('commonOrTokens (#7491)', () => {
+  const row = (token: string, share: number | null) => ({ token, lexemes: 1, share, rows: 2_000_000, analyzed: true });
+  test('names the tracked tokens estimated past the cap; untracked tokens are never common', () => {
+    expect([...commonOrTokens([row('say', 0.2), row('kalomi', 0.0001), row('412', null)], 400)]).toEqual(['say']);
+  });
+  test('no statistics, no common tokens', () => {
+    expect(commonOrTokens([], 400).size).toBe(0);
   });
 });

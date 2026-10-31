@@ -228,7 +228,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
           expect(degradedStages()).toContain('safe_index_pending');
           const block = buildEmptyRetrievalBlock(meta.retrieval) ?? '';
           expect(block).toContain('safe_index_pending');
-          expect(block).not.toContain('clean miss');
+          expect(block).not.toContain('retrieval healthy');
           // Trusted local reads also withhold unsealed projections; the rebuild
           // diagnostic is emitted only for remote callers.
           meta = {};
