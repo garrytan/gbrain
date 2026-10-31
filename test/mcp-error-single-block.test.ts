@@ -192,12 +192,12 @@ describe('gbrain serve --http (serve-http-mcp)', () => {
   }));
 
   test('dispatch itself throwing lands in the serve-http catch as one internal_error block', inHome(async () => {
-    // dispatchToolCall reads op.cliOnly before its own try; a fault there is the only way into serve-http's catch.
+    // dispatch reads op.cliOnly before its own try (in dispatchResolvedCall, after the caller-access await); a fault there is the only way into serve-http's catch.
     const op = opNamed('get_brain_identity');
     const own = Object.getOwnPropertyDescriptor(op, 'cliOnly');
     Object.defineProperty(op, 'cliOnly', {
       configurable: true,
-      get() { if (new Error().stack?.includes('dispatchToolCall')) throw new Error('op definition unreadable'); return own?.value; },
+      get() { const stack = new Error().stack ?? ''; if (stack.includes('dispatchToolCall') || stack.includes('dispatchResolvedCall')) throw new Error('op definition unreadable'); return own?.value; },
     });
     let r: ToolResultWire;
     try {
