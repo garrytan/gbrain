@@ -34,7 +34,7 @@ import { withoutSafetyAssessments } from './reconcile-safety.ts';
 import { digest, sha256 } from './digest.ts';
 import { preserveProtectedTakes } from './protected-takes.ts';
 import { getWorktreeBinding } from './ownership.ts';
-import { sourceMirrorReadOnly } from './mirror-read-only.ts';
+import { readOnlyMirrorOwnsPath, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { assertConfiguredSyncRoot, assertSyncEntryOrigin, readSyncFile, syncGit, syncRawHash, type SyncRename } from './sync-discovery.ts';
 import { directoryAt } from './sync-entry-fault.ts';
 import { assertSyncPageOrigin, sameSyncOrigin, syncOriginPath, syncOriginScope, type SyncOriginScope } from './sync-origin.ts';
@@ -905,7 +905,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
   if (overlay && p.companyApproval) throw companyWritebackRefusal(row, p, fenceFixes);
   // #5409: a read-only mirror keeps its canonical metadata in the database only; its checkout stays the remote's bytes.
   enterClaimStep(clock, 'mirror_check', undefined, 'db');
-  const mirrorReadOnly = overlay && await sourceMirrorReadOnly(engine, row.source_id);
+  const sourceIsMirror = overlay && await sourceMirrorReadOnly(engine, row.source_id), mirrorReadOnly = sourceIsMirror || overlay && await readOnlyMirrorOwnsPath(engine, row.source_id, join(root, p.path));
   const canonicalFile = overlay && !mirrorReadOnly ? serializePageToMarkdown(renderedPage, tags) : null;
   const writeback = canonicalWritebackNeeded(row, p, p.content, canonicalFile);
   // A rename projects against the moved page (same id), so its pinned timeline rows carry over.
@@ -925,7 +925,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
     deferEmbedding: p.processingOptions?.noEmbed || p.embedDeferred === true, ...(!(p.processingOptions?.noEmbed || p.embedDeferred === true) && ready.noop && !moved && snapshot && await chunksEmbeddedAsIs(engine, snapshot.page.id) ? { embeddingCurrent: true } : {}),
     ...(ready.afterCommit || renamed ? { afterCommit: async (target: BrainEngine) => { await published.afterCommit?.(target); } } : {}),
     ...(writeback ? { file: { root, path: join(root, p.path), content: canonicalFile, expectedBeforeHash: p.rawHash } } : {}),
-    ...(mirrorReadOnly ? { databaseOnlyReason: 'mirror_read_only' as const } : {}),
+    ...(sourceIsMirror ? { databaseOnlyReason: 'mirror_read_only' as const } : {}),
     apply: async (tx, preimage) => {
       let applied = ready;
       if (renamed) {
