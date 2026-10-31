@@ -362,6 +362,8 @@ export function extractCandidates(text: string): EntityCandidate[] {
 
 export interface WindowTurn {
   role: 'user' | 'assistant';
+  /** Speaker when input comes from another agent or program. */
+  speaker?: string;
   text: string;
 }
 

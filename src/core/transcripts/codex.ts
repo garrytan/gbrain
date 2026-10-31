@@ -9,14 +9,17 @@
  * codex 0.152, and as `event_msg` payload.type='item_completed' with
  * item.type='UserMessage' (text content blocks) from 0.153 on (#5163); a
  * rollout carrying both shapes for one turn keeps it once
- * (isRepeatedCodexUserTurn);
+ * (codexLineReader);
  * `response_item` rows with role user/developer are INJECTED context
  * (app-context, plugin lists, instruction preambles) and are skipped
  * wholesale. A sub-agent rollout (`session_meta` payload.source.subagent,
- * e.g. the guardian auto-reviewer) receives its task only as such injected
- * context, so it has assistant turns and no user turn by design: it reports
- * `subagentRollout`, never `userTurnsMissing` drift (#6741). Assistant text comes from `response_item` payload.type='message'
- * role='assistant' output_text blocks. reasoning / tool calls / token_count
+ * e.g. the guardian auto-reviewer) may receive its task only as injected
+ * context, so assistant-only sessions report
+ * `subagentRollout`, never `userTurnsMissing` drift (#6741). Assistant text
+ * comes from `response_item` payload.type='message'
+ * role='assistant' output_text blocks, AgentMessage items and task_complete
+ * last_agent_message. response_item agent_message records input from another
+ * agent under its own speaker label. reasoning / tool calls / token_count
  * and every other event kind are skipped — the archive records conversation
  * text only (lossy by design).
  */
@@ -49,21 +52,26 @@ export const CODEX_SPEC_TARGET: HostSpecTarget = {
     'codex-cli 0.154.0 and 0.159.3 rollout line shapes quoted in garrytan/gbrain#5163 (observed 2026-10-05)',
     'test/fixtures/transcripts/codex-rollout.jsonl',
     'test/fixtures/transcripts/codex-rollout-0154.jsonl',
+    'test/transcripts-codex-record-provenance.test.ts (synthetic additional record shapes)',
   ],
   note:
     'One JSON object per line: {timestamp: ISO, type, payload}; 0.159 adds ' +
-    'ordinal/started_at_ms/completed_at_ms, ignored. type ' +
+    'started_at_ms/completed_at_ms (ignored); ordinal bounds copied history. type ' +
     "'session_meta' header carries payload.{id, session_id, cwd, timestamp, " +
     "cli_version, source}; identity = payload.id (per-thread; session_id is the root " +
     "session shared by forked/subagent threads), first header wins. payload.source is a string ('cli', 'exec', ...) " +
-    "or {subagent: ...} for a sub-agent thread, whose task arrives only as injected context. User turns: type 'event_msg' with payload.type " +
+    "or {subagent: ...} for a sub-agent thread. Reuses the subagent flag for assistant-only threads. User turns: type 'event_msg' with payload.type " +
     "'user_message' (payload.message = typed text) through 0.152; from 0.153 " +
     "type 'event_msg' with payload.type 'item_completed' and " +
-    "payload.item.{type:'UserMessage', content:[{type:'text', text}]} (other " +
-    'item types, AgentMessage included, skipped; non-text blocks skipped; ' +
-    'both shapes for one turn kept once). Assistant turns: type ' +
+    "payload.item.{type:'UserMessage', content:[{type:'text', text}]}; " +
+    'AgentMessage items provide assistant Text blocks; non-text blocks skipped; ' +
+    'copies across routes kept once; genuine repeats kept. Assistant turns: type ' +
     "'response_item' with payload.{type:'message', role:'assistant', " +
-    "content:[{type:'output_text', text}]}. response_item rows with role " +
+    "content:[{type:'output_text', text}]} and task_complete.last_agent_message. " +
+    'response_item agent_message is user input labelled with its author. ' +
+    'codex_exec prompts carry Program (codex_exec). Parent history is skipped ' +
+    'only when a copied session header proves subagent_history_start_ordinal. ' +
+    'Untruncated realtime-only sessions are expected empty. response_item rows with role ' +
     'user/developer are injected context and are skipped. reasoning, ' +
     'custom_tool_call*, function_call*, token_count, world_state, ' +
     'turn_context, compacted: all skipped. Unknown fields tolerated.',
@@ -81,15 +89,6 @@ function textFromBlocks(content: unknown, blockType: string): string {
 }
 
 /**
- * #5163: a rollout written across the 0.152 -> 0.153 change can record one
- * typed turn as both `user_message` and `item_completed` UserMessage. The
- * second copy is the same text with no assistant turn between them.
- */
-export function isRepeatedCodexUserTurn(previous: { role: string; text: string } | undefined, text: string): boolean {
-  return previous?.role === 'user' && previous.text === text;
-}
-
-/**
  * One parsed codex rollout line, classified (mirrors openclaw.ts's
  * mapOpenclawLine precedent: the hook lane's tail-capable parser reuses the
  * SAME line→row mapping as the import adapter, so the dated CODEX_SPEC_TARGET
@@ -104,12 +103,24 @@ export function isRepeatedCodexUserTurn(previous: { role: string; text: string }
  * them, so there is no honest `result.ok` to join — calls ship without
  * result rather than with an inferred one.
  */
+export type CodexTextRoute = 'event' | 'message' | 'item' | 'final' | 'agent';
+
 export type CodexLineResult =
-  | { kind: 'session'; sessionId?: string; cwd?: string; startedAt?: string; cliVersion?: string; modelProvider?: string; subagent?: true }
-  | { kind: 'user'; message: TranscriptMessage }
-  | { kind: 'assistant'; message: TranscriptMessage }
+  | {
+      kind: 'session';
+      sessionId?: string;
+      cwd?: string;
+      startedAt?: string;
+      cliVersion?: string;
+      modelProvider?: string;
+      subagent?: true;
+      originator?: string;
+    }
+  | { kind: 'user'; message: TranscriptMessage; route: CodexTextRoute; recordId?: string }
+  | { kind: 'assistant'; message: TranscriptMessage; route: CodexTextRoute; recordId?: string }
   | { kind: 'tool_call'; name: string; input: unknown }
   | { kind: 'boundary' }
+  | { kind: 'turn_start' }
   | { kind: 'skip' };
 
 function tolerantJson(v: unknown): unknown {
@@ -120,6 +131,13 @@ function tolerantJson(v: unknown): unknown {
     return v; // a non-JSON args string is still the honest payload
   }
 }
+
+function idOf(v: unknown): string | undefined {
+  return typeof v === 'string' && v ? v : undefined;
+}
+
+/** Non-interactive Codex front end; unknown originators keep their existing behavior. */
+export const CODEX_PROGRAM_ORIGINATORS: ReadonlySet<string> = new Set(['codex_exec']);
 
 /** Map one ALREADY-JSON-PARSED codex rollout line. */
 export function mapCodexLine(entry: unknown): CodexLineResult {
@@ -142,26 +160,68 @@ export function mapCodexLine(entry: unknown): CodexLineResult {
       startedAt: typeof payload.timestamp === 'string' ? utcTimestamp(payload.timestamp) : lineTs || undefined,
       cliVersion: typeof payload.cli_version === 'string' ? payload.cli_version : undefined,
       modelProvider: typeof payload.model_provider === 'string' ? payload.model_provider : undefined,
+      originator: typeof payload.originator === 'string' ? payload.originator : undefined,
       ...(typeof payload.source === 'object' && payload.source !== null && 'subagent' in payload.source ? { subagent: true as const } : {}),
     };
   }
   if (e.type === 'compacted') return { kind: 'boundary' };
+  if (e.type === 'event_msg' && payload.type === 'task_started') return { kind: 'turn_start' };
   if (e.type === 'event_msg' && payload.type === 'user_message') {
-    const text = typeof payload.message === 'string' ? payload.message.trim() : '';
-    return text ? { kind: 'user', message: { role: 'user', timestamp: lineTs, text } } : { kind: 'skip' };
+    const raw = typeof payload.message === 'string' ? payload.message.trim() : '';
+    if (!raw) return { kind: 'skip' };
+    return { kind: 'user', route: 'event', message: { role: 'user', timestamp: lineTs, text: raw } };
   }
   if (e.type === 'event_msg' && payload.type === 'item_completed') {
-    // #5163: codex >= 0.153 records the typed turn only as an item_completed
-    // UserMessage. Every other item type is skipped: AgentMessage duplicates
-    // the response_item output_text row, command/tool items are not text.
+    // A UserMessage item is input to the turn. Injected context stays in
+    // response_item user/developer rows. AgentMessage is
+    // assistant text (commentary or final_answer). Block types are the
+    // observed ones: 'text' on UserMessage, 'Text' on AgentMessage. Images
+    // (local_image) carry no text and are skipped.
     const item = (typeof payload.item === 'object' && payload.item !== null ? payload.item : {}) as Record<string, unknown>;
-    if (item.type !== 'UserMessage') return { kind: 'skip' };
-    const text = textFromBlocks(item.content, 'text');
-    return text ? { kind: 'user', message: { role: 'user', timestamp: lineTs, text } } : { kind: 'skip' };
+    const recordId = idOf(item.id);
+    if (item.type === 'UserMessage') {
+      const raw = textFromBlocks(item.content, 'text');
+      if (!raw) return { kind: 'skip' };
+      return {
+        kind: 'user',
+        route: 'item',
+        recordId,
+        message: { role: 'user', timestamp: lineTs, text: raw },
+      };
+    }
+    if (item.type === 'AgentMessage') {
+      const text = textFromBlocks(item.content, 'Text');
+      return text
+        ? { kind: 'assistant', route: 'item', recordId, message: { role: 'assistant', timestamp: lineTs, text } }
+        : { kind: 'skip' };
+    }
+    return { kind: 'skip' }; // Reasoning, tool calls, file changes, sub-agent activity
+  }
+  if (e.type === 'event_msg' && payload.type === 'task_complete') {
+    const text = typeof payload.last_agent_message === 'string' ? payload.last_agent_message.trim() : '';
+    return text
+      ? { kind: 'assistant', route: 'final', recordId: idOf(payload.turn_id), message: { role: 'assistant', timestamp: lineTs, text } }
+      : { kind: 'skip' };
   }
   if (e.type === 'response_item' && payload.type === 'message' && payload.role === 'assistant') {
     const text = textFromBlocks(payload.content, 'output_text');
-    return text ? { kind: 'assistant', message: { role: 'assistant', timestamp: lineTs, text } } : { kind: 'skip' };
+    return text
+      ? { kind: 'assistant', route: 'message', recordId: idOf(payload.id), message: { role: 'assistant', timestamp: lineTs, text } }
+      : { kind: 'skip' };
+  }
+  if (e.type === 'response_item' && payload.type === 'agent_message') {
+    // A message another agent (a parent or a sub-agent) sent this thread. In
+    // every observed rollout the recipient is this thread, so it is input to
+    // this thread: a user turn, labelled with the sender.
+    const text = textFromBlocks(payload.content, 'input_text');
+    if (!text) return { kind: 'skip' };
+    const author = typeof payload.author === 'string' && payload.author.trim() ? payload.author.trim() : 'another agent';
+    return {
+      kind: 'user',
+      route: 'agent',
+      recordId: idOf(payload.id),
+      message: { role: 'user', speaker: `Agent ${author}`, timestamp: lineTs, text },
+    };
   }
   if (e.type === 'response_item' && (payload.type === 'custom_tool_call' || payload.type === 'function_call')) {
     const name = typeof payload.name === 'string' && payload.name ? payload.name : null;
@@ -173,6 +233,103 @@ export function mapCodexLine(entry: unknown): CodexLineResult {
   // telemetry events: skipped by design.
   return { kind: 'skip' };
 }
+
+/**
+ * Shared import/hook reader. Keep the first header, label program prompts,
+ * and drop copies across text routes while preserving repetitions within one.
+ * A parent-history boundary is used only when a copied header proves it.
+ */
+export function codexLineReader(opts: { historyBoundary?: number } = {}): (entry: unknown) => CodexLineResult {
+  let headerSeen = false;
+  let program: string | undefined;
+  const historyStart = opts.historyBoundary;
+  let counts = new Map<string, Map<CodexTextRoute, number>>();
+  let lastRole: 'user' | 'assistant' | undefined;
+  const seenIds = new Set<string>();
+  return (entry) => {
+    let mapped = mapCodexLine(entry);
+    if (mapped.kind === 'session' && !headerSeen) {
+      headerSeen = true;
+      if (mapped.originator && CODEX_PROGRAM_ORIGINATORS.has(mapped.originator)) program = mapped.originator;
+      return mapped;
+    }
+    if (historyStart !== undefined && typeof entry === 'object' && entry !== null) {
+      const ordinal = (entry as Record<string, unknown>).ordinal;
+      if (typeof ordinal === 'number' && ordinal < historyStart) return { kind: 'skip' };
+    }
+    if (mapped.kind === 'turn_start') {
+      counts = new Map();
+      seenIds.clear();
+      lastRole = undefined;
+      return { kind: 'skip' };
+    }
+    if (mapped.kind !== 'user' && mapped.kind !== 'assistant') return mapped;
+    if (program && mapped.kind === 'user' && !mapped.message.speaker) {
+      mapped = { ...mapped, message: { ...mapped.message, speaker: `Program (${program})` } };
+    }
+    // Older rollouts have no task_started rows. A new input following an
+    // answer starts a fresh copy-tracking window in those files as well.
+    if (mapped.kind === 'user' && lastRole === 'assistant') {
+      counts.clear();
+      seenIds.clear();
+    }
+    const m = mapped.message;
+    const text = m.text.replace(/\s+/g, ' ').trim();
+    if (mapped.recordId) {
+      const idKey = `${mapped.route}\u0000${mapped.recordId}\u0000${m.role}\u0000${m.speaker ?? ''}\u0000${text}`;
+      if (seenIds.has(idKey)) return { kind: 'skip' };
+      seenIds.add(idKey);
+    }
+    const key = `${m.role}\u0000${m.speaker ?? ''}\u0000${text}`;
+    let byRoute = counts.get(key);
+    if (!byRoute) counts.set(key, (byRoute = new Map()));
+    const mine = byRoute.get(mapped.route) ?? 0;
+    byRoute.set(mapped.route, mine + 1);
+    const copy = [...byRoute].some(([route, n]) => route !== mapped.route && n > mine);
+    if (copy) return { kind: 'skip' };
+    lastRole = m.role;
+    return mapped;
+  };
+}
+
+/**
+ * The ordinal below which a sub-agent rollout holds a copy of its parent's
+ * history, or undefined when the file does not prove one: the first
+ * session_meta carries subagent_history_start_ordinal AND another
+ * session_meta line (the copied parent header) has a lower ordinal. Only
+ * session_meta lines are parsed.
+ */
+export function codexHistoryBoundary(raw: string): number | undefined {
+  const firstEnd = raw.indexOf('\n');
+  let start: unknown;
+  try {
+    const first = JSON.parse(firstEnd < 0 ? raw : raw.slice(0, firstEnd)) as Record<string, unknown>;
+    if (first.type !== 'session_meta') return undefined;
+    const payload = first.payload as Record<string, unknown> | undefined;
+    if (typeof payload?.source !== 'object' || payload.source === null || !('subagent' in payload.source)) return undefined;
+    start = payload.subagent_history_start_ordinal;
+  } catch {
+    return undefined;
+  }
+  if (typeof start !== 'number' || !Number.isSafeInteger(start) || start < 0 || firstEnd < 0) return undefined;
+  let at = raw.indexOf('"session_meta"', firstEnd);
+  while (at >= 0) {
+    const lineStart = raw.lastIndexOf('\n', at) + 1;
+    let lineEnd = raw.indexOf('\n', at);
+    if (lineEnd < 0) lineEnd = raw.length;
+    try {
+      const e = JSON.parse(raw.slice(lineStart, lineEnd)) as Record<string, unknown>;
+      if (e.type === 'session_meta' && typeof e.ordinal === 'number' && e.ordinal < start) return start;
+    } catch {
+      // a torn line or text that merely mentions session_meta
+    }
+    at = raw.indexOf('"session_meta"', lineEnd);
+  }
+  return undefined;
+}
+
+/** Record types of a rollout that opened a voice session and said nothing. */
+const REALTIME_ONLY_TYPES = new Set(['session_meta', 'realtime_item']);
 
 export const codexAdapter: TranscriptAdapter = {
   format: 'codex',
@@ -242,6 +399,8 @@ export const codexAdapter: TranscriptAdapter = {
     let subagent = false;
     const messages: TranscriptMessage[] = [];
     let rawMeta: Record<string, unknown> | undefined;
+    const readLine = codexLineReader({ historyBoundary: codexHistoryBoundary(raw) });
+    const recordTypes = new Set<string>();
 
     for (const line of raw.split('\n')) {
       const t = line.trim();
@@ -253,7 +412,9 @@ export const codexAdapter: TranscriptAdapter = {
         skippedLines++;
         continue;
       }
-      const mapped = mapCodexLine(entry);
+      const type = typeof entry === 'object' && entry !== null ? (entry as Record<string, unknown>).type : undefined;
+      recordTypes.add(typeof type === 'string' ? type : '');
+      const mapped = readLine(entry);
       if (mapped.kind === 'session') {
         // #4981: first header wins — a child rollout carries its inherited parent
         // session_meta later in the file; it must not rewrite identity/cwd/start.
@@ -271,7 +432,6 @@ export const codexAdapter: TranscriptAdapter = {
         };
         continue;
       }
-      if (mapped.kind === 'user' && isRepeatedCodexUserTurn(messages.at(-1), mapped.message.text)) continue;
       if (mapped.kind === 'user' || mapped.kind === 'assistant') {
         messages.push(mapped.message);
         continue;
@@ -297,13 +457,23 @@ export const codexAdapter: TranscriptAdapter = {
         messages,
       };
     }
+    const expectedEmpty =
+      sessions === 0 &&
+      !truncated &&
+      skippedLines === 0 &&
+      recordTypes.has('realtime_item') && [...recordTypes].every((t) => REALTIME_ONLY_TYPES.has(t));
     return {
       bytesRead,
       skippedLines,
       truncated,
       sessions,
+      expectedEmpty: expectedEmpty || undefined,
       zeroSessionsReason:
-        sessions === 0 ? 'no user turns (user_message or item_completed UserMessage) or assistant message items in rollout' : undefined,
+        sessions === 0
+          ? expectedEmpty
+            ? 'realtime session with no text turns'
+            : 'no user or assistant text in rollout'
+          : undefined,
       userTurnsMissing: userless && !subagent ? true : undefined,
       subagentRollout: userless && subagent ? true : undefined,
     };

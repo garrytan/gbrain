@@ -756,9 +756,10 @@ export function parseClaudeSessionFile(
 /**
  * Render parsed turns as the session-corpus text the session-end hook writes
  * (the caller secret-scans BEFORE writing [S3#2]). Plain, line-oriented:
- * role-labeled blocks separated by blank lines.
+ * role-labeled blocks separated by blank lines. Labelled non-human input
+ * keeps its speaker in the block header; ordinary turns retain their format.
  */
 export function toCorpusText(turns: WindowTurn[]): string {
   if (!turns.length) return '';
-  return turns.map((t) => `[${t.role}]\n${t.text}`).join('\n\n') + '\n';
+  return turns.map((t) => `[${t.role}${t.speaker ? `: ${t.speaker}` : ''}]\n${t.text}`).join('\n\n') + '\n';
 }

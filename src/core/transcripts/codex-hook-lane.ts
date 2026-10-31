@@ -5,7 +5,7 @@
  * whole-session ParsedSession semantics; the session-end hook needs the
  * claude parser's shape instead (ParsedTranscript: WindowTurn[] + tool calls
  * + boundary positions, bounded reads, engine-free). Line→row mapping is
- * DELEGATED to codex.ts's exported mapCodexLine, so the dated
+ * DELEGATED to codex.ts's shared codexLineReader, so the dated
  * CODEX_SPEC_TARGET stays the single source of truth — the openclaw
  * precedent (mapOpenclawLine / readOpenclawBoundaryTail) exactly.
  *
@@ -38,7 +38,7 @@ import { isPathContained } from '../path-confine.ts';
 import type { ConfineTranscriptResult, ParsedTranscript, ToolCallRecord } from './claude-code-jsonl.ts';
 import { capToolCallInput, TRANSCRIPT_HARD_CAP_BYTES, TRANSCRIPT_MAX_BYTES_DEFAULT } from './claude-code-jsonl.ts';
 import type { WindowTurn } from '../context/entity-salience.ts';
-import { isRepeatedCodexUserTurn, mapCodexLine } from './codex.ts';
+import { codexHistoryBoundary, codexLineReader } from './codex.ts';
 
 /** Head window kept on over-budget reads: session_meta is byte 0 of a rollout
  * and carries the identity a pure tail read would lose (codex.ts rationale). */
@@ -165,6 +165,7 @@ export function parseCodexHookTranscript(
   let parsedLines = 0;
   let skippedLines = 0;
   let headerLines = 0;
+  const readLine = codexLineReader({ historyBoundary: codexHistoryBoundary(raw) });
 
   for (const line of raw.split('\n')) {
     const t = line.trim();
@@ -177,7 +178,7 @@ export function parseCodexHookTranscript(
       continue;
     }
     parsedLines++;
-    const mapped = mapCodexLine(entry);
+    const mapped = readLine(entry);
     switch (mapped.kind) {
       case 'session':
         headerLines++;
@@ -187,9 +188,12 @@ export function parseCodexHookTranscript(
         if (!cwd && mapped.cwd) cwd = mapped.cwd;
         break;
       case 'user':
-        if (isRepeatedCodexUserTurn(turns.at(-1), mapped.message.text)) break;
-        genuineUserTurnIndexes.push(turns.length);
-        turns.push({ role: mapped.message.role, text: mapped.message.text });
+        if (!mapped.message.speaker) genuineUserTurnIndexes.push(turns.length);
+        turns.push({
+          role: mapped.message.role,
+          ...(mapped.message.speaker ? { speaker: mapped.message.speaker } : {}),
+          text: mapped.message.text,
+        });
         break;
       case 'assistant':
         turns.push({ role: mapped.message.role, text: mapped.message.text });
