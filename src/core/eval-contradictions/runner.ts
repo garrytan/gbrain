@@ -27,6 +27,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { hybridSearch } from '../search/hybrid.ts';
+import { ALL_SOURCES, resolveSourceId } from '../source-resolver.ts';
 import type { SearchResult } from '../types.ts';
 import { buildCalibration } from './calibration.ts';
 import { JudgeCache } from './cache.ts';
@@ -283,9 +284,15 @@ async function _runContradictionProbeInner(opts: RunnerOpts): Promise<RunnerResu
   const budgetUsd = opts.budgetUsd ?? 5.0;
   const maxPairChars = opts.maxPairChars ?? DEFAULT_MAX_PAIR_CHARS;
   const judgeFn = opts.judgeFn ?? judgeContradiction;
+  // Resolve the existing ambient source selection once for the whole probe.
+  // Injected searches own their scope; the production search must not widen it.
+  const sourceId = opts.searchFn ? undefined : await resolveSourceId(opts.engine, undefined);
   const searchFn =
     opts.searchFn ??
-    ((engine, query, o) => hybridSearch(engine, query, { limit: o.limit }));
+    ((engine, query, o) => hybridSearch(engine, query, {
+      limit: o.limit,
+      ...(sourceId === ALL_SOURCES ? {} : { sourceId }),
+    }));
 
   const errs = new JudgeErrorCollector();
   const tracker = new CostTracker({ capUsd: budgetUsd });
