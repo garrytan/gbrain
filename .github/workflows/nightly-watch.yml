@@ -57,6 +57,7 @@ on:
       - OSV-Scanner
       - CI health
       - TLA+ specs
+      - Upgrade matrix
     types: [completed]
     branches: [master]
   workflow_dispatch:
