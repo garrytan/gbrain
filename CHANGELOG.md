@@ -12,6 +12,8 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
+**Sync and source-refresh follow-ups from wave #8123: an interrupted refresh names what holds it and how to finish it, managed-sync preparations stop waiting on table locks, code sources converge on their first full sync, and `sync.write_through=false`, impossible timeline dates, image names, dry runs and missing source directories behave as documented.**
+
 **`gbrain sources refresh` says what is actually holding an interrupted refresh, and its owner recovery stops holding locks it doesn't need (#8123).**
 
 Writer status for a `recovery_required` refresh now reads the checkout HEAD: at the upstream commit it names `--resume`, at the start commit `--abandon`, and only another HEAD asks the user to reset. An orphan whose HEAD git cannot read names `git -C <checkout> status` instead of promising that the next refresh finishes it, and the owner scan logs it once every 15 minutes instead of swallowing it. A refresh lock file this host cannot open reads `liveness: unknown` with the lock path, and a plain refresh refuses `refresh_in_progress` instead of failing with a raw lock error. A refresh held on another host names that host in `next`. A plain refresh that rolled back an orphan and then refused keeps that recovery in its refusal message. A delegated refresh (a resident PGLite owner) prints the same structured `fix` as a direct one.
@@ -34,6 +36,27 @@ A managed sync bounds each preparation by `persistence.sync_preparation_ms`. Its
 - `test/cycle/dream-reverse-write-commit.test.ts`: a refused commit in one source's checkout holds only that source's page (#8094).
 - `scripts/bench/managed-sync-stall-repro.ts`: `--sync-preparation-ms` and a `lock_release` result listing sync statements still waiting on a lock 3 s past the budget.
 
+**A first `gbrain sync --full` on a code-strategy source now settles in one pass, and a plain `gbrain sync status` no longer issues one database statement per abandoned uncommitted edit (#8047, #7339).**
+
+A code or image import recorded its provenance without the open `--full` episode, so every round of the pass saw those files as still owed and imported them again. A fresh code source reported twice its file count, stopped `not_converged` three passes in a row and then held every file `settle_mismatch`. Code and image imports now record the episode the way Markdown imports do, and the pass converges in its first round.
+
+`sync status` re-reads each `worktree_dirty` hold that is due to escalate, to see whether someone is still editing the file. It read every such hold's row even when the file's bytes still matched the hash the hold already recorded. On a source with thousands of abandoned edits that was thousands of round trips per status call, about minutes over a remote pooler. It now reads a row only when the bytes changed. With 40 such holds, a plain status went from 54 statements to 15, the same count as with one hold; an edit whose bytes changed is still noticed and stops counting as abandoned.
+
+### Itemized changes
+
+- `src/core/persistence/sync-prepare.ts`: `syncFileProvenance` (code and image imports) records `full_episode` (#8047). The same line is in contributor PR #8051; this fix was derived independently from the #8047 reproduction.
+- `src/core/persistence/sync-status.ts`: `observeDirtyEditors` skips `noteHoldEdit` when the working-tree hash equals the hold's recorded `working_hash` (#7339).
+- New tests: `test/sync-full-code-episode-8047.test.ts`, `test/sync-status-hold-reads-7339.test.ts`.
+
+**Managed sync and source checks fixes from the sync/refresh wave (#8123 part C): `sync.write_through=false` keeps sync's frontmatter corrections out of the checkout, a page with an impossible timeline date no longer blocks sync, images with punctuation in their names sync, `sync --dry-run` previews what it would do, and a missing source directory is no longer reported clean.**
+
+- With `sync.write_through` off, a managed sync keeps its canonical correction of a file (the frontmatter, title or tags a page keeps when an upstream edit drops them) in the database and never rewrites the checkout. Before, it wrote the rendering into the working tree and left it uncommitted, including into a read-only mirror's checkout reached through the `default` source's `sync.repo_path` fallback (#7084, #8118).
+- A timeline bullet or heading dated with an impossible day (`2026-02-30`, month 13) is no longer extracted as a timeline row. It used to reach the database's date cast and fail the page's publication, which blocked a managed sync and aborted a whole `repair file-drift` preview batch (#8049). The text stays in the page.
+- Managed image sync now gives an image the importer's identity (path lowercased, punctuation kept), so `notes/Photo+A.png` imports as `notes/photo+a.png` instead of being refused, and stays distinct from `notes/PhotoA.png` (#7107).
+- A managed `gbrain sync --dry-run` reports and prints how many files the run would add, modify, soft-delete and rename. It used to report zero, or repeat the previous run's counts (#7087).
+- `gbrain sources list` marks archived sources with `⚠ archived` and `--json` carries `archived` per source (#7701).
+- A registered source whose directory is missing is reported `missing` by the frontmatter audit and both frontmatter doctor checks, with the path and the restore or `sources set-path` step, instead of clean (#7889).
+
 ## [0.60.531.0] - 2026-10-31
 
 **Five severe fixes: the secret scan now redacts keys that follow a JSON or percent escape, a connector page that turns private leaves Git HEAD, deleted pages no longer stay searchable under a scoped writer role, a stale freshness marker can no longer starve the job queue, and a slow embedder no longer loses `remember` writes (#7978, #7971, #7637, #7941, #8135).**
@@ -48,15 +71,6 @@ The secret scan's rules required a non-word character before a key, but a JSON e
 - `src/core/notifier/store.ts`, `handoff.ts`, `resident.ts`: settlement takes the checkout HEAD after the run (#7941).
 - `src/core/facts/single-prepare.ts`, `src/core/persistence/memory-prepare.ts`, `service.ts`: the fact embed is bounded inside the preparation deadline (#8135).
 
-**Managed sync and source checks fixes from the sync/refresh wave (#8123 part C): `sync.write_through=false` keeps sync's frontmatter corrections out of the checkout, a page with an impossible timeline date no longer blocks sync, images with punctuation in their names sync, `sync --dry-run` previews what it would do, and a missing source directory is no longer reported clean.**
-
-- With `sync.write_through` off, a managed sync keeps its canonical correction of a file (the frontmatter, title or tags a page keeps when an upstream edit drops them) in the database and never rewrites the checkout. Before, it wrote the rendering into the working tree and left it uncommitted, including into a read-only mirror's checkout reached through the `default` source's `sync.repo_path` fallback (#7084, #8118).
-- A timeline bullet or heading dated with an impossible day (`2026-02-30`, month 13) is no longer extracted as a timeline row. It used to reach the database's date cast and fail the page's publication, which blocked a managed sync and aborted a whole `repair file-drift` preview batch (#8049). The text stays in the page.
-- Managed image sync now gives an image the importer's identity (path lowercased, punctuation kept), so `notes/Photo+A.png` imports as `notes/photo+a.png` instead of being refused, and stays distinct from `notes/PhotoA.png` (#7107).
-- A managed `gbrain sync --dry-run` reports and prints how many files the run would add, modify, soft-delete and rename. It used to report zero, or repeat the previous run's counts (#7087).
-- `gbrain sources list` marks archived sources with `⚠ archived` and `--json` carries `archived` per source (#7701).
-- A registered source whose directory is missing is reported `missing` by the frontmatter audit and both frontmatter doctor checks, with the path and the restore or `sources set-path` step, instead of clean (#7889).
-
 ## [0.60.530.0] - 2026-10-31
 
 **`gbrain sources refresh` no longer exits with a bare `internal_error` when another database transaction holds a row its fence needs. A fence that waits past its 5 s lock timeout now refuses as `refresh_lock_timeout`, and `why` names the open transactions holding those tables. Nothing moves, and a later run completes once the holder is gone. Any other unexpected error now prints a typed `internal_error` refusal with its stack in `why` and the refresh row it left, which the next run resumes.**
@@ -69,18 +83,6 @@ Before, a stuck transaction holding a source, worktree or brain row (a long-runn
 - `src/core/persistence/worktree-refresh.ts`: `refreshWorktree` turns any other non-`OperationError` throw into `internal_error` with the error name, error code (a SQLSTATE or a Node code) and message (credentials, connection details and the home directory redacted), the stack in `why`, and a fix naming the active refresh row and its state, or saying the row could not be read (also when that lookup takes more than 3 s; its statements are cancelled at that bound). A deadlock (`40P01`), serialization failure (`40001`), cancelled statement (`57014`) or lock timeout outside the fence (`55P03`) is marked retryable. The fix repeats `--dry-run`, `--abandon`, `--resume`, `--wait-drain` and `--fetch-timeout-ms` when given. Home-directory redaction replaces only the home path itself, not a sibling path that shares its prefix. The row is not changed, and a host identity file that cannot be read still yields that refusal. A database access error the classifier recognizes (connection refused, a missing table) is rethrown unchanged, so it keeps its `gbrain db-repair` or `gbrain apply-migrations` fix. The already-current path no longer throws a `TypeError` of its own when a member sync rejects with a non-object.
 - `src/commands/sources-refresh.ts`: refusals print `why` (a `why` key under `--json`, a `Why:` line otherwise).
 - Test: `test/worktree-refresh-unexpected-throw.test.ts` (PGLite, and Postgres under `DATABASE_URL`; the lock-timeout cases hold a source row from a second connection, before the fence and after the drain, and check that a plain reader is not named and no SQL text is echoed; an unreadable host identity file still gives a typed refusal, an access error is not wrapped, credentials and the home directory are redacted without touching a sibling path, `--abandon` and `--dry-run` survive into the fix, a lookup that never answers still gives the refusal and is cancelled (row lookup and lock-holder lookup), transient SQLSTATEs are retryable, the holder list is worded as candidates, and an abort blocked by the same holder still returns and says the row stays draining).
-
-**A first `gbrain sync --full` on a code-strategy source now settles in one pass, and a plain `gbrain sync status` no longer issues one database statement per abandoned uncommitted edit (#8047, #7339).**
-
-A code or image import recorded its provenance without the open `--full` episode, so every round of the pass saw those files as still owed and imported them again. A fresh code source reported twice its file count, stopped `not_converged` three passes in a row and then held every file `settle_mismatch`. Code and image imports now record the episode the way Markdown imports do, and the pass converges in its first round.
-
-`sync status` re-reads each `worktree_dirty` hold that is due to escalate, to see whether someone is still editing the file. It read every such hold's row even when the file's bytes still matched the hash the hold already recorded. On a source with thousands of abandoned edits that was thousands of round trips per status call, about minutes over a remote pooler. It now reads a row only when the bytes changed. With 40 such holds, a plain status went from 54 statements to 15, the same count as with one hold; an edit whose bytes changed is still noticed and stops counting as abandoned.
-
-### Itemized changes
-
-- `src/core/persistence/sync-prepare.ts`: `syncFileProvenance` (code and image imports) records `full_episode` (#8047). The same line is in contributor PR #8051; this fix was derived independently from the #8047 reproduction.
-- `src/core/persistence/sync-status.ts`: `observeDirtyEditors` skips `noteHoldEdit` when the working-tree hash equals the hold's recorded `working_hash` (#7339).
-- New tests: `test/sync-full-code-episode-8047.test.ts`, `test/sync-status-hold-reads-7339.test.ts`.
 
 ## [0.60.529.0] - 2026-10-31
 
