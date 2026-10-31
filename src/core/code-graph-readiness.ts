@@ -1,6 +1,6 @@
 import type { BrainEngine } from './engine.ts';
 import type { PageReadScope } from './types.ts';
-import { EDGE_EXTRACTOR_VERSION_TS } from './chunkers/symbol-resolver.ts';
+import { EDGE_EXTRACTOR_VERSION_TS, OWNS_EDGE } from './chunkers/symbol-resolver.ts';
 import { codeReadFilter } from './code-intel/read-scope.ts';
 import { pageReadFilter } from './search/read-policy-sql.ts';
 import { resolveExcludePrivatePages } from './search/private-visibility.ts';
@@ -91,7 +91,7 @@ export async function resolveCodeReadiness(
       return { status: hasSymbols ? 'ready' : 'no_symbols', ready: hasSymbols, has_code: true, pending_edges: false };
     }
     const pending = await currentChunksExist(engine, scope,
-      '(cc.edges_backfilled_at IS NULL OR cc.edges_backfilled_at < $1::timestamptz)', [EDGE_EXTRACTOR_VERSION_TS]);
+      `(cc.edges_backfilled_at IS NULL OR cc.edges_backfilled_at < $1::timestamptz) AND ${OWNS_EDGE}`, [EDGE_EXTRACTOR_VERSION_TS]);
     return { status: pending ? 'indexing' : 'ready', ready: !pending, has_code: true, pending_edges: pending };
   } catch {
     return { status: 'unknown', ready: false, has_code: opts.count > 0, pending_edges: false };
