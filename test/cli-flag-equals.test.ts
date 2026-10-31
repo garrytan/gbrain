@@ -424,6 +424,8 @@ describe('#7619 split rules', () => {
       'src/commands/access.ts': 'access has no EQUALS_READERS key, so the entry refuses every = form; flagValue and the --as guard also read it for a direct caller',
       'src/commands/auth-binding.ts': 'the entry refuses --member=/--may-act-for= on auth (no EQUALS_READERS key); takeBindingFlags also reads the = form so a direct caller never drops a binding',
       'src/core/workspace-push.ts': 'git child argv',
+      'src/core/access/policy-git.ts': 'git child argv',
+      'src/commands/access-rules.ts': 'access has no EQUALS_READERS key, so the entry refuses every = form on access rule; flag() also reads it for a direct caller',
       'src/core/context/session-speaker.ts': 'reads another process\'s argv (claude --print=), not a gbrain flag',
       'src/eval/longmemeval/via-operation.ts': 'git child argv',
     };
