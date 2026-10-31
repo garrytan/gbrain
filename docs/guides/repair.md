@@ -1160,9 +1160,8 @@ nothing, and a timeline-only rewrite queues no facts extraction.
 
 A writer that appended a `{type, value, last_used}` row to a page's
 frontmatter `contacts:` list on every touch, instead of updating the existing
-row, left the same value many times (#8109). `put_page` and `capture` now keep
-one row per (type, value); this explicit-only, preview-bound kind collapses the
-rows already stored. It never runs from `--all`, doctor's remediation plan, the
+row, left the same value many times (#8109). This explicit-only, preview-bound
+kind collapses the rows already stored, whichever writer left them. It never runs from `--all`, doctor's remediation plan, the
 maintenance cycle or an upgrade.
 
 **Say to your agent:** *"Preview which pages repeat contact rows, show me the

@@ -90,7 +90,6 @@ import { parseFenceRepairReceipt } from '../fence-repair/receipt.ts';
 import { fenceRepairCommit } from './effect-model.ts';
 import { withoutSafetyAssessments } from './reconcile-safety.ts';
 import { POLICY_KEYS } from './reconcile-additive.ts';
-import { dedupeFrontmatterContacts } from '../contact-rows.ts';
 import { protectedReconcileKey } from './reconcile-merge.ts';
 import { preparePagePurge, purgePageInTransaction, type PreparedPagePurge } from './page-purge.ts';
 import { withTrustKeep } from './context.ts';
@@ -131,12 +130,6 @@ function canonical(page: Pick<Page, 'type' | 'title' | 'compiled_truth' | 'timel
     frontmatter: comparableFrontmatter(page.frontmatter), tags: [...new Set(tags)].sort() };
 }
 interface CanonicalProvenance { source_kind: string; ingested_via: string; ingested_at: string; }
-/** #8109: a caller-authored page (put_page, capture) keeps one contact row per (type, value), the newest last_used kept; file and database alike. */
-function callerContactsDeduped(row: Pick<WriteRequest, 'operation'>, page: ParsedPage): ParsedPage {
-  const contacts = row.operation === 'put_page' || row.operation === 'capture' ? dedupeFrontmatterContacts(page.frontmatter) : null;
-  if (contacts) page.frontmatter = contacts.frontmatter;
-  return page;
-}
 /**
  * Writes whose caller supplies the page text, and so could supply provenance stamps in its frontmatter. Unlike
  * trust/page-write.ts CONTENT_OPERATIONS, revert_version and restore_page are absent: they replay a stored version.
@@ -963,7 +956,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     ...(gateTrust ? { writeGate: gateInput(gateTrust, row.id) } : {}),
     // Provenance compares the caller's page with the stored one, so it runs before the server's trust marker is stamped.
     prepareFrontmatter: page => {
-      provenance = putProvenance(row, snapshot, callerContactsDeduped(row, page));
+      provenance = putProvenance(row, snapshot, page);
       suppliedTrustMarker = page.frontmatter.trust_tier;
       stampPageTrustMarker(row, page.frontmatter, trust, storedTier, snapshot?.page.frontmatter);
       if (privateRequest) assertPrivateRequestKept(row, page.frontmatter);

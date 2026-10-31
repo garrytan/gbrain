@@ -3,7 +3,6 @@
  * canonical file is published through the coordinated writer) and a database-only (repo-less) source share one run.
  * The preview writes nothing, a moved preview refuses, the apply collapses exactly the planned pages without dropping a
  * distinct value, a page whose file drifted is listed needs_reconcile and left alone, and a second preview finds nothing.
- * put_page itself keeps one row per (type, value).
  */
 import { describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -114,15 +113,5 @@ for (const backend of testBackends()) {
       expect(await contacts(engine, 'source-a', 'people/alice-example')).toHaveLength(5);
     }, { databaseUrl, setup: seeded([['source-a', 'people/alice-example', doc('Alice Example', TRIPLED)], ['source-a', 'people/carol-example', doc('Carol Example', TRIPLED)]]) }), 180_000);
 
-    test('put_page keeps one contact row per (type, value), in the file and the database', () => managedBrain(async ({ engine, ctx, root }) => {
-      for (const sourceId of ['default', 'source-a']) {
-        await submitPageMutation({ ...ctx, sourceId } as OperationContext, { operation: 'put_page', params: { slug: 'people/alice-example', source_id: sourceId,
-          request_id: randomUUID(), content: doc('Alice Example', TRIPLED) } });
-        expect(await contacts(engine, sourceId, 'people/alice-example')).toEqual([{ type: 'phone', value: '+15550100', last_used: '2026-10-03' },
-          { type: 'email', value: 'alice@example.com', last_used: '2026-09-01' }, { type: 'phone', value: '+1 555 0100', last_used: '2026-08-01' }]);
-      }
-      expect(parseMarkdown(readFileSync(join(root, 'people/alice-example.md'), 'utf8'), 'people/alice-example.md').frontmatter.contacts)
-        .toEqual(await contacts(engine, 'default', 'people/alice-example'));
-    }, { databaseUrl, setup: gitRoot }), 180_000);
   });
 }
