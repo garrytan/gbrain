@@ -1,3 +1,4 @@
+import { AtomBatchTransport, resolveAtomBatchSize, splitAtomInput } from './extract-atoms-batch.ts';
 // v0.41.2.1 — extract_atoms cycle phase, post-fix-wave rebuild.
 //
 // Sequencing per cycle:
@@ -162,6 +163,17 @@ const pageScanStateExclusionSql = (maxInputChars?: string) => `AND NOT EXISTS (
     AND (scan.tombstoned OR ${maxInputChars ? `scan.partial_input_chars >= ${maxInputChars}` : 'scan.partial_input_chars IS NOT NULL'})
 )`;
 const PAGE_SCAN_STATE_EXCLUSION_SQL = pageScanStateExclusionSql();
+
+async function atomDiscoveryFilters(engine: BrainEngine, maxInputChars?: string): Promise<{ scan: string; managed: string; usesCap: boolean }> {
+  let chunked = false;
+  try { chunked = await engine.getConfig('cycle.extract_atoms.chunk_long_inputs') === 'true'; } catch { /* conservative default */ }
+  return chunked ? {
+    usesCap: false,
+    scan: PAGE_SCAN_STATE_EXCLUSION_SQL.replace('(scan.tombstoned OR scan.partial_input_chars IS NOT NULL)', 'scan.tombstoned'),
+    managed: MANAGED_ATOM_DISCOVERY_SQL.replace("ac.completed_keys->0->>'failure' IS NULL OR ac.completed_keys->0->>'held'='true'",
+      "(ac.completed_keys->0->>'failure' IS NULL AND ac.completed_keys->0->>'partial' IS NULL) OR ac.completed_keys->0->>'held'='true'"),
+  } : { scan: pageScanStateExclusionSql(maxInputChars), managed: managedAtomDiscoverySql(maxInputChars), usesCap: maxInputChars !== undefined };
+}
 
 /**
  * Pure allowlist policy: the legacy floor (minus floor types the pack declares not extractable, #5756: the floor
@@ -408,6 +420,7 @@ export async function discoverExtractablePages(
 ): Promise<AtomPageInput[]> {
   const hasFilter = Array.isArray(affectedSlugs) && affectedSlugs.length > 0;
   const connectorExclusion = await connectorAtomExclusionSql(engine);
+  const filters = await atomDiscoveryFilters(engine);
   const sql = `
     SELECT p.id, p.knowledge_revision,
            (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
@@ -423,8 +436,8 @@ export async function discoverExtractablePages(
       AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
       ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
       AND ${minCompiledTruthChars('$3')}
-      ${MANAGED_ATOM_DISCOVERY_SQL}
-      ${PAGE_SCAN_STATE_EXCLUSION_SQL}
+      ${filters.managed}
+      ${filters.scan}
       ${connectorExclusion}
       ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
       AND NOT EXISTS (
@@ -501,6 +514,7 @@ export async function countExtractAtomsBacklog(
     // brain-wide form keys the NOT EXISTS on `atom.source_id = p.source_id`.
     const scoped = sourceId !== undefined;
     const connectorExclusion = await connectorAtomExclusionSql(engine);
+    const filters = await atomDiscoveryFilters(engine, scoped ? '$4::integer' : '$3::integer');
     const sql = scoped
       ? `SELECT COUNT(*) AS cnt FROM pages p
          WHERE p.source_id = $1
@@ -511,8 +525,8 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND ${minCompiledTruthChars('$3')}
-           ${managedAtomDiscoverySql('$4::integer')}
-           ${pageScanStateExclusionSql('$4::integer')}
+           ${filters.managed}
+           ${filters.scan}
            ${connectorExclusion}
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
@@ -529,8 +543,8 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND ${minCompiledTruthChars('$2')}
-           ${managedAtomDiscoverySql('$3::integer')}
-           ${pageScanStateExclusionSql('$3::integer')}
+           ${filters.managed}
+           ${filters.scan}
            ${connectorExclusion}
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
@@ -542,8 +556,8 @@ export async function countExtractAtomsBacklog(
     const extractableTypes = await resolveExtractableTypes();
     const maxInputChars = await resolveExtractAtomsInputCap(engine);
     const params = scoped
-      ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars]
-      : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars];
+      ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, ...(filters.usesCap ? [maxInputChars] : [])]
+      : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, ...(filters.usesCap ? [maxInputChars] : [])];
     const rows = await engine.executeRaw<{ cnt: string | number }>(sql, params, { signal: opts.signal });
     return Number(rows[0]?.cnt ?? 0);
   } catch (err) {
@@ -705,6 +719,8 @@ export async function runPhaseExtractAtoms(
 ): Promise<PhaseResult> {
   const sourceId = opts.sourceId ?? 'default';
   const chat = opts._chat ?? gatewayChat;
+  let chunkLongInputs = false;
+  try { chunkLongInputs = await engine.getConfig('cycle.extract_atoms.chunk_long_inputs') === 'true'; } catch { /* retain single bounded input */ }
   const managed = await managedAtomSession(engine, sourceId, opts._managedRetry, opts.attempt?.writeWait);
   // v0.41.2.1: loadConfigWithEngine() so the dream.* DB-plane merge from Phase 1 reaches this phase.
   let transcriptDirs: { session_corpus_dir?: string; meeting_transcripts_dir?: string } | undefined;
@@ -758,7 +774,7 @@ export async function runPhaseExtractAtoms(
   // #6503: the input cap is read before discovery so the partial dispositions
   // a raised cap supersedes are released and their items offered in this run.
   const maxInputChars = await resolveExtractAtomsInputCap(engine);
-  if (!opts.dryRun) await releasePartialDispositions(engine, sourceId, maxInputChars);
+  if (!opts.dryRun) await releasePartialDispositions(engine, sourceId, chunkLongInputs ? 2147483647 : maxInputChars);
 
   // 1b. Get pages (test seam OR production discovery).
   //     _pages === undefined triggers discovery; _pages: [] suppresses it
@@ -925,8 +941,10 @@ export async function runPhaseExtractAtoms(
   // above (extract-atoms-input.ts).
   let maxOutputTokens = DEFAULT_EXTRACT_MAX_OUTPUT_TOKENS;
   let pacingMs = 0;
+  let batchSize = 1;
   try {
     extractModel = await resolveExtractAtomsModel(engine);
+    batchSize = resolveAtomBatchSize(await engine.getConfig('cycle.extract_atoms.batch_size'));
     const configuredBudget = await engine.getConfig('cycle.extract_atoms.budget_usd');
     if (configuredBudget) {
       const n = Number(configuredBudget);
@@ -1085,6 +1103,16 @@ export async function runPhaseExtractAtoms(
     }
   }
 
+  const batchTransport = new AtomBatchTransport(work, batchSize, async item => {
+    const label = item.kind === 'transcript' ? item.filePath : item.slug;
+    const prepared = extractAtomsInput(item, chunkLongInputs ? Number.MAX_SAFE_INTEGER : maxInputChars, item.kind === 'page'
+      ? (await readPageWatermark(engine, sourceId, item.slug, 'extract_atoms')).stored : null);
+    const prompt = atomsPrompt(dateGrounding, label, prepared.promptContent);
+    return { key: label, system: prompt.system, message: prompt.messages[0]!.content,
+      ...(chunkLongInputs && prepared.promptContent.length > maxInputChars ? { chunks: splitAtomInput(prepared.promptContent, maxInputChars).map(text => {
+        const p = atomsPrompt(dateGrounding, label, text); return { system: p.system, message: p.messages[0]!.content };
+      }) } : {}) };
+  }, chat, { model: extractModel, maxTokens: maxOutputTokens, abortSignal: opts.signal });
   let stoppedEarly = false;
   await withBudgetTracker(budgetTracker, async () => {
   for (const item of work) {
@@ -1102,7 +1130,7 @@ export async function runPhaseExtractAtoms(
     // item, so a quote can only verify against text the model actually saw.
     // #6503: a cut item is extracted once from its head and gets a partial
     // disposition instead of a completion stamp (extract-atoms-input.ts).
-    const input = extractAtomsInput(item, maxInputChars, item.kind === 'page' ? (await readPageWatermark(engine, sourceId, item.slug, 'extract_atoms')).stored : null);
+    const input = extractAtomsInput(item, chunkLongInputs ? Number.MAX_SAFE_INTEGER : maxInputChars, item.kind === 'page' ? (await readPageWatermark(engine, sourceId, item.slug, 'extract_atoms')).stored : null);
     const { promptContent, truncated } = input;
     let origin: AtomOrigin | null = null;
     try {
@@ -1120,12 +1148,12 @@ export async function runPhaseExtractAtoms(
       const cutLine = truncated ? inputTruncatedLine(originLabel, input, maxInputChars) : null; // A7: a complete appended-tail read prints nothing
       if (cutLine) { inputTruncated++; console.error(cutLine); } // counted only for a model call
 
-      const result = await chat({
-        model: extractModel,
-        ...atomsPrompt(dateGrounding, originLabel, promptContent),
-        maxTokens: maxOutputTokens, responseSchema: ATOMS_RESPONSE_SCHEMA,
-        abortSignal: opts.signal,
-      });
+      const prompt = atomsPrompt(dateGrounding, originLabel, promptContent);
+      const result = await batchTransport.read(item, { key: originLabel, system: prompt.system,
+        message: prompt.messages[0]!.content,
+        ...(chunkLongInputs && promptContent.length > maxInputChars ? { chunks: splitAtomInput(promptContent, maxInputChars).map(text => {
+          const p = atomsPrompt(dateGrounding, originLabel, text); return { system: p.system, message: p.messages[0]!.content };
+        }) } : {}) });
       // Post-await yield: closes the "long LLM call past TTL" hazard
       // codex flagged. The 30s throttle inside maybeYield bounds the
       // actual refresh rate so this is cheap when calls are fast.
