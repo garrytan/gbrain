@@ -15,6 +15,7 @@ import { PROJECTION_RETRY_READY_SQL, rebuildPendingPageProjections } from '../pa
 import { advanceProjectionCursor, residentProjectionCursor, residentWindowCtes } from '../page-state/projection-window.ts';
 import { rebuildPendingSegmentedProjections } from '../page-body/projection.ts';
 import { publicationConcurrency } from './pool-capacity.ts';
+import { bulkPublication } from './interactive-priority.ts';
 import { claimedHeadOrder } from './sync-window.ts';
 import { laneClaim, laneOf, laneRoots, laneTask } from './sync-lanes.ts';
 import { runPersistenceEffects } from './effects.ts';
@@ -728,7 +729,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
           [...this.owesSyncTurn].filter(key => !laneRootKeys.includes(key)), laneRootKeys.filter(key => !attemptedRoots.has(key)), Object.fromEntries(this.syncHeadSeen)));
         if (!row) break;
         if (row.worktree_id && row.seen_sequence) this.syncHeadSeen.set(row.worktree_id, row.seen_sequence);
-        if (String(row.intent?.kind ?? '').startsWith('managed_sync_')) this.owesSyncTurn.delete(row.worktree_id ?? `db:${row.source_incarnation}`);
+        if (String(row.intent?.kind ?? '').startsWith('managed_sync_') || bulkPublication(row)) this.owesSyncTurn.delete(row.worktree_id ?? `db:${row.source_incarnation}`);
         else if (row.passed_sync) this.passedSync.add(row.id);
         if (this.stopping) { await releaseUnpublishedClaim(this.statements, row, 'consumer_stopping'); break; }
         const key = row.worktree_id ?? `db:${row.source_incarnation}`;
