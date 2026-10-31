@@ -48,7 +48,7 @@ export function expectedConfigShow(engine: UpgradeEngine): string[] {
   return [
     'GBrain config:',
     '  engine: ' + engine,
-    engine === 'pglite' ? '  database_path: <BRAIN>' : '  database_url: postgresql://***@<BRAIN>',
+    engine === 'pglite' ? '  database_path: <BRAIN>' : '  database_url: <BRAIN, credentials redacted>',
     '  embedding_disabled: true    (effective value (file: true, db: unset); either plane\'s true turns embedding off)',
     '  schema_pack: gbrain-base-v2    (file plane (~/.gbrain/config.json); the tier gbrain schema active resolves)',
     '  mcp: {"publish_skills":true}',
@@ -134,8 +134,12 @@ export async function previousReleaseBrain(engine: UpgradeEngine, shape: BrainSh
     ...PREVIOUS_RELEASE_KEYLESS_CONFIG,
   }, null, 2) + '\n';
   writeFileSync(config, configText);
-  const redacted = engine === 'postgres' ? new URL(brain).host + new URL(brain).pathname : brain;
-  const normalize = (text: string) => text.replaceAll(brain, '<BRAIN>').replaceAll(redacted, '<BRAIN>').replaceAll(home, '<HOME>');
+  const url = engine === 'postgres' ? new URL(brain) : null;
+  const redacted = url ? url.protocol + '//***@' + url.host + url.pathname : null;
+  const normalize = (text: string) => {
+    const out = redacted ? text.replaceAll(redacted, '<BRAIN, credentials redacted>') : text;
+    return out.replaceAll(brain, '<BRAIN>').replaceAll(home, '<HOME>');
+  };
   return {
     home,
     brain,
