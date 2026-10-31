@@ -663,9 +663,15 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
   // Tailscale Funnel serves exactly three HTTPS ports; any other `--https-port`
   // with `--funnel` is refused here, before consent and before any change.
   const funnelPortUnsupported = opts.funnel && !TAILSCALE_FUNNEL_HTTPS_PORTS.includes(opts.httpsPort);
+  // A receipt that publishes this brain on another HTTPS port: publishing on
+  // the new port would leave the old mount live and rewrite the receipt that
+  // is the only way `--remove` finds it. Refused before consent and before any
+  // change; `--remove` first (an absent `https_port` in an older receipt is :443).
+  const previousHttpsPort = !opts.noTailscale && existing?.tailscale.dns_name && receiptHttpsPort(existing) !== opts.httpsPort ? receiptHttpsPort(existing) : null;
   const plan: string[] = [];
   plan.push(`Server    gbrain serve (HTTP) on 127.0.0.1:${opts.port} (surface ${opts.surface}${advertise ? `, listing ${advertise === 'verbs' ? 'the memory verbs and request_tools' : advertise}` : ''}${opts.enableDcr ? ', DCR on' : ''}); engine ${engine}`);
   if (tailscaleReceipt) plan.push(`Tailscale ${opts.dryRun ? 'WOULD BE REFUSED' : 'REFUSED'} (--no-tailscale): this brain is already published on your tailnet at ${tailscaleReceipt.public_url} — run \`gbrain mcp expose --remove --yes\` first, or re-run without --no-tailscale`);
+  else if (previousHttpsPort !== null) plan.push(`Tailscale ${opts.dryRun ? 'WOULD BE REFUSED' : 'REFUSED'} (--https-port ${opts.httpsPort}): this brain is already published on :${previousHttpsPort} at ${existing!.public_url} — run \`gbrain mcp expose --remove --yes\` first, then re-run with --https-port ${opts.httpsPort}`);
   else if (funnelPortUnsupported) plan.push(`Tailscale ${opts.dryRun ? 'WOULD BE REFUSED' : 'REFUSED'} (--funnel --https-port ${opts.httpsPort}): Tailscale Funnel serves only HTTPS ports ${FUNNEL_PORTS_TEXT} — pick one of them, or drop --funnel for a tailnet-only serve on :${opts.httpsPort}`);
   else if (opts.noTailscale) plan.push('Tailscale skipped (--no-tailscale): you publish the port yourself');
   else if (tailscaleBinary) plan.push(`Tailscale ${tailscaleBinary} — sign in if needed, then \`tailscale ${tailscaleServeArgv(opts.port, { funnel: opts.funnel, httpsPort: opts.httpsPort }).join(' ')}\``);
@@ -693,7 +699,7 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
     ? `a live process holds this PGLite brain (pid ${lockHolder.pid}, ${lockHolder.command ?? (lockHolder.serve ? 'gbrain serve' : 'gbrain')}): the service cannot start until it exits — stop it, or move to Postgres`
     : null;
   if (lockWarning) plan.push(`Lock      ${lockWarning}`);
-  s.check('plan', opts.dryRun ? 'planned' : noBrain || tailscaleReceipt || funnelPortUnsupported ? 'fail' : 'ok', plan.join(' | '));
+  s.check('plan', opts.dryRun ? 'planned' : noBrain || tailscaleReceipt || previousHttpsPort !== null || funnelPortUnsupported ? 'fail' : 'ok', plan.join(' | '));
   if (lockWarning) s.check('pglite_lock', 'warn', lockWarning);
   s.say('Plan');
   for (const line of plan) s.say(`  ${line}`);
@@ -709,6 +715,10 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
   if (tailscaleReceipt) {
     s.nextActions.push('gbrain mcp expose --remove --yes', rerunCommand({ ...opts, noTailscale: false }));
     return s.finish('error', 1, { receipt: existing, reason: 'tailscale_receipt_present', message: `This brain is already published on your tailnet at ${tailscaleReceipt.public_url}; run \`gbrain mcp expose --remove --yes\` first, or re-run without --no-tailscale.` });
+  }
+  if (previousHttpsPort !== null) {
+    s.nextActions.push('gbrain mcp expose --remove --yes', rerunCommand(opts));
+    return s.finish('error', 1, { receipt: existing, reason: 'https_port_changed', message: `This brain is already published on HTTPS port ${previousHttpsPort} (${existing!.public_url}); publishing it on port ${opts.httpsPort} would leave that handler live. Run \`gbrain mcp expose --remove --yes\` first, then re-run: ${rerunCommand(opts)}` });
   }
   if (funnelPortUnsupported) {
     s.nextActions.push(rerunCommand({ ...opts, httpsPort: 8443 }), rerunCommand({ ...opts, funnel: false }));
