@@ -22,6 +22,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine } from '../engine.ts';
+import { requestConfigRows } from '../config-snapshot.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { hasReaders, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
 import { validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
@@ -744,14 +745,27 @@ export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean }
  * restricted (fail closed); the env hatch needs no read.
  */
 export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<RemotePolicy> {
-  const hatch = process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1';
   try {
     const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY]]);
-    const value = (key: string) => rows.find(r => r.key === key)?.value ?? '';
-    return { privacyRelaxed: hatch || ['visible', 'true', '1'].includes(value(REMOTE_PRIVATE_PAGES_KEY)), restricted: value(ACCESS_RESTRICTIONS_KEY) === '1' };
+    return remotePolicyFrom(Object.fromEntries(rows.map(r => [r.key, r.value])));
   } catch {
-    return { privacyRelaxed: hatch, restricted: true };
+    return { privacyRelaxed: process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1', restricted: true };
   }
+}
+
+/**
+ * The remote read policy a request starts under: answered from the read request's config snapshot when one is open
+ * (taken when the request started, so no staler than readRemotePolicyNow there, and no extra round trip, #6721);
+ * otherwise (a write reads config live, or the snapshot's bulk read failed) readRemotePolicyNow's one statement.
+ */
+export async function requestRemotePolicy(engine: BrainEngine): Promise<RemotePolicy> {
+  const rows = await requestConfigRows(engine).catch(() => undefined);
+  return rows ? remotePolicyFrom(rows) : readRemotePolicyNow(engine);
+}
+
+function remotePolicyFrom(config: Record<string, string>): RemotePolicy {
+  const hatch = process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1';
+  return { privacyRelaxed: hatch || ['visible', 'true', '1'].includes(config[REMOTE_PRIVATE_PAGES_KEY] ?? ''), restricted: config[ACCESS_RESTRICTIONS_KEY] === '1' };
 }
 
 /** GBRA-218: does this brain hold member-access restrictions? Read live (the request snapshot answers it inside a read); unreadable counts as yes. */

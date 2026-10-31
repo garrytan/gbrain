@@ -21,9 +21,10 @@ describe('bench-member-access', () => {
     expect(out.pages).toBe(40);
     expect(out.queries).toBe(2);
     expect(out.cells.map(c => `${c.share}/${c.match}/${c.who}`).sort()).toEqual([
-      '0.5/hybrid/member', '0.5/hybrid/unbound', '0.5/keyword/member', '0.5/keyword/unbound',
+      '0.5/hybrid/aud1', '0.5/hybrid/aud2', '0.5/hybrid/member', '0.5/hybrid/unbound',
+      '0.5/keyword/aud1', '0.5/keyword/aud2', '0.5/keyword/member', '0.5/keyword/unbound',
       '0/hybrid/member', '0/hybrid/unbound', '0/keyword/member', '0/keyword/unbound',
     ]);
-    for (const c of out.cells.filter(c => c.share === 0.5 && c.who === 'member')) expect(c.hit_at_10).toBe(1);
+    for (const c of out.cells.filter(c => c.share === 0.5 && c.who !== 'unbound')) expect(c.hit_at_10).toBe(1);
   }, 120_000);
 });
