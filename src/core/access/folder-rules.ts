@@ -26,7 +26,8 @@
  * and gain entries applies the intersection.
  */
 import { createHash } from 'node:crypto';
-import { load, JSON_SCHEMA } from 'js-yaml';
+import { JSON_SCHEMA } from 'js-yaml';
+import { loadBoundedYaml } from '../data-frontmatter.ts';
 import { ACCESS_ID_RE, normalizePrincipal } from './principals.ts';
 
 export interface FolderRule {
@@ -149,7 +150,7 @@ function ruleLines(text: string): Array<number> {
 export function parsePolicyYaml(text: string): ParsedPolicy {
   let doc: unknown;
   try {
-    doc = load(text, { schema: JSON_SCHEMA, json: false });
+    doc = loadBoundedYaml(text, { schema: JSON_SCHEMA });
   } catch (e) {
     const mark = (e as { mark?: { line?: number } }).mark;
     return { ok: false, problems: [{ line: typeof mark?.line === 'number' ? mark.line + 1 : null, message: `not valid YAML: ${(e as Error).message.split('\n')[0]}` }], prefixes: null };

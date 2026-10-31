@@ -83,16 +83,16 @@ CREATE TABLE IF NOT EXISTS access_policy_migrations (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE OR REPLACE FUNCTION gbrain_access_folder_rules(p_source TEXT, p_slug TEXT) RETURNS TEXT[]
-  LANGUAGE sql STABLE PARALLEL SAFE SET search_path = pg_catalog, public AS $fn$
+  LANGUAGE sql STABLE PARALLEL SAFE SET search_path = pg_catalog, public, pg_temp AS $fn$
   SELECT array_agg(p_source || ':' || r.rule_id ORDER BY r.rule_id COLLATE "C")
     FROM access_rules r WHERE r.source_id = p_source AND starts_with(p_slug, r.prefix)
 $fn$;
 CREATE OR REPLACE FUNCTION gbrain_access_pending_covers(p_source TEXT, p_slug TEXT) RETURNS boolean
-  LANGUAGE sql STABLE PARALLEL SAFE SET search_path = pg_catalog, public AS $fn$
+  LANGUAGE sql STABLE PARALLEL SAFE SET search_path = pg_catalog, public, pg_temp AS $fn$
   SELECT EXISTS (SELECT 1 FROM access_pending_coverage c WHERE c.source_id = p_source AND starts_with(p_slug, c.prefix))
 $fn$;
 CREATE OR REPLACE FUNCTION gbrain_access_stamp_folder_rules() RETURNS trigger
-  LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+  LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN
   IF EXISTS (SELECT 1 FROM access_policy_state s WHERE s.source_id = NEW.source_id) THEN
     PERFORM 1 FROM access_policy_state s WHERE s.source_id = NEW.source_id FOR SHARE;
@@ -107,7 +107,7 @@ DROP TRIGGER IF EXISTS pages_access_stamp_folder_rules ON pages;
 CREATE TRIGGER pages_access_stamp_folder_rules BEFORE INSERT OR UPDATE OF slug, source_id, folder_rule_ids ON pages
   FOR EACH ROW EXECUTE FUNCTION gbrain_access_stamp_folder_rules();
 CREATE OR REPLACE FUNCTION gbrain_access_origin_restricted(p_id INTEGER, p_source_id TEXT, p_type TEXT, fm JSONB) RETURNS boolean
-  LANGUAGE plpgsql STABLE PARALLEL SAFE SET search_path = pg_catalog, public AS $fn$
+  LANGUAGE plpgsql STABLE PARALLEL SAFE SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN
   IF p_type = 'atom' THEN
     IF EXISTS (SELECT 1 FROM pages o WHERE o.source_id = p_source_id AND o.slug = fm->>'source_slug'

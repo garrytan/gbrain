@@ -41,6 +41,8 @@ beforeEach(async () => {
   _resetWriteThroughCacheForTest();
   repo = mkdtempSync(join(tmpdir(), 'gbrain-derived-wt-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Example Writer'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'writer@example.invalid'], { cwd: repo });
   await engine.executeRaw("UPDATE sources SET local_path = $1 WHERE id = 'default'", [repo]);
   await engine.setConfig('models.dream.synthesize', 'anthropic:claude-sonnet-4-6');
 });

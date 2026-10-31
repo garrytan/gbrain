@@ -76,7 +76,7 @@ async function invalid(engine: BrainEngine, sources: string[]): Promise<Check> {
   const first = found[0]!;
   return { name, status: 'fail', details: { sources: found },
     message: `The folder-rule file of ${found.map(f => `${f.source} does not validate (reads as nobody: ${f.prefixes.join(', ')})`).join('; ')}. The last applied rules stay in force. Fix .gbrain/access.yml, commit it and sync the source.`,
-    fix: { ...agentFix(['gbrain', 'access', 'rule', 'list', '--source', first.source, '--json'], 'Lists each problem in the file with its line, read-only; fix the file, commit it with gbrain git commit-push and run gbrain sync --source <id> --no-pull.', name,
+    fix: { ...agentFix(['gbrain', 'access', 'rule', 'list', '--source', first.source, '--json'], 'Lists each problem in the file with its line, read-only. Fix the file and commit it with gbrain git commit-push; then run gbrain sync --source <id> --no-pull.', name,
       { docs: 'docs/guides/write-refusals.md#access_policy_invalid' }), verify: doctorVerify(name) } };
 }
 

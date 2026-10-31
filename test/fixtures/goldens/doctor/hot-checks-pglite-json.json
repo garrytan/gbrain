@@ -1114,6 +1114,78 @@
             "status": "ok"
           },
           {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no page names readers and no member exists.",
+            "name": "access_readers_malformed",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no page names readers and no member exists.",
+            "name": "access_unknown_readers",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no page names readers and no member exists.",
+            "name": "access_recent_narrowings",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no page names readers and no member exists.",
+            "name": "access_page_readers_backfill",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no source has a folder rule.",
+            "name": "access_policy_pending",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no source has a folder rule.",
+            "name": "access_policy_widening_held",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no source has a folder rule.",
+            "name": "access_policy_invalid",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no source has a folder rule.",
+            "name": "access_policy_store_mismatch",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "ops",
             "elapsed_ms": "<volatile>",
             "message": "Skipped (PGLite — no PostgREST exposure, RLS not applicable)",
@@ -1144,7 +1216,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 162 table(s) the applied migrations create exist.",
+            "message": "All 170 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -2015,6 +2087,21 @@
             "elapsed_ms": "<volatile>",
             "message": "No active fact from a gbrain self-capture or paste candidate remains. This counts facts in the database; the self_capture check counts corpus files.",
             "name": "captured_facts_active",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "ambiguous": 0,
+              "docs": "docs/guides/repair.md#agent-session-facts",
+              "evidenced": 0,
+              "excluded": 0,
+              "repair": "agent-session-facts",
+              "unclassifiable": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No active owner-attributed fact from an agent-launched session remains.",
+            "name": "agent_session_facts",
             "status": "ok"
           },
           {
@@ -3755,6 +3842,65 @@
             "status": "ok"
           },
           {
+            "category": "brain",
+            "details": {
+              "count": 0,
+              "docs": "docs/guides/repair.md#rows-behind",
+              "sources": [
+                {
+                  "behind": 0,
+                  "checkpoint": null,
+                  "complete": true,
+                  "counts": {},
+                  "pages": 0,
+                  "reason": "no_checkpoint",
+                  "samples": [],
+                  "source_id": "default",
+                  "status": "not_applicable",
+                  "stopped_at": null,
+                  "unproven": 0,
+                  "unproven_samples": []
+                },
+                {
+                  "behind": 0,
+                  "checkpoint": "<fixture-head>",
+                  "complete": true,
+                  "counts": {
+                    "current": 18,
+                    "database_moved": 1
+                  },
+                  "pages": 19,
+                  "samples": [],
+                  "source_id": "notes",
+                  "status": "known",
+                  "stopped_at": null,
+                  "unproven": 0,
+                  "unproven_samples": []
+                },
+                {
+                  "behind": 0,
+                  "checkpoint": null,
+                  "complete": true,
+                  "counts": {},
+                  "pages": 0,
+                  "reason": "no_checkpoint",
+                  "samples": [],
+                  "source_id": "plain",
+                  "status": "not_applicable",
+                  "stopped_at": null,
+                  "unproven": 0,
+                  "unproven_samples": []
+                }
+              ],
+              "timeout_ms": "<volatile>",
+              "unproven": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every file-backed page holds its file as of the sync checkpoint (19 page(s) read).",
+            "name": "sync_rows_behind_checkpoint",
+            "status": "ok"
+          },
+          {
             "category": "meta",
             "details": {
               "rollback": [],
@@ -3849,6 +3995,32 @@
             "elapsed_ms": "<volatile>",
             "message": "No fact, take or link is indexed from a fence on an imported email, calendar, GitHub or transcript page.",
             "name": "outside_content_fences",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "count": 0,
+              "docs": "docs/guides/troubleshooting.md#owner-host-stale",
+              "stale": [],
+              "stale_after_ms": "<volatile>"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No managed write is waiting on an owner host.",
+            "name": "owner_host_stale",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "database_disabled": false,
+              "docs": "docs/guides/troubleshooting.md#embedding-plane-disagreement",
+              "file_disabled": true,
+              "vector_tables": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "The config file disables embeddings and the database holds no vectors.",
+            "name": "embedding_plane_disagreement",
             "status": "ok"
           },
           {
@@ -5895,6 +6067,78 @@
             "status": "ok"
           },
           {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no page names readers and no member exists.",
+            "name": "access_readers_malformed",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no page names readers and no member exists.",
+            "name": "access_unknown_readers",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no page names readers and no member exists.",
+            "name": "access_recent_narrowings",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no page names readers and no member exists.",
+            "name": "access_page_readers_backfill",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no source has a folder rule.",
+            "name": "access_policy_pending",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no source has a folder rule.",
+            "name": "access_policy_widening_held",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no source has a folder rule.",
+            "name": "access_policy_invalid",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no source has a folder rule.",
+            "name": "access_policy_store_mismatch",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "ops",
             "elapsed_ms": "<volatile>",
             "message": "Skipped (PGLite — no PostgREST exposure, RLS not applicable)",
@@ -5925,7 +6169,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 162 table(s) the applied migrations create exist.",
+            "message": "All 170 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -6796,6 +7040,21 @@
             "elapsed_ms": "<volatile>",
             "message": "No active fact from a gbrain self-capture or paste candidate remains. This counts facts in the database; the self_capture check counts corpus files.",
             "name": "captured_facts_active",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "ambiguous": 0,
+              "docs": "docs/guides/repair.md#agent-session-facts",
+              "evidenced": 0,
+              "excluded": 0,
+              "repair": "agent-session-facts",
+              "unclassifiable": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No active owner-attributed fact from an agent-launched session remains.",
+            "name": "agent_session_facts",
             "status": "ok"
           },
           {
@@ -8536,6 +8795,65 @@
             "status": "ok"
           },
           {
+            "category": "brain",
+            "details": {
+              "count": 0,
+              "docs": "docs/guides/repair.md#rows-behind",
+              "sources": [
+                {
+                  "behind": 0,
+                  "checkpoint": null,
+                  "complete": true,
+                  "counts": {},
+                  "pages": 0,
+                  "reason": "no_checkpoint",
+                  "samples": [],
+                  "source_id": "default",
+                  "status": "not_applicable",
+                  "stopped_at": null,
+                  "unproven": 0,
+                  "unproven_samples": []
+                },
+                {
+                  "behind": 0,
+                  "checkpoint": "<fixture-head>",
+                  "complete": true,
+                  "counts": {
+                    "current": 18,
+                    "database_moved": 1
+                  },
+                  "pages": 19,
+                  "samples": [],
+                  "source_id": "notes",
+                  "status": "known",
+                  "stopped_at": null,
+                  "unproven": 0,
+                  "unproven_samples": []
+                },
+                {
+                  "behind": 0,
+                  "checkpoint": null,
+                  "complete": true,
+                  "counts": {},
+                  "pages": 0,
+                  "reason": "no_checkpoint",
+                  "samples": [],
+                  "source_id": "plain",
+                  "status": "not_applicable",
+                  "stopped_at": null,
+                  "unproven": 0,
+                  "unproven_samples": []
+                }
+              ],
+              "timeout_ms": "<volatile>",
+              "unproven": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every file-backed page holds its file as of the sync checkpoint (19 page(s) read).",
+            "name": "sync_rows_behind_checkpoint",
+            "status": "ok"
+          },
+          {
             "category": "meta",
             "details": {
               "rollback": [],
@@ -8630,6 +8948,32 @@
             "elapsed_ms": "<volatile>",
             "message": "No fact, take or link is indexed from a fence on an imported email, calendar, GitHub or transcript page.",
             "name": "outside_content_fences",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "count": 0,
+              "docs": "docs/guides/troubleshooting.md#owner-host-stale",
+              "stale": [],
+              "stale_after_ms": "<volatile>"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No managed write is waiting on an owner host.",
+            "name": "owner_host_stale",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "database_disabled": false,
+              "docs": "docs/guides/troubleshooting.md#embedding-plane-disagreement",
+              "file_disabled": true,
+              "vector_tables": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "The config file disables embeddings and the database holds no vectors.",
+            "name": "embedding_plane_disagreement",
             "status": "ok"
           },
           {

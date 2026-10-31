@@ -469,13 +469,13 @@ async function prepareManagedSyncCode(engine: BrainEngine, row: WriteRequest, p:
  * #6712 PR 1: the import provenance a code or image publication records in its transaction, as a Markdown import records
  * its own: the page's revision after the write, the bytes on disk (the file: neither writes one back) and the parser.
  */
-function syncFileProvenance(row: WriteRequest, p: SyncIntent, root: string, rawSha256: string): (tx: BrainEngine) => Promise<void> {
+function syncFileProvenance(row: WriteRequest, p: SyncIntent, root: string, imported: Buffer): (tx: BrainEngine) => Promise<void> {
   return async tx => {
     const final = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
     if (!final || final.page.deleted_at != null) return;
     await recordSyncImportProvenance(tx, { source_id: row.source_id, incarnation: row.source_incarnation, page_id: Number(final.page.id), origin: p.sourcePath!,
-      raw_sha256: rawSha256, ...(p.blobOid ? { blob_oid: p.blobOid } : {}), working: p.working === true, gbrain_version: VERSION, revision: final.revision,
-      parser: syncImportParserFor(p.sourcePath!, null), ...syncDiskProvenance(syncDiskBytes(root, p.path!, p.content!, p.rawHash), p.target) });
+      raw_sha256: sha256(imported), ...(p.blobOid ? { blob_oid: p.blobOid } : {}), working: p.working === true, gbrain_version: VERSION, revision: final.revision,
+      parser: syncImportParserFor(p.sourcePath!, null), ...syncDiskProvenance(syncDiskBytes(root, p.path!, imported, p.rawHash), p.target) });
   };
 }
 
@@ -499,9 +499,18 @@ function publishedSyncNoop(row: WriteRequest, p: SyncIntent, root: string, snaps
     } };
 }
 
-/** The bytes on disk of an import that writes no file back: its frozen content when that is the file (raw hash), else the file read now (null: absent). */
-export function syncDiskBytes(root: string, path: string, content: string, rawHash: string | null): Uint8Array | null {
-  return rawHash !== null && rawHash === sha256(content) ? Buffer.from(content) : readSyncFile(root, path);
+/**
+ * The bytes on disk of an import that writes no file back, as its provenance records them: the imported bytes when they
+ * are the file (raw hash), else the file read now (null: absent) when it holds those bytes up to line endings. #8071: any
+ * other file bytes are not what the page holds; the record names the imported bytes instead, or a later commit of the
+ * newer bytes would classify `fileSame` and never be imported.
+ */
+export function syncDiskBytes(root: string, path: string, imported: Buffer, rawHash: string | null): Uint8Array | null {
+  if (rawHash !== null && rawHash === sha256(imported)) return imported;
+  const disk = readSyncFile(root, path);
+  if (!disk || disk.equals(imported)) return disk;
+  const text = disk.toString('utf8'), lf = (value: string) => value.replace(/\r\n/g, '\n');
+  return disk.equals(Buffer.from(text)) && lf(text) === lf(imported.toString('utf8')) ? disk : imported;
 }
 
 /** A pass's stamp is refused because the pass no longer holds the source (its lease went, or another pass pinned since). */
@@ -815,11 +824,11 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
   if (isImageFilePath(p.sourcePath)) {
     return prepareManagedSyncImage(engine, row, { content: p.content, sourcePath: p.sourcePath, path: p.path, rawHash: p.rawHash, lineEndingOnly: p.lineEndingOnly },
       { root, snapshot, ...(moved && moved.slug !== row.slug ? { renamedFrom: { slug: moved.slug } } : {}), noEmbed: p.processingOptions?.noEmbed === true || p.embedDeferred === true, companyApproval: !!p.companyApproval, validate, releaseHold, clock, screening: !!screening,
-        recordProvenance: syncFileProvenance(row, p, root, sha256(Buffer.from(p.content, 'base64'))),
+        recordProvenance: syncFileProvenance(row, p, root, Buffer.from(p.content, 'base64')),
         refuse: (code, message, cause) => syncPublicationRefusal(code, message, row, p, cause) });
   }
   if (isCodeFilePath(p.sourcePath)) return prepareManagedSyncCode(engine, row, { content: p.content, sourcePath: p.sourcePath, rawHash: p.rawHash, lineEndingOnly: p.lineEndingOnly, companyApproval: !!p.companyApproval },
-    { snapshot, validate, releaseHold, recordProvenance: syncFileProvenance(row, p, root, sha256(p.content)), clock, refuse: (code, message, cause) => syncPublicationRefusal(code, message, row, p, cause), contentRefusal: refusal => syncContentRefusal(refusal, row, p) });
+    { snapshot, validate, releaseHold, recordProvenance: syncFileProvenance(row, p, root, Buffer.from(p.content)), clock, refuse: (code, message, cause) => syncPublicationRefusal(code, message, row, p, cause), contentRefusal: refusal => syncContentRefusal(refusal, row, p) });
   const schema = p.companyApproval?.schema;
   if (schema && p.processingOptions?.noSchemaPack) throw syncPublicationRefusal('profile_incompatible', 'Company source approval requires its pinned schema pack.', row,
     { ...p, processingOptions: { ...p.processingOptions!, noSchemaPack: false } },
@@ -958,7 +967,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
         },
         () => releaseHold(tx),
         async () => { if (final) await recordSyncImportProvenance(tx, { ...importProvenance, page_id: Number(final.page.id), revision: final.revision,
-          ...syncDiskProvenance(writeback ? Buffer.from(canonicalFile) : syncDiskBytes(root, p.path!, p.content!, p.rawHash), p.target) }); },
+          ...syncDiskProvenance(writeback ? Buffer.from(canonicalFile) : syncDiskBytes(root, p.path!, Buffer.from(p.content!), p.rawHash), p.target) }); },
       ]);
       preparedImport.postimage = final;
       const writeState = applied.noop ? {} : await syncWriteState(tx, row, live?.page, installed?.segmented, applied.parsedPage?.frontmatter);

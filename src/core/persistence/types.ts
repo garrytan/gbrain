@@ -36,6 +36,8 @@ export interface WriteDiagnostic {
   assessment: typeof WRITE_HEALTH_ASSESSMENTS[number];
   reason: typeof WRITE_HEALTH_REASONS[number];
   next_action: typeof WRITE_HEALTH_ACTIONS[number];
+  /** GBRA-248: present whenever the worktree owner is stale (no live consumer, quiet past the stale window), with its last recorded activity; the reason is owner_unavailable unless recovery outranks it. No host id: receipts reach remote callers. Older readers ignore it. */
+  owner?: { last_active: string | null };
 }
 
 export interface WriteReceipt {
@@ -97,6 +99,10 @@ export function isWriteDiagnostic(value: unknown): value is WriteDiagnostic {
     const utc = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?Z$/.exec(value.observed_at);
     if (!utc || !Number.isFinite(Date.parse(value.observed_at))
       || new Date(value.observed_at).toISOString() !== `${utc[1]}.${(utc[2] ?? '').padEnd(3, '0')}Z`) return false;
+  }
+  if (value.owner !== undefined) {
+    const owner = value.owner;
+    if (!isRecord(owner) || (owner.last_active !== null && (typeof owner.last_active !== 'string' || !Number.isFinite(Date.parse(owner.last_active))))) return false;
   }
   return true;
 }
@@ -160,6 +166,7 @@ export function publicWriteReceipt(receipt: WriteReceipt): WriteReceipt {
       age_ms: receipt.diagnostic.age_ms, assessment: receipt.diagnostic.assessment,
       reason: receipt.diagnostic.reason, next_action: receipt.diagnostic.next_action,
       ...(receipt.diagnostic.observed_at !== undefined ? { observed_at: receipt.diagnostic.observed_at } : {}),
+      ...(receipt.diagnostic.owner !== undefined ? { owner: { last_active: receipt.diagnostic.owner.last_active } } : {}),
     } } : {}),
   };
 }

@@ -609,6 +609,14 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "source_id": {
         "type": "string",
         "description": "One source, or '__all__'."
+      },
+      "source_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Narrow to these sources (omit or [] for all you can read).",
+        "fullSurfaceOnly": true
       }
     },
     "scope": "read",
@@ -5699,6 +5707,14 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "source_id": {
         "type": "string",
         "description": "One readable source."
+      },
+      "source_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Narrow to these sources (omit or [] for all you can read).",
+        "fullSurfaceOnly": true
       },
       "since": {
         "type": "string",

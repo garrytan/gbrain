@@ -25,6 +25,7 @@ const REVIEWED: Record<string, string> = {
   'src/core/persistence/canonical-projections.ts': 'projects takes only, so a reservation projects no row and its old row is deleted',
   'src/core/persistence/takes-prepare.ts': 'allocates with nextFreeRowNum, re-renders through upsertTakeRow/supersedeRow/replaceFence, and remove adds the reservation',
   'src/core/repair/accepted-takes.ts': 'reads the archived row at a removed take\'s number (reservations are never takes) and requires the live fence to reserve that number; it re-renders with renderTakesFence keeping every other reservation',
+  'src/core/repair/agent-session-facts.ts': 'marks previewed take rows inactive and re-renders through replaceFence, which keeps the reservations of the body it replaces',
   'src/core/repair/connector-fences.ts': 'moves fence blocks verbatim, reservations included',
   'src/core/repair/take-supersession.ts': 're-renders through replaceFence, which keeps the reservations of the body it replaces',
   'src/core/shared-skills/migration-projection.ts': 'compares stored takes with fence takes; neither holds a reservation',

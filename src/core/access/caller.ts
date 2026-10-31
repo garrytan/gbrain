@@ -13,7 +13,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { AuthInfo } from '../ops/contract.ts';
-import { accessRestrictionsPresent, remotePrivacyRelaxed, type CallerAccess, type FolderCoverage } from '../search/private-visibility.ts';
+import { readRemotePolicyNow, remotePrivacyRelaxed, type CallerAccess, type FolderCoverage } from '../search/private-visibility.ts';
 import { ACCESS_ID_RE, identityFor, normalizePrincipal } from './principals.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
@@ -192,7 +192,8 @@ export async function resolveAudienceIdentities(engine: Pick<BrainEngine, 'execu
  * (several entries, a group or a guest) sees no visibility: private page.
  */
 export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | undefined, privateSources: readonly string[] | undefined, transport?: string, audience?: readonly AudiencePrincipal[] | null): Promise<Partial<CallerAccess>> {
-  const [relaxed, restricted] = await Promise.all([remotePrivacyRelaxed(engine), accessRestrictionsPresent(engine)]);
+  const [relaxed, remotePolicy] = await Promise.all([remotePrivacyRelaxed(engine), readRemotePolicyNow(engine)]);
+  const restricted = remotePolicy.restricted;
   if (audience?.length) {
     const identities = await resolveAudienceIdentities(engine, { auth, transport }, audience);
     const single = singleMemberAudience(audience);
@@ -205,6 +206,7 @@ export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | u
       hidePrivate: single ? !relaxed : true,
       applyRemoteReadPolicy: false,
       restricted,
+      remotePolicy,
     };
   }
   const identity = !restricted ? []
@@ -219,6 +221,7 @@ export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | u
     hidePrivate: !relaxed,
     applyRemoteReadPolicy: false,
     restricted,
+    remotePolicy,
   };
 }
 

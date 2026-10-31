@@ -653,6 +653,18 @@ vars — incident-time escape hatches, not everyday knobs.
    `--wait-drain <seconds>` (default 60; `sources.refresh_drain_wait_ms`,
    `GBRAIN_REFRESH_DRAIN_WAIT_MS`) and `--fetch-timeout-ms` (default 120000;
    `sources.refresh_fetch_timeout_ms`, `GBRAIN_REFRESH_FETCH_TIMEOUT_MS`).
+   The member syncs of one run share a budget,
+   `sources.refresh_sync_budget_ms` (default 300000; `GBRAIN_REFRESH_SYNC_BUDGET_MS`),
+   and each member gets an equal share of what is left, so a scheduled run
+   never holds the refresh lock much longer than that and one stalled source
+   cannot starve the others. A member that ran out of time is `deferred`:
+   the run reports `sync_deferred`, the refresh still completes (writes to
+   the checkout are admitted again) and the next
+   `gbrain sources refresh <source-id>` or sync continues from the member's
+   last commit. A member whose sync committed nothing in its share (a write no
+   consumer claims) is reported in `sync_blocked` as
+   [`refresh_sync_timeout`](write-refusals.md#refresh_sync_timeout) and
+   catches up on its next sync.
    A refresh whose process died (a crash, a replaced container) does not
    wedge the checkout: the owner finishes what it can on its own, and the next
    `gbrain sources refresh <source-id>` on the owner host finishes the rest

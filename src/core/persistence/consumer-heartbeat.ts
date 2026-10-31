@@ -285,6 +285,12 @@ export function startConsumerHeartbeat(engine: DirectEngine, hostId: string, opt
       const cancel = new AbortController();
       try { await bounded(execute('DELETE FROM persistence_consumers WHERE host_id=$1::uuid AND pid=$2::integer AND nonce=$3', [hostId, self.pid, self.nonce], cancel.signal), cancel, 1_000); }
       catch { /* the row lapses on its own; the next renewal on this host purges it */ }
+      // GBRA-248: the worktrees this host owns keep the time it stopped, so owner-activity.ts can tell a stopped owner from one long gone.
+      // Rows another transaction holds (a transfer) are skipped, in id order, so the stamp neither waits nor deadlocks.
+      const stamp = new AbortController();
+      try { await bounded(execute(`UPDATE persistence_worktrees SET heartbeat_at=now() WHERE id IN
+        (SELECT id FROM persistence_worktrees WHERE owner_host_id=$1::uuid ORDER BY id FOR UPDATE SKIP LOCKED)`, [hostId], stamp.signal), stamp, 1_000); }
+      catch { /* best effort: owner activity falls back to receipts and the last renewal */ }
     },
   };
 }

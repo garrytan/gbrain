@@ -27,7 +27,8 @@ import type { Operation, OperationContext } from './contract.ts';
 import type { Notice } from '../agent-output.ts';
 import { OperationError, opError, verbError } from './contract.ts';
 import { invalidParam, paramUse } from './op-fix.ts';
-import { assertExplicitSourceLive, federatedSearchScope, parseSourceIdParam, sourceScopeOpts, stampEvidenceSafe } from './context.ts';
+import { parseSourceIdParam, sourceScopeOpts, stampEvidenceSafe } from './context.ts';
+import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './search-source-scope.ts';
 import { markKeywordHits } from '../search/evidence.ts';
 import { hybridSearchCached, stampContentFlags, type HybridSearchOpts } from '../search/hybrid.ts';
 import { dedupResults } from '../search/dedup.ts';
@@ -296,6 +297,7 @@ const recall: Operation = {
     budget_tokens: { type: 'number', description: 'Token budget; facts pack first.' },
     budget_policy: { type: 'string', enum: ['facts_first', 'query_first'], description: 'Default facts_first.', fullSurfaceOnly: true },
     source_id: { type: 'string', description: 'One readable source.' },
+    source_ids: { ...SOURCE_IDS_PARAM, fullSurfaceOnly: true },
     since: { type: 'string', description: 'ISO 8601 or "8 hours ago".' },
     session_id: { type: 'string', description: "This session's facts." },
     include_expired: { type: 'boolean', description: 'Also expired; question ranks them.', fullSurfaceOnly: true },
@@ -329,10 +331,9 @@ const recall: Operation = {
       sourceIdParam = parseSourceIdParam(p.source_id, 'recall');
       // The facts arms widen an unqualified no-grant caller across the transport-computed
       // federated set, exactly like the page-search arm below and every sibling read op.
-      scope = federatedSearchScope(ctx, sourceIdParam);
-      await assertExplicitSourceLive(ctx, sourceIdParam);
+      scope = await requestSourceScope(ctx, sourceIdParam, parseSourceIdsParam(ctx, 'recall', p.source_ids));
     } catch (error) {
-      if (!(error instanceof OperationError) || p.source_id === undefined || p.source_id === null) throw error;
+      if (!(error instanceof OperationError) || ((p.source_id === undefined || p.source_id === null) && (p.source_ids === undefined || p.source_ids === null))) throw error;
       const code = error.code === 'permission_denied' ? 'scope_denied'
         : error.code === 'unknown_source' ? 'not_found'
           : error.code === 'invalid_params' ? 'invalid_params' : null;
@@ -343,7 +344,8 @@ const recall: Operation = {
     }
     // Set-dedupe: a grant carrying a repeated id (or the scalar source again)
     // must not fan out the same source twice into the merge.
-    const factSources: string[] = [...new Set(
+    const readsNoSource = scope.sourceIds?.length === 0;
+    const factSources: string[] = readsNoSource ? [] : [...new Set(
       scope.sourceIds && scope.sourceIds.length > 0 ? scope.sourceIds
         : scope.sourceId ? [scope.sourceId]
           : [sourceId],
@@ -419,7 +421,7 @@ const recall: Operation = {
       excludeAuditRows: true, eligibility,
     };
 
-    if (question !== null) {
+    if (question !== null && !readsNoSource) {
       ranking = await rankFactsByQuestion(ctx, { question, params: p, factSources, limit, entity: entityParam, sessionId: sessionParam, since, grep, includeExpired,
         scope: { sourceIds: factSources, remote: ctx.remote !== false, excludePrivate, minTrust: eligibility.floor, suppressFlagged: eligibility.suppressFlagged } });
       ({ rows, ambiguousEntity } = ranking);
@@ -530,13 +532,13 @@ const recall: Operation = {
     let delivery: DeliveryMeta | undefined;
     const evidencePlan = queryText ? await recallEvidencePlan(ctx, p) : null;
     const rankCutOpts: Pick<HybridSearchOpts, 'pageRankCut'> = evidencePlan?.rankCut ? { pageRankCut: evidencePlan.rankCut } : {};
-    if (queryText) {
+    if (queryText && !readsNoSource) {
       // #3242 parity (#4707): the page-search arm widens an unqualified
       // no-grant caller across the transport-computed federated set, exactly
       // like search/query/get_page/list_pages/resolve_slugs. sourceScopeOpts
       // alone pinned this arm to the scalar source, so a `federated: true`
       // source was invisible to recall while visible to every sibling read op.
-      const searchScope = { ...federatedSearchScope(ctx, sourceIdParam), ...(eligibility.floor ? { minTrust: eligibility.floor } : {}) };
+      const searchScope = { ...scope, ...(eligibility.floor ? { minTrust: eligibility.floor } : {}) };
       // #4352 — recall's page-search arm enforces `visibility: private` for
       // untrusted callers with the excludePrivate resolved above.
       const keywordOnly = await recallKeywordOnlyReason(ctx);

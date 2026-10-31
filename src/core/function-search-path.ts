@@ -23,6 +23,8 @@ export const LEGACY_SEARCH_PATH_SETTINGS = ['search_path=pg_catalog, public', 's
  */
 export const PINNED_FUNCTION_NAMES = [
   'auto_enable_rls', 'bump_page_generation_clock_fn', 'bump_page_generation_fn', 'enforce_minion_queue_protocol',
+  'gbrain_access_derive_page_readers', 'gbrain_access_folder_rules', 'gbrain_access_mark_restricted', 'gbrain_access_norm_readers',
+  'gbrain_access_origin_restricted', 'gbrain_access_pending_covers', 'gbrain_access_readers', 'gbrain_access_stamp_folder_rules',
   'gbrain_advance_page_revision', 'gbrain_advance_tag_revision', 'gbrain_bump_trust_generation',
   'gbrain_clear_atom_page_state', 'gbrain_count_git_canonical_sources', 'gbrain_count_modifications', 'gbrain_forget_page_retrievals',
   'gbrain_fts_input', 'gbrain_graduation_fence', 'gbrain_guard_effect_protocol', 'gbrain_guard_inserted_facts',

@@ -1,4 +1,5 @@
 import { isTerminalWriteState, WRITE_HEALTH_REASONS, type WriteDiagnostic, type WriteReceipt, type WriteRequestState } from './types.ts';
+import type { OwnerActivity } from './owner-activity.ts';
 
 export interface WriteHealthFacts {
   observed_at?: string;
@@ -6,6 +7,8 @@ export interface WriteHealthFacts {
   recovery_required?: boolean;
   owner_unavailable?: boolean;
   inspect_owner?: boolean;
+  /** GBRA-248: the worktree owner's liveness and last activity (owner-activity.ts). */
+  owner?: OwnerActivity;
 }
 /** How long a receipt that needs an owner's inspection asks callers to wait; #6305: also how long a consumer holds a root it cannot lock. */
 export const INSPECT_OWNER_RETRY_MS = 30_000;
@@ -18,20 +21,23 @@ export function writeHealth(row: { state: WriteRequestState; created_at: Date | 
   const raw = row.blocked_reason;
   const unexpected = raw === 'unexpected_file_bytes' || raw === 'unexpected_staging_bytes';
   let reason: WriteDiagnostic['reason'] = unexpected || facts.inspect_owner || facts.recovery_required || row.state === 'recovering'
-    ? 'recovery_required' : facts.owner_unavailable ? 'owner_unavailable' : facts.earlier_write ? 'waiting_on_earlier_write'
+    ? 'recovery_required' : facts.owner_unavailable || facts.owner?.stale ? 'owner_unavailable' : facts.earlier_write ? 'waiting_on_earlier_write'
     : raw ? (WRITE_HEALTH_REASONS as readonly string[]).includes(raw) ? raw as WriteDiagnostic['reason'] : 'cause_unknown' : 'pending';
   const aged = age >= 120_000;
   const unknown = reason === 'pending' || reason === 'cause_unknown';
   if (aged && unknown) reason = 'cause_unknown';
   const inspect = aged || unexpected || facts.inspect_owner || ['writer_pool_capacity', 'owner_unavailable', 'writer_lock_unavailable'].includes(reason);
+  const owner = facts.owner?.stale ? { last_active: facts.owner.last_active } : undefined;
   return { retry_after_ms: inspect ? INSPECT_OWNER_RETRY_MS : !unknown || age >= 30_000 ? 5000 : 1000,
     diagnostic: { age_ms: age, assessment: unknown ? aged ? 'stalled' : 'pending' : 'blocked', reason,
-      next_action: inspect ? 'inspect_owner' : 'poll', ...(facts.observed_at ? { observed_at: facts.observed_at } : {}) } };
+      next_action: inspect ? 'inspect_owner' : 'poll', ...(facts.observed_at ? { observed_at: facts.observed_at } : {}), ...(owner ? { owner } : {}) } };
 }
 
 export function pendingWriteHint(receipt: WriteReceipt, operation?: string): string {
   const identity = `Use the same operation with the same arguments and request_id ${receipt.request_id}. Do not submit a new request_id for this write.`;
-  if (receipt.diagnostic?.next_action === 'inspect_owner') return `${identity} Ask the operator to inspect gbrain sources writer status --probe --json on the selected brain's existing owner. Do not claim, transfer, activate, or remove locks. Poll no faster than ${receipt.retry_after_ms ?? 30_000} ms; if receipt helpers are unavailable, replay the same verb only after inspection.`;
+  const owner = receipt.diagnostic?.owner
+    ? ` The worktree's owner host runs no consumer and was last active ${receipt.diagnostic.owner.last_active ?? 'at no recorded time'}; it may be asleep or gone, and this write publishes only when that host runs gbrain again or its ownership moves through an explicit operator step; gbrain doctor --only owner_host_stale names it.` : '';
+  if (receipt.diagnostic?.next_action === 'inspect_owner') return `${identity}${owner} Ask the operator to inspect gbrain sources writer status --probe --json on the selected brain's existing owner. Do not claim, transfer, activate, or remove locks. Poll no faster than ${receipt.retry_after_ms ?? 30_000} ms; if receipt helpers are unavailable, replay the same verb only after inspection.`;
   const target = receipt.target?.slug ? ` Its fact goes to page ${receipt.target.slug}${receipt.target.entity_slug && receipt.target.entity_slug !== receipt.target.slug ? ` (entity ${receipt.target.entity_slug})` : ''}; get_write_request reports when it is saved there.` : '';
   return `${identity}${target} Poll get_write_request after ${receipt.retry_after_ms ?? 1000} ms (with applied: true, or gbrain write-request ${receipt.request_id} --applied --json, it also says whether search can find the write yet), or retry the same verb with identical arguments if receipt helpers are unavailable.${operation === 'put_page' ? ' Next time pass wait_ms (up to 30000) so the reply waits for the commit, and write more than 3 pages with put_pages.' : ''}`;
 }

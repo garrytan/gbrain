@@ -9,7 +9,7 @@ import { normalizeTokenScopes } from '../legacy-token-scope.ts';
 import { authSourcesFromGrant, grantFromTokenRow } from '../grants/model.ts';
 import { readLocalWriter, currentVerifiedLocalWriter, takeRegisteredWriterRow, verifyLocalWriter, type LocalGrant } from './identity.ts';
 import type { Principal, SqlEngine, WriteAuthority, WriteRequest } from './model.ts';
-import { authorizePageVisibility, excludesPrivateWrites } from './page-visibility.ts';
+import { authorizePageVisibility, excludesPrivateWritesAtAdmission } from './page-visibility.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import { pipelined, transactionMemo } from '../page-state/transactions.ts';
 
@@ -63,7 +63,7 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
   const a: WriteAuthority = {
     version: 1, principal, remote: ctx.remote !== false, sourceId, sourceIncarnation,
     // GBRA-231: a channel audience (anything but one member) never relaxes privacy, so its ceiling hides private pages.
-    excludePrivate: (actingFor !== undefined && currentCallerAccess().hidePrivate) || await excludesPrivateWrites(ctx.engine, ctx.remote !== false),
+    excludePrivate: (actingFor !== undefined && currentCallerAccess().hidePrivate) || await excludesPrivateWritesAtAdmission(ctx.engine, ctx.remote !== false),
     ...(actingFor ? { actingFor } : {}),
     autoLinkTrusted: ctx.remote === false || ctx.viaSubagent === true && !ctx.auth && !!ctx.allowedSlugPrefixes?.length,
     takesHolders: ctx.remote === false ? null : [...(ctx.takesHoldersAllowList ?? ['world'])],

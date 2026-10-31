@@ -104,7 +104,7 @@ export function folderRulesAllowedSql(alias: string, satisfied: readonly string[
  * everything. Outside any caller record the prefixes are read live, so a page under a pending prefix stays hidden.
  */
 function coverageSql(alias: string): string {
-  if (!callerAccessStore.getStore()) return ` AND NOT gbrain_access_pending_covers(${alias}.source_id, ${alias}.slug)`;
+  if (!callerAccessStore.getStore()) return ` AND NOT EXISTS (SELECT 1 FROM access_pending_coverage pc WHERE pc.source_id = ${alias}.source_id AND starts_with(${alias}.slug, pc.prefix))`;
   const coverage = currentCallerAccess().folderCoverage;
   if (!coverage.length) return '';
   return coverage.map(c => !isValidSourceId(c.source_id) || (c.prefix !== '' && !validPrefix(c.prefix)) ? ' AND FALSE'
@@ -219,13 +219,15 @@ export interface CallerAccess {
   hidePrivate: boolean;
   applyRemoteReadPolicy: boolean;
   restricted: boolean;
+  /** The fresh remote policy (readRemotePolicyNow) a remote request read when it started; null outside one. */
+  remotePolicy: RemotePolicy | null;
 }
 export interface FolderCoverage { source_id: string; prefix: string }
 const callerAccessStore = new AsyncLocalStorage<CallerAccess>();
 
 /** The current read's caller-access record (see CallerAccess). */
 export function currentCallerAccess(): CallerAccess {
-  return callerAccessStore.getStore() ?? { identity: [], audience: null, audienceIdentities: [], satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), applyRemoteReadPolicy: false, restricted: true };
+  return callerAccessStore.getStore() ?? { identity: [], audience: null, audienceIdentities: [], satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), applyRemoteReadPolicy: false, restricted: true, remotePolicy: null };
 }
 
 /** Runs `fn` under `access` merged over the current record; an invalid identity or source id empties that set (fail closed). */
@@ -250,6 +252,7 @@ export function withCallerAccess<T>(access: Partial<CallerAccess>, fn: () => T):
     hidePrivate: access.hidePrivate ?? base.hidePrivate,
     applyRemoteReadPolicy: access.applyRemoteReadPolicy ?? base.applyRemoteReadPolicy,
     restricted: access.restricted ?? base.restricted,
+    remotePolicy: access.remotePolicy ?? base.remotePolicy,
   }), fn);
 }
 
@@ -301,16 +304,18 @@ function callerAccessSql(pageAlias: string): string {
 }
 
 /**
- * `visiblePredicate` (a privacy-only predicate), widened to rows whose source
- * (`sourceIdSql`, a code-provided column reference) is in the current
- * private-readable set. Never pass a predicate that contains accessAllowedSql:
- * the widening would reach it. The ids are embedded as literals: each passed
+ * `visiblePredicate` (a privacy-only predicate), widened to pages
+ * (`pageAlias`, a code-provided alias) whose source is in the current
+ * private-readable set. A page carrying the `pinned_question` marker never
+ * widens: pinned questions stay owner-private (src/core/questions/pages.ts).
+ * Never pass a predicate that contains accessAllowedSql: the widening would
+ * reach it. The ids are embedded as literals: each passed
  * isValidSourceId, whose alphabet has no quote or backslash.
  */
-export function orPrivateReadableSource(sourceIdSql: string, visiblePredicate: string): string {
+export function orPrivateReadableSource(pageAlias: string, visiblePredicate: string): string {
   const ids = privateReadableSources();
   if (ids.length === 0) return visiblePredicate;
-  return `(${sourceIdSql} IN (${ids.map(id => `'${id}'`).join(', ')}) OR ${visiblePredicate})`;
+  return `((${pageAlias}.source_id IN (${ids.map(id => `'${id}'`).join(', ')}) AND NOT COALESCE(${pageAlias}.frontmatter ? 'pinned_question', false)) OR ${visiblePredicate})`;
 }
 
 /**
@@ -318,12 +323,12 @@ export function orPrivateReadableSource(sourceIdSql: string, visiblePredicate: s
  * relaxed privacy, else widened only to private-readable sources. Never pass
  * a predicate that contains accessAllowedSql or readersAllowedSql.
  */
-export function privacyForCaller(sourceIdSql: string, privacyPredicate: string): string {
-  return currentCallerAccess().hidePrivate ? orPrivateReadableSource(sourceIdSql, privacyPredicate) : 'TRUE';
+export function privacyForCaller(pageAlias: string, privacyPredicate: string): string {
+  return currentCallerAccess().hidePrivate ? orPrivateReadableSource(pageAlias, privacyPredicate) : 'TRUE';
 }
 
 function callerPrivacySql(pageAlias: string, privacyPredicate: string): string {
-  return privacyForCaller(`${pageAlias}.source_id`, privacyPredicate);
+  return privacyForCaller(pageAlias, privacyPredicate);
 }
 
 /** privatePagesFilterFragment for a remote read: the caller's member access, then the privacy part with its grant and hatch. Read sites only; derived-visibility decisions keep the plain fragment. */
@@ -370,6 +375,7 @@ export function isPrivatePageForCaller(page: { type?: string | null; frontmatter
   const access = currentCallerAccess();
   if (!callerReadersAllow(page.frontmatter)) return true;
   if (!access.hidePrivate || !isPrivacyPrivatePage(page)) return false;
+  if (typeof page.frontmatter === 'object' && page.frontmatter !== null && (page.frontmatter as Record<string, unknown>).pinned_question != null) return true;
   return !(typeof page.source_id === 'string' && access.privateReadableSources.includes(page.source_id));
 }
 
@@ -728,6 +734,8 @@ export async function remotePrivacyRelaxed(engine: BrainEngine): Promise<boolean
   return expose;
 }
 
+export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean }
+
 /**
  * The remote read policy read fresh, for publication: whether an operator
  * relaxed privacy (the env hatch or the config opt-out, uncached) and whether
@@ -735,7 +743,7 @@ export async function remotePrivacyRelaxed(engine: BrainEngine): Promise<boolean
  * transaction included). An unreadable config counts as not opted out and
  * restricted (fail closed); the env hatch needs no read.
  */
-export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<{ privacyRelaxed: boolean; restricted: boolean }> {
+export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<RemotePolicy> {
   const hatch = process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1';
   try {
     const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY]]);

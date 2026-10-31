@@ -34,6 +34,7 @@ import { listPagesPagination, listingTruncatedNotice } from './list-pages-pagina
 import { OperationError, opError, type Operation, type OperationContext } from './contract.ts';
 import { invalidParam, readFix } from './op-fix.ts';
 import { WHERE_PARAM, whereOpParam } from './where-param.ts';
+import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './search-source-scope.ts';
 import { isDatetimeInputError } from '../utils.ts';
 import { rethrowNamingRevisionSource } from './put-page-revision-source.ts';
 import {
@@ -537,6 +538,7 @@ const list_pages: Operation = {
       type: 'string',
       description: "One source, or '__all__'.",
     },
+    source_ids: { ...SOURCE_IDS_PARAM, fullSurfaceOnly: true },
   },
   handler: async (ctx, p) => {
     // Whitelist the sort enum at the handler before passing to the engine.
@@ -569,9 +571,7 @@ const list_pages: Operation = {
     // them silently return [] or, for the CLI's `--source-id ""`, widen to
     // every source.
     const sourceIdParam = parseSourceIdParam(p.source_id, 'list_pages', { allowAll: true });
-    const scope = federatedSearchScope(ctx, sourceIdParam);
-    // #4620: an explicit source_id must name a live source (after the grant check).
-    await assertExplicitSourceLive(ctx, sourceIdParam);
+    const scope = await requestSourceScope(ctx, sourceIdParam, parseSourceIdsParam(ctx, 'list_pages', p.source_ids));
     // #4352 remediation: untrusted listing never enumerates
     // `visibility: private` pages (slugs + titles are the leak surface here).
     // Composes with the #4400 per-call source_id and the v0.34.1 grant scope
@@ -609,7 +609,7 @@ const list_pages: Operation = {
     // list and never learns rows were dropped, and with the default
     // updated_desc sort the dropped rows are always the OLDEST, i.e. exactly
     // the pages such consumers exist to find.
-    const rows = await ctx.engine.listPages({
+    const rows = scope.sourceIds?.length === 0 ? [] : await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
       limit: limit + 1,
