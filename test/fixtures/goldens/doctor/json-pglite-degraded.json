@@ -3439,7 +3439,7 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
-          "message": "13 retrieval-affecting file(s) changed since HEAD: src/core/chunkers/bullet-chunks.ts, src/core/chunkers/recursive.ts, src/core/search/evidence-date.ts, …. Re-run `gbrain eval run-all` after committing these changes.",
+          "message": "No retrieval-affecting files changed in working tree.",
           "name": "eval_drift",
           "status": "ok"
         },
