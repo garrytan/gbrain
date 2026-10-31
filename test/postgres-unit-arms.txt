@@ -17,6 +17,7 @@ test/access-folder-lock-order.test.ts
 test/access-folder-multiconn.test.ts
 test/access-folder-rules.test.ts
 test/access-members.test.ts
+test/access-on-behalf-of.test.ts
 test/access-writes.test.ts
 test/activation-unbound-rooted-6449.test.ts
 test/alias-source-cascade-5094.test.ts

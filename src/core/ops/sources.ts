@@ -48,7 +48,10 @@ const whoami: Operation = {
       const entries = configReadiness(ctx.config, { transport }).entries;
       return transport === 'http' ? readinessHttpView(entries) : entries;
     };
-    const { accessView, credentialAccessView, stdioAccessView } = await import('../access/caller.ts');
+    const { accessView, appliedAccessSummary, credentialAccessView, stdioAccessView } = await import('../access/caller.ts');
+    // GBRA-231: the view this call is answered under (the shared-agent audience when the harness asserted one), so a
+    // model can check it when its harness does not forward _meta.access.
+    const withApplied = async <T extends object>(view: T) => ({ ...view, applied: await appliedAccessSummary(ctx.engine, ctx.auth, [ctx.sourceId, ...(ctx.localFederatedSourceIds ?? [])]) });
     if (ctx.remote === false) {
       // GBRA-218: a local --as <member> preview reports the member it reads as; the plain local CLI reads every page.
       const access = ctx.applyRemoteReadPolicy && ctx.accessIdentity?.length ? accessView(ctx.accessIdentity, 'as')
@@ -67,7 +70,7 @@ const whoami: Operation = {
         if (verified.remote) scopes = verified.grant.scopes;
       } catch { /* no registration: no scopes */ }
       const session = ctx.stdioSurface;
-      return { transport: 'stdio', scopes, ...(session ? { surface: session.surface, surface_source: session.source } : {}), access: await stdioAccessView(ctx.engine), readiness: readiness('stdio') };
+      return { transport: 'stdio', scopes, ...(session ? { surface: session.surface, surface_source: session.source } : {}), access: await withApplied(await stdioAccessView(ctx.engine)), readiness: readiness('stdio') };
     }
     if (!ctx.auth) {
       throw opError(
@@ -86,7 +89,7 @@ const whoami: Operation = {
         client_id: ctx.auth.clientId,
         client_name: ctx.auth.clientName ?? ctx.auth.clientId,
         ...await resolveAuthCapabilities(ctx.auth, ctx.engine, ctx.config, { surfaceCeiling: ctx.surfaceCeiling }),
-        access: await credentialAccessView(ctx.engine, ctx.auth),
+        access: await withApplied(await credentialAccessView(ctx.engine, ctx.auth)),
       };
     }
     return {
@@ -94,7 +97,7 @@ const whoami: Operation = {
       token_name: ctx.auth.clientName ?? ctx.auth.clientId,
       scopes: ctx.auth.scopes,
       expires_at: null,
-      access: await credentialAccessView(ctx.engine, ctx.auth),
+      access: await withApplied(await credentialAccessView(ctx.engine, ctx.auth)),
       grant_diagnosis: await resolveGrantDiagnosis(ctx.auth, ctx.engine, ctx.config, { surfaceCeiling: ctx.surfaceCeiling }),
       readiness: readiness('http'),
     };

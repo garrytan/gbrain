@@ -95,6 +95,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'access_policy_widening_held',
   'access_policy_invalid',
   'access_policy_store_mismatch',
+  // GBRA-231: shared agents (doctor/checks/shared-agent-access.ts).
+  'access_may_act_for_wildcard',
   'extractor_facts_expired',
   'loop_facts_drift',
   'ontology_facts_fenced',

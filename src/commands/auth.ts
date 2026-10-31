@@ -1350,8 +1350,9 @@ Usage:
      --member <id|none>                                   Bind the token or client to a member: remote reads of
                                                           pages naming readers (readable_by) see what that member
                                                           may read; 'none' unbinds (see gbrain access --help)
-     --may-act-for <list|none>                            Shared agents: member ids, group:<id>, guest or * it may
-                                                          act for (stored; enforced by a later release)
+     --may-act-for <list|none>                            Shared agents: member ids, group:<id>, guest or * the
+                                                          harness may name as a request's audience
+                                                          (X-Gbrain-On-Behalf-Of or _meta.on_behalf_of)
      --private-pages <granted-sources|none>               Remote reads see visibility: private pages in the
                                                           sources this grant names explicitly (never the
                                                           no-grant floor, federation, a client's bound source

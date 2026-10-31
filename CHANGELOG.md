@@ -27,6 +27,7 @@ identifiers and attribution are available in the pre-removal Git revision
 | Folder rules | | `gbrain access rule add\|rm\|list\|status\|history\|revert\|export\|import\|migrate`, `gbrain access apply` and `gbrain access resume` keep whole folders of a source to named members; a page under a rule is read remotely only by a member listed on every rule covering it and on its own `readable_by`. Rules live in the database on a repo-less source and in `.gbrain/access.yml` on a git-backed one |
 | Changing folder rules | | narrowing applies at once; widening is held until `gbrain access apply --source <id>` previews it and `--yes --expect <plan_hash>` approves it; an unfinished apply reads as nobody remotely until `gbrain access resume --source <id>` |
 | `gbrain export` and `gbrain import` | pages only | an export carries each source's applied folder rules under `.gbrain/`, and import installs them before publishing any page (`--access-policy <source>` maps a multi-source export) |
+| A shared agent (one bot serving a channel or many DMs) | read as its own credential, so it saw one view for everyone | its harness names each turn's audience (`X-Gbrain-On-Behalf-Of: alice-example, guest` or request-level `_meta.on_behalf_of`); the call reads only what every entry may read, within the agent's source grant, and only a one-member audience keeps the agent's private-page relaxation. The credential lists whom it may act for (`gbrain auth rescope --token <name> --may-act-for <list>`); every response carries `_meta.access`, and `whoami` returns it |
 
 ### What to watch for after you upgrade
 
@@ -36,6 +37,7 @@ identifiers and attribution are available in the pre-removal Git revision
 - Works the same on a repo-less brain: members, groups, bindings and folder rules live in the database. A source records which store holds its folder rules when its first rule is created, and only `gbrain access rule migrate --source <id>` moves them; doctor `access_policy_store_mismatch` names it when the filesystem changes.
 - The member-access and folder-rule SQL functions end their pinned `search_path` with `pg_temp`, like every other gbrain function (#7632), and frontmatter recovery never guesses a duplicated `readable_by` key: the file is held until a person fixes it.
 - Remote callers can no longer write pages under `.gbrain/`.
+- A harness that sends an audience its credential's `may_act_for` does not list gets `on_behalf_of_not_permitted` with the operator's command; an audience inside tool arguments is always refused (`on_behalf_of_in_arguments`). `may_act_for: *` is accepted and doctor warns (`access_may_act_for_wildcard`).
 
 ## [0.60.529.0] - 2026-10-31
 

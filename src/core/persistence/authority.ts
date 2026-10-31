@@ -10,6 +10,7 @@ import { authSourcesFromGrant, grantFromTokenRow } from '../grants/model.ts';
 import { readLocalWriter, currentVerifiedLocalWriter, takeRegisteredWriterRow, verifyLocalWriter, type LocalGrant } from './identity.ts';
 import type { Principal, SqlEngine, WriteAuthority, WriteRequest } from './model.ts';
 import { authorizePageVisibility, excludesPrivateWritesAtAdmission } from './page-visibility.ts';
+import { currentCallerAccess } from '../search/private-visibility.ts';
 import { pipelined, transactionMemo } from '../page-state/transactions.ts';
 
 function deny(message: string): never { throw new OperationError('permission_denied', message, 'Inspect the current writer registration and source/operation grants.'); }
@@ -57,9 +58,13 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
     if (!localGrant.sourceIds.includes('*') && !localGrant.sourceIds.includes(sourceId)) deny('The local grant excludes this source.');
   }
   const delegatedJobId = ctx.auth && ctx.viaSubagent ? jobNamespaceKey(ctx.subagentId) : undefined;
+  const audience = ctx.remote !== false ? currentCallerAccess().audience : null;
+  const actingFor = audience?.length ? [...audience] : undefined;
   const a: WriteAuthority = {
     version: 1, principal, remote: ctx.remote !== false, sourceId, sourceIncarnation,
-    excludePrivate: await excludesPrivateWritesAtAdmission(ctx.engine, ctx.remote !== false),
+    // GBRA-231: a channel audience (anything but one member) never relaxes privacy, so its ceiling hides private pages.
+    excludePrivate: (actingFor !== undefined && currentCallerAccess().hidePrivate) || await excludesPrivateWritesAtAdmission(ctx.engine, ctx.remote !== false),
+    ...(actingFor ? { actingFor } : {}),
     autoLinkTrusted: ctx.remote === false || ctx.viaSubagent === true && !ctx.auth && !!ctx.allowedSlugPrefixes?.length,
     takesHolders: ctx.remote === false ? null : [...(ctx.takesHoldersAllowList ?? ['world'])],
     scopes: [...(ctx.auth?.scopes ?? localGrant?.scopes ?? [])],

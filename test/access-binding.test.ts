@@ -175,7 +175,8 @@ for (const kind of testBackends()) {
       const auth = await verify(tokens.alice!.token);
       const out = await dispatchToolCall(engine, 'whoami', {}, { remote: true, transport: 'http', auth, sourceId: SRC });
       const body = JSON.parse(out.content[0]!.text);
-      expect(body.access).toEqual({ member: 'alice-example', groups: ['team-a'], may_act_for: ['member:bob-example'], bound_by: 'credential' });
+      expect(body.access).toEqual({ member: 'alice-example', groups: ['team-a'], may_act_for: ['member:bob-example'], bound_by: 'credential',
+        applied: { member: 'alice-example', groups: ['team-a'], audience: null, policy_rev: {}, relaxation: 'none' } });
       expect(body.grant_diagnosis).toMatchObject({ member: 'alice-example', groups: ['team-a'], may_act_for: ['member:bob-example'] });
       const unbound = JSON.parse((await dispatchToolCall(engine, 'whoami', {}, { remote: true, transport: 'http', auth: await verify(tokens.unbound!.token), sourceId: SRC })).content[0]!.text);
       expect(unbound.access).toMatchObject({ member: null, groups: [], bound_by: 'none' });

@@ -239,6 +239,10 @@ Inside one source, bind each member's credential with `gbrain auth rescope
 --token <name> --member <id>` (or `--client`) and put `readable_by` on the pages
 only some members may read, or keep a whole folder to them with `gbrain access
 rule add --prefix <folder>/ --readers <members> --source <id>`;
+One agent serving several people in a shared channel holds `--may-act-for
+<members>` instead, and its harness names each request's audience
+(`X-Gbrain-On-Behalf-Of` or request-level `_meta.on_behalf_of`); it reads only
+what every named person may read.
 `gbrain access check --token <name>` shows the
 result ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape)).
 

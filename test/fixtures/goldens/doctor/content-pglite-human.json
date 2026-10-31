@@ -86,6 +86,7 @@
       "  [INFO] access_policy_widening_held: Not applicable: no source has a folder rule.",
       "  [INFO] access_policy_invalid: Not applicable: no source has a folder rule.",
       "  [INFO] access_policy_store_mismatch: Not applicable: no source has a folder rule.",
+      "  [INFO] access_may_act_for_wildcard: Not applicable: no page names readers and no member exists.",
       "  [OK] rls: Skipped (PGLite — no PostgREST exposure, RLS not applicable)",
       "  [OK] function_search_path: Every gbrain function that pins a search_path ends it with pg_temp",
       "  [OK] schema_version: Version <latest> (latest: <latest>)",

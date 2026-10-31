@@ -36,6 +36,11 @@ export const ERROR_CATALOGUE = {
   access_member_invalid: { code: 'access_member_invalid', docs: 'docs/guides/write-refusals.md#access_member_invalid' },
   access_member_id_retired: { code: 'access_member_id_retired', docs: 'docs/guides/write-refusals.md#access_member_id_retired' },
   access_member_disabled: { code: 'access_member_disabled', docs: 'docs/guides/write-refusals.md#access_member_disabled' },
+  // GBRA-231 shared agents: the audience a harness asserts (X-Gbrain-On-Behalf-Of, _meta.on_behalf_of).
+  on_behalf_of_invalid_audience: { code: 'on_behalf_of_invalid_audience', docs: 'docs/guides/write-refusals.md#on_behalf_of_invalid_audience' },
+  on_behalf_of_unknown_member: { code: 'on_behalf_of_unknown_member', docs: 'docs/guides/write-refusals.md#on_behalf_of_unknown_member' },
+  on_behalf_of_not_permitted: { code: 'on_behalf_of_not_permitted', docs: 'docs/guides/write-refusals.md#on_behalf_of_not_permitted' },
+  on_behalf_of_in_arguments: { code: 'on_behalf_of_in_arguments', docs: 'docs/guides/write-refusals.md#on_behalf_of_in_arguments' },
   // GBRA-218 (A2) folder rules: invalid rules and policy files, pending narrowing.
   access_rule_invalid: { code: 'access_rule_invalid', docs: 'docs/guides/write-refusals.md#access_rule_invalid' },
   access_policy_invalid: { code: 'access_policy_invalid', docs: 'docs/guides/write-refusals.md#access_policy_invalid' },

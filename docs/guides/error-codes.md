@@ -2927,6 +2927,46 @@ More: [docs/guides/repair.md#ghost-pages](../../docs/guides/repair.md#ghost-page
 
 More: [docs/guides/on-commit-sync.md#notifier-stalled](../../docs/guides/on-commit-sync.md#notifier-stalled)
 
+### on_behalf_of_in_arguments
+
+<a id="on_behalf_of_in_arguments"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A tool call carried on_behalf_of inside its arguments, where conversation text could set it, so it was refused and nothing was read. | Only harness code may name whose notes a shared agent reads: the X-Gbrain-On-Behalf-Of header or request-level _meta.on_behalf_of, never tool arguments. | Remove on_behalf_of from the tool arguments. Harness code sends it as the X-Gbrain-On-Behalf-Of header or request-level _meta.on_behalf_of; other stdio clients use a credential bound to one member or config mcp.stdio_member. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#on_behalf_of_in_arguments](../../docs/guides/write-refusals.md#on_behalf_of_in_arguments)
+
+### on_behalf_of_invalid_audience
+
+<a id="on_behalf_of_invalid_audience"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A shared agent's request named its audience (the X-Gbrain-On-Behalf-Of header or request-level _meta.on_behalf_of) in a form gbrain does not accept: empty, more than 50 entries, an entry that is not a member id, group:<id> or guest, or a header and _meta that name different audiences. Nothing was read. | The audience decides whose notes the agent may read, so an audience gbrain cannot read exactly is refused instead of guessed. | Fix the harness code that sets the audience: 1-50 entries, each a member id, group:<id> or guest, the same in the header and _meta when both are sent. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#on_behalf_of_invalid_audience](../../docs/guides/write-refusals.md#on_behalf_of_invalid_audience)
+
+### on_behalf_of_not_permitted
+
+<a id="on_behalf_of_not_permitted"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A shared agent asserted an audience its credential's may_act_for does not list (for a stdio server, config mcp.stdio_may_act_for), so nothing was read. | A shared agent acts only for the people the brain operator approved for its credential; widening that list is the operator's decision, never the agent's. | The brain operator decides whether to approve the audience: gbrain auth rescope --token <name>\|--client <id> --may-act-for <list> on the brain host. Until then, call without the audience. | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/write-refusals.md#on_behalf_of_not_permitted](../../docs/guides/write-refusals.md#on_behalf_of_not_permitted)
+
+### on_behalf_of_unknown_member
+
+<a id="on_behalf_of_unknown_member"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A shared agent's audience names a member who is not enabled on this brain, or a group that does not exist, so nothing was read. | An unknown or disabled entry is refused rather than read as a guest, so a typo or a removed person never quietly changes what the agent reads. | Name enabled members and existing groups only (gbrain access member list --all, gbrain access group list on the brain host); a person who is not a member joins the audience as guest. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#on_behalf_of_unknown_member](../../docs/guides/write-refusals.md#on_behalf_of_unknown_member)
+
 ### origin_twin_mass_merge_refused
 
 <a id="origin_twin_mass_merge_refused"></a>

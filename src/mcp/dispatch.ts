@@ -15,7 +15,8 @@ import type { OperationMeta } from '../core/ops/contract.ts';
 import { loadConfig } from '../core/config.ts';
 import { withRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { withCallerAccess } from '../core/search/private-visibility.ts';
-import { remoteCallerAccess } from '../core/access/caller.ts';
+import { appliedAccessSummary, remoteCallerAccess } from '../core/access/caller.ts';
+import { audienceInArguments, audienceInArgumentsError, logAudienceAssertion, parseAudience, type AudienceAuditEvent, type AudienceChannels, type AudiencePrincipal } from '../core/access/audience.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
@@ -168,6 +169,11 @@ export interface ToolResult {
 }
 
 export interface DispatchOpts {
+  /**
+   * GBRA-231: the shared-agent audience channels the transport read from the request (the X-Gbrain-On-Behalf-Of
+   * header, request-level `_meta`), set by harness code. Never populated from tool arguments, which are refused.
+   */
+  onBehalfOf?: AudienceChannels;
   /** #6696 (A5): set by the trusted transport for the user's own agent calls; never from wire params. */
   admissionOrigin?: OperationContext['admissionOrigin'];
   /** Configuration selected by the resident transport, never populated from wire params. */
@@ -903,9 +909,29 @@ export async function dispatchToolCall(
   const privateSources = readOnly && opts.remote !== false && !WORLD_ONLY_PACK_OPS.has(name) ? opts.auth?.privatePages?.sources : undefined;
   const resolved = opts.metaHook && (opts.hotMemoryOff === true || hotMemoryOffIn(params)) ? { ...opts, metaHook: undefined } : opts;
   // GBRA-218: a remote call also carries its credential's member identity, which every caller-aware read checks page readers against.
+  // GBRA-231: or the audience a shared agent's harness asserts, resolved (and refused) on every call before any work.
   const run = async () => {
-    const access = opts.remote === false ? { privateReadableSources: [] } : await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport);
-    return withCallerAccess(access, () => withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, params, resolved)));
+    if (opts.remote === false) return withCallerAccess({ privateReadableSources: [] }, () => withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, params, resolved)));
+    let audience: AudiencePrincipal[] | null = null;
+    let access: Awaited<ReturnType<typeof remoteCallerAccess>>;
+    const assertion = (outcome: AudienceAuditEvent['outcome']) => logAudienceAssertion({ outcome, op: name, audience: audience ?? [], transport: opts.transport ?? 'unknown',
+      principal: opts.auth?.principal ? `${opts.auth.principal.kind}:${opts.auth.principal.id}` : opts.transport === 'stdio' ? 'local_stdio' : 'unknown' });
+    try {
+      if (audienceInArguments(params)) throw audienceInArgumentsError();
+      audience = parseAudience(opts.onBehalfOf);
+      access = await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience);
+    } catch (e) {
+      if (!(e instanceof OperationError) || !String(e.code).startsWith('on_behalf_of_')) throw e;
+      assertion(e.code as AudienceAuditEvent['outcome']);
+      return errorResult(e, opts, { op: name });
+    }
+    if (audience) assertion('accepted');
+    return withCallerAccess(access, async () => {
+      const out = await withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, params, resolved));
+      // _meta.access (MCP_META_CHANNELS.md): the view this call was answered under, for the harness; own producer, isolated.
+      try { out._meta = { ...(out._meta ?? {}), access: await appliedAccessSummary(engine, opts.auth, [opts.sourceId, ...(opts.localFederatedSourceIds ?? [])]) }; } catch { /* the key is absent */ }
+      return out;
+    });
   };
   if (name === 'search' || name === 'query') return withSearchConnectionBudget(() => withRequestConfigSnapshot(engine, run));
   return readOnly

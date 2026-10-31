@@ -1,4 +1,13 @@
 {
+  "_meta": {
+    "access": {
+      "member": null,
+      "groups": [],
+      "audience": null,
+      "policy_rev": null,
+      "relaxation": "none"
+    }
+  },
   "content": [
     {
       "type": "text",
