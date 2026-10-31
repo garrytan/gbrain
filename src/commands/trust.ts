@@ -42,7 +42,8 @@ export const TRUST_OWNER_USAGE = [
   '      preferences (f<id>), held writes (h<id>), agent pages flagged as instructions (p:<source>/<slug>) and your',
   '      allow rules (a<id>), grouped by day and page, each with its exact commands.',
   '  review --accept-all (--from <source> | --kind <kind> | --since <when>)...',
-  '      Accept every listed item matching the filters (at least one filter) after one typed confirmation.',
+  '      Accept every listed item matching the filters (at least one filter) after one typed confirmation. A flagged',
+  '      page is never included: read it, then run trust confirm on it.',
   '  confirm <f<id>|t<id>|p:<source>/<slug>|tp<id>|h<id>> [--source <id>]',
   '      Mark it "confirmed by you" (accepts a proposal; releases a held write). Asks you to type its token.',
   '  release <h<id>>          Release a held write into memory as "confirmed by you" (asks for its token).',
@@ -151,8 +152,9 @@ function resultLine(r: OwnerActionResult): string {
 const ACCEPT_ALL_ITEM_MAX = 1_000;
 
 /**
- * DX-15: accept every matching item after one typed confirmation. An item whose preview fails, or whose summary is too
- * long to show in one list, is listed as skipped: it is not in the confirmation and is never applied (#7820).
+ * DX-15: accept every matching item after one typed confirmation. An item whose preview fails, whose summary is too
+ * long to show in one list, or that is a flagged page (its preview names the page, not the flagged text) is listed as
+ * skipped: it is not in the confirmation and is never applied (#7820, #7116).
  */
 async function acceptAll(backend: TrustBackend, args: string[], json: boolean): Promise<void> {
   const filter = reviewFilter(args);
@@ -161,22 +163,25 @@ async function acceptAll(backend: TrustBackend, args: string[], json: boolean): 
       'Narrow it first, e.g. gbrain trust review --accept-all --from default --since 7d; run gbrain trust review to see what would match.');
   }
   const review = await backend.review(filter);
-  const inputs = review.items.map(item => ({ action: item.kind === 'hold' ? 'release' : 'confirm', ref: item.ref, source: item.source_id } as OwnerActionInput));
-  if (inputs.length === 0) {
+  const flagged = review.items.filter(item => item.kind === 'flagged_page').map(item => ({ ref: item.ref, reason: 'confirm_on_its_own', next: `gbrain trust confirm ${item.ref}` }));
+  const inputs = review.items.filter(item => item.kind !== 'flagged_page')
+    .map(item => ({ action: item.kind === 'hold' ? 'release' : 'confirm', ref: item.ref, source: item.source_id } as OwnerActionInput));
+  if (inputs.length === 0 && flagged.length === 0) {
     if (json) await writeStdoutFinal(`${JSON.stringify({ accepted: [], skipped: [] }, null, 2)}\n`); else console.log('Nothing matches those filters.');
     return;
   }
   const settled = await Promise.allSettled(inputs.map(input => backend.preview(input)));
-  const skipped = settled.flatMap((s, i) => {
+  const skipped = [...flagged, ...settled.flatMap((s, i) => {
     const next = `gbrain trust ${inputs[i]!.action} ${inputs[i]!.ref}`;
     if (s.status === 'rejected') return [{ ref: inputs[i]!.ref!, reason: 'preview_failed', error: s.reason instanceof OperationError ? s.reason.toJSON() : String(s.reason), next }];
     return s.value.summary.length > ACCEPT_ALL_ITEM_MAX ? [{ ref: inputs[i]!.ref!, reason: 'summary_too_long', next }] : [];
-  });
+  })];
   const previewed = settled.flatMap((s, i) => s.status === 'fulfilled' && s.value.summary.length <= ACCEPT_ALL_ITEM_MAX ? [{ input: inputs[i]!, preview: s.value }] : []);
   const previews = previewed.map(p => p.preview);
   const command = ['gbrain', 'trust', 'review', '--accept-all', ...args.filter(a => a !== '--accept-all' && a !== '--json')];
   const token = `all-${createHash('sha256').update(previews.map(p => `${p.ref}:${p.binding}`).join('\n')).digest('hex').slice(0, 8)}`;
-  const why = (reason: string) => reason === 'preview_failed' ? 'its preview failed' : 'it is too long to confirm in one list';
+  const why = (reason: string) => reason === 'preview_failed' ? 'its preview failed'
+    : reason === 'confirm_on_its_own' ? 'a page flagged as instructions is confirmed only after you read it' : 'it is too long to confirm in one list';
   const summary = [`Accept ${previews.length} item(s):`, ...previews.map(p => `  ${p.ref.padEnd(6)} ${p.summary}`),
     ...skipped.map(s => `  ${s.ref.padEnd(6)} skipped: ${why(s.reason)}, so it is not accepted (run ${s.next} on its own)`)].join('\n');
   if (previews.length) await requireOwnerConfirmation(LOCAL_CTX, { ref: `${previews.length} items`, token, summary, command });

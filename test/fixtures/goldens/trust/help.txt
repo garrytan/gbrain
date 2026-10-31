@@ -4,7 +4,8 @@ Usage: gbrain trust <review|confirm|release|drop|revert|explain|allow|disable|ba
       preferences (f<id>), held writes (h<id>), agent pages flagged as instructions (p:<source>/<slug>) and your
       allow rules (a<id>), grouped by day and page, each with its exact commands.
   review --accept-all (--from <source> | --kind <kind> | --since <when>)...
-      Accept every listed item matching the filters (at least one filter) after one typed confirmation.
+      Accept every listed item matching the filters (at least one filter) after one typed confirmation. A flagged
+      page is never included: read it, then run trust confirm on it.
   confirm <f<id>|t<id>|p:<source>/<slug>|tp<id>|h<id>> [--source <id>]
       Mark it "confirmed by you" (accepts a proposal; releases a held write). Asks you to type its token.
   release <h<id>>          Release a held write into memory as "confirmed by you" (asks for its token).

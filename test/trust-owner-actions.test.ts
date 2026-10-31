@@ -461,10 +461,11 @@ describe('review, explain and accept-all (CEO-2, DX-10, DX-15, DX-16)', () => {
   }), 60_000);
 
   // Value: protects=an agent-written page the write gate flagged as an instruction (withheld from proactive surfaces
-  // until confirmed) is listed by trust review and confirmed by one accept-all; a lowered page is not listed twice;
+  // until confirmed) is listed by trust review and confirmed on its own, never by accept-all, whose preview shows only
+  // its ref; a lowered page is not listed twice;
   // fails_when=review reads only proposals, preferences and holds (#7116: the page needs its own trust confirm);
   // why_new=the other review tests flag nothing; seam=none; no_claim=claim-pending legacy pages
-  test('#7116: review lists an agent page the write gate flagged as an instruction, and accept-all confirms it', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  test('#7116: review lists an agent page the write gate flagged as an instruction; accept-all skips it and trust confirm raises it', async () => withEnv({ GBRAIN_HOME: home }, async () => {
     for (const engine of engines) {
       const b = await brain(engine);
       const other = await brain(engine);
@@ -488,10 +489,18 @@ describe('review, explain and accept-all (CEO-2, DX-10, DX-15, DX-16)', () => {
 
       const io = typesToken();
       const original = console.log;
-      console.log = () => {};
-      try { await runTrustOwnerCommand(localTrustBackend(engine), 'review', ['--accept-all', '--from', b.sourceId, '--kind', 'flagged_page']); }
-      finally { console.log = original; }
+      const out: string[] = [];
+      console.log = (line: unknown) => { out.push(String(line)); };
+      let code: number | undefined;
+      try { await runTrustOwnerCommand(localTrustBackend(engine), 'review', ['--accept-all', '--from', b.sourceId]); code = currentExitCode(); }
+      finally { console.log = original; process.exitCode = 0; _resetCliExitVerdictForTests(); }
       expect(io.prompt()).toContain('Accept 1 item(s)');
+      expect(io.prompt()).toContain(`${ref} skipped: a page flagged as instructions is confirmed only after you read it`);
+      expect(out).toContain(`${ref}: skipped, a page flagged as instructions is confirmed only after you read it; run gbrain trust confirm ${ref} on its own`);
+      expect(code).toBe(1);
+      expect((await pageRow(b, 'notes/flagged-a-example')).trust_tier).toBe('agent_written');
+      typesToken();
+      await ownerDo(b, { action: 'confirm', ref });
       expect((await pageRow(b, 'notes/flagged-a-example')).trust_tier).toBe('user_confirmed');
       expect((await buildTrustReview(engine, { sourceId: b.sourceId, kind: 'flagged_page' })).items).toEqual([]);
       expect((await buildTrustReview(engine, { sourceId: other.sourceId })).items.map(i => i.ref)).toEqual([`p:${other.sourceId}/notes/flagged-a-example`]);
