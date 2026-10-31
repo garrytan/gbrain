@@ -1570,7 +1570,7 @@ export class PGLiteEngine implements BrainEngine {
    * Korean queries. This routes to an ILIKE substring scan with
    * term-frequency-count ranking as a ts_rank substitute.
    *
-   * Multi-term CJK queries are split via splitCJKQueryTerms and matched
+   * Multi-term CJK queries are split via cjkMatchTerms and matched
    * conjunctively (AND) so that documents containing all terms match
    * regardless of token order (e.g. Korean / Japanese free word order and particles).
    *

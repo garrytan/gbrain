@@ -140,3 +140,27 @@ describe('Korean particles in the CJK keyword match (#6666)', () => {
     expect(slugs(await engine.searchKeyword('회의'))).toEqual(['notes/meeting']);
   });
 });
+
+describe('Japanese natural-language queries (#6888)', () => {
+  test('a question typed without spaces finds the page about its content word, on the chunk and page paths', async () => {
+    await page('notes/backup', 'バックアップは毎晩3時に外付けディスクへ取る。');
+    await page('notes/rooms', '会議室の予約は総務に連絡する。');
+    expect(slugs(await engine.searchKeyword('バックアップはどうすればいい？'))).toEqual(['notes/backup']);
+    const rows = await engine.searchKeywordPages('バックアップはどうすればいい？', undefined, { limit: 10 });
+    expect(slugs(rows)).toEqual(['notes/backup']);
+    expect(await engine.countKeywordPages('バックアップはどうすればいい？')).toBe(rows.length);
+  });
+
+  test('content words of one unspaced question reach the hybrid OR fallback', async () => {
+    await page('notes/backup', 'バックアップの手順は手順書にある。');
+    await page('notes/restore', '復元テストは月に一度行う。');
+    expect(await engine.searchKeyword('バックアップと復元の違いは？')).toEqual([]);
+    expect(slugs(await engine.searchKeyword('バックアップと復元の違いは？', { orFallback: true })).sort()).toEqual(['notes/backup', 'notes/restore']);
+  });
+
+  test('an all-hiragana query still matches verbatim', async () => {
+    await page('notes/picks', '今月のおすすめは新しいノートアプリ。');
+    await page('notes/other', '来月の予定。');
+    expect(slugs(await engine.searchKeyword('おすすめ'))).toEqual(['notes/picks']);
+  });
+});

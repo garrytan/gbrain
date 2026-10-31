@@ -11,6 +11,7 @@ import {
   splitCJKQueryTerms,
   stripKoreanParticle,
   cjkMatchTerms,
+  japaneseContentWords,
 } from '../src/core/cjk.ts';
 
 describe('hasCJK', () => {
@@ -202,5 +203,53 @@ describe('cjkMatchTerms (#6666)', () => {
     expect(cjkMatchTerms('혈당에서 검진을')).toEqual(['혈당', '검진']);
     expect(cjkMatchTerms('혈당 혈당에서 수치')).toEqual(['혈당', '수치']);
     expect(cjkMatchTerms('席位 升级')).toEqual(['席位', '升级']);
+  });
+});
+
+describe('japaneseContentWords (#6888)', () => {
+  test('a natural question keeps its content words and drops particles and punctuation', () => {
+    expect(japaneseContentWords('バックアップはどうすればいい？')).toEqual(['バックアップ']);
+    expect(japaneseContentWords('東京都の人口は？')).toEqual(['東京都', '人口']);
+  });
+
+  test('a one-character kanji or katakana stays with the word next to it', () => {
+    expect(japaneseContentWords('請求書の送り方')).toEqual(['請求書', '送り方']);
+    expect(japaneseContentWords('10月26日の会議')).toEqual(['10月', '26日', '会議']);
+    expect(japaneseContentWords('PDF（最新版）を開く')).toEqual(['PDF', '最新版', '開く']);
+  });
+
+  test('ASCII pieces stay joined and lose trailing sentence punctuation', () => {
+    expect(japaneseContentWords('C++の使い方')).toEqual(['C++', '使い方']);
+    expect(japaneseContentWords('e-mailを送る')).toEqual(['e-mail', '送る']);
+    expect(japaneseContentWords('おすすめはChatGPT?')).toEqual(['ChatGPT']);
+  });
+
+  test('every word is a substring of the term', () => {
+    const term = 'AIハーネスは開発中のたたき台として継続する';
+    const words = japaneseContentWords(term);
+    expect(words.length).toBeGreaterThan(1);
+    for (const w of words) expect(term).toContain(w);
+    expect(words).not.toContain('として');
+  });
+
+  test('terms without kana letters stay whole, including Chinese with ・ or ー', () => {
+    expect(japaneseContentWords('機械学習')).toEqual(['機械学習']);
+    expect(japaneseContentWords('机器学习的应用')).toEqual(['机器学习的应用']);
+    expect(japaneseContentWords('乔布斯・史蒂夫的传记')).toEqual(['乔布斯・史蒂夫的传记']);
+    expect(japaneseContentWords('혈당에서')).toEqual(['혈당에서']);
+    expect(japaneseContentWords('LDL')).toEqual(['LDL']);
+  });
+
+  test('a term with no content word stays whole instead of vanishing or becoming a mark', () => {
+    expect(japaneseContentWords('おすすめ')).toEqual(['おすすめ']);
+    expect(japaneseContentWords('ありがとうございます')).toEqual(['ありがとうございます']);
+    expect(japaneseContentWords('らーめんは')).toEqual(['らーめんは']);
+  });
+
+  test('cjkMatchTerms splits Japanese and leaves Chinese and Korean as before', () => {
+    expect(cjkMatchTerms('バックアップはどうすればいい？')).toEqual(['バックアップ']);
+    expect(cjkMatchTerms('バックアップ バックアップはどうすればいい？')).toEqual(['バックアップ']);
+    expect(cjkMatchTerms('席位 升级')).toEqual(['席位', '升级']);
+    expect(cjkMatchTerms('혈당에서 검진을')).toEqual(['혈당', '검진']);
   });
 });

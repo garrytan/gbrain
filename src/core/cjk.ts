@@ -240,11 +240,63 @@ export function stripKoreanParticle(term: string): string {
   return term;
 }
 
+const JA_WORDS = new Intl.Segmenter('ja', { granularity: 'word' });
+/** Kana letters. ー and ・ also appear in Chinese text, so they do not mark a term as Japanese. */
+const KANA_RE = /[ぁ-ゖァ-ヺ]/;
+/** Kanji or katakana letters: what a Japanese content word carries. */
+const JA_CONTENT_RE = /[一-鿿ァ-ヺ]/;
+/** Hiragana, kana marks and iteration marks: a word made of these is a particle, auxiliary or inflection. */
+const JA_FUNCTION_RE = /[぀-ヿ々〆]/;
+const ASCII_RE = /^[\x21-\x7e]+$/;
+
+interface Piece { text: string; ja: boolean }
+
 /**
- * The terms every CJK keyword builder matches: whitespace-split, Korean
- * particles stripped, deduplicated in order. The count, the keyword pages and
- * the chunk search all read this, so a count never disagrees with the rows.
+ * The content words of a Japanese term (#6888). Japanese writes a question
+ * without spaces, so 「バックアップはどうすればいい？」 reaches the match as
+ * one term that no page contains. A term with kana is split into words;
+ * function words (は, どう, として) and Japanese punctuation split it and are
+ * dropped, giving ["バックアップ"].
+ *
+ * Between two splits, adjacent pieces stay joined when either is one kanji
+ * or katakana (請求+書, 取り+方, 10+月) or both are ASCII (C++, e-mail), so a
+ * suffix never becomes a one-character term that matches most pages. Every
+ * word is a substring of the term, so a page that contains the term still
+ * matches. A term with no kana (Chinese, kanji-only Japanese, Korean) stays
+ * whole, and so does a term with no content word (おすすめ).
+ */
+export function japaneseContentWords(term: string): string[] {
+  if (!KANA_RE.test(term)) return [term];
+  const words: string[] = [];
+  let prev: Piece | null = null;
+  const flush = () => {
+    const word = prev?.text.replace(/^[?!,:;]+|[?!.,:;]+$/g, '');
+    if (word && /[\p{L}\p{N}]/u.test(word)) words.push(word);
+    prev = null;
+  };
+  for (const { segment, isWordLike } of JA_WORDS.segment(term)) {
+    const ja = isWordLike === true && JA_CONTENT_RE.test(segment);
+    if (!ja && (isWordLike ? JA_FUNCTION_RE.test(segment) : !ASCII_RE.test(segment))) {
+      flush();
+      continue;
+    }
+    if (prev && ((!ja && !prev.ja) || (ja && segment.length === 1) || (prev.ja && prev.text.length === 1))) {
+      prev = { text: prev.text + segment, ja: ja || prev.ja };
+      continue;
+    }
+    flush();
+    prev = { text: segment, ja };
+  }
+  flush();
+  return words.length > 0 ? words : [term];
+}
+
+/**
+ * The terms every CJK keyword builder matches: whitespace-split, Japanese
+ * terms cut to their content words, Korean particles stripped, deduplicated
+ * in order. The count, the keyword pages, the chunk search and the OR
+ * fallback all read this, so a count never disagrees with the rows.
  */
 export function cjkMatchTerms(query: string): string[] {
-  return Array.from(new Set(splitCJKQueryTerms(query).map(stripKoreanParticle)));
+  return Array.from(new Set(splitCJKQueryTerms(query).flatMap(japaneseContentWords).map(stripKoreanParticle)));
 }
