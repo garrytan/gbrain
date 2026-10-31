@@ -662,8 +662,8 @@ function workingHashOf(root: string, path: string): { workingHash?: string } {
 /**
  * #6712 PR 2 (L4): before a `worktree_dirty` hold is called abandoned, its uncommitted bytes are read from the checkout
  * now; bytes that changed since the hold last looked are a live editor (`edited_at` refreshed, no attempt counted), so a
- * hold escalates only when nobody touched the edit for a day. Holds that would not escalate are not read. Status, unblock
- * and the soak sweep all look through this.
+ * hold escalates only when nobody touched the edit for a day. Holds that would not escalate are not read, and a hold whose
+ * bytes match the hash it already records costs no statement (#7339). Status, unblock and the soak sweep all look through this.
  */
 export async function observeDirtyEditors(engine: BrainEngine, sourceId: string, incarnation: string, holds: GitHoldRecord[], now = Date.now()): Promise<GitHoldRecord[]> {
   const due = holds.filter(hold => hold.code === 'worktree_dirty' && classifySyncFault({ code: hold.code, ...holdEscalation(hold, now) }).needs_human);
@@ -673,7 +673,7 @@ export async function observeDirtyEditors(engine: BrainEngine, sourceId: string,
   const fresh = new Map<string, GitHoldRecord>();
   for (const hold of due) {
     const { workingHash } = workingHashOf(context.root, hold.path);
-    const updated = workingHash === undefined ? null : await noteHoldEdit(engine, { sourceId, incarnation, path: hold.path, workingHash });
+    const updated = workingHash === undefined || workingHash === hold.meta.working_hash ? null : await noteHoldEdit(engine, { sourceId, incarnation, path: hold.path, workingHash });
     if (updated) fresh.set(hold.path, updated);
   }
   return holds.map(hold => fresh.get(hold.path) ?? hold);
