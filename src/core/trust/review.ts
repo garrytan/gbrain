@@ -8,6 +8,8 @@
  * - unconfirmed standing preferences: facts of kind preference/commitment at
  *   agent_written or lower that the write gate flagged `standing_instruction`;
  * - write-gate holds (`h<id>`);
+ * - agent-written pages the write gate flagged as instructions (#7116), the
+ *   pages proactive surfaces withhold until the owner confirms them;
  * - the owner's active allow rules (`a<id>`) and the kill-switch state.
  *
  * Items are grouped by day and page (many agent edits to one page are one
@@ -24,12 +26,12 @@ import { TRUST_MARKER_REPAIR_COMMAND } from './marker-repair.ts';
 import { formatTrustRef, pageRef, parseTrustRef, resolvePageRef } from './refs.ts';
 import { compareTrust, OWNER_TIER_FLOOR, storedTrustTier, trustLabel, USER_SAID_ORIGIN_MARKER, type TrustTier } from './tier.ts';
 import { isUserSaid, trustFields, trustLabelWords } from '../eligibility/labels.ts';
-import { ACTIVATION_REASON_FAMILIES, ACTIVATION_TIER_CEILING } from '../eligibility/sql.ts';
+import { ACTIVATION_REASON_FAMILIES, ACTIVATION_TIER_CEILING, activationSuppressedSql } from '../eligibility/sql.ts';
 import { claimPendingSql, TRUST_CLAIM_RESUME_COMMAND } from './claim-state.ts';
 import { listTrustAllowRules, type TrustAllowRule } from './allow-rules.ts';
-import { isQuarantined } from '../quarantine.ts';
+import { isQuarantined, QUARANTINE_FILTER_FRAGMENT } from '../quarantine.ts';
 
-export const TRUST_REVIEW_KINDS = ['proposal', 'lowered_page', 'preference', 'hold'] as const;
+export const TRUST_REVIEW_KINDS = ['proposal', 'lowered_page', 'preference', 'hold', 'flagged_page'] as const;
 export type TrustReviewKind = typeof TRUST_REVIEW_KINDS[number];
 
 export interface TrustReviewItem {
@@ -175,6 +177,29 @@ async function standingPreferences(engine: BrainEngine, filter: TrustReviewFilte
   });
 }
 
+/** Pages withheld from proactive surfaces until confirmed (eligibility/sql.ts), unless a pending proposal already lists them. */
+async function flaggedPages(engine: BrainEngine, filter: TrustReviewFilter): Promise<TrustReviewItem[]> {
+  const [table] = await engine.executeRaw<{ t: string | null }>(`SELECT to_regclass('write_gate_receipts')::text AS t`);
+  if (!table?.t) return [];
+  const rows = await engine.executeRaw<{ source_id: string; slug: string; title: string | null; trust_tier: string; updated_at: string }>(
+    `SELECT p.source_id, p.slug, p.title, p.trust_tier, p.updated_at FROM pages p
+      WHERE p.deleted_at IS NULL AND ${QUARANTINE_FILTER_FRAGMENT} AND ${activationSuppressedSql('pages', 'p')}
+        AND NOT (p.trust_tier = 'unknown' AND EXISTS (SELECT 1 FROM sources cs WHERE cs.id = p.source_id AND ${claimPendingSql('cs')}))
+        AND ($1::text IS NULL OR p.source_id = $1) AND ($2::timestamptz IS NULL OR p.updated_at >= $2)
+        AND NOT EXISTS (SELECT 1 FROM trust_proposals tp WHERE tp.status = 'pending' AND tp.target_table = 'pages' AND tp.target_id = p.id)
+      ORDER BY p.updated_at, p.id LIMIT 1000`, [filter.sourceId ?? null, filter.since?.toISOString() ?? null]);
+  return rows.map(r => {
+    const ref = pageRef(r.source_id, r.slug);
+    const tier = storedTrustTier(r.trust_tier);
+    const updated = new Date(r.updated_at).toISOString();
+    return {
+      ref, kind: 'flagged_page' as const, detail: 'instruction_flag', source_id: r.source_id, page: ref, day: day(updated), created_at: updated, tier, label: trustLabel(tier),
+      summary: `Unconfirmed page "${snippet(r.title || r.slug)}": the write gate flagged it as an instruction (not used proactively until you confirm it)`,
+      commands: { confirm: trust('confirm', ref), explain: trust('explain', ref) },
+    };
+  });
+}
+
 async function holds(engine: BrainEngine, filter: TrustReviewFilter): Promise<TrustReviewItem[]> {
   return (await currentHoldStore().list(engine, { sourceId: filter.sourceId, since: filter.since })).map(h => ({
     ref: `h${h.id}`, kind: 'hold' as const, detail: h.kind, source_id: h.source_id, page: h.slug ? pageRef(h.source_id, h.slug) : null,
@@ -197,6 +222,7 @@ export async function buildTrustReview(engine: BrainEngine, filter: TrustReviewF
   }
   if (wants(filter, 'preference')) items.push(...await standingPreferences(engine, filter));
   if (wants(filter, 'hold')) items.push(...await holds(engine, filter));
+  if (wants(filter, 'flagged_page')) items.push(...await flaggedPages(engine, filter));
   items.sort((a, b) => a.day.localeCompare(b.day) || (a.page ?? '').localeCompare(b.page ?? '') || a.created_at.localeCompare(b.created_at) || a.ref.localeCompare(b.ref));
   const groups: TrustReview['groups'] = [];
   for (const item of items) {
@@ -242,7 +268,7 @@ export function renderTrustReview(review: TrustReview): string {
   }
   const c = review.counts;
   if (review.items.length) {
-    lines.push('', `${review.items.length} item(s): ${c.proposal} proposal(s), ${c.lowered_page} lowered page(s), ${c.preference} unconfirmed preference(s), ${c.hold} held write(s).`,
+    lines.push('', `${review.items.length} item(s): ${c.proposal} proposal(s), ${c.lowered_page} lowered page(s), ${c.preference} unconfirmed preference(s), ${c.hold} held write(s), ${c.flagged_page} flagged page(s).`,
       'Confirming or releasing raises trust: run the command yourself in a terminal and type the token it asks for. Explain any item: gbrain trust explain <ref>.');
   }
   return lines.join('\n');

@@ -668,6 +668,24 @@ for (const backend of testBackends()) {
       expect(await engine.executeRaw('SELECT id FROM takes WHERE claim=$1', [CLAIM])).toEqual([]);
       expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE operation='trust_release'")).toEqual([]);
     }, brainOpts()), 180_000);
+
+    // Value: protects=#7821: dropping a held take marks the hold dropped without the owner's token and publishes nothing (no take, no request);
+    // fails_when=drop raises trust, goes through the door, or leaves the take held; why_new=the state matrix covered only fact drops;
+    // seam=none; no_claim=a take release (refused unavailable above)
+    test('dropping a held take marks it dropped and writes no take', () => managedBrain(async ({ engine, ctx }) => {
+      await seedPage(engine, ctx);
+      await enableTrustProtections(engine);
+      let ref = '';
+      try { await operationsByName.takes_add.handler(ctx, { slug, claim: CLAIM, kind: 'take', holder: 'world', weight: 0.6, content_origin: 'tool_output', request_id: randomUUID() }); }
+      catch (e) { ref = JSON.parse((e as { detail: string }).detail).hold_ref; }
+      expect(ref).toMatch(/^h\d+$/);
+      const preview = await previewOwnerAction(engine, { action: 'drop', ref });
+      expect(preview).toMatchObject({ raises: false, summary: `Drop held take ${ref} (${JSON.stringify(CLAIM)}); it stays out of memory` });
+      expect(await applyOwnerAction(engine, { action: 'drop', ref }, { binding: preview.binding, confirmation: null, by: owner })).toMatchObject({ status: 'dropped' });
+      expect(await holdStatus(engine, ref)).toBe('dropped');
+      expect(await engine.executeRaw('SELECT id FROM takes WHERE claim=$1', [CLAIM])).toEqual([]);
+      expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE operation='trust_release'")).toEqual([]);
+    }, brainOpts()), 180_000);
   });
 }
 
@@ -682,9 +700,23 @@ describe('the trust_release preparer refuses a request the owner did not confirm
     const intent = { hold_id: 1, last_seen_at: '2026-01-01T00:00:00Z', by: 'owner:owner-example', mode: 'append' };
     const row = (over: Record<string, unknown>) => ({ operation: 'trust_release', source_id: 'default', slug, page_id: 1, intent, authority: { remote: false }, ...over }) as never;
     for (const bad of [{ authority: { remote: true } }, { intent: null }, { intent: { ...intent, mode: 'rewrite' } }, { intent: { ...intent, hold_id: 'h1' } }, { intent: { ...intent, mode: 'index-existing' } },
-      { intent: { ...intent, mode: 'index-existing', row_num: 1 } }, { intent: { ...intent, mode: 'index-existing', row_num: 1, cell_fields: 7 } }, { operation: 'remember' }]) {
+      { intent: { ...intent, mode: 'index-existing', row_num: 1, cell_fields: 7 } }, { intent: { ...intent, mode: 'index-previewed', row_num: 1 } },
+      { intent: { ...intent, mode: 'index-previewed', row_num: 1, cell_fields: 7 } }, { intent: { ...intent, mode: 'index-previewed', cell_fields: 'x' } }, { operation: 'remember' }]) {
       const error = await prepareTrustReleaseMutation(engine, row(bad), { engine: 'pglite' } as never).then(() => null, (e: { code?: string }) => e);
       expect({ bad, code: error?.code }).toEqual({ bad, code: 'confirmation_required' });
     }
+  });
+
+  // Value: protects=#7821: an index-existing release journaled before the field preview (no cell_fields) refuses preview_changed and tells
+  // the owner to rerun, touching no engine; fails_when=it refuses with the misleading confirmation_required again, or prepares;
+  // why_new=the in-flight request across the upgrade had only the "not confirmed by the owner" wording; seam=none; no_claim=a real journal row
+  test('an index-existing release approved before the field preview refuses preview_changed and asks for a rerun', async () => {
+    const { prepareTrustReleaseMutation } = await import('../src/core/trust/release-publish.ts');
+    const engine = new Proxy({}, { get: (_t, key) => { throw new Error(`engine.${String(key)} read`); } }) as BrainEngine;
+    const intent = { hold_id: 4, last_seen_at: '2026-01-01T00:00:00Z', by: 'owner:owner-example', mode: 'index-existing', row_num: 1 };
+    const row = { operation: 'trust_release', source_id: 'default', slug, page_id: 1, intent, authority: { remote: false } } as never;
+    const error = await prepareTrustReleaseMutation(engine, row, { engine: 'pglite' } as never).then(() => null, (e: { code?: string }) => e);
+    expect(error).toMatchObject({ code: 'preview_changed', message: expect.stringContaining('h4 was approved before the release preview showed'),
+      suggestion: expect.stringContaining('gbrain trust release h4 again') });
   });
 });

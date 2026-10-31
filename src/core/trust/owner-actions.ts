@@ -107,8 +107,12 @@ const bindingOf = (value: unknown): string => createHash('sha256')
 /** A hold's approved state; #7656: plus the fence cell fields an index-existing release raises (`releaseCellOf`). */
 const holdBinding = (hold: Pick<HoldRow, 'id' | 'status' | 'last_seen_at'>, cellFields: Record<string, unknown> | null = null): string =>
   bindingOf({ id: hold.id, status: hold.status, last_seen_at: hold.last_seen_at, ...(cellFields ? { cell: cellFields } : {}) });
-/** One printable line: control and format characters (terminal escapes and bidi overrides included) and runs of whitespace become one space. */
-const printable = (text: unknown): string => String(text ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Cf}]/gu, ' ').replace(/\s+/g, ' ').trim();
+/**
+ * One printable line: control, format and default-ignorable characters (terminal escapes, bidi overrides, Hangul fillers,
+ * the combining grapheme joiner) and the braille blank become one space, and runs of whitespace collapse to one.
+ */
+const printable = (text: unknown): string => String(text ?? '')
+  .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u2800\p{Cf}\p{Default_Ignorable_Code_Point}]/gu, ' ').replace(/\s+/g, ' ').trim();
 /** A free-text value in the preview: quoted and escaped, so a quote or comma in it cannot close its field and fake another. */
 const quoted = (text: unknown): string => JSON.stringify(printable(text));
 const snippet = (text: unknown, max = 80): string => {
@@ -228,7 +232,7 @@ function releasedFields(hold: HoldRow, cell: ParsedFact | null): string {
     : [['kind', typeof p.kind === 'string' && p.kind ? p.kind : 'fact'], ['visibility', p.visibility === 'world' ? 'world' : 'private'], ['valid from', date(p.valid_from)],
       ['valid until', date(p.valid_until)], ['source', p.source], ['context', p.context]];
   const shown = entries.filter(([, v]) => v !== undefined && v !== null && v !== '')
-    .map(([k, v]) => `${k} ${k === 'context' || /[",;]/.test(printable(v)) ? quoted(v) : printable(v)}`).join(', ');
+    .map(([k, v]) => `${k} ${typeof v === 'number' && Number.isFinite(v) ? printable(v) : quoted(v)}`).join(', ');
   return cell ? ` with fence row ${cell.rowNum} as it stands: ${shown}` : ` with ${shown}`;
 }
 /**
@@ -333,7 +337,7 @@ async function previewConfirm(engine: BrainEngine, ref: TrustRef, input: OwnerAc
     if (!row.live) throw opError('invalid_params', `${label} is no longer active (expired, superseded or forgotten); there is nothing to confirm.`, 'Confirm the row that replaced it instead; gbrain trust explain shows its history.');
     const release = await suppressedFields(engine, row.table, row.id);
     return { action: 'confirm', ref: label, token: label, command: trustCommand('confirm', label), raises: row.tier !== 'user_confirmed' || release.length > 0, binding: row.binding,
-      tier: row.tier, target_tier: 'user_confirmed', summary: `Raise ${ref.kind} ${label} ("${snippet(row.text)}") from "${trustLabel(row.tier)}" to "confirmed by you"`
+      tier: row.tier, target_tier: 'user_confirmed', summary: `Raise ${ref.kind} ${label} (${JSON.stringify(snippet(row.text))}) from "${trustLabel(row.tier)}" to "confirmed by you"`
         + (release.length ? ` and release its purge-redacted ${release.join(', ')} in recorded history` : '') };
   }
   if (ref.kind === 'page') {
@@ -363,15 +367,15 @@ async function previewHold(engine: BrainEngine, id: number, action: 'release' | 
   const hold = await holdStore.get(engine, id);
   if (!hold) throw notFound(label, 'held write');
   const text = hold.payload.fact ?? hold.payload.claim ?? '';
-  const entity = hold.kind === 'fact' && typeof hold.payload.entity_slug === 'string' && hold.payload.entity_slug ? ` for ${hold.source_id}/${hold.payload.entity_slug}` : '';
+  const entity = hold.kind === 'fact' && typeof hold.payload.entity_slug === 'string' && hold.payload.entity_slug ? ` for ${quoted(`${hold.source_id}/${hold.payload.entity_slug}`)}` : '';
   const cell = action === 'release' ? await releaseCellOf(engine, hold) : null;
   return { action, ref: label, token: label, command: trustCommand(action, label), raises: action === 'release',
     binding: holdBinding(hold, cell?.fields ?? null), tier: hold.tier,
     ...(action === 'release' ? { target_tier: 'user_confirmed' as TrustTier } : {}),
     summary: action === 'release'
-      ? `Release held ${hold.kind} ${label} (${hold.kind === 'fact' ? quoted(text) : `"${snippet(text)}"`}, ${hold.reason_families.join(', ') || 'detector error'})${printable(entity)} into memory as "confirmed by you"`
+      ? `Release held ${hold.kind} ${label} (${hold.kind === 'fact' ? quoted(text) : JSON.stringify(snippet(text))}, ${hold.reason_families.join(', ') || 'detector error'})${entity} into memory as "confirmed by you"`
         + (hold.kind === 'fact' ? releasedFields(hold, cell?.cell ?? null) : '')
-      : `Drop held ${hold.kind} ${label} ("${snippet(text)}"); it stays out of memory` };
+      : `Drop held ${hold.kind} ${label} (${JSON.stringify(snippet(text))}); it stays out of memory` };
 }
 
 async function previewRevert(engine: BrainEngine, ref: TrustRef, input: OwnerActionInput): Promise<OwnerActionPreview> {

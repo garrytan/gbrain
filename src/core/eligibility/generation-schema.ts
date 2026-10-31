@@ -67,7 +67,7 @@ export const TRUST_GENERATION_WHEN: Readonly<Record<string, Partial<Record<Gener
   needs_rederive: { insert: 'TRUE' },
 };
 
-const BUMP_FUNCTION = `CREATE OR REPLACE FUNCTION ${TRUST_GENERATION_FUNCTION}() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+const BUMP_FUNCTION = `CREATE OR REPLACE FUNCTION ${TRUST_GENERATION_FUNCTION}() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN
   IF COALESCE(current_setting('gbrain.trust_generation_bumped', true), '') = 'on' THEN RETURN NULL; END IF;
   INSERT INTO ${TRUST_POLICY_STATE_TABLE} (id, generation, bumped_at) VALUES (1, 1, now())

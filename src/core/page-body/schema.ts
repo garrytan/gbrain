@@ -21,7 +21,7 @@
  * body identity is `body_generation`: its body columns are NULL on both sides
  * of a flip, so the generation moves when body_generation does.
  */
-export const PAGE_GENERATION_BUMP_FN_SQL = `CREATE OR REPLACE FUNCTION bump_page_generation_fn() RETURNS trigger SET search_path = pg_catalog, public AS $func$
+export const PAGE_GENERATION_BUMP_FN_SQL = `CREATE OR REPLACE FUNCTION bump_page_generation_fn() RETURNS trigger SET search_path = pg_catalog, public, pg_temp AS $func$
 BEGIN
   IF (TG_OP = 'INSERT') THEN
     NEW.generation := COALESCE((SELECT MAX(generation) FROM pages), 0) + 1;
@@ -311,7 +311,7 @@ CREATE TABLE IF NOT EXISTS page_segment_derivation_purge_pages (
   page_id    INTEGER NOT NULL,
   PRIMARY KEY (request_id, page_id)
 );
-CREATE OR REPLACE FUNCTION gbrain_mark_derivation_scope_entry() RETURNS trigger SET search_path = pg_catalog, public AS $func$
+CREATE OR REPLACE FUNCTION gbrain_mark_derivation_scope_entry() RETURNS trigger SET search_path = pg_catalog, public, pg_temp AS $func$
 DECLARE
   src TEXT;
   page INTEGER;
@@ -338,7 +338,7 @@ CREATE TRIGGER page_body_manifest_derivation_scope_delete AFTER DELETE ON page_b
 DROP TRIGGER IF EXISTS pages_derivation_scope_delete ON pages;
 CREATE TRIGGER pages_derivation_scope_delete AFTER UPDATE OF deleted_at ON pages
   FOR EACH ROW WHEN (OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL) EXECUTE FUNCTION gbrain_mark_derivation_scope_entry();
-CREATE OR REPLACE FUNCTION gbrain_refuse_purging_derivation() RETURNS trigger SET search_path = pg_catalog, public AS $func$
+CREATE OR REPLACE FUNCTION gbrain_refuse_purging_derivation() RETURNS trigger SET search_path = pg_catalog, public, pg_temp AS $func$
 BEGIN
   IF EXISTS (SELECT 1 FROM page_segment_derivation_purges x JOIN pages p ON p.source_id = x.source_id
     WHERE p.id = NEW.page_id AND ${derivationSweepScopeSql('NEW', 'p', 'x.page_ids')}

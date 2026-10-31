@@ -3,7 +3,8 @@
  * before the release preview showed and bound the fence cell's fields. Such a release indexed the live cell (kind,
  * confidence, notability, validity, typed claim, attribution, source, context) while the owner previewed only the
  * text. A row is listed while it is still current, user_confirmed, has origin `trust_release`, is indexed from the
- * fence row its released hold named, and its origin lacks `fields_previewed`. Read-only: it never lowers a tier;
+ * fence row its released hold named (the hold's request id is the one the fact's origin records, so an append release
+ * that reuses an earlier hold's row number is not listed, #7821), and its origin lacks `fields_previewed`. Read-only: it never lowers a tier;
  * the owner reviews each row and edits or forgets what is wrong.
  */
 import type { Check } from '../../doctor.ts';
@@ -19,7 +20,8 @@ async function runTrustReleaseUnpreviewed(ctx: DoctorContext): Promise<Check[]> 
     const rows = await connectedEngine(ctx).executeRaw<{ id: number; source_id: string; slug: string; row_num: number; hold_id: number; total: number }>(
       `SELECT f.id, f.source_id, f.source_markdown_slug AS slug, f.row_num, h.id AS hold_id, COUNT(*) OVER () AS total
          FROM facts f JOIN LATERAL (SELECT id FROM write_gate_holds WHERE kind = 'fact' AND status = 'released' AND source_id = f.source_id
-          AND slug = f.source_markdown_slug AND payload->>'row_num' = f.row_num::text ORDER BY id DESC LIMIT 1) h ON true
+          AND slug = f.source_markdown_slug AND payload->>'row_num' = f.row_num::text
+          AND request_id::text IS NOT DISTINCT FROM f.write_origin->>'request_id' ORDER BY id DESC LIMIT 1) h ON true
         WHERE f.trust_tier = 'user_confirmed' AND f.expired_at IS NULL AND f.write_origin->>'channel' = 'trust_release'
           AND f.write_origin->>'fields_previewed' IS NULL
         ORDER BY f.id LIMIT ${LIMIT}`);

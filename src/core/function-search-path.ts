@@ -8,17 +8,29 @@
  * through: for the owner as much as for any other writer. Named last, pg_temp comes after every other schema for
  * relations, and PostgreSQL never searches it for functions or operators.
  *
- * ALTER FUNCTION only: no body is rewritten, so every guard keeps master's body, SECURITY INVOKER and BEFORE ROW timing.
+ * Every definition gbrain owns now pins `pg_catalog, public, pg_temp` itself (#7785; scripts/check-search-path.sh keeps
+ * it so), so a schema replay keeps pg_temp. Historical migration bodies still pin the legacy settings, and so does a
+ * brain created before the change, which is what the hardening below completes: ALTER FUNCTION only, no body rewritten,
+ * so every guard keeps master's body, SECURITY INVOKER and BEFORE ROW timing.
  * A write role with no policy on a ledger still reads it empty under its own RLS; that fail-open stays open (#7659).
  */
+
+import type { BrainEngine } from './engine.ts';
+import { migrationStatementTimeoutMs } from './migration-timeout.ts';
+import { isLockTimeoutError } from './retry-matcher.ts';
+import { resolveSchemaLockTimeoutMs, schemaLockBlockedError } from './postgres-engine/schema-lock-timeout.ts';
 
 /** The search_path settings gbrain functions pinned before #7632, which the hardening completes with pg_temp. */
 export const LEGACY_SEARCH_PATH_SETTINGS = ['search_path=pg_catalog, public', 'search_path=pg_catalog'] as const;
 
+/** The pinned path in a pg_proc.proconfig entry `c.setting` (`search_path=<path>`). */
+export const PINNED_PATH_SQL = `substr(c.setting, ${'search_path='.length + 1})`;
+
 /**
  * Every function gbrain installs in public with a pinned search_path, on either engine. The hardening and the doctor
  * check touch only these, so another application's function in a shared database keeps its own search_path. A new
- * pinned function joins this list; the fresh-install tests (test/function-search-path-pglite.test.ts, and case 3 of
+ * pinned function joins this list; scripts/check-search-path.sh (bun run check:search-path) names one that does not,
+ * and the fresh-install tests (test/function-search-path-pglite.test.ts, and case 3 of
  * test/e2e/function-search-path-postgres.test.ts) fail until it does.
  */
 export const PINNED_FUNCTION_NAMES = [
@@ -38,15 +50,15 @@ export const PINNED_FUNCTION_NAMES = [
 /**
  * Appends pg_temp to the pinned search_path of every gbrain function (PINNED_FUNCTION_NAMES) in public the current
  * role may alter that still pins `pg_catalog, public` or `pg_catalog`. A function the role does not own is
- * left as it was, and so is a procedure (ALTER FUNCTION refuses one, and gbrain installs none). Shared by the schema blob (its last statement, so a replay's CREATE OR REPLACE never leaves a function
- * without it), the migration, the end of every migration run (src/core/migrate.ts: a migration that re-creates a
- * function resets its path, and the run may stop before v277) and `gbrain reindex-search-vector`, which rewrites the
+ * left as it was, and so is a procedure (ALTER FUNCTION refuses one, and gbrain installs none). Shared by the schema blob (its last
+ * statement, so a replay's CREATE OR REPLACE never leaves a function without it), hardenFunctionSearchPaths below
+ * (migration v277 and the end of every migration run) and `gbrain reindex-search-vector`, which rewrites the
  * search_vector trigger functions.
  */
 export const FUNCTION_SEARCH_PATH_HARDENING_SQL = `DO $harden$
 DECLARE f RECORD;
 BEGIN
-  FOR f IN SELECT p.oid::regprocedure AS sig, substr(c.setting, 13) AS path
+  FOR f IN SELECT p.oid::regprocedure AS sig, ${PINNED_PATH_SQL} AS path
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace CROSS JOIN LATERAL unnest(p.proconfig) AS c(setting)
     WHERE n.nspname = 'public' AND p.prokind = 'f' AND c.setting IN (${LEGACY_SEARCH_PATH_SETTINGS.map(v => `'${v}'`).join(', ')})
       AND p.proname IN (${PINNED_FUNCTION_NAMES.map(name => `'${name}'`).join(', ')})
@@ -57,3 +69,48 @@ BEGIN
   END LOOP;
 END $harden$;`;
 
+/** The gbrain functions (regprocedure text) whose pinned search_path is still a legacy setting. */
+export async function legacySearchPathFunctions(engine: BrainEngine): Promise<string[]> {
+  return (await engine.executeRaw<{ sig: string }>(
+    `SELECT p.oid::regprocedure::text AS sig FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public' AND p.prokind = 'f' AND p.proconfig && $1::text[] AND p.proname = ANY($2::text[]) ORDER BY 1`,
+    [[...LEGACY_SEARCH_PATH_SETTINGS], [...PINNED_FUNCTION_NAMES]])).map(r => r.sig);
+}
+
+/** Attempts of the hardening when another session's ALTER or CREATE OR REPLACE updates the same pg_proc row. */
+const CONCURRENT_UPDATE_ATTEMPTS = 3;
+
+function isConcurrentCatalogUpdate(error: unknown): boolean {
+  return /tuple concurrently updated/i.test(error instanceof Error ? error.message : String(error));
+}
+
+/**
+ * Runs the hardening in one short transaction with the migration statement and lock timeouts and returns the
+ * functions it had to leave (owned by another role), [] when none needed it, or null when the hardening committed but
+ * listing what it left failed. A pg_proc row lock it cannot take
+ * becomes `schema_lock_blocked`; a concurrent update of the same pg_proc row (`apply-migrations --force-schema` beside
+ * another process's boot) is retried, since the step is idempotent. Prints nothing: the caller decides who is told.
+ */
+export async function hardenFunctionSearchPaths(engine: BrainEngine, attempt = 1): Promise<string[] | null> {
+  if ((await legacySearchPathFunctions(engine)).length === 0) return [];
+  const lockTimeoutMs = resolveSchemaLockTimeoutMs();
+  try {
+    await engine.transaction(async tx => {
+      if (engine.kind === 'postgres') {
+        await tx.executeRaw(`SET LOCAL statement_timeout = '${migrationStatementTimeoutMs()}'`);
+        await tx.executeRaw(`SET LOCAL lock_timeout = '${lockTimeoutMs}ms'`);
+      }
+      await tx.runMigration(277, FUNCTION_SEARCH_PATH_HARDENING_SQL);
+    });
+  } catch (error) {
+    if (isLockTimeoutError(error)) {
+      throw schemaLockBlockedError({ step: 'search_path hardening', timeoutMs: lockTimeoutMs, sessions: null, sampledDuringWait: false, lock: 'a gbrain function row lock (pg_proc)' });
+    }
+    if (isConcurrentCatalogUpdate(error) && attempt < CONCURRENT_UPDATE_ATTEMPTS) {
+      await new Promise(resolve => setTimeout(resolve, 100 * attempt));
+      return hardenFunctionSearchPaths(engine, attempt + 1);
+    }
+    throw error;
+  }
+  return legacySearchPathFunctions(engine).catch(() => null);
+}

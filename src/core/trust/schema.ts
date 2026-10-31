@@ -103,7 +103,7 @@ const SETTINGS = `
     RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='gbrain trust setting names no tier', CONSTRAINT='trust_tier_guard';
   END IF;`;
 
-const STAMP_TIER_FUNCTION = `CREATE OR REPLACE FUNCTION gbrain_stamp_trust_tier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+const STAMP_TIER_FUNCTION = `CREATE OR REPLACE FUNCTION gbrain_stamp_trust_tier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 DECLARE writer text; origin_text text; promo text; backfill boolean; keep boolean; changed boolean; effective text;
 BEGIN${SETTINGS}
   IF ${rank('writer')} > ${rank(`'${OWNER_TIER_FLOOR}'`)} AND (promo IS NULL OR ${rank('writer')} > ${rank('promo')}) THEN
@@ -150,7 +150,7 @@ END $fn$`;
  * the same transaction, so the page row still carries the snapshotted tier
  * (ENG-10). A supplied value is honored only under the backfill setting.
  */
-const SNAPSHOT_VERSION_FUNCTION = `CREATE OR REPLACE FUNCTION gbrain_snapshot_version_trust() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+const SNAPSHOT_VERSION_FUNCTION = `CREATE OR REPLACE FUNCTION gbrain_snapshot_version_trust() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN
   IF COALESCE(current_setting('gbrain.write_trust_backfill', true), '') = 'on' AND NEW.trust_tier IS NOT NULL THEN RETURN NEW; END IF;
   SELECT p.trust_tier, p.write_origin INTO NEW.trust_tier, NEW.write_origin FROM pages p WHERE p.id = NEW.page_id;

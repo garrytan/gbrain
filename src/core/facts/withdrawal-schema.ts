@@ -58,7 +58,7 @@ export const FACT_WITHDRAWAL_SCHEMA_STATEMENTS = [
   )`,
   ...FACT_FINGERPRINT_FUNCTION_STATEMENTS,
   `CREATE OR REPLACE FUNCTION gbrain_preserve_fact_withdrawal() RETURNS trigger
-    LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+    LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
     DECLARE withdrawn TIMESTAMPTZ;
     BEGIN
       IF NEW.expired_at IS NULL THEN
