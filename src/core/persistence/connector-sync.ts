@@ -1179,12 +1179,15 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
     ? serializePageToMarkdown({ ...snapshot.page, ...parsed, compiled_truth: fenced, timeline: carried.timeline, type: parsed.typeExplicit ? parsed.type : snapshot.page.type }, parsed.tags)
     : p.content;
   let prepared: PreparedContentImport | undefined;
+  const tier = 'external_untrusted';
   const result = await importFromContent(engine, row.slug, content, { sourceId: row.source_id, sourcePath: p.sourcePath,
     filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), noEmbed: true, allowEmptyOverwrite: true, activePack,
     // #5575 A3: connector free text (mail bodies, invite descriptions, issue text) is external and gated.
-    writeGate: { tier: 'external_untrusted', origin: { channel: `connector:${p.connector}`, connector: String(p.connector), source_uri: p.sourcePath }, requestId: row.id },
+    writeGate: { tier, origin: { channel: `connector:${p.connector}`, connector: String(p.connector), source_uri: p.sourcePath }, requestId: row.id },
     prepareFrontmatter: page => {
       if (snapshot?.page.frontmatter.visibility === 'private') page.frontmatter.visibility = 'private';
+      // #8052: keep the marker `gbrain repair provenance` stamped, only when it names the tier this import assigns.
+      if (snapshot?.page.frontmatter.trust_tier === tier) page.frontmatter.trust_tier = tier;
     },
     prepare: async value => { prepared = value; return value.result; } });
   if (!prepared || prepared.slug !== row.slug) throw connectorPublicationRefusal('revision_conflict', result.error ?? 'A different page owns this connector content.', row,
