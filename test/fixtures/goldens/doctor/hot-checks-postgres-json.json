@@ -3450,6 +3450,14 @@
           },
           {
             "category": "ops",
+            "details": "<live-census>",
+            "elapsed_ms": "<volatile>",
+            "message": "<live-census>",
+            "name": "session_lane_budget",
+            "status": "<live-census>"
+          },
+          {
+            "category": "ops",
             "details": {
               "builds": [],
               "count": 0,
@@ -8336,6 +8344,14 @@
             "message": "This process's host identity (<home>/.gbrain/persistence/host.json) owns every binding this filesystem holds.",
             "name": "host_identity_mismatch",
             "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": "<live-census>",
+            "elapsed_ms": "<volatile>",
+            "message": "<live-census>",
+            "name": "session_lane_budget",
+            "status": "<live-census>"
           },
           {
             "category": "ops",
