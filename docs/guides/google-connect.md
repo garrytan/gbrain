@@ -674,6 +674,25 @@ IDs use deterministic MIME paths. Duplicate filenames remain separate receipts.
 Missing message IDs have deterministic fallback identities but no invented Gmail
 link. Pure-noise threads remain excluded by the existing ingestion policy.
 
+Gmail ingestion uses the existing source `g_loops_exclude_labels` list, falling
+back to `loops.extraction_exclude_labels`. Names are matched case-insensitively
+against the account's labels once per sweep; label IDs, including
+`CATEGORY_PROMOTIONS`, `CATEGORY_SOCIAL` and `CATEGORY_FORUMS`, are accepted.
+An unknown name stops the Gmail sweep without advancing its cursor. Excluded
+threads produce no page unless the owner wrote a substantive message (including
+send-as aliases); automated messages and calendar responses do not count.
+Previously imported excluded threads are retired on their next touch. After
+removing a label from the list, run a full sync to import unchanged threads again.
+Loop extraction retains its stricter exclusion, including owner-written mail.
+
+Without a configured exclusion list, categories and newsletters are imported.
+The renderer skips empty threads and threads whose every sender matches its
+noise-sender rules (automated sender patterns and the Google Meet notes sender).
+Calendar notices are not independently excluded from ingestion. Gmail message
+listing leaves spam and trash out by default; a full sync reconciles pages no
+longer listed within the history window. This does not purge older pages outside
+that window.
+
 Historical repair requests a Gmail partial response containing message IDs and
 explicit MIME metadata fields; `body.data`, raw messages and snippets are never
 selected. The selection includes child-identity sentinels beyond depth 32 so a

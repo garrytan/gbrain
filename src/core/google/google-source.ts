@@ -46,7 +46,7 @@ import { importRendered, myAddressSet, type ActivePack, type GoogleSyncDeps, typ
 export { myAddressSet } from './sweep-shared.ts';
 import { sweepCalendar, sweepContacts } from './people-calendar-sweep.ts';
 import { applyLoopDetection, enqueueLoopsExtraction, resolveSweepExclusion } from './loops-enqueue.ts';
-import { NO_EXCLUSION } from './loops-exclusion.ts';
+import { isExcludedByLabels, NO_EXCLUSION } from './loops-exclusion.ts';
 import {
   CalendarClient,
   GmailClient,
@@ -179,7 +179,26 @@ async function processThread(
   });
   seen.thread = thread;
   summary.threadsSeen++;
-  const rendered = renderThreadPage(thread);
+  const rendered = renderThreadPage(thread, deps.exclusion, myAddressSet(deps.entry));
+  if (!rendered && isExcludedByLabels(deps.exclusion, thread.messages.flatMap((m) => m.labelIds))) {
+    // A changed label retires the old page through the source's write owner.
+    // Unknown labels throw above, preserving both the page and the cursor.
+    const rows = await deps.engine.executeRaw<{ slug: string; source_path: string | null }>(
+      `SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL
+       AND slug LIKE 'emails/%' AND frontmatter->>'thread_id'=$2`, [deps.sourceId, thread.threadId]);
+    for (const page of rows) {
+      if (deps.managed) {
+        if (await deps.managed.delete(page.slug, page.source_path)) summary.deleted++;
+      } else {
+        await deps.engine.deletePages([page.slug], { sourceId: deps.sourceId });
+        if (page.source_path) {
+          const target = join(deps.cfg.dir, page.source_path);
+          if (isWriteTargetContained(target, deps.cfg.dir)) rmSync(target, { force: true });
+        }
+        summary.deleted++;
+      }
+    }
+  }
   // Pure noise renders no page AND skips detection — an all-noise thread
   // produces an empty verdict anyway, so nothing opens and nothing closes.
   if (!rendered) return thread;
@@ -377,6 +396,11 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
 async function sweepGmail(g: GmailSweep, onCurrent?: () => Promise<void>): Promise<boolean> {
   const { deps, gmail, state } = g;
   const cutoffMs = Date.now() - deps.cfg.historyDays * 86_400_000;
+  // Full sync must revisit unchanged mail after the exclusion list changes.
+  if (deps.opts.full) {
+    state.gmail_backfill_done = false;
+    state.gmail_backfill_floor_ms = null;
+  }
 
   // #5438: a completed backfill whose covered bound is above a now-WIDER
   // window reopens strictly below that bound (the floor's own `before:`).
@@ -855,6 +879,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
       const stop = startHeartbeat(progress, 'gmail sweep');
       try {
         deps.exclusion = await resolveSweepExclusion(deps, gmail);
+        if (deps.exclusion.unresolved.length > 0) throw new Error('Gmail ingestion exclusion labels are unresolved');
         // sweepGmail reports thread-level failures via its return value —
         // they exit through normal returns, not throws, and stamping
         // last_sync_at over them would blind the staleness gate (H1).

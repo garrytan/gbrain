@@ -1423,13 +1423,34 @@ describe('loops_extract enqueue completeness', () => {
       );
     };
     const jobCount = async () => Number((await engine.executeRaw<{ n: string }>(`SELECT count(*)::text AS n FROM minion_jobs WHERE name = 'loops_extract'`))[0].n);
+    test('ingestion retires excluded pages on touch and reimports after a full sync without exclusions', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'gsrc-ingestion-'));
+      const fx = emptyFx();
+      const vault = makeVault();
+      seedThreads(fx);
+      try {
+        await insertGoogleSource(dir);
+        await withHome(async () => {
+          expect((await sweep(dir, fx, vault)).added).toBe(2);
+          const excluded = await sweep(dir, fx, vault, { full: true }, 'gmail', { cfg: { g_loops_exclude_labels: 'Newsletters' } });
+          expect(excluded.added).toBe(0);
+          expect(excluded.deleted).toBe(1);
+          const active = await engine.executeRaw<{ subject: string }>(
+            `SELECT title AS subject FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND slug LIKE 'emails/%'`, ['gsrc']);
+          expect(active.map((p) => p.subject)).toEqual(['Plain topic']);
+          expect((await sweep(dir, fx, vault, { full: true })).added).toBe(1);
+        });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 120_000);
     /** The per-reason counts the sweep logs (`loops_extract eligibility: a=1 b=2`). */
     const eligibilityCounts = (err: string): Record<string, number> => {
       const line = /loops_extract eligibility: ([^\n]+)/.exec(err)?.[1] ?? '';
       return Object.fromEntries(line.trim().split(/\s+/).filter(Boolean).map((kv) => { const [k, v] = kv.split('='); return [k, Number(v)]; }));
     };
 
-    test('a name resolves once per sweep: one labels call, the labelled thread is excluded_label and not queued, the plain one is queued', async () => {
+    test('a name resolves once per sweep: one labels call, the labelled thread is not imported or queued, the plain one is queued', async () => {
       const dir = mkdtempSync(join(tmpdir(), 'gsrc-excl-'));
       const fx = emptyFx();
       const vault = makeVault();
@@ -1438,9 +1459,9 @@ describe('loops_extract enqueue completeness', () => {
         await insertGoogleSource(dir);
         await withHome(async () => {
           const { result: res, err } = await capturedStderr(() => sweep(dir, fx, vault, {}, 'gmail', { cfg: { g_loops_exclude_labels: 'newsletters' } }));
-          expect(res.added).toBe(2);
+          expect(res.added).toBe(1);
           expect(fx.calls.filter((c) => c.includes('/users/me/labels'))).toHaveLength(1);
-          expect(eligibilityCounts(err)).toEqual({ excluded_label: 1, human_correspondence: 1 });
+          expect(eligibilityCounts(err)).toEqual({ human_correspondence: 1 });
           expect(res.loops_enqueue).toMatchObject({ enqueued: 1, skipped_reason: null });
           expect(await jobCount()).toBe(1);
           expect(err).not.toContain('excluded_label_unresolved');
@@ -1453,7 +1474,7 @@ describe('loops_extract enqueue completeness', () => {
       }
     }, 120_000);
 
-    test('an unknown name fails closed: every thread counts excluded_label_unresolved, nothing is queued, stderr names the label', async () => {
+    test('an unknown name stops ingestion without advancing its cursor or queuing extraction', async () => {
       const dir = mkdtempSync(join(tmpdir(), 'gsrc-excl-unres-'));
       const fx = emptyFx();
       const vault = makeVault();
@@ -1462,8 +1483,10 @@ describe('loops_extract enqueue completeness', () => {
         await insertGoogleSource(dir);
         await withHome(async () => {
           const { result: res, err } = await capturedStderr(() => sweep(dir, fx, vault, {}, 'gmail', { cfg: { g_loops_exclude_labels: 'Newsletters, Vendor-Noise' } }));
-          expect(res.added).toBe(2);
-          expect(eligibilityCounts(err)).toEqual({ excluded_label: 1, excluded_label_unresolved: 1 });
+          expect(res.added).toBe(0);
+          expect(res.status).toBe('partial');
+          expect(readGoogleState(dir).gmail_history_id).toBeNull();
+          expect(eligibilityCounts(err)).toEqual({});
           expect(res.loops_enqueue).toMatchObject({ enqueued: 0, skipped_reason: 'excluded_label_unresolved' });
           expect(await jobCount()).toBe(0);
           expect(err).toContain('"Vendor-Noise" is not a label of a@example.com');
@@ -1485,7 +1508,7 @@ describe('loops_extract enqueue completeness', () => {
         await engine.setConfig('loops.extraction_exclude_labels', 'Label_7');
         await withHome(async () => {
           const { result: byId, err: errById } = await capturedStderr(() => sweep(dir, fx, vault));
-          expect(eligibilityCounts(errById)).toEqual({ excluded_label: 1, human_correspondence: 1 });
+          expect(eligibilityCounts(errById)).toEqual({ human_correspondence: 1 });
           expect(byId.loops_enqueue).toMatchObject({ enqueued: 1 });
           await engine.setConfig('loops.extraction_exclude_labels', 'Newsletters');
           const { result: byName, err } = await capturedStderr(() => sweep(dir, fx, vault, { full: true }));
@@ -1866,4 +1889,65 @@ describe('sweep progress (#5349)', () => {
       expect(second.notes).toBe(0);
     });
   });
+});
+
+/**
+ * Protects rendered ingestion output: excluded mail produces no page, while
+ * owner correspondence survives. Previously only loop eligibility read labels;
+ * existing renderer tests cover noise senders, not configured exclusions.
+ * Uses the production renderer and label resolver without a test-only seam.
+ */
+import { renderThreadPage } from '../src/core/google/google-render.ts';
+import { resolveExcludedLabels } from '../src/core/google/loops-exclusion.ts';
+import type { GmailMessageMeta, GmailThreadData } from '../src/core/google/types.ts';
+
+function message(overrides: Partial<GmailMessageMeta> = {}): GmailMessageMeta {
+  return {
+    id: 'abc123', threadId: 'abc', from: 'sender', fromAddress: 'sender',
+    to: [], cc: [], subject: 'Weekly bulletin', dateIso: '2026-10-01T00:00:00Z',
+    internalDateMs: Date.parse('2026-10-01T00:00:00Z'),
+    labelIds: ['Label_7'], listUnsubscribe: false, bodyText: 'Bulletin content',
+    ...overrides,
+  };
+}
+
+function thread(messages: GmailMessageMeta[]): GmailThreadData {
+  return { threadId: 'abc', account: 'owner', messages };
+}
+
+const catalog = [
+  { id: 'Label_7', name: 'Newsletters' },
+  { id: 'CATEGORY_PROMOTIONS', name: 'CATEGORY_PROMOTIONS' },
+  { id: 'CATEGORY_SOCIAL', name: 'CATEGORY_SOCIAL' },
+  { id: 'CATEGORY_FORUMS', name: 'CATEGORY_FORUMS' },
+];
+
+test('configured names, ids and categories exclude pages before ingestion', () => {
+  for (const token of ['newsletters', 'Label_7', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_FORUMS']) {
+    const policy = resolveExcludedLabels([token], catalog);
+    const label = token.startsWith('CATEGORY_') ? token : 'Label_7';
+    expect(renderThreadPage(thread([message({ labelIds: [label] })]), policy)).toBeNull();
+  }
+});
+
+test('owner replies preserve correspondence, including send-as aliases', () => {
+  const policy = resolveExcludedLabels(['Newsletters'], catalog);
+  for (const reply of [message({ labelIds: ['SENT'] }), message({ fromAddress: 'alias', labelIds: [] })]) {
+    expect(renderThreadPage(thread([message(), reply]), policy, new Set(['alias']))?.markdown).toContain('Bulletin content');
+  }
+  for (const reply of [
+    message({ labelIds: ['SENT'], autoSubmitted: true }),
+    message({ labelIds: ['SENT'], calendarMethod: 'REPLY' }),
+  ]) {
+    expect(renderThreadPage(thread([message(), reply]), policy)).toBeNull();
+  }
+});
+
+test('unknown names fail closed; removing exclusions permits reimport', () => {
+  const mail = thread([message()]);
+  expect(() => renderThreadPage(mail, resolveExcludedLabels(['Missing'], catalog))).toThrow('unresolved');
+  expect(renderThreadPage(mail, resolveExcludedLabels(['Newsletters'], catalog))).toBeNull();
+  expect(renderThreadPage(mail, resolveExcludedLabels([], catalog))?.markdown).toContain('Bulletin content');
+  expect(renderThreadPage(thread([message({ labelIds: ['CATEGORY_UPDATES'] })]),
+    resolveExcludedLabels(['Newsletters'], catalog))).not.toBeNull();
 });

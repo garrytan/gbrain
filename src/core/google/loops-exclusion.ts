@@ -17,8 +17,10 @@
  * could not be read, leaves the policy `unresolved`. While it is, no NEW paid
  * extraction runs for that source (`excluded_label_unresolved`, visible in
  * the sweep's eligibility counters and retried on the next sweep), and the
- * deterministic lane withholds new opens the same way. Closes, ingestion and
- * already-open loops are never touched by this policy.
+ * deterministic lane withholds new opens the same way. Ingestion also applies
+ * the resolved list, with an owner-participated override; an unresolved list
+ * stops the Gmail sweep before cursor advancement or page retirement.
+ * Closes and already-open loops are never touched by this policy.
  */
 import type { BrainEngine } from '../engine.ts';
 import { connectorStateKey } from '../persistence/connector-state.ts';

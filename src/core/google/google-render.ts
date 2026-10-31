@@ -11,6 +11,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { isExcludedByLabels, NO_EXCLUSION, type LoopsExclusionPolicy } from './loops-exclusion.ts';
 import { renderAttachmentInspection, threadAttachmentReceipts } from './attachment-receipts.ts';
 
 import { emailCitation } from '../output/scaffold.ts';
@@ -241,10 +242,20 @@ export interface RenderedPage {
 }
 
 /**
- * Render one Gmail thread as a page. Returns null for pure noise (every
- * message from a noise sender) — those threads never materialize.
+ * Render one Gmail thread as a page. Empty, pure-noise and label-excluded
+ * threads produce no page; substantive owner replies override label exclusions.
  */
-export function renderThreadPage(thread: GmailThreadData): RenderedPage | null {
+export function renderThreadPage(
+  thread: GmailThreadData,
+  exclusion: LoopsExclusionPolicy = NO_EXCLUSION,
+  myAddresses: ReadonlySet<string> = new Set(),
+): RenderedPage | null {
+  // A partial label catalog must never cause mail to be imported or retired.
+  if (exclusion.unresolved.length > 0) throw new Error('Gmail ingestion exclusion labels are unresolved');
+  const ownerParticipated = thread.messages.some((m) =>
+    (m.labelIds.includes('SENT') || myAddresses.has(m.fromAddress)) &&
+    !isNoiseSender(m.fromAddress) && !isCalendarSystemMail(m) && !m.autoSubmitted);
+  if (!ownerParticipated && isExcludedByLabels(exclusion, thread.messages.flatMap((m) => m.labelIds))) return null;
   if (thread.messages.length === 0) return null;
   const nonNoise = thread.messages.filter((m) => !isNoiseSender(m.fromAddress));
   if (nonNoise.length === 0) return null;
