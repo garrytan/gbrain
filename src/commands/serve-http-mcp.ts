@@ -15,7 +15,7 @@ import { opAllowedForBoundClient } from '../core/operations.ts';
 import { authTransport } from '../core/ops/contract.ts';
 import type { AuthInfo, Operation } from '../core/operations.ts';
 import { disabledOpsForPublishGates } from '../mcp/publish-gates.ts';
-import { installInstructionsResolver, readInstructionContent, resolveMcpInstructions } from '../mcp/instructions.ts';
+import { installInstructionsResolver, MCP_SERVER_DESCRIPTION, readInstructionContent, resolveMcpInstructions } from '../mcp/instructions.ts';
 import { httpInstructionTools } from '../mcp/initialize-context.ts';
 import { installCapabilitiesResource, mcpAdministrationGuidance } from '../mcp/capabilities.ts';
 import { createSkillResources } from '../mcp/skill-resources.ts';
@@ -42,6 +42,7 @@ import {
 } from '../mcp/surface.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { ON_BEHALF_OF_HEADER } from '../core/access/audience.ts';
+import { ACTOR_HEADER } from '../core/access/actor-model.ts';
 import { serializeError } from '../core/errors.ts';
 import { VERSION } from '../version.ts';
 import { executeRawJsonb } from '../core/sql-query.ts';
@@ -64,6 +65,8 @@ interface McpRequestState {
   thinClient: boolean;
   /** GBRA-231: the X-Gbrain-On-Behalf-Of header (a shared agent's audience); bounded by the credential's may_act_for in dispatch. */
   onBehalfOfHeader: string | undefined;
+  /** GST-359 C1: the x-qm-actor header (a trusted system names the person); honoured in dispatch only for an attest credential. */
+  actorHeader: string | undefined;
 }
 
 export function mountMcp(app: Express, ctx: ServeHttpContext): void {
@@ -175,7 +178,7 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
       surface === 'full' && authInfo.allowedOperations == null ? undefined : new Set(mcpOperations.map(o => o.name));
     const thinClient = isGbrainThinClient(req.get(GBRAIN_CLIENT_HEADER));
     const state: McpRequestState = { authInfo, agentName, startTime, mcpOperations, surface, surfaceCeiling, surfaceAllowedOps, resultRows, thinClient,
-      onBehalfOfHeader: req.get(ON_BEHALF_OF_HEADER) };
+      onBehalfOfHeader: req.get(ON_BEHALF_OF_HEADER), actorHeader: req.get(ACTOR_HEADER) };
     const server = createMcpRequestServer(ctx, state, writeback);
     await serveMcpRequest(server, req, res);
   }
@@ -203,7 +206,7 @@ function createMcpRequestServer(
     });
   }
   const server = new Server(
-    { name: 'gbrain', version: VERSION },
+    { name: 'gbrain', version: VERSION, description: MCP_SERVER_DESCRIPTION },
     {
       capabilities: { tools: {}, resources: {} },
       // #4748: contract (+ opt-in writeback section) + deployment identity.
@@ -411,6 +414,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
       ...(sessionId ? { sessionId } : {}),
       ...(hotMemoryOffIn(request.params) ? { hotMemoryOff: true } : {}),
       onBehalfOf: { header: state.onBehalfOfHeader, requestMeta: (request.params as { _meta?: unknown })._meta },
+      actor: { header: state.actorHeader },
       takesHoldersAllowList: tokenAllowList,
       sourceId: tokenSourceId,
       ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),

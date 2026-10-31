@@ -290,6 +290,12 @@ export interface AuthInfo {
   /** GBRA-218: the stored `may_act_for` audience list (shared agents, PR B); stored and reported only. */
   mayActFor?: string[] | null;
   /**
+   * GST-359 C1: the live right to name the person a call serves (x-qm-actor), joined by the verifier: the system and
+   * the operations an attested call may run. Null when the credential holds none, is bound to a member, or (an OAuth
+   * client) its token did not come from the client-credentials grant. Undefined when no verifier joined it.
+   */
+  attest?: { system: string; ops: string[] } | null;
+  /**
    * Human-readable agent name resolved at token-verification time.
    * For OAuth clients this is `oauth_clients.client_name`; for legacy
    * bearer tokens it is `access_tokens.name`. Threading this through

@@ -18,7 +18,7 @@ import { parseResultRowsMode, resolveResultRowsMode } from './result-rows.ts';
 import { loadConfig } from '../core/config.ts';
 import { requestConfigRows, withRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { gcSessionContextState } from '../core/context/session-state.ts';
-import { installInstructionsResolver, readInstructionContent, resolveMcpInstructions } from './instructions.ts';
+import { installInstructionsResolver, MCP_SERVER_DESCRIPTION, readInstructionContent, resolveMcpInstructions } from './instructions.ts';
 import { instructionReadiness, stdioCapabilityReadiness } from './initialize-context.ts';
 import { STATUS_TOOL_DEF, STATUS_TOOL_NAME, attemptStatusRecovery, statusHeadline, statusInstructionLine, statusModeErrorResult, statusModeOf, statusPayload, statusToolResult } from './status-mode.ts';
 import { installCapabilitiesResource, mcpAdministrationGuidance } from './capabilities.ts';
@@ -359,7 +359,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     extractFacts: session.allowedOps ? session.allowedOps.has('extract_facts') : true,
   }) : null;
   server = new Server(
-    { name: 'gbrain', version: VERSION },
+    { name: 'gbrain', version: VERSION, description: MCP_SERVER_DESCRIPTION },
     // listChanged: a client that handshakes during DEGRADED mode receives the
     // gate-hidden catalog (stdioVisibleTools fail-closes every publishGateKey
     // op on engine failure) and caches it — recovery sends the notification

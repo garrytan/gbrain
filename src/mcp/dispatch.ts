@@ -17,6 +17,7 @@ import { withRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core
 import { withCallerAccess } from '../core/search/private-visibility.ts';
 import { appliedAccessSummary, remoteCallerAccess } from '../core/access/caller.ts';
 import { audienceInArguments, audienceInArgumentsError, logAudienceAssertion, parseAudience, type AudienceAuditEvent, type AudienceChannels, type AudiencePrincipal } from '../core/access/audience.ts';
+import { ACTOR_ARGUMENT, EXTERNAL_ID_RE, resolveAttestedActor, type ActorChannels } from '../core/access/actor.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
@@ -165,9 +166,13 @@ export interface ToolResult {
    * tool call still succeeds.
    */
   _meta?: Record<string, unknown>;
+  /** GST-359 C1: set only on refusals of a call that named an attested actor (`{ error: { code, message, reason, fix } }`). */
+  structuredContent?: Record<string, unknown>;
 }
 
 export interface DispatchOpts {
+  /** GST-359 C1: the x-qm-actor header the HTTP transport read (a trusted system names the person); stdio never sets it. */
+  actor?: ActorChannels;
   /**
    * GBRA-231: the shared-agent audience channels the transport read from the request (the X-Gbrain-On-Behalf-Of
    * header, request-level `_meta`), set by harness code. Never populated from tool arguments, which are refused.
@@ -909,22 +914,31 @@ export async function dispatchToolCall(
   // GBRA-231: or the audience a shared agent's harness asserts, resolved (and refused) on every call before any work.
   const run = async () => {
     if (opts.remote === false) return withCallerAccess({ privateReadableSources: [] }, () => withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, params, resolved)));
+    // GST-359 C1: or the person a trusted system attests (x-qm-actor), decided here too, before any work (access/actor.ts).
     let audience: AudiencePrincipal[] | null = null;
+    let attested: Awaited<ReturnType<typeof resolveAttestedActor>> = null;
     let access: Awaited<ReturnType<typeof remoteCallerAccess>>;
-    const assertion = (outcome: AudienceAuditEvent['outcome']) => logAudienceAssertion({ outcome, op: name, audience: audience ?? [], transport: opts.transport ?? 'unknown',
-      principal: opts.auth?.principal ? `${opts.auth.principal.kind}:${opts.auth.principal.id}` : opts.transport === 'stdio' ? 'local_stdio' : 'unknown' });
+    const header = opts.actor?.header ?? undefined;
+    const actorNamed = header !== undefined || (!!params && Object.prototype.hasOwnProperty.call(params, ACTOR_ARGUMENT));
+    const assertion = (outcome: AudienceAuditEvent['outcome'], reason?: string) => logAudienceAssertion({ outcome, op: name,
+      audience: [...(attested?.access.audience ?? audience ?? [])], transport: opts.transport ?? 'unknown',
+      principal: opts.auth?.principal ? `${opts.auth.principal.kind}:${opts.auth.principal.id}` : opts.transport === 'stdio' ? 'local_stdio' : 'unknown',
+      ...(actorNamed ? { actor: { system: 'qm', ...(header && EXTERNAL_ID_RE.test(header) ? { external_id: header } : {}), ...(reason ? { reason } : {}) } } : {}) });
     try {
       if (audienceInArguments(params)) throw audienceInArgumentsError();
       audience = parseAudience(opts.onBehalfOf);
-      access = await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience);
+      attested = await resolveAttestedActor(engine, { channels: opts.actor, params, op: name, opShape: operations.find(o => o.name === name),
+        auth: opts.auth, transport: opts.transport, audienceAsserted: audience !== null });
+      access = attested ? attested.access : await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience);
     } catch (e) {
-      if (!(e instanceof OperationError) || !String(e.code).startsWith('on_behalf_of_')) throw e;
-      assertion(e.code as AudienceAuditEvent['outcome']);
-      return errorResult(e, opts, { op: name });
+      if (!(e instanceof OperationError) || !/^(on_behalf_of_|actor_)/.test(String(e.code))) throw e;
+      assertion(e.code as AudienceAuditEvent['outcome'], e.reason);
+      return actorNamed ? actorRefusal(e, opts, name) : errorResult(e, opts, { op: name });
     }
-    if (audience) assertion('accepted');
+    if (audience || attested) assertion('accepted');
+    const callParams = attested ? attested.params : params;
     return withCallerAccess(access, async () => {
-      const out = await withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, params, resolved));
+      const out = await withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, callParams, resolved));
       // _meta.access (MCP_META_CHANNELS.md): the view this call was answered under, for the harness; own producer, isolated.
       try { out._meta = { ...(out._meta ?? {}), access: await appliedAccessSummary(engine, opts.auth, [opts.sourceId, ...(opts.localFederatedSourceIds ?? [])]) }; } catch { /* the key is absent */ }
       return out;
@@ -934,6 +948,20 @@ export async function dispatchToolCall(
   return readOnly
     ? withRequestConfigSnapshot(engine, run)
     : withoutRequestConfigSnapshot(run);
+}
+
+/**
+ * GST-359 C1: the refusal of a call that named an attested actor: gbrain's envelope (top-level `code` in the JSON text
+ * block) plus `structuredContent.error`, both of which QM reads. The single seam where memory_recall (layer D) answers
+ * actor_unlinked as a success instead: empty content and structuredContent {facts: [], truncated: false, code: 'actor_unlinked'}.
+ */
+function actorRefusal(e: OperationError, opts: DispatchOpts, op: string): ToolResult {
+  const out = errorResult(e, opts, { op });
+  try {
+    const env = JSON.parse(out.content[0]!.text) as Record<string, unknown>;
+    out.structuredContent = { error: { code: env.code, message: env.message, ...(env.reason ? { reason: env.reason } : {}), ...(env.fix ? { fix: env.fix } : {}) } };
+  } catch { /* the text block still carries the code */ }
+  return out;
 }
 
 /** The response-meta hook's keys, or its failure message; never rejects (a hook failure degrades to no keys). */

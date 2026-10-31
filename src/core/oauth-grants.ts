@@ -270,7 +270,7 @@ export class OAuthGrants {
       const target = this.resource(row.resource, requested);
       const scopes = this.currentScopes(client, row.scopes as string[]);
       await sql`DELETE FROM oauth_codes WHERE code_hash = ${hashToken(code)} AND client_id = ${clientId}`;
-      return this.issue(sql, client, scopes, target, true);
+      return this.issue(sql, client, scopes, target, true, 'authorization_code');
     });
   }
 
@@ -287,7 +287,7 @@ export class OAuthGrants {
       const scopes = this.currentScopes(client, requested ?? original);
       const target = this.resource(row.resource, requestedResource);
       await sql`DELETE FROM oauth_tokens WHERE token_hash = ${hashToken(token)} AND token_type = 'refresh' AND client_id = ${clientId}`;
-      return this.issue(sql, client, scopes, target, true);
+      return this.issue(sql, client, scopes, target, true, 'refresh_token');
     });
   }
 
@@ -322,7 +322,7 @@ export class OAuthGrants {
       if (!Array.isArray(client.grant_types) || !client.grant_types.includes('client_credentials')) throw new InvalidGrantError('Client credentials grant not authorized for this client');
       if (typeof client.client_secret_hash !== 'string' || !/^[a-f0-9]{64}$/i.test(client.client_secret_hash) || !safeHexEqual(client.client_secret_hash, hashToken(secret))) throw new InvalidClientError('Invalid client secret');
       this.assertCredentialPolicy(client, client.client_secret_hash);
-      return this.issue(sql, client, grantScopes(client, requested ? parseScopeString(requested) : undefined), undefined, false);
+      return this.issue(sql, client, grantScopes(client, requested ? parseScopeString(requested) : undefined), undefined, false, 'client_credentials');
     });
   }
 
@@ -346,19 +346,20 @@ export class OAuthGrants {
     });
   }
 
-  private async issue(sql: SqlQuery, client: ClientRow, scopes: string[], resource: URL | undefined, refresh: boolean): Promise<OAuthTokens> {
+  /** GST-359 C1: each token records the grant that issued it (oauth_tokens.grant_type); only client_credentials tokens may attest an actor. */
+  private async issue(sql: SqlQuery, client: ClientRow, scopes: string[], resource: URL | undefined, refresh: boolean, grant: 'authorization_code' | 'refresh_token' | 'client_credentials'): Promise<OAuthTokens> {
     const clientId = client.client_id as string;
     const override = Number(client.token_ttl);
     const ttl = Math.min(Number.isFinite(override) && override > 0 ? override : this.options.tokenTtl, TOKEN_TTL_MAX_SECONDS);
     const now = Math.floor(this.now() / 1000);
     const access = generateToken('gbrain_at_');
-    await sql`INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource, created_at)
-      VALUES (${hashToken(access)}, ${'access'}, ${clientId}, ${oauthPgArray(scopes)}, ${now + ttl}, ${resource?.toString() ?? null}, to_timestamp(${now}))`;
+    await sql`INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource, created_at, grant_type)
+      VALUES (${hashToken(access)}, ${'access'}, ${clientId}, ${oauthPgArray(scopes)}, ${now + ttl}, ${resource?.toString() ?? null}, to_timestamp(${now}), ${grant})`;
     const result: OAuthTokens = { access_token: access, token_type: 'bearer', expires_in: ttl, scope: scopes.join(' ') };
     if (refresh) {
       const token = generateToken('gbrain_rt_');
-      await sql`INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource, created_at)
-        VALUES (${hashToken(token)}, ${'refresh'}, ${clientId}, ${oauthPgArray(scopes)}, ${now + this.options.refreshTtl}, ${resource?.toString() ?? null}, to_timestamp(${now}))`;
+      await sql`INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource, created_at, grant_type)
+        VALUES (${hashToken(token)}, ${'refresh'}, ${clientId}, ${oauthPgArray(scopes)}, ${now + this.options.refreshTtl}, ${resource?.toString() ?? null}, to_timestamp(${now}), ${grant})`;
       result.refresh_token = token;
     }
     return result;

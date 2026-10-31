@@ -232,6 +232,8 @@ export interface AppliedAccess {
   member: string | null;
   groups: string[];
   audience: string[] | null;
+  /** GST-359 C1: present on an attested call (the system that named the person; the id is not echoed). */
+  actor?: { system: string };
   policy_rev: Record<string, number> | null;
   relaxation: 'none' | 'granted_sources' | 'operator';
 }
@@ -252,6 +254,7 @@ export async function appliedAccessSummary(engine: Pick<BrainEngine, 'executeRaw
     member,
     groups: access.identity.filter(p => p.startsWith('group:')).map(p => p.slice('group:'.length)),
     audience: access.audience ? [...access.audience] : null,
+    ...(access.actor ? { actor: { system: access.actor.system } } : {}),
     policy_rev: policyRev,
     relaxation: !access.hidePrivate ? 'operator' : access.privateReadableSources.length ? 'granted_sources' : 'none',
   };

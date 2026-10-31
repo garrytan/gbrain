@@ -103,7 +103,10 @@ export interface AudienceAuditEvent {
   transport: string;
   op: string;
   audience: string[];
-  outcome: 'accepted' | 'on_behalf_of_invalid_audience' | 'on_behalf_of_not_permitted' | 'on_behalf_of_unknown_member' | 'on_behalf_of_in_arguments';
+  outcome: 'accepted' | 'on_behalf_of_invalid_audience' | 'on_behalf_of_not_permitted' | 'on_behalf_of_unknown_member' | 'on_behalf_of_in_arguments'
+    | 'actor_not_attested' | 'actor_unlinked';
+  /** GST-359 C1: an attested actor's system, the id it named (only when well-formed) and a refusal's reason. */
+  actor?: { system: string; external_id?: string; reason?: string };
 }
 
 const audit = createAuditWriter<AudienceAuditEvent>({ featureName: 'access-audience', errorLabel: 'access-audience-audit', errorTrailer: '; continuing' });

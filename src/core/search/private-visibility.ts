@@ -211,6 +211,11 @@ export interface CallerAccess {
    */
   audience: readonly string[] | null;
   audienceIdentities: readonly (readonly string[])[];
+  /**
+   * GST-359 C1: the attested actor (a trusted system named the person; access/actor.ts), or null. Its audience is that
+   * one member and its privacy is never relaxed. Queued writes and agent jobs carry it and re-resolve it live.
+   */
+  actor?: Readonly<{ system: string; external_id: string; member: string }> | null;
   /** GBRA-218 (A2): the source-qualified folder-rule ids (`<source>:<rule>`) the identity satisfies, from the applied rulebook. */
   satisfiedRuleIds: readonly string[];
   /** GBRA-218 (A2): prefixes that read as nobody (a narrowing being stamped, an invalid policy file); prefix '' is the whole source. */
@@ -225,7 +230,7 @@ const callerAccessStore = new AsyncLocalStorage<CallerAccess>();
 
 /** The current read's caller-access record (see CallerAccess). */
 export function currentCallerAccess(): CallerAccess {
-  return callerAccessStore.getStore() ?? { identity: [], audience: null, audienceIdentities: [], satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), applyRemoteReadPolicy: false, restricted: true };
+  return callerAccessStore.getStore() ?? { identity: [], audience: null, audienceIdentities: [], actor: null, satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), applyRemoteReadPolicy: false, restricted: true };
 }
 
 /** Runs `fn` under `access` merged over the current record; an invalid identity or source id empties that set (fail closed). */
@@ -238,12 +243,14 @@ export function withCallerAccess<T>(access: Partial<CallerAccess>, fn: () => T):
   const audienceIdentities = (access.audienceIdentities ?? (fresh ? [] : base.audienceIdentities))
     .map(id => id.length && validIdentity(id) ? Object.freeze([...new Set(id)].sort()) : Object.freeze([] as string[]));
   const audience = access.audience !== undefined ? access.audience : fresh ? null : base.audience;
+  const actor = access.actor !== undefined ? access.actor : fresh ? null : base.actor ?? null;
   const satisfiedOk = validIds || audienceIdentities.some(id => id.length > 0);
   const satisfied = satisfiedOk ? access.satisfiedRuleIds ?? (fresh ? [] : base.satisfiedRuleIds) : [];
   return callerAccessStore.run(Object.freeze({
     identity: validIds && audienceIdentities.length <= 1 ? Object.freeze([...new Set(identity)].sort()) : Object.freeze([]),
     audience: audience && audience.every(validAudienceEntry) ? Object.freeze([...audience]) : audience ? Object.freeze([GUEST_ENTRY]) : null,
     audienceIdentities: Object.freeze(audienceIdentities.length > 1 ? audienceIdentities : []),
+    actor: actor ? Object.freeze({ system: actor.system, external_id: actor.external_id, member: actor.member }) : null,
     satisfiedRuleIds: satisfied.length && satisfied.every(validQualifiedRuleId) ? Object.freeze([...new Set(satisfied)].sort()) : Object.freeze([]),
     folderCoverage: Object.freeze([...(access.folderCoverage ?? base.folderCoverage)].map(c => Object.freeze({ source_id: c.source_id, prefix: c.prefix }))),
     privateReadableSources: sources.length && sources.every(isValidSourceId) ? Object.freeze([...new Set(sources)]) : Object.freeze([]),

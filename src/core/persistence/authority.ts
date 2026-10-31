@@ -11,6 +11,7 @@ import { readLocalWriter, currentVerifiedLocalWriter, takeRegisteredWriterRow, v
 import type { Principal, SqlEngine, WriteAuthority, WriteRequest } from './model.ts';
 import { authorizePageVisibility, excludesPrivateWrites } from './page-visibility.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
+import { parseStoredActor, storedActorIdentity } from '../access/actor.ts';
 import { pipelined, transactionMemo } from '../page-state/transactions.ts';
 
 function deny(message: string): never { throw new OperationError('permission_denied', message, 'Inspect the current writer registration and source/operation grants.'); }
@@ -58,8 +59,9 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
     if (!localGrant.sourceIds.includes('*') && !localGrant.sourceIds.includes(sourceId)) deny('The local grant excludes this source.');
   }
   const delegatedJobId = ctx.auth && ctx.viaSubagent ? jobNamespaceKey(ctx.subagentId) : undefined;
-  const audience = ctx.remote !== false ? currentCallerAccess().audience : null;
-  const actingFor = audience?.length ? [...audience] : undefined;
+  const access = ctx.remote !== false ? currentCallerAccess() : null;
+  // GST-359 C1: an attested call stores its actor (never the bare one-member audience), so publication re-resolves the link.
+  const actingFor: WriteAuthority['actingFor'] = access?.actor ? { ...access.actor } : access?.audience?.length ? [...access.audience] : undefined;
   const a: WriteAuthority = {
     version: 1, principal, remote: ctx.remote !== false, sourceId, sourceIncarnation,
     // GBRA-231: a channel audience (anything but one member) never relaxes privacy, so its ceiling hides private pages.
@@ -143,6 +145,11 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
   assertSkillWriteScopes(a.scopes, operation, a.remote);
   if (!hasScope(a.scopes, a.delegated ? 'agent' : 'write') || !operationAllowed(a.operations, operation) || !prefixAllowed(a.slugPrefixes, slug)) deny('The operation exceeds its original accepted grant.');
   if ((a.delegated || a.restrictedNamespace) && (!a.delegatedPrefixes?.length || !matchesSlugAllowList(slug, a.delegatedPrefixes))) deny('The target exceeds the accepted delegated namespace.');
+  if (a.actingFor && !Array.isArray(a.actingFor)) {
+    const actor = parseStoredActor(a.actingFor);
+    if (!actor) deny('The accepted attested actor is malformed.');
+    await storedActorIdentity(engine, a.principal, actor);
+  }
   const suffix = lock ? ' FOR SHARE' : '';
   if (a.principal.kind === 'oauth_client') {
     const [row] = await engine.executeRaw<Record<string, unknown>>(`SELECT deleted_at,scope,source_id,allowed_operations,

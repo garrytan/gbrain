@@ -32,12 +32,13 @@ import { CAPABILITIES_URI } from './capabilities.ts';
 import { resolveAuthCapabilities } from '../core/harness/capabilities.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { buildToolDefs } from './tool-defs.ts';
-import { readInstructionContent, resolveMcpInstructions } from './instructions.ts';
+import { MCP_SERVER_DESCRIPTION, readInstructionContent, resolveMcpInstructions } from './instructions.ts';
 import { httpInstructionTools } from './initialize-context.ts';
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
 import { operations, operationsByName, opAllowedForBoundClient } from '../core/operations.ts';
 import { scopeDeniedError } from '../core/ops/op-fix.ts';
 import { ON_BEHALF_OF_HEADER } from '../core/access/audience.ts';
+import { ACTOR_HEADER, withAttestRight } from '../core/access/actor-model.ts';
 import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
 import type { AuthInfo } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
@@ -297,7 +298,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         token,
         clientId: rowId,
         principal: { kind: 'legacy_token', id: rowId },
-        ...binding,
+        ...withAttestRight(binding, row, 'legacy'),
         clientName: rowName,
         scopes: grant.scopes,
         sourceId,
@@ -453,7 +454,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           {
             result: {
               protocolVersion: '2025-03-26',
-              serverInfo: { name: 'gbrain', version: VERSION },
+              serverInfo: { name: 'gbrain', version: VERSION, description: MCP_SERVER_DESCRIPTION },
               capabilities: { tools: {}, resources: {} },
               // #4748: contract (+ opt-in writeback section) + deployment identity.
               instructions: resolveMcpInstructions(fileConfig, process.env, {
@@ -554,6 +555,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           takesHoldersAllowList: auth.takesHoldersAllowList,
           sourceId: auth.sourceId,
           ...(localFederated ? { localFederatedSourceIds: localFederated } : {}), onBehalfOf: { header: req.headers.get(ON_BEHALF_OF_HEADER) ?? undefined, requestMeta: params?._meta },
+          actor: { header: req.headers.get(ACTOR_HEADER) ?? undefined },
           // #1336: thread the token's federated_read grant so read ops scope
           // to the operator-granted sources via sourceScopeOpts.
           auth: auth.auth,

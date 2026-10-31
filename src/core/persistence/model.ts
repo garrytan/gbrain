@@ -13,7 +13,12 @@ export interface WriteAuthority {
    * GBRA-231: the audience a shared agent asserted for the write (normalized member:<id>, group:<g>, guest). Preparation
    * and publication re-resolve it against the principal's live may_act_for and members, never the principal's own member.
    */
-  actingFor?: string[];
+  /**
+   * GST-359 C1: or the attested actor { system, external_id, member } the write was accepted for. Preparation and
+   * publication re-resolve it through actorCoverage (access/actor.ts): the principal's live attest right and a live
+   * link from the id to the same enabled member, so an unlink, a disabled member or a revoked right refuses it.
+   */
+  actingFor?: string[] | { system: string; external_id: string; member: string };
   databaseOnlyReason?: 'subagent_sandbox' | 'disabled_by_config' | 'no_repo_configured' | 'connector_database' | 'unbound_source' | 'overwrite_restore' | 'detached';
   autoLinkTrusted?: boolean;
   restrictedNamespace?: boolean;

@@ -36,6 +36,7 @@ import { BRAIN_TOOL_ALLOWLIST } from './brain-tool-allowlist.ts';
 import { stagePutPage } from './staged-put-page.ts';
 import { withCallerAccess } from '../../search/private-visibility.ts';
 import { remoteCallerAccess } from '../../access/caller.ts';
+import { attestedCallerAccess, storedActorIdentity } from '../../access/actor.ts';
 import type { AudiencePrincipal } from '../../access/audience.ts';
 import { currentSubmissionAuthority } from '../submission-authority.ts';
 
@@ -316,7 +317,12 @@ function brainTool(op: Operation, opts: BuildBrainToolsOpts): ToolDef {
       // GBRA-231: a job a shared agent submitted for an audience reads as that audience, re-checked the same way.
       const submitted = currentSubmissionAuthority();
       const actingFor = submitted?.kind === 'remote_agent' ? submitted.grant.actingFor as AudiencePrincipal[] | undefined : undefined;
-      const output = opCtx.auth
+      // GST-359 C1: a job submitted for an attested actor reads as that member only while actorCoverage still covers it.
+      const agent = submitted?.kind === 'remote_agent' ? submitted : undefined;
+      const actor = agent?.grant.actor;
+      const output = agent && actor
+        ? await withCallerAccess(await attestedCallerAccess(ctx.engine, actor, await storedActorIdentity(ctx.engine, agent.principal, actor)), run)
+        : opCtx.auth
         ? await withCallerAccess(await remoteCallerAccess(ctx.engine, opCtx.auth, [], undefined, actingFor), run)
         : await run();
       const rejection = op.name === 'put_page' ? putPageRejection(output) : null;

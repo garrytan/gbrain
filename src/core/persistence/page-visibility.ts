@@ -3,6 +3,7 @@ import { callerAccessAllowedSql, callerIdentities, currentCallerAccess, readPoli
 import { parseMarkdown } from '../markdown.ts';
 import { folderAccessForAll, memberIdentityFor, resolveAudienceIdentities } from '../access/caller.ts';
 import type { AudiencePrincipal } from '../access/audience.ts';
+import { parseStoredActor, storedActorIdentity } from '../access/actor.ts';
 import { hasReaders, normalizePrincipal, normalizeReaders, readersAllow, NOBODY } from '../access/principals.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import type { SqlEngine, WriteAuthority } from './model.ts';
@@ -38,6 +39,11 @@ export async function authorizePageVisibility(engine: SqlEngine, authority: Writ
  * or naming a disabled member resolves to the guest identity, which reads no restricted page (fail closed).
  */
 async function writerIdentities(engine: SqlEngine, authority: WriteAuthority): Promise<string[][]> {
+  if (authority.actingFor && !Array.isArray(authority.actingFor)) {
+    // GST-359 C1: an attested write reads as its member only while actorCoverage still covers the same member.
+    const actor = parseStoredActor(authority.actingFor);
+    return [actor ? await storedActorIdentity(engine, authority.principal, actor).catch(() => []) : []];
+  }
   if (!authority.actingFor?.length) return [await memberIdentityFor(engine, authority)];
   try {
     return await resolveAudienceIdentities(engine, { principal: authority.principal, transport: authority.principal.kind === 'local_stdio' ? 'stdio' : 'http' },
@@ -109,7 +115,8 @@ export async function remoteReadersChecked<T extends { parsedPage: { frontmatter
     throw catalogueError('readable_by_invalid', 'This write removes readable_by from a page that names readers.',
       'Nothing was written. A remote write keeps the readable_by line: read the page with get_page include_content:true and keep its frontmatter, or ask the user to widen the page on the brain host.');
   }
-  assertRemoteReadersValid(after, await writerIdentities(engine, authority), authority.actingFor);
+  const acting = authority.actingFor;
+  assertRemoteReadersValid(after, await writerIdentities(engine, authority), Array.isArray(acting) ? acting : acting ? [`member:${acting.member}`] : undefined);
   return prepared;
 }
 
