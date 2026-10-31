@@ -8,7 +8,8 @@
  * links against 'default' — in-session writes got zero edges until a restart.
  *
  * Serial: top-level mock.module (captures runMaintenanceSweep's opts without
- * running the real sweep) + process.chdir (serve.ts resolves from process.cwd()).
+ * running the real sweep, and records which resident tickers a serve starts)
+ * + process.chdir (serve.ts resolves from process.cwd()).
  */
 import { afterAll, describe, expect, mock, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
@@ -17,6 +18,9 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { BrainEngine } from '../src/core/engine.ts';
 import * as realSweep from '../src/core/sweep.ts';
+import * as realDrain from '../src/core/facts/drain-scheduler.ts';
+import * as realMovement from '../src/core/persistence/sync-movement.ts';
+import * as realHeadWatcher from '../src/core/serve-head-watcher.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const sweepCalls: Array<{ sourceId?: string }> = [];
@@ -26,6 +30,20 @@ mock.module('../src/core/sweep.ts', () => ({
     sweepCalls.push(opts);
     return {};
   },
+}));
+
+const tickerStarts: string[] = [];
+mock.module('../src/core/facts/drain-scheduler.ts', () => ({
+  ...realDrain,
+  startFactsDrainScheduler: () => { tickerStarts.push('facts_drain'); return { stop: async () => {} }; },
+}));
+mock.module('../src/core/persistence/sync-movement.ts', () => ({
+  ...realMovement,
+  startMovementWatch: () => { tickerStarts.push('movement_watch'); return { stop: () => {} }; },
+}));
+mock.module('../src/core/serve-head-watcher.ts', () => ({
+  ...realHeadWatcher,
+  startServeHeadWatcher: () => { tickerStarts.push('head_watcher'); return { stop: async () => {} }; },
 }));
 
 // Imported AFTER the mock so serve.ts's lazy `import('../core/sweep.ts')`
@@ -108,5 +126,39 @@ describe('serve idle sweep source resolution (#4679)', () => {
 
     expect(sweepCalls.length).toBe(1);
     expect(sweepCalls[0].sourceId).toBe('wiki');
+  }, 20_000);
+
+  test('#7599: a read-only serve on Postgres arms no idle sweep; read-write, or on PGLite, it does', async () => {
+    const armed: string[] = [];
+    for (const [kind, args] of [['postgres', ['--access', 'read-only']], ['postgres', ['--access=read-only']], ['postgres', []], ['pglite', ['--access', 'read-only']]] as const) {
+      let timers = 0;
+      await withEnv({ GBRAIN_SOURCE: undefined }, () => runServe({ ...makeEngine(['default']), kind } as BrainEngine, [...args], {
+        stdin: new EventEmitter() as never, signals: new EventEmitter() as never, exit: () => {}, log: () => {}, startMcpServer: async () => {},
+        getParentPid: () => 1, probeWatchdog: () => true, setInterval: () => { timers++; return { unref() {} }; }, clearInterval: () => {},
+        mcpStdio: false, bootTimeoutMs: 0, sweepEnabled: true, factsDrain: false,
+      }));
+      armed.push(`${kind} ${args.join(' ') || 'read-write'}: ${timers}`);
+    }
+    expect(armed).toEqual(['postgres --access read-only: 0', 'postgres --access=read-only: 0', 'postgres read-write: 1', 'pglite --access read-only: 1']);
+  }, 20_000);
+
+  test('#7599: a read-only serve on Postgres starts no resident ticker (facts drain, movement watch, head watcher); read-write, or on PGLite, it does', async () => {
+    const started: string[] = [];
+    for (const [kind, args] of [['postgres', ['--access', 'read-only']], ['postgres', ['--access=read-only']], ['postgres', []], ['pglite', ['--access', 'read-only']]] as const) {
+      tickerStarts.length = 0;
+      await withEnv({ GBRAIN_SOURCE: undefined }, () => runServe({ ...makeEngine(['default']), kind } as BrainEngine, [...args], {
+        stdin: new EventEmitter() as never, signals: new EventEmitter() as never, exit: () => {}, log: () => {}, startMcpServer: async () => {},
+        getParentPid: () => 1, probeWatchdog: () => true, setInterval: () => ({ unref() {} }), clearInterval: () => {},
+        mcpStdio: false, bootTimeoutMs: 0, sweepEnabled: false, factsDrain: {},
+      }));
+      started.push(`${kind} ${args.join(' ') || 'read-write'}: ${[...tickerStarts].sort().join(',') || 'none'}`);
+    }
+    // The facts drain is PGLite-only (a Postgres brain has a job worker), so a read-write Postgres serve starts the other two.
+    expect(started).toEqual([
+      'postgres --access read-only: none',
+      'postgres --access=read-only: none',
+      'postgres read-write: head_watcher,movement_watch',
+      'pglite --access read-only: facts_drain,head_watcher,movement_watch',
+    ]);
   }, 20_000);
 });

@@ -190,7 +190,7 @@ describe('master-push reuse of a passed full-suite run', () => {
 
     const e2eReused = runs(e2e, { event: 'push', outputs: { reuse: 'true' } });
     expect(e2eReused).toContain('reused-full-suite');
-    for (const job of ['jsonb-parity', 'tier1', 'tier1-backend-matrix', 'selected-e2e', 'executed-receipts', 'e2e-status', 'e2e-full-suite']) {
+    for (const job of ['jsonb-parity', 'tier1', 'tier1-graduation', 'tier1-backend-matrix', 'selected-e2e', 'executed-receipts', 'e2e-status', 'e2e-full-suite']) {
       expect(e2eReused, job).not.toContain(job);
       expect(runs(e2e, { event: 'push' }), job).toContain(job);
     }

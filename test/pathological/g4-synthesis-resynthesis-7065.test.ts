@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ensureCorpusSpoolDir, sessionCorpusFileName } from '../../src/core/context/corpus-segments.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { runPhaseSynthesize } from '../../src/core/cycle/synthesize.ts';
@@ -66,8 +67,8 @@ async function fixture(managed: boolean, run: (f: Fixture) => Promise<void>) {
   for (const engine of engines) {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-g4-resynth-'));
     const f: Fixture = { engine, sourceId: `resynth-${randomUUID().slice(0, 8)}`, root: join(dir, 'brain'), corpus: join(dir, 'corpus'), transcript: '', managed };
-    f.transcript = join(f.corpus, 'sess-a.txt');
     for (const path of [f.root, f.corpus]) mkdirSync(path);
+    f.transcript = join(ensureCorpusSpoolDir(f.corpus), sessionCorpusFileName('sess-a', f.sourceId));
     writeFileSync(f.transcript, TRANSCRIPT);
     try {
       await withEnv({ GBRAIN_HOME: join(dir, 'home'), ANTHROPIC_API_KEY: 'sk-test-resynth' }, async () => {

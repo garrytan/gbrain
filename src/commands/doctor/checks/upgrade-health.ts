@@ -62,7 +62,7 @@ export function upgradeErrorResolved(
  * in ts order.
  */
 function heldAutoUpgrade(recent: SelfUpgradeAuditEvent[], runningVersion: string): SelfUpgradeAuditEvent | null {
-  const last = recent.filter((e) => e.channel === 'autopilot').at(-1);
+  const last = recent.filter((e) => e.channel === 'autopilot' && e.action !== 'restart_serve').at(-1);
   if (last?.action !== ('unsupported_runtime' satisfies SelfUpgradeAction) || !last.latest) return null;
   return isNewerVersion(runningVersion, last.latest) ? last : null;
 }
@@ -224,7 +224,8 @@ export async function checkUpgradeErrors(
  * The running Bun against the supported floor. The CLI refuses to start below
  * it, so a local doctor normally reports ok; the fail row keeps the fix
  * command for any caller that reaches doctor on an older runtime. A supported
- * runtime below SECURE_BUN_VERSION warns (#7373): a standalone binary embeds
+ * runtime below SECURE_BUN_VERSION warns (#7373; none today, as the floor is
+ * not below it, until a later Bun fix raises SECURE_BUN_VERSION): a standalone binary embeds
  * the Bun it was built with, so its fix is a new gbrain binary, while a bun
  * install runs on the user's Bun and `bun upgrade` fixes it.
  */

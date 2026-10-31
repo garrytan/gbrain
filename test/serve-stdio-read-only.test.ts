@@ -19,7 +19,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { keylessBrainEnv } from './helpers/provider-env.ts';
 import { operations } from '../src/core/operations.ts';
-import { isReadOnlyOperation } from '../src/mcp/surface.ts';
+import { isReadOnlyOperation, parseAccessFlag, parseSurfaceFlag } from '../src/mcp/surface.ts';
 import { CAPABILITIES_URI } from '../src/mcp/capabilities.ts';
 
 const MARKER = 'readonly-marker-4768';
@@ -66,6 +66,36 @@ test('the read-only predicate admits only non-mutating read operations of the li
   for (const name of ['search', 'get_page', 'query', 'recall']) expect(isReadOnlyOperation(operations.find(op => op.name === name)!)).toBe(true);
 });
 
+test('--access reads both forms; a read-only value is never widened, and a bad value refuses', () => {
+  expect(parseAccessFlag([])).toBe('full');
+  for (const args of [['--access', 'read-only'], ['--access=read-only'], ['--access=full', '--access', 'read-only'], ['--access', 'read-only', '--access=full']])
+    expect(parseAccessFlag(args)).toBe('read-only');
+  for (const args of [['--access', 'full'], ['--access=full']]) expect(parseAccessFlag(args)).toBe('full');
+  for (const args of [['--access'], ['--access='], ['--access=readonly'], ['--access', '--surface']])
+    expect(() => parseAccessFlag(args)).toThrow(/--access takes read-only or full/);
+});
+
+test('--surface reads both forms; a repeated flag takes the narrowest value, and a bad value refuses', () => {
+  expect(parseSurfaceFlag([])).toBeNull();
+  for (const args of [['--surface', 'verbs'], ['--http', '--surface=verbs'], ['--surface=full', '--surface', 'verbs'], ['--surface', 'starter', '--surface=verbs']])
+    expect(parseSurfaceFlag(args)).toBe('verbs');
+  expect(parseSurfaceFlag(['--surface=starter'])).toBe('starter');
+  // The wider value last never widens: narrowest wins whatever the order.
+  expect(parseSurfaceFlag(['--surface', 'verbs', '--surface=full'])).toBe('verbs');
+  for (const args of [['--surface'], ['--surface='], ['--surface', '--http']]) expect(() => parseSurfaceFlag(args)).toThrow(/--surface requires a value/);
+  expect(() => parseSurfaceFlag(['--surface=all'])).toThrow(/Unknown --surface "all"/);
+});
+
+test('a stdio serve with --surface=verbs lists the verbs surface, not the full one', async () => {
+  const listed = async (args: string[]) => {
+    const { client, close } = await session(args);
+    try { return (await client.listTools()).tools.map(tool => tool.name).sort(); } finally { await close(); }
+  };
+  const verbs = await listed(['--surface', 'verbs']);
+  expect(await listed(['--surface=verbs'])).toEqual(verbs);
+  expect((await listed([])).length).toBeGreaterThan(verbs.length);
+}, 90_000);
+
 describe('serve --access read-only', () => {
   for (const surface of ['full', 'starter', 'verbs'] as const) {
     test(`${surface}: catalog, capabilities and dispatch agree and refuse every mutation`, async () => {
@@ -95,6 +125,16 @@ describe('serve --access read-only', () => {
     }, 60_000);
   }
 
+  test('--access=read-only is the same ceiling, not a full-access serve', async () => {
+    const { client, close } = await session(['--access=read-only']);
+    try {
+      const listed = (await client.listTools()).tools.map(tool => tool.name);
+      expect(listed.length).toBeGreaterThan(0);
+      for (const name of listed) expect(isReadOnlyOperation(operations.find(op => op.name === name)!)).toBe(true);
+      expect(errorOf(await client.callTool({ name: 'put_page', arguments: { slug: 'notes/injected', content: '# Injected' } }))).toBe('unknown_tool');
+    } finally { await close(); }
+  }, 60_000);
+
   test('nothing was written and the default access is unchanged', async () => {
     const { client, close } = await session([]);
     try {
@@ -110,5 +150,8 @@ describe('serve --access read-only', () => {
     const refused = cli(['serve', '--http', '--access', 'read-only', '--port', '0']);
     expect(refused.status).not.toBe(0);
     expect(refused.stderr).toContain('gbrain auth rescope-token <name> --operations');
+    const refusedEq = cli(['serve', '--http', '--access=read-only', '--port', '0']);
+    expect(refusedEq.status).not.toBe(0);
+    expect(refusedEq.stderr).toContain('gbrain auth rescope-token <name> --operations');
   });
 });

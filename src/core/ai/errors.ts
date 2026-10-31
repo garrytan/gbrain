@@ -287,7 +287,7 @@ const STRUCTURED_JSON_STATUS_RE =
 const STRUCTURED_PROSE_STATUS_RE =
   /(?:\bHTTP[ /]|\bstatus(?:\s+code)?\s*[:= ]\s*)(401|402|403|429)\b/i;
 
-function numericStatusOf(e: unknown): number | undefined {
+export function numericStatusOf(e: unknown): number | undefined {
   const anyErr = e as Record<string, unknown> | null | undefined;
   for (const key of ['status', 'statusCode', 'apiErrorStatus', 'api_error_status']) {
     const v = anyErr?.[key];
@@ -303,7 +303,7 @@ function numericStatusOf(e: unknown): number | undefined {
  * only, and the walk stops after `limit` layers or at a layer already seen,
  * so a self-referencing chain cannot loop.
  */
-function* wrappedErrorLayers(err: unknown, limit = 5): Generator<Record<string, unknown>> {
+export function* wrappedErrorLayers(err: unknown, limit = 5): Generator<Record<string, unknown>> {
   const seen = new Set<object>();
   let layer = err;
   while (layer !== null && typeof layer === 'object' && seen.size < limit && !seen.has(layer)) {

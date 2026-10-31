@@ -19,7 +19,7 @@ export async function runAgentSetupCli(args: string[]): Promise<number> {
       values[args[i]] = args[++i];
     }
     if (!values['--root'] || !values['--harness'] || !values['--bundle'] || !values['--source-ref']) throw new AgentInstallError('usage', 'Use the package-shipped setup-in-agent.sh helper with an absolute --root and --harness.');
-    const result = await setupInAgent({ root: values['--root'], harness: values['--harness'] as AgentSetupOptions['harness'], bundle: values['--bundle'], sourceRef: values['--source-ref'], adopt: args.includes('--adopt'), upgrade: args.includes('--upgrade'), skills: values['--skills'] as AgentSetupOptions['skills'] });
+    const result = await setupInAgent({ root: values['--root'], harness: values['--harness'] as AgentSetupOptions['harness'], bundle: values['--bundle'], sourceRef: values['--source-ref'], adopt: args.includes('--adopt'), upgrade: args.includes('--upgrade'), skills: values['--skills'] as AgentSetupOptions['skills'], json });
     if (json) console.log(JSON.stringify({ ok: true, ...result }));
     else console.log(`${result.status}: ${result.launcher}\nInstructions: ${result.instructions}\nMaintenance: ${result.maintenance}\nShared skills: ${result.shared_skills.status} (${result.shared_skills.reason}). ${result.shared_skills.next_action}\nNative harness integration is unverified; enable the skill and test a new conversation.${result.search_mode_confirmation_required ? '\nRelay the init search-mode matrix and confirm the user’s choice before optional provider setup.' : ''}`);
     return 0;

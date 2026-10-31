@@ -30,7 +30,7 @@ import { initialEntryState, readEntryState, timelineEntryState, type EntryState 
 import { ContentHashStream } from './content-hash-stream.ts';
 import { prepareSegmentChunks } from './segment-chunks.ts';
 import { reuseSegmentChunkVectors } from '../import-chunk-reuse.ts';
-import { newFenceChunkBudget } from '../markdown-chunks.ts';
+import { newFenceChunkBudget, type FenceChunkBudget } from '../markdown-chunks.ts';
 import { loadFenceChunkOverlay } from '../eligibility/fence-overlay.ts';
 import { withdrawalFenceBlocks } from '../facts/withdrawal-overlay.ts';
 import { overlaySegmentText, readBodyLedger, type BodyLedger } from './segment-ledger.ts';
@@ -334,7 +334,7 @@ async function stageBody(engine: BrainEngine, input: SegmentedBodyInput, staging
   const chunkable = await occurrencesWithoutChunks(engine, input.live.id, expectedGeneration, rows);
   const chunks = await stageOccurrenceChunks(engine, { pageId: input.live.id, sourceId: input.sourceId, slug: input.slug, generation: newGeneration,
     occurrences: chunkable, title: input.title, frontmatter: input.frontmatter, flags: body.body_flags, chunking: input.chunking,
-    retiredOccurrences: retireChunkOccurrences });
+    retiredOccurrences: retireChunkOccurrences, truthLead: body.truth_lead });
   await faultPoint('segmented:chunks_staged', { sourceId: input.sourceId });
   const kept = new Set(rows.filter((_, i) => matched[i]).map(row => row.occurrenceId));
   retireChunkOccurrences.push(...chunkable.filter(row => kept.has(row.occurrenceId)).map(row => row.occurrenceId));
@@ -378,6 +378,8 @@ export const segmentChunkWork = { batches: 0, chunks: 0, heldBytes: 0 };
 export async function stageOccurrenceChunks(engine: BrainEngine, input: { pageId: number; sourceId: string; slug: string; generation: number;
   occurrences: readonly ManifestRowInput[]; title: string; frontmatter: JsonObject; flags: JsonObject; chunking: SegmentChunkingContext;
   retiredOccurrences: readonly number[];
+  /** The truth_lead the write stores, for the vector reuse onto a page stored under per-chunk synopsis; omitted, the stored one. */
+  truthLead?: string;
   /** Projection: each batch inserts under the page guard, at most PROJECTION_LOCK_HOLD_BYTES of occurrences per transaction, after re-reading which
    *  occurrences still lack rows, so two projections never both chunk one; a page whose generation moved past `generation` stops the projection before it inserts. */
   guarded?: boolean;
@@ -385,10 +387,12 @@ export async function stageOccurrenceChunks(engine: BrainEngine, input: { pageId
   hold?: SegmentChunkInput[];
   /** Guarded: runs in each insert transaction before its insert (the projection renews its claim on the page's queue row);
    *  false when the caller lost its claim: that transaction inserts nothing and the staging stops. */
-  renew?: (tx: BrainEngine) => Promise<boolean> }): Promise<{ rows: number; occurrences: number; indexes: number[] }> {
+  renew?: (tx: BrainEngine) => Promise<boolean>;
+  /** The page's fence-chunk budget when one page is chunked over several calls (the re-chunk, page-body/rechunk.ts); default a new one. */
+  fenceBudget?: FenceChunkBudget }): Promise<{ rows: number; occurrences: number; indexes: number[] }> {
   if (input.chunking.quarantined || !input.occurrences.length) return { rows: 0, occurrences: 0, indexes: [] };
   const batchBytes = STAGE_BATCH_BYTES[engine.kind];
-  const fenceBudget = newFenceChunkBudget();
+  const fenceBudget = input.fenceBudget ?? newFenceChunkBudget();
   let ledger: BodyLedger | undefined;
   let rows = 0, done = 0;
   const indexes: number[] = [];
@@ -419,7 +423,8 @@ export async function stageOccurrenceChunks(engine: BrainEngine, input: { pageId
       }
     }
     if (chunks.length && input.retiredOccurrences.length) await reuseSegmentChunkVectors(engine, { pageId: input.pageId,
-      retiredOccurrences: input.retiredOccurrences, chunks, title: input.title, corpusGeneration: input.chunking.corpusGeneration, tier: input.chunking.tier });
+      retiredOccurrences: input.retiredOccurrences, chunks, title: input.title, corpusGeneration: input.chunking.corpusGeneration, tier: input.chunking.tier,
+      truthLead: input.truthLead });
     segmentChunkWork.batches++;
     segmentChunkWork.chunks += chunks.length;
     if (input.hold) input.hold.push(...chunks);

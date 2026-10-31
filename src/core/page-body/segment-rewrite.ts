@@ -26,6 +26,7 @@ import { ContentHashStream } from './content-hash-stream.ts';
 import type { StoredRegion } from './segmenter.ts';
 import type { BodyRegion, JsonObject, ManifestRow } from './types.ts';
 import { assertGenerationTiles } from './body-tiling.ts';
+import { deleteRewrittenDerivations } from './segment-derive.ts';
 
 /** Rewrites one fence (the text of a stored facts or takes region, markers included), given the body region holding it; called in body order. */
 export type FenceTransform = (fence: string, at: { region: BodyRegion }) => Promise<string>;
@@ -154,6 +155,8 @@ const rewriteTier = (page: { contextual_retrieval_mode: string | null; corpus_ge
 export interface LiveFenceRewrite {
   /** Segment shas the old generation referenced in place of the rewritten units. */
   replaced: Uint8Array[];
+  /** page_segment_derivations rows deleted because they may hold the replaced text (deleteRewrittenDerivations). */
+  derivations: number;
   /** False when the page was left unsealed (its projection runs after commit: `buildSegmentedProjection`). */
   sealed: boolean;
 }
@@ -162,7 +165,8 @@ export interface LiveFenceRewrite {
  * Rewrite the fences of a segmented page's live body through `transform`, in
  * the caller's transaction: a new generation whose unchanged segments keep
  * their rows and chunks, and whose rewritten segments get new occurrences
- * (their chunks staged here, the old ones retired by the flip). A fence edit
+ * (their chunks staged here, the old ones retired by the flip), and the
+ * derivation rows that may hold the replaced text are deleted. A fence edit
  * is not authorship, so the page keeps its trust tier; a soft-deleted page
  * stays deleted. Null when no fence changed (nothing is written).
  */
@@ -189,7 +193,8 @@ export async function rewriteLiveSegmentedFences(tx: BrainEngine, pageId: number
     retireMaxRows: flipRetireMaxRows, meta: { title: page.title, type: page.type as never, frontmatter, page_kind: page.page_kind as never } }));
   if (page.deleted_at) await tx.executeRaw('UPDATE pages SET deleted_at=$2 WHERE id=$1', [pageId, page.deleted_at]);
   if (applied.complete) await sealSegmentedPage(tx, pageId);
-  return { replaced: replacedShas(rows, units), sealed: applied.complete };
+  const derivations = await deleteRewrittenDerivations(tx, pageId, rows, units);
+  return { replaced: replacedShas(rows, units), sealed: applied.complete, derivations };
 }
 
 const MANIFEST_COLUMNS = `page_id,occurrence_id,seq,region,source_id,sha256,byte_start,byte_len,line_start,line_count,cut_kind,entry_state,

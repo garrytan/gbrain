@@ -54,7 +54,7 @@ const DEFAULT_WEIGHTS_PATH = resolve(REPO_ROOT, "scripts/test-weights.json");
  * test.yml's unit matrix size, also e2e.yml's coverage-full-unit matrix;
  * test/scripts/unit-shard-budget.test.ts pins both workflows to it.
  */
-export const UNIT_SHARDS = 22;
+export const UNIT_SHARDS = 28;
 /** Unit shards each test.yml `test` job runs at once (scripts/test-shard-pack.sh); test/scripts/ci-gates.test.ts pins the matrix to it. */
 export const UNIT_SHARDS_PER_JOB = 2;
 /** test.yml's `test` job `timeout-minutes: 22`: the only bound on a unit shard, its setup steps included. */

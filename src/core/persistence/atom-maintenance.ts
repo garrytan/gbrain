@@ -407,15 +407,18 @@ async function waitAtomReceipts(engine: BrainEngine, session: ManagedAtomSession
   return receipts;
 }
 
-export interface ResumedMember { slug: string; activation_id: string; action: 'overwrite' | 'retire'; outcome: 'waited' | 'resubmitted' | 'kept_edited' | 'unrecoverable' }
+export interface ResumedMember { slug: string; activation_id: string; action: 'overwrite' | 'retire'; outcome: 'waited' | 'resubmitted' | 'kept_edited' | 'unrecoverable' | 'held_session_source'; reason?: string }
 
 /**
  * GBRA-161 PR 1b: finishes what a crash after an activation left pending in this source. A member request still queued
  * is waited on; one that ended without committing (or was never journaled) is submitted again under a fresh id bound to
  * the failed one, unless its page changed since the activation planned it (then the page keeps its content and the mark
- * clears: a person's edit wins). Returns one entry per pending member.
+ * clears: a person's edit wins). A transcript member whose session no longer resolves to this source (#7870: a generation
+ * planned before session routing) is held instead: not resubmitted, its page and pending mark left as they are, reported
+ * with the reason. Returns one entry per pending member.
  */
-export async function resumeManagedGenerationMembers(engine: BrainEngine, session: ManagedAtomSession): Promise<ResumedMember[]> {
+export async function resumeManagedGenerationMembers(engine: BrainEngine, session: ManagedAtomSession,
+  opts: { corpusDir: string | null }): Promise<ResumedMember[]> {
   const pending = await listPendingMembers(engine, [session.sourceId], atomGenerationAdapter.kind);
   const resumed: ResumedMember[] = [];
   for (const member of pending) {
@@ -425,6 +428,11 @@ export async function resumeManagedGenerationMembers(engine: BrainEngine, sessio
       if (row.state === 'committed') { resumed.push({ slug: member.slug, activation_id: member.activation_id, action: member.action, outcome: 'waited' }); continue; }
     }
     if (row?.state === 'committed') continue;
+    const origin = (row?.intent as AtomIntent | null | undefined)?.origin;
+    const hold = origin?.kind === 'transcript'
+      ? await (await import('../cycle/synthesize-source-routing.ts')).transcriptSourceHold(engine, origin.locator, { corpusDir: opts.corpusDir, sourceId: session.sourceId })
+      : null;
+    if (hold) { resumed.push({ slug: member.slug, activation_id: member.activation_id, action: member.action, outcome: 'held_session_source', reason: hold.reason }); continue; }
     resumed.push({ slug: member.slug, activation_id: member.activation_id, action: member.action, outcome: await resubmitMember(engine, session, member, row) });
   }
   return resumed;

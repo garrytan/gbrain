@@ -59,6 +59,7 @@ import { nativeFileTarget } from './native-file-target.ts';
 import { sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { isLockOpenFailure, type NativeLockHandle } from './native-lock.ts';
 import { planPageEmbedding } from '../page-embedding-budget.ts';
+import { acquirePageEmbeddingLease, pageEmbeddingLeaseUnavailable } from '../page-embedding-lease.ts';
 import { chunkGenerationFilter, chunkManifestReads } from '../search/safe-chunks.ts';
 import { classifyItemFailure, ItemRun } from '../item-failure.ts';
 
@@ -89,6 +90,8 @@ export interface EffectWorkerOptions {
   embedding?: { signature: string; model: string; embed: typeof embedBatch };
   /** GBRA-133: owner keys the consumer proved dead (`deadOwnerClaims`); their running effects are claimed before the lease lapses. */
   deadOwners?: readonly string[];
+  /** How long a pass waits for a contended worktree (default EFFECT_LOCK_WAIT_MS); production never supplies this. */
+  lockWaitMs?: number;
 }
 
 export async function selectedEffectPage(engine: BrainEngine, effect: PersistenceEffect): Promise<PageSnapshot | null> {
@@ -454,6 +457,13 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
   const segmented = await readSegmentedEmbedPage(engine, { id: snapshot.page.id });
   if (segmented) { await embedSegmentedEffect(engine, config, effect, snapshot, segmented, signature, opts); return; }
   await faultPoint('effect:embedding:page_read', { effectId: effect.id, requestId: effect.request_id, sourceId: effect.source_id });
+  // A stale drain or another worker embedding this page finishes first; the projection read below then finds its chunks complete.
+  await using pageLease = await acquirePageEmbeddingLease(engine, snapshot.page.id, { signal: opts.signal, whileWaiting: async () => {
+    if (!await renewPersistenceEffectClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, effect)) throw opError('write_claim_lost', 'The embedding claim changed.',
+      `Another worker took over the embedding of ${snapshot.page.slug} in source ${effect.source_id}; this attempt stops without installing vectors and the owning claim finishes it.`,
+      { fix: effectStatusFix(effect) });
+  } });
+  if (pageLease.busy) throw pageEmbeddingLeaseUnavailable(snapshot.page.id, false);
   // A write that committed after the page read above leaves no projection at this revision to wait for: the effect is
   // superseded, as when the page read already saw the newer revision; only the effect's own revision still unsealed retries.
   const projection = await readEmbeddingEffectProjection(engine, effect, snapshot, opts.hostId, signature, opts.embedding?.model).catch(async error => {
@@ -527,6 +537,7 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
       await tx.executeRaw("SELECT key FROM config WHERE key='embedding_disabled' FOR SHARE");
       await assertEmbeddingEffectEnabled(tx, config);
       signal.throwIfAborted();
+      await pageLease.assertHeld(tx);
       // A partially refused page keeps its signature unstamped so `gbrain embed --stale` finds the refused chunks.
       // A partial install (the page changed under the provider call) keeps the vectors whose chunk and input
       // still match and settles like a superseded one: the newer revision's own effect embeds the rest.
@@ -585,6 +596,7 @@ async function embedSegmentedEffect(engine: BrainEngine, config: GBrainConfig, e
     { fix: effectStatusFix(effect) });
   const embed = opts.embedding?.embed ?? embedBatch;
   const result = await embedSegmentedPage(engine, page, { signature, signal: opts.signal, occurrenceIds: effect.data.occurrence_ids,
+    whileWaiting: async () => { if (!await renewPersistenceEffectClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, effect)) throw claimLost(); },
     embedFn: (texts, o) => withAIInvocationPreflight(async () => {
       opts.signal?.throwIfAborted();
       if (!await renewPersistenceEffectClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, effect)) throw claimLost();
@@ -598,6 +610,7 @@ async function embedSegmentedEffect(engine: BrainEngine, config: GBrainConfig, e
     } });
   if (result.stopped === 'budget') { await completeEffect(engine, effect, { embedding: 'skipped', reason: 'budget_capped' }); return; }
   if (result.stopped === 'page_moved') { await completeEffect(engine, effect, { embedding: 'superseded', reason: 'revision_changed' }); return; }
+  if (result.stopped === 'busy') throw pageEmbeddingLeaseUnavailable(page.id, false);
   const stamp = await resolveProvenanceStamp(engine, signature);
   if (stamp) await stampIfPageProvenanceComplete(engine, page.slug, page.source_id, stamp);
   await finishPage(engine, effect, snapshot);
@@ -808,7 +821,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
     const path = binding.coordination_path ?? '';
     if (stalled.has(path)) return acquireWorktree(binding, 0, undefined, engine);
     waited.add(path);
-    const lock = await acquireWorktreeWaiting(binding, engine, EFFECT_LOCK_WAIT_MS, opts.signal);
+    const lock = await acquireWorktreeWaiting(binding, engine, opts.lockWaitMs ?? EFFECT_LOCK_WAIT_MS, opts.signal);
     if (!lock) stalled.add(path);
     return lock;
   };

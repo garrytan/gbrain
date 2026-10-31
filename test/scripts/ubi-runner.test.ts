@@ -75,7 +75,7 @@ describe("teardown waits for in-flight creates", () => {
       const proc = spawnRunner(["up"], { UBI_OWNER: "t1" });
       const started = await waitForEvent(api, /^create-start /);
       const name = started.split(" ")[1]!;
-      expect(name).toMatch(/^ubirun-t1-\d{10}-[0-9a-f]{8}$/);
+      expect(name).toMatch(/^ubirun-t1-\d{10}-[0-9a-f]{8}-t999$/);
       proc.kill(signal);
       expect(await proc.exited).toBe(130);
       expect(api.events).toEqual([`create-start ${name}`, `created ${name}`, `destroy ${name}`, `removed ${name}`]);

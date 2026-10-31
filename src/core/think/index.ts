@@ -38,6 +38,7 @@ import { resolveThinkWindow } from './temporal-window.ts';
 import { resolveThinkTemporalContext } from './temporal-context.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { deliverEvidence, effectivePlan, resolveEvidencePlan, EVIDENCE_BLOCK_CHAR_CAP, THINK_RETURN_UNIT_CONFIG_KEY, type DeliveryMeta } from '../search/evidence-delivery.ts';
+import { evidenceTitlesEnabled } from '../search/evidence-date.ts';
 import { startThinkDecide, thinkAbstainResult, type ThinkAbstention } from './decide.ts';
 import { classifyIntent } from './intent.ts';
 import { deriveTrust, type TaintRef } from '../trust/taint.ts';
@@ -555,17 +556,18 @@ function stampCitationSources(citations: ParsedCitation[], pages: SearchResult[]
 }
 
 async function renderThinkPages(engine: BrainEngine, opts: RunThinkOpts, pages: SearchResult[], timeZone: string, warnings: string[]): Promise<{ pagesBlock: string; evidenceTruncated: boolean; evidenceDelivery?: DeliveryMeta }> {
-  const [plan, budget] = await Promise.all([
+  const [plan, budget, titles] = await Promise.all([
     resolveEvidencePlan(engine, {
       remote: opts.remote, returnUnit: undefined, returnWindow: undefined, budget: undefined,
       snippetChars: undefined, snippetCap: 0, configKey: THINK_RETURN_UNIT_CONFIG_KEY, op: 'think',
     }),
     readThinkPagesBudget(engine, warnings), // #5461
+    evidenceTitlesEnabled(engine), // GBRA-205
   ]);
   const excerptLen = pagesBlockExcerptLen(pages.length, undefined, budget);
   const applied = effectivePlan(plan, pages);
   if (!applied) {
-    const rendered = renderPagesBlockDetailed(pages, excerptLen, opts.question, { timeZone });
+    const rendered = renderPagesBlockDetailed(pages, excerptLen, opts.question, { timeZone, titles });
     return { pagesBlock: rendered.text, evidenceTruncated: rendered.truncated };
   }
   const delivered = await deliverEvidence(engine, pages, applied, {
@@ -575,8 +577,8 @@ async function renderThinkPages(engine: BrainEngine, opts: RunThinkOpts, pages: 
   });
   const rendered = applied.unit === 'auto'
     ? renderPagesBlockDetailed(delivered.results, excerptLen, opts.question,
-      { verbatim: r => r.delivered?.reason !== 'not_conversation' && r.delivered?.reason !== 'conversation_over_budget', verbatimLen: EVIDENCE_BLOCK_CHAR_CAP, timeZone })
-    : renderPagesBlockDetailed(delivered.results, EVIDENCE_BLOCK_CHAR_CAP, opts.question, { verbatim: true, timeZone });
+      { verbatim: r => r.delivered?.reason !== 'not_conversation' && r.delivered?.reason !== 'conversation_over_budget', verbatimLen: EVIDENCE_BLOCK_CHAR_CAP, timeZone, titles })
+    : renderPagesBlockDetailed(delivered.results, EVIDENCE_BLOCK_CHAR_CAP, opts.question, { verbatim: true, timeZone, titles });
   return { pagesBlock: rendered.text, evidenceTruncated: rendered.truncated, evidenceDelivery: delivered.delivery };
 }
 

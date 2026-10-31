@@ -166,14 +166,16 @@ export async function readLivePassRows(engine: Exec, sourceIds?: readonly string
  * Writes the pass row inside `tx` (the caller has run `assertDrainLease` in the same transaction). `pin`: the pass that
  * just took the lease replaces whatever row a former holder left; otherwise the write lands only while the row still
  * carries `leaseToken`. Returns false when it did not land (another pass pinned since). `clock`: `telemetry.started_at` is the
- * transaction's clock (`now()`, as an ISO string), so the write needs no earlier read of it.
+ * transaction's clock (`now()`, as an ISO string), so the write needs no earlier read of it. `onlyOpen`: the write lands only
+ * on a row still `open`, so a stop after a folded stamp ended the row `synced` never rewrites the stamp's obligations.
  */
-export async function writePassRow(tx: Exec, value: ManagedSyncPassValue, opts: { pin?: boolean; clock?: boolean } = {}): Promise<boolean> {
+export async function writePassRow(tx: Exec, value: ManagedSyncPassValue, opts: { pin?: boolean; clock?: boolean; onlyOpen?: boolean } = {}): Promise<boolean> {
   const json = opts.clock ? `jsonb_set($3::text::jsonb,'{telemetry,started_at}',to_jsonb(to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')))` : '$3::text::jsonb';
   const rows = await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES($1,$2,jsonb_build_array(${json}),now())
     ON CONFLICT (op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys, updated_at=now()
-      WHERE $4::boolean OR op_checkpoints.completed_keys->0->>'lease_token'=$5 RETURNING 1`,
-  [MANAGED_SYNC_PASS_OP, passFingerprint(value.source_id, value.incarnation), JSON.stringify(value), opts.pin === true, value.lease_token]);
+      WHERE ($4::boolean OR op_checkpoints.completed_keys->0->>'lease_token'=$5)
+        AND (NOT $6::boolean OR op_checkpoints.completed_keys->0->'telemetry'->>'outcome'='open') RETURNING 1`,
+  [MANAGED_SYNC_PASS_OP, passFingerprint(value.source_id, value.incarnation), JSON.stringify(value), opts.pin === true, value.lease_token, opts.onlyOpen === true]);
   return rows.length > 0;
 }
 

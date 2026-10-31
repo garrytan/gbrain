@@ -41,6 +41,7 @@ import {
   connectionGateEntry,
 } from './checks/db-connection.ts';
 import { ipcSocketPathEntry } from './checks/local-ipc.ts';
+import { functionSearchPathEntry } from './checks/function-search-path.ts';
 import {
   pgvectorEntry,
   rlsEntry,
@@ -114,14 +115,17 @@ import { plannerStatsEntry } from './checks/planner-stats.ts';
 import { revisionBackfillEntry } from './checks/revision-backfill.ts';
 import { beliefLedgerEntry } from './checks/belief-ledger.ts';
 import { trustTiersEntry } from './checks/trust-tiers.ts';
+import { provenanceStampDriftEntry } from './checks/provenance-stamp-drift.ts';
 import { trustScanEntry } from './checks/trust-scan.ts';
 import { trustSourcesUnclaimedEntry } from './checks/trust-sources-unclaimed.ts';
+import { trustReleaseUnpreviewedEntry } from './checks/trust-release-unpreviewed.ts';
 import { harnessWiringDoctorEntry } from './checks/harness-wiring.ts';
 import { agentContractEntry } from './checks/agent-contract.ts';
 import { chatFallbackChainEntry } from './checks/chat-fallback.ts';
 import { providerConsentEntry } from './checks/provider-consent.ts';
 import { behaviorChangesEntry } from './checks/behavior-changes.ts';
 import { fenceIntegrityEntry } from './checks/fence-integrity.ts';
+import { outsideContentFencesEntry } from './checks/outside-content-fences.ts';
 import { dbAheadOfGitEntry } from './checks/db-ahead-of-git.ts';
 import { gitIndexLagEntry } from './checks/git-index-lag.ts';
 import { syncConfigKeysEntry } from './checks/sync-config-keys.ts';
@@ -134,6 +138,7 @@ import { renameIdentityDowngradesEntry } from './checks/rename-identity-downgrad
 import { unindexedFilesEntry } from './checks/unindexed-files.ts';
 import { syncLandingGapsEntry } from './checks/landing-gaps.ts';
 import { purgeParkedPagesEntry } from './checks/purge-parks.ts';
+import { derivationPurgeSweepsEntry } from './checks/derivation-purge-sweeps.ts';
 import { missingRecordedFilesEntry } from './checks/missing-recorded-files.ts';
 import { uncommittedSyncDeletionsEntry } from './checks/uncommitted-sync-deletions.ts';
 import { overwrittenEditsEntry } from './checks/overwritten-edits.ts';
@@ -145,6 +150,7 @@ import { managedSyncBlockedEntry } from './checks/managed-sync-blocked.ts';
 import { syncAdmissionEntry } from './checks/sync-admission.ts';
 import { atomHeldFailedEntry } from './checks/atom-holds.ts';
 import { extractionInputTruncatedEntry } from './checks/extraction-input.ts';
+import { derivationUnpricedModelEntry } from './checks/derivation-pricing.ts'; // PR 4 (Wave B incremental derivation, transcripts)
 import {
   persistenceCapacityEntry,
   terminalFailuresEntry,
@@ -209,6 +215,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   memberAccessEntry,
   folderAccessEntry,
   rlsEntry,
+  functionSearchPathEntry,
   schemaVersionEntry,
   rlsEventTriggerEntry,
   embeddingsEntry,
@@ -269,19 +276,23 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   revisionBackfillEntry,
   beliefLedgerEntry,
   trustTiersEntry,
+  provenanceStampDriftEntry,
   trustScanEntry,
   trustSourcesUnclaimedEntry,
+  trustReleaseUnpreviewedEntry,
   coreMemoryEntry,
   persistenceConsumersEntry,
   runtimeBuildSkewEntry,
   cliSocketRefusalsEntry,
   atomHeldFailedEntry,
   extractionInputTruncatedEntry,
+  derivationUnpricedModelEntry,
   ghostPagesEntry,
   originTwinsEntry,
   slugPathMismatchEntry,
   renameIdentityDowngradesEntry,
   purgeParkedPagesEntry,
+  derivationPurgeSweepsEntry,
   missingRecordedFilesEntry,
   uncommittedSyncDeletionsEntry,
   unindexedFilesEntry,
@@ -295,6 +306,8 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   dbAheadOfGitEntry,
   // Git-canonical G3: how far each strict source's index trails the commit at HEAD.
   gitIndexLagEntry,
+  // GBRA-221: live fence rows on imported pages whose body is outside-authored text (review only).
+  outsideContentFencesEntry,
   fenceIntegrityEntry,
   searchModeEntry,
 ];

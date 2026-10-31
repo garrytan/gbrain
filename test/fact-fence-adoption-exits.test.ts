@@ -17,6 +17,18 @@
  *   that will submit are checked before the fence step admits anything.
  * - One unadoptable legacy row no longer stops the phantom-redirect pass for
  *   the whole source; only a phantom that owns legacy rows is held.
+ * - G4: a legacy row with a NULL `notability` (a brain whose column lost its
+ *   NOT NULL, as some long-lived brains have it) adopts into its page's fence
+ *   with the column default `medium`, on the managed and the unmanaged path,
+ *   and the fence row reads back as the row. Before, the fence row rendered
+ *   `null` in the notability cell, the codec oracle refused it as `parse`,
+ *   and the row stayed unfenced on every run, keeping its page out of
+ *   reconciliation and booking the source's facts fence as an
+ *   `integrity_guard` halt.
+ * - G4: a legacy row that copies a fenced claim of its page (`duplicate_claim`)
+ *   is never adopted; `gbrain repair duplicate-facts` keeps the fence row and
+ *   retires the legacy copy onto it, and the page then leaves the guard.
+ *   Before, the repair kept an older legacy copy and held the fence row.
  * Seams: planFence against an engine stub, the managed-brain helper for the
  * coordinator path, PGLite for the extract_facts cycle, and an unmanaged
  * brain with a source checkout (PGLite and Postgres) for the file path.
@@ -27,7 +39,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { fenceCellReadBackProblem, parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, type ParsedFact } from '../src/core/facts-fence.ts';
-import { fenceUnfencedFacts, planFence, planUnfencedFacts, type UnfencedFactRow } from '../src/core/facts/unfenced-facts.ts';
+import { adoptableClaim, fenceRowOf, fenceUnfencedFacts, planFence, planUnfencedFacts, type UnfencedFactRow } from '../src/core/facts/unfenced-facts.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import { FACT_FENCE_PLANNER, maintenancePreflight, planFactFenceAdoption, submitFactFenceAdoption } from '../src/core/persistence/prepared-maintenance.ts';
@@ -39,6 +51,7 @@ import { LEGACY_FILE_SLUG, seedLegacyManagedContent, type LegacySeed } from './h
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { runRepairCommand } from '../src/commands/repair.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { managedPersistenceEnabled } from '../src/core/persistence/ownership.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
@@ -99,6 +112,25 @@ describe('planFence reuses a leftover cell without widening or overwriting it (#
     expect(fenceCellReadBackProblem({ ...cell, claim: '' }, { fact: '', visibility: 'world' })).toBe('empty');
     expect(fenceCellReadBackProblem(cell, { fact: 'a\nb', visibility: 'private' })).toBe('visibility');
     expect(fenceCellReadBackProblem(cell, { fact: 'a b', visibility: 'world' })).toBe('text');
+  });
+});
+
+describe('fenceRowOf renders an absent column as its column default (G4)', () => {
+  test('NULL notability and confidence render as medium and 1, and the row reads back exactly', () => {
+    const row = { ...legacyRow(), notability: null, confidence: null };
+    const cell = fenceRowOf(row, 7, row.fact);
+    expect(cell).toMatchObject({ rowNum: 7, active: true, claim: row.fact, notability: 'medium', confidence: 1 });
+    const back = parseFactsFence(renderFactsTable([cell]));
+    expect(back.warnings).toEqual([]);
+    expect(back.facts).toHaveLength(1);
+    expect(back.facts[0]).toMatchObject(cell);
+    expect(renderFactsTable(back.facts)).toBe(renderFactsTable([cell]));
+    expect(adoptableClaim(row as unknown as UnfencedFactRow)).toEqual({ claim: row.fact });
+  });
+
+  test('kind and visibility are never defaulted: a NULL one is refused, not guessed', () => {
+    expect(adoptableClaim(legacyRow({ kind: null as unknown as UnfencedFactRow['kind'] }))).toEqual({ rejected: 'parse' });
+    expect(adoptableClaim(legacyRow({ visibility: null as unknown as UnfencedFactRow['visibility'] }))).toEqual({ rejected: 'parse' });
   });
 });
 
@@ -323,4 +355,121 @@ for (const backend of testBackends()) {
       });
     } finally { fs.rmSync(home, { recursive: true, force: true }); }
   }, 120_000);
+}
+
+/** G4: the column shape of a brain whose `facts.notability` lost its NOT NULL, and one legacy row on it with no notability. */
+async function nullNotabilityRow(engine: BrainEngine, slug: string, claim: string): Promise<number> {
+  await engine.executeRaw('ALTER TABLE facts ALTER COLUMN notability DROP NOT NULL');
+  const [row] = await engine.executeRaw<{ id: number }>(
+    `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, valid_from, source, confidence)
+     VALUES ('default', $1, $2, 'fact', 'world', NULL, '2026-03-01', 'mcp:remember', 0.8) RETURNING id`, [slug, claim]);
+  return Number(row.id);
+}
+
+/** The adopted row keeps its id and text, its fence row reads back as it, and the fence carries the column default. */
+async function expectAdoptedWithDefaultNotability(engine: BrainEngine, file: string, id: number, claim: string): Promise<void> {
+  const [row] = await engine.executeRaw<{ id: number; fact: string; row_num: number | null; source_markdown_slug: string | null; expired: boolean; notability: string | null }>(
+    'SELECT id, fact, row_num, source_markdown_slug, expired_at IS NOT NULL AS expired, notability FROM facts WHERE id = $1', [id]);
+  expect(row).toMatchObject({ fact: claim, source_markdown_slug: SLUG, expired: false });
+  expect(row.row_num).not.toBeNull();
+  const cell = parseFactsFence(fs.readFileSync(file, 'utf8')).facts.find(f => f.rowNum === Number(row.row_num));
+  expect(cell).toMatchObject({ claim, active: true, visibility: 'world', notability: 'medium', kind: 'fact', source: 'mcp:remember' });
+  expect(fenceCellReadBackProblem(cell, { fact: row.fact, visibility: 'world' })).toBeNull();
+  // The fence is the record: the reconcile derives the cell's notability into the row; nothing else wrote it.
+  expect(row.notability).toBe('medium');
+  expect((await engine.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id = $1 AND fact = $2 ORDER BY id', ['default', claim])).map(r => Number(r.id))).toEqual([id]);
+}
+
+for (const backend of testBackends()) {
+  const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
+  const claim = 'Alice example mentors founders';
+
+  test(`${backend}: managed: a legacy row with NULL notability adopts through the coordinator with the default notability (G4)`, async () => {
+    let id!: number;
+    await managedBrain(async ({ engine, root }) => {
+      const result = await runExtractFacts(engine, { sourceId: 'default', brainDir: root });
+      expect(result.warnings.filter(w => w.startsWith('FACTS_FENCE_FAILED'))).toEqual([]);
+      expect(result).toMatchObject({ legacyRowsPending: 0, guardTriggered: false });
+      await expectAdoptedWithDefaultNotability(engine, path.join(root, `${LEGACY_FILE_SLUG}.md`), id, claim);
+      const again = await runExtractFacts(engine, { sourceId: 'default', brainDir: root });
+      expect(again).toMatchObject({ unfencedRowsFenced: 0, legacyRowsPending: 0, guardTriggered: false });
+    }, { databaseUrl, setup: async ({ engine, root }) => {
+      await seedLegacyManagedContent(engine, root);
+      id = await nullNotabilityRow(engine, LEGACY_FILE_SLUG, claim);
+    } });
+  }, 120_000);
+
+  test(`${backend}: unmanaged: a legacy row with NULL notability adopts onto the page file with the default notability (G4)`, async () => {
+    await unmanagedFilePage(databaseUrl, '# Alice Example\n\nProse.\n', async ({ engine, brainDir, file }) => {
+      const id = await nullNotabilityRow(engine, SLUG, claim);
+      const result = await runExtractFacts(engine, { sourceId: 'default', brainDir });
+      expect(result.warnings.filter(w => w.startsWith('FACTS_FENCE_FAILED'))).toEqual([]);
+      expect(result).toMatchObject({ unfencedRowsFenced: 1, legacyRowsPending: 0, guardTriggered: false });
+      await expectAdoptedWithDefaultNotability(engine, file, id, claim);
+      const written = fs.readFileSync(file, 'utf8');
+      const again = await runExtractFacts(engine, { sourceId: 'default', brainDir });
+      expect(again).toMatchObject({ unfencedRowsFenced: 0, legacyRowsPending: 0, guardTriggered: false, factsInserted: 0, factsDeleted: 0 });
+      expect(fs.readFileSync(file, 'utf8')).toBe(written);
+    });
+  }, 120_000);
+
+  test(`${backend}: unmanaged: an older legacy copy of a fenced claim is retired by repair duplicate-facts and its page leaves the guard (G4)`, async () => {
+    const fence = replaceOrInsertFactsFence('# Alice Example\n\nProse.\n', renderFactsTable([{ rowNum: 1, active: true, claim, kind: 'fact', confidence: 0.8,
+      visibility: 'world', notability: 'medium', validFrom: '2026-03-01', source: 'mcp:remember' }]));
+    await unmanagedFilePage(databaseUrl, fence, async ({ engine, brainDir, file, home }) => {
+      const [legacy] = await engine.executeRaw<{ id: number }>(
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, valid_from, source, confidence, created_at)
+         VALUES ('default', $1, $2, 'fact', 'world', 'medium', '2026-03-01', 'mcp:remember', 0.8, '2026-01-01T00:00:00Z') RETURNING id`, [SLUG, claim]);
+      const first = await runExtractFacts(engine, { sourceId: 'default', brainDir });
+      expect(first.warnings).toContain(`FACTS_FENCE_FAILED: ${SLUG} (duplicate_claim: 1 row(s))`);
+      expect(first).toMatchObject({ legacyRowsPending: 1, guardTriggered: true });
+      const [fenced] = await engine.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_markdown_slug = $1 AND row_num = 1 AND expired_at IS NULL', [SLUG]);
+
+      const repair = async (args: string[]) => {
+        const lines: string[] = [];
+        const original = console.log;
+        console.log = (...parts: unknown[]) => { lines.push(parts.map(String).join(' ')); };
+        try { await withEnv({ GBRAIN_HOME: home }, () => runRepairCommand(engine, ['duplicate-facts', ...args, '--json'])); } finally { console.log = original; }
+        return JSON.parse(lines.join('\n')).results[0] as { preview_hash: string; residuals: Record<string, number> };
+      };
+      const preview = await repair([]);
+      expect(preview.residuals).toMatchObject({ copies_to_retire: 1, fence_kept_elsewhere: 0 });
+      await repair(['--apply', '--expect', preview.preview_hash, '--yes']);
+      const state = async (id: number) => (await engine.executeRaw<{ active: boolean; superseded_by: number | null }>(
+        'SELECT expired_at IS NULL AS active, superseded_by FROM facts WHERE id = $1', [id])).map(r => [r.active, r.superseded_by === null ? null : Number(r.superseded_by)]);
+      expect(await state(legacy.id)).toEqual([[false, Number(fenced.id)]]);
+      expect(await state(fenced.id)).toEqual([[true, null]]);
+      const written = fs.readFileSync(file, 'utf8');
+
+      const next = await runExtractFacts(engine, { sourceId: 'default', brainDir });
+      expect(next.warnings.filter(w => w.startsWith('FACTS_FENCE_FAILED'))).toEqual([]);
+      expect(next).toMatchObject({ legacyRowsPending: 0, guardTriggered: false });
+      expect(fs.readFileSync(file, 'utf8')).toBe(written);
+    });
+  }, 120_000);
+}
+
+/** An unmanaged brain whose default source checkout holds `SLUG` as a file-backed page with `body`, its fence rows indexed. */
+async function unmanagedFilePage(databaseUrl: string | undefined, body: string,
+  run: (brain: { engine: BrainEngine; brainDir: string; file: string; home: string }) => Promise<void>): Promise<void> {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fence-adoption-g4-'));
+  try {
+    await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+      const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);
+      try {
+        expect(await managedPersistenceEnabled(engine)).toBe(false);
+        const brainDir = path.join(home, 'brain');
+        fs.mkdirSync(brainDir, { recursive: true });
+        await engine.executeRaw("UPDATE sources SET local_path = $1 WHERE id = 'default'", [brainDir]);
+        const page = await engine.putPage(SLUG, { type: 'person', title: 'Alice Example', compiled_truth: body });
+        await engine.executeRaw('UPDATE pages SET source_path = $1 WHERE id = $2', [`${SLUG}.md`, page.id]);
+        const snapshot = (await engine.readPageSnapshot(SLUG, { sourceId: 'default' }))!;
+        const file = path.join(brainDir, `${SLUG}.md`);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, serializePageToMarkdown(snapshot.page, snapshot.tags));
+        await runExtractFacts(engine, { sourceId: 'default', brainDir });
+        await run({ engine, brainDir, file, home });
+      } finally { await close(); }
+    });
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 }

@@ -1,6 +1,7 @@
 /**
  * `autopilot-cycle` Minion job handler (built-in; registered by registerBuiltinHandlers in src/commands/jobs.ts).
  */
+import { isAbsolute } from 'node:path';
 import type { BrainEngine } from '../../engine.ts';
 import type { MinionHandler } from '../types.ts';
 import { resolveJobPull } from './job-pull.ts';
@@ -91,7 +92,8 @@ export function makeAutopilotCycleHandler(engine: BrainEngine): MinionHandler {
       // #5673: a connector source's local_path is never a brain directory.
       connectorSource = isConnectorSourceKind(rows[0].kind);
       lastSourceCycleAt = rows[0].last_cycle && Number.isFinite(Date.parse(rows[0].last_cycle)) ? rows[0].last_cycle : null;
-      sourceLocalPath = !connectorSource && typeof rows[0].local_path === 'string' && rows[0].local_path.length > 0
+      // #7630: a relative local_path names whatever directory the worker runs from, so it is no checkout.
+      sourceLocalPath = !connectorSource && typeof rows[0].local_path === 'string' && isAbsolute(rows[0].local_path)
         ? rows[0].local_path
         : null;
     }
@@ -99,10 +101,13 @@ export function makeAutopilotCycleHandler(engine: BrainEngine): MinionHandler {
     // Effective checkout for FS phases. For a per-source cycle, bind to the
     // SOURCE's local_path (or null → skip FS phases for a pure-DB source);
     // NEVER fall through to the global repoPath, which would run sync/lint
-    // against the wrong tree. Legacy (no source_id) keeps the global repoPath.
+    // against the wrong tree. Legacy (no source_id) keeps the global repoPath,
+    // unless it is relative (#7630: that would be the worker's cwd).
+    const legacyRepo = sourceId ? null
+      : typeof job.data.repoPath === 'string' ? job.data.repoPath : (await engine.getConfig('sync.repo_path')) ?? null;
     const effectiveBrainDir: string | null = sourceId
       ? sourceLocalPath
-      : typeof job.data.repoPath === 'string' ? job.data.repoPath : (await engine.getConfig('sync.repo_path')) ?? null;
+      : legacyRepo && isAbsolute(legacyRepo) ? legacyRepo : null;
 
     // Allow callers to select phases via job data (e.g. skip embed for
     // fast cycles). Validates against ALL_PHASES to prevent injection, then

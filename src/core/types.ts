@@ -173,6 +173,8 @@ export interface Page {
   source_kind?: string | null;
   /** Original URI/path/message-id the ingestion event carried. */
   source_uri?: string | null;
+  /** G7a: the file a strict page had before it turned private (its origin is cleared); it writes there when it turns world. */
+  withheld_source_path?: string | null;
   /** Richer label paired with source_kind (often same value; indexable separately). */
   ingested_via?: string | null;
   /** Server-stamped first-write audit timestamp; CV12 COALESCE-preserved across edits. */
@@ -1124,6 +1126,8 @@ export interface SearchResult {
   fact_row?: { id: number; valid_from: string; valid_until: string | null };
   /** Fact rows only, and what callers see of them: never a page (no slug or id); follow with `follow_up`, read `page_slug` when the entity page exists. */
   result_type?: 'fact'; fact_id?: string; page_slug?: string; follow_up?: { op: 'recall'; args: Record<string, string> };
+  /** #7600: a conversation page's row, returned fenced as quoted source material with its tool-call blocks summarized (search/transcript-quote.ts). */
+  quoted?: 'transcript';
   /** A newer active fact covers the same entity and typed claim slot as a fact taken from this page. */
   superseded_claim?: { fact_id: number; valid_from: string };
   /**

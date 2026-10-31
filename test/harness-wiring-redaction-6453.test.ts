@@ -29,6 +29,7 @@ import { harnessWiringCheck } from '../src/commands/doctor/checks/harness-wiring
 
 const mod = () => import('../src/commands/doctor/checks/harness-wiring.ts');
 import { withEnv } from './helpers/with-env.ts';
+import { renderBrainFirstSnippet } from '../src/core/setup/brain-first.ts';
 
 const USER = 'alice-example';
 const USERINFO_PART = 'userinfo-6453-fixture';
@@ -62,6 +63,9 @@ const PGLITE = { engine: 'pglite', database_path: '/nonexistent/brain.pglite' };
 
 function register(b: Box, url: string, extra: Record<string, unknown> = {}): void {
   writeFileSync(join(b.env.HOME!, '.claude.json'), JSON.stringify({ mcpServers: { gbrain: { type: 'http', url, ...extra } } }));
+  // A complete wiring also carries the brain-first block, or harness_wiring warns on it.
+  mkdirSync(b.env.CLAUDE_CONFIG_DIR!, { recursive: true });
+  writeFileSync(join(b.env.CLAUDE_CONFIG_DIR!, 'CLAUDE.md'), renderBrainFirstSnippet('claude-code', { kind: 'mcp', server: 'gbrain' }));
 }
 
 interface Hit { path: string; query: string; authorization: string | null }

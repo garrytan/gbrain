@@ -131,10 +131,18 @@ gbrain config set mcp.publish_advisor true
 gbrain sources add org-wiki --path ~/brains/org-wiki
 gbrain sync --all        # cron this
 
-# 4. Serve over HTTP MCP (OAuth 2.1):
+# 4. Serve over HTTP MCP (OAuth 2.1), listing the 7 memory verbs:
 gbrain serve --http --bind 0.0.0.0 --port 3131 \
-  --public-url https://brain.acme-example.com
+  --public-url https://brain.acme-example.com --advertise verbs
 ```
+
+`--advertise verbs` is the registration default gbrain's own installers use
+(`--surface starter --advertise verbs` since v0.60.503.0). QM sends every listed
+tool schema on every request, so a bare serve costs each turn about 11,800 input
+tokens for 33 tool schemas; with `--advertise verbs` it lists the seven verbs
+plus `request_tools`. Every operation stays callable, so the `gbrain` tool in the
+sandbox keeps working: the server keeps the `full` ceiling here because the
+skill's `gbrain link` (`add_link`) is outside `starter`.
 
 Never hand sandboxes `DATABASE_URL` — direct DB access bypasses OAuth, source
 federation, and the write fence entirely.

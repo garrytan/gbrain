@@ -15,6 +15,10 @@ d('search planner statistics guard on Postgres', () => {
     await setupDB();
     await importFixtures();
     const engine = getEngine();
+    // Autovacuum is a second ANALYZE of pages that the guard does not own: on the shared e2e database it can restore
+    // the deleted statistics between beforeAll and a check (a gate failure; forced with autovacuum_naptime=1s and a
+    // zero analyze threshold, 2 of 3 runs). The SET waits out an analyze already running and keeps new ones off.
+    await engine.executeRaw('ALTER TABLE pages SET (autovacuum_enabled = false)');
     await engine.executeRaw('ANALYZE pages');
     await engine.executeRaw('ANALYZE content_chunks');
     await engine.executeRaw("DELETE FROM pg_statistic WHERE starelid = 'pages'::regclass");
@@ -22,7 +26,10 @@ d('search planner statistics guard on Postgres', () => {
     // deleted pg_statistic keeps), so the fixture stands in for a large brain that lost its statistics.
     await engine.executeRaw("UPDATE pg_class SET reltuples = 5000 WHERE oid = 'pages'::regclass");
   }, 60_000);
-  afterAll(async () => { await teardownDB(); });
+  afterAll(async () => {
+    await getEngine().executeRaw('ALTER TABLE pages RESET (autovacuum_enabled)');
+    await teardownDB();
+  });
 
   const pagesMissing = SEARCH_STATISTICS_COLUMNS.pages.map(c => `pages.${c}`);
 

@@ -311,13 +311,13 @@ test('#5762 the hint names one of three index states and keeps the saved process
 });
 
 test('#5762 a dropped index reads as missing and the hint then names the rebuild command', async () => each(async engine => {
-  // #6511 and #6757 added the purge slug and request-id indexes to the online-built set; the default read lists them after the checkpoint pair.
-  expect((await readRequestIndexStates(engine)).map(index => index.state)).toEqual(['valid', 'valid', 'valid', 'valid']);
+  // #6511, #6757 and #7649 added the purge slug, request-id and foreground-commit indexes to the online-built set; the default read lists them after the checkpoint pair.
+  expect((await readRequestIndexStates(engine)).map(index => index.state)).toEqual(['valid', 'valid', 'valid', 'valid', 'valid']);
   await engine.executeRaw('DROP INDEX persistence_requests_sync_run_committed');
   try {
     expect(await readRequestIndexStates(engine)).toEqual([{ name: 'persistence_requests_sync_run_open', state: 'valid' },
       { name: 'persistence_requests_sync_run_committed', state: 'missing' }, { name: 'persistence_requests_slug_intent', state: 'valid' },
-      { name: 'persistence_requests_request_id', state: 'valid' }]);
+      { name: 'persistence_requests_request_id', state: 'valid' }, { name: 'persistence_requests_foreground_committed', state: 'valid' }]);
   } finally {
     const { PERSISTENCE_SYNC_RUN_COMMITTED_INDEX_SQL } = await import('../src/core/persistence/schema.ts');
     await engine.executeRaw(PERSISTENCE_SYNC_RUN_COMMITTED_INDEX_SQL);

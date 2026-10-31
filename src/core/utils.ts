@@ -262,6 +262,7 @@ export function rowToPage(row: Record<string, unknown>): Page {
     // optional read; absent SELECT projections compile unchanged.
     ...(sourceKind !== undefined && { source_kind: sourceKind }),
     ...(sourceUri !== undefined && { source_uri: sourceUri }),
+    ...(row.withheld_source_path !== undefined && { withheld_source_path: row.withheld_source_path as string | null }),
     ...(ingestedVia !== undefined && { ingested_via: ingestedVia }),
     ...(ingestedAt !== undefined && { ingested_at: ingestedAt }),
     ...(contextualRetrievalMode !== undefined && { contextual_retrieval_mode: contextualRetrievalMode }),

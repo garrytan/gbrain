@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { renderAttachmentInspection, threadAttachmentReceipts } from './attachment-receipts.ts';
 
 import { emailCitation } from '../output/scaffold.ts';
+import { neutralizeOutsideText } from '../outside-content.ts';
 import { DEFAULT_CONTACTS_DIR, type CalendarEventData, type ContactData, type GmailMessageMeta, type GmailThreadData } from './types.ts';
 
 // ── Noise + signature rules (recipes/email-to-brain.md, now code) ───────────
@@ -284,7 +285,7 @@ export function renderThreadPage(thread: GmailThreadData): RenderedPage | null {
     '---',
   ];
 
-  const body: string[] = ['', `# ${subject}`, ''];
+  const body: string[] = ['', neutralizeOutsideText(`# ${subject}`), ''];
   for (const m of thread.messages) {
     const cite = /^[A-Za-z0-9]{10,60}$/.test(m.id) ? emailCitation({
       account: thread.account,
@@ -294,13 +295,13 @@ export function renderThreadPage(thread: GmailThreadData): RenderedPage | null {
     }) : 'Gmail message link unavailable.';
     const sent = m.labelIds.includes('SENT');
     body.push(
-      `## ${sent ? '→ ' : ''}${m.from || m.fromAddress} · ${m.dateIso.slice(0, 16).replace('T', ' ')}`,
+      neutralizeOutsideText(`## ${sent ? '→ ' : ''}${m.from || m.fromAddress} · ${m.dateIso.slice(0, 16).replace('T', ' ')}`),
       '',
       cite,
       '',
     );
-    if (m.to.length > 0) body.push(`To: ${m.to.join(', ')}${m.cc.length > 0 ? ` · Cc: ${m.cc.join(', ')}` : ''}`, '');
-    body.push(m.bodyText || '_empty message_', '', renderAttachmentInspection(m.attachmentInspection), '');
+    if (m.to.length > 0) body.push(neutralizeOutsideText(`To: ${m.to.join(', ')}${m.cc.length > 0 ? ` · Cc: ${m.cc.join(', ')}` : ''}`), '');
+    body.push(neutralizeOutsideText(m.bodyText || '_empty message_'), '', renderAttachmentInspection(m.attachmentInspection), '');
   }
 
   return { relPath: threadRelPath(thread), markdown: fm.join('\n') + body.join('\n') + '\n' };
@@ -364,7 +365,7 @@ export function renderCalendarEventPage(ev: CalendarEventData): RenderedPage | n
   }
   if (ev.description) body.push('## Description', '', htmlToText(ev.description), '');
   if (ev.hangoutLink) body.push(`Meet: ${ev.hangoutLink}`, '');
-  return { relPath: calendarRelPath(ev), markdown: fm.join('\n') + body.join('\n') + '\n' };
+  return { relPath: calendarRelPath(ev), markdown: fm.join('\n') + neutralizeOutsideText(body.join('\n')) + '\n' };
 }
 
 // ── Person page (contacts) ───────────────────────────────────────────────────
@@ -422,11 +423,11 @@ export function renderPersonPage(c: ContactData, disambiguate = false, dir: stri
   ];
   const body = [
     '',
-    `# ${name}`,
+    neutralizeOutsideText(`# ${name}`),
     '',
     [
-      c.title && c.organization ? `${c.title} at ${c.organization}.` : c.organization ? `Works at ${c.organization}.` : null,
-      `Contact: ${[...c.emails, ...c.phones].join(', ')}.`,
+      c.title && c.organization ? neutralizeOutsideText(`${c.title} at ${c.organization}.`) : c.organization ? neutralizeOutsideText(`Works at ${c.organization}.`) : null,
+      neutralizeOutsideText(`Contact: ${[...c.emails, ...c.phones].join(', ')}.`),
       `[Source: Google Contacts]`,
     ]
       .filter(Boolean)

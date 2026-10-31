@@ -1,9 +1,10 @@
 // ubicloud-reap-expired.test.ts — scripts/ubicloud/reap-expired.ts, the
 // operator-side leak guard for ci:ubicloud VMs.
 //
-// Protects: only VMs in the expiring name format
-// (ubirun-<owner>-<epoch>-x<expiry>-<suffix>) whose expiry plus the grace has
-// passed are ever selected; legacy untagged names, owner-tagged names without
+// Protects: only VMs whose name carries a TTL, in gstack's grammar
+// (ubirun-<owner>-<epoch>-<suffix>-t<H>, from any owner or tool) or the older
+// ubirun-<owner>-<epoch>-x<expiry>-<suffix>, and whose expiry plus the grace
+// has passed are ever selected; legacy untagged names, owner-tagged names without
 // an expiry and names ubi-runner did not make are never selected, whoever
 // owns them. Dry run is the default and destroys nothing; --apply destroys
 // through ubi-runner.sh down; more expired VMs than --max refuse the whole run.
@@ -42,12 +43,24 @@ describe("parseVmName", () => {
     expect(parseVmName(`${expired}-extra!`)).toEqual({ kind: "foreign" });
   });
 
-  it("the gate's name helper writes names of at most 63 characters that read back with their expiry", () => {
+  it("reads gstack's -t<H> grammar as expiring H hours after creation, for any owner or suffix", () => {
+    expect(parseVmName(`ubirun-gbra135-${NOW}-ci01a1b2-t2`)).toEqual({ kind: "expiring", owner: "gbra135", createdAt: NOW, expiresAt: NOW + 2 * H });
+    expect(parseVmName(`ubirun-trut4-${NOW}-e54c3f57-t4`)).toEqual({ kind: "expiring", owner: "trut4", createdAt: NOW, expiresAt: NOW + 4 * H });
+    expect(parseVmName(`ubirun-gsta30-${NOW}-a-b-c-t999`)).toEqual({ kind: "expiring", owner: "gsta30", createdAt: NOW, expiresAt: NOW + 999 * H });
+    expect(parseVmName(`ubirun-gbra1-${NOW}-t5`)).toEqual({ kind: "no-expiry", owner: "gbra1", createdAt: NOW });
+    expect(parseVmName(`ubirun-gbra1-${NOW}-aaaa-t1000`)).toEqual({ kind: "foreign" });
+    expect(parseVmName(`ubirun-${NOW}-aaaa-t3`)).toEqual({ kind: "foreign" });
+  });
+
+  it("the gate's name helper writes -t<H> names of at most 63 characters that read back with their expiry", () => {
     const name = expiringVmName({ owner: "abcdefghijkl", createdAt: NOW, ttlHours: 2, suffix: "ci10ffff" });
-    expect(name).toBe(`ubirun-abcdefghijkl-${NOW}-x${NOW + 2 * H}-ci10ffff`);
+    expect(name).toBe(`ubirun-abcdefghijkl-${NOW}-ci10ffff-t2`);
     expect(name.length).toBeLessThanOrEqual(63);
     expect(parseVmName(name)).toEqual({ kind: "expiring", owner: "abcdefghijkl", createdAt: NOW, expiresAt: NOW + 2 * H });
-    expect(expiringVmName({ owner: "t1", createdAt: NOW, ttlHours: 0, suffix: "ci01abcd" })).toBe(`ubirun-t1-${NOW}-ci01abcd`);
+    expect(expiringVmName({ owner: "abcdefghijkl", createdAt: NOW, ttlHours: 999, suffix: "a".repeat(24) }).length).toBeLessThanOrEqual(63);
+    expect(() => expiringVmName({ owner: "t1", createdAt: NOW, ttlHours: 0, suffix: "ci01abcd" })).toThrow();
+    expect(() => expiringVmName({ owner: "t1", createdAt: NOW, ttlHours: 1000, suffix: "ci01abcd" })).toThrow();
+    expect(() => expiringVmName({ owner: "t1", createdAt: NOW, ttlHours: 2, suffix: "ci-01" })).toThrow();
     expect(() => expiringVmName({ owner: "t1", createdAt: NOW, ttlHours: 1.5, suffix: "ci01abcd" })).toThrow();
     expect(() => expiringVmName({ owner: "T-1", createdAt: NOW, ttlHours: 1, suffix: "ci01abcd" })).toThrow();
   });
@@ -88,6 +101,47 @@ describe("planReap", () => {
     expect(notice).toContain("Dry run: nothing was destroyed");
     expect(notice).not.toContain("gbra130");
     expect(ownerNotices(planReap([{ location: LOC, name: live }], { now: NOW, graceSeconds: 0 }), { now: NOW, apply: false })).toContain("no expired VMs");
+  });
+});
+
+describe("planReap over both grammars", () => {
+  const ttlExpired = `ubirun-trut4-${NOW - 5 * H}-e54c3f57-t4`;
+  const ttlGate = `ubirun-gbra135-${NOW - 3 * H}-ci01a1b2-t2`;
+  const ttlLive = `ubirun-gsta30-${NOW - 6 * H}-154fa95a-t14`;
+  const ttlLong = `ubirun-gbra240-${NOW - 50 * H}-0654ca-t999`;
+  const ttlZero = `ubirun-gbra1-${NOW - H}-aaaaaaaa-t0`;
+  const rows = [ttlExpired, ttlGate, ttlLive, ttlLong, ttlZero, expired, live, noExpiry].map((name) => ({ location: LOC, name }));
+
+  it("destroys expired -t<H> names of every owner and expired -x<expiry> names, and keeps live and TTL-less ones", () => {
+    const action = Object.fromEntries(planReap(rows, { now: NOW, graceSeconds: 15 * 60 }).map((row) => [row.name, row.action]));
+    expect(action).toEqual({
+      [ttlExpired]: "destroy",
+      [ttlGate]: "destroy",
+      [ttlLive]: "keep",
+      [ttlLong]: "keep",
+      [ttlZero]: "skip",
+      [expired]: "destroy",
+      [live]: "keep",
+      [noExpiry]: "skip",
+    });
+  });
+
+  it("--apply destroys the expired -t<H> and -x<expiry> VMs through ubi-runner.sh down", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "reap-expired-ttl-"));
+    const mock = startMockUbicloud({ seed: rows });
+    try {
+      const proc = Bun.spawn(["bun", SCRIPT, "--apply", "--now", String(NOW)], {
+        env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dir, UBICLOUD_API_TOKEN: "test-token", UBICLOUD_API_URL: mock.url, UBI_RUNNER_STATE: join(dir, "state"), UBI_POLL_SECONDS: "0.2" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await proc.exited).toBe(0);
+      expect(mock.events.filter((e) => e.startsWith("destroy ")).sort()).toEqual([ttlExpired, ttlGate, expired].map((n) => `destroy ${n}`).sort());
+      expect([...mock.vms.keys()].sort()).toEqual([ttlLive, ttlLong, ttlZero, live, noExpiry].sort());
+    } finally {
+      mock.stop();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

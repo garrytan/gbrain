@@ -1,4 +1,4 @@
-# HEARTBEAT.md
+# {{SCHEDULES_FILE}}
 
 Session-triggered schedules for {{AGENT_NAME}}. These are cadence-prompted jobs
 that fire at turn/session boundaries **while the harness is open** — nothing runs

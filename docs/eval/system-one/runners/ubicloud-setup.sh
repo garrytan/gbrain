@@ -3,7 +3,7 @@
 # (scripts/ubicloud/ubi-runner.sh run --setup <this file>). Installs Bun and
 # the checkout's dependencies and creates an empty keyless PGLite brain.
 set -euo pipefail
-BUN_VERSION="${BUN_VERSION:-1.3.13}"
+BUN_VERSION="${BUN_VERSION:-1.4.4}"
 sudo apt-get update -qq && sudo apt-get install -y -qq unzip python3 > /dev/null
 arch=x64
 [ "$(uname -m)" = aarch64 ] && arch=aarch64

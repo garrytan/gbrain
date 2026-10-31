@@ -111,7 +111,7 @@ Trust runtime-provided context first — it usually already includes this file,
 `SOUL.md`, `USER.md`, `MEMORY.md`, and injected brain context. Then:
 1. If a hook status file or greeting digest reports a problem (failed pushes, hook
    degradation), surface it in the first reply.
-2. Check `HEARTBEAT.md`'s due-job list; run what is due (session-triggered schedules
+2. Check `{{SCHEDULES_FILE}}`'s due-job list; run what is due (session-triggered schedules
    run at turn boundaries — nothing fires while the harness is closed).
 
 ## Memory architecture
@@ -122,7 +122,7 @@ Trust runtime-provided context first — it usually already includes this file,
 | Hot state | MEMORY.md | every session (main only — security boundary) | same-turn file edits |
 | Daily log | memory/YYYY-MM-DD.md | on demand | append-only, same turn |
 | The brain | brain/ via gbrain tools | searched on demand, injected per turn | `put_page` / fences / timeline |
-| Schedules | HEARTBEAT.md | session start | explicit edits |
+| Schedules | {{SCHEDULES_FILE}} | session start | explicit edits |
 
 ## Time
 

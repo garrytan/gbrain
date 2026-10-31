@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, test, afterEach } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 import { spawnSync } from 'child_process';
@@ -197,6 +197,25 @@ describe('post-peel dispatch smoke [ENG-E5]', () => {
 });
 
 describe('scaffold --harness openclaw (workspace delegation)', () => {
+  test('default installs the brain-first core only; --all installs the full bundle', () => {
+    const { home, gbrainHome } = homes();
+    const ws = mkdtempSync(join(tmpdir(), 'gb-harness-ws-'));
+    const full = mkdtempSync(join(tmpdir(), 'gb-harness-ws-'));
+    cleanups.push(ws, full);
+    const env = { HOME: home, GBRAIN_HOME: gbrainHome };
+    const r = run(['scaffold', '--harness', 'openclaw', '--workspace', ws, '--json'], env);
+    expect(r.code, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout).persona).toBe('core');
+    const skillDirs = (dir: string) => readdirSync(join(dir, 'skills'), { withFileTypes: true })
+      .filter(e => e.isDirectory() && existsSync(join(dir, 'skills', e.name, 'SKILL.md'))).map(e => e.name).sort();
+    expect(skillDirs(ws)).toEqual(['brain-ops', 'capture', 'data-loss-gate', 'query', 'resolve-before-asking']);
+    expect(existsSync(join(ws, 'skills', 'conventions', 'brain-first.md'))).toBe(true);
+    const all = run(['scaffold', '--harness', 'openclaw', '--workspace', full, '--all', '--json'], env);
+    expect(all.code, all.stderr).toBe(0);
+    expect(JSON.parse(all.stdout).persona).toBe('all');
+    expect(skillDirs(full).length).toBeGreaterThan(50);
+  }, 120_000);
+
   test('--skill picks filter the workspace scaffold; plugin-lane additions are reported skipped, not thrown', () => {
     const { home, gbrainHome } = homes();
     const ws = mkdtempSync(join(tmpdir(), 'gb-harness-ws-'));

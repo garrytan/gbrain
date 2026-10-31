@@ -390,6 +390,10 @@
         "name": "rls"
       },
       {
+        "category": "ops",
+        "name": "function_search_path"
+      },
+      {
         "category": "meta",
         "name": "schema_version"
       },
@@ -927,11 +931,19 @@
       },
       {
         "category": "brain",
+        "name": "provenance_stamp_drift"
+      },
+      {
+        "category": "brain",
         "name": "trust_scan"
       },
       {
         "category": "brain",
         "name": "trust_sources_unclaimed"
+      },
+      {
+        "category": "brain",
+        "name": "trust_release_unpreviewed_fields"
       },
       {
         "category": "brain",
@@ -963,7 +975,15 @@
       },
       {
         "category": "brain",
+        "name": "conversation_detection_ambiguous"
+      },
+      {
+        "category": "brain",
         "name": "extraction_input_truncated"
+      },
+      {
+        "category": "brain",
+        "name": "derivation_unpriced_model"
       },
       {
         "category": "brain",
@@ -984,6 +1004,10 @@
       {
         "category": "brain",
         "name": "purge_parked_pages"
+      },
+      {
+        "category": "brain",
+        "name": "derivation_purge_sweeps"
       },
       {
         "category": "brain",
@@ -1020,6 +1044,10 @@
       {
         "category": "brain",
         "name": "git_index_lag"
+      },
+      {
+        "category": "brain",
+        "name": "outside_content_fences"
       },
       {
         "category": "brain",

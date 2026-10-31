@@ -42,10 +42,11 @@ const SAMPLE = 20;
  * #5612: Git and withdrawal targets that failed five consecutive times are
  * parked instead of retried forever. Reads the partial `persistence_effects_parked`
  * index: an exact count plus a capped sample naming each page and its retry command.
+ * Settled effects (#7423, #7378: `gbrain sources writer settle-effects`) are history and not counted.
  */
 export async function checkParkedEffects(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   try {
-    const scoped = sourceIds ? ' AND e.source_id=ANY($1::text[])' : '';
+    const scoped = `${sourceIds ? ' AND e.source_id=ANY($1::text[])' : ''} AND NOT (e.data ? 'settled')`;
     const params = sourceIds ? [sourceIds] : [];
     const [{ count }] = await engine.executeRaw<{ count: number }>(`SELECT COUNT(*)::int AS count FROM persistence_effects e WHERE e.data ? 'parked'${scoped}`, params);
     const rows = await engine.executeRaw<{ request: WriteRequest; source_id: string; kind: string; state: string; parked: ParkedTarget[] }>(

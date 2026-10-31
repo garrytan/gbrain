@@ -1,25 +1,23 @@
 # Install
 
-Start by choosing the setup you need:
+> [!TIP]
+> **Fastest: hosted GBrain at [gbrain.io](https://gbrain.io/cli?ref=install-md), for any harness.** One command launches a GBrain hosted on gbrain.io; Claude Code, Codex, ChatGPT, Cursor and every other AI you use connect to it, with nothing to keep online.
+>
+> ```bash
+> curl -sSL https://gbrainio.terminalwire.sh | bash
+> gbrainio terminal connect      # in a new terminal
+> gbrainio workspace new         # pick a plan in the browser
+> claude mcp add --transport http --scope user gbrain https://gbrain.io/mcp
+> codex mcp add gbrain --url https://gbrain.io/mcp
+> ```
+>
+> The installer is a shell script for macOS and Linux; read it before you run it.
 
-- **Add memory to the agent you already use (recommended):** [Grok Bot](guides/grok-bot.md), [Muse](guides/muse.md), or [Codex / Claude Code](tutorials/connect-coding-agent.md). Keep the existing identity; start keyless, without a personal-agent repository.
-- **Don't want to run anything yourself:** [gbrain.io](https://gbrain.io/?ref=install-md) is hosted GBrain, the easiest start for a first agent or a team.
-- **Connect to your existing hosted brain:** [private handoff and harness access](guides/hosted-harness-access.md). Provision on the host, install in the client environment.
+## Here's how to self-host it
 
+GBrain is MIT-licensed and free to self-host. The recommended start adds memory to the agent you already use and keeps its identity: [Grok Bot](guides/grok-bot.md), [Muse](guides/muse.md), or [Codex / Claude Code](tutorials/connect-coding-agent.md) (`gbrain setup claude-code` or `gbrain setup codex`). An existing hosted brain connects through [harness access](guides/hosted-harness-access.md). A new personal agent with identity files and a private repo uses the [bootstrap guide](guides/bootstrap.md). Read [memory boundaries](guides/memory-boundaries.md) before enabling cloud providers.
 
-**Optional: create a new persistent personal agent.** If you want identity
-files and a private repository, use the separate
-[bootstrap guide](guides/bootstrap.md) in a supported harness. The recommended
-memory-only setup above preserves your existing agent's identity and needs
-neither a bootstrap interview nor a private repository.
-
-The paths below are the manual equivalents and deep-dive detail. Pick one.
-Mix later if needed.
-
-Before enabling capabilities, read [memory boundaries](guides/memory-boundaries.md):
-durable preferences can be shared, but harness configuration stays local;
-remote writes need graph maintenance, cloud providers can receive text, and
-Markdown export is not a full database backup.
+The paths below are the manual equivalents. Pick one; mix later if needed.
 
 ## 1. Run with an agent platform
 
@@ -28,7 +26,8 @@ Already running [OpenClaw](https://github.com/garrytan/openclaw) or [Hermes](htt
 ```bash
 bun install -g github:garrytan/gbrain#latest-stable
 gbrain init --pglite --no-embedding   # keyless; no server
-gbrain skillpack scaffold --all       # scaffolds every bundled skill (skills/manifest.json) into your agent workspace
+gbrain skillpack scaffold --harness openclaw --workspace <ws>   # OpenClaw: the five-skill brain-first core
+gbrain skillpack scaffold --all       # Hermes or any other workspace: every bundled skill (skills/manifest.json)
 gbrain doctor                         # inspect diagnostics and expected empty-brain warnings
 ```
 
@@ -105,16 +104,11 @@ embeddings. Follow the CLI's explicit activation path, for example
 `gbrain init --force --embedding-model voyage:voyage-4`, after reviewing the
 provider and dimension choice. Keyword retrieval needs none of these keys.
 
-Reading a value back: `gbrain config get <key>` prints redacted by default — sensitive keys (any `key`/`secret`/`token`/`password`-segmented name) print `***`, and a `postgres://` / `postgresql://` value like `database_url` has its `user:password` userinfo replaced with `***` (host, port, database, and query string preserved) — because `get` output lands in agent transcripts and shell history. Scripts that need the real value pass `--raw` (accepted before or after the key). `config show` and the `Set <key> = ...` confirmation that `config set` prints redact the same way. `get` keeps stdout a bare value and reports which plane answered (file/env or DB) on stderr.
+`gbrain config get <key>` redacts secrets and database passwords by default, because its output lands in transcripts and shell history; scripts that need the real value pass `--raw`.
 
-Chat-shaped features (automatic fact extraction, enrichment, synthesis, query
-expansion) route to whichever supported chat key is present (Anthropic or
-OpenAI) — Anthropic when both are set, OpenAI when it is the only one; other
-chat providers need an explicit `models.*` pin. With neither key, they stay off
-calmly and memory comes from agent-authored `## Facts` fences and the
-`remember` verb.
+Chat features (automatic fact extraction, enrichment, synthesis, query expansion) use the Anthropic key, else the OpenAI key; other chat providers need a `models.*` pin. With neither key they stay off, and memory comes from agent-authored `## Facts` fences and the `remember` verb.
 
-For the autopilot daemon specifically, keys and process-level env (`NODE_EXTRA_CA_CERTS`, proxy vars, custom base URLs) belong in `~/.gbrain/env` — a 0600 file created by `gbrain autopilot --install` and sourced by the daemon wrapper (interactive shell rc files never reach daemon shells; the path honors `GBRAIN_HOME`). Re-run `gbrain autopilot --install` after editing it so the daemon reloads. To keep a key off disk, use your secret manager there: the file is sourced by bash at every daemon start, so a line like `VOYAGE_API_KEY="$(doppler secrets get VOYAGE_API_KEY --plain)"` (or `op read`, `security find-generic-password -w`, `pass show`) fetches the value at start-up and never writes it (#5196). The command must work non-interactively in the daemon's environment.
+The autopilot daemon reads keys and process env (`NODE_EXTRA_CA_CERTS`, proxy vars, custom base URLs) from `~/.gbrain/env`, a 0600 file that `gbrain autopilot --install` creates and bash sources at every daemon start (it honors `GBRAIN_HOME`; shell rc files never reach the daemon). A line there can fetch a key from your secret manager instead of storing it, for example `VOYAGE_API_KEY="$(op read ...)"` (#5196). Re-run `gbrain autopilot --install` after editing it.
 
 To change an existing brain's embedding provider, follow the explicit-consent playbook at [`skills/migrations/v0.46.3.0.md`](../skills/migrations/v0.46.3.0.md), with the full reference in [`docs/guides/embedding-migration.md`](guides/embedding-migration.md). Preview the work and cost before approving a migration; do not repoint existing vectors at a different model.
 
@@ -129,16 +123,16 @@ gbrain autopilot --install        # background daemon for nightly enrichment
 **Wire this same local brain into your coding agent** — zero server, zero token:
 
 ```bash
-claude mcp add gbrain -- "$(command -v gbrain)" serve --surface full     # Claude Code
-codex  mcp add gbrain -- "$(command -v gbrain)" serve --surface full     # Codex
+claude mcp add gbrain -- "$(command -v gbrain)" serve --surface starter --advertise verbs  # Claude Code
+codex  mcp add gbrain -- "$(command -v gbrain)" serve --surface starter --advertise verbs  # Codex
 ```
 
-The agent spawns `gbrain serve` as a stdio subprocess against your local brain. `--surface full` (what every registration gbrain writes pins) serves every operation, the seven-verb memory protocol ([MEMORY_VERBS v1](protocol/MEMORY_VERBS_v1.md)) included; a harness that caps its tool count can register `--surface starter` (the verbs plus the daily-driver set, 40 ops) or `--surface verbs` (only the seven verbs). Full walkthrough (both this local path and connecting to a remote brain), plus the brain-first protocol to paste into `CLAUDE.md` / `AGENTS.md`: **[Give your coding agent a memory](tutorials/connect-coding-agent.md)**.
+The agent spawns `gbrain serve` as a stdio subprocess against your local brain. `--surface starter --advertise verbs` is what every registration gbrain writes: the daily-driver set (40 ops) stays callable, and the tool list shows the seven memory verbs ([MEMORY_VERBS v1](protocol/MEMORY_VERBS_v1.md)) plus `request_tools`, which lists the other tools, returns any tool's full schema and reaches a left-out one. Drop `--advertise verbs` to list the whole starter set, or register `--surface full` (every operation) or `--surface verbs` (only the seven verbs, nothing else callable). Full walkthrough (both this local path and connecting to a remote brain), plus the brain-first protocol to paste into `CLAUDE.md` / `AGENTS.md`: **[Give your coding agent a memory](tutorials/connect-coding-agent.md)**.
 
 ## 3. MCP server (any MCP client)
 
 ```bash
-gbrain serve --surface full       # stdio MCP (Claude Desktop / Code / Cursor), every operation
+gbrain serve --surface starter    # stdio MCP (Claude Desktop / Code / Cursor); full = every operation
 gbrain serve --http               # HTTP MCP with OAuth 2.1 + admin dashboard
 gbrain mcp expose                 # publish serve --http on your Tailscale tailnet (HTTPS + user service)
 ```

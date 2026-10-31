@@ -423,8 +423,8 @@ export function checkHealthUnknown(check: Check): boolean {
 export interface WaveFinding { spec: WaveCheckSpec; check: Check; state: 'ok' | 'finding' | 'unknown' }
 
 /** Run wave checks; a throwing check becomes an unknown finding instead of aborting the rest. */
-export async function runWaveChecks(engine: BrainEngine, opts: WaveScope & { only?: WaveCheckSpec['registration']; remote?: boolean } = {}): Promise<WaveFinding[]> {
-  const specs = WAVE_CHECKS.filter(spec => (!opts.only || spec.registration === opts.only) && (!opts.remote || !spec.hostOnly));
+export async function runWaveChecks(engine: BrainEngine, opts: WaveScope & { only?: WaveCheckSpec['registration']; ids?: ReadonlySet<string>; remote?: boolean } = {}): Promise<WaveFinding[]> {
+  const specs = WAVE_CHECKS.filter(spec => (!opts.only || spec.registration === opts.only) && (!opts.ids || opts.ids.has(spec.id)) && (!opts.remote || !spec.hostOnly));
   const findings: WaveFinding[] = [];
   for (const spec of specs) {
     let check: Check;

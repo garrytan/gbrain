@@ -68,6 +68,17 @@ gbrain config set trust.agent_activation suppress       # keep flagged agent-wri
 
 With quarantine, an instruction-like external write is held: it is not
 searchable and not injected until you release it (`gbrain trust release`).
+On a managed brain, a released fact whose entity page exists is written as a
+row of that page's `## Facts` table, so the page's file holds it; a fact with
+no entity page, and any fact on an unmanaged brain, is saved to the database
+only.
+The release preview shows every field the release confirms along with the
+text: kind, visibility, validity, source and context, and for a held row
+that is already in a `## Facts` table, that row's confidence, notability,
+typed-claim and attribution cells as they stand. The confirmation covers exactly what you saw:
+if the hold or that row changes before the release lands, it refuses with
+`preview_changed` and the fact stays held, on every brain, with or without a
+repository.
 With suppress, flagged items are still returned by explicit search, recall
 and `get_page`, labeled, but hook context, the context engine,
 `context_pack` and volunteer leave them out until you confirm them in
@@ -202,3 +213,9 @@ Claim your own sources first, so your notes are not treated as unverified.
   not been scanned. Its fix is yours to run (`tell_user_to_run`).
 - `trust_tiers` reports the tier mix and recommends `gbrain trust backfill`.
   The backfill classifies older rows from deterministic signals only.
+- `trust_release_unpreviewed_fields` warns about facts released from a held
+  `## Facts` row before the preview showed that row's fields. Those releases
+  confirmed the row's confidence, notability, validity and other cells
+  without showing them. Review each listed fact (`gbrain trust explain f<id>`)
+  and edit the row or forget the fact if a field is wrong. The check is
+  read-only and never lowers a tier.

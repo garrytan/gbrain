@@ -40,7 +40,7 @@ describe('postgres-unit-arms list', () => {
     const shards = Array.from({ length: ARM_SHARDS }, (_, i) => i + 1);
     expect(job).toContain(`shard: [${shards.join(', ')}]`);
     expect(job).toContain(`Unit-lane PostgreSQL arms \${{ matrix.shard }}/${ARM_SHARDS}`);
-    expect(job).toContain(`run: bun scripts/postgres-unit-arms.ts run \${{ matrix.shard }} ${ARM_SHARDS} \${{ matrix.bun == '1.4.4' && '--postgres-only' || '' }}\n`);
+    expect(job).toContain(`run: bun scripts/postgres-unit-arms.ts run \${{ matrix.shard }} ${ARM_SHARDS}\n`);
     expect(job).toMatch(new RegExp(`- name: Require PostgreSQL arms of unit-lane suites\\n\\s+timeout-minutes: ${ARM_STEP_TIMEOUT_MS / 60_000}\\n`));
     const ports = [...job.matchAll(/ports: \['(\d+):5432'\]/g)].map(m => m[1]);
     const urls = [...job.matchAll(/postgres:\/\/gbrain_test:gbrain_test@127\.0\.0\.1:(\d+)\/gbrain_test/g)].map(m => m[1]);
@@ -49,7 +49,7 @@ describe('postgres-unit-arms list', () => {
     expect(urls).toEqual(ports);
   });
 
-  test('every CI shard\'s two-worker makespan fits the step twice over, with a minute to spare, in both Bun cells', () => {
+  test('every CI shard\'s two-worker makespan fits the step twice over, with a minute to spare, in both arm modes', () => {
     const files = readArmsList(REPO).files;
     expect(2 * ARM_SHARD_BUDGET_MS + 60_000).toBe(ARM_STEP_TIMEOUT_MS);
     for (const postgresOnly of [false, true]) {
@@ -58,6 +58,15 @@ describe('postgres-unit-arms list', () => {
       const makespans = armShards(REPO, files, ARM_SHARDS, postgresOnly).map(shard => armMakespan(shard, f => weights.get(f) ?? p75));
       expect({ postgresOnly, over: makespans.filter(ms => ms > ARM_SHARD_BUDGET_MS).map(Math.round) }).toEqual({ postgresOnly, over: [] });
     }
+  });
+
+  test('the job runs both arms: the unit shards skip *.slow.test.ts, so it is the only GitHub lane for the PGLite side of listed slow suites', () => {
+    const slow = readArmsList(REPO).files.filter(f => f.endsWith('.slow.test.ts'));
+    expect(slow.length).toBeGreaterThan(0);
+    expect(readFileSync(join(REPO, 'scripts', 'run-unit-shard.sh'), 'utf8')).toContain("-not -name '*.slow.test.ts'");
+    const workflow = readFileSync(join(REPO, '.github', 'workflows', 'persistence-validation.yml'), 'utf8');
+    const job = workflow.slice(workflow.indexOf('  unit-postgres-arms:'), workflow.indexOf('\n  invariants:'));
+    expect(job).not.toContain('--postgres-only');
   });
 
   test('a shard\'s makespan is the busiest worker when each takes the next heaviest file as it frees up', () => {

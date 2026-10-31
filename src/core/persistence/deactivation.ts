@@ -26,6 +26,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { DATABASE_ONLY_SOURCES_KEY } from './unbound-source.ts';
+import { NOT_PAGE_EMBEDDING_LEASE } from '../page-embedding-lease.ts';
 import { existsSync, lstatSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
@@ -143,7 +144,7 @@ export async function deactivationBlockers(engine: BrainEngine): Promise<Deactiv
         : carry.state_file ? `move ${carry.state_file} aside, then rerun deactivate; or ${resolve}` : resolve });
   }
   const leases = await engine.executeRaw<{ id: string; holder_host: string; holder_pid: number }>(
-    'SELECT id, holder_host, holder_pid FROM gbrain_cycle_locks WHERE ttl_expires_at > now() ORDER BY id');
+    `SELECT id, holder_host, holder_pid FROM gbrain_cycle_locks WHERE ttl_expires_at > now() AND ${NOT_PAGE_EMBEDDING_LEASE} ORDER BY id`);
   for (const l of leases) blockers.push({ kind: 'lease', id: l.id, detail: `held by host ${l.holder_host}, pid ${l.holder_pid}`,
     exit: 'wait for that connector sync or maintenance run to finish (gbrain doctor shows live locks), then rerun deactivate' });
   return blockers;
@@ -162,7 +163,7 @@ const EFFECT_ROWS = `SELECT e.id::text AS effect_id, e.kind, e.state, COALESCE(e
  * the same vector) or an effect whose source was archived, replaced or removed.
  */
 export async function failedEffectHistory(engine: BrainEngine): Promise<FailedEffectEntry[]> {
-  const rows = await engine.executeRaw<EffectRow>(`${EFFECT_ROWS} WHERE e.state='failed' AND e.recovery IS NULL ORDER BY e.id LIMIT 50`);
+  const rows = await engine.executeRaw<EffectRow>(`${EFFECT_ROWS} WHERE e.state='failed' AND e.recovery IS NULL AND NOT (e.data ? 'settled') ORDER BY e.id LIMIT 50`);
   return rows.map(e => {
     const retry = `gbrain sources writer retry-effects ${e.source_id} --request-id ${e.request_id} --dry-run`;
     const [exit, why] = !e.source_live ? [null, 'its source was archived, replaced or removed, so nothing can run it']

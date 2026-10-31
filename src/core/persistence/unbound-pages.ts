@@ -11,7 +11,7 @@
  * stamped in the publication transaction), so an ordinary page that merely
  * lacks a recorded origin is never matched to a slug-derived file.
  */
-import { readdirSync, type Dirent } from 'node:fs';
+import { existsSync, readdirSync, type Dirent } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { resolveSourceLocalFilePath } from '../markdown.ts';
 import { opError } from '../ops/contract.ts';
@@ -64,6 +64,22 @@ export function slugDerivedOrigin(root: string, slug: string, mode: 'git-root' |
         + 'Ask the user which one is the page\'s file; rename or remove the others, commit, then preview again.', { detail: 'slug_path_ambiguous' });
   }
   return matches[0] ?? { path, sourcePath };
+}
+
+/** GBRA-133: whether a page records no file origin: no source path and no `file:` source URI (a URL or a capture label names no file). */
+export function recordsNoFileOrigin(page: { source_path?: string | null; source_uri?: string | null }): boolean {
+  return !page.source_path && !/^file:/i.test(page.source_uri?.trim() ?? '');
+}
+
+/**
+ * GBRA-133: the file at a page's slug path (source-root relative). When `<slug>.md` is absent, the one file whose path
+ * imports as the slug in another spelling (`README.md` for slug `readme`) is that file, as discovery names it.
+ */
+export function slugPathFile(root: string, slug: string): string {
+  const exact = join(root, `${slug}.md`);
+  if (existsSync(exact)) return exact;
+  const derived = slugDerivedOrigin(root, slug, 'source-root');
+  return derived && existsSync(derived.path) ? derived.path : exact;
 }
 
 function entries(dir: string): Dirent[] {

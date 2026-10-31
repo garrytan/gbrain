@@ -406,8 +406,8 @@ export async function dispatchFreshnessSyncs(
         if (skip?.reason !== 'sync_disabled') reportAutomaticSyncSkip(src.id, skip, 'freshness_sync_skipped', jsonMode, (l) => process.stderr.write(l + '\n'));
         if (skip) decisions.push({ source_id: src.id, outcome: 'skipped' });
         if (skip) continue;
-        // A local_path this machine cannot use — relative (#3696: cwd is
-        // launchd's, not the registering shell's) or absent on disk and
+        // A local_path this machine cannot use — relative (#3696, #7630: it
+        // names whatever directory the daemon runs from) or absent on disk and
         // not a managed clone sync can re-create — would sync a phantom
         // path. Skip loudly (sourceLocalPathSkipWarning carries the
         // fix); under --json the skip is an NDJSON event like every

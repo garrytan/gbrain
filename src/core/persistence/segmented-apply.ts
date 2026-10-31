@@ -29,6 +29,7 @@ import { buildSegmentedProjection } from '../page-body/projection.ts';
 import { maintenanceAttribution } from './attribution.ts';
 import { readPageBodyPolicy, chooseBodyStorage, SEGMENTED_DEMOTE_AT_OR_BELOW_BYTES, type PageBodyPolicy } from '../page-body/limits.ts';
 import { SEGMENTED_CHUNKER_VERSION } from '../page-body/segment-chunks.ts';
+import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 import { pageSearchVectorSql } from '../fts-language.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
@@ -145,16 +146,24 @@ export interface SegmentedApplied { pageId: number; complete: boolean; retireDef
 /**
  * Seal a segmented page's text projection at its current revision (chunks visible, title + timeline lead searchable).
  * The lead is indexed as the inline seal indexes a snapshot's timeline: after the page's withdrawal overlay, sanitized.
+ * `chunker_version` is the oldest segmented chunker among the live chunks: a page sealed at an older one keeps it while
+ * any chunk row from before this generation is still stored (a write re-chunks only the occurrences it changed), so
+ * `gbrain reindex --segmented` still lists it.
  */
 export async function sealSegmentedPage(tx: Pick<BrainEngine, 'executeRaw'>, pageId: number, timelineLead?: string): Promise<void> {
-  const [page] = await tx.executeRaw<{ slug: string; source_id: string; timeline_lead: string | null }>('SELECT slug, source_id, timeline_lead FROM pages WHERE id=$1', [pageId]);
+  const [page] = await tx.executeRaw<{ slug: string; source_id: string; timeline_lead: string | null; chunker_version: number | null; body_generation: number | string }>(
+    'SELECT slug, source_id, timeline_lead, chunker_version, body_generation FROM pages WHERE id=$1', [pageId]);
   if (!page) return;
+  const stamped = Number(page.chunker_version ?? 0);
+  const older = stamped >= SAFE_FENCE_CHUNKER_VERSION && stamped < SEGMENTED_CHUNKER_VERSION && (await tx.executeRaw(
+    `-- chunk-visibility-ok: a sealing page stores only live rows; any one older than this generation predates the write
+    SELECT 1 FROM content_chunks WHERE page_id=$1 AND body_generation < $2 LIMIT 1`, [pageId, page.body_generation])).length > 0;
   const query = <T>(sql: string, params?: unknown[]) => tx.executeRaw<T>(sql, params);
   const ledger = await readPageSnapshot(query, page.slug, { sourceId: page.source_id, includeDeleted: true });
   const { timeline } = await overlayCanonicalBodies(query, '', timelineLead ?? page.timeline_lead ?? '', ledger?.withdrawals ?? [],
     { sourceId: page.source_id, marker: ledger?.globalPurges });
   await tx.executeRaw(`UPDATE pages SET text_projection_revision=knowledge_revision, chunker_version=$3,
-    search_vector=${pageSearchVectorSql('title', '$2')} WHERE id=$1`, [pageId, sanitizeRemoteBody(timeline), SEGMENTED_CHUNKER_VERSION]);
+    search_vector=${pageSearchVectorSql('title', '$2')} WHERE id=$1`, [pageId, sanitizeRemoteBody(timeline), older ? stamped : SEGMENTED_CHUNKER_VERSION]);
 }
 
 /** The segmented branch of a page write's apply, inside the publication transaction. */
@@ -192,8 +201,9 @@ export async function applySegmentedBody(tx: BrainEngine, input: SegmentedApplyI
  * Demotion: turn a segmented page row into an inline row with an empty body
  * (the caller's inline write fills it in the same transaction). The live
  * manifest rows close at the next generation, so versions that pin earlier
- * generations keep theirs; the page's segmented chunk rows are deleted here,
- * before the inline write stages its chunks. The write holds the page row FOR
+ * generations keep theirs; the page's segmented chunk rows and every
+ * page_segment_derivations row (outputs of segments no body holds any more)
+ * are deleted here, before the inline write stages its chunks. The write holds the page row FOR
  * UPDATE (lockPageKeys), so a chunk batch in flight (FOR KEY SHARE) commits
  * before this delete, and a later batch of a racing preparation refuses
  * (stageSegmentChunks: an inline page at the generation it targets).
@@ -205,6 +215,7 @@ export async function demoteSegmentedPage(tx: Pick<BrainEngine, 'executeRaw'>, p
     body_bytes=NULL, truth_bytes=NULL, body_lines=NULL, segment_count=NULL, segmenter_version=NULL, body_flags=NULL,
     body_generation=body_generation+1 WHERE id=$1 AND body_storage='segmented'`, [pageId]);
   await tx.executeRaw('DELETE FROM content_chunks WHERE page_id=$1 AND occurrence_id IS NOT NULL', [pageId]);
+  await tx.executeRaw('DELETE FROM page_segment_derivations WHERE page_id=$1', [pageId]);
 }
 
 /** Abort a staging whose write will not publish (best effort: expiry collects it anyway). */

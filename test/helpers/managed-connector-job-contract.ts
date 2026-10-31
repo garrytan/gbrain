@@ -933,9 +933,13 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
     const { engine } = state.brain;
     const count = async () => (await engine.executeRaw<{ n: number }>(
       'SELECT count(*)::int AS n FROM timeline_entries t JOIN pages p ON p.id=t.page_id WHERE p.source_id=$1 AND p.slug=$2', [state.sourceId, state.emailSlug]))[0].n;
-    // The connector import projected the row; drop it outside the protocol (as
-    // the fixture does for source setup) to model a page whose timeline was
-    // never projected, which is the work `extract timeline --source db` exists for.
+    // GBRA-221: the timeline-shaped line in the inbound body stays text, so the row comes from the brain's
+    // own timeline door. Then drop it outside the protocol (as the fixture does for source setup) to model a
+    // page whose timeline was never projected, which is the work `extract timeline --source db` exists for.
+    expect(await count()).toBe(0);
+    await operationsByName.add_timeline_entry.handler(state.ctx, { slug: state.emailSlug, date: '2026-09-28',
+      summary: 'Quarterly plan draft requested', request_id: randomUUID() });
+    await disposePersistenceConsumer(engine);
     expect(await count()).toBe(1);
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
     await engine.executeRaw('DELETE FROM timeline_entries WHERE page_id=(SELECT id FROM pages WHERE source_id=$1 AND slug=$2)', [state.sourceId, state.emailSlug]);

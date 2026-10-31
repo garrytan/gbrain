@@ -11,7 +11,7 @@
 #     --env RELEASE_COMMIT=8e11aa1f -- 'bun scripts/bench/managed-sync-stall-repro.ts --cli-repo ../gbrain-release ...'
 set -euo pipefail
 
-BUN_VERSION="${BUN_VERSION:-1.4.2}"
+BUN_VERSION="${BUN_VERSION:-1.4.4}"
 RELEASE_COMMIT="${RELEASE_COMMIT:-}"
 t0=$(date +%s)
 step() { echo "[stall-repro-setup +$(( $(date +%s) - t0 ))s] $*"; }

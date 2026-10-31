@@ -193,4 +193,15 @@ describe('shards', () => {
     expect(shards.map(s => s.items.reduce((n, i) => n + i.count, 0))).toEqual([6, 4]);
     expect(iterationEstimateMs('test/other.test.ts', 'postgres-arm', measured)).toBe(150_000);
   });
+
+  test('scripts/stress/iteration-weights.json keeps the shape mine-iterations writes: sorted test paths, positive whole milliseconds', () => {
+    const weights = JSON.parse(readFileSync(join(REPO, 'scripts/stress/iteration-weights.json'), 'utf8')) as Record<string, unknown>;
+    const files = Object.keys(weights);
+    expect(files.length).toBeGreaterThan(0);
+    expect(files).toEqual([...files].sort((a, b) => (a < b ? -1 : 1)));
+    for (const [file, ms] of Object.entries(weights)) {
+      expect(file).toMatch(/^test\/.+\.test\.ts$/);
+      expect(Number.isInteger(ms) && (ms as number) > 0).toBe(true);
+    }
+  });
 });
