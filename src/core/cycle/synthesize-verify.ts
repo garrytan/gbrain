@@ -1137,9 +1137,8 @@ export function verifyBody(body: string, sources: GroundedSource[], opts: { prio
     const unitProvenance: QuoteProvenance[] = [];
     const grounded: Array<{ source: GroundedSource; start: number }> = [];
     for (const sp of unitSpans) {
-      const g = groundAcross(sp.inner, sources);
-      if (g.result.status === 'none' && g.result.reason === 'not_found' && mentioned.size === 0 && isScareQuote(body, sp)) continue;
       quotes++;
+      const g = groundAcross(sp.inner, sources);
       if (g.result.status === 'none') {
         fail(g.result.reason === 'crosses_speakers' ? 'quote_crosses_speakers' : 'quote_not_in_source', clip(sp.inner));
         continue;
@@ -1200,20 +1199,6 @@ export function verifyBody(body: string, sources: GroundedSource[], opts: { prio
   for (const e of edits.sort((a, b) => b.start - a.start)) out = out.slice(0, e.start) + e.text + out.slice(e.end);
   out = collapseRemoved(out, body);
   return { body: out, changed: out !== body, quotes, exact, normalized, near, unbalanced, quarantined, provenance, failures, groundingUnits };
-}
-
-/** A quoted span of at most this many words can be the writer's own term in scare quotes (#7071); a three-word unattributed span is still a quotation to verify. */
-const MAX_SCARE_QUOTE_WORDS = 2;
-/** Text just before an opening mark that introduces a quotation: a speech verb or a colon. */
-const QUOTATION_LEAD_IN = /(?:\b(?:say|says|said|saying|tell|tells|told|ask|asks|asked|write|writes|wrote|reply|replies|replied|add|adds|added|call|calls|called|put it|quote|quotes|quoted)\b[^.!?\n]{0,16}|:)\s*$/i;
-
-/**
- * #7071: a short quoted span that grounds nowhere, in a unit that names no speaker, with no punctuation inside and no
- * quotation lead-in, is the writer's term in scare quotes (`not simply "work-life balance"`), not a quotation to verify.
- */
-function isScareQuote(body: string, span: { start: number; inner: string }): boolean {
-  return span.inner.trim().split(/\s+/).length <= MAX_SCARE_QUOTE_WORDS && !/[.,;:!?]/.test(span.inner)
-    && !QUOTATION_LEAD_IN.test(body.slice(Math.max(0, span.start - 40), span.start));
 }
 
 /** Units shorter than this many words (labels, headings, fragments) are not claims S8 judges. */
