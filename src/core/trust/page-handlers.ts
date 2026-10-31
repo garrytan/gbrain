@@ -348,7 +348,7 @@ const DATABASE_ONLY_TARGETS = ['no_repo_configured', 'disabled_by_config', 'not_
  * The checkout file an owner repair mode on an unmanaged brain renders the page to: `target: null` when the page has
  * none on purpose (DATABASE_ONLY_TARGETS), the bytes the write must still find, or why the page cannot be repaired:
  * `file_database_drift` when the file holds an edit the database lacks (a hand edit sync has not imported), else the
- * unresolvable target (a missing checkout, a path outside the source root) or `url_clone` (a clone gbrain pulls, whose
+ * unresolvable target (a missing checkout, a path outside the source root), `mirror_read_only` or `url_clone` (a mirror or a clone gbrain pulls, whose
  * next pull would undo a database-only repair). Read-only.
  */
 export async function ownerRepairFile(engine: BrainEngine, sourceId: string, slug: string):
@@ -356,8 +356,9 @@ export async function ownerRepairFile(engine: BrainEngine, sourceId: string, slu
   const { derivedFileTarget } = await import('../cycle/derived-write-through.ts');
   const resolved = await derivedFileTarget(engine, slug, sourceId);
   if (!resolved.ok) return DATABASE_ONLY_TARGETS.includes(resolved.skipped) ? { ok: true, target: null } : { ok: false, reason: resolved.skipped };
-  const { urlCloneReadOnly } = await import('../url-clone.ts');
-  if (await urlCloneReadOnly(engine, sourceId)) return { ok: false, reason: 'url_clone' };
+  const { readOnlyCheckout } = await import('../persistence/mirror-read-only.ts');
+  const readOnly = await readOnlyCheckout(engine, sourceId);
+  if (readOnly) return { ok: false, reason: readOnly };
   const { replaceableFile } = await import('../facts/file-body-guard.ts');
   const file = await replaceableFile(engine, sourceId, slug, resolved.target.filePath);
   return file.ok ? { ok: true, target: { expectedFileBytes: file.expectedFileBytes } } : { ok: false, reason: 'file_database_drift' };

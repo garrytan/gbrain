@@ -432,9 +432,10 @@ writes (for example a `forget`) complete as skipped. The flag is off by default.
 
 On a brain without managed persistence the flag holds the same way: page
 write-through (`sync --full` re-exports, `brainstorm --save`), fact fences,
-timeline entries, `forget` and the extract cycle's fence pass all leave the
-checkout untouched and keep the write in the database, reporting
-`mirror_read_only` (#7098).
+timeline entries, `forget`, the extract cycle's fence pass and owner trust
+repairs leave the checkout untouched and keep the write in the database (a
+trust repair is listed `needs_review` instead), reporting `mirror_read_only`
+(#7098). The dream cycle's reverse-written pages are not gated yet.
 
 A managed brain never pulls inside a cycle. Advance a managed checkout with
 one command on its owner host:

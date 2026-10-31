@@ -12,14 +12,13 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
-**A purge of a large source now finishes, a source marked `mirror-readonly` is no longer written by the older disk writers, and a refused `git-durability` enable no longer changes anything first (#7702, #7098, #7634, #7110, #7772, #7671).**
+**A source marked `mirror-readonly` is no longer written by page write-through, fact fences, timeline entries or `brainstorm --save`, and a refused `git-durability` enable no longer changes anything first (#7098, #7634, #7110, #7772, #7671).**
 
 This is the census half of the persistence/door follow-up wave (#8124). Each fix has a regression test that fails on master.
 
 ### Itemized changes
 
-- **Large source purge (#7702).** `gbrain sources purge` (or `remove`) of a large source no longer gets cancelled on every run. The one cascading delete of the source no longer runs under the 5 s statement cap; the 1 s lock wait still bounds it and it stays one transaction. A statement timeout or cancel (SQLSTATE 57014) now refuses `write_interrupted` instead of a `write_pending` that told you to retry. Contributed idea from @Masashi-Ono0611 (#7704, rewritten on master).
-- **Read-only mirrors (#7098).** On a brain without managed persistence, a source marked `gbrain sources mirror-readonly` is left alone by page write-through and delete, timeline entries, fact fences, `forget`, the extract cycle, `sync --full` and `brainstorm --save`. The writes stay in the database, so the mirror's checkout stays clean for `git pull --ff-only`. Brainstorm message idea from @javieraldape (#7113, rewritten on master).
+- **Read-only mirrors (#7098).** On a brain without managed persistence, a source marked `gbrain sources mirror-readonly` is left alone by page write-through and delete, timeline entries, fact fences, `forget`, the extract cycle, `sync --full` and `brainstorm --save`, and owner trust repairs list its pages `needs_review`. The writes stay in the database, so the mirror's checkout stays clean for `git pull --ff-only`. Brainstorm message idea from @javieraldape (#7113, rewritten on master).
 - **`git-durability` approval first (#7634).** `gbrain sources writer git-durability <source>` checks `--admin-intent` and `--expected-state` before reading the token file, so a missing, wrong or stale approval no longer rewrites `AGENTS.md`/`RESOLVER.md`, wires a credential or retries parked pushes. The `agents.commit` hint now names `gbrain git commit-push`.
 - **Parked push retry (#7110).** `retry-effects --parked-pushes` no longer stops on a request whose page became private to its remote writer. That request is listed as refused with its `request_id` and a read-only receipt command, the other parked pushes are retried, and the run ends `partial`.
 - **Embedding stop signal (#7772).** An embedding effect whose stop signal fires while the provider call is being admitted (a one-shot `gbrain put` exiting) is retried as `embedding_aborted` instead of failing for good as `embedding_budget_refused`, which blocked writer quiescence until a manual repair.
