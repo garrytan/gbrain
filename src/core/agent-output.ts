@@ -545,7 +545,7 @@ function recoveryFix(p: EnvelopeParts, ctx: AgentErrorContext, fields?: ReceiptF
 
 const REFRESH_REFUSALS: ReadonlySet<string> = new Set([
   'refresh_not_managed', 'refresh_not_owner', 'refresh_no_upstream', 'fetch_failed', 'refresh_diverged', 'refresh_dirty',
-  'sync_in_progress', 'refresh_in_progress', 'refresh_drain_timeout', 'refresh_source_changed', 'refresh_recovery_required',
+  'sync_in_progress', 'refresh_in_progress', 'refresh_drain_timeout', 'refresh_lock_timeout', 'refresh_source_changed', 'refresh_recovery_required',
   'worktree_refreshing',
 ]);
 

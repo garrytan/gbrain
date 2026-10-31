@@ -548,6 +548,7 @@ test/visibility-repair-scale.test.ts
 test/withdrawal-overlay-concurrency.test.ts
 test/withdrawal-publication-file.test.ts
 test/worktree-refresh-recovery-row-gbra130.test.ts
+test/worktree-refresh-unexpected-throw.test.ts
 test/write-roundtrips-gbra156.test.ts
 test/write-through-leak-guard-alias-7203.test.ts
 test/writer-admin-state-embed-lease.test.ts
