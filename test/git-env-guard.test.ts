@@ -8,7 +8,9 @@
  * and eval/drift-watch.ts in wave 13).
  */
 import { expect, test } from 'bun:test';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
@@ -77,3 +79,37 @@ test('the guard catches implicit and explicit process.env inheritance and accept
 test('PENDING names only files that still need the hunk', () => {
   for (const rel of PENDING) expect({ rel, unscrubbed: unscrubbedGitSpawns(rel, readFileSync(join(ROOT, rel), 'utf8')).length > 0 }).toEqual({ rel, unscrubbed: true });
 });
+
+test('the git preload isolates nested tests from a hook-provided GIT_DIR', () => {
+  const root = mkdtempSync(join(tmpdir(), 'gbrain-git-hook-env-'));
+  try {
+    const outer = join(root, 'outer.git');
+    const clone = join(root, 'clone');
+    execFileSync('git', ['init', '--bare', outer]);
+    execFileSync('git', ['init', clone]);
+    const outerConfig = join(outer, 'config');
+    const before = readFileSync(outerConfig);
+    const fixture = join(root, 'hook-env-probe.test.ts');
+    writeFileSync(fixture, [
+      "import { test } from 'bun:test';",
+      "import { execFileSync } from 'node:child_process';",
+      "test('writes config in its own clone', () => {",
+      "  execFileSync('git', ['-C', process.env.FIXTURE_CLONE!, 'config', 'user.email', 'polluted@example.invalid']);",
+      '});',
+    ].join('\n'));
+
+    const child = Bun.spawnSync(['bun', 'test', '--timeout=60000', fixture], {
+      cwd: ROOT,
+      env: { ...process.env, GIT_DIR: outer, FIXTURE_CLONE: clone },
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: 30_000,
+      killSignal: 'SIGKILL',
+    });
+
+    expect(child.exitCode).toBe(0);
+    expect(readFileSync(outerConfig)).toEqual(before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 45_000);
