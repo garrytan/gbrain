@@ -1150,7 +1150,7 @@ function runReloadCmd(args: string[]): void {
 }
 
 async function runAddTypeCmd(args: string[]): Promise<void> {
-  const { json } = parseFlags(args);
+  const json = parseFlags(args).json || args.includes('--json=true');
   const { parseAddTypeArgs, NO_PREFIX_NOTE } = await import('./schema-add-type.ts');
   let parsed: import('./schema-add-type.ts').AddTypeArgs;
   try {

@@ -3,7 +3,7 @@
  *
  * A page names its readers in frontmatter `readable_by` (a string or a list).
  * normalizeReaders() is the row twin of the SQL function gbrain_access_readers()
- * (schema migration v274); test/access-principals.test.ts holds the two equal
+ * (schema migration v281); test/access-principals.test.ts holds the two equal
  * on a generated corpus, so the predicate and every TypeScript check agree.
  *
  *   absent key            → null (no page-level restriction)

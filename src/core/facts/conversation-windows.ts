@@ -122,29 +122,6 @@ export function splitTurnText(text: string, budget: number): string[] {
   return pieces;
 }
 
-/**
- * Bounded windows over one eligible gap group. Every message lands in
- * exactly one window; a message whose own line overflows the budget is
- * replaced by its pieces (same speaker and timestamp) before packing.
- */
-function windowGroup(group: ConversationMessage[], pageTitle: string, maxMessages: number, maxChars: number): ConversationSegment[] {
-  const out: ConversationSegment[] = [];
-  let cur: ConversationMessage[] = [];
-  const close = () => {
-    if (cur.length > 0) out.push(segmentOf(cur));
-    cur = [];
-  };
-  for (const m of group) {
-    const parts = renderedLength(pageTitle, [m]) <= maxChars ? [m] : splitOversizedTurn(m, pageTitle, maxChars);
-    for (const part of parts) {
-      if (cur.length >= maxMessages || (cur.length > 0 && renderedLength(pageTitle, [...cur, part]) > maxChars)) close();
-      cur.push(part);
-    }
-  }
-  close();
-  return out;
-}
-
 function splitOversizedTurn(m: ConversationMessage, pageTitle: string, maxChars: number): ConversationMessage[] {
   const fixed = renderedLength(pageTitle, [{ ...m, text: '' }]);
   const budget = maxChars - fixed;
@@ -157,6 +134,65 @@ function splitOversizedTurn(m: ConversationMessage, pageTitle: string, maxChars:
   return splitTurnText(m.text, budget).map((text) => ({ ...m, text }));
 }
 
+/** A closed window and the tag of the message it starts with. */
+export interface TaggedWindow<Tag> { seg: ConversationSegment; tag: Tag }
+
+/** What one pushed message did: dropped (filtered out), or accepted, opening a new gap group or not. */
+export type WindowPush<Tag> = { accepted: false; windows: [] } | { accepted: true; startsGroup: boolean; windows: TaggedWindow<Tag>[] };
+
+/**
+ * splitIntoSegments as a stream: push messages in order, get each window as it closes, then `end()` for the rest.
+ * Holds only the open window (and, while its gap group has a single original message, that message's split pieces), so
+ * a caller can window a conversation of any length one segment at a time. The windows equal splitIntoSegments' over the
+ * same messages.
+ */
+export function createWindowStream<Tag>(opts: SplitSegmentsOpts = {}) {
+  const gapMs = (opts.gapMinutes ?? DEFAULT_SEGMENT_GAP_MINUTES) * 60_000;
+  const maxMessages = opts.maxMessages ?? DEFAULT_SEGMENT_MAX_MESSAGES;
+  const maxChars = opts.maxChars ?? SEGMENT_TEXT_CHAR_LIMIT;
+  const pageTitle = opts.pageTitle ?? '';
+  const sinceMs = opts.sinceIso ? Date.parse(opts.sinceIso) : NaN;
+  let lastTs: number | null = null;
+  let groupMessages = 0;
+  let cur: ConversationMessage[] = [];
+  let curTag: Tag | undefined;
+  let held: TaggedWindow<Tag>[] = [];
+  const close = (out: TaggedWindow<Tag>[]) => {
+    if (cur.length > 0) held.push({ seg: segmentOf(cur), tag: curTag as Tag });
+    cur = [];
+    if (groupMessages >= MIN_SEGMENT_MESSAGES) { out.push(...held); held = []; }
+  };
+  const endGroup = (out: TaggedWindow<Tag>[]) => {
+    close(out);
+    held = [];
+    groupMessages = 0;
+  };
+  return {
+    push(m: ConversationMessage, tag: Tag): WindowPush<Tag> {
+      const ts = Date.parse(m.timestamp);
+      if (!Number.isFinite(ts) || (Number.isFinite(sinceMs) && ts <= sinceMs)) return { accepted: false, windows: [] };
+      const windows: TaggedWindow<Tag>[] = [];
+      const startsGroup = lastTs === null || ts - lastTs > gapMs;
+      if (startsGroup) endGroup(windows);
+      lastTs = ts;
+      groupMessages++;
+      const parts = renderedLength(pageTitle, [m]) <= maxChars ? [m] : splitOversizedTurn(m, pageTitle, maxChars);
+      for (const part of parts) {
+        if (cur.length >= maxMessages || (cur.length > 0 && renderedLength(pageTitle, [...cur, part]) > maxChars)) close(windows);
+        if (cur.length === 0) curTag = tag;
+        cur.push(part);
+      }
+      if (groupMessages >= MIN_SEGMENT_MESSAGES && held.length) { windows.push(...held); held = []; }
+      return { accepted: true, startsGroup, windows };
+    },
+    end(): TaggedWindow<Tag>[] {
+      const windows: TaggedWindow<Tag>[] = [];
+      endGroup(windows);
+      return windows;
+    },
+  };
+}
+
 /**
  * Split parsed messages into bounded extraction windows.
  *
@@ -164,37 +200,19 @@ function splitOversizedTurn(m: ConversationMessage, pageTitle: string, maxChars:
  * 2. Cut gap groups on `gapMinutes`; a group with fewer than
  *    MIN_SEGMENT_MESSAGES messages is ineligible and dropped whole.
  * 3. Window each eligible group under `maxMessages` and `maxChars`
- *    (the rendered budget, header included, for `pageTitle`).
+ *    (the rendered budget, header included, for `pageTitle`): a window
+ *    closes when the next message would exceed either, and a turn that cannot
+ *    fit alone is replaced by its pieces (same speaker and timestamp).
  */
 export function splitIntoSegments(
   messages: ConversationMessage[],
   opts: SplitSegmentsOpts = {},
 ): ConversationSegment[] {
-  const gapMs = (opts.gapMinutes ?? DEFAULT_SEGMENT_GAP_MINUTES) * 60_000;
-  const maxMessages = opts.maxMessages ?? DEFAULT_SEGMENT_MAX_MESSAGES;
-  const maxChars = opts.maxChars ?? SEGMENT_TEXT_CHAR_LIMIT;
-  const pageTitle = opts.pageTitle ?? '';
-  const sinceMs = opts.sinceIso ? Date.parse(opts.sinceIso) : NaN;
-
-  const groups: ConversationMessage[][] = [];
-  let cur: ConversationMessage[] = [];
-  let lastTs: number | null = null;
-  for (const m of messages) {
-    const ts = Date.parse(m.timestamp);
-    if (!Number.isFinite(ts)) continue;
-    if (Number.isFinite(sinceMs) && ts <= sinceMs) continue;
-    if (lastTs !== null && ts - lastTs > gapMs) {
-      groups.push(cur);
-      cur = [];
-    }
-    cur.push(m);
-    lastTs = ts;
-  }
-  groups.push(cur);
-
-  return groups
-    .filter((g) => g.length >= MIN_SEGMENT_MESSAGES)
-    .flatMap((g) => windowGroup(g, pageTitle, maxMessages, maxChars));
+  const stream = createWindowStream<null>(opts);
+  const out: ConversationSegment[] = [];
+  for (const m of messages) for (const w of stream.push(m, null).windows) out.push(w.seg);
+  for (const w of stream.end()) out.push(w.seg);
+  return out;
 }
 
 /**

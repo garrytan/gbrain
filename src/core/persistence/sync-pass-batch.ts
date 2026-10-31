@@ -88,9 +88,9 @@ export async function readConvergedWatermark(tx: Pick<BrainEngine, 'executeRaw'>
         AND request_id IS DISTINCT FROM $2::uuid LIMIT $3)
     UNION ALL (SELECT 'e:'||e.id::text FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
       WHERE r.worktree_id=$1::uuid AND e.kind='git' AND e.state IN ('queued','running') LIMIT $3)`, [scope.worktreeId, selfRequestId, cap + 1, scope.sourceId, scope.incarnation]);
-  // The prior list's writebacks whose Git effect has not committed (queued, running, failed or parked) stay listed.
+  // The prior list's writebacks whose Git effect has not committed (queued, running, failed or parked) and is not settled stay listed.
   const carried = writeback?.prior?.length ? (await tx.executeRaw<{ id: string }>(`SELECT DISTINCT e.request_id::text AS id FROM persistence_effects e
-      WHERE e.request_id = ANY($1::uuid[]) AND e.kind='git' AND e.state<>'committed'`, [writeback.prior])).map(row => row.id) : [];
+      WHERE e.request_id = ANY($1::uuid[]) AND e.kind='git' AND e.state<>'committed' AND NOT (e.data ? 'settled')`, [writeback.prior])).map(row => row.id) : [];
   const listed = [...new Set([...(writeback?.own ? [writeback.own] : []), ...carried])];
   return { request_hwm: hwm?.hwm ?? '0', open_at_stamp: open.length > cap ? null : open.map(row => row.id), ...(listed.length ? { writeback: listed } : {}) };
 }

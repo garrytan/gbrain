@@ -27,6 +27,7 @@ import { readFix } from '../ops/op-fix.ts';
 import { faultPoint } from '../persistence/fault-points.ts';
 import { contentHash, rowToPage } from '../utils.ts';
 import { rewriteLiveSegmentedFences, rewriteSegmentedGeneration, segmentedBodyContains } from '../page-body/segment-rewrite.ts';
+import { continueDerivationPurges, derivationPurgeState, recordDerivationPurge } from '../page-body/segment-derive.ts';
 import { discoverWithdrawalTargets, withdrawalDiscoveryFailure } from './withdrawal-discovery.ts';
 import { dropPurgedFenceRows } from './purge-overlay.ts';
 import { derivedRowsFrom, hideDerivedRows, type DerivationRef } from './derivation-inputs.ts';
@@ -37,6 +38,7 @@ import { assertPersistenceAccepting } from '../persistence/service.ts';
 import { declareDurablePersistence } from '../persistence/protocol.ts';
 import { parseWriteRequestId } from '../persistence/preconditions.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
+import { outcomeMarkerSql } from './audit-sources.ts';
 import { requestAttribution } from '../persistence/attribution.ts';
 import { isTerminal, principalKey, type WriteRequest } from '../persistence/model.ts';
 import { retryWriteAdmission } from '../persistence/admission-retry.ts';
@@ -101,7 +103,7 @@ function notFound(rawId: string): OperationError {
 async function loadTarget(engine: BrainEngine, id: number, sourceId: string): Promise<PurgeTarget | null> {
   const [row] = await engine.executeRaw<PurgeTarget>(`SELECT id,source_id,visibility,fact,entity_slug,source_markdown_slug,
       gbrain_fact_fingerprint(fact) AS fact_hash,embedding::text AS embedding,embedding_model
-    FROM facts WHERE id=$1 AND source_id=$2`, [id, sourceId]);
+    FROM facts WHERE id=$1 AND source_id=$2 AND NOT ${outcomeMarkerSql('facts')}`, [id, sourceId]);
   return row ? { ...row, id: Number(row.id) } : null;
 }
 
@@ -224,6 +226,17 @@ async function ledgerLookup<T>(fn: () => Promise<T>, factId: number, sourceId: s
   }
 }
 
+/** A statement timeout recording the derivation sweep refuses the whole purge with the typed code, as the ledger redaction does. */
+async function derivationSweep(fn: () => Promise<void>, factId: number, sourceId: string): Promise<void> {
+  try { return await fn(); } catch (error) {
+    if ((error as { code?: unknown } | null)?.code !== '57014') throw error;
+    throw opError('purge_lookup_timeout', 'This purge could not finish; nothing was purged. Do not assume the requested content was erased.',
+      `Recording the sweep of stored derivation results holding fact ${factId} in source ${sourceId} exceeded the purge transaction's statement budget, so the transaction rolled back and nothing was removed, tombstoned or redacted. `
+      + 'Run the purge again with a new request id; if it times out again, report it with the output of gbrain doctor --json.',
+    { fix: readFix('Reports the brain\'s health, read-only.', { argv: ['gbrain', 'doctor', '--json'] }) });
+  }
+}
+
 /** Pages with a pending recovery record or an unfinished mirror refuse a purge, as effects refuse other writes. */
 async function assertNoPendingPublication(tx: BrainEngine, sourceId: string, pages: PurgePlan['pages'], ownRequest: string): Promise<void> {
   if (!pages.length) return;
@@ -245,7 +258,7 @@ const SEGMENTED_VERSION_CARRIES = `EXISTS (SELECT 1 FROM page_body_manifest m JO
     AND strpos(lower(convert_from(t.body,'UTF8')),$2)>0)`;
 
 /** What the body rewrites changed: slugs rewritten, segmented pages touched, and the segment texts they stopped referencing. */
-interface BodyRewrites { rewritten: string[]; segmented: number[]; unsealed: string[]; replaced: Uint8Array[] }
+interface BodyRewrites { rewritten: string[]; segmented: number[]; unsealed: string[]; replaced: Uint8Array[]; derivations: number }
 
 /**
  * Drop purged rows from each affected page's stored body. Each page is versioned first (the rewrite advances its
@@ -253,7 +266,7 @@ interface BodyRewrites { rewritten: string[]; segmented: number[]; unsealed: str
  * generation (spec 11), and its version of the old revision references that generation.
  */
 export async function rewritePageBodies(tx: BrainEngine, sourceId: string, pages: PurgePlan['pages']): Promise<BodyRewrites> {
-  const out: BodyRewrites = { rewritten: [], segmented: [], unsealed: [], replaced: [] };
+  const out: BodyRewrites = { rewritten: [], segmented: [], unsealed: [], replaced: [], derivations: 0 };
   if (!pages.length) return out;
   const rows = await tx.executeRaw<Record<string, unknown>>(`SELECT p.*,COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id),'[]'::jsonb) AS purge_tags
     FROM pages p WHERE p.source_id=$1 AND p.id=ANY($2::int[]) ORDER BY p.slug`, [sourceId, pages.map(p => p.page_id)]);
@@ -269,6 +282,7 @@ export async function rewritePageBodies(tx: BrainEngine, sourceId: string, pages
       if (preimage) await createPageVersion(tx, slug, sourceId, preimage);
       out.rewritten.push(slug);
       out.replaced.push(...done.replaced);
+      out.derivations += done.derivations;
       if (!done.sealed) out.unsealed.push(slug);
       continue;
     }
@@ -393,12 +407,16 @@ async function matchCandidates(engine: BrainEngine, sourceId: string, text: stri
     next: rows.length ? 'Pick one id and run gbrain forget <id> --purge; --match never purges.' : 'No fact in this source contains that text.' };
 }
 
-/** `--status`: the stored receipt and the current completion of an earlier purge request. Never re-reads claim text. */
-async function purgeStatus(ctx: OperationContext, requestId: string): Promise<Record<string, unknown>> {
+/**
+ * `--status`: the stored receipt and the current completion of an earlier purge request. Never re-reads claim text. With
+ * `--continue` it first continues the request's derivation sweep (a stalled one is tried again), then the source's others.
+ */
+async function purgeStatus(ctx: OperationContext, requestId: string, resume: boolean): Promise<Record<string, unknown>> {
   const principal = await requestPrincipalForContext(ctx);
   const row = await getWriteRequest(ctx.engine, principal, requestId);
   if (!row || row.operation !== PURGE_OPERATION) throw opError('not_found', `No purge request ${requestId} for this caller.`,
     'Pass the --request-id a purge printed. Status reads only purges this CLI submitted.');
+  if (resume && row.state === 'committed') await continueDerivationPurges(ctx.engine, row.source_id, { first: row.id, retry: row.id });
   return { ...(row.outcome ?? {}), request_id: row.request_id, state: row.state, ...await purgeCompletion(ctx.engine, row) };
 }
 
@@ -417,7 +435,7 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
   if (params.status === true) {
     const requestId = parseWriteRequestId(params.request_id);
     if (!requestId) throw opError('invalid_params', '--status needs --request-id.', 'Pass the request id the purge printed with --request-id, together with --status.');
-    return purgeStatus(ctx, requestId);
+    return purgeStatus(ctx, requestId, params.continue === true);
   }
   const sourceIdForMatch = typeof params.source_id === 'string' ? params.source_id : ctx.sourceId ?? 'default';
   if (typeof params.match === 'string') return matchCandidates(ctx.engine, sourceIdForMatch, params.match);
@@ -430,6 +448,7 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
     const prior = await getWriteRequest(ctx.engine, principal, p.requestId);
     if (prior) {
       assertReplayIntent(prior, intentDigest({ operation: PURGE_OPERATION, sourceId: p.sourceId, slug: prior.slug, callerIntent }));
+      if (prior.state === 'committed') await continueDerivationPurges(ctx.engine, prior.source_id, { first: prior.id });
       return { ...(prior.outcome ?? {}), request_id: prior.request_id, state: prior.state, replayed: true, ...await purgeCompletion(ctx.engine, prior) };
     }
   }
@@ -522,6 +541,9 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
       const bodies = await rewritePageBodies(tx, p.sourceId, plan.pages);
       ({ rewritten, unsealed } = bodies);
       const pageIds = plan.pages.map(page => page.page_id);
+      // The rows a rewrite could not place are swept after the commit, in batches of their own (continueDerivationPurges).
+      await derivationSweep(() => faultPoint('purge:derivation_sweep', { sourceId: p.sourceId, operation: PURGE_OPERATION })
+        .then(() => recordDerivationPurge(tx, admitted.id, p.sourceId, pageIds, [current.fact, escapeFenceCell(current.fact)])), current.id, p.sourceId);
       // A segmented page's flip already retired only the chunks of the occurrences it rewrote.
       const inline = pageIds.filter(id => !bodies.segmented.includes(id));
       const chunks = inline.length ? (await tx.executeRaw('DELETE FROM content_chunks WHERE page_id=ANY($1::integer[]) RETURNING 1', [inline])).length : 0;
@@ -542,7 +564,7 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
         targets: pages.map(page => ({ slug: page.slug, page_id: Number(page.id), revision: page.knowledge_revision })) })]);
       counts = { facts, takes, chunks, page_versions: versions.redacted, pages: rewritten.length, persistence_requests: intents,
         query_cache: cache, decide_review: review, open_loops: loops, take_proposals: proposals, core_edit_notices: notices, ...ledger,
-        write_gate_holds: holdIds.length, write_gate_receipts: gateReceipts, page_segment_texts: segments.texts,
+        write_gate_holds: holdIds.length, write_gate_receipts: gateReceipts, page_segment_texts: segments.texts, page_segment_derivations: bodies.derivations,
         page_body_stagings: segments.stagings, page_body_staging_parts: segments.parts, persistence_requests_cancelled: segments.cancelled,
         derived_hidden: Object.values(derived.hidden).reduce((a, b) => a + b, 0) };
       derivedHidden = derived;
@@ -572,9 +594,14 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
   for (const slug of unsealed) await buildSegmentedProjection(ctx.engine, { sourceId: p.sourceId, slug }).catch(() => undefined);
   if (row.state !== 'committed') return { ...(row.outcome ?? {}), request_id: row.request_id, state: row.state, error: row.error_code };
   appendPurgeCommitted(row.id);
+  counts.page_segment_derivations = (counts.page_segment_derivations ?? 0) + await continueDerivationPurges(ctx.engine, p.sourceId, { first: row.id, inline: true });
   if (beliefReport.appended || ledger?.derived_hidden) await markBeliefCommits(ctx.engine, [row.id]).catch(() => undefined);
+  const sweepVerified = !await derivationPurgeState(ctx.engine, row.id);
   const receipt: PurgeReceipt = await verifyFactPurge(ctx.engine, { target, plan: committedPlan, dryRun: false, removed: counts, prose,
-    vacuum: params.vacuum === true, ledger });
+    vacuum: params.vacuum === true, ledger, sweepVerified });
+  if (sweepVerified && receipt.stores.some(s => s.store === 'page_segment_derivations' && s.status === 'incomplete')) {
+    await recordDerivationPurge(ctx.engine, row.id, p.sourceId, committedPlan.pages.map(page => page.page_id), [target.fact, escapeFenceCell(target.fact)]);
+  }
   return { ...receipt, purge: (row.outcome as { purge?: unknown } | null)?.purge, request_id: row.request_id, state: row.state, similar_active: similar,
     ...await purgeCompletion(ctx.engine, row as WriteRequest, receipt) };
 }

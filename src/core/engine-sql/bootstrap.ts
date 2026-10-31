@@ -165,6 +165,8 @@ const FORWARD_REFERENCE_PROBES: readonly Probe[] = [
   ['facts_exists', 'facts'],
   ['facts_embedding_model_exists', 'facts', 'embedding_model'],
   ['facts_embedded_text_hash_exists', 'facts', 'embedded_text_hash'],
+  ['derived_generation_items_exists', 'derived_generation_items'],
+  ['derived_generation_items_pending_exists', 'derived_generation_items', 'pending'],
 ];
 
 // Probed only where `dreamVerdictsForwardReference` (the Postgres blob).
@@ -307,6 +309,11 @@ export function forwardReferenceGaps(probe: ProbeRow, dialect: ForwardReferenceB
     && probe.dream_verdicts_exists && !probe.dream_verdicts_expires_at_exists;
   const needsFactEmbeddingIdentity = probe.facts_exists
     && (!probe.facts_embedding_model_exists || !probe.facts_embedded_text_hash_exists);
+  // v266 (#7645): the blob's partial index derived_generation_items_pending
+  // (`WHERE pending`) references a column only v266 adds, so a brain at v265
+  // (the table exists since v265) wedged on the replay before any migration ran.
+  const needsDerivedGenerationItemsPending = probe.derived_generation_items_exists
+    && !probe.derived_generation_items_pending_exists;
   return {
     needsPagesBootstrap, needsLinksBootstrap, needsChunksBootstrap, needsPagesDeletedAt,
     needsMcpLogBootstrap, needsSubagentProviderId, needsChunksEmbeddingImage, needsPagesRecency,
@@ -315,7 +322,7 @@ export function forwardReferenceGaps(probe: ProbeRow, dialect: ForwardReferenceB
     needsContextualRetrievalColumns, needsPagesGeneration, needsPagesEmbeddingSignature,
     needsPagesLinksExtractedAt, needsTimelineEventPageId, needsMinionJobsTimeoutAt,
     needsMinionJobsIdempotencyKey, needsMinionJobsPrivateQueue, needsMinionJobsAuthority,
-    needsDreamVerdictsExpiresAt, needsFactEmbeddingIdentity,
+    needsDreamVerdictsExpiresAt, needsFactEmbeddingIdentity, needsDerivedGenerationItemsPending,
   };
 }
 
@@ -332,7 +339,7 @@ export async function applyForwardReferenceBootstrap(target: ForwardReferenceBoo
     needsContextualRetrievalColumns, needsPagesGeneration, needsPagesEmbeddingSignature,
     needsPagesLinksExtractedAt, needsTimelineEventPageId, needsMinionJobsTimeoutAt,
     needsMinionJobsIdempotencyKey, needsMinionJobsPrivateQueue, needsMinionJobsAuthority,
-    needsDreamVerdictsExpiresAt, needsFactEmbeddingIdentity,
+    needsDreamVerdictsExpiresAt, needsFactEmbeddingIdentity, needsDerivedGenerationItemsPending,
   } = gaps;
 
   if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
@@ -349,7 +356,8 @@ export async function applyForwardReferenceBootstrap(target: ForwardReferenceBoo
       && !needsTimelineEventPageId
       && !needsMinionJobsTimeoutAt && !needsMinionJobsIdempotencyKey
       && !needsMinionJobsPrivateQueue && !needsMinionJobsAuthority
-      && !needsDreamVerdictsExpiresAt && !needsFactEmbeddingIdentity) return;
+      && !needsDreamVerdictsExpiresAt && !needsFactEmbeddingIdentity
+      && !needsDerivedGenerationItemsPending) return;
 
   process.stderr.write('  Schema forward-reference gap detected, applying bootstrap\n');
 
@@ -582,6 +590,7 @@ async function applyLaterColumnGaps(target: ForwardReferenceBootstrapTarget, gap
     needsPagesGeneration, needsPagesEmbeddingSignature, needsPagesLinksExtractedAt,
     needsTimelineEventPageId, needsMinionJobsTimeoutAt, needsMinionJobsIdempotencyKey,
     needsDreamVerdictsExpiresAt, needsMinionJobsPrivateQueue, needsMinionJobsAuthority,
+    needsDerivedGenerationItemsPending,
   } = gaps;
 
   if (needsPagesLastRetrievedAt) {
@@ -711,6 +720,14 @@ async function applyLaterColumnGaps(target: ForwardReferenceBootstrapTarget, gap
     await exec(`
       ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS submission_authority JSONB;
       ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS claim_generation BIGINT NOT NULL DEFAULT 0;
+    `);
+  }
+
+  if (needsDerivedGenerationItemsPending) {
+    // Column only, exactly as v266 adds it (existing items are not pending);
+    // v266 still runs and owns the index and the activations table.
+    await exec(`
+      ALTER TABLE derived_generation_items ADD COLUMN IF NOT EXISTS pending BOOLEAN NOT NULL DEFAULT false;
     `);
   }
 }

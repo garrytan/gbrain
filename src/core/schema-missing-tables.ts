@@ -13,6 +13,7 @@ import { isRebuildableCache } from './persistence/rebuildable-cache.ts';
 import { v055 } from './schema-migrations/v055-query-cache-search-lite.ts';
 import { v056 } from './schema-migrations/v056-query-cache-knobs-hash.ts';
 import { v059 } from './schema-migrations/v059-code-traversal-cache-v0-34.ts';
+import { protectTables } from './schema-migrations/v275-rls-backfill-unguarded-tables.ts';
 import { hnswIndexExpected, readExistingEmbeddingShape } from './vector-index.ts';
 import type { LossKind } from './persistence/engine-graduation.types.ts';
 
@@ -58,9 +59,13 @@ const RECREATE: Readonly<Record<string, (engine: BrainEngine) => Promise<void>>>
 /** The migration that first creates each recreatable cache; below it the table is not expected yet. */
 const CREATED_BY: Readonly<Record<string, number>> = { query_cache: 55, code_traversal_cache: 59 };
 
-/** The recreate step for a rebuildable cache, or undefined for any other name. */
+/** The recreate step for a rebuildable cache, or undefined for any other name. On Postgres the table comes back with RLS on (v275's gate; a role that cannot is named on stderr). */
 export function recreateStep(table: string): ((engine: BrainEngine) => Promise<void>) | undefined {
-  return Object.hasOwn(RECREATE, table) && isRebuildableCache(table) ? RECREATE[table] : undefined;
+  if (!Object.hasOwn(RECREATE, table) || !isRebuildableCache(table)) return undefined;
+  return async engine => {
+    await RECREATE[table](engine);
+    await protectTables(engine, [table], 'repair missing-tables');
+  };
 }
 
 /** The tables `gbrain repair missing-tables` can recreate. */

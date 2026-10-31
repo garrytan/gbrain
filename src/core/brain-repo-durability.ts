@@ -29,7 +29,7 @@ import { assertManagedFilesystemWrite, hasFilesystemPublication, managedFilesyst
  */
 
 import {
-  existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, rmSync, statSync, renameSync, appendFileSync, realpathSync,
+  existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, rmSync, statSync, renameSync, appendFileSync, realpathSync, readdirSync,
 } from 'fs';
 import { join, dirname, relative, isAbsolute, sep } from 'path';
 import { execFileSync, execSync } from './spawn.ts';
@@ -317,20 +317,45 @@ exit 4
 
 // ── Managed AGENTS/RESOLVER block (taxonomy from filing rules; no drift) ─────
 
+/** Top-level folders that hold gbrain plumbing rather than filed content. */
+const NON_CONTENT_DIRS = new Set(['skills', 'scripts', 'node_modules']);
+
+/** Folder names rendered into the durability block: no dot-folders, markup, newlines or code-span breakers. */
+const SAFE_FOLDER_NAME = /^[A-Za-z0-9_][A-Za-z0-9_ .-]*$/;
+const MAX_DERIVED_FOLDERS = 50;
+
 /**
  * Resolve the filing-rules taxonomy for `repoPath`: prefer the repo's own
  * `skills/_brain-filing-rules.json`, then `_brain-filing-rules.json` at the
- * repo root, else the bundled default. Fails open — a missing or malformed
- * repo file must never break `sources harden`.
+ * repo root. Without one (#7629), a repo that already keeps content in
+ * top-level folders gets those folders, each bundled rule that lives under one
+ * keeping its kind; a repo with no content folder yet gets the bundled default,
+ * the convention a new brain starts from. Fails open — a missing or malformed
+ * repo file must never break `sources harden`. Only plain folder names are
+ * listed (at most 50), so repo content cannot add text to the block.
  */
-function resolveFilingRules(repoPath: string): FilingRulesDoc {
+function resolveFilingRules(repoPath: string): { rules: FilingRulesDoc; from: string } {
   for (const dir of [join(repoPath, 'skills'), repoPath]) {
     try {
       const rules = loadFilingRules(dir);
-      if (rules) return rules;
-    } catch { /* malformed — fall through to the bundled default */ }
+      if (rules) return { rules, from: dir === repoPath ? '`_brain-filing-rules.json`' : '`skills/_brain-filing-rules.json`' };
+    } catch { /* malformed — fall through */ }
   }
-  return filingRulesDoc as FilingRulesDoc;
+  const bundled = filingRulesDoc as FilingRulesDoc;
+  let folders: string[] = [];
+  try {
+    folders = readdirSync(repoPath, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && SAFE_FOLDER_NAME.test(d.name) && !NON_CONTENT_DIRS.has(d.name))
+      .map((d) => d.name)
+      .sort()
+      .slice(0, MAX_DERIVED_FOLDERS);
+  } catch { /* unreadable — use the bundled default */ }
+  if (folders.length === 0) return { rules: bundled, from: "gbrain's default taxonomy" };
+  const rules = folders.flatMap((folder) => {
+    const known = (bundled.rules ?? []).filter((r) => String(r.directory || '').split('/')[0] === folder);
+    return known.length > 0 ? known : [{ kind: 'existing folder', directory: `${folder}/` }];
+  });
+  return { rules: { ...bundled, rules }, from: "this repository's top-level folders" };
 }
 
 function renderTaxonomyLines(rules: FilingRulesDoc): string {
@@ -354,7 +379,7 @@ function renderTaxonomyLines(rules: FilingRulesDoc): string {
  * <source> --enable` (and `--pat-file`) regenerates it there.
  */
 function renderManagedBlock(repoPath: string, managed?: { sourceId: string }): string {
-  const rules = resolveFilingRules(repoPath);
+  const { rules, from } = resolveFilingRules(repoPath);
   const regeneratedBy = managed ? `gbrain sources writer git-durability ${managed.sourceId} --enable` : 'gbrain sources harden';
   const writeRules = managed ? `2. **Page writes go through gbrain, never through git.** This checkout is the
    managed canonical worktree of gbrain source \`${managed.sourceId}\`: the persistence
@@ -395,7 +420,7 @@ function renderManagedBlock(repoPath: string, managed?: { sourceId: string }): s
 ## Brain durability rules (always on)
 
 1. **Deterministic filing — never use /tmp as storage.** Every persistent output
-   goes to its taxonomy path (canonical, from \`skills/_brain-filing-rules.json\`):
+   goes to its taxonomy path (from ${from}):
 ${renderTaxonomyLines(rules)}
    Writing to /tmp, scratch dirs, or outside the repo is forbidden for anything
    meant to persist.

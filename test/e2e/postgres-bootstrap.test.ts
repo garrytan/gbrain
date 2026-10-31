@@ -405,6 +405,13 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
       WHERE tablename = 'pages' AND indexname = 'pages_deleted_at_purge_idx'
     `;
     expect(idx).toHaveLength(1);
+    // The CASCADE dropped the derivation-purge scope trigger with the column;
+    // the replay must recreate it once deleted_at exists again.
+    const trg = await conn`
+      SELECT tgname FROM pg_trigger
+      WHERE tgrelid = 'pages'::regclass AND tgname = 'pages_derivation_scope_delete'
+    `;
+    expect(trg).toHaveLength(1);
   }, 60_000);
 
   // Migration v120 — schema-lint hardening (#1647 / #171). Postgres-only

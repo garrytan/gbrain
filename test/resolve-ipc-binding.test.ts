@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import net from 'node:net';
 import { once } from 'node:events';
 import { bindResolveIpcForServe } from '../src/mcp/resolve-ipc-binding.ts';
-import { resolveSocketPath, socketHasLiveListener } from '../src/core/context/resolve-ipc.ts';
+import { readIpcSecret, requestSweepStart, requestSweepStatus, requestSyncAbort, requestSyncNudge, requestSyncStart, requestSyncStatus, resolveSocketPath, socketHasLiveListener } from '../src/core/context/resolve-ipc.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { requestPersistenceCapabilities } from '../src/core/persistence/ipc.ts';
@@ -93,6 +93,34 @@ describe('bindResolveIpcForServe (#4474)', () => {
         const closed = next.server ? once(next.server, 'close') : Promise.resolve();
         next.close();
         await closed;
+      }
+    });
+  });
+
+  it('#7599: a read-only bind registers no delegated sync or sweep kind; a read-write bind does', async () => {
+    const dataDir = join(tmp, 'db');
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(join(tmp, '.gbrain'), { recursive: true });
+    writeFileSync(join(tmp, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: dataDir }));
+    await withEnv({ GBRAIN_HOME: tmp, GBRAIN_DATABASE_URL: undefined, DATABASE_URL: undefined, GBRAIN_SERVE_SYNC_IPC: undefined }, async () => {
+      for (const lean of [true, false]) {
+        const binding = await bindResolveIpcForServe({} as unknown as BrainEngine, 'default', undefined, { lean });
+        try {
+          const secret = readIpcSecret(dataDir) ?? '';
+          const sync = await requestSyncStatus(binding.socketPath!, { secret, jobId: 'no-such-job' });
+          const sweep = await requestSweepStatus(binding.socketPath!, { secret, jobId: 'no-such-job' });
+          const want = lean ? 'unsupported_kind' : 'unknown_job';
+          expect((sync as { error?: string }).error).toBe(want);
+          expect((sweep as { error?: string }).error).toBe(want);
+          if (!lean) continue;
+          for (const write of [requestSyncStart, requestSyncAbort, requestSyncNudge, requestSweepStart]) {
+            expect(((await write(binding.socketPath!, { secret } as never)) as { error?: string }).error).toBe('unsupported_kind');
+          }
+        } finally {
+          const closed = binding.server ? once(binding.server, 'close') : Promise.resolve();
+          binding.close();
+          await closed;
+        }
       }
     });
   });

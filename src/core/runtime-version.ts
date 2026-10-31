@@ -1,13 +1,19 @@
 /**
- * Lowest supported Bun: contains the Linux child-exit fix (oven-sh/bun#30301)
- * and the guarded transport's explicit TLS serverName support.
+ * Lowest supported Bun. On Bun 1.4.0 to 1.4.2 a postgres.js connection over
+ * TLS keeps every chunk it receives, so RSS grows by about the total bytes
+ * read from Postgres and a full sync over a TLS Postgres or pooler is killed
+ * by memory guards (#7644, #7596); 1.4.3 fixed that, and 1.4.4 also carries
+ * the Brotli fix below. Also contains the Linux child-exit fix
+ * (oven-sh/bun#30301) and the guarded transport's explicit TLS serverName
+ * support.
  */
-export const MINIMUM_BUN_VERSION = '1.4.0';
+export const MINIMUM_BUN_VERSION = '1.4.4';
 
 /**
  * First Bun with the Brotli decoder fix for CVE-2026-111497 (oven-sh/bun#46392),
  * reachable through fetch() with `Content-Encoding: br` and the decompression
- * APIs (#7373). Older supported runtimes still start; doctor warns.
+ * APIs (#7373). A supported runtime below it would still start and doctor
+ * would warn; MINIMUM_BUN_VERSION is not below it today.
  */
 export const SECURE_BUN_VERSION = '1.4.4';
 

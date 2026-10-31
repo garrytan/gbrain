@@ -87,7 +87,7 @@ export function accessAllowedForAllSql(pageAlias: string, identities: readonly (
 /**
  * GBRA-218 (PR A2): the folder layer. `folder_rule_ids` holds the source-qualified ids
  * of every applied folder rule whose prefix the slug starts with (a trigger stamps it from the applied rulebook,
- * migration v275); a page passes only when the caller satisfies all of them (`<@`, set semantics), so nested member
+ * migration v282); a page passes only when the caller satisfies all of them (`<@`, set semantics), so nested member
  * and group rules both have to pass. `satisfied` is the caller's satisfied set (CallerAccess.satisfiedRuleIds); an
  * entry that is not a valid qualified id empties it (fail closed). Prefixes under a narrowing still being stamped,
  * or touched by a policy file that does not validate, read as nobody (CallerAccess.folderCoverage). Column tests
@@ -149,7 +149,7 @@ function namesReadersSql(alias: string): string {
  * declared `derived_from` names one. Read-time, so derivatives written before
  * the origin gained readers are covered; new derivations are stamped private
  * by isDerivationPrivate. The lineage test lives in the SQL function
- * gbrain_access_origin_restricted (migration v274) behind a cheap type and
+ * gbrain_access_origin_restricted (migration v281) behind a cheap type and
  * key guard, so a read plans one function call instead of four subplans. Both
  * parts lead with column tests (page_readers IS NULL, type) so the planner's
  * row estimate follows column statistics instead of a default guess.
@@ -188,7 +188,7 @@ export function privatePagesFilterFragmentFast(pageAlias: string): string {
  *    (GBRAIN_REMOTE_PRIVATE_PAGES=1 or search.remote_private_pages=visible);
  *  - restricted: false only inside a remote request on a brain whose config
  *    access.restrictions_present was unset when the request began. Then no
- *    page named readers at that moment and none predates the migration (v274
+ *    page named readers at that moment and none predates the migration (v281
  *    sets the flag when one does), so every readers value is in the derived
  *    column: accessAllowedSql tests only page_readers IS NULL and
  *    folder_rule_ids IS NULL (live, so a page gaining readers or a folder rule
@@ -196,7 +196,7 @@ export function privatePagesFilterFragmentFast(pageAlias: string): string {
  *    write) and skips lineage, member matching and the frontmatter test, whose
  *    per-row JSONB read cost keyword search about 3%. The flag is sticky and set
  *    in the same transaction as the first page that names readers, the first
- *    member and the first folder rule or pending folder prefix (v275).
+ *    member and the first folder rule or pending folder prefix (v282).
  * Outside any record (local CLI, jobs, cycles) the identity is empty, no
  * source is private-readable and hidePrivate follows the process's hatch
  * state, so caller-aware fragments still fail closed on restricted pages.
@@ -538,8 +538,8 @@ export async function folderRestricted(engine: Pick<BrainEngine, 'executeRaw'>, 
 }
 
 /** `page` with folder_restricted looked up (folderRestricted), for a page read without it, such as a page snapshot. */
-export async function withFolderRestricted<P extends { source_id: string; slug: string }>(engine: Pick<BrainEngine, 'executeRaw'>, page: P): Promise<P & { folder_restricted: boolean }> {
-  return { ...page, folder_restricted: await folderRestricted(engine, page.source_id, page.slug) };
+export async function withFolderRestricted(engine: Pick<BrainEngine, 'executeRaw'>, page: { source_id: string; slug: string; type?: string | null; frontmatter?: unknown }): Promise<{ type?: string | null; frontmatter?: unknown; folder_restricted: boolean }> {
+  return { type: page.type, frontmatter: page.frontmatter, folder_restricted: await folderRestricted(engine, page.source_id, page.slug) };
 }
 
 /**

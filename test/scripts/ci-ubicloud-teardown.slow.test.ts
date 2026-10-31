@@ -74,9 +74,7 @@ describe("ci:ubicloud teardown", () => {
     const requested = readFileSync(join(runDir, "vms.txt"), "utf8").trim().split("\n").map((l) => l.split(" ")[0]!);
     expect(requested).toHaveLength(3);
     for (const name of requested) {
-      const tagged = /^ubirun-probe-(\d{10})-x(\d{10})-ci0[123][0-9a-f]{4}$/.exec(name);
-      expect(tagged).not.toBeNull();
-      expect(Number(tagged![2]) - Number(tagged![1])).toBe(2 * 3600);
+      expect(name).toMatch(/^ubirun-probe-\d{10}-ci0[123][0-9a-f]{4}-t2$/);
       expect(api.events).toContain(`created ${name}`);
       expect(api.events).toContain(`removed ${name}`);
     }

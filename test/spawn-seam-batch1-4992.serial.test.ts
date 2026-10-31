@@ -18,7 +18,7 @@ import { runHook } from '../src/commands/hook.ts';
 import { GIT_LOCAL_ENV_VARS } from '../src/core/git-env.ts';
 import { writeReceipt } from '../src/core/bootstrap/format.ts';
 import type { RepoReceipt } from '../src/core/bootstrap/repo.ts';
-import { hardenedGitSync } from '../src/core/hardened-git.ts';
+import { __resetOperatorGitConfigForTests, hardenedGitSync } from '../src/core/hardened-git.ts';
 
 const ENV_KEYS = ['GBRAIN_HOME', 'DATABASE_URL', 'GBRAIN_DATABASE_URL', 'GBRAIN_SOURCE', 'GBRAIN_HOOKS', 'GBRAIN_STOP_PUSH',
   'GBRAIN_STOP_PUSH_DEBOUNCE_MIN', 'CLAUDE_CODE_REMOTE', 'CLAUDE_CODE_REMOTE_SESSION_ID', 'GH_TOKEN', 'GITHUB_TOKEN',
@@ -130,11 +130,16 @@ describe('wave-13 holdovers launch through the seam', () => {
       spawns.push({ command, args, options });
       return { status: 0, stdout: Buffer.from(''), stderr: Buffer.from(''), pid: 1, output: [], signal: null };
     }) as unknown as typeof childProcess.spawnSync);
+    __resetOperatorGitConfigForTests();
     try {
       expect(hardenedGitSync(tmp, ['rev-parse', '--show-toplevel'], { timeoutMs: 1000, maxBytes: 1024 }).ok).toBe(true);
+      expect(hardenedGitSync(tmp, ['rev-parse', '--show-toplevel'], { timeoutMs: 1000, maxBytes: 1024 }).ok).toBe(true);
     } finally { spy.mockRestore(); }
-    expect(spawns).toHaveLength(1);
-    expect(spawns[0]!.command).toBe('git');
-    expect(spawns[0]!.options).toMatchObject({ windowsHide: true, killSignal: 'SIGKILL' });
+    // #7584: the first call also reads the operator's safe.directory entries (cached), so two calls spawn three times.
+    expect(spawns.map(s => s.args.slice(0, 2))).toEqual([['config', '--includes'], ['--no-pager', '--no-optional-locks'], ['--no-pager', '--no-optional-locks']]);
+    for (const s of spawns) {
+      expect(s.command).toBe('git');
+      expect(s.options).toMatchObject({ windowsHide: true, killSignal: 'SIGKILL' });
+    }
   });
 });

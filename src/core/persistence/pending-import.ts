@@ -107,6 +107,14 @@ export async function committedBlob(root: string, path: string, signal?: AbortSi
   return await quiet(gitRead(root, ['hash-object', '--', `./${relative(root, path).split(sep).join('/')}`], signal), signal) === head ? head : null;
 }
 
+/**
+ * The newest commit after `from` (to HEAD) that touched `path`: the door commit of a strict publication that landed
+ * before its row; null when no commit in that range touched it, or when Git cannot read it.
+ */
+export async function landedCommit(root: string, from: string | null, path: string): Promise<string | null> {
+  return quiet(gitRead(root, ['rev-list', '-1', from ? `${from}..HEAD` : 'HEAD', '--', `:(literal)${relative(root, path).split(sep).join('/')}`]));
+}
+
 /** The commit HEAD names in `root`, or null on an unborn branch or when Git cannot read it. */
 export async function headCommit(root: string, signal?: AbortSignal): Promise<string | null> {
   return quiet(gitRead(root, ['rev-parse', '--verify', '--quiet', 'HEAD'], signal), signal);

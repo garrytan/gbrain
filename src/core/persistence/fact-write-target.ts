@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
 import { decideUnboundWrite } from './unbound-source.ts';
@@ -27,7 +28,7 @@ export async function resolveFactWriteTarget(engine: BrainEngine, sourceId: stri
   if (!writeThrough) return { kind: 'publish', binding: null, databaseOnlyReason: reason };
   const binding = await getWorktreeBinding(engine, sourceId);
   const root = source.local_path || (sourceId === 'default' ? await engine.getConfig('sync.repo_path') : null);
-  if (!root || binding) return { kind: 'publish', binding };
+  if (!root || !isAbsolute(root) || binding) return { kind: 'publish', binding };
   const decision = await decideUnboundWrite(engine, { sourceId, sourceKind: source.kind, fileBacked: opts.fileBacked, path: opts.remote ? null : root });
   return decision.kind === 'claim' ? { kind: 'unbound', root } : { kind: 'publish', binding: null, databaseOnlyReason: decision.reason };
 }

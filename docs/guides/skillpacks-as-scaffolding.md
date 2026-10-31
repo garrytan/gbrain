@@ -201,7 +201,7 @@ skill-discovery location** instead:
 gbrain skillpack scaffold --harness claude-code            # coding-agent persona → the user-scope skills dir
 gbrain skillpack scaffold --harness claude-code --persona daily-driver
 gbrain skillpack scaffold --harness claude-code --skill query --skill ingest
-gbrain skillpack scaffold --harness openclaw               # workspace delegation, full lane
+gbrain skillpack scaffold --harness openclaw               # workspace delegation, brain-first core (--all: full bundle)
 gbrain skillpack reference --harness claude-code           # stub-aware three-way diff lens
 gbrain skillpack remove --harness claude-code --skill query
 ```

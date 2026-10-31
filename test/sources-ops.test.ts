@@ -1310,3 +1310,39 @@ describe('addSource github kind', () => {
     expect(status.clone_state).toBe('not-applicable');
   });
 });
+
+describe('#7630 — a relative clone local_path never names the current directory', () => {
+  async function insideRelativeClone(id: string, config: Record<string, unknown>, fn: (dir: string) => Promise<void>): Promise<void> {
+    await withEnv2(async () => {
+      const dir = join(CLONE_ROOT, `${id}-cwd`);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'KEEP_ME.md'), 'another clone lives here');
+      await engine.executeRaw(
+        'INSERT INTO sources (id, name, local_path, config) VALUES ($1, $1, $2, $3::jsonb)',
+        [id, '.', JSON.stringify(config)],
+      );
+      const previous = process.cwd();
+      process.chdir(dir);
+      try { await fn(dir); } finally { process.chdir(previous); }
+    });
+  }
+
+  test('removeSource skips clone cleanup and leaves the current directory', async () => {
+    await insideRelativeClone('rel-remove', { remote_url: 'https://github.com/example/repo' }, async dir => {
+      const result = await removeSource(engine, { id: 'rel-remove', confirmDestructive: true });
+      expect(result.clone_removed).toBe(false);
+      expect(existsSync(join(dir, 'KEEP_ME.md'))).toBe(true);
+    });
+  });
+
+  test('recloneIfMissing refuses unmanaged_path and leaves the current directory', async () => {
+    await insideRelativeClone('rel-reclone', { remote_url: 'https://github.com/example/repo', managed_clone: true }, async dir => {
+      let threw: SourceOpError | null = null;
+      try { await recloneIfMissing(engine, 'rel-reclone'); } catch (e) { threw = e as SourceOpError; }
+      expect(threw?.code).toBe('unmanaged_path');
+      expect(threw?.message).toContain('gbrain sources set-path rel-reclone');
+      expect(existsSync(join(dir, 'KEEP_ME.md'))).toBe(true);
+      expect(readdirSync(dir)).toEqual(['KEEP_ME.md']);
+    });
+  });
+});

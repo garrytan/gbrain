@@ -209,7 +209,7 @@ export async function importRendered(
       ...(activePack ? { activePack } : {}),
     };
     const result = databaseOnly
-      ? await importFromContent(deps.engine, slug, markdown, { ...opts, sourcePath: relPath, preserveGateMarkers: true })
+      ? await importFromContent(deps.engine, slug, markdown, { ...opts, sourcePath: relPath, preserveGateMarkers: true, holdNoncanonicalPrivate: true })
       : await importFile(deps.engine, tmpPath, relPath, opts);
     if (result.status === 'error' || result.error) {
       throw new Error(result.error ?? `Import failed for ${relPath}`);

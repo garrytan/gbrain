@@ -35,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        bun: ['1.4.0', '1.4.4']
+        bun: ['1.4.4']
     services:
       postgres:
         image: pgvector/pgvector:pg16

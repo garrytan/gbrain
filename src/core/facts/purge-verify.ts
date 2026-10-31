@@ -27,14 +27,17 @@ import { DELETION_INVENTORY, OUT_OF_REACH_RESIDUALS, type InventoryEntry } from 
 import type { PurgePlan, PurgeTarget } from './purge.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { segmentedBodyContains } from '../page-body/segment-rewrite.ts';
-import { stagingNeedsTextSql } from '../page-body/schema.ts';
+import { derivationAfterSql, derivationBatchRows, derivationNeedles, derivationPurgeState, recordDerivationStatement,
+  type DerivationKey, type DerivationPendingReason, type DerivationStallReason, type DerivationSweepState } from '../page-body/segment-derive.ts';
+import { faultPoint } from '../persistence/fault-points.ts';
+import { derivationClaimCandidateSql, derivationHoldsClaimSql, derivationSweepScopeSql, stagingNeedsTextSql } from '../page-body/schema.ts';
 import { claimForms, quotes, type LedgerPurgeReport } from '../belief/purge.ts';
 import { CARRYING_FIELDS } from '../belief/keys.ts';
 import { relationExists } from '../persistence/rebuildable-cache.ts';
 
 export type StoreCount = Record<string, number>;
 export type StoreStatus = 'deleted' | 'would_remove' | 'retained_inactive' | 'unverified' | 'out_of_reach' | 'out_of_scope' | 'not_present' | 'incomplete';
-export interface StoreReport { store: string; status: StoreStatus; removed?: number; remaining?: number; reason?: string; detail?: string; items?: unknown[] }
+export interface StoreReport { store: string; status: StoreStatus; removed?: number; remaining?: number; reason?: string; detail?: string; items?: unknown[]; probe?: string }
 export type PurgeCompletion = 'committed' | 'complete' | 'incomplete';
 export interface PurgeReceipt {
   summary: string;
@@ -119,6 +122,78 @@ async function segmentTextReport(engine: BrainEngine, sourceId: string, needles:
     ? { store: 'page_segment_texts', status: 'out_of_scope', reason: 'source_prose', remaining: kept.count, removed,
       detail: 'Segments of live pages or retained versions still state the text outside a facts fence; they are listed under pages and page_versions.' }
     : { store: 'page_segment_texts', status: removed ? 'deleted' : 'not_present', removed };
+}
+
+/**
+ * Derivation rows holding the claim, matched and scoped as the purge sweeps them (segment-derive.ts
+ * derivationHoldsClaimSql, derivationSweepScopeSql): a row the sweep covers is a residual (`incomplete`); a row of a
+ * live segment of a page the purge did not rewrite is that page's prose, reported with it. The source's rows are walked
+ * in primary-key order, segment-derive.ts derivationBatchRows() per statement, each under the probe's statement bound; a
+ * statement that outruns it is read again in half as many rows, down to one row, and a single row that still outruns it
+ * leaves the store unverified. A probe that stops (a deadline or its row bound) after a statement counted a row holding
+ * the claim reports what it found, the stop as `probe`: a row the sweep covers makes the store `incomplete`, a row of a
+ * live segment of another page `out_of_scope`. Only when no statement that ran counted one and the purge's own sweep
+ * already ended verified (`sweepVerified`: its record is gone, removed only after a walk that deleted nothing) does a
+ * probe stopped by a deadline report the sweep's result instead, with the deadline it hit as `probe`.
+ */
+async function derivationTextReport(engine: BrainEngine, sourceId: string, pageIds: readonly number[], claims: readonly string[], removed: number,
+  deadline: number, sweepVerified: boolean): Promise<StoreReport> {
+  const { needles, patterns } = await derivationNeedles(engine, claims);
+  if (!needles.length) return { store: 'page_segment_derivations', status: removed ? 'deleted' : 'not_present', removed };
+  let swept = 0, kept = 0;
+  const unverified = (reason: string): StoreReport => {
+    if (swept) return { store: 'page_segment_derivations', status: 'incomplete', remaining: swept, removed, probe: reason,
+      detail: `The receipt's probe stopped (${reason}) after it counted ${swept} stored result(s) the sweep covers still holding the claim; there may be more.` };
+    if (kept) return { store: 'page_segment_derivations', status: 'out_of_scope', reason: 'source_prose', remaining: kept, removed, probe: reason,
+      detail: `The receipt's probe stopped (${reason}) after it counted ${kept} derivation(s) of live segments of pages the purge did not rewrite that hold the text their prose still states; they are listed under pages.` };
+    return sweepVerified && reason !== 'row_bound'
+      ? { store: 'page_segment_derivations', status: removed ? 'deleted' : 'not_present', removed, reason: 'verified_by_sweep', probe: reason,
+        detail: `The receipt's probe stopped at its deadline (${reason}) before any statement that ran counted a stored result holding the claim; the purge's sweep had already verified that no stored result it covers holds it. Results of live segments of other pages that still state it are listed under pages.` }
+      : { store: 'page_segment_derivations', status: 'unverified', reason, removed };
+  };
+  let cursor: DerivationKey | null = null;
+  let rows = derivationBatchRows();
+  for (;;) {
+    if (performance.now() > deadline) return unverified('verification_deadline');
+    let row: { scanned: number; normalized: number; swept: number; kept: number; last_page: number | null; last_pipeline: string | null; last_occurrence: string | null };
+    try {
+      row = await engine.transaction(async tx => {
+        await tx.executeRaw("SELECT set_config('statement_timeout',$1,true)", [`${probeLimits.statementMs}ms`]);
+        await faultPoint('purge:derivation_probe', { sourceId, round: rows });
+        const [counted] = await tx.executeRaw<typeof row>(`WITH batch AS MATERIALIZED (
+            SELECT d.page_id, d.pipeline, d.occurrence_id, ${derivationSweepScopeSql('d', 'p', '$3')} AS swept FROM page_segment_derivations d
+            JOIN pages p ON p.id=d.page_id WHERE p.source_id=$1 AND ${derivationAfterSql('d', ['$5', '$6', '$7'])}
+            ORDER BY d.page_id, d.pipeline, d.occurrence_id LIMIT $8
+          ), checked AS MATERIALIZED (
+            SELECT b.swept, c.candidate, CASE WHEN c.candidate THEN ${derivationHoldsClaimSql('d', '$2', '$4')} ELSE false END AS hit
+            FROM batch b JOIN page_segment_derivations d ON d.page_id=b.page_id AND d.pipeline=b.pipeline AND d.occurrence_id=b.occurrence_id
+            CROSS JOIN LATERAL (SELECT ${derivationClaimCandidateSql('d', '$4')} AS candidate) c
+          ), last AS (
+            SELECT b.page_id, b.pipeline, b.occurrence_id::text AS occurrence_id FROM batch b ORDER BY b.page_id DESC, b.pipeline DESC, b.occurrence_id DESC LIMIT 1
+          ) SELECT (SELECT count(*)::int FROM batch) AS scanned, count(*) FILTER (WHERE candidate)::int AS normalized,
+            count(*) FILTER (WHERE hit AND swept)::int AS swept, count(*) FILTER (WHERE hit AND NOT swept)::int AS kept,
+            (SELECT page_id FROM last) AS last_page, (SELECT pipeline FROM last) AS last_pipeline, (SELECT occurrence_id FROM last) AS last_occurrence
+          FROM checked`, [sourceId, needles, [...pageIds], patterns, cursor?.[0] ?? null, cursor?.[1] ?? null, cursor?.[2] ?? null, rows]);
+        return counted!;
+      });
+    } catch (error) {
+      if (getCode(error) !== '57014') throw error;
+      if (rows === 1) return unverified('statement_deadline');
+      rows = Math.floor(rows / 2);
+      continue;
+    }
+    recordDerivationStatement({ phase: 'probe', scanned: Number(row.scanned), normalized: Number(row.normalized) });
+    swept += Number(row.swept);
+    kept += Number(row.kept);
+    if (swept > probeLimits.rows || kept > probeLimits.rows) return unverified('row_bound');
+    if (Number(row.scanned) < rows) break;
+    cursor = [Number(row.last_page), row.last_pipeline!, String(row.last_occurrence)];
+  }
+  if (swept) return { store: 'page_segment_derivations', status: 'incomplete', remaining: swept, removed };
+  return kept
+    ? { store: 'page_segment_derivations', status: 'out_of_scope', reason: 'source_prose', remaining: kept, removed,
+      detail: 'Derivations of live segments of pages the purge did not rewrite hold the text their prose still states; they are listed under pages.' }
+    : { store: 'page_segment_derivations', status: removed ? 'deleted' : 'not_present', removed };
 }
 
 type ProbeResult = { count: number } | { unverified: string };
@@ -397,7 +472,7 @@ async function vectorProbe(engine: BrainEngine, target: PurgeTarget): Promise<Re
 
 /** Build the receipt: swept-store verification (or would-remove counts on a dry run), probes, residuals first. */
 export async function verifyFactPurge(engine: BrainEngine, input: { target: PurgeTarget; plan: PurgePlan; dryRun: boolean; removed?: StoreCount;
-  prose?: Array<{ slug: string; version_id: number }>; vacuum?: boolean; ledger?: LedgerPurgeReport | null }): Promise<PurgeReceipt> {
+  prose?: Array<{ slug: string; version_id: number }>; vacuum?: boolean; ledger?: LedgerPurgeReport | null; sweepVerified?: boolean }): Promise<PurgeReceipt> {
   const { target, plan, dryRun } = input;
   const deadline = performance.now() + probeLimits.totalMs;
   const claim = target.fact, needle = claim.toLowerCase(), src = target.source_id;
@@ -446,6 +521,8 @@ export async function verifyFactPurge(engine: BrainEngine, input: { target: Purg
     detail: `${legacy.n} model-derived page(s) in this source predate derivation edges, so purge cannot tell whether they restate the claim in other words.` });
   if (!dryRun) {
     stores.push(await segmentTextReport(engine, src, [...new Set([claim, escapeFenceCell(claim)])], removed.page_segment_texts ?? 0, deadline));
+    stores.push(await derivationTextReport(engine, src, plan.pages.map(page => page.page_id), [claim, escapeFenceCell(claim)], removed.page_segment_derivations ?? 0, deadline,
+      input.sweepVerified === true));
     stores.push(...await ledgerReports(engine, src, [claim], input.ledger, deadline));
     stores.push(await effectPayloadReport(engine, src, [claim], deadline, removed.persistence_effects ?? 0));
   }
@@ -608,7 +685,7 @@ export async function verifyPagePurge(engine: BrainEngine, input: { sourceId: st
   if (source?.local_path && context?.paths.length && needles.length) residuals.push(await gitResidualCommits(source.local_path, context.paths, needles[0]!));
   residuals.push(...outOfReach(engine).filter(r => !(r.store === 'git_history' && residuals.length)));
   residuals.push(...stores.filter(s => s.reason === 'source_prose' || s.reason === 'probed_reported'));
-  const [row] = await engine.executeRaw<Pick<WriteRequest, 'id' | 'state' | 'source_id' | 'outcome'>>(`SELECT id,state,source_id,outcome FROM persistence_requests
+  const [row] = await engine.executeRaw<Pick<WriteRequest, 'id' | 'request_id' | 'state' | 'source_id' | 'outcome'>>(`SELECT id,request_id,state,source_id,outcome FROM persistence_requests
     WHERE source_id=$1 AND request_id=$2::uuid AND operation='delete_page' ORDER BY created_at DESC LIMIT 1`, [src, input.requestId]);
   return { summary: 'Removed from live stores. Residuals below are copies purge cannot reach; this is not physical erasure.',
     residuals, stores, page_tombstones: Number(tombstones?.n ?? 0),
@@ -624,8 +701,9 @@ export async function verifyPagePurge(engine: BrainEngine, input: { sourceId: st
  * residual, `incomplete` when an effect failed or parked or a swept store
  * still holds the claim. Out-of-reach residuals never make it incomplete.
  */
-export async function purgeCompletion(engine: BrainEngine, row: Pick<WriteRequest, 'id' | 'state' | 'source_id' | 'outcome'>, receipt?: Pick<PurgeReceipt, 'stores'>):
-  Promise<{ completion: PurgeCompletion; effects: Array<{ kind: string; state: string; error_code: string | null }>; exit_code: number; fingerprint_probe?: Record<string, number> }> {
+export async function purgeCompletion(engine: BrainEngine, row: Pick<WriteRequest, 'id' | 'request_id' | 'state' | 'source_id' | 'outcome'>, receipt?: Pick<PurgeReceipt, 'stores'>):
+  Promise<{ completion: PurgeCompletion; effects: Array<{ kind: string; state: string; error_code: string | null }>; exit_code: number; fingerprint_probe?: Record<string, number>;
+    derivation_sweep?: DerivationSweepState; derivation_sweep_reason?: DerivationStallReason | DerivationPendingReason; next?: string[] }> {
   if (row.state !== 'committed') return { completion: 'incomplete', effects: [], exit_code: 75 };
   const effects = await engine.executeRaw<{ kind: string; state: string; error_code: string | null; parked: boolean }>(`SELECT kind,state,error_code,
     jsonb_array_length(COALESCE(data->'parked','[]'::jsonb))>0 AS parked FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind`, [row.id]);
@@ -639,9 +717,17 @@ export async function purgeCompletion(engine: BrainEngine, row: Pick<WriteReques
     fingerprint = { facts: Number(probe?.facts ?? 0), takes: Number(probe?.takes ?? 0) };
   }
   const failed = effects.some(e => e.state === 'failed' || e.parked);
-  const sweptResidual = receipt?.stores.some(s => s.status === 'incomplete') || (fingerprint && (fingerprint.facts || fingerprint.takes));
+  const sweep = await derivationPurgeState(engine, row.id);
+  const sweptResidual = sweep || receipt?.stores.some(s => s.status === 'incomplete') || (fingerprint && (fingerprint.facts || fingerprint.takes));
   const pending = effects.some(e => e.state !== 'committed');
   const completion: PurgeCompletion = failed || sweptResidual ? 'incomplete' : pending ? 'committed' : 'complete';
   return { completion, effects: effects.map(({ kind, state, error_code }) => ({ kind, state, error_code })),
-    exit_code: completion === 'complete' ? 0 : completion === 'committed' ? 10 : 75, ...(fingerprint ? { fingerprint_probe: fingerprint } : {}) };
+    exit_code: completion === 'complete' ? 0 : completion === 'committed' ? 10 : 75, ...(fingerprint ? { fingerprint_probe: fingerprint } : {}),
+    ...(sweep ? { derivation_sweep: sweep.state, ...(sweep.reason ? { derivation_sweep_reason: sweep.reason } : {}), next: [sweep.reason === 'scope_lock_busy'
+      ? `The sweep of stored derivation results has walked to its end, but a write in the source that brings stored results into its scope (an import, sync or page edit) is still open and held the source's scope lock past the sweep's wait (derivation_sweep: pending, scope_lock_busy). Let that write finish, then continue the sweep with gbrain forget --purge --status --request-id ${row.request_id} --continue.`
+      : sweep.state === 'pending'
+      ? `Stored derivation results are still being swept for the claim (derivation_sweep: pending). Continue the sweep with gbrain forget --purge --status --request-id ${row.request_id} --continue until completion is complete.`
+      : sweep.reason === 'paid_row_unreadable'
+        ? `The sweep of stored derivation results stopped on a paid result (synopsis or conversation facts) it could not read within its statement budget (derivation_sweep: stalled, paid_row_unreadable); paid results are never deleted unread, and other sweeps go on. Retry it with gbrain forget --purge --status --request-id ${row.request_id} --continue; if it stalls again, report it with the output of gbrain doctor --json.`
+        : `The sweep of stored derivation results stopped on a result it could not read or delete within its statement budget (derivation_sweep: stalled); other sweeps go on. Retry it with gbrain forget --purge --status --request-id ${row.request_id} --continue; if it stalls again, report it with the output of gbrain doctor --json.`] } : {}) };
 }

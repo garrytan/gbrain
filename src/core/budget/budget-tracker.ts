@@ -95,6 +95,11 @@ export interface BudgetActualUsage {
   countsAsCall?: boolean;
   /** Token counts are a heuristic (char estimate or pessimistic failure fallback), not provider-reported. */
   estimated?: boolean;
+  /**
+   * PR 4 (Wave B incremental derivation, transcripts): for a failed call, the tokens the provider may have billed
+   * across its attempts (failedCallUsage): zero only when it definitively refused every attempt before generating.
+   */
+  billed?: { inputTokens: number; outputTokens: number };
 }
 
 export interface BudgetSnapshot {
@@ -126,6 +131,12 @@ export interface BudgetTrackerOpts {
    * Models with neither a table row nor an override stay fail-closed.
    */
   pricingOverrides?: PricingOverrides;
+  /**
+   * PR 4 (Wave B incremental derivation, transcripts): the provider SDK's own retries for each call made under this
+   * tracker (chat's maxRetries); unset keeps the SDK default. A metered page step sets 0, so every attempt is a call
+   * it reserved for and sees.
+   */
+  providerRetries?: number;
   /**
    * A4: where `maxCostUsd` came from. `user` (an explicit flag or configured
    * cap; the default whenever `maxCostUsd` is set) hard-fails an unpriced
@@ -278,6 +289,11 @@ export class BudgetTracker {
   constructor(private readonly opts: BudgetTrackerOpts) {
     this.startedAt = Date.now();
     this.auditPath = opts.auditPath ?? defaultAuditPath();
+  }
+
+  /** The SDK retries each call under this tracker may make (BudgetTrackerOpts.providerRetries). */
+  get providerRetries(): number | undefined {
+    return this.opts.providerRetries;
   }
 
   /** Public read access. */

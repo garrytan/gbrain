@@ -73,7 +73,7 @@ for (const kind of testBackends()) {
     const unpinned = () => engine.executeRaw<{ sig: string }>(`SELECT p.oid::regprocedure::text AS sig FROM pg_proc p
         JOIN pg_namespace n ON n.oid = p.pronamespace JOIN pg_language l ON l.oid = p.prolang
       WHERE n.nspname = 'public' AND l.lanname = 'plpgsql' AND p.proname LIKE 'gbrain\\_%'
-        AND NOT ('search_path=pg_catalog, public' = ANY(COALESCE(p.proconfig, '{}'::text[])))`);
+        AND NOT (COALESCE(p.proconfig, '{}'::text[]) && ARRAY['search_path=pg_catalog, public', 'search_path=pg_catalog, public, pg_temp'])`);
     const searchPathMigration = MIGRATIONS.find(m => m.name.endsWith('function_search_path'))!;
     const rerunSearchPathMigration = async () => {
       expect(searchPathMigration).toBeDefined();

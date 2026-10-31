@@ -164,6 +164,38 @@ describe('sync freshness (#6858 ask 6)', () => {
     }
   }), 120_000);
 
+  test('#7604: a killed pass\'s receipts are read in one pass, not once per receipt', () => withEnv({ GBRAIN_HOME: home }, async () => {
+    const N = 300;
+    for (const { name, engine } of engines) {
+      await reset(engine);
+      const f = await managedSource(engine, 3600);
+      // One round of a pass killed mid-batch: N committed imports of one commit, none of them superseded yet.
+      await engine.executeRaw(`INSERT INTO persistence_requests(principal_kind,principal_id,request_id,operation,source_id,source_incarnation,slug,worktree_id,digest,authority,intent,intent_bytes,terminal_reservation,state,completed_at)
+        SELECT 'local_cli','cli:example',gen_random_uuid(),'submit_job',$1,$2::uuid,'notes/page-'||i,$3::uuid,'d','{}'::jsonb,
+          jsonb_build_object('kind','managed_sync_import','path','notes/page-'||i||'.md','target',$4::text,'from',$5::text,'runId',$6::text,'index',i,'total',$7::int),
+          1,16384,'committed',to_timestamp($8::double precision + i)
+        FROM generate_series(1,$7::int) i`, [f.id, f.incarnation, f.worktreeId, f.sha, FROM, randomUUID(), N, f.committedAt]);
+      const statements: Array<{ sql: string; params: unknown[] }> = [];
+      const run = engine.executeRaw;
+      engine.executeRaw = (async (sql: string, params?: unknown[]) => { statements.push({ sql, params: params ?? [] }); return run.call(engine, sql, params); }) as typeof engine.executeRaw;
+      let fresh;
+      try { [fresh] = await readSyncFreshness(engine, { sourceIds: [f.id] }); } finally { delete (engine as { executeRaw?: unknown }).executeRaw; }
+      expect(fresh!.commit_to_searchable.samples, name).toBe(N);
+      const aggregate = statements.find(s => s.sql.includes('percentile_cont'))!;
+      const [explained] = await engine.executeRaw<{ 'QUERY PLAN': unknown }>(`EXPLAIN (ANALYZE, FORMAT JSON) ${aggregate.sql}`, aggregate.params);
+      const raw = explained!['QUERY PLAN'];
+      const nodes: Array<Record<string, any>> = [];
+      const walk = (node: Record<string, any>) => { nodes.push(node); for (const child of node.Plans ?? []) walk(child); };
+      walk((typeof raw === 'string' ? JSON.parse(raw) : raw)[0].Plan);
+      const scans = nodes.filter(n => n['Relation Name'] === 'persistence_requests');
+      expect(scans.length, name).toBeGreaterThan(0);
+      // Each scan of the request table runs once, and together they read rows linear in the receipts, not N per receipt.
+      expect(scans.map(n => n['Actual Loops']), name).toEqual(scans.map(() => 1));
+      const read = scans.reduce((sum, n) => sum + (n['Actual Rows'] + (n['Rows Removed by Filter'] ?? 0)) * n['Actual Loops'], 0);
+      expect(read, name).toBeLessThanOrEqual(4 * N);
+    }
+  }), 120_000);
+
   test('a commit this checkout cannot date is counted unresolved, not sampled', () => withEnv({ GBRAIN_HOME: home }, async () => {
     for (const { engine } of engines) {
       await reset(engine);

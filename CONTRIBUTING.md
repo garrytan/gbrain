@@ -12,7 +12,7 @@ bun install --frozen-lockfile && bun run test && bun run verify
 battery. [`docs/TESTING.md`](docs/TESTING.md#quick-start) covers E2E, failure
 logs and the lanes.
 
-Requires Bun 1.4.0 or newer, matching `package.json`.
+Requires Bun 1.4.4 or newer, matching `package.json`.
 
 ### Windows
 
@@ -299,7 +299,7 @@ See [E2E selection](docs/TESTING.md#e2e-selection).
 ### Memory-trust smoke (trust tiers, write gate, purge)
 
 Touching trust tiers, the write gate, owner confirmation or `forget --purge`?
-Run `bun run trust:smoke` first (Bun >= 1.4.0, zero keys, in-memory PGLite,
+Run `bun run trust:smoke` first (Bun >= 1.4.4, zero keys, in-memory PGLite,
 about ten seconds). It drives the four seams through real write paths: the tier
 stamp, the gate verdict, the owner confirm (and an agent's refusal) and purge
 with no residual or resurrection, and prints one line per check. The script
@@ -722,7 +722,9 @@ gstack reads both from master, so a branch's edits take effect after it merges.
   whole suite). `UBI_OWNER=<thread code> gstack-pregate --stage tests --remote
   --spend-cap <usd> --allow-repo-commands` then runs the full Ubicloud gate on
   the working tree and clears the obligation from its
-  `PREGATE_REMOTE: tree=… tests=… failed=…` line.
+  `PREGATE_REMOTE: tree=… tests=… failed=…` line. On a clean tree whose Test and
+  E2E full runs already passed on GitHub, the line comes from those runs and no
+  VM starts ([remote-gate reuse](docs/ci-event-parity.md#remote-gate-reuse)).
 - `.gstack/ship-policy.json`: the stamp rule (the release stamp files and
   version patterns) and the migration numbering `gstack-pregate regate` and
   `gstack-tree-receipt` use to decide whether a restamped head is the same tree

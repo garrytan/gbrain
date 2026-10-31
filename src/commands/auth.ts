@@ -34,6 +34,7 @@ import { readClientGrant, rescopeClientGrant, resolveGrantProfile, type GrantPat
 import { parseClientRescopeArgs, parseRescopeGrantArgs, splitRescopeTarget, type RescopeGrantArgs } from '../core/grants/cli.ts';
 import { GRANT_PROFILES, GrantError, TOKEN_TTL_MAX_SECONDS, TOKEN_TTL_MIN_SECONDS, grantFromClient, privatePagesFromColumn, type ClientGrant, type PrivatePagesGrant } from '../core/grants/model.ts';
 import { cliRenderContext, renderAction, type RenderedAction } from '../core/agent-output.ts';
+import type { INSTALL_SURFACE_SET_BY } from '../mcp/surface.ts';
 import { migrateLegacyTokens, parseRescopeTokenArgs, renderLegacyGrantAxis, rescopeLegacyToken, resolveRescopeTarget, type MigrateLegacyResult, type RescopeTokenResult } from '../core/grants/legacy-token.ts';
 import { bindCredential, type BindingPatch, type BindingResult } from '../core/access/members.ts';
 import { bindingLine, checkBindingTarget, takeBindingFlags } from './auth-binding.ts';
@@ -606,6 +607,8 @@ export interface RegisterScopedClientOpts {
    * ONLY surface-column writer (sets surface_set_by='operator', the lock
    * request_tools cannot override). Never a raw column UPDATE. */
   surface?: 'verbs' | 'starter' | 'full';
+  /** INSTALL_SURFACE_SET_BY when `surface` is an install default (the client lists the memory verbs). */
+  surfaceSetBy?: 'operator' | typeof INSTALL_SURFACE_SET_BY;
   /** Result of preflightOauthClientColumns — decides which optional-column
    * writes are attempted. Absent → attempt everything (caller owns errors). */
   columns?: Set<string>;
@@ -699,7 +702,7 @@ export async function registerScopedClient(
     if (opts.columns && !opts.columns.has('surface')) {
       surfaceSkipped = true;
     } else {
-      const rescoped = await provider.rescopeClient(clientId, { surface: opts.surface });
+      const rescoped = await provider.rescopeClient(clientId, { surface: opts.surface, surfaceSetBy: opts.surfaceSetBy });
       surfaceApplied = opts.surface;
       surfaceOld = rescoped.surfaceOld ?? null;
     }
@@ -1485,5 +1488,9 @@ export async function runAuth(args: string[]): Promise<void> {
 // Direct-script entry point — only runs when this file is invoked as the main module
 // (e.g. `bun run src/commands/auth.ts ...`). When imported by cli.ts, this block is skipped.
 if (import.meta.main) {
-  await runAuth(process.argv.slice(2));
+  const { directEntryArgs } = await import('../cli/flag-equals.ts');
+  const { exitCliError } = await import('../cli/cli-error.ts');
+  const argv = await directEntryArgs('auth', process.argv.slice(2)).catch((e: unknown) => exitCliError(e, 'auth'));
+  if ('refusal' in argv) exitCliError(argv.refusal, 'auth', { legacy: argv.legacy });
+  else await runAuth(argv.args);
 }

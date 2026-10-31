@@ -391,12 +391,19 @@ export interface IpcPathConfig {
  * defers instead of unlinking it, #4896). The persistence socket ignores
  * `sourceId`: it routes to the single resident owner, so it stays
  * brain-keyed. Bound-source rejection [CX2-10] still applies per request.
+ *
+ * #7612: `read` is the socket a lean serve (a read-only stdio serve on
+ * Postgres, which registers no delegated sync, nudge or sweep kind) binds
+ * instead of the two above, keyed like the source socket. It answers only
+ * resolve, turn_context and context_pack, so it never takes the
+ * delegation-capable sockets from a read-write serve. PGLite has none (a
+ * PGLite serve is never lean).
  */
-export function resolveSocketPathForConfig(cfg: IpcPathConfig | null | undefined, kind: 'resolve' | 'persistence' = 'resolve', sourceId?: string): string | null {
+export function resolveSocketPathForConfig(cfg: IpcPathConfig | null | undefined, kind: 'resolve' | 'persistence' | 'read' = 'resolve', sourceId?: string): string | null {
   if (!cfg) return null;
-  if (cfg.engine === 'pglite' && cfg.database_path) return localIpcSocketPath(join(cfg.database_path, `.gbrain-${kind}.sock`));
+  if (cfg.engine === 'pglite' && cfg.database_path) return kind === 'read' ? null : localIpcSocketPath(join(cfg.database_path, `.gbrain-${kind}.sock`));
   if (cfg.engine === 'postgres' && cfg.database_url) {
-    const sourceKey = kind === 'resolve' && sourceId ? `-${hash12(sourceId)}` : '';
+    const sourceKey = kind !== 'persistence' && sourceId ? `-${hash12(sourceId)}` : '';
     return localIpcSocketPath(join(ipcRunDir(), `${kind}-${hash12(cfg.database_url)}${sourceKey}.sock`));
   }
   return null;
@@ -404,15 +411,20 @@ export function resolveSocketPathForConfig(cfg: IpcPathConfig | null | undefined
 
 /**
  * The resolve socket a hook calls (#5042): its own source's socket
- * (`GBRAIN_SOURCE`, else `default`) when a serve listens there, else the
- * legacy URL-only socket (an older serve, or a serve bound to a source the
- * hook does not name). PGLite has a single path (one serve per data dir).
+ * (`GBRAIN_SOURCE`, else `default`) when a serve listens there, then a lean
+ * serve's read socket for that source (#7612), else the legacy URL-only
+ * socket (an older serve, or a serve bound to a source the hook does not
+ * name). A delegation client (`delegation: true`) skips the read socket: a
+ * lean serve registers no delegated kind. PGLite has a single path (one
+ * serve per data dir).
  */
-export async function hookResolveSocketForConfig(cfg: IpcPathConfig | null | undefined, sourceId: string | undefined): Promise<string | null> {
+export async function hookResolveSocketForConfig(cfg: IpcPathConfig | null | undefined, sourceId: string | undefined, opts: { delegation?: boolean } = {}): Promise<string | null> {
   const legacy = resolveSocketPathForConfig(cfg);
   const keyed = resolveSocketPathForConfig(cfg, 'resolve', sourceId || 'default');
   if (!legacy || !keyed || keyed === legacy) return legacy;
-  return (await socketHasLiveListener(keyed)) ? keyed : legacy;
+  if (await socketHasLiveListener(keyed)) return keyed;
+  const read = opts.delegation ? null : resolveSocketPathForConfig(cfg, 'read', sourceId || 'default');
+  return read && (await socketHasLiveListener(read)) ? read : legacy;
 }
 
 /**

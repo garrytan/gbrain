@@ -57,7 +57,7 @@ describe('#7436 pending-import Git check during page preparation', () => {
     const [binding] = await engine.executeRaw<{ worktree_id: string }>("SELECT worktree_id FROM persistence_source_bindings WHERE source_id='default'");
     const realGit = Bun.which('git')!;
     const shims = mkdtempSync(join(tmpdir(), 'gbrain-slow-git-'));
-    writeFileSync(join(shims, 'git'), `#!/bin/sh\nsleep 0.4\nexec "${realGit}" "$@"\n`);
+    writeFileSync(join(shims, 'git'), `#!/bin/sh\nsleep 0.4\nPATH='${process.env.PATH}' exec "${realGit}" "$@"\n`);
     chmodSync(join(shims, 'git'), 0o755);
     const clock = startClaimPhase();
     enterClaimStep(clock, 'link_resolution', undefined, 'db');
@@ -81,7 +81,7 @@ describe('#7436 pending-import Git check during page preparation', () => {
     const { snapshot, row } = await pendingImportPage(engine, ctx, root);
     const pids = join(mkdtempSync(join(tmpdir(), 'gbrain-git-pids-')), 'pids');
     // hash-object ignores SIGTERM and leaves a grandchild that does too, both outliving any deadline: only the group SIGKILL ends them.
-    const shims = gitShim(realGit => `#!/bin/sh\nfor a in "$@"; do if [ "$a" = "hash-object" ]; then trap '' TERM; sleep 120 & echo "$PPID $$ $!" >> ${pids}; wait; fi; done\nexec "${realGit}" "$@"\n`);
+    const shims = gitShim(realGit => `#!/bin/sh\nfor a in "$@"; do if [ "$a" = "hash-object" ]; then trap '' TERM; sleep 120 & echo "$PPID $$ $!" >> ${pids}; wait; fi; done\nPATH='${process.env.PATH}' exec "${realGit}" "$@"\n`);
     const deadline = new AbortController();
     const clock = startClaimPhase(Date.now(), deadline.signal);
     enterClaimStep(clock, 'link_resolution', undefined, 'db');

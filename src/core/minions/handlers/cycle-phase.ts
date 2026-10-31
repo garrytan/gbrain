@@ -3,6 +3,7 @@
  * src/commands/jobs.ts for synthesize, patterns, consolidate, extract_facts,
  * resolve_symbol_edges and recompute_emotional_weight).
  */
+import { isAbsolute } from 'node:path';
 import type { BrainEngine } from '../../engine.ts';
 import type { MinionHandler } from '../types.ts';
 
@@ -20,9 +21,11 @@ export function makeCyclePhaseHandler(engine: BrainEngine, phase: string): Minio
     // checkout-less postgres brain a filesystem phase (synthesize/patterns/...)
     // skips with reason 'no_brain_dir' instead of running against the worker cwd;
     // DB-only phases (resolve_symbol_edges/embed/...) ignore brainDir either way.
-    const repoPath: string | null = typeof job.data.repoPath === 'string'
+    // #7630: a relative path names whatever directory the worker runs from, so it is no checkout either.
+    const configured: string | null = typeof job.data.repoPath === 'string'
       ? job.data.repoPath
       : ((await engine.getConfig('sync.repo_path')) ?? null);
+    const repoPath = configured && isAbsolute(configured) ? configured : null;
     const report = await runCycle(engine, {
       brainDir: repoPath,
       phases: [phase as any],

@@ -56,6 +56,7 @@ const EXEMPT = {
   'src/core/cycle/extract-takes.ts': 'takes reextract writes take rows only; page text is unchanged',
   'src/core/persistence/upload-streamed.ts': 'an upload over the single-string ceiling refuses when the page is or would become always-loaded core (the guard renders it whole); smaller uploads go through preparePageMutation',
   'src/core/persistence/page-edit.ts': 'segmented edit_page splices through page-append.ts prepareSegmentedSpliceMutation, which declines an always-loaded core page to preparePageMutation; the splice never changes frontmatter',
+  'src/core/trust/release-publish.ts': 'append mode publishes the page write prepareFenceFactAppend builds with preparePageMutation (core guard and exclusiveSources spread into the result); index-existing indexes a fence row the file already holds and changes no page text',
   'src/core/repair/take-supersession.ts': 'reprojection writes takes.superseded_by only; fence edits go through put_page (preparePageMutation)',
 };
 

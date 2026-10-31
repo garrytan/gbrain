@@ -113,7 +113,7 @@ describe('sync Git reads take no optional lock (GIT_OPTIONAL_LOCKS=0)', () => {
       const realGit = execFileSync('bash', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
       mkdirSync(bin); mkdirSync(repo);
       writeFileSync(join(bin, 'git'), '#!/bin/sh\nsub=""\nskip=0\nfor a in "$@"; do\n  if [ $skip = 1 ]; then skip=0; continue; fi\n  case "$a" in -c|-C) skip=1; continue;; esac\n  sub="$a"; break\ndone\n'
-        + 'printf \'%s %s\\n\' "${GIT_OPTIONAL_LOCKS:-unset}" "$sub" >> "$PROBE_GIT_LOG"\nexec ' + realGit + ' "$@"\n');
+        + 'printf \'%s %s\\n\' "${GIT_OPTIONAL_LOCKS:-unset}" "$sub" >> "$PROBE_GIT_LOG"\nPATH=\'' + process.env.PATH + '\' exec ' + realGit + ' "$@"\n');
       chmodSync(join(bin, 'git'), 0o755);
       gitIn(repo, 'init', '-q', '-b', 'main'); gitIn(repo, 'config', 'user.name', 'Example'); gitIn(repo, 'config', 'user.email', 'example@example.invalid');
       writeFileSync(join(repo, 'a.md'), md('a')); gitIn(repo, 'add', '-A'); gitIn(repo, 'commit', '-qm', 'a');

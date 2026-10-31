@@ -6,8 +6,10 @@
  * the vector was built under, and the exact embedding input: the chunk text for
  * `none` and fenced code, the title prefix plus the chunk text for `title`, and
  * (because a generated synopsis cannot be recomputed) the page's synopsis
- * corpus generation, the full title the synopsis prompt read, the document-body hash and the chunk text for
- * `per_chunk_synopsis`. A projection rebuild keeps a vector only when the stored
+ * corpus generation, the full title the synopsis prompt read, the hash of the synopsis document and the chunk text
+ * for `per_chunk_synopsis`. The document of a page read whole is every chunk (`synopsisBodyHash`); a segmented
+ * page's is its lead and the window of one segment around the chunk (wave-b spec 8.6, `segmentSynopsisWindows`), so
+ * a synopsis vector there depends on its own segment and the lead, never on the rest of the body. A projection rebuild keeps a vector only when the stored
  * hash equals one recomputed from the current page, so an unchanged input keeps
  * its vector and any change to it (title, body in synopsis mode, model, column,
  * dimensions, wrapper bytes) nulls it. `embedded_text_hash` keeps its meaning.
@@ -24,15 +26,24 @@ export interface EmbeddingInputContext {
   title: string;
   /** The page's stored corpus generation; only the synopsis tier digests it. */
   corpusGeneration: string | null;
-  /** `synopsisBodyHash` of the page's installed chunk set. */
+  /** `synopsisDocumentHash` of the synopsis document: `synopsisBodyHash` of the page's installed chunk set, or a segmented page's window document. */
   bodyHash: string;
 }
 
 type HashedChunk = { chunk_text: string; chunk_source?: string | null };
 
-/** The document a synopsis is generated from: every non-image chunk, in order. */
+/** The document a synopsis of a page read whole is generated from: every non-image chunk, in order. */
+export function synopsisDocument(chunks: ReadonlyArray<HashedChunk>): string {
+  return chunks.filter(c => c.chunk_source !== 'image_asset').map(c => c.chunk_text).join('\n\n');
+}
+
+/** The `bodyHash` of a synopsis document, the exact text the synopsis prompt reads. */
+export function synopsisDocumentHash(document: string): string {
+  return sha256(document);
+}
+
 export function synopsisBodyHash(chunks: ReadonlyArray<HashedChunk>): string {
-  return sha256(chunks.filter(c => c.chunk_source !== 'image_asset').map(c => c.chunk_text).join('\n\n'));
+  return synopsisDocumentHash(synopsisDocument(chunks));
 }
 
 /** The tier a plain re-embed uses for a stored mode (mirrors wrapChunkTextsForStoredMode). */

@@ -17,11 +17,12 @@
  * Serial: spawns `gbrain serve` subprocesses against one PGLite brain.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { peekLock } from '../src/core/pglite-lock.ts';
+import { renderBrainFirstSnippet } from '../src/core/setup/brain-first.ts';
 import { makeDoctorHome, runGbrain, type DoctorHome } from './helpers/doctor-json-golden.ts';
 
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
@@ -31,6 +32,9 @@ function register(command: string, args: string[]): void {
   writeFileSync(join(h.home, '.claude.json'), JSON.stringify({
     mcpServers: { gbrain: { type: 'stdio', command, args, env: { GBRAIN_HOME: h.home, GBRAIN_SKIP_STARTUP_HOOKS: '1' } } },
   }));
+  // A complete wiring also carries the brain-first block, or harness_wiring warns on it.
+  mkdirSync(join(h.home, '.claude'), { recursive: true });
+  writeFileSync(join(h.home, '.claude', 'CLAUDE.md'), renderBrainFirstSnippet('claude-code', { kind: 'mcp', server: 'gbrain' }));
 }
 
 function harnessCheck(run: { json: unknown; stdout: string }): Record<string, unknown> {

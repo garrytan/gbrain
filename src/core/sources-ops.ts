@@ -39,7 +39,7 @@ import { managedPersistenceEnabled } from './persistence/ownership.ts';
  */
 
 import { existsSync, mkdirSync, renameSync, rmSync, lstatSync, realpathSync } from 'fs';
-import { join, dirname, basename, resolve as resolvePath } from 'path';
+import { join, dirname, basename, isAbsolute, resolve as resolvePath } from 'path';
 import { isPathContained, msysToNativePath } from './path-confine.ts';
 import { mkdirPrivate } from './atomic-write.ts';
 import { randomBytes } from 'crypto';
@@ -392,6 +392,8 @@ export async function assertNoOverlappingPath(
   const realPath = real(path);
   for (const other of others) {
     const b = other.local_path;
+    // #7630: a relative local_path names whatever directory gbrain runs from, never a tree, so it overlaps nothing.
+    if (!isAbsolute(b)) continue;
     if (overlaps(path, b) || overlaps(realPath, real(b))) {
       throw new SourceOpError(
         'overlapping_path',
@@ -958,7 +960,11 @@ export async function removeSource(
   const gManaged = ghCfg.kind === 'google' && ghCfg.g_managed === true;
   const cloneRoot = gbrainPath('clones');
   let cloneRemoved = false;
-  if (
+  if (!opts.keepStorage && src.local_path && (remoteUrl || ghManaged || gManaged) && !isAbsolute(src.local_path)) {
+    console.error(
+      `[gbrain] WARN: clone cleanup skipped for "${opts.id}": its stored local_path "${src.local_path}" is relative, so it would name the current directory. Delete the clone by hand if you still want it gone.`,
+    );
+  } else if (
     !opts.keepStorage &&
     src.local_path &&
     (remoteUrl || ghManaged || gManaged) && // only auto-clean when gbrain managed the dir
@@ -1076,6 +1082,10 @@ export async function recloneIfMissing(
   }
   const remoteUrl = getRemoteUrl(src.config);
   if (!remoteUrl || !src.local_path) return false;
+  if (!isAbsolute(src.local_path)) {
+    throw new SourceOpError('unmanaged_path',
+      `Refusing to re-clone "${id}": its stored local_path "${src.local_path}" is relative, so it would name the current directory. Run gbrain sources set-path ${id} <absolute-directory>, then retry.`);
+  }
 
   const state = validateRepoState(src.local_path, remoteUrl);
   if (state === 'healthy') return false;

@@ -110,8 +110,7 @@ const get_skill: Operation = {
     // skill (confined to that source's pack root) rather than the host catalog.
     if (typeof p.source_id === 'string' && p.source_id.length > 0) {
       const brl = await import('../skillpack/brain-resident-locate.ts');
-      const slug = typeof p.name === 'string' ? p.name : '';
-      return brl.getResidentSkillDetail(ctx, p.source_id, slug);
+      return brl.getResidentSkillDetail(ctx, p.source_id, typeof p.name === 'string' ? p.name : '');
     }
     const override = await sc.readMcpSkillsDir(ctx);
     const { dir } = sc.resolveSkillsDir(ctx, override);

@@ -85,7 +85,7 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
       `Give the successor directory once: gbrain sources set-path ${id} DIRECTORY, or --path DIRECTORY, not both.`);
     const target = positionals.shift() ?? values.get('path');
     if (!target) throw invalid('set-path requires the verified successor directory.',
-      `Pass the directory that now holds source ${id}'s checkout: gbrain sources set-path ${id} DIRECTORY (--clear clears a connector source's stale local_path).`);
+      `Pass the directory that now holds source ${id}'s checkout: gbrain sources set-path ${id} DIRECTORY (--clear clears a connector source's stale local_path, or any relative one).`);
     params.path = absolute(target);
   }
   if (positionals.length) throw invalid(`Unexpected argument: ${positionals[0]}.`, `Remove ${positionals[0]}; sources ${verb} takes only the source id${verb === 'set-path' ? ' and the directory' : ''} as arguments.`);

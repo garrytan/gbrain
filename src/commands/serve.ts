@@ -13,6 +13,7 @@ import { redirectStdoutLoggingToStderr } from '../core/console-prefix.ts';
 import { startFactsDrainScheduler, type FactsDrainScheduler, type FactsDrainSchedulerOpts } from '../core/facts/drain-scheduler.ts';
 import { startMovementWatch, type MovementWatch } from '../core/persistence/sync-movement.ts';
 import { startServeHeadWatcher } from '../core/serve-head-watcher.ts';
+import { isReadOnlyServeArgs, readOnlyServeSkipsResidentDuties } from '../core/direct-pool-profile.ts';
 import { onForwardProgress } from '../core/forward-progress.ts';
 import { foregroundWindow } from '../core/foreground-activity.ts';
 import { graduationHandoffRequested, writeServeGraduationEnvelope } from '../core/persistence/graduation-serve-guard.ts';
@@ -106,7 +107,7 @@ export interface ServeOptions {
   // (which unconditionally attaches a 'data' listener to real
   // process.stdin and would pollute the test runner's stdin handle).
   // Defaults to the real implementation when omitted.
-  startMcpServer?: (engine: BrainEngine, opts?: { surface?: 'verbs' | 'starter' | 'full'; surfaceSource?: 'env' | 'flag' | 'config' | 'default'; invalidSurfaceEnv?: string; sourceGuard?: boolean; onBootPhase?: (phase: string) => void; access?: 'full' | 'read-only' }) => Promise<void>;
+  startMcpServer?: (engine: BrainEngine, opts?: { surface?: 'verbs' | 'starter' | 'full'; surfaceSource?: 'env' | 'flag' | 'config' | 'default'; invalidSurfaceEnv?: string; sourceGuard?: boolean; onBootPhase?: (phase: string) => void; access?: 'full' | 'read-only'; advertise?: 'verbs' | 'starter' | 'full' }) => Promise<void>;
   // Test seam for the parent-process watchdog. The default
   // (`readLiveParentPid`) reads the live kernel PPID via `ps` on POSIX
   // because `process.ppid` is captured at process creation and does not
@@ -250,9 +251,10 @@ export async function runServe(
   // ceiling never widens without an explicit --surface restart).
   // 'verbs' exposes exactly the seven protocol verbs (the quickstart surface);
   // 'starter' the ~20-op daily-driver set; 'full' keeps every operation.
-  const { parseSurfaceFlag, resolveSurfaceWithSource, resolveStdioSurface, parseAccessFlag, SURFACE_SOURCE_LABEL } = await import('../mcp/surface.ts');
+  const { parseSurfaceFlag, parseAdvertiseFlag, resolveSurfaceWithSource, resolveStdioSurface, parseAccessFlag, SURFACE_SOURCE_LABEL } = await import('../mcp/surface.ts');
   const { loadConfig, MERGED_CONFIG_BY_ENGINE } = await import('../core/config.ts');
   const surfaceFlag = parseSurfaceFlag(args);
+  const advertise = parseAdvertiseFlag(args);
   const resolved = isHttp ? resolveSurfaceWithSource(surfaceFlag, loadConfig()) : resolveStdioSurface(surfaceFlag, loadConfig());
   const surface = resolved.surface;
   if (isHttp && process.env.GBRAIN_SURFACE) {
@@ -261,7 +263,7 @@ export async function runServe(
   if (resolved.invalidEnv !== undefined) {
     console.error(`[gbrain serve] ignoring GBRAIN_SURFACE="${resolved.invalidEnv}" (use verbs | starter | full)`);
   }
-  console.error(`[gbrain serve] surface=${surface} (source: ${SURFACE_SOURCE_LABEL[resolved.source]})`);
+  console.error(`[gbrain serve] surface=${surface} (source: ${SURFACE_SOURCE_LABEL[resolved.source]})${advertise ? ` advertise=${advertise}` : ''}`);
   void (await import('../core/serve-behavior-notice.ts')).logServeBehaviorNotice(engine, loadConfig());
   // #6543 (A6): serve's stuck, desync and recovery events go to the pool-recovery audit `doctor --only pool_reap_health` reads.
   if (engine.kind === 'postgres') {
@@ -389,7 +391,7 @@ export async function runServe(
 
     const cliSocket = cliSocketOn ? await (await import('../core/cli-socket/server.ts')).startCliSocket(engine, httpLog) : null;
     try {
-      await runHttp(engine, { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams, bind, suppressBootstrapToken, printAdminToken, surface, adoptServer: opts.adoptServer });
+      await runHttp(engine, { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams, bind, suppressBootstrapToken, printAdminToken, surface, ...(advertise ? { advertise } : {}), adoptServer: opts.adoptServer });
     } finally {
       stallWatchdog?.dispose();
       corpusDrain?.cancel();
@@ -467,7 +469,7 @@ export async function runServe(
   }
 
   try {
-    await start(engine, { surface, surfaceSource: resolved.source, ...(resolved.invalidEnv !== undefined ? { invalidSurfaceEnv: resolved.invalidEnv } : {}), ...(sourceGuard ? { sourceGuard } : {}), onBootPhase: phase => { bootPhase = phase; bootProgressAt = Date.now(); }, ...(access === 'read-only' ? { access } : {}) });
+    await start(engine, { surface, surfaceSource: resolved.source, ...(resolved.invalidEnv !== undefined ? { invalidSurfaceEnv: resolved.invalidEnv } : {}), ...(sourceGuard ? { sourceGuard } : {}), onBootPhase: phase => { bootPhase = phase; bootProgressAt = Date.now(); }, ...(access === 'read-only' ? { access } : {}), ...(advertise ? { advertise } : {}) });
     // `--stdio-idle-timeout` arms its timer during lifecycle installation,
     // but its stdin activity listener must wait until startMcpServer has
     // attached the MCP SDK transport listener. Attaching any `data` listener
@@ -851,9 +853,9 @@ function installStdioLifecycle(
   // budget). SEPARATE timer from the parent watchdog, through the same
   // injectable deps.setInterval seam, unref'd per the serve convention so
   // it can never hold the process open. Cleared in beginShutdown. Kill
-  // switch: GBRAIN_SWEEP=0 (seam: opts.sweepEnabled). Chunk-level stdin
-  // 'data' granularity is sufficient — same rationale as armIdle below.
-  const sweepEnabled = opts.sweepEnabled ?? (process.env.GBRAIN_SWEEP !== '0');
+  // switch: GBRAIN_SWEEP=0 (seam: opts.sweepEnabled). Chunk-level stdin 'data' granularity is sufficient (see armIdle).
+  const lean = readOnlyServeSkipsResidentDuties(isReadOnlyServeArgs(args), engine.kind); // #7599: a read-only Postgres serve
+  const sweepEnabled = !lean && (opts.sweepEnabled ?? (process.env.GBRAIN_SWEEP !== '0')); // runs no sweep
   if (sweepEnabled) {
     const runIdleSweep = opts.sweep ?? (async (e: BrainEngine) => {
       // #4409: the runner loads lazily here too — the sweep fires after
@@ -911,7 +913,7 @@ function installStdioLifecycle(
   }
 
   // Automatic facts drain (Lane D) and the #6317 movement watch: see installResidentTickers.
-  factsDrain = installResidentTickers(engine, opts, deps, () => shuttingDown);
+  factsDrain = lean ? null : installResidentTickers(engine, opts, deps, () => shuttingDown); // #7599: nor its resident tickers
 
   // Optional idle-timeout safety net. Default OFF; opt-in via
   // `--stdio-idle-timeout <seconds>`. The flag is for the rare case where

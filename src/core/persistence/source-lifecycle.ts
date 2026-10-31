@@ -29,6 +29,7 @@ import { inspectRelocatedPhysicalRoot, relocatePhysicalRoot } from './physical-r
 import { assertWriterAdminState, WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { assertWriterAdminUnlocked } from './admin-lock.ts';
 import { rebindContentReceipts } from '../shared-skills/receipt-root.ts';
+import { assertLinkedWorktreeIntact } from './worktree-link.ts';
 
 export interface SourceLifecycleInput {
   operation:'add'|'claim'|'archive'|'restore'|'remove'|'purge'|'rebind'|'reclone';
@@ -59,6 +60,7 @@ function localRoot(path:string,create=false):{source:string;worktree:string}{
     'The path names a file. Pass the directory that holds the source content, then rerun the command; nothing was changed.');
   let worktree=source;
   let ancestor=source;while(!existsSync(ancestor))ancestor=dirname(ancestor);
+  assertLinkedWorktreeIntact(ancestor);
   try{worktree=realpathSync(discoverGitRoot(ancestor));}catch{/* directory source */}
   return {source,worktree};
 }

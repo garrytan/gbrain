@@ -13,6 +13,7 @@ import { parseKnownAsOf, readPageAtTime, remoteMayRead, type PageAtTime, type Pa
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import { unifiedDiff } from '../skillpack/diff-text.ts';
+import { fenceTranscriptText, isQuotedPageType } from '../search/transcript-quote.ts';
 
 export const KNOWN_AS_OF_PARAM: ParamDef = { type: 'string', fullSurfaceOnly: true,
   description: 'Recorded time: the page as this brain had recorded it at this ISO 8601 instant (2026-10-01T12:00:00Z), from the belief ledger. Not as_of, which is valid time (a date).' };
@@ -81,8 +82,13 @@ function intervalView(ctx: OperationContext, i: PageInterval, opts: { body: bool
     return { ...meta, body_ref: { total_bytes: bytes, ...(i.version_id != null ? { read: { tool: 'get_page', arguments: { slug: i.slug, version_id: i.version_id, body: 'window' } } } : {}) } };
   }
   const clean = (s: string | null) => s == null ? null : ctx.remote === false ? s : sanitizeRemoteBody(s, { includeWithdrawn: true, keepMaterializedMarkers: true });
-  return { ...meta, compiled_truth: clean(i.page.compiled_truth), timeline: clean(i.page.timeline) };
+  // #8042: a third-party page as recorded reaches an untrusted reader quoted, as get_page's current body does.
+  const quote = quotesInterval(ctx, i);
+  const fence = (s: string | null) => s && quote ? fenceTranscriptText(s, i.slug) : s;
+  return { ...meta, compiled_truth: fence(clean(i.page.compiled_truth)), timeline: fence(clean(i.page.timeline)), ...(quote ? { quoted: 'transcript' } : {}) };
 }
+
+const quotesInterval = (ctx: OperationContext, i: PageInterval) => ctx.remote !== false && isQuotedPageType(i.page?.type);
 
 function ledgerView(read: PageAtTime) {
   return { known_as_of: read.known_as_of, source_id: read.source_id, certified: read.certified, uncertified_reason: read.uncertified_reason, coverage_from: read.coverage_cut };
@@ -120,8 +126,11 @@ export async function getVersionsKnownAsOf(ctx: OperationContext, p: Record<stri
     const prev = intervals.slice(0, n).reverse().find(x => x.lifetime === i.lifetime);
     const text = (x: PageInterval | undefined) => x?.page && x.body !== 'segmented' ? `${x.page.compiled_truth ?? ''}${x.page.timeline ? `\n${x.page.timeline}` : ''}` : null;
     const [a, b] = [prev ? text(prev) : '', text(i)];
-    view.diff = a == null || b == null ? null : unifiedDiff(ctx.remote === false ? a : sanitizeRemoteBody(a), ctx.remote === false ? b : sanitizeRemoteBody(b),
+    const diff = a == null || b == null ? null : unifiedDiff(ctx.remote === false ? a : sanitizeRemoteBody(a), ctx.remote === false ? b : sanitizeRemoteBody(b),
       { oldPath: prev ? `${slug}@${prev.event.recorded_at}` : '/dev/null', newPath: `${slug}@${i.event.recorded_at}` });
+    const quote = diff !== null && (quotesInterval(ctx, i) || (prev !== undefined && quotesInterval(ctx, prev)));
+    view.diff = quote ? fenceTranscriptText(diff, i.slug) : diff;
+    if (quote) view.quoted = 'transcript';
     return view;
   });
   const newest = views.reverse();
