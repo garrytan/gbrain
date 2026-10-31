@@ -24,7 +24,8 @@ This skill guarantees:
 - MECE check: no overlap with existing skills' triggers
 - Manifest.json updated
 - RESOLVER.md updated with routing entry
-- Skill passes conformance tests (`bun test test/skills-conformance.test.ts`)
+- Skill passes conformance tests (`bun test test/skills-conformance.test.ts`) and `bun run check:skill-health` (no drift from the CLI, SKILL.md within 16 KB, description within 1 KB)
+- Improving a skill follows the update ladder (CONTRIBUTING.md, "Changing a skill"): fix it below the skill first, then edit the existing line instead of appending
 
 ## Phases
 

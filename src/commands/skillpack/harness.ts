@@ -21,6 +21,7 @@ import { join } from 'path';
 import type { BrainEngine } from '../../core/engine.ts';
 import { loadConfig } from '../../core/config.ts';
 import { VERSION } from '../../version.ts';
+import { recordScaffoldBases } from '../../core/skillpack/safe-update.ts';
 import { autoDetectSkillsDir } from '../../core/repo-root.ts';
 import {
   claudeProjectSkillsDir,
@@ -416,6 +417,8 @@ export async function cmdScaffoldHarness(args: string[]): Promise<void> {
         ...(useFullBundle ? {} : { skillSlugs: deliverable }),
         dryRun: a.dryRun,
       });
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- the operator's own workspace root, where runScaffold just wrote.
+      if (!a.dryRun) await recordScaffoldBases(join(targetWorkspace, 'skills'), result.files);
       if (a.json) {
         console.log(
           JSON.stringify(
@@ -461,6 +464,7 @@ export async function cmdScaffoldHarness(args: string[]): Promise<void> {
       dryRun: a.dryRun,
       nowIso: new Date().toISOString(),
     });
+    if (!result.dryRun) await recordScaffoldBases(dest, result.files.filter(file => file.slug !== null));
 
     // Coexistence: these same skills may also load from the gbrain plugin
     // snapshot (marketplace install) — duplicate names in one session.

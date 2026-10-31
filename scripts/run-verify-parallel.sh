@@ -102,6 +102,8 @@ CHECKS=(
   "check:skill-brain-first"
   # A-NEW-3: bundled SKILL.md files pass the shared-skill publication parser.
   "check:skill-publication"
+  # GBRA-225: skill drift against the live CLI surface, and per-skill size ceilings.
+  "check:skill-health"
   "check:conversation-parser"
   "check:resolver"
   "check:privacy"
@@ -134,6 +136,8 @@ CHECKS=(
   "check:eval-glossary"
   "check:tool-catalog"
   "check:skills-manifest"
+  # GBRA-225: skills.lock.history.json covers the lock and only grows.
+  "check:skills-lock-history"
   "check:no-pii-agent-voice"
   "check:synthetic-corpus-privacy"
   "check:operations-filter-bypass"

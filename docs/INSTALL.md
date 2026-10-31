@@ -36,7 +36,7 @@ Connect and verify the intended harness before calling it activated. Entity
 capture, recurring jobs and paid enrichment require separate opt-in; none of
 the commands above schedules a daily enrichment job.
 
-Scaffolded skills are first-class files in your agent repo — edit freely. To pull upstream gbrain improvements later, `gbrain skillpack reference <name>` diffs your local copy vs the bundle. If your `RESOLVER.md` / `AGENTS.md` still carries the managed `skillpack install` fence, `gbrain skillpack migrate-fence` strips it once and keeps the routing rows inside it.
+Scaffolded skills are first-class files in your agent repo — edit freely. To pull upstream gbrain improvements later, `gbrain skillpack reference <name>` diffs your local copy vs the bundle, and `gbrain skillpack reference --all --update-untouched` replaces the skills you never edited (`--dry-run` previews). If your `RESOLVER.md` / `AGENTS.md` still carries the managed `skillpack install` fence, `gbrain skillpack migrate-fence` strips it once and keeps the routing rows inside it.
 
 To upgrade later, use the [memory-only upgrade path](#memory-only-upgrades)
 unless services and provider work were deliberately configured. Upgrade runs

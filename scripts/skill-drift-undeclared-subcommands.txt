@@ -1,0 +1,46 @@
+# CLI commands that skills call with a second word (a subcommand or a positional argument) but
+# that declare no subcommands in src/cli/subcommands.ts, so scripts/check-skill-health.ts can only
+# check their flags. Shrink-only: declaring a command's subcommands (ROUTERS, bareHelpFirst) removes
+# it from this list, and a stale line fails. Add a command only in a reviewer-visible commit.
+agent
+auth
+autopilot
+backup
+bootstrap
+call
+capture
+check-backlinks
+connect
+connectors
+conversation-parser
+decide
+dream
+engine
+eval
+extract
+files
+friction
+frontmatter
+git
+google
+graph-query
+import
+jobs
+mcp
+migrate
+models
+mounts
+notices
+pricing
+providers
+publish
+recall
+repair
+skillify
+skillopt
+skillpack
+sources
+sync
+takes
+transcripts
+whoknows
