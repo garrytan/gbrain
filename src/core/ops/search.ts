@@ -453,10 +453,21 @@ async function buildRetrievalResponseMeta(
   }
   // #8042: a lookup failure withholds saved_facts (degraded stage below) rather than return third-party text unquoted.
   const quotedFacts = await quoteFacts(ctx.engine, visible).catch(() => null);
-  const savedFacts = (quotedFacts ?? []).map(f => {
+  const labelled = (quotedFacts ?? []).map(f => {
     const by = correctors(f).map(id => shownAs.get(id)).find(id => id !== undefined && id !== f.id);
     return stripCollapseColumns(by === undefined ? f : { ...f, corrected_by: by });
   });
+  // A corrected fact follows its corrector, as the matcher orders them: the reply's "corrected by a newer saved fact
+  // above" stays true, and its budget, which cuts from the end, never keeps a corrected fact without its corrector.
+  const savedFacts: typeof labelled = [];
+  const placed = new Set(factRowIds);
+  const correctorOf = (f: object) => (f as { corrected_by?: number }).corrected_by;
+  for (let rest = labelled; rest.length;) {
+    const ready = rest.filter(f => correctorOf(f) === undefined || placed.has(correctorOf(f)!));
+    const batch = ready.length ? ready : rest;
+    for (const f of batch) { savedFacts.push(f); placed.add(f.id); }
+    rest = rest.filter(f => !batch.includes(f));
+  }
   const heldTotal = [...heldBySource.values()].reduce((sum, n) => sum + n, 0);
   const embedding = embeddingHeld?.total ? embeddingHeld : null;
   const coverage: RetrievalCoverage | undefined = pending || heldTotal || embedding ? {

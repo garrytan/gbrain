@@ -433,3 +433,25 @@ describe('search.saved_facts_supersede: entity facts and the five-fact cap', () 
     }
   });
 });
+
+// Value: protects=a corrected fact always follows its correction in the reply (#7938 item 12); fails_when=a labelled entity fact sits above its corrector, so "corrected by a newer saved fact above" is false and the reply budget, which cuts from the end, can keep the label without the corrector; why_new=entity facts lead the list and no test placed a labelled entity fact; seam=none; no_claim=the order of facts nothing corrects
+describe('search.saved_facts_supersede: a corrected fact follows its correction', () => {
+  test('a labelled entity fact comes after the matched fact correcting it, in _meta and in the reply text', async () => {
+    await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'true');
+    try {
+      await importFromContent(engine, 'companies/ostravel', serializeMarkdown({}, 'Ostravel is a customer account.', '', { type: 'company', title: 'Ostravel', tags: [] }), { noEmbed: true, forceRechunk: true });
+      const old = await remember('Ostravel renews at 52 seats.', '2025-06-01T09:00:00Z');
+      const fix = await remember('Correction: Ostravel is at 46 seats, ignore the 52.', '2025-06-02T09:00:00Z');
+      await engine.executeRaw("UPDATE facts SET entity_slug = CASE WHEN id = $1 THEN 'companies/ostravel' ELSE NULL END WHERE id = ANY($2::int[])", [old, [old, fix]]);
+      const { facts, text } = await search('Ostravel renewal seats');
+      expect(facts.find(x => x.id === old)?.corrected_by).toBe(fix);
+      expect(order(facts, fix)).toBeGreaterThanOrEqual(0);
+      expect(order(facts, fix)).toBeLessThan(order(facts, old));
+      const block = text.slice(text.indexOf('Saved facts (remember)'));
+      expect(block.indexOf('Correction: Ostravel is at 46 seats')).toBeGreaterThan(0);
+      expect(block.indexOf('Correction: Ostravel is at 46 seats')).toBeLessThan(block.indexOf('Ostravel renews at 52 seats.'));
+    } finally {
+      await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'false');
+    }
+  });
+});
