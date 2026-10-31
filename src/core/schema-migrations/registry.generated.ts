@@ -280,6 +280,7 @@ import { v276 } from './v276-persistence-foreground-committed-index.ts';
 import { v277 } from './v277-function-search-path-pg-temp.ts';
 import { v278 } from './v278-writer-fence-fail-closed.ts';
 import { v279 } from './v279-outcome-markers-skip-purge-guard.ts';
+import { v280 } from './v280-persistence-consumers-identity-given-at-open.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -558,4 +559,5 @@ export const MIGRATIONS: Migration[] = [
   v277,
   v278,
   v279,
+  v280,
 ];

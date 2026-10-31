@@ -659,6 +659,52 @@ the same reason and fix on its `connection` check.
    `<data-dir>.gbrain-owner.json`, and starts the 10-minute WAL-repair
    quarantine (`<data-dir>.lock-reap.json`). The next ordinary open succeeds.
 
+## Opening an engine from settings
+
+`openEngine(settings)` (`src/core/engine-open.ts`, exported as `gbrain/engine-open`) creates and connects an
+engine from a value and nothing else: no config file, no environment variable, no home directory. The CLI and
+`gbrain serve` keep reading those (`connectEngineForServe`) and are unchanged; a host that holds several brains
+in one process, or that keeps its settings somewhere other than `~/.gbrain`, builds one settings object per brain
+and calls this.
+
+```ts
+import { openEngine } from 'gbrain/engine-open';
+
+const engine = await openEngine({
+  engine: 'postgres',
+  database: { url },            // or { path } for PGLite; no path is an in-memory engine
+  pool: { max: 4 },             // Postgres: this engine's own pool, never the module singleton
+  host: { id: hostId },         // the persistence host identity, a UUID; no host.json is minted
+});
+await engine.initSchema();      // a connect is not a migration: the caller runs them on purpose
+// ...
+await engine.disconnect();
+```
+
+What the settings decide:
+
+- **The pool.** A Postgres engine always connects on the instance-pool path (`connect({ poolSize })`), so two
+  engines with two URLs in one process never share a pool. `GBRAIN_POOL_SIZE` still caps it, as it does every pool.
+- **The host identity.** `host.id` is the id the engine's persistence consumer claims and publishes under, the id
+  its heartbeat row carries (with null `host_json_path` and `persistence_home`, since there is no file; migration
+  v280), and the id worktree ownership and the writer stamp compare against. `hostIdFor(engine)`
+  (`src/core/persistence/identity.ts`) answers it for an engine, a read-through view of one, or a page
+  transaction on one; without an explicit id it is `localHostId()`, the file identity, as before.
+- **The writer.** A write needs a principal. A host that holds the registration as a value registers it once with
+  `registerLocalWriterValue(engine, { id, credential, lane: 'stdio' })` (the row in `persistence_local_writers`,
+  no credential file) and runs each operation inside `withVerifiedLocalRegistration(engine, registration, ...)`,
+  as the HTTP server does for a registration it verified. A different credential under the same id refuses; a
+  revoked registration is never silently replaced.
+
+`test/engine-open-stateless.test.ts` pins the contract: an engine opened from settings on a clean filesystem writes
+a page, a second engine on the same datastore reads it back, two engines in one process keep their own identities,
+and nothing is minted under the home directory.
+
+What still reads the world after this: the AI gateway configuration is process-wide (`configureGateway`), so a
+host configures it once per process; `GBRAIN_*` tuning variables are read where they always were; and the other
+`localHostId()` call sites (sync, topology, repair) are the local app's, reached only through commands that run on
+a brain's own host.
+
 ## Canonical schema sources
 
 Schema DDL text has one hand-edited copy. `bun run build:schema`
