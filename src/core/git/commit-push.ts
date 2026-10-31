@@ -500,8 +500,12 @@ export function pendingWriteThroughStillDirty(repo: string): PendingWriteThrough
   return pending.filter(e => dirty.has(e.path));
 }
 
-/** Appends without the lock (O_APPEND), so a writer that could not get it still records its file. */
-function notePending(root: string, paths: string[]): void {
+/**
+ * Appends without the lock (O_APPEND), so a writer that could not get it still records its file. `root` is the checkout
+ * root and `paths` are relative to it (`scopePaths`). The derived write-through also records each file right after writing
+ * it (#8073), so a crash before its commit leaves the file for the next locked commit to sweep.
+ */
+export function notePending(root: string, paths: string[]): void {
   try { appendFileSync(absGitPath(root, PENDING_NAME), paths.map(p => `${new Date().toISOString()}\t${JSON.stringify(p)}\n`).join('')); } catch { /* best-effort */ }
 }
 

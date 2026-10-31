@@ -1,6 +1,6 @@
 # Canonical reconciliation
 
-See [generations](generations.md).
+See [generations](generations.md) and [continued entries](canonical-reconciliation-continued.md).
 
 - `src/commands/sync-diagnostics.ts` + `src/core/persistence/{sync-run,verb-errors}.ts` — bounded source/slug/path/reason diagnostics derive from immutable managed-sync receipts, including when the local failure ledger is unavailable. Direct and resident-owner JSON carry the same receipt; human memory errors lead with the specific write reason without widening frozen v1 error codes. Pending requests retain their original UUID, terminal corrections require a new UUID, and neither retry nor line-ending diagnostics bypasses raw-byte or skip guards.
 

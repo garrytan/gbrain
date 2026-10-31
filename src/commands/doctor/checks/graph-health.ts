@@ -376,6 +376,7 @@ export const timelineHistoryEntry: DoctorEntry = {
     'conversation_label_facts',
     'conversation_outcomes_stale',
     'captured_facts_active',
+    'agent_session_facts',
     'facts_redaction_marker',
     'fact_bulk_dates',
     'loop_facts_drift',

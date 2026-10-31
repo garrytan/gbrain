@@ -373,6 +373,13 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async (engine, scope) => (await import('./checks/captured-facts.ts')).capturedFactsCheck(engine, scope.sourceIds),
   },
   {
+    id: 'agent_session_facts', resolution: 'repair', registration: 'wave',
+    hostOnly: 'Classifying agent-session facts reads the session corpus on the brain host; the repair is explicit-only and needs the user\'s agreement.',
+    count: d => Number(d.evidenced ?? 0) + Number(d.ambiguous ?? 0),
+    impact: 'Some active facts from agent-launched sessions are still attributed to the owner',
+    run: async (engine, scope) => (await import('./checks/agent-session-facts.ts')).agentSessionFactsCheck(engine, scope.sourceIds),
+  },
+  {
     id: 'facts_redaction_marker', resolution: 'repair', registration: 'wave',
     hostOnly: 'Restoring redacted fact text reads the facts\' source pages and versions on the brain host; the repair is explicit-only.',
     count: d => Number(d.affected ?? 0),

@@ -13,7 +13,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { AuthInfo } from '../ops/contract.ts';
-import { accessRestrictionsPresent, remotePrivacyRelaxed, type CallerAccess, type FolderCoverage } from '../search/private-visibility.ts';
+import { readRemotePolicyNow, remotePrivacyRelaxed, type CallerAccess, type FolderCoverage } from '../search/private-visibility.ts';
 import { ACCESS_ID_RE, identityFor, normalizePrincipal } from './principals.ts';
 
 /** Config key binding a local stdio MCP server to one member. */
@@ -84,7 +84,8 @@ export async function folderAccessFor(engine: Pick<BrainEngine, 'executeRaw'>, i
 
 /** The CallerAccess fields for a remote operation (identity, privacy relaxation and the GBRA-156 private-readable set). */
 export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | undefined, privateSources: readonly string[] | undefined, transport?: string): Promise<Partial<CallerAccess>> {
-  const [relaxed, restricted] = await Promise.all([remotePrivacyRelaxed(engine), accessRestrictionsPresent(engine)]);
+  const [relaxed, remotePolicy] = await Promise.all([remotePrivacyRelaxed(engine), readRemotePolicyNow(engine)]);
+  const restricted = remotePolicy.restricted;
   const identity = !restricted ? []
     : !auth && transport === 'stdio' ? await stdioMemberIdentity(engine)
     : await memberIdentityFor(engine, auth);
@@ -95,6 +96,7 @@ export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | u
     hidePrivate: !relaxed,
     applyRemoteReadPolicy: false,
     restricted,
+    remotePolicy,
   };
 }
 

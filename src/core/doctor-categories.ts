@@ -60,6 +60,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   // #7013: atoms an empty managed re-extraction retired that atoms-restore can bring back (doctor/checks/atom-retirements.ts).
   'atom_retirements_restorable',
   'captured_facts_active',
+  // #8064: owner-attributed capture facts from agent-launched sessions (doctor/checks/agent-session-facts.ts).
+  'agent_session_facts',
   // #7125: facts whose stored text holds a pre-fix sanitizer redaction marker (doctor/checks/facts-redaction-marker.ts).
   'facts_redaction_marker',
   // #7247: a calendar day holding a bulk-loaded share of a source's facts as their valid_from (doctor/checks/fact-bulk-dates.ts).
@@ -135,6 +137,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   // #5137: an env provider key shadowing a different config key.
   'embedding_key_source',
   'embedding_migration_state',
+  // GBRA-248 W0b: the config file disables embeddings over a database that holds vectors (doctor/checks/embedding-plane.ts).
+  'embedding_plane_disagreement',
   'embedding_provider',
   // #5691: query-instruction advisory for instruction-style embedding models.
   'embedding_query_prefix',
@@ -259,6 +263,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'sync_landing_gaps',
   // #6712: live pages whose database-only edit an incremental sync overwrote without a hold (doctor/checks/overwritten-edits.ts).
   'sync_overwritten_db_edits',
+  // #8071: rows a managed sync's checkpoint moved past, compared with the file at the checkpoint commit (doctor/checks/rows-behind.ts).
+  'sync_rows_behind_checkpoint',
   // #7891: provenance stamps and trust markers a write removed before #7892 (doctor/checks/provenance-stamp-drift.ts).
   'provenance_stamp_drift',
   'unified_multimodal_coverage',
@@ -367,6 +373,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'two_consumers_on_host',
   'consumers_without_heartbeat',
   'host_identity_mismatch',
+  // GBRA-248 W0a: managed writes waiting on an owner host quiet past the stale window (doctor/checks/owner-host-stale.ts).
+  'owner_host_stale',
   // #6696 C6: a live serve or worker on an older build than this checkout (doctor/checks/persistence-consumers.ts).
   'serve_build_drift',
   // #7245: serve, the jobs supervisor, worker parents and job children on different builds (doctor/checks/runtime-build-skew.ts).

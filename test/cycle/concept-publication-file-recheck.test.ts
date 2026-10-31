@@ -49,6 +49,8 @@ for (const backend of testBackends()) describe(`publishClassicConcept file reche
     _resetWriteThroughCacheForTest();
     repo = mkdtempSync(join(tmpdir(), 'gbrain-concept-recheck-'));
     execFileSync('git', ['init', '-q'], { cwd: repo });
+    execFileSync('git', ['config', 'user.name', 'Example Writer'], { cwd: repo });
+    execFileSync('git', ['config', 'user.email', 'writer@example.invalid'], { cwd: repo });
     await engine.executeRaw("UPDATE sources SET local_path = $1 WHERE id = 'default'", [repo]);
     await importFromContent(engine, SLUG, serializeMarkdown(frontmatter, BASELINE, '', { type: 'concept', title: 'launch dates', tags: ['ops'] }), { noEmbed: true });
     const written = await writePageThrough(engine, SLUG, { sourceId: 'default' });

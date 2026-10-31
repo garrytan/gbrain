@@ -34,6 +34,7 @@ identifiers and attribution are available in the pre-removal Git revision
 - On a brain with any restriction, the escape hatches no longer turn the remote read filter off, and secondary surfaces (proactive brief, retrieval reflex, entity resolution, known-as-of) hide restricted pages from every remote caller, listed members included.
 - A credential bound to a disabled or removed member is refused at verification (`access_member_disabled`).
 - Works the same on a repo-less brain: members, groups, bindings and folder rules live in the database. A source records which store holds its folder rules when its first rule is created, and only `gbrain access rule migrate --source <id>` moves them; doctor `access_policy_store_mismatch` names it when the filesystem changes.
+- The member-access SQL functions end their pinned `search_path` with `pg_temp`, like every other gbrain function (#7632), and frontmatter recovery never guesses a duplicated `readable_by` key: the file is held until a person fixes it.
 - Remote callers can no longer write pages under `.gbrain/`.
 
 **A shared brain can now let each member's agent read that member's own private pages, and nobody else's. Access tokens and OAuth clients have a new private-pages grant: `none` for every token and client, existing or new, so remote reads keep hiding `visibility: private` pages exactly as before until the brain host opts a connection in with `gbrain auth rescope --token <name> --private-pages granted-sources` (or `--client <client_id>`). An opted-in connection then reads private pages only in the sources its grant names.**
@@ -44,6 +45,7 @@ identifiers and attribution are available in the pre-removal Git revision
 |---|---|---|
 | A member's agent reads a private page in its own granted source | hidden from every remote caller unless the operator set `search.remote_private_pages`, which shows private pages to every remote caller | still hidden by default; after `--private-pages granted-sources` it is visible to that token or client in `search`, `query`, `recall`, `entity`, `get_page`, `list_pages`, `get_chunks`, `get_versions`, `get_timeline`, links, backlinks, the graph and `resolve_slugs` |
 | Which sources count | | a token's `--sources` list, or a client's write source plus its read sources. A token with no source grant (the `default` floor), federated sources the grant does not name, a client's bound source and a request's `source_id` / `source_ids` never add one |
+| What the grant opens in a named source | | `visibility: private` pages, pages with a privacy alias (`access`, `confidentiality`), and atoms, concepts and events derived from private or unknown origins. Pinned questions stay owner-only |
 | Another member's private page, or a bot token granted every source without the setting | hidden | hidden |
 | `context_pack`, `delta` and writes | world-only | world-only, for every caller |
 | `--private-pages none` | | hides them again on the next request |
@@ -56,6 +58,86 @@ identifiers and attribution are available in the pre-removal Git revision
 - Opt in only connections that act for one person or one team. A bot answering several members over one token sees the private pages of every source that token is granted; give each member their own token ([lay out sources by who may read them](docs/guides/multi-source-brains.md#lay-out-sources-by-who-may-read-them)).
 - `search.remote_private_pages` and `GBRAIN_REMOTE_PRIVATE_PAGES` keep their meaning: when set, every remote caller sees private pages, whatever this grant says.
 - A local CLI call reads private pages as before.
+
+## [0.60.526.0] - 2026-10-31
+
+**The #7679 refresh state-matrix tests (7c and 7d) now run in about half the time, with every assertion kept (#7782).**
+
+These two tests built a fresh brain for each cell, and on a 2-CPU machine that cost added up to minutes per run. Now 7c hands a cell that ends settled to the next cell instead of building a new brain, and 7d builds one brain per kind of interrupted refresh and runs every action on it in turn, with each action undoing its seam. Nothing changes for users.
+
+### Itemized changes
+
+- Tests: 7c and 7d in `test/persistence-worktree-refresh.test.ts` share fixtures across their cells, and every assertion is kept (#7782).
+
+## [0.60.525.0] - 2026-10-31
+
+**Sync no longer moves its checkpoint past a file it never imported (#8071), a source refresh can no longer hold its lock for over an hour (#8072), and dream-cycle pages written into a Git checkout are now committed instead of left untracked (#8073).**
+
+If a file was edited while a sync pass was importing it, sync could record the newer bytes as imported while the page kept the older text. Once you committed the edit, sync treated the file as settled and the page stayed stale with no hold. Sync now records only the bytes the page actually holds, so the committed edit is imported on the next pass. To find pages already left behind, `gbrain doctor` adds `sync_rows_behind_checkpoint`: on each managed source's owner host it compares every live Markdown page with the file committed at the source's checkpoint, skips paths sync would not import, and reports `unknown` rather than ok when it runs out of time. `gbrain repair rows-behind --source <id>` previews the fix, and `--apply --expect <hash>` re-imports the committed file through the normal import (or opens the hold sync would have opened). Pages with no import record change only with `--include-ambiguous`, pages with uncommitted edits are listed and left alone, and nothing runs on upgrade. Repo-less brains are not affected.
+
+A refresh's member syncs now run under a deadline, `sources.refresh_sync_budget_ms` (default 5 minutes). A member that commits nothing in that time is reported `refresh_sync_timeout` with the write it waited on, a member that made progress is reported deferred, and the refresh always finishes and releases its lock, so later ticks run again. A Markdown file over 24 MiB that sync had to read whole to refuse (held `file_too_large`, for example for a facts fence) is no longer re-read on every tick; it is checked again only when it changes, after `gbrain sources retry-held <source>`, or after a gbrain upgrade.
+
+Atom and concept write-through and the reverse-written synthesis, patterns and cycle-summary pages now commit each batch through the checkout's commit door, naming only the files they wrote. Before, those files stayed untracked and made the scheduled pull skip every run. A refused commit rolls the batch's files back and the phase reports `write_through_failed`; files a crash left uncommitted are picked up by the next commit, and your own untracked files are never touched. Repo-less sources, non-Git folders, `storage.db_only` paths and gitignored paths behave as before.
+
+### Itemized changes
+
+- `src/core/persistence/sync-prepare.ts`: the import record names the working file only when it holds the imported bytes (line endings aside).
+- `src/core/persistence/rows-behind.ts` (new), `src/commands/doctor/checks/rows-behind.ts` (new), `src/core/repair/rows-behind.ts` (new): the `sync_rows_behind_checkpoint` doctor check and the explicit-only `rows-behind` repair kind; doctor and export goldens updated.
+- `src/core/persistence/worktree-refresh.ts`, `src/commands/sources-refresh.ts`: member syncs run through the governed drain under `sources.refresh_sync_budget_ms`; new code `refresh_sync_timeout`.
+- `src/core/persistence/sync-screen.ts`, `src/core/persistence/sync-holds.ts`: a held over-limit file is re-screened only when it changes.
+- `src/core/cycle/derived-write-through.ts`, `src/core/cycle/extract-atoms.ts`, `src/core/cycle/synthesize-concepts.ts`, `src/core/write-through.ts`: one commit per batch, rollback on a refused commit, pending write-through ledger.
+- `docs/guides/repair.md`, `docs/guides/live-sync.md`, `docs/guides/error-codes.md`, `docs/guides/write-refusals.md`: the new check, repair kind, budget and code.
+
+## [0.60.524.0] - 2026-10-31
+
+**A brain moved or restored under a new host identity no longer leaves writes pending forever behind an `--accept-pending` exit 0, and a keyless re-init from a cold `GBRAIN_HOME` no longer switches an embedded brain to keyword-only (GBRA-248 W0).**
+
+A managed source publishes only through the host that owns its checkout. When a brain moved to another machine, was restored from a backup, or ran in a container that restarted with a fresh `GBRAIN_HOME`, the new process got a new host identity, its writes queued for the old owner, and nothing said that owner was gone: the receipt read as an ordinary pending write and `--accept-pending` (or `GBRAIN_ACCEPT_PENDING=1`) exited 0, so hooks and cron treated writes that would never publish as saved. A pending receipt now flags that owner (reason `owner_unavailable` with a new `diagnostic.owner` block holding its last activity, which older clients ignore; doctor names the host) when it runs no live consumer and has been quiet for more than 24 hours, or at once on PGLite when this process holds the database file under another identity. `--accept-pending` does not cover such a write: `gbrain put`, `gbrain call`, brainstorm saves and `gbrain trust accept --all` exit 10 and say why. A consumer's clean stop now stamps the worktrees its host owns, so a stopped owner is not mistaken for a gone one. The owner host never sees the block, a repo-less (database-only) write never names an owner, and nothing claims or transfers ownership. New doctor check `owner_host_stale` lists the waiting writes with the owner and the read-only next step.
+
+`gbrain init` with no provider key in reach falls back to keyless. Run from a cold home against a database that already had an embedding model and vectors, it wrote `embedding_disabled: true` into the new config file, and the brain stopped embedding. When that fallback was implicit and the database holds vectors, init now keeps the database's stored model and width in the config file instead and prints the key to set and `gbrain embed --stale`. A fresh keyless install, a keyless brain with no vectors, an explicit `--no-embedding` and a database that already disables embeddings behave as before. New doctor check `embedding_plane_disagreement` finds brains the old behavior left in that state and prints the `gbrain init --force --embedding-model …` enable for the same model.
+
+### Itemized changes
+
+- `src/core/persistence/owner-activity.ts` (new): owner liveness, last activity and the stale rule; `journal.ts` attaches it to receipt facts inside budgets the reads already have, cancelled past them; `health.ts`, `types.ts`, `params.ts`: the optional `diagnostic.owner` receipt field.
+- `src/core/persistence/service.ts`: a write left pending carries its owner facts into the receipt.
+- `src/core/persistence/write-wait.ts`: `acceptPendingCovers`; `writeErrorExitCode` keeps exit 10 when `diagnostic.owner` is present; `persistence-delegate.ts`, `brainstorm.ts`, `trust.ts` follow it.
+- `src/core/persistence/consumer-heartbeat.ts`: a clean stop stamps `persistence_worktrees.heartbeat_at` for the host's worktrees.
+- `src/commands/init-embedding-plane.ts` (new), `src/commands/init.ts`: the implicit-keyless marker and the kept database identity on both engines.
+- Doctor: `owner_host_stale` (`checks/owner-host-stale.ts`) and `embedding_plane_disagreement` (`checks/embedding-plane.ts`); `core/readiness.ts` exports `enableArgv`.
+- Docs: troubleshooting entries `#owner-host-stale` (with the stable `GBRAIN_HOME` guidance for servers and containers) and `#embedding-plane-disagreement`; the exit-status tables.
+- Tests: `test/owner-stale-moved-brain.test.ts` (real CLI, PGLite), `test/persistence-owner-activity.test.ts` (PGLite and Postgres), `test/init-cold-home-embedding.test.ts` (PGLite and Postgres), `test/doctor-owner-host-stale.test.ts`, `test/doctor-embedding-plane-disagreement.test.ts`; doctor goldens.
+
+## [0.60.523.0] - 2026-10-31
+
+**A launcher can now tell gbrain that a session's user turns are an agent's, not yours, so orchestrator worker briefs stop landing in your brain as your own preferences (#8064). Codex sessions that open and close with no prompt no longer raise a week-long parser_drift alert (#8016), and task notifications and agent-team messages no longer get brain context injected as if you typed them (#8028).**
+
+Set `GBRAIN_SESSION_AGENT=<label>` on a worker's process and the capture hooks still save the session, but every claim from its user turns is saved as `attributed_to: other` with the context note `speaker: agent <label>, not the owner`, and the extractor is told the agent wrote them. `GBRAIN_SESSION_AGENT=off` saves nothing from the session; `owner` declares the turns yours. With the variable unset, a headless `claude -p` or `codex exec` session whose ancestors include another claude or codex process is detected and saved as agent `agent-launched`'s. The marker is a `<session>.speaker.json` sidecar written before any corpus file; if it can't be written, nothing is saved. Agent claims are never consolidated into your own takes. The marker covers the Claude Code and Codex hook lanes; the OpenClaw context-engine lane and dream synthesis don't read it yet.
+
+For facts already saved as yours, `gbrain repair agent-session-facts` previews a re-attribution: facts from sessions with a speaker marker, sessions you name (`--session`), or sessions whose working directory sits under a path you name (`--cwd`, for an orchestrator's worktree root). Sessions whose first turn opens with the same 160 characters as at least 3 other sessions (a template brief) are listed as ambiguous and change only with `--include-ambiguous`. `--apply --expect <hash> --yes` sets exactly the previewed facts to `attributed_to: other` with the speaker note and retires the self takes consolidate built only from them. It deletes nothing, keeps a claim you also made in another session, and works on repo-less brains. `gbrain doctor` (`agent_session_facts`) counts the candidates, and `doctor --remediation-plan` lists the preview command.
+
+### Itemized changes
+
+- `src/core/context/session-speaker.ts` (new): the env contract, ancestry detection, the speaker sidecar.
+- `src/commands/hook.ts`: compact, stop and session-end record the speaker before banking and skip banking on `off`; user-prompt skips `<task-notification` and `<teammate-message` prompts (`harness_prompt`); a session-end that saves turns clears its own lane's `parser_drift` status file, which now records the lane.
+- `src/core/facts/backstop.ts`, `src/core/facts/extract.ts`, `src/core/facts/speaker-context.ts`, `src/core/persistence/facts-maintenance.ts`: the `speaker` pipeline option.
+- `src/core/context/checkpoint-harvest.ts`, `src/core/sweep.ts`: the capture lanes pass the corpus file's speaker.
+- `src/core/transcripts/codex-hook-lane.ts`: `event_msg` / `thread_settings_applied` counts as a recognized record.
+- `src/core/repair/agent-session-facts.ts` (new), `src/commands/doctor/checks/agent-session-facts.ts` (new): the explicit-only repair kind, its `managed_maintenance_agent_session_facts` request and the `agent_session_facts` doctor check; registry, preview-approval and doctor goldens updated.
+- `docs/guides/ambient-writeback.md`: "Sessions an agent launches"; `docs/guides/repair.md`: the new kind.
+
+## [0.60.522.0] - 2026-10-31
+
+**`recall` and `list_pages` now honour `source_ids`, the per-request source narrowing `search` and `query` already had. Before, both ops ignored the list, so an agent narrowing each call to the asking member's sources still got other sources' facts and pages from these two tools.** A harness-evals run measured it: under per-request narrowing, `recall` returned a page from outside the requester's sources twice and `list_pages` 57 pages over three calls. Each id is checked like an explicit `source_id`, so the list can only narrow what the token's grant allows; an id outside a remote grant refuses the whole request, and an empty intersection with `source_id` returns nothing with an `empty_retrieval` notice. A call that names its own sources also no longer gets `_meta.brain_hot_memory`, which reads the connection's source.
+
+### Itemized changes
+
+- `src/core/ops/facts.ts`: `recall` takes `source_ids` and reads every fact arm and its page-search arm inside the narrowed scope.
+- `src/core/ops/pages.ts`: `list_pages` takes `source_ids`.
+- `src/core/ops/search-source-scope.ts`: the shared parser and resolver serve all four ops.
+- `src/mcp/dispatch.ts`: the hot-memory hook is skipped when a call names `source_ids` or a `source_id` other than the connection's.
+- `docs/protocol/MCP_META_CHANNELS.md`: says when `brain_hot_memory` is left out.
+- `docs/guides/multi-source-brains.md`: "Narrow one request with `source_ids`" names all four ops.
+- `test/recall-list-pages-source-ids.test.ts` (PGLite and Postgres): each recall arm and list_pages under narrowing, the grant refusal, the empty intersection, and starter-surface dispatch with the hot-memory hook; red on the old code.
 
 ## [0.60.521.0] - 2026-10-30
 

@@ -191,6 +191,28 @@ export function stampSyncDay(report: unknown, stamped: string, syncDays: readonl
   return copy;
 }
 
+export const FIXTURE_HEAD = '<fixture-head>';
+
+/**
+ * The fixture pins its commits' dates and identity, but a host's git can still rewrite the identity or append a
+ * trailer, so the commit id differs between machines. Doctor `sync_rows_behind_checkpoint` reports the source's
+ * checkpoint, which is that commit: this replaces exactly that field, and only after checking that each non-null
+ * `details.sources[].checkpoint` equals the fixture checkout's HEAD.
+ */
+export function stampFixtureHead(report: unknown, h: DoctorHome): unknown {
+  const head = execFileSync('git', ['-C', join(h.home, 'notes-src'), 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const copy = structuredClone(report) as { checks?: Array<{ name: string; details?: { sources?: Array<{ checkpoint: string | null }> } }> };
+  for (const check of copy.checks ?? []) {
+    if (check.name !== 'sync_rows_behind_checkpoint') continue;
+    for (const source of check.details?.sources ?? []) {
+      if (source.checkpoint === null) continue;
+      if (source.checkpoint !== head) throw new Error(`sync_rows_behind_checkpoint checkpoint ${source.checkpoint} is not the fixture checkout's HEAD (${head})`);
+      source.checkpoint = FIXTURE_HEAD;
+    }
+  }
+  return copy;
+}
+
 export const SOAK_DAY = '<soak-day>';
 
 /**

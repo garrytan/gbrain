@@ -1,5 +1,5 @@
 import { opError } from '../ops/contract.ts';
-import { callerAccessAllowedSql, callerIdentity, readPolicyFragment, readRemotePolicyNow, withCallerAccess } from '../search/private-visibility.ts';
+import { callerAccessAllowedSql, callerIdentity, currentCallerAccess, readPolicyFragment, readRemotePolicyNow, withCallerAccess } from '../search/private-visibility.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { folderAccessFor, memberIdentityFor } from '../access/caller.ts';
 import { hasReaders, normalizePrincipal, normalizeReaders, readersAllow, NOBODY } from '../access/principals.ts';
@@ -13,6 +13,15 @@ export async function excludesPrivateWrites(engine: SqlEngine, remote: boolean):
 }
 
 /**
+ * excludesPrivateWrites for a write's admission: reuses the fresh policy this remote request read when it started
+ * (remoteCallerAccess) instead of reading it again. A false result is rechecked fresh at publication.
+ */
+export async function excludesPrivateWritesAtAdmission(engine: SqlEngine, remote: boolean): Promise<boolean> {
+  if (!remote) return false;
+  return !(currentCallerAccess().remotePolicy ?? await readRemotePolicyNow(engine)).privacyRelaxed;
+}
+
+/**
  * Recheck after page guards at publication; also hide inaccessible receipt targets. GBRA-218: on a brain with
  * member-access restrictions the writer's identity is re-resolved from the stored principal on every check, so a
  * member disabled or unbound after submission (a queued job, a replay) loses the page before commit, and the
@@ -20,6 +29,14 @@ export async function excludesPrivateWrites(engine: SqlEngine, remote: boolean):
  */
 export async function authorizePageVisibility(engine: SqlEngine, authority: WriteAuthority, slug: string): Promise<void> {
   if (!authority.remote) return;
+  if (authority.excludePrivate ?? true) {
+    // Privacy is hidden whatever the policy says, and an empty identity is the strictest reading (an identity only
+    // opens a page that names readers), so a page visible with none needs no policy read or member lookup.
+    const [hidden] = await engine.executeRaw<{ names_readers: boolean }>(`SELECT page_readers IS NOT NULL AS names_readers FROM pages
+      WHERE source_id=$1 AND slug=$2 AND NOT (${readPolicyFragment('pages', [], true)}) LIMIT 1`, [authority.sourceId, slug]);
+    if (!hidden) return;
+    if (!hidden.names_readers) throw pageNotVisibleError();
+  }
   const policy = await readRemotePolicyNow(engine);
   const hidePrivate = (authority.excludePrivate ?? true) || !policy.privacyRelaxed;
   if (!hidePrivate && !policy.restricted) return;

@@ -15,6 +15,7 @@ import { pipelined } from '../page-state/transactions.ts';
 import { backgroundPaused, backgroundWorktreeInactive, declaredBackground, readBackgroundPauseShare, resolveAdmissionOrigin, type AdmissionOrigin } from './admission-origin.ts';
 import { EFFECT_BYTES_SQL, RECEIPT_RESERVATION_FLOOR, receiptReservation, retainedReceiptBytes, TRUE_UP_CLAMP_SQL } from './receipt-bytes.ts';
 import { writeHealth, type WriteHealthFacts } from './health.ts';
+import { OWNER_READ_BUDGET_MS, startOwnerRead } from './owner-activity.ts';
 import { assertBackgroundOwner } from './owner-verification.ts';
 import { writerStamp } from './writer-versions.ts';
 import { intentCarriesContent, intentCarriesPurgedContent, PURGE_PRESENCE_COLUMNS } from './purged-intent.ts';
@@ -1246,10 +1247,14 @@ export async function writeHealthFacts(engine: BrainEngine, rows: WriteRequest[]
     ) head ON true`, [roots], { signal: engine.kind === 'postgres' ? abort.signal : undefined })
     .catch(() => null).finally(() => { if (healthQueries.get(engine) === query) healthQueries.delete(engine); });
   healthQueries.set(engine, query);
+  // GBRA-248: owner facts read beside the head facts, inside the same 500 ms budget.
+  const ownerReadStarted = performance.now();
+  const settleOwners = startOwnerRead(engine, pending.flatMap(row => row.worktree_id ? [row.worktree_id] : []));
   let timer: ReturnType<typeof setTimeout> | undefined;
   const facts = await Promise.race([query, new Promise<null>(resolve => {
-    timer = setTimeout(() => { abort.abort(); resolve(null); }, 500);
+    timer = setTimeout(() => { abort.abort(); resolve(null); }, OWNER_READ_BUDGET_MS);
   })]).finally(() => { if (timer) clearTimeout(timer); });
+  const owners = await settleOwners(facts ? OWNER_READ_BUDGET_MS - (performance.now() - ownerReadStarted) : 0) ?? new Map();
   if (!facts) return result;
   const byRoot = new Map(facts.map(fact => [fact.root, fact]));
   for (const row of pending) {
@@ -1257,10 +1262,12 @@ export async function writeHealthFacts(engine: BrainEngine, rows: WriteRequest[]
     if (!fact) continue;
     // #5984 Phase 4.5: a foreground write publishing beside running lane groups (claimed sync jobs) is not waiting on them.
     const head = row.state === 'queued' ? fact.sequence : row.worktree_id && row.operation !== 'submit_job' ? fact.started_unlaned : fact.started_sequence;
+    const owner = row.worktree_id ? owners.get(row.worktree_id) : undefined;
     result.set(row.id, { observed_at, recovery_required: fact.recovery_required,
       owner_unavailable: fact.owner_unavailable,
       inspect_owner: fact.inspect_owner,
-      earlier_write: head != null && BigInt(head) < BigInt(row.sequence) });
+      earlier_write: head != null && BigInt(head) < BigInt(row.sequence),
+      ...(owner ? { owner } : {}) });
   }
   return result;
 }

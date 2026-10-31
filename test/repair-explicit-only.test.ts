@@ -24,7 +24,7 @@ import { REPAIR_HELP, parseRepairArgs, runRepairCommand } from '../src/commands/
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { withEnv } from './helpers/with-env.ts';
 
-const EXPLICIT: RepairKind[] = ['accepted-takes', 'google-file-modes', 'stale-atoms', 'atoms-restore', 'extractor-facts', 'conversation-labels', 'captured-facts', 'redacted-facts', 'loop-facts', 'ontology-facts', 'facts-rehome', 'consolidate-ties', 'duplicate-facts', 'orphan-children', 'failed-writes', 'split-facts', 'frontmatter', 'timeline-comments', 'timeline-order', 'managed-sync-orphans', 'content-receipt-root', 'frontmatter-keys', 'file-drift', 'stuck-recovery', 'ghost-pages', 'origin-twins', 'receipt-compaction', 'aliases', 'rename-identity', 'overwritten-edits', 'legacy-twins', 'missing-tables', 'url-clone-fences', 'segmented-mirror', 'uncommitted-deletions', 'generations', 'fact-claim-dates', 'provenance', 'secret-spans'];
+const EXPLICIT: RepairKind[] = ['accepted-takes', 'google-file-modes', 'stale-atoms', 'atoms-restore', 'extractor-facts', 'conversation-labels', 'captured-facts', 'agent-session-facts', 'redacted-facts', 'loop-facts', 'ontology-facts', 'facts-rehome', 'consolidate-ties', 'duplicate-facts', 'orphan-children', 'failed-writes', 'split-facts', 'frontmatter', 'timeline-comments', 'timeline-order', 'managed-sync-orphans', 'content-receipt-root', 'frontmatter-keys', 'file-drift', 'stuck-recovery', 'ghost-pages', 'origin-twins', 'receipt-compaction', 'aliases', 'rename-identity', 'overwritten-edits', 'legacy-twins', 'missing-tables', 'url-clone-fences', 'segmented-mirror', 'uncommitted-deletions', 'generations', 'fact-claim-dates', 'provenance', 'secret-spans', 'rows-behind'];
 // GBRA-161: the generations preview carries its ledger kind and the restore window, so the printed command runs as is.
 const PREVIEW = (kind: RepairKind): string => kind === 'generations' ? 'gbrain repair generations --kind atom --since 30d' : `gbrain repair ${kind}`;
 let engine: PGLiteEngine;
@@ -111,7 +111,7 @@ describe('surfaces that list instead of run', () => {
       expect(out.explicit_kinds).toEqual(EXPLICIT.map(kind => ({ kind, code: 'explicit_kind_required', preview_command: PREVIEW(kind),
         docs: 'docs/guides/repair.md#explicit-only-repair-kinds' })));
     }
-    expect(await captured(['--all'])).toContain('Explicit-only kinds (not run without their name; preview each): gbrain repair accepted-takes; gbrain repair google-file-modes; gbrain repair stale-atoms; gbrain repair atoms-restore; gbrain repair extractor-facts; gbrain repair conversation-labels; gbrain repair captured-facts; gbrain repair redacted-facts; gbrain repair loop-facts');
+    expect(await captured(['--all'])).toContain('Explicit-only kinds (not run without their name; preview each): gbrain repair accepted-takes; gbrain repair google-file-modes; gbrain repair stale-atoms; gbrain repair atoms-restore; gbrain repair extractor-facts; gbrain repair conversation-labels; gbrain repair captured-facts; gbrain repair agent-session-facts; gbrain repair redacted-facts; gbrain repair loop-facts');
   });
 
   test('gbrain repair --all --apply exits 0 when explicit kinds are the only ones left', async () => {

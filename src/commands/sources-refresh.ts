@@ -66,7 +66,7 @@ function describe(result: WorktreeRefreshResult): string {
 export function printRefreshOutcome(outcome: { result: WorktreeRefreshResult } | { error: OperationError }, json: boolean): void {
   if ('result' in outcome) {
     console.log(json ? JSON.stringify(outcome.result) : describe(outcome.result));
-    if (['sync_blocked', 'syncing'].includes(outcome.result.status)) setCliExitVerdict(1);
+    if (['sync_blocked', 'sync_deferred', 'syncing'].includes(outcome.result.status)) setCliExitVerdict(1);
     return;
   }
   const error = outcome.error;

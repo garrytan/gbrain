@@ -914,6 +914,13 @@ export async function dispatchToolCall(
 }
 
 /** The response-meta hook's keys, or its failure message; never rejects (a hook failure degrades to no keys). */
+// The hot-memory hook reads ctx.sourceId only, so a call that names its own sources gets no ambient-source payload.
+function namesOwnSources(params: Record<string, unknown>, sourceId: string | undefined): boolean {
+  const ids = params.source_ids;
+  if (Array.isArray(ids) ? ids.length > 0 : typeof ids === 'string' && ids.trim() !== '') return true;
+  return typeof params.source_id === 'string' && params.source_id !== '' && params.source_id !== sourceId;
+}
+
 async function runMetaHook(hook: NonNullable<DispatchOpts['metaHook']>, name: string, ctx: OperationContext): Promise<{ meta?: Record<string, unknown>; failure?: string }> {
   try { return { meta: await hook(name, ctx) }; }
   catch (metaErr) { return { failure: metaErr instanceof Error ? metaErr.message : String(metaErr) }; }
@@ -1105,7 +1112,8 @@ async function dispatchResolvedCall(
     // #5575 CEO-18: a floored connection only reaches read ops that enforce its floor.
     enforceReadTrustFloor(ctx.auth, op);
     // GBRA-156: a read op does not change what the hook reads, so it runs beside the handler (a degraded engine's reconnect stays the handler's).
-    const earlyMeta = opts.metaHook && op.mutating === false && !isEngineDegraded(engine) ? runMetaHook(opts.metaHook, name, ctx) : undefined;
+    const metaHook = namesOwnSources(safeParams, ctx.sourceId) ? undefined : opts.metaHook;
+    const earlyMeta = metaHook && op.mutating === false && !isEngineDegraded(engine) ? runMetaHook(metaHook, name, ctx) : undefined;
     const sharedStdio = ctx.transport === 'stdio' && !ctx.auth &&
       (op.requiredScopes?.length || ['list_skills', 'get_skill', 'get_skill_asset', 'list_brain_skillpack'].includes(name));
     let registration: Awaited<ReturnType<typeof readLocalWriter>> | undefined;
@@ -1198,8 +1206,8 @@ async function dispatchResolvedCall(
     // The hook is wrapped in its own try/catch — any DB blip / cache miss /
     // helper crash degrades to no hook keys rather than flipping the whole
     // tool call to error.
-    if (opts.metaHook) {
-      const { meta, failure } = await (earlyMeta ?? runMetaHook(opts.metaHook, name, ctx));
+    if (metaHook) {
+      const { meta, failure } = await (earlyMeta ?? runMetaHook(metaHook, name, ctx));
       if (meta && Object.keys(meta).length > 0) out._meta = { ...(out._meta ?? {}), ...meta };
       if (failure !== undefined) ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${failure}; degrading to no hook keys`);
     }

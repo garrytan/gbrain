@@ -97,6 +97,7 @@ export const ERROR_CATALOGUE = {
   sync_in_progress: { code: 'sync_in_progress', docs: 'docs/guides/write-refusals.md#sync_in_progress' },
   refresh_in_progress: { code: 'refresh_in_progress', docs: 'docs/guides/write-refusals.md#refresh_in_progress' },
   refresh_drain_timeout: { code: 'refresh_drain_timeout', docs: 'docs/guides/write-refusals.md#refresh_drain_timeout' },
+  refresh_sync_timeout: { code: 'refresh_sync_timeout', docs: 'docs/guides/write-refusals.md#refresh_sync_timeout' },
   refresh_source_changed: { code: 'refresh_source_changed', docs: 'docs/guides/write-refusals.md#refresh_source_changed' },
   refresh_recovery_required: { code: 'refresh_recovery_required', docs: 'docs/guides/write-refusals.md#refresh_recovery_required' },
   worktree_refreshing: { code: 'worktree_refreshing', docs: 'docs/guides/write-refusals.md#worktree_refreshing' },
