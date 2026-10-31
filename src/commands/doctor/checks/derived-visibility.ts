@@ -20,7 +20,7 @@ import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { derivationPrivateSql, privateSnapshotFilterFragment, readHonorAliases } from '../../../core/search/private-visibility.ts';
 import { aliasOnlyPagesSql, PLAN_STATEMENT_MS, worldFactsFromPrivateSources } from '../../../core/repair/visibility.ts';
-import { atomOriginSlugSql, atomOriginSlugsSql } from '../../../core/page-state/atom-origin.ts';
+import { atomOriginSlugSql, atomOriginSlugsSql } from '../../../core/persistence/atom-origin.ts';
 
 const FACT_SAMPLE = 50;
 

@@ -42,7 +42,7 @@ import { authorizeWrite } from '../persistence/authority.ts';
 import { preparePageMutation } from '../persistence/page-prepare.ts';
 import { bumpAtomGeneration, managedAtomCompletedSql, managedAtomSession, publishManagedAtomGeneration, type AtomOrigin } from '../persistence/atom-maintenance.ts';
 import { atomGenerationAdapter, atomOwnerKey, readAtomInput } from '../generations/adapters/atoms.ts';
-import { atomOriginSlugSql } from '../page-state/atom-origin.ts';
+import { atomOriginSlugSql } from '../persistence/atom-origin.ts';
 import { publishGeneration } from '../generations/publish.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
