@@ -8160,8 +8160,9 @@ gbrain sync --source <id>           # run the re-attempt now
 gbrain sources status <id>          # a recovered item leaves the list
 ```
 
-`gbrain sync --source <id> --full` also clears every hold. A held item whose
-upstream copy changes is re-attempted once automatically.
+`gbrain sync --source <id> --full` re-attempts every hold; one that fails
+again stays held. A held item whose upstream copy changes is re-attempted
+once automatically.
 
 **The thresholds are fixed** so every brain behaves the same way and a held
 item always means the same thing:

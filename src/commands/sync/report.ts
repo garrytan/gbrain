@@ -155,7 +155,7 @@ export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = p
           `Sync PARTIAL [connector_item_failures]: ${result.failedFiles ?? 0} connector item(s) failed to import; ` +
           `${result.filesImported ?? result.added + result.modified} page(s) written.`,
         );
-        write(`  The failure reasons are in the warnings above. Fix the cause, then re-run 'gbrain sync --source <id>' (the cursor did not advance past failed items; see 'gbrain sources status <id>'). Docs: docs/guides/google-connect.md#held-items`);
+        write(`  The failure reasons are in the warnings above. Fix the cause, then re-run 'gbrain sync --source <id>' (the cursor did not advance past failed items; see 'gbrain sources status <id>'). Docs: docs/guides/github-source.md#held-items (GitHub), docs/guides/google-connect.md#held-items (Google)`);
         break;
       }
       if (result.reason === 'connector_partial') {
