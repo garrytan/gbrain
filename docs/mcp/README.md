@@ -84,18 +84,40 @@ provenance marker that is present: `injection_suspected`, `injection_p`,
 `stale` when true, `provenance: "generated"` on a machine-written page,
 and `delivered: {"truncated": true}` when evidence delivery cut the text.
 
-A row from a conversation page (`type: "conversation"`, what transcript
-imports and chat connectors write) carries `quoted: "transcript"`, and its
+A row of third-party text carries `quoted: "transcript"`, and its
 `chunk_text` is a quoted excerpt: a line naming the page as source
 material, not instructions, then the text inside a code fence it cannot
-close. Each tool-call or function-call JSON block in it (Gemini
+close. Third-party text is a page whose type holds someone else's words
+(`conversation`, `meeting`, `slack`, `slack-dm-day`, `slack-thread`,
+`email`, `email-digest`, `imessage`, `imessage-daily`, `transcript`, `chat`)
+or a fact taken from one, marker `fact <id>`: saved by the conversation-facts
+extractor (provenance `cli:extract-conversation-facts`), or recorded as
+derived from or held on such a page (the facts backstop on a synced Slack,
+email or meeting page, `extract_facts`; for older backstop facts, the page
+its `source_session` names). If that lookup fails, `saved_facts` is left out
+(degraded stage `saved_facts_withheld`) and remote `recall` returns no facts
+(`facts_degraded.reason: "saved_facts_withheld"`), never unquoted facts. Each tool-call or function-call JSON block in it (Gemini
 `functionCall` included) is replaced by
 `[tool call: <name>, arguments omitted]`, and so is each XML-style call
 block (`function_calls`, `invoke`, `tool_use`, `tool_call`). `search`, `query` and
-`assemble_evidence` return it this way to every caller, the CLI included;
-the stored page is unchanged (`get_page` reads it as written). Other read
-paths (`recall`, `think`, `search_exact`, `fetch`, `get_chunks`) and other
-conversation-like page types still return the text as stored.
+`assemble_evidence` return it this way to every caller, the CLI included
+(their `saved_facts` too); the stored page is unchanged.
+
+Over MCP (any caller that is not the trusted local CLI) the other reads
+quote the same text (#8042). `recall` quotes its `results` and each quoted
+fact's `fact` (with `quoted`), and so do `delta` facts and
+`_meta.brain_hot_memory`. `get_page` on such a page returns
+`quoted: "transcript"` with `compiled_truth`, `timeline`, `content` and
+every window's text each fenced, without summarizing tool calls, so the text
+inside is byte-exact: `edit_page` `old_text` copied from inside a fence still
+matches, and `put_page` given that `content` back removes exactly the fences
+get_page added around this page before writing (only on a page of a quoted
+type, so a note's own fence-like text is kept). `get_page` with
+`known_as_of` and `get_versions` with `include_body` (and its `diff`) fence
+the recorded bodies of these pages the same way. `fetch` quotes `text` the
+same way (`metadata.quoted`). The trusted local CLI (`gbrain get`, `gbrain
+put`) reads and writes the body as stored. `search_exact` and `get_chunks`
+still return text as stored.
 
 `effective_date` is the page's own date and `effective_date_source` says
 which kind: `date`, `published` or `filename` is a document date,

@@ -16,7 +16,7 @@ import type { Page } from '../types.ts';
 import { decodeDeepResearchAnchor, decodeDeepResearchId, deepResearchPageUrl } from '../deep-research-id.ts';
 import { PageSnapshotAmbiguousError, type PageSnapshot } from '../page-state/types.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { pageTrustForRead, projectFetchText, projectGetPage, readQuarantined } from './get-page-projection.ts';
+import { pageTrustForRead, projectFetchText, projectGetPage, quotesBody, readQuarantined } from './get-page-projection.ts';
 import { assertLargePageAdmission } from '../persistence/large-page-guard.ts';
 import { assertFullReadFits, bodyBytes, fetchWindowResult, GET_PAGE_BODY_PARAMS, inlineBodyBytes, parseBodyRequest, readPartialBody, segmentedFullReadError, authorizedReadPin } from './get-page-body.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
@@ -232,14 +232,14 @@ const get_page: Operation = {
     const whole = bodyRequest.mode === 'full'
       || (bodyRequest.mode === 'auto' && !segmented && bodyBytes(visibleBody) <= await inlineBodyBytes(ctx));
     if (!whole) {
-      const partial = await readPartialBody(ctx, { page, visibleBody, revision: snapshot!.revision, tags, quarantined, trust: readable.trust, pin,
+      const partial = await readPartialBody(ctx, { page, visibleBody, revision: snapshot!.revision, tags, quarantined, trust: readable.trust, pin, quote: quotesBody(ctx, page),
         extras: { ...(quarantined ? { quarantined } : {}), ...(timelineEntries ? { timeline_entries: timelineEntries } : {}), ...fileHeld,
           ...(resolved_slug ? { resolved_slug } : {}), ...(content_flag ? { content_flag } : {}) } }, bodyRequest);
       return lineGrammar ? { ...partial, line_grammar: lineGrammar } : partial;
     }
     if (segmented) throw await segmentedFullReadError(ctx, page, bodyRequest, { ...pin, revision: snapshot!.revision });
     const projected = projectGetPage(visibleBody, {
-      revision: snapshot!.revision, tags, includeContent, contentOnly, resolved_slug, content_flag, quarantined, trust: readable.trust,
+      revision: snapshot!.revision, tags, includeContent, contentOnly, resolved_slug, content_flag, quarantined, trust: readable.trust, quote: quotesBody(ctx, page),
       ...(timelineEntries ? { timeline_entries: timelineEntries } : {}),
       ...fileHeld,
     });
@@ -307,12 +307,12 @@ const fetch_page: Operation = {
     const quarantined = readQuarantined(ctx, page, p.include_quarantined === true);
     if (!quarantined?.body_omitted && (segmented || (ctx.remote !== false && bodyBytes(visibleBody) > await inlineBodyBytes(ctx)))) {
       const pin = authorizedReadPin(ctx, page, snapshot!.bodyGeneration, p.min_trust, missing);
-      return fetchWindowResult(ctx, { page, visibleBody: visibleBody as Page, revision: snapshot!.revision, tags, quarantined, trust: readable.trust, extras: {}, pin }, id, identity ? decodeDeepResearchAnchor(id) : null);
+      return fetchWindowResult(ctx, { page, visibleBody: visibleBody as Page, revision: snapshot!.revision, tags, quarantined, trust: readable.trust, extras: {}, pin, quote: quotesBody(ctx, page) }, id, identity ? decodeDeepResearchAnchor(id) : null);
     }
     return {
       id: identity ? id : page.slug,
       title: page.title,
-      text: projectFetchText(visibleBody as Page, tags, quarantined, readable.trust),
+      text: projectFetchText(visibleBody as Page, tags, quarantined, readable.trust, quotesBody(ctx, page)),
       // Pages have no public http home; a stable brain-local URI satisfies
       // the contract's citation slot without inventing a fake web URL.
       url: deepResearchPageUrl(page.source_id, page.slug),
@@ -321,7 +321,7 @@ const fetch_page: Operation = {
         type: page.type,
         source_id: page.source_id,
         updated_at: page.updated_at,
-        tags, ...(quarantined ? { quarantined } : {}), ...readable.trust,
+        tags, ...(quarantined ? { quarantined } : {}), ...readable.trust, ...(quotesBody(ctx, page) ? { quoted: 'transcript' } : {}),
       },
     };
   },

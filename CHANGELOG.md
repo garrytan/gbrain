@@ -53,6 +53,40 @@ identifiers and attribution are available in the pre-removal Git revision
 - `search.remote_private_pages` and `GBRAIN_REMOTE_PRIVATE_PAGES` keep their meaning: when set, every remote caller sees private pages, whatever this grant says.
 - A local CLI call reads private pages as before.
 
+## [0.60.521.0] - 2026-10-30
+
+**Text from other people's messages is now quoted on every read that hands it to an agent, not only in `search` results for imported conversations: Slack, iMessage, email and meeting pages, facts saved from them, and `get_page`, `fetch`, `recall`, `delta`, hot memory and `think` all mark it as source material.**
+
+Since the previous release, `search`, `query` and `assemble_evidence` returned a `conversation` page's text inside a quote fence, a line naming the page as source material, not instructions, then a code fence the text cannot close, with tool calls in it summarized. Other chat page types and the facts extracted from them came back unmarked, and so did every other read. Now one rule decides what is quoted: a page of type `conversation`, `meeting`, `slack`, `slack-dm-day`, `slack-thread`, `email`, `email-digest`, `imessage`, `imessage-daily`, `transcript` or `chat`, and a fact taken from one: saved by the conversation-facts extractor (`cli:extract-conversation-facts`), extracted by the facts backstop or `extract_facts` from such a page (a synced or written Slack, email or meeting page), or held in such a page's facts fence. Which facts count is decided when they are read, from what each fact already records about its source page: the page holding it, the derivation edge the backstop has written since it started recording them, or, for older backstop facts and brains rebuilt from git, the page its `source_session` names (`sync:<slug>`, `put_page:<slug>`). This release adds no new write and changes nothing stored. Each comes back with `quoted: "transcript"` and its text fenced; a fact's marker names it as `fact <id>`.
+
+- `search`, `query` and `assemble_evidence` quote these rows for every caller, as they already did for `conversation` pages, including fact rows and `saved_facts`. If the lookup that decides which facts to quote fails, `saved_facts` is left out with the degraded stage `saved_facts_withheld` (and remote `recall` returns no facts, with `facts_degraded.reason: "saved_facts_withheld"`) rather than returning them unquoted.
+- Over MCP, `recall` quotes its `results` and the `fact` of each quoted fact, and `delta` facts and `_meta.brain_hot_memory` do the same.
+- Over MCP, `get_page` on such a page fences `compiled_truth`, `timeline`, `content` and every window's text, and `fetch` fences `text` (`metadata.quoted`). Tool calls are not summarized there, so the text inside the fence is the stored text: `edit_page` with `old_text` copied from inside still matches, and `put_page` given the fenced `content` back removes exactly those fences before it writes, so a read, edit and write round trip keeps the page as it was apart from your edit. Only a page whose stored or new type is quoted loses a fence naming it on such a write; a note whose own text looks like one keeps it, and a retried write that changes the type replays as the same request.
+- Over MCP, `get_page` with `known_as_of` and `get_versions` with `include_body` (and the `known_as_of` `diff`) fence the same pages' recorded bodies and mark them `quoted`.
+- `think` quotes these pages in the evidence it gives the model, on every run.
+- The local CLI (`gbrain get`, `gbrain put`, `gbrain recall`, `gbrain delta`) reads and writes as before. A thin-client `gbrain get` (and `--json`) prints the fences the host returns, except when it pages a large chat page window by window: it removes them and checks the page against the host's size and checksum. Stored pages, facts, ranking and scores are unchanged. `search_exact` and `get_chunks` still return text as stored.
+
+### What changes for you
+
+- An agent connected over MCP sees chat and email text, and facts saved from it, as quoted source material wherever it reads them.
+- A script reading `get_page` or `recall` over MCP sees the marker line and fence around such text; read `quoted` to tell. Writing `content` back with `put_page` needs no change.
+- Upgrade thin clients with the host: a thin client older than this release cannot page a large chat page from a host on it, because the fenced windows no longer match the reported checksum.
+- Not covered yet: `get_timeline` rows and `get_page include_timeline_entries` rows, the `context_pack` and `delta` text renderers, `search_exact` and `get_chunks`.
+
+## [0.60.520.0] - 2026-10-30
+
+**The Heavy nightly's Codex plugin door test checks the plugin's MCP surface against `PLUGIN_SURFACE`, the surface the plugin's `mcp.json` actually serves, instead of `REGISTRATION_SURFACE`. A unit-shard listing that dies on a signal now names the signal instead of an empty error.**
+
+The plugin ships `serve --surface PLUGIN_SURFACE --source-guard`, so the door test's launcher-args check and its `tools/list` oracle compared against the wrong surface and failed every Heavy nightly (#6049).
+
+`unitShards()` in `scripts/sharding.ts` threw `scripts/test-shard.sh --dry-run-list 26 28 failed: ` with nothing after it when a plain `bun test test/scripts/unit-shard-budget.test.ts` hit Bun's 5 s default test timeout. Bun ignores bunfig's `timeout`, the 28 listings take about 5.5 s, and the timeout kills the child, so the status is null and stderr is empty. The error now reads `killed by SIGTERM`. CI was never affected: `scripts/test-shard.sh` passes `--timeout=60000`.
+
+### Itemized changes
+
+- `test/e2e/codex-plugin-install-real.serial.test.ts`: assert `PLUGIN_SURFACE`.
+- `scripts/sharding.ts`: `unitShards()` names the signal that killed a listing.
+- `test/scripts/sharding.test.ts`: a listing killed by SIGTERM reports it.
+
 ## [0.60.519.0] - 2026-10-30
 
 **The unit lane now runs 28 shards instead of 22, on shard weights refreshed from the Oct 30 nightly. With the fresh weights, every one of 22 shards would be planned at 624.4 s against the 600 s per-shard budget; at 28 shards the largest is 490.6 s.**

@@ -344,7 +344,6 @@ src/core/ops/attribution.ts	rowTarget	field	NONE	not the page body: timeline ent
 src/core/ops/get-page-body.ts	bodyBytes	field	META	
 src/core/ops/get-page-body.ts	editTarget	field	INLINE	inline branch only (a segmented page maps through the window's segment units); regions read whole within the segmented threshold
 src/core/ops/get-page-body.ts	readPartialBody	call:serializePageToMarkdown	SEGW	
-src/core/ops/get-page-projection.ts	projectFetchText	call:serializePageToMarkdown	STREAM	fetch text of an inline page; spread of a segmented page throws
 src/core/ops/get-page-projection.ts	projectGetPage	call:serializePageToMarkdown	STREAM	full content render of an inline page
 src/core/ops/get-page-projection.ts	projectGetPage	field	STREAM	segmented page: getter throws page_body_segmented (windowed read in PR 2)
 src/core/ops/known-as-of.ts	getVersionsKnownAsOf	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only

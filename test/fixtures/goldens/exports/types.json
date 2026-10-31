@@ -492,7 +492,7 @@
         "kind": "variable",
         "name": "DEGRADED_STAGES",
         "signature": [
-          "readonly [\"embed_unavailable\", \"embed_timeout\", \"expansion_failed\", \"expansion_partial\", \"rescore_skipped\", \"vector_arm_failed\", \"keyword_arm_failed\", \"title_arm_failed\", \"budget_dropped_all\", \"budget_truncated\", \"keyword_zero\", \"cache_prestamp\", \"reranker_skipped\", \"rerank_passthrough\", \"rerank_failed\", \"keyword_relaxed_carried\", \"safe_index_pending\", \"vector_candidates_incomplete\", \"keyword_candidates_incomplete\", \"projection_pending\", \"projection_by_design\", \"projection_status_unknown\", \"keyword_count_unavailable\"]"
+          "readonly [\"embed_unavailable\", \"embed_timeout\", \"expansion_failed\", \"expansion_partial\", \"rescore_skipped\", \"vector_arm_failed\", \"keyword_arm_failed\", \"title_arm_failed\", \"budget_dropped_all\", \"budget_truncated\", \"keyword_zero\", \"cache_prestamp\", \"reranker_skipped\", \"rerank_passthrough\", \"rerank_failed\", \"keyword_relaxed_carried\", \"safe_index_pending\", \"vector_candidates_incomplete\", \"keyword_candidates_incomplete\", \"projection_pending\", \"projection_by_design\", \"projection_status_unknown\", \"keyword_count_unavailable\", \"saved_facts_withheld\"]"
         ]
       },
       {
@@ -506,14 +506,14 @@
         "kind": "type",
         "name": "DegradedStage",
         "signature": [
-          "\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\""
+          "\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\""
         ]
       },
       {
         "kind": "interface",
         "members": [
           "reason?: \"candidate_budget\" | \"iterative_scan_unavailable\" | \"no_provider\" | \"provider_error\" | \"timeout\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\" | \"rate_limited\" | \"unreachable\" | \"auth\" | \"egress_denied\" | \"embedding_disabled\" | \"skipped_after_timeout\" | undefined",
-          "stage: \"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\""
+          "stage: \"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\""
         ],
         "name": "DegradedStageEntry"
       },
@@ -1313,7 +1313,7 @@
         "kind": "variable",
         "name": "RANKING_ONLY_DEGRADED_STAGES",
         "signature": [
-          "ReadonlySet<\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\">"
+          "ReadonlySet<\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\">"
         ]
       },
       {
@@ -1511,7 +1511,7 @@
           "exact_lookup?: \"title\" | \"slug\" | \"identifier\" | undefined",
           "exact_match_boost?: number | undefined",
           "fact_id?: string | undefined",
-          "fact_row?: { id: number; valid_from: string; valid_until: string | null; } | undefined",
+          "fact_row?: { id: number; valid_from: string; valid_until: string | null; source?: string; from_quoted_page?: true; } | undefined",
           "feedback_boost?: number | undefined",
           "follow_up?: { op: \"recall\"; args: Record<string, string>; } | undefined",
           "fused_score?: number | undefined",
@@ -8844,7 +8844,7 @@
         "kind": "variable",
         "name": "DEGRADED_STAGES",
         "signature": [
-          "readonly [\"embed_unavailable\", \"embed_timeout\", \"expansion_failed\", \"expansion_partial\", \"rescore_skipped\", \"vector_arm_failed\", \"keyword_arm_failed\", \"title_arm_failed\", \"budget_dropped_all\", \"budget_truncated\", \"keyword_zero\", \"cache_prestamp\", \"reranker_skipped\", \"rerank_passthrough\", \"rerank_failed\", \"keyword_relaxed_carried\", \"safe_index_pending\", \"vector_candidates_incomplete\", \"keyword_candidates_incomplete\", \"projection_pending\", \"projection_by_design\", \"projection_status_unknown\", \"keyword_count_unavailable\"]"
+          "readonly [\"embed_unavailable\", \"embed_timeout\", \"expansion_failed\", \"expansion_partial\", \"rescore_skipped\", \"vector_arm_failed\", \"keyword_arm_failed\", \"title_arm_failed\", \"budget_dropped_all\", \"budget_truncated\", \"keyword_zero\", \"cache_prestamp\", \"reranker_skipped\", \"rerank_passthrough\", \"rerank_failed\", \"keyword_relaxed_carried\", \"safe_index_pending\", \"vector_candidates_incomplete\", \"keyword_candidates_incomplete\", \"projection_pending\", \"projection_by_design\", \"projection_status_unknown\", \"keyword_count_unavailable\", \"saved_facts_withheld\"]"
         ]
       },
       {
@@ -8858,14 +8858,14 @@
         "kind": "type",
         "name": "DegradedStage",
         "signature": [
-          "\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\""
+          "\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\""
         ]
       },
       {
         "kind": "interface",
         "members": [
           "reason?: \"candidate_budget\" | \"iterative_scan_unavailable\" | \"no_provider\" | \"provider_error\" | \"timeout\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\" | \"rate_limited\" | \"unreachable\" | \"auth\" | \"egress_denied\" | \"embedding_disabled\" | \"skipped_after_timeout\" | undefined",
-          "stage: \"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\""
+          "stage: \"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\""
         ],
         "name": "DegradedStageEntry"
       },
@@ -9413,7 +9413,7 @@
         "kind": "variable",
         "name": "RANKING_ONLY_DEGRADED_STAGES",
         "signature": [
-          "ReadonlySet<\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\">"
+          "ReadonlySet<\"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"projection_by_design\" | \"projection_status_unknown\" | \"keyword_count_unavailable\" | \"saved_facts_withheld\">"
         ]
       },
       {
@@ -9611,7 +9611,7 @@
           "exact_lookup?: \"title\" | \"slug\" | \"identifier\" | undefined",
           "exact_match_boost?: number | undefined",
           "fact_id?: string | undefined",
-          "fact_row?: { id: number; valid_from: string; valid_until: string | null; } | undefined",
+          "fact_row?: { id: number; valid_from: string; valid_until: string | null; source?: string; from_quoted_page?: true; } | undefined",
           "feedback_boost?: number | undefined",
           "follow_up?: { op: \"recall\"; args: Record<string, string>; } | undefined",
           "fused_score?: number | undefined",

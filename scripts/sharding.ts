@@ -73,7 +73,7 @@ export const UNIT_SHARD_BUDGET_MS = (UNIT_JOB_TIMEOUT_MS - UNIT_SETUP_ALLOWANCE_
 export function unitShards(root: string, n: number = UNIT_SHARDS): string[][] {
   return Array.from({ length: n }, (_, i) => {
     const r = spawnSync("bash", [join(root, "scripts/test-shard.sh"), "--dry-run-list", String(i + 1), String(n)], { cwd: root, encoding: "utf8" });
-    if (r.status !== 0) throw new Error(`scripts/test-shard.sh --dry-run-list ${i + 1} ${n} failed: ${r.stderr}`);
+    if (r.status !== 0) throw new Error(`scripts/test-shard.sh --dry-run-list ${i + 1} ${n} ${r.signal ? `killed by ${r.signal}` : "failed"}: ${r.stderr}`);
     return r.stdout.split("\n").filter(Boolean);
   });
 }
