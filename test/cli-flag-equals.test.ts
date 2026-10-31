@@ -421,6 +421,8 @@ describe('#7619 split rules', () => {
       'src/core/tailscale.ts': 'tailscale child argv',
       'src/mcp/surface.ts': 'serve --access/--surface parsers read both forms (#7603); the entry splits the = form first',
       'src/core/direct-pool-profile.ts': 'pool profile reads serve --access in both forms from the raw argv before the gate',
+      'src/commands/access.ts': 'access has no EQUALS_READERS key, so the entry refuses every = form; flagValue and the --as guard also read it for a direct caller',
+      'src/commands/auth-binding.ts': 'the entry refuses --member=/--may-act-for= on auth (no EQUALS_READERS key); takeBindingFlags also reads the = form so a direct caller never drops a binding',
       'src/core/workspace-push.ts': 'git child argv',
       'src/core/context/session-speaker.ts': 'reads another process\'s argv (claude --print=), not a gbrain flag',
       'src/eval/longmemeval/via-operation.ts': 'git child argv',

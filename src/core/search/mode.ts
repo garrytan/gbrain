@@ -27,7 +27,7 @@ import { normalizeChainSlots } from './relational-chain.ts';
 import { createHash } from 'crypto';
 import { CR_MODES, type CRMode } from '../types.ts';
 import { getFtsLanguage } from '../fts-language.ts';
-import { privateReadableSources } from './private-visibility.ts';
+import { privateReadableSources, currentCallerAccess } from './private-visibility.ts';
 import { loadConfigSnapshot, type BulkConfigReader } from '../config-snapshot.ts';
 import { pickDecideConfig } from '../ai/decide/config.ts';
 import { getRecipe } from '../ai/recipes/index.ts';
@@ -1305,6 +1305,13 @@ export function knobsHash(
   // set (read here so every knobsHash() caller is covered); an empty set adds no part and keeps the key.
   const privateReadable = ctx?.excludePrivate === true ? privateReadableSources() : [];
   if (privateReadable.length) parts.push(`xpr=${[...privateReadable].sort().join(',')}`);
+  // GBRA-218 (append-only, no bump): a read under the read policy keys on its member identity (sorted at
+  // record time) and on an operator privacy relaxation; an unbound, unrelaxed read adds no part.
+  if (ctx?.excludePrivate === true) {
+    const access = currentCallerAccess();
+    if (access.identity.length) parts.push(`xid=${createHash('sha256').update(access.identity.join(',')).digest('hex').slice(0, 16)}`);
+    if (!access.hidePrivate) parts.push('xhp=0');
+  }
   const h = createHash('sha256');
   h.update(parts.join('|'));
   return h.digest('hex').slice(0, 16);

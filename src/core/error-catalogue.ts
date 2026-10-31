@@ -32,6 +32,10 @@ export interface CatalogueEntry {
 }
 
 export const ERROR_CATALOGUE = {
+  // GBRA-218 per-member read access: member ids, credential bindings and local --as.
+  access_member_invalid: { code: 'access_member_invalid', docs: 'docs/guides/write-refusals.md#access_member_invalid' },
+  access_member_id_retired: { code: 'access_member_id_retired', docs: 'docs/guides/write-refusals.md#access_member_id_retired' },
+  access_member_disabled: { code: 'access_member_disabled', docs: 'docs/guides/write-refusals.md#access_member_disabled' },
   // W2 page-at-time: recorded-time reads (`known_as_of`).
   coverage_from: { code: 'coverage_from', docs: 'docs/guides/repair.md#coverage-from' },
   coverage_gap: { code: 'coverage_gap', docs: 'docs/guides/repair.md#coverage-gap' },
@@ -70,6 +74,8 @@ export const ERROR_CATALOGUE = {
   no_pricing: { code: 'no_pricing', docs: 'docs/guides/write-refusals.md#no_pricing' },
   timeline_comment_markup: { code: 'timeline_comment_markup', docs: 'docs/guides/repair.md#timeline-comments' },
   timeline_rows_would_be_removed: { code: 'timeline_rows_would_be_removed', docs: 'docs/guides/write-refusals.md#timeline_rows_would_be_removed' },
+  // GBRA-218: a remote write's frontmatter readable_by is malformed, drops the field, or locks the writer out.
+  readable_by_invalid: { code: 'readable_by_invalid', docs: 'docs/guides/write-refusals.md#readable_by_invalid' },
   reconcile_private_facts: { code: 'permission_denied', docs: 'docs/guides/write-refusals.md#reconcile-private-facts' },
   maintenance_backpressure: { code: 'maintenance_backpressure', docs: 'docs/guides/write-refusals.md#maintenance_backpressure' },
   // #6696: cumulative write caps (A5 background pause, A6 refusal at the cap, A7 bulk-run preflight).

@@ -39,7 +39,7 @@ export interface GitHomePolicy { mirror: boolean; databaseOnlySource?: boolean; 
  * private and alias-private pages never reach a remote; a page the database keeps on purpose (`database_only_reason`) or
  * under a `storage.db_only` prefix stays there; a derive-phase page that never recorded a file (page-prepare.ts
  * `isNeverFiledDerivedPage`, DERIVE_PHASE_DB_ONLY_DEFAULTS) publishes database-only; a path the checkout's Git ignores
- * can never be committed. `lineage_private` is what privatePagesFilterFragment adds over the row's own fields; the caller
+ * can never be committed. `lineage_private` is what privacyPartSql adds over the row's own fields; the caller
  * computes it in SQL. Callers load `visibility.honor_aliases` (readHonorAliases) first.
  */
 export function declaredDatabaseOnly(page: { slug: string; type?: string | null; frontmatter?: unknown; database_only_reason?: string | null;

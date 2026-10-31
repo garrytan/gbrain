@@ -1,6 +1,13 @@
 {
   "golden": {
     "constraints": {
+      "access_group_members.access_group_members_group_id_fkey": "f FOREIGN KEY (group_id) REFERENCES access_groups(id) ON DELETE CASCADE",
+      "access_group_members.access_group_members_member_id_fkey": "f FOREIGN KEY (member_id) REFERENCES access_members(id) ON DELETE CASCADE",
+      "access_group_members.access_group_members_pkey": "p PRIMARY KEY (group_id, member_id)",
+      "access_groups.access_groups_id_check": "c CHECK ((id ~ '^[a-z0-9][a-z0-9._-]{0,63}$'::text))",
+      "access_groups.access_groups_pkey": "p PRIMARY KEY (id)",
+      "access_members.access_members_id_check": "c CHECK ((id ~ '^[a-z0-9][a-z0-9._-]{0,63}$'::text))",
+      "access_members.access_members_pkey": "p PRIMARY KEY (id)",
       "access_tokens.access_tokens_min_trust_check": "c CHECK (((min_trust IS NULL) OR (min_trust = ANY (ARRAY['user_confirmed'::text, 'operator_curated'::text, 'tool_observed'::text, 'agent_written'::text, 'unknown'::text, 'external_untrusted'::text]))))",
       "access_tokens.access_tokens_pkey": "p PRIMARY KEY (id)",
       "access_tokens.access_tokens_private_pages_check": "c CHECK ((private_pages = ANY (ARRAY['none'::text, 'granted_sources'::text])))",
@@ -541,6 +548,11 @@
       "bump_page_generation_clock_fn()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=d3359bcd09cccd881585abd9eee81c3dcf4161d935164f7953f2e9fdef73ed3e",
       "bump_page_generation_fn()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=314d4775d7c90f8ed650ea12ae3687f388f714ed3d30582dc8ff678dfea1dc97",
       "enforce_minion_queue_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=be82640d1979fc81dc812efb78bb3596ef536f656d20750e5e4aa19016bf4784",
+      "gbrain_access_derive_page_readers()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=55923fb552adcdc8e5e3c820a0b4ba11f74748b4478f52de2e1b7506e969ac4d",
+      "gbrain_access_mark_restricted()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=e45dc26421664fa3d409fba6c612af88905d2df35923f9592bcb759fc1ea618f",
+      "gbrain_access_norm_readers(vals text[])": "RETURNS text[] kind=f lang=sql volatility=i secdef=false config=[search_path=pg_catalog, pg_temp] body_sha256=b536c2604461abac62c90c090d127b71bdda8ed23d43ae25790606a8ee64f769",
+      "gbrain_access_origin_restricted(p_id integer, p_source_id text, p_type text, fm jsonb)": "RETURNS boolean kind=f lang=plpgsql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=f4b698f7fb87ae726b6e965b048f59d709afa834d97fd52240a81f898f069b3a",
+      "gbrain_access_readers(fm jsonb)": "RETURNS text[] kind=f lang=sql volatility=i secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=18348cb56089106aaec6470076ee652d7ed3bfbcb20e950a24abd52a21e7a380",
       "gbrain_advance_page_revision()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=2a431195dc4c4150e3428251d0dec0a685cdc2992525c1b4b54dff103d5d99c9",
       "gbrain_advance_tag_revision()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=7807b26b4933148aa63c67fca824a60d3492396728205d04e16c48c81174cbd5",
       "gbrain_bump_trust_generation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=4708a89d166ac0999a8922ad8ee8f69fea3213c59e0782d96220f93b0c001a62",
@@ -578,6 +590,15 @@
       "update_page_search_vector()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=c393710877f69961517a5a820b741b9229ee9e20d045e736b191e8366170fedc"
     },
     "grants": {
+      "access_group_members": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "access_groups": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "access_members": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "access_tokens": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -1069,6 +1090,10 @@
       ]
     },
     "indexes": {
+      "access_group_members_member_idx": "CREATE INDEX access_group_members_member_idx ON public.access_group_members USING btree (member_id)",
+      "access_group_members_pkey": "CREATE UNIQUE INDEX access_group_members_pkey ON public.access_group_members USING btree (group_id, member_id)",
+      "access_groups_pkey": "CREATE UNIQUE INDEX access_groups_pkey ON public.access_groups USING btree (id)",
+      "access_members_pkey": "CREATE UNIQUE INDEX access_members_pkey ON public.access_members USING btree (id)",
       "access_tokens_pkey": "CREATE UNIQUE INDEX access_tokens_pkey ON public.access_tokens USING btree (id)",
       "access_tokens_token_hash_key": "CREATE UNIQUE INDEX access_tokens_token_hash_key ON public.access_tokens USING btree (token_hash)",
       "belief_commit_marks_pkey": "CREATE UNIQUE INDEX belief_commit_marks_pkey ON public.belief_commit_marks USING btree (publication_id)",
@@ -1406,6 +1431,7 @@
       "pages_generation_idx": "CREATE INDEX pages_generation_idx ON public.pages USING btree (generation)",
       "pages_links_extracted_at_idx": "CREATE INDEX pages_links_extracted_at_idx ON public.pages USING btree (source_id, links_extracted_at)",
       "pages_live_origin_key": "CREATE UNIQUE INDEX pages_live_origin_key ON public.pages USING btree (source_id, source_path) WHERE ((deleted_at IS NULL) AND (source_path IS NOT NULL))",
+      "pages_page_readers_gin": "CREATE INDEX pages_page_readers_gin ON public.pages USING gin (page_readers) WHERE (page_readers IS NOT NULL)",
       "pages_pkey": "CREATE UNIQUE INDEX pages_pkey ON public.pages USING btree (id)",
       "pages_safe_chunk_pending_idx": "CREATE INDEX pages_safe_chunk_pending_idx ON public.pages USING btree (source_id) WHERE (chunker_version < 4)",
       "pages_segmented_body_bytes_idx": "CREATE INDEX pages_segmented_body_bytes_idx ON public.pages USING btree (body_bytes) WHERE (body_storage = 'segmented'::text)",
@@ -1621,6 +1647,31 @@
       "write_gate_receipts_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=write_gate_receipts.id"
     },
     "tables": {
+      "access_group_members": {
+        "columns": [
+          "1 group_id text/text NOT NULL",
+          "2 member_id text/text NOT NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "access_groups": {
+        "columns": [
+          "1 id text/text NOT NULL",
+          "2 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "access_members": {
+        "columns": [
+          "1 id text/text NOT NULL",
+          "2 display_name text/text NULL",
+          "3 disabled_at timestamp with time zone/timestamptz NULL",
+          "4 tombstoned_at timestamp with time zone/timestamptz NULL",
+          "5 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "6 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
       "access_tokens": {
         "columns": [
           "1 id uuid/uuid NOT NULL DEFAULT gen_random_uuid()",
@@ -1638,7 +1689,9 @@
           "13 takes_holders ARRAY/_text NULL",
           "14 grant_revision integer/int4 NOT NULL DEFAULT 0",
           "15 min_trust text/text NULL",
-          "16 private_pages text/text NOT NULL DEFAULT 'none'::text"
+          "16 private_pages text/text NOT NULL DEFAULT 'none'::text",
+          "17 member_id text/text NULL",
+          "18 may_act_for ARRAY/_text NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -2864,7 +2917,9 @@
           "30 takes_holders ARRAY/_text NULL",
           "31 min_trust text/text NULL",
           "32 registered_via text/text NULL",
-          "33 private_pages text/text NOT NULL DEFAULT 'none'::text"
+          "33 private_pages text/text NOT NULL DEFAULT 'none'::text",
+          "34 member_id text/text NULL",
+          "35 may_act_for ARRAY/_text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -3298,7 +3353,8 @@
           "51 truth_lead text/text NULL",
           "52 timeline_lead text/text NULL",
           "53 links_extract_failure jsonb/jsonb NULL",
-          "54 withheld_source_path text/text NULL"
+          "54 withheld_source_path text/text NULL",
+          "55 page_readers ARRAY/_text NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -4304,6 +4360,7 @@
       }
     },
     "triggers": {
+      "access_members.access_members_mark_restricted": "CREATE TRIGGER access_members_mark_restricted AFTER INSERT ON public.access_members FOR EACH ROW EXECUTE FUNCTION gbrain_access_mark_restricted()",
       "access_tokens.trust_generation_update": "CREATE CONSTRAINT TRIGGER trust_generation_update AFTER UPDATE ON public.access_tokens DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN ((old.min_trust IS DISTINCT FROM new.min_trust)) EXECUTE FUNCTION gbrain_bump_trust_generation()",
       "config.trust_generation_delete": "CREATE CONSTRAINT TRIGGER trust_generation_delete AFTER DELETE ON public.config DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN ((old.key ~~ 'trust.%'::text)) EXECUTE FUNCTION gbrain_bump_trust_generation()",
       "config.trust_generation_insert": "CREATE CONSTRAINT TRIGGER trust_generation_insert AFTER INSERT ON public.config DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN ((new.key ~~ 'trust.%'::text)) EXECUTE FUNCTION gbrain_bump_trust_generation()",
@@ -4342,6 +4399,8 @@
       "pages.bump_page_generation_clock_trg": "CREATE TRIGGER bump_page_generation_clock_trg AFTER INSERT OR DELETE OR UPDATE ON public.pages FOR EACH STATEMENT EXECUTE FUNCTION bump_page_generation_clock_fn()",
       "pages.bump_page_generation_trg": "CREATE TRIGGER bump_page_generation_trg BEFORE INSERT OR UPDATE ON public.pages FOR EACH ROW EXECUTE FUNCTION bump_page_generation_fn()",
       "pages.managed_writer_guard": "CREATE TRIGGER managed_writer_guard BEFORE INSERT OR DELETE OR UPDATE ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_require_managed_writer()",
+      "pages.pages_access_derive_readers": "CREATE TRIGGER pages_access_derive_readers BEFORE INSERT OR UPDATE OF frontmatter, page_readers ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_access_derive_page_readers()",
+      "pages.pages_access_mark_restricted": "CREATE TRIGGER pages_access_mark_restricted AFTER INSERT OR UPDATE OF frontmatter ON public.pages FOR EACH ROW WHEN ((new.frontmatter ? 'readable_by'::text)) EXECUTE FUNCTION gbrain_access_mark_restricted()",
       "pages.pages_clear_atom_scan_state": "CREATE TRIGGER pages_clear_atom_scan_state AFTER UPDATE ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_clear_atom_page_state()",
       "pages.pages_derivation_scope_delete": "CREATE TRIGGER pages_derivation_scope_delete AFTER UPDATE OF deleted_at ON public.pages FOR EACH ROW WHEN (((old.deleted_at IS NULL) AND (new.deleted_at IS NOT NULL))) EXECUTE FUNCTION gbrain_mark_derivation_scope_entry()",
       "pages.pages_forget_retrievals": "CREATE TRIGGER pages_forget_retrievals AFTER DELETE ON public.pages REFERENCING OLD TABLE AS gbrain_deleted_pages FOR EACH STATEMENT EXECUTE FUNCTION gbrain_forget_page_retrievals()",

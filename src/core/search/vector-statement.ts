@@ -113,7 +113,7 @@ export interface VectorSearchStatement {
  * of the probe (a segmented page has no body string).
  */
 export const INDEX_WALK_PAGE_COLUMNS = ['id', 'slug', 'source_id', 'title', 'type', 'frontmatter', 'deleted_at', 'updated_at', 'effective_date',
-  'effective_date_source', 'trust_tier', 'body_generation', 'chunker_version', 'knowledge_revision', 'text_projection_revision'] as const;
+  'effective_date_source', 'trust_tier', 'body_generation', 'chunker_version', 'knowledge_revision', 'text_projection_revision', 'page_readers'] as const;
 
 /** Raw rows the index walk orders per window slot, so page filters can drop some and still fill the window. */
 export const INDEX_WALK_OVERFETCH = 2;

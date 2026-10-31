@@ -11,6 +11,10 @@
 # file is a one-line edit: insert its path in sorted order. Shards balance
 # other Postgres lane runs. The unit, serial and slow lanes unset
 # themselves from scripts/postgres-arm-weights.json.
+test/access-as.test.ts
+test/access-binding.test.ts
+test/access-members.test.ts
+test/access-writes.test.ts
 test/activation-unbound-rooted-6449.test.ts
 test/alias-source-cascade-5094.test.ts
 test/attribution-backfill-history.test.ts
@@ -266,6 +270,7 @@ test/managed-sync-preparation-stalled-holds.test.ts
 test/managed-sync-row-parity.test.ts
 test/managed-sync-stale-group-head.test.ts
 test/mcp-sources-not-readable.test.ts
+test/member-read-access.test.ts
 test/migration-0-53-host-move-7900.test.ts
 test/migration-persistence-foreground-committed-index.test.ts
 test/migration-persistence-request-id-index.test.ts
