@@ -54,7 +54,7 @@ export function bandChecks(bands: BandsResult, only: ReadonlySet<string> | null)
 }
 
 /** `tier` / `only` as parsed by the doctor dispatch (src/cli/commands/doctor.ts); `label` names the request in the handoff. */
-export async function runScopedRemoteDoctor(config: GBrainConfig, req: { tier?: string; only: ReadonlySet<string> | null; json: boolean; label: string }): Promise<void> {
+export async function runScopedRemoteDoctor(config: GBrainConfig, req: { tier?: string; only: ReadonlySet<string> | null; json: boolean; label: string; alert?: boolean }): Promise<void> {
   const { tier, only, json } = req;
   const handoff = (why: string) => {
     const out = renderCliError(opError('doctor_tier_unavailable', `The remote brain cannot answer gbrain doctor ${req.label} for this client: ${why}`,
@@ -71,6 +71,7 @@ export async function runScopedRemoteDoctor(config: GBrainConfig, req: { tier?: 
   if (runDoctor && needs.every((p) => runDoctor.params.includes(p))) {
     try {
       const report = unpackToolResult<{ status: string; checks: unknown[] }>(await callRemoteTool(config, 'run_doctor', { ...(tier ? { tier } : {}), ...(only ? { only: [...only] } : {}) }));
+      if (req.alert) return printAlert(report, json);
       return print(report, json);
     } catch (e) {
       if (!(e instanceof RemoteMcpError && isScopeErrorCode(e.detail?.code, e.detail?.canonical_code, e.detail?.reason))) throw e;
@@ -86,6 +87,24 @@ export async function runScopedRemoteDoctor(config: GBrainConfig, req: { tier?: 
   return handoff(runDoctor || tools.some((t) => t.name === 'get_brain_health')
     ? `this token cannot run ${only ? `the ${[...only].join(', ')} check(s)` : 'the ops tier'} remotely and the read-scope bands do not cover ${only ? 'them' : 'every ops section'}.`
     : 'the serve predates the doctor ops tier (run_doctor lists no tier or only parameter and get_brain_health is not served).');
+}
+
+/**
+ * W4 `gbrain doctor --alert` on a thin client: the serve ran the page-class checks (run_doctor `only`); exit by its
+ * alert verdict with this client's consecutive-unknown count. A serve older than the alert reports none: unknown.
+ */
+async function printAlert(report: Record<string, unknown>, json: boolean): Promise<void> {
+  const { recordAlertStreak, alertExitCode, ALERT_DOCS } = await import('../commands/doctor/alert.ts');
+  const served = report.alert as import('../commands/doctor/alert.ts').DoctorAlert | undefined;
+  const alert = recordAlertStreak(served ?? { level: 'unknown', items: [], unknown: [], docs: ALERT_DOCS });
+  if (!served) process.stderr.write('[gbrain doctor] the remote serve predates doctor --alert, so the verdict is unknown; upgrade and restart it.\n');
+  if (json) void writeJsonDocument(JSON.stringify({ ...report, alert }));
+  else {
+    console.log(`Alert (remote): ${alert.level}`);
+    for (const item of alert.items) console.log(`  [ACT] ${item.check}: ${item.fix?.command ?? item.fix?.user_message ?? item.code}`);
+    for (const item of alert.unknown) console.log(`  [UNKNOWN] ${item.check}: ${item.message}`);
+  }
+  setCliExitVerdict(alertExitCode(alert.level));
 }
 
 function print(report: { status: string; checks: unknown[] } & Record<string, unknown>, json: boolean): void {

@@ -12,6 +12,9 @@ import { invalidParam } from '../../core/ops/op-fix.ts';
 import { computeDoctorReport, doctorReportRemote, buildChecks, type DoctorReport } from '../doctor.ts';
 import { doctorCheckNames, opsCheckNames } from './registry.ts';
 import { startDoctorDeadline } from './budget.ts';
+import { ALERT_BUDGET_MS_DEFAULT, alertRanChecks } from './alert.ts';
+import { PAGE_CHECK_NAMES } from '../../core/doctor-categories.ts';
+import { redactForTransport } from '../../core/agent-output.ts';
 
 export async function runRemoteDoctorTier(ctx: OperationContext, p: Record<string, unknown>): Promise<DoctorReport> {
   if (p.tier !== undefined && p.tier !== 'ops') {
@@ -33,6 +36,15 @@ export async function runRemoteDoctorTier(ctx: OperationContext, p: Record<strin
     const deadline = startDoctorDeadline(args);
     const checks = await buildChecks(ctx.engine, args, undefined, undefined, deadline, { sourceIds, remote: ctx.remote !== false });
     return computeDoctorReport(checks, { engine: ctx.engine.kind, render, run: { tier: 'ops', startedAt: deadline.startedAt, budgetMs: deadline.budgetMs } });
+  }
+  // W4: `only` naming page-class checks runs them on the serving host (the alert tier), so a harness whose serve holds
+  // the brain gets a fresh alert verdict over MCP; check text is redacted like every remote report.
+  if (only && only.every((n) => PAGE_CHECK_NAMES.has(n))) {
+    const args = ['--json', '--only', only.join(','), '--budget-ms', String(ALERT_BUDGET_MS_DEFAULT), '--scope=brain'];
+    const deadline = startDoctorDeadline(args);
+    const raw = await buildChecks(ctx.engine, args, undefined, undefined, deadline, { sourceIds, remote: ctx.remote !== false });
+    const checks = transport === 'cli' ? raw : redactForTransport(raw, 'http');
+    return computeDoctorReport(checks, { engine: ctx.engine.kind, render, alertRan: alertRanChecks(checks, 'standard') });
   }
   const report = await doctorReportRemote(ctx.engine, { sourceIds, remote: ctx.remote, render });
   const kept = report.checks.filter((c) => only!.includes(c.name));

@@ -148,6 +148,7 @@ export const SECTIONS: DocSection[] = [
         path: "docs/schema-author-tutorial.md",
         // GBRA-199: an optional walkthrough; dropped from the single-fetch
         // bundle so the memory-verb listing docs fit FULL_SIZE_BUDGET.
+        // Linked, not inlined: the doctor --alert guide (troubleshooting, exit codes, cron) put llms-full.txt over FULL_SIZE_BUDGET.
         includeInFull: false,
       },
       {

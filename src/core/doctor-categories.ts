@@ -518,3 +518,27 @@ export function categorizeCheck(name: string): CheckCategory {
  * categorization and the per-check categorization aligned.
  */
 export const SKILL_CHECK_GROUP_NAMES: ReadonlySet<string> = SKILL_CHECK_NAMES;
+
+/**
+ * W4: the page class of `DoctorReport.alert`. Each name is an existing check that, at the status given or worse,
+ * means the brain needs someone now; every other check (skill checks included) never pages. `warn`: a warning
+ * pages too; `fail`: only a failure pages (that check's warning is an early or advisory state). Drift-guarded in
+ * test/doctor-categories.test.ts against the emitted check names.
+ */
+export const PAGE_CHECK_LEVELS: ReadonlyMap<string, 'warn' | 'fail'> = new Map([
+  ['connection', 'fail'],
+  ['schema_version', 'warn'],
+  ['schema_missing_tables', 'fail'],
+  ['minions_migration', 'warn'],
+  ['persistence_terminal_failures', 'warn'],
+  ['persistence_write_stall', 'warn'],
+  ['runtime_build_skew', 'fail'],
+  ['managed_sync_blocked', 'fail'],
+  ['managed_sync_not_moving', 'fail'],
+  ['global_maintenance_stalled', 'fail'],
+  ['jsonb_integrity', 'warn'],
+  ['rls', 'fail'],
+  ['dream_paid_loop', 'warn'],
+]);
+
+export const PAGE_CHECK_NAMES: ReadonlySet<string> = new Set(PAGE_CHECK_LEVELS.keys());

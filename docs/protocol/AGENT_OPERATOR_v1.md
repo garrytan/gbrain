@@ -1013,6 +1013,8 @@ that work in this conversation.
 | 12 | `no_results`: a recall or entity lookup matched nothing (only with `GBRAIN_FAIL_ON_EMPTY=1`) | treat it as a miss, not a failure |
 | 13 | `pending_verify`: a harness wired, verification waits for the serve | start the serve, then run `fix.command` |
 | 14 | `bootstrap_cleanup_pending`: a harness is wired; old shared-skills enrollments or token ids still await cleanup | follow `fix.next` (re-run, or relay the owner's revoke step), then re-run |
+| 17 | `doctor_alert_act`: `gbrain doctor --alert` found a page-class check that needs someone now | follow each `alert.items[].fix` in the `--json` document |
+| 18 | `doctor_alert_unknown`: `gbrain doctor --alert` found nothing to act on, but a page-class check did not run fresh | run each `alert.unknown[].fix`; page only when `alert.consecutive_unknown` is 2 or more |
 | 75 | another runner holds the migration lock | wait, then retry |
 | 124 | the command's deadline elapsed | inspect what is still running |
 | 130 | interrupted | ask the user whether to re-run |

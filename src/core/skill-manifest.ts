@@ -26,8 +26,13 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { atomicWriteFileSync } from './atomic-write.ts';
+import { findAllResolverFiles } from './resolver-filenames.ts';
+import { SKILLS_MANIFEST_FILENAME } from './skills-integrity.ts';
+
+/** First line of the block `gbrain skillpack install` writes into a workspace's resolver file. */
+export const SKILLPACK_MANAGED_BEGIN = '<!-- gbrain:skillpack:begin -->';
 
 export interface ManifestEntry {
   name: string;
@@ -144,6 +149,26 @@ export function loadOrDeriveManifest(skillsDir: string): ManifestLoadResult {
   }
 
   return { skills: deriveManifest(skillsDir), derived: true };
+}
+
+/**
+ * Whether gbrain installed or ships this skills folder, read from files only
+ * gbrain writes: its tamper manifest (`skills.lock.json`), a valid
+ * `manifest.json` on disk (a derived one does not count), or the skillpack
+ * managed block in a resolver file (RESOLVER.md / AGENTS.md here or at the
+ * workspace root). A generic RESOLVER.md alone is not a gbrain marker. Doctor
+ * grades an auto-detected skills folder against gbrain's conventions only when
+ * this holds; an agent's own skills folder found by walking up from the cwd is
+ * not gbrain's to grade.
+ */
+export function isGbrainManagedSkillsDir(dir: string): boolean {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- the second segment is a fixed file name; dir is the operator's own skills folder and is only probed for existence, never written.
+  if (existsSync(join(dir, SKILLS_MANIFEST_FILENAME))) return true;
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- fixed file name under the operator's own skills folder; existence probe only.
+  if (existsSync(join(dir, 'manifest.json')) && !loadOrDeriveManifest(dir).derived) return true;
+  return [...findAllResolverFiles(dir), ...findAllResolverFiles(dirname(dir))].some((file) => {
+    try { return readFileSync(file, 'utf-8').includes(SKILLPACK_MANAGED_BEGIN); } catch { return false; }
+  });
 }
 
 /**
