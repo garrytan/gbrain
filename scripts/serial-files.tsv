@@ -332,6 +332,7 @@ test/query-image-flag.serial.test.ts	R2	R2: mock.module(../src/core/ai/gateway.t
 test/query-image-mode-limit.serial.test.ts	R2	R2: mock.module(../src/core/ai/gateway.ts) replaces modules for every file in the process
 test/query-op-limit-mode-4356.serial.test.ts	R2	R2: mock.module(../src/core/search/hybrid.ts) replaces modules for every file in the process
 test/readiness-embedding-enablement.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll
+test/recall-all-local.serial.test.ts	global-state	global-state: captures process.stdout.write to inspect the complete CLI response
 test/recall-budget-policy-thin.serial.test.ts	R2	R2: mock.module(../src/core/config.ts, ../src/core/mcp-client.ts) replaces modules for every file in the process
 test/recall-thin-client-fallback.serial.test.ts	R2	R2: mock.module(../src/core/config.ts, ../src/core/mcp-client.ts) replaces modules for every file in the process
 test/reconcile-owner-journey-http.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect; binds local servers/ports

@@ -74,6 +74,7 @@ export interface ParsedFlags {
   json: boolean;
   source: string;
   limit: number;
+  all: boolean;
   // MEMORY_VERBS v1 [c4]: recall's verb params, routed through the recall OP
   // (this hand-rolled CLI otherwise ignores unknown flags silently).
   query: string | null;
@@ -110,6 +111,7 @@ export function parseFlags(args: string[]): ParsedFlags {
     json: false,
     source: 'default',
     limit: 50,
+    all: false,
     query: null,
     question: null,
     budgetTokens: null,
@@ -170,6 +172,7 @@ export function parseFlags(args: string[]): ParsedFlags {
     if (a === '--supersessions') { out.supersessions = true; continue; }
     if (a === '--include-expired') { out.includeExpired = true; continue; }
     if (a === '--as-context') { out.asContext = true; continue; }
+    if (a === '--all') { out.all = true; continue; }
     if (a === '--json') { out.json = true; continue; }
     if (a === '--source') { out.source = args[++i] ?? 'default'; out.sourceExplicit = true; continue; }
     if (a === '--source-id') { out.source = args[++i] ?? ''; out.sourceExplicit = true; continue; }
@@ -238,7 +241,7 @@ export function parseFlags(args: string[]): ParsedFlags {
 /** Only `--query`/`--budget-tokens` without --budget-policy or --question runs the recall op in-process; every other form has a thin-client path. */
 export function recallNeedsLocalEngine(args: string[]): boolean {
   const flags = parseFlags(args);
-  return flags.budgetPolicy === null && flags.question === null && (flags.query !== null || flags.budgetTokens !== null);
+  return flags.all || (flags.budgetPolicy === null && flags.question === null && (flags.query !== null || flags.budgetTokens !== null));
 }
 
 export function validateAndNormalizeFlags(flags: ParsedFlags): void {
@@ -325,15 +328,69 @@ continues after the last one shown (local brains; a thin client warns instead).
 "2d") or a relative phrase ("6 weeks ago", "last month"). An unreadable
 --since or a --session with no ID is refused (invalid_params, exit 2).
 
-Options: --limit N, --include-expired, --json, --as-context, --source <id>,
+Options: --all (local, world facts, exact entity + explicit source + JSON; complete stable read), --limit N, --include-expired, --json, --as-context, --source <id>,
 --budget-tokens N, --budget-policy facts_first|query_first, --supersessions,
 --since-last-run, --pending, --rollup, --watch [SECONDS].
 Withdraw a fact with gbrain forget <fact-id>.
 `;
 
+/** Complete exact-entity local read. Never substitute a capped remote response. */
+async function runRecallAll(engine: BrainEngine, flags: ParsedFlags): Promise<void> {
+  if (!flags.entity || !flags.sourceExplicit || !SOURCE_ID_RE.test(flags.source) || !flags.json
+      || flags.query !== null || flags.question !== null || flags.budgetTokens !== null
+      || flags.budgetPolicy !== null || flags.since || flags.sessionId || flags.grep
+      || flags.supersessions || flags.sinceLastRun || flags.pending || flags.rollup
+      || flags.watchSeconds !== null || flags.asContext || flags.today) {
+    throw usageError('--all requires an exact entity, explicit --source and --json, with no ranking or window options.',
+      'Use gbrain recall <entity-slug> --source <id> --all --json.');
+  }
+  if (isThinClient(loadConfig())) {
+    throw usageError('--all requires a local engine; remote recall cannot certify complete enumeration.',
+      'Run this read on the brain host.');
+  }
+  const sourceId = await resolveSourceId(engine, flags.source);
+  const { resolveReadEligibility } = await import('../core/eligibility/policy.ts');
+  const { stampRowTrust } = await import('../core/eligibility/stamp.ts');
+  const { redactRetrievalOutput } = await import('../core/search/output-redaction.ts');
+  const eligibility = await resolveReadEligibility({ engine });
+  const scan = async () => {
+    const rows: FactRow[] = [];
+    const seen = new Set<number>();
+    for (let offset = 0; ; offset += 100) {
+      const page = await engine.listFactsByEntity(sourceId, flags.entity!, {
+        activeOnly: !flags.includeExpired, limit: 100, offset, excludeAuditRows: true, eligibility, visibility: ['world'], excludePrivate: true,
+      });
+      for (const row of page) {
+        if (row.source_id !== sourceId || row.entity_slug !== flags.entity || seen.has(row.id)) {
+          throw usageError('Complete recall changed or returned an out-of-scope row.', 'Retry the complete read.');
+        }
+        seen.add(row.id);
+        rows.push(row);
+      }
+      if (page.length < 100) break;
+    }
+    const stamped = await stampRowTrust(engine, 'facts', rows.map(row => ({ ...factRowToJson(row), source_id: row.source_id,
+      fact_id: String(row.id), provenance: row.source, context: row.context,
+      ...(row.attributed_to ? { attributed_to: row.attributed_to } : {}) })), row => row.fact_id);
+    return redactRetrievalOutput([{ facts: stamped }], {}, { uncapped: true }).results[0].facts;
+  };
+  const first = await scan();
+  const second = await scan();
+  const stable = (rows: typeof first) => JSON.stringify(rows, (key, value) => key === 'effective_confidence' ? undefined : value);
+  if (stable(first) !== stable(second)) {
+    throw usageError('Facts changed during complete recall; no complete snapshot certified.', 'Retry the complete read.');
+  }
+  process.stdout.write(JSON.stringify({ facts: second, total: second.length, complete: true,
+    source_id: sourceId, entity_slug: flags.entity, enumeration: 'local-exact-entity/v1' }) + '\n');
+}
+
 export async function runRecall(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) { process.stdout.write(RECALL_HELP); return; }
   const flags = parseFlags(args);
+  if (flags.all) {
+    await runRecallAll(engine, flags);
+    return;
+  }
   if (isOneShotRecall(flags)) {
     try {
       await renderRecallVerbResult(flags, await oneShotRecallResult(engine, flags));
