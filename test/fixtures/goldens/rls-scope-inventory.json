@@ -3602,7 +3602,7 @@
       }
     },
     "static": {
-      "callSites": 35,
+      "callSites": 36,
       "directMethods": {
         "_searchKeywordCJK": 1,
         "countChunklessPagesWithContent": 1,
@@ -3634,7 +3634,7 @@
         "readPageSnapshot": 1,
         "readPageSnapshotsBatch": 1,
         "runVectorAttempt": 1,
-        "searchKeyword": 1,
+        "searchKeyword": 2,
         "searchKeywordChunks": 1,
         "searchKeywordPages": 1,
         "searchTitles": 1,

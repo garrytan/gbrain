@@ -180,7 +180,7 @@ describe('EO4 RLS scope inventory (master)', () => {
     const scoping = astScoping(capture.ast);
 
     const callSites = Object.values(capture.ast).reduce((a, m) => a + m.directCallSites, 0);
-    expect(callSites).toBe(35);
+    expect(callSites).toBe(36);
     expect(Object.values(capture.ast).filter((m) => m.directCallSites > 0).length).toBe(35);
 
     const byMethod = new Map<string, RuntimeObservation[]>();
