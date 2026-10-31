@@ -19,10 +19,10 @@
  *     a 400; between_tools at effort high or below is its off), reasoning off
  *   - Claude Haiku 5.5: `thinking: { type: 'disabled' }` (accepted only at
  *     effort high or below), reasoning off
- *   - Claude Opus 5.5: `thinking: { type: 'adaptive' }`; it cannot turn
- *     thinking off, only lower the effort, so it keeps reasoning and gets
- *     the headroom below
  *   - older Claude: `thinking: { type: 'disabled' }`, reasoning off
+ * Claude Opus 5.5 cannot turn thinking off and still gets `disabled` here:
+ * pricing it with the thinking headroom puts the default fence-repair model
+ * over its default per-page cap, so that row waits on its own fix.
  * Other routes whose option turns reasoning off keep the requested cap:
  *   - DeepSeek (`deepseek`; thinking is on by default for v4):
  *     `thinking: { type: 'disabled' }`
@@ -70,13 +70,13 @@ export interface ThinkingOffControl {
 
 const THINKING_DISABLED: Record<string, unknown> = { thinking: { type: 'disabled' } };
 
-const CLAUDE_55_RE = /^claude-(sonnet|opus|haiku)-5-5(?:-\d{8})?$/;
-const CLAUDE_55_THINKING: Readonly<Record<string, string>> = { sonnet: 'between_tools', opus: 'adaptive', haiku: 'disabled' };
+const CLAUDE_55_RE = /^claude-(sonnet|haiku)-5-5(?:-\d{8})?$/;
+const CLAUDE_55_THINKING: Readonly<Record<string, string>> = { sonnet: 'between_tools', haiku: 'disabled' };
 
 function anthropicControl(model: string): ThinkingOffControl {
   const family = CLAUDE_55_RE.exec(model)?.[1];
   if (!family) return { set: { namespace: 'anthropic', options: THINKING_DISABLED }, disables: true };
-  return { set: { namespace: 'anthropic', options: { thinking: { type: CLAUDE_55_THINKING[family] }, effort: 'low' } }, disables: family !== 'opus' };
+  return { set: { namespace: 'anthropic', options: { thinking: { type: CLAUDE_55_THINKING[family] }, effort: 'low' } }, disables: true };
 }
 
 const GEMINI_ID_RE = /^gemini-(\d+(?:\.\d+)?)-(flash-lite|flash|pro)(?:-|$)/;

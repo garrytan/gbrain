@@ -1,10 +1,10 @@
 /**
  * #7567: `thinking: 'off'` on a native Claude 5.5 route sends that model's
  * lowest supported thinking setting with effort low, not the blanket
- * `{ type: 'disabled' }` (a 400 on Sonnet 5.5, ignored by Opus 5.5, valid on
- * Haiku 5.5 only at effort high or below). A configured budget or effort is
- * replaced and sibling options survive. Opus 5.5 still reasons, so its cap
- * and the preflight estimate get the thinking headroom. The wire check goes
+ * `{ type: 'disabled' }` (a 400 on Sonnet 5.5, valid on Haiku 5.5 only at
+ * effort high or below). A configured budget or effort is replaced and
+ * sibling options survive. Opus 5.5 keeps the older row until its pricing
+ * against the fence-repair caps is decided. The wire check goes
  * through the real @ai-sdk/anthropic with a stub fetch: no network, no key.
  */
 import { describe, expect, test } from 'bun:test';
@@ -19,8 +19,6 @@ const configured = () => ({ anthropic: { thinking: { type: 'enabled', budgetToke
 const rows = [
   { model: 'claude-sonnet-5-5', thinking: 'between_tools', disables: true },
   { model: 'claude-sonnet-5-5-20261015', thinking: 'between_tools', disables: true },
-  { model: 'claude-opus-5-5', thinking: 'adaptive', disables: false },
-  { model: 'claude-opus-5-5-20261015', thinking: 'adaptive', disables: false },
   { model: 'claude-haiku-5-5', thinking: 'disabled', disables: true },
   { model: 'claude-haiku-5-5-20261015', thinking: 'disabled', disables: true },
 ];
@@ -47,7 +45,7 @@ describe('Claude 5.5 thinking-off controls (#7567)', () => {
       const options = applyThinkingOff(configured(), route);
       expect(options).toEqual({ anthropic: { thinking: { type: row.thinking }, effort: 'low', cacheControl: { type: 'ephemeral', ttl: '1h' } } });
       const cap = thinkingOffMaxOutputTokens(route, REQUESTED, true, HEADROOM);
-      expect(cap).toBe(row.disables ? REQUESTED : HEADROOM);
+      expect(cap).toBe(REQUESTED);
       const { sent, warnings } = await sentBody(row.model, options, cap);
       expect(warnings).toEqual([]);
       expect(sent.thinking).toEqual({ type: row.thinking });
@@ -57,7 +55,7 @@ describe('Claude 5.5 thinking-off controls (#7567)', () => {
   }
 
   test('older Claude, DeepSeek and non-native Claude routes keep their behavior', () => {
-    for (const route of ['anthropic:claude-opus-5', 'anthropic:claude-sonnet-4-6', 'anthropic:claude-haiku-4-5-20251001', 'anthropic:claude-sonnet-5-5-preview']) {
+    for (const route of ['anthropic:claude-opus-5-5', 'anthropic:claude-opus-5', 'anthropic:claude-sonnet-4-6', 'anthropic:claude-haiku-4-5-20251001', 'anthropic:claude-sonnet-5-5-preview']) {
       expect(applyThinkingOff({}, route)).toEqual({ anthropic: { thinking: { type: 'disabled' } } });
       expect(thinkingOffMaxOutputTokens(route, REQUESTED, true, HEADROOM)).toBe(REQUESTED);
     }
