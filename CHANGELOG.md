@@ -28,6 +28,7 @@ identifiers and attribution are available in the pre-removal Git revision
 | Changing folder rules | | narrowing applies at once; widening is held until `gbrain access apply --source <id>` previews it and `--yes --expect <plan_hash>` approves it; an unfinished apply reads as nobody remotely until `gbrain access resume --source <id>` |
 | `gbrain export` and `gbrain import` | pages only | an export carries each source's applied folder rules under `.gbrain/`, and import installs them before publishing any page (`--access-policy <source>` maps a multi-source export) |
 | A shared agent (one bot serving a channel or many DMs) | read as its own credential, so it saw one view for everyone | its harness names each turn's audience (`X-Gbrain-On-Behalf-Of: alice-example, guest` or request-level `_meta.on_behalf_of`); the call reads only what every entry may read, within the agent's source grant, and only a one-member audience keeps the agent's private-page relaxation. The credential lists whom it may act for (`gbrain auth rescope --token <name> --may-act-for <list>`); every response carries `_meta.access`, and `whoami` returns it |
+| A trusted system that names the person (QM) | | a client-credentials client granted `gbrain auth rescope --client <id> --attest-actor qm [--attest-ops <list>]` sends `x-qm-actor: <canonical id>`; the call reads and writes as the member that id is linked to (`gbrain access member link <member> --qm <id>`, `unlink`, `links`), never private pages, and queued writes and jobs re-check the link. Refusals carry `structuredContent.error` (`actor_not_attested`, `actor_unlinked`). Every MCP server's `serverInfo` now has a one-line `description` |
 
 ### What to watch for after you upgrade
 
@@ -37,6 +38,7 @@ identifiers and attribution are available in the pre-removal Git revision
 - Works the same on a repo-less brain: members, groups, bindings and folder rules live in the database. A source records which store holds its folder rules when its first rule is created, and only `gbrain access rule migrate --source <id>` moves them; doctor `access_policy_store_mismatch` names it when the filesystem changes.
 - Remote callers can no longer write pages under `.gbrain/`.
 - A harness that sends an audience its credential's `may_act_for` does not list gets `on_behalf_of_not_permitted` with the operator's command; an audience inside tool arguments is always refused (`on_behalf_of_in_arguments`). `may_act_for: *` is accepted and doctor warns (`access_may_act_for_wildcard`).
+- A call that sends `x-qm-actor` or an `acting_user` argument from a credential without the attest right is now refused (`actor_not_attested`) instead of reading as the credential; tokens issued before this upgrade never attest, so a QM client takes a fresh client-credentials token after it is granted.
 
 ## [0.60.453.0] - 2026-10-25
 

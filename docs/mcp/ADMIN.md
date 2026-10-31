@@ -243,6 +243,13 @@ One agent serving several people in a shared channel holds `--may-act-for
 <members>` instead, and its harness names each request's audience
 (`X-Gbrain-On-Behalf-Of` or request-level `_meta.on_behalf_of`); it reads only
 what every named person may read.
+A trusted system that already knows who each person is (QM) instead holds the
+attest right: register a client-credentials client, grant it with `gbrain auth
+rescope --client <id> --attest-actor qm [--attest-ops <op,...>]` (default
+`memory_recall,memory_write`), and link each person's canonical id with `gbrain
+access member link <member> --qm <id>` (`unlink`, `links`). Its `x-qm-actor`
+header then reads and writes as that member, never private pages; see
+[attested-actor refusals](../guides/write-refusals.md#attested-actor-refusals).
 `gbrain access check --token <name>` shows the
 result ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape)).
 
