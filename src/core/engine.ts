@@ -707,8 +707,8 @@ export interface FactListOpts {
   excludePrivate?: boolean;
 }
 
-/** FactListOpts plus the entity the recall cursor reads (listFactsSince, listFactsKeyset) narrow to before LIMIT. */
-export type RecallFactReadOpts = FactListOpts & { entitySlug?: string };
+/** FactListOpts plus the entity (and the page the fact sits on) listFactsSince and listFactsKeyset narrow to before LIMIT. */
+export type RecallFactReadOpts = FactListOpts & { entitySlug?: string; sourceMarkdownSlug?: string };
 
 /** Per-source operational health snapshot consumed by `gbrain doctor`. */
 export interface FactsHealth {

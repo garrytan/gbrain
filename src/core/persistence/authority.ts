@@ -68,6 +68,7 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
     // GBRA-231: a channel audience (anything but one member) never relaxes privacy, so its ceiling hides private pages.
     excludePrivate: (actingFor !== undefined && currentCallerAccess().hidePrivate) || await excludesPrivateWrites(ctx.engine, ctx.remote !== false),
     ...(actingFor ? { actingFor } : {}),
+    ...(access?.actor && ctx.attestedOp ? { attestedOp: ctx.attestedOp } : {}),
     autoLinkTrusted: ctx.remote === false || ctx.viaSubagent === true && !ctx.auth && !!ctx.allowedSlugPrefixes?.length,
     takesHolders: ctx.remote === false ? null : [...(ctx.takesHoldersAllowList ?? ['world'])],
     scopes: [...(ctx.auth?.scopes ?? localGrant?.scopes ?? [])],
@@ -149,7 +150,7 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
   if (a.actingFor && !Array.isArray(a.actingFor)) {
     const actor = parseStoredActor(a.actingFor);
     if (!actor) deny('The accepted attested actor is malformed.');
-    await storedActorIdentity(engine, a.principal, actor, operation);
+    await storedActorIdentity(engine, a.principal, actor, a.attestedOp ?? operation);
   }
   const suffix = lock ? ' FOR SHARE' : '';
   if (a.principal.kind === 'oauth_client') {
@@ -270,7 +271,7 @@ function onceReads(engine: BrainEngine): BrainEngine {
 export async function ownRequestAccessible(ctx: OperationContext, row: WriteRequest): Promise<boolean> {
   try {
     const engine = onceReads(ctx.engine);
-    const auth = await submissionAuthority({ ...ctx, engine }, row.operation, row.source_id, row.source_incarnation, row.slug);
+    const auth = await submissionAuthority({ ...ctx, engine, attestedOp: row.authority?.attestedOp }, row.operation, row.source_id, row.source_incarnation, row.slug);
     if (auth.principal.kind !== row.principal_kind || auth.principal.id !== row.principal_id) return false;
     // GST-359 C2: under one attest credential, a receipt belongs to the person it was written for.
     if (!sameAttestedActor(row.authority?.actingFor)) return false;

@@ -110,6 +110,7 @@ import { transcriptsOperations } from './ops/transcripts.ts';
 import { connectorsOperations } from './ops/connectors.ts';
 import { sourcesOperations } from './ops/sources.ts';
 import { factsOperations } from './ops/facts.ts';
+import { qmMemoryOperations } from './ops/qm-memory.ts';
 import { purgeOperations } from './ops/purge.ts';
 import { codeIntelOperations } from './ops/code-intel.ts';
 import { embeddingMigrationOperations } from './ops/embedding-migration.ts';
@@ -212,7 +213,7 @@ export const operations: Operation[] = [
   ...entityIdentityOperations,
   // v0.31: hot memory (extract_facts, recall, context_pack, delta,
   // forget_fact) — ops/facts.ts
-  ...factsOperations, ...purgeOperations,
+  ...factsOperations, ...purgeOperations, ...qmMemoryOperations, // + GST-359 QM memory pair — ops/qm-memory.ts
   // v0.32.6: contradiction probe MCP surface (M3) — ops/insights.ts
   find_contradictions,
   // v0.33: expertise + relationship-proximity routing — ops/insights.ts

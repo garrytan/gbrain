@@ -28,7 +28,7 @@ const ATTESTABLE_SCOPES = new Set(['read', 'write', 'agent']);
 
 
 
-export type ActorReason = 'no_attest_right' | 'op_not_attested' | 'argument_mismatch' | 'argument_without_attestation' | 'invalid_actor_id';
+export type ActorReason = 'no_attest_right' | 'op_not_attested' | 'argument_mismatch' | 'argument_without_attestation' | 'invalid_actor_id' | 'actor_required';
 /** The operation metadata attestability reads (a subset of Operation, so this module never imports the registry). */
 export interface AttestableOpShape { scope?: string; requiredScopes?: readonly string[]; localOnly?: boolean; cliOnly?: unknown }
 
@@ -124,6 +124,9 @@ export function actorNotAttested(reason: ActorReason, caller: ActorCaller, ctx: 
     case 'argument_without_attestation':
       return opError('actor_not_attested', `The ${ACTOR_ARGUMENT} argument is accepted only on an attested call, so nothing was read or written.`,
         `Remove ${ACTOR_ARGUMENT} from the arguments. A trusted system names the person in the ${ACTOR_HEADER} header from a credential holding the attest right (gbrain auth rescope ... --attest-actor qm on the brain host).`, { reason, docs });
+    case 'actor_required':
+      return opError('actor_not_attested', `${ctx.op} writes only as an attested person, and this call names none (no ${ACTOR_HEADER} header on a credential holding the attest right), so nothing was written.`,
+        `Send ${ACTOR_HEADER} with the person's canonical id from a credential the brain operator granted the attest right (gbrain auth rescope --client <id> --attest-actor qm). To save a fact as yourself, call remember.`, { reason, docs });
     case 'invalid_actor_id':
       return opError('actor_not_attested', `The ${ACTOR_HEADER} header or the ${ACTOR_ARGUMENT} argument is not a canonical person id (1-256 visible ASCII characters), so nothing was read or written.`,
         'Fix the harness code that sets the header: send the canonical id unchanged, with no spaces or control characters.', { reason, docs });

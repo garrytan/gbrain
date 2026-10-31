@@ -89,6 +89,7 @@ const OP_AREAS: Record<string, string> = {
   takes_scorecard: 'takes', takes_calibration: 'takes',
   // hot memory (facts)
   extract_facts: 'memory', forget_fact: 'memory', confirm_memory: 'memory',
+  memory_recall: 'memory', memory_write: 'memory', // GST-359: QM's memory provider pair
   // entity extraction lane
   extract_entities: 'entities', extraction_pending: 'entities',
   extraction_review: 'entities',

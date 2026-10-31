@@ -18,6 +18,7 @@ import { withCallerAccess } from '../core/search/private-visibility.ts';
 import { appliedAccessSummary, remoteCallerAccess } from '../core/access/caller.ts';
 import { audienceInArguments, audienceInArgumentsError, logAudienceAssertion, parseAudience, type AudienceAuditEvent, type AudienceChannels, type AudiencePrincipal } from '../core/access/audience.ts';
 import { ACTOR_ARGUMENT, EXTERNAL_ID_RE, resolveAttestedActor, type ActorChannels } from '../core/access/actor.ts';
+import { qmMemoryToolResult, unlinkedRecallResult } from '../core/ops/qm-memory.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
@@ -913,7 +914,7 @@ export async function dispatchToolCall(
   // GBRA-218: a remote call also carries its credential's member identity, which every caller-aware read checks page readers against.
   // GBRA-231: or the audience a shared agent's harness asserts, resolved (and refused) on every call before any work.
   const run = async () => {
-    if (opts.remote === false) return withCallerAccess({ privateReadableSources: [] }, () => withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, params, resolved)));
+    if (opts.remote === false) return qmMemoryToolResult(name, await withCallerAccess({ privateReadableSources: [] }, () => withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, params, resolved))));
     // GST-359 C1: or the person a trusted system attests (x-qm-actor), decided here too, before any work (access/actor.ts).
     let audience: AudiencePrincipal[] | null = null;
     let attested: Awaited<ReturnType<typeof resolveAttestedActor>> = null;
@@ -933,7 +934,7 @@ export async function dispatchToolCall(
     } catch (e) {
       if (!(e instanceof OperationError) || !/^(on_behalf_of_|actor_)/.test(String(e.code))) throw e;
       assertion(e.code as AudienceAuditEvent['outcome'], e.reason);
-      return actorNamed ? actorRefusal(e, opts, name) : errorResult(e, opts, { op: name });
+      return actorNamed ? actorRefusal(e, opts, name, header) : errorResult(e, opts, { op: name });
     }
     if (audience || attested) assertion('accepted');
     const callParams = attested ? attested.params : params;
@@ -941,7 +942,7 @@ export async function dispatchToolCall(
       const out = await withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, callParams, resolved));
       // _meta.access (MCP_META_CHANNELS.md): the view this call was answered under, for the harness; own producer, isolated.
       try { out._meta = { ...(out._meta ?? {}), access: await appliedAccessSummary(engine, opts.auth, [opts.sourceId, ...(opts.localFederatedSourceIds ?? [])]) }; } catch { /* the key is absent */ }
-      return out;
+      return qmMemoryToolResult(name, out);
     });
   };
   if (name === 'search' || name === 'query') return withSearchConnectionBudget(() => withRequestConfigSnapshot(engine, run));
@@ -952,10 +953,14 @@ export async function dispatchToolCall(
 
 /**
  * GST-359 C1: the refusal of a call that named an attested actor: gbrain's envelope (top-level `code` in the JSON text
- * block) plus `structuredContent.error`, both of which QM reads. The single seam where memory_recall (layer D) answers
- * actor_unlinked as a success instead: empty content and structuredContent {facts: [], truncated: false, code: 'actor_unlinked'}.
+ * block) plus `structuredContent.error`, both of which QM reads. The single seam where memory_recall answers
+ * actor_unlinked as a success instead (GST-359 D): empty content and structuredContent {facts: [], truncated: false,
+ * code: 'actor_unlinked'}, the code also in `_meta.access`, so a person not yet linked reads nothing and QM's turn goes on.
  */
-function actorRefusal(e: OperationError, opts: DispatchOpts, op: string): ToolResult {
+function actorRefusal(e: OperationError, opts: DispatchOpts, op: string, header: string | undefined): ToolResult {
+  if (op === 'memory_recall' && e.code === 'actor_unlinked') {
+    return { ...unlinkedRecallResult(), _meta: { access: { code: 'actor_unlinked', member: null, groups: [], audience: null, actor: { system: 'qm', external_id: header } } } };
+  }
   const out = errorResult(e, opts, { op });
   try {
     const env = JSON.parse(out.content[0]!.text) as Record<string, unknown>;

@@ -19,6 +19,8 @@ export interface WriteAuthority {
    * link from the id to the same enabled member, so an unlink, a disabled member or a revoked right refuses it.
    */
   actingFor?: string[] | { system: string; external_id: string; member: string };
+  /** GST-359 D: the attested operation this write serves when it differs from the stored one (memory_write as remember). */
+  attestedOp?: string;
   databaseOnlyReason?: 'subagent_sandbox' | 'disabled_by_config' | 'no_repo_configured' | 'connector_database' | 'unbound_source' | 'overwrite_restore' | 'detached';
   autoLinkTrusted?: boolean;
   restrictedNamespace?: boolean;

@@ -581,6 +581,11 @@ export interface OperationContext {
    */
   replayAuthority?: WriteAuthority;
   /**
+   * GST-359 D: the attested operation a nested write serves (memory_write saves through remember). Set by the handler,
+   * never from arguments; the stored authority keeps it, so publication re-checks that operation's attest right.
+   */
+  attestedOp?: string;
+  /**
    * #4216 — defer chunk embeddings on put_page writes: importFromContent runs
    * noEmbed and the standing embed machinery (embed phase / phase-end
    * backfill / the stale-embed sweep) picks the chunks up via the

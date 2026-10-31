@@ -73,12 +73,13 @@ function grepPattern(opts: FactListOpts | undefined): string | null {
 
 /**
  * The pre-LIMIT narrowing both recall cursor reads apply (listFactsSince and,
- * for --since-last-run paging, listFactsKeyset): entity, session, audit rows
- * and --grep. Each part is opt-in, so a caller passing none (delta) gets none.
+ * for --since-last-run paging, listFactsKeyset): entity, the page the fact sits
+ * on (memory_recall's own-member-page arm), session, audit rows and --grep. Each part is opt-in, so a caller passing none (delta) gets none.
  */
 function recallNarrowing(opts: RecallFactReadOpts | undefined) {
   const grep = grepPattern(opts);
   return sqlFragment`${opts?.entitySlug != null ? sqlFragment` AND entity_slug = ${opts.entitySlug}` : sqlFragment``}${
+    opts?.sourceMarkdownSlug != null ? sqlFragment` AND source_markdown_slug = ${opts.sourceMarkdownSlug}` : sqlFragment``}${
     opts?.sessionId ? sqlFragment` AND source_session = ${opts.sessionId}` : sqlFragment``}${
     opts?.excludeAuditRows ? sqlFragment` AND source != ALL(${AUDIT_ROW_SOURCES}::text[])` : sqlFragment``}${
     grep ? sqlFragment` AND fact ILIKE ${grep} ESCAPE '\\'` : sqlFragment``}`;
