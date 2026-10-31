@@ -465,6 +465,46 @@ export const storedTypeUndeclared: LintRule = async (manifest, opts) => {
   return issues;
 };
 
+/** Data-plane sibling: canonical stored types whose slugs match no declared prefix. */
+export const storedTypePathPrefixMismatch: LintRule = async (manifest, opts) => {
+  if (!opts?.engine) return [];
+  const issues: LintIssue[] = [];
+  const declared = manifest.page_types.filter((t) => t.path_prefixes.length > 0);
+  if (declared.length === 0) return issues;
+  const params: unknown[] = [opts.sourceId ?? null];
+  const conditions = declared.map((t) => {
+    const typeParam = params.push(t.name);
+    const prefixMatch = t.path_prefixes.map((prefix) => {
+      const prefixParam = params.push(prefix);
+      return `left(slug, length($${prefixParam}::text)) = $${prefixParam}::text`;
+    }).join(' OR ');
+    return `(type = $${typeParam}::text AND NOT (${prefixMatch}))`;
+  });
+  const rows = await opts.engine.executeRaw<{ type: string; n: string }>(
+    `SELECT type, count(*)::text AS n FROM pages
+      WHERE deleted_at IS NULL AND ($1::text IS NULL OR source_id = $1)
+        AND (${conditions.join(' OR ')})
+      GROUP BY type`,
+    params,
+  );
+  const byName = new Map(declared.map((t) => [t.name, t]));
+  for (const row of rows) {
+    const t = byName.get(row.type);
+    if (!t) continue;
+    const count = Number.parseInt(row.n, 10);
+    const type = sanitizeTypeForDisplay(t.name);
+    const prefixes = t.path_prefixes.map(sanitizeTypeForDisplay).join(', ');
+    issues.push({
+      rule: 'stored_type_path_prefix_mismatch',
+      severity: 'warning',
+      message: `${count} page(s) store type '${type}' but their slugs match none of its path_prefixes (${prefixes}); move the page(s) under a declared prefix OR add a matching path_prefix`,
+      pack: manifest.name,
+      type: t.name,
+    });
+  }
+  return issues;
+};
+
 /** All rules. File-plane callers can compose a subset via FILE_PLANE_RULES. */
 export const ALL_LINT_RULES: ReadonlyArray<{ name: string; rule: LintRule; planeAware: boolean }> = [
   { name: 'alias_shadows_type', rule: aliasShadowsType, planeAware: false },
@@ -483,6 +523,7 @@ export const ALL_LINT_RULES: ReadonlyArray<{ name: string; rule: LintRule; plane
   { name: 'mutation_count_anomaly', rule: mutationCountAnomaly, planeAware: true },
   { name: 'stored_type_is_alias', rule: storedTypeIsAlias, planeAware: true },
   { name: 'stored_type_undeclared', rule: storedTypeUndeclared, planeAware: true },
+  { name: 'stored_type_path_prefix_mismatch', rule: storedTypePathPrefixMismatch, planeAware: true },
 ];
 
 /** File-plane subset: rules safe to run inside `withMutation`'s pre-write gate. */
