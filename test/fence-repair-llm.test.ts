@@ -116,6 +116,14 @@ describe('Tier 3 requests and prompt', () => {
     expect(tier3TokenBudget(req, 'claude-cli:claude-fable-5-1').maxOutputTokens).toBe(32000);
   });
 
+  test('Claude Opus 5.5, which cannot turn thinking off, is priced with the thinking headroom (#7567)', () => {
+    const req = residualOf(rowLevel).requests[0]!;
+    const table = tier3TokenBudget(req, 'anthropic:claude-opus-4-7').maxOutputTokens;
+    expect(tier3TokenBudget(req, 'anthropic:claude-opus-5-5').maxOutputTokens).toBe(32000);
+    expect(tier3TokenBudget(req, 'anthropic:claude-opus-5-5').maxOutputTokens).toBe(thinkingOffOutputCap('anthropic:claude-opus-5-5', table + TIER3_REASONING_TOKENS));
+    expect(tier3TokenBudget(req, 'anthropic:claude-sonnet-5-5').maxOutputTokens).toBe(table + TIER3_REASONING_TOKENS);
+  });
+
   test('a fence with a stray text line inside is not eligible (rebuilding the table would drop it)', () => {
     const stray = `${FB}\n| 1 | ${BROKEN} | fact | 0.9 | private | high | 2026-01-01 |  | chat | ctx |\na stray note\n${FBE}\n`;
     const out = residualOf(stray);
