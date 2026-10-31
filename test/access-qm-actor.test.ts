@@ -23,7 +23,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
-import { executeRawJsonb, sqlQueryForEngine } from '../src/core/sql-query.ts';
+import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { parseRescopeTokenArgs, rescopeLegacyToken } from '../src/core/grants/legacy-token.ts';
 import { dispatchToolCall, type ToolResult } from '../src/mcp/dispatch.ts';
@@ -401,28 +401,26 @@ for (const kind of testBackends()) {
         expect(() => parseAttestOps('get_page,' + op, lookup)).toThrow(/cannot run yet/);
         await expect(bindCredential(engine, { kind: 'client', id: clients.qm!.id }, { attestActor: 'qm', attestOps: ['get_page', op] })).rejects.toMatchObject({ code: 'invalid_params' });
       }
-      for (const op of ['get_agent_job', 'submit_agent', 'get_write_request', 'list_write_requests', 'cancel_write_request', 'delta', 'remember', 'capture', 'extract_facts']) {
+      // GST-359 C2 keyed remember, delta, the write receipts and agent jobs to the person (test/access-member-facts.test.ts).
+      for (const op of ['capture', 'extract_facts', 'forget', 'forget_fact', 'takes_add', 'list_write_conflicts']) {
         expect(ACTOR_DEFERRED_OPS.has(op)).toBe(true);
+      }
+      for (const op of ['get_agent_job', 'submit_agent', 'get_write_request', 'list_write_requests', 'cancel_write_request', 'delta', 'remember']) {
+        expect(ACTOR_DEFERRED_OPS.has(op)).toBe(false);
       }
       const { clientId, clientSecret } = await provider().registerClientManual('qm-jobs-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], SRC);
       await engine.executeRaw("UPDATE oauth_clients SET scope = 'read write agent', bound_tools = $2, bound_source_id = source_id, federated_read = ARRAY[source_id], delegated_namespace = 'job', delegated_slug_prefixes = NULL, bound_max_concurrent = 1 WHERE client_id = $1", [clientId, ['get_page', ...ACTOR_DEFERRED_OPS]]);
       await bindCredential(engine, { kind: 'client', id: clientId }, { attestActor: 'qm', attestOps: ['get_page'] });
       await engine.executeRaw('UPDATE oauth_clients SET attest_ops = $2 WHERE client_id = $1', [clientId, ['get_page', ...ACTOR_DEFERRED_OPS]]);
       const bearer = (await provider().exchangeClientCredentials(clientId, clientSecret!)).access_token;
-      const canary = 'canaryqmjobresult';
-      const [job] = await executeRawJsonb<{ id: number }>(engine,
-        `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, result, finished_at) VALUES ('{}'::jsonb, 'subagent', 'default', 'completed', $1::jsonb, $2::jsonb, now()) RETURNING id`,
-        [], [{ __owner_client_id: clientId, actor: { system: 'qm', external_id: ALICE_ID, member: 'alice-example' } }, { text: canary }]);
-      expect((await call(bearer, 'get_agent_job', { id: Number(job!.id) })).text).toContain(canary);
-      const asBob = await refused(call(bearer, 'get_agent_job', { id: Number(job!.id) }, { actor: BOB_ID }), 'actor_not_attested', 'op_not_attested');
-      expect(asBob.text).not.toContain(canary);
-      expect(asBob.structured!.error!.fix).toBeUndefined();
       const deferredCalls: Array<[string, Record<string, unknown>]> = [
-        ['list_write_requests', {}], ['get_write_request', { id: randomUUID() }], ['cancel_write_request', { id: randomUUID() }],
-        ['delta', {}], ['remember', { content: 'alice-example prefers tea' }], ['capture', { content: 'note' }],
-        ['submit_agent', { prompt: 'x' }], ['extract_facts', { text: 'x' }],
+        ['list_write_conflicts', {}], ['capture', { content: 'note' }], ['extract_facts', { text: 'x' }],
+        ['forget_fact', { id: '1' }], ['takes_add', { page_slug: PAGES.alice.slug, claim: 'x' }],
       ];
-      for (const [op, params] of deferredCalls) await refused(call(bearer, op, params, { actor: ALICE_ID }), 'actor_not_attested', 'op_not_attested');
+      for (const [op, params] of deferredCalls) {
+        const out = await refused(call(bearer, op, params, { actor: ALICE_ID }), 'actor_not_attested', 'op_not_attested');
+        expect(out.structured!.error!.fix).toBeUndefined();
+      }
       expect((await call(bearer, 'get_page', { slug: PAGES.alice.slug }, { actor: ALICE_ID })).text).toContain(PAGES.alice.canary);
     }, 120_000);
 

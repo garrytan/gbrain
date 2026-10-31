@@ -22,7 +22,7 @@ import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
-import { configureGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { dispatchToolCall, type ToolResult } from '../src/mcp/dispatch.ts';
@@ -57,7 +57,7 @@ const ALICE_ID = 'U0ALICE';
 const BOB_ID = 'bob-example@acme.test';
 const ACME = 'companies/acme-example';
 const CANARY = { alice: 'canaryfactalice', bob: 'canaryfactbob' } as const;
-const ATTEST_OPS = ['context_pack', 'delta', 'get_page', 'get_write_request', 'list_write_requests', 'put_page', 'recall', 'remember', 'search', 'whoami'];
+const ATTEST_OPS = ['cancel_write_request', 'context_pack', 'delta', 'get_page', 'get_write_request', 'list_write_requests', 'put_page', 'recall', 'remember', 'search', 'whoami'];
 
 for (const kind of testBackends()) {
   describe('member facts and member-scoped reads (' + kind + ', repo-less)', () => {
@@ -113,7 +113,7 @@ for (const kind of testBackends()) {
       await linkMember(engine, 'bob-example', 'qm', BOB_ID);
     }, 120_000);
 
-    afterAll(async () => { await close?.(); });
+    afterAll(async () => { __setEmbedTransportForTests(null); resetGateway(); await close?.(); });
 
     test('an attested member fact lands private on the member page, created by it, with the entity kept as metadata', async () => {
       const out = await remember(who.alice(), 'Alice prefers oolong for harbor reviews ' + CANARY.alice, { entity: ACME, visibility: 'world' });
@@ -184,7 +184,6 @@ for (const kind of testBackends()) {
 
     test('a member stops reading its own facts once its page\'s readers no longer name it', async () => {
       const bobPage = 'memory/members/bob-example';
-      const [before] = await engine.executeRaw<{ frontmatter: unknown }>('SELECT frontmatter FROM pages WHERE source_id = $1 AND slug = $2', [SRC, bobPage]);
       await engine.executeRaw(`UPDATE pages SET frontmatter = jsonb_set(frontmatter, '{readable_by}', '["group:team-a"]'::jsonb) WHERE source_id = $1 AND slug = $2`, [SRC, bobPage]);
       __resetPrivateVisibilityCacheForTests();
       const [narrowed] = await engine.executeRaw<{ page_readers: string[] }>('SELECT page_readers FROM pages WHERE source_id = $1 AND slug = $2', [SRC, bobPage]);
@@ -197,7 +196,7 @@ for (const kind of testBackends()) {
           });
         }
       } finally {
-        await engine.executeRaw('UPDATE pages SET frontmatter = $3::jsonb WHERE source_id = $1 AND slug = $2', [SRC, bobPage, JSON.stringify(before!.frontmatter)]);
+        await engine.executeRaw("UPDATE pages SET frontmatter = jsonb_set(frontmatter, '{readable_by}', jsonb_build_array('member:bob-example')) WHERE source_id = $1 AND slug = $2", [SRC, bobPage]);
         __resetPrivateVisibilityCacheForTests();
       }
       expect((await call(who.bobToken(), 'recall', { query: 'harbor' })).all).toContain(CANARY.bob);
@@ -227,16 +226,20 @@ for (const kind of testBackends()) {
       expect(JSON.stringify(bare.meta ?? {})).not.toContain(CANARY.alice);
     }, 60_000);
 
-    test('delta: Alice then Bob on one session id keep separate cursors', async () => {
+    test('delta: Alice, Bob and the bare client on one session id keep separate cursors, and only Alice sees her new fact', async () => {
       const session = 'delta-session-' + randomUUID().slice(0, 6);
-      const first = await call(who.alice(), 'delta', { session_id: session });
-      expect(first.isError).toBe(false);
-      expect(first.all).toContain('started this session');
-      const bob = await call(who.bob(), 'delta', { session_id: session });
-      expect(bob.isError).toBe(false);
-      expect(bob.all).toContain('started this session');
-      const bobAgain = await call(who.bob(), 'delta', { session_id: session });
-      expect(bobAgain.all).not.toContain(CANARY.alice);
+      for (const as of [who.alice(), who.bob(), who.bare()]) {
+        const first = await call(as, 'delta', { session_id: session });
+        expect(first.isError).toBe(false);
+        expect(first.all).toContain('started this session');
+      }
+      expect((await remember(who.alice(), 'Alice moves the harbor review to friday ' + CANARY.alice + 'delta')).isError).toBe(false);
+      expect((await call(who.alice(), 'delta', { session_id: session })).all).toContain(CANARY.alice + 'delta');
+      for (const as of [who.bob(), who.bare()]) {
+        const later = await call(as, 'delta', { session_id: session });
+        expect(later.isError).toBe(false);
+        expect(later.all).not.toContain(CANARY.alice);
+      }
     }, 60_000);
 
     test('receipts: Alice\'s write receipt is invisible to Bob and the bare client, and her request_id never replays for Bob', async () => {
@@ -253,6 +256,12 @@ for (const kind of testBackends()) {
         expect(listed.all).not.toContain(requestId);
       }
       expect((await call(who.alice(), 'list_write_requests', {})).all).toContain(requestId);
+      for (const as of [who.bob(), who.bare()]) {
+        const cancelled = await call(as, 'cancel_write_request', { request_id: requestId });
+        expect({ isError: cancelled.isError, code: cancelled.json.code ?? cancelled.json.error }).toEqual({ isError: true, code: 'not_found' });
+      }
+      const own = await call(who.alice(), 'cancel_write_request', { request_id: requestId });
+      expect(own.json.code ?? own.json.error ?? own.json.state).not.toBe('not_found');
       const replay = await remember(who.bob(), 'Alice signs the harbor charter ' + CANARY.alice + 'r', { request_id: requestId });
       expect(replay.isError).toBe(true);
       expect(replay.all).not.toContain('"id":"' + factId + '"');
@@ -269,6 +278,33 @@ for (const kind of testBackends()) {
       const bobReplay = await call(who.bob(), 'put_page', { slug: 'notes/' + shared, content, request_id: shared });
       expect(bobReplay.isError).toBe(true);
       expect(bobReplay.json.code ?? bobReplay.json.error).toBe('idempotency_conflict');
+    }, 60_000);
+
+    test('agent jobs: Alice\'s job is hers alone, and two people\'s identical submissions never share a job', async () => {
+      const reg = await provider().registerClientManual('c2-agent-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], SRC);
+      await engine.executeRaw("UPDATE oauth_clients SET scope = 'read write agent', bound_tools = $2, bound_source_id = source_id, federated_read = ARRAY[source_id], delegated_namespace = 'job', delegated_slug_prefixes = NULL, bound_max_concurrent = 5 WHERE client_id = $1", [reg.clientId, ['get_page', 'search']]);
+      await bindCredential(engine, { kind: 'client', id: reg.clientId }, { attestActor: 'qm', attestOps: ['get_agent_job', 'get_page', 'submit_agent'] });
+      tokens.agent = (await provider().exchangeClientCredentials(reg.clientId, reg.clientSecret!)).access_token;
+      const as = { alice: { token: 'agent', actor: ALICE_ID }, bob: { token: 'agent', actor: BOB_ID }, bare: { token: 'agent' } };
+      const prompt = 'Summarize the harbor ledger notes';
+      const ids: Record<string, number> = {};
+      for (const [name, caller] of Object.entries(as)) {
+        const out = await call(caller, 'submit_agent', { prompt });
+        expect(out.isError, out.text).toBe(false);
+        expect(out.json.coalesced).toBeUndefined();
+        ids[name] = Number(out.json.id);
+      }
+      expect(new Set(Object.values(ids)).size).toBe(3);
+      const canary = 'canaryagentjobalice';
+      await engine.executeRaw("UPDATE minion_jobs SET status = 'completed', result = jsonb_build_object('text', $2::text), finished_at = now() WHERE id = $1", [ids.alice, canary]);
+      expect((await call(as.alice, 'get_agent_job', { id: ids.alice })).all).toContain(canary);
+      for (const caller of [as.bob, as.bare]) {
+        const got = await call(caller, 'get_agent_job', { id: ids.alice });
+        expect({ isError: got.isError, code: got.json.code ?? got.json.error }).toEqual({ isError: true, code: 'not_found' });
+        expect(got.all).not.toContain(canary);
+      }
+      expect((await call(as.bob, 'get_agent_job', { id: ids.bob })).isError).toBe(false);
+      expect((await call(as.bare, 'get_agent_job', { id: ids.bare })).isError).toBe(false);
     }, 60_000);
 
     test('two members saving the same words get two facts, each on its own page', async () => {

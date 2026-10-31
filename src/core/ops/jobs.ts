@@ -346,6 +346,16 @@ function delegationDenied(ctx: OperationContext, error: Error & { reasons: strin
 //      protected-name guard. Bindings are enforced PER-OP, not per-name.
 //   3. The dispatcher is the subagent handler with the gateway-native loop
 //      (agent.use_gateway_loop is auto-on for submit_agent jobs).
+/**
+ * GST-359 C2: the attested actor an agent job belongs to (its accepted grant's actor), as [system, external_id,
+ * member], '' outside an attested call. A remote agent job never coalesces (queue.add coalesces application jobs only).
+ */
+async function callerJobActor(): Promise<[string, string, string]> {
+  const { currentCallerAccess } = await import('../search/private-visibility.ts');
+  const actor = currentCallerAccess().actor;
+  return actor ? [actor.system, actor.external_id, actor.member] : ['', '', ''];
+}
+
 const submit_agent: Operation = {
   name: 'submit_agent',
   idempotent: false,
@@ -573,8 +583,11 @@ const get_agent_job: Operation = {
          FROM minion_jobs j
         WHERE j.id = $1
           AND j.name = 'subagent'
-          AND j.data->>'__owner_client_id' = $2`,
-      [id, clientId],
+          AND j.data->>'__owner_client_id' = $2
+          AND COALESCE(j.submission_authority->'grant'->'actor'->>'system', '') = $3
+          AND COALESCE(j.submission_authority->'grant'->'actor'->>'external_id', '') = $4
+          AND COALESCE(j.submission_authority->'grant'->'actor'->>'member', '') = $5`,
+      [id, clientId, ...await callerJobActor()],
     );
     if (rows.length === 0) {
       // Uniform envelope: foreign-owned and nonexistent ids are

@@ -17,7 +17,7 @@ import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
-import { configureGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
@@ -128,7 +128,7 @@ for (const kind of testBackends()) {
       fixture.factId = String(fact!.id);
     }, 120_000);
 
-    afterAll(async () => { await close?.(); });
+    afterAll(async () => { __setEmbedTransportForTests(null); resetGateway(); await close?.(); });
 
     test('the canary is reachable by its owner (the sweep is not vacuous)', async () => {
       const alice: Who = { label: 'alice', token: 'qm', actor: ALICE_ID };

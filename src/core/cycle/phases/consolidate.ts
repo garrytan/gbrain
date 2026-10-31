@@ -140,6 +140,13 @@ export function parseClusterThreshold(value: string): number {
   return n;
 }
 
+/** GST-359 C2: `facts` without those on a page that names readers (a member page): they never become a take on the entity page. */
+async function withoutReadersSourced(engine: BrainEngine, facts: FactRow[]): Promise<FactRow[]> {
+  const rows = await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND ${readersSourcedFactSql('facts')}`, [facts.map(f => f.id)]);
+  const restricted = new Set(rows.map(row => Number(row.id)));
+  return facts.filter(f => !restricted.has(f.id));
+}
+
 export async function runPhaseConsolidate(
   engine: BrainEngine,
   opts: ConsolidatePhaseOpts = {},
@@ -229,10 +236,7 @@ export async function runPhaseConsolidate(
       });
       // Takes here are the user's own (holder 'self'): a claim the assistant or
       // a named third party asserted is never promoted into one.
-      // GST-359 C2: a fact on a page that names readers (a member page) never becomes a take on the entity page.
-      const restricted = new Set((await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND ${readersSourcedFactSql('facts')}`,
-        [candidates.map(f => f.id)])).map(row => Number(row.id)));
-      const unconsolidated = candidates.filter(f => !restricted.has(f.id) && (!managed || f.visibility === 'world') && (!f.attributed_to || f.attributed_to === 'user'));
+      const unconsolidated = (await withoutReadersSourced(engine, candidates)).filter(f => (!managed || f.visibility === 'world') && (!f.attributed_to || f.attributed_to === 'user'));
       if (unconsolidated.length < minPerBucket) {
         bucketsSkipped += 1;
         continue;
