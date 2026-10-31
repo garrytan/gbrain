@@ -12,7 +12,9 @@
  *     provider context errors mapped, bounded rejected history, unknown window);
  *   - one-shot guards (length stop, cap too small, truncated body) never
  *     return a body and never call chat when refusing;
- *   - budget exhaustion is rethrown, never converted to a reflect error.
+ *   - budget exhaustion is rethrown, never converted to a reflect error;
+ *   - #7257: each reflect mode's own system prompt names the edit ops and
+ *     fields `validateEdits` accepts (the success-only call used to omit them).
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -65,6 +67,28 @@ describe('reflect output cap', () => {
       expect(r.calls[0]!.maxTokens).toBe(expected);
     }
   });
+});
+
+// #7257: a success-only batch makes only the success-reflect call. The optimizer
+// can only emit edits that `validateEdits` accepts if THAT call's own system
+// prompt names the op and field names, so each mode is checked on the prompt it
+// actually sends (a failure-reflect prompt it never sends does not count).
+describe('reflect system prompt states the edit schema in both modes (#7257)', () => {
+  const MODES: Array<[string, { successes: ScoredRollout[]; failures: ScoredRollout[] }]> = [
+    ['success', { successes: [scored('s', 1)], failures: [] }],
+    ['failure', { successes: [], failures: [scored('f', 0)] }],
+  ];
+
+  for (const [mode, batch] of MODES) {
+    test(`${mode}-only batch: the single call's system prompt names every op and edit field`, async () => {
+      const r = recorder(() => reply('{"edits":[]}'));
+      await runReflect({ skillBodyText: '# S', ...batch, rejected: [], optimizerModel: PLAIN, chatFn: r.chatFn });
+      expect(r.calls).toHaveLength(1);
+      const system = r.calls[0]!.system!;
+      for (const op of ['add', 'replace', 'delete']) expect(system).toMatch(new RegExp(`"op"\\s*:\\s*"${op}"`));
+      for (const field of ['anchor', 'content', 'target', 'replacement']) expect(system).toMatch(new RegExp(`"${field}"\\s*:`));
+    });
+  }
 });
 
 describe('reflect reply classification (exactly one error per call)', () => {
