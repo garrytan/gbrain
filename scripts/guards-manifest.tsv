@@ -58,6 +58,7 @@ check-fuzz-purity.sh	buildfresh	exempt	executes fuzz corpus
 check-image-decoders-embedded.sh	buildfresh	exempt	binary embed check; in verify CHECKS (check:image-decoders); its smoketest compile bundles a handful of modules (~0.6s)
 check-pglite-embedded.sh	buildfresh	exempt	binary embed check
 check-skills-manifest-fresh.sh	buildfresh	exempt	regenerates + diffs
+check-skills-lock-history.ts	repostate	exempt	GBRA-225: skills/skills.lock.history.json lists every hash the lock lists and keeps every entry of HEAD and the merge-base copy (append-only); compares committed file state, no scanned fixtures
 check-tool-catalog-fresh.sh	buildfresh	exempt	regenerates + diffs
 check-wasm-embedded.sh	buildfresh	exempt	binary embed check
 check-bootstrap-tag.sh	repostate	exempt	VERSION stamp drift check

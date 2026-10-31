@@ -324,6 +324,7 @@ describe('#7619 split rules', () => {
       'src/commands/skillpack.ts': ['skillpack status', 'skillpack sync', 'skillpack migrate-fence', 'skillpack scrub-legacy-fence-rows', 'skillpack harvest', 'skillpack diff'],
       'src/commands/skillpack/harness.ts': ['skillpack scaffold', 'skillpack reference'], // also the OWN parser of skillpack remove
       'src/commands/skillpack/reference.ts': ['skillpack reference'],
+      'src/commands/skillpack/update.ts': ['skillpack reference'],
       'src/commands/skillpack/scaffold.ts': ['skillpack scaffold'],
       'src/commands/sources-harden.ts': ['sources harden', 'sources pull'], // *
       'src/commands/sources.ts': ['sources status'], // * (paged regex :1214)

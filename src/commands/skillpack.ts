@@ -33,6 +33,7 @@ import { parsePrecondition, type Precondition } from '../core/skillpack/precondi
 import { resolveAbs, findGbrainOrDie, resolveWorkspace } from './skillpack/shared.ts';
 import { cmdScaffold } from './skillpack/scaffold.ts';
 import { cmdReference } from './skillpack/reference.ts';
+import { recordScaffoldBases, type ScaffoldedFile } from '../core/skillpack/safe-update.ts';
 
 const HELP_TOP = `gbrain skillpack <subcommand> [options]
 
@@ -55,6 +56,11 @@ Subcommands:
                              Two-way diff, auto-apply non-conflicting hunks.
   reference --harness <h>    Diff a harness install (stub-aware; splits
                              local_edit vs upstream_drift).
+  reference <n>|--all --update-untouched
+                             Replace whole skills you never edited with
+                             gbrain's version (journaled; --dry-run previews).
+  pin <name> / unpin <name>  Keep a skill out of --update-untouched.
+  restore <id> | --list      Undo an --update-untouched run.
 
   remove --harness <h>       Remove files the harness bridge wrote (ledger-
                              owned only — never your own files).
@@ -127,6 +133,17 @@ export async function runSkillpack(args: string[]): Promise<void> {
     case 'reference':
       await cmdReference(rest);
       return;
+    case 'pin':
+    case 'unpin': {
+      const { cmdPin } = await import('./skillpack/update.ts');
+      await cmdPin(rest, sub === 'pin');
+      return;
+    }
+    case 'restore': {
+      const { cmdRestore } = await import('./skillpack/update.ts');
+      await cmdRestore(rest);
+      return;
+    }
     case 'status':
       await cmdStatus(rest);
       return;
@@ -404,12 +421,15 @@ async function cmdSync(args: string[]): Promise<void> {
     // file by design, so drifted/current files are never touched — the
     // ownership model. In --dry-run nothing is written.
     const scaffolded: string[] = [];
+    const scaffoldedFiles: ScaffoldedFile[] = [];
     for (const slug of newSlugs) {
-      runScaffold({ gbrainRoot, targetWorkspace, skillSlug: slug, dryRun });
+      scaffoldedFiles.push(...runScaffold({ gbrainRoot, targetWorkspace, skillSlug: slug, dryRun }).files);
       scaffolded.push(slug);
     }
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- targetWorkspace is the local operator's --workspace argument or the auto-detected workspace root, the same root runScaffold just wrote under.
     const registered = dryRun ? [] : registerManifestEntries(join(targetWorkspace, 'skills'), scaffolded);
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- the same operator workspace root runScaffold just wrote under.
+    if (!dryRun) await recordScaffoldBases(join(targetWorkspace, 'skills'), scaffoldedFiles);
 
     if (json) {
       console.log(JSON.stringify({ scaffolded, registered, drifted: driftedSlugs, dryRun }, null, 2));

@@ -53,7 +53,7 @@ export interface DriftReport {
 
 const SHELL_FENCES = new Set(['', 'bash', 'sh', 'shell', 'zsh', 'console']);
 const IGNORE_MARKER = '<!-- skill-drift-ok';
-const GBRAIN_AT = /(?:^|[|&;(]|\$\()\s*(?:[A-Z_][A-Z0-9_]*=\S*\s+)*(?:(?:nohup|exec|time)\s+)?gbrain\s+/g;
+const INVOCATION_AT = /(?:^|[|&;(]|\$\()\s*(?:[A-Z_][A-Z0-9_]*=\S*\s+)*(?:(?:nohup|exec|time)\s+)?gbrain\s+/g;
 const HOST_TOOLS = new Set(['web_fetch', 'web_search']);
 
 function splitShell(text: string): { words: string[]; rest: string } {
@@ -94,7 +94,7 @@ function splitShell(text: string): { words: string[]; rest: string } {
 const isPlaceholder = (t: string) => /[<>{}]|\.\.\.|…/.test(t);
 
 function invocationsIn(text: string, line: number, out: Invocation[]): void {
-  for (const m of text.matchAll(GBRAIN_AT)) {
+  for (const m of text.matchAll(INVOCATION_AT)) {
     const start = m.index! + m[0].length;
     const { words } = splitShell(text.slice(start));
     if (!words.length || isPlaceholder(words[0]!)) continue;

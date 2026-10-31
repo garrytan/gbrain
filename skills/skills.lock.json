@@ -1,6 +1,6 @@
 {
   "RESOLVER.md": "d788b96fae6731a9bad8586074e40d6b22d360f5b5a7f7a85cea0ef3bb46cf2d",
-  "_AGENT_README.md": "ab51e36e9a0b53f4d0609294b0556444399147834932d9c1acfdc7aa367c70b8",
+  "_AGENT_README.md": "ce694f4d952cd4ac1377b4f68a63b93f616d2fce745d76a399f1633805c83244",
   "_brain-filing-rules.json": "4e6ecee2d94867d146583d60bf98dccdd9205bb70793af56fe1397a2b258ae0d",
   "_brain-filing-rules.md": "ff42b331bce542d708f97ff0a73ff0fb5664b46ee9b1862a5478b15dc637487e",
   "_friction-protocol.md": "51353207240142024ff1facc25f225712275ecdb4a034ffffdd83740c8d328e3",
@@ -225,6 +225,7 @@
   "skillpack-check/SKILL.md": "0d2d2d201ed72e19b47d7e3743b5bbdfb5c2655d1f34d29447c601fca3908f9e",
   "skillpack-harvest/SKILL.md": "0f86314b58d25b5511809f567c04aedc3fba6fe35ed642ac52d8216ae365b6eb",
   "skillpack-harvest/routing-eval.jsonl": "cb4783288e95af3132b32ecb40a54cffc095f57b36240f96a25c2d2adf5e68c6",
+  "skills.lock.history.json": "ffc3adac7c32b2538686487a79bbc537dbe1a01b7fbb0a1dbfee0d84e1dbdd10",
   "smoke-test/SKILL.md": "f5099e1d2ab9dc6827096249e68414f7ae357c29b39fb069a54bb7fb74f414a5",
   "soul-audit/SKILL.md": "7a48e180849f7502d332878c443397f90a3756f45caa94f76bcfcc7c997469c8",
   "strategic-reading/SKILL.md": "ab2cd3adc79289374cfbc5cb3d5ee17f962fd8f7f3c997a1da708da0ed67797c",

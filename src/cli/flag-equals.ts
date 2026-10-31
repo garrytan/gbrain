@@ -190,7 +190,7 @@ export const EQUALS_READERS: Readonly<Record<string, readonly string[]>> = {
   'skillpack diff': ['--workspace', '--skills-dir'],
   // skillpack/scaffold.ts:36 lane select + :73 --workspace=; harness lane skillpack/harness.ts:91-158 parseHarnessArgs (:364).
   'skillpack scaffold': ['--workspace', '--harness', '--persona', '--skill', '--dest', '--scope', '--skills'],
-  // skillpack/reference.ts:44 harness lane (strict-args.ts:102 makes the non-harness lane STRICT); harness.ts:542.
+  // skillpack/reference.ts:44 harness lane (strict-args.ts:102 makes the non-harness lane STRICT); harness.ts:542; skillpack/update.ts readValue (--update-untouched lane).
   'skillpack reference': ['--harness', '--persona', '--skill', '--dest', '--scope', '--workspace', '--skills'],
   // core/bounded-listing-cli.ts:15 via sources.ts:1213 runStatus (+ :1214 paged regex).
   'sources status': ['--limit', '--cursor'],

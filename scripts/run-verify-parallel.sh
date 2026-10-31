@@ -136,6 +136,8 @@ CHECKS=(
   "check:eval-glossary"
   "check:tool-catalog"
   "check:skills-manifest"
+  # GBRA-225: skills.lock.history.json covers the lock and only grows.
+  "check:skills-lock-history"
   "check:no-pii-agent-voice"
   "check:synthetic-corpus-privacy"
   "check:operations-filter-bypass"

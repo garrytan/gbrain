@@ -122,6 +122,7 @@
     "check:eval-glossary": "bash scripts/check-eval-glossary-fresh.sh",
     "check:tool-catalog": "bash scripts/check-tool-catalog-fresh.sh",
     "check:skills-manifest": "bash scripts/check-skills-manifest-fresh.sh",
+    "check:skills-lock-history": "bun scripts/check-skills-lock-history.ts",
     "check:test-names": "bash scripts/check-test-real-names.sh",
     "check:progress": "bash scripts/check-progress-to-stdout.sh",
     "check:no-tracked-symlinks": "bash scripts/check-no-tracked-symlinks.sh",

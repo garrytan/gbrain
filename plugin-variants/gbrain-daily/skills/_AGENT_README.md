@@ -143,7 +143,10 @@ gbrain skillpack reference --all
 ```
 
 That sweeps every bundled skill and reports per-skill `identical / differs /
-missing` counts. For each `differs`:
+missing` counts. Skills the user never edited take gbrain's version whole with
+`gbrain skillpack reference --all --update-untouched` (`--dry-run` previews;
+edited or pinned skills are skipped; `gbrain skillpack restore <id>` undoes it).
+For each remaining `differs`:
 
 ```bash
 gbrain skillpack reference <slug>

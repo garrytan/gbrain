@@ -42,6 +42,14 @@
         "name": "skill_health"
       },
       {
+        "category": "skill",
+        "name": "skillpack_update_incomplete"
+      },
+      {
+        "category": "skill",
+        "name": "skillpack_backups"
+      },
+      {
         "category": "ops",
         "name": "plugin_lane_collision"
       },

@@ -4,7 +4,7 @@
  *
  * Composes the foundation pieces:
  *   resolveSource → loadSkillpackManifest → askTrust → enumerateScaffoldEntries
- *   → copyArtifacts → saveState (~/.gbrain/skillpack-state.json) → buildBootstrapDisplay
+ *   → copyArtifacts → updateState (~/.gbrain/skillpack-state.json, under its lock) → buildBootstrapDisplay
  *
  * Mirrors the contracts of v0.36's `runScaffold` (no managed-block writes,
  * refuses to overwrite, partial-state policy via enumerateScaffoldEntries +
@@ -24,7 +24,7 @@ import { enumerateScaffoldEntries, type ScaffoldEntry } from './bundle.ts';
 import {
   defaultStatePath,
   loadState,
-  saveState,
+  updateState,
   upsertEntry,
   type SkillpackState,
   type SkillpackStateEntry,
@@ -194,8 +194,10 @@ export async function runScaffoldThirdParty(
       workspace: opts.targetWorkspace,
       skill_slugs: skillSlugs,
     };
-    newState = upsertEntry(state, entry);
-    saveState(newState, { statePath: opts.statePath });
+    newState = await updateState((current) => {
+      const next = upsertEntry(current, entry);
+      return { state: next, result: next };
+    }, { statePath: opts.statePath });
   }
 
   const status: ScaffoldThirdPartyStatus = opts.dryRun
