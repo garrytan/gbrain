@@ -50,6 +50,7 @@ test/conversation-facts-purged-claim-7438.test.ts
 test/cycle/synthesize-concepts-merge.test.ts
 test/db-lock-reconnect.test.ts
 test/decide/conflict-proposals-managed.test.ts
+test/decide/segmented-trust-proposal.test.ts
 test/declared-lineage-visibility.test.ts
 test/derived-link-reconciliation.test.ts
 test/direct-pool-profile.test.ts

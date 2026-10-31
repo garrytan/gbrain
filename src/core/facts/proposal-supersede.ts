@@ -32,6 +32,7 @@ import { getProposal, transitionProposal, type ProposalRow } from '../ai/decide/
 import { strikeFenceRow, supersededFact } from './forget.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { withTrustKeep } from '../persistence/context.ts';
+import { wholeBodySnapshot } from '../persistence/segmented-apply.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { noteBelief } from '../belief/ledger.ts';
@@ -368,7 +369,7 @@ export async function prepareProposalMutation(engine: BrainEngine, row: WriteReq
   }
   const action = p.action;
   const proposal = await store.get(engine, id);
-  const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
+  let snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
   const observedRevision = snapshot?.revision ?? null;
   const done = (outcome: Record<string, unknown>): PreparedMutation => ({ observedRevision, noop: true, apply: async () => outcome });
   if (!proposal || proposal.source_id !== row.source_id) return done({ id, action, status: 'refused', reason: 'not_found' });
@@ -402,6 +403,9 @@ export async function prepareProposalMutation(engine: BrainEngine, row: WriteReq
       await store.transition(tx, id, 'pending', 'stale');
       return { id, action, status: 'stale', reason: stale };
     } };
+    if (oldF!.source_markdown_slug === row.slug && oldF!.row_num !== null && snapshot) {
+      snapshot = await wholeBodySnapshot(engine, snapshot, 'proposal fence write');
+    }
     const plan = oldF!.source_markdown_slug === row.slug && snapshot ? planAcceptFence(snapshot.page.compiled_truth, oldF!, newF!, formatFenceDate(new Date())) : null;
     const page = plan ? await pageFor(plan.body) : undefined;
     const fence = (r: ParsedFact, revision: string | null): FenceState => ({ slug: row.slug, row_num: oldF!.row_num!, row: r, page_revision: revision, file: page?.file !== undefined });
@@ -422,6 +426,7 @@ export async function prepareProposalMutation(engine: BrainEngine, row: WriteReq
   const { before, after } = states;
   let page: PreparedMutation | undefined;
   if (before.fence && after.fence) {
+    if (snapshot && before.fence.slug === row.slug) snapshot = await wholeBodySnapshot(engine, snapshot, 'proposal fence write');
     const planned = snapshot && before.fence.slug === row.slug ? planUndoFence(snapshot.page.compiled_truth, before.fence, after.fence) : 'changed';
     if (planned === 'changed') return done({ id, action, status: 'refused', reason: 'fence_changed' });
     page = await pageFor(planned.body);
