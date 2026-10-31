@@ -37,7 +37,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  HARNESS_EVALS_PIN: 2c45a247f67285e693ed6d63cb16710272927a19
+  HARNESS_EVALS_PIN: 0a5246d1678e6773c5f39d40c9eecc65c369e09d
 
 jobs:
   # Event parity: docs/ci-event-parity.md#classification (harness-check.yml): a fork head is refused, a missing token skips.
