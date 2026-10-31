@@ -450,3 +450,5 @@ test/page-embedding-lease.serial.test.ts	global-state	global-state: process-wide
 test/migrate-search-path-best-effort.serial.test.ts	R2	R2: mock.module(v277 migration module) replaces modules for every file in the process
 test/agent-session-speaker-8064.serial.test.ts	R1	R1: sets GBRAIN_HOME and GBRAIN_SESSION_AGENT and clears DATABASE_URL and the hook env on process.env
 test/two-engine-isolation.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME); also drives the process-wide AI gateway, chat usage sink, search telemetry, link semantics and module caches the suite proves are shared, and binds fake AI provider ports
+test/search/identifier-probe.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
+test/search/slug-handles.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
