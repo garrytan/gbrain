@@ -371,3 +371,65 @@ describe('search.saved_facts_supersede: what a correction must share', () => {
     }
   });
 });
+
+// Value: protects=entity enrichment never shows a corrected claim as current (#7938 item 1); fails_when=the entity-facts copy of a claim the five-fact cap cut comes back unlabelled, beside its corrector or without it; why_new=the entity-copy test above keeps both facts inside the cap; seam=none; no_claim=fact rows the facts arm returns
+describe('search.saved_facts_supersede: entity facts and the five-fact cap', () => {
+  async function seedCapped(name: string, desks: number): Promise<{ query: string; old: number; fix: number }> {
+    const slug = `companies/${name.toLowerCase()}`;
+    await importFromContent(engine, slug, serializeMarkdown({}, `${name} is a customer account.`, '', { type: 'company', title: name, tags: [] }), { noEmbed: true, forceRechunk: true });
+    const old = await remember(`${name} renews at 52 seats.`, '2025-08-01T09:00:00Z');
+    const fix = await remember(`Correction: ${name} is at 46 seats, ignore the 52.`, '2025-08-02T09:00:00Z');
+    const seeded = [old, fix];
+    for (let i = 0; i < desks; i++) seeded.push(await remember(`${name} renewal seats reviewed by desk ${'abcdef'[i]}.`, '2025-08-03T09:00:00Z'));
+    // Only the corrected claim is filed under the entity, so it alone comes back through the entity facts.
+    await engine.executeRaw('UPDATE facts SET entity_slug = CASE WHEN id = $1 THEN $2 ELSE NULL END WHERE id = ANY($3::int[])', [old, slug, seeded]);
+    return { query: `${name} renewal seats`, old, fix };
+  }
+  const savedFactsBlock = (text: string) => text.slice(text.indexOf('Saved facts (remember)'));
+
+  test('a claim whose corrector the cap cut does not come back through the entity facts', async () => {
+    await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'true');
+    try {
+      const f = await seedCapped('Quarnetix', 5);
+      const { facts, text } = await search(f.query);
+      expect(facts.map(x => x.id)).not.toContain(f.fix);
+      expect(facts.map(x => x.id)).not.toContain(f.old);
+      expect(savedFactsBlock(text)).not.toContain('Quarnetix renews at 52 seats.');
+    } finally {
+      await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'false');
+    }
+  });
+
+  test('a claim the cap cut but the entity facts return is labelled with its returned corrector', async () => {
+    await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'true');
+    try {
+      const f = await seedCapped('Brisketon', 4);
+      const { facts } = await search(f.query);
+      expect(facts.map(x => x.id)).toContain(f.fix);
+      expect(facts.find(x => x.id === f.old)?.corrected_by).toBe(f.fix);
+    } finally {
+      await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'false');
+    }
+  });
+
+  test('dropping an entity fact whose corrector the cap cut also drops the entity fact it corrects', async () => {
+    await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'true');
+    try {
+      await importFromContent(engine, 'companies/kelvanta', serializeMarkdown({}, 'Kelvanta is a customer account.', '', { type: 'company', title: 'Kelvanta', tags: [] }), { noEmbed: true, forceRechunk: true });
+      const old = await remember('Kelvanta renews at 52 seats.', '2025-07-01T09:00:00Z');
+      const fix = await remember('Correction: Kelvanta renewal seats are 46.', '2025-07-02T09:00:00Z');
+      // Restates the old figure, so it corrects the correction but not the claim it corrected.
+      const refix = await remember('Correction: Kelvanta seats are 52.', '2025-07-03T09:00:00Z');
+      const desks = [];
+      for (const desk of 'abcde') desks.push(await remember(`Kelvanta renewal seats reviewed by desk ${desk}.`, '2025-07-04T09:00:00Z'));
+      await engine.executeRaw("UPDATE facts SET entity_slug = CASE WHEN id = ANY($1::int[]) THEN 'companies/kelvanta' ELSE NULL END WHERE id = ANY($2::int[])",
+        [[old, fix], [old, fix, refix, ...desks]]);
+      const { facts } = await search('Kelvanta renewal seats');
+      const returned = new Set(facts.map(x => x.id));
+      expect([old, fix, refix].filter(id => returned.has(id))).toEqual([]);
+      for (const x of facts) if (x.corrected_by !== undefined) expect(returned.has(x.corrected_by), String(x.id)).toBe(true);
+    } finally {
+      await engine.setConfig(SAVED_FACTS_SUPERSEDE_KEY, 'false');
+    }
+  });
+});
