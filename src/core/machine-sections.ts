@@ -5,6 +5,7 @@
  * grammar (src/core/line-grammar.ts) never reads a typed relation or a fact
  * line inside them: writers fill these sections with per-event references.
  */
+import { stripCodeBlocks } from './markdown-code.ts';
 
 /**
  * Content index ranges where the page-role prior must NOT apply: the
@@ -47,4 +48,21 @@ export function inSuppressedRange(ranges: Array<[number, number]>, idx: number):
     if (idx >= start && idx < end) return true;
   }
   return false;
+}
+
+/**
+ * The text the page-role priors read their trigger from (#7882): `text` without its machine-written sections
+ * (rolePriorSuppressedRanges), the sections whose links never receive the prior either. `open` are the headings
+ * still open before `text` (a segmented block, openHeadings), so a section that began in an earlier block still counts.
+ */
+export function roleTriggerText(text: string, open: ReadonlyArray<string | null | undefined> = []): string {
+  const head = open.filter(Boolean).map(h => `${h}\n`).join('');
+  let kept = '';
+  let at = 0;
+  for (const [start, end] of rolePriorSuppressedRanges(stripCodeBlocks(head + text))) {
+    if (end - head.length <= at) continue;
+    if (start - head.length > at) kept += `${text.slice(at, start - head.length)}\n`;
+    at = end - head.length;
+  }
+  return kept + text.slice(at);
 }

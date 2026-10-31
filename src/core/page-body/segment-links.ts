@@ -18,9 +18,10 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import {
-  candidateKey, dedupeCandidates, extractBodyLinks, frontmatterLinks, LINK_EXTRACTOR_VERSION_TS, rolePriorPhrases, roleTriggerText, stripCodeBlocks,
+  candidateKey, dedupeCandidates, extractBodyLinks, frontmatterLinks, LINK_EXTRACTOR_VERSION_TS, rolePriorPhrases, stripCodeBlocks,
   type BodyLinkCandidate, type ExtractPageLinksOptions, type PageLinksResult, type SlugResolver,
 } from '../link-extraction.ts';
+import { roleTriggerText } from '../machine-sections.ts';
 import { canonicalJson } from '../belief/keys.ts';
 import { datedLines, narrativeRefs } from '../link-temporal-evidence.ts';
 import { rangedRelationLines } from '../link-effective.ts';

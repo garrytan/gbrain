@@ -17,7 +17,7 @@ import { ensureWellFormed } from './text-safe.ts';
 import { stripCodeBlocks } from './markdown-code.ts';
 import { maskLinksFence } from './links-fence.ts';
 import { targetTakesVerb } from './link-target-roles.ts';
-import { inSuppressedRange, rolePriorSuppressedRanges } from './machine-sections.ts';
+import { inSuppressedRange, roleTriggerText, rolePriorSuppressedRanges } from './machine-sections.ts';
 import { statedRelationTypes } from './line-grammar.ts';
 import { isValidSourceId } from './source-id.ts';
 import { isDatedTimelineLine, parseInlineCitationTimelineEntries, TIMELINE_LINE_RE, TIMELINE_LINE_RE_CN } from './timeline-citations.ts';
@@ -1343,23 +1343,6 @@ const ADVISOR_ROLE_RE = /\b(?:full-time advisor|professional advisor|advises (?:
 /** The first match of each page-role prior in `text`: joined with newlines, they decide every prior exactly as the whole text does (no prior crosses a line). */
 export function rolePriorPhrases(text: string): Array<string | null> {
   return [PARTNER_ROLE_RE, ADVISOR_ROLE_RE, EMPLOYEE_ROLE_RE].map(re => re.exec(text)?.[0] ?? null);
-}
-
-/**
- * The text the page-role priors read their trigger from (#7882): `text` without its machine-written sections
- * (rolePriorSuppressedRanges), the sections whose links never receive the prior either. `open` are the headings
- * still open before `text` (a segmented block, openHeadings), so a section that began in an earlier block still counts.
- */
-export function roleTriggerText(text: string, open: ReadonlyArray<string | null | undefined> = []): string {
-  const head = open.filter(Boolean).map(h => `${h}\n`).join('');
-  let kept = '';
-  let at = 0;
-  for (const [start, end] of rolePriorSuppressedRanges(stripCodeBlocks(head + text))) {
-    if (end - head.length <= at) continue;
-    if (start - head.length > at) kept += `${text.slice(at, start - head.length)}\n`;
-    at = end - head.length;
-  }
-  return kept + text.slice(at);
 }
 
 const EMPLOYEE_ROLE_RE = /\b(?:is an? (?:senior|staff|principal|lead|backend|frontend|full-?stack|ML|data|security|DevOps|platform)? ?engineer at|is an? (?:senior|staff|principal|lead)? ?(?:developer|designer|product manager|engineering manager|director|VP) (?:at|of)|holds? the (?:CTO|CEO|CFO|COO|CMO|CRO|VP) (?:role|position|seat|title) at|is the (?:CTO|CEO|CFO|COO|CMO|CRO) of|employee at|on the team at|works on .{0,30} at)\b/i;
