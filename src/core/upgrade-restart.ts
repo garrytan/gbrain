@@ -32,6 +32,7 @@
  *   warm CLI socket, when serve had one, accepts this build.
  */
 import { basename, resolve } from 'node:path';
+import { parseGlobalFlags } from './cli-options.ts';
 
 export type ProcessRole = 'serve' | 'autopilot' | 'supervisor' | 'worker' | 'mcp' | 'sync';
 
@@ -203,11 +204,16 @@ export interface RestartPlan {
 
 const label = (p: Pick<HostProcess, 'role' | 'pid' | 'version'>) => `${p.role} pid ${p.pid} (${p.version ? `v${p.version}` : 'build not recorded'})`;
 
-/** The supervisor's stop and start commands from the arguments it runs with, so the restart keeps its queue, concurrency and PID file. */
+/**
+ * The supervisor's stop and start commands from the arguments it runs with, so the restart keeps its queue, concurrency and PID file.
+ * A `--flag=value` token that is neither a global flag nor --job-isolation was ignored by the supervisor that holds it (an older release) and is refused by this one, so it is dropped: the restart runs what the supervisor applied.
+ */
 export function supervisorRestartArgv(args: readonly string[]): { stop: string[]; start: string[]; pid_file: string | null } {
-  const rest = args.slice(args.indexOf('supervisor') + 1).filter(arg => arg !== 'start' && arg !== '--detach' && arg !== '--json');
-  const at = rest.findIndex(arg => arg === '--pid-file' || arg.startsWith('--pid-file='));
-  const pidFile = at === -1 ? null : rest[at]!.includes('=') ? rest[at]!.slice('--pid-file='.length) : rest[at + 1] ?? null;
+  let local: ReadonlySet<string> = new Set();
+  try { local = new Set(parseGlobalFlags([...args]).rest); } catch { /* an unparseable global flag: keep every token, as before */ }
+  const rest = args.slice(args.indexOf('supervisor') + 1).filter(arg => arg !== 'start' && arg !== '--detach' && arg !== '--json' && !(/^--[^=]+=/.test(arg) && local.has(arg) && !arg.startsWith('--job-isolation=')));
+  const at = rest.indexOf('--pid-file');
+  const pidFile = at === -1 ? null : rest[at + 1] ?? null;
   return {
     stop: ['gbrain', 'jobs', 'supervisor', 'stop', ...(pidFile ? ['--pid-file', pidFile] : []), '--json'],
     start: ['gbrain', 'jobs', 'supervisor', 'start', '--detach', ...rest, '--json'],

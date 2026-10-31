@@ -1,7 +1,7 @@
 /**
  * #5530: the effect runner coalesces ready single-file Git effects.
  *
- * The v0.13.1 grandfather step admits one put_page per page; before this fix
+ * A bulk rewrite admits one put_page per page; before this fix
  * every page's Git effect made its own `git commit` and its own synchronous
  * `git push`. The runner now claims up to 100 ready single-file Git effects
  * for the same worktree, validates each path under the worktree lock, makes
@@ -22,18 +22,18 @@ import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
-import { phaseCGrandfather } from '../src/commands/migrations/v0_13_1.ts';
-import { admitCanonicalGrandfather } from '../src/core/persistence/grandfather.ts';
 import { acquireWorktree, claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { activateSharedSkillPersistence } from '../src/core/persistence/skill-activation.ts';
-import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { preparePageAdmission, submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { admitWrite } from '../src/core/persistence/journal.ts';
+import { PAGE_BATCH_MAX_PAGES, submitPageBatch } from '../src/core/persistence/page-batch.ts';
 import { disposePersistenceConsumer, startPersistenceConsumer } from '../src/core/persistence/service.ts';
 import { claimCoalescedGitEffects } from '../src/core/persistence/effect-journal.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
-import { type Repo, bindSource, createGitCoalescingFixture, effectSql, git, gitStates, harden, pageContent, pass, pauseGitEffects, putPage, release, seed, seedSequentially } from './helpers/git-coalescing-fixture.ts';
+import { type Repo, bindSource, createGitCoalescingFixture, effectSql, git, gitStates, harden, pageContent, pageSlug, pass, pauseGitEffects, putPage, release, seed, seedSequentially } from './helpers/git-coalescing-fixture.ts';
 
 const { makeRepo, withBrain, dispose } = createGitCoalescingFixture('5530');
 afterAll(dispose);
@@ -44,6 +44,15 @@ function stubGit(home: string, body: string): string {
   writeFileSync(join(dir, 'git'), `#!/bin/sh\n${body}\n`);
   chmodSync(join(dir, 'git'), 0o755);
   return dir;
+}
+
+/** Update pages 0..count-1 through put_pages batches: one managed Git effect per page, as a bulk rewrite admits. */
+async function updateBurst(ctx: OperationContext, count: number): Promise<void> {
+  for (let start = 0; start < count; start += PAGE_BATCH_MAX_PAGES) {
+    const pages = await Promise.all(Array.from({ length: Math.min(PAGE_BATCH_MAX_PAGES, count - start) }, async (_, k) => ({ slug: pageSlug(start + k), content: pageContent(start + k, ' updated'),
+      expected_revision: (await ctx.engine.readPageSnapshot(pageSlug(start + k), { sourceId: 'default' }))!.revision })));
+    expect((await submitPageBatch(ctx, { request_id: randomUUID(), pages })).state).toBe('committed');
+  }
 }
 
 const PAGES = Number(process.env.GBRAIN_TEST_COALESCE_PAGES ?? 250);
@@ -96,13 +105,13 @@ for (const kind of testBackends()) describe(`#5530 Git effect coalescing (${kind
     expect(await snapshot(seed)).toEqual(sequential);
   }, 300_000);
 
-  test(`${PAGES} grandfathered pages give ${Math.ceil(PAGES / 100)} commits and 1 push; an interleaved write still completes`, () => withBrain(kind, async ({ engine, home, ctx }) => {
+  test(`${PAGES - 1} updated pages plus one write give ${Math.ceil(PAGES / 100)} commits and 1 push; an interleaved write still completes`, () => withBrain(kind, async ({ engine, home, ctx }) => {
     const repo = makeRepo(home, 'content');
     await bindSource(engine, 'default', repo);
     await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
     // The seed's own Git effects are setup, not under test: hold them while
     // seeding (the consumer would otherwise probe the worktree once per page)
-    // and apply them all here, before hardening, so only the grandfather's and
+    // and apply them all here, before hardening, so only the update burst's and
     // the interleaved write's effects are pending below.
     await pauseGitEffects(engine, () => seed(ctx('default'), PAGES - 1));
     for (let i = 0; (await gitStates(engine)).queued && i < 50; i++) { await release(engine); await pass(engine); }
@@ -110,9 +119,8 @@ for (const kind of testBackends()) describe(`#5530 Git effect coalescing (${kind
     harden(repo);
     const commitsBefore = repo.commits();
     await pauseGitEffects(engine, async () => {
-      const result = await phaseCGrandfather(engine, { yes: true, dryRun: false, noAutopilotInstall: true } as never);
-      expect(result.detail).toMatchObject({ touched: PAGES - 1, failed: 0 });
-      // An ordinary write on the same source publishes while the grandfather's Git work is still pending.
+      await updateBurst(ctx('default'), PAGES - 1);
+      // An ordinary write on the same source publishes while the update burst's Git work is still pending.
       const ordinary = await submitPageMutation(ctx('default'), { operation: 'put_page', params: { slug: 'notes/ordinary', request_id: randomUUID(), content: pageContent(9999) } }) as { state?: string };
       expect(ordinary.state).toBe('committed');
     });
@@ -209,8 +217,9 @@ for (const kind of testBackends()) describe(`#5530 Git effect coalescing (${kind
     const [target] = await engine.executeRaw<{ id: number; slug: string; source_id: string; source_incarnation: string }>(
       "SELECT p.id,p.slug,p.source_id,s.incarnation AS source_incarnation FROM pages p JOIN sources s ON s.id=p.source_id WHERE p.slug='notes/page-0500'");
     // Admitted and not yet published: the publication is queued for the same worktree.
-    const admitted = await admitCanonicalGrandfather(engine, target!, () => {});
-    expect(admitted.status).toBe('admitted');
+    const update = { operation: 'put_page', params: { slug: target!.slug, request_id: randomUUID(), content: pageContent(500, ' updated'),
+      expected_revision: (await engine.readPageSnapshot(target!.slug, { sourceId: 'default' }))!.revision } };
+    await admitWrite(engine, (await preparePageAdmission(ctx('default'), update)).admission!);
     await release(engine);
     await pass(engine);
     expect(repo.commits()).toBe(commitsBefore);
@@ -222,7 +231,7 @@ for (const kind of testBackends()) describe(`#5530 Git effect coalescing (${kind
     await pass(engine);
     expect(repo.commits() - commitsBefore).toBe(1);
     expect(await gitStates(engine)).toEqual({ committed: 4 });
-    if (admitted.status === 'admitted') expect((await admitted.complete()).revision).toBeTruthy();
+    expect((await submitPageMutation(ctx('default'), update)).state).toBe('committed');
   }), 300_000);
   test('sources sharing one worktree are each validated against their own binding', () => withBrain(kind, async ({ engine, home, ctx }) => {
     const repo = makeRepo(home, 'content');

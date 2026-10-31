@@ -140,13 +140,19 @@ export function strictArgsProblem(spec: StrictSpec, args: readonly string[]): St
   return null;
 }
 
+/** The spec governing `gbrain <command> <sub> ...rest`, or null when the subcommand is not strict here. */
+export function strictSpecFor(command: string, subArgs: readonly string[]): StrictSpec | null {
+  const key = `${command} ${subArgs[0] ?? ''}`;
+  const spec = STRICT_SUBCOMMANDS[key] ?? STRICT_SELF_HELP_SUBCOMMANDS[key];
+  return spec && (!spec.when || spec.when(subArgs.slice(1))) ? spec : null;
+}
+
 /** The `invalid_params` refusal for `gbrain <command> <sub> ...rest`, or null when the subcommand is not strict or the arguments parse. */
 export function strictArgsRefusal(command: string, subArgs: readonly string[]): OperationError | null {
   const key = `${command} ${subArgs[0] ?? ''}`;
-  const spec = STRICT_SUBCOMMANDS[key] ?? STRICT_SELF_HELP_SUBCOMMANDS[key];
+  const spec = strictSpecFor(command, subArgs);
   if (!spec) return null;
   const rest = subArgs.slice(1);
-  if (spec.when && !spec.when(rest)) return null;
   const p = strictArgsProblem(spec, rest);
   if (!p) return null;
   const name = p.token.split('=')[0]!;

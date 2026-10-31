@@ -45,7 +45,7 @@
 
 import { withAdmissionOrigin } from './persistence/admission-origin.ts';
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, statSync, realpathSync } from 'fs';
-import { join } from 'path';
+import { isAbsolute, join } from 'path';
 import { gbrainPath, loadConfig } from './config.ts';
 import type { BrainEngine } from './engine.ts';
 import { createProgress, type ProgressReporter } from './progress.ts';
@@ -1224,7 +1224,7 @@ export async function resolveSourceForDir(
     const matched: string[] = [];
     for (const row of candidates) {
       try {
-        if (realpathSync(row.local_path) === realDir) matched.push(row.id);
+        if (isAbsolute(row.local_path) && realpathSync(row.local_path) === realDir) matched.push(row.id);
       } catch {
         // Stale/unreadable registered path — not a match, keep scanning.
       }
@@ -1285,6 +1285,8 @@ async function runPhaseSync(
     // instead of the global config key. The global key can drift out of
     // git history (force push, GC) causing a full reimport of all files.
     const sourceId = await resolveSourceForDir(engine, brainDir);
+    // #7630: with no matching source, a relative default local_path would leave this sync on the global anchors; refuse like sync does.
+    if (!sourceId) await (await import('./sync-applicability.ts')).assertSyncAnchorAbsolute(engine, { sourceId: 'default' });
     // #5255: managed sync refuses `git pull`; a cycle syncs local HEAD and reports it (explicit sync keeps refusing).
     const managedPullSkipped = pull && await isManagedBrain(engine);
     const result = await performSync(engine, {
@@ -1352,6 +1354,11 @@ async function runPhaseSync(
     const { SyncLockBusyError } = await import('../commands/sync.ts');
     if (e instanceof SyncLockBusyError) {
       return { phase: 'sync', status: 'skipped', duration_ms: 0, summary: 'sync already in progress elsewhere — skipped', details: { syncStatus: 'lock_busy' } };
+    }
+    if ((e as { code?: unknown } | null)?.code === 'sync_anchor_relative') {
+      const { renderAction, cliRenderContext } = await import('./agent-output.ts');
+      const fix = (e as { fix?: Parameters<typeof renderAction>[0] }).fix;
+      return { phase: 'sync', status: 'fail', duration_ms: 0, summary: (e as Error).message, details: { reason: 'sync_anchor_relative' }, error: makeErrorFromException(e), code: 'sync_anchor_relative', ...(fix ? { fix: renderAction(fix, cliRenderContext()) } : {}) };
     }
     if ((e as { code?: unknown } | null)?.code === 'sync_not_applicable') {
       return { phase: 'sync', status: 'skipped', duration_ms: 0, summary: (e as Error).message, details: { reason: 'sync_not_applicable' } };

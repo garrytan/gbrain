@@ -28,6 +28,7 @@ import { parseMarkdown } from '../src/core/markdown.ts';
 import { configureGateway, resetGateway, __setChatTransportForTests } from '../src/core/ai/gateway.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { freezeCorpusSessions } from './helpers/frozen-corpus.ts';
 import { testBackends } from './helpers/test-backends.ts';
 
 const backends = testBackends();
@@ -136,6 +137,7 @@ for (const managed of [true, false]) describe(`${managed ? 'managed' : 'unmanage
       writeSession(corpus, 'sess-alice', 'the durable storage plan', 'alice-desk');
       writeSession(corpus, 'sess-bob', 'the household budget review', 'bob-desk');
       writeSession(corpus, 'sess-plain', 'the garden watering schedule');
+      freezeCorpusSessions(corpus, sourceId);
       const opts = { brainDir: root, sourceId, dryRun: false };
       const first = await runPhaseSynthesize(engine, opts);
       expect(first).toMatchObject({ status: 'ok' });

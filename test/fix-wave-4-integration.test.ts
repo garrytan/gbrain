@@ -77,8 +77,8 @@ test('X1: an upgrade from v178 builds the request indexes; managed working-tree 
     await engine.executeRaw('DROP INDEX IF EXISTS persistence_requests_sync_run_committed');
     await engine.setConfig('version', '178');
     expect(await runMigrations(engine)).toEqual({ applied: LATEST_VERSION - 178, current: LATEST_VERSION });
-    // #6511/#6757: the online-built set is the checkpoint pair, the purge slug index and the request-id index.
-    expect((await readRequestIndexStates(engine)).map(index => index.state)).toEqual(['valid', 'valid', 'valid', 'valid']);
+    // #6511/#6757/#7649: the online-built set is the checkpoint pair, the purge slug index, the request-id index and the claims' foreground-commit index.
+    expect((await readRequestIndexStates(engine)).map(index => index.state)).toEqual(['valid', 'valid', 'valid', 'valid', 'valid']);
     expect((await requestIndexesCheck(engine)).status).toBe('ok');
 
     const id = `x1-${randomUUID().slice(0, 8)}`, root = join(home, id);
@@ -230,7 +230,7 @@ test('X11: the remediation run reaches every new repair kind, runs the free ones
     const byKind = Object.fromEntries(run.repairs.map((r: { kind: string }) => [r.kind, r]));
     expect(byKind['request-indexes']).toMatchObject({ status: 'completed' });
     expect(byKind['orphan-bindings']).toMatchObject({ status: 'completed' });
-    expect((await readRequestIndexStates(engine)).map(index => index.state)).toEqual(['valid', 'valid', 'valid', 'valid']);
+    expect((await readRequestIndexStates(engine)).map(index => index.state)).toEqual(['valid', 'valid', 'valid', 'valid', 'valid']);
     expect(await engine.executeRaw("SELECT 1 FROM persistence_source_bindings WHERE source_id='x11-orphan'")).toEqual([]);
     const replanned = (await planRepairSteps(engine, { noEmbed: true })).map(step => step.kind);
     expect(replanned).not.toContain('request-indexes');

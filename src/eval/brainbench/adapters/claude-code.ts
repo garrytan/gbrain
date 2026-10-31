@@ -229,6 +229,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
       userPromptDeadlineMs: BENCH_USER_PROMPT_DEADLINE_MS,
       configOverride: cfg,
       disablePushBanner: true,
+      turnRule: null,
       // Telemetry paths resolve from GBRAIN_HOME/homedir, not configOverride
       // — without this, every fixture turn appends to the OPERATOR's real
       // hook heartbeat history (codex ship-review).

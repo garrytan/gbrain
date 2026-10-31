@@ -30,6 +30,8 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
     ? [{ page_kind: pageKinds.get(Number(params?.[0])) ?? 'markdown' }]
     : sql === 'SELECT archived FROM sources WHERE id=$1' ? [{ archived: false }]
     : sql.includes('FROM persistence_brain') ? [{ enabled: false }]
+    // The per-page embedding lease (src/core/page-embedding-lease.ts) is always free, and its install-time renewal always holds, in this single-process mock.
+    : sql.startsWith('INSERT INTO gbrain_cycle_locks') || sql.startsWith('UPDATE gbrain_cycle_locks') ? [{ id: params?.[0] }]
     : executeRaw(sql, params);
   const calls: { method: string; args: any[] }[] = [];
   const track = (method: string) => (...args: any[]) => {

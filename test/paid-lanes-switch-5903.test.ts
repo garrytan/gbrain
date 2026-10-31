@@ -29,6 +29,7 @@ if (!aggregate?.run || !aggregate.env) throw new Error('e2e-status has no "Aggre
 const GREEN = {
   JSONB: 'success',
   TIER1: 'success',
+  GRADUATION: 'success',
   BACKEND_MATRIX: 'success',
   POSTGRES15: 'success',
   TIER2: 'success',
@@ -63,7 +64,7 @@ function runAggregate(overrides: Partial<typeof GREEN>) {
 
 describe('#5903 GBRAIN_PAID_LANES switches every paid lane off', () => {
   test('tier2 is gated on the variable and e2e-status reads it from env', () => {
-    expect(e2eJobs.tier2.if).toBe("format('{0}', vars.GBRAIN_PAID_LANES) != '0'");
+    expect(e2eJobs.tier2.if).toBe("format('{0}', vars.GBRAIN_PAID_LANES) != '0' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus))");
     expect(aggregate!.env!.GBRAIN_PAID_LANES).toBe('${{ vars.GBRAIN_PAID_LANES }}');
     expect(aggregate!.env!.TIER2).toBe('${{ needs.tier2.result }}');
     expect(e2eJobs['e2e-status'].needs).toContain('tier2');
@@ -118,15 +119,15 @@ describe('#5903 e2e-status accepts a skipped tier2 only under GBRAIN_PAID_LANES=
     expect(runAggregate({}).status).toBe(0);
   });
 
-  test('tier2 skipped with the variable unset fails', () => {
-    const r = runAggregate({ TIER2: 'skipped' });
+  test('tier2 skipped on the nightly with the variable unset fails', () => {
+    const r = runAggregate({ TIER2: 'skipped', FULL_CORPUS: 'true' });
     expect(r.status).toBe(1);
     expect(r.stdout).toContain('gated e2e job did not succeed (got skipped)');
   });
 
-  test("tier2 skipped with the variable at '1' or 'false' fails", () => {
-    expect(runAggregate({ TIER2: 'skipped', GBRAIN_PAID_LANES: '1' }).status).toBe(1);
-    expect(runAggregate({ TIER2: 'skipped', GBRAIN_PAID_LANES: 'false' }).status).toBe(1);
+  test("tier2 skipped on the nightly with the variable at '1' or 'false' fails", () => {
+    expect(runAggregate({ TIER2: 'skipped', FULL_CORPUS: 'true', GBRAIN_PAID_LANES: '1' }).status).toBe(1);
+    expect(runAggregate({ TIER2: 'skipped', FULL_CORPUS: 'true', GBRAIN_PAID_LANES: 'false' }).status).toBe(1);
   });
 
   test("tier2 skipped with the variable at '0' passes and says it is not coverage", () => {
@@ -137,13 +138,28 @@ describe('#5903 e2e-status accepts a skipped tier2 only under GBRAIN_PAID_LANES=
     expect(r.summary).toContain('not green coverage of Tier 2');
   });
 
+  test("tier2 skipped outside the nightly passes and says keys were withheld (GBRA-135 L6)", () => {
+    for (const EVENT of ['workflow_dispatch', 'push', 'merge_group']) {
+      const r = runAggregate({ TIER2: 'skipped', EVENT });
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain('tier2 not run: provider keys are withheld outside the nightly E2E schedule');
+      expect(r.stdout).toContain('::notice::Tier 2 (LLM Skills) not run: keys withheld');
+      expect(r.summary).toContain('not green coverage of Tier 2');
+    }
+  });
+
+  test('outside the nightly a failed or cancelled tier2 still fails', () => {
+    expect(runAggregate({ TIER2: 'failure' }).status).toBe(1);
+    expect(runAggregate({ TIER2: 'cancelled' }).status).toBe(1);
+  });
+
   test("the variable at '0' does not excuse a failed or cancelled tier2", () => {
     expect(runAggregate({ TIER2: 'failure', GBRAIN_PAID_LANES: '0' }).status).toBe(1);
     expect(runAggregate({ TIER2: 'cancelled', GBRAIN_PAID_LANES: '0' }).status).toBe(1);
   });
 
   test("the variable at '0' does not excuse any other skipped lane", () => {
-    for (const key of ['JSONB', 'TIER1', 'BACKEND_MATRIX', 'POSTGRES15', 'PREPARE', 'SELECTED'] as const) {
+    for (const key of ['JSONB', 'TIER1', 'GRADUATION', 'BACKEND_MATRIX', 'POSTGRES15', 'PREPARE', 'SELECTED'] as const) {
       const r = runAggregate({ [key]: 'skipped', GBRAIN_PAID_LANES: '0' });
       expect(r.status).toBe(1);
       expect(r.stdout).toContain('got skipped');

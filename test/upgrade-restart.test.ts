@@ -6,6 +6,8 @@
  * heartbeat rows, the service managers and the socket.
  */
 import { describe, expect, test } from 'bun:test';
+import { EQUALS_READERS } from '../src/cli/flag-equals.ts';
+import { parseGlobalFlags } from '../src/core/cli-options.ts';
 import {
   bunGlobalCopyOf, classifyGbrainCommand, collectHostProcesses, mismatchedBuilds, planRestart, restartProblems, runRestartSteps, supervisorRestartArgv, unverifiedBuilds, verifyRestart,
   type HostProcess, type ProcessSources, type RestartContext, type RestartExecutor, type WarmSocketState,
@@ -63,6 +65,23 @@ describe('supervisorRestartArgv', () => {
       pid_file: '/tmp/sup-example.pid',
     });
     expect(DEFAULT_SUP).toEqual({ stop: ['gbrain', 'jobs', 'supervisor', 'stop', '--json'], start: ['gbrain', 'jobs', 'supervisor', 'start', '--detach', '--json'], pid_file: null });
+  });
+
+  test('drops the = values an older supervisor ignored, so the restart runs what it applied and this release does not refuse it', () => {
+    expect(supervisorRestartArgv(['jobs', 'supervisor', 'start', '--concurrency=4', '--pid-file=/tmp/sup-example.pid', '--job-isolation=process', '--queue', 'ingest', '--allow-shell-jobs=true'])).toEqual({
+      stop: ['gbrain', 'jobs', 'supervisor', 'stop', '--json'],
+      start: ['gbrain', 'jobs', 'supervisor', 'start', '--detach', '--job-isolation=process', '--queue', 'ingest', '--json'],
+      pid_file: null,
+    });
+  });
+
+  test('keeps the global flags and every = value the supervisor applied', () => {
+    const argv = ['jobs', 'supervisor', 'start', '--brain=work', '--timeout=30s', '--queue', 'ingest', '--progress-interval=500'];
+    expect(parseGlobalFlags([...argv]).cliOpts.brain).toBe('work');
+    expect(supervisorRestartArgv(argv).start).toEqual(['gbrain', 'jobs', 'supervisor', 'start', '--detach', '--brain=work', '--timeout=30s', '--queue', 'ingest', '--progress-interval=500', '--json']);
+    for (const flag of EQUALS_READERS['jobs supervisor'] ?? []) expect(supervisorRestartArgv(['jobs', 'supervisor', 'start', `${flag}=x`]).start).toContain(`${flag}=x`);
+    expect(() => parseGlobalFlags(['jobs', 'supervisor', 'start', '--wait=abc'])).toThrow();
+    expect(supervisorRestartArgv(['jobs', 'supervisor', 'start', '--wait=abc', '--concurrency=4']).start).toEqual(['gbrain', 'jobs', 'supervisor', 'start', '--detach', '--wait=abc', '--concurrency=4', '--json']);
   });
 });
 

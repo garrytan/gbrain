@@ -938,6 +938,9 @@ export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'co
     `The journal row of request ${row.request_id} in source ${row.source_id} disappeared before its completion was recorded, so no outcome was saved. Inspect the source's requests with the command in fix before submitting anything again.`,
     { fix: ownerStatusFix(row.source_id) });
   if (isTerminal(current)) return current;
+  // G7b: a strict write whose door commit landed before its row keeps naming that commit when it ends without committing.
+  const landed = (current.outcome as { persistence?: { landed_before_row?: boolean } } | null)?.persistence;
+  if (state !== 'committed' && landed?.landed_before_row === true && !('persistence' in outcome)) outcome = { ...outcome, persistence: landed };
   if (row.execution_token !== current.execution_token) throw opError('write_claim_lost', 'Write claim changed before completion.',
     `Another owner pass claimed request ${row.request_id} in source ${row.source_id} before this pass recorded its outcome, so this pass's completion was discarded; the current claim records the final outcome. Inspect the request with the command in fix instead of resubmitting it.`,
     { fix: requestInspectFix(row) });

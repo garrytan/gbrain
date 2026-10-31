@@ -48,6 +48,7 @@ for (const name of ['spawn', 'spawnSync'] as const) {
 
 const kept = gitChildEnv({}, process.env);
 for (const key of Object.keys(process.env)) if (!(key in kept)) delete process.env[key];
+Object.assign(process.env, kept);
 
 const base = Number(process.env.GIT_CONFIG_COUNT ?? '0') || 0;
 const existingKeys: string[] = [];

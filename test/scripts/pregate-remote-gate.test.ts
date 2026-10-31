@@ -11,7 +11,13 @@
  * PREGATE_TREE mismatch reaches the gate, or the default gate is anything
  * but the development form `bun run ci:ubicloud:diff` (the full gate runs
  * once per PR, at handoff).
- * Seam: GBRAIN_PREGATE_GATE_CMD replaces `bun run ci:ubicloud:diff`.
+ * Remote-gate reuse: a clean tree whose Test and E2E full runs passed on GitHub
+ * takes its receipt from them (same line, byte for byte) and starts no gate; a
+ * failed full run refuses; a dirty tree, no repository, GBRAIN_PREGATE_REUSE=0
+ * or no reuse runs the gate.
+ * Seams: GBRAIN_PREGATE_GATE_CMD replaces `bun run ci:ubicloud:diff`,
+ * GBRAIN_PREGATE_REUSE_CMD replaces `bun scripts/ci-reuse.ts --gate`,
+ * GBRAIN_PREGATE_REPO names the repository.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
@@ -46,7 +52,7 @@ afterEach(() => rmSync(repo, { recursive: true, force: true }));
 function run(gate: string, env: Record<string, string | undefined> = {}) {
   const r = spawnSync('bash', [SCRIPT], {
     cwd: repo, encoding: 'utf8',
-    env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', UBI_OWNER: 'gbra0test', PREGATE_TREE: undefined, GBRAIN_PREGATE_GATE_CMD: gate, ...env },
+    env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', UBI_OWNER: 'gbra0test', PREGATE_TREE: undefined, GBRAIN_PREGATE_REPO: undefined, GBRAIN_PREGATE_REUSE: undefined, GBRAIN_PREGATE_REUSE_CMD: undefined, GBRAIN_PREGATE_GATE_CMD: gate, ...env },
   });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
@@ -124,5 +130,104 @@ describe('pregate-remote-gate.sh', () => {
     expect(stale.code).toBe(1);
     expect(stale.err).toContain('not the tree pregate selected');
     expect(spawnSync('test', ['-e', marker]).status).not.toBe(0);
+  });
+
+  describe('reuse of GitHub full runs on the identical tree', () => {
+    const GREEN_GATE = `printf '%s\\n' '=== ci-ubicloud summary ===' '  unit     4 passed, 0 failed, 1s compute'`;
+    const reuser = (body: string) => {
+      const file = join(repo, '.git', 'reuse.sh');
+      writeFileSync(file, `echo "reuse-args: $*" > .git/reuse-args\n${body}\n`);
+      return `bash ${file}`;
+    };
+    const ran = (name: string) => spawnSync('test', ['-e', join(repo, '.git', name)]).status === 0;
+    const gateMarking = `touch .git/gate-ran; ${GREEN_GATE}`;
+    beforeEach(() => git('update-ref', 'refs/remotes/origin/master', 'HEAD'));
+
+    it('runs the reuse check without the model and database keys the gate strips', () => {
+      const keys = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'VOYAGE_API_KEY', 'GEMINI_API_KEY', 'JEV_TYPESAFE_API_KEY', 'DATABASE_URL'];
+      const seen = keys.map(k => `echo "${k}=\${${k}:-unset}" >> .git/reuse-env`).join('; ');
+      run(gateMarking, { GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE_CMD: reuser(`${seen}; exit 4`), ...Object.fromEntries(keys.map(k => [k, 'secret-example'])) });
+      expect(spawnSync('cat', [join(repo, '.git', 'reuse-env')], { encoding: 'utf8' }).stdout.trim().split('\n')).toEqual(keys.map(k => `${k}=unset`));
+    });
+
+    it('a tree that changes the full-ci workflows or the scripts that attest its runs relative to origin/master never reuses its own runs', () => {
+      for (const path of ['.github/workflows/test.yml', '.github/workflows/e2e.yml', 'scripts/ci-reuse.ts', 'scripts/ci-full-suite-tree.sh', 'scripts/ci-executed-counts.ts', 'scripts/lib/gh-issue.ts']) {
+        rmSync(join(repo, '.git', 'reuse-args'), { force: true });
+        rmSync(join(repo, '.git', 'gate-ran'), { force: true });
+        mkdirSync(join(repo, path, '..'), { recursive: true });
+        writeFileSync(join(repo, path), `changed ${path}\n`);
+        git('add', '.');
+        git('commit', '-q', '-m', `change ${path}`);
+        const r = run(gateMarking, { GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE_CMD: reuser("echo 'GBRAIN_REUSE_RESULT tests=9 failed=0'") });
+        expect(ran('reuse-args')).toBe(false);
+        expect(ran('gate-ran')).toBe(true);
+        expect(r.err).toContain(`pregate-remote-gate: the tree changes ${path} relative to origin/master`);
+        expect(r.out.trim().split('\n').at(-1)).toBe(`PREGATE_REMOTE: tree=${contentTree()} tests=4 failed=0`);
+        git('update-ref', 'refs/remotes/origin/master', 'HEAD');
+      }
+      // Without origin/master to compare against, reuse is not trusted either.
+      git('update-ref', '-d', 'refs/remotes/origin/master');
+      rmSync(join(repo, '.git', 'reuse-args'), { force: true });
+      run(gateMarking, { GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE_CMD: reuser("echo 'GBRAIN_REUSE_RESULT tests=9 failed=0'") });
+      expect(ran('reuse-args')).toBe(false);
+    });
+
+    it('takes the receipt from the full runs, with the gate\'s exact line, and starts no gate', () => {
+      const r = run(gateMarking, { GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE_CMD: reuser("echo '[ci-reuse] gate: Test run passed'; echo 'GBRAIN_REUSE_RESULT tests=58853 failed=0'") });
+      const tree = git('rev-parse', 'HEAD^{tree}');
+      expect(r.out.endsWith(`PREGATE_REMOTE: tree=${tree} tests=58853 failed=0\n`)).toBe(true);
+      expect(r.code).toBe(0);
+      expect(ran('gate-ran')).toBe(false);
+      expect(spawnSync('cat', [join(repo, '.git', 'reuse-args')], { encoding: 'utf8' }).stdout.trim())
+        .toBe(`reuse-args: --sha ${git('rev-parse', 'HEAD')} --tree ${tree} --repo owner-example/repo-example`);
+    });
+
+    it('a full run on the tree that failed refuses: exit 1, no receipt, no gate', () => {
+      const r = run(gateMarking, { GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE_CMD: reuser('exit 3') });
+      expect(r.out).not.toContain('PREGATE_REMOTE:');
+      expect(r.err).toContain(`pregate-remote-gate: a full run on tree ${git('rev-parse', 'HEAD^{tree}')} failed`);
+      expect(r.code).toBe(1);
+      expect(ran('gate-ran')).toBe(false);
+    });
+
+    it('a reused run that recorded failed tests prints its receipt with exit 1, and starts no gate', () => {
+      const r = run(gateMarking, { GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE_CMD: reuser("echo 'GBRAIN_REUSE_RESULT tests=10 failed=2'") });
+      expect(r.out.endsWith(`PREGATE_REMOTE: tree=${git('rev-parse', 'HEAD^{tree}')} tests=10 failed=2\n`)).toBe(true);
+      expect(r.code).toBe(1);
+      expect(ran('gate-ran')).toBe(false);
+    });
+
+    it('a reuse step that exits 0 without a result line, or exits with any other code, runs the gate', () => {
+      for (const body of ["echo '[ci-reuse] gate: something'", 'exit 2']) {
+        rmSync(join(repo, '.git', 'gate-ran'), { force: true });
+        const r = run(gateMarking, { GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE_CMD: reuser(body) });
+        expect(ran('gate-ran')).toBe(true);
+        expect(r.out.trim().split('\n').at(-1)).toBe(`PREGATE_REMOTE: tree=${contentTree()} tests=4 failed=0`);
+        expect(r.code).toBe(0);
+      }
+    });
+
+    it('no reuse runs the gate, whose summary is the receipt', () => {
+      const r = run(gateMarking, { GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE_CMD: reuser('exit 4') });
+      expect(ran('gate-ran')).toBe(true);
+      expect(r.out.trim().split('\n').at(-1)).toBe(`PREGATE_REMOTE: tree=${contentTree()} tests=4 failed=0`);
+      expect(r.code).toBe(0);
+    });
+
+    it('a dirty tree, GBRAIN_PREGATE_REUSE=0 or no repository never asks for reuse', () => {
+      const env = { GBRAIN_PREGATE_REUSE_CMD: reuser("echo 'GBRAIN_REUSE_RESULT tests=9 failed=0'") };
+      run(gateMarking, { ...env, GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE: '0' });
+      run(gateMarking, env);
+      writeFileSync(join(repo, 'edited.txt'), 'not committed\n');
+      const dirty = run(gateMarking, { ...env, GBRAIN_PREGATE_REPO: 'owner-example/repo-example' });
+      expect(ran('reuse-args')).toBe(false);
+      expect(dirty.out.trim().split('\n').at(-1)).toBe(`PREGATE_REMOTE: tree=${contentTree()} tests=4 failed=0`);
+    });
+
+    it('reads the repository from the origin remote', () => {
+      git('remote', 'add', 'origin', 'https://git.example.invalid/owner-example/repo-example.git');
+      run(gateMarking, { GBRAIN_PREGATE_REUSE_CMD: reuser('exit 4') });
+      expect(spawnSync('cat', [join(repo, '.git', 'reuse-args')], { encoding: 'utf8' }).stdout).toContain('--repo owner-example/repo-example');
+    });
   });
 });

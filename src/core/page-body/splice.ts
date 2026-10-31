@@ -395,7 +395,8 @@ export async function spliceSegmentedBody(engine: BrainEngine, input: SegmentedS
     };
     const chunkable = await occurrencesWithoutChunks(engine, page.id, page.generation, changed);
     const chunks = await stageOccurrenceChunks(engine, { pageId: page.id, sourceId: input.sourceId, slug: input.slug, generation, occurrences: chunkable,
-      title: page.title, frontmatter: input.frontmatter, flags: body.body_flags, chunking: input.chunking, retiredOccurrences: retireChunkOccurrences });
+      title: page.title, frontmatter: input.frontmatter, flags: body.body_flags, chunking: input.chunking, retiredOccurrences: retireChunkOccurrences,
+      truthLead: body.truth_lead });
     await faultPoint('segmented:chunks_staged', { sourceId: input.sourceId });
     const kept = new Set(out.filter(item => !fresh.includes(item)).map(item => item.row.occurrenceId));
     retireChunkOccurrences.push(...chunkable.filter(row => kept.has(row.occurrenceId)).map(row => row.occurrenceId));

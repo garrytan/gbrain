@@ -41,6 +41,7 @@ import { collapseHotFacts } from './capture-dedup.ts';
 import { proactiveEligibility } from '../eligibility/registry.ts';
 import { partitionForActivation, suppressionSummary } from '../eligibility/activation.ts';
 import { trustFields } from '../eligibility/labels.ts';
+import { quoteFacts } from '../search/transcript-quote.ts';
 import { eligibilityCacheField, readTrustGeneration } from '../eligibility/generation.ts';
 import { callerRelaxesPrivacy, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { isConfigTruthy } from '../config.ts';
@@ -249,7 +250,8 @@ export async function getBrainHotMemoryMeta(
       source_id: sourceId,
       session_id: sessionId,
       ...(suppressed ? { suppressed } : {}),
-      facts: rows.map(r => ({
+      // #8042: a fact saved from a chat page rides the ambient channel quoted.
+      facts: (await quoteFacts(ctx.engine, rows)).map(r => ({
         id: r.id,
         fact: r.fact,
         kind: r.kind,
@@ -270,6 +272,7 @@ export async function getBrainHotMemoryMeta(
         ...(r.attributed_to ? { attributed_to: r.attributed_to } : {}),
         ...trustFields(r.trust_tier, r.write_origin),
         ...(unconfirmed.has(r.id) ? { unconfirmed: true as const } : {}),
+        ...(r.quoted ? { quoted: r.quoted } : {}),
       })),
     },
   };

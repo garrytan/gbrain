@@ -12,7 +12,7 @@
 #   BENCH_MAX_USD   per-embed cap passed to gbrain embed --max-usd (default 2)
 #   BENCH_PG_PORT   host port of the pgvector container (default 5440)
 #   BENCH_PG_CONTAINER  pgvector container name (default gbrain-bench-pg)
-#   BUN             bun >= 1.4 binary (default: bun on PATH)
+#   BUN             bun >= 1.4.4 binary (default: bun on PATH)
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BUN="${BUN:-bun}"

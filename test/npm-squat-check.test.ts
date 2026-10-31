@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import {
   assessGbrainBinaries,
   classifyGbrainBinary,
+  classifyGlobalGbrainPackage,
 } from '../src/core/npm-squat-check.ts';
 
 let root: string;
@@ -203,5 +204,107 @@ describe('assessGbrainBinaries', () => {
   test('duplicate PATH entries deduped', () => {
     const a = assessGbrainBinaries([realBinShapeLink, realBinShapeLink]);
     expect(a.binaries.length).toBe(1);
+  });
+});
+
+describe('global installs (npm root -g, Bun global dir)', () => {
+  let npmForeign: string; // <npm root -g>/gbrain, an unrelated package
+  let bunGlobalRoot: string;
+  let bunForeign: string; // <bun global>/node_modules/gbrain, an unrelated package
+  let realGlobal: string; // this project installed globally
+
+  beforeAll(() => {
+    npmForeign = join(root, 'npm-prefix', 'lib', 'node_modules', 'gbrain');
+    makePkg(npmForeign, { name: 'gbrain', version: '1.0.0', bin: { gbrain: 'cli.js' } });
+    bunGlobalRoot = join(root, 'bun-home', 'install', 'global');
+    bunForeign = join(bunGlobalRoot, 'node_modules', 'gbrain');
+    makePkg(bunForeign, { name: 'gbrain', version: '1.0.0', bin: { gbrain: 'cli.js' } });
+    realGlobal = join(root, 'real-prefix', 'node_modules', 'gbrain');
+    makePkg(realGlobal, { name: 'gbrain', version: '0.60.0.0', bin: { gbrain: 'src/cli.ts' } }, join('src', 'cli.ts'));
+  });
+
+  test('classifies a global package directory, null when nothing named gbrain is there', () => {
+    expect(classifyGlobalGbrainPackage(npmForeign)).toMatchObject({ kind: 'foreign', global: true });
+    expect(classifyGlobalGbrainPackage(realGlobal)).toMatchObject({ kind: 'real', global: true });
+    expect(classifyGlobalGbrainPackage(join(root, 'nowhere', 'gbrain'))).toBeNull();
+  });
+
+  test('unrelated global package and no gbrain on PATH → warn with remove, reinstall and #218 recovery', () => {
+    const a = assessGbrainBinaries([], { globalPackages: [npmForeign], npmRoot: join(root, 'npm-prefix', 'lib', 'node_modules') });
+    expect(a.status).toBe('warn');
+    expect(a.message).toContain('installed globally');
+    expect(a.message).toContain('no real gbrain is on PATH');
+    expect(a.message).toContain('bun install -g github:garrytan/gbrain#latest-stable');
+    expect(a.message).toContain('#218');
+    expect(a.message).toContain('gbrain apply-migrations --yes --no-autopilot-install');
+    expect(a.fix).toMatchObject({
+      argv: ['npm', 'uninstall', '-g', 'gbrain'],
+      ask_user: true,
+      verify: { argv: ['gbrain', 'doctor', '--only', 'npm_squat', '--json'] },
+    });
+    expect(a.fix!.then!.argv).toEqual(['bun', 'install', '-g', 'github:garrytan/gbrain#latest-stable']);
+    expect(a.fix!.then!.then!.argv).toEqual(['gbrain', 'apply-migrations', '--yes', '--no-autopilot-install']);
+  });
+
+  test('an unrelated package in Bun\'s global dir is removed with Bun', () => {
+    const a = assessGbrainBinaries([], { globalPackages: [bunForeign], bunGlobalRoot });
+    expect(a.status).toBe('warn');
+    expect(a.fix!.argv).toEqual(['bun', 'remove', '-g', 'gbrain']);
+  });
+
+  test('foreign shadowing real on PATH → fix removes it without reinstalling', () => {
+    const a = assessGbrainBinaries([foreignLink, realBinShapeLink], { npmRoot: join(root, 'global', 'node_modules') });
+    expect(a.fix!.argv).toEqual(['npm', 'uninstall', '-g', 'gbrain']);
+    expect(a.fix!.then).toBeUndefined();
+  });
+
+  test('only foreign on PATH → fix removes it and reinstalls', () => {
+    const a = assessGbrainBinaries([foreignLink], { npmRoot: join(root, 'global', 'node_modules') });
+    expect(a.fix!.argv).toEqual(['npm', 'uninstall', '-g', 'gbrain']);
+    expect(a.fix!.then!.argv).toEqual(['bun', 'install', '-g', 'github:garrytan/gbrain#latest-stable']);
+  });
+
+  test('a global package PATH already reaches is listed once', () => {
+    const a = assessGbrainBinaries([foreignLink], { globalPackages: [join(root, 'global', 'node_modules', 'gbrain')] });
+    expect(a.binaries.length).toBe(1);
+    expect(a.message).toContain('on PATH resolves to an unrelated npm package');
+  });
+
+  test('real on PATH with an unrelated global package behind it → ok, noted', () => {
+    const a = assessGbrainBinaries([realBinShapeLink], { globalPackages: [npmForeign] });
+    expect(a.status).toBe('ok');
+    expect(a.message).toContain('also installed');
+    expect(a.fix).toBeUndefined();
+  });
+
+  test('a foreign package outside npm and Bun global roots gets no runnable remove command', () => {
+    const a = assessGbrainBinaries([foreignLink], { npmRoot: join(root, 'npm-prefix', 'lib', 'node_modules'), bunGlobalRoot });
+    expect(a.status).toBe('warn');
+    expect(a.fix!.argv).toBeUndefined();
+    expect(a.fix!.actor).toBe('user');
+    expect(a.fix!.then).toBeUndefined();
+    expect(a.fix!.user_message).toContain('package manager that installed it');
+  });
+
+  test('an unidentified gbrain on PATH before an unrelated global package → remove only, no reinstall', () => {
+    const wrapperDir = join(root, 'wrapper-bin');
+    mkdirSync(wrapperDir, { recursive: true });
+    writeFileSync(join(wrapperDir, 'gbrain'), '#!/bin/sh\nexec bun "$HOME/gbrain/src/cli.ts" "$@"\n');
+    const a = assessGbrainBinaries([join(wrapperDir, 'gbrain')], { globalPackages: [npmForeign], npmRoot: join(root, 'npm-prefix', 'lib', 'node_modules') });
+    expect(a.status).toBe('warn');
+    expect(a.message).not.toContain('no real gbrain is on PATH');
+    expect(a.fix!.argv).toEqual(['npm', 'uninstall', '-g', 'gbrain']);
+    expect(a.fix!.then).toBeUndefined();
+  });
+
+  test('doctor running from this project counts as a real gbrain → remove only, no reinstall', () => {
+    const a = assessGbrainBinaries([], { globalPackages: [npmForeign], npmRoot: join(root, 'npm-prefix', 'lib', 'node_modules'), selfDir: join(realGlobal, 'src') });
+    expect(a.status).toBe('warn');
+    expect(a.message).not.toContain('no real gbrain is on PATH');
+    expect(a.fix!.then).toBeUndefined();
+  });
+
+  test('a real global package or an empty global dir adds nothing', () => {
+    expect(assessGbrainBinaries([], { globalPackages: [realGlobal, join(root, 'nowhere', 'gbrain')] }).status).toBe('skip');
   });
 });

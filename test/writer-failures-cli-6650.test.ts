@@ -50,6 +50,7 @@ describe('sources writer failures', () => {
       operation: 'writer_failures', params: { source_id: SOURCE, group_by: 'category', limit: 5 }, json: true });
     expect(parsePersistenceAdminArgs('writer', ['failures', SOURCE, '--state', 'all', '--since', '3d', '--origin', 'none', '--before', '12'])).toMatchObject({
       operation: 'writer_failures', params: { source_id: SOURCE, state: 'all', since: '3d', origin: 'none', before: '12' }, json: false });
+    expect(parsePersistenceAdminArgs('writer', ['failures', SOURCE, '--code', 'preparation_stalled', '--operation', 'put_page']).params).toMatchObject({ code: 'preparation_stalled', operation: 'put_page' });
   });
 
   test('refuses bad options, a missing source and an archived one with the usage to fix it', async () => {
@@ -61,6 +62,7 @@ describe('sources writer failures', () => {
     await expect(run({ source_id: SOURCE, group_by: 'slug' })).rejects.toMatchObject({ code: 'invalid_params', message: 'Invalid --group-by value.' });
     await expect(run({ source_id: SOURCE, limit: 0 })).rejects.toMatchObject({ code: 'invalid_params', message: 'Invalid --limit value.' });
     await expect(run({ source_id: SOURCE, before: 'abc' })).rejects.toMatchObject({ code: 'invalid_params', message: 'Invalid --before value.' });
+    await expect(run({ source_id: SOURCE, operation: 'Bad-Op' })).rejects.toMatchObject({ code: 'invalid_params', message: 'Invalid --operation value.' });
     await expect(run({ source_id: SOURCE, slug: 'x' })).rejects.toMatchObject({ code: 'invalid_params' });
   });
 
@@ -126,16 +128,17 @@ describe('capability handshake across releases', () => {
     'company_brain_resume', 'writer_reconcile_preview', 'writer_reconcile_apply', 'writer_reconcile_audit', 'writer_reconcile_backups',
     'trust_read', 'trust_preview', 'trust_apply'];
 
-  test('a new owner keeps the frozen list and advertises writer_failures and writer_transfer_cancel as extensions', async () => {
+  test('a new owner keeps the frozen list and advertises writer_failures, writer_transfer_cancel and writer_settle_effects as extensions', async () => {
     expect([...PERSISTENCE_ADMIN_OPERATIONS as readonly string[]].sort()).toEqual([...FROZEN].sort());
     const path = socketPath();
     const binding = await startPersistenceIpcServer(path, { brainId: BRAIN, dispatch: async () => ({}), administer: async () => ({}) });
     bindings.push(binding!);
     const capability = await requestPersistenceCapabilities(path);
     expect((capability.administration ?? []).every(op => FROZEN.includes(op))).toBe(true);
-    expect(capability.administration_extensions).toEqual(['writer_failures', 'writer_transfer_cancel']);
+    expect(capability.administration_extensions).toEqual(['writer_failures', 'writer_transfer_cancel', 'writer_settle_effects']);
     expect(ownerAdministers(capability, 'writer_failures')).toBe(true);
     expect(ownerAdministers(capability, 'writer_transfer_cancel')).toBe(true);
+    expect(ownerAdministers(capability, 'writer_settle_effects')).toBe(true);
     expect(ownerAdministers(capability, 'writer_status')).toBe(true);
   });
 

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 264227,
-    "stdoutSha256": "f1f964ec0bac00c293cdf8e2dfdd28c67c75cde928f45b71f189690e93762e67",
+    "stdoutBytes": 264563,
+    "stdoutSha256": "0d71d7f1367627c5f9c27d3d7a9b09513131117000012eed0d35ab9ede69095f",
     "toolNames": [
       "remember",
       "entity",
@@ -838,7 +838,7 @@
         "schema": {
           "properties": {
             "detach": {
-              "description": "Restore a page whose recorded canonical file is gone from the checkout as a database-only page: it forgets the file, so sync never deletes it again. Only accepted when a plain restore refuses with canonical_file_absent; ask the user first.",
+              "description": "Restore a page whose recorded canonical file is gone from the checkout as a database-only page: it forgets the file, so sync never deletes it again. Only accepted when a plain restore refuses with canonical_file_absent, or for a page under a declared storage.db_only dir whose recorded file left the checkout; ask the user first.",
               "type": "boolean"
             },
             "expected_revision": {
@@ -6965,6 +6965,7 @@
         "parameters": {
           "all_subjects": "boolean?",
           "confirm": "string?",
+          "continue": "boolean?",
           "dry_run": "boolean?",
           "expected_revision": "string?",
           "id": "number?",
@@ -6985,6 +6986,10 @@
             "confirm": {
               "description": "The confirmation token from the dry run (first 8 hex of the claim fingerprint).",
               "type": "string"
+            },
+            "continue": {
+              "description": "With status: first continue the purge's sweep of stored derivation results (derivation_sweep pending or stalled), then report.",
+              "type": "boolean"
             },
             "dry_run": {
               "description": "Return the receipt with would-remove counts and the confirmation token; changes nothing.",

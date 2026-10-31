@@ -22,6 +22,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ensureCorpusSpoolDir, sessionCorpusFileName } from '../src/core/context/corpus-segments.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { ALL_PHASES, runCycle, type CycleOpts, type CyclePhase, type PhaseResult } from '../src/core/cycle.ts';
@@ -179,7 +180,7 @@ const MATRIX: Record<CyclePhase, Entry> = {
   synthesize: {
     seed: async ({ engine, sourceId, root }) => {
       await put(engine, sourceId, 'people/example', page('note', 'Example', 'Example evidence.'));
-      writeFileSync(join(root, '2026-09-20-session.txt'), `User: we charge for durability because reliable memories should survive every tool.\n${'Assistant: Discuss the long term roadmap.\n'.repeat(15)}`);
+      writeFileSync(join(ensureCorpusSpoolDir(root), sessionCorpusFileName('2026-09-20-session', sourceId)), `User: we charge for durability because reliable memories should survive every tool.\n${'Assistant: Discuss the long term roadmap.\n'.repeat(15)}`);
     },
     config: { 'dream.synthesize.enabled': 'true', 'dream.synthesize.cooldown_hours': '0', 'dream.synthesize.min_chars': '100',
       'dream.synthesize.link_manifest': 'false', 'dream.synthesize.mode': 'oneshot', 'models.dream.synthesize': 'anthropic:claude-sonnet-4-6',

@@ -50,12 +50,12 @@ async function capabilities(auth: AuthInfo) {
 }
 
 describe('profile surface defaults', () => {
-  test('memory-writer and coding-agent resolve to an operator-set full surface with put_pages in the snapshot', () => {
+  test('memory-writer and coding-agent resolve to an install-default full surface (listing the verbs, GBRA-199) with put_pages in the snapshot', () => {
     const writer = resolveGrantProfile({ profile: 'memory-writer', sourceId: 'default' });
     const coding = resolveGrantProfile({ profile: 'coding-agent', sourceId: 'default', boundSlugPrefixes: ['agents/example/'] });
     for (const grant of [writer, coding]) {
       expect(grant.surface).toBe('full');
-      expect(grant.surfaceSetBy).toBe('operator');
+      expect(grant.surfaceSetBy).toBe('install');
       expect(grant.allowedOperations).toContain('put_pages');
     }
   });
@@ -98,7 +98,7 @@ describe('existing grants widen only through an explicit profile application', (
   async function preD4Writer(name: string) {
     // The shape every pre-D4 memory-writer was minted with: operator-pinned starter.
     const created = await provider.registerClientManual(name, ['client_credentials'], 'read write', [], 'default', undefined, undefined, undefined,
-      { ...resolveGrantProfile({ profile: 'memory-writer', sourceId: 'default' }), surface: 'starter' });
+      { ...resolveGrantProfile({ profile: 'memory-writer', sourceId: 'default' }), surface: 'starter', surfaceSetBy: 'operator' });
     return { created, grant: await readClientGrant(engine, created.clientId) };
   }
 

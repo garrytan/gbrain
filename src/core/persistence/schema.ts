@@ -35,8 +35,20 @@ export const PERSISTENCE_REQUEST_SLUG_INTENT_INDEX = { name: 'persistence_reques
 export const PERSISTENCE_REQUEST_ID_INDEX_SQL = `CREATE INDEX IF NOT EXISTS persistence_requests_request_id
   ON persistence_requests(source_id,request_id)`;
 export const PERSISTENCE_REQUEST_ID_INDEX = { name: 'persistence_requests_request_id', table: 'persistence_requests', sql: PERSISTENCE_REQUEST_ID_INDEX_SQL } as const;
+/**
+ * #7649: the write claims' foreground-commit probe (journal.ts `FOREGROUND_WAITING_ON`: a committed non-sync request on the
+ * worktree after the `syncSeen` bound). After a restart the bound is 0, and with no index on (worktree, sequence) for committed
+ * rows the probe walked the sequence key (or the heap) through every receipt, sync receipts included, on each claim. The
+ * predicate is the probe's `state='committed' AND NOT SYNC_KIND(c)` written the same way, so the planner can use it; like the probe it
+ * also covers compacted receipts of any kind (their intent is NULL), so on a long-lived brain it holds most committed rows. Postgres
+ * builds it CONCURRENTLY in the persistence_foreground_committed_index migration (`transaction: false`); PGLite inline.
+ */
+export const PERSISTENCE_FOREGROUND_COMMITTED_INDEX_SQL = `CREATE INDEX IF NOT EXISTS persistence_requests_foreground_committed
+  ON persistence_requests(worktree_id,sequence) WHERE state='committed' AND NOT COALESCE(intent->>'kind','') LIKE 'managed_sync_%'`;
+export const PERSISTENCE_FOREGROUND_COMMITTED_INDEX = { name: 'persistence_requests_foreground_committed', table: 'persistence_requests', sql: PERSISTENCE_FOREGROUND_COMMITTED_INDEX_SQL } as const;
 /** Every request-table index built online (a migration, then `gbrain repair request-indexes` and doctor `persistence_request_indexes`). */
-export const PERSISTENCE_REQUEST_ONLINE_INDEXES = [...PERSISTENCE_SYNC_RUN_INDEXES, PERSISTENCE_REQUEST_SLUG_INTENT_INDEX, PERSISTENCE_REQUEST_ID_INDEX] as const;
+export const PERSISTENCE_REQUEST_ONLINE_INDEXES = [...PERSISTENCE_SYNC_RUN_INDEXES, PERSISTENCE_REQUEST_SLUG_INTENT_INDEX, PERSISTENCE_REQUEST_ID_INDEX,
+  PERSISTENCE_FOREGROUND_COMMITTED_INDEX] as const;
 /**
  * #6317: the movement watermark (the newest committed receipt of a worktree)
  * that `writer movement`, `data_moving` and doctor `managed_sync_not_moving`
@@ -107,7 +119,7 @@ export const PERSISTENCE_CONSUMERS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS persi
 /** Indexes the Postgres blob omits because a migration builds them CONCURRENTLY. */
 export const POSTGRES_CONCURRENT_PERSISTENCE_INDEXES: ReadonlySet<string> = new Set([
   PERSISTENCE_DATABASE_PENDING_INDEX_SQL, PERSISTENCE_SYNC_RUN_OPEN_INDEX_SQL, PERSISTENCE_SYNC_RUN_COMMITTED_INDEX_SQL, PERSISTENCE_SYNC_WATERMARK_INDEX_SQL, PERSISTENCE_COMPACTABLE_INDEX_SQL,
-  PERSISTENCE_REQUEST_SLUG_INTENT_INDEX_SQL, PERSISTENCE_REQUEST_ID_INDEX_SQL,
+  PERSISTENCE_REQUEST_SLUG_INTENT_INDEX_SQL, PERSISTENCE_REQUEST_ID_INDEX_SQL, PERSISTENCE_FOREGROUND_COMMITTED_INDEX_SQL,
 ]);
 /** Durable infrastructure: never reconstruct or discard these rows during page reindexing. */
 export const PERSISTENCE_SCHEMA_STATEMENTS = [
@@ -203,6 +215,7 @@ export const PERSISTENCE_SCHEMA_STATEMENTS = [
   PERSISTENCE_COMPACTABLE_INDEX_SQL,
   PERSISTENCE_REQUEST_SLUG_INTENT_INDEX_SQL,
   PERSISTENCE_REQUEST_ID_INDEX_SQL,
+  PERSISTENCE_FOREGROUND_COMMITTED_INDEX_SQL,
   `CREATE INDEX IF NOT EXISTS persistence_requests_principal ON persistence_requests(principal_kind,principal_id,sequence DESC)`,
   `CREATE TABLE IF NOT EXISTS persistence_effects (
     id bigserial PRIMARY KEY,

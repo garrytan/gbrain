@@ -71,7 +71,10 @@ describe('loadResidentPacksForServer', () => {
     const p = result.packs[0]!;
     expect(p.name).toBe('deal-brain');
     expect(p.source_id).toBe('default');
-    expect(p.skills.map((s) => s.slug)).toEqual(['diligence']);
+    expect(p.skills.map((s) => s.name)).toEqual(['diligence']);
+    // Skill names are not page slugs: no `slug` key anywhere, so a reader that
+    // treats every slug as a page cannot mistake a skill for one (HARN-2).
+    expect(JSON.stringify(result)).not.toContain('"slug"');
     // git remote → scaffold_spec is the git spec, NEVER a server FS path (#6)
     expect(p.scaffold_spec).toBe('https://github.com/u/deal-brain.git');
     expect(p.scaffold_spec).not.toContain(packDir);
@@ -107,7 +110,8 @@ describe('getResidentSkillDetail', () => {
     const engine = fakeEngine([{ id: 'default', local_path: packDir }]);
     const detail = await getResidentSkillDetail(ctxFor(engine, { remote: false }), 'default', 'diligence');
     expect(detail.pack_name).toBe('deal-brain');
-    expect(detail.slug).toBe('diligence');
+    expect(detail.name).toBe('diligence');
+    expect(Object.keys(detail)).not.toContain('slug');
     expect(detail.body).toContain('# diligence');
   });
 

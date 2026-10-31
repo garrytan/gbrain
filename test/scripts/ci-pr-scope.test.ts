@@ -25,6 +25,9 @@ function cells(job: Job, context: Record<string, unknown>): string[] {
 }
 
 const native = load('native-locks.yml').jobs;
+/** The primary (pinned) Bun and the oldest supported one: matrices run every supported version (one cell today: the floor is the primary). */
+const PRIMARY_BUN = '1.4.4';
+const SUPPORTED_BUN = [...new Set([MINIMUM_BUN_VERSION, PRIMARY_BUN])];
 const nativeCells = (scope: string) => ({
   native: cells(native.native, { inputs: { scope } }),
   musl: cells(native.musl, { inputs: { scope } }),
@@ -42,10 +45,10 @@ function classify(files: string): string {
 describe('pull-request CI scope', () => {
   test('pushes, schedules and manual runs keep every Bun version on every native target', () => {
     const full = nativeCells('full');
-    expect(full.native).toHaveLength(12);
-    expect(full.musl).toHaveLength(4);
-    expect(full.console).toHaveLength(4);
-    expect(full.dotnet).toHaveLength(4);
+    expect(full.native).toHaveLength(6 * SUPPORTED_BUN.length);
+    expect(full.musl).toHaveLength(2 * SUPPORTED_BUN.length);
+    expect(full.console).toHaveLength(2 * SUPPORTED_BUN.length);
+    expect(full.dotnet).toHaveLength(2 * SUPPORTED_BUN.length);
     expect(full.openclaw).toBe(true);
   });
 
@@ -153,7 +156,7 @@ esac
   // Pull requests run the cheap tier (docs/ci-event-parity.md#full-ci-on-pull-requests):
   // of the persistence lanes only the crash robot and convergence; the rest run
   // in the full-ci dispatch, on every push, in the merge queue and nightly.
-  test('security and persistence matrices run both supported Bun versions on every event that runs them; pull requests run only the crash robot and convergence', () => {
+  test('security and persistence matrices run every supported Bun version on every event that runs them; pull requests run only the crash robot and convergence', () => {
     const security = load('test.yml').jobs['security-regressions'];
     const persistence = load('persistence-validation.yml').jobs;
     const cheap = [security, persistence['crash-robot']!, persistence.convergence!];
@@ -166,9 +169,9 @@ esac
         expect(cells(job, { github: { event_name }, inputs: {} })).toEqual(push);
       }
       expect(cells(job, { github: { event_name: 'pull_request' }, inputs: {} })).toEqual(cheap.includes(job) ? push : []);
-      expect(push.filter(cell => cell.split('/').includes(MINIMUM_BUN_VERSION)).length).toBe(push.length / 2);
+      for (const bun of SUPPORTED_BUN) expect(push.filter(cell => cell.split('/').includes(bun)).length).toBe(push.length / SUPPORTED_BUN.length);
     }
-    expect(cells(security, { github: { event_name: 'pull_request' }, inputs: {} })).toHaveLength(6);
+    expect(cells(security, { github: { event_name: 'pull_request' }, inputs: {} })).toHaveLength(3 * SUPPORTED_BUN.length);
   });
 
   // Every event-conditional behavior in a test workflow is classified beside
@@ -272,7 +275,7 @@ esac
     expect(Object.keys(raw.on).sort()).toEqual(['schedule', 'workflow_dispatch']);
     expect(raw.concurrency).toEqual({ group: '${{ github.workflow }}-${{ github.ref }}', 'cancel-in-progress': false });
     const nightly = raw.jobs.convergence!;
-    expect(nightly.strategy!.matrix.bun).toEqual([MINIMUM_BUN_VERSION, '1.4.4']);
+    expect(nightly.strategy!.matrix.bun).toEqual(SUPPORTED_BUN);
     expect(nightly.name).toContain('seed ${{ inputs.seed || github.run_id }}');
     expect(cell(nightly)).toEqual({ NOTES: '2000', LATENCY_MS: '50', KILLS: '20', SEED: '${{ inputs.seed || github.run_id }}' });
     // Outside test-status: no workflow calls it, and test.yml's aggregator never names it.
@@ -289,8 +292,8 @@ esac
 
   // #4479: a local gate or VM on a different Bun than CI produced
   // runtime-only skew, so every single-version pin moves together.
-  test('every single-version Bun pin matches the primary, and matrices keep the oldest supported version', () => {
-    const primary = '1.4.4';
+  test('every single-version Bun pin matches the primary, and matrices run every supported version', () => {
+    const primary = PRIMARY_BUN;
     // #7373: release binaries embed this Bun, so it never drops below the first release with the CVE-2026-111497 fix.
     expect(Bun.semver.order(primary, SECURE_BUN_VERSION)).toBeGreaterThanOrEqual(0);
     const read = (path: string) => readFileSync(join(root, path), 'utf8');
@@ -308,9 +311,9 @@ esac
     const matrices = [load('test.yml').jobs['security-regressions'], ...Object.values(load('persistence-validation.yml').jobs)]
       .map(job => job.strategy?.matrix.bun).filter(Boolean);
     expect(matrices).toHaveLength(8);
-    for (const bun of matrices) expect(bun).toEqual([MINIMUM_BUN_VERSION, primary]);
+    for (const bun of matrices) expect(bun).toEqual(SUPPORTED_BUN);
     for (const job of ['native', 'musl', 'windows-backup-console', 'windows-backup-dotnet']) {
-      expect(native[job].strategy!.matrix.bun).toEqual([MINIMUM_BUN_VERSION, primary]);
+      expect(native[job].strategy!.matrix.bun).toEqual(SUPPORTED_BUN);
     }
   });
 });

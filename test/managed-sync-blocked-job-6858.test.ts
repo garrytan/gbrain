@@ -7,7 +7,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -15,6 +15,7 @@ import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { MinionJobContext } from '../src/core/minions/types.ts';
 import { UnrecoverableError } from '../src/core/minions/errors.ts';
+import { syncLockId } from '../src/core/db-lock.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
@@ -114,6 +115,9 @@ test('#6858: a freshness sync job whose managed run is blocked ends dead with th
     // #6712 PR 4b: a resumed pass records itself open in its pass row while the failure row stays until a pass converges:
     // it is draining, not blocked. A pass that stops blocked again is blocked again, with the write's code.
     const outcome = (value: string) => engine.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,telemetry,outcome}',to_jsonb($2::text)) WHERE op='managed-sync-pass' AND completed_keys->0->>'source_id'=$1", [s.id, value]);
+    // The resumed pass holds the source's drain lease while it drains (#7596: an open pass no process holds was killed).
+    await engine.executeRaw(`INSERT INTO gbrain_cycle_locks(id,holder_pid,holder_host,acquired_at,ttl_expires_at,last_refreshed_at)
+      VALUES($1,$2,$3,now(),now()+interval '2 minutes',now())`, [syncLockId(s.id), process.pid, hostname()]);
     await outcome('open');
     expect(await readBlockedManagedSyncs(engine, [s.id])).toEqual([]);
     expect(await check()).toEqual([expect.objectContaining({ name: 'managed_sync_blocked', status: 'ok' })]);

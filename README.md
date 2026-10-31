@@ -2,6 +2,8 @@
 
 **Give the agent you already use a memory you control.** GBrain stores explicit facts with their sources, supports corrections and withdrawal, and makes the same memory available across your agents. Start with keyless memory and keyword retrieval; add semantic search, synthesis, and background enrichment when you need them.
 
+GBrain is MIT-licensed and free to self-host; gbrain.io is optional paid hosting.
+
 > [!TIP]
 > **Need hosted? First time running an agent?** Try **[gbrain.io](https://gbrain.io/?ref=readme)**, hosted GBrain, for the easiest experience: one brain for you and your team, connected to ChatGPT, Claude and Cursor, with nothing to install or keep online. Stuck? Email support@gbrain.io and a person will set it up with you, free.
 
@@ -26,7 +28,7 @@ I'm Garry Tan, President and CEO of Y Combinator. I built GBrain to run my own A
 Alongside keyword and semantic retrieval, GBrain offers two optional ways to use your stored knowledge:
 
 - **A synthesis layer that gives you the actual answer.** Synthesized, well-cited prose across people, companies, deals, and ideas. Not "here are 10 chunks that mention your query"; an actual answer with citations and an explicit note on what the brain doesn't know yet. The gap analysis is the part that changes how you use the brain.
-- **A typed knowledge graph.** Trusted local page writes extract supported references without LLM calls when auto-linking is enabled. Remote `put_page` edges arrive later, via sweeps, maintenance or `add_link`. Ask "who works at acme-example?": walks are breadth-first, milliseconds on dense clusters ([how](docs/architecture/RETRIEVAL.md#breadth-first-graph-walks)). On BrainBench relationship questions a graph adapter scored **P@5 0.3421, R@5 0.9791** vs 0.1917 / 0.6874 plain hybrid ([2026-09-09 refresh](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-09-09-retrieval-refresh.md)): whole systems, not a graph-only lift or a general guarantee.
+- **A typed knowledge graph.** Trusted local page writes extract supported references without LLM calls when auto-linking is enabled. Remote `put_page` edges arrive later, via sweeps, maintenance or `add_link`. Ask "who works at acme-example?": walks are breadth-first, milliseconds on dense clusters ([how](docs/architecture/RETRIEVAL.md#breadth-first-graph-walks)). On BrainBench relationship questions, relationship retrieval lifts production **R@5 from 0.6626 to 0.7241** ([benchmark](docs/architecture/RETRIEVAL.md#the-benchmark)); 0.9791 is the `graph-oracle-parse` upper bound, not a product score.
 
 The point of building a 150K-page brain is to use it as a strategic moat. To never lose context. To query what's in your own head without re-reading it. The brain layer is what makes the moat usable. The 24/7 dream cycle is what keeps it sharp. Both run on your hardware, your DB, your keys.
 
@@ -88,169 +90,80 @@ This is the difference between a search engine and a brain. Search finds the pag
 
 ## Install
 
-Requires **Bun 1.4.0 or newer**. Existing worker installations should follow the
-[authorization and queue upgrade guide](docs/guides/authorization-upgrade.md)
-before restarting services with this version.
+> [!TIP]
+> **Fastest: hosted GBrain at [gbrain.io](https://gbrain.io/cli?ref=readme), for any harness.** One command launches a GBrain hosted on gbrain.io; Claude Code, Codex, ChatGPT, Cursor and every other AI you use connect to it, with nothing to keep online.
+>
+> ```bash
+> curl -sSL https://gbrainio.terminalwire.sh | bash
+> gbrainio terminal connect      # in a new terminal
+> gbrainio workspace new         # pick a plan in the browser
+> claude mcp add --transport http --scope user gbrain https://gbrain.io/mcp
+> codex mcp add gbrain --url https://gbrain.io/mcp
+> ```
+>
+> The installer is a shell script for macOS and Linux; read it before you run it.
+
+### Here's how to self-host it
+
+GBrain is MIT-licensed and free to self-host. It needs **Bun 1.4.4 or newer**; existing worker installs read the [authorization and queue upgrade guide](docs/guides/authorization-upgrade.md) before restarting on this version.
 
 > [!WARNING]
 > **GBrain is NOT distributed on npm.** The npm `gbrain` package is unrelated and
 > can shadow the real binary, so never run `npm install -g gbrain` or
-> `bun add -g gbrain`. Install only via `bun install -g github:garrytan/gbrain`
-> or `git clone` + `bun install && bun link`.
-> Installed it by mistake? `npm uninstall -g gbrain` / `bun remove -g gbrain`, then
-> reinstall; `gbrain doctor` detects it.
-> Schema not migrated ([#218](https://github.com/garrytan/gbrain/issues/218))?
-> Run `gbrain apply-migrations --yes --no-autopilot-install`; exit 1 means it's still
-> behind: run `gbrain doctor --json`, not `--yes` (`wedged`: relay its fix).
-
-**Claude Code or Codex, fastest path:**
+> `bun add -g gbrain`. Install only via `bun install -g github:garrytan/gbrain#latest-stable`
+> or `git clone` + `bun install && bun link`. Installed by mistake? `gbrain doctor` gives the fix.
+> Schema not migrated ([#218](https://github.com/garrytan/gbrain/issues/218))? Run
+> `gbrain apply-migrations --yes --no-autopilot-install`; if it exits 1, run `gbrain doctor --json`, not another `--yes` (`wedged`: relay its fix).
 
 ```bash
-bun install -g github:garrytan/gbrain
-gbrain setup claude-code   # or codex; --dry-run previews, --remove undoes
+bun install -g github:garrytan/gbrain#latest-stable
+gbrain setup claude-code              # or: gbrain setup codex
+gbrain init --pglite --no-embedding   # any other harness, or no agent
 ```
 
-`setup` shows the brain, source, launcher and owner it resolved before writing, runs `gbrain init --pglite --no-embedding` only when no brain exists, writes the stdio MCP entry and read-context hooks (owned by hash, plus Codex hook trust) and smoke-tests them. Capture and providers stay off unless accepted; a hosted brain keeps `gbrain connect --install`. [Setup guide](docs/guides/setup.md).
-
-Start with the agent you already use. For Grok Bot and Muse, the dedicated guides above install an isolated launcher, repairable runtime, and memory in a verified persistent directory. For a coding agent, paste:
+`gbrain setup` shows what it will write first (`--dry-run` previews, `--remove` undoes), creates a keyless brain only if none exists, wires MCP, hooks and a brain-first block in the agent's instruction file (`--no-instructions` skips it), and smoke-tests them ([setup guide](docs/guides/setup.md)). For any other coding agent, paste:
 
 ```text
 Add GBrain memory to this existing agent. Read and follow:
 https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
-Keep my current identity and instructions. Start keyless, preserve unrelated
-configuration, and use the memory-only path. Do not create a personal-agent
-identity or private repository. Show me the required search-mode choice.
-Verify a unique remember/recall/correction/withdrawal round trip using observed
-GBrain calls, then tell me how to verify recall in a new conversation.
+Keep my current identity and instructions, start keyless, and show me the
+search-mode choice. Verify a remember/recall round trip with real GBrain calls.
 ```
 
-[Codex guide](docs/mcp/CODEX.md) · [Claude Code guide](docs/mcp/CLAUDE_CODE.md) · [Memory-only walkthrough](docs/tutorials/connect-coding-agent.md) · [CLI standalone](#cli-standalone-no-agent).
-
-The following bootstrap paths are optional: use them when you want GBrain to help create a **new persistent personal agent**, including identity files and a private repository.
-
-### For Codex — optional personal-agent bootstrap
-
-Turn Codex into your persistent personal agent. (Just want the brain + skills without the full agent? `codex plugin marketplace add garrytan/gbrain@codex-plugin` then `codex plugin add gbrain@gbrain` — see [docs/mcp/CODEX.md](docs/mcp/CODEX.md). The paste block below builds the whole agent.) Works in the **ChatGPT desktop app** (open Codex on a folder) and in the **Codex CLI** (`codex` in a terminal) — same install, same result. Open Codex in a **new, empty folder** (not an existing code project) — that folder becomes your agent's own **private GitHub repo**, which bootstrap creates and privacy-verifies for you. Then paste:
-
-```
-Read and follow every step of:
-https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/BOOTSTRAP_FOR_AGENTS.md
-Goal: set yourself up as my persistent personal agent in this folder, with gbrain
-as your memory. Interview me before writing any identity file — never invent
-answers. Ask before anything destructive. You are not done until
-`gbrain bootstrap verify` exits 0.
-```
-
-Bootstrap creates identity files from your answers, a local keyless brain, MCP
-registration, and a private repository. Command approvals are normal. Verify a
-saved fact in a fresh conversation; identity-file recall alone is not that test.
-The repo is not a complete backup. For private-repo adoption, optional providers,
-cloud behavior, and uninstall, read the [bootstrap guide](docs/guides/bootstrap.md).
-
-### For Claude Code — optional personal-agent bootstrap
-
-Works in the **desktop app** and in the **CLI** (`claude` in a terminal) — identical harness, identical result. Open Claude Code in a **new, empty folder** (not an existing code project) — that folder becomes your agent's own **private GitHub repo**, created and privacy-verified for you. Then paste the same block:
-
-```
-Read and follow every step of:
-https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/BOOTSTRAP_FOR_AGENTS.md
-Goal: set yourself up as my persistent personal agent in this folder, with gbrain
-as your memory. Interview me before writing any identity file — never invent
-answers. Ask before anything destructive. You are not done until
-`gbrain bootstrap verify` exits 0.
-```
-
-Claude Code also supports per-turn context and persistence hooks, with opt-outs.
-A fresh-conversation recall test must observe actual GBrain calls, not infer the
-source from the answer. See [bootstrap](docs/guides/bootstrap.md) for cloud setup,
-private-repo adoption, hooks, recovery, and removal.
-
-### For OpenClaw or Hermes — GBrain as intended, always on
-
-This is GBrain used the way it was designed to be used: a server-hosted agent with 24/7 crons, continuous ingestion, and the overnight dream cycle that enriches your brain while you sleep — your agent works whether your laptop is open or not. It's also the highest-cost path: a deployed server (8GB+ RAM) plus raw API token usage that scales with how hard your agent runs, well beyond a chat subscription. Start here if you want the full experience from day one; start with Codex above if you want to feel it first. If you don't have a platform running yet, both deploy in one click:
-
-- **[OpenClaw](https://github.com/openclaw/openclaw)** — deploy [AlphaClaw on Render](https://render.com/deploy?repo=https://github.com/chrysb/alphaclaw) (one click, 8GB+ RAM)
-- **[Hermes](https://github.com/NousResearch/hermes-agent)** — deploy on [Railway](https://github.com/praveen-ks-2001/hermes-agent-template) (one click)
-
-Then paste this into your agent:
-
-```
-Retrieve and follow the instructions at:
-https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
-```
-
-The agent starts with keyless memory and verifies it. API keys, automatic capture, paid enrichment, and the dream cycle are separate opt-in choices; the install prompt does not authorize all of them.
-
-> **Never set up an AI agent platform before?** The [personal-brain tutorial](docs/tutorials/personal-brain.md) walks the whole path end-to-end — picking OpenClaw vs Hermes, deploying it, pointing it at INSTALL_FOR_AGENTS.md, getting the API keys, and verifying the first query. Start there if any of the above is new. Or skip the platform: [gbrain.io](https://gbrain.io/?ref=readme) is hosted GBrain.
-
-### Lighter ways in
-
-**Just want a memory for your coding agent — no identity, no repo.** On Claude Code or Codex use `gbrain setup` (above). By hand: `gbrain init --pglite --no-embedding`, then `codex mcp add gbrain -- "$(command -v gbrain)" serve --surface full` (`claude mcp add` takes the same argv; `--surface verbs` or `starter` for a harness that caps its tool count). Saved memories are brain-wide by default; pass `visibility: "private"` for local-only facts.
-
-**Already have a brain on a remote host** (OpenClaw, Hermes, or any `gbrain serve --http`)? Point your laptop agents at it with one command each — `--install` wires it up and smoke-tests the token before handoff:
-
-```bash
-gbrain connect https://your-host/mcp --token gbrain_xxx --install               # Claude Code
-gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex --install # Codex
-```
-
-Onboarding a whole agent harness onto a shared brain? On the brain host, `gbrain agent register <name> --harness claude-code` mints a scoped OAuth client plus a 30-day token and prints the paste-ready wiring block — presets for daily-driver and write-isolated coding agents. The [onboarding decision table](docs/guides/agent-to-gbrain.md#onboarding-paths--the-decision-table) says which path fits.
-
-**Brain-only install into another coding agent** (Cursor, Claude Cowork, or anything that can fetch a URL and run shell commands) — paste the OpenClaw/Hermes block above (`INSTALL_FOR_AGENTS.md`). It starts with keyless memory without replacing the agent's identity. Skills, automatic capture and the dream cycle are separate choices; verify activation in the intended harness.
-
-**[→ Full walkthrough: give your coding agent a memory](docs/tutorials/connect-coding-agent.md)** — the memory-only paths end to end, plus the brain-first protocol you paste into `CLAUDE.md` / `AGENTS.md` and the four habits that make it actually change how you work.
+Postgres, thin clients, API keys and upgrades: [docs/INSTALL.md](docs/INSTALL.md). Agents: [INSTALL_FOR_AGENTS.md](INSTALL_FOR_AGENTS.md). Memory-only walkthrough: [give your coding agent a memory](docs/tutorials/connect-coding-agent.md).
 
 ### CLI standalone (no agent)
 
 ```bash
-bun install -g github:garrytan/gbrain
-gbrain init --pglite --no-embedding  # keyless; no server, no Docker
-gbrain doctor            # verify health
-gbrain import ~/notes/ --no-embed   # index your markdown
+gbrain init --pglite --no-embedding   # keyless; no server, no Docker
+gbrain import ~/notes/ --no-embed     # index your markdown
 gbrain search "a phrase from a note" --json
+gbrain doctor                         # verify health
 ```
 
-Postgres-at-scale, Supabase, and thin-client setup paths live in [`docs/INSTALL.md`](docs/INSTALL.md).
-For an existing keyless brain, follow the [memory-only upgrade path](docs/INSTALL.md#memory-only-upgrades)
-to keep daemon installation and paid reindexing opt-in.
+### Optional: a new personal agent
+
+To have GBrain create a **new persistent personal agent** with identity files and its own private GitHub repo, open Codex (CLI or ChatGPT desktop) or Claude Code in a new, empty folder and paste:
+
+```
+Read and follow every step of:
+https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/BOOTSTRAP_FOR_AGENTS.md
+Goal: set yourself up as my persistent personal agent in this folder, with gbrain
+as your memory. Interview me before writing any identity file — never invent
+answers. Ask before anything destructive. You are not done until
+`gbrain bootstrap verify` exits 0.
+```
+
+The repo is not a complete backup; see the [bootstrap guide](docs/guides/bootstrap.md). For the always-on version (24/7 ingestion and the overnight dream cycle on a server with 8GB+ RAM and its own API usage), run GBrain under [OpenClaw](https://github.com/openclaw/openclaw) or [Hermes](https://github.com/NousResearch/hermes-agent) and point it at `INSTALL_FOR_AGENTS.md`; the [personal-brain tutorial](docs/tutorials/personal-brain.md) walks it end to end.
 
 ### Connect GBrain to your AI client (MCP)
 
-For a hosted brain, start with the [native OAuth and private machine connection guide](docs/guides/hosted-harness-access.md). To open the dashboard, register clients, edit access, or invalidate tokens, use [MCP administration](docs/mcp/ADMIN.md). A **profile** controls MCP authority; a **surface** controls which granted tools are visible. Neither grants owner dashboard access. New memory profiles use the full surface. `--surface verbs` retains exactly the seven memory verbs, with orientation available through `gbrain://capabilities`. Thin CLI connections use the full surface and remain restricted by their grants.
+- **Local stdio client:** `claude mcp add gbrain -- "$(command -v gbrain)" serve --surface starter --advertise verbs` (lists the memory verbs; `--surface full` lists every tool); Codex, Cursor, Windsurf and other stdio clients take the same command. Then run `gbrain setup <harness> --instructions-only`: agents seldom call a brain nobody told them about.
+- **Plugins with curated skills:** Codex `codex plugin marketplace add garrytan/gbrain@codex-plugin` + `codex plugin add gbrain@gbrain`; Claude Code `/plugin marketplace add garrytan/gbrain` + `/plugin install gbrain@gbrain`.
+- **This brain from anywhere:** `gbrain mcp expose` publishes it on your Tailscale tailnet as a user service (`--funnel` for cloud agents such as Grok Bot, Muse and ChatGPT). [Guide](docs/guides/remote-mcp.md).
+- **A brain on another host:** `gbrain connect https://your-host/mcp --token gbrain_xxx --install` (add `--agent codex` for Codex). Hosted brains use [native OAuth or a private handoff](docs/guides/hosted-harness-access.md); dashboard, clients and permissions live in [MCP administration](docs/mcp/ADMIN.md).
 
-Choose the connection instructions for your actual product:
-
-**Upgrading a brain indexed before v0.48.3.0?** Rebuild its search chunks first: [upgrade recovery guide](skills/migrations/v0.48.3.0.md). **Say to your agent:** *"Upgrade gbrain and check whether my search index needs rebuilding."*
-
-- **[Claude Code](docs/mcp/CLAUDE_CODE.md)** — plugin: `/plugin marketplace add garrytan/gbrain` + `/plugin install gbrain@gbrain` (MCP + skills; persona variants `gbrain-coding` / `gbrain-daily` install curated subsets; pick one). Marketplace-free skills: `gbrain skillpack scaffold --harness claude-code` copies a persona-curated skill set into your user-scope skills dir. Or local one-liner: `claude mcp add gbrain -- "$(command -v gbrain)" serve`. Remote with just a bearer token: `gbrain connect https://your-host/mcp --token gbrain_xxx` prints a paste-ready block (or `--install` wires it up and smoke-tests the token).
-- **[Codex](docs/mcp/CODEX.md)** — plugin (recommended): `codex plugin marketplace add garrytan/gbrain@codex-plugin` + `codex plugin add gbrain@gbrain` installs the MCP server AND the curated skill set. Or connect-only: `gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex` (or `--install`); the token path reads `$GBRAIN_REMOTE_TOKEN` at runtime, while the private-handoff installer writes a private managed HTTP header so the connection survives a new shell.
-- **[Cursor / Windsurf / any stdio MCP client](docs/mcp/CLAUDE_CODE.md)** — same shape, add `{"command": "gbrain", "args": ["serve", "--surface", "full"]}` to your MCP config.
-- **[Hermes](docs/mcp/HERMES.md)** — `printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve --surface full`. Keep `--args` last, and verify with `hermes mcp test gbrain` (the add exits 0 even on failure).
-- **[Grok Bot](docs/guides/grok-bot.md)** — recommended: keep the brain on your computer, publish it with `gbrain mcp expose --funnel`, grant the Bot a `memory-writer` client and install the thin CLI at `/workspace/gbrain`; or install memory inside the Bot computer when no machine of yours stays online. Bots share local files and credentials; sources organize memory without isolating Bots. **Say to your agent:** *"connect grok bot to my brain"*.
-- **[Muse personal agent](docs/guides/muse.md)** — first verify its durable user-files location; then either connect it to your published brain (`gbrain mcp expose --funnel` + thin CLI) or install the local CLI there. Native MCP configuration and skill activation are not assumed. **Say to your agent:** *"connect muse to my brain"*.
-- **[Grok Build](docs/mcp/GROK.md)** — `grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface full`. The add is lazy (exit 0 without connecting) — verify with `grok mcp doctor gbrain`, which spawns the server. Verified against Grok Build v1.0.4.
-- **[opencode](docs/mcp/OPENCODE.md)** (opencode.ai / SST — not OpenClaw) — `opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface full`, or let `gbrain bootstrap hooks --harness opencode` write the config for you (opencode is a bootstrap-supported harness — it reads AGENTS.md natively). The add is lazy — verify with `opencode mcp list`, which spawns the server (`✓ gbrain connected`). Remote: `gbrain connect https://your-host/mcp --token gbrain_xxx --agent opencode [--install]` — the config stores only the `{env:GBRAIN_REMOTE_TOKEN}` interpolation. Verified against opencode v1.18.18.
-- **[OpenClaw](docs/mcp/OPENCLAW.md)** — the ClawHub bundle plugin registers gbrain automatically (`openclaw.plugin.json` ships in this repo), or register the stdio server with `openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --env GBRAIN_HOME=$HOME` (absolute path: the launchd gateway PATH lacks `~/.bun/bin`); verify with `openclaw mcp list`.
-- **[Claude Desktop (Cowork)](docs/mcp/CLAUDE_DESKTOP.md)** — Settings → Integrations → add the URL of your HTTP server. Remote only; the local `claude_desktop_config.json` does not work for remote servers.
-- **[Claude Cowork (team plan)](docs/mcp/CLAUDE_COWORK.md)** — org Owner adds the connector under Organization Settings → Connectors.
-- **[Perplexity Computer](docs/mcp/PERPLEXITY.md)** — choose native OAuth or a managed bearer connection according to the actual connector settings. The owner registers the matching client and delivers any confidential credentials privately.
-- **[ChatGPT](docs/mcp/CHATGPT.md)** — native OAuth with PKCE. Register the exact callback and token authentication method shown in its MCP settings, then start the connection in ChatGPT and complete owner consent.
-
-For the HTTP server itself:
-
-```bash
-gbrain serve              # stdio MCP (local subprocess; for Claude Code, Cursor, Windsurf)
-gbrain serve --http       # HTTP MCP with OAuth 2.1 + admin dashboard at /admin
-                          # (required for Claude Desktop, Cowork, Perplexity, ChatGPT)
-gbrain mcp expose         # publish serve --http on your Tailscale tailnet with HTTPS + a user service
-gbrain mcp expose --funnel  # same name, public HTTPS — for agents that run in a vendor's cloud
-```
-
-`gbrain mcp expose` is the recommended way to run the server from your own computer: it installs Tailscale if needed (after a consent prompt), signs in, publishes the server on `https://your-machine.your-tailnet.ts.net/mcp`, keeps the admin token in a private file, installs a launchd / systemd user service, and prints separate owner-login, native OAuth, and machine-client next steps (`--status` re-checks, `--remove` undoes only its own changes). Local coding agents on the same machine: `gbrain bootstrap harness --yes --port 3131` on a Postgres brain; on PGLite mint a token before the service runs (`gbrain auth create local-agents --scopes read,write`) and pass `--token`, or grant a scoped client through the running server (`gbrain mcp grant … --admin-token-file ~/.gbrain/serve/admin-token`). Tailnet-only by default; `--funnel` is the explicit opt-in for cloud agents. **Say to your agent:** *"use my brain over mcp"* — *"reach my brain from my phone"*. Guide: [use your brain from anywhere over MCP](docs/guides/remote-mcp.md).
-
-The HTTP server includes optional dynamic client registration, scope-gated access (`read` / `write` / `admin` / `agent`), owner-approved OAuth authorization, and rate limiting. Dynamic registration cannot grant delegation; `admin` implies neither `agent` nor owner administration. Start with the [MCP task guide](docs/mcp/README.md) for deployment, client setup, administration, and alternatives to Tailscale (ngrok, Railway, Fly.io).
-
-Running several brains behind one tool catalog? Give each one an identity with `gbrain config set mcp.instructions "<identity>"` so a connected agent can tell them apart ([details](docs/mcp/DEPLOY.md#operations)). **Say to your agent:** *"Tell connected agents which brain this is"*.
+Per-client guides: [Claude Code](docs/mcp/CLAUDE_CODE.md) · [Codex](docs/mcp/CODEX.md) · [ChatGPT](docs/mcp/CHATGPT.md) · [Claude Desktop](docs/mcp/CLAUDE_DESKTOP.md) · [Claude Cowork](docs/mcp/CLAUDE_COWORK.md) · [Perplexity](docs/mcp/PERPLEXITY.md) · [Hermes](docs/mcp/HERMES.md) · [OpenClaw](docs/mcp/OPENCLAW.md) · [opencode](docs/mcp/OPENCODE.md) · [Grok Build](docs/mcp/GROK.md) · [Grok Bot](docs/guides/grok-bot.md) · [Muse](docs/guides/muse.md) · [everything MCP](docs/mcp/README.md).
 
 ## Two ways to query your brain
 

@@ -1,28 +1,11 @@
-export const SHARED_SKILLS_PERSISTENCE_SCHEMA_STATEMENTS: readonly string[] = [
-  `ALTER TABLE persistence_brain ADD COLUMN IF NOT EXISTS writer_protocol_floor integer NOT NULL DEFAULT 1 CHECK (writer_protocol_floor IN (1,2))`,
-  `ALTER TABLE persistence_brain ADD COLUMN IF NOT EXISTS skill_bundles_enabled boolean NOT NULL DEFAULT false`,
-  `ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS target_kind text NOT NULL DEFAULT 'page' CHECK (target_kind IN ('page','skill_bundle'))`,
-  `ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS protocol_version integer NOT NULL DEFAULT 1 CHECK (protocol_version IN (1,2))`,
-  `CREATE TABLE IF NOT EXISTS persistence_writer_protocols (
-    worktree_id uuid NOT NULL REFERENCES persistence_worktrees(id),
-    host_id uuid NOT NULL,
-    owner_epoch bigint NOT NULL,
-    protocol_version integer NOT NULL CHECK (protocol_version=2),
-    registered_at timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY(worktree_id,host_id)
-  )`,
-  `CREATE OR REPLACE FUNCTION gbrain_require_persistence_protocol(required integer) RETURNS void LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
-  BEGIN
-    IF required >= 2 AND COALESCE(current_setting('gbrain.persistence_protocol',true),'') <> '2' THEN
-      RAISE EXCEPTION 'writer_upgrade_required: this mutation requires persistence protocol 2' USING ERRCODE='42501';
-    END IF;
-  END $$`,
-  `CREATE OR REPLACE FUNCTION gbrain_guard_request_protocol() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+/** The fence functions alone: replacing one takes no table lock (#7636). */
+export const REQUEST_PROTOCOL_GUARD_SQL = `CREATE OR REPLACE FUNCTION gbrain_guard_request_protocol() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
   DECLARE target text; version integer; floor integer; active boolean; record jsonb;
   BEGIN
     IF TG_OP='DELETE' THEN target:=OLD.target_kind; version:=OLD.protocol_version;
     ELSE target:=NEW.target_kind; version:=NEW.protocol_version; END IF;
     SELECT writer_protocol_floor,skill_bundles_enabled INTO floor,active FROM persistence_brain WHERE singleton=1 FOR SHARE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'writer_coordinator_required: writer state is unreadable to this database role' USING ERRCODE='42501'; END IF;
     PERFORM gbrain_require_persistence_protocol(GREATEST(floor,version,CASE WHEN target='skill_bundle' THEN 2 ELSE 1 END));
     IF TG_OP='DELETE' THEN RETURN OLD; END IF;
     IF TG_OP='UPDATE' AND (NEW.target_kind<>OLD.target_kind OR NEW.protocol_version<>OLD.protocol_version) THEN
@@ -53,28 +36,27 @@ export const SHARED_SKILLS_PERSISTENCE_SCHEMA_STATEMENTS: readonly string[] = [
       RAISE EXCEPTION 'unsupported_mutation_protocol: recovery target mismatch' USING ERRCODE='42501';
     END IF;
     RETURN NEW;
-  END $$`,
-  `DROP TRIGGER IF EXISTS gbrain_request_protocol ON persistence_requests`,
-  `CREATE TRIGGER gbrain_request_protocol BEFORE INSERT OR UPDATE OR DELETE ON persistence_requests
-    FOR EACH ROW EXECUTE FUNCTION gbrain_guard_request_protocol()`,
-  `CREATE OR REPLACE FUNCTION gbrain_guard_effect_protocol() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+  END $$`;
+export const EFFECT_PROTOCOL_GUARD_SQL = `CREATE OR REPLACE FUNCTION gbrain_guard_effect_protocol() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
   DECLARE floor integer;
   BEGIN
     SELECT writer_protocol_floor INTO floor FROM persistence_brain WHERE singleton=1 FOR SHARE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'writer_coordinator_required: writer state is unreadable to this database role' USING ERRCODE='42501'; END IF;
     PERFORM gbrain_require_persistence_protocol(floor);
     IF TG_OP='DELETE' THEN RETURN OLD; END IF;
     RETURN NEW;
-  END $$`,
-  `DROP TRIGGER IF EXISTS gbrain_effect_protocol ON persistence_effects`,
-  `CREATE TRIGGER gbrain_effect_protocol BEFORE INSERT OR UPDATE OR DELETE ON persistence_effects
-    FOR EACH ROW EXECUTE FUNCTION gbrain_guard_effect_protocol()`,
-  `CREATE OR REPLACE FUNCTION gbrain_guard_protocol_activation() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+  END $$`;
+export const PROTOCOL_ACTIVATION_GUARD_SQL = `CREATE OR REPLACE FUNCTION gbrain_guard_protocol_activation() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
   BEGIN
     IF NEW.writer_protocol_floor<OLD.writer_protocol_floor THEN
       RAISE EXCEPTION 'writer_upgrade_required: the protocol floor cannot be lowered' USING ERRCODE='42501';
     END IF;
     IF NEW.writer_protocol_floor>OLD.writer_protocol_floor OR (NEW.skill_bundles_enabled AND NOT OLD.skill_bundles_enabled) THEN
       PERFORM gbrain_require_persistence_protocol(2);
+      IF row_security_active('persistence_requests') OR row_security_active('persistence_effects') OR row_security_active('persistence_worktrees')
+        OR row_security_active('persistence_source_bindings') OR row_security_active('sources') THEN
+        RAISE EXCEPTION 'writer_coordinator_required: writer state is unreadable to this database role' USING ERRCODE='42501';
+      END IF;
       IF COALESCE(current_setting('gbrain.writer_quiesced',true),'')<>'true' OR NOT NEW.enabled OR NEW.writer_protocol_floor<>2
         OR EXISTS (SELECT 1 FROM persistence_requests WHERE state IN ('queued','running','recovering') OR recovery IS NOT NULL)
         OR EXISTS (SELECT 1 FROM persistence_effects WHERE state='running' OR recovery IS NOT NULL)
@@ -87,7 +69,35 @@ export const SHARED_SKILLS_PERSISTENCE_SCHEMA_STATEMENTS: readonly string[] = [
       END IF;
     END IF;
     RETURN NEW;
+  END $$`;
+export const SHARED_SKILLS_PERSISTENCE_SCHEMA_STATEMENTS: readonly string[] = [
+  `ALTER TABLE persistence_brain ADD COLUMN IF NOT EXISTS writer_protocol_floor integer NOT NULL DEFAULT 1 CHECK (writer_protocol_floor IN (1,2))`,
+  `ALTER TABLE persistence_brain ADD COLUMN IF NOT EXISTS skill_bundles_enabled boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS target_kind text NOT NULL DEFAULT 'page' CHECK (target_kind IN ('page','skill_bundle'))`,
+  `ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS protocol_version integer NOT NULL DEFAULT 1 CHECK (protocol_version IN (1,2))`,
+  `CREATE TABLE IF NOT EXISTS persistence_writer_protocols (
+    worktree_id uuid NOT NULL REFERENCES persistence_worktrees(id),
+    host_id uuid NOT NULL,
+    owner_epoch bigint NOT NULL,
+    protocol_version integer NOT NULL CHECK (protocol_version=2),
+    registered_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY(worktree_id,host_id)
+  )`,
+  `CREATE OR REPLACE FUNCTION gbrain_require_persistence_protocol(required integer) RETURNS void LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+  BEGIN
+    IF required >= 2 AND COALESCE(current_setting('gbrain.persistence_protocol',true),'') <> '2' THEN
+      RAISE EXCEPTION 'writer_upgrade_required: this mutation requires persistence protocol 2' USING ERRCODE='42501';
+    END IF;
   END $$`,
+  REQUEST_PROTOCOL_GUARD_SQL,
+  `DROP TRIGGER IF EXISTS gbrain_request_protocol ON persistence_requests`,
+  `CREATE TRIGGER gbrain_request_protocol BEFORE INSERT OR UPDATE OR DELETE ON persistence_requests
+    FOR EACH ROW EXECUTE FUNCTION gbrain_guard_request_protocol()`,
+  EFFECT_PROTOCOL_GUARD_SQL,
+  `DROP TRIGGER IF EXISTS gbrain_effect_protocol ON persistence_effects`,
+  `CREATE TRIGGER gbrain_effect_protocol BEFORE INSERT OR UPDATE OR DELETE ON persistence_effects
+    FOR EACH ROW EXECUTE FUNCTION gbrain_guard_effect_protocol()`,
+  PROTOCOL_ACTIVATION_GUARD_SQL,
   `DROP TRIGGER IF EXISTS gbrain_protocol_activation ON persistence_brain`,
   `CREATE TRIGGER gbrain_protocol_activation BEFORE UPDATE ON persistence_brain
     FOR EACH ROW EXECUTE FUNCTION gbrain_guard_protocol_activation()`,

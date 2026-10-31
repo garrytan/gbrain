@@ -10,7 +10,8 @@ import type { Action } from '../agent-output.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { fenceOperationError, scanCanonicalFences } from '../fence-repair/refusal.ts';
-import { fenceCellReadBackProblem, parseFactsFence } from '../facts-fence.ts';
+import { fenceCellReadBackProblem, formatFenceDate, parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, type ParsedFact } from '../facts-fence.ts';
+import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
 import { submissionAuthority, authorizeStoredRequest, authorizeWrite } from './authority.ts';
 import { currentVerifiedLocalWriter, localHostId, registerLocalWriter } from './identity.ts';
 import { getWorktreeBinding, managedPersistenceEnabled, type WorktreeBinding } from './ownership.ts';
@@ -32,7 +33,8 @@ import { assertPhysicalRoot } from './physical-root.ts';
 import { isConnectorSourceKind } from './connector-identity.ts';
 import { MaintenanceWriteWait } from './maintenance-wait.ts';
 import { auditConflictsCommand, FILE_DRIFT_MESSAGE, liveFileDrift } from './drift-conflicts.ts';
-import { declaredWriteTrust, lowerToDerivedTier, readDerivationDeclaration, recordTaintEdges, type DerivationDeclaration } from '../trust/taint.ts';
+import { lowerToDerivedTier, readDerivationDeclaration, recordTaintEdges, type DerivationDeclaration } from '../trust/taint.ts';
+import { derivationWriteTrust, recordAgentPageLowering, storedPageTier } from '../trust/page-write.ts';
 import { sameInstantTies } from '../facts/claim-ties.ts';
 import { factPreimages, recordConsolidationGeneration } from '../generations/adapters/fact-rows.ts';
 
@@ -547,21 +549,27 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
  * derived row when the publication changed no content column, and records
  * the complete input edges (ENG-7). A consolidation's takes fence edit
  * keeps the entity page's tier (page-prepare's fence-edit rule).
+ * #7918: a declaration that is present but unreadable publishes at `unknown`
+ * (fail closed) with no input edges. #7917: a page the publication lowered
+ * files a `lower_page` proposal the owner sees in `gbrain trust review`.
  */
 export async function prepareMaintenanceMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, clock?: ClaimPhaseClock): Promise<PreparedMutation> {
   const prepared = await prepareMaintenanceKind(engine, row, config, clock);
+  const trust = derivationWriteTrust(row.intent);
+  if (!trust) return prepared;
   const declaration = readDerivationDeclaration(row.intent?.derivation);
-  if (!declaration) return prepared;
-  const trust = declaredWriteTrust(declaration);
   const consolidation = row.intent?.kind === 'managed_maintenance_consolidate';
   return { ...prepared, trust, apply: async (tx, preimage) => {
+    const snapshot = consolidation ? null : await tx.readPageSnapshot(row.slug, { sourceId: row.source_id });
+    const prior = snapshot ? { tier: await storedPageTier(tx, row.source_id, row.slug), revision: snapshot.revision } : null;
     const outcome = await prepared.apply(tx, preimage);
     const [derived] = consolidation ? (outcome.take_id ? [{ table: 'takes' as const, id: Number(outcome.take_id) }] : [])
       : (await tx.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [row.source_id, row.slug]))
         .map(page => ({ table: 'pages' as const, id: Number(page.id) }));
     if (derived) {
-      await lowerToDerivedTier(tx, derived.table, [derived.id], trust);
-      await recordTaintEdges(tx, { ...derived, sourceId: row.source_id }, declaration.inputs);
+      const lowered = await lowerToDerivedTier(tx, derived.table, [derived.id], trust);
+      if (declaration) await recordTaintEdges(tx, { ...derived, sourceId: row.source_id }, declaration.inputs);
+      if (lowered.length && prior?.tier) await recordAgentPageLowering(tx, row, { tier: prior.tier, revision: prior.revision });
     }
     return outcome;
   } };
@@ -636,9 +644,31 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
     }, apply: async () => ({ status: 'skipped', reason: 'retired_take', noop: true,
       facts_consolidated: 0, takes_written: 0, take_id: Number(existing.id) }) };
   }
+  // The chain closes each fact at its successor's valid_from. A fenced fact is closed in its fence row, published with the
+  // take on this page, and its row derives from that cell; an unfenced fact has no fence row and is closed in the database.
+  // A fenced fact whose fence is on another page stays open: this publication does not write that file.
+  const chronological = [...facts].sort((a, b) => Date.parse(String(a.value.valid_from)) - Date.parse(String(b.value.valid_from)) || a.id - b.id);
+  const closes = chronological.slice(0, -1).map((fact, i) => ({ fact, until: String(chronological[i + 1].value.valid_from) }));
+  const fenceCloses = new Map(closes.filter(c => c.fact.value.row_num !== null && c.fact.value.source_markdown_slug === row.slug)
+    .map(c => [Number(c.fact.value.row_num), c]));
+  const databaseCloses = closes.filter(c => c.fact.value.row_num === null);
+  let closedRows: ParsedFact[] = [];
+  const closeInFence = (body: string): string => {
+    if (!fenceCloses.size) return body;
+    const fence = parseFactsFence(body);
+    for (const [rowNum, { fact }] of fenceCloses) {
+      if (!fence.warnings.length && !fenceCellReadBackProblem(fence.facts.find(f => f.rowNum === rowNum), { fact: String(fact.value.fact), visibility: String(fact.value.visibility) })) continue;
+      throw opError('revision_conflict', 'A consolidated fact does not match its fence row.',
+        `Fact ${fact.id} on ${row.slug} in ${row.source_id} does not read back from fence row ${rowNum}, so consolidation request ${row.request_id} could not close it in the page and wrote nothing. The next extract_facts run reconciles the fence, and the next consolidate run re-clusters the current facts.`,
+        { fix: receiptFix(row) });
+    }
+    const rows = fence.facts.map(f => fenceCloses.has(f.rowNum) ? { ...f, validUntil: formatFenceDate(new Date(fenceCloses.get(f.rowNum)!.until)) } : f);
+    closedRows = rows.filter(f => fenceCloses.has(f.rowNum));
+    return replaceOrInsertFactsFence(body, renderFactsTable(rows));
+  };
   const prepared = await prepareTakesMutation(engine, { ...row, operation: existing ? 'takes_update' : 'takes_add',
       intent: existing ? { source: p.source, row_num: Number(existing.row_num), expected_revision: p.expected_revision }
-        : { ...p, kind: 'fact', holder: 'self' } }, config);
+        : { ...p, kind: 'fact', holder: 'self' } }, config, closeInFence);
   return { ...prepared, additionalPageKeys: pages.map(page => ({ sourceId: row.source_id, slug: page.slug })),
     validate: async tx => {
       await prepared.validate?.(tx);
@@ -666,10 +696,13 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
         { fix: receiptFix(row) });
       const before = await factPreimages(tx, row.source_id, facts.map(f => f.id));
       for (const fact of facts) await tx.consolidateFact(fact.id, take.id);
-      const chronological = [...facts].sort((a, b) => Date.parse(String(a.value.valid_from)) - Date.parse(String(b.value.valid_from)) || a.id - b.id);
-      for (let i = 0; i < chronological.length - 1; i++) {
-        await tx.executeRaw('UPDATE facts SET valid_until=$1::timestamptz WHERE source_id=$2 AND id=$3',
-          [chronological[i + 1].value.valid_from, row.source_id, chronological[i].id]);
+      for (const { fact, until } of databaseCloses) {
+        await tx.executeRaw('UPDATE facts SET valid_until=$1::timestamptz WHERE source_id=$2 AND id=$3', [until, row.source_id, fact.id]);
+      }
+      const derived = extractFactsFromFenceText(closedRows, row.slug, row.source_id);
+      for (const [i, cell] of closedRows.entries()) {
+        await tx.executeRaw('UPDATE facts SET valid_until=$1::timestamptz WHERE source_id=$2 AND id=$3 AND row_num=$4 AND source_markdown_slug=$5',
+          [derived[i].valid_until, row.source_id, fenceCloses.get(cell.rowNum)!.fact.id, cell.rowNum, row.slug]);
       }
       await recordConsolidationGeneration(tx, row.source_id, row.slug, before);
       return { ...outcome, noop: false, facts_consolidated: facts.length, takes_written: existing ? 0 : 1, take_id: Number(take.id) };

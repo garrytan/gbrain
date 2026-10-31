@@ -82,7 +82,7 @@ describe('gbrain_fts_input (#6370)', () => {
       `SELECT gbrain_fts_input(NULL) AS n, p.provolatile AS vol, p.proconfig AS cfg FROM pg_proc p WHERE p.proname = 'gbrain_fts_input'`);
     expect(rows[0]!.n).toBeNull();
     expect(rows[0]!.vol).toBe('i');
-    expect(rows[0]!.cfg).toEqual(['search_path=pg_catalog']);
+    expect(rows[0]!.cfg).toEqual(['search_path=pg_catalog, pg_temp']);
   });
 });
 

@@ -161,7 +161,7 @@ receipt_begin primary "s${SHARD_INDEX}of${TOTAL_SHARDS}" "$SHARD_INDEX" "$TOTAL_
 [ "${#RECEIPT_ARGS[@]}" -eq 0 ] || XARGS_FLAGS=(-n 100000 -x)
 # --max-concurrency mirrors the local runner: unbounded intra-process
 # concurrency under parallel PGLite boots produced real shard deaths (the
-# 22-minute matrix timeout in test.yml records 13 of them).
+# matrix job's timeout-minutes in test.yml records 13 of them).
 #
 # The `./` prefix makes each argument a path, not a name filter: Bun runs
 # bare `test/x.test.ts` arguments in directory-scan order (filesystem

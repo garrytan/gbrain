@@ -29,6 +29,7 @@ import {
   BootstrapRenderError,
   DERIVED_DEFAULTS,
 } from '../src/core/bootstrap/render.ts';
+import { detectOpenClawWorkspace } from '../src/core/bootstrap/render-host.ts';
 import { BOOTSTRAP_TEMPLATES } from '../src/core/bootstrap/assets.ts';
 import { readManifest, writeManifest, TEMPLATE_PLACEHOLDER_MANIFEST } from '../src/core/bootstrap/format.ts';
 import { setAnswer, skipAnswer, interviewStatePath } from '../src/core/bootstrap/interview.ts';
@@ -465,5 +466,71 @@ describe('renderWorkspace — machine-specific wiring stays out of the repo [B8]
     // Honest persistence copy [D9]: 30-minute pull + event-driven pushes.
     expect(gh).toContain('30-minute pull');
     expect(gh).not.toContain('15-minute');
+  });
+});
+
+describe('renderWorkspace — OpenClaw host keeps its schedule list out of HEARTBEAT.md (#7470)', () => {
+  test('host openclaw renders the due-job list as SCHEDULES.md and AGENTS.md points only there', () => {
+    const ws = answeredWs();
+    const result = renderWorkspace(ws, { host: 'openclaw' });
+    expect(result.note).toContain('SCHEDULES.md');
+    expect(result.written).toContain('SCHEDULES.md');
+    expect(result.written).not.toContain('HEARTBEAT.md');
+    expect(existsSync(join(ws, 'HEARTBEAT.md'))).toBe(false);
+    const schedules = readFileSync(join(ws, 'SCHEDULES.md'), 'utf8');
+    expect(schedules.startsWith('# SCHEDULES.md\n')).toBe(true);
+    expect(schedules).toContain('## Due-job list');
+    expect(TOKEN_RE.test(schedules)).toBe(false);
+    const agents = readFileSync(join(ws, 'AGENTS.md'), 'utf8');
+    expect(agents).not.toContain('HEARTBEAT.md');
+    expect(agents).toMatch(/SCHEDULES\.md[^\n]*due-job list/);
+    expect(agents).toContain('| Schedules | SCHEDULES.md |');
+  });
+
+  test('an unknown host refuses before writing anything', () => {
+    const ws = answeredWs();
+    expect(() => renderWorkspace(ws, { host: 'bogus' })).toThrow(/unknown render host 'bogus'/);
+    expect(existsSync(join(ws, 'AGENTS.md'))).toBe(false);
+  });
+
+  test('every other harness keeps HEARTBEAT.md', () => {
+    const ws = answeredWs();
+    const result = renderWorkspace(ws);
+    expect(result.note).toBeUndefined();
+    expect(result.written).toContain('HEARTBEAT.md');
+    expect(existsSync(join(ws, 'SCHEDULES.md'))).toBe(false);
+    expect(readFileSync(join(ws, 'HEARTBEAT.md'), 'utf8').startsWith('# HEARTBEAT.md\n')).toBe(true);
+    expect(readFileSync(join(ws, 'AGENTS.md'), 'utf8')).toMatch(/HEARTBEAT\.md[^\n]*due-job list/);
+  });
+
+  test('--only HEARTBEAT.md on OpenClaw writes SCHEDULES.md, never the file the host doctor removes', () => {
+    const ws = answeredWs();
+    const result = renderWorkspace(ws, { host: 'openclaw', only: ['HEARTBEAT.md'] });
+    expect(result.written).toEqual(['SCHEDULES.md']);
+    expect(existsSync(join(ws, 'HEARTBEAT.md'))).toBe(false);
+    expect(isBootstrapRenderDest('SCHEDULES.md')).toBe(true);
+  });
+
+  test('minimal mode ignores the host, so the template repo stays byte-identical', () => {
+    const a = makeWs(), b = makeWs();
+    renderWorkspace(a, { minimal: true });
+    renderWorkspace(b, { minimal: true, host: 'openclaw' });
+    expect(existsSync(join(b, 'SCHEDULES.md'))).toBe(false);
+    for (const dest of ALL_DESTS) {
+      expect(readFileSync(join(b, dest), 'utf8')).toBe(readFileSync(join(a, dest), 'utf8'));
+    }
+  });
+
+  test('detectOpenClawWorkspace: the configured workspace, a state-dir workspace, or a profile; nothing else', () => {
+    const home = '/home/alice-example';
+    expect(detectOpenClawWorkspace('/srv/agent-ws', { OPENCLAW_WORKSPACE_DIR: '/srv/agent-ws/' }, home)).toBe(true);
+    expect(detectOpenClawWorkspace('/srv/agent-ws', { OPENCLAW_WORKSPACE: '/srv/agent-ws' }, home)).toBe(true);
+    expect(detectOpenClawWorkspace(`${home}/.openclaw/workspace`, {}, home)).toBe(true);
+    expect(detectOpenClawWorkspace(`${home}/.openclaw/workspace/agent-a`, {}, home)).toBe(true);
+    expect(detectOpenClawWorkspace(`${home}/.openclaw-work/workspace`, {}, home)).toBe(true);
+    expect(detectOpenClawWorkspace('/var/oc/workspace', { OPENCLAW_STATE_DIR: '/var/oc' }, home)).toBe(true);
+    expect(detectOpenClawWorkspace(`${home}/agent`, {}, home)).toBe(false);
+    expect(detectOpenClawWorkspace(`${home}/.openclawish/workspace`, {}, home)).toBe(false);
+    expect(detectOpenClawWorkspace('/srv/other', { OPENCLAW_WORKSPACE_DIR: '/srv/agent-ws' }, home)).toBe(false);
   });
 });

@@ -277,10 +277,10 @@ describe('#2964: sync auto-inits a never-git-initialized default brain dir', () 
   test('a gbrain.yml that mentions db_only but resolves no dirs refuses the baseline commit (round 6 P2: unsupported-syntax sniff test)', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
     const { execSync } = await import('child_process');
-    // Flow-style array — valid YAML, but the narrow custom parser only
-    // handles block-style lists, so loadStorageConfig warns and resolves
-    // an empty db_only list rather than throwing.
-    writeFileSync(join(dir, 'gbrain.yml'), 'storage:\n  db_only: [private-cache/]\n');
+    // A flow-style array split over lines — valid YAML, but the narrow
+    // custom parser reads block lists and one-line flow lists only (#8007),
+    // so loadStorageConfig resolves an empty db_only list rather than throwing.
+    writeFileSync(join(dir, 'gbrain.yml'), 'storage:\n  db_only: [private-cache/,\n    archive/]\n');
 
     await expect(
       performSync(engine, { noPull: true, noEmbed: true, full: true }),

@@ -14,7 +14,7 @@ import { missingTable, type DetectionMode, type NotifierState } from './store.ts
 import { residentNotifier } from './resident.ts';
 import { parseOnCommit } from '../commit-notifier.ts';
 import { SYNC_ON_COMMIT_KEY } from '../sync-config-keys.ts';
-import { HOLDER_STALL_MS, holderStalled, publicDrainHolder, readDrainHolder, type DrainHolder } from '../persistence/sync-lease.ts';
+import { HOLDER_STALL_MS, holderStalled, publicDrainHolder, readLiveDrainHolder, type DrainHolder } from '../persistence/sync-lease.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw' | 'kind'>;
 type FreshnessExec = Exec & Pick<BrainEngine, 'getConfig'>;
@@ -150,7 +150,8 @@ export async function readNotifierBlock(engine: BrainEngine, sourceId: string, o
   const live = ownerLive(engine, row);
   const stalled = row.reason === 'notifier_stalled' || row.state === 'operator_blocked';
   const resident = live ? { kind: row.owner_kind ?? 'unknown', pid: remote ? null : row.owner_pid === null ? null : Number(row.owner_pid), host_id: remote ? null : row.owner_host_id, live } : null;
-  const holder = live ? null : await readDrainHolder(engine, sourceId).catch(() => null);
+  // #7614: a holder that stopped renewing the drain lease (killed) syncs nothing, so it does not stand in for the resident.
+  const holder = live ? null : await readLiveDrainHolder(engine, sourceId).catch(() => null);
   // #7243: the resident the row last recorded (the one its trace rows name), whose notifier lease is no longer live.
   const recorded = !live && row.owner_kind ? { kind: row.owner_kind, pid: remote || row.owner_pid == null ? null : Number(row.owner_pid), host_id: remote ? null : row.owner_host_id,
     seen_at: iso(row.owner_seen_at), lease_expired_at: iso(row.lease_expires_at) } : null;

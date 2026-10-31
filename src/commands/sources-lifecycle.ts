@@ -21,7 +21,7 @@ export const SOURCE_LIFECYCLE_HELP = `Managed source administration:
   gbrain sources remove <id> --confirm-destructive
   gbrain sources purge <archived-id> --confirm-destructive
   gbrain sources set-path <id> <verified-directory>
-  gbrain sources set-path <id> --clear   (connector sources: clear a stale local_path)
+  gbrain sources set-path <id> --clear   (connector sources, or any relative local_path: clear it)
   gbrain sources reclone <id>
 
 All commands accept --request-id <uuid>, --expected-incarnation <uuid>, --dry-run,

@@ -1454,8 +1454,15 @@ describe('PR #356 — non-transactional DDL runs via reserved connection', () =>
     const runFnIdx = source.indexOf('async function runMigrationSQL(');
     expect(runFnIdx).toBeGreaterThan(-1);
     const fnBody = source.slice(runFnIdx, runFnIdx + 2500);
-    expect(fnBody).toContain('withReservedConnection');
-    expect(fnBody).toContain("SET statement_timeout = '${migrationStatementTimeoutMs()}'");
+    // The else-branch runs through schema-migrations/helpers.ts runMigrationStatement, which a handler's own
+    // statement (v265's VALIDATE CONSTRAINT) shares.
+    expect(fnBody).toContain('await runMigrationStatement(engine, m.version, sql);');
+    const helpers = surfaceFileSource('migrate', 'src/core/schema-migrations/helpers.ts');
+    const helperIdx = helpers.indexOf('export async function runMigrationStatement(');
+    expect(helperIdx).toBeGreaterThan(-1);
+    const helperBody = helpers.slice(helperIdx, helperIdx + 1500);
+    expect(helperBody).toContain('withReservedConnection');
+    expect(helperBody).toContain("SET statement_timeout = '${migrationStatementTimeoutMs()}'");
     expect(migrationStatementTimeoutMs()).toBe(600_000);
   });
 });

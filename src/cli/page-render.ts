@@ -28,6 +28,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import { serializeMarkdown } from '../core/markdown.ts';
 import { opError } from '../core/ops/contract.ts';
+import { unquoteTranscriptText } from '../core/search/transcript-quote.ts';
 import { readFix } from '../core/ops/op-fix.ts';
 import { PAGE_MAX_BYTES } from '../core/page-size-policy.ts';
 import { isSegmentedPage } from '../core/page-body/page-shape.ts';
@@ -155,7 +156,8 @@ async function spoolWholePage(call: PagedCall, params: Record<string, unknown>, 
       if (!r.window || typeof r.window.byte_start !== 'number' || !size || typeof size.sha256 !== 'string') {
         throw new Error(`get_page did not return a markdown window for ${String(params.slug)}; the page was not printed.`);
       }
-      const part = Buffer.from(r.window.text, 'utf8');
+      // #8042: a host quotes each window of a chat page; size and sha256 cover the page's own bytes.
+      const part = Buffer.from(r.quoted === 'transcript' ? unquoteTranscriptText(r.window.text, String(r.slug)) : r.window.text, 'utf8');
       hash.update(part);
       for (let written = 0; written < part.length;) written += (await spool.write(part, written, part.length - written, bytes + written)).bytesWritten;
       lengths.push(part.length);

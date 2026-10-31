@@ -42,6 +42,14 @@ describe('directPoolProfileForCommand', () => {
       expect(directPoolProfileForCommand(command, [])).toBe('one_shot');
   });
 
+  test('#7599: a read-only stdio serve is one-shot; a read-write serve stays resident', () => {
+    expect(directPoolProfileForCommand('serve', ['--access', 'read-only'])).toBe('one_shot');
+    expect(directPoolProfileForCommand('serve', ['--surface', 'full', '--access', 'read-only'])).toBe('one_shot');
+    expect(directPoolProfileForCommand('serve', ['--access=read-only'])).toBe('one_shot');
+    for (const args of [[], ['--access', 'full'], ['--access=full'], ['--surface', 'read-only'], ['--http', '--port', '8080']])
+      expect(directPoolProfileForCommand('serve', args)).toBe('resident');
+  });
+
   test('every claim owner keeps a direct route', () => {
     for (const command of OWNER_COMMANDS) expect(directPoolProfileForCommand(command, [])).not.toBe('one_shot');
   });

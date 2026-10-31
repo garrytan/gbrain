@@ -33,6 +33,7 @@
  * marker, so its request identity and replay are unchanged; when the group
  * does not commit it takes `publishMutation` like any other member.
  */
+import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { authorizeStoredRequest, storedAuthorizationReads } from './authority.ts';
@@ -81,6 +82,7 @@ import { importGroupReads, type ImportGroupReads } from './import-reads.ts';
 import { withScreeningPaths } from './screening-paths.ts';
 import { publicationBeliefOptions, withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
+import { PAGE_CHANGED_DURING_PREPARATION_MESSAGE } from './verb-errors.ts';
 
 /** A `put_pages` or managed import group publishes at most this many pages per transaction, so one commit stays a few seconds long. */
 export const PAGE_BATCH_GROUP_MAX = 8;
@@ -377,7 +379,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
                 await authorizePageVisibility(tx, row.authority, row.slug);
                 if ((snapshot?.page.id ?? null) !== row.page_id) throw new OperationError('page_identity_changed', 'The accepted page was deleted or recreated.', 'Read the page again and submit a new intent with a new request_id.');
                 await assertUnboundPublication(tx, row, snapshot?.page.source_path);
-                if ((snapshot?.revision ?? null) !== member.observedRevision) throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
+                if ((snapshot?.revision ?? null) !== member.observedRevision) throw new OperationError('revision_conflict', PAGE_CHANGED_DURING_PREPARATION_MESSAGE, 'Read its current revision and submit the updated intent with a new request_id.');
                 return snapshot;
               },
               async () => { if (sync) await member.validate?.(tx); },
@@ -414,7 +416,13 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
       if (lane) { timed.apply?.turn(); await faultPoint('lane:applied', { requestId: head.request_id, sourceId: head.source_id, operation: head.operation }); await awaitLaneTurn(tx, lane, rows); timed.apply?.turned(); }
       // G2: one path-only commit for every member's file, in commit order, before the rows commit; a shared lease never reclaims an index lock.
       if (strict && recorded.size) {
-        const commit = await commitThroughDoor(binding.local_path!, [...recorded].map(([i, member]) => ({ path: member.record.path, note: prepared[i]!.file?.commit })), lane || joined ? undefined : lock);
+        const commit = await commitThroughDoor(binding.local_path!, [...recorded].map(([i, member]) => ({ path: member.record.path, planned: member.record.afterHash, note: prepared[i]!.file?.commit })), lane || joined ? undefined : lock,
+          paths => {
+            for (const [i, member] of recorded) {
+              const rel = relative(binding.local_path!, member.record.path).split(sep).join('/');
+              if (paths.includes(rel)) Object.assign(outcomes[i]!.persistence as object, { git_index_restored: [rel] });
+            }
+          });
         for (const i of recorded.keys()) Object.assign(outcomes[i]!.persistence as object, { git_state: 'committed', git_commit: commit });
       }
       const done = await completeGroup(tx, rows, outcomes);

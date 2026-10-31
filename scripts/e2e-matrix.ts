@@ -6,7 +6,7 @@ import { resolve, relative, isAbsolute } from "node:path";
 import { loadWeights, partition, type WeightMap } from "./sharding.ts";
 
 // PR owner of the reconciliation crash suites is persistence-validation.yml
-// (called from test.yml on every PR; postgres x Bun 1.4.0/1.4.2; crash
+// (called from test.yml on every PR; postgres x every supported Bun; crash
 // manifests uploaded). Nightly full-corpus E2E still runs them.
 export const PERSISTENCE_VALIDATION_OWNED = new Set([
   'test/e2e/reconcile-crash.test.ts',
@@ -26,7 +26,7 @@ export function exclusionNotice(file: string): string {
   if (BACKEND_MATRIX_OWNED.has(file)) return `excluded: ${file} (owned by the Tier 1 backend matrix, scripts/e2e-backend-matrix.txt)`;
   return `excluded (named-job / live-key lane): ${file}`;
 }
-export const MAX_E2E_WORKERS = 8;
+export const MAX_E2E_WORKERS = 14;
 export const E2E_EXCLUSIONS = new Set([
   'test/e2e/op-checkpoint-jsonb-parity.test.ts',
   'test/e2e/jsonb-roundtrip.test.ts',
@@ -41,7 +41,7 @@ export const E2E_EXCLUSIONS = new Set([
   'test/e2e/skills.test.ts',
   'test/e2e/voyage-rerank-live.test.ts',
   'test/e2e/voyage-multimodal.test.ts',
-  // Engine graduation: run once by tier1's graduation step (direct Postgres + PgBouncer).
+  // Engine graduation: run once by the tier1-graduation job (direct Postgres + PgBouncer).
   'test/e2e/graduation-cli.test.ts',
   'test/e2e/graduation-cli-topologies.test.ts',
   'test/e2e/graduation-cli-history.test.ts',
