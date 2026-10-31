@@ -1039,6 +1039,22 @@ Imports now make that text inert before it reaches the page. Every `gbrain:` mar
 - `POST /ingest` is unchanged: its caller is an authenticated writer with the same rights as `put_page`. Files the ingestion daemon picks up are unchanged too, because they're the owner's own.
 - New connectors should pass every outside field through `neutralizeOutsideText` in `src/core/outside-content.ts`.
 
+## [Unreleased]
+
+**Upgrades are now tested from real published releases every night.**
+
+A new Upgrade matrix workflow installs older gbrain releases the way the README says (`bun install -g github:garrytan/gbrain`), builds a small brain on each, and upgrades it with that release's own `gbrain upgrade` to the newest release. It then checks that the installed files are the new release's, that a running `gbrain serve` comes back on the new build, that migrations finish at the schema head, that doctor is clean, that pages, facts and sources are unchanged, that new writes and searches work, and that the old binary can still read the upgraded brain. Each old release (one, ten and fifty releases back, about 30 days back, and stable when it exists) runs on PGLite and Postgres, with and without an embedding key (a local stand-in, nothing billed), on a brain with and without a Git repository.
+
+The updater only ever sees the release under test: GitHub traffic goes to a local fixture and every other host except the npm registry is refused. A failing nightly run opens one `upgrade-break` issue and a later green run closes it. Pull requests that touch migrations, the schema or the updater run a smaller subset. Details: `docs/ci-upgrade-matrix.md`.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A migration fails on brains created by an older release | found by users after the release | the nightly matrix fails the schema-head and apply-migrations checks (it catches the v0.60.390.0 → v0.60.465.0 PGLite failure fixed in 0.60.466.0) |
+| An upgrade rewrites page content | unnoticed | the preservation check lists every changed field; upgrading a v0.59.2.0 brain is tracked as a known exception (#7814) |
+| `gh workflow run upgrade-matrix.yml -f candidate=<tag>` | — | runs the full matrix against that release and uploads a plan and receipt |
+
 ## [0.60.475.0] - 2026-10-27
 
 **A repository's own commit checks now apply to commits gbrain makes.**
