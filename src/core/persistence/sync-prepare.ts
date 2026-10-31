@@ -687,7 +687,7 @@ async function syncWriteState(tx: BrainEngine, row: WriteRequest, page: Paramete
 
 async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _config: GBrainConfig, clock: ClaimPhaseClock | undefined,
   screening: { unsaved: true } | undefined, at: { root?: string }): Promise<SyncPreparedMutation> {
-  const engine = boundedReads(unbounded, clock);
+  const engine = boundedReads(unbounded, clock, { engineReads: true });
   const p = row.intent as SyncIntent | null;
   if (!p || !['managed_sync_import', 'managed_sync_delete', 'managed_sync_checkpoint'].includes(p.kind)) throw syncPublicationRefusal('invalid_params', 'Unsupported internal sync intent.', row, p,
     'The request does not carry a managed sync intent this release can publish.');

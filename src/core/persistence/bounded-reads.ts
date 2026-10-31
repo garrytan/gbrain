@@ -25,9 +25,10 @@
  * on) the engine is returned as it is.
  *
  * #6318: the engine's own reads (`readPageSnapshot`, `readPageSnapshotsBatch`, `findDuplicatePage`, the import
- * pipeline's lookups) bypass `executeRaw`. Every other method called through the view runs under the clock's
- * deadline (read-deadline.ts `withReadDeadline`), so the Postgres engine's scoped reads it issues end on the server at
- * the deadline too; one the server ended there (or a 55P03 a shorter session `lock_timeout` raised) is the member's
+ * pipeline's lookups) bypass `executeRaw`. With `engineReads` (the managed-sync preparer, sync-prepare.ts) every other
+ * method called through the view runs under the clock's deadline (read-deadline.ts `withReadDeadline`), so the Postgres
+ * engine's scoped reads it issues end on the server at the deadline too, each paying a pipelined BEGIN/SET LOCAL and
+ * COMMIT on a reserved connection; the page and maintenance preparers keep plain engine reads; one the server ended there (or a 55P03 a shorter session `lock_timeout` raised) is the member's
  * `preparation_deadline`. A read a group memo shares (group-publish.ts `preparationReads`, import-reads.ts) takes the
  * deadline of the member that sent it, and its failure stays a shared one.
  *
@@ -87,7 +88,7 @@ export function isSharedReadFailure(error: unknown): boolean {
 }
 
 /** The engine a preparer reads through: raw statements bounded by the clock's remaining budget, everything else untouched. */
-export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undefined): BrainEngine {
+export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undefined, opts: { engineReads?: boolean } = {}): BrainEngine {
   const deadlineAt = clock?.deadlineAt;
   if (deadlineAt === undefined || engine.kind !== 'postgres') return engine;
   return registerEngineView(new Proxy(engine, { get(target, key) {
@@ -112,6 +113,7 @@ export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undef
     };
     const value = Reflect.get(target, key, target);
     if (typeof value !== 'function') return value;
+    if (!opts.engineReads) return value.bind(target);
     return (...args: unknown[]) => {
       const result = withReadDeadline(deadlineAt, () => value.apply(target, args));
       return result instanceof Promise ? result.catch(error => {

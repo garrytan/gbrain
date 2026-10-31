@@ -4,9 +4,10 @@
  * (`readPageSnapshot`, `readPageSnapshotsBatch`, `findDuplicatePage`, the import pipeline's lookups) issue their
  * statements on the engine's connection directly. Under a relation lock held elsewhere those statements waited for as long
  * as the lock lasted, through a pooler that drops the session's `statement_timeout`. Work run inside
- * `withReadDeadline(deadlineAt, fn)` carries the deadline, and the Postgres engine's scoped reads issued from it run in a
- * read-only transaction whose `statement_timeout` is the time left (one settings statement, pipelined behind BEGIN), so
- * the server ends them at the deadline. A transaction's own statements and PGLite are unaffected.
+ * `withReadDeadline(deadlineAt, fn)` carries the deadline, and the Postgres engine's scoped reads issued from it run on a
+ * reserved connection in a read-only transaction whose `statement_timeout` is the time left
+ * (postgres-engine/bounded-statement.ts `runDeadlineRead`, pipelined), so the server ends them at the deadline. A
+ * transaction's own statements and PGLite are unaffected.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 
