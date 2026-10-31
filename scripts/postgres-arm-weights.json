@@ -387,6 +387,7 @@
   "test/shared-skills-source-opt-out.test.ts": 6068,
   "test/shared-skills-writer-boundary.test.ts": 29218,
   "test/source-lifecycle-dry-run-physical-root-6849.test.ts": 5349,
+  "test/source-purge-stranded-pages-7072.test.ts": 2807,
   "test/source-retire-missing-checkout.test.ts": 7678,
   "test/source-row-diagnostics.test.ts": 4799,
   "test/sources-resolve-path.test.ts": 9676,
