@@ -313,8 +313,9 @@ rule withheld (`loop_withheld_senders`: reason, count, last time; at most
 thread of up to 500 senders with open reply-owed loops, so the record covers
 older loops. `gbrain waiting` then prints how many open reply-owed loops come
 from those senders and the exact `gbrain loops drop sender <email> --source
-<id> --dry-run` to preview for each (JSON and the `open_loops` grouped view:
-`withheld_noise`). Nothing is closed automatically. The sync log prints
+<id> --dry-run` to preview for each: the 10 senders with the most loops,
+then a count of the rest. `gbrain waiting --json` and the `open_loops` grouped
+view list every sender in `withheld_noise`. Nothing is closed automatically. The sync log prints
 `[google] reply-owed loops withheld: automated_mail=N`.
 
 **Opt-in: Updates mail needs reciprocity.** With
