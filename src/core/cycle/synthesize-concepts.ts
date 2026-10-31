@@ -329,6 +329,7 @@ export async function runPhaseSynthesizeConcepts(
   const skippedHumanOwned: string[] = [];
   const skippedDeleted: string[] = [];
   const skippedUnchanged: string[] = [];
+  const provenanceRestored: string[] = [];
   const rehashed: string[] = [];
   const keptExistingNarrative: string[] = [];
   const pricingOverrides = await loadPricingOverrides(engine);
@@ -372,16 +373,18 @@ export async function runPhaseSynthesizeConcepts(
     const memberHash = hashFor(hashModel);
     const priorMode = existing?.frontmatter?.synthesis_mode;
     const realNarrative = priorMode === 'llm' || priorMode === 'deterministic_tier';
-    if (existing?.frontmatter?.member_hash === memberHash && realNarrative) {
-      skippedUnchanged.push(conceptSlug);
-      continue;
-    }
     // #7269: rewriting a deterministic page to the template it already holds, at a visibility it already has, would
     // publish nothing new (a page hashed with the model before the fix keeps its body and is not rewritten).
     const priorVisibility: Visibility = existing?.frontmatter?.visibility === 'private' ? 'private' : 'world';
-    if (hashModel === '' && priorMode === 'deterministic_tier' && strictestVisibility([group.visibility, priorVisibility]) === priorVisibility
-      && stripFenceSections(existing!.compiled_truth).trim() === deterministicNarrative(group).trim()) {
+    if ((existing?.frontmatter?.member_hash === memberHash && realNarrative)
+      || (hashModel === '' && priorMode === 'deterministic_tier' && strictestVisibility([group.visibility, priorVisibility]) === priorVisibility
+        && stripFenceSections(existing!.compiled_truth).trim() === deterministicNarrative(group).trim())) {
       skippedUnchanged.push(conceptSlug);
+      // #7548: the cache skips the model, not the member provenance an unchanged concept may have lost.
+      if (!opts.dryRun && !await conceptProvenanceCovers(engine, src, conceptSlug, group.atomSlugs)) {
+        await writer.restoreProvenance({ concept: group.conceptSlug, conceptSlug, atomSlugs: group.atomSlugs, revision: existingSnapshot!.revision });
+        provenanceRestored.push(conceptSlug);
+      }
       continue;
     }
     // #6643 (B1): a drifted concept would only add a conflict receipt per publication; checked live before any spend.
@@ -593,6 +596,7 @@ export async function runPhaseSynthesizeConcepts(
       skipped_human_owned: skippedHumanOwned,
       skipped_deleted: skippedDeleted,
       skipped_unchanged: skippedUnchanged,
+      provenance_restored: provenanceRestored,
       rehashed,
       kept_existing_narrative: keptExistingNarrative,
       skipped_retry_bound: skippedRetryBound,

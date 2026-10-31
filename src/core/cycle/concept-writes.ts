@@ -87,8 +87,13 @@ export function conceptWriter(deps: ConceptWriterDeps) {
    * as a warn, the page write stands. Mirrors #3961. Returns whether the concept now goes to world.
    */
   const bankProvenance = async (write: ConceptWrite): Promise<boolean> => {
+    if (write.synthesisMode === 'llm') deps.retries.succeed(`${src}:${write.conceptSlug}`);
+    await bankLinks(write);
+    return write.visibility === 'world' && !write.covered && await conceptProvenanceCovers(engine, src, write.conceptSlug, write.atomSlugs);
+  };
+  /** The edges of a concept at `write.revision` (managed) or its current revision (unmanaged); a failure is a link warning. */
+  const bankLinks = async (write: Pick<ConceptWrite, 'concept' | 'conceptSlug' | 'atomSlugs' | 'revision'>): Promise<void> => {
     const { conceptSlug } = write;
-    if (write.synthesisMode === 'llm') deps.retries.succeed(`${src}:${conceptSlug}`);
     const provenanceLinks: LinkBatchInput[] = [...new Set(write.atomSlugs)].flatMap((atomSlug) => [
       { from_slug: conceptSlug, to_slug: atomSlug, link_type: 'synthesized_from', link_source: 'concept-provenance', context: 'member atom', from_source_id: src, to_source_id: src },
       { from_slug: atomSlug, to_slug: conceptSlug, link_type: 'synthesizes', link_source: 'concept-provenance', context: 'concept synthesized from this atom', from_source_id: src, to_source_id: src },
@@ -112,7 +117,6 @@ export function conceptWriter(deps: ConceptWriterDeps) {
       deps.linkWarnings.push({ concept: write.concept, warning: `provenance links failed: ${msg}` });
       console.error(`[synthesize_concepts] provenance links failed for ${conceptSlug} (non-fatal): ${msg}`);
     }
-    return write.visibility === 'world' && !write.covered && await conceptProvenanceCovers(engine, src, conceptSlug, write.atomSlugs);
   };
   /** One managed batch; each concept settles on its own, and the ones that published carry their new revision. */
   const publishManaged = async (writes: ConceptWrite[], pageVisibility: (write: ConceptWrite) => Visibility): Promise<ConceptWrite[]> => {
@@ -150,5 +154,7 @@ export function conceptWriter(deps: ConceptWriterDeps) {
     },
     /** Managed: publish whatever is queued. */
     flush,
+    /** #7548: an unchanged concept whose edges no longer reach every member banks them again, with no publication. */
+    restoreProvenance: bankLinks,
   };
 }
