@@ -14,10 +14,13 @@ export async function readMarkersForRun(engine: BrainEngine, sourceId: string): 
 }
 
 /** After a completed run: clears what it satisfied; queues one follow-up job when something is still due. Returns that job. */
-export async function settleRunMarkers(engine: BrainEngine, sourceId: string, read: WantedMarker[], run: { pulled: boolean; full: boolean }, opts: { queue?: boolean } = {}): Promise<{ job_id: number | null; markers: number } | null> {
+export async function settleRunMarkers(engine: BrainEngine, sourceId: string, read: WantedMarker[], run: { pulled: boolean; full: boolean; noProgress?: boolean }, opts: { queue?: boolean } = {}): Promise<{ job_id: number | null; markers: number } | null> {
   try {
     const remaining = await settleMarkers(engine, sourceId, read, run);
     if (!remaining.length) return null;
+    // A no-op run cannot make an unchanged, still-due marker any closer to satisfaction.
+    // Keep it durable for the notifier/operator, but don't let it enqueue itself forever.
+    if (run.noProgress) return null;
     if (opts.queue === false || engine.kind === 'pglite') {
       (await import('./resident.ts')).nudgeResidentNotifier();
       return { job_id: null, markers: remaining.length };

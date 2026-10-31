@@ -218,7 +218,7 @@ export function makeSyncHandler(engine: BrainEngine): MinionHandler {
       throw new UnrecoverableError(`Managed sync of source ${sourceId ?? 'default'} is ${result.status === 'blocked_by_failures' ? 'blocked' : 'stopped'}`
         + ` (${drain?.stop_reason ?? result.status}${drain?.remaining != null ? `, ${drain.remaining} entries left` : ''}). ${next?.why ?? ''}${next?.command ? ` Next: ${next.command}` : ''}`.trim());
     }
-    const followUp = drained.incomplete === true ? null : await settleRunMarkers(engine, sourceId ?? 'default', markersRead, { pulled: !noPull, full: false });
+    const followUp = drained.incomplete === true ? null : await settleRunMarkers(engine, sourceId ?? 'default', markersRead, { pulled: !noPull, full: false, noProgress: result.status === 'up_to_date' });
     return { ...result, ...drained, embed_job_id: embedJobId, embed_skip_reason: embedSkipReason, ...(embedNotice ? { notice: embedNotice } : {}),
       ...(followUp ? { marker_follow_up: followUp } : {}) };
   };
