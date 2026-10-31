@@ -482,9 +482,11 @@ function syncFileProvenance(row: WriteRequest, p: SyncIntent, root: string, impo
 /**
  * The no-op of an entry whose newer working-tree bytes are the current page (`published`): it records, as its import
  * provenance, those working-tree bytes at the page's current revision (#6712 PR 1), so the commit that later carries
- * them is prescreened; the pinned bytes it did not import are not recorded.
+ * them is prescreened; the pinned bytes it did not import are not recorded. #8089: the file is re-read at apply, so the
+ * record names it only when it still holds those bytes (its hash is the raw hash); otherwise nothing is recorded and the
+ * later commit is imported, never matched by bytes the page does not hold.
  */
-function publishedSyncNoop(row: WriteRequest, p: SyncIntent, root: string, snapshot: Snapshot | null, schemaPack: string | null,
+export function publishedSyncNoop(row: WriteRequest, p: SyncIntent, root: string, snapshot: Snapshot | null, schemaPack: string | null,
   validate: (tx: BrainEngine) => Promise<void>, releaseHold: (tx: BrainEngine) => Promise<void>): SyncPreparedMutation {
   const importProvenance: SyncImportProvenanceBase = { source_id: row.source_id, incarnation: row.source_incarnation, origin: p.sourcePath!, raw_sha256: p.rawHash!,
     working: true, gbrain_version: VERSION, parser: syncImportParser(schemaPack), ...(p.fullEpisode ? { full_episode: p.fullEpisode } : {}) };
@@ -492,8 +494,9 @@ function publishedSyncNoop(row: WriteRequest, p: SyncIntent, root: string, snaps
     apply: async tx => {
       await releaseHold(tx);
       const current = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
-      if (current && current.page.deleted_at == null && current.revision === snapshot?.revision) {
-        await recordSyncImportProvenance(tx, { ...importProvenance, page_id: Number(current.page.id), revision: current.revision, ...syncDiskProvenance(readSyncFile(root, p.path!), p.target) });
+      const disk = readSyncFile(root, p.path!);
+      if (current && current.page.deleted_at == null && current.revision === snapshot?.revision && disk && sha256(disk) === p.rawHash) {
+        await recordSyncImportProvenance(tx, { ...importProvenance, page_id: Number(current.page.id), revision: current.revision, ...syncDiskProvenance(disk, p.target) });
       }
       return { status: 'skipped', slug: row.slug, source_id: row.source_id, chunks: 0, noop: true, imported_file: true };
     } };
@@ -507,7 +510,11 @@ function publishedSyncNoop(row: WriteRequest, p: SyncIntent, root: string, snaps
  */
 export function syncDiskBytes(root: string, path: string, imported: Buffer, rawHash: string | null): Uint8Array | null {
   if (rawHash !== null && rawHash === sha256(imported)) return imported;
-  const disk = readSyncFile(root, path);
+  return heldDiskBytes(readSyncFile(root, path), imported);
+}
+
+/** #8071 and #8089: `disk` (null: absent) when it holds the imported bytes up to line endings, else the imported bytes. */
+export function heldDiskBytes(disk: Buffer | null, imported: Buffer): Uint8Array | null {
   if (!disk || disk.equals(imported)) return disk;
   const text = disk.toString('utf8'), lf = (value: string) => value.replace(/\r\n/g, '\n');
   return disk.equals(Buffer.from(text)) && lf(text) === lf(imported.toString('utf8')) ? disk : imported;

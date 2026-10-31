@@ -8,6 +8,7 @@ import { assertPageRevision } from './page-state/types.ts';
 import { assertOriginUnclaimed, assertRevivalUnclaimed, classifyOriginUniqueViolation } from './persistence/origin-guard.ts';
 import { lockUnheldPageKeys, withHeldPageKeys, type HeldPageKeys } from './page-state/guards.ts';
 import { readPageSnapshot as readCanonicalPageSnapshot } from './page-state/snapshot.ts';
+import { readDeadline } from './read-deadline.ts';
 import { readPageSnapshotsBatch } from './page-snapshot-batch.ts';
 import { createPageVersion } from './page-state/versions.ts';
 import { moveSlugBindings, recordRenameAlias } from './page-state/rename-alias.ts';
@@ -359,10 +360,11 @@ export class PostgresEngine implements BrainEngine {
     callback: (tx: ReturnType<typeof postgres>) => Promise<T>,
     opts?: { alwaysTransaction?: boolean; jitOff?: boolean; settings?: SearchSettings | (() => SearchSettings) },
   ): Promise<T> {
+    const deadlineAt = this._pageTransaction ? undefined : readDeadline();
     // Flag off + no pre-existing transaction need: call through on the
     // shared pool exactly as master does. No tx round-trip, no pool slot
     // held for the duration of the read.
-    if (!this.rlsScopeBindingEnabled && !opts?.alwaysTransaction) {
+    if (!this.rlsScopeBindingEnabled && !opts?.alwaysTransaction && deadlineAt === undefined) {
       return await callback(this.sql);
     }
     // Precedence matches sourceScopeOpts: federated array > scalar > '*'
@@ -384,6 +386,7 @@ export class PostgresEngine implements BrainEngine {
       const settings = {
         ...(this.rlsScopeBindingEnabled ? { 'app.scopes': scopesValue } : {}),
         ...(opts?.jitOff ? SEARCH_JIT_OFF : {}),
+        ...(deadlineAt === undefined ? {} : { statement_timeout: String(Math.max(1, Math.ceil(deadlineAt - Date.now()))) }),
         ...(typeof opts?.settings === 'function' ? opts.settings() : opts?.settings),
       };
       return withSearchSettings(tx, this._pageTransaction, settings, () => callback(tx), VECTOR_SETTING_DEFAULTS);

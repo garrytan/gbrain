@@ -20,11 +20,16 @@
  * The memo rule stands: a read `preparationReads` answers once for a whole
  * group never takes one member's bound or signal (group-publish.ts drops
  * them), and a statement that already carries a caller's signal keeps the
- * foreground path's cancellation instead of the bound. Engine helpers that bypass `executeRaw`
- * (`readPageSnapshot` and the import pipeline) stay under the consumer's race
- * and the ceiling. Without a deadline (switch off, a clock from an older
+ * foreground path's cancellation instead of the bound. Without a deadline (switch off, a clock from an older
  * caller) or on PGLite (one in-process connection, no other session to wait
  * on) the engine is returned as it is.
+ *
+ * #6318: the engine's own reads (`readPageSnapshot`, `readPageSnapshotsBatch`, `findDuplicatePage`, the import
+ * pipeline's lookups) bypass `executeRaw`. Every other method called through the view runs under the clock's
+ * deadline (read-deadline.ts `withReadDeadline`), so the Postgres engine's scoped reads it issues end on the server at
+ * the deadline too; one the server ended there (or a 55P03 a shorter session `lock_timeout` raised) is the member's
+ * `preparation_deadline`. A read a group memo shares (group-publish.ts `preparationReads`, import-reads.ts) takes the
+ * deadline of the member that sent it, and its failure stays a shared one.
  *
  * #6317 (C1): the same wrapper records each statement's label on the clock
  * (`recordClaimSql`) before issuing it, so the claim stamp's `last_sql` names
@@ -33,6 +38,7 @@
 import type { BrainEngine, ReservedConnection } from '../engine.ts';
 import { PoolCapacityError } from '../pool-budget.ts';
 import { READ_WRITE_BEGIN } from '../postgres-engine/read-write-transactions.ts';
+import { withReadDeadline } from '../read-deadline.ts';
 import { recordClaimSql, type ClaimPhaseClock } from './claim-phase.ts';
 import { registerEngineView, viewedEngine } from './switches.ts';
 
@@ -105,7 +111,15 @@ export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undef
       }
     };
     const value = Reflect.get(target, key, target);
-    return typeof value === 'function' ? value.bind(target) : value;
+    if (typeof value !== 'function') return value;
+    return (...args: unknown[]) => {
+      const result = withReadDeadline(deadlineAt, () => value.apply(target, args));
+      return result instanceof Promise ? result.catch(error => {
+        if (!isStatementTimeout(error) || isSharedReadFailure(error) || Date.now() < deadlineAt) throw error;
+        if (clock!.signal?.aborted) throw clock!.signal.reason;
+        throw new PreparationDeadlineError(clock!.step, error.code, error);
+      }) : result;
+    };
   } }), viewedEngine(engine));
 }
 

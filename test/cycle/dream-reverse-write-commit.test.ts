@@ -138,6 +138,35 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       });
     }, 180_000);
 
+    // Value: protects=#8087's root match in reverseWriteDreamRefs (a refused commit holds only the pages of the checkout that refused it);
+    // fails_when=the failure is matched to changes by relative path alone, so the same slug in another source's checkout is held and taken off
+    // the written count too; why_new=every other case here has one checkout (#8094); seam=none (two real checkouts, a pre-commit hook in one);
+    // no_claim=the hold token's text, which names the slug only.
+    test('a refused commit in one source\'s checkout holds only that source\'s page; the same slug in another checkout commits', async () => {
+      await withBrain(databaseUrl, 'git', async b => {
+        const other = `${b.root}-b`;
+        mkdirSync(other, { recursive: true });
+        const gitB = (...args: string[]) => execFileSync('git', ['-C', other, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+        gitB('init', '-q');
+        gitB('config', 'user.name', 'Example Writer');
+        gitB('config', 'user.email', 'writer@example.invalid');
+        writeFileSync(join(other, 'README.md'), '# source-b\n');
+        gitB('add', 'README.md');
+        gitB('commit', '-qm', 'init');
+        await b.engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', ['source-b', other]);
+        await importFromContent(b.engine, IDEA, page('Alice Example idea', 'The source-b copy of the idea.'), { noEmbed: true, sourceId: 'source-b' });
+        refuseCommits(b);
+        const headA = b.git('rev-parse', 'HEAD'), commitsB = Number(gitB('rev-list', '--count', 'HEAD'));
+        const held: string[] = [];
+        const written = await reverseWriteDreamRefs(b.engine, b.brainDir, [{ slug: IDEA, source_id: SOURCE }, { slug: IDEA, source_id: 'source-b' }],
+          { phase: 'synthesize', nativeSourceId: SOURCE, render: (p, tags) => serializePageToMarkdown(p, tags), held });
+        expect({ written, held: failedHolds(held, IDEA).length }).toEqual({ written: 1, held: 1 });
+        expect({ headA: b.git('rev-parse', 'HEAD'), dirtyA: dirty(b), fileA: existsSync(b.path(IDEA)) }).toEqual({ headA, dirtyA: '', fileA: false });
+        expect({ commitsB: Number(gitB('rev-list', '--count', 'HEAD')) - commitsB, pathsB: gitB('show', '--name-only', '--format=', 'HEAD'),
+          dirtyB: gitB('status', '--porcelain', '--untracked-files=all') }).toEqual({ commitsB: 1, pathsB: `${IDEA}.md`, dirtyB: '' });
+      });
+    }, 180_000);
+
     test('a checkout carrying a canonical owner marker commits through the named-paths-only path', async () => {
       await withBrain(databaseUrl, 'git', async b => {
         appendFileSync(join(b.root, '.git', 'info', 'exclude'), '.gbrain-owner.json\n');

@@ -12,15 +12,19 @@
  * is the one its last sync import produced (the database has not moved since) is `behind`; one the database moved since
  * is `database_moved` and not reported (file-drift's territory); one with no record (or a record without a revision) is
  * `unproven`, listed apart. Not reported either: held paths (the hold already says it), paths with no blob at the
- * checkpoint, non-Markdown pages, declared database-only pages, and paths that changed between the checkpoint and HEAD
- * (the next sync imports them).
+ * checkpoint, non-Markdown pages, declared database-only pages, paths sync does not read (`not_eligible`: outside the
+ * source's scope, matched by `sync.exclude`, hidden, outside the sync strategy or a reserved skillpack path), and paths
+ * that changed between the checkpoint and HEAD (the next sync imports them).
  *
  * Bounded: the checkpoint tree is listed once (and HEAD's only when it differs), pages are read in id batches of
- * ROWS_BEHIND_BATCH in read-only transactions, committed blobs are read in bounded `cat-file --batch` calls, and a blob
- * over the sync read bound (SYNC_READ_BOUND, the page ceiling) is never read: its row is reported with the
- * `file_too_large` refusal sync would hold it with. The deadline is checked before each batch and before each row's
- * content comparison and confirmation (`complete: false`; `pages` and `counts` cover the rows decided before
- * `stopped_at`, the page id the scan stopped at). `confirmUnproven: false` (doctor) counts rows with no import record
+ * ROWS_BEHIND_BATCH in read-only transactions, and a blob over the sync read bound (SYNC_READ_BOUND, the page ceiling) is
+ * never read: its row is reported with the `file_too_large` refusal sync would hold it with. #8093: a batch's committed
+ * blobs and export pages are read and compared in chunks of at most ROWS_BEHIND_BATCH_BYTES (one blob when a single one
+ * is larger), each chunk's buffers dropped once it is compared, and the differing rows keep at most that many bytes for
+ * their confirmation (the rest re-read their blob there). The deadline is checked before the per-source tree reads,
+ * before each batch and before each row's content comparison and confirmation (`complete: false`; `pages` and
+ * `counts` cover the rows decided before `stopped_at`, the page id the scan stopped at); no chunk is read after it
+ * passes. The confirmation's screen config and the export withdrawals are read once the first batch starts. `confirmUnproven: false` (doctor) counts rows with no import record
  * from the content comparison alone, without running the importer's confirmation.
  * Applies only on the owner host of a managed source with a checkout and a checkpoint; everything else, a repo-less
  * brain included, is `not_applicable` with its reason. Read-only. Readers: doctor `sync_rows_behind_checkpoint` and
@@ -43,6 +47,8 @@ import { METAFILE_HEAD_BYTES } from '../sync.ts';
 import { isSourceDbOnlySlug } from './source-storage.ts';
 
 export const ROWS_BEHIND_BATCH = 256;
+/** #8093: the committed-blob bytes one chunk of a batch reads, and the bytes the batch's differing rows keep for confirmation. */
+export const ROWS_BEHIND_BATCH_BYTES = 64 * 1024 * 1024;
 /** Rows one scan lists per class; counts go on past it (`truncated`). */
 export const ROWS_BEHIND_LIST_LIMIT = 1000;
 export const ROWS_BEHIND_DOCS = 'docs/guides/repair.md#rows-behind';
@@ -103,7 +109,7 @@ const empty = (sourceId: string, status: RowsBehindScan['status'], reason?: stri
 const isMarkdown = (path: string) => /\.mdx?$/i.test(path);
 
 export async function scanRowsBehind(engine: BrainEngine, sourceId: string,
-  opts: { deadlineAt?: number; confirmUnproven?: boolean; now?: () => number } = {}): Promise<RowsBehindScan> {
+  opts: { deadlineAt?: number; confirmUnproven?: boolean; now?: () => number; batchBytes?: number } = {}): Promise<RowsBehindScan> {
   if (!(await managedPersistenceEnabled(engine))) return empty(sourceId, 'not_applicable', 'not_managed');
   const context = await sourceContext(engine, sourceId);
   if (!context.ok) return empty(sourceId, context.status, context.reason);
@@ -111,6 +117,9 @@ export async function scanRowsBehind(engine: BrainEngine, sourceId: string,
   if (!source?.last_commit) return empty(sourceId, 'not_applicable', 'no_checkpoint');
   const root = context.root;
   try { isSourceDbOnlySlug(root, '', 'refuse'); } catch { return empty(sourceId, 'unknown', 'invalid_source_config'); }
+  const now = opts.now ?? Date.now;
+  const late = () => opts.deadlineAt !== undefined && now() >= opts.deadlineAt;
+  if (late()) return { ...empty(sourceId, 'known'), checkpoint: source.last_commit, complete: false };
   const checkpoint = await readHeadTree(root, source.last_commit);
   if (!checkpoint?.commit) return { ...empty(sourceId, 'unknown', 'checkpoint_unreadable'), checkpoint: source.last_commit };
   const headRead = await readHeadTree(root, 'HEAD');
@@ -123,13 +132,13 @@ export async function scanRowsBehind(engine: BrainEngine, sourceId: string,
   const policy = { mirror: false, databaseOnlySource: false, dbOnly: (slug: string) => isSourceDbOnlySlug(root, slug, 'refuse'), ignored: new Set<string>() };
   const scan: RowsBehindScan = { ...empty(sourceId, 'known'), checkpoint: checkpoint.commit, head: head.commit };
   const count = (why: RowsBehindSkip) => { scan.counts[why] = (scan.counts[why] ?? 0) + 1; };
-  const now = opts.now ?? Date.now;
-  const late = () => opts.deadlineAt !== undefined && now() >= opts.deadlineAt;
-  const screen = await repairScreenConfig(engine, sourceId);
-  const withdrawals: ExportWithdrawal[] = await readExportWithdrawals(engine, sourceId);
+  const batchBytes = opts.batchBytes ?? ROWS_BEHIND_BATCH_BYTES;
+  let screen: Awaited<ReturnType<typeof repairScreenConfig>> | undefined;
+  let withdrawals: ExportWithdrawal[] | undefined;
   const incarnation = context.owner.source_incarnation;
   for (let cursor = '0'; ;) {
     if (late()) { scan.complete = false; break; }
+    const exportWithdrawals = withdrawals ??= await readExportWithdrawals(engine, sourceId);
     let stop: number | null = null;
     const skipped: Array<[number, RowsBehindSkip]> = [];
     const skip = (id: string, why: RowsBehindSkip) => { skipped.push([Number(id), why]); };
@@ -174,28 +183,40 @@ export async function scanRowsBehind(engine: BrainEngine, sourceId: string,
         if (head !== checkpoint && head.blobs.get(gitPath(row.rel))?.oid !== row.blob.oid) { skip(row.key.id, 'changed_after_checkpoint'); continue; }
         compare.push(row);
       }
-      const readable = compare.filter(row => row.blob.size <= SYNC_READ_BOUND);
-      const bytes = await readBlobs(root, readable.filter(row => !row.key.segmented).map(row => row.blob));
-      if (!bytes) throw new Error(`Git could not read committed files of source ${sourceId} at ${checkpoint.commit}`);
-      const snapshots = await readExportPages(tx, readable.map(row => row.key), withdrawals);
-      const byId = new Map(snapshots.map(snapshot => [String(snapshot.page.id), snapshot]));
-      for (const row of compare) {
-        if (late()) { stop = Number(row.key.id); break; }
-        const recordState: RowBehind['record'] = records.get(Number(row.key.id))?.revision != null ? 'recorded' : 'none';
-        if (row.blob.size > SYNC_READ_BOUND) { candidates.push({ ...row, record: recordState, content: null, compared: null }); continue; }
-        const snapshot = byId.get(row.key.id);
-        if (!snapshot) continue;
-        const compared = row.key.segmented ? await compareSegmentedExportBlob(tx, snapshot, withdrawals, row.blob, checkpoint.format)
-          : compareInlineExportFile(bytes.get(row.blob.oid)!, scannerSourcePath(root, `${root}/${row.rel}`, context.mode), snapshot);
-        if (compared.state === 'equal') { skip(row.key.id, 'current'); continue; }
-        candidates.push({ ...row, record: recordState, content: bytes.get(row.blob.oid) ?? null, compared });
+      const blobBytes = (row: (typeof compare)[number]) => row.blob.size > SYNC_READ_BOUND || row.key.segmented ? 0 : row.blob.size;
+      let kept = 0;
+      for (let start = 0; start < compare.length && stop === null;) {
+        let end = start, total = 0;
+        while (end < compare.length && (end === start || total + blobBytes(compare[end]!) <= batchBytes)) total += blobBytes(compare[end++]!);
+        const chunk = compare.slice(start, end);
+        start = end;
+        const readable = chunk.filter(row => row.blob.size <= SYNC_READ_BOUND);
+        const bytes = await readBlobs(root, readable.filter(row => !row.key.segmented).map(row => row.blob));
+        if (!bytes) throw new Error(`Git could not read committed files of source ${sourceId} at ${checkpoint.commit}`);
+        const snapshots = await readExportPages(tx, readable.map(row => row.key), exportWithdrawals);
+        const byId = new Map(snapshots.map(snapshot => [String(snapshot.page.id), snapshot]));
+        for (const row of chunk) {
+          if (late()) { stop = Number(row.key.id); break; }
+          const recordState: RowBehind['record'] = records.get(Number(row.key.id))?.revision != null ? 'recorded' : 'none';
+          if (row.blob.size > SYNC_READ_BOUND) { candidates.push({ ...row, record: recordState, content: null, compared: null }); continue; }
+          const snapshot = byId.get(row.key.id);
+          if (!snapshot) continue;
+          const compared = row.key.segmented ? await compareSegmentedExportBlob(tx, snapshot, exportWithdrawals, row.blob, checkpoint.format)
+            : compareInlineExportFile(bytes.get(row.blob.oid)!, scannerSourcePath(root, `${root}/${row.rel}`, context.mode), snapshot);
+          if (compared.state === 'equal') { skip(row.key.id, 'current'); continue; }
+          const content = bytes.get(row.blob.oid) ?? null;
+          const keep = content !== null && kept + content.length <= batchBytes;
+          if (keep) kept += content.length;
+          candidates.push({ ...row, record: recordState, content: keep ? content : null, compared });
+        }
       }
       return batch.length < ROWS_BEHIND_BATCH;
     });
     for (const candidate of candidates) {
       if (stop !== null && Number(candidate.key.id) >= stop) break;
       if (late()) { stop = Number(candidate.key.id); break; }
-      const row = candidate.record === 'none' && opts.confirmUnproven === false ? unconfirmedRow(candidate) : await confirm(engine, sourceId, root, screen, candidate);
+      const row = candidate.record === 'none' && opts.confirmUnproven === false ? unconfirmedRow(candidate)
+        : await confirm(engine, sourceId, root, screen ??= await repairScreenConfig(engine, sourceId), candidate);
       if (typeof row === 'string') { count(row); continue; }
       const list = row.record === 'recorded' ? scan.behind : scan.unproven;
       if (row.record === 'recorded') scan.behind_count++; else scan.unproven_count++;

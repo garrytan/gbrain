@@ -10,6 +10,20 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A table lock on `pages` no longer pins a managed sync's preparations past their budget, sync and waiver provenance records name a file only when it holds the bytes they record, and the rows-behind doctor check holds at most 64 MiB of committed files per batch (#6318, #8089, #8093, #8094).**
+
+A managed sync bounds each preparation by `persistence.sync_preparation_ms`. Its raw reads already ended on the server at that budget, but the engine's own reads (the page snapshot, the import pipeline's duplicate and content-hash lookups) ran as plain autocommit statements, so under `LOCK TABLE pages` held elsewhere they waited as long as the lock did, through a pooler that drops the session `statement_timeout`. Those reads now run in a transaction whose `statement_timeout` is the time the preparation has left, and a read the server ends there is the member's `preparation_deadline`, held as `preparation_stalled` like the head member. Nothing changes without a deadline, inside a transaction, or on PGLite.
+
+### Itemized changes
+
+- `src/core/read-deadline.ts` (new), `src/core/postgres-engine.ts` `withScopedReadTransaction`, `src/core/persistence/bounded-reads.ts`: a call through a preparation's bounded engine view carries the clock's deadline, and the Postgres engine's scoped reads issued under it set `statement_timeout` to the time left (#6318). Probe: `test/e2e/persistence-preparation-engine-reads-lock-postgres.test.ts`.
+- `src/core/persistence/sync-prepare.ts` (`publishedSyncNoop`, new `heldDiskBytes`), `src/core/persistence/sync-waivers.ts` (`waivedProvenance`): a `published` no-op re-reads its file at apply and records provenance only when the file still has the raw hash; a waiver records the file it read only when it holds the imported bytes (up to line endings), the rule `syncDiskBytes` already follows (#8089). Probe: `test/sync-provenance-writers-8089.test.ts`.
+- `src/core/persistence/rows-behind.ts`: doctor `sync_rows_behind_checkpoint` reads and compares a batch's committed files in chunks of at most 64 MiB (`ROWS_BEHIND_BATCH_BYTES`), drops each chunk's buffers after the comparison, checks the deadline before the per-source tree reads and each chunk, and reads its screen config only once a batch starts (#8093 item 1). The docstring names `not_eligible` (#8094).
+- `test/cycle/dream-reverse-write-commit.test.ts`: a refused commit in one source's checkout holds only that source's page (#8094).
+- `scripts/bench/managed-sync-stall-repro.ts`: `--sync-preparation-ms` and a `lock_release` result listing sync statements still waiting on a lock 3 s past the budget.
+
 ## [0.60.529.0] - 2026-10-31
 
 **A pull request that adds a file to the PGLite snapshot inputs no longer gets stopped at gstack's pregate secrets check by its own workflow cache keys (#8107).**
