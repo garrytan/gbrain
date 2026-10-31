@@ -7,6 +7,10 @@ export const ollama: Recipe = {
   tier: 'openai-compat',
   implementation: 'openai-compatible',
   base_url_default: 'http://localhost:11434/v1',
+  // OpenCode Go routes and caches requests by session. This is harmless to
+  // Ollama servers and lets the documented OpenAI-compatible URL override
+  // work with Go without requiring provider-specific configuration.
+  default_headers: { 'x-opencode-session': 'gbrain' },
   auth_env: {
     required: [], // Ollama runs unauthenticated locally; users pass `ollama` as the key.
     optional: ['OLLAMA_BASE_URL', 'OLLAMA_API_KEY'],
