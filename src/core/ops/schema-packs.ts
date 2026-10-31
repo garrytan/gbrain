@@ -35,18 +35,12 @@ const get_active_schema_pack: Operation = {
   scope: 'read',
   handler: async (ctx) => {
     const { loadActivePack, resolveActivePackNameOnly } = await import('../schema-pack/load-active.ts');
-    const { loadConfig } = await import('../config.ts');
-    const cfg = loadConfig();
-    const sourceOpts: Record<string, unknown> = {};
-    if (ctx.sourceId) sourceOpts.sourceId = ctx.sourceId;
-    // #3792: thread the DB-plane schema_pack (tier 4) so this identity
-    // packet reports the SAME pack the engine actually queries with.
-    let dbConfig: string | undefined;
-    try {
-      dbConfig = (await ctx.engine.getConfig('schema_pack')) ?? undefined;
-    } catch { /* engine.config may not exist on very old brains */ }
-    const resolution = resolveActivePackNameOnly({ cfg, remote: ctx.remote ?? true, dbConfig, ...sourceOpts });
-    const pack = await loadActivePack({ cfg, remote: ctx.remote ?? true, dbConfig, ...sourceOpts });
+    const { engineSchemaInput } = await import('../schema-pack/engine-resolution.ts');
+    // #3792/#7942: the DB-plane tiers (brain-wide and the caller source's
+    // override) so this packet reports the pack writes validate against.
+    const input = await engineSchemaInput(ctx.engine, { remote: ctx.remote ?? true, sourceId: ctx.sourceId });
+    const resolution = resolveActivePackNameOnly(input);
+    const pack = await loadActivePack(input);
     const primitiveSummary: Record<string, number> = {};
     for (const t of pack.manifest.page_types) {
       primitiveSummary[t.primitive] = (primitiveSummary[t.primitive] ?? 0) + 1;
@@ -122,11 +116,10 @@ const schema_lint: Operation = {
   scope: 'read',
   handler: async (ctx, p) => {
     const { runAllLintRules } = await import('../schema-pack/lint-rules.ts');
-    const { loadActivePack, resolveLoadedPack } = await import('../schema-pack/load-active.ts');
-    const { loadConfig, gbrainPath } = await import('../config.ts');
+    const { resolveLoadedPack } = await import('../schema-pack/load-active.ts');
+    const { gbrainPath } = await import('../config.ts');
     const { existsSync } = await import('node:fs');
     const { join } = await import('node:path');
-    const cfg = loadConfig();
     let manifest;
     if (p.pack) {
       // Locate by name without trust-gating per-call schema_pack opt
@@ -153,11 +146,9 @@ const schema_lint: Operation = {
       // count as declared — parity with the active-pack branch below.
       manifest = (await resolveLoadedPack(loader(path))).manifest;
     } else {
-      // #4653: tier-4 DB-plane schema_pack, same read get_active_schema_pack does.
-      const { readDbSchemaPack } = await import('../schema-pack/best-effort.ts');
-      const dbConfig = await readDbSchemaPack(ctx.engine);
-      const resolved = await loadActivePack({ cfg, remote: ctx.remote ?? true, sourceId: ctx.sourceId, dbConfig });
-      manifest = resolved.manifest;
+      // #4653/#7942: the DB-plane tiers, same resolution get_active_schema_pack does.
+      const { loadActivePackForEngine } = await import('../schema-pack/engine-resolution.ts');
+      manifest = (await loadActivePackForEngine(ctx.engine, { remote: ctx.remote ?? true, sourceId: ctx.sourceId })).manifest;
     }
     // File-plane only over MCP; the engine-aware --with-db opt-in is
     // CLI-only (Phase 5 wiring). MCP callers get the 9 file-plane rules.
@@ -174,13 +165,9 @@ const schema_graph: Operation = {
   params: {},
   scope: 'read',
   handler: async (ctx) => {
-    const { loadActivePack } = await import('../schema-pack/load-active.ts');
-    const { loadConfig } = await import('../config.ts');
-    const { readDbSchemaPack } = await import('../schema-pack/best-effort.ts');
-    const cfg = loadConfig();
-    // #4653: tier-4 DB-plane schema_pack, same read get_active_schema_pack does.
-    const dbConfig = await readDbSchemaPack(ctx.engine);
-    const pack = await loadActivePack({ cfg, remote: ctx.remote ?? true, sourceId: ctx.sourceId, dbConfig });
+    const { loadActivePackForEngine } = await import('../schema-pack/engine-resolution.ts');
+    // #4653/#7942: the DB-plane tiers, same resolution get_active_schema_pack does.
+    const pack = await loadActivePackForEngine(ctx.engine, { remote: ctx.remote ?? true, sourceId: ctx.sourceId });
     const nodes = pack.manifest.page_types.map((t) => ({ name: t.name, primitive: t.primitive }));
     const edges: Array<{ from: string; verb: string; to: string }> = [];
     for (const lt of pack.manifest.link_types) {
@@ -210,13 +197,9 @@ const schema_explain_type: Operation = {
   },
   scope: 'read',
   handler: async (ctx, p) => {
-    const { loadActivePack } = await import('../schema-pack/load-active.ts');
-    const { loadConfig } = await import('../config.ts');
-    const { readDbSchemaPack } = await import('../schema-pack/best-effort.ts');
-    const cfg = loadConfig();
-    // #4653: tier-4 DB-plane schema_pack, same read get_active_schema_pack does.
-    const dbConfig = await readDbSchemaPack(ctx.engine);
-    const pack = await loadActivePack({ cfg, remote: ctx.remote ?? true, sourceId: ctx.sourceId, dbConfig });
+    const { loadActivePackForEngine } = await import('../schema-pack/engine-resolution.ts');
+    // #4653/#7942: the DB-plane tiers, same resolution get_active_schema_pack does.
+    const pack = await loadActivePackForEngine(ctx.engine, { remote: ctx.remote ?? true, sourceId: ctx.sourceId });
     const found = pack.manifest.page_types.find((t) => t.name === p.type);
     if (!found) return { error: 'type_not_found', type: p.type as string, pack: pack.manifest.name };
     return { schema_version: 1, pack: pack.manifest.name, type: found };

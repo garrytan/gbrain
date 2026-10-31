@@ -79,7 +79,7 @@ function intervalView(ctx: OperationContext, i: PageInterval, opts: { body: bool
   if (!opts.body || !i.page) return meta;
   const bytes = i.page.body_bytes ?? 0;
   if (i.body === 'segmented' || bytes > opts.inlineMax) {
-    return { ...meta, body_ref: { total_bytes: bytes, ...(i.version_id != null ? { read: { tool: 'get_page', arguments: { slug: i.slug, version_id: i.version_id, body: 'window' } } } : {}) } };
+    return { ...meta, body_ref: { total_bytes: bytes } };
   }
   const clean = (s: string | null) => s == null ? null : ctx.remote === false ? s : sanitizeRemoteBody(s, { includeWithdrawn: true, keepMaterializedMarkers: true });
   // #8042: a third-party page as recorded reaches an untrusted reader quoted, as get_page's current body does.
