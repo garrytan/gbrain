@@ -272,16 +272,18 @@ echo "[runner] bun version: $(bun --version)"
 # Test prerequisites may be missing even in a warm runner image: git backs
 # fixture repos, python3 backs security scans and argv recorders, and ps backs
 # live-process / PID-reuse lock checks. psql cleans up connections between E2E
-# files. None are application dependencies.
+# files. curl downloads for check:vendor-postgres (vendor/update-postgres.sh);
+# the oven/bun image ships without it (#7765). None are application dependencies.
 if ! command -v git >/dev/null 2>&1 || \
    ! command -v python3 >/dev/null 2>&1 || \
    ! command -v ps >/dev/null 2>&1 || \
    ! command -v psql >/dev/null 2>&1 || \
    ! command -v cc >/dev/null 2>&1 || \
-   ! command -v jq >/dev/null 2>&1; then
+   ! command -v jq >/dev/null 2>&1 || \
+   ! command -v curl >/dev/null 2>&1; then
   echo "[runner] Installing test prerequisites (debian apt)..."
   apt-get update -qq >/dev/null
-  apt-get install -y -qq git ca-certificates python3 procps postgresql-client jq build-essential >/dev/null
+  apt-get install -y -qq git ca-certificates python3 procps postgresql-client jq curl build-essential >/dev/null
 fi
 # Container runs as root (uid 0) against a host-uid bind-mount; mark repo +
 # any worktree gitdir as safe so `git status` etc. don't refuse.
