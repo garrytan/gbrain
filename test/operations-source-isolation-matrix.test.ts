@@ -182,6 +182,7 @@ const MATRIX: Row[] = [
   { name: 'get_recent_salience', mode: 'isolated', args: { limit: 50 } },
   { name: 'find_anomalies', mode: 'isolated', args: {} },
   { name: 'recall', mode: 'isolated', args: { query: 'BETAMARKER', limit: 20 } },
+  { name: 'memory_recall', mode: 'isolated', args: { query: 'BETAMARKER works' } },
   { name: 'find_contradictions', mode: 'isolated', args: {} },
   { name: 'find_experts', mode: 'isolated', args: { topic: 'BETAMARKER', limit: 10 } },
   { name: 'chronicle_day', mode: 'isolated', args: { date: TODAY } },

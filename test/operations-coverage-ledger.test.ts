@@ -33,6 +33,8 @@ const LEDGER: Record<string, string> = {
   entity: 'test/memory-verbs-conformance.test.ts',
   synthesize: 'test/memory-verbs-conformance.test.ts',
   forget: 'test/memory-verbs-conformance.test.ts',
+  memory_recall: 'test/qm-memory-tools.test.ts',
+  memory_write: 'test/qm-memory-tools.test.ts',
   get_page: 'test/get-page-federated-scope.test.ts',
   put_page: 'test/put-page-provenance.test.ts',
   put_pages: 'test/put-pages-batch.test.ts',

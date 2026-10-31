@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 264227,
-    "stdoutSha256": "f1f964ec0bac00c293cdf8e2dfdd28c67c75cde928f45b71f189690e93762e67",
+    "stdoutBytes": 267201,
+    "stdoutSha256": "9572ed8710168f1ca343b8471caf198aad30542b1e0c007e903f2472235d2c02",
     "toolNames": [
       "remember",
       "entity",
@@ -156,6 +156,8 @@
       "purge_fact",
       "list_page_purges",
       "unpurge_page",
+      "memory_recall",
+      "memory_write",
       "find_contradictions",
       "find_experts",
       "find_trajectory",
@@ -7083,6 +7085,108 @@
           "type": "object"
         },
         "scope": "admin"
+      },
+      {
+        "description": "Facts for the person this call serves, one per line: their own recent facts first, then facts matching query. Never page bodies. For QM; agents use recall.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "memory_recall",
+        "parameters": {
+          "acting_user": "string?",
+          "max_chars": "number?",
+          "query": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "acting_user": {
+              "description": "Set by the trusted system: equal to the x-qm-actor header, or omit.",
+              "type": "string"
+            },
+            "max_chars": {
+              "description": "Text cap, 200-12000 (default 6000).",
+              "type": "number"
+            },
+            "query": {
+              "description": "What the turn is about; ranks the facts.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Save facts for the person this call serves, readable by them alone. Needs an attested person. The same idempotency_key replays the first receipt. For QM; agents use remember.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "memory_write",
+        "parameters": {
+          "acting_user": "string?",
+          "facts": "array",
+          "idempotency_key": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "acting_user": {
+              "description": "Set by the trusted system: equal to the x-qm-actor header, or omit.",
+              "type": "string"
+            },
+            "facts": {
+              "description": "1-20 facts.",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "fact": {
+                    "description": "One claim.",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "description": "Default fact.",
+                    "enum": [
+                      "event",
+                      "preference",
+                      "commitment",
+                      "belief",
+                      "fact"
+                    ],
+                    "type": "string"
+                  },
+                  "provenance": {
+                    "description": "Where it came from (<=200 chars).",
+                    "type": "string"
+                  },
+                  "valid_from": {
+                    "description": "When it became true (ISO 8601).",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "fact",
+                  "provenance"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "idempotency_key": {
+              "description": "1-128 visible ASCII characters; the same key replays this write.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "facts",
+            "idempotency_key"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
       },
       {
         "description": "Return suspected-contradiction findings from the most recent `gbrain eval suspected-contradictions` probe run, optionally filtered by slug and/or severity. Use this when the user asks 'what's inconsistent in my brain', 'show me contradictions about Acme', 'high-severity issues only', or wants to act on the probe's findings without re-running it. Returns {contradictions: [{a, b, severity, axis, confidence, resolution_command}]}. Remote, source-scoped or min_trust callers get only findings whose two sides they can read now (each side re-read live, with source_id, trust_tier and origin) and total_visible instead of the run total. Reads the stored run without triggering a new probe; users run `gbrain eval suspected-contradictions` for that.",

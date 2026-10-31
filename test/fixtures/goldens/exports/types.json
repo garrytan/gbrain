@@ -3892,7 +3892,7 @@
         "kind": "type",
         "name": "RecallFactReadOpts",
         "signature": [
-          "FactListOpts & { entitySlug?: string; }"
+          "FactListOpts & { entitySlug?: string; sourceMarkdownSlug?: string; }"
         ]
       },
       {
@@ -6438,6 +6438,7 @@
           "admissionOrigin?: AdmissionOrigin | undefined",
           "allowedSlugPrefixes?: string[] | undefined",
           "applyRemoteReadPolicy?: boolean | undefined",
+          "attestedOp?: string | undefined",
           "auth?: AuthInfo | undefined",
           "brainId?: string | undefined",
           "cliOpts?: { quiet: boolean; progressJson: boolean; progressInterval: number; } | undefined",

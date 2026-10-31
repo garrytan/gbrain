@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 162 tools across 25 areas. **Starter** marks membership in the ~40-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 164 tools across 25 areas. **Starter** marks membership in the ~40-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -144,6 +144,8 @@ Every non-localOnly operation on the MCP surface: 162 tools across 25 areas. **S
 | `confirm_memory` | Owner only: mark a fact, take or page as confirmed by the user (trust tier user_confirmed). | write |  |  |
 | `extract_facts` | Extract personal-knowledge facts (events, preferences, commitments, beliefs, ideas, and plain facts) from a conversation turn into the per-source hot memory. | write |  |  |
 | `forget_fact` | Forget a fact by recording a durable withdrawal in its source and visibility. | write |  |  |
+| `memory_recall` | Facts for the person this call serves, one per line: their own recent facts first, then facts matching query. | read |  |  |
+| `memory_write` | Save facts for the person this call serves, readable by them alone. | write |  |  |
 
 ## memory-verbs
 

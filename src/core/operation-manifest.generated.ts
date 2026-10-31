@@ -6108,6 +6108,97 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     }
   },
   {
+    "name": "memory_recall",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": {
+      "exempt": "renders its own bounded text: fact text passes the retrieval redactor before the max_chars cut"
+    },
+    "description": "Facts for the person this call serves, one per line: their own recent facts first, then facts matching query. Never page bodies. For QM; agents use recall.",
+    "params": {
+      "query": {
+        "type": "string",
+        "required": true,
+        "description": "What the turn is about; ranks the facts."
+      },
+      "max_chars": {
+        "type": "number",
+        "description": "Text cap, 200-12000 (default 6000)."
+      },
+      "acting_user": {
+        "type": "string",
+        "description": "Set by the trusted system: equal to the x-qm-actor header, or omit.",
+        "fullSurfaceOnly": true
+      }
+    },
+    "scope": "read",
+    "annotations": {
+      "title": "memory_recall (QM memory read)",
+      "readOnlyHint": true
+    },
+    "area": "memory"
+  },
+  {
+    "name": "memory_write",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Save facts for the person this call serves, readable by them alone. Needs an attested person. The same idempotency_key replays the first receipt. For QM; agents use remember.",
+    "params": {
+      "facts": {
+        "type": "array",
+        "required": true,
+        "description": "1-20 facts.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "fact": {
+              "type": "string",
+              "required": true,
+              "description": "One claim."
+            },
+            "provenance": {
+              "type": "string",
+              "required": true,
+              "description": "Where it came from (<=200 chars)."
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "event",
+                "preference",
+                "commitment",
+                "belief",
+                "fact"
+              ],
+              "description": "Default fact."
+            },
+            "valid_from": {
+              "type": "string",
+              "description": "When it became true (ISO 8601)."
+            }
+          }
+        }
+      },
+      "idempotency_key": {
+        "type": "string",
+        "required": true,
+        "description": "1-128 visible ASCII characters; the same key replays this write."
+      },
+      "acting_user": {
+        "type": "string",
+        "description": "Set by the trusted system: equal to the x-qm-actor header, or omit.",
+        "fullSurfaceOnly": true
+      }
+    },
+    "scope": "write",
+    "annotations": {
+      "title": "memory_write (QM memory write)",
+      "idempotentHint": true
+    },
+    "area": "memory"
+  },
+  {
     "name": "find_contradictions",
     "mutating": false,
     "idempotent": true,
