@@ -37,7 +37,7 @@ import { maintenancePreflight, publishMaintenancePage, type MaintenanceAuthority
 import { preserveCanonicalFences } from '../core/cycle/concept-publication.ts';
 import type { WriteReceipt } from '../core/persistence/types.ts';
 import type { OperationContext } from '../core/operations.ts';
-import { configureGatewayIfUninitialized, isAvailable, chat, getChatModel, withBudgetTracker } from '../core/ai/gateway.ts';
+import { configureGatewayIfUninitialized, isAvailable, chat, getChatModel, withBudgetTracker, isThinkingModel, THINKING_MODEL_MAX_OUTPUT_TOKENS } from '../core/ai/gateway.ts';
 import { BudgetTracker, BudgetExhausted, loadPricingOverrides, type BudgetReason, type NoPricingGuidance } from '../core/budget/budget-tracker.ts';
 import { noPricingSteps } from '../core/budget/no-pricing.ts';
 import { CapFlagError, mergeCapFlag, parseCapFlag, type CapFlag } from '../core/budget/cap-flag.ts';
@@ -231,12 +231,21 @@ function completedKey(sourceId: string, slug: string): string {
 // Default synthesis via the gateway.
 // ---------------------------------------------------------------------------
 
+/** A write-up's output cap is 2048 tokens. A thinking-by-default model (Claude 5) spends its reasoning inside
+ *  maxTokens, so on one the cap cut write-ups short (about 1 call in 9 ended at exactly 2048 output tokens on a
+ *  production brain once its reasoning tier moved to Claude Sonnet 5.5): give a thinking model the gateway's own
+ *  thinking-model cap, the default chat() would use without an explicit maxTokens. */
+export const ENRICH_MAX_TOKENS = 2048;
+export function enrichMaxTokens(model: string): number {
+  return isThinkingModel(model) ? THINKING_MODEL_MAX_OUTPUT_TOKENS : ENRICH_MAX_TOKENS;
+}
+
 const defaultSynthesize: SynthesizeFn = async ({ system, user, model, abortSignal }) => {
   const res = await chat({
     model,
     system,
     messages: [{ role: 'user', content: user }],
-    maxTokens: 2048,
+    maxTokens: enrichMaxTokens(model),
     abortSignal,
     cacheSystem: true,
   });
