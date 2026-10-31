@@ -960,6 +960,84 @@ recovery, idempotent replay and fresh readback after a clean restart. Do not
 disable persistence to bypass this, and do not confuse live fact-backfill IPC
 with live-owner dream delegation.
 
+## Embedded core (planned)
+
+Status: planned (GBRA-248). None of this runs yet, and nothing reads the
+setting below. Today one process serves one brain; to serve several, run one
+process per brain ([running gbrain on servers today](../guides/servers-today.md)).
+
+The embedded core lets a host such as a hosted service run many customers'
+brains in one server process. Each brain is opened from a settings object, and
+everything that belongs to a brain lives on the engine that settings object
+opened.
+
+**What the host supplies.** One settings object per brain: the database (URL,
+direct URL, pool size and an optional process-wide connection budget), storage
+(a `StorageBackend` and a per-brain key prefix), AI (keys, models, base URLs),
+the host identity, and whether the engine may touch a worktree.
+
+**What the core promises.** `openEngine(settings)` (a new name, because
+`createEngine(EngineConfig)` is already exported from `gbrain/engine-factory`)
+returns an engine that reads only its argument: no `~/.gbrain/config.json`, no
+process environment, no per-brain module state. The pool, the AI gateway with
+its model clients and caches, and the usage and telemetry sinks hang off the
+engine. Opening never migrates; a separate `migrate(settings)` does, and an
+engine refuses an older or newer schema. Every failure carries the
+[agent operator contract](../protocol/AGENT_OPERATOR_v1.md).
+
+**What the local app adds.** The CLI keeps reading `~/.gbrain/config.json` and
+the environment, builds the same settings and passes them in, and still
+migrates on connect. Process exit, signal handlers, timers, files under
+`GBRAIN_HOME` and child processes stay in the local app.
+
+**`database_only`.** A hosted brain with no repository is the existing no-root
+source state (`gbrain init --db-only`), not a new mode. Git stays the parent
+wherever a repository exists. Markdown and files leave a database-only brain
+through `gbrain export` and a `StorageBackend`, not through a mirror.
+
+**The `embedded_core` setting.** Every hosted or embedded behavior the program
+adds is opt-in behind one setting, `embedded_core`, off by default: no-root
+hosted sources opened through `openEngine`, the explicit-migration mode for
+servers, and export to a `StorageBackend`. A brain that never sets it sees no
+behavior change, which every wave proves with the upgrade-from-previous-release
+harness. No code reads the setting yet.
+
+**Guards.** `bun run check:core-world-reads` (in `bun run verify`) counts,
+per file in `src/core`, `loadConfig` calls, environment reads, `fs` imports,
+module-level mutable collections, spawn imports, process-wide hooks and
+`AsyncLocalStorage` stores against `scripts/core-world-reads-baseline.tsv`,
+whose rows name the wave that removes each count. Counts only fall: a rise
+fails (take the value from the settings the caller passes in, or justify a
+raised row in the same PR), and so does a stale row (`--prune` lowers it).
+Rules are in the script's header. The two-engine suite
+(`test/helpers/two-engine.ts`) runs two brains in one process on PGLite and
+Postgres and lists each dimension that still leaks with the wave that fixes
+it. `test/embedded-hermeticity.test.ts` runs
+[`examples/embedded-two-brains.ts`](../../examples/embedded-two-brains.ts) in a
+cold process with canary homes and environment. The upgrade harness
+(`test/helpers/upgrade-from-previous-release.ts`) opens the previous
+release's brain and config under the new build for the repo,
+content-directory and no-root shapes.
+
+**Per-process state and the wave that moves it.**
+
+| State | Where | Wave |
+|---|---|---|
+| Postgres pool singleton; a second `connect()` reuses it | `src/core/db.ts` | W2 |
+| AI gateway config, model-client cache (keyed without the key or endpoint), shrink state | `src/core/ai/gateway.ts` | W2 for the hosted slice, W3 for every caller |
+| Query-embedding cache (keyed without brain, key or caller) | `src/core/ai/query-embed-cache.ts` | W2 |
+| Chat usage sink (top of a process-wide stack) | `src/core/ai/chat-usage.ts` | W2 |
+| Search telemetry writer (bound to the first engine) | `src/core/search/telemetry.ts` | W2 |
+| Schema-pack link semantics | `src/core/link-validity.ts` | W2 |
+| Strict-params and default-surface fallbacks | `src/mcp/validate-params.ts`, `src/commands/serve-http-mcp.ts` | W2 |
+| Minion admission policy cache (keyed by job name) | `src/core/minions/admission.ts` | W6 |
+| Retrieval-tracking switch cache | `src/core/last-retrieved.ts` | W6 |
+| Sources query-shape memo | `src/core/source-resolver.ts` | W6 |
+| Full-text language cache | `src/core/fts-language.ts` | W6 |
+| `loadConfig` rereads and `GBRAIN_HOME` paths | `src/core/config.ts` | W6 |
+| Page-lock root and slug-only key | `src/core/page-lock.ts` | W5 |
+| Process handlers, telemetry and supervisor timers, claim leases | `src/core/process-cleanup.ts`, `src/core/minions/supervisor.ts`, `src/core/persistence/claim-lease.ts` | W7 |
+
 ## When NOT to use these topologies
 
 - **Don't use Topology 2 if your agent only ever runs on the same machine
