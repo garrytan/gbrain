@@ -15,7 +15,8 @@ import { resolveHoursEnv } from '../../../core/env-number.ts';
 import { chunkerStamp } from '../../../core/chunkers/code.ts';
 import { smallBrainBacklogNote } from '../../../core/link-extraction-watermark.ts';
 import { extractionLagVerdict, extractionRoutes, heldExtractionReport, readExtractionLag } from '../../../core/extraction-lag.ts';
-import { isMissingSchemaObject } from '../../../core/utils.ts';
+import { contentHash, isMissingSchemaObject } from '../../../core/utils.ts';
+import { stripFenceSections } from '../../../core/cycle/concept-publication.ts';
 import {
   loadStorageConfig,
   effectiveDbOnlyDirs,
@@ -771,6 +772,68 @@ export async function computeExtractAtomsBacklogCheck(
   }
 }
 
+/** The page-bound and slug-unbound atoms atom_provenance_drift reads (`ss` NULL: slug-unbound), as a CTE body. */
+const ATOM_PROVENANCE_CTE = `atom AS (
+         SELECT a.source_id,
+                -- managed atoms keep their provisional prefix for good (#5770)
+                CASE WHEN a.frontmatter->>'managed_extraction' = 'true'
+                     THEN regexp_replace(a.frontmatter->>'source_hash', '^pending:', '')
+                     ELSE a.frontmatter->>'source_hash' END AS sh,
+                -- NULL = slug-unbound: transcript-minted (source_path only) or
+                -- pre-binding-era. \`ss IS NULL\` is THE predicate for that
+                -- population everywhere below (#4799 / #4806).
+                NULLIF(a.frontmatter->>'source_slug', '') AS ss,
+                CASE WHEN a.frontmatter->>'extracted_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                     THEN a.frontmatter->>'extracted_at' END AS ext
+           FROM pages a
+          WHERE a.type = 'atom'
+            AND a.deleted_at IS NULL
+            AND a.frontmatter->>'source_hash' IS NOT NULL
+            -- in-flight marker written before an unmanaged extraction commits
+            AND (a.frontmatter->>'source_hash' NOT LIKE 'pending:%' OR a.frontmatter->>'managed_extraction' = 'true')
+         )`;
+
+/** (page, source_hash) groups of drifted atoms unchangedBodyAtoms re-checks per run; the rest keep their drift verdict. */
+const BODY_RECHECK_GROUPS = 200;
+/** The newest versions of a page searched for an atom's extraction edition. */
+const BODY_RECHECK_VERSIONS = 20;
+
+/**
+ * #6825: drifted atoms of a live inline page whose prose did not change. An atom's source_hash names the page edition
+ * it was extracted from; when one of the page's recent versions hashes to it and its body without the gbrain-managed
+ * facts and takes sections (stripFenceSections, the narrative concept synthesis compares) equals the page's, the move
+ * was a metadata or fence write, not an edit of what the atom summarises. An edition no version still holds, and a
+ * segmented page, keep their drift verdict.
+ */
+async function unchangedBodyAtoms(engine: BrainEngine): Promise<number> {
+  const groups = await engine.executeRaw<{ page_id: number; sh: string; n: number }>(
+    `WITH ${ATOM_PROVENANCE_CTE}, live_hashes AS MATERIALIZED (
+       SELECT DISTINCT source_id, substring(content_hash from 1 for 16) AS sh FROM pages WHERE deleted_at IS NULL AND content_hash IS NOT NULL
+     )
+     SELECT p.id AS page_id, atom.sh, count(*)::int AS n
+       FROM atom
+       JOIN pages p ON p.source_id = atom.source_id AND p.slug = atom.ss AND p.deleted_at IS NULL AND p.body_storage = 'inline'
+       LEFT JOIN live_hashes h ON h.source_id = atom.source_id AND h.sh = atom.sh
+      WHERE h.sh IS NULL AND length(atom.sh) = 16
+      GROUP BY p.id, atom.sh ORDER BY p.id, atom.sh LIMIT ${BODY_RECHECK_GROUPS}`, []);
+  const json = <T>(v: unknown): T => (typeof v === 'string' ? JSON.parse(v) : v) as T;
+  const narrative = (body: { compiled_truth: string; timeline: string | null }) => [stripFenceSections(body.compiled_truth), stripFenceSections(body.timeline ?? '')];
+  let unchanged = 0;
+  for (const group of groups) {
+    const [page] = await engine.executeRaw<{ compiled_truth: string | null; timeline: string | null }>('SELECT compiled_truth, timeline FROM pages WHERE id = $1', [group.page_id]);
+    if (page?.compiled_truth == null) continue;
+    const versions = await engine.executeRaw<{ compiled_truth: string | null; timeline: string | null; title: string; type: string; frontmatter: unknown; tags: unknown }>(
+      `SELECT compiled_truth, timeline, title, type, frontmatter, tags FROM page_versions
+        WHERE page_id = $1 AND body_storage = 'inline' AND compiled_truth IS NOT NULL ORDER BY id DESC LIMIT ${BODY_RECHECK_VERSIONS}`, [group.page_id]);
+    const edition = versions.find(v => contentHash({ title: v.title, type: v.type as never, compiled_truth: v.compiled_truth!, timeline: v.timeline ?? '',
+      frontmatter: json<Record<string, unknown>>(v.frontmatter) ?? {}, tags: json<string[] | null>(v.tags) ?? [] }).startsWith(group.sh));
+    if (!edition) continue;
+    const [was, is] = [narrative({ compiled_truth: edition.compiled_truth!, timeline: edition.timeline }), narrative({ compiled_truth: page.compiled_truth, timeline: page.timeline })];
+    if (was[0] === is[0] && was[1] === is[1]) unchanged += Number(group.n);
+  }
+  return unchanged;
+}
+
 /**
  * atom_provenance_drift doctor check (#4566).
  *
@@ -833,31 +896,14 @@ export async function computeAtomProvenanceDriftCheck(
       // garbage from the min(); the age math happens in TS where Date
       // parsing can never throw (semantically-invalid dates become NaN →
       // metric omitted, verdict untouched).
-      `WITH atom AS (
-         SELECT a.source_id,
-                -- managed atoms keep their provisional prefix for good (#5770)
-                CASE WHEN a.frontmatter->>'managed_extraction' = 'true'
-                     THEN regexp_replace(a.frontmatter->>'source_hash', '^pending:', '')
-                     ELSE a.frontmatter->>'source_hash' END AS sh,
-                -- NULL = slug-unbound: transcript-minted (source_path only) or
-                -- pre-binding-era. \`ss IS NULL\` is THE predicate for that
-                -- population everywhere below (#4799 / #4806).
-                NULLIF(a.frontmatter->>'source_slug', '') AS ss,
-                CASE WHEN a.frontmatter->>'extracted_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
-                     THEN a.frontmatter->>'extracted_at' END AS ext
-           FROM pages a
-          WHERE a.type = 'atom'
-            AND a.deleted_at IS NULL
-            AND a.frontmatter->>'source_hash' IS NOT NULL
-            -- in-flight marker written before an unmanaged extraction commits
-            AND (a.frontmatter->>'source_hash' NOT LIKE 'pending:%' OR a.frontmatter->>'managed_extraction' = 'true')
+      `WITH ${ATOM_PROVENANCE_CTE},
        -- Lookup sets are built ONCE and joined (#4937). A correlated EXISTS in
        -- the SELECT list is not rewritten to a semi-join — Postgres re-runs it
        -- per atom over substring(content_hash), which no index serves, so the
        -- check went O(atoms x same-source pages) and blew health-check budgets.
        -- DISTINCT is load-bearing: duplicate live content_hash values are a
        -- real state and would otherwise fan one atom out into several rows.
-       ), live_hashes AS MATERIALIZED (
+       live_hashes AS MATERIALIZED (
          SELECT DISTINCT source_id, substring(content_hash from 1 for 16) AS sh
            FROM pages WHERE deleted_at IS NULL AND content_hash IS NOT NULL
        ), live_slugs AS MATERIALIZED (
@@ -891,8 +937,9 @@ export async function computeAtomProvenanceDriftCheck(
     const num = (v: string | number | null | undefined) => (v == null ? 0 : Number(v));
     const total = num(r.total);
     const slugUnbound = num(r.slug_unbound);
-    const drifted = num(r.drifted);
-    const sourceChanged = num(r.source_changed);
+    const bodyUnchanged = num(r.source_changed) > 0 ? await unchangedBodyAtoms(engine) : 0;
+    const drifted = num(r.drifted) - bodyUnchanged;
+    const sourceChanged = num(r.source_changed) - bodyUnchanged;
     const sourceGone = num(r.source_gone);
     const oldestExtMs = r.oldest_ext ? new Date(String(r.oldest_ext)).getTime() : NaN;
     const oldestDays = Number.isFinite(oldestExtMs)
@@ -905,6 +952,7 @@ export async function computeAtomProvenanceDriftCheck(
       drifted,
       source_changed: sourceChanged,
       source_gone: sourceGone,
+      body_unchanged: bodyUnchanged,
       drift_pct: total > 0 ? Math.round(ratio * 1000) / 10 : 0,
       oldest_drifted_days: oldestDays ?? undefined,
     };
@@ -929,7 +977,7 @@ export async function computeAtomProvenanceDriftCheck(
           `${drifted}/${total} atom(s) (${details.drift_pct}%) reference a source_hash no live page carries ` +
           `— ${sourceChanged} whose source page still exists (edited), ${sourceGone} whose source page is gone` +
           (oldestDays != null ? `; oldest ${oldestDays}d` : '') + su +
-          `. This compares source_hash only (any edit to the source page changes it); it does not re-check whether ` +
+          `. Past metadata- and fence-only edits whose extracted edition a recent version still holds, this compares source_hash only; it does not re-check whether ` +
           `the atom's source_quote still appears in the page, so edited-source atoms may still be accurate. Fix: ${fix}`,
         details,
       };
