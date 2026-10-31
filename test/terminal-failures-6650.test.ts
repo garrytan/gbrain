@@ -518,15 +518,18 @@ for (const kind of testBackends()) describe(`the aggregate, doctor and the drill
     await seed({ slug: 'h6', operation: 'submit_job', state: 'cancelled', code: 'cancelled', detail: knock, build: 'dev-build' });
     await seed({ slug: 'h7', operation: 'submit_job', state: 'failed', code: 'fence_unrenderable', message: 'The adopted fence row does not render its legacy fact.', build: '0.60.217.0' });
     await seed({ slug: 'h8', operation: 'submit_job', state: 'failed', code: 'fence_unrenderable', message: 'The adopted fence row does not render its legacy fact.', build: '0.60.218.0' });
+    await seed({ slug: 'h9', state: 'conflict', code: 'revision_conflict', detail: { origin: 'grandfather_retired' }, compacted: true, build: '0.60.500.0' });
+    await seed({ slug: 'h9b', state: 'conflict', code: 'revision_conflict', kind: 'managed_grandfather', build: '0.60.500.0' });
+    await seed({ slug: 'h9c', state: 'conflict', code: 'revision_conflict', build: '0.60.500.0' });
     const all = Object.values(TERMINAL_HISTORICAL_SQL).map(sql => sql('b')).join(' OR ');
     const rows = await engine.executeRaw<{ slug: string; flag: boolean; state: string; error_code: string; error_message: string | null; error_detail: Record<string, unknown> | null; operation: string;
       compacted: boolean; build: string | null }>(`SELECT b.*, (${all}) AS flag FROM (SELECT r.slug, r.state, r.error_code, r.error_message, r.error_detail, r.operation, r.compacted,
-        r.error_detail->>'origin' AS origin, r.recovery IS NOT NULL AS has_recovery, ${terminalKnockOnSql('r')} AS knock_on,
+        r.error_detail->>'origin' AS origin, r.intent->>'kind' AS intent_kind, r.recovery IS NOT NULL AS has_recovery, ${terminalKnockOnSql('r')} AS knock_on,
         CASE WHEN r.error_detail IS NULL AND r.error_message LIKE 'Publication failed (P0001)%' THEN 'Publication failed (P0001)' END AS routed_message,
         COALESCE(r.error_detail->'attempt'->>'consumer_version', r.admitter_version) AS build FROM persistence_requests r) b ORDER BY b.slug`);
     const ts = rows.map(row => [row.slug, classifyTerminal({ ...base, ...row, recovery: null, blocked_reason: null })!.historical]);
     expect(rows.map(row => [row.slug, row.flag])).toEqual(ts as never);
-    expect(ts).toEqual([['h1', true], ['h2', false], ['h3', true], ['h4', true], ['h5', false], ['h6', false], ['h7', true], ['h8', false]]);
+    expect(ts).toEqual([['h1', true], ['h2', false], ['h3', true], ['h4', true], ['h5', false], ['h6', false], ['h7', true], ['h8', false], ['h9', true], ['h9b', true], ['h9c', false]]);
   });
 
   test('the extracted supersession rule is the one failed-writes applies', async () => {

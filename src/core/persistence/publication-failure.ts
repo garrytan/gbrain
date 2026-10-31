@@ -57,7 +57,9 @@ export interface OwnerExceptionDetail extends Pick<PublicationFailureDetail, 'st
 export type WithdrawalRefusalDetail = WithdrawalFailureDetail & Pick<PublicationFailureDetail, 'stage' | 'attempt'>;
 /** #6696 (A12): the page's recorded canonical file is gone (`prepareFileTarget`); a producer refuses the same write before admission. */
 export const CANONICAL_FILE_MISSING = 'canonical_file_missing';
-export interface CanonicalFileDetail { origin: typeof CANONICAL_FILE_MISSING; stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null } }
+/** #7837: a `managed_grandfather` request an older binary queued, refused because the v0.13.1 grandfather is retired (#7814). */
+export const GRANDFATHER_RETIRED = 'grandfather_retired';
+export interface CanonicalFileDetail { origin: typeof CANONICAL_FILE_MISSING | typeof GRANDFATHER_RETIRED; stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null } }
 /** #6693: a page write refused because its file holds a committed change sync has not imported (`pending_import`) or sync holds the file (`sync_held`). */
 export interface PendingImportDetail { origin: 'pending_import' | 'sync_held'; stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null } }
 export interface PublicationFailure { code: string; message: string; detail?: PublicationFailureDetail | FenceRefusalDetail | WithdrawalRefusalDetail | OwnerExceptionDetail | CanonicalFileDetail | PendingImportDetail }

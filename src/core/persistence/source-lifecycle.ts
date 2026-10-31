@@ -8,7 +8,7 @@ import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { isValidSourceId } from '../source-id.ts';
-import { EXPIRED_ARCHIVE_SQL } from '../source-delete.ts';
+import { assertSourcePagesGone, EXPIRED_ARCHIVE_SQL } from '../source-delete.ts';
 import { parseSourceConfig } from '../sources-load.ts';
 import { redactSourceConfig } from '../source-config-redact.ts';
 import { discoverGitRoot } from '../sync-git.ts';
@@ -280,6 +280,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
         const [impact]=await tx.executeRaw<{count:string}>('SELECT count(*)::text AS count FROM pages WHERE source_id=$1',[input.sourceId]);
         pagesDeleted=Number(impact.count);
         await tx.executeRaw('DELETE FROM sources WHERE id=$1 AND incarnation=$2::uuid',[input.sourceId,incarnation]);
+        await assertSourcePagesGone(tx,input.sourceId);
         await tx.executeRaw('DELETE FROM persistence_source_bindings WHERE source_id=$1 AND source_incarnation=$2::uuid',[input.sourceId,incarnation]);
       }
       const contentReceipts=input.operation==='rebind'?await rebindContentReceipts(tx,worktrees,localHostId(),relocated?undefined:[input.sourceId]):[];
