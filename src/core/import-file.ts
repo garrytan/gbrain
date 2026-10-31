@@ -4,7 +4,7 @@ import { noncanonicalPrivateHold } from './persistence/visibility-request.ts';
 import { maintenanceBeliefTransaction } from './belief/writers.ts';
 import { withUnmanagedBeliefs } from './belief/projection-point.ts';
 import { maintenanceTransaction, ownerSourceGateInput, suppliedTrustMarkerView, trustMarkerChanged, writeTrustOfGate } from './persistence/attribution.ts';
-import { assertImportBase, sameCanonicalImport, sameContentAnyKeyOrder } from './page-state/import-guard.ts';
+import { assertImportBase, contentFlagOnlyImport, sameCanonicalImport, sameContentAnyKeyOrder } from './page-state/import-guard.ts';
 import { stabilizeSafetyAssessments } from './persistence/reconcile-safety.ts';
 import { decideImportIdentity, collidingSlugOwner, fileOriginUri } from './import-identity.ts';
 import { readSourceFileSync } from './minions/source-filesystem.ts';
@@ -730,7 +730,7 @@ export async function importFromContent(
   // for single-source callers.
   const txOpts = { sourceId: sourceId ?? 'default' };
   let persistedProjection: ProjectionSnapshot | null = null;
-  const [timeZone, mentionPolicy] = await Promise.all([loadBrainTimeZone(engine), readMentionPolicy(engine).catch(() => null)]);
+  const [timeZone, mentionPolicy, flagOnlyChanged] = await Promise.all([loadBrainTimeZone(engine), readMentionPolicy(engine).catch(() => null), contentFlagOnlyImport(engine, existing, existingSnapshot?.tags ?? null, parsedPage, txOpts.sourceId)]);
   let chunkReplacementDeferred = false;
   const applyPrepared = async (tx: BrainEngine, preimage?: PageSnapshot | null) => {
     if (!opts.coordinated) await assertImportBase(tx, slug, txOpts.sourceId, existing, reused.size > 0);
@@ -756,7 +756,7 @@ export async function importFromContent(
 
     const demote = !segmented && bodyStorageOf(existing) === 'segmented';
     // Before the page write: an unpinned version reads the page itself, a demoted one references the generation it retires.
-    if (existing && (!preimage || demote)) await tx.createVersion(slug, preimage ? { ...txOpts, preimage } : txOpts);
+    if (existing && !flagOnlyChanged && (!preimage || demote)) await tx.createVersion(slug, preimage ? { ...txOpts, preimage } : txOpts);
     if (demote) await demoteSegmentedPage(tx, Number(existing!.id));
     // Every import keeps each stored row that is identical to its new chunk and
     // writes only the rest, so an edit rewrites only the chunks it changed. The
@@ -773,7 +773,7 @@ export async function importFromContent(
     let written: Page | undefined;
     await pipelined(tx, [
       () => assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug),
-      async () => { if (existing && preimage && !demote) await tx.createVersion(slug, { ...txOpts, preimage }); },
+      async () => { if (existing && !flagOnlyChanged && preimage && !demote) await tx.createVersion(slug, { ...txOpts, preimage }); },
       async () => {
         if (segmented) return segmented.apply(tx, { type: parsed.type, title: parsed.title, frontmatter: parsed.frontmatter, page_kind: 'markdown',
           effective_date: effectiveDate, effective_date_source: effectiveDateSource, import_filename: filenameForChain, source_path: opts.sourcePath ?? null,

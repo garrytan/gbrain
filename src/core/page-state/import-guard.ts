@@ -48,3 +48,17 @@ export async function sameContentAnyKeyOrder(engine: Pick<BrainEngine, 'getTags'
   const tags = existingTags ?? await engine.getTags(existing.slug, { sourceId });
   return stableJson([...tags].sort()) === stableJson([...parsed.tags].sort());
 }
+
+/** A gate diagnostic is still persisted, but does not archive identical source content (B208). */
+export async function contentFlagOnlyImport(engine: Pick<BrainEngine, 'getTags'>, existing: Page | null,
+  existingTags: string[] | null, parsed: ParsedPage, sourceId: string): Promise<boolean> {
+  if (!existing || stableJson(existing.frontmatter.content_flag ?? null) === stableJson(parsed.frontmatter.content_flag ?? null)) return false;
+  const withoutFlag = (frontmatter: Record<string, unknown>) => {
+    const copy = { ...frontmatter };
+    delete copy.content_flag;
+    return copy;
+  };
+  // Deliberately keep trust, quarantine, embed_skip and every source field in the comparison.
+  return sameContentAnyKeyOrder(engine, { ...existing, frontmatter: withoutFlag(existing.frontmatter) }, existingTags,
+    { ...parsed, frontmatter: withoutFlag(parsed.frontmatter) }, sourceId);
+}
