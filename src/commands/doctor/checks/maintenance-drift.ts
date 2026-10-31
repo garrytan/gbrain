@@ -109,11 +109,14 @@ export async function maintenanceWriteDriftCheck(engine: BrainEngine, sourceIds?
         fix: agentFix(['gbrain', 'sources', 'reconcile', auditSource!, '--brain', 'host', '--audit', '--conflicts', '--window', '1000000', '--json'],
           'Read-only: pages through the conflict receipts grouped by slug, with whether each file still differs.', 'maintenance_write_drift', { docs }) };
     }
+    const unknown = rows.reduce((sum, row) => sum + row.unknown, 0);
+    if (!count && !skipCount && unknown) {
+      return { name: 'maintenance_write_drift', status: 'warn', details: { ...details, health: 'unknown', exact: false }, fix_unavailable_reason: 'operator_judgement',
+        message: `Maintenance write drift unknown: no page checked on this host has a canonical file that differs from the database, but ${unknown} could not be checked here (run doctor on the canonical owner host).` };
+    }
     if (!count && !skipCount) {
-      const unknown = rows.reduce((sum, row) => sum + row.unknown, 0);
       return { name: 'maintenance_write_drift', status: 'ok', details,
-        message: unknown ? `No page checked on this host has a canonical file that differs from the database; ${unknown} could not be checked here (run doctor on the canonical owner host).`
-          : `No page whose writes refuse source_changed still has a canonical file that differs from the database.${policyNote}` };
+        message: `No page whose writes refuse source_changed still has a canonical file that differs from the database.${policyNote}` };
     }
     const first = rows.find(row => row.drifted || row.concept_skips)!.source_id;
     return { name: 'maintenance_write_drift', status: 'warn', details,
