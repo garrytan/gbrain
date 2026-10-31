@@ -539,6 +539,8 @@ export const PAGE_CHECK_LEVELS: ReadonlyMap<string, 'warn' | 'fail'> = new Map([
   ['jsonb_integrity', 'warn'],
   ['rls', 'fail'],
   ['dream_paid_loop', 'warn'],
+  ['dream_write_deferred', 'warn'],
+  ['embedding_restamp_stalled', 'warn'],
 ]);
 
 export const PAGE_CHECK_NAMES: ReadonlySet<string> = new Set(PAGE_CHECK_LEVELS.keys());

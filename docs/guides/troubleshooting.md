@@ -768,6 +768,8 @@ other check, skill checks included, never pages:
 | double-encoded JSONB rows | `jsonb_integrity` | warn |
 | public schema readable with the anon key | `rls` | fail |
 | a tripped paid-loop breaker | `dream_paid_loop` | warn |
+| a dream write still pending past its replay bound | `dream_write_deferred` | warn |
+| the embedding signature restamp failing run after run | `embedding_restamp_stalled` | warn |
 
 <a id="doctor-alert-act"></a>
 
