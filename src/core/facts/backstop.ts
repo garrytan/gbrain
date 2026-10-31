@@ -972,7 +972,7 @@ async function runPipelineBodyInner(
       // #4206: caller event-time fallback + provenance context. #4819: a
       // DB-only row has no fence to name the page it came from, so the page
       // path's slug fills context when the caller passed no sourceSlug.
-      valid_from: factEventTime(f, ctx),
+      valid_from: factEventTime(f, ctx), valid_until: f.valid_until ?? null,
       context: withSpeakerNote(ctx.speaker, annotateUnverifiedResolution(ctx.sourceSlug ?? input.pageSlug ?? null, resolutionSource, f.entity_inferred)),
     };
     await insertDerivedFact(newFact); // legacy DB-only fallback for unparented / thin-client facts (no entity page to fence onto)
@@ -1002,7 +1002,7 @@ async function runPipelineBodyInner(
       confidence: f.confidence,
       // #4206: extractor-derived date wins; then the caller's event time
       // (historical imports); then import time.
-      validFrom: factEventTime(f, ctx) ?? new Date(),
+      validFrom: factEventTime(f, ctx) ?? new Date(), validUntil: f.valid_until ?? null,
       embedding: f.embedding ?? null,
       embedding_model: f.embedding_model ?? null, attributedTo: f.attributed_to ?? undefined,
       sessionId: f.source_session ?? null,
@@ -1061,7 +1061,7 @@ async function runPipelineBodyInner(
           embedding: f.embedding ?? null,
           embedding_model: f.embedding_model ?? null, attributed_to: f.attributed_to ?? null,
           // #4206: caller event-time fallback + provenance context.
-          valid_from: factEventTime(f, ctx),
+          valid_from: factEventTime(f, ctx), valid_until: f.valid_until ?? null,
           context: withSpeakerNote(ctx.speaker, ctx.sourceSlug ?? input.pageSlug ?? null),
         };
         await insertDerivedFact(newFact); // stub-guard / unresolvable-target fallback for unprefixed or fallback-resolved entity slugs (no fenceable page or usable tree)
@@ -1090,7 +1090,7 @@ async function runPipelineBodyInner(
           embedding: f.embedding ?? null,
           embedding_model: f.embedding_model ?? null, attributed_to: f.attributed_to ?? null,
           // #4206: caller event-time fallback + provenance context.
-          valid_from: factEventTime(f, ctx),
+          valid_from: factEventTime(f, ctx), valid_until: f.valid_until ?? null,
           context: withSpeakerNote(ctx.speaker, result.databaseOnlyReason === 'file_database_drift' ? annotateUnverifiedResolution(ctx.sourceSlug ?? input.pageSlug ?? null, groupResolutionSource, f.entity_inferred) : ctx.sourceSlug ?? input.pageSlug ?? null),
         };
         await insertDerivedFact(newFact); // DB-only fallback when the fence lane declined the write (write_through opt-out race / localPath echo)

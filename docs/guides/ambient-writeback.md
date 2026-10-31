@@ -408,9 +408,9 @@ Expiry is **exact-time and read-side**: active reads (`recall`, entity cards,
 hot-memory injection, dedup candidates) exclude facts whose `valid_until` has
 passed — no sweeper needed, nothing mutated. The rows stay in the database as
 history (`--asof` and supersession views still see them), and a re-stated
-fact after expiry inserts fresh. Backstop-extracted facts currently get no
-TTL (the extractor doesn't classify transience yet — a filed follow-up), so a
-transient fact caught only by the backstop is durable until forgotten.
+fact after expiry inserts fresh. The shared extractor classifies each claim
+as durable or transient and applies this TTL to transient claims across the
+backstop, `extract_facts`, and conversation extraction lanes.
 
 **Note on lapsed rows:** `valid_until` is temporal validity and active reads
 honor it, so a brain that already carries lapsed rows sees them leave the

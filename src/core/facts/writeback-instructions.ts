@@ -43,11 +43,11 @@ export function buildAmbientWritebackSection(opts: AmbientWritebackOpts): string
     : opts.extractFactsAvailable === 'unknown'
       ? 'For a raw turn carrying several facts, submit the turn text once through extract_facts when that tool is in your tool list; otherwise distill them yourself and call remember once per claim.'
       : 'When a turn carries several facts, distill them yourself and call remember once per claim.';
-  // Surface-honest like the multi-fact line: only warn about extract_facts'
-  // missing ttl parameter when the tool may actually be advertised.
+  // Surface-honest like the multi-fact line: only describe extract_facts'
+  // transient classification when the tool may actually be advertised.
   const transientLine = opts.extractFactsAvailable === false
-    ? `pass ttl: "${opts.transientTtl}".`
-    : `always save via remember with ttl: "${opts.transientTtl}" — never batch them through extract_facts (it cannot set a ttl, so they would become permanent).`;
+    ? `pass ttl: "${opts.transientTtl}" on remember calls.`
+    : `pass ttl: "${opts.transientTtl}" on remember calls; never batch them through extract_facts without its classification, which applies the same ttl to transient claims.`;
   const visibilityLine = opts.visibility === 'world'
     ? 'Pass visibility: "world" explicitly on every save. "world" means readable by agents authorized on THIS brain — not the public internet. Never widen a private fact on your own.'
     : 'Pass visibility: "private" explicitly on every save — this brain\'s operator keeps facts private by default (omitting visibility would silently widen: remember defaults to world). Private facts are readable by the local CLI only, not by remote sessions: you, and every other MCP or HTTP session, cannot recall or forget a fact you save as private. Never widen to world on your own.';

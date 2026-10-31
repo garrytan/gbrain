@@ -35,6 +35,8 @@ import type { BrainEngine, NewFact, FactKind, FactAttribution } from '../engine.
 import { normalizeMetricLabel } from './extract-from-fence.ts';
 import { isNullLikeEntity } from './write-single.ts';
 import { isAIInvocationPolicyError } from '../ai/invocation-guard.ts';
+import { AUTO_WRITEBACK_TTL_KEY, DEFAULT_TRANSIENT_TTL } from './writeback-config.ts';
+import { parseDurationShorthandMs, validateTtlConfig } from './ttl-parse.ts';
 
 /**
  * v0.31 (D15): kill-switch for fact extraction.
@@ -367,6 +369,7 @@ function renderExtractorSystem(admitsLow: boolean): string {
     '{"facts":[{"fact":"<terse claim>","kind":"event|preference|commitment|belief|fact|idea",',
     '"entity":"<canonical slug or display name or null>","confidence":<0..1>,',
     '"notability":"high|medium|low",',
+    '"durability":"durable|transient",',
     '"metric":"<lowercase snake_case or null>","value":<number or null>,',
     '"unit":"<USD|people|pct|... or null>","period":"<monthly|annual|quarterly|null>"}]}.',
     'No prose, no code fences. Empty facts array is valid when nothing claim-worthy was said.',
@@ -379,6 +382,10 @@ function renderExtractorSystem(admitsLow: boolean): string {
     '- "belief": opinion, hypothesis, or stance that may change.',
     '- "idea": a novel idea, frame, thesis, or mental model the speaker articulates.',
     '- "fact": objective claim that doesn\'t fit the above.',
+    '- durability: "durable" for preferences, corrections, decisions, commitments, relationships, and lasting project state;',
+    '  "transient" for current health, location, travel, mood, near-term schedules, pending state, temporary statuses,',
+    '  and counts or metrics expected to change soon.',
+    '  Classify each claim by how long it remains true, not by its kind; when uncertain, use "durable".',
     '- Skip greetings, operational chatter, and questions ("how does X work?" is not a fact).',
     '- One fact per atomic claim. Cap at 10 facts per turn.',
     '- entity = a canonical slug (e.g. "people/alice-example", "companies/acme", "travel") when known,',
@@ -486,12 +493,13 @@ const FACTS_EXTRACTION_SCHEMA: Record<string, unknown> = {
           entity: { type: ['string', 'null'] },
           confidence: { type: ['number', 'null'] },
           notability: { type: 'string', enum: ['high', 'medium', 'low'] },
+          durability: { type: 'string', enum: ['durable', 'transient'] },
           metric: { type: ['string', 'null'] },
           value: { type: ['number', 'null'] },
           unit: { type: ['string', 'null'] },
           period: { type: ['string', 'null'] },
         },
-        required: ['fact', 'kind', 'entity', 'confidence', 'notability', 'metric', 'value', 'unit', 'period'],
+        required: ['fact', 'kind', 'entity', 'confidence', 'notability', 'durability', 'metric', 'value', 'unit', 'period'],
         additionalProperties: false,
       },
     },
@@ -643,12 +651,18 @@ export async function extractFactsFromTurnWithOutcome(
   // because those reuse `extractorSystem`. Read AFTER the availability gate —
   // a chat_unavailable early return must not pay config round-trips (#4298
   // resolved the model/gate ordering; these reads sit behind it).
-  const [promptAppendix, junkFilterOn, missingConfidence, variant] = await Promise.all([
+  const [promptAppendix, junkFilterOn, missingConfidence, variant, rawTransientTtl] = await Promise.all([
     getFactsExtractionPromptAppendix(input.engine),
     isJunkFilterEnabled(input.engine),
     getMissingConfidence(input.engine),
     input.variant ?? getExtractorVariant(input.engine),
+    input.engine
+      ? Promise.resolve().then(() => input.engine!.getConfig(AUTO_WRITEBACK_TTL_KEY)).catch(() => null)
+      : Promise.resolve(null),
   ]);
+  const configuredTransientTtl = validateTtlConfig(rawTransientTtl, DEFAULT_TRANSIENT_TTL).ttl;
+  const transientTtlMs = parseDurationShorthandMs(configuredTransientTtl)
+    ?? parseDurationShorthandMs(DEFAULT_TRANSIENT_TTL)!;
   const extractorSystem = promptAppendix
     ? `${buildExtractorSystem(admitsLow, variant)}\n\n${promptAppendix}`
     : buildExtractorSystem(admitsLow, variant);
@@ -864,6 +878,9 @@ export async function extractFactsFromTurnWithOutcome(
       claim_value:  claimValue,
       claim_unit:   claimUnit,
       claim_period: claimPeriod,
+      ...(candidate.durability === 'transient'
+        ? { valid_until: new Date(Date.now() + transientTtlMs) }
+        : {}),
       // Date grounding: a validated extractor-stated event date wins over the
       // caller's fallback (backstop precedence). Malformed / out-of-range
       // dates are dropped, never guessed.
@@ -916,6 +933,7 @@ interface RawExtracted {
   entity?: string | null;
   confidence?: number;
   notability?: string;
+  durability?: 'durable' | 'transient';
   // v0.35.4 (D-CDX-2) — typed-claim fields. All optional; emit only for
   // metric-shaped claims. See EXTRACTOR_SYSTEM rules above.
   metric?: string | null;
@@ -1001,6 +1019,7 @@ function tryArrayShapeDetailed(s: string): ParsedExtractorShape | null {
             ? Number(o.confidence)
             : undefined,
         notability: typeof o.notability === 'string' ? o.notability : undefined,
+        ...(o.durability === 'durable' || o.durability === 'transient' ? { durability: o.durability } : {}),
         // v0.35.4 (D-CDX-2) — typed-claim fields. Strict shape: metric/unit/period
         // must be string-or-null; value must be a finite number-or-null. Anything
         // else falls through to undefined so the downstream pipeline treats it
