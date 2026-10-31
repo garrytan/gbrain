@@ -57,11 +57,23 @@ doesn't carry the `GBRAIN:RLS_EXEMPT` exemption (see below) and enables RLS
 on each. After the upgrade, `gbrain doctor`'s `rls` check should be a no-op
 on every brain.
 
+**3. The gbrain-table backfill.** Schema migration v275 enables RLS on every
+table gbrain itself creates that is still without it. A gbrain table could
+miss RLS when its RLS came only from a full schema replay, which
+`gbrain apply-migrations --yes` does not run, or only from the event trigger
+above, which needs a superuser and is absent on many managed brains. v275
+touches only gbrain's own tables, leaves a table that already has RLS or
+carries the `GBRAIN:RLS_EXEMPT` comment alone, and reads or writes no row. It
+acts only when the migrating role bypasses RLS and owns the table; otherwise
+it names the table on stderr and leaves it, and doctor's `rls` check keeps
+naming it.
+
 ### Keeping a table RLS-off through the backfill
 
 If you have public tables that are intentionally RLS-off and you want them
 to stay that way, you MUST add the `GBRAIN:RLS_EXEMPT` comment **before**
-migration v35 (the RLS backfill) runs on that brain. The backfill flips RLS on for any
+migration v35 (the RLS backfill) runs on that brain (for one of gbrain's own
+tables, before v275). The backfill flips RLS on for any
 public table that doesn't carry the exact comment contract documented below.
 There is no `--dry-run` flag on the migration.
 
@@ -239,13 +251,27 @@ brains, the schema migration that creates the table
 (`bun run new:migration <name>`, one file in `src/core/schema-migrations/`)
 enables RLS too, with a `sqlFor: { pglite: ... }` variant that leaves it out.
 The auto-RLS event trigger and doctor's `rls` check backstop a table that
-slips through on Postgres, but they are the safety net, not the plan.
+slips through on Postgres, but they are the safety net, not the plan: the
+trigger needs a superuser and is missing on many managed brains, and
+`gbrain apply-migrations --yes` runs migrations without replaying
+`src/schema.sql`. `test/e2e/rls-every-table-postgres.test.ts` checks every
+public table after a fresh install and after that migrations-only upgrade,
+both with the trigger inert, so a table that relies on either one fails it.
 
 ## Function search_path
 
-Every plpgsql function gbrain installs pins `search_path = pg_catalog, public`,
+Every plpgsql function gbrain installs pins `search_path = pg_catalog, public, pg_temp`,
 so a same-named object in another schema can never change what the function
-reads or writes. The three fact-fingerprint functions
+reads or writes. `pg_temp` is named last because PostgreSQL otherwise searches the
+caller's temporary schema first for tables and views: a session, the owner included,
+could shadow a purge or withdrawal ledger a guard reads with an empty temporary one of
+the same name and store purged content again. On an older brain, migration v277 appends
+`pg_temp` to every gbrain function it owns with `ALTER FUNCTION` (no body changes), and
+`gbrain doctor` (`function_search_path`) names any function it could not change, with the
+`ALTER FUNCTION` to run as its owner. This does not close the scoped-writer gap: on
+Postgres, a write role with no RLS policy on a ledger still reads it empty, so its purged
+or withdrawn writes still go through (gbrain#7659 tracks the fix; [docs/ENGINES.md](../ENGINES.md)
+("Purge and withdrawal guards") has the policy to add meanwhile). The three fact-fingerprint functions
 (`gbrain_fact_fingerprint`, `gbrain_fact_fingerprint_v1`,
 `gbrain_fact_normalize`) are SQL functions that an index expression uses, so
 they call `pg_catalog.`-qualified built-ins instead of pinning a setting (a

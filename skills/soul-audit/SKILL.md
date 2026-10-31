@@ -62,7 +62,10 @@ gbrain bootstrap render --only SOUL.md --force
 ```
 
 Render targets: `SOUL.md`, `USER.md`, `ACCESS_POLICY.md`, `HEARTBEAT.md`,
-`AGENTS.md` (re-render whichever files the changed keys feed).
+`AGENTS.md` (re-render whichever files the changed keys feed). In an OpenClaw
+workspace the `HEARTBEAT.md` target writes `SCHEDULES.md`, because OpenClaw
+2026.10.6+ removes a workspace `HEARTBEAT.md`; render detects the workspace,
+or pass `--host openclaw`.
 
 ## Phases (each independent, each re-runnable)
 
@@ -100,7 +103,8 @@ ACCESS_POLICY.md.
 ### Phase 6: Operational Cadence
 Ask: "How often should the agent check in? Morning briefing? End of day summary?
 What recurring jobs do you want?"
-Keys: `HEARTBEAT_CADENCE`, `QUIET_HOURS`. Renders: HEARTBEAT.md. Jobs ship
+Keys: `HEARTBEAT_CADENCE`, `QUIET_HOURS`. Renders: HEARTBEAT.md (SCHEDULES.md on
+OpenClaw). Jobs ship
 disabled — enable one at a time after a manual dry run (the ritual is in the
 rendered file).
 

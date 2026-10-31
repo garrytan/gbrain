@@ -180,7 +180,7 @@ suite('client capability grants — Postgres and admin HTTP', () => {
 
   test('D4: an operator-pinned old client is reported, not widened, and still refused', async () => {
     const old = await new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine) }).registerClientManual('d4-old-' + randomUUID(), ['client_credentials'], 'read write', [], 'default', undefined, undefined, undefined,
-      { ...resolveGrantProfile({ profile: 'memory-writer', sourceId: 'default' }), surface: 'starter' });
+      { ...resolveGrantProfile({ profile: 'memory-writer', sourceId: 'default' }), surface: 'starter', surfaceSetBy: 'operator' });
     clients.push(old.clientId);
     const before = await readClientGrant(engine, old.clientId);
     const token = await clientToken(old.clientId, old.clientSecret!);

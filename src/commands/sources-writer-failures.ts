@@ -32,9 +32,9 @@ export function renderWriterFailures(listing: TerminalFailureListing, json: bool
   const scope = `${rendered.state === 'all' ? 'all' : 'unresolved'} receipts of the last ${rendered.window_days} d${rendered.window_clamped ? ' (clamped to persistence.receipt_retention_days)' : ''}`;
   if (rendered.groups) {
     lines.push(`Source ${rendered.source_id}: ${rendered.groups.length} group(s) of ${scope}.`);
-    if (rendered.groups.length) lines.push(`  ${pad('ROWS', 6)} ${pad('CATEGORY', 26)} ${pad('CODE', 28)} ${pad('ORIGIN', 18)} ${pad('CLASS', 10)} HUMAN`);
+    if (rendered.groups.length) lines.push(`  ${pad('ROWS', 6)} ${pad('CATEGORY', 26)} ${pad('CODE', 28)} ${pad('OPERATION', 20)} ${pad('ORIGIN', 18)} ${pad('CLASS', 10)} HUMAN`);
     for (const g of rendered.groups) {
-      lines.push(`  ${pad(String(g.rows), 6)} ${pad(g.category, 26)} ${pad(g.code, 28)} ${pad(g.origin ?? '-', 18)} ${pad(g.class, 10)} ${g.needs_human ? 'yes' : 'no'}`);
+      lines.push(`  ${pad(String(g.rows), 6)} ${pad(g.category, 26)} ${pad(g.code, 28)} ${pad(g.operation ?? '-', 20)} ${pad(g.origin ?? '-', 18)} ${pad(g.class, 10)} ${g.needs_human ? 'yes' : 'no'}`);
       lines.push(`         fix: ${g.fix.command ?? g.fix.why}`);
       lines.push(`         rows: ${g.drill_down.join(' ')}`);
     }

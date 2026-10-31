@@ -55,9 +55,14 @@ const legacyReason = (value: string | null | undefined) => value != null && valu
 export const isPrivacyClass = (value: string | null | undefined): value is PrivacyClass => value != null && PRIVACY.has(value);
 export const isDeclaredReason = (value: string | null | undefined): value is DeclaredReason => value != null && (DECLARED_REASONS as readonly string[]).includes(value);
 
-/** A derive-phase page (DERIVE_PHASE_DB_ONLY_DEFAULTS) that never recorded a canonical file. */
-export function isNeverFiledDerivedPage(slug: string, page: { source_path?: string | null; source_uri?: string | null }): boolean {
-  return !page.source_path && !page.source_uri && DERIVE_PHASE_DB_ONLY_DEFAULTS.some(prefix => slug.startsWith(prefix));
+type RecordedFile = { source_path?: string | null; source_uri?: string | null; withheld_source_path?: string | null };
+
+/** Whether a page has a canonical file: one it records, or the one its private transition removed (`withheld_source_path`). */
+export const keepsCanonicalFile = (page: RecordedFile) => Boolean(page.source_path || page.withheld_source_path);
+
+/** A derive-phase page (DERIVE_PHASE_DB_ONLY_DEFAULTS) that never recorded a canonical file; a file withheld while private counts as recorded. */
+export function isNeverFiledDerivedPage(slug: string, page: RecordedFile): boolean {
+  return !keepsCanonicalFile(page) && !page.source_uri && DERIVE_PHASE_DB_ONLY_DEFAULTS.some(prefix => slug.startsWith(prefix));
 }
 
 /**
@@ -67,7 +72,7 @@ export function isNeverFiledDerivedPage(slug: string, page: { source_path?: stri
  * the file its write offers (G6 commits a strict source's new atoms through the door), and a write that offers none
  * passes an empty page so the new page is declared (a new concept publishes `file: false`).
  */
-export function declaredPathClass(root: string, slug: string, page: { source_path?: string | null; source_uri?: string | null } | null): 'db_only_prefix' | 'derive_folder' | null {
+export function declaredPathClass(root: string, slug: string, page: RecordedFile | null): 'db_only_prefix' | 'derive_folder' | null {
   if (isSourceDbOnlySlug(root, slug, 'refuse')) return 'db_only_prefix';
   return page && isNeverFiledDerivedPage(slug, page) ? 'derive_folder' : null;
 }
@@ -92,7 +97,7 @@ export async function privacyClass(engine: BrainEngine, sourceId: string, page: 
 
 /** The declared class a strict page belongs to by its slug, its prior file and its content, or null when it belongs in Git. */
 export async function strictPageClass(engine: BrainEngine, sourceId: string, root: string,
-  page: { id?: number | null; slug: string; type?: string | null; frontmatter?: unknown }, before: { source_path?: string | null; source_uri?: string | null } | null): Promise<StrictClass | null> {
+  page: { id?: number | null; slug: string; type?: string | null; frontmatter?: unknown }, before: RecordedFile | null): Promise<StrictClass | null> {
   return declaredPathClass(root, page.slug, before) ?? await privacyClass(engine, sourceId, page);
 }
 
@@ -223,7 +228,8 @@ export async function declareStrictPublication(tx: BrainEngine, row: WriteReques
     const declared = await strictPageClass(tx, row.source_id, root, page, before?.page ?? null);
     if (isPrivacyClass(declared)) throw privateCommitRefused(row, declared, remote);
     if (declared) throw gitHomeRequired(row, 'declared_target', remote, declared);
-    if (isDeclaredReason(reason)) await tx.executeRaw('UPDATE pages SET database_only_reason=NULL WHERE id=$1', [page.id]);
+    await tx.executeRaw(`UPDATE pages SET withheld_source_path=NULL,
+      database_only_reason=CASE WHEN database_only_reason=ANY($2::text[]) THEN NULL ELSE database_only_reason END WHERE id=$1`, [page.id, [...DECLARED_REASONS]]);
     return;
   }
   const declared: StrictClass | null = legacyReason(prepared.databaseOnlyReason) || legacyReason(reason) ? 'database_only'
@@ -231,8 +237,11 @@ export async function declareStrictPublication(tx: BrainEngine, row: WriteReques
       ?? (await ignoredTarget(root, join(root, page.source_path || `${page.slug}.md`)) ? 'git_ignored' : null);
   if (!declared) throw gitHomeRequired(row, 'no_file_form', remote);
   if (isPrivacyClass(declared)) {
-    await tx.executeRaw('UPDATE pages SET database_only_reason=$2, source_path=NULL, source_uri=NULL WHERE id=$1', [page.id, declared]);
+    await tx.executeRaw(`UPDATE pages SET database_only_reason=$2, withheld_source_path=COALESCE(NULLIF(source_path,''), withheld_source_path),
+      source_path=NULL, source_uri=NULL WHERE id=$1`, [page.id, declared]);
   } else if (declared === 'git_ignored' && reason !== 'git_ignored') {
     await tx.executeRaw('UPDATE pages SET database_only_reason=$2 WHERE id=$1', [page.id, declared]);
+  } else if (declared !== 'git_ignored' && isDeclaredReason(reason)) {
+    await tx.executeRaw('UPDATE pages SET database_only_reason=NULL WHERE id=$1', [page.id]);
   }
 }

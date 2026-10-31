@@ -12,6 +12,7 @@ import type { SegmentChunkInput } from './page-body/types.ts';
 import { quoteIdentifier } from './search/embedding-column.ts';
 import { chunkGenerationFilter } from './search/safe-chunks.ts';
 import { parseEmbedding } from './utils.ts';
+import { segmentSynopsisInputHashes, segmentSynopsisLead } from './page-body/segment-synopsis.ts';
 
 /**
  * A stored row an import keeps: its id and the index it holds now (a kept row whose new chunk sits elsewhere moves
@@ -95,30 +96,42 @@ export async function reuseStoredChunkVectors(
  * the occurrences the write retires (never the whole page): one statement
  * reads those rows with their vectors, the same gate as
  * `reuseStoredChunkVectors` admits each (recorded input hash for the write's
- * tier, nothing from a page stored under per-chunk synopsis), and each admitted
- * vector is copied, with its recorded input, onto the new chunk with the same
- * source and text (`chunk_source\0chunk_text`, FIFO for duplicates). So an
+ * tier), and each admitted vector is copied, with its recorded input, onto the
+ * new chunk with the same source and text (`chunk_source\0chunk_text`, FIFO for
+ * duplicates); on a page stored under per-chunk synopsis, onto the new chunk
+ * whose synopsis input hashes to the recorded one (its window is unchanged). So an
  * unchanged chunk inside a rewritten tail keeps its vector and only new text
  * reaches the provider. Returns how many chunks got one.
  */
-export async function reuseSegmentChunkVectors(exec: BrainEngine, { pageId, retiredOccurrences, chunks, title, corpusGeneration, tier }: {
-  pageId: number; retiredOccurrences: readonly number[]; chunks: SegmentChunkInput[]; title: string; corpusGeneration: string | null; tier: 'title' | 'none' }): Promise<number> {
+export async function reuseSegmentChunkVectors(exec: BrainEngine, { pageId, retiredOccurrences, chunks, title, corpusGeneration, tier, truthLead }: {
+  pageId: number; retiredOccurrences: readonly number[]; chunks: SegmentChunkInput[]; title: string; corpusGeneration: string | null; tier: 'title' | 'none';
+  /** The truth_lead the write stores (a synopsis window opens with it); omitted when the body is unchanged (the stored one). */
+  truthLead?: string }): Promise<number> {
   if (retiredOccurrences.length === 0 || chunks.length === 0) return 0;
   const target = await embeddingWriteTarget(exec);
   const provenance = embeddingInputContext(target, title, corpusGeneration, []);
   const col = quoteIdentifier(target.column.name);
   const rows = await exec.executeRaw<{ chunk_text: string; chunk_source: string; embedding: unknown; token_count: number | null; model: string | null;
-    embedding_input_hash: string | null; contextual_retrieval_mode: string | null }>(
-    `SELECT c.chunk_text, c.chunk_source, c.${col} AS embedding, c.token_count, c.model, c.embedding_input_hash, p.contextual_retrieval_mode
+    embedding_input_hash: string | null; contextual_retrieval_mode: string | null; slug: string; source_id: string; corpus_generation: string | null }>(
+    `SELECT c.chunk_text, c.chunk_source, c.${col} AS embedding, c.token_count, c.model, c.embedding_input_hash, p.contextual_retrieval_mode,
+            p.slug, p.source_id, p.corpus_generation
        FROM content_chunks c JOIN pages p ON p.id = c.page_id
       WHERE c.page_id = $1 AND c.occurrence_id = ANY($2::bigint[]) AND c.${col} IS NOT NULL AND ${chunkGenerationFilter('p', 'c')}
       ORDER BY c.chunk_index`, [pageId, [...retiredOccurrences]]);
   const mode = rows[0]?.contextual_retrieval_mode ?? null;
-  if (rows.length === 0 || (mode && modeRequiresSynopsis(mode as CRMode))) return 0;
+  if (rows.length === 0) return 0;
+  // Wave B spec 8.6: on a page stored under per-chunk synopsis, a vector carries over only onto a new chunk whose
+  // synopsis input (its segment window over the page lead) hashes to the stored row's recorded input.
+  const synopsis = mode && modeRequiresSynopsis(mode as CRMode)
+    ? segmentSynopsisInputHashes(embeddingInputContext(target, title, rows[0]!.corpus_generation, []),
+      await segmentSynopsisLead(exec, { id: pageId, slug: rows[0]!.slug, source_id: rows[0]!.source_id }, truthLead), chunks)
+    : null;
   const stored = rows.map(row => ({ chunk_text: row.chunk_text, chunk_source: row.chunk_source, embedding: parseEmbedding(row.embedding),
     token_count: row.token_count, model: row.model, embedding_input_hash: row.embedding_input_hash }))
-    .filter(chunk => canReuseMarkdownVector(chunk.embedding_input_hash, mode, tier, provenance, chunk));
-  const { reuse } = planEmbeddingReuse(stored, chunks, c => `${c.chunk_source}\0${c.chunk_text}`);
+    .filter(chunk => synopsis ? chunk.embedding_input_hash !== null : canReuseMarkdownVector(chunk.embedding_input_hash, mode, tier, provenance, chunk));
+  const { reuse } = planEmbeddingReuse(stored, chunks, synopsis
+    ? c => synopsis.get(c as SegmentChunkInput) ?? (c as { embedding_input_hash?: string | null }).embedding_input_hash ?? ''
+    : c => `${c.chunk_source}\0${c.chunk_text}`);
   for (const [i, matched] of reuse) {
     const row = matched as typeof stored[number];
     chunks[i]!.embedding = row.embedding as Float32Array;

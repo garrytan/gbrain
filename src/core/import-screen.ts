@@ -37,6 +37,7 @@ import type { FenceCtx, FenceFix, FencePage, FenceReason } from './fence-repair/
 import { effectiveVisibility } from './search/private-visibility.ts';
 import { CODE_FILE_MAX_BYTES, PAGE_MAX_BYTES } from './page-size-policy.ts';
 import { sliceMemo } from './persistence/slice-memo.ts';
+import { noncanonicalPrivateHold } from './persistence/visibility-request.ts';
 
 /** Largest Markdown page import admits: the Wave A ceiling (page-size-policy.ts). */
 export const MAX_FILE_SIZE = PAGE_MAX_BYTES;
@@ -350,7 +351,7 @@ export function assessImportSanity(page: Pick<ParsedMarkdown, 'compiled_truth' |
  * with its location-only `fence`.
  */
 export interface ContentRefusal extends Omit<ContentHold, 'code' | 'reason'> {
-  code: ContentHold['code'] | 'content_rejected' | 'invalid_fence' | 'purged_content' | 'write_gate_rejected';
+  code: ContentHold['code'] | 'content_rejected' | 'invalid_fence' | 'purged_content' | 'write_gate_rejected' | 'visibility_noncanonical';
   reason?: ContentHold['reason'] | FenceReason;
   fence?: FenceMessageLocation;
   /** #6188 (D18): every issue that blocks the write, location and class only. */
@@ -413,6 +414,12 @@ export interface ImportScreenInput {
   writeGate?: WriteGateInput;
   /** #6712 PR 2: the owner's trust allow rules that preparation applies (`applyTrustAllowRules`); a reject they cover is not refused. */
   gateAllowed?: (gate: { families: readonly string[]; detectorError: boolean }) => boolean;
+  /**
+   * #7848 file ingestion (managed sync and import, `validate --importable`): content that asks for `visibility: private` but would
+   * not store exactly that refuses `visibility_noncanonical`. Page writes refuse it earlier (`visibility_not_applied`), and
+   * derived writes of a stored page never refuse, so they leave it unset.
+   */
+  holdNoncanonicalPrivate?: boolean;
 }
 
 export type ImportScreenResult =
@@ -432,7 +439,8 @@ export function screenImportContent(input: ImportScreenInput): ImportScreenResul
   if (size) return { status: 'refused', refusal: size };
   if (codeFile) return { status: 'importable', parsed: null };
   const parsed = parseMarkdown(input.content, input.path, { validate: true, ...(input.activePack ? { activePack: input.activePack } : {}) });
-  const hold = classifyImportHold(parsed, { expectedSlug: input.expectedSlug, slugExempt: input.slugExempt, slugConflictMessage: input.slugConflictMessage });
+  const hold = classifyImportHold(parsed, { expectedSlug: input.expectedSlug, slugExempt: input.slugExempt, slugConflictMessage: input.slugConflictMessage })
+    ?? (input.holdNoncanonicalPrivate ? noncanonicalPrivateHold(input.content, parsed.frontmatter) : null);
   if (hold) return { status: 'refused', refusal: hold };
   const purgedAs = input.purgedPages?.size ? input.purgedPages.get(contentHash(parsed)) : undefined;
   if (purgedAs !== undefined) return { status: 'refused', refusal: { code: 'purged_content',
@@ -506,11 +514,12 @@ export function contentRefusalFromReceipt(code: string | null | undefined, messa
     : typed === 'content_rejected' ? 'The content-sanity gate rejects this content under the operator\'s junk_disposition=reject setting. Remove the matched junk, then submit with a new request_id.'
     : typed === 'purged_content' ? 'This content was purged by the owner and stays out of the brain. Do not resubmit it; write new content, or ask the user to clear the tombstone on the brain host (gbrain pages unpurge).'
     : typed === 'write_gate_rejected' ? 'The write gate refuses this external instruction-like content under the operator\'s write_gate.external_mode=reject setting, so it refuses on every retry. Tell the user; changing that setting is their decision.'
+    : typed === 'visibility_noncanonical' ? 'The content asks for visibility: private in a spelling page privacy does not read, so it refuses on every retry. Write visibility: private on its own frontmatter line (lowercase key and value), then submit with a new request_id.'
     : PAGE_OVER_LIMIT_SUGGESTION;
   return { code: typed, ...(reason ? { reason } : {}), ...(key ? { key } : {}), ...(line !== undefined ? { line } : {}), suggestion };
 }
 
-const CONTENT_REFUSAL_CODES = new Set(['invalid_frontmatter', 'frontmatter_slug_conflict', 'file_too_large', 'content_rejected', 'purged_content', 'write_gate_rejected']);
+const CONTENT_REFUSAL_CODES = new Set(['invalid_frontmatter', 'frontmatter_slug_conflict', 'file_too_large', 'content_rejected', 'purged_content', 'write_gate_rejected', 'visibility_noncanonical']);
 const LEGACY_CONTENT_MESSAGES: Array<[code: string, pattern: RegExp]> = [
   ['invalid_params', /^Invalid YAML frontmatter(?::| at line \d| in )/],
   ['invalid_params', /^The frontmatter slug "[^"\n]*" in [^\n]+ conflicts with its path, which expects slug "[^"\n]*"\./],

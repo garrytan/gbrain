@@ -5,7 +5,7 @@ Brain data (pulled pages, synthetic brains, PGLite files, results) lives under
 `$BENCH_WORK` (default `~/.capy/work/brain`) and must never be committed. Result rows hold
 counts, sizes and timings only.
 
-Requires Bun >= 1.4 (the repo's `engines.bun`) and Docker for the Postgres engine.
+Requires Bun >= 1.4.4 (the repo's `engines.bun`) and Docker for the Postgres engine.
 
 | File | What it does |
 |---|---|

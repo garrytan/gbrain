@@ -21,6 +21,7 @@ import { resolveChildCliInvocation } from '../core/minions/job-isolation.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import {
   attemptAutopilotSelfUpgrade,
+  computeAutopilotIdle,
   autopilotEngineIdentity,
   chatBootWarning,
   classifyReconnectError,
@@ -32,6 +33,7 @@ import {
   resolveGbrainCliPath,
   shouldSpawnAutopilotWorker,
 } from './autopilot.ts';
+import { restartServeAfterSelfUpgrade } from './upgrade-restart.ts';
 
 /**
  * Mutable daemon state shared by the tick loop, the shutdown path and the tick
@@ -320,6 +322,8 @@ export async function runAutopilotDaemon(engine: BrainEngine, args: string[]): P
     // + exits for supervisor relaunch (never returns). No-op unless mode=auto.
     if (configurationBlocked()) continue;
     await attemptAutopilotSelfUpgrade(engine, engineType, lockPath, () => !configurationBlocked());
+    if (configurationBlocked()) continue;
+    await restartServeAfterSelfUpgrade(() => computeAutopilotIdle(engine, engineType));
     if (configurationBlocked()) continue;
 
     // --no-worker peer-liveness probe (v0.19.1). Runs every cycle, cheap

@@ -8,7 +8,7 @@
 #   scripts/ubicloud/ubi-runner.sh run --setup scripts/bench/production-soak/vm-setup.sh -- 'bash scripts/bench/production-soak/run.sh ...'
 set -euo pipefail
 
-BUN_VERSION="${BUN_VERSION:-1.4.3}"
+BUN_VERSION="${BUN_VERSION:-1.4.4}"
 t0=$(date +%s)
 step() { echo "[soak-setup +$(( $(date +%s) - t0 ))s] $*"; }
 

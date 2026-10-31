@@ -35,6 +35,13 @@ export function contentRepairCommit(path: string, receipt: Pick<ContentRepairRec
 }
 /** `rule`: for `git_target_ignored`, the .gitignore rule that excludes the file (`<file>:<line>: <pattern>`). */
 export interface ParkedTarget { slug?: string; error_code: string; rule?: string }
+/** #7423 / #7378: a settled target: under a declared db_only dir (`declared`), or its current bytes proved on the fetched remote (effect-settle.ts). */
+export type SettledTarget = { slug: string; declared: string }
+  | { slug: string; path: string; remote_ref: string; remote_commit: string; blob: string; receipt_request_id: string };
+export type SettlementProof = { kind: 'db_only'; worktree_id: string; targets: SettledTarget[] }
+  | { kind: 'superseded_remote'; former_worktree_id: string; worktree_id: string; targets: SettledTarget[] };
+/** The disposition `gbrain sources writer settle-effects` records on a Git effect whose retry can never succeed. */
+export interface EffectSettlement { reason: SettlementProof['kind']; at: string; host_id: string; plan_hash: string; proof: SettlementProof }
 /** `page_body_segmented`: a segmented page an older binary's mirror or Git scan passed by; this one mirrors and commits it. */
 /** `preview_changed`: a `gbrain repair segmented-mirror` target whose file or render no longer has the hash its preview approved (`data.approved_file`). */
 export interface SkippedTarget { slug: string; reason: 'metafile' | 'file_database_drift' | 'page_body_segmented' | 'withdrawal_not_mirrored' | 'preview_changed' }
@@ -103,7 +110,11 @@ export interface PersistenceEffect {
     /** GBRA-130 A-12: pages whose file this withdrawal mirror rewrote, recorded by its recovery with the cursor step. */
     published?: string[];
     /** The SHA-256 of the bytes this mirror wrote to each published page's file, at the page revision it rendered. */
-    published_files?: Record<string, { hash: string; revision: string }> };
+    published_files?: Record<string, { hash: string; revision: string }>;
+    /** #7423 / #7378: present while the effect is settled; every reader of parked and held effects skips it. */
+    settled?: EffectSettlement;
+    /** Every settle and unsettle of this effect, oldest first; never trimmed. */
+    settlements?: Array<Record<string, unknown> & { action: 'settled' | 'unsettled'; at: string; host_id: string; plan_hash: string }> };
   state: 'queued' | 'running' | 'committed' | 'failed';
   execution_token: string | null;
   claim_expires_at: string | Date | null;

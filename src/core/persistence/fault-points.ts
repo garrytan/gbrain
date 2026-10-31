@@ -47,6 +47,17 @@ export type FaultPoint = `publication:${PublicationBoundary}` | `effect:${Effect
   | 'purge:sweep_chunk' | 'purge:carrying_lookup'
   // W1: before each keyset batch of the belief ledger's purge redaction (belief/purge.ts); a 57014 from the hook models its statement timeout.
   | 'purge:ledger_redaction'
+  // Before a fact purge records its derivation sweep in its transaction (segment-derive.ts recordDerivationPurge); a 57014 from the hook models its statement timeout.
+  | 'purge:derivation_sweep'
+  // Inside each batch transaction of a purge's derivation sweep (segment-derive.ts continueDerivationPurges), with the batch size as `round` and the cursor as `read`; a 57014 from the hook models the batch outrunning its statement budget.
+  | 'purge:derivation_batch'
+  // Before the sweep deletes, unread, the one row that alone outran its statement budget; a 57014 from the hook models that statement outrunning it too.
+  | 'purge:derivation_unread'
+  // Inside each batch transaction of the purge receipt's derivation probe (purge-verify.ts derivationTextReport), with the batch size as `round`; a 57014 models a batch outrunning the probe's statement budget.
+  | 'purge:derivation_probe'
+  // Before a purge's derivation sweep takes the source's scope lock at the end of a walk (segment-derive.ts continueDerivationPurges): tried without
+  // waiting, then waited for a bounded time. A 55P03 from the hook models a write in the source holding it: the try fails, the wait times out.
+  | 'purge:derivation_scope_lock'
   // #6712 PR 4b: after a page-row deletion of a managed Git source wrote its origin's deletion marker (sync-markers.ts), before the row goes.
   | 'purge:marker_written'
   // #6712 PR 4b: before each round of a pass reads its level (`round`), and after it read it (`level`: its statements and its
@@ -92,7 +103,9 @@ export type FaultPoint = `publication:${PublicationBoundary}` | `effect:${Effect
   // and after the activation committed, before the producer acknowledges it.
   | 'generation:published' | 'generation:retired' | 'generation:activated'
   // GBRA-161 PR 1b: as a managed generation member (an overwrite or retirement after its activation committed) is prepared.
-  | 'generation:member';
+  | 'generation:member'
+  // G8a (git-conversion.ts): after a conversion group's door commit, and after the strict-equivalent pass, before the flag is set.
+  | 'conversion:group_committed' | 'conversion:withhold_stamped' | 'conversion:withhold_committed' | 'conversion:before_flip';
 /**
  * `signal` (#6278, `consumer:preparing` only): the preparation's abort signal, so
  * a stalling hook can model both the reporter's cases: a preparer that honours

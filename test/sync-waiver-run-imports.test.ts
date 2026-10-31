@@ -23,6 +23,7 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
+import { SYNC_IMPORT_PROVENANCE_OP } from '../src/core/persistence/sync-holds.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -41,6 +42,14 @@ beforeAll(async () => {
 afterAll(async () => { for (const engine of engines) { await disposePersistenceConsumer(engine); await engine.disconnect(); } await closePostgres?.(); rmSync(home, { recursive: true, force: true }); });
 
 /** A synced source of `n` notes; the next `full` sync screens every file as an unchanged import. */
+/**
+ * A full episode admits an already-current page in place (sync-classify.ts `inPlace`), so unchanged files reach the
+ * waiver only while a reparse is owed: here their import records name an older parser, as after a parser upgrade.
+ */
+const olderParserRecords = (engine: BrainEngine, sourceId: string) => engine.executeRaw(
+  `UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,parser,parser_version}','"an-older-parser"'::jsonb) WHERE op=$1 AND starts_with(fingerprint, $2 || ':')`,
+  [SYNC_IMPORT_PROVENANCE_OP, sourceId]);
+
 async function syncedSource(engine: BrainEngine, n: number) {
   const id = `wri-${randomUUID().replace(/-/g, '').slice(0, 16)}`, root = join(home, id);
   mkdirSync(root, { recursive: true }); git(root, 'init', '-q');
@@ -51,6 +60,7 @@ async function syncedSource(engine: BrainEngine, n: number) {
   await claimWorktree(engine, id, root);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
   expect((await performManagedSync(engine, { sourceId: id, ...OPTS })).status).toBe('first_sync');
+  await olderParserRecords(engine, id);
   await disposePersistenceConsumer(engine);
   return { id, root };
 }

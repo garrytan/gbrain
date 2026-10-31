@@ -330,6 +330,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     if (!data.prompt || typeof data.prompt !== 'string') {
       throw new Error('subagent job data.prompt is required (string)');
     }
+    if (!submitted) await (await import('../../cycle/synthesize-source-routing.ts')).refuseChangedSessionSource(engine, data); // #7850
 
     // v0.38 (S1.5 + S1.7) — capability-based gate replaces the v0.31.12
     // Anthropic-only check. The handler now routes between two paths:

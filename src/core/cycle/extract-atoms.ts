@@ -51,7 +51,7 @@
 // Budget: $0.30/source/run, key `cycle.extract_atoms.budget_usd`.
 // Exceeded budget halts with PhaseStatus='warn' + partial result.
 //
-// Source-scoped: opts.sourceId gates brain-global transcript discovery,
+// Source-scoped: opts.sourceId gates session-corpus transcripts (#7846),
 // the discovery SQL (source_id = $1), the NOT EXISTS idempotency
 // subquery (atom.source_id = $1), AND every putPage write
 // ({sourceId} third arg). Pre-fix the putPage call was missing the
@@ -67,6 +67,7 @@ import type { ProgressReporter } from '../progress.ts';
 import { chat as gatewayChat, withBudgetTracker } from '../ai/gateway.ts';
 import { createGlobalLlmHaltTracker, haltedClassOf, providerContentBlockReason, type GlobalLlmErrorClass } from '../ai/errors.ts';
 import { derivedWriteThrough, reportFileHolds } from './derived-write-through.ts';
+import { emptySessionSourceRouting, keepSessionSourceTranscripts, withSessionSourceRouting } from './synthesize-source-routing.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { DEFAULT_EXTRACT_MAX_INPUT_CHARS, extractAtomsInput, inputTruncatedLine, recordPartialDisposition, releasePartialDispositions, resolveExtractAtomsInputCap, stampTranscriptTombstone, type ExtractAtomsInput, type ExtractAtomsItem } from './extract-atoms-input.ts';
 import { commitExtractionPlan, readPageWatermark } from '../extraction-watermark.ts';
@@ -705,39 +706,44 @@ export async function runPhaseExtractAtoms(
   const sourceId = opts.sourceId ?? 'default';
   const chat = opts._chat ?? gatewayChat;
   const managed = await managedAtomSession(engine, sourceId, opts._managedRetry, opts.attempt?.writeWait);
-  if (managed && !opts.dryRun) await resumeManagedGenerationMembers(engine, managed); // GBRA-161 PR 1b: finish what a crash after an activation left
+  // v0.41.2.1: loadConfigWithEngine() so the dream.* DB-plane merge from Phase 1 reaches this phase.
+  let transcriptDirs: { session_corpus_dir?: string; meeting_transcripts_dir?: string } | undefined;
+  try {
+    const cfg = (opts._loadConfig ? await opts._loadConfig() : await (await import('../config.ts')).loadConfigWithEngine(engine)) as unknown as
+      { dream?: { synthesize?: typeof transcriptDirs } } | null;
+    transcriptDirs = cfg?.dream?.synthesize;
+  } catch { transcriptDirs = undefined; }
+  const sourceRouting = emptySessionSourceRouting();
+  if (managed && !opts.dryRun) { // GBRA-161 PR 1b: finish what a crash after an activation left
+    for (const member of await resumeManagedGenerationMembers(engine, managed, { corpusDir: transcriptDirs?.session_corpus_dir ?? null })) {
+      if (member.outcome !== 'held_session_source') continue;
+      const held = sourceRouting.generation_members_held ??= {};
+      held[member.reason!] = (held[member.reason!] ?? 0) + 1;
+    }
+  }
   const atomFiles = await derivedWriteThrough(engine, 'extract_atoms', sourceId, { managed: managed !== null, dryRun: opts.dryRun ?? false });
   const writeRequests: WriteReceipt[] = [];
   const pageAtomTitles = new Map<string, Map<string, string[]>>();
 
   // 1a. Get transcripts (test seam OR production discovery).
-  //     v0.41.2.1: config loader switched to loadConfigWithEngine() so the
-  //     dream.* DB-plane merge from Phase 1 reaches this phase.
   let transcripts: Array<{ filePath: string; content: string; contentHash: string; root?: { path: string; label: string } }> = opts._transcripts ?? [];
-  // Configured transcript corpus paths are brain-global, so only default discovers them.
+  // Configured transcript paths are brain-global: every source walks the session
+  // corpus and keeps only the files #6268 resolves to it (#7846); the meeting
+  // transcripts dir stays default's.
   if (
-    sourceId === 'default'
-    && transcripts.length === 0
+    transcripts.length === 0
     && opts.brainDir !== undefined
     && opts._transcripts === undefined
   ) {
     try {
       const { discoverTranscripts } = await import('./transcript-discovery.ts');
-      const { loadConfigWithEngine } = await import('../config.ts');
-      const cfgRaw = opts._loadConfig
-        ? await opts._loadConfig()
-        : await loadConfigWithEngine(engine);
-      const cfg = (cfgRaw ?? {}) as unknown as Record<string, unknown>;
-      const dream = cfg.dream as
-        | { synthesize?: { session_corpus_dir?: string; meeting_transcripts_dir?: string } }
-        | undefined;
-      const corpusDir = dream?.synthesize?.session_corpus_dir;
-      const meetingDir = dream?.synthesize?.meeting_transcripts_dir;
+      const corpusDir = transcriptDirs?.session_corpus_dir;
+      const meetingDir = transcriptDirs?.meeting_transcripts_dir;
       if (corpusDir !== undefined) {
-        const discovered = discoverTranscripts({
+        const discovered = await keepSessionSourceTranscripts(engine, discoverTranscripts({
           corpusDir,
-          meetingTranscriptsDir: meetingDir, selfCaptureSessionIds: claudeCliSelfSessionIds(), // #5820, as synthesize
-        });
+          meetingTranscriptsDir: sourceId === 'default' ? meetingDir : undefined, selfCaptureSessionIds: claudeCliSelfSessionIds(), // #5820, as synthesize
+        }), { corpusDir, sourceId, readOnly: opts.dryRun }, sourceRouting);
         transcripts = discovered.map((d) => ({
           filePath: d.filePath,
           content: d.content,
@@ -872,7 +878,7 @@ export async function runPhaseExtractAtoms(
 
   // Phase-level no-op: nothing to extract today.
   if (work.length === 0 && transcripts.length === 0 && pages.length === 0) {
-    return reportFileHolds({
+    return withSessionSourceRouting(reportFileHolds({
       phase: 'extract_atoms',
       status: 'skipped',
       duration_ms: 0,
@@ -892,7 +898,7 @@ export async function runPhaseExtractAtoms(
         budget_usd: DEFAULT_BUDGET_USD,
         dry_run: opts.dryRun ?? false,
       },
-    }, atomFiles?.held, 'atom');
+    }, atomFiles?.held, 'atom'), sourceRouting, sourceId, 'extract_atoms');
   }
 
   // 4. Per work-item: extract atoms via the configured extract_atoms model
@@ -1419,7 +1425,7 @@ export async function runPhaseExtractAtoms(
     });
   }
 
-  return reportFileHolds({
+  return withSessionSourceRouting(reportFileHolds({
     phase: 'extract_atoms',
     // A phase that skipped every work item and produced nothing did not
     // succeed, even though skips are not failures and leave failures[] empty.
@@ -1466,7 +1472,7 @@ export async function runPhaseExtractAtoms(
       source_id: sourceId,
       dry_run: opts.dryRun ?? false,
     },
-  }, atomFiles?.held, 'atom');
+  }, atomFiles?.held, 'atom'), sourceRouting, sourceId, 'extract_atoms');
 }
 
 /**

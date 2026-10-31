@@ -4,9 +4,11 @@
  * **Closure** (§6, dx-outside-1, eng-outside-2). An episode stores its selection, so its universe is `U_E = eligible_E(T)`.
  * A converged round closes it in the pass's checkpoint when either (a) `U_E ⊆ U_pass`, a set inclusion over the paths
  * of `T`, or (b) the pass is at the configured selection, which releases the paths of `U_E` the source does not sync.
- * `chunker_version` is stamped only when (b) holds and `U_E ⊇ U_config`. So a scoped `--full --exclude X` closes its own
- * episode by (a) without advancing `last_commit`; a plain sync closes any episode by (b); a narrower takeover satisfies
- * neither and leaves it open. There is no abandon command: the plain sync (`resume_argv`) always terminates.
+ * `chunker_version` is stamped only when (b) holds and `U_E ⊇ U_config`. Every page of `U_E` was re-imported by the episode
+ * or admitted without a reparse because it already was current (sync-classify.ts `inPlace`: the import of its blob, at
+ * this parser and chunker, with its derived state current and no hold), so the stamp is true of every page. So a scoped
+ * `--full --exclude X` closes its own episode by (a) without advancing `last_commit`; a plain sync closes any episode by
+ * (b); a narrower takeover satisfies neither and leaves it open. There is no abandon command: the plain sync (`resume_argv`) always terminates.
  *
  * **Cost** (§7). Each admitted group reserves its priced embedding spend in its own row, `op='sync-pass-cost'`,
  * fingerprint `<source>:<incarnation>:<episode_or_pass_id>:<group_id>`, value `{source_id, incarnation, usd}`, inserted

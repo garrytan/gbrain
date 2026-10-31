@@ -508,6 +508,8 @@ function installDeps(over: Partial<ConnectDeps> = {}): ConnectDeps {
     env: () => undefined, // tests control the env; real GBRAIN_REMOTE_TOKEN must not leak in
     registerOAuthClient: () => ({ ok: true, clientId: 'gbrain_cl_minted', clientSecret: 'gbrain_cs_minted' }),
     writeOpencodeRemoteEntry: (name) => ({ configPath: `/tmp/xdg/opencode/opencode.jsonc (${name})`, replacedPrior: false }),
+    writeInstructions: (agent, name, optOut) => (optOut ? null : `write    instructions brain-first block for ${agent} '${name}'`),
+    writeTurnHook: (agent) => ({ lines: [`write    turn hook per-turn rule hook for ${agent}`], ok: true }),
     ...over,
   };
 }
@@ -534,6 +536,16 @@ describe('runConnect --install', () => {
     expect(all).toMatch(/did not verify \(auth\)/);
     expect(all).not.toContain('gbrain_secret');
     expect(all).toContain(REDACTED);
+  });
+
+  test('a per-turn hook that does not load fails the install loudly (turn_hook_not_loaded)', async () => {
+    const r = await runWithExitCapture(
+      ['https://brain.example.com/mcp', '--token', 'gbrain_tok', '--install', '--yes'],
+      installDeps({ writeTurnHook: () => ({ lines: ['error turn_hook_not_loaded (hook_failed): the per-turn gbrain hook is not active'], ok: false }) }),
+    );
+    expect(r.exitCode).toBe(1);
+    expect(r.err.join('\n')).toContain('turn_hook_not_loaded');
+    expect(r.err.join('\n')).toMatch(/Verified/);
   });
 
   test('missing claude binary fails fast', async () => {

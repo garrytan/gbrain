@@ -265,9 +265,13 @@ describe('part splitting [embed-skip is the binding limit]', () => {
     const ids = new Set(r.parts.map((p) => p.frontmatterId));
     expect(ids.size).toBe(r.parts.length);
     // Every part body stays under the embed-skip threshold with margin.
+    // Wave B: the part count stays out of hashed content (no `of`, no "of N" in the title).
     for (const p of r.parts) {
       expect(Buffer.byteLength(splitBody(p.content), 'utf8')).toBeLessThan(PART_TARGET_BYTES + 64 * 1024);
-      expect(frontmatter(p.content).transcript_import.of).toBe(r.parts.length);
+      const fm = frontmatter(p.content);
+      expect(fm.transcript_import.of).toBeUndefined();
+      expect(fm.transcript_import).toMatchObject({ part: p.part, part_bytes: PART_TARGET_BYTES });
+      expect(fm.title.endsWith(` (part ${p.part})`)).toBe(true);
     }
     // Overlap: part 2 starts with the tail messages of part 1.
     const p1Body = splitBody(r.parts[0].content);

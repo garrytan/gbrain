@@ -12,13 +12,11 @@
  * (src/core/facts/writeback-instructions.ts) so this surface structurally
  * cannot drift from the MCP instructions surface.
  *
- * Splice discipline copied VERBATIM from spliceCompiledBlock
- * (src/commands/compile-context.ts): exact-line marker match at column 0; no
- * markers → append a fresh block at EOF; exactly one in-order pair → replace
- * the interior; anything else (duplicates, an orphan, out of order) → THROW —
- * those are hand-edits we must not guess through. Marker-equal lines inside
- * the body are neutralized with a leading space so a body excerpt can never
- * self-wedge the next splice.
+ * Splice discipline lives in src/core/managed-block.ts (shared with the
+ * brain-first block): exact-line marker match at column 0; no markers →
+ * append a fresh block at EOF; exactly one in-order pair → replace the
+ * interior; anything else (duplicates, an orphan, out of order) → THROW.
+ * Marker-equal lines inside the body are neutralized with a leading space.
  *
  * The block header names the serve endpoint [OV-A3]: on a multi-brain box the
  * LAST `bootstrap harness` run wins the block, and the named URL is what
@@ -28,83 +26,31 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { buildAmbientWritebackSection } from '../facts/writeback-instructions.ts';
 import { atomicWriteTextFile } from './atomic-write.ts';
+import { blockPresent, probeBlock, removeBlock, spliceBlock, type BlockMarkers } from '../managed-block.ts';
 
 export const AMBIENT_WRITEBACK_BLOCK_BEGIN = '<!-- gbrain:ambient-writeback:begin -->';
 export const AMBIENT_WRITEBACK_BLOCK_END = '<!-- gbrain:ambient-writeback:end -->';
 
-function damagedMarkersError(begins: number, ends: number): Error {
-  return new Error(
-    `the gbrain ambient-writeback markers in this file are damaged ` +
-      `(${begins} begin / ${ends} end` +
-      `${begins === 1 && ends === 1 ? ', out of order' : ''}) — ` +
-      `the managed block was hand-edited. Fix the markers (or delete the whole block, ` +
-      `markers included) and re-run \`gbrain bootstrap harness\`.`,
-  );
-}
-
-/**
- * The ONE marker scan (splice, remove, status probes, and doctor's drift
- * compare all consume it — divergent hand-rolled scans would classify a
- * damaged file differently per surface). 'absent' = no marker lines at all;
- * a well-formed single in-order pair returns its indexes; anything else
- * (duplicates, an orphan, out of order) THROWS the damaged-markers error.
- */
-function scanMarkers(lines: string[]): { begin: number; end: number } | 'absent' {
-  const begins: number[] = [];
-  const ends: number[] = [];
-  lines.forEach((line, i) => {
-    if (line === AMBIENT_WRITEBACK_BLOCK_BEGIN) begins.push(i);
-    if (line === AMBIENT_WRITEBACK_BLOCK_END) ends.push(i);
-  });
-  if (begins.length === 0 && ends.length === 0) return 'absent';
-  if (begins.length !== 1 || ends.length !== 1 || begins[0] > ends[0]) {
-    throw damagedMarkersError(begins.length, ends.length);
-  }
-  return { begin: begins[0], end: ends[0] };
-}
+const AMBIENT_MARKERS: BlockMarkers = {
+  begin: AMBIENT_WRITEBACK_BLOCK_BEGIN,
+  end: AMBIENT_WRITEBACK_BLOCK_END,
+  label: 'ambient-writeback',
+  rerun: 'gbrain bootstrap harness',
+};
 
 /** Non-throwing probe for status/doctor surfaces: one vocabulary for the
  * three states, with the interior when present. */
-export function probeAmbientBlock(
-  text: string,
-): { state: 'absent' | 'present' | 'damaged'; interior?: string } {
-  const lines = text.split('\n');
-  try {
-    const scan = scanMarkers(lines);
-    if (scan === 'absent') return { state: 'absent' };
-    return { state: 'present', interior: lines.slice(scan.begin + 1, scan.end).join('\n') };
-  } catch {
-    return { state: 'damaged' };
-  }
+export function probeAmbientBlock(text: string): { state: 'absent' | 'present' | 'damaged'; interior?: string } {
+  return probeBlock(AMBIENT_MARKERS, text);
 }
 
 /**
  * Splice `body` into the managed block inside `existing`. No markers →
  * append a fresh block at EOF. Exactly one in-order pair → replace the
- * interior. Anything else → THROW (spliceCompiledBlock discipline).
+ * interior. Anything else → THROW (managed-block.ts discipline).
  */
 export function spliceAmbientWritebackBlock(existing: string, body: string): string {
-  const lines = existing.length > 0 ? existing.split('\n') : [];
-  const scan = scanMarkers(lines);
-  // Neutralize marker-equal lines INSIDE the body: a body line that is
-  // exactly a marker string would land as a real marker line — the first
-  // splice succeeds, and every run after that sees damaged markers
-  // (self-wedge until hand-edit). A leading space keeps the text visible but
-  // fails the exact-line match. Deterministic, so re-splices compare
-  // like-for-like.
-  const neutralized = body
-    .split('\n')
-    .map((l) => (l === AMBIENT_WRITEBACK_BLOCK_BEGIN || l === AMBIENT_WRITEBACK_BLOCK_END ? ` ${l}` : l))
-    .join('\n');
-  const interior = neutralized.endsWith('\n') ? neutralized.slice(0, -1) : neutralized;
-  if (scan === 'absent') {
-    const head =
-      existing.length === 0 ? '' : existing.endsWith('\n') ? existing : `${existing}\n`;
-    return `${head}${AMBIENT_WRITEBACK_BLOCK_BEGIN}\n${interior}\n${AMBIENT_WRITEBACK_BLOCK_END}\n`;
-  }
-  const out = [...lines.slice(0, scan.begin + 1), ...interior.split('\n'), ...lines.slice(scan.end)];
-  const joined = out.join('\n');
-  return joined.endsWith('\n') ? joined : `${joined}\n`;
+  return spliceBlock(AMBIENT_MARKERS, existing, body);
 }
 
 /**
@@ -114,24 +60,13 @@ export function spliceAmbientWritebackBlock(existing: string, body: string): str
  * callers — a file left empty of our content stays in place.
  */
 export function removeAmbientWritebackBlock(existing: string): { text: string; removed: boolean } {
-  const lines = existing.length > 0 ? existing.split('\n') : [];
-  const scan = scanMarkers(lines);
-  if (scan === 'absent') return { text: existing, removed: false };
-  // Consume at most one trailing BLANK line after the end marker. The final
-  // '' element of a newline-terminated file is the trailing-newline sentinel,
-  // not a blank line — only consume when something follows it.
-  let after = scan.end + 1;
-  if (after < lines.length - 1 && lines[after] === '') after++;
-  const out = [...lines.slice(0, scan.begin), ...lines.slice(after)];
-  return { text: out.join('\n'), removed: true };
+  return removeBlock(AMBIENT_MARKERS, existing);
 }
 
 /** True when any exact marker line is present (well-formed OR damaged) —
  * the cheap probe callers run before locking for a strip. */
 export function ambientBlockPresent(text: string): boolean {
-  return text
-    .split('\n')
-    .some((l) => l === AMBIENT_WRITEBACK_BLOCK_BEGIN || l === AMBIENT_WRITEBACK_BLOCK_END);
+  return blockPresent(AMBIENT_MARKERS, text);
 }
 
 export interface AmbientInstructionBlockOpts {

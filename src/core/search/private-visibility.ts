@@ -102,7 +102,7 @@ function namesReadersSql(alias: string): string {
  * declared `derived_from` names one. Read-time, so derivatives written before
  * the origin gained readers are covered; new derivations are stamped private
  * by isDerivationPrivate. The lineage test lives in the SQL function
- * gbrain_access_origin_restricted (migration v274) behind a cheap type and
+ * gbrain_access_origin_restricted (migration v281) behind a cheap type and
  * key guard, so a read plans one function call instead of four subplans. Both
  * parts lead with column tests (page_readers IS NULL, type) so the planner's
  * row estimate follows column statistics instead of a default guess.
@@ -141,7 +141,7 @@ export function privatePagesFilterFragmentFast(pageAlias: string): string {
  *    (GBRAIN_REMOTE_PRIVATE_PAGES=1 or search.remote_private_pages=visible);
  *  - restricted: false only inside a remote request on a brain whose config
  *    access.restrictions_present was unset when the request began. Then no
- *    page named readers at that moment and none predates the migration (v274
+ *    page named readers at that moment and none predates the migration (v281
  *    sets the flag when one does), so every readers value is in the derived
  *    column: accessAllowedSql tests only page_readers IS NULL (live, so a page
  *    gaining readers mid-request is still hidden, since the trigger fills the

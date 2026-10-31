@@ -76,4 +76,18 @@ describePostgres('projection readiness probe plan on Postgres (GBRA-156)', () =>
       await engine.executeRaw("UPDATE pages SET text_projection_revision=knowledge_revision WHERE slug='filler-7'");
     }
   });
+
+  test('a brain with many pending pages answers pending without the by_design walk (#8000)', async () => {
+    await engine.executeRaw("UPDATE pages SET text_projection_revision=NULL WHERE source_id='source-a'");
+    try {
+      await engine.executeRaw('ANALYZE pages');
+      const { result, probe } = await probeStatement({ sourceId: 'source-a' });
+      expect(result.status).toBe('projection_pending');
+      const text = await plan(probe.sql, probe.params);
+      expect(text.split('\n').filter(line => / on pages p(_\d+)? /.test(line) && !line.includes('never executed'))).toHaveLength(1);
+    } finally {
+      await engine.executeRaw("UPDATE pages SET text_projection_revision=knowledge_revision WHERE source_id='source-a'");
+      await engine.executeRaw('ANALYZE pages');
+    }
+  });
 });

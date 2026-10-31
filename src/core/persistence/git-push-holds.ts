@@ -28,19 +28,22 @@ export interface GitPushHold {
   oldest_at: string;
   /** The unresolved conflict the last publish recorded for the checkout (both sides changed these paths). */
   conflict: IntegrateConflictState | null;
+  /** #7378: the effects belong to a worktree the source is no longer bound to; no retry reaches them, settle-effects accounts for them. */
+  former_worktree: boolean;
   fix: Action;
 }
 
 export async function readGitPushHolds(engine: BrainEngine, sourceIds?: string[]): Promise<GitPushHold[]> {
-  const rows = await engine.executeRaw<{ source_id: string; root: string | null; retrying: number; parked: number; codes: string[]; oldest_at: string | Date }>(
+  const rows = await engine.executeRaw<{ source_id: string; root: string | null; former_worktree: boolean; retrying: number; parked: number; codes: string[]; oldest_at: string | Date }>(
     `WITH held AS (
        SELECT e.source_id, e.worktree_id, e.state, r.created_at,
               CASE WHEN e.error_code='targets_parked' THEN (SELECT p->>'error_code' FROM jsonb_array_elements(COALESCE(e.data->'parked','[]'::jsonb)) p
                 WHERE p->>'error_code'=ANY($1::text[]) LIMIT 1) ELSE e.error_code END AS code
          FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
-        WHERE e.kind='git' AND e.state IN ('queued','running','failed') AND e.recovery IS NULL
+        WHERE e.kind='git' AND e.state IN ('queued','running','failed') AND e.recovery IS NULL AND NOT (e.data ? 'settled')
           AND ($2::text[] IS NULL OR e.source_id=ANY($2::text[])))
      SELECT h.source_id, (SELECT b.local_path FROM persistence_host_bindings b WHERE b.worktree_id=h.worktree_id ORDER BY b.local_path LIMIT 1) AS root,
+            NOT EXISTS (SELECT 1 FROM persistence_source_bindings s WHERE s.source_id=h.source_id AND s.worktree_id=h.worktree_id) AS former_worktree,
             count(*) FILTER (WHERE h.state<>'failed')::int AS retrying, count(*) FILTER (WHERE h.state='failed')::int AS parked,
             array_agg(DISTINCT h.code ORDER BY h.code) AS codes, min(h.created_at) AS oldest_at
        FROM held h WHERE h.code=ANY($1::text[])
@@ -48,7 +51,7 @@ export async function readGitPushHolds(engine: BrainEngine, sourceIds?: string[]
   return rows.map(row => {
     const conflict = row.root ? readIntegrateConflict(row.root) : null;
     const hold = { source_id: row.source_id, root: row.root, retrying: Number(row.retrying), parked: Number(row.parked), codes: row.codes,
-      oldest_at: new Date(row.oldest_at).toISOString(), conflict };
+      oldest_at: new Date(row.oldest_at).toISOString(), conflict, former_worktree: row.former_worktree === true };
     return { ...hold, fix: gitPushFix(hold) };
   });
 }
@@ -64,6 +67,11 @@ function gitPushFix(hold: Omit<GitPushHold, 'fix'>): Action {
     why: 'Choosing which version of a file wins discards the other side; ask the user before resolving.',
     user_message: `This machine and the remote both changed ${hold.conflict.paths.join(', ')} in ${hold.root}, so ${held} Git backup(s) of page writes in source ${hold.source_id} are held (nothing is lost; the database has every write). Which version should win: this machine's (ours) or the remote's (theirs)? Afterwards run gbrain sources writer retry-effects ${hold.source_id} --parked-pushes, then gbrain sources refresh ${hold.source_id}.`,
     verify: statusVerify(hold.source_id), docs: 'docs/guides/shared-checkout-git.md#conflicts',
+  };
+  if (hold.parked && hold.former_worktree) return {
+    argv: ['gbrain', 'sources', 'writer', 'settle-effects', hold.source_id, '--parked-code', hold.codes[0]!, '--dry-run'], consent: [], actor: 'agent', requires_exclusive: false,
+    why: `${hold.parked} Git effect(s) of source ${hold.source_id} failed on a push (${hold.codes.join(', ')}) in a worktree the source is no longer bound to, so no retry reaches them. This previews settling each one whose current bytes the fetched remote already holds; it changes nothing.`,
+    verify: statusVerify(hold.source_id),
   };
   if (hold.parked) return {
     argv: ['gbrain', 'sources', 'writer', 'retry-effects', hold.source_id, '--parked-pushes'], consent: [], actor: 'agent', requires_exclusive: false,

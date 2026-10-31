@@ -1,7 +1,7 @@
 /**
  * GBRA-218: readers normalization parity.
  *
- * 1. Protects: the SQL function gbrain_access_readers() (migration v274),
+ * 1. Protects: the SQL function gbrain_access_readers() (migration v281),
  *    which every read predicate uses, and normalizeReaders(), which every
  *    TypeScript check (isPrivatePage, isPrivatePageForCaller) uses, return the
  *    same readers for the same frontmatter.

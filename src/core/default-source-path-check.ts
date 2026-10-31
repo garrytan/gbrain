@@ -21,6 +21,10 @@
  *     nor a resolvable `sync.repo_path` names the tree they live in, so
  *     write-through, fence writes, and delete-reconcile cannot find them.
  *
+ *   - RELATIVE PATH (#7630): a set `local_path`, or with a null one a
+ *     `sync.repo_path`, that is not absolute (a legacy "."). It names whatever
+ *     directory gbrain runs from, and sync refuses it `sync_anchor_relative`.
+ *
  * Everything else (no pages yet, resolvable repo fallback, deliberate
  * DB-only brain) reports ok. The repair for a genuinely broken pointer is
  * the non-destructive `gbrain sources set-path default <path>`.
@@ -30,6 +34,8 @@
  * npm-squat-check.ts / pglite-leftovers-check.ts. The gathering wrapper
  * lives on the doctor surface (doctor/checks/default-source-path.ts).
  */
+import { posix, win32 } from 'path';
+
 export interface DefaultSourcePathInput {
   /** The `default` sources row, or undefined when no such row exists. */
   defaultSource: { local_path: string | null } | undefined;
@@ -62,10 +68,30 @@ export function assessDefaultSourcePath(
     // integrity.
     return { status: 'skip', message: '' };
   }
+  if (defaultSource.local_path && !posix.isAbsolute(defaultSource.local_path) && !win32.isAbsolute(defaultSource.local_path)) {
+    return {
+      status: 'warn',
+      message:
+        `default source local_path is the relative path "${defaultSource.local_path}", which names whatever directory ` +
+        'gbrain runs from, so sync refuses it (sync_anchor_relative). Ask the user which directory holds the brain, then ' +
+        'run `gbrain sources set-path default <absolute-directory>`, or clear the pointer with ' +
+        '`gbrain sources set-path default --clear`.',
+    };
+  }
   if (defaultSource.local_path) {
     return {
       status: 'ok',
       message: `default source local_path is set: ${defaultSource.local_path}`,
+    };
+  }
+  if (repoPath && !posix.isAbsolute(repoPath) && !win32.isAbsolute(repoPath)) {
+    return {
+      status: 'warn',
+      message:
+        `default source has no local_path and sync.repo_path is the relative path "${repoPath}", which names whatever ` +
+        'directory gbrain runs from, so default-source page writes skip the repository. Ask the user which directory holds ' +
+        'the brain, then run `gbrain sources set-path default <absolute-directory>` (or ' +
+        '`gbrain config set sync.repo_path <absolute-directory>`).',
     };
   }
   // null local_path — the designed fallback topology. Only warn when the

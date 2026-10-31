@@ -87,6 +87,7 @@ export function parseAddTypeArgs(args: string[]): AddTypeArgs {
     const flag = a.startsWith('--') && eq > 0 ? a.slice(0, eq) : a;
     if (!flag.startsWith('--')) { positional.push(a); continue; }
     seen.add(flag);
+    if (!VALUE_FLAGS.has(flag) && flag !== a && a !== '--json=true') throw usageError(`${flag} is a switch and takes no value.`, `Write ${flag} on its own.`);
     if (!VALUE_FLAGS.has(flag)) continue;
     const value = flag !== a ? a.slice(eq + 1) : args[++i];
     if (flag === '--alias') { if (value !== undefined) aliases.push(value); } else values[flag] = value;

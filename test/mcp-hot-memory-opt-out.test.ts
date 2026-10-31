@@ -38,7 +38,7 @@ beforeAll(async () => {
   await engine.insertFact({ fact: FACT, kind: 'preference', entity_slug: 'people/alice-example', visibility: 'world', source: 'test' }, { source_id: MEMBER_SOURCE });
   token = (await mintLegacyToken(engine, { name: 'hm-member-alice', scopes: ['read'], takesHolders: ['world'], sourceGrant: [MEMBER_SOURCE, CHANNEL_SOURCE] })).token;
   app = await startServeHttp(engine);
-});
+}, 60_000);
 
 afterAll(async () => {
   await app?.close();

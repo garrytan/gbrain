@@ -2,6 +2,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { AuthInfo, OperationContext } from '../ops/contract.ts';
 import { OperationError, opError } from '../ops/contract.ts';
@@ -110,6 +111,8 @@ async function sourceBoundary(engine: BrainEngine, sourceId: string, jobName: Re
   if (typeof config === 'string') { try { config = JSON.parse(config); } catch { deny('malformed source config', `Source ${sourceId}'s stored config is not valid JSON on the brain host, so nothing was queued. The brain host operator inspects it with gbrain sources status ${sourceId} --json.`); } }
   if (!record(config) || record(config)!.kind != null) deny('generic filesystem jobs require an ordinary filesystem source; use the dedicated connector endpoint',
     `Source ${sourceId} is a connector source: the brain host syncs it with gbrain connectors (connector_sync), not through submit_job.`);
+  if (!isAbsolute(source.local_path)) deny('registered source root is a relative path',
+    `Source ${sourceId}'s registered root is a relative path, which names whatever directory the brain host runs from (#7630), so nothing was queued. The brain host operator sets it with gbrain sources set-path ${sourceId} <absolute-directory>.`);
   let canonicalRoot: string;
   try {
     canonicalRoot = realpathSync(source.local_path);

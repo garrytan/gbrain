@@ -20,16 +20,44 @@ import { lstatSync } from 'node:fs';
 import { once } from 'node:events';
 import type { Writable } from 'node:stream';
 import { join } from 'node:path';
+import { envSafeDirectories, gitChildEnv, safeDirectoryEnv } from './git-env.ts';
 
 export const HARDENED_GIT_ARGS: readonly string[] = ['--no-pager', '--no-optional-locks', '--no-replace-objects',
   '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.untrackedCache=false',
   '-c', 'submodule.recurse=false', '-c', 'protocol.allow=never', '-c', 'credential.helper=',
   '-c', 'maintenance.auto=false', '-c', 'gc.auto=0'];
 
+const OPERATOR_CONFIG_TTL_MS = 30_000;
+let operatorConfig: { key: string; at: number; values: string[] } | null = null;
+
+/**
+ * #7584: the `safe.directory` entries in the operator's system and global Git config, in Git's order, read from `/` so no
+ * repository's config takes part. Re-read every 30 s, so a running server picks up an edit without a restart.
+ */
+function operatorConfigSafeDirectories(): string[] {
+  const key = ['HOME', 'XDG_CONFIG_HOME', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM', 'PATH'].map(name => process.env[name] ?? '').join('\0');
+  if (operatorConfig?.key === key && Date.now() - operatorConfig.at < OPERATOR_CONFIG_TTL_MS) return operatorConfig.values;
+  const run = spawnSync('git', ['config', '--includes', '--show-scope', '-z', '--get-all', 'safe.directory'],
+    { cwd: '/', env: { ...gitChildEnv(), LC_ALL: 'C' }, stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, maxBuffer: 1024 * 1024, killSignal: 'SIGKILL' });
+  const fields = run.status === 0 ? run.stdout.toString('utf8').split('\0') : [];
+  const values: string[] = [];
+  for (let i = 0; i + 1 < fields.length; i += 2) if (fields[i] === 'system' || fields[i] === 'global') values.push(fields[i + 1]!);
+  operatorConfig = { key, at: Date.now(), values };
+  return values;
+}
+
+export function __resetOperatorGitConfigForTests(): void { operatorConfig = null; }
+
+/**
+ * System and global config stay off and every `GIT_*` variable is dropped, except the operator's `safe.directory` entries
+ * (system, global, then environment, as Git orders them), carried as environment config (#7584). They relax only Git's
+ * ownership check for a repository owned by another user, which the operator allowed for their own `git` too.
+ */
 export function hardenedGitEnvironment(): NodeJS.ProcessEnv {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
   return { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0',
-    GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0', GIT_LFS_SKIP_SMUDGE: '1', LC_ALL: 'C' };
+    GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0', GIT_LFS_SKIP_SMUDGE: '1', LC_ALL: 'C',
+    ...safeDirectoryEnv([...operatorConfigSafeDirectories(), ...envSafeDirectories()]) };
 }
 
 export type HardenedGitResult = { ok: true; stdout: Buffer } | { ok: false; reason: 'exit' | 'timeout' | 'too_large' | 'unavailable'; status?: number };

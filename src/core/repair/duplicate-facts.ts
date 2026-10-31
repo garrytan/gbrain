@@ -1,10 +1,14 @@
 /**
  * `gbrain repair duplicate-facts` (#7043): retire exact copies of one active
- * fact, keeping the oldest.
+ * fact, keeping a fenced copy when there is one, else the oldest.
  *
  * A group is the active facts of one source and visibility (and one speaker)
  * that share `gbrain_fact_fingerprint`; near duplicates (rewordings) are never
- * grouped. The oldest row (created_at, then id) is kept; every other row is
+ * grouped. The oldest fenced row is kept, or the oldest row (created_at, then
+ * id) when none is fenced (G4: the page file is the record, so a database-only
+ * legacy copy of a fenced claim is the one retired; keeping it instead held
+ * the fenced copy and left the legacy row unfenced, which kept its page out of
+ * fact reconciliation for good); every other row is
  * superseded by it: `expired_at` set and `superseded_by` pointing at the kept
  * row. It is a supersession, never a withdrawal, so the claim stays
  * rememberable and the kept row keeps its entity.
@@ -77,7 +81,7 @@ export async function findDuplicateFacts(engine: BrainEngine, sourceIds: string[
        WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
          AND f.superseded_by IS NULL AND COALESCE(f.source, '') <> ALL($2::text[])
     ) d WHERE d.n > 1
-    ORDER BY d.source_id, d.visibility, d.fp, d.speaker, d.created_at, d.id`, [sourceIds, [...AUDIT_ROW_SOURCES]]);
+    ORDER BY d.source_id, d.visibility, d.fp, d.speaker, d.fenced DESC, d.created_at, d.id`, [sourceIds, [...AUDIT_ROW_SOURCES]]);
   const groups: DuplicateGroup[] = [];
   let key = '';
   for (const row of rows) {

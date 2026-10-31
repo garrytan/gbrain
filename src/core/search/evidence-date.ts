@@ -28,6 +28,8 @@
 import { computeEffectiveDate, formatBrainDay } from '../effective-date.ts';
 
 export const EVIDENCE_DATE_HEADER_KEY = 'search.evidence_date_header';
+/** GBRA-205: with the date header on, a page block's header line also carries its title (default off). */
+export const EVIDENCE_TITLES_KEY = 'search.evidence_titles';
 export const UNKNOWN_DATE = 'unknown';
 
 const OBSERVATION_SOURCES = new Set(['filename', 'date', 'published', 'created']);
@@ -146,25 +148,56 @@ async function factObservationDates(
   return out;
 }
 
+/** A page title as one inert line: angle brackets and U+0085 become spaces, double quotes single quotes, whitespace runs one space. */
+export function evidenceTitle(title: string | null | undefined): string {
+  return (title ?? '').replace(/[<>\u0085]/g, ' ').replace(/"/g, "'").replace(/\s+/g, ' ').trim();
+}
+
+/** A page header line with the page's title after the bracket, on one line; an empty title adds nothing. */
+export function titledPageHeader(header: string, title: string | null | undefined): string {
+  const clean = evidenceTitle(title);
+  return clean ? `${header} ${clean}` : header;
+}
+
+type HeaderHit = { page_id: number; title?: string | null; chunk_text?: string | null; fact_row?: { valid_from: string; valid_until: string | null } };
+
 /**
  * The date header line (with its newline) for each delivered block, read for
  * every hit page in one query. A failed read renders `unknown` for every page
  * and calls `onUnavailable` once. A facts-arm row gets its fact header unless
- * its text already starts with one.
+ * its text already starts with one. With `titles`, a page block's line ends
+ * with its title (`search.evidence_titles`); fact headers never change.
  */
 export async function blockDateHeaders(engine: Parameters<typeof loadPageDateHeaders>[0],
-  hits: Array<{ page_id: number; chunk_text?: string | null; fact_row?: { valid_from: string; valid_until: string | null } }>,
-  onUnavailable: () => void): Promise<(hit: { page_id: number; chunk_text?: string | null; fact_row?: { valid_from: string; valid_until: string | null } }) => string> {
+  hits: HeaderHit[], onUnavailable: () => void, opts: { titles?: boolean } = {}): Promise<(hit: HeaderHit) => string> {
   let headers: Map<number, string>;
   try { headers = await loadPageDateHeaders(engine, hits.map(h => h.page_id)); } catch { headers = new Map(); onUnavailable(); }
-  return hit => hit.fact_row ? (hit.chunk_text?.startsWith('[observed ') ? '' : `${factDateHeader(hit.fact_row)}\n`) : `${headers.get(hit.page_id) ?? pageDateHeader(null)}\n`;
+  return hit => {
+    if (hit.fact_row) return hit.chunk_text?.startsWith('[observed ') ? '' : `${factDateHeader(hit.fact_row)}\n`;
+    const header = headers.get(hit.page_id) ?? pageDateHeader(null);
+    return `${opts.titles ? titledPageHeader(header, hit.title) : header}\n`;
+  };
+}
+
+/** A config flag value is on: 'true' | 'on' | '1' | 'yes', case-insensitive. */
+export function configFlagOn(raw: string | null | undefined): boolean {
+  const v = raw?.trim().toLowerCase();
+  return v === 'true' || v === 'on' || v === '1' || v === 'yes';
 }
 
 /** `search.evidence_date_header` is on ('true' | 'on' | '1' | 'yes'); off by default and on any read error. */
 export async function evidenceDateHeaderEnabled(engine: { getConfig(key: string): Promise<string | null> }): Promise<boolean> {
   try {
-    const raw = (await engine.getConfig(EVIDENCE_DATE_HEADER_KEY))?.trim().toLowerCase();
-    return raw === 'true' || raw === 'on' || raw === '1' || raw === 'yes';
+    return configFlagOn(await engine.getConfig(EVIDENCE_DATE_HEADER_KEY));
+  } catch {
+    return false;
+  }
+}
+
+/** `search.evidence_titles` is on ('true' | 'on' | '1' | 'yes'); off by default and on any read error. */
+export async function evidenceTitlesEnabled(engine: { getConfig(key: string): Promise<string | null> }): Promise<boolean> {
+  try {
+    return configFlagOn(await engine.getConfig(EVIDENCE_TITLES_KEY));
   } catch {
     return false;
   }

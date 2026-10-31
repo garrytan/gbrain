@@ -41,8 +41,11 @@
  *
  * A segmented page (body in segments, NULL body columns) is scanned block by
  * block (page-body/segment-blocks.ts), the title first, keeping each target's
- * first mention: a name whose tokens straddle a segment cut (a blank line,
- * heading, dated line or message boundary) is not matched. A gazetteer change
+ * first mention, and incrementally: each run's mentions are stored on its
+ * page_segment_derivations row keyed by its text, the gazetteer's digest and
+ * the scan options, so only runs that changed are read again. A name whose
+ * tokens straddle a segment cut (a blank line, heading, dated line or message
+ * boundary) is not matched. A gazetteer change
  * marks every segmented page in scope due (no SQL prefilter reads its body).
  * Derived aliases are still refreshed for inline entity pages only.
  */
@@ -55,7 +58,9 @@ import {
   buildGazetteer, findMentionedEntities, gazetteerEntryKeys, tokenizeTitle,
   type FindMentionsOpts, type Gazetteer, type GazetteerEntry, type GazetteerEntryKey, type Mention,
 } from '../by-mention.ts';
-import { bodyBlocks } from '../page-body/segment-blocks.ts';
+import { bodyBlocks, detachedValue } from '../page-body/segment-blocks.ts';
+import { commitRuns, derivationScope, keyDigest, planRuns, readRuns, SegmentDerivationRaced, type DeriveRun } from '../page-body/segment-derive.ts';
+import { canonicalJson } from '../belief/keys.ts';
 import { classifyItemFailure } from '../item-failure.ts';
 import { linkableTypesFor, loadSourcePack, parseNameList, readMentionPolicy, type MentionPolicy, type PackTypes } from './policy.ts';
 import { deriveEntityAliases, type DerivedAlias } from './aliases.ts';
@@ -247,7 +252,52 @@ async function disableSource(engine: BrainEngine, managed: boolean, sourceId: st
 interface DuePage { id: number; slug: string; source_id: string; revision: string; title: string | null; type: string | null;
   compiled_truth: string | null; timeline: string | null; mention_ignore: unknown; frontmatter?: Record<string, unknown> | null; body_storage?: string }
 
-/** findMentionedEntities over `${title}\n\n${compiled_truth}\n\n${timeline}`; a segmented body is scanned block by block. */
+/** What one run of a segmented body holds for the mention pass: its UTF-16 length and each target's first mention in it (offset run-local). */
+interface MentionRunOutput { chars: number; mentions: Mention[] }
+
+const gazetteerDigests = new WeakMap<Gazetteer, string>();
+
+/** A digest of every gazetteer entry (all fields), computed once per gazetteer object: the input a body run's mentions depend on. */
+function gazetteerDigest(gazetteer: Gazetteer): string {
+  let digest = gazetteerDigests.get(gazetteer);
+  if (digest === undefined) {
+    digest = keyDigest(canonicalJson([...gazetteer].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))));
+    gazetteerDigests.set(gazetteer, digest);
+  }
+  return digest;
+}
+
+/**
+ * The body mentions of a segmented page per run (spec 8.2 mentions), in page order: runs whose rows match the gazetteer,
+ * the scan options and their text are reused, the others are scanned block by block and stored. Null when the page is
+ * not segmented.
+ */
+async function segmentedRunMentions(engine: BrainEngine, p: { id: number; slug: string; source_id: string }, gazetteer: Gazetteer,
+  opts: FindMentionsOpts): Promise<Array<{ run: DeriveRun; output: MentionRunOutput }> | null> {
+  const scope = await derivationScope(engine, p);
+  if (!scope) return null;
+  const inputs = { extractor: MENTION_EXTRACTOR_VERSION, gazetteer: gazetteerDigest(gazetteer), opts, separator: '\n\n' };
+  const plan = await planRuns<MentionRunOutput>(engine, 'mentions', scope, () => inputs);
+  const fresh = new Map(plan.todo.map(run => [run.index, { chars: 0, mentions: [] as Mention[], seen: new Set<string>() }]));
+  await readRuns(engine, scope, new Set(fresh.keys()), (run, block) => {
+    const out = run && fresh.get(run.index);
+    if (!out) return;
+    for (const m of findMentionedEntities(block.text, gazetteer, opts)) {
+      if (out.seen.has(`${m.source_id}\0${m.slug}`)) continue;
+      out.seen.add(`${m.source_id}\0${m.slug}`);
+      out.mentions.push(detachedValue({ ...m, offset: m.offset + out.chars }));
+    }
+    out.chars += block.text.length;
+  }, { separator: '\n\n' });
+  const outputs = new Map([...fresh].map(([index, { chars, mentions }]) => [index, { chars, mentions }]));
+  await commitRuns(engine, 'mentions', scope, outputs, () => inputs);
+  return scope.runs.map(run => ({ run, output: outputs.get(run.index) ?? plan.current.get(run.index)! }));
+}
+
+/**
+ * findMentionedEntities over `${title}\n\n${compiled_truth}\n\n${timeline}`; a segmented body is scanned block by block,
+ * incrementally (segmentedRunMentions), or in a full pass when its body moves during the read.
+ */
 export async function pageMentions(engine: BrainEngine,
   p: { id: number; slug: string; source_id: string; title: string | null; compiled_truth?: string | null; timeline?: string | null; body_storage?: string | null },
   gazetteer: Gazetteer, opts: FindMentionsOpts): Promise<Mention[]> {
@@ -260,7 +310,20 @@ export async function pageMentions(engine: BrainEngine,
   };
   add(findMentionedEntities(p.title ?? '', gazetteer, opts), 0);
   const base = (p.title ?? '').length + 2;
-  for await (const block of bodyBlocks(engine, p, { separator: '\n\n' })) add(findMentionedEntities(block.text, gazetteer, opts), base + block.at);
+  const runs = await segmentedRunMentions(engine, p, gazetteer, opts).catch(error => {
+    if (error instanceof SegmentDerivationRaced) return null;
+    throw error;
+  });
+  if (!runs) {
+    for await (const block of bodyBlocks(engine, p, { separator: '\n\n' })) add(findMentionedEntities(block.text, gazetteer, opts), base + block.at);
+    return [...found.values()];
+  }
+  let at = base;
+  for (const { run, output } of runs) {
+    if (run.region === 'timeline' && (run.index === 0 || runs[run.index - 1]!.run.region === 'truth')) at += 2;
+    add(output.mentions, at);
+    at += output.chars;
+  }
   return [...found.values()];
 }
 

@@ -53,42 +53,59 @@ function to24h(hour: number, ampm?: string): number {
 }
 
 /**
+ * normalizeBlockConversation one line at a time: `emit` gets each collapsed message line once the message ends (the next
+ * header, or `end()`); `headers` counts the block headers seen. Lines before the first header are dropped. With
+ * `maxBodyChars`, a message's body keeps only its first that many characters (pattern detection, which needs the
+ * collapsed line's shape, not all of its text), copied so a kept line never holds the text it was cut from alive.
+ */
+export function blockNormalizer(emit: (line: string) => void, opts: { maxBodyChars?: number } = {}): { line(line: string): void; end(): void; readonly headers: number } {
+  let current: { name: string; time: string } | null = null;
+  let bodyParts: string[] = [];
+  let bodyChars = 0;
+  let headers = 0;
+
+  const flush = () => {
+    if (current) {
+      const text = bodyParts.join(' ').replace(/\s+/g, ' ').trim();
+      emit(`**${current.name}** (${current.time}): ${text}`);
+    }
+    current = null;
+    bodyParts = [];
+    bodyChars = 0;
+  };
+
+  return {
+    get headers() { return headers; },
+    line(line: string) {
+      const m = BLOCK_HEADER.exec(line);
+      if (m) {
+        flush();
+        headers++;
+        const hour = to24h(parseInt(m[2], 10), m[4]);
+        const time = `${String(hour).padStart(2, '0')}:${m[3]}`;
+        current = { name: m[1].trim(), time };
+      } else if (current) {
+        // Body line of the current message. Drop blank lines; keep the rest.
+        const room = (opts.maxBodyChars ?? Infinity) - bodyChars;
+        const trimmed = room > 0 ? line.trim().slice(0, room) : '';
+        if (trimmed) { bodyParts.push(opts.maxBodyChars === undefined ? trimmed : Buffer.from(trimmed).toString()); bodyChars += trimmed.length; }
+      }
+      // Lines before the first header (page title, leading blanks) are dropped —
+      // they never matched a pattern anyway.
+    },
+    end: flush,
+  };
+}
+
+/**
  * Collapse block-format messages into canonical single-line `**Name** (HH:MM):
  * body` lines. Returns `body` unchanged when no block header is present.
  */
 export function normalizeBlockConversation(body: string): string {
   if (!looksLikeBlockConversation(body)) return body;
-
-  const lines = body.split('\n');
   const out: string[] = [];
-  let current: { name: string; time: string } | null = null;
-  let bodyParts: string[] = [];
-
-  const flush = () => {
-    if (current) {
-      const text = bodyParts.join(' ').replace(/\s+/g, ' ').trim();
-      out.push(`**${current.name}** (${current.time}): ${text}`);
-    }
-    current = null;
-    bodyParts = [];
-  };
-
-  for (const line of lines) {
-    const m = BLOCK_HEADER.exec(line);
-    if (m) {
-      flush();
-      const hour = to24h(parseInt(m[2], 10), m[4]);
-      const time = `${String(hour).padStart(2, '0')}:${m[3]}`;
-      current = { name: m[1].trim(), time };
-    } else if (current) {
-      // Body line of the current message. Drop blank lines; keep the rest.
-      const trimmed = line.trim();
-      if (trimmed) bodyParts.push(trimmed);
-    }
-    // Lines before the first header (page title, leading blanks) are dropped —
-    // they never matched a pattern anyway.
-  }
-  flush();
-
+  const normalizer = blockNormalizer(line => out.push(line));
+  for (const line of body.split('\n')) normalizer.line(line);
+  normalizer.end();
   return out.length > 0 ? out.join('\n') : body;
 }

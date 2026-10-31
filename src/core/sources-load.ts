@@ -191,8 +191,8 @@ export function relativeSourceLocalPathSkipWarning(sourceId: string, localPath: 
   if (isAbsolute(localPath)) return null;
   return (
     `[autopilot] skipping source '${sourceId}': relative local_path ` +
-    `'${localPath}' cannot be resolved from a daemon. Re-register with an ` +
-    `absolute --path or run 'gbrain sync --source ${sourceId}' once to self-heal.`
+    `'${localPath}' cannot be resolved from a daemon. Point it at its checkout ` +
+    `with 'gbrain sources set-path ${sourceId} <absolute-directory>' (#7630: sync refuses a relative path).`
   );
 }
 

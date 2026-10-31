@@ -114,7 +114,7 @@ export async function importCompanyBrainFile(engine: BrainEngine, filePath: stri
   const snapshot = await engine.readPageSnapshot(entry.page.slug, { sourceId });
   const canonical = (page: Pick<typeof parsed, 'type' | 'title' | 'compiled_truth' | 'timeline' | 'frontmatter'>, tags: string[]) => ({ type: page.type, title: page.title, body: page.compiled_truth,
     timeline: page.timeline ?? '', frontmatter: page.frontmatter, tags: [...new Set(tags)].sort() });
-  return importFromContent(engine, entry.page.slug, content, { sourceId, noEmbed: true, remote: false,
+  return importFromContent(engine, entry.page.slug, content, { sourceId, noEmbed: true, remote: false, holdNoncanonicalPrivate: true,
     activePack: pack.manifest, filename: basename(path).replace(/\.mdx?$/i, ''), sourcePath: path,
     prepare: async ready => {
       const tags = [...(snapshot?.tags ?? []), ...ready.parsedPage.tags];

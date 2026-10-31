@@ -81,3 +81,22 @@ test('a claimed source whose recorded local_path vanished names its claimed chec
   try { await runSetPath(engine, ['default-example', claimed]); } finally { console.log = log; }
   expect(await activatePersistence(engine, { confirmQuiesced: true, dryRun: true })).toMatchObject({ enabled: false, activated: false, filesystem_sources: 2 });
 }), 60_000);
+
+// /ship coverage audit (GBRA-207, #7630).
+// Value: protects=a claimed source whose recorded local_path is relative (".") blocks activation as source_path_missing naming
+//   the relative path and its claimed checkout, never resolving "." against the process cwd; fails_when=the owner-host branch
+//   drops its isAbsolute guard, so "." resolves to the cwd and activation reports source_changed (or matches a cwd checkout);
+//   why_new=the 7630 suite covers only the unclaimed branch (no binding); seam=none; no_claim=a Postgres brain (PGLite only)
+test('#7630: a claimed source whose recorded local_path is relative names the relative path and its claimed checkout', () => fixture(async home => {
+  const claimed = join(home, 'claimed'); mkdirSync(claimed);
+  await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', ['default-example', claimed]);
+  await claimWorktree(engine, 'default-example', claimed);
+  await engine.executeRaw("UPDATE sources SET local_path='.' WHERE id=$1", ['default-example']);
+  for (const dryRun of [true, false]) {
+    const error = await activatePersistence(engine, { confirmQuiesced: true, dryRun }).catch(e => e);
+    expect(error).toMatchObject({ code: 'source_changed', detail: 'source_path_missing' });
+    expect(error.message).toContain("Source 'default-example' records the relative local path .");
+    expect(error.suggestion).toContain(`gbrain sources set-path default-example ${JSON.stringify(claimed)}`);
+  }
+  expect(await managedPersistenceEnabled(engine)).toBe(false);
+}), 60_000);

@@ -7,6 +7,8 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { analyzeDeferred, lockTableForAnalyze } from '../analyze-lock.ts';
+import { migrationStatementTimeoutMs } from '../migration-timeout.ts';
+import { withSchemaLockTimeout } from '../postgres-engine/schema-lock-timeout.ts';
 
 /**
  * When true, per-migration explanatory notices (e.g. the v123/v124 "here is
@@ -68,6 +70,37 @@ export async function dropInvalidConcurrentIndex(
     await engine.runMigration(version, `DROP INDEX CONCURRENTLY IF EXISTS ${indexName};`);
   }
   return isInvalid;
+}
+
+/**
+ * Runs one migration statement outside a transaction: a `transaction: false` migration's SQL (runMigrationSQL), or a
+ * statement its handler runs on its own, such as a VALIDATE CONSTRAINT that must not hold the ALTER's lock. PGLite
+ * runs it as is.
+ *
+ * Postgres can't use SET LOCAL without a transaction or a plain SET on the
+ * pooled connection (it leaks to other queries), so this reserves a dedicated
+ * backend and sets session-level statement_timeout on just that connection.
+ * On Supabase (both PgBouncer 6543 and direct 5432) a server-level
+ * statement_timeout of ~2 min is enforced; without this override a CREATE
+ * INDEX CONCURRENTLY or a VALIDATE on a large table hits it and aborts.
+ * #5227 (W14 P1.6): the lock wait is bounded session-level on the same backend
+ * and restored after. #6543 (A4): the raised statement_timeout is restored too,
+ * so the connection does not carry the migration's budget back to the pool.
+ */
+export async function runMigrationStatement(engine: BrainEngine, version: number, sql: string): Promise<void> {
+  if (engine.kind !== 'postgres') { await engine.runMigration(version, sql); return; }
+  await engine.withReservedConnection(async (conn) => {
+    try {
+      await conn.executeRaw(`SET statement_timeout = '${migrationStatementTimeoutMs()}'`);
+    } catch {
+      // Non-fatal: some managed Postgres may restrict this GUC; the statement then runs with the server default.
+    }
+    try {
+      await withSchemaLockTimeout({ unsafe: (query: string) => conn.executeRaw(query) }, () => conn.executeRaw(sql), { step: `migration v${version}` });
+    } finally {
+      await conn.executeRaw('RESET statement_timeout').catch(() => {});
+    }
+  }, { selfContained: true });
 }
 
 export type OnlineIndexOutcome = 'present' | 'created' | 'rebuilt' | 'building';

@@ -71,8 +71,8 @@ jobs:
   # native target on the primary Bun version; other pull requests run the Linux
   # x64 smoke cell. Pushes, schedules and manual runs always run the full matrix.
   # Named exception (docs/TESTING.md#event-parity): the native-locks scope
-  # reduction on pull requests and merge-queue runs (Bun 1.4.0 and cross-target
-  # cells) is covered by every push to master and the nightly Test schedule,
+  # reduction on pull requests and merge-queue runs (cross-target cells) is
+  # covered by every push to master and the nightly Test schedule,
   # which both run scope=full.
   changes:
     runs-on: ubicloud-standard-2-ubuntu-2404
@@ -241,9 +241,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-26, windows-latest]
-        bun: ['1.4.0', '1.4.4']
+        bun: ['1.4.4']
         # Event parity: every event, pull requests and merge-queue runs
-        # included, runs both supported Bun versions on every OS
+        # included, runs every supported Bun version on every OS
         # (docs/TESTING.md#event-parity).
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -842,8 +842,9 @@ jobs:
     # 568 for 18 solo jobs) mined ~12,640s of file time, ~1.4x the solo
     # weights.
     #
-    # 22 shards (UNIT_SHARDS in scripts/sharding.ts): those ~12,640s are ~575s
-    # per shard. A shard's mined weight must fit this job's 22 minutes twice
+    # 28 shards (UNIT_SHARDS in scripts/sharding.ts): run 40468581224
+    # (2026-10-27) mined ~14,950s of file time, ~534s per shard; at 22 that
+    # was ~680s. A shard's mined weight must fit this job's 22 minutes twice
     # over, after a minute of setup, with a minute to spare
     # (UNIT_SHARD_BUDGET_MS, 600s; test/scripts/unit-shard-budget.test.ts).
     # At 18 the packed weights put every shard at ~702s; at 10 (~950s per
@@ -866,7 +867,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shards: [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12], [13, 14], [15, 16], [17, 18], [19, 20], [21, 22]]
+        shards: [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12], [13, 14], [15, 16], [17, 18], [19, 20], [21, 22], [23, 24], [25, 26], [27, 28]]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
@@ -902,9 +903,9 @@ jobs:
           awk '/^cpu /{print "steal_jiffies", $9}' /proc/stat
           lscpu | grep -m1 'Model name'
           (while true; do free -m | awk '/^Mem:/{print $3, $7}' >> "$RUNNER_TEMP/mem.log"; sleep 5; done) > /dev/null 2>&1 &
-      - name: Run test shards ${{ join(matrix.shards, ' and ') }} of 22
+      - name: Run test shards ${{ join(matrix.shards, ' and ') }} of 28
         shell: bash
-        run: bash scripts/test-shard-pack.sh 22 ${{ join(matrix.shards, ' ') }}
+        run: bash scripts/test-shard-pack.sh 28 ${{ join(matrix.shards, ' ') }}
         env:
           GBRAIN_SHARD_PACK_DIR: ${{ runner.temp }}/shards
       - name: Runner diagnostics (after shard)
@@ -971,7 +972,7 @@ jobs:
 
 
   # ──────────────────────────────────────────────────────────────────────
-  # coverage-report: merges the PR corpus (22 unit + 4 serial + 2 slow
+  # coverage-report: merges the PR corpus (28 unit + 4 serial + 2 slow
   # lanes) into one honest number, renders it to the step summary, and runs
   # the diff + baseline gates in report-only mode (COVERAGE_GATE_ENFORCE=0).
   # ADVISORY during the report-only window: deliberately NOT in test-status's
@@ -1015,7 +1016,7 @@ jobs:
           bun scripts/merge-lcov.ts \
             --out-lcov "$RUNNER_TEMP/coverage-merged/lcov.info" \
             --out-json "$RUNNER_TEMP/coverage-merged/summary.json" \
-            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,shard-11,shard-12,shard-13,shard-14,shard-15,shard-16,shard-17,shard-18,shard-19,shard-20,shard-21,shard-22,serial-1,serial-2,serial-3,serial-4,slowperf,slowbrainbench \
+            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,shard-11,shard-12,shard-13,shard-14,shard-15,shard-16,shard-17,shard-18,shard-19,shard-20,shard-21,shard-22,shard-23,shard-24,shard-25,shard-26,shard-27,shard-28,serial-1,serial-2,serial-3,serial-4,slowperf,slowbrainbench \
             "$RUNNER_TEMP/coverage-artifacts"
       - name: Coverage summary → step summary
         run: bun scripts/render-coverage-summary.ts --summary "$RUNNER_TEMP/coverage-merged/summary.json" --structural scripts/structural-suites.tsv >> "$GITHUB_STEP_SUMMARY"

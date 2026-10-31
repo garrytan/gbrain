@@ -54,7 +54,7 @@ export const WRITE_ATTRIBUTION_CONTENT_COLUMNS: Record<AttributedTable, readonly
  * content rewrite, so it does not move last_write_*).
  */
 export const WRITE_ATTRIBUTION_PROJECTION_COLUMNS: Record<AttributedTable, readonly string[]> = {
-  facts: ['embedding', 'embedded_at', 'embedding_model', 'embedded_text_hash', ...TRUST_ROW_COLUMNS],
+  facts: ['embedding', 'embedded_at', 'embedding_model', 'embedded_text_hash', 'source_window', ...TRUST_ROW_COLUMNS],
   takes: ['embedding', 'embedded_at', 'updated_at', 'embedding_model', 'embedded_text_hash', ...TRUST_ROW_COLUMNS],
   timeline_entries: [...TRUST_ROW_COLUMNS],
 };

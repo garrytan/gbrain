@@ -143,6 +143,57 @@ test('Q3: every strict writer is classified when it prepares; a managed import, 
     expect(await row(engine, 'notes/half')).toMatchObject({ live: true, reason: 'private', source_path: null });
   }, { databaseUrl, setup }), 120_000);
 
+  test('a derive-folder page that turned private keeps its file path and writes the file back there when it turns world (G7a follow-up)', () => managedBrain(async ({ engine, ctx, root }) => {
+    await strict(engine);
+    mkdirSync(join(root, 'concepts'), { recursive: true });
+    writeFileSync(join(root, 'concepts/Turning Idea.md'), page('Turning idea', 'World first.'));
+    git(root, 'add', 'concepts/Turning Idea.md'); git(root, 'commit', '-qm', 'concept');
+    await performManagedSync(engine, OPTS);
+    const filed = async () => (await engine.executeRaw<{ reason: string | null; source_path: string | null; withheld: string | null }>(
+      "SELECT database_only_reason AS reason, source_path, withheld_source_path AS withheld FROM pages WHERE source_id='default' AND slug='concepts/turning-idea'"))[0];
+    expect(await filed()).toEqual({ reason: null, source_path: 'concepts/Turning Idea.md', withheld: null });
+    const world = (await engine.readPageSnapshot('concepts/turning-idea', { sourceId: 'default' }))!;
+    const turned = await put(ctx, 'concepts/turning-idea', page('Turning idea', 'Private now.', 'visibility: private\n'), randomUUID(), world.revision);
+    expect(turned).toMatchObject({ state: 'committed' });
+    expect(atHead(root, 'concepts/Turning Idea.md')).toBe('');
+    expect(await filed()).toEqual({ reason: 'private', source_path: null, withheld: 'concepts/Turning Idea.md' });
+    await settleManagedGitEffects(engine);
+    await performManagedSync(engine, OPTS);
+    expect(await filed()).toEqual({ reason: 'private', source_path: null, withheld: 'concepts/Turning Idea.md' });
+    const before = head(root);
+    expect(await put(ctx, 'concepts/turning-idea', page('Turning idea', 'World again.'), randomUUID(), turned.revision)).toMatchObject({ state: 'committed' });
+    expect(head(root)).not.toBe(before);
+    expect(atHead(root, 'concepts/Turning Idea.md')).toBe('concepts/Turning Idea.md');
+    expect(atHead(root, 'concepts/turning-idea.md')).toBe('');
+    expect(git(root, 'show', 'HEAD:concepts/Turning Idea.md')).toContain('World again.');
+    expect(await filed()).toEqual({ reason: null, source_path: 'concepts/Turning Idea.md', withheld: null });
+    await settleManagedGitEffects(engine);
+    await performManagedSync(engine, OPTS);
+    expect(await filed()).toEqual({ reason: null, source_path: 'concepts/Turning Idea.md', withheld: null });
+    expect(git(root, 'status', '--porcelain').trim()).toBe('');
+  }, { databaseUrl, setup }), 120_000);
+
+  test('a page that turned private writes its file back when it turns world; one under a folder declared db_only since drops its stale class', () => managedBrain(async ({ engine, ctx, root }) => {
+    await strict(engine);
+    const first = await put(ctx, 'notes/back', page('Back', 'World first.'));
+    const second = await put(ctx, 'cache/quiet', page('Quiet', 'World first.'));
+    const hidden = await put(ctx, 'notes/back', page('Back', 'Private now.', 'visibility: private\n'), randomUUID(), first.revision);
+    const hiddenToo = await put(ctx, 'cache/quiet', page('Quiet', 'Private now.', 'visibility: private\n'), randomUUID(), second.revision);
+    expect([hidden.state, hiddenToo.state]).toEqual(['committed', 'committed']);
+    expect([atHead(root, 'notes/back.md'), atHead(root, 'cache/quiet.md')]).toEqual(['', '']);
+    writeFileSync(join(root, 'gbrain.yml'), 'storage:\n  db_only:\n    - cache/\n');
+    git(root, 'add', 'gbrain.yml'); git(root, 'commit', '-qm', 'db_only');
+    expect(await put(ctx, 'notes/back', page('Back', 'World again.'), randomUUID(), hidden.revision)).toMatchObject({ state: 'committed' });
+    expect(git(root, 'show', 'HEAD:notes/back.md')).toContain('World again.');
+    expect(await row(engine, 'notes/back')).toEqual({ live: true, reason: null, source_path: 'notes/back.md', visibility: null });
+    const before = head(root);
+    expect(await put(ctx, 'cache/quiet', page('Quiet', 'World again.'), randomUUID(), hiddenToo.revision)).toMatchObject({ state: 'committed' });
+    expect(head(root)).toBe(before);
+    expect(await row(engine, 'cache/quiet')).toEqual({ live: true, reason: null, source_path: null, visibility: null });
+    await settleManagedGitEffects(engine);
+    expect(git(root, 'status', '--porcelain').trim()).toBe('');
+  }, { databaseUrl, setup }), 120_000);
+
   test('preparePrivateTransition (for GBRA-60): the removal of a strict page file; nothing on a source without the flag', () => managedBrain(async ({ engine, ctx, root }) => {
     expect(await put(ctx, 'notes/concept', page('Concept', 'World first.'))).toMatchObject({ state: 'committed' });
     await settleManagedGitEffects(engine);

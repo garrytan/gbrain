@@ -44,7 +44,7 @@
             "next": "report",
             "requires_exclusive": false,
             "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
-            "why": "Register `<absolute path to gbrain> serve --surface full` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+            "why": "Register `<absolute path to gbrain> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
           },
           "message": "pglite — serve IPC socket not present; enabled but NO resolve path exists right now: the IPC socket is only bound by a running `gbrain serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise) — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`",
           "name": "retrieval_reflex_health",
@@ -294,7 +294,7 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
-          "message": "Bun <bun-version> (minimum 1.4.0)",
+          "message": "Bun <bun-version> (minimum 1.4.4)",
           "name": "bun_runtime",
           "status": "ok"
         },
@@ -430,7 +430,7 @@
             "next": "report",
             "requires_exclusive": false,
             "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
-            "why": "Register `<absolute path to gbrain> serve --surface full` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+            "why": "Register `<absolute path to gbrain> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
           },
           "message": "No agent harness was detected. Wire one when the user picks an agent app.",
           "name": "harness_wiring",
@@ -956,10 +956,53 @@
           "status": "ok"
         },
         {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no page names readers and no member exists.",
+          "name": "access_readers_malformed",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no page names readers and no member exists.",
+          "name": "access_unknown_readers",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no page names readers and no member exists.",
+          "name": "access_recent_narrowings",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no page names readers and no member exists.",
+          "name": "access_page_readers_backfill",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
           "category": "ops",
           "elapsed_ms": "<volatile>",
           "message": "Skipped (PGLite — no PostgREST exposure, RLS not applicable)",
           "name": "rls",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "elapsed_ms": "<volatile>",
+          "message": "Every gbrain function that pins a search_path ends it with pg_temp",
+          "name": "function_search_path",
           "status": "ok"
         },
         {
@@ -972,14 +1015,14 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "1353 column(s) verified against live schema",
+          "message": "1388 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 158 table(s) the applied migrations create exist.",
+          "message": "All 162 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
@@ -1262,6 +1305,10 @@
               },
               {
                 "name": "persistence_requests_request_id",
+                "state": "valid"
+              },
+              {
+                "name": "persistence_requests_foreground_committed",
                 "state": "valid"
               }
             ],
@@ -2825,6 +2872,18 @@
         {
           "category": "brain",
           "details": {
+            "docs": "docs/guides/repair.md#provenance",
+            "sources": [],
+            "truncated": false
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No page has provenance stamps or a trust marker that another writer removed.",
+          "name": "provenance_stamp_drift",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "completed_at": null,
             "detector_version": 2,
             "total_unscanned": 0,
@@ -2850,6 +2909,17 @@
           "elapsed_ms": "<volatile>",
           "message": "No unclaimed source holds rows from before trust tiers.",
           "name": "trust_sources_unclaimed",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "items": [],
+            "total": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No released fact was confirmed with fence-row fields its release preview did not show.",
+          "name": "trust_release_unpreviewed_fields",
           "status": "ok"
         },
         {
@@ -2950,11 +3020,32 @@
         {
           "category": "brain",
           "details": {
+            "pages": 0,
+            "samples": []
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No conversation page is held for an undetected format.",
+          "name": "conversation_detection_ambiguous",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "groups": []
           },
           "elapsed_ms": "<volatile>",
           "message": "Every page extraction read all of its input (no head-only, tail-window or size-skip receipts).",
           "name": "extraction_input_truncated",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "models": []
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No segmented page derivation is held back by a model without a price.",
+          "name": "derivation_unpriced_model",
           "status": "ok"
         },
         {
@@ -3034,6 +3125,16 @@
           "elapsed_ms": "<volatile>",
           "message": "No soft-deleted page is parked by the managed purge.",
           "name": "purge_parked_pages",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "sweeps": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No fact purge has a sweep of stored derivation results pending or stalled.",
+          "name": "derivation_purge_sweeps",
           "status": "ok"
         },
         {
@@ -3222,6 +3323,18 @@
         {
           "category": "brain",
           "details": {
+            "docs": "docs/guides/repair.md#outside-content-fences",
+            "items": [],
+            "pages": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No fact, take or link is indexed from a fence on an imported email, calendar, GitHub or transcript page.",
+          "name": "outside_content_fences",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "docs": "docs/guides/write-refusals.md#invalid_fence",
             "model_repair": {
               "max_usd_per_day": 1,
@@ -3326,7 +3439,7 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
-          "message": "No retrieval-affecting files changed in working tree.",
+          "message": "13 retrieval-affecting file(s) changed since HEAD: src/core/chunkers/bullet-chunks.ts, src/core/chunkers/recursive.ts, src/core/search/evidence-date.ts, …. Re-run `gbrain eval run-all` after committing these changes.",
           "name": "eval_drift",
           "status": "ok"
         },

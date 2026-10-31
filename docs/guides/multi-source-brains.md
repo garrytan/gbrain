@@ -115,6 +115,36 @@ behave as you'd expect — every page appears in search.
 
 Flip later with `gbrain sources federate <id>` / `unfederate <id>`.
 
+### An unscoped connection whose sources hold no pages
+
+A remote token minted without `--sources`, or an agent stdio connection with
+no binding, has no source grant: it reads the `default` source plus every
+federated source. Because a new source is not federated, a brain whose pages
+all live in such sources would answer that connection's every search with an
+empty result that reads like a clean miss.
+
+So an unscoped `search`, `query`, `recall` or `list_pages` from such a
+connection that comes back empty is refused with `sources_not_readable` when
+the sources it reads hold no page at all (for `recall` and `query`, no world fact either)
+while other sources on the brain hold pages. The refusal
+never names a source the connection cannot read. Its fix is host-side: the
+user picks the source these connections should read and the brain host runs
+`gbrain sources federate <source>`, or grants the connection its sources
+(`gbrain auth rescope --token <name> --sources <ids>`).
+
+Nothing else changes. A read whose sources hold pages but match nothing
+answers empty, as does a brain where no source holds a page. A token granted
+sources, an OAuth client, a bound connection and a read that names
+`source_id` or `source_ids` are never refused: the refusal only ever stops a
+call, never widens what it reads. Federating a source never shows its
+`visibility: private` pages to a remote connection.
+
+On a brain that is not managed, `gbrain sources add` without `--federated` or `--no-federated` warns on stderr that the new source is not federated, and
+when the sources an unscoped connection reads hold no page it also prints the
+next step on stdout (`next: gbrain sources federate <id>`), and as `next`
+(`command`, `argv`, `why`) under `--json`. A managed brain's `sources add`
+prints its lifecycle receipt instead, without the warning or the next step.
+
 ### Explicit reads from a bound agent connection
 
 An agent connection started with `GBRAIN_SOURCE=<id>` (or inside a
@@ -166,7 +196,9 @@ only in source-a."*
 A shared brain often holds one source per member or project, with one bot
 answering for several people. Give each member their own token, granted only
 the sources that member may read, and send each member's requests with that
-member's token:
+member's token. This is the supported production setup today: one
+`serve-http` API key per member, each with its own source grant. The server
+never learns who is asking from the request itself.
 
 ```bash
 gbrain auth create bot-alice-example
@@ -304,7 +336,7 @@ recorded mode (preview it first without `--apply`; see
 
 
 ```
-gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
+gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force] [--json]
                                Register a source. id: [a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?
                                --path must be a git repo (or a subdirectory of one) — see
                                "The git requirement for --path sources" below. --force
@@ -339,7 +371,37 @@ gbrain sources set-sync <id> <on|off> [--dry-run] [--expect <on|off>]
                                (config.syncEnabled; an explicit gbrain sync --source
                                still runs). --dry-run prints the apply command, which
                                carries --expect; a moved state refuses preview_changed.
+gbrain sources host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>]
+                               Managed brains: host a new, empty source in a bare
+                               repository under <path> (see below). Previews without --expect.
+gbrain sources canonical <id> --to git|mixed [--dry-run | --apply --expect <hash>] [--json]
+                               Managed brains: convert a source to git-canonical or back
+                               to mixed. Previews without --apply; the apply prints progress
+                               on stderr and, if stopped, where it stopped
+                               (docs/designs/GIT_CANONICAL_MEMORY.md#conversion).
 ```
+
+### Hosted repositories
+
+`gbrain sources host-repo` gives a new, empty source its own bare repository
+(`<path>/repo.git`) that people clone and fetch from, and checks it out once
+as a linked worktree gbrain owns (`<path>/worktree`), claimed as the source's
+canonical worktree like any other. The source becomes git-canonical
+(`canonical: git`), so every page write, remote ones included, commits there
+through the door before the database indexes it. A pre-receive hook refuses
+every push into the repository; `--push-remote` names a repository of your own
+that the push effect publishes to once Git durability is enabled
+(`gbrain sources writer git-durability <id> --enable`).
+
+It runs only from the trusted local CLI on the brain host. The preview says in
+words that the source becomes strict and prints the apply command with its
+`--expect <plan_hash>`; a plan that moved refuses `preview_changed`. It refuses
+a source that is bound or already has pages (moving existing pages into a
+hosted repository is conversion, a later wave), and a directory that is not
+empty or sits inside a checkout or another source's directory. On a hosted
+source the preview reports the hook and the worktree link, and the apply
+reinstalls a missing or changed hook. An agent runs it on a production brain
+only with the user's explicit yes, one source at a time.
 
 ### Read-only mirror sources
 
