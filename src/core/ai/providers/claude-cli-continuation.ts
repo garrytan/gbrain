@@ -7,8 +7,9 @@
  * envelope alone reads as a complete answer that is really its tail.
  *
  * Every assistant message the loop yields reaches the SDK output, and with
- * `--output-format json --verbose` stdout is that whole event array (verified in
- * the Claude Code 2.1.296 bundle). The adapter therefore rebuilds the answer
+ * `--verbose` stdout is that whole event list (the `--output-format json` array
+ * verified in the Claude Code 2.1.296 bundle; the adapter's `stream-json`
+ * output carries the same events, one per line, on 2.1.308). The adapter therefore rebuilds the answer
  * from the call's own events, never from a session transcript on disk:
  * consecutive assistant events sharing a `message.id` are one API response
  * (one segment), and the answer is the segments' text in order.
@@ -35,7 +36,7 @@ export type ContinuationUnprovenReason = 'events_missing' | 'no_assistant_events
 
 /** The remedy each reason's stderr notice names. */
 export const CONTINUATION_UNPROVEN_REMEDY: Record<ContinuationUnprovenReason, string> = {
-  events_missing: 'upgrade the claude CLI: this one printed only the result envelope under --output-format json --verbose, without the session event array',
+  events_missing: 'upgrade the claude CLI: this one printed only the result envelope under --verbose, without the session events',
   no_assistant_events: 'upgrade the claude CLI: its --verbose event array carried no assistant messages to rebuild the answer from',
   segments_unmatched: "raise that caller's output cap (the setting its truncation warning names) so the answer fits without a continuation",
 };
