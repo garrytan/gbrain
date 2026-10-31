@@ -602,7 +602,9 @@ export async function adoptSharedSkillpack(ctx: OperationContext, sourceId: stri
     throw opError('invalid_params', 'No declared skill bundle is available to adopt.',
       `Source ${sourceId}'s skillpack.json declares no skills. Add its skills/ entries to the manifest (or pass the skills explicitly), then adopt again.`);
   }
-  const seed = digest({ request: options.request_id ?? inputs.map(({ expected_revision: _revision, ...input }) => input), sourceId, incarnation: source.incarnation, packId });
+  const seed = digest({ request: options.request_id ?? inputs.map(({ expected_revision: _revision, ...input }) => input),
+    payload: options.request_id ? { skills: inputs.map(({ expected_revision: _revision, ...input }) => input), initial_files: options.initial_files ?? null } : undefined,
+    sourceId, incarnation: source.incarnation, packId });
   const requestId = `${seed.slice(0, 8)}-${seed.slice(8, 12)}-4${seed.slice(13, 16)}-a${seed.slice(17, 20)}-${seed.slice(20, 32)}`;
   await initializeLocalPersistence(ctx);
   const prior = await getWriteRequest(ctx.engine, await requestPrincipalForContext(ctx), requestId);
