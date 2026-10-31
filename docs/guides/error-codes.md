@@ -111,7 +111,7 @@ More: [docs/guides/write-refusals.md#access_member_invalid](../../docs/guides/wr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A source's folder-rule policy (the committed .gbrain/access.yml, or a file given to gbrain access rule import) does not validate, so it was not applied: the last applied rules stay in force and every prefix the bad file names reads as nobody (the whole source when its prefixes cannot be read). | A typo in an access file must never open a folder: an unreadable revision keeps the previous rules and hides what it touches until it is fixed. | Show each problem with its line (gbrain access rule list --source <id>), fix the file, commit it with gbrain git commit-push and sync the source (gbrain sync --source <id> --no-pull). Run: gbrain access rule list --source '{source_id}' --json | user | `gbrain doctor --json` | 1 | no |
+| A source's folder-rule policy (the committed .gbrain/access.yml, or a file given to gbrain access rule import) does not validate, so it was not applied: the last applied rules stay in force and every prefix the bad file names reads as nobody (the whole source when its prefixes cannot be read). | A typo in an access file must never open a folder: an unreadable revision keeps the previous rules and hides what it touches until it is fixed. | Show each problem with its line (gbrain access rule list --source <id>). Fix the file, commit it with gbrain git commit-push and sync the source (gbrain sync --source <id> --no-pull). Run: gbrain access rule list --source '{source_id}' --json | user | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/write-refusals.md#access_policy_invalid](../../docs/guides/write-refusals.md#access_policy_invalid)
 
@@ -121,7 +121,7 @@ More: [docs/guides/write-refusals.md#access_policy_invalid](../../docs/guides/wr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A narrowing change to a source's folder rules is still being applied to its pages, so the prefixes it touches read as nobody until it finishes; pages under other prefixes keep the last applied rules. | Pages under a newly restricted folder are restamped in batches; until the last batch and its re-check pass land, they read as nobody instead of under the old rules. | Retry shortly. If it stays pending, the apply was interrupted: the brain host finishes it with gbrain access resume --source <id> (database store) or gbrain sync --source <id> --no-pull (git store). Run: gbrain access rule status --source '{source_id}' --json | agent | `repeat the read that failed` | 1 | yes |
+| A narrowing change to a source's folder rules is still being applied to its pages, so the prefixes it touches read as nobody until it finishes; pages under other prefixes keep the last applied rules. | Pages under a newly restricted folder are restamped in batches; until the last batch and its re-check pass land, they read as nobody instead of under the old rules. | Retry shortly. If it stays pending, the apply was interrupted: the brain host finishes it with gbrain access resume --source <id> (database store); a git store finishes with gbrain sync --source <id> --no-pull. Run: gbrain access rule status --source '{source_id}' --json | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/write-refusals.md#access_policy_pending](../../docs/guides/write-refusals.md#access_policy_pending)
 
