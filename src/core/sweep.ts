@@ -48,7 +48,8 @@ import { readLineGrammarSettings } from './line-grammar.ts';
  */
 
 import { join } from 'node:path';
-import { readdir, readFile, writeFile, rm, stat } from 'node:fs/promises';
+import { readdir, readFile, writeFile, stat } from 'node:fs/promises';
+import { releaseCorpusClaim } from './sweep-claim-cleanup.ts';
 import type { CorpusFactTime } from './context/corpus-windows.ts';
 import type { BrainEngine, LinkBatchInput, TimelineBatchInput } from './engine.ts';
 import type { FactsBackstopCtx } from './facts/backstop.ts';
@@ -1013,7 +1014,7 @@ async function runCorpusIngestPass(
       windowsLeft -= attempted.count;
       // Success (its .ingested sidecar now stands in) and failure (retry next
       // sweep) both release the claim.
-      await rm(claimPath, { force: true }).catch(() => {});
+      await releaseCorpusClaim(claimPath);
     }
     if (abortLoop) break;
   }
@@ -1095,7 +1096,7 @@ export async function acquireCorpusClaim(claimPath: string): Promise<boolean> {
     // Treat as contended; a later sweep picks the file up if still needed.
     return false;
   }
-  await rm(claimPath, { force: true }).catch(() => {});
+  if (!await releaseCorpusClaim(claimPath)) return false;
   return tryCreate();
 }
 
