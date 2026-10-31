@@ -832,9 +832,11 @@ async function replacementPublished(db: BrainEngine, row: WriteRequest, p: AtomI
 
 /** A `managed-atoms` checkpoint `ac` for one page at its current content hash, completed or failed. */
 function managedAtomIdentitySql(page: { sourceId: string; slug: string; pageId: string; contentHash: string }): string {
+  // A rename preserves the page id and content; its old locator is not a new
+  // extraction identity. Source incarnation still fences recreated sources.
   return `ac.op='managed-atoms' AND ac.completed_keys->0->>'sourceId'=${page.sourceId}
     AND ac.completed_keys->0->>'incarnation'=(SELECT incarnation::text FROM sources WHERE id=${page.sourceId})
-    AND ac.completed_keys->0->>'kind'='page' AND ac.completed_keys->0->>'locator'=${page.slug}
+    AND ac.completed_keys->0->>'kind'='page'
     AND ac.completed_keys->0->>'pageId'=${page.pageId}::text AND ac.completed_keys->0->>'contentHash'=${page.contentHash}`;
 }
 
