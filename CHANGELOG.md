@@ -61,6 +61,18 @@ Before, a stuck transaction holding a source, worktree or brain row (a long-runn
 - `src/commands/sources-refresh.ts`: refusals print `why` (a `why` key under `--json`, a `Why:` line otherwise).
 - Test: `test/worktree-refresh-unexpected-throw.test.ts` (PGLite, and Postgres under `DATABASE_URL`; the lock-timeout cases hold a source row from a second connection, before the fence and after the drain, and check that a plain reader is not named and no SQL text is echoed; an unreadable host identity file still gives a typed refusal, an access error is not wrapped, credentials and the home directory are redacted without touching a sibling path, `--abandon` and `--dry-run` survive into the fix, a lookup that never answers still gives the refusal and is cancelled (row lookup and lock-holder lookup), transient SQLSTATEs are retryable, the holder list is worded as candidates, and an abort blocked by the same holder still returns and says the row stays draining).
 
+**A first `gbrain sync --full` on a code-strategy source now settles in one pass, and a plain `gbrain sync status` no longer issues one database statement per abandoned uncommitted edit (#8047, #7339).**
+
+A code or image import recorded its provenance without the open `--full` episode, so every round of the pass saw those files as still owed and imported them again. A fresh code source reported twice its file count, stopped `not_converged` three passes in a row and then held every file `settle_mismatch`. Code and image imports now record the episode the way Markdown imports do, and the pass converges in its first round.
+
+`sync status` re-reads each `worktree_dirty` hold that is due to escalate, to see whether someone is still editing the file. It read every such hold's row even when the file's bytes still matched the hash the hold already recorded. On a source with thousands of abandoned edits that was thousands of round trips per status call, about minutes over a remote pooler. It now reads a row only when the bytes changed. With 40 such holds, a plain status went from 54 statements to 15, the same count as with one hold; an edit whose bytes changed is still noticed and stops counting as abandoned.
+
+### Itemized changes
+
+- `src/core/persistence/sync-prepare.ts`: `syncFileProvenance` (code and image imports) records `full_episode` (#8047). The same line is in contributor PR #8051; this fix was derived independently from the #8047 reproduction.
+- `src/core/persistence/sync-status.ts`: `observeDirtyEditors` skips `noteHoldEdit` when the working-tree hash equals the hold's recorded `working_hash` (#7339).
+- New tests: `test/sync-full-code-episode-8047.test.ts`, `test/sync-status-hold-reads-7339.test.ts`.
+
 ## [0.60.529.0] - 2026-10-31
 
 **A pull request that adds a file to the PGLite snapshot inputs no longer gets stopped at gstack's pregate secrets check by its own workflow cache keys (#8107).**
