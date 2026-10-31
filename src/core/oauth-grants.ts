@@ -346,20 +346,29 @@ export class OAuthGrants {
     });
   }
 
-  /** GST-359 C1: each token records the grant that issued it (oauth_tokens.grant_type); only client_credentials tokens may attest an actor. */
+  /**
+   * GST-359 C1: each token records the grant that issued it (oauth_tokens.grant_type); only client_credentials tokens
+   * may attest an actor. grant_type is migration-only (v283, beside oauth_clients.attest_actor), so a schema without it
+   * issues unmarked tokens, which never attest. The locked client row tells which: a failed INSERT would abort the
+   * surrounding transaction, so the schema is inspected before the statement.
+   */
   private async issue(sql: SqlQuery, client: ClientRow, scopes: string[], resource: URL | undefined, refresh: boolean, grant: 'authorization_code' | 'refresh_token' | 'client_credentials'): Promise<OAuthTokens> {
     const clientId = client.client_id as string;
     const override = Number(client.token_ttl);
     const ttl = Math.min(Number.isFinite(override) && override > 0 ? override : this.options.tokenTtl, TOKEN_TTL_MAX_SECONDS);
     const now = Math.floor(this.now() / 1000);
+    const marked = 'attest_actor' in client;
+    const insert = (token: string, type: 'access' | 'refresh', expiresAt: number) => marked
+      ? sql`INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource, created_at, grant_type)
+          VALUES (${hashToken(token)}, ${type}, ${clientId}, ${oauthPgArray(scopes)}, ${expiresAt}, ${resource?.toString() ?? null}, to_timestamp(${now}), ${grant})`
+      : sql`INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource, created_at)
+          VALUES (${hashToken(token)}, ${type}, ${clientId}, ${oauthPgArray(scopes)}, ${expiresAt}, ${resource?.toString() ?? null}, to_timestamp(${now}))`;
     const access = generateToken('gbrain_at_');
-    await sql`INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource, created_at, grant_type)
-      VALUES (${hashToken(access)}, ${'access'}, ${clientId}, ${oauthPgArray(scopes)}, ${now + ttl}, ${resource?.toString() ?? null}, to_timestamp(${now}), ${grant})`;
+    await insert(access, 'access', now + ttl);
     const result: OAuthTokens = { access_token: access, token_type: 'bearer', expires_in: ttl, scope: scopes.join(' ') };
     if (refresh) {
       const token = generateToken('gbrain_rt_');
-      await sql`INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource, created_at, grant_type)
-        VALUES (${hashToken(token)}, ${'refresh'}, ${clientId}, ${oauthPgArray(scopes)}, ${now + this.options.refreshTtl}, ${resource?.toString() ?? null}, to_timestamp(${now}), ${grant})`;
+      await insert(token, 'refresh', now + this.options.refreshTtl);
       result.refresh_token = token;
     }
     return result;
