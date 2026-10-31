@@ -79,14 +79,14 @@ function describe(sessions: BlockingSession[]): string {
 
 /** The typed refusal for SQLSTATE 55P03 under the schema bound. */
 // engine-sql-ok: the suggestion text quotes an operator's pg_stat_activity query; nothing here runs SQL
-export function schemaLockBlockedError(input: { step: string; timeoutMs: number; sessions: BlockingSession[] | null; sampledDuringWait: boolean }): OperationError {
+export function schemaLockBlockedError(input: { step: string; timeoutMs: number; sessions: BlockingSession[] | null; sampledDuringWait: boolean; lock?: string }): OperationError {
   const { step, timeoutMs, sessions } = input;
   const holders = sessions === null ? 'The blocking sessions could not be sampled.'
     : sessions.length === 0 ? `No blocking session was found${input.sampledDuringWait ? ' at the sample' : ' after the cancel (it may have finished)'}.`
     : `Blocked by ${describe(sessions)}${input.sampledDuringWait ? '' : ' (sampled after the cancel)'}.`;
   const pids = sessions?.map(s => s.pid) ?? [];
   return opError('schema_lock_blocked',
-    `Schema ${step} waited ${Math.round(timeoutMs / 1000)}s for a table lock another session holds, and stopped instead of hanging. ${holders} Query text is not shown.`,
+    `Schema ${step} waited ${Math.round(timeoutMs / 1000)}s for ${input.lock ?? 'a table lock'} another session holds, and stopped instead of hanging. ${holders} Query text is not shown.`,
     `Nothing was changed by the cancelled step; the schema is as it was. Find what holds the lock (an open transaction in another client, a stuck job): ${pids.length
       ? `the blocking pid(s) are ${pids.join(', ')}. Let that session finish or, with the user's agreement, end it with SELECT pg_terminate_backend(<pid>) on the database host.`
       : 'run SELECT pid, application_name, state FROM pg_stat_activity WHERE state LIKE \'idle in transaction%\' on the database host and let that session finish or, with the user\'s agreement, end it with SELECT pg_terminate_backend(<pid>).'} Then rerun the same gbrain command; a longer wait is GBRAIN_SCHEMA_LOCK_TIMEOUT_SECONDS.`,

@@ -398,18 +398,26 @@ tables) under that role's RLS. Every gbrain function that pins a search_path end
 cannot hide it from a guard; before, any session, the owner included, could store purged
 content that way. A write role with no policy on a ledger still reads it empty, so its
 purged or withdrawn writes still go through: give a scoped write role a `SELECT` policy on
-the ledgers of the sources it writes (gbrain#7659 tracks the fix). Where the migrating role
-does not own a function, v277 names it on stderr and leaves it; `gbrain doctor`
-(`function_search_path`) prints the `ALTER FUNCTION` to run as its owner
-(`test/e2e/function-search-path-postgres.test.ts`).
+the ledgers of the sources it writes (gbrain#7659 tracks the fix). Each definition outside
+`src/core/schema-migrations/` pins `pg_catalog, public, pg_temp` itself (`bun run check:search-path`
+fails one that does not, or a pinned function missing from `PINNED_FUNCTION_NAMES`), so a schema
+replay keeps it; historical migration bodies still pin the old path, so every migration run ends by
+putting `pg_temp` back (`hardenFunctionSearchPaths` in `src/core/function-search-path.ts`), and the
+schema blob's generated hardening region must stay its last statement. Where the migrating role
+does not own a function, the run that applies migrations names it on stderr and leaves it;
+`gbrain doctor` (`function_search_path`) prints the schema-qualified `ALTER FUNCTION` to run as its
+owner, or `gbrain apply-migrations --yes` below v277 ([function search path](guides/troubleshooting.md#function-search-path);
+`test/e2e/function-search-path-postgres.test.ts`).
 
+<a id="writer-protocol-fences"></a>
 **Writer-protocol fences.** The managed-writer guard, the persistence protocol floor, protocol
 activation and the Git-canonical source counter also run as the writing role and read their state
 under its RLS. Since migration v278 (#7636) they fail closed: a role that cannot see the
 `persistence_brain` row is refused with `writer_coordinator_required` (relationship
 `unreadable_state`) on every guarded write, managed brain or not, instead of being treated as
-unmanaged. On a managed brain the same refusal covers a hidden `git_canonical_brain` row or
-Git-canonical source row (for a writer without the git protocol) and a hidden page row behind a tag,
+unmanaged. On a managed brain the same refusal covers, for a writer without the git protocol, a
+hidden `git_canonical_brain` row and, while the brain has any Git-canonical source, a hidden
+target or old source row whether or not that source is Git-canonical; and a hidden page row behind a tag,
 timeline entry or take. Protocol activation (row-level security on `sources`, `persistence_requests`,
 `persistence_effects`, `persistence_worktrees` or `persistence_source_bindings`) and a change to
 which sources are Git-canonical (row-level security on `sources`) refuse any role it applies to,

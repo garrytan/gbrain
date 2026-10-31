@@ -55,11 +55,30 @@ describe('check-search-path.sh', () => {
 
   it('flags the legacy RETURNS trigger AS form and accepts a pinned header spread over lines', () => {
     write('src/a.sql', 'CREATE OR REPLACE FUNCTION legacy_fn() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$;\n');
-    write('src/b.ts', 'const s = `CREATE OR REPLACE FUNCTION pinned_fn() RETURNS trigger\n    LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$ BEGIN RETURN NEW; END $fn$`;\n');
+    write('src/b.ts', 'const s = `CREATE OR REPLACE FUNCTION pinned_fn() RETURNS trigger\n    LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$ BEGIN RETURN NEW; END $fn$`;\n');
     const run = guard();
     expect(run.code).toBe(1);
     expect(run.out).toContain('src/a.sql:1: legacy_fn');
     expect(run.out).not.toContain('pinned_fn');
+  });
+
+  it('flags a pinned search_path that does not end in pg_temp, LANGUAGE sql included (#7785)', () => {
+    write('src/a.sql', 'CREATE OR REPLACE FUNCTION legacy_path() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$ BEGIN RETURN NEW; END $fn$;\n');
+    write('src/b.ts', 'const s = `CREATE OR REPLACE FUNCTION sql_path(t text) RETURNS text\n  LANGUAGE sql IMMUTABLE SET search_path = pg_catalog\nAS $fn$ SELECT t $fn$`;\n');
+    const run = guard();
+    expect(run.code).toBe(1);
+    expect(run.out).toContain('src/a.sql:1: legacy_path (search_path = pg_catalog, public does not end in pg_temp)');
+    expect(run.out).toContain('src/b.ts:1: sql_path (search_path = pg_catalog does not end in pg_temp)');
+  });
+
+  it('flags a pinned function missing from PINNED_FUNCTION_NAMES when the allowlist file exists (#7688)', () => {
+    write('src/core/function-search-path.ts', "export const PINNED_FUNCTION_NAMES = [\n  'listed_fn',\n] as const;\n");
+    write('src/schema.sql', 'CREATE OR REPLACE FUNCTION listed_fn() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$ BEGIN RETURN NEW; END $fn$;\n'
+      + 'CREATE OR REPLACE FUNCTION public.unlisted_fn() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$ BEGIN RETURN NEW; END $fn$;\n');
+    const run = guard();
+    expect(run.code).toBe(1);
+    expect(run.out).toContain('src/schema.sql:2: unlisted_fn (not in PINNED_FUNCTION_NAMES)');
+    expect(run.out).not.toContain('src/schema.sql:1:');
   });
 
   it('exempts LANGUAGE sql functions and historical migration bodies', () => {
