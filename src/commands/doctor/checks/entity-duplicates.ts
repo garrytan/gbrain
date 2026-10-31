@@ -14,8 +14,9 @@
  * A stub already marked retired (merged_into, superseded_by, canonical:
  * false) is settled and not listed.
  *
- * Bounded: titled candidates come from exact slug-prefix reads
- * (PAIR_SCAN_CAP per brain), one variant read each, one batched link count.
+ * Also sweeps live entity identifiers and aliases within each source.
+ * Titled candidates use exact slug-prefix reads (PAIR_SCAN_CAP per brain)
+ * and one variant read each; all pairs share one batched link count.
  */
 import type { Check } from '../../doctor.ts';
 import { NAME_TITLE_TOKENS, hasLeadingTitle, stripLeadingTitles } from '../../../core/entities/name-variants.ts';
@@ -23,6 +24,7 @@ import { resolveNameVariant } from '../../../core/verbs/entity-variants.ts';
 import { retiredPageSql } from '../../../core/entities/resolve.ts';
 import { doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { entityCollisionPairs } from './entity-collisions.ts';
 
 export const NAME = 'person_title_duplicates';
 /** Titled person pages examined per run; more are reported as not examined. */
@@ -46,7 +48,8 @@ async function runPersonTitleDuplicates(ctx: DoctorContext): Promise<Check[]> {
     let scanned = 0;
     let capped = false;
     for (const sourceId of sources) {
-      if (scanned >= PAIR_SCAN_CAP) { capped = true; break; }
+      pairs.push(...await entityCollisionPairs(engine, sourceId));
+      if (scanned >= PAIR_SCAN_CAP) { capped = true; continue; }
       const stubs = await engine.executeRaw<{ slug: string; title: string | null }>(
         `SELECT slug, title FROM pages
           WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE ANY($2::text[]) AND NOT ${retiredPageSql('pages')}
@@ -62,6 +65,14 @@ async function runPersonTitleDuplicates(ctx: DoctorContext): Promise<Check[]> {
         });
         if (res.hit && res.hit.row.slug.startsWith('people/')) pairs.push({ source_id: sourceId, stub: stub.slug, canonical: res.hit.row.slug, stub_links: 0, canonical_links: 0 });
       }
+    }
+    // A titled pair can also share an email or alias. Keep one stable tuple.
+    const seen = new Set<string>();
+    for (let i = pairs.length - 1; i >= 0; i--) {
+      const p = pairs[i]!;
+      const key = JSON.stringify([p.source_id, ...[p.stub, p.canonical].sort()]);
+      if (seen.has(key)) pairs.splice(i, 1);
+      else seen.add(key);
     }
     if (pairs.length) {
       const counts = await engine.executeRaw<{ source_id: string; slug: string; n: number }>(
@@ -86,17 +97,17 @@ async function runPersonTitleDuplicates(ctx: DoctorContext): Promise<Check[]> {
     checks.push({
       name: 'person_title_duplicates',
       status: 'warn',
-      message: `${pairs.length} title-prefixed person page(s) likely duplicate an unprefixed page of the same person, so links and lookups split between them. Nothing was changed. ${shown}${pairs.length > SHOWN ? `; ${pairs.length - SHOWN} more in details` : ''}.${scope}`,
+      message: `${pairs.length} potential entity duplicate or name collision pair(s): shared person email (including role mailboxes), organization domain, alias naming another page, or title-prefixed person name. Review filing and identity; pair order does not select a merge target. Nothing was changed. ${shown}${pairs.length > SHOWN ? `; ${pairs.length - SHOWN} more in details` : ''}.${scope}`,
       details: { scanned, capped, pairs },
       fix: {
         ask_user: true, actor: 'user', consent: [], requires_exclusive: false, verify: doctorVerify(NAME),
         argv: ['gbrain', 'get', first.stub, '--source', first.source_id],
-        why: 'Each pair is a guess from names alone; only the owner can say whether the two pages are one person.',
-        user_message: `Review each pair (for example ${first.stub} and ${first.canonical}). Where both pages are the same person, add \`merged_into: ${first.canonical}\` to the titled page's frontmatter (move anything worth keeping first); entity lookup and link resolution then follow it. Leave pairs that are different people as they are.`,
+        why: 'Shared identifiers or names can be legitimate; only the owner can establish identity and the correct filing.',
+        user_message: `Review each pair (for example ${first.stub} and ${first.canonical}). Correct shared role mailboxes and conflicting aliases where appropriate. Only after verifying both pages represent one entity, choose the surviving page and mark the other with merged_into: <surviving slug>, preserving its content first.`,
       },
     });
   } catch (err) {
-    checks.push({ name: 'person_title_duplicates', status: 'warn', message: `Title-prefixed person pages could not be checked: ${err instanceof Error ? err.message : String(err)}. Health is unknown.` });
+    checks.push({ name: 'person_title_duplicates', status: 'warn', message: `Entity duplicate and collision checks could not complete: ${err instanceof Error ? err.message : String(err)}. Health is unknown.` });
   }
   return checks;
 }
