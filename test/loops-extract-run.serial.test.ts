@@ -145,6 +145,48 @@ afterAll(async () => {
   await engine.disconnect();
 });
 
+describe('mute during extraction (#7287)', () => {
+  test('a sender or thread mute committed during the model call prevents all projections', async () => {
+    const { addSuppression, removeSuppression } = await import('../src/core/loops/loops-store.ts');
+    const previous = chatImpl;
+    const available = chatAvailable;
+    chatAvailable = true;
+    try {
+      for (const kind of ['sender', 'thread'] as const) {
+        const sourceId = `flight-${kind}`;
+        const slug = 'emails/flight';
+        const threadId = `flight-${kind}`;
+        const value = kind === 'sender' ? 'alice@example.com' : threadId;
+        await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ($1, $1)`, [sourceId]);
+        await engine.putPage(slug, { type: 'email', title: 'Synthetic promise',
+          compiled_truth: 'I will send you the deck by Friday. Which week works for the kickoff?',
+          frontmatter: { from: 'Alice Example <alice@example.com>', senders: ['alice@example.com'],
+            thread_id: threadId, date: '2026-08-20T10:00:00Z' } }, { sourceId });
+        const calls = chatCalls;
+        chatImpl = async () => {
+          await addSuppression(engine, sourceId, kind, value);
+          return { text: cleanJson(), stopReason: 'end' };
+        };
+        const result = await runLoopsExtract(engine, { sourceId, slug, threadId });
+        expect(chatCalls - calls).toBe(1);
+        expect(result).toMatchObject({ status: 'skipped', reason: 'suppressed', commitments: 0, decisions: 0, loop_ids: [] });
+        for (const table of ['open_loops', 'facts']) {
+          const rows = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM ${table} WHERE source_id = $1`, [sourceId]);
+          expect(Number(rows[0].n)).toBe(0);
+        }
+        const edges = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM links l JOIN pages p ON p.id = l.from_page_id WHERE p.source_id = $1`, [sourceId]);
+        expect(Number(edges[0].n)).toBe(0);
+        expect((await runLoopsExtract(engine, { sourceId, slug, threadId })).reason).toBe('suppressed');
+        expect(chatCalls - calls).toBe(1);
+        await removeSuppression(engine, sourceId, kind, value);
+      }
+    } finally {
+      chatImpl = previous;
+      chatAvailable = available;
+    }
+  });
+});
+
 describe('isLoopsExtractionEnabled', () => {
   test('default (unset) → enabled; false/0/off disable; true re-enables', async () => {
     expect(await isLoopsExtractionEnabled(engine)).toBe(true);

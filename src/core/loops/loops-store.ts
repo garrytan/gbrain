@@ -319,8 +319,8 @@ function suppressionMatch(kind: 'sender' | 'thread', param: string, alias = ''):
 }
 
 /**
- * #5012: the reply-owed loops a sender or thread mute covers: open
- * `unanswered_inbound` loops (and ones still queued from an earlier unmute).
+ * A sender mute covers every loop type; a thread mute retains its reply-owed
+ * scope. Include loops still queued from an earlier unmute.
  * `apply` closes them as `dropped` / `muted`; otherwise they are only listed.
  */
 export async function closeMutedLoops(
@@ -330,7 +330,8 @@ export async function closeMutedLoops(
   value: string,
   apply: boolean,
 ): Promise<number[]> {
-  const where = `source_id = $1 AND loop_type = 'unanswered_inbound' AND ${suppressionMatch(kind, '$2')}
+  const typeScope = kind === 'sender' ? '' : "AND loop_type = 'unanswered_inbound'";
+  const where = `source_id = $1 ${typeScope} AND ${suppressionMatch(kind, '$2')}
        AND (status = 'open' OR closed_by = '${MUTE_RECHECK}')`;
   const rows = apply
     ? await engine.executeRaw<{ id: number }>(
@@ -345,7 +346,8 @@ export async function closeMutedLoops(
  * that no remaining suppression still covers. Loops on a thread are queued
  * for re-check (`mute_recheck`): the next Gmail sweep re-fetches the thread
  * and reopens a loop only when nothing answered it since. A loop without a
- * thread cannot be re-checked and stays closed (`unmuted`). Manual closes are
+ * thread, or an LLM/manual obligation the reply detector cannot verify, stays
+ * closed (`unmuted`). Manual closes are
  * never touched. Without `apply` the loops are only listed.
  */
 export async function requeueMutedLoops(
@@ -355,20 +357,21 @@ export async function requeueMutedLoops(
   value: string,
   apply: boolean,
 ): Promise<{ requeued: number[]; unverifiable: number[] }> {
-  const rows = await engine.executeRaw<{ id: number; thread_id: string | null }>(
-    `${apply ? `UPDATE open_loops l SET closed_by = CASE WHEN l.thread_id IS NULL THEN '${UNMUTED}' ELSE '${MUTE_RECHECK}' END, updated_at = now()`
-      : 'SELECT l.id, l.thread_id FROM open_loops l'}
+  const recheckable = "l.thread_id IS NOT NULL AND l.detector = 'deterministic_thread' AND l.loop_type IN ('unanswered_inbound', 'unanswered_outbound')";
+  const rows = await engine.executeRaw<{ id: number; recheckable: boolean }>(
+    `${apply ? `UPDATE open_loops l SET closed_by = CASE WHEN ${recheckable} THEN '${MUTE_RECHECK}' ELSE '${UNMUTED}' END, updated_at = now()`
+      : `SELECT l.id, (${recheckable}) AS recheckable FROM open_loops l`}
       WHERE l.source_id = $1 AND l.closed_by = '${MUTED}' AND ${suppressionMatch(kind, '$3', 'l.')}
         AND NOT EXISTS (SELECT 1 FROM loop_suppressions s
                          WHERE s.source_id = l.source_id AND NOT (s.kind = $2 AND s.value = $3)
                            AND ((s.kind = 'thread' AND s.value = lower(l.thread_id))
                              OR (s.kind = 'sender' AND s.value = l.counterparty_email)))
-      ${apply ? 'RETURNING l.id, l.thread_id' : ''}`,
+      ${apply ? `RETURNING l.id, (${recheckable}) AS recheckable` : ''}`,
     [sourceId, kind, value.toLowerCase()],
   );
-  const ids = (pick: (r: { thread_id: string | null }) => boolean) =>
+  const ids = (pick: (r: { recheckable: boolean }) => boolean) =>
     rows.filter(pick).map((r) => Number(r.id)).sort((a, b) => a - b);
-  return { requeued: ids((r) => r.thread_id !== null), unverifiable: ids((r) => r.thread_id === null) };
+  return { requeued: ids((r) => r.recheckable), unverifiable: ids((r) => !r.recheckable) };
 }
 
 /** #5012: every open reply-owed loop from one sender (`gbrain loops drop sender`), oldest id first. */

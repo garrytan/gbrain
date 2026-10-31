@@ -436,6 +436,15 @@ export async function runLoopsExtract(
     );
   }
 
+  // The provider call can outlive a mute. Re-read the same author/thread
+  // policy before publishing any of the three projections; the enqueue-time
+  // and pre-model checks alone cannot see a mute committed during inference.
+  const currentSuppressions = await loadSuppressions(engine, payload.sourceId);
+  if (currentSuppressions.threads.has(threadId.toLowerCase()) ||
+      [...senderAddresses].some(a => currentSuppressions.senders.has(a))) {
+    return { ...empty, reason: 'suppressed' };
+  }
+
   // Evidence quotes render as receipts (`> "…"`) on the trusted-local waiting
   // surface — they must be VERBATIM from the thread the model saw. A
   // hallucinated or prompt-injected "quote" is dropped (the loop still
