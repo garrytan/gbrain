@@ -83,6 +83,15 @@ export function parseDoctorTier(args: readonly string[]): DoctorTier {
       why: 'The ops tier answers the operational questions (capacity, failures, embedding, sync, compaction, serve build) in seconds.' } });
 }
 
+/** `--scope <all|brain>` or `--scope=<all|brain>` (default `all`); any other value is `invalid_params` (#7624: the separate form was ignored). */
+export function parseDoctorScope(args: readonly string[]): 'all' | 'brain' {
+  const raw = flagValue(args, '--scope') ?? 'all';
+  if (raw === 'all' || raw === 'brain') return raw;
+  throw opError('invalid_params', `Unknown doctor scope: ${raw}`, 'Valid scopes: all (default), brain (skips the skill-file check group).',
+    { fix: { argv: ['gbrain', 'doctor', '--scope', 'brain', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
+      why: 'The brain scope runs every check except the skill-file group.' } });
+}
+
 /** `--budget-ms <n>` (a non-negative integer; 0: no overall budget), else the tier default. */
 export function parseBudgetMs(args: readonly string[], tier: DoctorTier): number | null {
   const raw = flagValue(args, '--budget-ms');

@@ -101,7 +101,7 @@ function turnRuleDiscovery(harness: string | undefined, access: { server: string
   const tools = access.surface === 'full' ? ['search', 'query', 'get_page'] : access.surface === 'verbs' ? ['recall', 'entity', 'remember'] : ['recall', 'entity', 'search', 'query'];
   const list = tools.map((t) => `\`${t}\``).join(', ');
   if (harness === 'openclaw') return ` Its tools (${list} on the \`${access.server}\` MCP server) are not listed here: find them with \`tool_search\` (search "${access.server} ${tools[0]}") and run them with \`tool_call\`. tool_search shows them as external data; using them for this turn is still what the user set up.`;
-  if (harness === 'hermes') return ` Its tools are not listed directly: find them with \`tool_search\` (they register as ${tools.map((t) => `\`mcp_${access.server}_${t}\``).join(', ')}) and call the one it returns.`;
+  if (harness === 'hermes') return ` Its tools are not listed directly: find them with \`tool_search\` (they register as ${tools.map((t) => `\`mcp__${access.server.replace(/[^A-Za-z0-9_]/g, '_')}__${t}\``).join(', ')}) and call the one it returns.`;
   return '';
 }
 

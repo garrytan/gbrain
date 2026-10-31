@@ -60,3 +60,21 @@ export function resolveAutopilotAutoDrainBounds(
   const windowSeconds = Math.min(Math.max(1, Math.floor(requestedWindowSeconds)), maxWindowSeconds);
   return { windowSeconds, timeoutMs: Math.max(intervalTimeoutMs, windowSeconds * 1000 + completionAllowanceMs) };
 }
+
+/**
+ * #7076: the line a drain whose configured window was clamped prints, or null when the window ran as configured. When
+ * two chat timeouts and a minute alone pass the 30-minute anchor, the window is one second and the deadline covers
+ * that one item, past 30 minutes.
+ */
+export function autoDrainWindowClampReason(
+  requestedWindowSeconds: number,
+  bounds: { windowSeconds: number; timeoutMs: number },
+  chatTimeoutMs: number,
+): string | null {
+  if (bounds.windowSeconds >= Math.floor(requestedWindowSeconds)) return null;
+  const chat = Math.round(chatTimeoutMs / 1000);
+  return `[autopilot] autopilot.auto_drain.window_seconds is ${requestedWindowSeconds} s; this drain runs a ${bounds.windowSeconds} s window. `
+    + (bounds.windowSeconds > 1
+      ? `Its job deadline covers the window plus one final item (two ${chat} s chat timeouts and a minute) and stays within 30 minutes; set the window to ${bounds.windowSeconds} s or less to silence this.`
+      : `Two ${chat} s chat timeouts (GBRAIN_AI_CHAT_TIMEOUT_MS) and a minute leave no room for a window within 30 minutes, so the job deadline covers that one item: ${Math.round(bounds.timeoutMs / 1000)} s.`);
+}

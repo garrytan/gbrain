@@ -30,8 +30,8 @@ import {
 // two surfaces can't drift again. Match on word-segments to avoid
 // false-positives (e.g. `monkey` doesn't match `key`).
 export function isSensitiveConfigKey(key: string): boolean {
-  const lower = key.toLowerCase();
-  // Word-boundary matches: foo_key, foo.key, key_foo, key, api_key, ...
+  const lower = key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+  // Word-boundary matches: foo_key, foo.key, key_foo, key, api_key, secretAccessKey, ...
   return /(^|[._-])(key|secret|token|password|pwd|passwd|auth)([._-]|$)/.test(lower);
 }
 
@@ -279,6 +279,14 @@ export function redactConfigValue(key: string, value: string): string {
   if (/postgres(ql)?:\/\//.test(value)) return redactPgUrl(value);
   if (isSensitiveConfigKey(key)) return '***';
   return value;
+}
+
+/** An object config value with every sensitive field masked at any depth (#7346: storage.secretAccessKey). */
+function redactNestedConfig(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactNestedConfig);
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k,
+    typeof v === 'string' ? redactConfigValue(k, v) : v !== null && v !== undefined && isSensitiveConfigKey(k) ? '***' : redactNestedConfig(v)]));
 }
 
 // #3661: the flags `config set` actually honors. Everything else that looks
@@ -675,7 +683,7 @@ async function showConfig(engine: BrainEngine): Promise<void> {
     const display = typeof v === 'string'
       ? redactConfigValue(k, v)
       : v !== null && typeof v === 'object'
-        ? (isSensitiveConfigKey(k) ? '***' : JSON.stringify(v))
+        ? (isSensitiveConfigKey(k) ? '***' : JSON.stringify(redactNestedConfig(v)))
         : v;
     console.log(`  ${k}: ${display}`);
   }
@@ -947,7 +955,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     if (val !== null && val !== undefined) {
       // #3943: redact by default like `show`/`set` — `get` output lands in
       // agent transcripts and shell history; scripts opt out with the flag.
-      const out = typeof val === 'string' ? val : JSON.stringify(val);
+      const out = typeof val === 'string' ? val : JSON.stringify(rawFlag ? val : redactNestedConfig(val));
       console.log(rawFlag ? out : redactConfigValue(key, out));
       if (dbAuthoritative) {
         console.error(`[config] source: ${dbVal !== null && dbVal !== undefined ? 'db plane (authoritative for this key)' : 'file mirror (no DB row)'}${await writebackLanesNote(engine, key)}`);

@@ -28,8 +28,14 @@ import type { LinkReadScope } from '../link-validity.ts';
 
 /** Bounded link reads annotate rows with relationship status (never filter) when a temporal read is requested. */
 function finishTemporal(rows: unknown[], opts?: LinkReadScope): Link[] {
-  const t = opts?.temporal;
+  const t = opts?.page?.count ? undefined : opts?.temporal;
   return (t ? rows.map(r => annotateTemporalRow(r as Link, t.asOf)) : rows) as Link[];
+}
+
+/** Run one link read; a counting page (#7075) runs it as count(*) and returns one row carrying `link_total`. */
+async function runLinkRead(exec: ScopedRead, opts: LinkReadScope | undefined, statement: SqlFragment): Promise<unknown[]> {
+  if (!opts?.page?.count) return (await exec.run(statement)).rows;
+  return (await exec.run(sqlFragment`SELECT count(*)::int AS link_total FROM (${statement}) counted`)).rows;
 }
 
 /** WHERE fragment that keeps only edges matching the caller's temporal policy (walks and fanout). */
@@ -355,7 +361,7 @@ export async function getLinks(exec: ScopedRead, slug: string, opts?: LinkReadSc
       // out of grant. Remote MCP clients always land here.
       if (opts?.sourceIds && opts.sourceIds.length > 0) {
         const ids = opts.sourceIds;
-        const rows = (await exec.run(sqlFragment`
+        const rows = await runLinkRead(exec, opts, sqlFragment`
           SELECT f.slug as from_slug, f.source_id as from_source_id,
                  t.slug as to_slug, t.source_id as to_source_id,
                  l.link_type, ${page.context}, l.link_source,
@@ -368,7 +374,7 @@ export async function getLinks(exec: ScopedRead, slug: string, opts?: LinkReadSc
           WHERE f.slug = ${slug} AND f.source_id = ANY(${ids}::text[]) AND t.source_id = ANY(${ids}::text[])
             AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${trustedSql(privacy)}${page.where}
           ORDER BY l.id${page.limit}
-        `)).rows;
+        `);
         return finish(rows);
       }
       // v0.31.8 (D16) + #2200: the federated arm above is the first branch; the
@@ -379,7 +385,7 @@ export async function getLinks(exec: ScopedRead, slug: string, opts?: LinkReadSc
       // NULL) so links to/from soft-deleted pages stop voting in the graph,
       // matching orphans/get/list/search visibility.
       if (opts?.sourceId) {
-        const rows = (await exec.run(sqlFragment`
+        const rows = await runLinkRead(exec, opts, sqlFragment`
           SELECT f.slug as from_slug, f.source_id as from_source_id,
                  t.slug as to_slug, t.source_id as to_source_id,
                  l.link_type, ${page.context}, l.link_source,
@@ -392,10 +398,10 @@ export async function getLinks(exec: ScopedRead, slug: string, opts?: LinkReadSc
           WHERE f.slug = ${slug} AND f.source_id = ${opts.sourceId}
             AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${trustedSql(privacy)}${page.where}
           ORDER BY l.id${page.limit}
-        `)).rows;
+        `);
         return finish(rows);
       }
-      const rows = (await exec.run(sqlFragment`
+      const rows = await runLinkRead(exec, opts, sqlFragment`
         SELECT f.slug as from_slug, f.source_id as from_source_id,
                t.slug as to_slug, t.source_id as to_source_id,
                l.link_type, ${page.context}, l.link_source,
@@ -408,7 +414,7 @@ export async function getLinks(exec: ScopedRead, slug: string, opts?: LinkReadSc
         WHERE f.slug = ${slug}
           AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${trustedSql(privacy)}${page.where}
         ORDER BY l.id${page.limit}
-      `)).rows;
+      `);
       return finish(rows);
   }
 
@@ -424,7 +430,7 @@ export async function getBacklinks(exec: ScopedRead, slug: string, opts?: LinkRe
       // a foreign referrer nor a foreign origin slug is disclosed to the caller.
       if (opts?.sourceIds && opts.sourceIds.length > 0) {
         const ids = opts.sourceIds;
-        const rows = (await exec.run(sqlFragment`
+        const rows = await runLinkRead(exec, opts, sqlFragment`
           SELECT f.slug as from_slug, f.source_id as from_source_id,
                  t.slug as to_slug, t.source_id as to_source_id,
                  l.link_type, ${page.context}, l.link_source,
@@ -437,13 +443,13 @@ export async function getBacklinks(exec: ScopedRead, slug: string, opts?: LinkRe
           WHERE t.slug = ${slug} AND t.source_id = ANY(${ids}::text[]) AND f.source_id = ANY(${ids}::text[])
             AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${trustedSql(privacy)}${page.where}
           ORDER BY l.id${page.limit}
-        `)).rows;
+        `);
         return finish(rows);
       }
       // v0.31.8 (D16) + #2200: federated arm above is first; two below mirror getLinks
       // (incl. the #3754 soft-delete endpoint filter on all three arms).
       if (opts?.sourceId) {
-        const rows = (await exec.run(sqlFragment`
+        const rows = await runLinkRead(exec, opts, sqlFragment`
           SELECT f.slug as from_slug, f.source_id as from_source_id,
                  t.slug as to_slug, t.source_id as to_source_id,
                  l.link_type, ${page.context}, l.link_source,
@@ -456,10 +462,10 @@ export async function getBacklinks(exec: ScopedRead, slug: string, opts?: LinkRe
           WHERE t.slug = ${slug} AND t.source_id = ${opts.sourceId}
             AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${trustedSql(privacy)}${page.where}
           ORDER BY l.id${page.limit}
-        `)).rows;
+        `);
         return finish(rows);
       }
-      const rows = (await exec.run(sqlFragment`
+      const rows = await runLinkRead(exec, opts, sqlFragment`
         SELECT f.slug as from_slug, f.source_id as from_source_id,
                t.slug as to_slug, t.source_id as to_source_id,
                l.link_type, ${page.context}, l.link_source,
@@ -472,7 +478,7 @@ export async function getBacklinks(exec: ScopedRead, slug: string, opts?: LinkRe
         WHERE t.slug = ${slug}
           AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${trustedSql(privacy)}${page.where}
         ORDER BY l.id${page.limit}
-      `)).rows;
+      `);
       return finish(rows);
   }
 

@@ -14,7 +14,7 @@ import { connectorAccountMismatches, connectorAccountMismatchSkipWarning } from 
 import { AUTOPILOT_GIT_PULL_KEY, automaticGitPullDisabled, automaticSyncPull } from '../core/persistence/automatic-sync-policy.ts';
 import { isSyncDisabledConfig } from '../core/sync-policy.ts';
 import { automaticSyncSkip, loadActivationPendingSourceIds, reportAutomaticSyncSkip, skipActivationPendingSync } from '../core/sync-policy.ts';
-import { resolveAutopilotAutoDrainBounds, resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
+import { autoDrainWindowClampReason, resolveAutopilotAutoDrainBounds, resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
 import {
   autopilotRemediationIdempotencyKey,
   autopilotTargetedSteps,
@@ -658,7 +658,9 @@ export async function submitAutoDrains(
   };
   const threshold = parsePosInt(await engine.getConfig('autopilot.auto_drain.threshold'), 25);
   const { AI_CHAT_TIMEOUT_MS } = await import('../core/ai/gateway.ts');
-  const bounds = resolveAutopilotAutoDrainBounds(timeoutMs, parsePosInt(await engine.getConfig('autopilot.auto_drain.window_seconds'), 120), AI_CHAT_TIMEOUT_MS);
+  const requestedWindowSeconds = parsePosInt(await engine.getConfig('autopilot.auto_drain.window_seconds'), 120);
+  const bounds = resolveAutopilotAutoDrainBounds(timeoutMs, requestedWindowSeconds, AI_CHAT_TIMEOUT_MS);
+  const clampReason = autoDrainWindowClampReason(requestedWindowSeconds, bounds, AI_CHAT_TIMEOUT_MS);
   const maxUsdPerDay = parseNonNegFloat(await engine.getConfig('autopilot.auto_drain.max_usd_per_day'), 2.0);
   // Each drain attempt runs under one BudgetTracker capped at ~$0.30
   // (cycle.extract_atoms.budget_usd); bound the brain-wide daily attempt
@@ -751,6 +753,10 @@ export async function submitAutoDrains(
       );
       submittedToday++;
       next = kind === 'checkout' ? 'connector' : 'checkout';
+      if (clampReason) {
+        process.stderr.write((jsonMode ? JSON.stringify({ event: 'auto_drain_window_clamped', job_id: job.id, source_id: src.id,
+          requested_window_seconds: requestedWindowSeconds, window_seconds: bounds.windowSeconds, timeout_ms: bounds.timeoutMs, reason: clampReason }) : clampReason) + '\n');
+      }
       if (jsonMode) {
         process.stderr.write(JSON.stringify({
           event: 'dispatched', job_id: job.id, mode: 'auto-drain',
