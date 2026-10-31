@@ -368,6 +368,7 @@ const put_page: Operation = {
       return { dry_run: true, action: 'put_page', slug: p.slug };
     }
     if (ctx.remote !== false && typeof p.slug === 'string') await assertLargePageAdmission(ctx.engine, p.slug, sourceId, p);
+    (await import('../persistence/page-visibility.ts')).assertSubmittedReaders(ctx.remote, p.slug, p.content);
     return submitPageMutation(ctx, { operation: 'put_page', params: p }).then(funnelPassThrough('save')).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error));
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },

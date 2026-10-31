@@ -22,7 +22,7 @@ import { moveSlugBindings, recordRenameAlias } from '../page-state/rename-alias.
 import { segmentedRevertRefusal } from '../page-state/versions.ts';
 import { sanitizeText } from '../batch-rows.ts';
 import { SAFE_FENCE_CHUNKER_VERSION, bodyWriteChunkVersion } from '../search/safe-chunks.ts';
-import { orPrivateReadableSource, privatePagesFilterFragment, privateSnapshotFilterFragment, privatePagesFilterForCaller } from '../search/private-visibility.ts';
+import { privatePagesFilterFragment, privateSnapshotFilterFragment, privatePagesFilterForCaller, privacyForCaller, readersAllowedSql, callerIdentity } from '../search/private-visibility.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
 import { rederiveHiddenSql } from '../eligibility/sql.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, isMissingSchemaObject, warnOncePerProcess } from '../utils.ts';
@@ -1011,7 +1011,7 @@ export async function getVersions<B extends boolean = true>(
   opts?: GetVersionsOpts<B>,
 ): Promise<PageVersionRows<B>> {
     const privacy = opts?.excludePrivate
-      ? trustedSql(`AND ${orPrivateReadableSource('p', `${privatePagesFilterFragment('p')} AND ${privateSnapshotFilterFragment('pv')}`)}`) : sqlFragment``;
+      ? trustedSql(`AND ${privatePagesFilterForCaller('p')} AND ${readersAllowedSql('pv', callerIdentity(), 'snapshot')} AND ${privacyForCaller('p', privateSnapshotFilterFragment('pv'))}`) : sqlFragment``;
     const scope = opts?.sourceIds && opts.sourceIds.length > 0
       ? sqlFragment`AND p.source_id = ANY(${opts.sourceIds}::text[])`
       : opts?.sourceId ? sqlFragment`AND p.source_id = ${opts.sourceId}` : sqlFragment``;

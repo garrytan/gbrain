@@ -10,6 +10,29 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A shared brain can now keep a page to the members it names, inside one source. Put `readable_by: [alice-example, group:team-a]` in a page's frontmatter, bind each member's token, OAuth client or stdio server to a member, and remote reads of that page answer only for them. Nothing changes until a page names readers or a member is created.**
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A page names `readable_by` | ignored: every remote caller granted the source read it | read remotely only by a credential bound to a listed member (directly or through a group); everyone else gets the canonical `not_found` on every read path, and a remote write to it answers `page_not_found` |
+| Escape hatches and `--private-pages granted-sources` | relaxed `visibility: private` | still relax only `visibility: private`; they never open a page to an unlisted member |
+| A `visibility: private` page that also names readers | hidden remotely | still hidden from a listed member unless that member's credential also has `--private-pages granted-sources` |
+| Atoms, concepts and chronicle events derived from a restricted page | followed the origin's visibility | readable by no remote caller |
+| Members and groups | | `gbrain access member add\|disable\|enable\|rm\|list`, `gbrain access group add\|rm\|list`, `gbrain access who-can-read <slug>`, `gbrain access check --token\|--client <name>`; `--member` and `--may-act-for` on `auth create`, `auth rescope` and `auth register-client`; config `mcp.stdio_member` for a stdio server; `--as <member>` previews one member's view from the local CLI; `whoami` and `grant_diagnosis` show member and groups |
+| Doctor | | `access_readers_malformed`, `access_unknown_readers`, `access_recent_narrowings`, `access_page_readers_backfill` |
+
+### What to watch for after you upgrade
+
+- A page that already carried `readable_by` before this release reads as nobody remotely until you run `gbrain repair access` (preview) and then `gbrain repair access --apply`. Doctor's `access_page_readers_backfill` lists them.
+- On a brain with any restriction, the escape hatches no longer turn the remote read filter off, and secondary surfaces (proactive brief, retrieval reflex, entity resolution, known-as-of) hide restricted pages from every remote caller, listed members included.
+- A credential bound to a disabled or removed member is refused at verification (`access_member_disabled`).
+- Works the same on a repo-less brain: members, groups and bindings live in the database.
+- The member-access SQL functions end their pinned `search_path` with `pg_temp`, like every other gbrain function (#7632), and frontmatter recovery never guesses a duplicated `readable_by` key: the file is held until a person fixes it.
+
 ## [0.60.528.0] - 2026-10-31
 
 **The test-isolation scan is about 25 times faster on Linux and 12 times faster on macOS, so `bun run verify` and the macOS validation job no longer come close to their per-check caps (#8053, #8099).**

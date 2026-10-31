@@ -168,6 +168,7 @@
     "check:chunk-visibility": "bun scripts/check-chunk-visibility.ts",
     "check:page-body-readers": "bun scripts/check-page-body-readers.ts",
     "check:engine-sql-dynamic": "bun scripts/check-engine-sql-dynamic.ts",
+    "check:remote-privacy-reads": "bun scripts/check-remote-privacy-reads.ts",
     "check:engine-sql-brands": "bun scripts/check-engine-sql-brands.ts",
     "check:sync-run-state": "bun scripts/check-sync-run-state.ts",
     "check:schema-migrations": "bash scripts/check-schema-migrations-fresh.sh",

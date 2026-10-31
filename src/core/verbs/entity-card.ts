@@ -306,10 +306,10 @@ export async function selectEntityCandidates(
   scope: EntityLookupScope,
   opts: { omitQuarantined?: boolean; suggest?: boolean; variants?: boolean } = {},
 ): Promise<EntityCandidates> {
-  const { orPrivateReadableSource, privatePagesFilterFragment, privatePagesFilterForCaller } = await import('../search/private-visibility.ts');
+  const { privatePagesFilterForCaller } = await import('../search/private-visibility.ts');
   // Predicate text lives ONCE (private-visibility.ts) — both card queries
   // below select `FROM pages` unaliased, so qualify with the table name.
-  const privatePredicate = scope.excludePrivate ? ` AND ${orPrivateReadableSource('pages', privatePagesFilterFragment('pages'))}` : '';
+  const privatePredicate = scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('pages')}` : '';
 
   const norm = normalizeAlias(trimmed);
   const titleLc = trimmed.toLowerCase();

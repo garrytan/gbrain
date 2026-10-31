@@ -113,6 +113,25 @@ There are two ways to scope teammates' access. They suit different deployment sh
 
 **Model B: one source, directory-based per-person scoping (simpler for one-agent-serves-everyone setups).** The shape I actually run in production: a single source called `default`, with a `partners/<slug>/` convention inside it (e.g. `partners/alice-example/`, `partners/bob-example/`). Each partner gets their own subdirectory holding their personal pages: `partners/alice-example/USER.md`, `partners/alice-example/concepts/`, `partners/alice-example/sources/`, etc. This is the right model when ONE agent (yours) serves everyone over Telegram or a single shared interface. It's simpler ops, no per-user OAuth. **Write scoping within the shared source can be server-enforced:** register each per-person client with `--bound-slug-prefixes partners/alice-example/` and every slug-mutating write outside that prefix is rejected with `permission_denied`. Without the binding, the scoping is convention-only (the agent polices itself). Read scoping stays source-granular in both models — within a shared source, everyone entitled to the source can read every folder.
 
+**Model C: one source, per-member reads.** Teammates share one source, and a page that names its readers in frontmatter is read only by them. Bind each teammate's token or OAuth client to a member, then put `readable_by` on the pages that need it:
+
+```yaml
+---
+title: Renewal notes
+readable_by: [alice-example, group:team-a]
+---
+```
+
+```bash
+gbrain access member add alice-example --groups team-a
+gbrain access member add bob-example
+gbrain auth rescope --token alice-laptop --member alice-example
+gbrain access check --token alice-laptop          # what this credential can read, axis by axis
+gbrain access who-can-read notes/renewal-notes    # the members and groups a page admits
+```
+
+A remote caller whose credential is bound to a listed member (directly or through a group) reads the page on every read path; every other remote caller, including an unbound token, an unbound stdio server, a bot with `--private-pages granted-sources` and an operator escape hatch (`GBRAIN_REMOTE_PRIVATE_PAGES=1`, `search.remote_private_pages=visible`), gets the same `not_found` as for a page that does not exist. `readable_by` only narrows: a `visibility: private` page stays private to a listed member unless the member's credential also has `--private-pages granted-sources`. A malformed `readable_by` reads as nobody. A page derived from a restricted page (an extracted atom, a synthesized concept, a chronicle event) is readable by no remote caller. The local CLI is unchanged; `--as <member>` previews one member's view. Pages that already carried `readable_by` before you upgraded read as nobody until `gbrain repair access` (preview, then `--apply`) derives their readers. This works the same on a repo-less brain: members, groups and bindings live in the database.
+
 For most company-brain installs (10+ teammates each with their own AI client), Model A is the right starting point. If you're running the fat-agent-serves-everyone pattern from the personal-brain tutorial, Model B is genuinely simpler. You can also mix: separate sources for the obviously-different ones (customer notes vs internal-only) AND a `partners/<slug>/` convention inside the shared source for per-person workspace.
 
 ### Per-person folder structure inside each source
@@ -547,85 +566,3 @@ gbrain sources status
 Returns a per-source dashboard: when each source last synced, how many pages, how many embedded, how many unacked sync failures. The at-a-glance health check.
 
 The admin dashboard at `https://brain.acme-co.com/admin` shows live request volume, registered OAuth clients, recent activity, and brain stats. Use the admin bootstrap token from Part 4 to log in the first time, then register additional admin users from inside the dashboard.
-
-### If agents run as containers on the same Docker host
-
-OAuth source scoping only guards the HTTP MCP path. If the brain's Postgres and your teammates' agent runtimes are containers on the same Docker host, make sure the agents can't reach Postgres directly over Docker's default bridge network — a direct DB session skips OAuth entirely. Put Postgres on its own user-defined network, publish it loopback-only if at all, and never hand agent containers a `DATABASE_URL`. The copy-paste operator checklist lives in [docs/mcp/DEPLOY.md — Co-located Docker workloads](../mcp/DEPLOY.md#co-located-docker-workloads-self-hosted-postgres).
-
----
-
-## Part 13: Cost and speed expectations
-
-Historical numbers from the published benchmark snapshot (2026-05-23,
-v0.40.6.0) were measured on a retired hosted embedding stack, not the current
-Voyage default. Provider identifiers are redacted; original attribution is
-preserved at Git revision `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29`
-(retained on 2026-09-23). The measurements below are unchanged and do not
-establish a supported replacement's latency or throughput. The later
-LongMemEval result is separately dated and labeled.
-
-- **Embedding cost:** the default (`voyage:voyage-4`) is $0.06 per million tokens; the snapshot's retired hosted stack is $0.05. For comparison, GBrain configured with OpenAI is $0.13.
-- **Ingest speed:** about 22 seconds for a small test corpus of 164 pages on the host machine. For a 10K-page corpus, expect about 20 minutes the first time, then most syncs are incremental and finish in seconds.
-- **Query latency:** about 122 ms median for a `gbrain search`. For comparison, the same query through GBrain with OpenAI takes about 282 ms.
-- **Synthesized-answer latency:** a few seconds, dominated by the Anthropic API.
-- **Retrieval quality:** on the public LongMemEval benchmark (S split, cleaned revision, 470 scored questions), GBrain measures 95.53% session-level `recall_all@5` on its release default path (`voyage:rerank-2.5` on, autocut off) and 93.40% with the reranker off: every gold session inside the top 5 retrieved sessions, retrieval only, no reader model (measured 2026-09-06 at v0.48.4.0 by `gbrain eval longmemeval`; receipts in the sibling gbrain-evals repo and `docs/eval-bench.md`).
-
-Full methodology and per-run receipt JSONs live in [the gbrain-evals repo](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-05-23-v0.40.6.0-snapshot.md).
-
-For a 25-person company at sustained use, expect about $40 a month in embeddings (the default `voyage-4` at $0.06/million tokens), $50 a month in Anthropic calls for the synthesized-answer queries, plus your hosting bill. Under $100 a month for the AI side at most companies your size.
-
----
-
-## Part 14: Common gotchas
-
-### "My teammate can't see anything"
-
-Check `gbrain auth list` on the host and confirm their client has `--source` set to a source that actually exists. Empty or null `--source` means the client falls through to the `default` source, which probably has no content if you set up three named sources.
-
-### "Sync is slow and feels stuck"
-
-The first sync embeds every page, which takes time. Check `gbrain sources status` for the live page count. If it's climbing you're not stuck, you're just embedding. If you've got a 10K-page corpus and your embedding provider is throttling you, the per-source parallel sync looks like progress on three sources at once rather than one source moving fast.
-
-### "I see a page I shouldn't see"
-
-This shouldn't happen, but if you suspect it, run `gbrain search "<query>" --json` from a thin-client install configured with the constrained client's credentials (the Part 5 verification setup) and inspect the `source_id` field on every returned result. Every row should be in the client's `--federated-read` set. If one isn't, file an issue with the exact slug and source IDs.
-
-### "The synthesized answer is wrong"
-
-The brain layer is grounded in the retrieved pages. If the retrieved pages contain bad information, the answer will too. The gap-analysis note often catches this: if the answer says "based on retrieved pages from date X" and date X is six months ago, the brain is telling you the information is stale. Run `gbrain sync --all` to refresh and try again.
-
-### "OAuth `/token` endpoint returns 401 for my client"
-
-Verify the client secret matches what was printed at register-client time. The server stores only a SHA-256 hash; if you lost the original, you have to revoke the client and re-register. Use `gbrain auth revoke-client <client_id>` and re-run `register-client`.
-
-### "Postgres connection is exhausting"
-
-Each parallel sync worker opens its own pool. With three sources and the default four workers per source, you can hit your Postgres connection limit if it's set low. Either reduce the worker count with `gbrain sync --all --parallel 2 --workers 2`, or raise your Postgres `max_connections` to at least 100. Supabase's free tier defaults to 60, which is tight.
-
-### "I want to add a fourth teammate but they need access to all three sources"
-
-```bash
-gbrain auth register-client diana-example \
-  --grant-types client_credentials \
-  --scopes "read write" \
-  --source shared \
-  --federated-read shared,customers,internal
-```
-
-That's it. Add or rotate teammates as the org grows.
-
----
-
-## What you built
-
-You now have the personal-brain agent from the previous tutorial, plus a multi-user shared layer on top: three federated sources holding shared, customer, and internal-only content; per-person folders inside each source so teammates' writes don't collide; per-person OAuth clients with scoped read and write; per-person crons that run on each teammate's own schedule with their own scoping; per-person skills the agent only runs for the right person. Each teammate queries the brain in plain English through their AI client and gets back synthesized, sourced answers that are correctly scoped.
-
-What to do next:
-
-- **Wire ingestion** from external systems (Granola, Linear, Slack) using the [ingestion source contract](../skillpack-anatomy.md). Most companies want their meetings auto-ingested so the brain stays current without anyone typing notes.
-- **Set up team-specific dashboards** through the admin UI. Each team lead can have their own view of brain health and activity.
-- **Explore the rest of the brain layer.** `gbrain whoknows` (find the expert on a topic), `gbrain find-trajectory` (how a metric changed over time), `gbrain founder scorecard` (especially useful for VC and ops teams), the contradiction-detection cycle that surfaces conflicts between different people's notes.
-
-If you're building in this space (which YC has flagged as the [company-brain category in its Request for Startups](https://www.ycombinator.com/rfs#company-brain)), you might as well build on this. Everything described above is open source, MIT licensed, and what I run in production behind my own AI agents.
-
-Questions, gotchas, or wins worth sharing? Open an issue at [github.com/garrytan/gbrain](https://github.com/garrytan/gbrain/issues).

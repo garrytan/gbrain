@@ -9,7 +9,7 @@ import { normalizeTokenScopes } from '../legacy-token-scope.ts';
 import { authSourcesFromGrant, grantFromTokenRow } from '../grants/model.ts';
 import { readLocalWriter, currentVerifiedLocalWriter, takeRegisteredWriterRow, verifyLocalWriter, type LocalGrant } from './identity.ts';
 import type { Principal, SqlEngine, WriteAuthority, WriteRequest } from './model.ts';
-import { authorizePageVisibility, excludesPrivateWrites } from './page-visibility.ts';
+import { authorizePageVisibility, excludesPrivateWritesAtAdmission } from './page-visibility.ts';
 import { pipelined, transactionMemo } from '../page-state/transactions.ts';
 
 function deny(message: string): never { throw new OperationError('permission_denied', message, 'Inspect the current writer registration and source/operation grants.'); }
@@ -59,7 +59,7 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
   const delegatedJobId = ctx.auth && ctx.viaSubagent ? jobNamespaceKey(ctx.subagentId) : undefined;
   const a: WriteAuthority = {
     version: 1, principal, remote: ctx.remote !== false, sourceId, sourceIncarnation,
-    excludePrivate: await excludesPrivateWrites(ctx.engine, ctx.remote !== false),
+    excludePrivate: await excludesPrivateWritesAtAdmission(ctx.engine, ctx.remote !== false),
     autoLinkTrusted: ctx.remote === false || ctx.viaSubagent === true && !ctx.auth && !!ctx.allowedSlugPrefixes?.length,
     takesHolders: ctx.remote === false ? null : [...(ctx.takesHoldersAllowList ?? ['world'])],
     scopes: [...(ctx.auth?.scopes ?? localGrant?.scopes ?? [])],

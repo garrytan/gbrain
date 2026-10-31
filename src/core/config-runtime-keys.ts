@@ -20,4 +20,6 @@ export const RUNTIME_READER_CONFIG_KEYS: readonly string[] = [
   'context.hot_memory.session_only', // facts/meta-hook.ts, read by the turn_context and context_pack IPC handlers: hot memory never falls back to other sessions' facts, default off
   'serve.cli_socket', // config.ts loadConfigWithEngine (snapshot only) → serve.ts: a Postgres serve answers CLI reads over a private Unix socket, default off
   'serve.vector_prewarm', // config.ts loadConfigWithEngine (snapshot only) → serve.ts: a Postgres serve prewarms the HNSW indexes into shared_buffers at start when they fit, default off
+  'mcp.stdio_member', // access/caller.ts (GBRA-218): binds a local stdio MCP server to one member; unbound, stdio reads no page that names readers
+  'access.restrictions_present', // search/private-visibility.ts (GBRA-218): '1' once a page names readers or a member exists (set by a migration trigger; sticky)
 ];

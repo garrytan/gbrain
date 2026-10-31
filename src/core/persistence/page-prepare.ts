@@ -37,6 +37,7 @@ import { recordedPathFromFileUri, scannerSlugRootMode, scannerSourcePath } from 
 import { engineMutationPrecondition, parseMutationPrecondition } from './preconditions.ts';
 import { assertPurgeParams } from './purge-params.ts';
 import { authorizeWrite, slugDisclosable } from './authority.ts';
+import { remoteReadersChecked } from './page-visibility.ts';
 import { findLiveFileClaimants, type FileClaimant, type FileClaimTarget } from './file-claims.ts';
 import { digest, sha256 } from './digest.ts';
 import { replaceableFile } from '../facts/file-body-guard.ts';
@@ -941,7 +942,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     if (refusal) throw frontmatterRefusalError(refusal);
     throw opError('invalid_params', 'The content was rejected before publication.', 'Check the content and frontmatter, then submit the corrected content with a new request_id.');
   }
-  const ready = prepared;
+  const ready = await remoteReadersChecked(engine, row.authority, snapshot?.page.frontmatter, prepared);
   if (ready.observedRevision !== observedRevision) throw pageRefusal('revision_conflict', 'The page changed during import preparation.', row,
     `Page ${row.slug} was written by another request while this one was being prepared, so it published nothing. Read the current page and revision, then submit the intended change against it.`,
     pageFix(row.source_id, row.slug));

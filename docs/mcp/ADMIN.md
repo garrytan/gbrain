@@ -233,8 +233,12 @@ For one bot acting for several members of a shared brain, give each member a
 separate client or token restricted to that member's sources. The grant is the
 security boundary; a request's `source_ids` can only narrow inside it. See
 [a bot acting for many members](../guides/multi-source-brains.md#a-bot-acting-for-many-members).
-Access is per source, never per page, so lay sources out by who may read them
+Grants are per source, so lay sources out by who may read them
 ([guide](../guides/multi-source-brains.md#lay-out-sources-by-who-may-read-them)).
+Inside one source, bind each member's credential with `gbrain auth rescope
+--token <name> --member <id>` (or `--client`) and put `readable_by` on the pages
+only some members may read; `gbrain access check --token <name>` shows the
+result ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape)).
 
 New `memory-reader`, `memory-writer` and `coding-agent` grants are callable on
 the full surface and list the seven memory verbs plus `request_tools`, which

@@ -999,9 +999,45 @@
           "status": "ok"
         },
         {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no page names readers and no member exists.",
+          "name": "access_readers_malformed",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no page names readers and no member exists.",
+          "name": "access_unknown_readers",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no page names readers and no member exists.",
+          "name": "access_recent_narrowings",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no page names readers and no member exists.",
+          "name": "access_page_readers_backfill",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
           "category": "ops",
           "elapsed_ms": "<volatile>",
-          "message": "RLS enabled on 161/161 public tables",
+          "message": "RLS enabled on 164/164 public tables",
           "name": "rls",
           "status": "ok"
         },
@@ -1029,7 +1065,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 161 table(s) the applied migrations create exist.",
+          "message": "All 164 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },

@@ -1194,6 +1194,14 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // v258: absent from both schema blobs, so fresh and upgraded brains share its ordinal; column-only and nullable, no
   // index or function in either blob references it, and only strict-source publications (v272+) write it.
   'pages.withheld_source_path',
+  // GBRA-218 A1 (migration v281) - per-member read access. Same posture as v274: absent from both schema blobs, so fresh
+  // and upgraded brains share their ordinals; the migration creates the page_readers index, trigger and functions itself,
+  // and no index or function in either blob references these columns.
+  'pages.page_readers',
+  'access_tokens.member_id',
+  'access_tokens.may_act_for',
+  'oauth_clients.member_id',
+  'oauth_clients.may_act_for',
   // Wave B segmented page storage (migration v248). Deliberately absent from
   // both schema blobs so fresh and upgraded brains share their ordinals; no
   // index in either blob references them (content_chunks_occurrence_idx is
