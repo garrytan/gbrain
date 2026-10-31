@@ -149,7 +149,8 @@ describe('signals and the warning', () => {
       expect(n.why).toContain('visibility: private');
       expect(n.why).toContain('source_ids narrows only the call that sends it, so recall, list_pages or any read without it reads the token\'s full grant');
       expect(n.why).not.toContain('narrow single calls');
-      expect(n.why).toContain('gbrain auth create <name> --member <id>) arrive with gbrain#7812');
+      expect(n.why).toContain('Per-member keys arrive with gbrain#7812 and are not in this version.');
+      expect(n.why).not.toContain('gbrain access');
       expect(n.user_message).toBe(n.fix!.user_message);
     }
     const bot = sharedTokenNotice({ kind: 'stdio', harness: 'hermes' }, { harness: 'hermes' })!;
