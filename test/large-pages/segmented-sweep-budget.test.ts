@@ -117,6 +117,9 @@ for (const kind of testBackends()) {
         peak = Math.max(peak, process.memoryUsage().heapUsed);
         return transaction(fn);
       }) as BrainEngine['transaction'];
+      // PGLite keeps its WAL segments in the JS heap (16 MiB each, allocated as a segment fills). Start on a fresh one,
+      // so a segment boundary the earlier writes left nearby cannot count as heap the sweep holds.
+      if (kind === 'pglite') { await engine.executeRaw('SELECT pg_switch_wal()'); await engine.executeRaw('CHECKPOINT'); }
       Bun.gc(true);
       const base = process.memoryUsage().heapUsed;
       let r: Awaited<ReturnType<typeof runMaintenanceSweep>>;

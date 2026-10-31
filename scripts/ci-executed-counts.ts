@@ -268,14 +268,20 @@ function describeAttempt(r: Receipt): string {
   return `${r.artifact}/${r.id} [${r.kind}${r.exit === undefined ? ', interrupted' : `, exit ${r.exit}`}]: ${state}`;
 }
 
-export function buildSide(label: string, all: Receipt[], expectedAttempts = new Map<string, number>()): Side {
+/**
+ * `latestBy` 'run' (the comparison) keeps only receipts from the run's latest attempt. 'job' keeps each artifact's
+ * newest attempt: a re-run of failed jobs overwrites only their artifacts, so the others still hold the receipts of
+ * the attempt in which their job last ran, and the side counts the whole suite (#8001).
+ */
+export function buildSide(label: string, all: Receipt[], expectedAttempts = new Map<string, number>(), latestBy: 'run' | 'job' = 'run'): Side {
   const side: Side = { label, artifacts: new Set(all.map(r => r.artifact)), identities: new Map(), issues: [], duplicates: [], overlaps: [], lanes: new Map(), shas: new Set() };
-  const latest = new Map(expectedAttempts);
+  const scope = (r: Receipt) => (latestBy === 'run' ? r.runId : `${r.runId}\u001f${r.artifact}`);
+  const latest = new Map(latestBy === 'run' ? expectedAttempts : []);
   for (const r of all) {
-    if (r.runId && r.runAttempt !== undefined && r.runAttempt > (latest.get(r.runId) ?? 0)) latest.set(r.runId, r.runAttempt);
+    if (r.runId && r.runAttempt !== undefined && r.runAttempt > (latest.get(scope(r)) ?? 0)) latest.set(scope(r), r.runAttempt);
   }
   const receipts = all.filter(r => {
-    const want = r.runId ? latest.get(r.runId) : undefined;
+    const want = r.runId ? latest.get(scope(r)) : undefined;
     if (want !== undefined && r.runAttempt !== undefined && r.runAttempt < want) {
       side.issues.push({ kind: 'prior-attempt', lane: r.lane, artifact: r.artifact, detail: `${r.artifact}/${r.id} comes from attempt ${r.runAttempt} of run ${r.runId}; the run's latest attempt is ${want}. Re-run all jobs, not only failed ones, so every lane reports from one attempt.` });
       return false;
@@ -710,7 +716,7 @@ export function parseArgs(argv: string[]): Args {
   return args;
 }
 
-function loadSide(runs: string[], dirs: string[], args: Args, into: string): Side | undefined {
+function loadSide(runs: string[], dirs: string[], args: Args, into: string): { side: Side; receipts: Receipt[] } | undefined {
   if (!runs.length && !dirs.length) return undefined;
   const receipts: Receipt[] = [];
   const expect = new Map(args.expect);
@@ -733,7 +739,7 @@ function loadSide(runs: string[], dirs: string[], args: Args, into: string): Sid
     if (seen.has(key) && seen.get(key) !== source) throw new UsageError(`artifact ${r.artifact} appears in two runs of one side; pass one test.yml run and one e2e.yml run per side`);
     seen.set(key, source);
   }
-  return buildSide(labels.join(' + '), receipts, expect);
+  return { side: buildSide(labels.join(' + '), receipts, expect), receipts };
 }
 
 export function main(argv: string[]): number {
@@ -748,8 +754,9 @@ export function main(argv: string[]): number {
   }
   try {
     const scratch = mkdtempSync(join(tmpdir(), 'gbrain-receipts-'));
-    const head = loadSide(args.headRuns, args.headDirs, args, scratch)!;
-    const base = loadSide(args.baseRuns, args.baseDirs, args, scratch);
+    const loaded = loadSide(args.headRuns, args.headDirs, args, scratch)!;
+    const head = loaded.side;
+    const base = loadSide(args.baseRuns, args.baseDirs, args, scratch)?.side;
     const deltasPath = args.deltas ?? (existsSync(DEFAULT_DELTAS) ? DEFAULT_DELTAS : undefined);
     const deltas = deltasPath ? parseDeltas(readFileSync(deltasPath, 'utf8')) : { rows: [], errors: [] };
     const result = compare(head, base, deltas, { failOnAdditions: args.failOnAdditions });
@@ -767,7 +774,18 @@ export function main(argv: string[]): number {
     const text = render(result, extra);
     process.stdout.write(text);
     if (args.summary) appendFileSync(args.summary, text);
-    if (args.json) writeFileSync(args.json, `${JSON.stringify(toJSON(result), null, 2)}\n`);
+    if (args.json) {
+      // The run this ledger was written for, and the head's executed counts with each job at its newest attempt
+      // (scripts/ci-reuse.ts --gate reads both, #8001).
+      const [run] = args.expect.size === 1 ? [...args.expect] : [];
+      const jobs = [...buildSide(head.label, loaded.receipts, new Map(), 'job').lanes.values()];
+      const attempts = [...new Set(loaded.receipts.flatMap(r => (r.runAttempt === undefined ? [] : [r.runAttempt])))].sort((a, b) => a - b);
+      writeFileSync(args.json, `${JSON.stringify({
+        ...(toJSON(result) as object),
+        run: run ? { id: Number(run[0]), attempt: run[1] } : null,
+        job_latest: { executed: jobs.reduce((n, l) => n + l.executed, 0), failed: jobs.reduce((n, l) => n + l.failed, 0), attempts },
+      }, null, 2)}\n`);
+    }
     return result.ok || args.reportOnly ? 0 : 1;
   } catch (error) {
     console.error(`ci-executed-counts: ${error instanceof Error ? error.message : String(error)}`);

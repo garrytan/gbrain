@@ -4,6 +4,10 @@
  * Serial: per-file runner PASS records, seconds (not buffered log timestamps).
  * E2E: per-file Bun summaries, milliseconds. Partial selections merge old weights;
  * explicit full-profile runs replace them after source-corpus validation.
+ * Several --run values give each file its median over those runs: one run's
+ * timings carry that run's runner speeds (whole runs differ by 0.75-1.3x and
+ * two-shard jobs within one run by 0.7-1.7x), so a lone fast run under-predicts
+ * every shard.
  * Refresh after large test additions or sustained shard imbalance.
  */
 import { spawnSync } from "node:child_process";
@@ -186,6 +190,16 @@ export function mineWeights(raw: string, lane: Lane, opts: { expectedJobs?: read
   }
   return weights;
 }
+/** Each file's median over the runs that measured it (the mean of the middle two for an even count). */
+export function medianWeights(runs: readonly Map<string, number>[]): Map<string, number> {
+  const values = new Map<string, number[]>();
+  for (const run of runs) for (const [file, value] of run) values.set(file, [...(values.get(file) ?? []), value]);
+  return new Map([...values].map(([file, list]) => {
+    const sorted = list.sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return [file, sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2];
+  }));
+}
 export function serializeWeights(weights: Map<string, number>): string {
   for (const [file, value] of weights) {
     if (!Number.isFinite(value) || value < 0) throw new Error(`invalid weight for ${file}: ${value}`);
@@ -235,13 +249,14 @@ export function sourceE2ECorpus(commit: string): string[] {
   } finally { rmSync(root, { recursive: true, force: true }); }
 }
 async function main(): Promise<void> {
-  let lane: Lane = "unit", run: string | undefined, input: string | undefined, out: string | undefined;
+  let lane: Lane = "unit", input: string | undefined, out: string | undefined;
+  const runs: string[] = [];
   let e2eProfile: E2EProfile = "selected";
   const argv = process.argv.slice(2);
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === "--help" || arg === "-h") {
-      console.log("usage: bun run weights:mine [--lane unit|serial|e2e] [--e2e-profile selected|full] [--run ID | --from-file PATH | <stdin>] [--out PATH]\nfull E2E requires --lane e2e --run and a matching source checkout");
+      console.log("usage: bun run weights:mine [--lane unit|serial|e2e] [--e2e-profile selected|full] [--run ID [--run ID ...] | --from-file PATH | <stdin>] [--out PATH]\nseveral --run values (newest first) give each file its median over those runs\nfull E2E requires --lane e2e, exactly one --run and a matching source checkout");
       return;
     }
     if (!["--lane", "--e2e-profile", "--run", "--run-id", "--from-file", "--out"].includes(arg) || !argv[i + 1] || argv[i + 1]!.startsWith("--")) throw new Error(`unknown/incomplete option: ${arg}`);
@@ -252,52 +267,60 @@ async function main(): Promise<void> {
     } else if (arg === "--e2e-profile") {
       if (value !== "selected" && value !== "full") throw new Error(`invalid E2E profile: ${value}`);
       e2eProfile = value;
-    } else if (arg === "--run" || arg === "--run-id") run = value;
+    } else if (arg === "--run" || arg === "--run-id") runs.push(value);
     else if (arg === "--from-file") input = value;
     else out = resolve(value);
   }
-  if (run && input) throw new Error("choose --run or --from-file, not both");
+  if (runs.length && input) throw new Error("choose --run or --from-file, not both");
+  if (new Set(runs).size !== runs.length) throw new Error("each --run may be given once");
   const full = e2eProfile === "full";
-  if (full && (lane !== "e2e" || !run)) throw new Error("full E2E requires --lane e2e --run for verified source provenance");
+  if (full && (lane !== "e2e" || runs.length !== 1)) throw new Error("full E2E requires --lane e2e and exactly one --run for verified source provenance");
   out ??= resolve(ROOT, `scripts/${OUTPUTS[lane]}.json`);
-  let commit: string | null = null;
-  let expectedJobs: string[] | undefined;
-  let expectedFiles: string[] | undefined;
-  let attempt: number | undefined;
-  let fullJobs: Array<{ name: string; databaseId: number }> = [];
-  let serialJobs: Array<{ name: string; databaseId: number }> = [];
-  if (run) {
+  type Mined = { run: string | null; commit: string | null; measured: Map<string, number>; attempt?: number; jobs: Array<{ name: string; databaseId: number }>; expectedFiles?: string[]; raw: string };
+  const mineRun = (run: string): Mined => {
     const info = JSON.parse(gh(["run", "view", run, "--json", full ? "attempt,conclusion,headSha,jobs" : "conclusion,headSha,jobs"]));
     if (info.conclusion !== "success") throw new Error(`run ${run} is not successful`);
     const jobs = info.jobs.filter((j: { name: string }) => isJob(j.name, lane, e2eProfile));
     if (!jobs.length || jobs.some((j: { conclusion: string }) => j.conclusion !== "success")) throw new Error(`run ${run} has no complete ${lane} lane`);
     // A packed unit job captured each of its shards as job `test (N)`.
-    expectedJobs = lane === "unit" ? jobs.flatMap((j: { name: string }) => unitJobShards(j.name)!.map(shard => `test (${shard})`))
+    const expectedJobs: string[] = lane === "unit" ? jobs.flatMap((j: { name: string }) => unitJobShards(j.name)!.map(shard => `test (${shard})`))
       : jobs.map((j: { name: string }) => j.name);
-    commit = info.headSha;
-    if (lane === "serial") {
-      if (jobs.some((j: { databaseId: number }) => !Number.isInteger(j.databaseId) || j.databaseId < 1)) throw new Error("serial: missing job identity");
-      serialJobs = jobs.map(({ name, databaseId }: { name: string; databaseId: number }) => ({ name, databaseId }));
+    let attempt: number | undefined, expectedFiles: string[] | undefined;
+    let identified: Array<{ name: string; databaseId: number }> = [];
+    if (lane === "serial" || full) {
+      if ((full && (!Number.isInteger(info.attempt) || info.attempt < 1)) || jobs.some((j: { databaseId: number }) => !Number.isInteger(j.databaseId) || j.databaseId < 1)) throw new Error(full ? "full E2E: missing attempt or job identity" : "serial: missing job identity");
+      identified = jobs.map(({ name, databaseId }: { name: string; databaseId: number }) => ({ name, databaseId }));
     }
     if (full) {
-      if (!Number.isInteger(info.attempt) || info.attempt < 1 || jobs.some((j: { databaseId: number }) => !Number.isInteger(j.databaseId) || j.databaseId < 1)) throw new Error("full E2E: missing attempt or job identity");
       attempt = info.attempt;
-      fullJobs = jobs.map(({ name, databaseId }: { name: string; databaseId: number }) => ({ name, databaseId }));
       expectedFiles = sourceE2ECorpus(info.headSha);
     }
+    const raw = full ? identified.map(job => gh(["run", "view", run, "--attempt", String(attempt), "--job", String(job.databaseId), "--log"])).join("\n")
+      : lane === "unit" ? expectedJobs.map(job => capturedUnitLog(run, job)).join("\n")
+      : lane === "serial" ? identified.map(job => gh(["run", "view", run, "--job", String(job.databaseId), "--log"])).join("\n")
+      : gh(["run", "view", run, "--log"]);
+    const measured = mineWeights(raw, lane, { expectedJobs, e2eProfile, expectedFiles, requireCapture: lane === "unit" });
+    return { run, commit: info.headSha, measured, attempt, jobs: full ? identified : [], expectedFiles, raw };
+  };
+  let mined: Mined[];
+  if (runs.length) mined = runs.map(mineRun);
+  else {
+    const raw = input ? readFileSync(input, "utf8") : await new Response(Bun.stdin.stream()).text();
+    mined = [{ run: null, commit: null, jobs: [], raw, measured: mineWeights(raw, lane, { e2eProfile }) }];
   }
-  const raw = full ? fullJobs.map(job => gh(["run", "view", run!, "--attempt", String(attempt), "--job", String(job.databaseId), "--log"])).join("\n")
-    : run && lane === "unit" ? expectedJobs!.map(job => capturedUnitLog(run!, job)).join("\n")
-    : run && lane === "serial" ? serialJobs.map(job => gh(["run", "view", run!, "--job", String(job.databaseId), "--log"])).join("\n")
-    : run ? gh(["run", "view", run, "--log"]) : input ? readFileSync(input, "utf8") : await new Response(Bun.stdin.stream()).text();
-  const measured = mineWeights(raw, lane, { expectedJobs, e2eProfile, expectedFiles, requireCapture: !!run && lane === "unit" });
+  const { run, commit, attempt, jobs: fullJobs, expectedFiles, raw } = mined[0]!;
   // Downloaded artifacts/stdin may cover only one shard. Only an authoritative
   // complete GitHub unit/serial/full-E2E run replaces the full map; selected E2E always
   // merges because its executed corpus depends on the diff.
   const mergeExisting = !full && (!run || lane === "e2e");
+  // A complete newest run (the first --run) names the current files, so one only older runs measured was deleted or
+  // renamed since. A merging run's corpus is partial, so every run's median stands.
+  const median = medianWeights(mined.map(m => m.measured));
+  const measured = mergeExisting ? median : new Map([...median].filter(([file]) => mined[0]!.measured.has(file)));
   const weights = mergeExisting && existsSync(out) ? loadWeights(out) : new Map<string, number>();
   for (const [file, duration] of measured) weights.set(file, duration);
-  const metadata = { lane, unit: lane === "serial" ? "seconds" : "milliseconds", run: run ?? null, commit, source: run ? "github" : input ? "file" : "stdin", measuredFiles: measured.size, totalFiles: weights.size, mergeExisting,
+  const metadata = { lane, unit: lane === "serial" ? "seconds" : "milliseconds", run: run ?? null, commit, source: run ? "github" : input ? "file" : "stdin",
+    ...(mined.length > 1 ? { runs, commits: mined.map(m => m.commit) } : {}), measuredFiles: measured.size, totalFiles: weights.size, mergeExisting,
     ...(full ? { e2eProfile, attempt, jobs: fullJobs, logSha256: createHash("sha256").update(raw).digest("hex"), corpusSha256: createHash("sha256").update([...expectedFiles!].sort().join("\n") + "\n").digest("hex") } : {}),
   };
   const temp = `${out}.${process.pid}.tmp`;
@@ -306,6 +329,6 @@ async function main(): Promise<void> {
     renameSync(temp, out);
     writeFileSync(out.endsWith(".json") ? out.replace(/\.json$/, ".metadata.json") : `${out}.metadata.json`, JSON.stringify(metadata, null, 2) + "\n");
   } finally { rmSync(temp, { force: true }); }
-  console.error(`[weights:mine] ${lane}: ${measured.size} measured, ${weights.size} total (${metadata.unit}); ${out}`);
+  console.error(`[weights:mine] ${lane}: ${measured.size} measured${mined.length > 1 ? ` (median of ${mined.length} runs)` : ""}, ${weights.size} total (${metadata.unit}); ${out}`);
 }
 if (import.meta.main) main().catch(error => { console.error(`weights:mine: ${error.message}`); process.exitCode = 1; });

@@ -9,11 +9,11 @@
  * push) falls back to a full run with a reason code. Fixtures only; no network.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
-import { apiDeps, attemptJobs, checkRecord, decide, decideGate, gateDeps, PROFILES, runGate, writeDecision, type Commit, type GateDeps, type JobRow, type FullRun, type ReuseDeps } from '../../scripts/ci-reuse.ts';
+import { apiDeps, attemptJobs, checkRecord, decide, decideGate, GATE_NONE_GRACE_MS, gateDeps, PROFILES, runGate, writeDecision, type Commit, type ExecutedCounts, type GateDeps, type JobRow, type FullRun, type ReuseDeps } from '../../scripts/ci-reuse.ts';
 import { GET_RETRY_DELAYS_MS, restClient, type GitHubClient } from '../../scripts/lib/gh-issue.ts';
 
 const REPO = 'owner-example/repo-example';
@@ -67,6 +67,26 @@ function fixture(f: Fixture): ReuseDeps & { jobCalls: string[] } {
 }
 
 const green = (run = prRun()) => fixture({ runs: [run], artifacts: { [run.id]: { value: treeJson(run) } } });
+
+/** A one-file zip archive, as GitHub serves an artifact. */
+function zipOf(name: string, content: string): Uint8Array {
+  const data = Buffer.from(content), body = deflateRawSync(data), file = Buffer.from(name);
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(8, 8); local.writeUInt32LE(body.length, 18); local.writeUInt32LE(data.length, 22); local.writeUInt16LE(file.length, 26);
+  const central = Buffer.alloc(46);
+  central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(8, 10); central.writeUInt32LE(body.length, 20); central.writeUInt32LE(data.length, 24); central.writeUInt16LE(file.length, 28);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10); end.writeUInt32LE(46 + file.length, 12); end.writeUInt32LE(30 + file.length + body.length, 16);
+  return new Uint8Array(Buffer.concat([local, file, body, central, file, end]));
+}
+/** A client whose runs hold `doc` as their executed-identities artifact (or none). */
+const identitiesClient = (doc: unknown, listed = true): GitHubClient => ({
+  async request<T>(_m: string, path: string): Promise<T> {
+    if (/^repos\/\{repo\}\/actions\/runs\/\d+\/artifacts\?name=executed-identities&per_page=10$/.test(path)) return { artifacts: listed ? [{ id: 9, name: 'executed-identities', expired: false }] : [] } as T;
+    throw new Error(`unexpected ${path}`);
+  },
+  async download() { return zipOf('executed-identities.json', JSON.stringify(doc)); },
+});
 
 describe('ci-reuse decision', () => {
   test('reuses the complete full-suite dispatch run on the merged PR head when its tested tree equals the push tree', async () => {
@@ -317,7 +337,7 @@ describe('ci-reuse remote-gate decision', () => {
   const run = (file: File, over: Partial<FullRun> = {}): FullRun & { file: File } => ({ ...prRun({ id: file === 'test.yml' ? 600 : 700, head_sha: A, ...over }), file });
   const tree = (r: FullRun & { file: File }, over: Record<string, unknown> = {}) => ({ ...treeJson(r, { workflow: files[r.file].workflow }), ...over });
 
-  function gate(o: { commits?: Record<string, Commit>; runs: Array<FullRun & { file: File }>; artifacts?: Record<number, unknown>; jobs?: Record<string, JobRow[]>; executed?: Record<number, { tests: number; failed: number } | { reason: string }> }): GateDeps {
+  function gate(o: { commits?: Record<string, Commit>; runs: Array<FullRun & { file: File }>; artifacts?: Record<number, unknown>; jobs?: Record<string, JobRow[]>; executed?: Record<number, ExecutedCounts | { reason: string }> }): GateDeps {
     const commits = o.commits ?? { [A]: { tree: T, parents: [BASE] } };
     const art = o.artifacts ?? Object.fromEntries(o.runs.map(r => [r.id, tree(r)]));
     return {
@@ -334,7 +354,7 @@ describe('ci-reuse remote-gate decision', () => {
         expect(name).toBe(files[r.file].artifact);
         return art[runId] === undefined ? { reason: `run ${runId} has no '${name}' artifact` } : { value: art[runId] };
       },
-      async executed(runId) { return o.executed?.[runId] ?? { tests: runId, failed: 0 }; },
+      async executed(r) { return o.executed?.[r.id] ?? { tests: r.id, failed: 0 }; },
     };
   }
   const go = async (deps: GateDeps, head = A, t0 = T, waitMs = 0) => {
@@ -405,27 +425,79 @@ describe('ci-reuse remote-gate decision', () => {
   });
 
   test('the executed-identities artifact counts pass and fail identities, and an unreadable one says why', async () => {
-    const zipOf = (name: string, content: string): Uint8Array => {
-      const data = Buffer.from(content), body = deflateRawSync(data), file = Buffer.from(name);
-      const local = Buffer.alloc(30);
-      local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(8, 8); local.writeUInt32LE(body.length, 18); local.writeUInt32LE(data.length, 22); local.writeUInt16LE(file.length, 26);
-      const central = Buffer.alloc(46);
-      central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(8, 10); central.writeUInt32LE(body.length, 20); central.writeUInt32LE(data.length, 24); central.writeUInt16LE(file.length, 28);
-      const end = Buffer.alloc(22);
-      end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10); end.writeUInt32LE(46 + file.length, 12); end.writeUInt32LE(30 + file.length + body.length, 16);
-      return new Uint8Array(Buffer.concat([local, file, body, central, file, end]));
-    };
-    const client = (doc: unknown, listed = true): GitHubClient => ({
-      async request<T>(_m: string, path: string): Promise<T> {
-        if (path === 'repos/{repo}/actions/runs/600/artifacts?name=executed-identities&per_page=10') return { artifacts: listed ? [{ id: 9, name: 'executed-identities', expired: false }] : [] } as T;
-        throw new Error(`unexpected ${path}`);
-      },
-      async download() { return zipOf('executed-identities.json', JSON.stringify(doc)); },
-    });
+    const client = identitiesClient;
     const ids = [{ status: 'pass' }, { status: 'pass' }, { status: 'fail' }, { status: 'skip' }, {}];
-    expect(await gateDeps(client({ head: { identities: ids } })).executed(600)).toEqual({ tests: 3, failed: 1 });
-    expect(await gateDeps(client({ head: {} })).executed(600)).toEqual({ reason: "run 600's executed-identities.json has no head.identities list" });
-    expect(await gateDeps(client(null, false)).executed(600)).toEqual({ reason: "run 600 has no 'executed-identities' artifact" });
+    const r600 = run('test.yml');
+    expect(await gateDeps(client({ head: { identities: ids } })).executed(r600)).toEqual({ tests: 3, failed: 1 });
+    expect(await gateDeps(client({ head: {} })).executed(r600)).toEqual({ reason: "run 600's executed-identities.json has no head.identities list" });
+    expect(await gateDeps(client(null, false)).executed(r600)).toEqual({ reason: "run 600 has no 'executed-identities' artifact" });
+  });
+
+  /** A run's receipts as scripts/lib/test-env.sh writes them: one artifact directory per job, one test file each. */
+  function writeReceipts(dir: string, artifact: string, lane: string, attempt: number, tests: string[]) {
+    const at = join(dir, artifact); mkdirSync(at, { recursive: true });
+    const file = `test/${lane}.test.ts`;
+    writeFileSync(join(at, `${lane}.receipt`), ['version=1', `lane=${lane}`, 'kind=primary', `tag=${lane}`, 'shard=', 'of=', 'arm=', `sha=${A}`, 'root=/repo', 'run_id=600', `run_attempt=${attempt}`, 'job=test', 'started=100', 'exit=0', ''].join('\n'));
+    writeFileSync(join(at, `${lane}.files`), `${file}\n`);
+    writeFileSync(join(at, `${lane}.junit.xml`), `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="bun test" tests="${tests.length}">\n<testsuite name="${file}" file="${file}">\n${tests.map(t => `<testcase name="${t}" classname="" file="${file}"></testcase>`).join('\n')}\n</testsuite>\n</testsuites>\n`);
+  }
+
+  test('a re-run of failed jobs counts every job at its newest attempt: the ledger the run wrote, read by the gate (#8001)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-reuse-attempts-'));
+    try {
+      // Attempt 1 ran both jobs and the pg job failed; attempt 2 re-ran only the pg job, overwriting its artifact.
+      writeReceipts(join(dir, 'receipts'), 'receipts-unit-1', 'unit', 1, ['u1', 'u2', 'u3']);
+      writeReceipts(join(dir, 'receipts'), 'receipts-pg-1', 'pg', 2, ['p1', 'p2']);
+      const out = join(dir, 'executed-identities.json');
+      const cli = Bun.spawnSync(['bun', resolve(import.meta.dir, '..', '..', 'scripts', 'ci-executed-counts.ts'), '--head-dir', join(dir, 'receipts'), '--report-only', '--expect-attempt', '600:2', '--json', out, '--deltas', '/dev/null']);
+      expect(cli.exitCode, cli.stderr.toString()).toBe(0);
+      const doc = JSON.parse(readFileSync(out, 'utf8'));
+      const rerun = run('test.yml', { run_attempt: 2 });
+      expect(await gateDeps(identitiesClient(doc)).executed(rerun)).toEqual({ tests: 5, failed: 0 });
+      // The ledger names its run and attempt: one written for another run, or for a later attempt, is refused.
+      expect(await gateDeps(identitiesClient(doc)).executed(run('test.yml', { id: 601, run_attempt: 2 }))).toMatchObject({ reason: expect.stringContaining('written by run 600 attempt 2') });
+      expect(await gateDeps(identitiesClient(doc)).executed(run('test.yml'))).toMatchObject({ reason: expect.stringContaining('written by run 600 attempt 2') });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test('a ledger without per-job counts that dropped earlier attempts is a partial count, labelled on the gate line (#8001)', async () => {
+    const old = { head: { identities: [{ status: 'pass' }, { status: 'pass' }] }, issues: [{ kind: 'prior-attempt', detail: 'from attempt 1' }] };
+    expect(await gateDeps(identitiesClient(old)).executed(run('test.yml', { run_attempt: 2 }))).toEqual({ tests: 2, failed: 0, partial: 2 });
+    const t2 = run('test.yml', { run_attempt: 2 });
+    const r = await go(gate({ runs: [t2, run('e2e.yml')], executed: { 600: { tests: 491, failed: 0, partial: 2 } } }));
+    expect(r.code).toBe(0);
+    expect(r.lines.find(l => l.includes('runs/600/'))).toEndWith('(491 tests, 0 failed; attempt 2, partial count)');
+    expect(r.lines.find(l => l.includes('runs/700/'))).toEndWith('(700 tests, 0 failed)');
+    expect(r.last).toBe('GBRAIN_REUSE_RESULT tests=1191 failed=0');
+  });
+
+  test('a workflow with no full run on the tree holds the gate only for a short grace, not the whole wait (#7927)', async () => {
+    const r = await go(gate({ runs: [run('test.yml', { status: 'in_progress', conclusion: null })] }), A, T, 90 * 60_000);
+    expect(r.code).toBe(4);
+    const waits = r.lines.filter(l => l.includes('waiting for')).length;
+    expect(waits).toBe(GATE_NONE_GRACE_MS / 60_000);
+    // The second dispatch of full-ci shows up a poll late: the grace covers it and the gate reuses.
+    const live = run('test.yml', { status: 'in_progress', conclusion: null });
+    let polls = 0;
+    const deps = gate({ runs: [live, run('e2e.yml')] });
+    const lagging = { ...deps, async runsForHead(file: string, sha: string) {
+      if (file === 'test.yml' && ++polls >= 4) Object.assign(live, { status: 'completed', conclusion: 'success' });
+      return file === 'e2e.yml' && polls < 3 ? [] : deps.runsForHead(file, sha);
+    } };
+    const ok = await go(lagging, A, T, 90 * 60_000);
+    expect(ok.code).toBe(0);
+    expect(ok.lines.filter(l => l.includes('waiting for')).length).toBe(3);
+  });
+
+  test('a same-tree other head whose newest run skipped the full job, or was cancelled, looks further back (#7927)', async () => {
+    const C2 = '8'.repeat(40);
+    const commits = { [A]: { tree: T, parents: [BASE] }, [C2]: { tree: T, parents: [A] } };
+    for (const over of [{ conclusion: 'cancelled' }, {}]) {
+      const deps = gate({ commits, runs: [run('test.yml', { id: 660, head_sha: C2, ...over }), run('test.yml'), run('e2e.yml')],
+        jobs: over.conclusion ? {} : { '660/1': [{ name: PROFILES.test.job, status: 'completed', conclusion: 'skipped' }] } });
+      expect(await decideGate(deps, PROFILES.test, A, T, REPO)).toMatchObject({ state: 'reuse', tests: 600 });
+      expect(await decideGate(deps, PROFILES.test, C2, T, REPO)).toMatchObject({ state: 'reuse', tests: 600 });
+    }
   });
 
   test('--gate with a malformed sha, tree or repository is a usage error (exit 2) and reads nothing', () => {

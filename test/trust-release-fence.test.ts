@@ -11,7 +11,8 @@
  * flight refuses `preview_changed` with nothing written.
  *
  * Managed brain with a durable Git repo; synthetic data only. Postgres runs
- * through test/e2e/trust-release-fence-postgres.test.ts.
+ * through test/e2e/trust-release-fence-postgres.test.ts, each brain a clone of
+ * one migrated template database per file.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -32,6 +33,7 @@ import { durableGitRepo, git } from './helpers/git-publication.ts';
 import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
+import { persistencePostgresTemplate } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { managedPersistenceEnabled } from '../src/core/persistence/ownership.ts';
 import { enableTrustProtections } from './helpers/trust-protections.ts';
@@ -86,6 +88,12 @@ for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
 
   describe(`owner release of a held fact writes its entity page's facts fence through the door (${backend})`, () => {
+    // One migrated Postgres template per file; each brain is its own clone, so no test sees another's rows or receipts.
+    let template: Awaited<ReturnType<typeof persistencePostgresTemplate>> | undefined;
+    beforeAll(async () => { if (databaseUrl) template = await persistencePostgresTemplate(databaseUrl); }, 120_000);
+    afterAll(async () => { await template?.dispose(); });
+    const brainOpts = () => ({ setup, ...(template ? { open: template.clone } : {}) });
+
     test('the released fact is a fence row in the stored body and the canonical file, user_confirmed and indexed from that row; a re-import keeps it', () => managedBrain(async ({ engine, ctx, root }) => {
       await seedPage(engine, ctx);
       await enableBeliefLedger(engine, 'default');
@@ -112,7 +120,7 @@ for (const backend of testBackends()) {
 
       await reimport(engine, root, 'Edited by hand.');
       expect(await factRows(engine)).toEqual([released!]);
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     test('a fence-guard hold is indexed from the fence row its file already holds: no twin row, no file change', () => managedBrain(async ({ engine, ctx, root }) => {
       await seedPage(engine, ctx);
@@ -142,7 +150,7 @@ for (const backend of testBackends()) {
       await reimport(engine, root, 'Edited by hand.');
       expect(await factRows(engine)).toEqual(rows);
       expect(await holdStatus(engine, `h${hold!.id}`)).toBe('released');
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     test('a fence-guard hold whose row was edited after it was held refuses fence_row_changed: the edit is never indexed under the older approval', () => managedBrain(async ({ engine, ctx, root }) => {
       await seedPage(engine, ctx);
@@ -177,7 +185,7 @@ for (const backend of testBackends()) {
       expect(new Set(requests.map(r => r.id)).size).toBe(2);
       expect(await holdStatus(engine, `h${first!.id}`)).toBe('held');
       expect(await factRows(engine)).toEqual([]);
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     test('a fence-guard hold whose source cell was edited after it was held refuses: the edit re-gates the hold, so the older approval is stale', () => managedBrain(async ({ engine, ctx, root }) => {
       await seedPage(engine, ctx);
@@ -202,7 +210,7 @@ for (const backend of testBackends()) {
       expect(error?.code).toBe('preview_changed');
       expect(await holdStatus(engine, `h${hold!.id}`)).toBe('held');
       expect(await factRows(engine)).toEqual([]);
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     test('an unedited fence-guard row with context, or with no source cell, releases without fence_row_changed', async () => {
       for (const shape of [{ context: 'Approved context with  two spaces | and a pipe.', source: 'email' }, { context: 'Some context.' }] as Array<{ context: string; source?: string }>) {
@@ -227,7 +235,7 @@ for (const backend of testBackends()) {
           expect(Number(rows[0]!.row_num)).toBe(1);
           await settleManagedGitEffects(engine);
           expect(readFileSync(file(root), 'utf8')).toBe(before);
-        }, { setup, databaseUrl });
+        }, brainOpts());
       }
     }, 300_000);
 
@@ -240,7 +248,7 @@ for (const backend of testBackends()) {
       expect(await factRows(engine)).toHaveLength(1);
       await settleManagedGitEffects(engine);
       expect(fenceCells(readFileSync(file(root), 'utf8'))).toHaveLength(1);
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     test('a hold decided while the release is in flight refuses preview_changed and writes nothing', () => managedBrain(async ({ engine, ctx, root }) => {
       await seedPage(engine, ctx);
@@ -259,7 +267,7 @@ for (const backend of testBackends()) {
       expect(receipt).toMatchObject({ state: 'failed', error_code: 'preview_changed' });
       await settleManagedGitEffects(engine);
       expect(readFileSync(file(root), 'utf8')).toBe(before);
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     // Generated by gstack /ship Step 7 coverage audit (#7511 run 2).
     // Value: protects=a hold re-gated or dropped after the release was prepared, before it publishes, refuses preview_changed: hold kept, no fact, file unchanged;
@@ -299,7 +307,7 @@ for (const backend of testBackends()) {
           expect(receipt).toMatchObject({ state: 'failed', error_code: 'preview_changed' });
           await settleManagedGitEffects(engine);
           expect(readFileSync(file(root), 'utf8')).toBe(before);
-        }, { setup, databaseUrl });
+        }, brainOpts());
       }
     }, 300_000);
 
@@ -328,7 +336,7 @@ for (const backend of testBackends()) {
           expect(await factRows(engine)).toEqual([]);
           expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE operation='trust_release'")).toEqual([]);
           if (before !== null) { await settleManagedGitEffects(engine); expect(readFileSync(file(root), 'utf8')).toBe(before); }
-        }, { setup, databaseUrl });
+        }, brainOpts());
       }
     }, 300_000);
 
@@ -343,7 +351,7 @@ for (const backend of testBackends()) {
       expect(await holdStatus(engine, ref)).toBe('released');
       expect(await factRows(engine)).toEqual([expect.objectContaining({ trust_tier: 'user_confirmed', entity_slug: slug, row_num: null, source_markdown_slug: null, expired_at: null })]);
       expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE operation='trust_release'")).toEqual([]);
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     // Generated by gstack /ship Step 7 coverage audit (#7511).
     // Value: protects=a page deleted after the release request was admitted ends the request in conflict (page_not_found, legacy page_identity_changed); the hold stays held, no fact row;
@@ -364,7 +372,7 @@ for (const backend of testBackends()) {
       expect(await holdStatus(engine, ref)).toBe('released');
       expect(await factRows(engine)).toEqual([expect.objectContaining({ trust_tier: 'user_confirmed', entity_slug: null, row_num: null, source_markdown_slug: null })]);
       expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE operation='trust_release'")).toEqual([]);
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     test('an entity page deleted while the release is in flight ends the request in conflict (page_not_found): the fact stays held', () => managedBrain(async ({ engine, ctx }) => {
       await seedPage(engine, ctx);
@@ -385,7 +393,7 @@ for (const backend of testBackends()) {
       expect(await factRows(engine)).toEqual([]);
       const [receipt] = await engine.executeRaw<{ state: string; error_code: string }>("SELECT state, error_code FROM persistence_requests WHERE operation='trust_release'");
       expect(receipt).toMatchObject({ state: 'conflict', error_code: 'page_identity_changed' });
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     test('a held claim forgotten before its release is refused: the fact stays held and the fence never gets it back', () => managedBrain(async ({ engine, ctx, root }) => {
       await seedPage(engine, ctx);
@@ -398,13 +406,13 @@ for (const backend of testBackends()) {
       expect(await factRows(engine)).toEqual([]);
       await settleManagedGitEffects(engine);
       expect(readFileSync(file(root), 'utf8')).toBe(before);
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     test('the release preview names the page whose facts the release writes', () => managedBrain(async ({ engine, ctx }) => {
       await seedPage(engine, ctx);
       const ref = await holdRemember(engine, ctx);
       expect((await previewOwnerAction(engine, { action: 'release', ref })).summary).toContain(`default/${slug}`);
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     test('an append release keeps the held payload: kind, world visibility, source, context, valid_from and valid_until reach the fence row and the facts row', () => managedBrain(async ({ engine, ctx, root }) => {
       await seedPage(engine, ctx);
@@ -417,7 +425,7 @@ for (const backend of testBackends()) {
       await settleManagedGitEffects(engine);
       expect(fenceCells(readFileSync(file(root), 'utf8'))).toEqual([expect.objectContaining({ rowNum: Number(row!.row_num), kind: 'preference', visibility: 'world',
         source: 'email', context: 'Held context.', validFrom: '2025-06-01', validUntil: '2027-01-01' })]);
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     test('a release that ended without committing and whose hold was then dropped admits no new attempt: publish returns false, nothing written', () => managedBrain(async ({ engine, ctx }) => {
       await seedPage(engine, ctx);
@@ -437,7 +445,7 @@ for (const backend of testBackends()) {
       expect(await holdStatus(engine, ref)).toBe('dropped');
       expect(await factRows(engine)).toEqual([]);
       expect((await engine.executeRaw<{ state: string }>("SELECT state FROM persistence_requests WHERE operation='trust_release'")).map(r => r.state)).toEqual(['conflict']);
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     test('a release whose request ended without committing can be released again once the cause is fixed: the retry admits a new attempt', () => managedBrain(async ({ engine, ctx, root }) => {
       await seedPage(engine, ctx);
@@ -464,7 +472,7 @@ for (const backend of testBackends()) {
       expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE operation='trust_release'")).toHaveLength(2);
       await settleManagedGitEffects(engine);
       expect(fenceCells(readFileSync(file(root), 'utf8'))).toHaveLength(1);
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     test('a release that ended without committing twice admits a distinct attempt each time and replays the committed one', () => managedBrain(async ({ engine, ctx, root }) => {
       await seedPage(engine, ctx);
@@ -492,7 +500,7 @@ for (const backend of testBackends()) {
       expect(await factRows(engine)).toHaveLength(1);
       await settleManagedGitEffects(engine);
       expect(fenceCells(readFileSync(file(root), 'utf8'))).toHaveLength(1);
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     // Generated by gstack /ship Step 7 coverage audit (#7511).
     // Value: protects=on an unmanaged brain a held fact whose entity page exists still releases database-only: no trust_release request, no fence row;
@@ -502,7 +510,7 @@ for (const backend of testBackends()) {
       const home = mkdtempSync(join(tmpdir(), 'gbrain-release-unmanaged-'));
       try {
         await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
-          const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);
+          const { engine, close } = await (template ? template.clone() : isolatedSharedSkillsEngine());
           try {
             expect(await managedPersistenceEnabled(engine)).toBe(false);
             const ctx = { engine, config: { engine: engine.kind, embedding_disabled: true }, sourceId: 'default', remote: false, dryRun: false,
@@ -541,7 +549,7 @@ for (const backend of testBackends()) {
       expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE operation='trust_release'")).toEqual([]);
       await settleManagedGitEffects(engine);
       expect(readFileSync(file(root), 'utf8')).toBe(before);
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     test('a hold re-gated after the owner approved it is not published under the older approval: preview_changed, nothing admitted', () => managedBrain(async ({ engine, ctx }) => {
       await seedPage(engine, ctx);
@@ -553,7 +561,7 @@ for (const backend of testBackends()) {
       expect(await holdStatus(engine, ref)).toBe('held');
       expect(await factRows(engine)).toEqual([]);
       expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE operation='trust_release'")).toEqual([]);
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     // Generated by gstack /ship Step 7 coverage audit (#7511).
     // Value: protects=a release into a page of an archived source refuses source_changed before admission: the fact stays held, no request, the file is unchanged;
@@ -573,7 +581,7 @@ for (const backend of testBackends()) {
       expect(await factRows(engine)).toEqual([]);
       expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE operation='trust_release'")).toEqual([]);
       expect(readFileSync(file(root), 'utf8')).toBe(before);
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     // Generated by gstack /ship Step 7 coverage audit (#7511).
     // Value: protects=a page recreated under the slug (new page id) after the release was admitted ends the request in conflict page_identity_changed, hold held and no fact;
@@ -601,7 +609,7 @@ for (const backend of testBackends()) {
       expect(await factRows(engine)).toEqual([]);
       const [receipt] = await engine.executeRaw<{ state: string; error_code: string }>("SELECT state, error_code FROM persistence_requests WHERE operation='trust_release'");
       expect(receipt).toMatchObject({ state: 'conflict', error_code: 'page_identity_changed' });
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     // Generated by gstack /ship Step 7 coverage audit (#7511).
     // Value: protects=a release into an agent_written page keeps the page's tier (stored tier and frontmatter marker) while its fact row is user_confirmed;
@@ -617,7 +625,7 @@ for (const backend of testBackends()) {
       expect(await release(engine, ref)).toMatchObject({ status: 'released', tier: 'user_confirmed' });
       expect(await factRows(engine)).toEqual([expect.objectContaining({ trust_tier: 'user_confirmed', channel: 'trust_release', source_markdown_slug: slug })]);
       expect(await pageTier()).toEqual(before);
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     // Generated by gstack /ship Step 7 coverage audit (#7511 run 2).
     // Value: protects=with sync.write_through off, a managed release writes the fence row to the stored page and its facts row, and leaves the canonical file alone;
@@ -639,7 +647,7 @@ for (const backend of testBackends()) {
         .toEqual([{ state: 'committed', write_through: { written: false, skipped: 'disabled_by_config' } }]);
       await settleManagedGitEffects(engine);
       expect(readFileSync(file(root), 'utf8')).toBe(before);
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
 
     // Generated by gstack /ship Step 7 coverage audit (#7511).
     // Value: protects=a held take on a managed brain skips the door (publish returns null) and its release refuses unavailable: hold held, no take, no request;
@@ -659,7 +667,7 @@ for (const backend of testBackends()) {
       expect(await holdStatus(engine, ref)).toBe('held');
       expect(await engine.executeRaw('SELECT id FROM takes WHERE claim=$1', [CLAIM])).toEqual([]);
       expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE operation='trust_release'")).toEqual([]);
-    }, { setup, databaseUrl }), 180_000);
+    }, brainOpts()), 180_000);
   });
 }
 

@@ -58,6 +58,9 @@ function gitCheckout(root: string, files: number, prefix: string): void {
   git(['commit', '--quiet', '-m', 'f4d fixture']);
 }
 
+/** The watchdog's extension notice: `still progressing` after a commit, or `before the run committed anything` inside the first progress window. */
+export const deadlineExtended = (stderr: string) => stderr.includes('still progressing') || stderr.includes('before the run committed anything');
+
 const tail = (run: Run) => `exit ${run.code}; stdout: ${run.stdout.slice(-600)} stderr: ${run.stderr.slice(-600)}`;
 const lastJson = (text: string) => {
   const line = text.trim().split('\n').reverse().find(l => l.startsWith('{'));
@@ -74,7 +77,7 @@ async function syncDeadline(ctx: F4dContext): Promise<{ check: DataCheck; measur
     { GBRAIN_SYNC_MAX_RUNTIME_SECONDS: '1', GBRAIN_SYNC_STALL_ABORT_SECONDS: '300' });
   const body = lastJson(sync.stdout);
   const imported = Number(body?.added ?? 0);
-  const extended = sync.stderr.includes('still progressing');
+  const extended = deadlineExtended(sync.stderr);
   const problem = sync.code !== 0 ? `sync exited before finishing: ${tail(sync)}`
     : imported !== files ? `sync imported ${imported} of ${files} files`
       : !extended && sync.ms > 2000 ? 'sync outlasted its 1 s deadline without the progress-aware extension notice' : null;

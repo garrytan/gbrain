@@ -3,13 +3,14 @@
 # on ephemeral Ubicloud VMs, one VM per latency, in parallel (GBRA-174).
 #
 #   UBI_OWNER=<thread> scripts/bench/production-soak/ubicloud.sh start [--pages 600000] [--hours 3]
-#     [--rtts 65,2] [--size standard-16] [--storage 640] [--ttl-hours 15] [--out .context/production-soak]
+#     [--rtts 65,2] [--size standard-16] [--storage 640] [--ttl-hours HOURS+12] [--out .context/production-soak]
 #   scripts/bench/production-soak/ubicloud.sh status  [--out DIR]   # last lines of each cell's run log
 #   scripts/bench/production-soak/ubicloud.sh collect [--out DIR]   # copy each finished cell back, destroy its VM
 #
-# start creates one VM per latency, named with a TTL (--ttl-hours: a -t15 name
-# by default, above the 3-hour soak plus setup and collect) so the operator
-# reaper or gstack's reap destroys it if nobody collects it, syncs this checkout
+# start creates one VM per latency, named with a TTL (--ttl-hours: the soak's
+# --hours, rounded up, plus 12 by default, so a -t15 name for the 3-hour soak;
+# start refuses a TTL under --hours + 4, which the reapers would end mid-soak)
+# so the operator reaper or gstack's reap destroys it if nobody collects it, syncs this checkout
 # (uncommitted edits included), bootstraps it (vm-setup.sh) and launches
 # run.sh detached on the VM, so the soak does not depend on this machine
 # staying awake. collect copies <out>/rtt<N>/out back for every cell whose run
@@ -19,7 +20,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../../.."
 UBI=scripts/ubicloud/ubi-runner.sh
 CMD=${1:-}; shift || true
-PAGES=600000 HOURS=3 RTTS=65,2 SIZE=standard-16 STORAGE=640 TTL=15 OUT=.context/production-soak EXTRA=()
+PAGES=600000 HOURS=3 RTTS=65,2 SIZE=standard-16 STORAGE=640 TTL="" OUT=.context/production-soak EXTRA=()
 while [ $# -gt 0 ]; do
   case $1 in
     --pages) PAGES=$2; shift 2 ;;
@@ -35,6 +36,11 @@ done
 case $CMD in
   start)
     [ -n "${UBI_OWNER:-}" ] || { echo "set UBI_OWNER to your thread code" >&2; exit 2; }
+    whole=$(awk -v h="$HOURS" 'BEGIN { if (h !~ /^[0-9]+(\.[0-9]+)?$/) exit 1; c = int(h); if (c < h) c++; print c }') \
+      || { echo "--hours must be a number of hours (got $HOURS)" >&2; exit 2; }
+    TTL=${TTL:-$(( whole + 12 ))}
+    [[ "$TTL" =~ ^[1-9][0-9]{0,2}$ ]] || { echo "--ttl-hours must be a whole number from 1 to 999 (got $TTL)" >&2; exit 2; }
+    [ "$TTL" -ge $(( whole + 4 )) ] || { echo "--ttl-hours $TTL is under --hours $HOURS + 4: the reapers would destroy the VMs mid-soak; give at least $(( whole + 4 ))" >&2; exit 2; }
     mkdir -p "$OUT"
     for rtt in ${RTTS//,/ }; do
       cell="$OUT/rtt$rtt"; mkdir -p "$cell"

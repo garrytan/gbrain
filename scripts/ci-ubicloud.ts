@@ -32,7 +32,8 @@
  *                      expiry, so a VM a sleeping machine never tore down
  *                      dies within hours (scripts/ubicloud/reap-expired.ts)
  *
- * Needs UBICLOUD_API_KEY (or UBICLOUD_API_TOKEN) plus bash, curl, python3,
+ * Needs UBI_OWNER (your thread code; every VM name carries it, and the run
+ * refuses without it) and UBICLOUD_API_KEY (or UBICLOUD_API_TOKEN) plus bash, curl, python3,
  * ssh, ssh-keygen and tar locally. The checkout (tracked + untracked-unignored
  * files + .git) is packed once and streamed to every VM, so uncommitted edits
  * are tested.
@@ -53,12 +54,21 @@
  * merged into .context/ci-ubicloud/weights.json, which weights the next run.
  *
  * VMs are named ubirun-<owner>-<epoch>-ciNN<hex>-t<ttl hours> (owner:
- * UBI_OWNER or the runner's per-machine id), gstack's runner grammar, so
+ * UBI_OWNER), gstack's runner grammar, so
  * gstack's reap reads the same TTL. Each name is appended to <run>/vms.txt before its
  * create request is sent. On exit, including SIGINT, SIGTERM, SIGHUP (a
  * dropped terminal, a cancelled background operation) and SIGQUIT, in-flight
  * `up` calls are allowed to finish (they destroy their own VM), then every
- * recorded name is destroyed and polled until it is confirmed gone.
+ * recorded name is destroyed and polled until it is confirmed gone. Then the
+ * project's VM list is read once more and the run prints gstack's leftover line,
+ *   UBICLOUD: left=<n|unknown> owner=<owner> vms=<requested> others=<n>
+ * (left: this run's VMs still listed; others: this owner's other VMs, for
+ * information), also appended to UBI_LEFT_FILE when set
+ * (scripts/pregate-remote-gate.sh reads it). A left other than 0 fails a run
+ * that would otherwise pass; --keep reports its VMs as left=<n> kept=1. A run
+ * that exits before it requests any VM (a missing key or owner, a broken
+ * inventory) prints left=0 vms=0, so pregate reads its failure as the gate's,
+ * and a missing line still means a crash after VMs were requested.
  */
 
 import { spawnSync, type ChildProcess } from "node:child_process";
@@ -95,6 +105,7 @@ const COMMITTED_WEIGHTS = join(ROOT, "scripts/ubicloud/weights.json");
 const LOCAL_WEIGHTS = join(ROOT, ".context/ci-ubicloud/weights.json");
 const ALL_LANES = ["gitleaks", "verify", "serial", "slow", "unit", "pg-arms", "e2e"] as const;
 const BATCH_TIMEOUT_MS = 20 * 60 * 1000;
+const VM_LIST_TIMEOUT_MS = 120_000;
 // Test timeouts and the mined shard weights are calibrated on this location's VMs.
 const GATE_LOCATION = "eu-central-h1";
 // Items this heavy are the run's long poles: spread them one per VM so two of
@@ -200,6 +211,8 @@ function sh(cmd: string, args: string[]): string {
 const lines = (text: string) => text.split(/\s+/).map((l) => l.trim()).filter(Boolean);
 
 const children = new Map<ChildProcess, string>();
+let vmRequested = false;
+let leftReported = false;
 
 /** Run the runner script; output goes to `out` (a path) or is returned (scripts/ubicloud/run-script.ts). */
 function runner(args: string[], opts: Omit<RunScriptOpts, "cwd" | "onSpawn" | "onClose"> = {}): Promise<{ code: number; stdout: string }> {
@@ -226,6 +239,11 @@ async function main() {
     console.error("ci-ubicloud: UBICLOUD_API_KEY (or UBICLOUD_API_TOKEN) is not set");
     process.exit(2);
   }
+  if (!process.env.UBI_OWNER) {
+    console.error("ci-ubicloud: UBI_OWNER is not set; set it to your thread code in lowercase (e.g. UBI_OWNER=gbra106) so every VM carries its owner (UBI_OWNER_REQUIRED)");
+    process.exit(2);
+  }
+  const owner = sh("bash", [RUNNER, "owner"]).trim();
   const sha = sh("git", ["rev-parse", "HEAD"]).trim();
   const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${sha.slice(0, 8)}`;
   const runDir = join(ROOT, ".context/ci-ubicloud", runId);
@@ -238,7 +256,9 @@ async function main() {
     const classification = spawnSync("bun", ["run", "scripts/select-e2e.ts", "--classify-only"], { cwd: ROOT, encoding: "utf8" }).stdout?.trim();
     if (classification === "DOC_ONLY") {
       log("--diff: doc-only diff — running the doc checks locally, then gitleaks (ci:local doc-only fast-path)");
-      if (spawnSync("bash", ["scripts/ci-doc-checks.sh"], { cwd: ROOT, stdio: "inherit" }).status !== 0) process.exit(1);
+      if (spawnSync("bash", ["scripts/ci-doc-checks.sh"], { cwd: ROOT, stdio: "inherit" }).status !== 0) {
+        process.exit(1);
+      }
       opts.lanes = new Set(["gitleaks"]);
       opts.vms = 1;
     } else {
@@ -314,7 +334,6 @@ async function main() {
     ?? "1.4.4";
 
   // ── Teardown on every exit path ──────────────────────────────────────────
-  const owner = sh("bash", [RUNNER, "owner"]).trim();
   const ledger = join(runDir, "vms.txt");
   const createdAt = Math.floor(Date.now() / 1000);
   const vms: Vm[] = Array.from({ length: opts.vms }, (_, i) => ({
@@ -338,8 +357,10 @@ async function main() {
     await Promise.all(ups.map((child) => new Promise((done) => (child.exitCode !== null || child.signalCode !== null ? done(null) : child.once("exit", done)))));
     rmSync(tarball, { force: true });
     const live = vms.filter((vm) => vm.requested && vm.state !== "destroyed");
+    const requested = vms.filter((vm) => vm.requested).map((vm) => vm.name);
     if (opts.keep) {
       log(`--keep: leaving ${live.map((vm) => vm.name).join(" ")} running; destroy with: scripts/ubicloud/ubi-runner.sh down NAME (the operator reaper destroys them ${opts.ttlHours}h after creation; pass --ttl-hours up to 999 for longer)`);
+      await leftover(owner, requested, true);
       return;
     }
     log(`destroying ${live.length} VM(s): ${live.map((vm) => vm.name).join(" ")}`);
@@ -354,7 +375,9 @@ async function main() {
     }));
     const left = live.filter((vm) => vm.state !== "destroyed").length;
     log(left ? `teardown left ${left} VM(s) unconfirmed (names in ${ledger})` : `teardown confirmed ${live.length} VM(s) gone`);
+    leftClean = await leftover(owner, requested, false);
   };
+  let leftClean = true;
   let interrupted = false;
   // After SIGHUP the terminal may be gone: a failed log write must not abort teardown.
   for (const stream of [process.stdout, process.stderr]) stream.on("error", () => {});
@@ -477,13 +500,14 @@ async function main() {
     const setupLog = join(runDir, "logs", `setup-${vm.name}.log`);
     if (tornDown) return;
     vm.requested = true;
+    vmRequested = true;
     appendFileSync(ledger, `${vm.name} ${opts.location}\n`);
     const up = await runner(["up", "-n", vm.name, "-s", opts.size, "-l", opts.location, ...(opts.image === "stock" ? [] : ["-b", opts.image])], { out: setupLog });
     if (tornDown) return;
     if (up.code !== 0) {
       vm.state = "failed";
       const setupText = readFileSync(setupLog, "utf8").trim();
-      const quota = setupText.indexOf("ubi-runner: quota refused");
+      const quota = setupText.search(/ubi-runner: quota (preflight )?refused/);
       if (quota >= 0) log(`VM ${index + 1} refused by the Ubicloud vCPU quota; the run continues on the VMs that started:\n${setupText.slice(quota)}`);
       else log(`VM ${index + 1} failed to provision (see ${setupLog}): ${setupText.split("\n").slice(-2).join(" | ")}`);
       return;
@@ -538,6 +562,10 @@ async function main() {
   } finally {
     clearInterval(progress);
     await teardown();
+  }
+  if (!leftClean) {
+    console.error(`ci-ubicloud: VM cleanup not confirmed (see the UBICLOUD: line above); check with: UBI_OWNER=${owner} scripts/ubicloud/ubi-runner.sh list --mine`);
+    exitCode = 1;
   }
 
   // ── Report ───────────────────────────────────────────────────────────────
@@ -644,6 +672,24 @@ async function main() {
 }
 
 /**
+ * Print gstack's leftover line after teardown (and append it to UBI_LEFT_FILE):
+ * left counts `names` still in the project's VM list ("unknown" when the list
+ * cannot be read), others this owner's other ubirun VMs. Returns whether left
+ * is 0; a --keep run reports its live VMs as left=<n> kept=1.
+ */
+async function leftover(owner: string, names: string[], kept: boolean): Promise<boolean> {
+  const list = await runner(["cli", "vm", "list", "-N", "-f", "location,name"], { timeoutMs: VM_LIST_TIMEOUT_MS });
+  const listed = list.code === 0 ? new Set(list.stdout.split("\n").map((line) => line.trim().split(/\s+/)[1]).filter(Boolean)) : null;
+  const left = listed ? names.filter((name) => listed.has(name)).length : "unknown";
+  const others = listed ? [...listed].filter((name) => name!.startsWith(`ubirun-${owner}-`) && !names.includes(name!)).length : "unknown";
+  const line = `UBICLOUD: left=${left} owner=${owner} vms=${names.length} ${kept ? "kept=1" : `others=${others}`}`;
+  console.log(line);
+  if (process.env.UBI_LEFT_FILE) appendFileSync(process.env.UBI_LEFT_FILE, line + "\n");
+  leftReported = true;
+  return left === 0;
+}
+
+/**
  * test.yml's unit shards as this gate checks them: the partition and mined weights of unitShardPlan, failing a
  * shard over UNIT_SHARD_BUDGET_MS exactly as test/scripts/unit-shard-budget.test.ts does. `measured` (this run's
  * per-file durations) is reported beside the plan and never gates: each item here is its own wrapper and Bun
@@ -663,6 +709,12 @@ function sortedObject(obj: Record<string, number>): Record<string, number> {
 }
 
 if (import.meta.main) {
+  process.on("exit", () => {
+    if (leftReported || vmRequested) return;
+    const line = `UBICLOUD: left=0 owner=${process.env.UBI_OWNER ?? ""} vms=0 others=unknown`;
+    console.log(line);
+    if (process.env.UBI_LEFT_FILE) appendFileSync(process.env.UBI_LEFT_FILE, line + "\n");
+  });
   main().catch((error) => {
     console.error(error);
     process.exit(1);

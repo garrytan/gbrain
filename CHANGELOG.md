@@ -33,6 +33,24 @@ identifiers and attribution are available in the pre-removal Git revision
 - Works the same on a repo-less brain: members, groups and bindings live in the database.
 - The member-access SQL functions end their pinned `search_path` with `pg_temp`, like every other gbrain function (#7632), and frontmatter recovery never guesses a duplicated `readable_by` key: the file is held until a person fixes it.
 
+## [0.60.528.0] - 2026-10-31
+
+**The test-isolation scan is about 25 times faster on Linux and 12 times faster on macOS, so `bun run verify` and the macOS validation job no longer come close to their per-check caps (#8053, #8099).**
+
+`check:test-isolation` started several processes per test file, about 2,400 in all. It now reads every file in one awk pass with byte-identical output under mawk, gawk and macOS awk. Linux: 123 s to 1.3 s alone (about 5 s inside verify). macOS 26 validation (bash 3.2, a 240 s cap): 134-146 s to 10 s. Neither cap changed.
+
+This release also brings the Ubicloud runner up to date with gstack main, refreshes the shard weights from the median of ten recent runs, fixes CI gate edge cases and removes several flaky tests at their root cause. Nothing changes for users of the gbrain CLI.
+
+### Itemized changes
+
+- `scripts/check-test-isolation.sh`: one awk pass over all files instead of per-file greps (#8053, #8099).
+- `scripts/ubicloud/ubi-runner.sh`, `.gstack/ubicloud.json`, `scripts/ubicloud/reap-expired.ts`: runner synced from gstack main, owner-tagged VM names with an expiry (3 h default), a per-command idle watchdog, a committed remote verify, and `UBI_REAP=0` by default until legacy VMs without a TTL are gone. `scripts/ubicloud/ci-item.sh` now exits with the worst item's exit code, so the committed verify fails when its item fails.
+- `scripts/ci-ubicloud.ts`, `scripts/pregate-remote-gate.sh`: a gate that exits before requesting a VM reports `left=0 vms=0`, so its failure stays a gate result instead of an infrastructure failure.
+- `scripts/ci-reuse.ts`, `scripts/ci-executed-counts.ts`: gate reuse and executed-count edge cases (#8001, #7927). `scripts/ci-mcp-tap.sh`, `scripts/ci-openclaw-mcp.sh`: Tier 2 counts a tool call only when its request was answered (#8011). The crash robot stops a lane after a worker failure (#8062).
+- `scripts/mine-shard-weights.ts`, `scripts/test-weights.json`, `scripts/serial-weights.json`, `scripts/e2e-weights.json`: weights are the per-file median of several runs; a complete re-mine drops files only older runs measured.
+- Tests: flaky tests fixed at the cause (#7922, #7933, #7957, #7964, #8025, trust-release fence); the #7679 refresh matrices 7c and 7d moved to their own files to fit the per-file E2E cap (#8025).
+- `docs/TESTING.md`, `scripts/ubicloud/README.md`, `docs/eval/`: runner TTL and reap defaults; long repro recipes pass `--ttl-hours`.
+
 ## [0.60.527.0] - 2026-10-31
 
 **A shared brain can now let each member's agent read that member's own private pages, and nobody else's. Access tokens and OAuth clients have a new private-pages grant: `none` for every token and client, existing or new, so remote reads keep hiding `visibility: private` pages exactly as before until the brain host opts a connection in with `gbrain auth rescope --token <name> --private-pages granted-sources` (or `--client <client_id>`). An opted-in connection then reads private pages only in the sources its grant names.**

@@ -14,7 +14,8 @@
 # OpenClaw adds about 31 of its own to gbrain's 158 on the full surface.
 #
 # The server runs behind scripts/ci-mcp-tap.sh, which logs every request to
-# $GBRAIN_TEST_TIER2_MCP_TAP_LOG for test/e2e/skills.test.ts.
+# $GBRAIN_TEST_TIER2_MCP_TAP_LOG and every response to
+# $GBRAIN_TEST_TIER2_MCP_TAP_LOG.responses for test/e2e/skills.test.ts.
 #
 # Environment: DATABASE_URL and GBRAIN_TEST_TIER2_MCP_TAP_LOG (required);
 # OPENCLAW, the CLI to call (default openclaw; the test overrides it).
@@ -33,6 +34,7 @@ server=$(GBRAIN_REPO="$PWD" bun -e '
   }));
 ')
 : > "$GBRAIN_TEST_TIER2_MCP_TAP_LOG"
+: > "$GBRAIN_TEST_TIER2_MCP_TAP_LOG.responses"
 "$openclaw" mcp set gbrain "$server"
 shown=$("$openclaw" mcp show gbrain --json 2>&1) || true
 if ! EXPECTED="$server" SHOWN="$shown" bun -e '

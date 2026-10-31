@@ -55,6 +55,10 @@ for (const kind of testBackends()) {
       await brain.seed(BIG, conversationPage(16_000_000, { seed: 2 }));
       expect((await brain.body(SMALL)).storage).toBe('segmented');
       expect((await brain.body(BIG)).storage).toBe('segmented');
+      // Seeds skip embedding; left unembedded, the first append's embedding effect embeds the whole page and holds the
+      // PGLite connection while the next measured append waits on its receipt (#7957).
+      await runEmbedCore(brain.engine, { stale: true, quiet: true } as never);
+      expect((await brain.engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM content_chunks WHERE embedding IS NULL'))[0]!.n).toBe(0);
     }, 600_000);
     afterAll(() => brain.close(), 120_000);
 

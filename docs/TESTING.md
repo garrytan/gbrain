@@ -458,8 +458,8 @@ too; build the admin app on the host when updating its committed bundle.
 from one heaviest-first work queue; every VM is destroyed on exit. VM setup, scheduling, weights, quota
 and flags are in [scripts/ubicloud/README.md](../scripts/ubicloud/README.md).
 
-VMs are named `ubirun-<owner>-<epoch>-<suffix>-t<H>`; set `UBI_OWNER` to your thread
-code. `scripts/ubicloud/ubi-runner.sh usage` shows vCPUs by owner.
+VMs are named `ubirun-<owner>-<epoch>-<suffix>-t<H>`; `UBI_OWNER` (your thread
+code) is required. `scripts/ubicloud/ubi-runner.sh usage` shows vCPUs by owner.
 A sleeping machine kills the run with no signal, so teardown never runs: on Capy, run
 `ci:ubicloud` as a watched background operation. After any interrupted run, check
 `ubi-runner.sh list --mine` and reap leftovers with `down NAME` (or `gc HOURS`, own VMs only).
@@ -660,7 +660,7 @@ evidence for a change before it merges. `test.yml`'s security matrix,
 
 ### Keeping CI partitions balanced
 
-Required CI runs 22 weighted unit workers, four serial workers with bounded
+Required CI runs 28 weighted unit workers, four serial workers with bounded
 per-file pools, and up to eight selected E2E workers. E2E selection and exclusions
 run once before setup; the resulting file lists are frozen and executed against
 separate Postgres services. An explicit empty selection launches no tests;
@@ -686,8 +686,8 @@ share passes 5% (unit) or 10% (serial, E2E), warns on pull requests and pushes
 and fails the scheduled run, printing the lane's miner command:
 
 ```bash
-bun run weights:mine --lane unit --run <successful-test-run>
-bun run weights:mine --lane serial --run <successful-test-run>
+bun run weights:mine --lane unit --run <run> --run <run> ...
+bun run weights:mine --lane serial --run <run> --run <run> ...
 bun run weights:mine --lane e2e --run <successful-e2e-run>
 bun run weights:mine --lane e2e --e2e-profile full --run <successful-full-corpus-run>
 ```
@@ -700,8 +700,9 @@ uses each file's Bun summary and merges partial selections into known weights.
 File/stdin imports also merge unobserved entries; only a complete GitHub unit,
 serial or explicit full-profile E2E run replaces that lane's entire map. Captured artifacts need their final
 successful completion marker, and GitHub imports verify every expected job.
-Incomplete or failed inputs leave the existing map intact. Sidecar metadata
-records the source run/commit, units, and counts. Unit/E2E weights are milliseconds;
+Incomplete or failed inputs leave the existing map intact. Repeated `--run`
+(5-10 full runs) takes each file's median; one run carries its runner
+speed. Metadata records runs, commits, units and counts. Unit/E2E weights are milliseconds;
 serial weights remain seconds. New files receive the corpus p75 estimate.
 
 The default E2E miner reads selected jobs and merges partial observations.
@@ -713,8 +714,7 @@ Missing/extra files, ambiguous basenames, duplicate execution or failed evidence
 leave weights and metadata untouched. Basename resolution preserves the
 outside-directory parity entry. Full mode replaces the complete map and records
 source SHA, attempt, jobs, log hash and corpus hash; file/stdin imports cannot
-claim full-profile provenance. These weights schedule work; they are not an
-observed parallel runtime.
+claim full-profile provenance.
 
 CI retains timestamped unit/E2E logs, frozen E2E selection, and serial attempt
 records for 14 days. Compare push-to-required-green time including queueing,

@@ -398,7 +398,7 @@ async function processFault(config: RobotConfig, world: World, model: ReferenceM
       const stopped = await Promise.race([disposePersistenceConsumer(engine).then(() => true), Bun.sleep(45_000).then(() => false)]);
       if (!stopped) model.violate({ class: 'wedge', detail: 'hung git child: consumer shutdown did not finish within 45 s' });
       else if (Date.now() - started > 30_000) model.violate({ class: 'wedge', detail: `hung git child: consumer shutdown took ${Date.now() - started} ms` });
-    }
+    } else model.violate({ class: 'wedge', detail: 'hung_git: the hung commit never started' });
     shim.release();
     await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now() WHERE kind='git' AND state='queued'");
   } else if (config.process === 'facts_absorb_kill') {

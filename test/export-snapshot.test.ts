@@ -183,9 +183,18 @@ for (const backend of testBackends()) describe(`coherent export: ${backend}`, ()
    * one-key join from the source index, filtering every page of the source; seam=the plan of the statement itself.
    */
   test('#7618: a one-key export read looks its page up by primary key and examines no other page', async () => {
+    const fill = `INSERT INTO pages(source_id,slug,type,title,compiled_truth,timeline,frontmatter)
+      SELECT 'default','scale/p'||n,'note','Synthetic','A synthetic body.','','{}'::jsonb FROM generate_series(1,5000) n`;
+    // #7922: start from the statistics a vacuum leaves after most of the table was deleted (50 live rows over every page). On
+    // those, the planner answers the one-key read with a bitmap heap scan whatever the statement; the fixture's ANALYZE pins
+    // the plan to the statistics of the rows it reads.
     await engine.executeRaw('DELETE FROM pages');
-    await engine.executeRaw(`INSERT INTO pages(source_id,slug,type,title,compiled_truth,timeline,frontmatter)
-      SELECT 'default','scale/p'||n,'note','Synthetic','A synthetic body.','','{}'::jsonb FROM generate_series(1,5000) n`);
+    await engine.executeRaw(fill);
+    await engine.executeRaw("DELETE FROM pages WHERE slug !~ '00$'");
+    await engine.executeRaw('VACUUM ANALYZE pages');
+    await engine.executeRaw('DELETE FROM pages');
+    await engine.executeRaw(fill);
+    await engine.executeRaw('ANALYZE pages');
     const [key] = await engine.executeRaw<{ id: string; source_id: string; slug: string }>("SELECT id::text AS id, source_id, slug FROM pages WHERE slug='scale/p2500'");
     const real = engine.executeRaw;
     let read: { query: string; params: unknown[] } | undefined;
@@ -200,10 +209,11 @@ for (const backend of testBackends()) describe(`coherent export: ${backend}`, ()
     const nodes: Record<string, unknown>[] = [];
     const walk = (node: Record<string, unknown>) => { nodes.push(node); for (const child of (node.Plans as Record<string, unknown>[] | undefined) ?? []) walk(child); };
     walk(((typeof raw === 'string' ? JSON.parse(raw) : raw) as { Plan: Record<string, unknown> }[])[0]!.Plan);
+    const plan = JSON.stringify(nodes.map(node => [node['Node Type'], node['Relation Name'], node['Index Name']].filter(Boolean).join(' ')));
     const scans = nodes.filter(node => node['Relation Name'] === 'pages');
-    expect(scans.length).toBeGreaterThan(0);
+    expect(scans.length, plan).toBeGreaterThan(0);
     for (const scan of scans) {
-      expect(scan['Index Name']).toBe('pages_pkey');
+      expect(scan['Index Name'], plan).toBe('pages_pkey');
       expect(Number(scan['Rows Removed by Filter'] ?? 0) + Number(scan['Rows Removed by Index Recheck'] ?? 0)).toBe(0);
     }
   }, 60000);

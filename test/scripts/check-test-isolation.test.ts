@@ -90,6 +90,35 @@ describe('check-test-isolation.sh', () => {
         rmSync(bin, { recursive: true, force: true });
       }
     });
+    it('lints candidate files in one pass instead of starting grep or awk per file (#8053)', () => {
+      const bin = mkdtempSync(join(tmpdir(), 'lint-candidate-count-'));
+      const log = join(bin, 'calls');
+      for (const tool of ['grep', 'awk']) {
+        writeFileSync(join(bin, tool), '#!/usr/bin/env bash\nprintf "' + tool + '\\n" >> "$CALL_LOG"\nexec "' + Bun.which(tool)! + '" "$@"\n', { mode: 0o755 });
+      }
+      try {
+        const candidate = [
+          "import { beforeAll, afterAll } from 'bun:test';",
+          'let engine;',
+          'beforeAll(async () => { engine = new PGLiteEngine(); });',
+          'afterAll(async () => { await engine.disconnect(); });',
+          '',
+        ].join('\n');
+        const files = Array.from({ length: 200 }, (_, i) => ({ path: 'candidate ' + i + '.test.ts', contents: candidate }));
+        const env = { PATH: bin + ':' + process.env.PATH, CALL_LOG: log };
+        const r = runLintIn(files, [], env);
+        expect(r.status).toBe(0);
+        expect(r.stdout).toContain('200 non-serial unit files scanned');
+        expect(readFileSync(log, 'utf8').trim().split('\n').length).toBeLessThan(12);
+        const bad = runLintIn([...files, { path: 'z bad.test.ts', contents: 'const engine = new PGLiteEngine();\n' }], [], env);
+        expect(bad.status).toBe(1);
+        expect(bad.stdout).toContain('ERROR: test/z bad.test.ts\n       rule R3:');
+        expect(bad.stdout).toContain('         1:const engine = new PGLiteEngine();\nERROR: test/z bad.test.ts\n       rule R4:');
+        expect(bad.stdout).toContain('check-test-isolation: FAIL (2 violation(s))');
+      } finally {
+        rmSync(bin, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('R1 — env mutation', () => {

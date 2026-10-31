@@ -234,3 +234,11 @@ test('resultHits reads slugs from arrays and nested evidence objects', () => {
   expect(resultHits([{ slug: 'a', source_id: 'default' }, { results: [{ slug: 'b' }] }])).toEqual([{ slug: 'a', source_id: 'default' }, { slug: 'b' }]);
   expect(resultHits(null)).toEqual([]);
 });
+
+test('f4d_sync_deadline reads both watchdog extension notices as extended', async () => {
+  const { deadlineExtended } = await import('../../scripts/scale/f4d.ts');
+  expect(deadlineExtended('[sync-watchdog] deadline reached (1s) but the run is still progressing (last progress 0s ago) — extending; it stops after 300s without progress')).toBe(true);
+  expect(deadlineExtended('[sync-watchdog] deadline reached (1s) before the run committed anything; it stops as a stall unless it commits within 300s of its start')).toBe(true);
+  expect(deadlineExtended('[sync-watchdog] hard deadline armed: 1s + 30s grace (env:GBRAIN_SYNC_MAX_RUNTIME_SECONDS)')).toBe(false);
+  expect(deadlineExtended('[sync-watchdog] deadline reached (1s) and no progress for 300s — sending SIGTERM for graceful shutdown')).toBe(false);
+});

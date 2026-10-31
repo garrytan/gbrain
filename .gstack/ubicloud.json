@@ -1,0 +1,12 @@
+{
+  "setup": "scripts/ubicloud/setup-ci-vm.sh",
+  "command": "SLOT=1 bash scripts/ubicloud/ci-item.sh heavy",
+  "size": "standard-30",
+  "env": [
+    "SLOTS=1",
+    "GBRAIN_HEAVY_LOG_DIR=/home/ubi/heavy-logs"
+  ],
+  "pull": [
+    "heavy-logs:.context/ubicloud-verify"
+  ]
+}

@@ -75,7 +75,7 @@ describe("teardown waits for in-flight creates", () => {
       const proc = spawnRunner(["up"], { UBI_OWNER: "t1" });
       const started = await waitForEvent(api, /^create-start /);
       const name = started.split(" ")[1]!;
-      expect(name).toMatch(/^ubirun-t1-\d{10}-[0-9a-f]{8}-t999$/);
+      expect(name).toMatch(/^ubirun-t1-\d{10}-[0-9a-f]{8}-t3$/);
       proc.kill(signal);
       expect(await proc.exited).toBe(130);
       expect(api.events).toEqual([`create-start ${name}`, `created ${name}`, `destroy ${name}`, `removed ${name}`]);
@@ -186,9 +186,12 @@ describe("stale sweep and ownership", () => {
     expect([...api.vms.keys()].sort()).toEqual(seed.slice(1).map((s) => s.name).sort());
   });
 
-  it("gc HOURS destroys only the caller's VMs older than HOURS and requires HOURS", async () => {
+  it("gc HOURS destroys only the caller's VMs older than HOURS; without HOURS it destroys nothing", async () => {
     const api = serve({ seed });
-    expect((await run(["gc"], { UBI_OWNER: "t1" })).code).toBe(1);
+    const none = await run(["gc"], { UBI_OWNER: "t1" });
+    expect(none.code).toBe(0);
+    expect(none.stderr).toContain("gc: no sweep");
+    expect(api.events).toEqual([]);
     const gc = await run(["gc", "1"], { UBI_OWNER: "t1" });
     expect(gc.code).toBe(0);
     expect(api.events).toEqual([`destroy ubirun-t1-${OLD}-aaaaaaaa`, `removed ubirun-t1-${OLD}-aaaaaaaa`]);

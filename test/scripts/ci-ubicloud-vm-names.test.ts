@@ -3,13 +3,14 @@
 // TTL-less names, for scripts/ubicloud/ubi-runner.sh and scripts/ci-ubicloud.ts.
 //
 // Protects: `up`/`run --ttl-hours H` name their VM with a -t<H> TTL, and
-// without --ttl-hours with -t999, so no generated name is TTL-less (gstack's
-// reap destroys those at four hours); the flag is validated (1 to 999) and
-// cannot be combined with -n; every parser (list --mine, usage, gc, down)
-// reads all three formats alike: gc ages a VM by its creation epoch, never its
-// expiry.
+// without it with UBI_TTL_HOURS (gstack's default, 3), so no generated name is
+// TTL-less; the flag is validated (1 to 999), with -n NAME it appends -t<H>,
+// and a ubirun- NAME without a TTL is refused before any create (#8050);
+// every parser (list --mine, usage, gc, down) reads all three formats alike:
+// gc ages a VM by its creation epoch, never its expiry.
 // Fails when: a new-format name is not owner-tagged for list --mine or usage,
-// gc sweeps by the expiry or another owner's VM, or the flag is ignored.
+// gc sweeps by the expiry or another owner's VM, the flag is ignored, or a
+// hand-named ubirun- VM reaches the API without a TTL.
 // Network: none (in-process mock Ubicloud API).
 
 import { afterEach, describe, expect, it } from "bun:test";
@@ -75,30 +76,50 @@ describe("--ttl-hours", () => {
     });
   }
 
-  it("without --ttl-hours the name carries the longest TTL, -t999", async () => {
-    const api = serve();
-    const proc = spawnRunner(["up"], { UBI_OWNER: "gbra135" });
-    const name = (await waitForEvent(api, /^create-start /)).split(" ")[1]!;
-    proc.kill("SIGTERM");
-    await proc.exited;
-    expect(name).toMatch(/^ubirun-gbra135-\d{10}-[0-9a-f]{8}-t999$/);
-    expect(name.length).toBeLessThanOrEqual(63);
+  it("without --ttl-hours the name carries UBI_TTL_HOURS: gstack's 3 by default, 999 at most", async () => {
+    for (const [extra, ttl] of [[{}, "t3"], [{ UBI_TTL_HOURS: "999" }, "t999"]] as const) {
+      const api = serve({ rejectCreates: true });
+      const r = await run(["up"], { UBI_OWNER: "gbra135", ...extra });
+      expect(r.code).toBe(1);
+      const name = api.events[0]!.split(" ")[1]!;
+      expect(name).toMatch(new RegExp(`^ubirun-gbra135-\\d{10}-[0-9a-f]{8}-${ttl}$`));
+      expect(name.length).toBeLessThanOrEqual(63);
+      mock!.stop();
+    }
   });
 
-  it("refuses a bad value and the combination with -n before any create", async () => {
+  it("refuses a bad value before any create", async () => {
     const api = serve();
     for (const bad of ["0", "1.5", "abc", "1000", "024"]) {
-      const r = await run(["up", "--ttl-hours", bad], { UBI_OWNER: "t1" });
-      expect(r.code).toBe(1);
-      expect(r.stderr).toContain("--ttl-hours must be a whole number of hours from 1 to 999");
+      for (const args of [["up", "--ttl-hours", bad], ["run", "--ttl-hours", bad, "--", "true"]]) {
+        const r = await run(args, { UBI_OWNER: "t1" });
+        expect(r.code).toBe(1);
+        expect(r.stderr).toContain("--ttl-hours must be a whole number of hours from 1 to 999");
+      }
     }
-    const both = await run(["up", "-n", "ubirun-t1-1790000000-aaaaaaaa", "--ttl-hours", "2"], { UBI_OWNER: "t1" });
-    expect(both.code).toBe(1);
-    expect(both.stderr).toContain("cannot be combined with -n");
-    const runBoth = await run(["run", "--ttl-hours", "2", "-n", "ubirun-t1-1790000000-aaaaaaaa", "--", "true"], { UBI_OWNER: "t1" });
-    expect(runBoth.code).toBe(1);
-    expect(runBoth.stderr).toContain("cannot be combined with -n");
     expect(api.events).toEqual([]);
+  });
+
+  // #8050 item 1: a hand-named ubirun- VM used to bypass the TTL.
+  it("-n NAME with --ttl-hours appends -t<H>; a ubirun- NAME without a TTL is refused before any create; other names pass", async () => {
+    const api = serve({ rejectCreates: true });
+    for (const args of [["up", "-n", "ubirun-t1-1790000000-aaaaaaaa", "--ttl-hours", "2"], ["run", "--ttl-hours", "2", "-n", "ubirun-t1-1790000000-bbbbbbbb", "--", "true"]]) {
+      expect((await run(args, { UBI_OWNER: "t1" })).code).toBe(1);
+    }
+    expect(api.events.filter((e) => e.startsWith("create-start "))).toEqual(["create-start ubirun-t1-1790000000-aaaaaaaa-t2", "create-start ubirun-t1-1790000000-bbbbbbbb-t2"]);
+    api.events.length = 0;
+    for (const args of [["up", "-n", "ubirun-t1-1790000000-cccccccc"], ["run", "-n", "ubirun-t1-1790000000-dddddddd", "--", "true"], ["up", "-n", "ubirun-t1-1790000000-eeeeeeee-t0"]]) {
+      const r = await run(args, { UBI_OWNER: "t1" });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("has no -t<hours> TTL, so no reaper could destroy it if this run dies; add --ttl-hours H");
+    }
+    const twice = await run(["up", "-n", "ubirun-t1-1790000000-ffffffff-t5", "--ttl-hours", "2"], { UBI_OWNER: "t1" });
+    expect(twice.code).toBe(1);
+    expect(twice.stderr).toContain("already ends in a TTL");
+    expect(api.events).toEqual([]);
+    expect((await run(["up", "-n", "ubirun-t1-1790000000-abababab-t5"], { UBI_OWNER: "t1" })).code).toBe(1);
+    expect((await run(["up", "-n", "bench-db-1"], { UBI_OWNER: "t1" })).code).toBe(1);
+    expect(api.events.filter((e) => e.startsWith("create-start "))).toEqual(["create-start ubirun-t1-1790000000-abababab-t5", "create-start bench-db-1"]);
   });
 });
 

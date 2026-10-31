@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   computeWeights,
+  medianWeights,
   mineWeights,
   parseLog,
   serializeWeights,
@@ -469,4 +470,97 @@ it('GitHub refresh mines every shard of a packed unit job (test.yml runs two per
     expect(result.status, result.stderr).toBe(0);
     expect(Object.keys(JSON.parse(readFileSync(out, 'utf8')))).toEqual(['test/four.test.ts', 'test/one.test.ts', 'test/three.test.ts', 'test/two.test.ts']);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+it('a refresh from several GitHub runs takes each file\'s median, so one fast or slow run or runner cannot set the weights', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-mine-runs-'));
+  try {
+    const bin = join(dir, 'bin');
+    const fixtures = join(dir, 'fixtures');
+    mkdirSync(bin);
+    mkdirSync(fixtures);
+    writeFileSync(join(bin, 'gh'), '#!/bin/sh\ncase "$*" in\n  "run view "*" --json conclusion,headSha,jobs") cat "$FIXTURE_GH/$3.json" ;;\n  "run download "*" --name timings-unit-"*) [ -f "$FIXTURE_GH/$3-$5.log" ] && cp "$FIXTURE_GH/$3-$5.log" "$7/unit.log" ;;\n  *) exit 2 ;;\nesac\n', { mode: 0o755 });
+    const at = (ms: number) => new Date(Date.UTC(2026, 9, 30, 12) + ms).toISOString();
+    const line = (job: string, ms: number, text: string) => `${job}\tcapture\t${at(ms)} ${text}\n`;
+    const shard = (job: string, files: [string, number][]) => {
+      let t = 0;
+      let body = line(job, t, '##[gbrain-capture-start]');
+      for (const [file, ms] of files) { body += line(job, t, `::group::${file}:`); t += ms; }
+      return body + line(job, t, ' 0 fail') + line(job, t, `Ran ${files.length} tests across ${files.length} files. [1ms]`) + line(job, t, '##[gbrain-capture-complete] exit=0');
+    };
+    const run = (id: string, commit: string, files: [string, number][], conclusion = 'success') => {
+      writeFileSync(join(fixtures, `${id}.json`), JSON.stringify({ conclusion, headSha: commit, jobs: [{ name: 'test (1, 2)', conclusion }] }));
+      writeFileSync(join(fixtures, `${id}-timings-unit-1.log`), shard('test (1)', files.slice(0, 1)));
+      writeFileSync(join(fixtures, `${id}-timings-unit-2.log`), shard('test (2)', files.slice(1)));
+    };
+    run('101', 'commit-a', [['test/one.test.ts', 1000], ['test/two.test.ts', 9000], ['test/new.test.ts', 500]]);
+    run('102', 'commit-b', [['test/one.test.ts', 2000], ['test/two.test.ts', 6000]]);
+    // test/gone.test.ts was deleted before the newest run (101), so it must not stay in the weights.
+    run('103', 'commit-c', [['test/one.test.ts', 4000], ['test/two.test.ts', 3000], ['test/gone.test.ts', 700]]);
+    run('104', 'commit-d', [['test/one.test.ts', 1], ['test/two.test.ts', 1]], 'failure');
+    const out = join(dir, 'weights.json');
+    const meta = join(dir, 'weights.metadata.json');
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, FIXTURE_GH: fixtures };
+    const mine = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dir, '../../scripts/mine-shard-weights.ts'), ...args, '--out', out], { env, encoding: 'utf8' });
+    writeFileSync(out, '{"test/old.test.ts":42}\n');
+    writeFileSync(meta, '{"prior":true}\n');
+    expect(mine('--run', '101', '--run', '104', '--run', '103').status).not.toBe(0);
+    expect(mine('--lane', 'e2e', '--e2e-profile', 'full', '--run', '101', '--run', '102').status).not.toBe(0);
+    expect(readFileSync(out, 'utf8')).toBe('{"test/old.test.ts":42}\n');
+    expect(readFileSync(meta, 'utf8')).toBe('{"prior":true}\n');
+    const result = mine('--run', '101', '--run', '102', '--run', '103');
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual({ 'test/new.test.ts': 500, 'test/one.test.ts': 2000, 'test/two.test.ts': 6000 });
+    expect(JSON.parse(readFileSync(meta, 'utf8'))).toMatchObject({
+      lane: 'unit', run: '101', commit: 'commit-a', runs: ['101', '102', '103'], commits: ['commit-a', 'commit-b', 'commit-c'],
+      measuredFiles: 3, totalFiles: 3, mergeExisting: false,
+    });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+it('selected E2E from several runs keeps the median of a file only an older run selected', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-mine-e2e-runs-'));
+  try {
+    const bin = join(dir, 'bin');
+    const fixtures = join(dir, 'fixtures');
+    mkdirSync(bin);
+    mkdirSync(fixtures);
+    writeFileSync(join(bin, 'gh'), '#!/bin/sh\ncase "$*" in\n  "run view "*" --json conclusion,headSha,jobs") cat "$FIXTURE_GH/$3.json" ;;\n  "run view "*" --log") cat "$FIXTURE_GH/$3.log" ;;\n  *) exit 2 ;;\nesac\n', { mode: 0o755 });
+    const job = 'Selected E2E (diff-relevant) 1';
+    const line = (text: string) => job + '\tstep\t2026-10-30T12:00:00.000Z ' + text + '\n';
+    const run = (id: string, files: [string, number][]) => {
+      writeFileSync(join(fixtures, id + '.json'), JSON.stringify({ conclusion: 'success', headSha: 'commit-' + id, jobs: [{ name: job, conclusion: 'success' }] }));
+      writeFileSync(join(fixtures, id + '.log'), files.map(([name, ms]) => line('=== ' + name + ' ===') + line(' 0 fail') + line('Ran 1 test across 1 file. [' + ms + '.00ms]')).join('')
+        + line('Files: ' + files.length + ' total, ' + files.length + ' passed, 0 failed'));
+    };
+    run('201', [['alpha.test.ts', 1000]]);
+    run('202', [['alpha.test.ts', 3000], ['beta.test.ts', 800]]);
+    const out = join(dir, 'e2e-weights.json');
+    writeFileSync(out, '{"test/e2e/beta.test.ts":42}\n');
+    const result = spawnSync(process.execPath, [join(import.meta.dir, '../../scripts/mine-shard-weights.ts'), '--lane', 'e2e', '--run', '201', '--run', '202', '--out', out],
+      { env: { ...process.env, PATH: bin + ':' + process.env.PATH, FIXTURE_GH: fixtures }, encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual({ 'test/e2e/alpha.test.ts': 2000, 'test/e2e/beta.test.ts': 800 });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+describe('medianWeights', () => {
+  it('takes each file\'s median over the runs that measured it, averaging the middle two of an even count', () => {
+    const runs = [new Map([['a', 1], ['b', 10]]), new Map([['a', 9], ['b', 30], ['c', 7]]), new Map([['a', 3]]), new Map([['a', 5], ['b', 20]])];
+    expect(Object.fromEntries(medianWeights(runs))).toEqual({ a: 4, b: 20, c: 7 });
+    expect(medianWeights([]).size).toBe(0);
+  });
+});
+
+describe('committed shard weights', () => {
+  it.each([
+    ['scripts/test-weights.json', 'scripts/test-weights.metadata.json', 'unit', 'milliseconds'],
+    ['scripts/serial-weights.json', 'scripts/serial-weights.metadata.json', 'serial', 'seconds'],
+  ])('%s matches the metadata the miner wrote beside it', (weightsPath, metadataPath, lane, unit) => {
+    const root = join(import.meta.dir, '..', '..');
+    const weights = JSON.parse(readFileSync(join(root, weightsPath), 'utf8')) as Record<string, number>;
+    const metadata = JSON.parse(readFileSync(join(root, metadataPath), 'utf8'));
+    expect(metadata).toMatchObject({ lane, unit, totalFiles: Object.keys(weights).length });
+    expect(metadata.runs?.length ?? 1).toBe(metadata.commits?.length ?? 1);
+  });
 });
