@@ -467,6 +467,7 @@ src/core/persistence/page-input.ts	normalizeSubagentPageInput	call:serializeMark
 src/core/persistence/page-input.ts	normalizeSubagentPageInput	field	SEGW	
 src/core/persistence/page-prepare.ts	canonical	field	SEGW	lane 1d file; segmented page: getter throws page_body_segmented
 src/core/persistence/page-prepare.ts	fileMatchesSnapshot	field	SEGW	lane 1d file; segmented page: getter throws page_body_segmented
+src/core/persistence/page-prepare.ts	frontmatterDriftWrite	field	SEGW	#8109: called only for an inline page (bodyUnread excluded at the call site); compares the file's parsed body with the snapshot body
 src/core/persistence/page-prepare.ts	prepareInlineOrSegmentedMutation	call:serializePageToMarkdown	SEGW	lane 1d file
 src/core/persistence/page-prepare.ts	prepareInlineOrSegmentedMutation	field	SEGW	lane 1d file: preserveProtectedTakes reads the snapshot body; segmented page: getter throws page_body_segmented
 src/core/persistence/page-prepare.ts	segmentedFileMatches	field	NONE	the body fields hold region digests (body-digests.ts) for the canonical comparison; no page body is read
@@ -526,6 +527,8 @@ src/core/repair/connector-fences.ts	candidates	sql	STREAM
 src/core/repair/connector-fences.ts	connectorFencesRepair	call:serializePageToMarkdown	SEGW	
 src/core/repair/connector-fences.ts	connectorFencesRepair	field	STREAM	
 src/core/repair/connector-fences.ts	relocateTimelineFences	field	STREAM	
+src/core/repair/contact-rows.ts	plannedChange	call:serializePageToMarkdown	SEGW	SQL exclusion in scan: body_storage='inline' only
+src/core/repair/contact-rows.ts	plannedChange	field	SEGW	SQL exclusion in scan: body_storage='inline' only; the read-back compares the re-rendered body
 src/core/repair/conversation-labels.ts	classifyLabelFacts	sql	STREAM	
 src/core/repair/conversation-labels.ts	countLabelFacts	sql	STREAM	
 src/core/repair/duplicate-facts.ts	strikeFencedCopies	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read, and its fenced copies stay active (listed as segmented_page)

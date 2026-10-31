@@ -10,6 +10,21 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A frontmatter-only disagreement between a page's file and its database copy no longer blocks an unrelated `remember`, a contact row whose `last_used` moved forward reconciles automatically, and duplicated contact rows can be collapsed with one previewed repair (#8109).**
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A person page's file differs from the database only in frontmatter (for example one contact row's `last_used` moved forward), and an agent saves a fact | `remember` refused `source_changed` (`file_database_drift`) until someone reconciled the page | the fact lands; the file keeps its own frontmatter with the new body, and the frontmatter drift stays for reconcile. Body, timeline, title, type, tag and policy or privacy key drift still refuse, and so does a write that changes frontmatter |
+| `gbrain sources reconcile <source> <slug> --preview --auto-additive` on a contact row whose only change is a later `last_used` | `review` (`list_entries_changed_or_reordered`) | `auto` (rule `contacts_activity_advance`); a removed, reordered or otherwise changed row, or a date moved backward or into the future, still needs review. Unquoted YAML dates compare as dates |
+| A `put_page` or `capture` whose frontmatter `contacts:` list repeats a `(type, value)` row | stored every copy | keeps one row per `(type, value)` with the newest `last_used`; rows that differ in another field and every distinct value stay |
+| Pages that already hold repeated contact rows | no repair | `gbrain repair contact-rows [--source <id>] [--slug <slug>]...` previews (writes nothing), then `--apply --expect <hash> --yes` rewrites exactly the previewed pages through revision-bound `put_page`: the file through the coordinated writer on sources with a checkout, the database on repo-less brains. Drifted pages are listed `needs_reconcile` with the reconcile command |
+
+Nothing runs on upgrade.
+
 ## [0.60.528.0] - 2026-10-31
 
 **The test-isolation scan is about 25 times faster on Linux and 12 times faster on macOS, so `bun run verify` and the macOS validation job no longer come close to their per-check caps (#8053, #8099).**

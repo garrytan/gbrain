@@ -89,6 +89,9 @@ import { pageFencesNormalized } from '../fence-repair/report.ts';
 import { parseFenceRepairReceipt } from '../fence-repair/receipt.ts';
 import { fenceRepairCommit } from './effect-model.ts';
 import { withoutSafetyAssessments } from './reconcile-safety.ts';
+import { POLICY_KEYS } from './reconcile-additive.ts';
+import { dedupeFrontmatterContacts } from '../contact-rows.ts';
+import { protectedReconcileKey } from './reconcile-merge.ts';
 import { preparePagePurge, purgePageInTransaction, type PreparedPagePurge } from './page-purge.ts';
 import { withTrustKeep } from './context.ts';
 import { isFenceEditWrite, pageGateTrust, pageWriteTrust, recordAgentPageLowering, stampPageTrustMarker, storedPageTier } from '../trust/page-write.ts';
@@ -128,6 +131,12 @@ function canonical(page: Pick<Page, 'type' | 'title' | 'compiled_truth' | 'timel
     frontmatter: comparableFrontmatter(page.frontmatter), tags: [...new Set(tags)].sort() };
 }
 interface CanonicalProvenance { source_kind: string; ingested_via: string; ingested_at: string; }
+/** #8109: a caller-authored page (put_page, capture) keeps one contact row per (type, value), the newest last_used kept; file and database alike. */
+function callerContactsDeduped(row: Pick<WriteRequest, 'operation'>, page: ParsedPage): ParsedPage {
+  const contacts = row.operation === 'put_page' || row.operation === 'capture' ? dedupeFrontmatterContacts(page.frontmatter) : null;
+  if (contacts) page.frontmatter = contacts.frontmatter;
+  return page;
+}
 /**
  * Writes whose caller supplies the page text, and so could supply provenance stamps in its frontmatter. Unlike
  * trust/page-write.ts CONTENT_OPERATIONS, revert_version and restore_page are absent: they replay a stored version.
@@ -229,6 +238,36 @@ export async function fileMatchesSnapshot(engine: BrainEngine, slug: string, byt
   if (await matches(bytes, false)) return true;
   const reading = readCanonicalAsImported(bytes, typeof sourcePath === 'string' ? sourcePath : await sourcePath());
   return reading.inferred && await matches(reading.content, true);
+}
+/**
+ * #8109: the file a write publishes over a canonical file that differs from the database only in frontmatter, or null
+ * when the write must refuse as drift. The file and the database must agree on everything but frontmatter (body,
+ * timeline, title, type and tags, as fileMatchesSnapshot compares them), no drifted key may be a policy or protected
+ * key, and the write must leave the stored frontmatter unchanged. The file then keeps its own frontmatter block and
+ * takes the write's body, so neither side's frontmatter is lost; the drift stays for reconcile.
+ */
+async function frontmatterDriftWrite(engine: BrainEngine, slug: string, fileText: string, snapshot: PageSnapshot, content: string,
+  activePack?: ParseOpts['activePack']): Promise<string | null> {
+  const file = parseMarkdown(fileText, slug, { activePack });
+  const type = importedFileType(file, snapshot.page, false);
+  const bodies = await overlayCanonicalBodies(engine.executeRaw.bind(engine), file.compiled_truth, file.timeline ?? '', snapshot.withdrawals,
+    { sourceId: snapshot.page.source_id, marker: snapshot.globalPurges });
+  const bare = (page: Parameters<typeof canonical>[0], tags: string[]) => digest(canonical({ ...page, frontmatter: {} }, tags));
+  if (bare({ ...file, type, ...bodies }, file.tags) !== bare(snapshot.page, snapshot.tags)) return null;
+  const fileFrontmatter = comparableFrontmatter(withoutSafetyAssessments(file.frontmatter));
+  const stored = comparableFrontmatter(withoutSafetyAssessments(snapshot.page.frontmatter ?? {}));
+  const drifted = [...new Set([...Object.keys(fileFrontmatter), ...Object.keys(stored)])].filter(key => digest(fileFrontmatter[key] ?? null) !== digest(stored[key] ?? null));
+  if (!drifted.length || drifted.some(key => POLICY_KEYS.has(key) || protectedReconcileKey(key))) return null;
+  const incoming = parseMarkdown(content, slug, { activePack });
+  if (digest(comparableFrontmatter(withoutSafetyAssessments(incoming.frontmatter))) !== digest(stored)
+    || bare({ ...incoming, compiled_truth: '', timeline: '' }, incoming.tags) !== bare({ ...snapshot.page, compiled_truth: '', timeline: '' }, snapshot.tags)) return null;
+  const head = /^\uFEFF?---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n/;
+  const fileHead = head.exec(fileText), contentHead = head.exec(content);
+  if (!fileHead || !contentHead) return null;
+  const spliced = fileHead[0] + content.slice(contentHead[0].length);
+  const check = parseMarkdown(spliced, slug, { activePack });
+  return digest(check.frontmatter) === digest(file.frontmatter) && check.title === file.title && check.type === incoming.type && digest(check.tags) === digest(file.tags)
+    && check.compiled_truth === incoming.compiled_truth && (check.timeline ?? '') === (incoming.timeline ?? '') ? spliced : null;
 }
 /** The type a file's parse compares with (`fileMatchesSnapshot`), after aligning the parse with what its import over `page` stores. */
 function importedFileType(parsed: ParsedMarkdown, page: Pick<Page, 'type' | 'frontmatter'>, inferred: boolean): Page['type'] {
@@ -421,6 +460,10 @@ async function compareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 's
       const adopt = !snapshot.page.source_path && !snapshot.page.source_uri ? ['--adopt-slug-path'] : [];
       // #6693: a committed Git change sync has not imported yet (another agent's commit), on a page that records its file.
       if (!adopt.length && await waitingOnWhile(options.clock, 'git', () => committedPendingImport(engine, row.source_id, root, path, options.clock?.signal))) throw pendingImportRefusal(row, options.remote === true);
+      // #8109: drift confined to ordinary frontmatter keys never blocks a write that leaves the frontmatter alone.
+      const spliced = !adopt.length && options.deleting !== true && typeof content === 'string' && before instanceof Buffer && !bodyUnread(snapshot.page) && before.length <= PUSH_SCAN_MAX_FILE_BYTES
+        ? await frontmatterDriftWrite(engine, row.slug, before.toString('utf8'), snapshot, content, options.activePack) : null;
+      if (spliced !== null) return { path, root, content: spliced, expectedBeforeHash: beforeHash() };
       throw opError('source_changed', 'The canonical file contains an uncoordinated local edit.',
         `On the brain host, run gbrain sources reconcile ${row.source_id} ${row.slug} --brain <brain id, host by default> --preview${adopt.length ? ' --adopt-slug-path (the page records no file of its own, so the preview adopts the file at its slug path)' : ''}, review and apply the resolved preview, then retry this write with a new request_id. Neither copy was overwritten.`,
         { detail: 'file_database_drift', fix: readFix(`Previews how page ${row.slug}'s canonical file and database copy reconcile; a preview never changes canonical content.`,
@@ -920,7 +963,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     ...(gateTrust ? { writeGate: gateInput(gateTrust, row.id) } : {}),
     // Provenance compares the caller's page with the stored one, so it runs before the server's trust marker is stamped.
     prepareFrontmatter: page => {
-      provenance = putProvenance(row, snapshot, page);
+      provenance = putProvenance(row, snapshot, callerContactsDeduped(row, page));
       suppliedTrustMarker = page.frontmatter.trust_tier;
       stampPageTrustMarker(row, page.frontmatter, trust, storedTier, snapshot?.page.frontmatter);
       if (privateRequest) assertPrivateRequestKept(row, page.frontmatter);
