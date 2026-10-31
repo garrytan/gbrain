@@ -890,8 +890,11 @@ as `content_receipts`. A receipt an older release left on the old root makes
 doctor report `content_receipt_stale` with this repair as its fix. The repair
 also lists an unfinished setup checkpoint that names another root: after a host
 move, the 0.53.0 migration refuses `The canonical root changed after setup
-began` with this repair as its fix (#7900). Follow the class it prints, then
-run `gbrain apply-migrations --force-retry 0.53.0`.
+began` with this repair as its fix (#7900). The repair lists only sources claimed
+under activated writer persistence, so for a moved source that is not, the
+refusal names the `gbrain sources writer claim` and `activate` previews to run
+first (#7915). Follow the class it prints, then run
+`gbrain apply-migrations --force-retry 0.53.0`.
 
 ```bash
 gbrain repair content-receipt-root --source default                       # preview, on the owner host
