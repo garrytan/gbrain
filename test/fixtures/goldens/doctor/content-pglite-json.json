@@ -784,7 +784,9 @@
             },
             "covering_index": null,
             "deleted_page_chunks": {
+              "held": 0,
               "past_window": 0,
+              "purgeable": 0,
               "window_hours": 72,
               "within_window": 0
             },
