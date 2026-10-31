@@ -135,7 +135,9 @@ for ((offset=0, group=1; offset<${#files[@]}; offset+=GROUP_SIZE, group++)); do
   echo "__gbrain_unit_group_start__ group=$group/$GROUPS_TOTAL files=${#group_files[@]}"
   receipt_begin primary "$RECEIPT_TAG-g$group" "$RECEIPT_SHARD" "$RECEIPT_OF" "" "${group_files[@]}"
   set +e
-  bun "${TEST_ARGS[@]}" ${RECEIPT_ARGS[@]+"${RECEIPT_ARGS[@]}"} "${group_files[@]}" 2>&1 | tee "$log"
+  # Bun's agent mode hides passing-file headers required by the census below.
+  # Its existing AGENT override takes precedence over CLAUDECODE and REPL_ID.
+  AGENT=0 bun "${TEST_ARGS[@]}" ${RECEIPT_ARGS[@]+"${RECEIPT_ARGS[@]}"} "${group_files[@]}" 2>&1 | tee "$log"
   statuses=("${PIPESTATUS[@]}")
   set -e
   bun_rc=${statuses[0]}
