@@ -10698,7 +10698,7 @@ other check, skill checks included, never pages:
 | Condition | Check | Pages on |
 |---|---|---|
 | database unreachable | `connection` | fail |
-| migrations pending or wedged | `schema_version`, `minions_migration` | warn |
+| migrations pending or wedged (not the opt-in autopilot install suggestion) | `schema_version`, `minions_migration` | warn |
 | tables the applied migrations created hold user data and are missing | `schema_missing_tables` | fail |
 | writes failing | `persistence_terminal_failures` | warn |
 | writes wedged | `persistence_write_stall` | warn |

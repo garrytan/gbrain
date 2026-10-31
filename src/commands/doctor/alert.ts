@@ -103,8 +103,9 @@ function unknownReason(c: Check): AlertUnknownReason | null {
   return null;
 }
 
+/** An advisory warning (details.advisory, e.g. the opt-in autopilot install suggestion) never pages; a failure always does. */
 function pages(c: Check): boolean {
-  return c.status === 'fail' || (c.status === 'warn' && PAGE_CHECK_LEVELS.get(c.name) === 'warn');
+  return c.status === 'fail' || (c.status === 'warn' && PAGE_CHECK_LEVELS.get(c.name) === 'warn' && c.details?.advisory !== true);
 }
 
 function isRendered(fix: Check['fix']): fix is RenderedAction {

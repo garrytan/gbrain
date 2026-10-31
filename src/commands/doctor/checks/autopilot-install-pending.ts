@@ -21,6 +21,6 @@ export function autopilotInstallPendingCheck(): Check | null {
     fix: agentFix(todo.install_argv,
       'Installs the background maintenance daemon (sync, extract, embed) for this brain repo under the host supervisor; a persistent install, so ask the user first.',
       'minions_migration', { consent: ['persistent_install'], ...(inputs ? { inputs } : {}) }),
-    details: { pending_host_work: todo },
+    details: { pending_host_work: todo, advisory: true },
   };
 }

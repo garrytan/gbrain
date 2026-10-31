@@ -49,6 +49,29 @@ describe('alert verdict per page-class check', () => {
     });
   }
 
+  test('the opt-in autopilot install suggestion (an advisory minions_migration warning) does not page', async () => {
+    const { autopilotInstallPendingCheck } = await import('../src/commands/doctor/checks/autopilot-install-pending.ts');
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const home = mkdtempSync(join(tmpdir(), 'alert-advisory-'));
+    const prev = process.env.GBRAIN_HOME;
+    process.env.GBRAIN_HOME = home;
+    try {
+      mkdirSync(join(home, '.gbrain', 'migrations'), { recursive: true });
+      writeFileSync(join(home, '.gbrain', 'migrations', 'pending-host-work.jsonl'), JSON.stringify({ type: 'autopilot-install-needs-repo', status: 'pending', detected_at: '2026-10-31T00:00:00.000Z', repo: '/tmp/brain-example', install_argv: ['gbrain', 'autopilot', '--install', '--yes', '--repo', '/tmp/brain-example'], recommendation: 'opt-in' }) + '\n');
+      const suggestion = autopilotInstallPendingCheck();
+      expect(suggestion?.name).toBe('minions_migration');
+      expect(suggestion?.status).toBe('warn');
+      const checks = [...healthy(), suggestion!];
+      expect(computeDoctorReport(checks, { alertRan: ALL }).alert!.level).toBe('none');
+      const pending = [...checks, { name: 'minions_migration', status: 'warn' as const, message: '1 host migration(s) not run yet' }];
+      expect(computeDoctorReport(pending, { alertRan: ALL }).alert!.level).toBe('act');
+    } finally {
+      if (prev === undefined) delete process.env.GBRAIN_HOME; else process.env.GBRAIN_HOME = prev;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test('a stable details.code is the item code, and details.docs its docs', () => {
     const checks = healthy().map((c) => c.name === 'global_maintenance_stalled'
       ? { ...c, status: 'fail' as const, details: { code: 'global_maintenance_stalled', docs: 'docs/guides/troubleshooting.md#global-maintenance-stalled' } } : c);
