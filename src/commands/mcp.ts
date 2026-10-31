@@ -10,6 +10,8 @@ import { provisionHarnessGrant, type ProvisionGrantInput } from './mcp-provision
 import { validateHarnessArguments, MCP_GRANT_ARGUMENTS } from '../core/harness/arguments.ts';
 import { createMcpAdminHttp, hasAdminCredential, McpAdminError, redactAdminValue } from './mcp-admin-http.ts';
 import { runMcpAdmin } from './mcp-admin.ts';
+import { grantFromClient } from '../core/grants/model.ts';
+import { credentialCensus, renderedExposure, sharedTokenNotice, writeExposureNotice } from '../core/grants/shared-exposure.ts';
 
 const HELP = `gbrain mcp — provision access on the host; install it inside the harness
 
@@ -143,7 +145,13 @@ export async function runMcp(args: string[], engine?: BrainEngine): Promise<void
       try { writeCredentials(value('--credentials-out')!, result.credentials); }
       catch { throw new Error(`credential_delivery_incomplete: client ${result.grant.clientId} exists; repeat with --resume --client ${result.grant.clientId} --credentials-out <private-file>. Do not create a duplicate or rotate its secret automatically.`); }
     }
+    const exposure = sharedTokenNotice({ kind: 'oauth_client', id: result.grant.clientId || input.name, name: input.name }, {
+      harness: harnessAdapter(input.harness).id,
+      census: engine && !hasAdminCredential(args) ? await credentialCensus(engine, grantFromClient(result.grant)) : null,
+    });
+    writeExposureNotice(exposure);
     console.log(JSON.stringify({ status: result.dry_run ? 'preview' : 'granted', grant: result.grant, before: result.before,
+      ...(exposure ? { warnings: renderedExposure(exposure) } : {}),
       spending: result.grant.budgetUsdPerDay === null ? { mode: 'unlimited' } : { mode: 'daily_cap', usd: result.grant.budgetUsdPerDay },
       credentials: result.credentials ? credentialReceipt(result.credentials) : result.credential_action,
       credential_file: result.credentials ? value('--credentials-out') : null,
