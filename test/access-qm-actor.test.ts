@@ -23,7 +23,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
-import { sqlQueryForEngine } from '../src/core/sql-query.ts';
+import { executeRawJsonb, sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { parseRescopeTokenArgs, rescopeLegacyToken } from '../src/core/grants/legacy-token.ts';
 import { dispatchToolCall, type ToolResult } from '../src/mcp/dispatch.ts';
@@ -32,7 +32,7 @@ import { RateLimiter } from '../src/mcp/rate-limit.ts';
 import { GBRAIN_MCP_INSTRUCTIONS, MCP_SERVER_DESCRIPTION } from '../src/mcp/instructions.ts';
 import { __resetPrivateVisibilityCacheForTests, withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { addMember, bindCredential, disableMember, enableMember } from '../src/core/access/members.ts';
-import { attestedCallerAccess, linkMember, listMemberLinks, parseAttestOps, unlinkMember } from '../src/core/access/actor.ts';
+import { ACTOR_DEFERRED_OPS, attestedCallerAccess, linkMember, listMemberLinks, parseAttestOps, unlinkMember } from '../src/core/access/actor.ts';
 import { readAudienceAssertions } from '../src/core/access/audience.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { submissionAuthority, authorizeStoredRequest } from '../src/core/persistence/authority.ts';
@@ -72,7 +72,7 @@ const ALICE_ID = 'U0ALICE';
 const BOB_ID = 'bob-example@acme.test';
 const OIDC_ID = 'oidc:3f2a9c:alice-example';
 const LONG_ID = 'L'.repeat(256);
-const ATTEST_OPS = ['add_tag', 'get_page', 'list_pages', 'search', 'submit_agent', 'whoami'];
+const ATTEST_OPS = ['add_tag', 'get_page', 'list_pages', 'search', 'whoami'];
 
 for (const kind of testBackends()) {
   describe('attested actor x-qm-actor (' + kind + ', repo-less)', () => {
@@ -227,6 +227,17 @@ for (const kind of testBackends()) {
       } finally {
         await engine.executeRaw("UPDATE oauth_tokens SET grant_type = 'client_credentials' WHERE token_hash = $1", [hash]);
       }
+      await engine.executeRaw('UPDATE oauth_tokens SET grant_type = NULL WHERE token_hash = $1', [hash]);
+      try {
+        const old = await refused(getAs(ALICE_ID, 'alice'), 'actor_not_attested', 'no_attest_right');
+        expect(old.json.message).toContain('holds the attest right');
+        expect(String(old.json.suggestion ?? old.json.next ?? old.text)).toContain('grant_type=client_credentials');
+        expect(old.structured!.error!.fix).toBeUndefined();
+      } finally {
+        await engine.executeRaw("UPDATE oauth_tokens SET grant_type = 'client_credentials' WHERE token_hash = $1", [hash]);
+      }
+      const plain = await refused(getAs(ALICE_ID, 'alice', clients.plain!.token), 'actor_not_attested', 'no_attest_right');
+      expect(plain.json.message).not.toContain('holds the attest right');
       expect((await getAs(ALICE_ID, 'alice')).text).toContain(PAGES.alice.canary);
     }, 60_000);
 
@@ -329,6 +340,13 @@ for (const kind of testBackends()) {
       } finally {
         await bindCredential(engine, { kind: 'client', id: clients.qm!.id }, { attestActor: 'qm', attestOps: ATTEST_OPS });
       }
+      await bindCredential(engine, { kind: 'client', id: clients.qm!.id }, { attestActor: 'qm', attestOps: ATTEST_OPS.filter(op => op !== 'add_tag') });
+      try {
+        await expect(authorizeStoredRequest(engine, row)).rejects.toMatchObject({ code: 'actor_not_attested', reason: 'op_not_attested' });
+      } finally {
+        await bindCredential(engine, { kind: 'client', id: clients.qm!.id }, { attestActor: 'qm', attestOps: ATTEST_OPS });
+      }
+      await authorizeStoredRequest(engine, row);
       const live = await call(qm(), 'add_tag', { slug: PAGES.alice.slug, tag: 'qm-tag' }, { actor: ALICE_ID });
       expect(live.isError).toBe(false);
       const hidden = await call(qm(), 'add_tag', { slug: PAGES.bob.slug, tag: 'qm-tag' }, { actor: ALICE_ID });
@@ -337,7 +355,7 @@ for (const kind of testBackends()) {
 
     test('an agent job submitted for an attested actor reads as the member until the link is gone', async () => {
       const { clientId } = await provider().registerClientManual('qm-agent-' + randomUUID().slice(0, 8), ['client_credentials'], 'read', [], SRC);
-      await bindCredential(engine, { kind: 'client', id: clientId }, { attestActor: 'qm', attestOps: ['submit_agent', 'get_page'] });
+      await bindCredential(engine, { kind: 'client', id: clientId }, { attestActor: 'qm', attestOps: ['get_page'] });
       await engine.executeRaw("UPDATE oauth_clients SET scope = 'read agent', bound_tools = ARRAY['get_page'], bound_source_id = source_id, federated_read = ARRAY[source_id], delegated_namespace = 'job', delegated_slug_prefixes = NULL, bound_max_concurrent = 1 WHERE client_id = $1", [clientId]);
       const actor = { system: 'qm', external_id: BOB_ID, member: 'bob-example' };
       const agentAuth = { token: 'x', clientId, scopes: ['read', 'agent'], sourceId: SRC, principal: { kind: 'oauth_client', id: clientId } } as unknown as AuthInfo;
@@ -363,9 +381,49 @@ for (const kind of testBackends()) {
       } finally {
         await linkMember(engine, 'bob-example', 'qm', BOB_ID);
       }
+      await bindCredential(engine, { kind: 'client', id: clientId }, { attestActor: 'qm', attestOps: ['search'] });
+      try {
+        const removed = await read(PAGES.bob.slug);
+        expect(removed).not.toContain(PAGES.bob.canary);
+        expect(removed).toContain('get_page is not in this connection');
+      } finally {
+        await bindCredential(engine, { kind: 'client', id: clientId }, { attestActor: 'qm', attestOps: ['get_page'] });
+      }
+      expect(await read(PAGES.bob.slug)).toContain(PAGES.bob.canary);
       const bad = (grant: Record<string, unknown>) => parseSubmissionAuthority({ ...authority, grant: { ...authority.grant, ...grant } });
       expect(bad({ actor: { ...actor, external_id: 'has space' } })).toBeNull();
       expect(bad({ actingFor: ['member:bob-example'] })).toBeNull();
+    }, 120_000);
+
+    test('operations not keyed to the person yet are never attested: refused at rescope, at bind and at every call', async () => {
+      const lookup = (name: string) => operationsByName[name];
+      for (const op of ACTOR_DEFERRED_OPS) {
+        expect(() => parseAttestOps('get_page,' + op, lookup)).toThrow(/cannot run yet/);
+        await expect(bindCredential(engine, { kind: 'client', id: clients.qm!.id }, { attestActor: 'qm', attestOps: ['get_page', op] })).rejects.toMatchObject({ code: 'invalid_params' });
+      }
+      for (const op of ['get_agent_job', 'submit_agent', 'get_write_request', 'list_write_requests', 'cancel_write_request', 'delta', 'remember', 'capture', 'extract_facts']) {
+        expect(ACTOR_DEFERRED_OPS.has(op)).toBe(true);
+      }
+      const { clientId, clientSecret } = await provider().registerClientManual('qm-jobs-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], SRC);
+      await engine.executeRaw("UPDATE oauth_clients SET scope = 'read write agent', bound_tools = $2, bound_source_id = source_id, federated_read = ARRAY[source_id], delegated_namespace = 'job', delegated_slug_prefixes = NULL, bound_max_concurrent = 1 WHERE client_id = $1", [clientId, ['get_page', ...ACTOR_DEFERRED_OPS]]);
+      await bindCredential(engine, { kind: 'client', id: clientId }, { attestActor: 'qm', attestOps: ['get_page'] });
+      await engine.executeRaw('UPDATE oauth_clients SET attest_ops = $2 WHERE client_id = $1', [clientId, ['get_page', ...ACTOR_DEFERRED_OPS]]);
+      const bearer = (await provider().exchangeClientCredentials(clientId, clientSecret!)).access_token;
+      const canary = 'canaryqmjobresult';
+      const [job] = await executeRawJsonb<{ id: number }>(engine,
+        `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, result, finished_at) VALUES ('{}'::jsonb, 'subagent', 'default', 'completed', $1::jsonb, $2::jsonb, now()) RETURNING id`,
+        [], [{ __owner_client_id: clientId, actor: { system: 'qm', external_id: ALICE_ID, member: 'alice-example' } }, { text: canary }]);
+      expect((await call(bearer, 'get_agent_job', { id: Number(job!.id) })).text).toContain(canary);
+      const asBob = await refused(call(bearer, 'get_agent_job', { id: Number(job!.id) }, { actor: BOB_ID }), 'actor_not_attested', 'op_not_attested');
+      expect(asBob.text).not.toContain(canary);
+      expect(asBob.structured!.error!.fix).toBeUndefined();
+      const deferredCalls: Array<[string, Record<string, unknown>]> = [
+        ['list_write_requests', {}], ['get_write_request', { id: randomUUID() }], ['cancel_write_request', { id: randomUUID() }],
+        ['delta', {}], ['remember', { content: 'alice-example prefers tea' }], ['capture', { content: 'note' }],
+        ['submit_agent', { prompt: 'x' }], ['extract_facts', { text: 'x' }],
+      ];
+      for (const [op, params] of deferredCalls) await refused(call(bearer, op, params, { actor: ALICE_ID }), 'actor_not_attested', 'op_not_attested');
+      expect((await call(bearer, 'get_page', { slug: PAGES.alice.slug }, { actor: ALICE_ID })).text).toContain(PAGES.alice.canary);
     }, 120_000);
 
     test('the legacy bearer transport reads x-qm-actor over a real socket and serves the description on initialize', async () => {

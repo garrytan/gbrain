@@ -321,7 +321,7 @@ function brainTool(op: Operation, opts: BuildBrainToolsOpts): ToolDef {
       const agent = submitted?.kind === 'remote_agent' ? submitted : undefined;
       const actor = agent?.grant.actor;
       const output = agent && actor
-        ? await withCallerAccess(await attestedCallerAccess(ctx.engine, actor, await storedActorIdentity(ctx.engine, agent.principal, actor)), run)
+        ? await withCallerAccess(await attestedCallerAccess(ctx.engine, actor, await storedActorIdentity(ctx.engine, agent.principal, actor, op.name)), run)
         : opCtx.auth
         ? await withCallerAccess(await remoteCallerAccess(ctx.engine, opCtx.auth, [], undefined, actingFor), run)
         : await run();

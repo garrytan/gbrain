@@ -148,7 +148,7 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
   if (a.actingFor && !Array.isArray(a.actingFor)) {
     const actor = parseStoredActor(a.actingFor);
     if (!actor) deny('The accepted attested actor is malformed.');
-    await storedActorIdentity(engine, a.principal, actor);
+    await storedActorIdentity(engine, a.principal, actor, operation);
   }
   const suffix = lock ? ' FOR SHARE' : '';
   if (a.principal.kind === 'oauth_client') {
