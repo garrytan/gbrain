@@ -20,6 +20,14 @@ export async function excludesPrivateWrites(engine: SqlEngine, remote: boolean):
  */
 export async function authorizePageVisibility(engine: SqlEngine, authority: WriteAuthority, slug: string): Promise<void> {
   if (!authority.remote) return;
+  if (authority.excludePrivate ?? true) {
+    // Privacy is hidden whatever the policy says, and an empty identity is the strictest reading (an identity only
+    // opens a page that names readers), so a page visible with none needs no policy read or member lookup.
+    const [hidden] = await engine.executeRaw<{ names_readers: boolean }>(`SELECT page_readers IS NOT NULL AS names_readers FROM pages
+      WHERE source_id=$1 AND slug=$2 AND NOT (${readPolicyFragment('pages', [], true)}) LIMIT 1`, [authority.sourceId, slug]);
+    if (!hidden) return;
+    if (!hidden.names_readers) throw pageNotVisibleError();
+  }
   const policy = await readRemotePolicyNow(engine);
   const hidePrivate = (authority.excludePrivate ?? true) || !policy.privacyRelaxed;
   if (!hidePrivate && !policy.restricted) return;
