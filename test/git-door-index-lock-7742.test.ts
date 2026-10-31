@@ -330,6 +330,21 @@ describe('door plumbing: the index lock', () => {
     expect(leftovers(root)).toEqual([live]);
   });
 
+  // Value: protects=a dead process's leftover the sweep cannot remove (a directory here; EBUSY or EPERM on Windows) never fails the refresh
+  //   of a commit that landed (#7755 review); fails_when=the sweep's removal error ends the write with the landed git_unavailable failure and
+  //   leaves the index behind HEAD on every later write; why_new=the sweep test plants only removable files; seam=none; no_claim=a real EBUSY
+  test('a stale index copy the sweep cannot remove is left in place and the refresh still completes', async () => {
+    const root = seeded(), gitDir = join(root, '.git');
+    const dead = spawnSync('true').pid;
+    const stuck = `index.gbrain-${dead}-0123456789ab`;
+    mkdirSync(join(gitDir, stuck));
+    writeFileSync(join(gitDir, stuck, 'x'), 'x');
+    writeFileSync(join(root, 'notes/a.md'), 'door\n');
+    expect(await commitThroughDoor(root, [{ path: join(root, 'notes/a.md'), planned: sha256('door\n') }])).toBe(git(root, 'rev-parse', 'HEAD'));
+    expect(git(root, 'rev-parse', ':notes/a.md')).toBe(git(root, 'rev-parse', 'HEAD:notes/a.md'));
+    expect(leftovers(root)).toEqual([stuck]);
+  });
+
   // Value: protects=on win32 a transient sharing violation (EPERM, EBUSY, EACCES) on the renames that commit the refreshed index is retried,
   //   as Git for Windows retries its own, while other platforms fail at once as before (#7756); fails_when=one refused rename ends the write
   //   with the landed failure on Windows, or a retry runs elsewhere; why_new=no Windows path was tested; seam=indexCommitIo (rename, platform);

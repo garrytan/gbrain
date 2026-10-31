@@ -541,7 +541,7 @@ function sweepIndexCopies(index: string): void {
   try { names = readdirSync(dir); } catch { return; }
   for (const name of names) {
     const pid = name.startsWith(stem) ? /^(\d+)-[0-9a-f]{12}(?:\.lock)?$/.exec(name.slice(stem.length))?.[1] : undefined;
-    if (pid && processGone(Number(pid))) rmSync(join(dir, name), { force: true });
+    if (pid && processGone(Number(pid))) try { rmSync(join(dir, name), { force: true }); } catch { /* best effort: a leftover never fails the refresh */ }
   }
 }
 
