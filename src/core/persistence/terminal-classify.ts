@@ -25,6 +25,7 @@ import { classifySyncFault, SYNC_FAULT_TABLE, type SyncFaultClass, type SyncSafe
 import { isSyncKnockOn, knockOnRoot, SYNC_CURSOR_FENCE_ORIGIN, SYNC_KNOCK_ON_ORIGIN, cursorFenceCause, syncKnockOnSql } from './sync-knock-on.ts';
 import { writeFailureDiagnostic } from './verb-errors.ts';
 import { publicCategory, type PublicCategory } from './public-category.ts';
+import { GRANDFATHER_RETIRED } from './publication-failure.ts';
 
 export type TerminalCategory =
   | 'recovery_pending' | 'recovery_blocked'
@@ -33,7 +34,9 @@ export type TerminalCategory =
   | 'writer_guard' | 'database_refusal' | 'owner_exception' | 'legacy_publication_refusal'
   | 'sync_fault' | 'transport' | 'caller_refusal' | 'gbrain_defect' | 'diagnosis_required'
   // #6904: the write met a missing relation or column (42P01 / 42703); the schema is behind this build or lost a table.
-  | 'schema_missing';
+  | 'schema_missing'
+  // #7837: a request for a write gbrain retired (the v0.13.1 grandfather, #7814) that an older build queued; nothing to do.
+  | 'retired_operation';
 
 /** The receipt columns the classifier reads; every one but `intent_kind` and `error_message` survives compaction. */
 export interface TerminalInput {
@@ -93,6 +96,8 @@ export const TERMINAL_FIXED_IN = {
   legacy_publication_refusal: '0.60.40.0',
   // #6657: a refused fact-fence adoption is no longer resubmitted every cycle and keeps its metadata.
   fence_unrenderable: '0.60.218.0',
+  // #7814: the v0.13.1 grandfather writes nothing; a queued managed_grandfather request only an older build admitted ends refused.
+  retired_operation: '0.60.479.0',
 } as const satisfies Partial<Record<TerminalCategory, string>>;
 
 /** The connection-loss texts `classifySyncFault` reads as `connection_lost`; POSIX-compatible, so readers match it in SQL (`~*`). */
@@ -148,7 +153,7 @@ export function classifyTerminal(input: TerminalInput): TerminalVerdict | null {
   const verdict = route(input);
   const fixedIn = (TERMINAL_FIXED_IN as Partial<Record<TerminalCategory, string>>)[verdict.category] ?? null;
   const ran = build(input);
-  const historical = fixedIn !== null && (verdict.category === 'legacy_publication_refusal' || (ran !== null && compareVersions(ran, fixedIn) < 0));
+  const historical = fixedIn !== null && (verdict.category === 'legacy_publication_refusal' || verdict.category === 'retired_operation' || (ran !== null && compareVersions(ran, fixedIn) < 0));
   return { ...verdict, public_category: publicCategory(verdict), escalate: verdict.escalate ?? escalateOf(verdict.code), defect: DEFECTS.has(verdict.category), fixed_in: fixedIn, historical };
 }
 
@@ -289,6 +294,12 @@ function route(input: TerminalInput): Partial_ {
       action: { argv: terminalInspectArgv(input.request_id ?? '<request_id>'), consent: [], actor: 'agent', requires_exclusive: false,
         why: 'A fact-extraction batch was not recorded complete because some of its per-entity requests did not commit (__managed_facts_complete__ is bookkeeping, not a page). The receipt is read-only history; run the extraction again only if facts are still missing.',
         verify: { argv: failuresArgv(source) } } };
+  }
+  if (code === 'revision_conflict' && (origin === GRANDFATHER_RETIRED || input.intent_kind === 'managed_grandfather')) {
+    return { category: 'retired_operation', code, origin, class: 'page', safe_actions: ['none'], needs_human: false,
+      escalate: 'never: the page was left unchanged and nothing retries it',
+      action: { argv: terminalInspectArgv(input.request_id ?? '<request_id>'), consent: [], actor: 'agent', requires_exclusive: false,
+        why: 'Retired grandfather, nothing to do: an older gbrain queued the v0.13.1 validate: false stamp for this page, and upgrades no longer rewrite pages (#7814), so the request ended without writing. Do not resubmit it; the receipt is read-only history.' } };
   }
   if (code === 'revision_conflict' || code === 'page_identity_changed') {
     return { category: 'caller_conflict', code, origin, class: 'page', safe_actions: ['retry'], needs_human: false, escalate: escalateOf(code),
