@@ -2517,13 +2517,6 @@
           },
           {
             "category": "ops",
-            "elapsed_ms": "<volatile>",
-            "message": "No credential or local agent can read chat from several channels without a per-person scope.",
-            "name": "unscoped_multi_user_token",
-            "status": "ok"
-          },
-          {
-            "category": "ops",
             "details": {
               "docs": "docs/mcp/ADMIN.md#grants-that-cannot-reach-new-operations",
               "grants": [],
@@ -2532,6 +2525,13 @@
             "elapsed_ms": "<volatile>",
             "message": "Every active client and token can call the operations its scopes allow.",
             "name": "grant_new_ops_available",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "No credential or local agent can read chat from several channels without a per-person scope.",
+            "name": "unscoped_multi_user_token",
             "status": "ok"
           },
           {
@@ -7414,13 +7414,6 @@
           },
           {
             "category": "ops",
-            "elapsed_ms": "<volatile>",
-            "message": "No credential or local agent can read chat from several channels without a per-person scope.",
-            "name": "unscoped_multi_user_token",
-            "status": "ok"
-          },
-          {
-            "category": "ops",
             "details": {
               "docs": "docs/mcp/ADMIN.md#grants-that-cannot-reach-new-operations",
               "grants": [],
@@ -7429,6 +7422,13 @@
             "elapsed_ms": "<volatile>",
             "message": "Every active client and token can call the operations its scopes allow.",
             "name": "grant_new_ops_available",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "No credential or local agent can read chat from several channels without a per-person scope.",
+            "name": "unscoped_multi_user_token",
             "status": "ok"
           },
           {
