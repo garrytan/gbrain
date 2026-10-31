@@ -22,7 +22,8 @@ import type { WriteTrust } from '../trust/tier.ts';
  * brain; the caller keeps its legacy path.
  */
 export async function coordinatedDatabaseWrite<T>(ctx: OperationContext, operation: string, authoritySlug: string,
-  lockSlugs: readonly string[], write: (engine: BrainEngine, sourceId: string) => Promise<T>, trust?: WriteTrust): Promise<{ value: T } | null> {
+  lockSlugs: readonly string[], write: (engine: BrainEngine, sourceId: string) => Promise<T>, trust?: WriteTrust,
+  readKeys: readonly { sourceId: string; slug: string }[] = []): Promise<{ value: T } | null> {
   if (!await managedPersistenceEnabled(ctx.engine)) return null;
   assertPersistenceAccepting(ctx.engine);
   const sourceId = ctx.sourceId ?? 'default';
@@ -46,7 +47,9 @@ export async function coordinatedDatabaseWrite<T>(ctx: OperationContext, operati
         { fix: readFix('Lists sources with their archived state, read-only.', { argv: ['gbrain', 'sources', 'list', '--json'], mcp: { tool: 'sources_list', arguments: {} } }) });
     }
     await authorizeWrite(tx, authority, operation, authoritySlug, true);
-    await tx.lockPageKeys(lockSlugs.map(slug => ({ sourceId, slug })));
+    // Read dependencies join the same lock order without gaining write authority.
+    await tx.lockPageKeys([...lockSlugs.map(slug => ({ sourceId, slug })), ...readKeys]
+      .sort((a, b) => a.sourceId.localeCompare(b.sourceId) || a.slug.localeCompare(b.slug)));
     // W1 finalization contract (docs/designs/BELIEF_LEDGER.md 5.1): the database-only rows this write changes are recorded under the keys it holds.
     return withBeliefBatch(tx, { sourceId, slugs: lockSlugs, publicationId, op: operation, remote: ctx.remote !== false, report }, () => write(tx, sourceId));
   }, { ...principalAttribution(authority.principal), ...(trust ? { trust } : {}) }));

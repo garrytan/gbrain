@@ -1,3 +1,4 @@
+import { sourceQualifiedManualLink } from '../persistence/manual-links.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
@@ -28,6 +29,7 @@ import {
   requireWritablePage,
   sourceScopeOpts,
   assertSourceInCallerScope,
+  assertSourceInCallerWriteScope,
 } from './context.ts';
 import { listWantedPages } from '../wanted-links-store.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
@@ -89,15 +91,23 @@ function validateLinkDates(ctx: OperationContext, p: Record<string, unknown>, li
   return { ...(typeof validFrom === 'string' ? { validFrom } : {}), ...(typeof validUntil === 'string' ? { validUntil } : {}) };
 }
 
+/** A qualified local target still belongs to the canonical same-source fence. */
+function sameSourceTarget(ctx: OperationContext, p: Record<string, unknown>): Record<string, unknown> {
+  assertSourceInCallerWriteScope(ctx, ctx.sourceId ?? 'default');
+  const prefix = `${ctx.sourceId ?? 'default'}:`;
+  return typeof p.to === 'string' && p.to.startsWith(prefix) && !p.to.slice(prefix.length).includes(':')
+    ? { ...p, to: p.to.slice(prefix.length) } : p;
+}
+
 const add_link: Operation = {
   name: 'add_link',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Create a typed link (edge) from one page to another in the same source. Use when recording a relationship (works_at, invested_in, mentions); remote page writes already link [[wikilinks]] to existing pages as mentions (receipt auto_links), so add only typed links or ones the text lacks. Needs write scope; an explicit link_type must be declared by the active schema pack. On page_not_found: resolve both slugs with resolve_slugs.',
+  description: 'Create a typed link (edge) from one page to another. Use source-id:slug in to for an explicitly selected readable target source. Use when recording a relationship (works_at, invested_in, mentions); remote page writes already link [[wikilinks]] to existing pages as mentions (receipt auto_links), so add only typed links or ones the text lacks. Needs write scope; an explicit link_type must be declared by the active schema pack. On page_not_found: resolve both slugs with resolve_slugs.',
   params: {
     request_id: WRITE_REQUEST_PARAM,
     from: { type: 'string', required: true, description: "Slug of the page the link originates from (the edge renders on this page), e.g. 'people/alice-example'. These are page slugs — there is no `source`/`target` pair." },
-    to: { type: 'string', required: true, description: "Slug of the page the link points to, e.g. 'companies/acme-example'." },
+    to: { type: 'string', required: true, description: "Slug, or source-id:slug, of the page the link points to, e.g. 'companies/acme-example'." },
     link_type: { type: 'string', description: 'Link type (e.g., invested_in, works_at). When the active schema pack declares a link vocabulary, an explicit link_type must be one of its declared verbs (undeclared verbs are rejected, also under dry_run). Omitted = untyped edge.' },
     context: { type: 'string', description: 'Context for the link' },
     link_source: { type: 'string', description: "Provenance tag (kebab-case, e.g. 'citation-graph'). Defaults to 'manual'. Reconciliation-managed built-ins (markdown/frontmatter/mentions/wikilink-resolved) are rejected." },
@@ -107,6 +117,7 @@ const add_link: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
+    p = sameSourceTarget(ctx, p);
     // Client fence on the `from` endpoint only: the edge originates from
     // (and renders on) the from page; linking TO a page outside the
     // binding is a reference, not a mutation of the target.
@@ -128,6 +139,9 @@ const add_link: Operation = {
     }
     await primeRelationSemantics(ctx.engine);
     const dates = validateLinkDates(ctx, p, linkType);
+    if (typeof p.to === 'string' && p.to.includes(':')) {
+      return sourceQualifiedManualLink(ctx, 'add_link', p, linkType, dates);
+    }
     if (ctx.dryRun) return { dry_run: true, action: 'add_link', from: p.from, to: p.to };
     // v114 (#1941): default omitted provenance to 'manual' (NOT the engine's
     // 'markdown' default) so hand/tool-created CLI edges are honestly manual,
@@ -191,14 +205,19 @@ const remove_link: Operation = {
   params: {
     request_id: WRITE_REQUEST_PARAM,
     from: { type: 'string', required: true, description: 'Slug of the page the link originates from (same endpoint order as add_link).' },
-    to: { type: 'string', required: true, description: 'Slug of the page the link points to.' },
+    to: { type: 'string', required: true, description: 'Slug, or source-id:slug, of the page the link points to.' },
     link_type: { type: 'string', description: 'Only remove edges of this link type (omit = all types)' },
     link_source: { type: 'string', description: 'Only remove edges of this provenance (e.g. citation-graph); omit = any provenance' },
   },
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
+    p = sameSourceTarget(ctx, p);
     enforceClientSlugFence(ctx, p.from as string, 'remove_link');
+    if (typeof p.to === 'string' && p.to.includes(':')) {
+      await primeRelationSemantics(ctx.engine);
+      return sourceQualifiedManualLink(ctx, 'remove_link', p);
+    }
     if (ctx.dryRun) return { dry_run: true, action: 'remove_link', from: p.from, to: p.to };
     await primeRelationSemantics(ctx.engine);
     const linkOpts = ctx.sourceId

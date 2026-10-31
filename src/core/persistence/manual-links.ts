@@ -11,6 +11,70 @@ import { LINKS_FENCE_ORIGIN_FIELD, LinksFenceRewriteRefusal, MANAGED_LINK_SOURCE
   upsertLinksFenceRow } from '../links-fence.ts';
 import { linksFenceProjectionRows, projectLinksFence } from '../links-fence-projection.ts';
 import { removeManualTransitions } from '../link-temporal-apply.ts';
+import { writeManualTransitions } from '../link-temporal-apply.ts';
+import type { OperationContext } from '../ops/contract.ts';
+import { assertExplicitSourceLive, assertSourceInCallerWriteScope, federatedSearchScope, parseSourceIdParam, readPolicyOpts, requireWritablePage } from '../ops/context.ts';
+import { coordinatedDatabaseWrite } from './database-write.ts';
+import { maintenanceTransaction } from './attribution.ts';
+
+/** Qualified references are database-only: a same-source links fence cannot represent their identity. */
+export async function sourceQualifiedManualLink(ctx: OperationContext, operation: 'add_link' | 'remove_link',
+  p: Record<string, unknown>, linkType = '', dates?: { validFrom?: string; validUntil?: string } | null): Promise<Record<string, unknown>> {
+  const qualified = String(p.to);
+  const colon = qualified.indexOf(':');
+  const targetSource = parseSourceIdParam(qualified.slice(0, colon), operation)!;
+  const to = qualified.slice(colon + 1);
+  if (!targetSource || !to || to.includes(':')) throw opError('invalid_params', 'Expected to as source-id:slug.', 'Supply one source ID and one page slug.');
+  const scope = federatedSearchScope(ctx, targetSource);
+  await assertExplicitSourceLive(ctx, targetSource);
+  const policy = await readPolicyOpts(ctx, scope);
+  const from = String(p.from);
+  const sourceId = ctx.sourceId ?? 'default';
+  assertSourceInCallerWriteScope(ctx, sourceId);
+  await requireWritablePage(ctx, from, operation, 'from');
+  const target = await ctx.engine.getPage(to, policy);
+  if (!target) throw opError('page_not_found', 'The link target is not readable.', 'Select an existing target in a readable source.');
+  const keys = [{ sourceId, slug: from }, { sourceId: targetSource, slug: to }];
+  const sources = [...new Set(keys.map(key => key.sourceId))].sort();
+  const observedSources = await ctx.engine.executeRaw<{ id: string; incarnation: string }>(
+    'SELECT id, incarnation FROM sources WHERE id=ANY($1::text[]) AND NOT archived ORDER BY id', [sources]);
+  const snapshots = await Promise.all(keys.map(key => ctx.engine.readPageSnapshot(key.slug, { sourceId: key.sourceId })));
+  if (observedSources.length !== sources.length || snapshots.some(snapshot => !snapshot)) {
+    throw opError('source_changed', 'A link endpoint changed.', 'Read both endpoints again before retrying.');
+  }
+  const provenance = ((p.link_source as string) || 'manual').trim();
+  if (MANAGED_LINK_SOURCES.includes(provenance)) throw opError('invalid_params', 'This provenance is reconciliation-managed.', 'Use manual or a custom provenance.');
+  if (ctx.dryRun) return { dry_run: true, action: operation, from: p.from, to: p.to };
+  const write = async (tx: BrainEngine) => {
+    const currentSources = await tx.executeRaw<{ id: string; incarnation: string }>(
+      'SELECT id, incarnation FROM sources WHERE id=ANY($1::text[]) AND NOT archived ORDER BY id FOR SHARE', [sources]);
+    if (currentSources.length !== observedSources.length || currentSources.some((source, i) => source.id !== observedSources[i].id || source.incarnation !== observedSources[i].incarnation)) {
+      throw opError('source_changed', 'A link source changed before commit.', 'Read both endpoints again before retrying.');
+    }
+    await tx.lockPageKeys([...keys].sort((a, b) => a.sourceId.localeCompare(b.sourceId) || a.slug.localeCompare(b.slug)));
+    // Hold endpoint rows as well as publication keys: legacy writers also take row locks.
+    await tx.executeRaw('SELECT id FROM pages WHERE id=ANY($1::bigint[]) ORDER BY id FOR SHARE', [snapshots.map(snapshot => snapshot!.page.id)]);
+    for (let i = 0; i < keys.length; i++) {
+      const current = await tx.readPageSnapshot(keys[i].slug, { sourceId: keys[i].sourceId });
+      if (!current || current.page.id !== snapshots[i]!.page.id || current.revision !== snapshots[i]!.revision) {
+        throw opError('revision_conflict', 'A link endpoint changed before commit.', 'Read both endpoints again before retrying.');
+      }
+    }
+    if (!await tx.getPage(to, policy)) throw opError('page_not_found', 'The link target is no longer readable.', 'Select a readable target.');
+    const opts = { fromSourceId: sourceId, toSourceId: targetSource, originSourceId: sourceId };
+    const rel = { from, to, sourceId, toSourceId: targetSource, linkType };
+    if (operation === 'add_link') {
+      await tx.addLink(from, to, String(p.context ?? ''), linkType, provenance, undefined, undefined, opts); // gbrain-allow-direct-insert: explicit source-qualified manual edge
+      if (dates) await writeManualTransitions(tx, rel, dates);
+      return { status: 'ok' };
+    }
+    const removed = await tx.removeLink(from, to, optional(p.link_type), optional(p.link_source), opts);
+    if (removed && (!p.link_source || p.link_source === 'manual')) await removeManualTransitions(tx, { ...rel, linkType: optional(p.link_type) });
+    return { status: 'ok', removed };
+  };
+  const coordinated = await coordinatedDatabaseWrite(ctx, operation, from, [from], write, undefined, [keys[1]]);
+  return coordinated ? coordinated.value : maintenanceTransaction(ctx.engine, write);
+}
 
 const optional = (value: unknown) => typeof value === 'string' && value ? value : undefined;
 

@@ -128,7 +128,7 @@ export async function applyTemporalEvidence(
  */
 export async function writeManualTransitions(
   tx: Tx,
-  rel: { from: string; to: string; linkType: string; sourceId: string },
+  rel: { from: string; to: string; linkType: string; sourceId: string; toSourceId?: string },
   dates: { validFrom?: string; validUntil?: string },
 ): Promise<number> {
   const rows = [
@@ -139,26 +139,26 @@ export async function writeManualTransitions(
   const inserted = await executeRawJsonb<RelationshipKey>(tx,
     `INSERT INTO link_transitions (source_id, from_page_id, to_page_id, link_type, kind, occurred_on, producer, origin_page_id)
      SELECT $1, f.id, t.id, $4, v.kind, v.occurred_on::date, 'manual', NULL
-       FROM jsonb_to_recordset(($5::jsonb)->'rows') AS v(kind text, occurred_on text)
+       FROM jsonb_to_recordset(($6::jsonb)->'rows') AS v(kind text, occurred_on text)
        JOIN pages f ON f.slug = $2 AND f.source_id = $1 AND f.deleted_at IS NULL
-       JOIN pages t ON t.slug = $3 AND t.source_id = $1 AND t.deleted_at IS NULL
+       JOIN pages t ON t.slug = $3 AND t.source_id = $5 AND t.deleted_at IS NULL
      ON CONFLICT DO NOTHING
      RETURNING from_page_id, to_page_id, link_type`,
-    [rel.sourceId, rel.from, rel.to, rel.linkType], [{ rows }]);
+    [rel.sourceId, rel.from, rel.to, rel.linkType, rel.toSourceId ?? rel.sourceId], [{ rows }]);
   const [key] = await tx.executeRaw<RelationshipKey>(
     `SELECT f.id AS from_page_id, t.id AS to_page_id, $4::text AS link_type FROM pages f, pages t
-      WHERE f.slug = $2 AND f.source_id = $1 AND t.slug = $3 AND t.source_id = $1`, [rel.sourceId, rel.from, rel.to, rel.linkType]);
+      WHERE f.slug = $2 AND f.source_id = $1 AND t.slug = $3 AND t.source_id = $5`, [rel.sourceId, rel.from, rel.to, rel.linkType, rel.toSourceId ?? rel.sourceId]);
   if (key) await refreshRelationships(tx, [key]);
   return inserted.length;
 }
 
 /** remove_link companion: drop manual dated statements for the removed relationship(s). */
-export async function removeManualTransitions(tx: Tx, rel: { from: string; to: string; linkType?: string; sourceId: string }): Promise<void> {
+export async function removeManualTransitions(tx: Tx, rel: { from: string; to: string; linkType?: string; sourceId: string; toSourceId?: string }): Promise<void> {
   const keys = await tx.executeRaw<RelationshipKey>(
     `DELETE FROM link_transitions lt USING pages f, pages t
       WHERE f.id = lt.from_page_id AND t.id = lt.to_page_id AND f.slug = $1 AND t.slug = $2
-        AND f.source_id = $3 AND t.source_id = $3 AND lt.producer = 'manual'
+        AND f.source_id = $3 AND t.source_id = $5 AND lt.producer = 'manual'
         AND ($4::text IS NULL OR lt.link_type = $4)
-      RETURNING lt.from_page_id, lt.to_page_id, lt.link_type`, [rel.from, rel.to, rel.sourceId, rel.linkType ?? null]);
+      RETURNING lt.from_page_id, lt.to_page_id, lt.link_type`, [rel.from, rel.to, rel.sourceId, rel.linkType ?? null, rel.toSourceId ?? rel.sourceId]);
   if (keys.length) await refreshRelationships(tx, keys);
 }
