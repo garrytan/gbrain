@@ -31,6 +31,8 @@ const MODULE_CALL_TYPES: Partial<Record<SupportedCodeLanguage, ReadonlySet<strin
   javascript: JS_CALL_TYPES,
   python: new Set(['call']),
   ruby: new Set(['call', 'method_call']),
+  // #7080: every Elixir construct is a `call`; a top-level one that defines no module or function is module-level code.
+  elixir: new Set(['call']),
 };
 
 const MODULE_SYMBOL = { symbolName: MODULE_SYMBOL_NAME, symbolType: MODULE_SYMBOL_TYPE } as const;

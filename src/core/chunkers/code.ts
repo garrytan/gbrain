@@ -22,6 +22,7 @@ import { chunkText as recursiveChunk } from './recursive.ts';
 import { buildQualifiedName } from './qualified-names.ts';
 import { MERGE_PROTECTED_SYMBOL_TYPES, declaresFunctionValue } from './def-types.ts';
 import { isModuleChunk, mergedRunSymbol, moduleChunkQualifiedName, moduleStatementSymbol } from './code-module-chunks.ts';
+import { elixirDefinition } from './code-elixir.ts';
 import { estimateTokens, estimateEmbedTokens, estimateEmbedTokensCeiling, DEFAULT_MAX_CHUNK_TOKENS } from './token-estimate.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 import {
@@ -151,8 +152,9 @@ export const CHUNKER_VERSION = 8;
  * parse after the first on uninitialized state; Lua defs now become chunks.
  * typescript/tsx/javascript/python/ruby 1 (#5001): top-level call statements become `__module__` chunks (code-module-chunks.ts).
  * typescript/tsx/javascript/python/ruby 2 (#5001): so do top-level `if`/`for`/`try` blocks and anonymous definitions holding a call.
+ * elixir 1 (#7080): modules and def/defp functions get their own named chunks and call edges (code-elixir.ts).
  */
-export const GRAMMAR_REVISIONS: Partial<Record<SupportedCodeLanguage, number>> = { lua: 1, typescript: 2, tsx: 2, javascript: 2, python: 2, ruby: 2 };
+export const GRAMMAR_REVISIONS: Partial<Record<SupportedCodeLanguage, number>> = { lua: 1, typescript: 2, tsx: 2, javascript: 2, python: 2, ruby: 2, elixir: 1 };
 /** The `sources.chunker_version` gate value: a change forces the next sync to walk every file (hash compare, no re-import of unchanged hashes). */
 export const chunkerStamp = (): string => [String(CHUNKER_VERSION), ...Object.entries(GRAMMAR_REVISIONS).map(([lang, rev]) => `${lang}=${rev}`)].join(';');
 
@@ -496,6 +498,13 @@ const BODY_NODE_TYPES = new Set([
 interface NestedEmitConfig {
   parentTypes: Set<string>;
   childTypes: Set<string>;
+  /**
+   * #7080 Elixir: every node is a `call`, so the macro decides role, name and type instead of the node-type sets;
+   * `bodyTypes` names the body wrapper (`do_block`), and the parent chunk keeps the text outside its nested
+   * definitions (`use`, `alias`, `schema … do`, router macros) rather than only its first line.
+   */
+  definition?: (node: any) => { name: string; type: string; role: 'parent' | 'leaf' } | null;
+  bodyTypes?: Set<string>;
 }
 const NESTED_EMIT_CONFIG: Partial<Record<SupportedCodeLanguage, NestedEmitConfig>> = {
   typescript: {
@@ -539,6 +548,7 @@ const NESTED_EMIT_CONFIG: Partial<Record<SupportedCodeLanguage, NestedEmitConfig
     ]),
     childTypes: new Set(['method_declaration', 'constructor_declaration', 'property_declaration']),
   },
+  elixir: { parentTypes: new Set(), childTypes: new Set(), definition: elixirDefinition, bodyTypes: new Set(['do_block']) },
 };
 
 let initDone = false;
@@ -837,7 +847,9 @@ async function chunkParsedLanguage(
       // declaration; top-level chunk still uses the outer node's range
       // so the header shows the `export` keyword for completeness.
       const nestableNode = findNestableParent(node, nestedConfig);
-      const definedName = topLevelTypes.has(node.type) ? extractSymbolName(nestableNode ?? node) : null;
+      const elixirDef = language === 'elixir' ? elixirDefinition(node) : null;
+      const definedName = language === 'elixir' ? elixirDef?.name ?? null
+        : topLevelTypes.has(node.type) ? extractSymbolName(nestableNode ?? node) : null;
       // #5001: a top-level statement or anonymous definition containing a call is module-level code
       const moduleSymbol = moduleStatementSymbol(node, language, definedName !== null);
       const symbolName = moduleSymbol?.symbolName ?? definedName;
@@ -847,7 +859,7 @@ async function chunkParsedLanguage(
       // #3821: same for Python decorated_definition — the header must say
       // "function cached_fn" / "class Config", not "decorated definition".
       const typeNode = unwrapDecorated(nestableNode ?? node);
-      const symbolType = moduleSymbol?.symbolType ?? ((typeNode.type === 'statement' && typeNode.namedChildCount === 1)
+      const symbolType = moduleSymbol?.symbolType ?? elixirDef?.type ?? ((typeNode.type === 'statement' && typeNode.namedChildCount === 1)
         ? normalizeSymbolType(typeNode.namedChild(0).type)
         : normalizeSymbolType(typeNode.type));
 
@@ -1253,6 +1265,7 @@ function buildChunk(input: {
  */
 function findNestableParent(node: any, config: NestedEmitConfig | undefined): any | null {
   if (!config) return null;
+  if (config.definition) return config.definition(node)?.role === 'parent' ? node : null;
   if (config.parentTypes.has(node.type)) return node;
   // #3821: a decorated Python class (`@dataclass class Config`) wraps the
   // class_definition in decorated_definition. Return the OUTER node so the
@@ -1282,9 +1295,10 @@ function collectImmediateNestedChildren(node: any, config: NestedEmitConfig): {
   const leaves: any[] = [];
   const scan = (n: any) => {
     for (const child of n.namedChildren) {
-      if (config.parentTypes.has(child.type)) parents.push(child);
-      else if (config.childTypes.has(child.type)) leaves.push(child);
-      if (BODY_NODE_TYPES.has(child.type) || child.type.endsWith('_body')) {
+      const role = config.definition?.(child)?.role;
+      if (role === 'parent' || config.parentTypes.has(child.type)) parents.push(child);
+      else if (role === 'leaf' || config.childTypes.has(child.type)) leaves.push(child);
+      if (BODY_NODE_TYPES.has(child.type) || child.type.endsWith('_body') || config.bodyTypes?.has(child.type)) {
         scan(child);
       }
     }
@@ -1312,22 +1326,25 @@ function emitNestedScoped(
   config: NestedEmitConfig,
   chunks: CodeChunk[],
 ): void {
-  const name = extractSymbolName(node);
+  const nameOf = (n: any): string | null => config.definition ? config.definition(n)?.name ?? null : extractSymbolName(n);
+  const name = nameOf(node);
   if (!name) return;
   // #3821: unwrap decorated_definition for type + child collection (the
   // class body hangs off the inner def); ranges below stay on `node` so a
   // decorated class's scope header keeps its decorator line.
   const def = unwrapDecorated(node);
-  const symbolType = normalizeSymbolType(def.type);
+  const symbolType = config.definition?.(def)?.type ?? normalizeSymbolType(def.type);
   const { parents, leaves } = collectImmediateNestedChildren(def, config);
 
   // Parent scope-header chunk: declaration + member digest.
   const digestNames = [
-    ...parents.map(p => extractSymbolName(p)).filter((n): n is string => Boolean(n)),
-    ...leaves.map(l => extractSymbolName(l)).filter((n): n is string => Boolean(n)),
+    ...parents.map(nameOf).filter((n): n is string => Boolean(n)),
+    ...leaves.map(nameOf).filter((n): n is string => Boolean(n)),
   ];
   chunks.push(buildChunk({
-    body: buildScopeHeaderBody(node, source, digestNames, def),
+    body: config.definition
+      ? textOutside(node, [...parents, ...leaves], source, digestNames)
+      : buildScopeHeaderBody(node, source, digestNames, def),
     filePath, language, symbolName: name, symbolType,
     startLine: node.startPosition.row + 1,
     endLine: node.endPosition.row + 1,
@@ -1346,8 +1363,8 @@ function emitNestedScoped(
   // is a decorated_definition leaf — type from the inner def, range from the
   // outer node so the decorator line ships in the chunk.
   for (const leaf of leaves) {
-    const leafName = extractSymbolName(leaf);
-    const leafType = normalizeSymbolType(unwrapDecorated(leaf).type);
+    const leafName = nameOf(leaf);
+    const leafType = config.definition?.(leaf)?.type ?? normalizeSymbolType(unwrapDecorated(leaf).type);
     const leafText = source.slice(leaf.startIndex, leaf.endIndex).trim();
     if (!leafText) continue;
     chunks.push(buildChunk({
@@ -1359,6 +1376,18 @@ function emitNestedScoped(
       parentSymbolPath: newParentPath,
     }));
   }
+}
+
+/** #7080: a parent's own text with its nested definitions cut out, plus the member digest; nothing is indexed twice. */
+function textOutside(node: any, nested: any[], source: string, memberNames: string[]): string {
+  let text = '';
+  let at = node.startIndex;
+  for (const child of [...nested].sort((a, b) => a.startIndex - b.startIndex)) {
+    text += source.slice(at, child.startIndex);
+    at = child.endIndex;
+  }
+  text = (text + source.slice(at, node.endIndex)).replace(/\n[ \t]*(?=\n)/g, '\n').replace(/\n{3,}/g, '\n\n');
+  return memberNames.length === 0 ? text : `${text}\n\n// Members: ${memberNames.slice(0, 20).join(', ')}`;
 }
 
 /**

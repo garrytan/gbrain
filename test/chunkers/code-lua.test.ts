@@ -112,7 +112,7 @@ describe('the grammar swap re-chunks Lua files only', () => {
     expect(CHUNKER_VERSION).toBe(8);
     expect(GRAMMAR_REVISIONS.lua).toBe(1);
     // #5001 added per-language revisions for the `__module__` chunks after `lua=1`; the Lua entry is unchanged.
-    expect(chunkerStamp()).toBe('8;lua=1;typescript=2;tsx=2;javascript=2;python=2;ruby=2');
+    expect(chunkerStamp()).toBe('8;lua=1;typescript=2;tsx=2;javascript=2;python=2;ruby=2;elixir=1');
   });
 
   test('grammarOnlyDrift names the languages whose revision moved, and nothing on a version bump or a fresh source', () => {
