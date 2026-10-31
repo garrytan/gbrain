@@ -28,6 +28,9 @@ export interface SavedFactMatch { id: number; fact: string; entity_slug: string 
   /** With `search.saved_facts_supersede` on: the newer returned fact that corrects this one. */
   corrected_by?: number }
 
+/** The matched facts, and every correction decision made before the five-fact cap (corrected fact id to its corrector's id). */
+export interface SavedFactMatches { facts: Array<SavedFactMatch & CollapseColumns>; correctedBy: Map<number, number> }
+
 /** Default on (set false to turn off): a newer saved fact carrying a correction cue is returned ahead of the older fact it corrects, which is labelled `corrected_by`. */
 export const SAVED_FACTS_SUPERSEDE_KEY = 'search.saved_facts_supersede';
 /** Cues that withdraw what was said, so they correct without stating a new figure. */
@@ -39,17 +42,35 @@ const CORRECTION_CUE = String.raw`\m(correction|${RETRACTION})\M`;
 const MONTH = String.raw`(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b\.?`;
 const DATES = new RegExp(String.raw`\b\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?|\b\d{1,2}:\d{2}\b|\b\d{1,2}(?:st|nd|rd|th)? ${MONTH}|\b${MONTH} \d{1,2}(?:st|nd|rd|th)?\b`, 'gi');
 
-/** The query words a fact writes as the first word of a name ("Orbix" in "Orbix Home Goods", not "Example" in "Alice Example"); term indexes are 1-based. */
-function namedWords(text: string, terms: string[], words: Set<number>): Set<number> {
-  const heads = [...text.matchAll(/[\p{L}\p{N}][\p{L}\p{N}'-]*/gu)]
+/** The words a fact writes as the first word of a name ("Orbix" in "Orbix Home Goods", not "Example" in "Alice Example"), lower-cased. */
+function nameHeads(text: string): string[] {
+  return [...text.matchAll(/[\p{L}\p{N}][\p{L}\p{N}'-]*/gu)]
     .filter(m => m[0][0] !== m[0][0]!.toLowerCase() && !/\p{Lu}[\p{L}\p{N}'-]*\s+$/u.test(text.slice(0, m.index)))
     .map(m => m[0].toLowerCase());
-  return new Set([...words].filter(i => heads.some(h => h.startsWith(terms[i - 1]!))));
 }
 
-/** The figures a fact states: its numbers, with dates ("2026-10-14", "14 Oct", "July 1") and clock times left out. */
+/** The matched query words a fact writes as a name head, by prefix or by stem (`stems`: head to the 1-based term indexes it matches). */
+function namedWords(heads: string[], terms: string[], words: Set<number>, stems: Map<string, Set<number>>): Set<number> {
+  return new Set([...words].filter(i => heads.some(h => h.startsWith(terms[i - 1]!) || stems.get(h)?.has(i))));
+}
+
+/** Which query terms each name head matches after stemming with the brain's full-text language, as the keyword scan matches words; empty on a read error. */
+async function headStems(engine: OperationContext['engine'], lang: string, heads: string[], terms: string[]): Promise<Map<string, Set<number>>> {
+  if (heads.length === 0) return new Map();
+  const rows = await engine.executeRaw<{ h: string; i: unknown[] }>(
+    `SELECT h, ARRAY(SELECT t.i FROM unnest($2::text[]) WITH ORDINALITY AS t(term, i)
+       WHERE to_tsvector('${lang}'::regconfig, h) @@ plainto_tsquery('${lang}'::regconfig, t.term)) AS i
+     FROM unnest($1::text[]) AS h`, [heads, terms]).catch(() => []);
+  return new Map(rows.map(r => [r.h, new Set(r.i.map(Number))]));
+}
+
+/**
+ * The figures a fact states: its numbers, with dates ("2026-10-14", "14 Oct", "July 1") and clock times left out,
+ * thousands separators and a zero fraction dropped, so 52,000, 52000 and 52000.0 are one figure.
+ */
 function figures(text: string): Set<string> {
-  return new Set(text.replace(DATES, ' ').match(/\d+(?:[.,]\d+)*/g) ?? []);
+  return new Set((text.replace(DATES, ' ').match(/\d+(?:[.,]\d+)*/g) ?? [])
+    .map(n => (/^\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(n) ? n.replace(/,/g, '') : n).replace(/\.0+$/, '')));
 }
 
 async function savedFactsSupersedeEnabled(engine: { getConfig(key: string): Promise<string | null> }): Promise<boolean> {
@@ -81,16 +102,20 @@ async function savedFactsSupersedeEnabled(engine: { getConfig(key: string): Prom
  * fact that adds no figure (a number other than a date or time) to the older
  * fact, when it restates one of its figures or the older fact is itself a
  * correction. Nor does a cue fact about another entity, one missing every
- * name the older fact starts with a matched word, one of lower trust, or one
+ * name the older fact starts with a matched word (prefix or stem; the stems are
+ * read only when a cue fact is among the candidates), one of lower trust, or one
  * stating no figure that withdraws nothing. A corrected fact whose corrector
- * the five-fact cap leaves out is dropped.
+ * the five-fact cap leaves out is dropped. `correctedBy` carries the decisions
+ * for facts the cap cut too, so a caller merging other reads of the same facts
+ * (the entity facts) can drop or label them the same way.
  */
-export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceId?: string; sourceIds?: string[]; minTrust?: TrustTier }, queryText: string, otherNames: string[] = []): Promise<Array<SavedFactMatch & CollapseColumns>> {
+export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceId?: string; sourceIds?: string[]; minTrust?: TrustTier }, queryText: string, otherNames: string[] = []): Promise<SavedFactMatches> {
+  const none: SavedFactMatches = { facts: [], correctedBy: new Map() };
   // A query naming one of two declared names also matches facts saved under the other.
   if (otherNames.length) queryText += ` ${otherNames.join(' ')}`;
   const terms = [...new Set(queryText.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}'-]+/gu) ?? [])]
     .filter(t => t.length >= 3 && !FACT_MATCH_STOPWORDS.has(t) && !QUESTION_FRAME_WORDS.has(t)).slice(0, 12);
-  if (terms.length === 0 || !ctx.emitResponseMeta) return [];
+  if (terms.length === 0 || !ctx.emitResponseMeta) return none;
   const sources = scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default'];
   const [excludePrivate, supersede] = await Promise.all([resolveExcludePrivatePages(ctx.engine, ctx.remote), savedFactsSupersedeEnabled(ctx.engine)]);
   const active = `f.source_id = ANY($1::text[])
@@ -143,13 +168,15 @@ export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceI
       [sources, [...AUDIT_ROW_SOURCES], terms, pats, CORRECTION_CUE, supersede],
     );
     const found = rows.map(({ at, matched, need, cue, trust_rank, pool_rank: _p, ...fact }) => ({ fact: { ...fact, id: Number(fact.id) } as SavedFactMatch & CollapseColumns,
-      at: new Date(at as string).getTime(), words: new Set(matched.map(Number)), need: Number(need), cue, trust: Number(trust_rank), figures: figures(fact.fact) }))
-      .map(r => ({ ...r, names: namedWords(r.fact.fact, terms, r.words) }));
+      at: new Date(at as string).getTime(), words: new Set(matched.map(Number)), need: Number(need), cue, trust: Number(trust_rank), figures: figures(fact.fact) }));
     const admitted = found.filter(r => r.words.size >= r.need);
     const correcting = new Set<number>();
     if (supersede) {
       const cues = found.filter(n => n.cue);
+      const heads = new Map(admitted.map(r => [r, nameHeads(r.fact.fact)]));
+      const stems = cues.length ? await headStems(ctx.engine, lang, [...new Set([...heads.values()].flat())], terms) : new Map<string, Set<number>>();
       for (const older of admitted) {
+        const names = namedWords(heads.get(older)!, terms, older.words, stems);
         // Posts saved in one flush share a time; the later id is the later post.
         // An acknowledgement is not a correction: a cue fact that adds no figure to the older fact
         // corrects it only when it restates no figure and the older fact is not a correction itself.
@@ -157,7 +184,7 @@ export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceI
         // higher trust; one stating no figure corrects only by withdrawing ("disregard"), never by a bare "correction".
         const corrections = cues.filter(n => (n.at > older.at || (n.at === older.at && n.fact.id > older.fact.id))
           && (!n.fact.entity_slug || !older.fact.entity_slug || n.fact.entity_slug === older.fact.entity_slug)
-          && (older.names.size === 0 || [...older.names].some(w => n.words.has(w))) && n.trust >= older.trust
+          && (names.size === 0 || [...names].some(w => n.words.has(w))) && n.trust >= older.trust
           && [...n.words].filter(w => older.words.has(w)).length >= Math.min(2, n.need)
           && (n.figures.size > 0 || RETRACTION_CUE.test(n.fact.fact))
           && !([...n.figures].every(x => older.figures.has(x)) && (n.figures.size > 0 || older.cue))).sort((a, b) => b.at - a.at || b.fact.id - a.fact.id);
@@ -173,17 +200,20 @@ export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceI
       ...admitted.filter(r => r.fact.corrected_by && correcting.has(r.fact.id)).sort((a, b) => b.at - a.at || b.fact.id - a.fact.id),
       ...admitted.filter(r => r.fact.corrected_by && !correcting.has(r.fact.id))] : admitted;
     const kept = (await collapseFactReads(ctx.engine, ordered.map(r => r.fact))).slice(0, 5);
-    if (!supersede) return kept;
+    if (!supersede) return { facts: kept, correctedBy: new Map() };
     // A label names the returned fact that stands for its corrector. A corrected fact whose corrector the cap or
     // the collapse left out is dropped rather than shown as current.
-    const correctedBy = new Map(ordered.map(r => [r.fact.id, r.fact.corrected_by]));
+    const correctedBy = new Map(ordered.flatMap(r => r.fact.corrected_by === undefined ? [] : [[r.fact.id, r.fact.corrected_by] as const]));
     const shownAs = new Map(kept.flatMap(r => (r.collapsed_ids ?? [r.id]).map(id => [id, r.id] as const)));
-    return kept.flatMap(({ corrected_by, ...r }) => {
+    const facts = kept.flatMap(({ corrected_by, ...r }) => {
       const by = (r.collapsed_ids ?? [r.id]).map(id => shownAs.get(correctedBy.get(id) ?? -1)).find(c => c !== undefined && c !== r.id);
       if (by !== undefined) return [{ ...r, corrected_by: by }];
       return corrected_by === undefined ? [r] : [];
     });
-  } catch {
-    return [];
+    return { facts, correctedBy };
+  } catch (err) {
+    const code = (err as { code?: unknown } | null)?.code;
+    console.warn(`[search] Saved-facts match failed (SQLSTATE ${typeof code === 'string' ? code : 'unknown'}); this reply carries no saved facts, which does not mean none match.`);
+    return none;
   }
 }

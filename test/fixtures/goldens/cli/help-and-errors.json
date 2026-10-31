@@ -740,7 +740,7 @@
         "  --snippet-chars            Chars per row (0 = full).",
         "  --return-unit              Default auto: whole conversations.",
         "  --return-window            Window radius 1-3.",
-        "  --token-budget             Evidence token cap.",
+        "  --token-budget             Evidence token cap. Without return_unit it caps the chunk payload; with search.query_budget_unit=auto it is the hard delivery cap (below 32 refused).",
         "  --expand                   Default off; one LLM call, rarely helps.",
         "  --detail                   low (compiled truth), medium (default) or high (all chunks).",
         "  --fields                   lean (remote default) or full.",

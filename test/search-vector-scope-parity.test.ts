@@ -10,7 +10,9 @@
  *    query's image branch, not only on keyword search.
  * 2. Fails when: any path returns a page from a source outside the caller's
  *    scope, or a path misses a source the caller may read (every page is
- *    equally similar to the query, so a correct path returns them all).
+ *    equally similar to the query, so a correct path returns them all), or
+ *    returns a `visibility: private` or quarantined page of a source it may
+ *    read (#7993), at a limit of 1 or 50.
  * 3. Existing coverage: keyword search under member grants
  *    (e2e/serve-http-member-tokens), local federation
  *    (local-federated-search-scope); none drove the vector arm, the vector
@@ -37,6 +39,19 @@ const VECTOR_QUERY = 'saltpan orbit';
 const TEXT_VEC = Array.from({ length: 1536 }, (_, i) => (i === 0 ? 1 : 0.01));
 const IMAGE_VEC = Array.from({ length: 1024 }, (_, i) => (i === 0 ? 1 : 0.01));
 const IMAGE = Buffer.from('fixture image bytes').toString('base64');
+// Pages in the default source that no remote read may return, in both modalities, as similar to the query as every other page.
+const HIDDEN_MARKERS = { private: { visibility: 'private' }, quarantined: { quarantine: { reason: 'junk_pattern' } } } as const;
+
+async function seedHidden(engine: BrainEngine, marked: boolean): Promise<void> {
+  for (const [marker, frontmatter] of Object.entries(HIDDEN_MARKERS)) {
+    const fm = marked ? frontmatter : {};
+    const text = `Quillmarsh ledger reconciliation memo: ${marker} desk tallies, harbour audit trail, signed copies.`;
+    await engine.putPage(`hidden/${marker}-note`, { type: 'note', title: `Memo ${marker}`, compiled_truth: text, timeline: '', frontmatter: fm } as never, { sourceId: 'default' });
+    await installFixtureChunks(engine, `hidden/${marker}-note`, [{ chunk_index: 0, chunk_text: text, chunk_source: 'compiled_truth', embedding: new Float32Array(TEXT_VEC), modality: 'text' }], { sourceId: 'default' });
+    await engine.putPage(`hidden/${marker}-image`, { type: 'image', page_kind: 'image', title: `Scan ${marker}`, compiled_truth: '', timeline: '', frontmatter: fm } as never, { sourceId: 'default' });
+    await installFixtureChunks(engine, `hidden/${marker}-image`, [{ chunk_index: 0, chunk_text: `photo ${marker}`, chunk_source: 'image_asset', embedding_image: new Float32Array(IMAGE_VEC), modality: 'image' } as never], { sourceId: 'default' });
+  }
+}
 
 type Provider = 'vector' | 'embed_fails' | 'no_provider';
 
@@ -88,6 +103,7 @@ for (const kind of testBackends()) {
         await engine.putPage(`photos/image-${sourceId}`, { type: 'image', page_kind: 'image', title: `Photo ${sourceId}`, compiled_truth: '', timeline: '' } as never, { sourceId });
         await installFixtureChunks(engine, `photos/image-${sourceId}`, [{ chunk_index: 0, chunk_text: `photo ${sourceId}`, chunk_source: 'image_asset', embedding_image: new Float32Array(IMAGE_VEC), modality: 'image' } as never], { sourceId });
       }
+      await seedHidden(engine, true);
       serve = await startServeHttp(engine, { surface: 'full' });
       tokens.floor = await legacyToken(engine, ['read']);
       tokens.granted = (await mintLegacyToken(engine, { name: 'granted-bc', takesHolders: ['world'], scopes: ['read'], sourceGrant: ['source-b', 'source-c'] })).token;
@@ -127,7 +143,35 @@ for (const kind of testBackends()) {
       { name: 'query, image branch', provider: 'vector', tool: 'query', args: { image: IMAGE, image_mime: 'image/png' } },
     ];
 
+    const hiddenSlugs = (out: ToolResultWire) => (JSON.parse(out.content[0]!.text) as Array<{ slug: string }>).map(r => r.slug).filter(s => s.startsWith('hidden/'));
+
+    // Anti-vacuity: with their markers removed the hidden pages come back on every path, so the test below can fail.
+    test('every path returns the fixture pages once they are neither private nor quarantined', async () => {
+      await seedHidden(engine, false);
+      try {
+        for (const path of PATHS) {
+          useProvider(path.provider);
+          const out = await callTool(serve.base, tokens.oauth!, path.tool, { ...path.args, limit: 50 });
+          expect({ path: path.name, found: hiddenSlugs(out).length > 0 }).toEqual({ path: path.name, found: true });
+        }
+      } finally {
+        await seedHidden(engine, true);
+      }
+    }, 120_000);
+
     for (const path of PATHS) {
+      test(`${path.name}: private and quarantined pages of a readable source never come back, at a limit of 1 or 50`, async () => {
+        useProvider(path.provider);
+        for (const token of ['oauth', 'floor']) {
+          for (const limit of [1, 50]) {
+            const out = await callTool(serve.base, tokens[token]!, path.tool, { ...path.args, limit });
+            const rows = JSON.parse(out.content[0]!.text) as unknown[];
+            expect({ path: path.name, token, limit, isError: out.isError === true, hidden: hiddenSlugs(out), some: rows.length > 0 })
+              .toEqual({ path: path.name, token, limit, isError: false, hidden: [], some: true });
+          }
+        }
+      }, 120_000);
+
       test(`${path.name}: every grant and per-call scope reads exactly its sources`, async () => {
         useProvider(path.provider);
         for (const c of CASES) {

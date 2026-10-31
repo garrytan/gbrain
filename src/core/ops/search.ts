@@ -413,7 +413,7 @@ async function buildRetrievalResponseMeta(
   const readinessScope = { ...scope, excludePrivate, types: opts.types, excludeSlugPrefixes };
   // #6721: these reads depend on nothing but the inputs above, so they run at once: on a pooled Postgres
   // the wall time is the slowest read's round trips, not their sum. The answer-feedback write still runs last.
-  const [safeIndexPending, [readiness, pendingCount], entityFacts, matchedFacts, held, sourceFreshness, embeddingHeld, filterNotice] = await Promise.all([
+  const [safeIndexPending, [readiness, pendingCount], entityFacts, matched, held, sourceFreshness, embeddingHeld, filterNotice] = await Promise.all([
     timed('safe_index', ctx.remote !== false && hasUnsealedPagesInScope(ctx, scope, excludePrivate, { types: opts.types, excludeSlugPrefixes })),
     timed('readiness', probeProjectionReadiness(ctx.engine, readinessScope).then(async r =>
       [r, r.status === 'projection_pending' ? await countPendingProjections(ctx.engine, readinessScope, relevance) : null] as const)),
@@ -435,18 +435,39 @@ async function buildRetrievalResponseMeta(
   // A fact the facts arm already returned as a row is not repeated beside the blocks.
   const factRowIds = new Set((results as SearchResult[]).flatMap(r => r.fact_row ? [r.fact_row.id] : []));
   // #7043: a matched fact may copy an entity fact; the merged list collapses again before the response.
-  // An entity fact keeps the corrected_by its matched copy carries, and a label follows its corrector into the collapse.
-  const correctedBy = new Map(matchedFacts.flatMap(m => m.corrected_by ? [[m.id, m.corrected_by] as const] : []));
-  const merged = await collapseFactReads(ctx.engine, [...entityFacts.map(e => ({ ...e, corrected_by: correctedBy.get(e.id) })),
-    ...matchedFacts.filter(m => !entityFacts.some(e => e.id === m.id))].filter(f => !factRowIds.has(f.id)));
+  const merged = await collapseFactReads(ctx.engine, [...entityFacts,
+    ...matched.facts.filter(m => !entityFacts.some(e => e.id === m.id)).map(({ corrected_by: _, ...m }) => m)].filter(f => !factRowIds.has(f.id)));
   const shownAs = new Map([...factRowIds].map(id => [id, id]));
   for (const f of merged) for (const id of f.collapsed_ids ?? [f.id]) shownAs.set(id, f.id);
+  // #7938: the matcher's correction decisions cover facts its cap cut, which the entity facts can bring back. A
+  // corrected fact shows only labelled beside a returned corrector; dropping one can strand a fact it corrected,
+  // so the drop repeats until every remaining label names a returned fact.
+  const correctors = (f: { id: number; collapsed_ids?: number[] }) => (f.collapsed_ids ?? [f.id]).flatMap(id => matched.correctedBy.get(id) ?? []);
+  let visible = merged;
+  for (;;) {
+    const kept = visible.filter(f => { const by = correctors(f); return !by.length || by.some(id => shownAs.has(id) && shownAs.get(id) !== f.id); });
+    if (kept.length === visible.length) break;
+    const keptIds = new Set(kept.map(f => f.id));
+    for (const [id, rep] of shownAs) if (!factRowIds.has(rep) && !keptIds.has(rep)) shownAs.delete(id);
+    visible = kept;
+  }
   // #8042: a lookup failure withholds saved_facts (degraded stage below) rather than return third-party text unquoted.
-  const quotedFacts = await quoteFacts(ctx.engine, merged).catch(() => null);
-  const savedFacts = (quotedFacts ?? []).map(({ corrected_by, ...f }) => {
-    const by = corrected_by === undefined ? undefined : shownAs.get(corrected_by);
-    return stripCollapseColumns(by === undefined || by === f.id ? f : { ...f, corrected_by: by });
+  const quotedFacts = await quoteFacts(ctx.engine, visible).catch(() => null);
+  const labelled = (quotedFacts ?? []).map(f => {
+    const by = correctors(f).map(id => shownAs.get(id)).find(id => id !== undefined && id !== f.id);
+    return stripCollapseColumns(by === undefined ? f : { ...f, corrected_by: by });
   });
+  // A corrected fact follows its corrector, as the matcher orders them: the reply's "corrected by a newer saved fact
+  // above" stays true, and its budget, which cuts from the end, never keeps a corrected fact without its corrector.
+  const savedFacts: typeof labelled = [];
+  const placed = new Set(factRowIds);
+  const correctorOf = (f: object) => (f as { corrected_by?: number }).corrected_by;
+  for (let rest = labelled; rest.length;) {
+    const ready = rest.filter(f => correctorOf(f) === undefined || placed.has(correctorOf(f)!));
+    const batch = ready.length ? ready : rest;
+    for (const f of batch) { savedFacts.push(f); placed.add(f.id); }
+    rest = rest.filter(f => !batch.includes(f));
+  }
   const heldTotal = [...heldBySource.values()].reduce((sum, n) => sum + n, 0);
   const embedding = embeddingHeld?.total ? embeddingHeld : null;
   const coverage: RetrievalCoverage | undefined = pending || heldTotal || embedding ? {
@@ -463,7 +484,7 @@ async function buildRetrievalResponseMeta(
   if (heldNotice) ctx.emitNotice?.(heldNotice);
   const degraded = [...(m?.degraded ?? [])];
   if (safeIndexPending) degraded.push({ stage: 'safe_index_pending' });
-  if (quotedFacts === null && merged.length) degraded.push({ stage: 'saved_facts_withheld' });
+  if (quotedFacts === null && visible.length) degraded.push({ stage: 'saved_facts_withheld' });
   if (readiness.status === 'by_design') degraded.push({ stage: 'projection_by_design' });
   else if (readiness.status !== 'ready') {
     degraded.push({ stage: readiness.status === 'projection_pending' ? 'projection_pending' : 'projection_status_unknown' });
@@ -853,7 +874,7 @@ const query: Operation = {
     snippet_chars: SNIPPET_CHARS_PARAM,
     return_unit: RETURN_UNIT_PARAM,
     return_window: RETURN_WINDOW_PARAM,
-    token_budget: { type: 'number', description: 'Evidence token cap.', fullSurfaceOnly: true },
+    token_budget: { type: 'number', description: 'Evidence token cap. Without return_unit it caps the chunk payload; with search.query_budget_unit=auto it is the hard delivery cap (below 32 refused).', fullSurfaceOnly: true },
     expand: { type: 'boolean', description: 'Default off; one LLM call, rarely helps.' },
     detail: { type: 'string', description: 'low (compiled truth), medium (default) or high (all chunks).', fullSurfaceOnly: true },
     fields: FIELDS_PARAM,
