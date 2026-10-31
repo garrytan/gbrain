@@ -55,7 +55,7 @@ export async function retryManagedAtomBatch(engine: BrainEngine, sourceId: strin
       stop = anyAbortSignal(opts.signal ? [opts.signal, lockSignal] : [lockSignal]);
       check();
       const wait = new MaintenanceWriteWait(opts.deadlineAtMs ?? null);
-      const session = await managedAtomSession(engine, sourceId, { requestId, retryId }, wait);
+      const session = await managedAtomSession(engine, sourceId, { requestId, retryId }, wait, stop.signal);
       check();
       if (!session?.retry) throw opError('invalid_params', 'Explicit atom retry requires a managed source.',
         `Source ${sourceId} is not under managed persistence, so retained atom batch ${requestId} cannot be retried there; nothing was started. Run the ordinary atom drain for the source instead (it calls the configured LLM, so confirm the spend).`,

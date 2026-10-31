@@ -848,9 +848,12 @@ guards against; bring remote commits in with `gbrain sources refresh <source>`.
 The durability block `sources harden` writes into `AGENTS.md`/`RESOLVER.md`
 before activation says the opposite (run the push helper after every write,
 pull before writing), so `writer git-durability <source> --enable` and
-`--pat-file` rewrite that block in place to the managed variant (#5808); the
-preview reports it as `agents`, the rewrite touches nothing outside the
-markers, and the file is left for you to commit.
+`--pat-file` write the managed variant (#5808); the preview reports it as
+`agents`. An existing block is rewritten in place and nothing outside its
+markers changes. With no block, the managed block is appended to the root
+instruction file (`RESOLVER.md` or `AGENTS.md`, whichever is found first), or
+`AGENTS.md` is created when neither exists (#7733). Either way the file is
+left for you to commit, so a clean-tree check fails until you do.
 
 ### Supported managed work and explicit repair
 

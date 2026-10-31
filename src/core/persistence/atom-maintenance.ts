@@ -11,7 +11,7 @@ import { authorizeStoredRequest, authorizeWrite, submissionAuthority } from './a
 import { currentVerifiedLocalWriter, localHostId, registerLocalWriter } from './identity.ts';
 import { admitWriteInTransaction, getWriteRequest, receiptFor } from './journal.ts';
 import { digest, requireUuid, sha256 } from './digest.ts';
-import { getWorktreeBinding, managedPersistenceEnabled, probeWorktreeWriter, type WorktreeBinding } from './ownership.ts';
+import { getWorktreeBinding, MANAGED_WRITER_PROBE_WAIT_MS, managedPersistenceEnabled, probeWorktreeWriter, type WorktreeBinding } from './ownership.ts';
 import { isConnectorSourceKind } from './connector-identity.ts';
 import { preparePageMutation } from './page-prepare.ts';
 import { assertPersistenceAccepting, waitForWrite, writeResponse } from './service.ts';
@@ -120,7 +120,7 @@ export async function atomDrainOwnerRefusal(engine: BrainEngine, sourceId: strin
 }
 
 export async function managedAtomSession(engine: BrainEngine, sourceId: string, retry?: { requestId: string; retryId: string },
-  wait: MaintenanceWriteWait = new MaintenanceWriteWait()): Promise<ManagedAtomSession | null> {
+  wait: MaintenanceWriteWait = new MaintenanceWriteWait(), signal?: AbortSignal): Promise<ManagedAtomSession | null> {
   if (!(await managedPersistenceEnabled(engine))) return null;
   assertPersistenceAccepting(engine);
   const caller = currentSubmissionAuthority();
@@ -150,7 +150,7 @@ export async function managedAtomSession(engine: BrainEngine, sourceId: string, 
     `No extraction was started for source ${sourceId}. Check its canonical owner: run atom extraction on the host that owns the checkout, or have the user claim the checkout on this host with gbrain sources writer claim.`,
     { fix: ownerStatusFix(sourceId) });
   if (writeThrough && binding) {
-    if (!await probeWorktreeWriter(binding, engine)) throw opError('writer_lock_unavailable', 'The canonical atom writer is busy; no extraction was started.',
+    if (!await probeWorktreeWriter(binding, engine, wait.probeMs(MANAGED_WRITER_PROBE_WAIT_MS), signal)) throw opError('writer_lock_unavailable', 'The canonical atom writer is busy; no extraction was started.',
       `Another write holds source ${sourceId}'s canonical writer. Nothing was started, so run the atom drain again once the owner status shows it idle.`,
       { fix: ownerStatusFix(sourceId) });
   }
@@ -563,6 +563,28 @@ async function resumeAtomBatch(engine: BrainEngine, session: ManagedAtomSession,
   return 'done';
 }
 
+/**
+ * #7923: two runs of one origin under one run key (a force-evicted phase still running beside the next run, a manual
+ * drain beside the cycle) both find no accepted batch and both extract; the run that admits second reuses the batch's
+ * deterministic request ids with other intents (a new extracted_at in each atom, another runId, other children or
+ * atoms), and the journal refuses it with
+ * idempotency_conflict. When a batch completion already holds this run key, that refusal means another run published
+ * the origin: wait on its batch like a resume. Null for any other error, when no batch holds the run key (a real
+ * collision stays a failure), or when waiting on that batch fails (the refusal is reported as before).
+ */
+export async function concurrentAtomBatch(engine: BrainEngine, session: ManagedAtomSession, origin: AtomOrigin,
+  error: unknown): Promise<'done' | 'held' | 'pending' | null> {
+  if (!(error instanceof OperationError) || error.code !== 'idempotency_conflict') return null;
+  const completionId = atomRequestId(atomClaim(session, origin).runKey, '__managed_atom_complete__');
+  if (!await getWriteRequest(engine, session.authority.principal, completionId)) return null;
+  try {
+    const resumed = await resumeManagedAtoms(engine, session, origin);
+    return resumed === 'run' ? null : resumed;
+  } catch (waited) {
+    return acceptedPendingReceipt(waited) ? 'pending' : null;
+  }
+}
+
 export interface ManagedAtomRetirement {
   slug: string;
   pageId: number;
@@ -830,16 +852,19 @@ async function replacementPublished(db: BrainEngine, row: WriteRequest, p: AtomI
     { fix: receiptFix(row.request_id) });
 }
 
-/** A `managed-atoms` checkpoint `ac` for one page at its current content hash, completed or failed. */
-function managedAtomIdentitySql(page: { sourceId: string; slug: string; pageId: string; contentHash: string }): string {
+/**
+ * A `managed-atoms` checkpoint `ac` for one page at its current content hash, completed or failed. Keyed on the page id, not
+ * the slug it was recorded under (#7462): a rename keeps the row and its content, so it is not a new extraction input.
+ */
+function managedAtomIdentitySql(page: { sourceId: string; pageId: string; contentHash: string }): string {
   return `ac.op='managed-atoms' AND ac.completed_keys->0->>'sourceId'=${page.sourceId}
     AND ac.completed_keys->0->>'incarnation'=(SELECT incarnation::text FROM sources WHERE id=${page.sourceId})
-    AND ac.completed_keys->0->>'kind'='page' AND ac.completed_keys->0->>'locator'=${page.slug}
+    AND ac.completed_keys->0->>'kind'='page'
     AND ac.completed_keys->0->>'pageId'=${page.pageId}::text AND ac.completed_keys->0->>'contentHash'=${page.contentHash}`;
 }
 
 /** The completed, failure-free `managed-atoms` checkpoint `ac` for one page at its current content hash. */
-export function managedAtomCompletedSql(page: { sourceId: string; slug: string; pageId: string; contentHash: string }): string {
+export function managedAtomCompletedSql(page: { sourceId: string; pageId: string; contentHash: string }): string {
   return `${managedAtomIdentitySql(page)}
     AND ac.completed_keys->0->>'failure' IS NULL`;
 }
@@ -850,7 +875,7 @@ export function managedAtomCompletedSql(page: { sourceId: string; slug: string; 
  */
 export function managedAtomDiscoverySql(maxInputChars?: string): string {
   return `AND NOT EXISTS (SELECT 1 FROM op_checkpoints ac
-  WHERE ${managedAtomIdentitySql({ sourceId: 'p.source_id', slug: 'p.slug', pageId: 'p.id', contentHash: 'p.content_hash' })}
+  WHERE ${managedAtomIdentitySql({ sourceId: 'p.source_id', pageId: 'p.id', contentHash: 'p.content_hash' })}
     AND (ac.completed_keys->0->>'failure' IS NULL OR ac.completed_keys->0->>'held'='true')${maxInputChars ? `
     AND (ac.completed_keys->0->>'partial' IS NULL OR (ac.completed_keys->0->>'partial')::integer >= ${maxInputChars})` : ''})`;
 }
@@ -885,7 +910,9 @@ export async function listHeldManagedAtoms(engine: BrainEngine, sourceIds?: stri
           AND p.id::text=h.completed_keys->0->>'pageId' AND p.content_hash=h.completed_keys->0->>'contentHash' AND p.deleted_at IS NULL))
         AND NOT EXISTS (SELECT 1 FROM op_checkpoints ac WHERE ac.op='managed-atoms' AND ac.completed_keys->0->>'failure' IS NULL
           AND ac.completed_keys->0->>'sourceId'=s.id AND ac.completed_keys->0->>'incarnation'=s.incarnation::text
-          AND ac.completed_keys->0->>'kind'=h.completed_keys->0->>'kind' AND ac.completed_keys->0->>'locator'=h.completed_keys->0->>'locator'
+          AND ac.completed_keys->0->>'kind'=h.completed_keys->0->>'kind'
+          AND (CASE WHEN h.completed_keys->0->>'kind'='page' THEN ac.completed_keys->0->>'pageId'=h.completed_keys->0->>'pageId'
+            ELSE ac.completed_keys->0->>'locator'=h.completed_keys->0->>'locator' END)
           AND ac.completed_keys->0->>'contentHash'=h.completed_keys->0->>'contentHash')
       ORDER BY h.completed_keys->0->>'requestId', h.updated_at`, [sourceIds ?? null]);
   return rows.map(row => ({ ...row, attempts: Number(row.attempts), held_at: new Date(row.held_at).toISOString() }))

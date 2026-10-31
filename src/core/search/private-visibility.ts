@@ -23,6 +23,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine } from '../engine.ts';
 import { isValidSourceId } from '../source-id.ts';
+import { atomOriginSlugsSql } from '../persistence/atom-origin.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 
@@ -156,10 +157,12 @@ export function privateSnapshotFilterFragment(alias: string): string {
  * a synthesized concept with a private input atom (or an input atom whose
  * origin is private), are private whatever their own field says.
  * `gbrain repair visibility` then stamps the stricter value on the rows.
+ * An atom whose origin a sync rename moved (#7462) is private when the page at
+ * its `source_slug` or the page the rename moved it to is private.
  */
 function derivedOriginPrivateSql(p: string): string {
   const privateOrigin = (atom: string, alias: string) => `EXISTS (SELECT 1 FROM pages ${alias} WHERE ${alias}.source_id = ${atom}.source_id
-      AND ${alias}.slug = ${atom}.frontmatter->>'source_slug' AND ${alias}.frontmatter->>'visibility' = 'private')`;
+      AND ${alias}.slug = ANY(${atomOriginSlugsSql(atom)}) AND ${alias}.frontmatter->>'visibility' = 'private')`;
   return `(CASE WHEN ${p}.type = 'atom' THEN ${privateOrigin(p, 'derived_origin')}
     WHEN ${derivedPageSql(p)} THEN EXISTS (SELECT 1 FROM links derived_input_link
       JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id

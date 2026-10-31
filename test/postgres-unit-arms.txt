@@ -65,6 +65,7 @@ test/embed-stale-images-managed-6529.test.ts
 test/embedding-completion-atomic.serial.test.ts
 test/engine-sql-facts-keyset.test.ts
 test/extract-all-stamp-intersection.serial.test.ts
+test/extract-atoms-concurrent-run-7923.test.ts
 test/extract-atoms-input-truncated-6503.test.ts
 test/extract-atoms-raised-cap-drain-7391.test.ts
 test/extract-endpoint-revision.serial.test.ts
@@ -424,6 +425,7 @@ test/purge-fact.test.ts
 test/purge-global-marker.test.ts
 test/purge-missing-cache-6911.test.ts
 test/purge-read-surfaces.test.ts
+test/purge-root-metafile-7613.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
 test/read-meta-diag.test.ts
 test/recall-page-fill.test.ts
@@ -431,6 +433,7 @@ test/receipt-compaction-newest-sync-gbra130.test.ts
 test/reconcile-clears-stalled-hold-7364.test.ts
 test/remediation-manual-only.test.ts
 test/remember-batch-entity-7432.test.ts
+test/rename-atom-lineage-7462.test.ts
 test/repair-apply-pending-6543.test.ts
 test/repair-database-stop-gbra133.test.ts
 test/repair-embedding-effects.test.ts

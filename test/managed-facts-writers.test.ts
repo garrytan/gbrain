@@ -31,7 +31,7 @@ import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { configureGateway, resetGateway, __setChatTransportForTests, __setEmbedTransportForTests, type ChatResult } from '../src/core/ai/gateway.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
-import { runExtractConversationFactsCore, runExtractConversationFacts } from '../src/commands/extract-conversation-facts.ts';
+import { runExtractConversationFactsCore, runExtractConversationFacts, type ExtractConversationFactsResult } from '../src/commands/extract-conversation-facts.ts';
 import { runPhaseConversationFactsBackfill } from '../src/core/cycle/conversation-facts-backfill.ts';
 import { writeFactsToFence } from '../src/core/facts/fence-write.ts';
 import { writeSingleFact } from '../src/core/facts/write-single.ts';
@@ -529,6 +529,40 @@ test('managed writeSingleFact reports the entity it persisted for an unresolved 
     const written = await writeSingleFact(engine, sourceId, { fact: 'Carol Unknown owns a sailboat.', provenance: 'fixture', entity: 'Carol Unknown' });
     const [row] = await engine.executeRaw<{ entity_slug: string | null }>('SELECT entity_slug FROM facts WHERE id=$1', [written.id]);
     expect(written.entity_slug).toBe(row.entity_slug);
+  });
+}, 120_000);
+
+test('#7068: an interrupted managed extraction hands back the counts of the pages it published', async () => {
+  const later = `---\ntitle: Synthetic follow-up\ntype: conversation\n---\n${[
+    '**Bob Demo** (2024-03-16 9:00 AM): Did the move to the platform team go through?',
+    '**Alice Example** (2024-03-16 9:01 AM): Yes, I start on Monday.',
+  ].join('\n')}\n`;
+  await managed(async ({ put }) => {
+    await put('conversations/first-chat', CONVERSATION);
+    await put('conversations/second-chat', later);
+  }, async ({ engine, sourceId }) => {
+    const caller = new AbortController();
+    const replies = ['Alice Example signed an offer with Acme Corp.', 'Alice Example starts on the platform team on Monday.'];
+    let call = 0;
+    const factFor = (text: string) => [{ fact: text, kind: 'event' as const, entity_slug: null, confidence: 1,
+      notability: 'high' as const, source: 'test', visibility: 'private' as const }];
+    const interruptSecond = async () => {
+      if (++call === 2) { caller.abort(new Error('per-source walltime cap hit')); throw caller.signal.reason; }
+      return factFor(replies[0]!);
+    };
+    const handed: ExtractConversationFactsResult[] = [];
+    const thrown = await runExtractConversationFactsCore(engine, { sourceId, types: ['conversation'], sleepMs: 0,
+      extractor: interruptSecond, onInterrupted: partial => { handed.push(partial); } }, caller.signal).then(() => null, (err: Error) => err);
+    expect(thrown?.message).toBe('per-source walltime cap hit');
+    expect(handed).toHaveLength(1);
+    expect(handed[0]).toMatchObject({ pages_processed: 1, facts_inserted: 1, pages_failed: 0 });
+    expect((await facts(engine, sourceId, 'conversations/first-chat')).map(f => f.fact)).toEqual([replies[0], 'EXTRACTION_COMPLETE']);
+    expect(await facts(engine, sourceId, 'conversations/second-chat')).toEqual([]);
+
+    const resumed = await runExtractConversationFactsCore(engine, { sourceId, types: ['conversation'], sleepMs: 0,
+      extractor: async () => factFor(replies[1]!) });
+    expect(resumed).toMatchObject({ pages_skipped_completed: 1, pages_processed: 1, facts_inserted: 1 });
+    expect((await facts(engine, sourceId, 'conversations/second-chat')).map(f => f.fact)).toEqual([replies[1], 'EXTRACTION_COMPLETE']);
   });
 }, 120_000);
 
