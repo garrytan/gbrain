@@ -209,9 +209,10 @@ export async function structuralExactLookup(
  * Mirrors applyAliasHop's contract: hits already present are promoted to the
  * top (score = current-top + epsilon) and stamped; absent hits inject with
  * the same top-of-organic + epsilon score shape. Identity rows move to the
- * front; every other row keeps its input order (never re-sorted by `score`,
- * which would discard a reranked order). Returns a NEW array; fail-open
- * returns `results` unchanged.
+ * front in the hits' own order (#7935: the first hit ends at rank 1 with the
+ * highest score); every other row keeps its input order (never re-sorted by
+ * `score`, which would discard a reranked order). Returns a NEW array;
+ * fail-open returns `results` unchanged.
  */
 export async function applyExactLookupTier(
   engine: BrainEngine,
@@ -241,7 +242,7 @@ export function applyExactLookupHits(results: SearchResult[], hits: readonly Sea
   const topScore = out.reduce((m, r) => (Number.isFinite(r.score) && r.score > m ? r.score : m), 0);
   let injectScore = topScore > 0 ? topScore : 1.0;
 
-  for (const hit of hits) {
+  for (const hit of [...hits].reverse()) {
     injectScore += 1e-6;
     const matchingIndexes: number[] = [];
     for (let i = 0; i < out.length; i++) {
