@@ -563,6 +563,28 @@ async function resumeAtomBatch(engine: BrainEngine, session: ManagedAtomSession,
   return 'done';
 }
 
+/**
+ * #7923: two runs of one origin under one run key (a force-evicted phase still running beside the next run, a manual
+ * drain beside the cycle) both find no accepted batch and both extract; the run that admits second reuses the batch's
+ * deterministic request ids with other intents (a new extracted_at in each atom, another runId, other children or
+ * atoms), and the journal refuses it with
+ * idempotency_conflict. When a batch completion already holds this run key, that refusal means another run published
+ * the origin: wait on its batch like a resume. Null for any other error, when no batch holds the run key (a real
+ * collision stays a failure), or when waiting on that batch fails (the refusal is reported as before).
+ */
+export async function concurrentAtomBatch(engine: BrainEngine, session: ManagedAtomSession, origin: AtomOrigin,
+  error: unknown): Promise<'done' | 'held' | 'pending' | null> {
+  if (!(error instanceof OperationError) || error.code !== 'idempotency_conflict') return null;
+  const completionId = atomRequestId(atomClaim(session, origin).runKey, '__managed_atom_complete__');
+  if (!await getWriteRequest(engine, session.authority.principal, completionId)) return null;
+  try {
+    const resumed = await resumeManagedAtoms(engine, session, origin);
+    return resumed === 'run' ? null : resumed;
+  } catch (waited) {
+    return acceptedPendingReceipt(waited) ? 'pending' : null;
+  }
+}
+
 export interface ManagedAtomRetirement {
   slug: string;
   pageId: number;
