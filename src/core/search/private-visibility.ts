@@ -159,12 +159,14 @@ export interface CallerAccess {
   hidePrivate: boolean;
   applyRemoteReadPolicy: boolean;
   restricted: boolean;
+  /** The fresh remote policy (readRemotePolicyNow) a remote request read when it started; null outside one. */
+  remotePolicy: RemotePolicy | null;
 }
 const callerAccessStore = new AsyncLocalStorage<CallerAccess>();
 
 /** The current read's caller-access record (see CallerAccess). */
 export function currentCallerAccess(): CallerAccess {
-  return callerAccessStore.getStore() ?? { identity: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), applyRemoteReadPolicy: false, restricted: true };
+  return callerAccessStore.getStore() ?? { identity: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), applyRemoteReadPolicy: false, restricted: true, remotePolicy: null };
 }
 
 /** Runs `fn` under `access` merged over the current record; an invalid identity or source id empties that set (fail closed). */
@@ -178,6 +180,7 @@ export function withCallerAccess<T>(access: Partial<CallerAccess>, fn: () => T):
     hidePrivate: access.hidePrivate ?? base.hidePrivate,
     applyRemoteReadPolicy: access.applyRemoteReadPolicy ?? base.applyRemoteReadPolicy,
     restricted: access.restricted ?? base.restricted,
+    remotePolicy: access.remotePolicy ?? base.remotePolicy,
   }), fn);
 }
 
@@ -604,6 +607,8 @@ export async function remotePrivacyRelaxed(engine: BrainEngine): Promise<boolean
   return expose;
 }
 
+export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean }
+
 /**
  * The remote read policy read fresh, for publication: whether an operator
  * relaxed privacy (the env hatch or the config opt-out, uncached) and whether
@@ -611,7 +616,7 @@ export async function remotePrivacyRelaxed(engine: BrainEngine): Promise<boolean
  * transaction included). An unreadable config counts as not opted out and
  * restricted (fail closed); the env hatch needs no read.
  */
-export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<{ privacyRelaxed: boolean; restricted: boolean }> {
+export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<RemotePolicy> {
   const hatch = process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1';
   try {
     const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY]]);

@@ -1,5 +1,5 @@
 import { opError } from '../ops/contract.ts';
-import { callerAccessAllowedSql, callerIdentity, readPolicyFragment, readRemotePolicyNow } from '../search/private-visibility.ts';
+import { callerAccessAllowedSql, callerIdentity, currentCallerAccess, readPolicyFragment, readRemotePolicyNow } from '../search/private-visibility.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { memberIdentityFor } from '../access/caller.ts';
 import { hasReaders, normalizePrincipal, normalizeReaders, readersAllow, NOBODY } from '../access/principals.ts';
@@ -10,6 +10,15 @@ import type { SqlEngine, WriteAuthority } from './model.ts';
 export async function excludesPrivateWrites(engine: SqlEngine, remote: boolean): Promise<boolean> {
   if (!remote) return false;
   return !(await readRemotePolicyNow(engine)).privacyRelaxed;
+}
+
+/**
+ * excludesPrivateWrites for a write's admission: reuses the fresh policy this remote request read when it started
+ * (remoteCallerAccess) instead of reading it again. A false result is rechecked fresh at publication.
+ */
+export async function excludesPrivateWritesAtAdmission(engine: SqlEngine, remote: boolean): Promise<boolean> {
+  if (!remote) return false;
+  return !(currentCallerAccess().remotePolicy ?? await readRemotePolicyNow(engine)).privacyRelaxed;
 }
 
 /**
