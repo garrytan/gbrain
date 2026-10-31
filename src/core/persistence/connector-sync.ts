@@ -27,7 +27,7 @@ import { managedSyncAuthority, validateManagedSyncOptions, validateSyncAuthority
 import type { PreparedContentImport } from './prepared-import.ts';
 import { persistenceFileHash, type PreparedMutation } from './coordinator.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
-import { databaseOnlyPublication, prepareFileTarget } from './page-prepare.ts';
+import { databaseOnlyPublication, prepareFileTarget, preparePrivateTransition } from './page-prepare.ts';
 import { sourceCanonicalGit } from './git-door.ts';
 import { isPrivatePage } from '../search/private-visibility.ts';
 import { assertPhysicalRoot } from './physical-root.ts';
@@ -250,6 +250,19 @@ async function strictPrivateImport(engine: BrainEngine, sourceId: string, conten
   const parsed = parseMarkdown(content, sourcePath);
   const frontmatter = snapshot?.page.frontmatter.visibility === 'private' ? { ...parsed.frontmatter, visibility: 'private' } : parsed.frontmatter;
   return isPrivatePage({ type: parsed.type, frontmatter }) && await sourceCanonicalGit(engine, sourceId);
+}
+
+/**
+ * #7971: the file target of a strict private import, or null when the import is not one. A page turning private (its
+ * stored snapshot is live and public) gets the removal of the file it still has in the worktree or at HEAD, which the
+ * door commits with the publication (G7a, preparePrivateTransition), so the public file leaves HEAD and no private byte
+ * is committed. A page already private, or one without a file, publishes no file.
+ */
+async function strictPrivateFile(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'>, content: string, sourcePath: string,
+  snapshot: PageSnapshot | null): Promise<{ file: PreparedMutation['file'] } | null> {
+  if (!await strictPrivateImport(engine, row.source_id, content, sourcePath, snapshot)) return null;
+  const turning = snapshot && !snapshot.page.deleted_at && !isPrivatePage({ type: snapshot.page.type, frontmatter: snapshot.page.frontmatter });
+  return { file: turning ? await preparePrivateTransition(engine, row, snapshot) : undefined };
 }
 
 export async function beginConnectorSync(engine: BrainEngine, sourceId: string, connector: ConnectorKind,
@@ -892,7 +905,7 @@ export class ManagedConnectorSync {
       if (kind === 'connector_v2_delete') {
         if (this.binding || prepared.noop !== true) return false;
       } else {
-        const databaseOnly = !this.binding || await strictPrivateImport(this.engine, this.sourceId, intent.content ?? '', sourcePath ?? `${slug}.md`, snapshot);
+        const databaseOnly = !this.binding || !prepared.file && await strictPrivateImport(this.engine, this.sourceId, intent.content ?? '', sourcePath ?? `${slug}.md`, snapshot);
         const verdict = await inspectUnchanged(this.engine, { prepared, snapshot, sourcePath, databaseOnly });
         if (verdict.admitReason) return false;
       }
@@ -916,9 +929,11 @@ export class ManagedConnectorSync {
       extra.googleReceipts = ownedGoogleReceipts(snapshot, (this.identity.config as GoogleSourceConfig).account, extra.googleReceipts!);
       sourcePath = snapshot!.page.source_path!;
     }
-    const file = kind === 'connector_v2_checkpoint' || kind === 'connector_v2_import' && sourcePath && typeof extra.content === 'string'
-      && await strictPrivateImport(this.engine, this.sourceId, extra.content, sourcePath, snapshot) ? undefined : await connectorFileTarget(this.engine,
-      { source_id: this.sourceId, worktree_id: this.binding?.worktree_id ?? null, slug }, snapshot, extra.content ?? null, sourcePath, this.canonicalRoot);
+    const target = { source_id: this.sourceId, worktree_id: this.binding?.worktree_id ?? null, slug };
+    const strictPrivate = kind === 'connector_v2_import' && sourcePath && typeof extra.content === 'string'
+      ? await strictPrivateFile(this.engine, target, extra.content, sourcePath, snapshot) : null;
+    const file = kind === 'connector_v2_checkpoint' ? undefined : strictPrivate ? strictPrivate.file
+      : await connectorFileTarget(this.engine, target, snapshot, extra.content ?? null, sourcePath, this.canonicalRoot);
     if (file && sourcePath && resolve(file.path) !== resolve(this.canonicalRoot!, sourcePath)) {
       throw opError('source_changed', 'The connector source path no longer names its canonical file.',
         `The recorded path of ${slug} no longer resolves to its canonical file under the root of ${this.sourceId}, so nothing was submitted. Inspect the root and binding before running gbrain sync --source ${this.sourceId} again.`,
@@ -1195,7 +1210,8 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
   const project = await prepareCanonicalProjections(engine, ready.parsedPage, row.slug, row.source_id, snapshot, 'preserving');
   const tags = [...new Set([...(snapshot?.tags ?? []), ...ready.parsedPage.tags])].sort();
   const page: Page = { ...(snapshot?.page ?? { id: 0, slug: row.slug, source_id: row.source_id, created_at: new Date(row.created_at), updated_at: new Date(row.created_at) }), ...ready.parsedPage };
-  const target = await strictPrivateImport(engine, row.source_id, p.content, p.sourcePath, snapshot) ? undefined
+  const strictPrivate = await strictPrivateFile(engine, row, p.content, p.sourcePath, snapshot);
+  const target = strictPrivate ? strictPrivate.file
     : await connectorFileTarget(engine, row, snapshot, serializePageToMarkdown(page, tags), p.sourcePath, p.canonicalRoot);
   // Google pages hold private mail: derived here from the stored connector, never submitted, so request ids are unchanged.
   const file = target && p.connector === 'google' ? { ...target, publishMode: 0o600 } : target;

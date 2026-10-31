@@ -309,12 +309,25 @@ CREATE TABLE IF NOT EXISTS page_retrievals (
   page_id           INTEGER PRIMARY KEY,
   last_retrieved_at TIMESTAMPTZ NOT NULL
 );
+-- BEGIN GENERATED from src/core/derived-state-maintainers.ts (PAGE_RETRIEVALS_FORGET_FUNCTION_SQL). Edit that file, then run: bun run build:schema
 CREATE OR REPLACE FUNCTION gbrain_forget_page_retrievals() RETURNS trigger
-  LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+  LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
-  DELETE FROM page_retrievals r USING gbrain_deleted_pages d WHERE r.page_id = d.id;
+  IF EXISTS (SELECT 1 FROM gbrain_deleted_pages) THEN
+    IF pg_catalog.row_security_active('page_retrievals') THEN
+      IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r','d']) AS needed(cmd) WHERE NOT EXISTS (
+          SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'page_retrievals'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+            AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+        RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+          TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+          DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','page_retrievals')::text;
+      END IF;
+    END IF;
+    DELETE FROM page_retrievals r USING gbrain_deleted_pages d WHERE r.page_id = d.id;
+  END IF;
   RETURN NULL;
 END $$;
+-- END GENERATED from src/core/derived-state-maintainers.ts (PAGE_RETRIEVALS_FORGET_FUNCTION_SQL)
 DROP TRIGGER IF EXISTS pages_forget_retrievals ON pages;
 CREATE TRIGGER pages_forget_retrievals AFTER DELETE ON pages
   REFERENCING OLD TABLE AS gbrain_deleted_pages
@@ -1180,11 +1193,22 @@ CREATE INDEX IF NOT EXISTS idx_pages_title_search ON pages USING GIN (ts_filter(
 -- what searchKeyword() actually queries. See migrate.ts's v124 migration
 -- for the full rationale; keep in sync with that + reindex-search-vector.ts
 -- + pglite-schema.ts.
-CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger SET search_path = pg_catalog, public AS $$
+CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE
   timeline_text TEXT;
   timeline_lead_text TEXT;
 BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    IF pg_catalog.row_security_active('timeline_entries') THEN
+      IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r']) AS needed(cmd) WHERE NOT EXISTS (
+          SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'timeline_entries'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+            AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+        RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+          TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+          DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','timeline_entries')::text;
+      END IF;
+    END IF;
+  END IF;
   SELECT coalesce(string_agg(summary || ' ' || detail, ' ' ORDER BY id), '')
   INTO timeline_text
   FROM timeline_entries
@@ -1910,10 +1934,19 @@ CREATE OR REPLACE FUNCTION gbrain_advance_page_revision() RETURNS trigger LANGUA
 DROP TRIGGER IF EXISTS pages_knowledge_revision ON pages;
 CREATE TRIGGER pages_knowledge_revision BEFORE UPDATE ON pages
     FOR EACH ROW EXECUTE FUNCTION gbrain_advance_page_revision();
-CREATE OR REPLACE FUNCTION gbrain_advance_tag_revision() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+CREATE OR REPLACE FUNCTION gbrain_advance_tag_revision() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
     BEGIN
       IF TG_OP = 'UPDATE' AND (NEW.page_id, NEW.tag) IS NOT DISTINCT FROM (OLD.page_id, OLD.tag) THEN
         RETURN NULL;
+      END IF;
+      IF pg_catalog.row_security_active('pages') THEN
+        IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r','w']) AS needed(cmd) WHERE NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'pages'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+              AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+          RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+            TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+            DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','pages')::text;
+        END IF;
       END IF;
       IF TG_OP <> 'INSERT' THEN
         UPDATE pages SET knowledge_revision = gen_random_uuid() WHERE id = OLD.page_id;
@@ -2616,22 +2649,67 @@ CREATE TABLE IF NOT EXISTS page_projection_jobs (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY(source_incarnation,slug)
   );
-CREATE OR REPLACE FUNCTION gbrain_queue_page_projection() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+CREATE OR REPLACE FUNCTION gbrain_queue_page_projection() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
     DECLARE incarnation UUID;
     BEGIN
+      IF pg_catalog.row_security_active('sources') THEN
+        IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r']) AS needed(cmd) WHERE NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'sources'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+              AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+          RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+            TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+            DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','sources')::text;
+        END IF;
+      END IF;
       IF TG_OP='DELETE' THEN
+        IF pg_catalog.row_security_active('page_projection_jobs') THEN
+          IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r','d']) AS needed(cmd) WHERE NOT EXISTS (
+              SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'page_projection_jobs'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+                AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+            RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+              TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+              DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','page_projection_jobs')::text;
+          END IF;
+        END IF;
         DELETE FROM page_projection_jobs j USING sources s
           WHERE s.id=OLD.source_id AND j.source_incarnation=s.incarnation AND j.slug=OLD.slug;
         RETURN NULL;
       END IF;
       IF TG_OP='UPDATE' AND (OLD.source_id,OLD.slug) IS DISTINCT FROM (NEW.source_id,NEW.slug) THEN
+        IF pg_catalog.row_security_active('page_projection_jobs') THEN
+          IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r','d']) AS needed(cmd) WHERE NOT EXISTS (
+              SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'page_projection_jobs'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+                AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+            RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+              TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+              DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','page_projection_jobs')::text;
+          END IF;
+        END IF;
         DELETE FROM page_projection_jobs j USING sources s
           WHERE s.id=OLD.source_id AND j.source_incarnation=s.incarnation AND j.slug=OLD.slug;
       END IF;
       SELECT s.incarnation INTO incarnation FROM sources s WHERE s.id=NEW.source_id;
       IF NEW.deleted_at IS NOT NULL OR NEW.text_projection_revision=NEW.knowledge_revision THEN
+        IF pg_catalog.row_security_active('page_projection_jobs') THEN
+          IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r','d']) AS needed(cmd) WHERE NOT EXISTS (
+              SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'page_projection_jobs'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+                AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+            RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+              TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+              DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','page_projection_jobs')::text;
+          END IF;
+        END IF;
         DELETE FROM page_projection_jobs j WHERE j.source_incarnation=incarnation AND j.slug=NEW.slug;
       ELSIF TG_OP='INSERT' OR NEW.knowledge_revision IS DISTINCT FROM OLD.knowledge_revision THEN
+        IF pg_catalog.row_security_active('page_projection_jobs') THEN
+          IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r','a','w']) AS needed(cmd) WHERE NOT EXISTS (
+              SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'page_projection_jobs'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+                AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+            RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+              TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+              DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','page_projection_jobs')::text;
+          END IF;
+        END IF;
         INSERT INTO page_projection_jobs(source_incarnation,slug,revision,reason)
           VALUES (incarnation,NEW.slug,NEW.knowledge_revision,'canonical_change')
           ON CONFLICT(source_incarnation,slug) DO UPDATE SET revision=EXCLUDED.revision,reason=EXCLUDED.reason,updated_at=now();

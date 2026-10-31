@@ -27,6 +27,12 @@ export async function sourceSyncShape(engine: BrainEngine, sourceId: string): Pr
   return { exists: true, managed, root: (managed ? row.root : null) ?? row.local_path };
 }
 
+/** The source checkout's HEAD now, or null when it has none or git can't read it (a settle then stays exact). */
+export async function checkoutHead(engine: BrainEngine, sourceId: string): Promise<string | null> {
+  const { root } = await sourceSyncShape(engine, sourceId);
+  return root ? revParseHead(root).catch(() => null) : null;
+}
+
 /** Records the marker a trigger asks for; resolves the intent and, for freshness, the checkout's HEAD. */
 export async function recordTriggerMarker(engine: BrainEngine, req: { sourceId: string; intent?: MarkerIntent; wantedHead?: string | null; requestedBy: MarkerRequester; jobId?: number | null }):
     Promise<{ marker: WantedMarker; managed: boolean } | null> {

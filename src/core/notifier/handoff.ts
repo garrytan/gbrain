@@ -16,7 +16,8 @@ export async function readMarkersForRun(engine: BrainEngine, sourceId: string): 
 /** After a completed run: clears what it satisfied; queues one follow-up job when something is still due. Returns that job. */
 export async function settleRunMarkers(engine: BrainEngine, sourceId: string, read: WantedMarker[], run: { pulled: boolean; full: boolean }, opts: { queue?: boolean } = {}): Promise<{ job_id: number | null; markers: number } | null> {
   try {
-    const remaining = await settleMarkers(engine, sourceId, read, run);
+    const head = await (await import('./nudge.ts')).checkoutHead(engine, sourceId).catch(() => null);
+    const remaining = await settleMarkers(engine, sourceId, read, { ...run, checkoutHead: head });
     if (!remaining.length) return null;
     if (opts.queue === false || engine.kind === 'pglite') {
       (await import('./resident.ts')).nudgeResidentNotifier();

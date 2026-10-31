@@ -49,7 +49,8 @@ export function sqlNotifierStore(engine: BrainEngine): NotifierStore {
     liveJobs: async (ids) => new Set((await engine.executeRaw<{ id: unknown }>(
       "SELECT id FROM minion_jobs WHERE id = ANY($1::bigint[]) AND status IN ('waiting','active','delayed','waiting-children','paused')", [ids])).map(r => Number(r.id))),
     forward: async (sourceId, head) => { await upsertMarker(engine, { sourceId, intent: 'freshness', wantedHead: head, requestedBy: 'notifier' }); },
-    settleMarkers: (sourceId, read, run) => settleMarkers(engine, sourceId, read, run),
+    settleMarkers: async (sourceId, read, run) => settleMarkers(engine, sourceId, read,
+      { ...run, checkoutHead: await (await import('./nudge.ts')).checkoutHead(engine, sourceId).catch(() => null) }),
     readStates: (ids) => readNotifierSources(engine, ids),
     writeState: (sourceId, patch) => writeState(engine, sourceId, patch),
     writeCoverage: (sourceId, c) => writeCoverage(engine, sourceId, c),

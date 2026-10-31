@@ -110,6 +110,7 @@ test/cycle-phase-deadline-drift.test.ts	propose_takes deadline < job timeout (#4
 test/cycle/nightly-probe-routes.test.ts	resolveNightlyProbeModelRoutes	6	source-surface-helper
 test/cycle/nightly-probe-routes.test.ts	resolveNightlyProbeModelRoutesForDaemon (autopilot step dep)	3	source-surface-helper
 test/deletion-inventory.test.ts	deletion inventory	3	readFileSync
+test/derived-state-maintainers-7637.test.ts	owner behaviour is unchanged	6	readFileSync
 test/destructive-guard.test.ts	FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)	9	readFileSync
 test/destructive-guard.test.ts	assessDestructiveImpact	5	readFileSync
 test/destructive-guard.test.ts	formatters (display helpers)	4	readFileSync
