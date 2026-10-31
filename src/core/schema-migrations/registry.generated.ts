@@ -276,6 +276,7 @@ import { v272 } from './v272-git-canonical-declared.ts';
 import { v273 } from './v273-principal-private-pages.ts';
 import { v274 } from './v274-member-read-access.ts';
 import { v275 } from './v275-folder-access-rules.ts';
+import { v276 } from './v276-qm-actor-links.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -550,4 +551,5 @@ export const MIGRATIONS: Migration[] = [
   v273,
   v274,
   v275,
+  v276,
 ];
