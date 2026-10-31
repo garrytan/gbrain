@@ -10,12 +10,13 @@
  *   - Anything else (mailto:, internal anchors) → warning.
  *
  * Relative links resolve against the linking page's directory through the
- * link extractor's own resolver (resolveMarkdownLinkSlug), so a link this
+ * link extractor's own resolvers (pageRelativeMarkdownSlugs, then
+ * resolveMarkdownLinkSlug), so a link this
  * validator accepts is a link the graph records, and a wrong-depth link is
  * reported with the slug it actually resolves to.
  */
 
-import { resolveMarkdownLinkSlug } from '../../link-extraction.ts';
+import { pageRelativeMarkdownSlugs, resolveMarkdownLinkSlug } from '../../link-extraction.ts';
 import type { PageValidator, PageValidationContext, ValidationFinding } from '../writer.ts';
 
 const MD_LINK_RE = /\[([^\]]+)\]\(([^)]+)\)/g;
@@ -26,6 +27,12 @@ export const linkValidator: PageValidator = {
   async validate(ctx: PageValidationContext): Promise<ValidationFinding[]> {
     const findings: ValidationFinding[] = [];
     const body = `${ctx.compiledTruth}\n${ctx.timeline}`;
+
+    const sourceOpts = ctx.sourceIds && ctx.sourceIds.length > 0
+      ? { sourceIds: ctx.sourceIds }
+      : ctx.sourceId
+        ? { sourceId: ctx.sourceId }
+        : undefined;
 
     // Collect unique internal targets first to batch engine lookups.
     const internalTargets = new Set<string>();
@@ -46,7 +53,10 @@ export const linkValidator: PageValidator = {
         continue;
       }
 
-      const slug = resolveMarkdownLinkSlug(ctx.slug, href.trim());
+      let slug = resolveMarkdownLinkSlug(ctx.slug, href.trim());
+      for (const candidate of pageRelativeMarkdownSlugs(ctx.slug, href)) {
+        if (await ctx.engine.getPage(candidate, sourceOpts)) { slug = candidate; break; }
+      }
       if (!slug) {
         findings.push({
           slug: ctx.slug,
@@ -65,11 +75,6 @@ export const linkValidator: PageValidator = {
     }
 
     // Batch-check which targets exist within the validation read scope.
-    const sourceOpts = ctx.sourceIds && ctx.sourceIds.length > 0
-      ? { sourceIds: ctx.sourceIds }
-      : ctx.sourceId
-        ? { sourceId: ctx.sourceId }
-        : undefined;
     for (const slug of internalTargets) {
       const page = await ctx.engine.getPage(slug, sourceOpts);
       if (page) continue;
