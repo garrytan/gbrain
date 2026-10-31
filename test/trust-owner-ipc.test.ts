@@ -15,7 +15,7 @@
  * Fails if any of those paths opens, or the CLI stops delegating.
  * PGLite only (the resident-owner socket is a PGLite topology).
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -38,6 +38,8 @@ import { __setConfirmationIoForTests } from '../src/core/trust/confirm.ts';
 import { getTrustProposal } from '../src/core/trust/proposals.ts';
 import { TRUST_ADMIN_OPERATIONS, runTrustAdministration } from '../src/core/trust/owner-ipc.ts';
 import { maybeDelegateTrust } from '../src/commands/trust.ts';
+import * as localClient from '../src/core/persistence/local-client.ts';
+import { DOOR_WAIT_MS } from '../src/core/trust/release-publish.ts';
 import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
@@ -140,6 +142,28 @@ describe('gbrain trust through the resident owner (DX-2)', () => {
     expect(lines.join('\n')).toContain(`${tp}: accepted`);
     expect((await getTrustProposal(engine, id))!.status).toBe('accepted');
     expect(await tier('notes/ipc-two-example')).toBe('user_confirmed');
+  }, 120_000);
+
+  // Value: protects=trust_apply over the owner socket waits longer than the release door's own wait (DOOR_WAIT_MS);
+  // fails_when=the CLI falls back to the socket's 30 s default (red at 70dd6dd18^: timeoutMs undefined); why_new=no test pinned the apply timeout;
+  // seam=a call-through spy on maybeDelegateLocalAdministration; no_claim=a real release slower than 30 s over the socket
+  test('trust_apply over the owner socket is given a timeout longer than the release door\'s wait (DOOR_WAIT_MS)', async () => {
+    const { tp } = await loweredPage('notes/ipc-three-example');
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let prompt = '';
+    output.on('data', chunk => { prompt += String(chunk); if (prompt.includes('to confirm')) input.write(`${tp}\n`); });
+    __setConfirmationIoForTests({ probe: { stdinIsTTY: true, stdoutIsTTY: true, env: { GBRAIN_INTERACTIVE: '1' } }, input, output, timeoutMs: 5000 });
+    const delegate = spyOn(localClient, 'maybeDelegateLocalAdministration');
+    const log = console.log;
+    console.log = () => {};
+    let calls: typeof delegate.mock.calls = [];
+    try {
+      expect(await withEnv({ GBRAIN_HOME: dir, ...ENV }, () => maybeDelegateTrust(config as never, ['confirm', tp]))).toBe(true);
+    } finally { calls = [...delegate.mock.calls]; console.log = log; __setConfirmationIoForTests(null); delegate.mockRestore(); }
+    const apply = calls.find(call => call[0] === 'trust_apply');
+    expect(apply).toBeDefined();
+    expect(apply![3]?.timeoutMs).toBeGreaterThan(DOOR_WAIT_MS);
   }, 120_000);
 });
 

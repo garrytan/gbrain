@@ -1,6 +1,6 @@
 {
   "name": "gbrain-coding",
-  "version": "0.60.452.0",
+  "version": "0.60.521.0",
   "description": "Brain-first coding agent working inside a repo: retrieval, routing, ingest discipline, correction hygiene. Default persona for the claude-code harness bridge; also published as the gbrain-coding marketplace variant. (persona variant of the gbrain plugin — 21 skills)",
   "author": {
     "name": "Garry Tan",
@@ -20,6 +20,21 @@
   ],
   "skills": "./skills/",
   "mcpServers": "./.codex-plugin/mcp.json",
+  "hooks": {
+    "hooks": {
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "env GBRAIN_HOOK_LANE=plugin GBRAIN_PLUGIN=gbrain-coding \"${PLUGIN_ROOT}/.agents/gbrain-launcher\" hook user-prompt --harness codex",
+              "timeout": 15
+            }
+          ]
+        }
+      ]
+    }
+  },
   "interface": {
     "displayName": "GBrain",
     "shortDescription": "Give your agent a persistent brain: search, synthesis, memory",

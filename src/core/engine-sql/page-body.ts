@@ -35,6 +35,7 @@ import type { LegacyUnscopedRead } from './brands.ts';
 import { joinFragments, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { compileRowNormalizer } from './normalize.ts';
 import { stagingNeedsTextSql } from '../page-body/schema.ts';
+import { DerivationWriteRefused, type SegmentDerivationInput, type SegmentDerivationKind, type SegmentDerivationRow, type SegmentDerivationState } from '../page-body/derivations.ts';
 import { RELEASE_STAGED_CTE } from '../persistence/limits.ts';
 
 export const LIVE_STAGING_STATES = ['open', 'sealed', 'prepared'];
@@ -458,3 +459,68 @@ export async function sweepSegments(exec: SqlExecutor, opts: SegmentSweepOptions
       FOR UPDATE SKIP LOCKED)`)).affectedRows;
   return { retiredChunksDeleted: retiredChunksDeleted + orphanedChunksDeleted, manifestRowsDeleted: stagedRowsDeleted + closedRowsDeleted, textsDeleted, stagingsExpired };
 }
+
+const normalizeDerivationRow = compileRowNormalizer<Record<string, unknown>>({ occurrence_id: 'bigint', output: 'jsonb', receipt: 'jsonb' });
+
+/** A page's per-segment derivation rows (every kind, or `kind`; optionally only `occurrenceIds`), by kind then occurrence. */
+export async function readSegmentDerivations(exec: LegacyUnscopedRead, pageId: number,
+  opts: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[] } = {}): Promise<SegmentDerivationRow[]> {
+  if (opts.occurrenceIds !== undefined && opts.occurrenceIds.length === 0) return [];
+  const kind = opts.kind !== undefined ? sqlFragment`AND d.pipeline = ${opts.kind}` : sqlFragment``;
+  const occurrences = opts.occurrenceIds !== undefined ? sqlFragment`AND d.occurrence_id = ANY(${[...opts.occurrenceIds]}::bigint[])` : sqlFragment``;
+  const { rows } = await exec.run<Record<string, unknown>>(sqlFragment`
+    SELECT d.page_id, d.pipeline, d.occurrence_id, d.pipeline_version, d.segment_sha256, d.context_hash, d.state, d.output, d.receipt,
+           to_char(d.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
+           to_char(d.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at
+      FROM page_segment_derivations d
+     WHERE d.page_id = ${pageId}::int ${kind} ${occurrences}
+     ORDER BY d.pipeline, d.occurrence_id`);
+  return rows.map(raw => {
+    const r = normalizeDerivationRow(raw);
+    return {
+      pageId: r.page_id as number, kind: r.pipeline as SegmentDerivationKind, occurrenceId: r.occurrence_id as number,
+      version: r.pipeline_version as number, segmentSha256: bytes(r.segment_sha256), contextHash: bytes(r.context_hash),
+      state: r.state as SegmentDerivationState, output: r.output ?? null, receipt: r.receipt ?? null,
+      createdAt: r.created_at as string, updatedAt: r.updated_at as string,
+    };
+  });
+}
+
+/**
+ * Insert or replace rows keyed (page, kind, occurrence), in statements bounded like manifest rows. A replaced row
+ * keeps its created_at and moves updated_at. Outputs and receipts travel inside the batch's JSON text, never as a
+ * `::jsonb` bind of a stringified value. A row a fact purge's sweep refuses (it holds the purged claim; page-body/schema.ts)
+ * is not stored, and the call throws DerivationWriteRefused after storing the others.
+ */
+export async function upsertSegmentDerivations(exec: SqlExecutor, rows: readonly SegmentDerivationInput[]): Promise<void> {
+  const batches = jsonRowBatches(rows, row => ({
+    page_id: row.pageId, pipeline: row.kind, occurrence_id: row.occurrenceId, pipeline_version: row.version,
+    segment_sha256: hex(row.segmentSha256), context_hash: hex(row.contextHash), state: row.state,
+    output: row.output ?? null, receipt: row.receipt ?? null,
+  }), stageBatchBytes(exec));
+  let stored = 0;
+  for (const json of batches) {
+    const { affectedRows } = await exec.run(sqlFragment`INSERT INTO page_segment_derivations (page_id, pipeline, occurrence_id, pipeline_version, segment_sha256,
+        context_hash, state, output, receipt)
+      SELECT d.page_id, d.pipeline, d.occurrence_id, d.pipeline_version, decode(d.segment_sha256, 'hex'), decode(d.context_hash, 'hex'),
+        d.state, d.output, d.receipt
+      FROM jsonb_to_recordset(${json}::text::jsonb) AS d(page_id int, pipeline text, occurrence_id bigint, pipeline_version int,
+        segment_sha256 text, context_hash text, state text, output jsonb, receipt jsonb)
+      ON CONFLICT (page_id, pipeline, occurrence_id) DO UPDATE SET pipeline_version = EXCLUDED.pipeline_version,
+        segment_sha256 = EXCLUDED.segment_sha256, context_hash = EXCLUDED.context_hash, state = EXCLUDED.state,
+        output = EXCLUDED.output, receipt = EXCLUDED.receipt, updated_at = now()`);
+    stored += affectedRows;
+    await yieldTurn();
+  }
+  if (stored < rows.length) throw new DerivationWriteRefused(rows.length - stored);
+}
+
+/** Delete a page's rows (every kind, or `kind`) whose occurrence is not in `liveOccurrenceIds`; returns the count. */
+export async function retireSegmentDerivations(exec: SqlExecutor, pageId: number, liveOccurrenceIds: readonly number[],
+  opts: { kind?: SegmentDerivationKind } = {}): Promise<number> {
+  const kind = opts.kind !== undefined ? sqlFragment`AND pipeline = ${opts.kind}` : sqlFragment``;
+  const { affectedRows } = await exec.run(sqlFragment`DELETE FROM page_segment_derivations
+    WHERE page_id = ${pageId}::int ${kind} AND NOT (occurrence_id = ANY(${[...liveOccurrenceIds]}::bigint[]))`);
+  return affectedRows;
+}
+

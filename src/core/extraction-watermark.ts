@@ -36,7 +36,14 @@ export type HeadFallbackReason = 'no_watermark' | 'prefix_changed' | 'version_ch
 
 /** The durable receipt of an extraction that did not read all of its input. */
 export interface InputTruncated {
-  kind: 'head' | 'tail_window' | 'skipped_too_large';
+  /**
+   * PR 4 (Wave B incremental derivation, transcripts): `no_messages`, a segmented conversation page reads as a transcript
+   * format over its whole text yet no message parsed under it; the run changed nothing. `detection_ambiguous`, no format is
+   * detected over a segmented conversation page yet the formats in `grammars` parse messages in it: the page is held, nothing
+   * extracted or collected, until it changes or the operator chooses its format. `grammar_chosen`, the operator's format
+   * (`gbrain extract-conversation-facts --grammar`) for page version `version_token`; not a truncation.
+   */
+  kind: 'head' | 'tail_window' | 'skipped_too_large' | 'no_messages' | 'detection_ambiguous' | 'grammar_chosen';
   pipeline: ExtractionPipeline;
   /** Characters the extractor read (0 for a skipped page). */
   processed_chars: number;
@@ -54,6 +61,12 @@ export interface InputTruncated {
    */
   window_rule?: 'no_prior_facts' | 'prior_facts_kept';
   prior_facts?: number;
+  /** PR 4 (Wave B incremental derivation, transcripts): `detection_ambiguous`: the messages each format that parses any parses over the page. */
+  grammars?: Record<string, number>;
+  /** PR 4 (Wave B incremental derivation, transcripts): `grammar_chosen`: the chosen format (null: none, the page is not a transcript). */
+  grammar?: string | null;
+  /** PR 4 (Wave B incremental derivation, transcripts): `grammar_chosen`, `detection_ambiguous`: the page version the choice or the hold is for. */
+  version_token?: string;
 }
 
 export interface StoredWatermark { pipelineVersion: number; bytes: number; sha256: string }
@@ -207,6 +220,19 @@ export async function commitExtractionPlan(engine: BrainEngine, pageId: number, 
 }
 
 /** Record (receipt) or clear (null) the partial-input receipt of a pipeline that keeps no watermark: the conversation-facts size skip. */
+/** PR 4 (Wave B incremental derivation, transcripts): the page's receipt for `pipeline`, or null (none, or unreadable). */
+export async function readExtractionReceipt(engine: BrainEngine, pageId: number, pipeline: ExtractionPipeline): Promise<InputTruncated | null> {
+  try {
+    const [row] = await engine.executeRaw<{ receipt: InputTruncated | string | null }>(
+      'SELECT input_truncated AS receipt FROM page_extraction_state WHERE page_id = $1 AND pipeline = $2', [pageId, pipeline]);
+    const receipt = row?.receipt ?? null;
+    return typeof receipt === 'string' ? JSON.parse(receipt) as InputTruncated : receipt;
+  } catch (error) {
+    warnStorageOnce('read the extraction receipt', error);
+    return null;
+  }
+}
+
 export async function setExtractionReceipt(engine: BrainEngine, pageId: number, pipeline: ExtractionPipeline,
   receipt: InputTruncated | null): Promise<void> {
   try {

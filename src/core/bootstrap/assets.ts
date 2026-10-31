@@ -47,6 +47,10 @@ export interface BootstrapTemplate {
   dest: string;
   /** Group for `render --only`. */
   group: 'identity' | 'contract' | 'scaffold';
+  /** Destination in an OpenClaw workspace, when it differs: OpenClaw
+   * 2026.10.6+ retired its own HEARTBEAT.md and `openclaw doctor --fix`
+   * imports and removes any workspace file by that name (#7470). */
+  openclawDest?: string;
 }
 
 /** The cloud environment setup script [D16] — NOT a rendered template (it is
@@ -63,7 +67,7 @@ export const BOOTSTRAP_TEMPLATES: BootstrapTemplate[] = [
   { assetPath: T_SOUL as unknown as string, dest: 'SOUL.md', group: 'identity' },
   { assetPath: T_USER as unknown as string, dest: 'USER.md', group: 'identity' },
   { assetPath: T_MEMORY as unknown as string, dest: 'MEMORY.md', group: 'identity' },
-  { assetPath: T_HEARTBEAT as unknown as string, dest: 'HEARTBEAT.md', group: 'contract' },
+  { assetPath: T_HEARTBEAT as unknown as string, dest: 'HEARTBEAT.md', group: 'contract', openclawDest: 'SCHEDULES.md' },
   { assetPath: T_ACCESS as unknown as string, dest: 'ACCESS_POLICY.md', group: 'contract' },
   { assetPath: T_GITHUB as unknown as string, dest: 'GITHUB.md', group: 'contract' },
   { assetPath: T_MEMORY_README as unknown as string, dest: 'memory/README.md', group: 'scaffold' },
@@ -90,6 +94,9 @@ export const DERIVED_TOKENS = [
   'GITHUB_REPO_URL',
   /** From config `dream.synthesize.corpus_retention_days` (default 30). */
   'CORPUS_RETENTION_DAYS',
+  /** The rendered name of the due-job list: HEARTBEAT.md, or its
+   * `openclawDest` when rendering for OpenClaw. */
+  'SCHEDULES_FILE',
 ] as const;
 
 export interface QuestionSpec {

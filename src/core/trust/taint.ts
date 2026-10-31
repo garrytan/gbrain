@@ -133,8 +133,11 @@ export async function lowerToDerivedTier(tx: Sql, table: TaintTable, ids: readon
   return lowered;
 }
 
-/** A row a derivation wrote, for the lowering and edge pass. */
-export interface DerivedRowRef { table: TaintTable; id: number; sourceId?: string | null }
+/**
+ * A row a derivation wrote, for the lowering and edge pass. `prior` (#7917): an existing page's slug and the tier and
+ * revision read before the write, so a page the derivation lowered files a `lower_page` proposal for the owner.
+ */
+export interface DerivedRowRef { table: TaintTable; id: number; sourceId?: string | null; prior?: { slug: string; tier: TrustTier; revision: string | null } }
 
 /**
  * An unmanaged deriver's write: one attributed maintenance transaction at the
@@ -148,6 +151,10 @@ export async function derivedMaintenanceTransaction<T>(engine: BrainEngine, deri
     for (const row of rows) {
       await lowerToDerivedTier(tx, row.table, [row.id], derivation.trust);
       await recordTaintEdges(tx, row, derivation.inputs);
+      if (row.table !== 'pages' || !row.prior || !row.sourceId) continue;
+      const { recordAgentPageLowering } = await import('./page-write.ts');
+      await recordAgentPageLowering(tx, { operation: 'derived_maintenance', source_id: row.sourceId, slug: row.prior.slug }, row.prior,
+        `derived_page:${String(derivation.trust.origin?.channel ?? 'maintenance')}`);
     }
     return result;
   }, derivation.trust);

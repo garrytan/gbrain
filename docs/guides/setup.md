@@ -2,7 +2,8 @@
 
 `gbrain setup claude-code` and `gbrain setup codex` give Claude Code or Codex
 memory in one command: a brain (the existing one, or a new keyless local
-brain), a stdio MCP entry, and the read-context hooks, verified with the same
+brain), a stdio MCP entry, the read-context hooks and a short
+[brain-first instruction block](#brain-first-instructions), verified with the same
 smoke test `gbrain doctor --only harness_wiring` runs. Setup changes only what
 it records, and `--remove` undoes exactly that.
 
@@ -23,9 +24,9 @@ Before it writes anything, setup resolves and prints:
 |---|---|
 | Brain | This install's config (`GBRAIN_HOME`). With none, a new keyless PGLite brain from `gbrain init --pglite --no-embedding`. |
 | Source | `--source`, else `GBRAIN_SOURCE`, else unpinned (the server uses the brain's default source). |
-| Transport | Local stdio: the harness starts `<launcher> serve --surface <surface>`. |
+| Transport | Local stdio: the harness starts `<launcher> serve --surface <surface>`, plus `--advertise verbs` on a new registration that chose no surface. |
 | Launcher | `--gbrain-bin`, else the absolute `gbrain` on `PATH` (GUI-launched hosts inherit no `PATH`, so a bare name is never written). |
-| Surface | `--surface`, else `GBRAIN_SURFACE`, else the surface already registered, else `full`. |
+| Surface | `--surface`, else `GBRAIN_SURFACE`, else the surface already registered, else `starter`, listing only the seven memory verbs and `request_tools` (`--advertise verbs`). A chosen surface is listed in full; `--surface full` is the opt-in for every tool; an existing registration keeps its surface and listing. |
 | Owner | Who owns the MCP name now: nobody, this setup (its receipt), or the gbrain Claude Code or Codex plugin (setup then adds hooks only). |
 
 It refuses with a coded error, before any write, when the target is not safe:
@@ -146,6 +147,49 @@ leaves it alone. The brain, its notes, unrelated MCP servers and hooks stay.
 Two installs on one machine (different `GBRAIN_HOME`) each use their own
 `--name` and remove only their own entries.
 
+## Brain-first instructions
+
+Registering MCP makes the tools available; it does not make agents use them.
+Without a line in the harness's own instructions, sessions rarely call the
+brain. So setup also writes one short marked block (`<!-- gbrain:brain-first:begin -->`
+… `<!-- gbrain:brain-first:end -->`) into the file the harness loads every
+session: before answering any turn, search the brain first, read the best hit,
+fill gaps with other tools, apply your own access rules (`source_ids` narrows a
+search to what the current requester may see), then finish the task.
+
+| Harness | File |
+|---|---|
+| claude-code | `~/.claude/CLAUDE.md` (`--scope project`: `./CLAUDE.local.md`) |
+| codex | `$CODEX_HOME/AGENTS.md`, or a non-empty `AGENTS.override.md` (the file Codex loads) |
+| opencode | `~/.config/opencode/AGENTS.md` |
+| openclaw | `<workspace>/AGENTS.md` (`agents.defaults.workspace`, else `~/.openclaw/workspace`; several agents need `--workspace`) |
+| hermes | `$HERMES_HOME/SOUL.md`, after the identity text; never created, since a SOUL.md replaces Hermes's default identity |
+| cursor | `./.cursor/rules/gbrain-brain-first.mdc` (an always-applied project rule) |
+
+Text outside the markers is never touched, and a re-run upgrades the block in
+place. `--dry-run` previews it, `--no-instructions` (or
+`GBRAIN_AGENT_INSTRUCTIONS=0`) removes it and remembers the opt-out,
+`--instructions` opts back in, `--instructions-only` manages only the block,
+and `--remove` takes it out with the rest. A hand-edited block with damaged
+markers is left alone and reported. Clients with no instruction file gbrain can
+write (Claude Desktop, ChatGPT, Perplexity, Grok Build, Grok Bot, Muse) get the
+block printed to paste. `gbrain connect --install` and
+`gbrain bootstrap harness` write the same block beside the connection they
+install, and the thin-client `GBRAIN-INSTRUCTIONS.md` starts with it.
+`gbrain doctor` (`harness_wiring`) warns when a registered harness's block is
+missing, stale or damaged, with a fix that rewrites only the block.
+
+A rule in the system prompt is easy for a model to pass over, so the same rule
+also rides each turn where the harness has a per-turn hook: Claude Code and
+Codex get it from setup's UserPromptSubmit hook while the block is installed,
+OpenClaw from a hook-only plugin (`gbrain-turn-rule`, `before_prompt_build`)
+that `gbrain setup openclaw` installs with the openclaw CLI, and Hermes from a
+marked, self-contained `pre_llm_call` hook that `gbrain setup hermes` adds to its
+config.yaml. Cursor's rule is always applied; opencode reads its AGENTS.md on
+every request. QM has no per-turn hook an install can set: its gateway's
+`instructions` are per turn but belong to the surface that posts the turn. The
+opt-out turns the per-turn rule off with the block.
+
 ## Harness capability table
 
 The table is data (`src/core/setup/capabilities.ts`, version 2). Push is never
@@ -155,9 +199,9 @@ claimed from documentation alone.
 |---|---|---|---|
 | claude-code | local stdio | supported | native-pending |
 | codex | local stdio | supported | native-verified: on codex-cli 0.162.1, after a fresh `gbrain setup codex`, the `UserPromptSubmit` hook put a randomized brain item into a fresh native `codex exec` session, which answered it with no tool call (3 of 3 installs); a `--no-hooks` control answered NONE |
-| openclaw | local context engine | refusal with [its guide](../mcp/OPENCLAW.md) | native-pending |
-| openclaw | thin client | refusal with [its guide](../mcp/OPENCLAW.md) | unsupported |
-| hermes | local stdio | refusal with [its guide](../mcp/HERMES.md) | unsupported |
+| openclaw | local context engine | instruction block; MCP per [its guide](../mcp/OPENCLAW.md) | native-pending |
+| openclaw | thin client | instruction block; MCP per [its guide](../mcp/OPENCLAW.md) | unsupported |
+| hermes | local stdio | instruction block; MCP per [its guide](../mcp/HERMES.md) | unsupported |
 
 ## How setup relates to the other entry points
 

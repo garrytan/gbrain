@@ -17,7 +17,7 @@ import { sharedOriginExit } from './sync-origin.ts';
 import { originTwinsPreviewArgv } from './origin-twins.ts';
 export { fileClaimCandidatesQuery } from './file-claims.ts';
 import { localHostId } from './identity.ts';
-import { isDatabaseOnlyPage, slugDerivedOrigin } from './unbound-pages.ts';
+import { isDatabaseOnlyPage, recordsNoFileOrigin, slugDerivedOrigin } from './unbound-pages.ts';
 import { isUnboundSourcePage } from './unbound-source.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
 import { digest, gitBlobOid, requireUuid, sha256, stableJson } from './digest.ts';
@@ -26,7 +26,7 @@ import { reconcileCanonical, strictReconcileKeys, validateReconcileJson, type Re
 import type { ParsedPage } from '../import-file.ts';
 import type { AutoDecision } from './reconcile-additive.ts';
 import { publishesDatabaseOnly, readCanonicalAsImported } from './page-prepare.ts';
-import { isMirrorOnlyPage } from './mirror-read-only.ts';
+import { isMirrorOnlyPage, staleMirrorPage } from './mirror-read-only.ts';
 import { hardenedGitSync } from '../hardened-git.ts';
 
 export interface ReconcilePins {
@@ -236,15 +236,15 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
   const recorded = recordedPathFromFileUri(snapshot.page.source_uri, root);
   const mode = await scannerSlugRootMode(engine, sourceId, root);
   const recordedPath = recordedReconcilePath(root, snapshot.page, mode);
-  const marked = !recordedPath && isDatabaseOnlyPage({ ...snapshot.page,
-    database_only_reason: await isUnboundSourcePage(engine, sourceId, slug) ? 'unbound_source' : null });
-  const adoptable = !recordedPath && !marked && opts.adoptSlugPath === true && !snapshot.page.source_uri
+  const marked = !recordedPath && (isDatabaseOnlyPage({ ...snapshot.page,
+    database_only_reason: await isUnboundSourcePage(engine, sourceId, slug) ? 'unbound_source' : null }) || await staleMirrorPage(engine, sourceId, snapshot.page));
+  const adoptable = !recordedPath && !marked && opts.adoptSlugPath === true && recordsNoFileOrigin(snapshot.page)
     && !publishesDatabaseOnly(root, slug, snapshot) && !await isMirrorOnlyPage(engine, sourceId, slug);
   const derived = marked || adoptable ? slugDerivedOrigin(root, slug, mode) : null;
   const origin = derived ? 'slug_derived' : 'recorded';
   const path = recordedPath ?? derived?.path ?? null;
   if (!path || !isWriteTargetContained(path, root)) throw opError('source_changed', 'The page has no unambiguous confined recorded Markdown origin.',
-    `Page ${slug} in '${sourceId}' records no Markdown file inside the source checkout, so there is nothing to reconcile it against; nothing changed. ${!recordedPath && !marked && !snapshot.page.source_uri && opts.adoptSlugPath !== true
+    `Page ${slug} in '${sourceId}' records no Markdown file inside the source checkout, so there is nothing to reconcile it against; nothing changed. ${!recordedPath && !marked && recordsNoFileOrigin(snapshot.page) && opts.adoptSlugPath !== true
       ? `If the file at its slug path is this page's canonical file, preview again with --adopt-slug-path (gbrain sources reconcile ${sourceId} ${slug} --preview --adopt-slug-path) to adopt it; otherwise check its recorded source path with the command in fix.` : 'Check its recorded source path with the command in fix.'}`,
     { fix: readFix('Shows the page and its recorded source path.', { argv: ['gbrain', 'get', '--source', sourceId, '--', slug] }) });
   let size: number;
@@ -312,7 +312,7 @@ async function reconcilePins(engine: BrainEngine, input: { brain_id: string; sou
 /** #6394: a preview made with --adopt-slug-path recorded a page with no origin; apply and publication adopt the same pinned file. */
 export function reconcilePreviewAdopts(artifact: Pick<ReconcileArtifact, 'preimages'>): boolean {
   const stored = (artifact.preimages as { stored_page?: { source_path?: unknown; source_uri?: unknown } | null } | null)?.stored_page;
-  return stored != null && stored.source_path == null && stored.source_uri == null;
+  return stored != null && stored.source_path == null && recordsNoFileOrigin({ source_uri: typeof stored.source_uri === 'string' ? stored.source_uri : null });
 }
 export function assertReconcilePins(expected: ReconcilePins, actual: ReconcilePins): void {
   for (const key of Object.keys(expected) as Array<keyof ReconcilePins>) if (expected[key] !== actual[key]) staleReconcile(key);
@@ -345,7 +345,7 @@ export function validateReconcileArtifact(value: unknown): ReconcileArtifact {
   strictReconcileKeys(value.preimages.database.page, ['id', 'slug', 'source_id', 'type', 'title', 'compiled_truth', 'timeline', 'frontmatter',
     'content_hash', 'source_path', 'knowledge_revision', 'text_projection_revision', 'emotional_weight', 'created_at', 'updated_at', 'updated_at_iso',
     'deleted_at', 'effective_date', 'effective_date_source', 'import_filename', 'salience_touched_at', 'source_kind', 'source_uri', 'ingested_via',
-    'ingested_at', 'contextual_retrieval_mode', 'corpus_generation'], ['id', 'slug', 'source_id', 'type', 'title', 'compiled_truth', 'timeline', 'frontmatter']);
+    'ingested_at', 'contextual_retrieval_mode', 'corpus_generation', 'withheld_source_path'], ['id', 'slug', 'source_id', 'type', 'title', 'compiled_truth', 'timeline', 'frontmatter']);
   strictReconcileKeys(value.preimages.stored_page, ['id', 'source_id', 'slug', 'type', 'title', 'compiled_truth', 'timeline', 'frontmatter',
     'content_hash', 'source_path', 'source_kind', 'source_uri', 'ingested_via', 'ingested_at', 'knowledge_revision', 'deleted_at']);
   strictReconcileKeys(value.result, ['type', 'title', 'compiled_truth', 'timeline', 'frontmatter', 'tags']);
@@ -382,6 +382,13 @@ export function validateReconcileArtifact(value: unknown): ReconcileArtifact {
  * inferring import wrote the row); a row imported without inference (`gbrain reindex` on an unmanaged brain) is
  * compared with the raw bytes. An inferred `type:` is not one the file declared: the caller keeps the stored type.
  */
+/** GBRA-133: a canonical file's text as `readReconcileState` reads it (the reconcile canonical form of the page it imports). */
+export function readCanonicalFileText(state: Pick<ReconcileState, 'importPath' | 'snapshot'>, slug: string, text: string): ParsedPage {
+  const reading = reconcileFileReading(text, state.importPath, state.snapshot.page);
+  const parsed = parseMarkdown(reading.content, `${slug}.md`, { validate: true, expectedSlug: slug });
+  alignWithStored(parsed, state.snapshot.page, reading.inferred);
+  return reconcileCanonical(parsed, parsed.tags);
+}
 export function reconcileFileReading(text: string, sourcePath: string, stored: { frontmatter?: Record<string, unknown> | null }): { content: string; inferred: boolean } {
   const reading = readCanonicalAsImported(text, sourcePath);
   if (!reading.inferred) return reading;

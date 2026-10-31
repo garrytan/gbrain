@@ -52,6 +52,7 @@ import { GBRAIN_REMOTE_TOKEN_ENV } from '../core/bootstrap/opencode-json.ts';
 import { renderCodexHttpServerBlock } from '../core/bootstrap/codex-toml.ts';
 import { probeServeHealth, isServeOlderThanScopes, SCOPES_MIN_SERVE_VERSION } from '../core/bootstrap/serve-health.ts';
 import { writeSurfaceChangeAudit } from '../core/surface-audit.ts';
+import { INSTALL_SURFACE_SET_BY } from '../mcp/surface.ts';
 import {
   registerScopedClient,
   preflightOauthClientColumns,
@@ -280,9 +281,14 @@ export interface ResolvedPreset {
   /** 'snapshot' = all non-archived sources at registration time. */
   federatedRead: string[] | 'snapshot';
   surface?: 'verbs' | 'starter' | 'full';
+  /** INSTALL_SURFACE_SET_BY when the preset chose `surface` (no --surface): the client lists the memory verbs. */
+  surfaceSetBy?: typeof INSTALL_SURFACE_SET_BY;
   /** The write source is the derived `<name>-workspace` (auto-creatable). */
   workspaceDerived: boolean;
 }
+
+/** GBRA-199: a preset's own full surface lists the memory verbs and request_tools; an explicit --surface lists that surface in full. */
+const presetListing = (flags: AgentRegisterArgs): Pick<ResolvedPreset, 'surfaceSetBy'> => (flags.surface === undefined ? { surfaceSetBy: INSTALL_SURFACE_SET_BY } : {});
 
 export function resolvePreset(flags: AgentRegisterArgs): ResolvedPreset {
   const name = flags.name ?? '';
@@ -295,6 +301,7 @@ export function resolvePreset(flags: AgentRegisterArgs): ResolvedPreset {
         federatedRead: flags.federatedRead ?? 'snapshot',
         // S0/D4: no narrowing on any install path; pass --surface starter for a capped harness.
         surface: explicit(flags.surface, 'full'),
+        ...presetListing(flags),
         workspaceDerived: false,
       };
     case 'coding-agent': {
@@ -322,6 +329,7 @@ export function resolvePreset(flags: AgentRegisterArgs): ResolvedPreset {
         // source-scoped for remote callers (readPolicyOpts / routeCodeIntelScope),
         // so full no longer reaches past the client's grant.
         surface: explicit(flags.surface, 'full'),
+        ...presetListing(flags),
         workspaceDerived,
       };
     }
@@ -367,6 +375,8 @@ interface RegisterOutput {
     write_source: string;
     federated_read: string[];
     surface: string | null;
+    /** The surface tools/list shows when narrower than `surface` (an install-default surface lists the verbs). */
+    listed: string | null;
     token_ttl: number | null;
   };
   serveWarning: string | null;
@@ -550,6 +560,7 @@ export async function runAgentRegister(engine: BrainEngine | null, args: string[
       registered = await registerScopedClient(txSql, name, registerArgs, {
         tokenTtlSeconds: ttl,
         surface: preset.surface,
+        surfaceSetBy: preset.surfaceSetBy,
         columns,
       });
     });
@@ -577,6 +588,7 @@ export async function runAgentRegister(engine: BrainEngine | null, args: string[
         write_source: preset.writeSource,
         federated_read: federated,
         surface: registered.surface ?? null,
+        listed: registered.surface && preset.surfaceSetBy ? 'verbs' : null,
         token_ttl: registered.tokenTtl ?? null,
       });
       printOutput(flags, out);
@@ -789,6 +801,7 @@ async function runReissue(
     write_source: registered.sourceId,
     federated_read: registered.federatedRead,
     surface: null,
+    listed: null,
     token_ttl: registered.tokenTtl ?? null,
   });
   out.probeNote = `${out.probeNote ?? ''}${out.probeNote ? ' ' : ''}Secret ROTATED: the old secret no longer mints tokens; outstanding access tokens stay valid until expiry — revoke the client to kill them now.`;
@@ -917,7 +930,9 @@ function printOutput(flags: AgentRegisterArgs, out: RegisterOutput): void {
   console.log(`  Write source:        ${out.presetResolved.write_source}${r.created.source ? '  (created)' : ''}`);
   console.log(`  Federated reads:     ${out.presetResolved.federated_read.join(', ')}`);
   if (out.presetResolved.surface) {
-    console.log(`  Surface tier:        ${out.presetResolved.surface} (widen: gbrain auth rescope-client "${r.clientId}" --surface full)`);
+    console.log(out.presetResolved.listed
+      ? `  Surface tier:        ${out.presetResolved.surface}, listing the memory verbs and request_tools (list everything: gbrain auth rescope-client "${r.clientId}" --surface full)`
+      : `  Surface tier:        ${out.presetResolved.surface} (widen: gbrain auth rescope-client "${r.clientId}" --surface full)`);
   }
   if (out.presetResolved.token_ttl) {
     console.log(`  Token TTL:           ${out.presetResolved.token_ttl}s`);

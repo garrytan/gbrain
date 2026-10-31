@@ -92,10 +92,11 @@ async function takeRemovalRequiresOwner(engine: BrainEngine, row: WriteRequest, 
   return error;
 }
 
-export async function prepareTakesMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
-  try { return await prepare(engine,row,config); } catch (error) { return fail(error); }
+/** `editBody`: a same-page edit published with the takes change (consolidation closes its fenced facts here). */
+export async function prepareTakesMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, editBody?: (body: string) => string): Promise<PreparedMutation> {
+  try { return await prepare(engine,row,config,editBody); } catch (error) { return fail(error); }
 }
-async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
+async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, editBody?: (body: string) => string): Promise<PreparedMutation> {
   const stored = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
   if (!stored || stored.page.id !== row.page_id) throw takesRefusal('page_identity_changed','The accepted page no longer exists.',row,
     `Page ${row.slug} was deleted or replaced after the takes request was accepted.`);
@@ -214,6 +215,7 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
       result={slug:row.slug,row_num:number,...(row.operation==='takes_resolve'?{quality:p.quality,resolved_by:p.resolved_by}:{})};
     }
   }
+  if (editBody) next = editBody(next);
   // #6450 post-condition: never publish a fence the next write would refuse.
   const republished = parseTakesFence(next);
   if (republished.warnings.length) throw takesRefusal('invalid_params',`The write would publish a takes fence the next write would refuse: ${republished.warnings[0]}`,row,

@@ -29,7 +29,9 @@ import { sourceScopeOpts } from '../operations.ts';
 import { hostFix, readFix } from '../ops/op-fix.ts';
 
 export interface ResidentPackSkill {
-  slug: string;
+  /** Skill name, as get_skill takes it. Never `slug`: page slugs and skill
+   * names are different things, and readers treat every slug as a page. */
+  name: string;
   description: string;
 }
 
@@ -149,7 +151,7 @@ export async function loadResidentPacksForServer(ctx: OperationContext): Promise
         active_schema_pack: active,
         schema_pack_match: wantSchema === null ? null : wantSchema === active,
         skills: manifest.skills.map((s) => ({
-          slug: s.replace(/^skills\//, ''),
+          name: s.replace(/^skills\//, ''),
           description: readSkillDescription(localPath, s),
         })),
         scaffold_spec: remoteUrl && remoteUrl.length > 0 ? remoteUrl : null,
@@ -170,7 +172,7 @@ function listPacksFix(why: string): Action {
 export interface ResidentSkillDetail {
   source_id: string;
   pack_name: string;
-  slug: string;
+  name: string;
   description: string;
   /** Full SKILL.md body (size-capped). */
   body: string;
@@ -178,7 +180,7 @@ export interface ResidentSkillDetail {
 
 /**
  * Fetch one brain-resident skill's SKILL.md body from a specific source, for
- * `get_skill` when a `source_id` is supplied (disambiguates a slug that exists
+ * `get_skill` when a `source_id` is supplied (disambiguates a skill name that exists
  * on more than one source). Same confinement as skill-catalog: realpath +
  * relative-contained to the pack root, regular file named SKILL.md, size-capped.
  *
@@ -188,12 +190,12 @@ export interface ResidentSkillDetail {
 export async function getResidentSkillDetail(
   ctx: OperationContext,
   sourceId: string,
-  slug: string,
+  name: string,
 ): Promise<ResidentSkillDetail> {
-  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(slug)) {
-    throw opError('invalid_params', `Invalid skill slug: ${JSON.stringify(slug)}`,
-      'Pass the skill slug exactly as list_brain_skillpack returns it: lowercase letters, digits, and hyphens, at most 64 characters.',
-      { fix: listPacksFix('Lists every brain-resident pack with its source id and skill slugs.') });
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) {
+    throw opError('invalid_params', `Invalid skill name: ${JSON.stringify(name)}`,
+      'Pass the skill name exactly as list_brain_skillpack returns it: lowercase letters, digits, and hyphens, at most 64 characters.',
+      { fix: listPacksFix('Lists every brain-resident pack with its source id and skill names.') });
   }
   // Respect source scoping: a scoped caller can only reach its own sources.
   const scope = sourceScopeOpts(ctx);
@@ -231,11 +233,11 @@ export async function getResidentSkillDetail(
       `Source ${sourceId}'s skillpack is not marked brain_resident, so it is not served here. List the packs this brain does serve.`,
       { fix: listPacksFix('Lists the sources that ship a brain-resident pack.') });
   }
-  const skillDir = `skills/${slug}`;
+  const skillDir = `skills/${name}`;
   if (!manifest.skills.includes(skillDir)) {
-    throw opError('not_found', `Skill "${slug}" not in pack ${manifest.name}.`,
-      `Pack ${manifest.name} on source ${sourceId} has no skill ${slug}. List its skills and pass one of the slugs it returns.`,
-      { fix: listPacksFix(`Lists pack ${manifest.name}'s skill slugs.`) });
+    throw opError('not_found', `Skill "${name}" not in pack ${manifest.name}.`,
+      `Pack ${manifest.name} on source ${sourceId} has no skill ${name}. List its skills and pass one of the names it returns.`,
+      { fix: listPacksFix(`Lists pack ${manifest.name}'s skill names.`) });
   }
 
   // Confinement: realpath the resolved SKILL.md and require it stays under the
@@ -247,29 +249,29 @@ export async function getResidentSkillDetail(
     realRoot = realpathSync(packRoot);
     realFile = realpathSync(skillMd);
   } catch {
-    throw opError('not_found', `SKILL.md missing for ${slug} in ${sourceId}.`,
-      `Pack ${manifest.name} lists skill ${slug}, but its SKILL.md is missing on the brain host. Tell the user the pack is incomplete so its maintainer can add the file.`);
+    throw opError('not_found', `SKILL.md missing for ${name} in ${sourceId}.`,
+      `Pack ${manifest.name} lists skill ${name}, but its SKILL.md is missing on the brain host. Tell the user the pack is incomplete so its maintainer can add the file.`);
   }
   const rel = relative(realRoot, realFile);
   if (rel.startsWith('..') || resolve(realRoot, rel) !== realFile) {
     throw opError('storage_error', 'Skill path escaped the pack root.',
-      `Skill ${slug} in source ${sourceId} resolves outside its pack root (a symlink or '..'), so it was refused. Do not retry; tell the user so the pack's maintainer replaces it with a regular file inside the pack.`);
+      `Skill ${name} in source ${sourceId} resolves outside its pack root (a symlink or '..'), so it was refused. Do not retry; tell the user so the pack's maintainer replaces it with a regular file inside the pack.`);
   }
   const st = statSync(realFile);
   if (!st.isFile()) {
     throw opError('storage_error', 'Resolved skill path is not a file.',
-      `Skill ${slug}'s SKILL.md in source ${sourceId} is not a regular file. Tell the user so the pack's maintainer can fix the pack.`);
+      `Skill ${name}'s SKILL.md in source ${sourceId} is not a regular file. Tell the user so the pack's maintainer can fix the pack.`);
   }
   if (st.size > MAX_SKILL_MD_BYTES) {
     throw opError('storage_error', `SKILL.md exceeds ${MAX_SKILL_MD_BYTES} bytes.`,
-      `Skill ${slug}'s SKILL.md in source ${sourceId} is larger than the ${MAX_SKILL_MD_BYTES}-byte limit and cannot be served. Tell the user so the pack's maintainer can shorten it.`);
+      `Skill ${name}'s SKILL.md in source ${sourceId} is larger than the ${MAX_SKILL_MD_BYTES}-byte limit and cannot be served. Tell the user so the pack's maintainer can shorten it.`);
   }
 
   const body = readFileSync(realFile, 'utf-8');
   return {
     source_id: sourceId,
     pack_name: manifest.name,
-    slug,
+    name,
     description: readSkillDescription(packRoot, skillDir),
     body,
   };

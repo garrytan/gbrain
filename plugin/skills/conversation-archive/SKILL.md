@@ -51,9 +51,10 @@ when_to_use: "Use when the user asks: \"chatgpt export\", \"claude export\", \"p
 Two halves of one loop:
 
 1. **IMPORT** — raw export or session log → dated markdown pages under
-   `conversations/` (the native importer writes them directly and splits
-   long sessions into parts; the manual path converts one page per
-   conversation, then `gbrain import`/`gbrain sync`) → parser validation →
+   `conversations/` (the native importer writes them directly, one page per
+   new session; sessions it split into parts before keep their parts; the
+   manual path converts one page per conversation, then
+   `gbrain import`/`gbrain sync`) → parser validation →
    fact extraction → gap check.
 2. **RETRIEVE** — search the archive, pull threads, build timelines, and
    answer "when did I first discuss X".
@@ -65,8 +66,8 @@ blob in a downloads folder.
 **A native importer now exists: `gbrain transcripts ingest`.** It parses
 agent session logs (Claude Code, Codex, OpenClaw, Hermes, Grok Build) AND
 extracted consumer exports (ChatGPT `conversations.json`, Claude.ai export)
-directly: detection, secret redaction, imessage-slack rendering,
-long-session splitting, and idempotent re-runs are all native. Prefer it
+directly: detection, secret redaction, imessage-slack rendering, one page
+per session, and idempotent re-runs are all native. Prefer it
 over the manual procedure whenever the source is one of those seven
 formats:
 

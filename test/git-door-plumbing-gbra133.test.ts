@@ -21,6 +21,7 @@ import { operations, type OperationContext } from '../src/core/operations.ts';
 import { commitGitTargets } from '../src/core/persistence/effect-git.ts';
 import type { GitCommitNote } from '../src/core/persistence/effect-model.ts';
 import { commitThroughDoor, doorSeams } from '../src/core/persistence/git-door.ts';
+import { hashFile } from '../src/core/persistence/large-file.ts';
 import { gitChildEnv } from '../src/core/git-env.ts';
 import { durableGitRepo } from './helpers/git-publication.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
@@ -59,7 +60,7 @@ function indexEntries(root: string): Map<string, string> {
   }
   return entries;
 }
-const door = (root: string, ...paths: string[]) => commitThroughDoor(root, paths.map(path => ({ path: join(root, path) })));
+const door = (root: string, ...paths: string[]) => commitThroughDoor(root, paths.map(path => ({ path: join(root, path), planned: hashFile(join(root, path)) })));
 /** A sandbox's git wrapper may append a co-author trailer to every `git commit` (never to commit-tree): both sides are read without it. */
 const unshimmed = (message: string) => message.replace(/^Co-authored-by: .*\n/gm, '').replace(/\n+$/, '\n');
 const refusal = (work: Promise<unknown>) => work.then(() => null, (error: { code?: string; message?: string }) => error);
@@ -178,7 +179,7 @@ describe('G2 plumbing door commit', () => {
       for (const root of [porcelain, plumbing]) for (const path of paths) put(root, path, path + ', second revision\n');
       const outcomes = await commitGitTargets(porcelain, paths, undefined, new Map(paths.flatMap(path => notes[path] ? [[path, notes[path]!] as const] : [])));
       expect([...outcomes.values()].every(outcome => !(outcome instanceof Error) && outcome.git === 'committed')).toBe(true);
-      await commitThroughDoor(plumbing, paths.map(path => ({ path: join(plumbing, path), note: notes[path] })));
+      await commitThroughDoor(plumbing, paths.map(path => ({ path: join(plumbing, path), planned: hashFile(join(plumbing, path)), note: notes[path] })));
       for (const format of ['%B', '%(trailers:only)', '%an <%ae>']) expect(unshimmed(raw(plumbing, 'log', '-1', '--format=' + format))).toBe(unshimmed(raw(porcelain, 'log', '-1', '--format=' + format)));
       expect(git(plumbing, 'rev-parse', 'HEAD^{tree}')).toBe(git(porcelain, 'rev-parse', 'HEAD^{tree}'));
       expect(git(plumbing, 'reflog', '-1', '--format=%gs')).toBe(git(porcelain, 'reflog', '-1', '--format=%gs'));

@@ -20,7 +20,8 @@ import { invalidateStaleSignatureEmbeddingsGuarded } from '../../src/core/embedd
 import { reconcileContextualEmbeddingInputs } from '../../src/core/page-state/contextual-proof.ts';
 import { installPageProjection, readProjectionSnapshot } from '../../src/core/page-state/projections.ts';
 import { installFixtureChunks } from './page-projection.ts';
-import { chunk, flipInput, hexOf, manifestRow, pageMeta, publishSegmentedPage, segmentText, stageGeneration, stagingInput } from './page-body-fixtures.ts';
+import { chunk, flipInput, hexOf, manifestRow, pageMeta, publishSegmentedPage, segmentText, sha256, stageGeneration, stagingInput } from './page-body-fixtures.ts';
+import type { SegmentDerivationInput, SegmentDerivationKind, SegmentDerivationState } from '../../src/core/page-body/derivations.ts';
 
 export interface RollbackCase {
   domain: string;
@@ -451,7 +452,35 @@ export const ROLLBACK_CASES: RollbackCase[] = [
     },
     observe: engine => segmentTextExists(engine, ORPHAN_TEXT),
   },
+  {
+    domain: 'page-body (upsertSegmentDerivations)',
+    async seed(engine) {
+      await seedSegmentedPage(engine, SEGMENTED_SLUG);
+      await engine.upsertSegmentDerivations([derivationRow(await segmentedPageId(engine, SEGMENTED_SLUG), 'links', 1, 'partial')]);
+    },
+    async write(tx) { await tx.upsertSegmentDerivations([derivationRow(await segmentedPageId(tx, SEGMENTED_SLUG), 'links', 1, 'done')]); },
+    async observe(engine) {
+      return (await engine.readSegmentDerivations(await segmentedPageId(engine, SEGMENTED_SLUG), { kind: 'links' })).map(r => r.state);
+    },
+  },
+  {
+    domain: 'page-body (retireSegmentDerivations)',
+    async seed(engine) {
+      await seedSegmentedPage(engine, SEGMENTED_SLUG);
+      const pageId = await segmentedPageId(engine, SEGMENTED_SLUG);
+      await engine.upsertSegmentDerivations([derivationRow(pageId, 'mentions', 1, 'done'), derivationRow(pageId, 'mentions', 2, 'done')]);
+    },
+    async write(tx) { expect(await tx.retireSegmentDerivations(await segmentedPageId(tx, SEGMENTED_SLUG), [1], { kind: 'mentions' })).toBe(1); },
+    async observe(engine) {
+      return (await engine.readSegmentDerivations(await segmentedPageId(engine, SEGMENTED_SLUG), { kind: 'mentions' })).map(r => r.occurrenceId);
+    },
+  },
 ];
+
+function derivationRow(pageId: number, kind: SegmentDerivationKind, occurrenceId: number, state: SegmentDerivationState): SegmentDerivationInput {
+  return { pageId, kind, occurrenceId, version: 1, segmentSha256: sha256(`segment ${occurrenceId}`), contextHash: sha256(`context ${occurrenceId}`),
+    state, output: { n: occurrenceId }, receipt: null };
+}
 
 const SEGMENTED_SLUG = 'notes/engine-sql-rollback-segmented-alice-example';
 const FLIP_SLUG = 'notes/engine-sql-rollback-flip-alice-example';

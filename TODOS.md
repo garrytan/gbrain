@@ -1,5 +1,10 @@
 # TODOS
 
+## RLS backfill follow-ups (filed 2026-10-26, GBRA-95, #7625)
+
+- [ ] **P1 — Guard triggers fail open under a scoped write role without lookup-table policies (#7632).**
+  **What:** make `gbrain_refuse_purging_derivation`, `gbrain_mark_derivation_scope_entry`, `gbrain_preserve_fact_withdrawal` and `gbrain_guard_inserted_facts` `SECURITY DEFINER`, owned by the schema owner with `search_path` pinned, through a new migration and the schema blob. **Why:** they run as SECURITY INVOKER, so a write role that neither owns the tables nor bypasses RLS, with write policies on the guarded table but none on `page_segment_derivation_purges` / `page_segment_derivation_purge_pages` / `fact_withdrawals`, reads no rows there: a purged derivation claim or a withdrawn fact can be stored again. Fresh installs already have RLS on those tables; v275 extends it to migrations-only brains. **Test:** e2e red/green under a scoped NOBYPASSRLS non-owner write role (red on master: the write succeeds; green: the guard refuses). **Effort:** M. **Priority:** P1.
+
 ## Run-child heap follow-ups (filed 2026-10-24, GBRA-133)
 
 - [ ] **P3 — Heap growth of a managed sync/lint run-child after a history rewrite.** **What:** the per-child `--max-rss` cap from #7467 contains it, but the holder is unknown; synthetic lint --fix with 15k holds, a concurrent 60k-file sync drain plus lint, and a force-pushed rewrite with 15k `file_drift` holds all stayed flat, and every module-level cache is bounded. **Next:** a long-lived run-child across many cycles with a heap snapshot diff per publication. Reopen with the job's data if `ChildRssLimitError` fires. **Effort:** M. **Priority:** P3.

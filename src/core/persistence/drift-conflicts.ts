@@ -19,7 +19,7 @@
  *     updates and releases it once the file and database agree again;
  *   - doctor `maintenance_write_drift` and `gbrain repair file-drift`.
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError, opError } from '../ops/contract.ts';
@@ -35,10 +35,12 @@ import type { PageSnapshot } from '../page-state/types.ts';
 import { sha256 } from './digest.ts';
 import { existingLocalHostId } from './identity.ts';
 import { getWorktreeBinding } from './ownership.ts';
+import { staleMirrorPage } from './mirror-read-only.ts';
 import { prepareFileTarget } from './page-prepare.ts';
 import { readReconcileState } from './reconcile-state.ts';
 import { reconcileCanonical } from './reconcile-merge.ts';
 import { classifyDrift } from './reconcile-additive.ts';
+import { recordsNoFileOrigin, slugPathFile } from './unbound-pages.ts';
 
 /** The refusal message `prepareFileTarget` stores on a drift conflict receipt (the detail is not kept on the row). */
 export const FILE_DRIFT_MESSAGE = 'The canonical file contains an uncoordinated local edit.';
@@ -81,6 +83,12 @@ export async function liveFileDrift(engine: BrainEngine, sourceId: string, slug:
   const page = snapshot === undefined ? await engine.readPageSnapshot(slug, { sourceId }) : snapshot;
   if (!page || page.page.deleted_at) return { still_present: null, reason: 'page_missing' };
   const root = join(binding.local_path, binding.relative_path);
+  // GBRA-133 (#7931): a stale mirror page publishes database-only but reconciles against the file at its slug path.
+  if (await staleMirrorPage(engine, sourceId, page.page)) {
+    const path = slugPathFile(root, slug);
+    if (!existsSync(path)) return { still_present: false, reason: 'database_only', db_revision: page.revision };
+    return { still_present: true, reason: 'file_database_drift', db_revision: page.revision, path: relative(root, path).split(sep).join('/'), file_hash: sha256(readFileSync(path)) };
+  }
   try {
     const file = await prepareFileTarget(engine, { source_id: sourceId, worktree_id: binding.worktree_id, slug }, page, null, hostId!);
     if (!file) return { still_present: false, reason: 'database_only', db_revision: page.revision };
@@ -105,7 +113,7 @@ export async function liveFileDrift(engine: BrainEngine, sourceId: string, slug:
 async function canonicalFilePath(engine: BrainEngine, sourceId: string, root: string, snapshot: PageSnapshot, slug: string): Promise<string> {
   const mode = snapshot.page.source_path ? await scannerSlugRootMode(engine, sourceId, root) : undefined;
   const captured = recordedPathFromFileUri(snapshot.page.source_uri, root);
-  return resolveSourceLocalFilePath(root, snapshot.page.source_path, slug, mode) ?? (captured ? join(root, captured) : join(root, `${slug}.md`));
+  return resolveSourceLocalFilePath(root, snapshot.page.source_path, slug, mode) ?? (captured ? join(root, captured) : slugPathFile(root, slug));
 }
 
 /** Whether Git tracks the canonical file and whether its bytes equal the last commit (null: Git cannot say). */
@@ -279,7 +287,7 @@ export async function auditDriftConflicts(engine: BrainEngine, sourceId: string,
         if (live.path) { result.path = live.path; result.git = gitState(root, live.path); }
         if (live.still_present) {
           report.totals.still_present++;
-          result.class = await driftClass(engine, sourceId, row.slug, !page?.source_path && !page?.source_uri);
+          result.class = await driftClass(engine, sourceId, row.slug, !!page && recordsNoFileOrigin(page));
         }
       }
     }

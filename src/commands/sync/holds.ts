@@ -21,6 +21,7 @@ import { RECOVERY_VERSION } from '../../core/frontmatter-recovery.ts';
 import { importSizeLimit, contentRefusalFromReceipt, isContentRefusal, type ContentRefusal } from '../../core/import-screen.ts';
 import { slugConflictHoldMessage, type ImportResult } from '../../core/import-file.ts';
 import { classifyImportHold, parseMarkdown } from '../../core/markdown.ts';
+import { noncanonicalPrivateHold } from '../../core/persistence/visibility-request.ts';
 import { readSourceFileSync } from '../../core/minions/source-filesystem.ts';
 import { maintenanceBeliefTransaction } from '../../core/belief/writers.ts';
 import type { SyncRename } from '../../core/persistence/sync-discovery.ts';
@@ -169,7 +170,8 @@ export function screenLegacyFile(filePath: string, relPath: string, activePack?:
   if (!read) return { refusal: { code: 'file_too_large', message: `File too large (${lstatSync(filePath).size} bytes, max ${importSizeLimit(filePath)}).` }, upstreamVersion: null };
   if (hasMalformedPathSegment(relPath) || isCodeFilePath(relPath)) return { refusal: null, upstreamVersion: read.upstreamVersion };
   const parsed = parseMarkdown(read.content, relPath, { validate: true, ...(activePack ? { activePack } : {}) });
-  const refusal = classifyImportHold(parsed, { expectedSlug: slugifyPath(relPath) || null, slugConflictMessage: (_found, expected) => slugConflictHoldMessage(relPath, expected) });
+  const refusal = classifyImportHold(parsed, { expectedSlug: slugifyPath(relPath) || null, slugConflictMessage: (_found, expected) => slugConflictHoldMessage(relPath, expected) })
+    ?? noncanonicalPrivateHold(read.content, parsed.frontmatter);
   return { refusal, upstreamVersion: read.upstreamVersion };
 }
 

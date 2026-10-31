@@ -18,7 +18,7 @@
  *   bun test test/write-gate.test.ts test/import-write-gate.test.ts                                     # gate verdict
  *   bun test test/trust-owner-actions.test.ts test/trust-guarded-supersession.test.ts                   # owner confirm
  *   bun test test/purge-fact.test.ts test/forget-purge-cli.test.ts                                      # purge
- * Needs Bun >= 1.4.0 (docs/guides/memory-trust.md).
+ * Needs Bun >= 1.4.4 (docs/guides/memory-trust.md).
  */
 import { createTrustBrain, probeStores, resolveStepRow, rowTier, runTrustSteps, type TrustFixtureRun } from '../src/eval/brainbench/trust-scenario.ts';
 import type { BrainBenchFixture } from '../src/eval/brainbench/types.ts';

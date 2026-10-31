@@ -97,7 +97,7 @@ for (const databaseUrl of process.env.DATABASE_URL ? [undefined, process.env.DAT
     for (const slug of SLUGS) expect(await revisionOf(engine, slug)).toBe(revisions.get(slug)!);
   }, { databaseUrl, setup }), 180_000);
 
-  test('a parser change and a byte change are pass candidates; a record revision that no longer names the page is db_ahead; --full screens every matched page', () => managedBrain(async ({ engine, root }) => {
+  test('a parser change and a byte change are pass candidates; a record revision that no longer names the page is db_ahead; --full admits every current page in place', () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     await tamper(engine, 'notes/a', [['parser,parser_version', 'an-older-parser']]);
     await tamper(engine, 'notes/b', [['revision', '1']]);
@@ -112,8 +112,12 @@ for (const databaseUrl of process.env.DATABASE_URL ? [undefined, process.env.DAT
     expect(await classOf(engine, 'notes/b.md')).toMatchObject({ cls: 'db_ahead', settled: true });
     const incarnation = await incarnationOf(engine);
     expect((await readSyncImportProvenance(engine, 'default', incarnation, await pageIdOf(engine, 'notes/a')))?.parser?.parser_version).toBe(SYNC_IMPORT_PARSER_VERSION);
+    // Every page is the import of its blob with its derived state current (b stays db_ahead), so --full admits each in place
+    // (sync-classify.ts `inPlace`): no candidate, no screen, no new revision.
+    const settled = new Map(await Promise.all(SLUGS.map(async slug => [slug, await revisionOf(engine, slug)] as const)));
     const full = await performManagedSync(engine, { ...OPTS, full: true });
-    expect(full).toMatchObject({ pass: { kind: 'full', candidates: SLUGS.length - 1 }, waived: { imports: SLUGS.length - 1 } });
+    expect(full).toMatchObject({ status: 'synced', pass: { kind: 'full', candidates: 0 }, waived: { imports: 0 }, modified: 0 });
+    for (const slug of SLUGS) expect(await revisionOf(engine, slug)).toBe(settled.get(slug)!);
   }, { databaseUrl, setup }), 180_000);
 
   test('in a bulk drain a mode-only change between changed files is not a candidate; only the changed files import', () => managedBrain(async ({ engine, root }) => {

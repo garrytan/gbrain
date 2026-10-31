@@ -365,6 +365,17 @@ console.log('CHECK=' + JSON.stringify(autopilotInstallPendingCheck()));
     });
   }, 60_000);
 
+  // #7630: the install refuses a relative stored path, so Phase F treats one as unset instead of failing and wedging.
+  test('a relative sync.repo_path and default-source path: Phase F skips no_repo_path and installs nothing', async () => {
+    await postgresBrain({ syncRepoPath: '.', defaultSourcePath: '.' }, async ({ home, ledger, calls, apply }) => {
+      const run = apply(['--yes', '--non-interactive', '--migration', '0.11.0']);
+      expect(run.exitCode, run.stderr).toBe(0);
+      expect(calls()).not.toContain('autopilot');
+      expect(entries(ledger).at(-1)!.phases!.find(phase => phase.name === 'install')).toMatchObject({ status: 'skipped', reason: 'no_repo_path' });
+      expect(pendingInstallItems(home)[0].install_argv).toEqual(['gbrain', 'autopilot', '--install', '--yes', '--repo', '<REPO_PATH>']);
+    });
+  }, 60_000);
+
   test('sync.repo_path set: Phase F installs as before', async () => {
     await postgresBrain({ syncRepoPath: '/srv/brain' }, async ({ home, ledger, calls, apply }) => {
       const run = apply(['--yes', '--migration', '0.11.0']);
@@ -392,6 +403,18 @@ console.log('CHECK=' + JSON.stringify(autopilotInstallPendingCheck()));
       expect(run.stderr).toContain('Cleared the v0.11.0 wedge');
       expect(entries(ledger).map(row => row.status)).toEqual(['partial', 'partial', 'partial', 'retry', 'complete']);
       expect(entries(ledger)[3]).toMatchObject({ reason: 'phase_f_no_repo_path' });
+      expect(calls()).not.toContain('autopilot');
+    });
+  }, 60_000);
+
+  for (const brain of [{ syncRepoPath: '.' }, { syncRepoPath: '.', defaultSourcePath: '.' }]) test(`install-only partials on a brain whose stored path is relative (${JSON.stringify(brain)}) are cleared and the migration completes`, async () => {
+    await postgresBrain(brain, async ({ ledger, calls, apply }) => {
+      const partial = (n: number) => JSON.stringify({ version: '0.11.0', ts: `2026-10-0${n}T00:00:00.000Z`, status: 'partial', phases: phaseRows(OLD_REFUSAL) });
+      writeFileSync(ledger, [partial(1), partial(2), partial(3)].join('\n') + '\n');
+      const run = apply(['--yes', '--migration', '0.11.0']);
+      expect(run.exitCode, run.stderr).toBe(0);
+      expect(run.stderr).toContain('Cleared the v0.11.0 wedge');
+      expect(entries(ledger).map(row => row.status)).toEqual(['partial', 'partial', 'partial', 'retry', 'complete']);
       expect(calls()).not.toContain('autopilot');
     });
   }, 60_000);

@@ -26,9 +26,9 @@ jobs:
       fail-fast: false
       matrix:
         engine: [pglite, postgres]
-        bun: ['1.4.0', '1.4.4']
+        bun: ['1.4.4']
         # Event parity: every event, pull requests and merge-queue runs
-        # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
+        # included, runs every supported Bun version (docs/TESTING.md#event-parity).
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -72,9 +72,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        bun: ['1.4.0', '1.4.4']
+        bun: ['1.4.4']
         # Event parity: every event, pull requests and merge-queue runs
-        # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
+        # included, runs every supported Bun version (docs/TESTING.md#event-parity).
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -188,14 +188,13 @@ jobs:
   # scripts/check-postgres-lane-coverage.ts fails a new DATABASE_URL-gated arm
   # until it is listed there or wrapped in a test/e2e registerPostgresTests
   # file. The twelve shards (ARM_SHARDS in scripts/postgres-unit-arms.ts) are
-  # balanced by measured runtime (scripts/postgres-arm-weights.json, and
-  # ARM_WEIGHTS_POSTGRES_ONLY for the Bun 1.4.4 cell, mined from this job's
-  # ARM_FILE lines). Each job runs two files at a time, each
+  # balanced by measured runtime (scripts/postgres-arm-weights.json, mined
+  # from this job's ARM_FILE lines). Each job runs two files at a time, each
   # worker against its own PostgreSQL service; a shard's two-worker makespan,
   # doubled for a slow runner, must end a minute inside the step's 20 minutes
-  # (ARM_SHARD_BUDGET_MS). The Bun 1.4.4 cell runs only the PostgreSQL side of
-  # testBackends() suites (--postgres-only); their PGLite side runs in the unit
-  # and serial lanes on Bun 1.4.4, and the Bun 1.4.0 cell keeps both sides.
+  # (ARM_SHARD_BUDGET_MS). The job runs both arms of every listed file: the
+  # unit shards skip *.slow.test.ts, so this lane is the only GitHub lane that
+  # runs the PGLite side of the listed slow testBackends() suites.
   # Event parity (docs/ci-event-parity.md#full-ci-on-pull-requests): full profile only; a
   # pull request (cheap tier) runs only the crash robot and convergence here. The
   # full-ci dispatch on its head, every push and the nightly run this lane.
@@ -208,9 +207,9 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-        bun: ['1.4.0', '1.4.4']
+        bun: ['1.4.4']
         # Event parity: every event, pull requests and merge-queue runs
-        # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
+        # included, runs every supported Bun version (docs/TESTING.md#event-parity).
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -255,7 +254,7 @@ jobs:
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
           GBRAIN_TEST_RECEIPT_LANE: pg-arms-bun-${{ matrix.bun }}
-        run: bun scripts/postgres-unit-arms.ts run ${{ matrix.shard }} 12 ${{ matrix.bun == '1.4.4' && '--postgres-only' || '' }}
+        run: bun scripts/postgres-unit-arms.ts run ${{ matrix.shard }} 12
       - name: Upload receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -280,9 +279,9 @@ jobs:
       fail-fast: false
       matrix:
         engine: [pglite, postgres]
-        bun: ['1.4.0', '1.4.4']
+        bun: ['1.4.4']
         # Event parity: every event, pull requests and merge-queue runs
-        # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
+        # included, runs every supported Bun version (docs/TESTING.md#event-parity).
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -335,9 +334,9 @@ jobs:
       fail-fast: false
       matrix:
         engine: [pglite, postgres]
-        bun: ['1.4.0', '1.4.4']
+        bun: ['1.4.4']
         # Event parity: every event, pull requests and merge-queue runs
-        # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
+        # included, runs every supported Bun version (docs/TESTING.md#event-parity).
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -426,9 +425,9 @@ jobs:
       fail-fast: false
       matrix:
         engine: [pglite, postgres]
-        bun: ['1.4.0', '1.4.4']
+        bun: ['1.4.4']
         # Event parity: every event, pull requests and merge-queue runs
-        # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
+        # included, runs every supported Bun version (docs/TESTING.md#event-parity).
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -488,9 +487,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        bun: ['1.4.0', '1.4.4']
+        bun: ['1.4.4']
         # Event parity: every event, pull requests and merge-queue runs
-        # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
+        # included, runs every supported Bun version (docs/TESTING.md#event-parity).
     services:
       postgres:
         image: pgvector/pgvector:pg16

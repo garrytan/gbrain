@@ -6,6 +6,10 @@
       "access_group_members.access_group_members_pkey": "p PRIMARY KEY (group_id, member_id)",
       "access_groups.access_groups_id_check": "c CHECK ((id ~ '^[a-z0-9][a-z0-9._-]{0,63}$'::text))",
       "access_groups.access_groups_pkey": "p PRIMARY KEY (id)",
+      "access_member_links.access_member_links_external_id_check": "c CHECK ((((length(external_id) >= 1) AND (length(external_id) <= 256)) AND (external_id ~ '^[!-~]+$'::text)))",
+      "access_member_links.access_member_links_member_id_fkey": "f FOREIGN KEY (member_id) REFERENCES access_members(id) ON DELETE CASCADE",
+      "access_member_links.access_member_links_pkey": "p PRIMARY KEY (system, external_id)",
+      "access_member_links.access_member_links_system_check": "c CHECK ((system ~ '^[a-z][a-z0-9_-]{0,31}$'::text))",
       "access_members.access_members_id_check": "c CHECK ((id ~ '^[a-z0-9][a-z0-9._-]{0,63}$'::text))",
       "access_members.access_members_pkey": "p PRIMARY KEY (id)",
       "access_pending_coverage.access_pending_coverage_pkey": "p PRIMARY KEY (source_id, prefix, reason)",
@@ -141,6 +145,7 @@
       "facts.facts_notability_check": "c CHECK ((notability = ANY (ARRAY['high'::text, 'medium'::text, 'low'::text])))",
       "facts.facts_pkey": "p PRIMARY KEY (id)",
       "facts.facts_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
+      "facts.facts_source_window_chk": "c CHECK (((source_window IS NULL) OR ((jsonb_typeof(source_window) = 'object'::text) AND (jsonb_typeof((source_window -> 'occurrence_id'::text)) = 'number'::text) AND (jsonb_typeof((source_window -> 'window_ordinal'::text)) = 'number'::text) AND (jsonb_typeof((source_window -> 'window_text_sha'::text)) = 'string'::text))))",
       "facts.facts_superseded_by_fkey": "f FOREIGN KEY (superseded_by) REFERENCES facts(id) ON DELETE SET NULL",
       "facts.facts_trust_tier_check": "c CHECK ((trust_tier = ANY (ARRAY['user_confirmed'::text, 'operator_curated'::text, 'tool_observed'::text, 'agent_written'::text, 'unknown'::text, 'external_untrusted'::text])))",
       "facts.facts_visibility_check": "c CHECK ((visibility = ANY (ARRAY['private'::text, 'world'::text])))",
@@ -278,6 +283,11 @@
       "page_body_stagings.page_body_stagings_principal_kind_principal_id_client_reque_key": "u UNIQUE (principal_kind, principal_id, client_request_id)",
       "page_body_stagings.page_body_stagings_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "page_body_stagings.page_body_stagings_state_check": "c CHECK ((state = ANY (ARRAY['open'::text, 'sealed'::text, 'prepared'::text, 'committed'::text, 'aborted'::text, 'expired'::text])))",
+      "page_derivation_spend.page_derivation_spend_family_check": "c CHECK ((family = ANY (ARRAY['facts'::text, 'synopsis'::text])))",
+      "page_derivation_spend.page_derivation_spend_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
+      "page_derivation_spend.page_derivation_spend_pkey": "p PRIMARY KEY (page_id, family)",
+      "page_derivation_spend.page_derivation_spend_reserved_usd_check": "c CHECK ((reserved_usd >= (0)::double precision))",
+      "page_derivation_spend.page_derivation_spend_spent_usd_check": "c CHECK ((spent_usd >= (0)::double precision))",
       "page_embedding_budget.page_embedding_budget_cap_usd_check": "c CHECK (((cap_usd IS NULL) OR (cap_usd >= (0)::double precision)))",
       "page_embedding_budget.page_embedding_budget_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "page_embedding_budget.page_embedding_budget_pkey": "p PRIMARY KEY (page_id)",
@@ -303,6 +313,21 @@
       "page_purges.page_purges_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "page_purges.trust_generation_insert": "t TRIGGER DEFERRABLE INITIALLY DEFERRED",
       "page_retrievals.page_retrievals_pkey": "p PRIMARY KEY (page_id)",
+      "page_segment_derivation_purge_pages.page_segment_derivation_purge_pages_pkey": "p PRIMARY KEY (request_id, page_id)",
+      "page_segment_derivation_purges.page_segment_derivation_purges_batch_rows_check": "c CHECK ((batch_rows >= 1))",
+      "page_segment_derivation_purges.page_segment_derivation_purges_found_check": "c CHECK ((found >= 0))",
+      "page_segment_derivation_purges.page_segment_derivation_purges_pending_reason_check": "c CHECK ((pending_reason = 'scope_lock_busy'::text))",
+      "page_segment_derivation_purges.page_segment_derivation_purges_phase_check": "c CHECK ((phase = ANY (ARRAY['sweep'::text, 'verify'::text, 'recheck'::text])))",
+      "page_segment_derivation_purges.page_segment_derivation_purges_pkey": "p PRIMARY KEY (request_id)",
+      "page_segment_derivation_purges.page_segment_derivation_purges_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
+      "page_segment_derivation_purges.page_segment_derivation_purges_stalled_reason_check": "c CHECK ((stalled_reason = ANY (ARRAY['statement_timeout'::text, 'paid_row_unreadable'::text])))",
+      "page_segment_derivations.page_segment_derivations_context_hash_check": "c CHECK ((octet_length(context_hash) = 32))",
+      "page_segment_derivations.page_segment_derivations_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
+      "page_segment_derivations.page_segment_derivations_pipeline_check": "c CHECK ((pipeline = ANY (ARRAY['links'::text, 'mentions'::text, 'timeline'::text, 'fences'::text, 'conversation_facts'::text, 'facts_backstop'::text, 'synopsis'::text])))",
+      "page_segment_derivations.page_segment_derivations_pipeline_version_check": "c CHECK ((pipeline_version >= 0))",
+      "page_segment_derivations.page_segment_derivations_pkey": "p PRIMARY KEY (page_id, pipeline, occurrence_id)",
+      "page_segment_derivations.page_segment_derivations_segment_sha256_check": "c CHECK ((octet_length(segment_sha256) = 32))",
+      "page_segment_derivations.page_segment_derivations_state_check": "c CHECK ((state = ANY (ARRAY['done'::text, 'partial'::text, 'failed'::text, 'skipped'::text])))",
       "page_segment_texts.page_segment_texts_byte_len_check": "c CHECK (((byte_len >= 1) AND (byte_len <= 1048576)))",
       "page_segment_texts.page_segment_texts_line_count_check": "c CHECK ((line_count >= 0))",
       "page_segment_texts.page_segment_texts_pkey": "p PRIMARY KEY (source_id, sha256)",
@@ -542,9 +567,9 @@
       "vector"
     ],
     "functions": {
-      "bump_page_generation_clock_fn()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=c40a0a3b86e640b6c8979976173dd93ae92c8c1b9a9e3595cae2af1e265328fe",
-      "bump_page_generation_fn()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=314d4775d7c90f8ed650ea12ae3687f388f714ed3d30582dc8ff678dfea1dc97",
-      "enforce_minion_queue_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=be82640d1979fc81dc812efb78bb3596ef536f656d20750e5e4aa19016bf4784",
+      "bump_page_generation_clock_fn()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=c40a0a3b86e640b6c8979976173dd93ae92c8c1b9a9e3595cae2af1e265328fe",
+      "bump_page_generation_fn()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=314d4775d7c90f8ed650ea12ae3687f388f714ed3d30582dc8ff678dfea1dc97",
+      "enforce_minion_queue_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=be82640d1979fc81dc812efb78bb3596ef536f656d20750e5e4aa19016bf4784",
       "gbrain_access_derive_page_readers()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=55923fb552adcdc8e5e3c820a0b4ba11f74748b4478f52de2e1b7506e969ac4d",
       "gbrain_access_folder_rules(p_source text, p_slug text)": "RETURNS text[] kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public] body_sha256=2fcbf1744ede8ffc2ac16972f3d793109543710ecfe13ae9849eced94f347305",
       "gbrain_access_mark_restricted()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=e45dc26421664fa3d409fba6c612af88905d2df35923f9592bcb759fc1ea618f",
@@ -553,45 +578,50 @@
       "gbrain_access_pending_covers(p_source text, p_slug text)": "RETURNS boolean kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public] body_sha256=3a5530179ad6f056532e398fb4de58610125625e09140340ff138a2e268772a8",
       "gbrain_access_readers(fm jsonb)": "RETURNS text[] kind=f lang=sql volatility=i secdef=false config=[search_path=pg_catalog, public] body_sha256=18348cb56089106aaec6470076ee652d7ed3bfbcb20e950a24abd52a21e7a380",
       "gbrain_access_stamp_folder_rules()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=5185d4f512c372e3c42ef274294d2ab2daf1b93f3ce46516f514831cbee10f7d",
-      "gbrain_advance_page_revision()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=2a431195dc4c4150e3428251d0dec0a685cdc2992525c1b4b54dff103d5d99c9",
-      "gbrain_advance_tag_revision()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=7807b26b4933148aa63c67fca824a60d3492396728205d04e16c48c81174cbd5",
-      "gbrain_bump_trust_generation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=4708a89d166ac0999a8922ad8ee8f69fea3213c59e0782d96220f93b0c001a62",
-      "gbrain_clear_atom_page_state()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=7db0ef05d1220a579e64428b2dd7cf5183191da186fbe64b6496433a7a713d11",
-      "gbrain_count_git_canonical_sources()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=ef162804d8f0946d3df6209096567f0ca4255e02fceeee0adc8e52c47806d6a0",
-      "gbrain_count_modifications()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=9518c925621def19cafb2918da4d41e602ce94619af872eafa3c11b46c66296f",
+      "gbrain_advance_page_revision()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=2a431195dc4c4150e3428251d0dec0a685cdc2992525c1b4b54dff103d5d99c9",
+      "gbrain_advance_tag_revision()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=7807b26b4933148aa63c67fca824a60d3492396728205d04e16c48c81174cbd5",
+      "gbrain_bump_trust_generation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=4708a89d166ac0999a8922ad8ee8f69fea3213c59e0782d96220f93b0c001a62",
+      "gbrain_clear_atom_page_state()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=7db0ef05d1220a579e64428b2dd7cf5183191da186fbe64b6496433a7a713d11",
+      "gbrain_count_git_canonical_sources()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=c8d77fd08f3b8f8e04a9928428cc854a36b6c05979291d2835cd741c305be80b",
+      "gbrain_count_modifications()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=9518c925621def19cafb2918da4d41e602ce94619af872eafa3c11b46c66296f",
       "gbrain_fact_fingerprint(claim text)": "RETURNS text kind=f lang=sql volatility=i secdef=false config=[] body_sha256=ff99709590deb4c83f0e16d30b3988ca2598018f5fd6f30d132acf31b1010174",
       "gbrain_fact_fingerprint_v1(claim text)": "RETURNS text kind=f lang=sql volatility=i secdef=false config=[] body_sha256=aa955a02d3c695f237e1771f0ffded2fa8e5c7b795c42b87f7fd239ae35e213c",
       "gbrain_fact_normalize(claim text)": "RETURNS text kind=f lang=sql volatility=i secdef=false config=[] body_sha256=595b1e012edeb66edbec72a2a8b1d046a8360a386bfce2fd903e50e3f78af37b",
-      "gbrain_forget_page_retrievals()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=0f053c08f9d5a4512d10406f7b20b9c60ec43d9bbea48b28b7e4cf7187ee191b",
-      "gbrain_fts_input(t text)": "RETURNS text kind=f lang=sql volatility=i secdef=false config=[search_path=pg_catalog] body_sha256=c73d0dbc333c6dccc9714a6b8d1b7785f48170556b9024002ddca1c80b25d87d",
-      "gbrain_graduation_fence()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=cd4642fe8deee2a3c14ef41f53862f0a449b2d8a10e47177bd4f5d2e05ce8803",
-      "gbrain_guard_effect_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=e8b5589dafd4a355106104daffdf57c7776d34fe18c5b5f5336a27de188688a1",
-      "gbrain_guard_inserted_facts()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=b794bdc82a9818e1b53738ee7476788cfc05929dd7fcde8b3d07d9a3e221fe59",
-      "gbrain_guard_protocol_activation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=f27354966c25d961fcecbffebba0e45747ad3de23575351319f6aee4f9aefd47",
-      "gbrain_guard_request_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=12baf1d365a8aa3009ac0fe6605497e6433304e8d5915a3fc0b0b39ad748f6c2",
-      "gbrain_guard_skill_publication()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=e854c0d058e75a65c3a90127c5c417380975100e83fc34288f6085e786df10a9",
-      "gbrain_lease_shared_skill_delivery()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=5e493c1ac8dce8cb025a736629e563437c4b214744137c302c532c20bf7e7acf",
-      "gbrain_preserve_fact_withdrawal()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=9beb118551a08451a228146373f50f2aa2ce0cfe89937e937d361b33224aa0aa",
-      "gbrain_queue_page_projection()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=6c544b9c129b6a17dcabeb5ee8d44a2b0e0af9d02ca3fe47c7d7f22ec313042c",
-      "gbrain_refuse_purged_fact()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=d1d584b91ceea7f4e63c235b790ef89c958c578e635f77ddd644918bc36d33f1",
-      "gbrain_refuse_purged_page()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=8aaaf7c22fc9acb4b1e84fe75f11ae6c889949b78de1ef6bdba1db54ef43844e",
-      "gbrain_refuse_purged_take()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=4a291b0448ab7a31926aa482b5222e0595d31a6bfad81b851b13e4bf581a0d83",
-      "gbrain_require_managed_writer()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=ae9883e69ac3121bc07689f68518c1d97a02a2788a64e496a26f12720300fe8a",
-      "gbrain_require_persistence_protocol(required integer)": "RETURNS void kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=af07b7fac60dec0a4fe568217931ac449d32f73b3a53a047b3b02a5f59cb5058",
-      "gbrain_snapshot_version_trust()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=7452350236ed4c68a6cd1f4d78a1381a4ef44cc70e8a032141f01bba4a704702",
-      "gbrain_stamp_revision_attribution()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=d446ed1145d8bb9c93cb0ca4aa076a5dc7a5fe07b3e79518adaf1b17b0a51216",
-      "gbrain_stamp_trust_tier()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=4610c2e064a0d34dbb66981dd49f15fb6b0b85407327983cde76b905cd626598",
-      "gbrain_stamp_version_attribution()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=1b28a0e5769198d86490dc20b2aee80b7e6595670428a63ac9c6825cd2a35b10",
-      "gbrain_stamp_write_attribution()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=e2dbafe65571fedcadc0441415f58fb5b5209b4c9cefa50e4855f58f0452327c",
-      "gbrain_try_jsonb(input text)": "RETURNS jsonb kind=f lang=plpgsql volatility=i secdef=false config=[search_path=pg_catalog, public] body_sha256=11b96a0400158fcb3dbd84255985cd11e473688c53fff64ebf92602fceccbedf",
-      "update_chunk_search_vector()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=b870de46705a62891bb318ecdeca1d0d5ea1f8da9a9a79c4cec6569e515dbdeb",
-      "update_page_search_vector()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=f354d9571ef5de74a98cfd1661e09aebca711541cbdd6eb86effa48aae8822cc"
+      "gbrain_forget_page_retrievals()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=0f053c08f9d5a4512d10406f7b20b9c60ec43d9bbea48b28b7e4cf7187ee191b",
+      "gbrain_fts_input(t text)": "RETURNS text kind=f lang=sql volatility=i secdef=false config=[search_path=pg_catalog, pg_temp] body_sha256=c73d0dbc333c6dccc9714a6b8d1b7785f48170556b9024002ddca1c80b25d87d",
+      "gbrain_graduation_fence()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=cd4642fe8deee2a3c14ef41f53862f0a449b2d8a10e47177bd4f5d2e05ce8803",
+      "gbrain_guard_effect_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=aa01528006dd7029eac6808e0233991524c9de9dc14aaf41f44160d67a747042",
+      "gbrain_guard_inserted_facts()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=027c16bf0f61101510f54966dfa7d3c5f90112cef52a51861adc36103a0bc02b",
+      "gbrain_guard_protocol_activation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=66b6cd26959d68687e6bec2314d10594bd2e20c5013638cad41c2d872a999eda",
+      "gbrain_guard_request_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=962d9fc19fc77ad54fe532d5003e28cbc428d17522612067975b7703d1fcb0c0",
+      "gbrain_guard_skill_publication()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=e854c0d058e75a65c3a90127c5c417380975100e83fc34288f6085e786df10a9",
+      "gbrain_lease_shared_skill_delivery()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=5e493c1ac8dce8cb025a736629e563437c4b214744137c302c532c20bf7e7acf",
+      "gbrain_mark_derivation_scope_entry()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=72ac0027fd37ecc4c72ad2e294ae3a98564736339b9ac917ea5d4112ec3cd35f",
+      "gbrain_preserve_fact_withdrawal()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=9beb118551a08451a228146373f50f2aa2ce0cfe89937e937d361b33224aa0aa",
+      "gbrain_queue_page_projection()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=6c544b9c129b6a17dcabeb5ee8d44a2b0e0af9d02ca3fe47c7d7f22ec313042c",
+      "gbrain_refuse_purged_fact()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=d1d584b91ceea7f4e63c235b790ef89c958c578e635f77ddd644918bc36d33f1",
+      "gbrain_refuse_purged_page()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=8aaaf7c22fc9acb4b1e84fe75f11ae6c889949b78de1ef6bdba1db54ef43844e",
+      "gbrain_refuse_purged_take()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=4a291b0448ab7a31926aa482b5222e0595d31a6bfad81b851b13e4bf581a0d83",
+      "gbrain_refuse_purging_derivation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=0d0afb3e61857f1668f2e7996da1c6aaf269aecaa1bf3763ce90df90e2d66fd3",
+      "gbrain_require_managed_writer()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=15a834d125e04a6508f114e93e2595800bccf0a8ccfe7e2e23323830580c98a1",
+      "gbrain_require_persistence_protocol(required integer)": "RETURNS void kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=af07b7fac60dec0a4fe568217931ac449d32f73b3a53a047b3b02a5f59cb5058",
+      "gbrain_snapshot_version_trust()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=7452350236ed4c68a6cd1f4d78a1381a4ef44cc70e8a032141f01bba4a704702",
+      "gbrain_stamp_revision_attribution()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=d446ed1145d8bb9c93cb0ca4aa076a5dc7a5fe07b3e79518adaf1b17b0a51216",
+      "gbrain_stamp_trust_tier()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=4610c2e064a0d34dbb66981dd49f15fb6b0b85407327983cde76b905cd626598",
+      "gbrain_stamp_version_attribution()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=1b28a0e5769198d86490dc20b2aee80b7e6595670428a63ac9c6825cd2a35b10",
+      "gbrain_stamp_write_attribution()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=e2dbafe65571fedcadc0441415f58fb5b5209b4c9cefa50e4855f58f0452327c",
+      "gbrain_try_jsonb(input text)": "RETURNS jsonb kind=f lang=plpgsql volatility=i secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=11b96a0400158fcb3dbd84255985cd11e473688c53fff64ebf92602fceccbedf",
+      "update_chunk_search_vector()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=b870de46705a62891bb318ecdeca1d0d5ea1f8da9a9a79c4cec6569e515dbdeb",
+      "update_page_search_vector()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=f354d9571ef5de74a98cfd1661e09aebca711541cbdd6eb86effa48aae8822cc"
     },
     "grants": {
       "access_group_members": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "access_groups": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "access_member_links": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "access_members": [
@@ -864,6 +894,9 @@
       "page_body_stagings": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "page_derivation_spend": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "page_embedding_budget": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -889,6 +922,15 @@
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "page_retrievals": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "page_segment_derivation_purge_pages": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "page_segment_derivation_purges": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "page_segment_derivations": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "page_segment_texts": [
@@ -1094,6 +1136,8 @@
       "access_group_members_member_idx": "CREATE INDEX access_group_members_member_idx ON public.access_group_members USING btree (member_id)",
       "access_group_members_pkey": "CREATE UNIQUE INDEX access_group_members_pkey ON public.access_group_members USING btree (group_id, member_id)",
       "access_groups_pkey": "CREATE UNIQUE INDEX access_groups_pkey ON public.access_groups USING btree (id)",
+      "access_member_links_member_idx": "CREATE INDEX access_member_links_member_idx ON public.access_member_links USING btree (member_id)",
+      "access_member_links_pkey": "CREATE UNIQUE INDEX access_member_links_pkey ON public.access_member_links USING btree (system, external_id)",
       "access_members_pkey": "CREATE UNIQUE INDEX access_members_pkey ON public.access_members USING btree (id)",
       "access_pending_coverage_pkey": "CREATE UNIQUE INDEX access_pending_coverage_pkey ON public.access_pending_coverage USING btree (source_id, prefix, reason)",
       "access_policy_migrations_pkey": "CREATE UNIQUE INDEX access_policy_migrations_pkey ON public.access_policy_migrations USING btree (id)",
@@ -1408,6 +1452,7 @@
       "page_body_stagings_expiry": "CREATE INDEX page_body_stagings_expiry ON public.page_body_stagings USING btree (hard_expires_at) WHERE (state = ANY (ARRAY['open'::text, 'sealed'::text, 'prepared'::text]))",
       "page_body_stagings_pkey": "CREATE UNIQUE INDEX page_body_stagings_pkey ON public.page_body_stagings USING btree (id)",
       "page_body_stagings_principal_kind_principal_id_client_reque_key": "CREATE UNIQUE INDEX page_body_stagings_principal_kind_principal_id_client_reque_key ON public.page_body_stagings USING btree (principal_kind, principal_id, client_request_id)",
+      "page_derivation_spend_pkey": "CREATE UNIQUE INDEX page_derivation_spend_pkey ON public.page_derivation_spend USING btree (page_id, family)",
       "page_embedding_budget_pkey": "CREATE UNIQUE INDEX page_embedding_budget_pkey ON public.page_embedding_budget USING btree (page_id)",
       "page_embedding_budget_state_idx": "CREATE INDEX page_embedding_budget_state_idx ON public.page_embedding_budget USING btree (state) WHERE (state <> 'open'::text)",
       "page_extraction_state_pkey": "CREATE UNIQUE INDEX page_extraction_state_pkey ON public.page_extraction_state USING btree (page_id, pipeline)",
@@ -1419,6 +1464,11 @@
       "page_projection_jobs_pkey": "CREATE UNIQUE INDEX page_projection_jobs_pkey ON public.page_projection_jobs USING btree (source_incarnation, slug)",
       "page_purges_pkey": "CREATE UNIQUE INDEX page_purges_pkey ON public.page_purges USING btree (source_id, content_hash)",
       "page_retrievals_pkey": "CREATE UNIQUE INDEX page_retrievals_pkey ON public.page_retrievals USING btree (page_id)",
+      "page_segment_derivation_purge_pages_pkey": "CREATE UNIQUE INDEX page_segment_derivation_purge_pages_pkey ON public.page_segment_derivation_purge_pages USING btree (request_id, page_id)",
+      "page_segment_derivation_purges_pkey": "CREATE UNIQUE INDEX page_segment_derivation_purges_pkey ON public.page_segment_derivation_purges USING btree (request_id)",
+      "page_segment_derivation_purges_source": "CREATE INDEX page_segment_derivation_purges_source ON public.page_segment_derivation_purges USING btree (source_id, created_at)",
+      "page_segment_derivations_pkey": "CREATE UNIQUE INDEX page_segment_derivations_pkey ON public.page_segment_derivations USING btree (page_id, pipeline, occurrence_id)",
+      "page_segment_derivations_unsettled": "CREATE INDEX page_segment_derivations_unsettled ON public.page_segment_derivations USING btree (pipeline, page_id) WHERE (state = ANY (ARRAY['partial'::text, 'failed'::text]))",
       "page_segment_texts_pkey": "CREATE UNIQUE INDEX page_segment_texts_pkey ON public.page_segment_texts USING btree (source_id, sha256)",
       "page_versions_pkey": "CREATE UNIQUE INDEX page_versions_pkey ON public.page_versions USING btree (id)",
       "page_view_digests_pkey": "CREATE UNIQUE INDEX page_view_digests_pkey ON public.page_view_digests USING btree (page_id, revision, view, audience)",
@@ -1455,6 +1505,7 @@
       "persistence_local_writers_pkey": "CREATE UNIQUE INDEX persistence_local_writers_pkey ON public.persistence_local_writers USING btree (id)",
       "persistence_requests_compactable": "CREATE INDEX persistence_requests_compactable ON public.persistence_requests USING btree (completed_at) WHERE ((recovery IS NULL) AND (NOT compacted) AND (state = ANY (ARRAY['committed'::text, 'conflict'::text, 'failed'::text, 'cancelled'::text])))",
       "persistence_requests_database_pending": "CREATE INDEX persistence_requests_database_pending ON public.persistence_requests USING btree (source_incarnation, sequence) WHERE ((worktree_id IS NULL) AND (state = ANY (ARRAY['queued'::text, 'running'::text, 'recovering'::text])))",
+      "persistence_requests_foreground_committed": "CREATE INDEX persistence_requests_foreground_committed ON public.persistence_requests USING btree (worktree_id, sequence) WHERE ((state = 'committed'::text) AND (NOT (COALESCE((intent ->> 'kind'::text), ''::text) ~~ 'managed_sync_%'::text)))",
       "persistence_requests_pending": "CREATE INDEX persistence_requests_pending ON public.persistence_requests USING btree (worktree_id, sequence) WHERE (state = ANY (ARRAY['queued'::text, 'running'::text, 'recovering'::text]))",
       "persistence_requests_pkey": "CREATE UNIQUE INDEX persistence_requests_pkey ON public.persistence_requests USING btree (id)",
       "persistence_requests_principal": "CREATE INDEX persistence_requests_principal ON public.persistence_requests USING btree (principal_kind, principal_id, sequence DESC)",
@@ -1653,14 +1704,23 @@
           "1 group_id text/text NOT NULL",
           "2 member_id text/text NOT NULL"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "access_groups": {
         "columns": [
           "1 id text/text NOT NULL",
           "2 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "access_member_links": {
+        "columns": [
+          "1 system text/text NOT NULL",
+          "2 external_id text/text NOT NULL",
+          "3 member_id text/text NOT NULL",
+          "4 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "access_members": {
         "columns": [
@@ -1671,7 +1731,7 @@
           "5 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "6 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "access_pending_coverage": {
         "columns": [
@@ -1682,7 +1742,7 @@
           "5 detail jsonb/jsonb NULL",
           "6 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "access_policy_migrations": {
         "columns": [
@@ -1694,7 +1754,7 @@
           "6 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "7 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "access_policy_revisions": {
         "columns": [
@@ -1711,14 +1771,14 @@
           "11 applied_at timestamp with time zone/timestamptz NULL",
           "12 approved_at timestamp with time zone/timestamptz NULL"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "access_policy_state": {
         "columns": [
           "1 source_id text/text NOT NULL",
           "2 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "access_rules": {
         "columns": [
@@ -1730,7 +1790,7 @@
           "6 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "7 created_by text/text NULL"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "access_tokens": {
         "columns": [
@@ -1751,7 +1811,9 @@
           "15 min_trust text/text NULL",
           "16 private_pages text/text NOT NULL DEFAULT 'none'::text",
           "17 member_id text/text NULL",
-          "18 may_act_for ARRAY/_text NULL"
+          "18 may_act_for ARRAY/_text NULL",
+          "19 attest_actor text/text NULL",
+          "20 attest_ops ARRAY/_text NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -2577,7 +2639,8 @@
           "40 last_written_at timestamp with time zone/timestamptz NULL",
           "41 attributed_to text/text NULL",
           "42 trust_tier text/text NOT NULL DEFAULT 'unknown'::text",
-          "43 write_origin jsonb/jsonb NULL"
+          "43 write_origin jsonb/jsonb NULL",
+          "44 source_window jsonb/jsonb NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -2978,7 +3041,9 @@
           "32 registered_via text/text NULL",
           "33 private_pages text/text NOT NULL DEFAULT 'none'::text",
           "34 member_id text/text NULL",
-          "35 may_act_for ARRAY/_text NULL"
+          "35 may_act_for ARRAY/_text NULL",
+          "36 attest_actor text/text NULL",
+          "37 attest_ops ARRAY/_text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -3018,7 +3083,8 @@
           "4 scopes ARRAY/_text NULL",
           "5 expires_at bigint/int8 NULL",
           "6 resource text/text NULL",
-          "7 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+          "7 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "8 grant_type text/text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -3156,6 +3222,17 @@
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
+      "page_derivation_spend": {
+        "columns": [
+          "1 page_id integer/int4 NOT NULL",
+          "2 family text/text NOT NULL",
+          "3 spent_usd double precision/float8 NOT NULL DEFAULT 0",
+          "4 reserved_usd double precision/float8 NOT NULL DEFAULT 0",
+          "5 reserved_at timestamp with time zone/timestamptz NULL",
+          "6 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
+      },
       "page_embedding_budget": {
         "columns": [
           "1 page_id integer/int4 NOT NULL",
@@ -3239,6 +3316,50 @@
         "columns": [
           "1 page_id integer/int4 NOT NULL",
           "2 last_retrieved_at timestamp with time zone/timestamptz NOT NULL"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
+      },
+      "page_segment_derivation_purge_pages": {
+        "columns": [
+          "1 request_id uuid/uuid NOT NULL",
+          "2 page_id integer/int4 NOT NULL"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
+      },
+      "page_segment_derivation_purges": {
+        "columns": [
+          "1 request_id uuid/uuid NOT NULL",
+          "2 source_id text/text NOT NULL",
+          "3 needles ARRAY/_text NOT NULL",
+          "4 patterns ARRAY/_text NOT NULL",
+          "5 page_ids ARRAY/_int4 NOT NULL DEFAULT '{}'::integer[]",
+          "6 phase text/text NOT NULL DEFAULT 'sweep'::text",
+          "7 recheck ARRAY/_int4 NULL",
+          "8 found integer/int4 NOT NULL DEFAULT 0",
+          "9 cursor_page integer/int4 NULL",
+          "10 cursor_pipeline text/text NULL",
+          "11 cursor_occurrence bigint/int8 NULL",
+          "12 batch_rows integer/int4 NULL",
+          "13 stalled_at timestamp with time zone/timestamptz NULL",
+          "14 stalled_reason text/text NULL",
+          "15 pending_reason text/text NULL",
+          "16 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
+      },
+      "page_segment_derivations": {
+        "columns": [
+          "1 page_id integer/int4 NOT NULL",
+          "2 pipeline text/text NOT NULL",
+          "3 occurrence_id bigint/int8 NOT NULL",
+          "4 pipeline_version integer/int4 NOT NULL",
+          "5 segment_sha256 bytea/bytea NOT NULL",
+          "6 context_hash bytea/bytea NOT NULL",
+          "7 state text/text NOT NULL",
+          "8 output jsonb/jsonb NULL",
+          "9 receipt jsonb/jsonb NULL",
+          "10 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "11 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -3357,8 +3478,9 @@
           "51 truth_lead text/text NULL",
           "52 timeline_lead text/text NULL",
           "53 links_extract_failure jsonb/jsonb NULL",
-          "54 page_readers ARRAY/_text NULL",
-          "55 folder_rule_ids ARRAY/_text NULL"
+          "54 withheld_source_path text/text NULL",
+          "55 page_readers ARRAY/_text NULL",
+          "56 folder_rule_ids ARRAY/_text NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -4395,7 +4517,10 @@
       "oauth_clients.trust_generation_update": "CREATE CONSTRAINT TRIGGER trust_generation_update AFTER UPDATE ON public.oauth_clients DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN ((old.min_trust IS DISTINCT FROM new.min_trust)) EXECUTE FUNCTION gbrain_bump_trust_generation()",
       "page_aliases.managed_writer_guard": "CREATE TRIGGER managed_writer_guard BEFORE INSERT OR DELETE OR UPDATE ON public.page_aliases FOR EACH ROW EXECUTE FUNCTION gbrain_require_managed_writer()",
       "page_body_manifest.managed_writer_guard": "CREATE TRIGGER managed_writer_guard BEFORE INSERT OR DELETE OR UPDATE ON public.page_body_manifest FOR EACH ROW EXECUTE FUNCTION gbrain_require_managed_writer()",
+      "page_body_manifest.page_body_manifest_derivation_scope_delete": "CREATE TRIGGER page_body_manifest_derivation_scope_delete AFTER DELETE ON public.page_body_manifest FOR EACH ROW WHEN (((old.gen_to IS NULL) AND (old.staging_id IS NULL))) EXECUTE FUNCTION gbrain_mark_derivation_scope_entry()",
+      "page_body_manifest.page_body_manifest_derivation_scope_retire": "CREATE TRIGGER page_body_manifest_derivation_scope_retire AFTER UPDATE OF gen_to ON public.page_body_manifest FOR EACH ROW WHEN (((old.gen_to IS NULL) AND (new.gen_to IS NOT NULL) AND (old.staging_id IS NULL))) EXECUTE FUNCTION gbrain_mark_derivation_scope_entry()",
       "page_purges.trust_generation_insert": "CREATE CONSTRAINT TRIGGER trust_generation_insert AFTER INSERT ON public.page_purges DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (true) EXECUTE FUNCTION gbrain_bump_trust_generation()",
+      "page_segment_derivations.page_segment_derivations_refuse_purging": "CREATE TRIGGER page_segment_derivations_refuse_purging BEFORE INSERT OR UPDATE OF output, receipt ON public.page_segment_derivations FOR EACH ROW EXECUTE FUNCTION gbrain_refuse_purging_derivation()",
       "page_segment_texts.managed_writer_guard": "CREATE TRIGGER managed_writer_guard BEFORE INSERT OR DELETE OR UPDATE ON public.page_segment_texts FOR EACH ROW EXECUTE FUNCTION gbrain_require_managed_writer()",
       "page_versions.page_versions_trust_snapshot": "CREATE TRIGGER page_versions_trust_snapshot BEFORE INSERT ON public.page_versions FOR EACH ROW EXECUTE FUNCTION gbrain_snapshot_version_trust()",
       "page_versions.page_versions_write_attribution": "CREATE TRIGGER page_versions_write_attribution BEFORE INSERT ON public.page_versions FOR EACH ROW EXECUTE FUNCTION gbrain_stamp_version_attribution()",
@@ -4406,6 +4531,7 @@
       "pages.pages_access_mark_restricted": "CREATE TRIGGER pages_access_mark_restricted AFTER INSERT OR UPDATE OF frontmatter ON public.pages FOR EACH ROW WHEN ((new.frontmatter ? 'readable_by'::text)) EXECUTE FUNCTION gbrain_access_mark_restricted()",
       "pages.pages_access_stamp_folder_rules": "CREATE TRIGGER pages_access_stamp_folder_rules BEFORE INSERT OR UPDATE OF slug, source_id, folder_rule_ids ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_access_stamp_folder_rules()",
       "pages.pages_clear_atom_scan_state": "CREATE TRIGGER pages_clear_atom_scan_state AFTER UPDATE ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_clear_atom_page_state()",
+      "pages.pages_derivation_scope_delete": "CREATE TRIGGER pages_derivation_scope_delete AFTER UPDATE OF deleted_at ON public.pages FOR EACH ROW WHEN (((old.deleted_at IS NULL) AND (new.deleted_at IS NOT NULL))) EXECUTE FUNCTION gbrain_mark_derivation_scope_entry()",
       "pages.pages_forget_retrievals": "CREATE TRIGGER pages_forget_retrievals AFTER DELETE ON public.pages REFERENCING OLD TABLE AS gbrain_deleted_pages FOR EACH STATEMENT EXECUTE FUNCTION gbrain_forget_page_retrievals()",
       "pages.pages_knowledge_revision": "CREATE TRIGGER pages_knowledge_revision BEFORE UPDATE ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_advance_page_revision()",
       "pages.pages_projection_queue": "CREATE TRIGGER pages_projection_queue AFTER INSERT OR DELETE OR UPDATE ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_queue_page_projection()",

@@ -362,9 +362,9 @@ export function fullCases(cases: SeededCase[]): SeededCase[] {
   };
   return cases.map(entry => {
     const e = entry.expect;
-    // An open episode makes the matched dirty-absorbed path a candidate, so its Dp is read and row 11 applies.
-    if (entry.path === 'mix/dirty-absorbed.md') return to(entry, 'row 11 (a candidate under --full, so Dp is read)', { key: 'dirty', action: 'none', settled: true });
-    if (e.key === 'matched') return to(entry, 'row 14 (episode obligation)', { key: 'reparse', action: 'reparse', settled: false }, entry.finding);
+    // A matched page is already the import of its blob with its derived state current, so the open episode admits it in place
+    // (sync-classify.ts `inPlace`): it stays matched, is no candidate, and the dirty-absorbed path's Dp is not read.
+    if (e.key === 'matched') return to(entry, 'row 14 satisfied in place (fileSame, dbSame, derived current, no hold)', e, entry.finding);
     if (entry.path === 'mix/adopt-revision.md') return to(entry, 'row 15 (fileSame, ¬dbSame, arm 1 attests)', { key: 'db_ahead', action: 'none', settled: true, sub: 'pending' });
     if (e.key === 'adopt') return to(entry, 'row 16 (¬fileSame, proof)', { key: 'import', action: 'import', settled: false });
     if (e.key === 'db_ahead' && e.sub !== 'pending') return to(entry, 'row 15 (full_skipped_db_ahead)', { ...e, fullSkipped: true });

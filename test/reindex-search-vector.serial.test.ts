@@ -148,20 +148,21 @@ describe('runReindexSearchVector', () => {
 
     // 1 inventory + 2 CREATE + 2 backfill batches (mock returns no rows, so
     // the keyset loop terminates after the first batch per table) + the facts
-    // keyword index swap (10) = 15 calls
-    expect(state.calls.length).toBe(15);
+    // keyword index swap (10) + putting pg_temp back on the recreated functions' search_path (#7632) = 16 calls
+    expect(state.calls.length).toBe(16);
+    expect(state.calls[3]).toContain('ALTER FUNCTION %s SET search_path');
     expect(state.calls[1]).toContain('CREATE OR REPLACE FUNCTION update_page_search_vector');
     expect(state.calls[1]).toContain("to_tsvector('pt_br'");
     expect(state.calls[2]).toContain('CREATE OR REPLACE FUNCTION update_chunk_search_vector');
     expect(state.calls[2]).toContain("to_tsvector('pt_br'");
-    expect(state.calls[3]).toMatch(/UPDATE pages/);
-    expect(state.calls[4]).toMatch(/UPDATE content_chunks/);
-    expect(state.calls[4]).toContain("to_tsvector('pt_br'");
+    expect(state.calls[4]).toMatch(/UPDATE pages/);
+    expect(state.calls[5]).toMatch(/UPDATE content_chunks/);
+    expect(state.calls[5]).toContain("to_tsvector('pt_br'");
     // v120/#1647 hardening must survive the CREATE OR REPLACE (which resets
     // proconfig): both recreated bodies pin search_path.
     expect(state.calls[1]).toContain('SET search_path = pg_catalog, public');
     expect(state.calls[2]).toContain('SET search_path = pg_catalog, public');
-    expectFactsSwap(state.calls.slice(5), 'pt_br');
+    expectFactsSwap(state.calls.slice(6), 'pt_br');
   });
 
   test('default english language still recreates + backfills (no shortcut here)', async () => {
@@ -176,17 +177,17 @@ describe('runReindexSearchVector', () => {
 
     expect(result.status).toBe('ok');
     expect(result.language).toBe('english');
-    expect(state.calls.length).toBe(15);
+    expect(state.calls.length).toBe(16);
 
-    // Trigger recreates (calls 1, 2) and chunks backfill (call 4) embed the
-    // language literal. Pages backfill (call 3) is UPDATE-to-self that
+    // Trigger recreates (calls 1, 2) and chunks backfill (call 5) embed the
+    // language literal. Pages backfill (call 4) is UPDATE-to-self that
     // re-fires the trigger, so the language literal lives in the trigger
     // function body — not in the UPDATE statement.
     expect(state.calls[1]).toContain("'english'");
     expect(state.calls[2]).toContain("'english'");
-    expect(state.calls[3]).toMatch(/UPDATE pages/);
-    expect(state.calls[4]).toContain("'english'");
-    expectFactsSwap(state.calls.slice(5), 'english');
+    expect(state.calls[4]).toMatch(/UPDATE pages/);
+    expect(state.calls[5]).toContain("'english'");
+    expectFactsSwap(state.calls.slice(6), 'english');
   });
 
   test('SQL injection attempt falls back to english', async () => {
@@ -308,7 +309,7 @@ describe('runReindexSearchVector', () => {
       expect([...state.config!.keys()]).toEqual([]);
       // The existing executeRaw shape is untouched (config goes through
       // get/set/unsetConfig, not executeRaw).
-      expect(state.calls.length).toBe(15);
+      expect(state.calls.length).toBe(16);
     });
 
     test('resumes the chunks backfill from the persisted checkpoint when the marker matches the language', async () => {

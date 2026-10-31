@@ -1860,7 +1860,8 @@ OPTIONS
   --chat-model <PROVIDER:MODEL>
                         Default subagent driver (v0.27+)
   --no-embedding        Defer embedding setup (skips the embedding-key check)
-  --surface <verbs|starter|full>  Tool surface the printed harness registration pins (default full)
+  --surface <verbs|starter|full>  Tool surface the printed harness registration pins, listed in full
+                                  (default: full, listing the memory verbs and request_tools)
   --search-mode <conservative|balanced|tokenmax>  Record the operator's search mode (no first-run ask; an existing brain's mode needs --force)
   --skip-embed-check    Skip the init-time embedding-key validation (config +
                         live test-embed). Also via GBRAIN_INIT_SKIP_EMBED_CHECK=1

@@ -13,7 +13,7 @@
 #   DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5434/postgres bun scripts/bench/hnsw-iterative-scan.ts --corpus latent ...
 set -euo pipefail
 
-BUN_VERSION="${BUN_VERSION:-1.4.2}"
+BUN_VERSION="${BUN_VERSION:-1.4.4}"
 PG_IMAGE="${PG_IMAGE:-pgvector/pgvector:pg16}"
 t0=$(date +%s)
 step() { echo "[hnsw-scale-setup +$(( $(date +%s) - t0 ))s] $*"; }
