@@ -284,7 +284,7 @@ export interface GBrainConfig {
    */
   self_upgrade?: {
     mode?: 'auto' | 'notify' | 'off';
-    channel?: 'latest' | 'stable';
+    channel?: 'stable' | 'alpha' | 'latest';
     /** Set true once the upgrade-time consent prompt has been shown. */
     mode_prompted?: boolean;
     /** Quiet-hours window for the autopilot silent channel. */
@@ -1607,6 +1607,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Paid-loop breaker: dead submissions of one dream key within 24h before
   // it is refused (default 3; 0 disables). `gbrain dream reset-key` clears one.
   'dream.breaker.max_dead_submissions',
+  'dream.write_deferral.enabled', 'embed.restamp.enabled', // GBRA-224 W3 self-heal switches, default on (heal-audit.ts healEnabled)
   // Emotional weight (v0.29)
   'emotional_weight.high_tags',
   'emotional_weight.user_holder',

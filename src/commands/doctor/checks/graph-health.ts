@@ -383,6 +383,8 @@ export const timelineHistoryEntry: DoctorEntry = {
     'ontology_facts_fenced',
     'stale_frontmatter_keys',
     'maintenance_write_drift',
+    'dream_write_deferred',
+    'embedding_restamp_stalled',
   ],
   run: runTimelineHistory,
 };

@@ -153,6 +153,7 @@ CHECKS=(
   "check:pin-doc-privacy"
   "check:worker-lock-renewal-shape"
   "check:bootstrap-tag"
+  "check:install-ref"
   "check:plugin-tree"
   "check:skill-refs"
   # Previously reachable ONLY from the deleted check:all (i.e. never run):

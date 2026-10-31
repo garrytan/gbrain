@@ -9,6 +9,12 @@
       ],
       "exit_code": 1,
       "report": {
+        "alert": {
+          "docs": "docs/guides/troubleshooting.md#doctor-alert",
+          "items": [],
+          "level": "none",
+          "unknown": []
+        },
         "brain_checks_score": 45,
         "budget_ms": "<volatile>",
         "capped_by": [
@@ -1756,6 +1762,30 @@
             "elapsed_ms": "<volatile>",
             "message": "No page was written database-only to an unbound source.",
             "name": "unbound_source",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "bound": 3,
+              "enabled": true,
+              "items": [],
+              "pending": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No deferred dream writes",
+            "name": "dream_write_deferred",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "bound": 3,
+              "enabled": true
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "The embedding signature restamp is running clean",
+            "name": "embedding_restamp_stalled",
             "status": "ok"
           },
           {
@@ -4890,6 +4920,12 @@
       ],
       "exit_code": 1,
       "report": {
+        "alert": {
+          "docs": "docs/guides/troubleshooting.md#doctor-alert",
+          "items": [],
+          "level": "none",
+          "unknown": []
+        },
         "brain_checks_score": 45,
         "budget_ms": "<volatile>",
         "capped_by": [
@@ -6637,6 +6673,30 @@
             "elapsed_ms": "<volatile>",
             "message": "No page was written database-only to an unbound source.",
             "name": "unbound_source",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "bound": 3,
+              "enabled": true,
+              "items": [],
+              "pending": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No deferred dream writes",
+            "name": "dream_write_deferred",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "bound": 3,
+              "enabled": true
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "The embedding signature restamp is running clean",
+            "name": "embedding_restamp_stalled",
             "status": "ok"
           },
           {

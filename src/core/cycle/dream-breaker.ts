@@ -18,9 +18,22 @@
  * before any work does not. A completed patterns run resets its source key,
  * so only consecutive deaths trip it.
  *
- * Not covered: content-hashed synthesize keys change whenever a transcript
- * grows, and patterns runs outside maintenance carry no key.
+ * Content-hashed synthesize keys (W3, #6753/#6924): a synth-v2 key digests
+ * the transcript, so a growing transcript gets a new key on every pass and
+ * its deaths never meet on one key. Each synthesize death therefore also
+ * counts under the stable per-transcript key
+ * `dream:synth-v2:@file:<source id>:<encoded basename>` (the job's
+ * `source_id`, not its incarnation, so a brain that went managed keeps its
+ * count). The same work is "this transcript file in this source", whatever
+ * its length or chunking; the rule stays 3 dead runs in 24 h, and only the
+ * window or `gbrain dream reset-key` clears it ('@' cannot occur in an
+ * encoded identity, so the prefix never collides with a job key). The
+ * per-transcript row exists only once its deaths span two content keys, so a
+ * loop on one unchanged transcript still reports under its own key.
+ *
+ * Not covered: patterns runs outside maintenance carry no key.
  */
+import { basename } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
 
@@ -34,6 +47,15 @@ export function dreamPatternsSourceKey(sourceId: string): string {
 }
 /** Base-key prefix of a contained cycle-phase failure after paid model calls. */
 export const DREAM_PHASE_KEY_PREFIX = 'dream:phase:';
+/** Base-key prefix of the per-transcript synthesize count, whatever each pass's content hash. */
+export const DREAM_SYNTH_FILE_KEY_PREFIX = 'dream:synth-v2:@file:';
+/** Every key family `gbrain dream reset-key` accepts: the ones `--list` and the breaker refusals print. */
+export const DREAM_RESETTABLE_KEY_PREFIXES = [...DREAM_BREAKER_KEY_PREFIXES, DREAM_PHASE_KEY_PREFIX] as const;
+
+/** The stable key every synthesize death of this transcript counts under (W3). */
+export function dreamSynthFileKey(sourceId: string, transcriptBasename: string): string {
+  return `${DREAM_SYNTH_FILE_KEY_PREFIX}${sourceId}:${encodeURIComponent(transcriptBasename)}`;
+}
 export const DREAM_BREAKER_CONFIG_KEY = 'dream.breaker.max_dead_submissions';
 export const DREAM_BREAKER_RESETS_KEY = 'dream.breaker.resets';
 /** Contained paid phase failures: `{ [base key]: ISO finish times }`, pruned to the 24 h window. */
@@ -84,18 +106,23 @@ export async function countDeadDreamSubmissions(engine: BrainEngine): Promise<De
         WHERE name = 'subagent' AND finished_at > now() - interval '24 hours'
           AND (status = 'dead' OR (status = 'cancelled' AND tokens_input + tokens_output > 0))
      ), counted AS (
-       SELECT base_key, queue, finished_at FROM ended
+       SELECT base_key, queue, finished_at, base_key AS content_key FROM ended
         WHERE status = 'dead' AND left(base_key, ${DREAM_BREAKER_KEY_PREFIXES[0].length}) = $1
        UNION ALL
-       SELECT $4::text || source_id, queue, finished_at FROM ended
+       SELECT $4::text || source_id, queue, finished_at, NULL FROM ended
         WHERE left(base_key, ${DREAM_BREAKER_KEY_PREFIXES[1].length}) = $2
+       UNION ALL
+       SELECT $5::text || source_id || ':' || substring(base_key from ':filename:([^:]*):[^:]*$'), queue, finished_at, base_key FROM ended
+        WHERE status = 'dead' AND left(base_key, ${DREAM_BREAKER_KEY_PREFIXES[0].length}) = $1 AND base_key ~ ':filename:[^:]*:[^:]*$'
      )
      SELECT base_key, COUNT(DISTINCT queue)::int AS dead_submissions, MAX(finished_at)::text AS last_dead_at
        FROM counted
       WHERE finished_at > COALESCE(($3::text::jsonb ->> base_key)::timestamptz, '-infinity'::timestamptz)
       GROUP BY base_key
+     -- A per-transcript count is its own row only once its deaths span two content keys; one key already counts itself.
+     HAVING left(base_key, length($5::text)) <> $5::text OR COUNT(DISTINCT content_key) > 1
       ORDER BY dead_submissions DESC, base_key`,
-    [DREAM_BREAKER_KEY_PREFIXES[0], DREAM_BREAKER_KEY_PREFIXES[1], JSON.stringify(resets), DREAM_PATTERNS_SOURCE_KEY_PREFIX],
+    [DREAM_BREAKER_KEY_PREFIXES[0], DREAM_BREAKER_KEY_PREFIXES[1], JSON.stringify(resets), DREAM_PATTERNS_SOURCE_KEY_PREFIX, DREAM_SYNTH_FILE_KEY_PREFIX],
   );
   const cutoff = Date.now() - 24 * 3_600_000;
   for (const [baseKey, times] of Object.entries(await loadContained(engine))) {
@@ -197,6 +224,16 @@ export async function clearPatternsSourceDeaths(engine: BrainEngine, sourceId: s
 }
 
 /** Refusal line for the cycle summary and the autopilot log. */
+/**
+ * The synthesize refusal for one transcript: its content key first, then (W3) its per-transcript key, which catches a
+ * transcript that grew (a new content key) between dying runs.
+ */
+export function synthBreakerRefusal(breaker: DreamBreaker, t: { synthesisIdentity: string; sourceId: string; filePath: string; hash16: string }): string | null {
+  const file = basename(t.filePath);
+  return dreamBreakerRefusal(breaker, `dream:synth-v2:${encodeURIComponent(t.synthesisIdentity)}:filename:${encodeURIComponent(file)}:${t.hash16}`)
+    ?? dreamBreakerRefusal(breaker, dreamSynthFileKey(t.sourceId, file));
+}
+
 export function dreamBreakerRefusal(breaker: DreamBreaker, baseKey: string): string | null {
   const count = breaker.tripped.get(baseKey);
   if (count === undefined) return null;

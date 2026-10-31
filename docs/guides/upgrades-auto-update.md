@@ -128,42 +128,80 @@ them in order and stop if the tag check fails.
 <a id="release-channel"></a>
 ### Which version counts as available
 
-Every update surface (the startup marker, `gbrain check-update`,
-`gbrain self-upgrade`, doctor's `self_upgrade_health` and the `auto` channel)
-reads the `VERSION` file at the `latest-stable` tag: the release the canonical
-install (`github:garrytan/gbrain#latest-stable`) gets from `bun update`, moved
-only after the release checks pass and the assets publish. Master's `VERSION`
-is never offered: the next PR stamps it before release.yml tags it, and a
-superseded version never gets a tag (#6718, #6828).
-
 <a id="stable-channel"></a>
-**The stable channel.** A large or production brain can follow a slower line:
-the newest release a maintainer promoted after the production-shaped soak
-passed on that release's exact git tree. Promotion is weekly or manual, through
-the maintainer-only `Promote stable` workflow
-([RELEASING.md](../RELEASING.md#stable-channel-promotion)), which moves the
-`stable` tag to the release commit and records the soak scoreboard link in the
-tag message (`git show stable`).
+gbrain has two release channels, and every update surface (the startup
+marker, `gbrain check-update`, `gbrain self-upgrade`, `gbrain upgrade`,
+doctor's `self_upgrade_health` and the `auto` mode) follows the one in
+effect:
+
+| Channel | What it offers | Read from |
+|---------|----------------|-----------|
+| `stable` (default) | Weekly releases a maintainer promoted after testing on that release's exact git tree. | The evidence record `stable.json` on the `stable-record` branch, checked against the `stable` tag. |
+| `alpha` | Every published release. | `VERSION` at the `latest-stable` tag, which release.yml moves on every publish. |
+
+`latest` is accepted everywhere as an alias for `alpha`. The channel comes
+from the first of these that is set: `--channel` on the command, the
+`GBRAIN_RELEASE_CHANNEL` environment variable, `self_upgrade.channel` in the
+brain home's config, then the default. An invalid value at the first one set
+is an error (`invalid_params`), never a fall-through to the next. Channel state
+lives under `GBRAIN_HOME`, so a repo-less brain and a repo brain behave the
+same. When a channel is set, `gbrain doctor` prints `channel=<channel> (<source>)`.
 
 ```bash
-gbrain upgrade --channel stable                 # one run on the stable channel
-gbrain config set self_upgrade.channel stable   # make stable the default for this brain home
-gbrain config set self_upgrade.channel latest   # back to every published release
+gbrain config set self_upgrade.channel alpha    # follow every release on this brain home
+gbrain config set self_upgrade.channel stable   # back to the default
+gbrain upgrade --channel alpha                  # one run on alpha, config unchanged
+gbrain upgrade --dry-run --json                 # what an upgrade would install, installing nothing
 ```
 
-With `self_upgrade.channel stable`, every update surface above reads `VERSION`
-at the `stable` tag instead of `latest-stable`, so the marker, `check-update`,
-`self-upgrade` and the `auto` channel only ever offer the stable release.
-`gbrain upgrade` resolves it from `git ls-remote` (the `v<version>` tag on the
-commit `stable` peels to) and installs exactly that release: a bun install is
+An install with no channel set prints one notice, once per `GBRAIN_HOME`, on stderr (never under `--json`, `serve` or
+`mcp`): `[gbrain notice release_channel] This install now follows the stable
+channel ...`. It is not an `UPGRADE_AVAILABLE` marker. Setting any channel
+silences it.
+
+**The evidence record.** `Promote stable`
+([RELEASING.md](../RELEASING.md#stable-channel-promotion)) moves the `stable`
+tag and commits `stable.json` to the `stable-record` branch in one atomic
+push. The record names the version, commit, tree, the soak run that passed on
+that tree and a `known_bad` list of withdrawn releases. The update check reads
+only that file (no API call, no git), so a missing record or a record without
+the evidence its generation requires is never trusted. Generation 1 records
+carry the soak run; from the matrix cutover on, `matrix_run` is required too.
+`gbrain upgrade` also checks that `stable` and `v<version>` peel to the
+record's commit, then installs exactly that release: a bun install is
 reinstalled pinned to `#v<version>` (remove, then add; it restores the
 previous release if the add fails), a bun-link clone fast-forwards to the
-release commit (never backward or across a fork), and the binary install
-downloads that release's asset. A build already at or above the stable release
-changes nothing: the stable channel never downgrades. A ClawHub install follows
-ClawHub's own line and is refused with the reinstall command. When no release
-has been promoted yet, or the remote cannot be read, the upgrade stops with
-`stable_channel_unresolved` and changes nothing.
+release commit, and the binary install downloads that release's asset.
+
+**Never downgrade.** A build at or above the stable release is offered
+nothing, so an install that ran ahead on alpha waits until stable passes it.
+The one exception is a build on the record's `known_bad` list: it is offered
+the current stable release even when that is older. A ClawHub install follows
+ClawHub's own line and is refused with the reinstall command.
+
+**The update cache and snooze are per channel.** Each channel keeps its own
+answer (`update-check.<channel>.json`, which also records the evidence policy)
+and its own snooze (`update-snoozed.<channel>.json`). Switching channel reads
+that channel's answer; a cached answer from another policy, or the
+unpartitioned cache of older builds, is never read. A snooze holds for its
+whole window (24 h, then 48 h, then 7 days) however many releases ship
+meanwhile; a stable rollback below the snoozed version clears it.
+
+<a id="stable-channel-errors"></a>
+**When stable has no usable answer.** The background check only records and
+reports these; it never offers alpha instead. An explicit `gbrain upgrade` or
+`gbrain self-upgrade` on stable exits non-zero with the code and installs
+nothing.
+
+| Code | Meaning | What to do |
+|------|---------|------------|
+| `stable_missing` | No release has been promoted yet (no record or no `stable` tag). | Wait for the first promotion, or `gbrain config set self_upgrade.channel alpha`. |
+| `stable_invalid` | The record is malformed, lacks a required evidence key, lists its own version as known bad, or its version's tag is not the stable commit. | Wait for a maintainer to repair or re-promote stable, or switch to alpha. |
+| `stable_unreadable` | The record or the tags did not answer (network, or a promotion still propagating). | Retry: `gbrain self-upgrade --check-only --json`. The last verified answer still shows in the notice, never as an install target. |
+
+When the channel came from `--channel` or `GBRAIN_RELEASE_CHANNEL`, the fix
+names that override instead of the config command. Builds before this release
+reported `stable_channel_unresolved` (retired).
 
 A swap is a swap only when the version changed. When `gbrain upgrade` finds
 the same version running after the install step (`bun update` on a tag whose

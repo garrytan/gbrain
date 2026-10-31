@@ -13,6 +13,7 @@ import {
   type HostProcess, type ProcessSources, type RestartContext, type RestartExecutor, type WarmSocketState,
 } from '../src/core/upgrade-restart.ts';
 import { handleRestartOnly, mismatchFix, restartRefusal } from '../src/commands/upgrade-restart.ts';
+import { runUpgradeDryRun } from '../src/commands/upgrade-channel.ts';
 import { CLI_FLAG_REGISTRY } from '../src/core/cli-flag-registry.generated.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { exitCodeForCode } from '../src/core/error-catalogue.ts';
@@ -401,8 +402,8 @@ describe('another install on the host (GBRA-175 production finding: serve ran fr
   });
 });
 
-describe('--dry-run belongs to --restart-only (#2185)', () => {
-  test('a dry run without --restart-only is refused instead of ignored', async () => {
+describe('--dry-run never installs (#2185)', () => {
+  test('without --restart-only the restart handler leaves --dry-run to the channel preview, which installs nothing (GBRA-224; upgrade-stable-channel.test.ts runs it)', async () => {
     const opts = { stopMcp: false, json: false, rerunArgv: ['gbrain', 'upgrade'] };
     const writes: string[] = [];
     const write = process.stderr.write;
@@ -411,15 +412,15 @@ describe('--dry-run belongs to --restart-only (#2185)', () => {
     _resetCliExitVerdictForTests();
     try {
       expect(await handleRestartOnly(['--channel', 'stable'], opts)).toBe(false);
+      expect(await handleRestartOnly(['--dry-run'], opts)).toBe(false);
       expect(currentExitCode()).toBe(0);
-      expect(await handleRestartOnly(['--dry-run'], opts)).toBe(true);
-      expect(currentExitCode()).toBe(exitCodeForCode('invalid_params'));
     } finally {
       process.stderr.write = write;
       process.exitCode = prevExit ?? 0;
       _resetCliExitVerdictForTests();
     }
-    expect(writes.join('')).toContain('--dry-run previews only a restart');
+    expect(writes.join('')).toBe('');
+    expect(await runUpgradeDryRun(['--channel', 'stable'], false)).toBe(false);
   });
 
   test('upgrade accepts --dry-run and post-upgrade, which shares its module, does not', () => {

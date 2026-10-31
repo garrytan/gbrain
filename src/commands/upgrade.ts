@@ -12,9 +12,10 @@ import { forwardProgressPast, migrationLedgerSummary, wedgedLedgerHint } from '.
 import { loadCompletedMigrations } from '../core/preferences.ts';
 import { MIGRATIONS_RUNNING_EXIT_CODE, readMigrationLockHolder } from '../core/migration-orchestration-lock.ts';
 import { loadConfig, gbrainPath } from '../core/config.ts';
-import { clearSnooze, clearUpdateCache, resolveReleaseChannel, writeJustUpgraded, writeSwapReceipt, type ReleaseChannel } from '../core/self-upgrade.ts';
+import { clearSnooze, clearUpdateCache, currentReleaseChannel, writeJustUpgraded, writeSwapReceipt, type ReleaseChannel } from '../core/self-upgrade.ts';
 import { handleRestartOnly, preflightHostRestart } from './upgrade-restart.ts';
-import { parseChannelArg, resolveStableRelease, stableUnresolvedMessage } from '../core/stable-channel.ts';
+import { resolveStableRelease } from '../core/stable-channel.ts';
+import { channelTarget, runUpgradeDryRun } from './upgrade-channel.ts';
 export { parseChannelArg, resolveStableRelease } from '../core/stable-channel.ts';
 import { MOVEMENT_SUPERVISOR_STEP } from './movement-step.ts';
 import {
@@ -49,7 +50,7 @@ export function assessUpgradeOutcome(
 
 export async function runUpgrade(args: string[], opts: { targetVersion?: string } = {}) {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain upgrade [--channel latest|stable] [--stop-mcp] [--no-restart] [--swap-only] [--no-autopilot-install] [--no-bun-floor-check]\n       gbrain upgrade --restart-only [--stop-mcp] [--dry-run] [--json]\n\nSelf-update the CLI, then restart every gbrain process on this host onto the new build.\n\nDetects install method (bun, binary, clawhub) and runs the appropriate update.\nAfter upgrading, shows what\'s new and offers to set up new features.\n\n--channel <name>        latest (every published release) or stable (the newest release promoted after the\n                       production-shaped soak passed on its exact tree). Default: self_upgrade.channel, else latest.\n                       Set it per brain with gbrain config set self_upgrade.channel stable — update checks follow it too.\n--stop-mcp              Stop MCP stdio servers agent harnesses started, instead of refusing; reconnect gbrain\n                       in each harness afterwards.\n--no-restart            Install without restarting anything (doctor reports runtime_build_skew until\n                       \'gbrain upgrade --restart-only\' runs).\n--restart-only          Restart serve, autopilot, the jobs supervisor and its worker (and, with --stop-mcp, MCP\n                       servers) onto the installed build, then verify every process reports it and the warm\n                       CLI socket accepts it. A process it cannot restart refuses with the exact step (exit 3).\n--dry-run               With --restart-only: print the plan and change nothing.\n--no-autopilot-install  Skip autopilot installation and service rewrites, including package postinstall.\n                       Also supported as GBRAIN_NO_AUTOPILOT_INSTALL=1.\n--no-bun-floor-check    Upgrade even when the target release\'s Bun floor cannot be read or is above\n                       this host\'s Bun (manual upgrades only). Docs: docs/guides/upgrades-auto-update.md#bun-floor.\n--swap-only  Perform ONLY the binary/source swap and skip post-upgrade\n             (migrations run on the next launch). Used by the autopilot\n             silent self-upgrade channel so the daemon can swap + relaunch\n             without a 30-min blocking post-upgrade inside its tick.');
+    console.log('Usage: gbrain upgrade [--channel stable|alpha] [--dry-run] [--stop-mcp] [--no-restart] [--swap-only] [--no-autopilot-install] [--no-bun-floor-check]\n       gbrain upgrade --restart-only [--stop-mcp] [--dry-run] [--json]\n\nSelf-update the CLI, then restart every gbrain process on this host onto the new build.\n\nDetects install method (bun, binary, clawhub) and runs the appropriate update.\nAfter upgrading, shows what\'s new and offers to set up new features.\n\n--channel <name>        stable (weekly, promoted after its gates passed on the exact release; the default) or alpha\n                       (every published release; latest is an alias). Precedence: --channel, GBRAIN_RELEASE_CHANNEL,\n                       self_upgrade.channel, stable. Persist it as self_upgrade.channel in config.\n--stop-mcp              Stop MCP stdio servers agent harnesses started, instead of refusing; reconnect gbrain\n                       in each harness afterwards.\n--no-restart            Install without restarting anything (doctor reports runtime_build_skew until\n                       \'gbrain upgrade --restart-only\' runs).\n--restart-only          Restart serve, autopilot, the jobs supervisor and its worker (and, with --stop-mcp, MCP\n                       servers) onto the installed build, then verify every process reports it and the warm\n                       CLI socket accepts it. A process it cannot restart refuses with the exact step (exit 3).\n--dry-run               Print the effective channel, where it came from and what would install; change nothing.\n                       With --restart-only: print the restart plan instead.\n--no-autopilot-install  Skip autopilot installation and service rewrites, including package postinstall.\n                       Also supported as GBRAIN_NO_AUTOPILOT_INSTALL=1.\n--no-bun-floor-check    Upgrade even when the target release\'s Bun floor cannot be read or is above\n                       this host\'s Bun (manual upgrades only). Docs: docs/guides/upgrades-auto-update.md#bun-floor.\n--swap-only  Perform ONLY the binary/source swap and skip post-upgrade\n             (migrations run on the next launch). Used by the autopilot\n             silent self-upgrade channel so the daemon can swap + relaunch\n             without a 30-min blocking post-upgrade inside its tick.');
     return;
   }
 
@@ -65,6 +66,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
   const stopMcp = args.includes('--stop-mcp');
   const restartOpts = { stopMcp, json, rerunArgv: ['gbrain', 'upgrade', ...args.filter(a => a !== '--json')] };
   if (await handleRestartOnly(args, restartOpts)) return;
+  if (await runUpgradeDryRun(args, json)) return;
   const noRestart = args.includes('--no-restart');
   // Capture old version BEFORE upgrading (Codex finding: old binary runs this code)
   const oldVersion = VERSION;
@@ -72,7 +74,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
 
   console.log(`Detected install method: ${method}`);
 
-  const stableTarget = channelTarget(args, oldVersion, json);
+  const stableTarget = await channelTarget(args, oldVersion, json);
   if (stableTarget === 'stop') return;
   if (stableTarget) opts = { ...opts, targetVersion: stableTarget.version };
   if (!swapOnly && !noRestart && !await preflightHostRestart(restartOpts)) return;
@@ -354,32 +356,6 @@ function restartOntoNewBuild(stopMcp: boolean, newVersion: string): string {
 }
 
 /**
- * GBRA-175: the release `--channel` (default self_upgrade.channel) selects: null on latest, the stable release when it
- * is newer than this build, or 'stop' after reporting an invalid channel, an unresolved stable tag or nothing newer.
- */
-function channelTarget(args: readonly string[], oldVersion: string, json: boolean): { version: string; commit: string } | null | 'stop' {
-  const channel = parseChannelArg(args) ?? resolveReleaseChannel(loadConfig());
-  if (channel === 'invalid') {
-    setCliExitVerdict(writeCliError(opError('invalid_params', '--channel takes latest or stable.', 'Run gbrain upgrade --channel stable (or latest).'), 'upgrade', { json }));
-    return 'stop';
-  }
-  if (channel === 'latest') return null;
-  const stable = resolveStableRelease();
-  if ('error' in stable) {
-    setCliExitVerdict(writeCliError(opError('stable_channel_unresolved', stableUnresolvedMessage(stable.error), 'Nothing was changed. Retry later, or run: gbrain upgrade --channel latest', { reason: stable.error }), 'upgrade', { json }));
-    return 'stop';
-  }
-  if (!isNewerVersion(oldVersion, stable.version)) {
-    console.log(oldVersion === stable.version
-      ? `Already on the stable channel's release: gbrain ${oldVersion}.`
-      : `gbrain ${oldVersion} is newer than the stable channel's release (${stable.version}); the stable channel never downgrades. Nothing was changed.`);
-    return 'stop';
-  }
-  console.log(`Stable channel: installing gbrain ${stable.version} (promoted after the production-shaped soak).`);
-  return stable;
-}
-
-/**
  * GBRA-175: `bun update` keeps a pinned tag or commit, so a pinned global install is replaced with the newest published
  * release (remove, then add the tag). null when the install is not pinned, or a requested version is not published (#6662
  * then reports it after the no-op update).
@@ -471,10 +447,10 @@ async function installStableRelease(method: string, target: { version: string; c
  * it, so a floor raised in between still refuses there. GBRA-175: on the stable
  * channel (self_upgrade.channel) it is the stable release's floor.
  */
-export async function readInstallTargetFloor(method: string, channel: ReleaseChannel = resolveReleaseChannel(loadConfig())): Promise<TargetFloor> {
-  if (channel === 'stable') {
-    const stable = resolveStableRelease();
-    return 'error' in stable ? { ok: false, failedRead: `the stable channel's release (${stable.error})` } : readPackageTarget(`github:${GBRAIN_GITHUB_REPO}#v${stable.version}`);
+export async function readInstallTargetFloor(method: string, channel: ReleaseChannel | null = currentReleaseChannel()): Promise<TargetFloor> {
+  if (channel !== 'alpha') {
+    const stable = channel ? await resolveStableRelease() : null;
+    return !stable?.ok ? { ok: false, failedRead: `the stable channel's release (${stable ? stable.code : 'invalid channel'})` } : readPackageTarget(`github:${GBRAIN_GITHUB_REPO}#v${stable.version}`);
   }
   if (method === 'bun-link') {
     const link = detectBunLink();

@@ -40,6 +40,7 @@ test/bootstrap-contract.test.ts	bootstrap same-turn write-back contract	6	readFi
 test/bootstrap-opencode-door.serial.test.ts	opencode door — rendered AGENTS.md pull protocol	1	readFileSync
 test/bootstrap-render.test.ts	renderWorkspace — OpenClaw host keeps its schedule list out of HEARTBEAT.md (#7470)	6	readFileSync
 test/bootstrap-shared-skills.test.ts	(file-level)	19	readFileSync
+test/boring-default.test.ts	the default install adds nothing (GBRA-224 W5)	3	readFileSync
 test/brain-durability-hook.serial.test.ts	#4682 — push-lock timeout is fail-loud for the helper only	1	readFileSync
 test/brain-durability-hook.serial.test.ts	brain-commit-push.sh (D13 guarantee)	4	readFileSync
 test/brain-durability-hook.serial.test.ts	durability push remote confirmation (#5138)	9	readFileSync

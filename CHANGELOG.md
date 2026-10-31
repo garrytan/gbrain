@@ -10,6 +10,41 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Stability for self-hosters: updates follow a stable channel by default, upgrades are tested from real releases every night, health alerts page only on what needs someone, routine maintenance noise heals itself, and an upgrade adds nothing you didn't turn on.**
+
+gbrain publishes a release for nearly every merged change, more than a hundred a week, and every install followed all of them. An always-on brain upgraded several times a week onto releases no one had run on a production-shaped brain, a weekly health alert could read "score 30" because of the agent's own skills folder, a nightly cycle could end `partial` for reasons that needed no one, and one upgrade path installed a daemon on a brain that never asked for one. This release fixes all five.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A new or existing install with no channel set | offered every published release | offered the newest stable release (weekly, promoted after the soak passed on that release's exact tree); one notice on stderr says so, once per brain home |
+| Following every release | the default | `gbrain config set self_upgrade.channel alpha` (or `--channel alpha`, `GBRAIN_RELEASE_CHANNEL=alpha`); `latest` still works as an alias for alpha |
+| Which stable release is offered | `VERSION` at the `stable` tag | the published evidence record (`stable.json` on `stable-record`): version, commit, tree, soak run, withdrawn versions; a record without the evidence is never trusted |
+| Stable has no usable answer | `stable_channel_unresolved` on upgrade | `stable_missing`, `stable_invalid` or `stable_unreadable`; the background check only reports it, an explicit upgrade exits non-zero, neither falls back to alpha |
+| An install ahead of stable (it ran alpha) | — | offered nothing until stable passes it; never downgraded unless its version was withdrawn |
+| Update cache and snooze | one file for every channel; a snooze ended when a newer release shipped | one per channel, tagged with the evidence policy; a snooze holds its whole window (24 h, 48 h, 7 days); a stable rollback below it clears it |
+| `gbrain upgrade --dry-run` | refused without `--restart-only` | reports channel, its source, current and target version and the action, installing nothing |
+| `Promote stable` workflow | moved the `stable` tag | also commits the evidence record in the same atomic push; new `withdraw` input adds versions to `known_bad` |
+| A migration fails, or an upgrade rewrites page content, on brains an older release created | found by users after the release | a new nightly Upgrade matrix workflow installs older releases (one, ten and fifty back, about 30 days back, and stable) the way the README says, upgrades each with its own `gbrain upgrade` on PGLite and Postgres, keyed and keyless, with and without a Git repository, and checks install, serve restart, schema head, doctor, preserved pages, facts and sources, new writes and searches, and the old binary reading the upgraded brain |
+| A health alert from `gbrain doctor` | a score that counted every check, the agent's own skills folder included | `gbrain doctor --alert` runs only the page-class checks, fresh, under a 30 s budget, and exits 0 (`none`), 17 (`act`, with each check's own fix) or 18 (`unknown`, with `alert.consecutive_unknown`) |
+| A skills folder doctor found by walking up from the current directory that gbrain did not install | graded against gbrain's conventions and lowered the score | reported as "not a gbrain skills folder (<path>)"; `--skills-dir`, `GBRAIN_SKILLS_DIR` and `OPENCLAW_WORKSPACE` still grade it |
+| A dream purge or consolidate write accepted but still pending after the publish wait | the phase failed and the cycle ended `partial` | the phase warns `dream_write_deferred` with the receipt id and the next pass reconciles it; after 3 passes still pending, doctor `dream_write_deferred` names the receipt and pages |
+| Every transcript in the synthesize window is already synthesized | triage, the manifest context and the child queue still ran | the phase returns `no_candidates` before any of that |
+| A transcript grows between runs that keep dying | each run had a new content key, so the 3-deaths breaker never tripped | deaths also count per transcript file; the same 3-in-24h limit applies; `gbrain dream reset-key` accepts the `dream:phase:` keys `--list` prints |
+| Pages whose chunks already hold current-model vectors but carry no or an old signature | read as another model's space until a paid drain stamped them | the embed phase stamps them first, up to 500 pages a run, with no provider call; doctor `embedding_restamp_stalled` pages when that keeps failing |
+| A Postgres brain with `sync.repo_path` set and no autopilot, on upgrade | the v0.11.0 migration's Phase F ran `gbrain autopilot --install` | Phase F installs nothing (reason `not_installed`), prints the install command and doctor shows it as a `minions_migration` line; a brain that already runs autopilot gets it reinstalled as before |
+
+### For operators
+
+- Install commands still name `latest-stable`; every install surface goes through `src/core/install-ref.ts` (checked by `bun run check:install-ref`) and moves to `stable` after a release with this change has been promoted.
+- The page class (`PAGE_CHECK_LEVELS`): connection, migrations, write failures and stalls, build skew, managed sync stopped, maintenance stalled, corrupt JSONB rows, RLS exposure, the paid-loop breaker, `dream_write_deferred` and `embedding_restamp_stalled`; the opt-in autopilot install suggestion that `minions_migration` shows after an upgrade never pages. Every doctor report carries `alert`; `health_score`, `brain_checks_score`, `category_scores` and `status` are unchanged. Cron recipe and exit codes: `docs/guides/troubleshooting.md`.
+- New switches, on by default: `dream.write_deferral.enabled` and `embed.restamp.enabled`; `false` restores the old behavior. Every heal writes a row to the `heal.audit` config record (last 200 rows, 30 days). Nothing heals on upgrade, and repo-less brains get the same behavior.
+- The upgrade matrix runs nightly against the newest release, opens one `upgrade-break` issue on a red run and closes it on a green one; `gh workflow run upgrade-matrix.yml -f candidate=<tag>` runs it on demand, and pull requests touching migrations, the schema or the updater run a subset. Upgrading a v0.59.2.0 brain now passes the preservation check (#7814), so the matrix carries no known exceptions. Details: `docs/ci-upgrade-matrix.md`.
+- INSTALL_FOR_AGENTS.md has one **Opt-ins** list (keys and embeddings, autopilot, dream schedule, connectors, auto-upgrade, release channel), and `gbrain setup <harness>` prints one line pointing to it. The default keyless install starts no daemon, writes no service, connects nothing and keeps self-upgrade in `notify` mode, now locked by `test/boring-default.test.ts`.
+
 ## [0.60.529.0] - 2026-10-31
 
 **A pull request that adds a file to the PGLite snapshot inputs no longer gets stopped at gstack's pregate secrets check by its own workflow cache keys (#8107).**

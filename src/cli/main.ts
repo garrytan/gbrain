@@ -16,11 +16,12 @@ import {
   readUpdateCache,
   isCacheFresh,
   pendingUpgradeVersion,
-  readSnooze,
-  isSnoozeActive,
+  snoozeHolds,
+  currentReleaseChannel,
   resolveSelfUpgradeMode,
   justUpgradedPath,
 } from '../core/self-upgrade.ts';
+import { maybeEmitChannelNotice } from '../core/release-channel-notice.ts';
 import { loadConfig, loadConfigFileOnly, loadConfigWithEngine, isThinClient, getDbUrlSource, envShadowDetected, MERGED_CONFIG_BY_ENGINE } from '../core/config.ts';
 import {
   classifyPgAccessError as classifyDbAccessError,
@@ -213,7 +214,7 @@ export const cliAliases = buildCliAliases(OPERATION_MANIFEST, cliOps, CLI_ONLY);
  * blocks a command and NEVER throws (the marker must not break any command).
  * Mode resolution is file-plane only (no DB; thin clients have no local DB).
  */
-function maybeEmitUpdateMarker(command: string): void {
+function maybeEmitUpdateMarker(command: string, args: readonly string[]): void {
   try {
     if (process.env.GBRAIN_SKIP_STARTUP_HOOKS) return;
     // Never run during the test suite: tests spawn the CLI hundreds of times,
@@ -244,17 +245,20 @@ function maybeEmitUpdateMarker(command: string): void {
     const cfg = loadConfigFileOnly();
     const mode = resolveSelfUpgradeMode(cfg);
     if (mode === 'off') return;
+    const channel = currentReleaseChannel();
+    if (!channel) return;
+    maybeEmitChannelNotice({ command, args, cfg });
 
     const now = Date.now();
-    const entry = readUpdateCache();
+    const entry = readUpdateCache(channel);
     if (entry && isCacheFresh(entry, now)) {
       // Shared stale/foreign-cache guard (pendingUpgradeVersion): only nag when
-      // the cached latest is strictly newer than the RUNNING binary, and print
-      // the running version — the cache records whatever binary WROTE it.
-      const latest = pendingUpgradeVersion(VERSION, now);
+      // the channel offers this RUNNING binary a release, and print the running
+      // version — the cache records whatever binary WROTE it.
+      const latest = pendingUpgradeVersion(VERSION, now, channel);
       if (latest) {
-        // notify mode honors a per-version snooze; auto mode ignores it.
-        if (mode === 'notify' && isSnoozeActive(readSnooze(), latest, now)) return;
+        // notify mode honors the channel's time-based snooze; auto mode ignores it.
+        if (mode === 'notify' && snoozeHolds(latest, now, channel)) return;
         // One line, once per COVERAGE_NOTICE_WINDOW_MS across calls under
         // GBRAIN_HOME (a newer latest prints at once, #7147). An agent harness
         // (stderr not a TTY, or GBRAIN_FORCE_UPGRADE_MARKER=1 under a PTY) gets
@@ -347,7 +351,7 @@ async function main() {
   // only, fail-open, never blocks. Skips the update path's own commands + sets
   // GBRAIN_SKIP_STARTUP_HOOKS for their children. Runs for every real command.
   if (!helpRequested) {
-    maybeEmitUpdateMarker(command);
+    maybeEmitUpdateMarker(command, args);
 
     // Monthly backup-coverage nag (cache-read-only, bounded by the nag gate;
     // guards + skip set live inside the helper — one place, every call site).

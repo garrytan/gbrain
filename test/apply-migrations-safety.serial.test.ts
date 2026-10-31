@@ -21,6 +21,13 @@ async function fixture(run: (home: string, ledger: string) => Promise<void>): Pr
   }
 }
 
+/** A systemd user unit for this brain's autopilot, as `gbrain autopilot --install` writes it; HOME and GBRAIN_HOME are both `home`. */
+function installedAutopilotUnit(home: string): void {
+  const unitDir = join(home, '.config/systemd/user');
+  mkdirSync(unitDir, { recursive: true });
+  writeFileSync(join(unitDir, 'gbrain-autopilot.service'), `[Unit]\nDescription=GBrain Autopilot\n[Service]\nExecStart=${join(home, '.gbrain', 'autopilot-run.sh')}\nRestart=always\n`);
+}
+
 function entries(ledger: string): CompletedMigrationEntry[] {
   return readFileSync(ledger, 'utf8').trim().split('\n').map(row => JSON.parse(row));
 }
@@ -105,6 +112,7 @@ await runApplyMigrations(['--yes']);
 
   test.each(['file-postgres', 'env-overrides-pglite'])('failed applicable install retries in %s, while a historical complete requires explicit force-retry', async (context) => {
     await fixture(async (home, ledger) => {
+      installedAutopilotUnit(home);
       const databaseUrl = 'postgresql://fixture:fixture@127.0.0.1:1/gbrain_test';
       if (context === 'file-postgres') {
         writeFileSync(join(home, '.gbrain/config.json'), JSON.stringify({ engine: 'postgres', database_url: databaseUrl }));
@@ -259,7 +267,7 @@ describe('v0.11.0 Phase F without a repo path (#6755)', () => {
     { name: 'install', status: 'failed', detail: installDetail }, { name: 'record', status: 'complete' },
   ];
 
-  async function postgresBrain(brain: { syncRepoPath?: string; defaultSourcePath?: string; autopilotExit?: number }, run: (h: {
+  async function postgresBrain(brain: { syncRepoPath?: string; defaultSourcePath?: string; autopilotExit?: number; autopilotInstalled?: boolean }, run: (h: {
     home: string; ledger: string; calls: () => string; apply: (args: string[]) => { exitCode: number | null; stdout: string; stderr: string };
     script: (body: string) => { exitCode: number | null; stdout: string; stderr: string };
   }) => Promise<void>): Promise<void> {
@@ -270,6 +278,7 @@ describe('v0.11.0 Phase F without a repo path (#6755)', () => {
       const callsPath = join(home, 'calls.log');
       writeFileSync(callsPath, '');
       writeFileSync(join(bin, 'gbrain'), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${callsPath}'\nif [ "$1" = autopilot ]; then exit ${brain.autopilotExit ?? 0}; fi\nexit 0\n`, { mode: 0o755 });
+      if (brain.autopilotInstalled) installedAutopilotUnit(home);
       const env: Record<string, string> = { HOME: home, GBRAIN_HOME: home, PATH: `${bin}:${process.env.PATH ?? ''}` };
       const setup = `
 import { mock } from 'bun:test';
@@ -376,8 +385,23 @@ console.log('CHECK=' + JSON.stringify(autopilotInstallPendingCheck()));
     });
   }, 60_000);
 
-  test('sync.repo_path set: Phase F installs as before', async () => {
-    await postgresBrain({ syncRepoPath: '/srv/brain' }, async ({ home, ledger, calls, apply }) => {
+  test('sync.repo_path set and no autopilot installed: an upgrade installs none, completes, and records the install command', async () => {
+    await postgresBrain({ syncRepoPath: '/srv/brain' }, async ({ home, ledger, calls, apply, script }) => {
+      const run = apply(['--yes', '--non-interactive', '--migration', '0.11.0']);
+      expect(run.exitCode, run.stderr).toBe(0);
+      expect(calls()).not.toContain('autopilot');
+      expect(existsSync(join(home, '.config/systemd/user/gbrain-autopilot.service'))).toBe(false);
+      const record = entries(ledger).at(-1)!;
+      expect(record).toMatchObject({ version: '0.11.0', status: 'complete', autopilot_installed: false });
+      expect(record.phases!.find(phase => phase.name === 'install')).toMatchObject({ status: 'skipped', reason: 'not_installed' });
+      expect(run.stdout).toContain('gbrain autopilot --install --yes --repo /srv/brain');
+      expect(pendingInstallItems(home)[0].install_argv).toEqual(['gbrain', 'autopilot', '--install', '--yes', '--repo', '/srv/brain']);
+      expect(doctorLine(script).fix.argv).toEqual(['gbrain', 'autopilot', '--install', '--yes', '--repo', '/srv/brain']);
+    });
+  }, 60_000);
+
+  test('sync.repo_path set and an autopilot already installed for this brain: Phase F reinstalls it as before', async () => {
+    await postgresBrain({ syncRepoPath: '/srv/brain', autopilotInstalled: true }, async ({ home, ledger, calls, apply }) => {
       const run = apply(['--yes', '--migration', '0.11.0']);
       expect(run.exitCode, run.stderr).toBe(0);
       expect(calls()).toContain('autopilot --install --yes');
@@ -387,7 +411,7 @@ console.log('CHECK=' + JSON.stringify(autopilotInstallPendingCheck()));
   }, 60_000);
 
   test('a failing install with sync.repo_path set records reason install_failed', async () => {
-    await postgresBrain({ syncRepoPath: '/srv/brain', autopilotExit: 1 }, async ({ ledger, apply }) => {
+    await postgresBrain({ syncRepoPath: '/srv/brain', autopilotExit: 1, autopilotInstalled: true }, async ({ ledger, apply }) => {
       const run = apply(['--yes', '--migration', '0.11.0']);
       expect(run.exitCode).toBe(1);
       expect(entries(ledger).at(-1)!.phases).toContainEqual(expect.objectContaining({ name: 'install', status: 'failed', reason: 'install_failed' }));

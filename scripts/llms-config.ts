@@ -148,6 +148,7 @@ export const SECTIONS: DocSection[] = [
         path: "docs/schema-author-tutorial.md",
         // GBRA-199: an optional walkthrough; dropped from the single-fetch
         // bundle so the memory-verb listing docs fit FULL_SIZE_BUDGET.
+        // Linked, not inlined: the doctor --alert guide (troubleshooting, exit codes, cron) put llms-full.txt over FULL_SIZE_BUDGET.
         includeInFull: false,
       },
       {
@@ -379,6 +380,9 @@ export const SECTIONS: DocSection[] = [
         title: "docs/integrations/reliability-repair.md",
         description: "Data integrity recovery.",
         path: "docs/integrations/reliability-repair.md",
+        // Linked, not inlined: the GBRA-224 W3 troubleshooting rows put llms-full.txt over FULL_SIZE_BUDGET.
+        // Linked, not inlined: the INSTALL_FOR_AGENTS.md Opt-ins list (GBRA-224 W5) put llms-full.txt over FULL_SIZE_BUDGET.
+        includeInFull: false,
       },
     ],
   },

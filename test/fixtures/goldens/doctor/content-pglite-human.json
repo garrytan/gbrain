@@ -117,6 +117,8 @@
       "  [OK] foreign_ownership_marker: Every ownership marker beside a source checkout belongs to this brain.",
       "  [OK] coordination_lock_location: Every checkout's recorded coordination lock agrees with GBRAIN_COORDINATION_HOME, or the variable does not apply.",
       "  [OK] unbound_source: No page was written database-only to an unbound source.",
+      "  [OK] dream_write_deferred: No deferred dream writes",
+      "  [OK] embedding_restamp_stalled: The embedding signature restamp is running clean",
       "  [OK] writer_version: Every writer that admitted or published a request in the last 7 days is v0.60.5.0 or newer.",
       "  [OK] segmented_storage: Segmented page storage is on: pages over 1 MiB are stored in segments, up to 134217728 bytes on this PGLite brain.",
       "  [OK] self_capture: No session corpus is configured; nothing to classify.",

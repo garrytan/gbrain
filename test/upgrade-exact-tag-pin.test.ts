@@ -17,6 +17,7 @@ import { tmpdir } from 'os';
 import { bunGlobalExactTagPin, bunReinstallCommand } from '../src/commands/upgrade.ts';
 import { VERSION } from '../src/version.ts';
 import { upgradeErrorResolved } from '../src/commands/doctor.ts';
+import { writeChannelCache } from './helpers/update-cache.ts';
 
 const REPO = resolve(import.meta.dir, '..');
 
@@ -35,7 +36,7 @@ async function runBareUpgrade(spec: string, observedVersion: string, cache?: str
   chmodSync(join(bin, 'gbrain'), 0o755);
   if (cache) {
     mkdirSync(join(home, '.gbrain'), { recursive: true });
-    writeFileSync(join(home, '.gbrain', 'last-update-check'), `${cache}\n`);
+    writeChannelCache(join(home, '.gbrain'), cache);
   }
   const globalRoot = join(home, '.bun', 'install', 'global');
   const pkgDir = join(globalRoot, 'node_modules', 'gbrain');
@@ -44,7 +45,8 @@ async function runBareUpgrade(spec: string, observedVersion: string, cache?: str
   writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'gbrain', repository: 'github:garrytan/gbrain' }));
   const driver = join(pkgDir, 'driver.ts');
   writeFileSync(driver, `import { runUpgrade } from '${REPO}/src/commands/upgrade.ts';\nawait runUpgrade(['--swap-only', '--no-bun-floor-check']);\n`);
-  const env: Record<string, string | undefined> = { ...process.env, HOME: home, GBRAIN_HOME: home, PATH: `${bin}:${process.env.PATH}` };
+  // The bare-upgrade path under test is the install method's own (alpha); stable is covered in upgrade-stable-channel.
+  const env: Record<string, string | undefined> = { ...process.env, HOME: home, GBRAIN_HOME: home, GBRAIN_RELEASE_CHANNEL: 'alpha', PATH: `${bin}:${process.env.PATH}` };
   delete env.BUN_INSTALL;
   const proc = Bun.spawn([process.execPath, 'run', driver], { cwd: REPO, env, stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
