@@ -739,6 +739,7 @@ function makeTypeFor(content: string, pageType: PageType, opts: ExtractPageLinks
   // `content` (stripCodeBlocks and the wikilink mask are length-preserving,
   // so indices line up); idx < 0 / undefined keeps the old behavior.
   const suppressedRanges = rolePriorSuppressedRanges(stripCodeBlocks(content));
+  const roleText = opts.roleText ?? roleTriggerText(content);
   const attendanceRanges = attendanceEvidenceRanges(content);
   const statedType = statedRelationTypes(content, { ...opts.lineGrammar, declaredVerbs: pack?.link_types.map(lt => lt.name) });
   return (ctx, targetSlug, idx, sourceId, bodyReference = true) => {
@@ -772,7 +773,6 @@ function makeTypeFor(content: string, pageType: PageType, opts: ExtractPageLinks
       return decide('mentions', { rule: 'page.meeting' });
     }
     const suppressPrior = idx !== undefined && idx >= 0 && inSuppressedRange(suppressedRanges, idx);
-    const roleText = opts.roleText ?? content;
     const trace = traceLinkType(pageType, ctx, suppressPrior ? undefined : roleText, targetSlug,
       opts.targetType ? targetType ?? null : undefined, bodyReference && idx !== undefined && idx >= 0 ? excerptAnchor(content, idx, 240) : undefined, roleText, !!explain);
     const { type, ...why } = trace;
@@ -1343,6 +1343,23 @@ const ADVISOR_ROLE_RE = /\b(?:full-time advisor|professional advisor|advises (?:
 /** The first match of each page-role prior in `text`: joined with newlines, they decide every prior exactly as the whole text does (no prior crosses a line). */
 export function rolePriorPhrases(text: string): Array<string | null> {
   return [PARTNER_ROLE_RE, ADVISOR_ROLE_RE, EMPLOYEE_ROLE_RE].map(re => re.exec(text)?.[0] ?? null);
+}
+
+/**
+ * The text the page-role priors read their trigger from (#7882): `text` without its machine-written sections
+ * (rolePriorSuppressedRanges), the sections whose links never receive the prior either. `open` are the headings
+ * still open before `text` (a segmented block, openHeadings), so a section that began in an earlier block still counts.
+ */
+export function roleTriggerText(text: string, open: ReadonlyArray<string | null | undefined> = []): string {
+  const head = open.filter(Boolean).map(h => `${h}\n`).join('');
+  let kept = '';
+  let at = 0;
+  for (const [start, end] of rolePriorSuppressedRanges(stripCodeBlocks(head + text))) {
+    if (end - head.length <= at) continue;
+    if (start - head.length > at) kept += `${text.slice(at, start - head.length)}\n`;
+    at = end - head.length;
+  }
+  return kept + text.slice(at);
 }
 
 const EMPLOYEE_ROLE_RE = /\b(?:is an? (?:senior|staff|principal|lead|backend|frontend|full-?stack|ML|data|security|DevOps|platform)? ?engineer at|is an? (?:senior|staff|principal|lead)? ?(?:developer|designer|product manager|engineering manager|director|VP) (?:at|of)|holds? the (?:CTO|CEO|CFO|COO|CMO|CRO|VP) (?:role|position|seat|title) at|is the (?:CTO|CEO|CFO|COO|CMO|CRO) of|employee at|on the team at|works on .{0,30} at)\b/i;

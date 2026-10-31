@@ -18,7 +18,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import {
-  candidateKey, dedupeCandidates, extractBodyLinks, frontmatterLinks, LINK_EXTRACTOR_VERSION_TS, rolePriorPhrases, stripCodeBlocks,
+  candidateKey, dedupeCandidates, extractBodyLinks, frontmatterLinks, LINK_EXTRACTOR_VERSION_TS, rolePriorPhrases, roleTriggerText, stripCodeBlocks,
   type BodyLinkCandidate, type ExtractPageLinksOptions, type PageLinksResult, type SlugResolver,
 } from '../link-extraction.ts';
 import { canonicalJson } from '../belief/keys.ts';
@@ -118,13 +118,15 @@ export async function* bodyWindows(engine: BrainEngine, page: { id: number; slug
   yield* cutter.flush();
 }
 
-/** The page-role phrases of a segmented body (rolePriorPhrases over every block), as ExtractPageLinksOptions.roleText. */
+/** The page-role phrases of a segmented body (rolePriorPhrases over every block's roleTriggerText), as ExtractPageLinksOptions.roleText. */
 export async function segmentedRoleText(engine: BrainEngine, page: { id: number; slug: string; source_id?: string },
   opts: BodyBlockOptions = {}): Promise<string> {
   const found: Array<string | null> = [null, null, null];
+  const open: string[] = [];
   for await (const block of bodyBlocks(engine, page, opts)) {
-    rolePriorPhrases(block.text).forEach((phrase, i) => { found[i] ??= phrase; });
+    rolePriorPhrases(roleTriggerText(block.text, open)).forEach((phrase, i) => { found[i] ??= phrase; });
     if (found.every(Boolean)) break;
+    openHeadings(block.text, open);
   }
   return found.filter(Boolean).join('\n');
 }
@@ -271,7 +273,7 @@ export async function openSegmentedLinkSession(engine: BrainEngine, page: Segmen
     const r = run && reading;
     if (r) {
       r.info.chars += block.text.length;
-      rolePriorPhrases(block.text).forEach((phrase, i) => { r.info.roles[i] ??= phrase === null ? null : detachedValue(phrase); });
+      rolePriorPhrases(roleTriggerText(block.text, open)).forEach((phrase, i) => { r.info.roles[i] ??= phrase === null ? null : detachedValue(phrase); });
       if (r.head.length < CONTEXT_CHARS) r.head += block.text.slice(0, CONTEXT_CHARS - r.head.length);
       r.tail.push(block.text);
       r.tailChars += block.text.length;

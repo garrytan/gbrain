@@ -25,8 +25,8 @@ import { ledgerApplies, readBodyLedger } from './segment-ledger.ts';
 import { SEGMENTER_VERSION } from './segmenter.ts';
 import type { BodyRegion, ManifestRow } from './types.ts';
 
-/** Bump a kind's version to re-derive every page's rows of that kind once. fences 2: rows keep fence digests, not fence text. */
-export const SEGMENT_PIPELINE_VERSIONS = { links: 1, mentions: 1, timeline: 1, fences: 2 } as const satisfies Partial<Record<SegmentDerivationKind, number>>;
+/** Bump a kind's version to re-derive every page's rows of that kind once. fences 2: rows keep fence digests, not fence text. links 2: role phrases skip machine sections (#7882). */
+export const SEGMENT_PIPELINE_VERSIONS = { links: 2, mentions: 1, timeline: 1, fences: 2 } as const satisfies Partial<Record<SegmentDerivationKind, number>>;
 export type UnpaidDerivationKind = keyof typeof SEGMENT_PIPELINE_VERSIONS;
 
 /**
