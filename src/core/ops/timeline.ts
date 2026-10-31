@@ -1,4 +1,5 @@
 import { submitPageMutation } from '../persistence/page-mutations.ts';
+import { isSyntheticFixture } from '../fixture-provenance.ts';
 import { MERGE_PRECONDITION_PARAMS, WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 /**
  * Timeline operation cluster — pure move from operations.ts (v0.46.x
@@ -62,6 +63,9 @@ const add_timeline_entry: Operation = {
     if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
       throw badDate(`Invalid calendar date "${date}"`);
     }
+    if (typeof p.source === 'string' && isSyntheticFixture(
+      await ctx.engine.getPage(p.source, { sourceId: ctx.sourceId ?? 'default' }),
+    )) return { status: 'skipped', slug: p.slug };
     return submitPageMutation(ctx, { operation: 'add_timeline_entry', params: p });
   },
   cliHints: { name: 'timeline-add', positional: ['slug', 'date', 'summary'] },

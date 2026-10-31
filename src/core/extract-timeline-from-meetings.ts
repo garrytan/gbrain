@@ -10,6 +10,7 @@
 // page would silently drop the second one.
 
 import type { BrainEngine } from './engine.ts';
+import { isSyntheticFixture } from './fixture-provenance.ts';
 import type { TimelineBatchInput } from './engine.ts';
 import { buildGazetteer, findMentionedEntities, type Gazetteer } from './by-mention.ts';
 import { isCrossSourceLinksEnabled } from './link-extraction.ts';
@@ -209,6 +210,7 @@ export async function extractTimelineFromMeetings(
       if (Number.isFinite(updatedMs) && updatedMs <= sinceMs) continue;
     }
     const frontmatter = parseFrontmatter(meeting.frontmatter);
+    if (isSyntheticFixture({ frontmatter })) continue;
     // A private meeting must not fan its title/slug/date out onto other pages'
     // timelines: the row carries no event_page_id (the (event_page_id, date)
     // unique index allows one row per event, not one per attendee), so the
@@ -469,7 +471,8 @@ export async function prepareMeetingTimeline(engine: BrainEngine, row: WriteRequ
         [[...new Set(queued.map(r => r.meeting_id))]])).map(m => [Number(m.id), m]));
       const current = queued.filter(r => {
         const meeting = meetings.get(r.meeting_id);
-        return meeting && !isDerivationPrivate({ frontmatter: parseFrontmatter(meeting.frontmatter) })
+        return meeting && !isSyntheticFixture({ frontmatter: parseFrontmatter(meeting.frontmatter) })
+          && !isDerivationPrivate({ frontmatter: parseFrontmatter(meeting.frontmatter) })
           && r.source === `${MEETING_SOURCE_PREFIX}${meeting.slug}` && r.summary === `Discussed in ${meeting.title}`;
       });
       const tiers = new Map([...meetings.values()].map(m => [Number(m.id), m.trust_tier]));

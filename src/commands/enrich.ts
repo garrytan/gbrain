@@ -30,6 +30,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { isSyntheticFixture } from '../core/fixture-provenance.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { EnrichCandidate, PageType } from '../core/types.ts';
 import { operations, OperationError } from '../core/operations.ts';
@@ -304,6 +305,7 @@ async function retrieveEvidence(
       if (n >= BACKLINK_LIMIT) break;
       const ctx = (l.context ?? '').trim();
       if (!ctx) continue;
+      if (isSyntheticFixture(await engine.getPage(l.from_slug, { sourceId }))) continue;
       const dedup = `${l.from_slug}:${ctx.slice(0, 40)}`;
       if (seen.has(dedup)) continue;
       seen.add(dedup);
@@ -323,6 +325,7 @@ async function retrieveEvidence(
     });
     for (const h of hits) {
       if (h.slug === slug) continue; // don't feed the stub its own body twice
+      if (isSyntheticFixture(await engine.getPage(h.slug, { sourceId }))) continue;
       const dedup = `${h.slug}:${h.chunk_text.slice(0, 40)}`;
       if (seen.has(dedup)) continue;
       seen.add(dedup);
@@ -387,6 +390,7 @@ async function enrichOneLocked(ctx: EnrichOneCtx, candidate: EnrichCandidate): P
     return;
   }
   const page = snapshot.page;
+  if (isSyntheticFixture(page)) return;
   const requestId = randomUUID();
 
   const kind = inferEnrichKind(page.type, slug);

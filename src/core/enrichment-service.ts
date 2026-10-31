@@ -14,6 +14,7 @@
  */
 
 import type { BrainEngine } from './engine.ts';
+import { isSyntheticFixture } from './fixture-provenance.ts';
 import type { OperationContext } from './ops/contract.ts';
 import { OperationError } from './ops/contract.ts';
 import { waitForCapacity } from './backoff.ts';
@@ -219,6 +220,12 @@ async function planEntity(
   const prefix = request.entityType === 'person' ? 'people' : 'companies';
   const candidateSlug = `${prefix}/${entitySegment(base, request.entityType, false)}`;
   const sourceId = opts?.sourceId ?? 'default';
+  const origin = await engine.getPage(request.sourceSlug, { sourceId });
+  if (isSyntheticFixture(origin)) {
+    return { slug: candidateSlug, action: 'skipped', tier: request.tier ?? 3,
+      backlinkCreated: false, timelineAdded: false, mentionCount: 0,
+      mentionSources: [], suggestedTier: 3, tierEscalated: false };
+  }
   let slug = await engine.resolveSlugWithAlias(candidateSlug, sourceId);
   // Fail-closed: only an explicit `trusted: true` writes authoritative pages.
   const trusted = opts?.trusted === true;
@@ -563,7 +570,12 @@ async function countMentions(
   sourceId?: string,
 ): Promise<{ mentionCount: number; mentionSources: string[] }> {
   try {
-    const results = await engine.searchKeyword(entityName, { limit: 100, ...(sourceId ? { sourceId } : {}) });
+    const hits = await engine.searchKeyword(entityName, { limit: 100, ...(sourceId ? { sourceId } : {}) });
+    const results = [];
+    for (const hit of hits) {
+      const page = await engine.getPage(hit.slug, { sourceId: hit.source_id ?? sourceId ?? 'default' });
+      if (!isSyntheticFixture(page)) results.push(hit);
+    }
     // Derive sources from slug prefixes since SearchResult has no metadata.skill
     const sources = new Set<string>();
     for (const r of results) {
