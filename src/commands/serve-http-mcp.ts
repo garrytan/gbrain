@@ -9,7 +9,7 @@ import type { Express, Request, Response } from 'express';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { DEFAULT_MAX_REQUEST_BODY_SIZE } from '@modelcontextprotocol/sdk/server/requestBody.js';
-import { ListToolsRequestSchema, CallToolRequestSchema, type CallToolRequest } from '@modelcontextprotocol/sdk/types.js';
+import { ListToolsRequestSchema, CallToolRequestSchema, ReadResourceRequestSchema, McpError, ErrorCode, type CallToolRequest } from '@modelcontextprotocol/sdk/types.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { opAllowedForBoundClient } from '../core/operations.ts';
 import { authTransport } from '../core/ops/contract.ts';
@@ -42,7 +42,12 @@ import {
 } from '../mcp/surface.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { ON_BEHALF_OF_HEADER } from '../core/access/audience.ts';
-import { ACTOR_HEADER } from '../core/access/actor-model.ts';
+import { ACTOR_HEADER, EXTERNAL_ID_RE } from '../core/access/actor-model.ts';
+import { attestableOp } from '../core/access/actor.ts';
+
+const actorResourceRefusal = () => new McpError(ErrorCode.InvalidRequest,
+  `actor_not_attested: resources are never read as an attested person, so nothing was read. Read resources without ${ACTOR_HEADER}.`,
+  { code: 'actor_not_attested', reason: 'op_not_attested' });
 import { serializeError } from '../core/errors.ts';
 import { VERSION } from '../version.ts';
 import { executeRawJsonb } from '../core/sql-query.ts';
@@ -222,13 +227,15 @@ function createMcpRequestServer(
   installCapabilitiesResource(server, async () => {
     return { transport: authTransport(authInfo), client_id: authInfo.clientId,
       ...await resolveAuthCapabilities(authInfo, engine, config), administration: mcpAdministrationGuidance(mcpResourceUrl.toString()) };
-  }, createSkillResources(engine, async () => {
+  }, state.actorHeader != null ? undefined : createSkillResources(engine, async () => {
     const sourceId = authInfo.sourceId ?? 'default';
     const { noGrantFederatedScope } = await import('../core/source-resolver.ts');
     return { remote: true, transport: 'http', sourceId, auth: authInfo, config,
       localFederatedSourceIds: await noGrantFederatedScope(engine, authInfo.hasSourceGrant, sourceId),
       allowedOps: surfaceAllowedOps, surface, surfaceCeiling };
   }));
+  // GST-359 C1: resources are never read as an attested person, so a request naming one reads none.
+  if (state.actorHeader != null) server.setRequestHandler(ReadResourceRequestSchema, async () => { throw actorResourceRefusal(); });
   server.setRequestHandler(ListToolsRequestSchema, async () => listMcpTools(ctx, state));
   server.setRequestHandler(CallToolRequestSchema, async (request) => callMcpTool(ctx, state, request));
   return server;
@@ -262,9 +269,11 @@ async function listMcpTools(ctx: ServeHttpContext, state: McpRequestState) {
   // Agent contract v1 (A2): the one callability predicate (isCallable) plus
   // the bound-client op fence.
   const publishGates = publishGatesFromDisabled(mcpOperations, gateDisabled);
+  // GST-359 C1: under a valid x-qm-actor header from an attest credential, only the operations it may run as the person.
+  const attest = state.actorHeader != null && EXTERNAL_ID_RE.test(state.actorHeader) ? authInfo.attest : null;
   const visibleOps = mcpOperations.filter(op =>
     isCallable(op, { transport: 'http', surface, scopes: authInfo.scopes, publishGates, allowedOps: surfaceAllowedOps })
-    && opAllowedForBoundClient(authInfo, op),
+    && opAllowedForBoundClient(authInfo, op) && (!attest || (attest.ops.includes(op.name) && attestableOp(op.name, op))),
   );
   // WP3 (amendment 14): ONE schema mapper — the inline map this handler
   // carried is unified onto buildToolDefs so the byte-pin test covers the

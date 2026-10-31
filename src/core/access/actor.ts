@@ -20,11 +20,13 @@ import type { CallerAccess } from '../search/private-visibility.ts';
 import { identityFor } from './principals.ts';
 import { memberIdentity } from './members.ts';
 import { folderAccessFor } from './caller.ts';
-import { ACTOR_ARGUMENT, ACTOR_HEADER, attestRightFrom, DEFAULT_ATTEST_OPS, EXTERNAL_ID_RE, type AttestedActor, type AttestRight } from './actor-model.ts';
+import { ACTOR_ARGUMENT, ACTOR_DEFERRED_OPS, ACTOR_HEADER, attestRightFrom, DEFAULT_ATTEST_OPS, EXTERNAL_ID_RE, type AttestedActor, type AttestRight } from './actor-model.ts';
 
 export * from './actor-model.ts';
 
 const ATTESTABLE_SCOPES = new Set(['read', 'write', 'agent']);
+
+
 
 export type ActorReason = 'no_attest_right' | 'op_not_attested' | 'argument_mismatch' | 'argument_without_attestation' | 'invalid_actor_id';
 /** The operation metadata attestability reads (a subset of Operation, so this module never imports the registry). */
@@ -59,6 +61,7 @@ export async function attestRightOf(engine: Pick<BrainEngine, 'executeRaw'>, cal
 
 /** Whether an operation may ever run under an attested actor: the reserved memory pair or a read, write or agent op. */
 export function attestableOp(name: string, op: AttestableOpShape | undefined): boolean {
+  if (ACTOR_DEFERRED_OPS.has(name)) return false;
   if (DEFAULT_ATTEST_OPS.includes(name)) return true;
   if (!op || op.localOnly || op.cliOnly) return false;
   return ATTESTABLE_SCOPES.has(op.scope ?? 'read') && !(op.requiredScopes ?? []).some(s => !ATTESTABLE_SCOPES.has(s));
@@ -68,6 +71,12 @@ export function attestableOp(name: string, op: AttestableOpShape | undefined): b
 export function parseAttestOps(raw: string, lookup: (name: string) => AttestableOpShape | undefined): string[] {
   const ops = [...new Set(raw.split(',').map(s => s.trim()).filter(Boolean))];
   if (!ops.length) throw opError('invalid_params', '--attest-ops needs at least one operation.', `Pass a comma-separated list, for example ${DEFAULT_ATTEST_OPS.join(',')}.`);
+  const deferred = ops.filter(op => ACTOR_DEFERRED_OPS.has(op));
+  if (deferred.length) {
+    throw opError('invalid_params', `--attest-ops names ${deferred.join(', ')}, which an attested actor cannot run yet: what they read or write is not yet kept to the person.`,
+      `Leave ${deferred.join(', ')} out. Not attestable yet: ${[...ACTOR_DEFERRED_OPS].join(', ')}.`,
+      { why: 'An attested call must never return or record one person\'s memory where another person reads it.' });
+  }
   const refused = ops.filter(op => !/^[a-z][a-z0-9_]{0,63}$/.test(op) || !attestableOp(op, lookup(op)));
   if (refused.length) {
     throw opError('invalid_params', `--attest-ops names ${refused.join(', ')}, which an attested actor can never run.`,
@@ -86,17 +95,25 @@ function credentialArgv(caller: ActorCaller): string[] {
 const transportOf = (transport?: string) => ({ remote: true, transport: transport === 'stdio' ? 'stdio' as const : 'http' as const });
 
 /** actor_not_attested with its reason, remedy and (where the operator can fix it) the rescope command. */
-export function actorNotAttested(reason: ActorReason, caller: ActorCaller, ctx: { op: string; transport?: string; right?: AttestRight | null }): OperationError {
+export function actorNotAttested(reason: ActorReason, caller: ActorCaller, ctx: { op: string; transport?: string; right?: AttestRight | null; reissue?: boolean }): OperationError {
   const docs = ERROR_CATALOGUE.actor_not_attested.docs;
   const rescope = (extra: string[]) => ['gbrain', 'auth', 'rescope', ...credentialArgv(caller), ...extra];
   const hostOnly = (message: string, argv: string[], why: string, suggestion: string) =>
     Object.assign(hostOnlyError(transportOf(ctx.transport), 'actor_not_attested', message, argv, why, { reason, suggestion }), { docs });
   switch (reason) {
     case 'no_attest_right':
+      if (ctx.reissue) {
+        return opError('actor_not_attested', `This client holds the attest right, but this access token was not issued by the client-credentials grant since the upgrade, so it may not name the person it acts for (${ACTOR_HEADER}). Nothing was read or written.`,
+          'Request a new token with grant_type=client_credentials (POST /token) and retry with it. Tokens issued before the upgrade, or by another grant, never attest.', { reason, docs });
+      }
       return hostOnly(`This connection may not name the person it acts for (${ACTOR_HEADER}), so nothing was read or written.`, rescope(['--attest-actor', 'qm']),
         'Grants this client-credentials client (or member-less legacy token) the right to name the person a QM call serves. Trusting a system to name people is the brain operator\'s decision.',
         'Only a credential the brain operator granted the attest right may send the actor header. Call without it, or ask the operator to run the command in fix.');
     case 'op_not_attested':
+      if (ACTOR_DEFERRED_OPS.has(ctx.op)) {
+        return opError('actor_not_attested', `${ctx.op} cannot run as an attested person yet: what it reads or writes is not yet kept to the person. Nothing was read or written.`,
+          `Call it without ${ACTOR_HEADER}, or use an attestable operation. Not attestable yet: ${[...ACTOR_DEFERRED_OPS].join(', ')}.`, { reason, docs });
+      }
       return hostOnly(`${ctx.op} is not in this connection's attested operations, so nothing was read or written.`,
         rescope(['--attest-actor', 'qm', '--attest-ops', [...new Set([...(ctx.right?.ops ?? DEFAULT_ATTEST_OPS), ctx.op])].sort().join(',')]),
         'Lets an attested call run this operation as the person it names. Widening what a trusted system may do as a person is the brain operator\'s decision.',
@@ -143,18 +160,22 @@ export async function linkedMember(engine: Pick<BrainEngine, 'executeRaw'>, syst
  * live attest right for the system, and a live link from the id to an enabled member. Returns that member's identity;
  * throws actor_not_attested (no_attest_right) or actor_unlinked.
  */
-export async function actorCoverage(engine: Pick<BrainEngine, 'executeRaw'>, caller: ActorCaller, actor: { system: string; external_id: string }, transport?: string):
+export async function actorCoverage(engine: Pick<BrainEngine, 'executeRaw'>, caller: ActorCaller, actor: { system: string; external_id: string }, transport?: string, op?: string):
   Promise<{ member: string; groups: string[]; identity: string[] }> {
   const right = await attestRightOf(engine, caller);
-  if (!right || right.system !== actor.system) throw actorNotAttested('no_attest_right', caller, { op: 'stored', transport });
+  if (!right || right.system !== actor.system) throw actorNotAttested('no_attest_right', caller, { op: op ?? 'stored', transport });
+  if (op !== undefined && (!right.ops.includes(op) || ACTOR_DEFERRED_OPS.has(op))) throw actorNotAttested('op_not_attested', caller, { op, transport, right });
   const linked = EXTERNAL_ID_RE.test(actor.external_id) ? await linkedMember(engine, actor.system, actor.external_id) : null;
   if (!linked) throw actorUnlinked(actor.external_id, transport);
   return linked;
 }
 
-/** A stored attested authority (a queued write, an agent job) re-resolved through actorCoverage: the same member must still be covered. */
-export async function storedActorIdentity(engine: Pick<BrainEngine, 'executeRaw'>, principal: Principal, actor: AttestedActor): Promise<string[]> {
-  const covered = await actorCoverage(engine, { principal }, actor);
+/**
+ * A stored attested authority (a queued write, an agent job) re-resolved through actorCoverage: the same member must
+ * still be covered and, when `op` is given (publication, a job tool call), the operation must still be attested.
+ */
+export async function storedActorIdentity(engine: Pick<BrainEngine, 'executeRaw'>, principal: Principal, actor: AttestedActor, op?: string): Promise<string[]> {
+  const covered = await actorCoverage(engine, { principal }, actor, undefined, op);
   if (covered.member !== actor.member) throw actorUnlinked(actor.external_id);
   return covered.identity;
 }
@@ -206,7 +227,11 @@ export async function resolveAttestedActor(engine: Pick<BrainEngine, 'executeRaw
       `Send one: ${ACTOR_HEADER} from an attest credential, or X-Gbrain-On-Behalf-Of / request-level _meta.on_behalf_of from a shared agent.`);
   }
   const right = input.transport === 'stdio' ? null : await attestRightOf(engine, caller);
-  if (!right || right.system !== 'qm') throw actorNotAttested(hasArgument ? 'argument_without_attestation' : 'no_attest_right', caller, ctx);
+  if (!right || right.system !== 'qm') {
+    const principal = input.auth?.principal;
+    const reissue = !hasArgument && !right && principal?.kind === 'oauth_client' && !!await attestRightOf(engine, { principal });
+    throw actorNotAttested(hasArgument ? 'argument_without_attestation' : 'no_attest_right', caller, { ...ctx, reissue });
+  }
   if (!right.ops.includes(input.op) || !attestableOp(input.op, input.opShape)) throw actorNotAttested('op_not_attested', caller, { ...ctx, right });
   if (hasArgument && argument !== header) throw actorNotAttested('argument_mismatch', caller, ctx);
   const covered = await actorCoverage(engine, caller, { system: right.system, external_id: header }, input.transport);

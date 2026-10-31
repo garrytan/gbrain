@@ -16,6 +16,7 @@ import type { SqlQuery } from '../sql-query.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import type { Action } from '../agent-output.ts';
 import { ACCESS_ID_RE, identityFor, normalizePrincipal } from './principals.ts';
+import { ACTOR_DEFERRED_OPS } from './actor-model.ts';
 
 export interface MemberRecord {
   id: string;
@@ -316,6 +317,8 @@ export async function bindCredential(engine: BrainEngine, target: { kind: 'token
   const attestOps = attestActor === null ? null : patch.attestOps === undefined ? before.attest_ops : patch.attestOps;
   const what = target.kind === 'token' ? 'This token' : `OAuth client ${target.id}`;
   if (patch.attestOps != null && attestActor === null) throw attestRefused('--attest-ops needs the attest right.', 'Pass --attest-actor qm with it.');
+  const deferred = (patch.attestOps ?? []).filter(op => ACTOR_DEFERRED_OPS.has(op));
+  if (deferred.length) throw attestRefused(`--attest-ops names ${deferred.join(', ')}, which an attested actor cannot run yet.`, `Leave them out. Not attestable yet: ${[...ACTOR_DEFERRED_OPS].join(', ')}.`);
   if (attestActor !== null && (patch.attestActor !== undefined || patch.member !== undefined)) {
     if (member !== null) throw attestRefused(`${what} is bound to member "${member}", so it cannot attest other people.`, 'Use a credential bound to no member (--member none), or a separate client for the trusted system.');
     if (target.kind === 'client' && (!(before.grant_types ?? []).includes('client_credentials') || before.confidential !== true)) {

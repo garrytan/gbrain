@@ -9,6 +9,20 @@ export const ACTOR_HEADER = 'x-qm-actor';
 export const ACTOR_ARGUMENT = 'acting_user';
 export const ATTEST_SYSTEMS: readonly string[] = ['qm'];
 export const DEFAULT_ATTEST_OPS: readonly string[] = ['memory_recall', 'memory_write'];
+/**
+ * Operations no attested call may run yet: what they read or write is not keyed to the person, so one person could
+ * see another's result (an agent job's output, a write receipt, a delta feed) or write facts and takes every reader
+ * sees. GST-359 C2 removes each entry as it keys that operation to the member (member-scoped facts, jobs, receipts).
+ * Refused at `--attest-ops`, at every call and when a stored write or job tool call is re-resolved.
+ */
+export const ACTOR_DEFERRED_OPS: ReadonlySet<string> = new Set([
+  'submit_agent', 'get_agent_job',
+  'get_write_request', 'list_write_requests', 'cancel_write_request', 'list_write_conflicts',
+  'delta',
+  'remember', 'capture', 'extract_facts', 'forget', 'forget_fact',
+  'takes_add', 'takes_update', 'takes_resolve', 'takes_supersede',
+]);
+
 /** Canonical person ids: 1-256 visible ASCII characters (QM's credential broker rule), no case folding. */
 export const EXTERNAL_ID_RE = /^[\x21-\x7e]{1,256}$/;
 
