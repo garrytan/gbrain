@@ -32,7 +32,7 @@ import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '
 import type { HybridSearchMeta, SearchResult } from '../types.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { applySnippetCap, DEFAULT_AGENT_SNIPPET_CHARS, resultChunkCap } from '../search/snippet-cap.ts';
-import { fenceTranscriptRows, neutralizeTranscriptRows } from '../search/transcript-quote.ts';
+import { fenceTranscriptRows, neutralizeTranscriptRows, quoteFacts } from '../search/transcript-quote.ts';
 import { scoresFollowRank } from '../search/score-contract.ts';
 import { redactRetrievalOutput } from '../search/output-redaction.ts';
 import { leanRowsKeepId, projectRows, resultRowsFor } from '../search/lean-rows.ts';
@@ -441,7 +441,9 @@ async function buildRetrievalResponseMeta(
     ...matchedFacts.filter(m => !entityFacts.some(e => e.id === m.id))].filter(f => !factRowIds.has(f.id)));
   const shownAs = new Map([...factRowIds].map(id => [id, id]));
   for (const f of merged) for (const id of f.collapsed_ids ?? [f.id]) shownAs.set(id, f.id);
-  const savedFacts = merged.map(({ corrected_by, ...f }) => {
+  // #8042: a lookup failure withholds saved_facts (degraded stage below) rather than return third-party text unquoted.
+  const quotedFacts = await quoteFacts(ctx.engine, merged).catch(() => null);
+  const savedFacts = (quotedFacts ?? []).map(({ corrected_by, ...f }) => {
     const by = corrected_by === undefined ? undefined : shownAs.get(corrected_by);
     return stripCollapseColumns(by === undefined || by === f.id ? f : { ...f, corrected_by: by });
   });
@@ -461,6 +463,7 @@ async function buildRetrievalResponseMeta(
   if (heldNotice) ctx.emitNotice?.(heldNotice);
   const degraded = [...(m?.degraded ?? [])];
   if (safeIndexPending) degraded.push({ stage: 'safe_index_pending' });
+  if (quotedFacts === null && merged.length) degraded.push({ stage: 'saved_facts_withheld' });
   if (readiness.status === 'by_design') degraded.push({ stage: 'projection_by_design' });
   else if (readiness.status !== 'ready') {
     degraded.push({ stage: readiness.status === 'projection_pending' ? 'projection_pending' : 'projection_status_unknown' });

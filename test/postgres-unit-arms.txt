@@ -460,6 +460,7 @@ test/scripts/test-stress-postgres.test.ts
 test/search-read-keyword-bound.test.ts
 test/search-remote-page-cap.test.ts
 test/search-transcript-quote-budget.test.ts
+test/search-transcript-quote-coverage.test.ts
 test/search-transcript-quote.test.ts
 test/search-vector-scope-parity.test.ts
 test/search/page-rank-cut.test.ts

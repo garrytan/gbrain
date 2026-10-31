@@ -22,7 +22,7 @@ import { parseWireWriteWaitMs } from './write-wait.ts';
 import { assertTimelineNotOmitted, isTimelineSection, timelineSectionOf, type TimelineSection } from './timeline-omission.ts';
 import { contentOriginTier } from '../trust/tier.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
-import { contentSizeHold } from '../markdown.ts';
+import { contentSizeHold, parseMarkdownHead } from '../markdown.ts';
 import { throwIfHeld } from '../trust/gate-outcomes.ts';
 import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequest, intentDigest, type WriteAdmission } from './journal.ts';
 import { submissionAuthority, authorizeStoredRequest } from './authority.ts';
@@ -43,6 +43,7 @@ import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { liveSearchable } from './searchable.ts';
 import { cachedPreadmitBrain, dropPreadmitCache, preadmitReads, preadmitRecheckFailed } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
+import { isQuotedPageType, unquoteTranscriptText } from '../search/transcript-quote.ts';
 import { isMirrorOnlyPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
@@ -252,6 +253,18 @@ export async function submitPageMutation(ctx: OperationContext,
 }
 
 /**
+ * #8042: a remote put_page (put_pages too) of a quoted page's get_page content writes the page body, not the fences
+ * get_page added (search/transcript-quote.ts). A fence naming the page is removed when its stored type or the type the
+ * new content declares is one get_page quotes (either, so a retype keeps the body); a note's own fence-like text is kept.
+ */
+async function unquotedPutContent(engine: BrainEngine, sourceId: string, slug: string, content: string): Promise<string> {
+  const unquoted = unquoteTranscriptText(content, slug);
+  if (unquoted === content || isQuotedPageType(String(parseMarkdownHead(content).frontmatter.type ?? ''))) return unquoted;
+  const [stored] = await engine.executeRaw<{ type: string | null }>('SELECT type FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
+  return isQuotedPageType(stored?.type) ? unquoted : content;
+}
+
+/**
  * Every check a page mutation passes before it is journaled, without admitting
  * it: either the authorized prior request with this request_id (a replay), or
  * the admission to submit. `put_pages` admits several of these together.
@@ -323,6 +336,10 @@ export async function preparePageAdmission(ctx: OperationContext,
   if (!source || source.archived) {
     throw new OperationError('source_changed', 'The write source is not active.',
       `Source ${sourceId} is archived or not registered, so nothing was written. Write to an active source (sources_list shows them).`);
+  }
+  // After the replay check: the request digest covers what the caller sent, so a retry matches whatever the page's type is by then.
+  if (input.operation === 'put_page' && ctx.remote !== false && typeof p.content === 'string' && typeof p.slug === 'string') {
+    p.content = await unquotedPutContent(ctx.engine, sourceId, p.slug.toLowerCase(), p.content);
   }
   let slug = typeof p.slug === 'string' ? p.slug.toLowerCase() : '';
   const intent = ['takes_add','takes_update','takes_supersede','takes_resolve','takes_remove'].includes(input.operation)

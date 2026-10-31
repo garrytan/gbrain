@@ -1123,10 +1123,10 @@ export interface SearchResult {
    */
   entity_anchored?: 'entity' | 'linked';
   /** Set on a saved-fact row the `search.query_facts_arm` arm added (search/facts-arm.ts); page_id is 0. */
-  fact_row?: { id: number; valid_from: string; valid_until: string | null };
+  fact_row?: { id: number; valid_from: string; valid_until: string | null; source?: string; from_quoted_page?: true };
   /** Fact rows only, and what callers see of them: never a page (no slug or id); follow with `follow_up`, read `page_slug` when the entity page exists. */
   result_type?: 'fact'; fact_id?: string; page_slug?: string; follow_up?: { op: 'recall'; args: Record<string, string> };
-  /** #7600: a conversation page's row, returned fenced as quoted source material with its tool-call blocks summarized (search/transcript-quote.ts). */
+  /** #7600, #8042: a row of third-party text (a chat page or a fact saved from one), returned fenced as quoted source material with its tool-call blocks summarized (search/transcript-quote.ts). */
   quoted?: 'transcript';
   /** A newer active fact covers the same entity and typed claim slot as a fact taken from this page. */
   superseded_claim?: { fact_id: number; valid_from: string };
@@ -2094,7 +2094,7 @@ export const DEGRADED_STAGES = [
   'keyword_candidates_incomplete',
   'projection_pending', 'projection_by_design',
   'projection_status_unknown',
-  'keyword_count_unavailable',
+  'keyword_count_unavailable', 'saved_facts_withheld',
 ] as const;
 export type DegradedStage = (typeof DEGRADED_STAGES)[number];
 

@@ -50,7 +50,8 @@ function bagOfWords(text: string, dims: number): number[] {
 }
 
 /** Fact markers in a payload, in order of appearance (every fact text starts with one). */
-const markers = (facts: R[]) => facts.map(f => String(f.fact).split(' ')[0]);
+/** Each fact's first word; a remote reader gets a fact taken from a meeting page quoted (#8042), so read inside its fence. */
+const markers = (facts: R[]) => facts.map(f => (f.quoted === 'transcript' ? String(f.fact).split('\n')[2]! : String(f.fact)).split(' ')[0]);
 
 for (const kind of testBackends()) {
   describe(`recall question ranking (${kind})`, () => {
