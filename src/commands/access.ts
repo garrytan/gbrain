@@ -12,6 +12,7 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { exitCliError, usageError } from '../cli/cli-error.ts';
+import { runAccessRules } from './access-rules.ts';
 import { opError } from '../core/ops/contract.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { grantFromClient, type PrincipalGrant } from '../core/grants/model.ts';
@@ -37,6 +38,20 @@ Members and groups:
                                              With --members, removes those members; otherwise previews
                                              removing the group (--yes applies)
   gbrain access group list [<group>]
+
+Folder rules (one rulebook per source; the database store on a repo-less source, .gbrain/access.yml on a git one):
+  gbrain access rule add --prefix <folder/> --readers a,group:b [--id <rule>] [--source <id>] [--yes]
+                                             Preview first; narrowing applies at once
+  gbrain access rule rm <rule> [--source <id>] [--yes]
+                                             A widening: recorded and held until gbrain access apply
+  gbrain access rule list|status|history [--source <id>] [--operation <id>]
+  gbrain access rule revert --to <revision> [--source <id>] [--yes]
+  gbrain access rule export|import [--file <access.yml>] [--source <id>] [--yes]
+  gbrain access rule migrate [--source <id>] [--yes]
+                                             Move the rules between the database and git stores
+  gbrain access apply [--source <id>] [--revision <n>] [--yes --expect <plan_hash>]
+                                             Preview held widenings; --yes approves the previewed plan
+  gbrain access resume [--source <id>]       Finish a narrowing that was interrupted while stamping pages
 
 Checks (read-only):
   gbrain access who-can-read <slug> [--source <id>]
@@ -245,6 +260,7 @@ export async function runAccess(engine: BrainEngine, args: string[]): Promise<vo
     if (cmd !== 'check' && rest.some(a => a === '--as' || a.startsWith('--as='))) {
       throw usageError(`--as is not an option of gbrain access ${cmd}.`, 'gbrain access check --token <name> --as a,b evaluates an audience; operations take --as <member> to preview a member view.');
     }
+    if (await runAccessRules(engine, cmd!, rest, json)) return;
     switch (cmd) {
       case 'member': return await memberCmd(engine, rest[0], rest.slice(1), json);
       case 'group': return await groupCmd(engine, rest[0], rest.slice(1), json);
@@ -272,7 +288,7 @@ export async function runAccess(engine: BrainEngine, args: string[]): Promise<vo
           `  ${r.explanation}`]);
       }
       default:
-        throw usageError(`Unknown access subcommand: ${cmd}.`, 'Use member, group, who-can-read or check (gbrain access --help).', { code: 'unknown_command' });
+        throw usageError(`Unknown access subcommand: ${cmd}.`, 'Use member, group, rule, apply, resume, who-can-read or check (gbrain access --help).', { code: 'unknown_command' });
     }
   } catch (e) {
     exitCliError(e, 'access');

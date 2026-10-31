@@ -133,6 +133,7 @@ import { gitIndexLagEntry } from './checks/git-index-lag.ts';
 import { syncConfigKeysEntry } from './checks/sync-config-keys.ts';
 import { ghostPagesEntry } from './checks/ghost-pages.ts';
 import { memberAccessEntry } from './checks/member-access.ts';
+import { folderAccessEntry } from './checks/folder-access.ts';
 import { originTwinsEntry } from './checks/origin-twins.ts';
 import { slugPathMismatchEntry } from './checks/slug-path-mismatch.ts';
 import { renameIdentityDowngradesEntry } from './checks/rename-identity-downgrades.ts';
@@ -215,6 +216,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   // #7276: the privacy check next, with its own entry budget, before any full scan.
   derivedVisibilityEntry,
   memberAccessEntry,
+  folderAccessEntry,
   rlsEntry,
   functionSearchPathEntry,
   schemaVersionEntry,

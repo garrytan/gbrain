@@ -1,7 +1,7 @@
 import { opError } from '../ops/contract.ts';
-import { callerAccessAllowedSql, callerIdentity, currentCallerAccess, readPolicyFragment, readRemotePolicyNow } from '../search/private-visibility.ts';
+import { callerAccessAllowedSql, callerIdentity, currentCallerAccess, readPolicyFragment, readRemotePolicyNow, withCallerAccess } from '../search/private-visibility.ts';
 import { parseMarkdown } from '../markdown.ts';
-import { memberIdentityFor } from '../access/caller.ts';
+import { folderAccessFor, memberIdentityFor } from '../access/caller.ts';
 import { hasReaders, normalizePrincipal, normalizeReaders, readersAllow, NOBODY } from '../access/principals.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import type { SqlEngine, WriteAuthority } from './model.ts';
@@ -41,8 +41,10 @@ export async function authorizePageVisibility(engine: SqlEngine, authority: Writ
   const hidePrivate = (authority.excludePrivate ?? true) || !policy.privacyRelaxed;
   if (!hidePrivate && !policy.restricted) return;
   const identity = policy.restricted ? await memberIdentityFor(engine, authority) : [];
+  const folder = policy.restricted ? await folderAccessFor(engine, identity) : { satisfiedRuleIds: [], folderCoverage: [] };
+  const fragment = withCallerAccess({ folderCoverage: folder.folderCoverage }, () => readPolicyFragment('pages', identity, hidePrivate, folder.satisfiedRuleIds));
   const rows = await engine.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2
-    AND NOT (${readPolicyFragment('pages', identity, hidePrivate)}) LIMIT 1`, [authority.sourceId, slug]);
+    AND NOT (${fragment}) LIMIT 1`, [authority.sourceId, slug]);
   if (rows.length) throw pageNotVisibleError();
 }
 

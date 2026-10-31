@@ -1946,8 +1946,9 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   [cron-schedule.md](docs/guides/cron-schedule.md#calling-gbrain-unattended),
   [scripts and the managed checkout](docs/guides/shared-checkout-git.md#scripts-and-the-managed-checkout).
 - **Keep a page to some members of a shared source:** put `readable_by: [alice-example, group:team-a]` in its
-  frontmatter and bind each member's credential (`gbrain access member add`, `gbrain auth rescope --token <name>
-  --member <id>`); `gbrain access check --token <name>` and `--as <member>` preview what a member reads. A remote
+  frontmatter (a whole folder: `gbrain access rule add --prefix <folder>/ --readers <list> --source <id>`, preview
+  then `--yes`; widening waits for `gbrain access apply`) and bind each member's credential (`gbrain access member
+  add`, `gbrain auth rescope --token <name> --member <id>`); `gbrain access check --token <name>` and `--as <member>` preview what a member reads. A remote
   `not_found` may be a restricted page: check `whoami` before telling the user there are no notes
   ([Model C](docs/tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape)).
 - **Delete or purge pages:** `gbrain delete --purge` skips the 72-hour soft

@@ -29,6 +29,7 @@ import { pageCapLine } from '../core/search/remote-page-cap.ts';
 import { dateLabelLine } from '../core/search/date-labels.ts';
 import { emptyRead, hiddenTakesNotice, localTranscriptsNotice, recallInteropNotices, wantsTranscriptHint } from '../core/interop-notices.ts';
 import { assertUnscopedReadReachesPages } from '../core/sources-not-readable.ts';
+import { accessPolicyNotices } from '../core/access/policy-notice.ts';
 import { hiddenToolHint, hiddenToolNext, hiddenToolRoute, type ToolConnection } from './hidden-tool-hint.ts';
 import { opAllowedForBoundClient } from '../core/ops/context.ts';
 import { takePostUpgradeMcpNotice } from '../core/post-upgrade-notice.ts';
@@ -1167,7 +1168,7 @@ async function dispatchResolvedCall(
     const rerankDegradedCalls = recordRerankDegradation(responseMeta, opts);
     notices.push(...recallInteropNotices(name, result, responseMeta, safeParams,
       { config: ctx.config, transport: dispatchRenderContext(opts).transport, binding: ctx.explicitReadBinding, rerankDegradedCalls }));
-    notices.push(...await hiddenContentNotices(engine, name, result, ctx, opts));
+    notices.push(...accessPolicyNotices(name, ctx), ...await hiddenContentNotices(engine, name, result, ctx, opts));
     // Monthly backup-coverage: one AGGREGATE notice per process (counts only —
     // never a local path or source id). The refresher runs on the stdio
     // transport ONLY — the WP1/D7 locality axis localOnly ops use; 'http' or

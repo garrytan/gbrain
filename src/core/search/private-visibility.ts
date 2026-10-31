@@ -24,6 +24,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine } from '../engine.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { hasReaders, readersAllow, validIdentity } from '../access/principals.ts';
+import { validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 
@@ -68,9 +69,45 @@ export function privacyPartSql(pageAlias: string): string {
  * `identity` must pass validIdentity (its alphabet has no quote), so it is
  * embedded as literals; anything else empties it (fail closed).
  */
-export function accessAllowedSql(pageAlias: string, identity: readonly string[]): string {
-  if (!currentCallerAccess().restricted) return `(${pageAlias}.page_readers IS NULL)`;
-  return `(${readersAllowedSql(pageAlias, identity)} AND ${originAllowedSql(pageAlias)})`;
+export function accessAllowedSql(pageAlias: string, identity: readonly string[], satisfied: readonly string[] = satisfiedFor(identity)): string {
+  if (!currentCallerAccess().restricted) return `(${pageAlias}.page_readers IS NULL AND ${pageAlias}.folder_rule_ids IS NULL)`;
+  return `(${readersAllowedSql(pageAlias, identity)} AND ${folderRulesAllowedSql(pageAlias, satisfied)} AND ${originAllowedSql(pageAlias)})`;
+}
+
+/**
+ * GBRA-218 (PR A2): the folder layer. `folder_rule_ids` holds the source-qualified ids
+ * of every applied folder rule whose prefix the slug starts with (a trigger stamps it from the applied rulebook,
+ * migration v282); a page passes only when the caller satisfies all of them (`<@`, set semantics), so nested member
+ * and group rules both have to pass. `satisfied` is the caller's satisfied set (CallerAccess.satisfiedRuleIds); an
+ * entry that is not a valid qualified id empties it (fail closed). Prefixes under a narrowing still being stamped,
+ * or touched by a policy file that does not validate, read as nobody (CallerAccess.folderCoverage). Column tests
+ * lead, so a page under no rule costs one NULL test.
+ */
+export function folderRulesAllowedSql(alias: string, satisfied: readonly string[]): string {
+  const ids = satisfied.length && satisfied.every(validQualifiedRuleId) ? [...new Set(satisfied)].sort() : [];
+  const listed = ids.length ? ` OR ${alias}.folder_rule_ids <@ ARRAY[${ids.map(id => `'${id}'`).join(', ')}]::text[]` : '';
+  return `(${alias}.folder_rule_ids IS NULL${listed})${coverageSql(alias)}`;
+}
+
+/**
+ * The pending or invalid prefixes of the current record as a conjunct (empty when none); an ill-formed entry hides
+ * everything. Outside any caller record the prefixes are read live, so a page under a pending prefix stays hidden.
+ */
+function coverageSql(alias: string): string {
+  if (!callerAccessStore.getStore()) return ` AND NOT EXISTS (SELECT 1 FROM access_pending_coverage pc WHERE pc.source_id = ${alias}.source_id AND starts_with(${alias}.slug, pc.prefix))`;
+  const coverage = currentCallerAccess().folderCoverage;
+  if (!coverage.length) return '';
+  return coverage.map(c => !isValidSourceId(c.source_id) || (c.prefix !== '' && !validPrefix(c.prefix)) ? ' AND FALSE'
+    : c.prefix === '' ? ` AND ${alias}.source_id <> '${c.source_id}'`
+    : ` AND NOT (${alias}.source_id = '${c.source_id}' AND starts_with(${alias}.slug, '${c.prefix}'))`).join('');
+}
+
+/** The satisfied rule ids for `identity`: the current record's set when it is the record's identity, else none. */
+function satisfiedFor(identity: readonly string[]): readonly string[] {
+  const access = currentCallerAccess();
+  if (!identity.length || identity.length !== access.identity.length) return [];
+  const sorted = [...identity].sort();
+  return sorted.every((p, i) => p === access.identity[i]) ? access.satisfiedRuleIds : [];
 }
 
 /**
@@ -120,11 +157,11 @@ function originAllowedSql(p: string): string {
  * candidate pages (an entity's referrers).
  */
 export function privatePagesFilterFragmentFast(pageAlias: string): string {
-  return `((${pageAlias}.frontmatter->'visibility' IS NULL AND ${pageAlias}.frontmatter->'derived_from' IS NULL${honorAliases()
+  return `(${folderRulesAllowedSql(pageAlias, [])} AND ((${pageAlias}.frontmatter->'visibility' IS NULL AND ${pageAlias}.frontmatter->'derived_from' IS NULL${honorAliases()
       ? `\n      AND ${pageAlias}.frontmatter->'access' IS NULL AND ${pageAlias}.frontmatter->'confidentiality' IS NULL` : ''}
       AND ${pageAlias}.frontmatter->'readable_by' IS NULL
       AND ${pageAlias}.type NOT IN ('atom', 'concept', 'event'))
-    OR ${privatePagesFilterFragment(pageAlias)})`;
+    OR ${privatePagesFilterFragment(pageAlias)}))`;
 }
 
 /**
@@ -143,18 +180,23 @@ export function privatePagesFilterFragmentFast(pageAlias: string): string {
  *    access.restrictions_present was unset when the request began. Then no
  *    page named readers at that moment and none predates the migration (v281
  *    sets the flag when one does), so every readers value is in the derived
- *    column: accessAllowedSql tests only page_readers IS NULL (live, so a page
- *    gaining readers mid-request is still hidden, since the trigger fills the
- *    column in that write) and skips lineage, member matching and the
- *    frontmatter test, whose per-row JSONB read cost keyword search about 3%.
- *    The flag is sticky and set in the same transaction as the first page
- *    that names readers.
+ *    column: accessAllowedSql tests only page_readers IS NULL and
+ *    folder_rule_ids IS NULL (live, so a page gaining readers or a folder rule
+ *    mid-request is still hidden, since the triggers fill both columns in that
+ *    write) and skips lineage, member matching and the frontmatter test, whose
+ *    per-row JSONB read cost keyword search about 3%. The flag is sticky and set
+ *    in the same transaction as the first page that names readers, the first
+ *    member and the first folder rule or pending folder prefix (v282).
  * Outside any record (local CLI, jobs, cycles) the identity is empty, no
  * source is private-readable and hidePrivate follows the process's hatch
  * state, so caller-aware fragments still fail closed on restricted pages.
  */
 export interface CallerAccess {
   identity: readonly string[];
+  /** GBRA-218 (A2): the source-qualified folder-rule ids (`<source>:<rule>`) the identity satisfies, from the applied rulebook. */
+  satisfiedRuleIds: readonly string[];
+  /** GBRA-218 (A2): prefixes that read as nobody (a narrowing being stamped, an invalid policy file); prefix '' is the whole source. */
+  folderCoverage: readonly FolderCoverage[];
   privateReadableSources: readonly string[];
   hidePrivate: boolean;
   applyRemoteReadPolicy: boolean;
@@ -162,11 +204,12 @@ export interface CallerAccess {
   /** The fresh remote policy (readRemotePolicyNow) a remote request read when it started; null outside one. */
   remotePolicy: RemotePolicy | null;
 }
+export interface FolderCoverage { source_id: string; prefix: string }
 const callerAccessStore = new AsyncLocalStorage<CallerAccess>();
 
 /** The current read's caller-access record (see CallerAccess). */
 export function currentCallerAccess(): CallerAccess {
-  return callerAccessStore.getStore() ?? { identity: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), applyRemoteReadPolicy: false, restricted: true, remotePolicy: null };
+  return callerAccessStore.getStore() ?? { identity: [], satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), applyRemoteReadPolicy: false, restricted: true, remotePolicy: null };
 }
 
 /** Runs `fn` under `access` merged over the current record; an invalid identity or source id empties that set (fail closed). */
@@ -174,8 +217,12 @@ export function withCallerAccess<T>(access: Partial<CallerAccess>, fn: () => T):
   const base = currentCallerAccess();
   const identity = access.identity ?? base.identity;
   const sources = access.privateReadableSources ?? base.privateReadableSources;
+  const validIds = identity.length > 0 && validIdentity(identity);
+  const satisfied = validIds ? access.satisfiedRuleIds ?? (access.identity ? [] : base.satisfiedRuleIds) : [];
   return callerAccessStore.run(Object.freeze({
-    identity: identity.length && validIdentity(identity) ? Object.freeze([...new Set(identity)].sort()) : Object.freeze([]),
+    identity: validIds ? Object.freeze([...new Set(identity)].sort()) : Object.freeze([]),
+    satisfiedRuleIds: satisfied.length && satisfied.every(validQualifiedRuleId) ? Object.freeze([...new Set(satisfied)].sort()) : Object.freeze([]),
+    folderCoverage: Object.freeze([...(access.folderCoverage ?? base.folderCoverage)].map(c => Object.freeze({ source_id: c.source_id, prefix: c.prefix }))),
     privateReadableSources: sources.length && sources.every(isValidSourceId) ? Object.freeze([...new Set(sources)]) : Object.freeze([]),
     hidePrivate: access.hidePrivate ?? base.hidePrivate,
     applyRemoteReadPolicy: access.applyRemoteReadPolicy ?? base.applyRemoteReadPolicy,
@@ -248,8 +295,8 @@ export function callerAccessAllowedSql(pageAlias: string): string {
  * part, then the privacy part unless `hidePrivate` is false. With an empty
  * identity and `hidePrivate` it equals privatePagesFilterFragment.
  */
-export function readPolicyFragment(pageAlias: string, identity: readonly string[], hidePrivate: boolean): string {
-  return `(${accessAllowedSql(pageAlias, identity)} AND ${hidePrivate ? privacyPartSql(pageAlias) : 'TRUE'})`;
+export function readPolicyFragment(pageAlias: string, identity: readonly string[], hidePrivate: boolean, satisfied?: readonly string[]): string {
+  return `(${accessAllowedSql(pageAlias, identity, satisfied)} AND ${hidePrivate ? privacyPartSql(pageAlias) : 'TRUE'})`;
 }
 
 /** privatePagesFilterFragmentFast for a remote read. */
@@ -403,15 +450,42 @@ export async function readHonorAliases(engine: BrainEngine): Promise<boolean> {
   }
 }
 
-/** A page whatever is derived from it must not outrank: private to remote readers, or carrying a privacy alias. */
-export function isDerivationPrivate(page: { type?: string | null; frontmatter?: unknown }): boolean {
-  if (isPrivatePage(page)) return true;
+/**
+ * A page whatever is derived from it must not outrank: private to remote readers, carrying a privacy alias, or under a
+ * folder rule or a pending folder prefix (`folder_restricted`, selected with folderRestrictedSql or looked up with folderRestricted).
+ */
+export function isDerivationPrivate(page: { type?: string | null; frontmatter?: unknown; folder_restricted?: boolean | null }): boolean {
+  if (page.folder_restricted === true || isPrivatePage(page)) return true;
   return typeof page.frontmatter === 'object' && page.frontmatter !== null && hasPrivacyAlias(page.frontmatter as Record<string, unknown>);
 }
 
 /** SQL twin of isDerivationPrivate. */
 export function derivationPrivateSql(alias: string): string {
-  return `(NOT ${privateSnapshotFilterFragment(alias)} OR ${privacyAliasSql(alias)} OR ${namesReadersSql(alias)})`;
+  return `(NOT ${privateSnapshotFilterFragment(alias)} OR ${privacyAliasSql(alias)} OR ${namesReadersSql(alias)} OR ${folderRestrictedSql(alias)})`;
+}
+
+/** GBRA-218 (A2): the page row sits under an applied folder rule (its stamp) or a pending or invalid folder prefix. */
+export function folderRestrictedSql(alias: string): string {
+  return `(${alias}.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(${alias}.source_id, ${alias}.slug))`;
+}
+
+/**
+ * folderRestrictedSql for a page known by its slug (a parsed page, a row read without the column, a page about to be
+ * written): judged against the applied folder rules, not the stamp. A failed read counts as restricted.
+ */
+export async function folderRestricted(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string): Promise<boolean> {
+  try {
+    const [row] = await engine.executeRaw<{ restricted: boolean }>(
+      'SELECT (gbrain_access_folder_rules($1, $2) IS NOT NULL OR gbrain_access_pending_covers($1, $2)) AS restricted', [sourceId, slug]);
+    return row?.restricted === true;
+  } catch {
+    return true;
+  }
+}
+
+/** `page` with folder_restricted looked up (folderRestricted), for a page read without it, such as a page snapshot. */
+export async function withFolderRestricted(engine: Pick<BrainEngine, 'executeRaw'>, page: { source_id: string; slug: string; type?: string | null; frontmatter?: unknown }): Promise<{ type?: string | null; frontmatter?: unknown; folder_restricted: boolean }> {
+  return { type: page.type, frontmatter: page.frontmatter, folder_restricted: await folderRestricted(engine, page.source_id, page.slug) };
 }
 
 /**
@@ -419,7 +493,7 @@ export function derivationPrivateSql(alias: string): string {
  * missing origins are private, and a page origin is private when remote
  * readers cannot see it or it carries a privacy alias.
  */
-export function effectiveVisibility(origin: { kind: 'transcript' } | { kind: 'page'; page: { type?: string | null; frontmatter?: unknown } | null }): Visibility {
+export function effectiveVisibility(origin: { kind: 'transcript' } | { kind: 'page'; page: { type?: string | null; frontmatter?: unknown; folder_restricted?: boolean | null } | null }): Visibility {
   if (origin.kind === 'transcript' || !origin.page) return 'private';
   return isDerivationPrivate(origin.page) ? 'private' : 'world';
 }

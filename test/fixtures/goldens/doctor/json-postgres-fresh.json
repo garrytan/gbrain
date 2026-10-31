@@ -1035,9 +1035,45 @@
           "status": "ok"
         },
         {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no source has a folder rule.",
+          "name": "access_policy_pending",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no source has a folder rule.",
+          "name": "access_policy_widening_held",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no source has a folder rule.",
+          "name": "access_policy_invalid",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no source has a folder rule.",
+          "name": "access_policy_store_mismatch",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
           "category": "ops",
           "elapsed_ms": "<volatile>",
-          "message": "RLS enabled on 164/164 public tables",
+          "message": "RLS enabled on 169/169 public tables",
           "name": "rls",
           "status": "ok"
         },
@@ -1065,7 +1101,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 164 table(s) the applied migrations create exist.",
+          "message": "All 169 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },

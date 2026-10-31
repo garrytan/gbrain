@@ -19,7 +19,7 @@ import { lexicalContestCandidate, recordContestedFact, supersessionGuarded } fro
 import { storedTrustTier } from '../trust/tier.ts';
 import { fenceAppendPendingTier } from '../eligibility/fence-overlay.ts';
 import { prepareFenceFactAppend, requestReceiptFix, type FenceFactAppend } from '../facts/fence-fact-append.ts';
-import { privateProvenanceFilterFragment, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { privateProvenanceFilterFragment, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
 import { tightenToPage } from '../facts/visibility.ts';
 import { noteBelief } from '../belief/ledger.ts';
 
@@ -72,7 +72,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
   if ((snapshot?.page.id ?? null) !== row.page_id) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted entity was deleted or recreated.');
   // A defaulted visibility never lands broader than the target page as it stands at publication.
-  if (p.visibility_defaulted === true && snapshot) input.visibility = tightenToPage(input.visibility, snapshot.page);
+  if (p.visibility_defaulted === true && snapshot) input.visibility = tightenToPage(input.visibility, await withFolderRestricted(engine, snapshot.page));
   if (p.expected_revision !== undefined) assertPageRevision(snapshot, engineMutationPrecondition(parseMutationPrecondition(p)));
   const observedRevision = snapshot?.revision ?? null;
   const excludePrivate = await resolveExcludePrivatePages(engine, row.authority.remote === true);

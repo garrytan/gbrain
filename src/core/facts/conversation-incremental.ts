@@ -68,7 +68,7 @@ import type { ConversationSegment } from './conversation-types.ts';
 import { renderSegmentForExtraction } from './conversation-windows.ts';
 import { extractConversationWindow, nonExtractableAuditFact, regularPageVersionToken, terminalAuditFact, type ConversationWindowRun } from './conversation-window-extract.ts';
 import { getFactsExtractionMaxTokens, resolveFactsExtractionModel, type ExtractInput } from './extract.ts';
-import { tightenToPage, type FactVisibility } from './visibility.ts';
+import { tightenToStoredPage, type FactVisibility } from './visibility.ts';
 
 const KIND = 'conversation_facts';
 /** Bump when the windowing or the row output changes shape: every occurrence is extracted again once. */
@@ -180,7 +180,7 @@ export async function processSegmentedConversationPage(run: SegmentedConversatio
   const { engine, sourceId, result } = run;
   if (!opts.redetect) result.pages_considered++;
   const versionToken = regularPageVersionToken(page);
-  const factVisibility = tightenToPage(run.factVisibility, page);
+  const factVisibility = await tightenToStoredPage(engine, sourceId, run.factVisibility, page);
   const { model, inputs } = await conversationContext(engine, page, opts.gapMinutes, factVisibility);
   const contextHash = segmentDerivationContextHash(KIND, { entryState: null, page: inputs });
   const { body, occurrences } = await readConversationOccurrences(engine, page.id);

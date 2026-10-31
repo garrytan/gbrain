@@ -13,6 +13,7 @@ import { publishExport } from '../core/export-publish.ts';
 import { nativeFileTarget } from '../core/persistence/native-file-target.ts';
 import { exportBodyLedger, inlineExportMarkdown, readExportPage, readExportWithdrawals, segmentedExportHead, segmentedExportMarkdown } from '../core/export-snapshot.ts';
 import { segmentedPageCeiling } from '../core/page-body/limits.ts';
+import { exportPolicyFiles } from '../core/access/policy-transfer.ts';
 import { isSegmentedPage } from '../core/page-body/page-shape.ts';
 
 function option(args: string[], name: string): string | undefined {
@@ -177,6 +178,7 @@ a fresh directory. See docs/storage-tiering.md#safe-export.`);
       }
       checkDeadline();
       if (collisions.length) throw collisionRefusal(collisions, owners, outDir);
+      if (!restoreOnly) for (const file of await exportPolicyFiles(tx, source && source !== ALL_SOURCES ? source : null)) staged.add(file.path, 'file', file.content);
     });
     console.log(`${restoreOnly ? 'Restoring' : 'Exporting'} ${stage.pages}${restoreOnly ? ' db_only' : ''} pages to ${outDir}/`);
     const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));

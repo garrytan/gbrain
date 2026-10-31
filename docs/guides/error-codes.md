@@ -105,6 +105,52 @@ Reasons: `ill_formed`, `unknown`, `disabled`, `removed`, `exists`, `unknown_grou
 
 More: [docs/guides/write-refusals.md#access_member_invalid](../../docs/guides/write-refusals.md#access_member_invalid)
 
+### access_policy_invalid
+
+<a id="access_policy_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A source's folder-rule policy (the committed .gbrain/access.yml, or a file given to gbrain access rule import) does not validate, so it was not applied: the last applied rules stay in force and every prefix the bad file names reads as nobody (the whole source when its prefixes cannot be read). | A typo in an access file must never open a folder: an unreadable revision keeps the previous rules and hides what it touches until it is fixed. | Show each problem with its line (gbrain access rule list --source <id>). Fix the file, commit it with gbrain git commit-push and sync the source (gbrain sync --source <id> --no-pull). Run: gbrain access rule list --source '{source_id}' --json | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/write-refusals.md#access_policy_invalid](../../docs/guides/write-refusals.md#access_policy_invalid)
+
+### access_policy_pending
+
+<a id="access_policy_pending"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A narrowing change to a source's folder rules is still being applied to its pages, so the prefixes it touches read as nobody until it finishes; pages under other prefixes keep the last applied rules. | Pages under a newly restricted folder are restamped in batches; until the last batch and its re-check pass land, they read as nobody instead of under the old rules. | Retry shortly. If it stays pending, the apply was interrupted: the brain host finishes it with gbrain access resume --source <id> (database store); a git store finishes with gbrain sync --source <id> --no-pull. Run: gbrain access rule status --source '{source_id}' --json | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/write-refusals.md#access_policy_pending](../../docs/guides/write-refusals.md#access_policy_pending)
+
+### access_policy_store_mismatch
+
+<a id="access_policy_store_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A source's persisted folder-rule store (sources.config.access_store) disagrees with what this host sees (a git store with no visible work tree, or a database store whose root became a repository), so the persisted store and its applied rules stay in force and nothing switches on its own. | Inferring the store per host would let a missing checkout or a stray git init change which rules apply; only gbrain access rule migrate moves them, and neither direction widens. | On the brain host, preview the move with gbrain access rule migrate --source <id>, then apply it by adding --yes. Run: gbrain access rule status --source '{source_id}' --json | user | `gbrain doctor --json` | 1 | no |
+
+### access_policy_widening_held
+
+<a id="access_policy_widening_held"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A change to a source's folder rules widens who may read (a rule removed, readers added, the old folder of a moved prefix), so it is recorded but held: the previous rules stay in force until an operator previews it with gbrain access apply --source <id> and approves the printed plan with --yes --expect <plan_hash> on the brain host. | Write access to the policy (a git commit or a rule edit) must not be enough to open a folder; widening needs a host-side preview and an explicit approval. | Ask the user whether to approve the widening; the brain host previews it with gbrain access apply --source <id>. Run: gbrain access apply --source '{source_id}' --json | user | `repeat the read that failed` | 1 | no |
+
+### access_rule_invalid
+
+<a id="access_rule_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A folder rule given to gbrain access rule add is invalid (its prefix is not a literal lower-case folder ending in /, holds .. or *, its readers are not member ids or group:<id>, or another rule already covers the prefix), so nothing was written. | Prefixes are matched literally against slugs; a pattern or a typo would silently restrict the wrong pages or none. | Write the prefix as a slug folder ending in / (partners/alice-example/) and the readers as member ids or group:<id>. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#access_rule_invalid](../../docs/guides/write-refusals.md#access_rule_invalid)
+
 ### acknowledgment_unavailable
 
 <a id="acknowledgment_unavailable"></a>

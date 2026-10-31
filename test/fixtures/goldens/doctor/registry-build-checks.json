@@ -370,6 +370,22 @@
         "name": "access_page_readers_backfill"
       },
       {
+        "category": "brain",
+        "name": "access_policy_pending"
+      },
+      {
+        "category": "brain",
+        "name": "access_policy_widening_held"
+      },
+      {
+        "category": "brain",
+        "name": "access_policy_invalid"
+      },
+      {
+        "category": "brain",
+        "name": "access_policy_store_mismatch"
+      },
+      {
         "category": "ops",
         "name": "rls"
       },
