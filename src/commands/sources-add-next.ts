@@ -11,6 +11,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { localFederatedSourceIds } from '../core/source-resolver.ts';
 import { privatePagesFilterFragment, resolveExcludePrivatePages } from '../core/search/private-visibility.ts';
+import { quarantineFilterFragment } from '../core/quarantine.ts';
 
 export interface SourcesAddNext {
   command: string;
@@ -21,7 +22,8 @@ export interface SourcesAddNext {
 /** The federate step for `id` when the no-grant floor holds no live page a remote read may show, else null. */
 export async function noGrantFloorNext(engine: BrainEngine, id: string): Promise<SourcesAddNext | null> {
   const floor = (await localFederatedSourceIds(engine, 'default', 'seed_default')) ?? ['default'];
-  const visible = await resolveExcludePrivatePages(engine, true) ? ` AND ${privatePagesFilterFragment('p')}` : '';
+  const visible = ` AND ${quarantineFilterFragment('p')}`
+    + (await resolveExcludePrivatePages(engine, true) ? ` AND ${privatePagesFilterFragment('p')}` : '');
   const [row] = await engine.executeRaw<{ holds: boolean }>(
     `SELECT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = ANY($1::text[]) AND p.deleted_at IS NULL${visible}) AS holds`, [floor]);
   if (row?.holds) return null;
