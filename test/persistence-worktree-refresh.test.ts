@@ -35,7 +35,7 @@ import { runManagedSourceLifecycle } from '../src/core/persistence/source-lifecy
 import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readSyncStatus } from '../src/core/persistence/sync-status.ts';
-import { refreshWorktree, resumeWorktreeRefreshes } from '../src/core/persistence/worktree-refresh.ts';
+import { _refreshScanCacheSizeForTests, refreshLockPath, refreshWorktree, resumeWorktreeRefreshes } from '../src/core/persistence/worktree-refresh.ts';
 import { commitAndPush } from '../src/core/git/commit-push.ts';
 import { gitConvergenceCheck } from '../src/commands/doctor/checks/git-convergence.ts';
 import { MANAGED_SYNC_PASS_OP, writePassRow, type ManagedSyncPassValue } from '../src/core/persistence/sync-pass-row.ts';
@@ -331,9 +331,12 @@ test('7. a crash leaving HEAD on an unrelated commit is recovery_required; write
   // own (auto_recovery none, ask the user before resetting); fails_when=adoption drops its recovery_required guard, or the holder report treats
   // it as an orphan the next refresh finishes; why_new=the #7679 tests cover syncing orphans only; seam=none; no_claim=the reset choice itself.
   // The plain refresh refuses with the row's own code and stored fix (both resets), not refresh_in_progress: no process will finish it.
+  // #7708: a distinct holder pid shows the plain refresh never took the row over (adoption would record this process as its holder).
+  await f.engine.executeRaw(`UPDATE persistence_worktree_refreshes SET outcome=jsonb_set(outcome,'{holder,pid}','535353'::jsonb) WHERE state='recovery_required'`);
   const plain = await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_recovery_required');
   expect(plain.suggestion).toContain(`reset --hard ${old}`);
   expect((await f.refreshRows()).map(r => r.state)).toEqual(['recovery_required']);
+  expect((await f.refreshRows())[0].outcome).toMatchObject({ holder: { pid: 535353 } });
   const [held] = (await runPersistenceAdministration(f.engine, 'writer_status', { source_id: f.alpha }) as { worktree_refreshes: Array<Record<string, any>> }).worktree_refreshes;
   expect(held).toMatchObject({ state: 'recovery_required', auto_recovery: 'none', fix: { argv: ['gbrain', 'sources', 'refresh', f.alpha, '--resume'], actor: 'agent' } });
   expect(held.fix.why).toContain('ask the user');
@@ -484,6 +487,192 @@ test('7g. #7679: a backlog of 16 orphaned syncing refreshes waiting on their mem
       await f.engine.executeRaw('DELETE FROM persistence_worktrees WHERE id=ANY($1::uuid[])', [backlog]);
     }
   }
+}), 180_000);
+
+/** Crash a refresh at `point` and restore the state the crash left (the resident consumer's owner scan may already have settled it). */
+async function orphanAt(f: RefreshFixture, point: 'drained' | 'fenced' | 'merged' | 'syncing', state: string) {
+  await expect(refreshWorktree(f.engine, f.alpha, { hooks: { boundary: at => { if (at === point) throw new Error(`simulated crash at ${at}`); } } }))
+    .rejects.toThrow('simulated crash');
+  await disposePersistenceConsumer(f.engine);
+  const [orphan] = await f.refreshRows();
+  await f.engine.executeRaw(`UPDATE persistence_worktree_refreshes SET state=$2,completed_at=NULL WHERE id=$1::uuid`, [orphan.id, state]);
+  return orphan;
+}
+const setLastCommit = (f: RefreshFixture, member: string, sha: string) => f.engine.transaction(tx => withCoordinatedWrite(tx, [member],
+  () => tx.executeRaw('UPDATE sources SET last_commit=$2 WHERE id=$1', [member, sha]), TEST_WRITE_ATTRIBUTION));
+const writerStatusRow = async (f: RefreshFixture) => (await runPersistenceAdministration(f.engine, 'writer_status', { source_id: f.alpha }) as
+  { worktree_refreshes: Array<Record<string, any>> }).worktree_refreshes[0];
+
+test('7i. #7708: the owner scan skips syncing orphans whose members never left the start commit, so 16 of them do not hide one it can complete', () => each(async f => {
+  // Value: protects=the scan's SQL filter keeps syncing rows whose members still sit at old_head (or have no last_commit) out of its LIMIT 16;
+  // fails_when=the filter is dropped, so 16 older lagging rows fill the LIMIT and a completable orphan is never scanned; why_new=7g backlogs
+  // rows the ORDER BY puts after a drain, which never competes with syncing rows; seam=backlog rows inserted with SQL (no host binding);
+  // no_claim=16 real worktrees.
+  const target = f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
+  const orphan = await orphanAt(f, 'syncing', 'syncing');
+  for (const member of [f.alpha, f.beta]) await setLastCommit(f, member, target);
+  const [{ owner_host_id: host, principal_id: principal }] = await f.engine.executeRaw<{ owner_host_id: string; principal_id: string }>(
+    `SELECT w.owner_host_id::text AS owner_host_id, r.principal_id::text AS principal_id FROM persistence_worktrees w
+     JOIN persistence_worktree_refreshes r ON r.worktree_id=w.id WHERE r.id=$1::uuid`, [orphan.id]);
+  const backlog: string[] = [];
+  try {
+    for (let i = 0; i < 16; i++) {
+      const [{ id }] = await f.engine.executeRaw<{ id: string }>('INSERT INTO persistence_worktrees(owner_host_id) VALUES($1::uuid) RETURNING id::text AS id', [host]);
+      backlog.push(id);
+      // The member's last_commit is this row's old_head: it never synced past the start commit.
+      await f.engine.executeRaw(`INSERT INTO persistence_worktree_refreshes(worktree_id,source_ids,principal_id,owner_epoch,topology_generation,state,old_head,target_head,upstream_ref,created_at)
+        VALUES($1::uuid,ARRAY[$2]::text[],$3::uuid,0,1,'syncing',$4,$5,'origin/main',now()-interval '1 hour')`, [id, f.alpha, principal, target, 'f'.repeat(40)]);
+    }
+    expect(await resumeWorktreeRefreshes(f.engine)).toBe(1);
+    expect(await f.refreshRows()).toMatchObject([{ id: orphan.id, state: 'completed', outcome: { completed_by: 'owner_recovery' } }]);
+  } finally {
+    if (backlog.length) {
+      await f.engine.executeRaw('DELETE FROM persistence_worktree_refreshes WHERE worktree_id=ANY($1::uuid[])', [backlog]);
+      await f.engine.executeRaw('DELETE FROM persistence_worktrees WHERE id=ANY($1::uuid[])', [backlog]);
+    }
+  }
+}), 180_000);
+
+test('7j. #7712: a lagging syncing orphan is checked without its refresh lock, and an unreadable lock never stops the scan', () => each(async f => {
+  // Value: protects=the owner scan reads member progress before it takes the refresh lock, so a lagging row never holds it (a refresh or
+  // liveness probe landing then would see it busy), and a lock it cannot open fails that row only; fails_when=the scan takes the lock before
+  // checking members, or lets the lock error escape the scan; why_new=7e checks the verdict, not the lock; seam=the lock file made unreadable
+  // (chmod 000); no_claim=the race window itself.
+  const first = f.push('alpha/two.md', page('Alpha two', 'Upstream first.'));
+  const target = f.push('alpha/three.md', page('Alpha three', 'Upstream second.'));
+  const orphan = await orphanAt(f, 'syncing', 'syncing');
+  await setLastCommit(f, f.alpha, target);
+  await setLastCommit(f, f.beta, first);
+  const lockFile = refreshLockPath(f.worktreeId);
+  mkdirSync(join(lockFile, '..'), { recursive: true });
+  if (!existsSync(lockFile)) writeFileSync(lockFile, '');
+  chmodSync(lockFile, 0o000);
+  const errors: string[] = [];
+  const consoleError = console.error;
+  console.error = (...args: unknown[]) => { errors.push(args.join(' ')); };
+  try {
+    expect(await resumeWorktreeRefreshes(f.engine)).toBe(0);
+    await setLastCommit(f, f.beta, target);
+    // Every member reached the target, so this scan needs the lock: it cannot open it, says so, and returns normally.
+    expect(await resumeWorktreeRefreshes(f.engine)).toBe(0);
+  } finally { console.error = consoleError; chmodSync(lockFile, 0o644); }
+  expect(errors.filter(line => line.includes(orphan.id))).toHaveLength(1);
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['syncing']);
+  expect(await resumeWorktreeRefreshes(f.engine)).toBe(1);
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['completed']);
+}), 180_000);
+
+test('7k. #7728: a refresh lock this host cannot read reports liveness unknown with a host_admin fix, and a plain refresh does not adopt the orphan', () => each(async f => {
+  // Value: protects=refreshLiveness's unreadable-lock branch: writer status says unknown (not orphaned) and names the lock file, and the plain
+  // refresh refuses refresh_in_progress instead of adopting or failing with a raw lock error; fails_when=the probe's catch is dropped, or
+  // adoption lets the lock error escape; why_new=7d reaches 'unknown' only through a holder on another host; seam=the lock file made
+  // unreadable (chmod 000); no_claim=other ways a lock read fails.
+  f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
+  const orphan = await orphanAt(f, 'fenced', 'fenced');
+  const before = JSON.stringify(await f.refreshRows());
+  const lockFile = refreshLockPath(f.worktreeId);
+  mkdirSync(join(lockFile, '..'), { recursive: true });
+  if (!existsSync(lockFile)) writeFileSync(lockFile, '');
+  chmodSync(lockFile, 0o000);
+  try {
+    const status = await writerStatusRow(f);
+    expect(status).toMatchObject({ refresh_id: orphan.id, liveness: 'unknown', orphaned: null, auto_recovery: 'unknown',
+      fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', f.alpha, '--json'], actor: 'host_admin' } });
+    expect(status.fix.why).toContain(lockFile);
+    await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_in_progress');
+  } finally { chmodSync(lockFile, 0o644); }
+  expect(JSON.stringify(await f.refreshRows())).toBe(before);
+}), 180_000);
+
+test('7l. #7730: the owner scan forgets a refresh it no longer lists', () => each(async f => {
+  // Value: protects=a long-lived owner keeps no cache entry for a refresh that settled; fails_when=the scan stops pruning ids absent from its
+  // rows; why_new=no test read the cache; seam=a test-only size read; no_claim=memory growth over a real process lifetime.
+  const first = f.push('alpha/two.md', page('Alpha two', 'Upstream first.'));
+  const target = f.push('alpha/three.md', page('Alpha three', 'Upstream second.'));
+  await orphanAt(f, 'syncing', 'syncing');
+  await setLastCommit(f, f.alpha, target);
+  await setLastCommit(f, f.beta, first);
+  expect(await resumeWorktreeRefreshes(f.engine)).toBe(0);
+  expect(_refreshScanCacheSizeForTests()).toBe(1);
+  await setLastCommit(f, f.beta, target);
+  expect(await resumeWorktreeRefreshes(f.engine)).toBe(1);
+  expect(await resumeWorktreeRefreshes(f.engine)).toBe(0);
+  expect(_refreshScanCacheSizeForTests()).toBe(0);
+}), 180_000);
+
+test('7m. #7731: a syncing orphan whose HEAD is unrelated is re-checked after a minute, not on every owner scan tick', () => each(async f => {
+  // Value: protects=the owner scan caches a syncing orphan it could not complete because of its HEAD, as it does a lagging one, so it does not
+  // retake the refresh and topology locks every tick; fails_when=only lagging members are cached; why_new=7h caches a member verdict only;
+  // seam=HEAD reset with git, the clock moved with setSystemTime; no_claim=the lock contention itself.
+  const target = f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
+  const orphan = await orphanAt(f, 'syncing', 'syncing');
+  for (const member of [f.alpha, f.beta]) await setLastCommit(f, member, target);
+  const old = git(f.root, 'rev-parse', 'HEAD~1');
+  git(f.root, 'reset', '-q', '--hard', old);
+  commitFile(f.root, 'beta/unrelated.md', page('Unrelated', 'Not the upstream commit.'));
+  expect(await resumeWorktreeRefreshes(f.engine)).toBe(0);
+  git(f.root, 'reset', '-q', '--hard', target);
+  expect(await resumeWorktreeRefreshes(f.engine)).toBe(0);
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['syncing']);
+  setSystemTime(new Date(Date.now() + 61_000));
+  try { expect(await resumeWorktreeRefreshes(f.engine)).toBe(1); } finally { setSystemTime(); }
+  expect(await f.refreshRows()).toMatchObject([{ id: orphan.id, state: 'completed' }]);
+}), 180_000);
+
+test('7n. #7731: an orphan whose checkout HEAD git cannot read says so in writer status and in one owner-scan log line, not on every tick', () => each(async f => {
+  // Value: protects=writer status does not promise that the next refresh finishes an orphan whose HEAD is unreadable (it names git status),
+  // and the owner scan logs it once instead of swallowing it on every tick; fails_when=the holder report ignores HEAD for orphans, or the scan
+  // drops the log or its rate limit; why_new=7d checks that nothing moves, not what status or the log says; seam=.git/HEAD overwritten with
+  // garbage; no_claim=the 15-minute repeat.
+  f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
+  const orphan = await orphanAt(f, 'fenced', 'fenced');
+  const headFile = join(f.root, '.git', 'HEAD');
+  const saved = readFileSync(headFile, 'utf8');
+  writeFileSync(headFile, 'not a ref\n');
+  const errors: string[] = [];
+  const consoleError = console.error;
+  console.error = (...args: unknown[]) => { errors.push(args.join(' ')); };
+  try {
+    expect(await writerStatusRow(f)).toMatchObject({ refresh_id: orphan.id, liveness: 'orphaned', auto_recovery: 'none',
+      fix: { argv: ['git', '-C', f.root, 'status'] }, next: `git -C ${f.root} status` });
+    expect(await resumeWorktreeRefreshes(f.engine)).toBe(0);
+    expect(await resumeWorktreeRefreshes(f.engine)).toBe(0);
+  } finally { console.error = consoleError; writeFileSync(headFile, saved); }
+  expect(errors.filter(line => line.includes(orphan.id))).toEqual([expect.stringContaining('cannot read the checkout HEAD')]);
+  expect(await writerStatusRow(f)).toMatchObject({ refresh_id: orphan.id, auto_recovery: 'next_refresh' });
+}), 180_000);
+
+test('7o. #7712: a plain refresh that rolls back an orphan and then refuses keeps that recovery in its refusal', () => each(async f => {
+  // Value: protects=the rollback a plain refresh made before its own refresh refused is still reported (a cron log otherwise shows only the
+  // refusal); fails_when=refreshWorktree attaches the recovery to successful results only; why_new=7b and 7f succeed after adopting;
+  // seam=an uncommitted edit of the incoming path; no_claim=other refusals (they take the same path).
+  f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
+  const orphan = await orphanAt(f, 'fenced', 'fenced');
+  writeFileSync(join(f.root, 'alpha/two.md'), page('Alpha two', 'Edited locally, not committed.'));
+  const refused = await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_dirty');
+  expect(refused.message).toContain(`finished orphaned refresh ${orphan.id} (abandoned; previous holder: pid ${process.pid}`);
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['aborted']);
+}), 180_000);
+
+test('7p. #7712: writer status for a recovery_required refresh names the step HEAD allows: --resume at the target, --abandon at the start commit', () => each(async f => {
+  // Value: protects=the fix of a recovery_required row follows the checkout HEAD: at the target --resume converges it with nothing to reset, at
+  // the start commit --abandon lifts the fence, and only another HEAD asks the user to reset; fails_when=the fix text stays unconditional;
+  // why_new=test 7 reads it at an unrelated HEAD only; seam=the row's state set with SQL after a crash at merged; no_claim=none.
+  const target = f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
+  const old = f.head();
+  const orphan = await orphanAt(f, 'merged', 'recovery_required');
+  expect(f.head()).toBe(target);
+  const atTarget = await writerStatusRow(f);
+  expect(atTarget).toMatchObject({ refresh_id: orphan.id, state: 'recovery_required', auto_recovery: 'none', fix: { argv: ['gbrain', 'sources', 'refresh', f.alpha, '--resume'] } });
+  expect(atTarget.fix.why).toContain('nothing needs resetting');
+  expect(atTarget.fix.why).not.toContain('ask the user');
+  git(f.root, 'reset', '-q', '--hard', old);
+  const atOld = await writerStatusRow(f);
+  expect(atOld).toMatchObject({ fix: { argv: ['gbrain', 'sources', 'refresh', f.alpha, '--abandon'] }, next: `gbrain sources refresh ${f.alpha} --abandon` });
+  expect((await refreshWorktree(f.engine, f.alpha, { abandon: true })).status).toBe('abandoned');
+  git(f.root, 'merge', '-q', '--ff-only', target);
+  await f.engine.executeRaw(`UPDATE persistence_worktree_refreshes SET state='recovery_required',completed_at=NULL WHERE id=$1::uuid`, [orphan.id]);
+  expect(await refreshWorktree(f.engine, f.alpha, { resume: true })).toMatchObject({ refresh_id: orphan.id, status: 'completed' });
 }), 180_000);
 
 test('8. a queued git effect drains before fenced, and nothing on the worktree is claimed while fenced', () => each(async f => {

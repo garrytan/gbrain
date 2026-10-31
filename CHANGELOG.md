@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**`gbrain sources refresh` says what is actually holding an interrupted refresh, and its owner recovery stops holding locks it doesn't need (#8123).**
+
+Writer status for a `recovery_required` refresh now reads the checkout HEAD: at the upstream commit it names `--resume`, at the start commit `--abandon`, and only another HEAD asks the user to reset. An orphan whose HEAD git cannot read names `git -C <checkout> status` instead of promising that the next refresh finishes it, and the owner scan logs it once every 15 minutes instead of swallowing it. A refresh lock file this host cannot open reads `liveness: unknown` with the lock path, and a plain refresh refuses `refresh_in_progress` instead of failing with a raw lock error. A refresh held on another host names that host in `next`. A plain refresh that rolled back an orphan and then refused keeps that recovery in its refusal message. A delegated refresh (a resident PGLite owner) prints the same structured `fix` as a direct one.
+
+### Itemized changes
+
+- `src/core/persistence/worktree-refresh.ts`: the owner scan checks member progress before it takes the refresh lock, caches a syncing orphan it could not complete because of its HEAD, fails one row (not the scan) on a lock error, and prunes its caches each scan (#7712, #7728, #7730, #7731); `refreshHolderReport` reads HEAD (#7712, #7731); `next` is host-scoped and shell-quoted (#7731).
+- `src/core/persistence/ipc.ts`: a refusal's `fix`, `why`, `reason` and `contract_version` survive the owner socket (#7707, #8130).
+- Tests: the #7679 state matrix gains the `--abandon` action for every kind (#7718-#7727, #7729), plus red tests for the owner scan's syncing filter and test 7's adoption guard (#7708) and the unreadable-lock branch (#7728).
+
 ## [0.60.530.0] - 2026-10-31
 
 **`gbrain sources refresh` no longer exits with a bare `internal_error` when another database transaction holds a row its fence needs. A fence that waits past its 5 s lock timeout now refuses as `refresh_lock_timeout`, and `why` names the open transactions holding those tables. Nothing moves, and a later run completes once the holder is gone. Any other unexpected error now prints a typed `internal_error` refusal with its stack in `why` and the refresh row it left, which the next run resumes.**
