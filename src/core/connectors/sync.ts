@@ -343,17 +343,8 @@ export async function runConnectorSync(
   const toFetch = [...plan.retries, ...plan.listed];
 
   if (opts.dryRun) {
-    return {
-      ...base,
-      status: listErrored ? 'partial' : 'dry_run',
-      listed: stubs.length,
-      unresolved: Object.keys(failed).length,
-      listComplete: !listErrored,
-      wouldFetch: toFetch.length,
-      hint: listErrored
-        ? `the listing stopped early; ${toFetch.length} conversation(s) listed so far would be fetched`
-        : `${toFetch.length} conversation(s) would be fetched`,
-    };
+    const hint = listErrored ? `the listing stopped early; ${toFetch.length} conversation(s) listed so far would be fetched` : `${toFetch.length} conversation(s) would be fetched`;
+    return { ...base, status: listErrored ? 'partial' : 'dry_run', listed: stubs.length, unresolved: Object.keys(failed).length, listComplete: !listErrored, wouldFetch: toFetch.length, hint };
   }
 
   // FETCH details + spool + ingest, in batches (memory-bounded; banks progress).

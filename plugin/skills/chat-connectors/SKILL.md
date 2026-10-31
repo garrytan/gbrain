@@ -177,7 +177,8 @@ This skill guarantees:
 - Sync is incremental: a durable config-scalar watermark plus a trailing-window
   re-list; the watermark advances ONLY on a fully clean run (no fetch errors, no
   `--limit` cap, clean ingest), so a partial run never creates a silent gap.
-- `--dry-run` fetches nothing and writes nothing; `--limit N` caps a run and does
+- `--dry-run` fetches nothing and writes nothing; a listing that stopped early
+  reports `partial` with `listComplete: false`. `--limit N` caps a run and does
   not advance the watermark.
 - Scheduled auto-sync is opt-in per provider (`connectors.<provider>.auto_sync`),
   daily by default, credential-gated and auth-error-gated; it fires for nobody

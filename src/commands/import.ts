@@ -42,13 +42,12 @@ import { realpathOrResolve } from '../core/path-confine.ts';
 import { slog } from '../core/console-prefix.ts';
 import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
 import { importAnalyzeEveryPages, maybeRefreshPlannerStats, PLANNER_STATS_REPAIR_COMMAND } from '../core/planner-stats.ts';
-import { importManagedFile, nextImportBatch, settleManagedImportBatch } from '../core/persistence/import-mutations.ts';
+import { importManagedFile, managedImportWriteThroughRefusal, nextImportBatch, settleManagedImportBatch } from '../core/persistence/import-mutations.ts';
 import { acceptedPendingReceipt } from '../core/persistence/accepted-pending.ts';
 import { estimateCostFromChars, lookupEmbeddingPrice } from '../core/embedding-pricing.ts';
 import { getEmbeddingModel } from '../core/ai/gateway.ts';
 import { managedRootMarkerFor } from '../core/persistence/root-registry.ts';
 import { readManagedMode } from '../core/persistence/ownership.ts';
-import { writeThroughConfigured } from '../core/persistence/switches.ts';
 import { readPageBodyPolicy } from '../core/page-body/limits.ts';
 
 /** Return a refusal when an import target lies outside every admitted root. */
@@ -167,20 +166,6 @@ function symlinkedRootAbort(dirArg: string, dir: string): ImportAbortError {
   console.error(`Managed import refuses a symlinked input root: ${dirArg} resolves to ${dir}.`);
   console.error(`Fix: gbrain import ${dir}`);
   return new ImportAbortError('managed import refuses a symlinked input root');
-}
-
-/**
- * #7085: with `sync.write_through` off a page write records no worktree, and a managed import publishes only through
- * the source's canonical owner, so every file would be admitted and then refused. Refuse once, before any admission.
- */
-function writeThroughOffAbort(sourceId: string): ImportAbortError {
-  const error = opError('owner_unavailable', 'Managed import publishes through the canonical owner, and sync.write_through is off on this brain.',
-    `Nothing was imported and no write was admitted. Copy the files into source ${sourceId}'s checkout, commit them, then run gbrain sync --source ${sourceId}.`,
-    { detail: 'disabled_by_config', retryable: false, fix: { argv: ['gbrain', 'sync', '--source', sourceId], consent: [], actor: 'agent',
-      why: `Imports the files committed in source ${sourceId}'s checkout; run it after committing them.`, requires_exclusive: false } });
-  console.error(`Error [${error.code}]: ${error.message}`);
-  console.error(`Fix: ${error.suggestion}`);
-  return new ImportAbortError('sync.write_through is off, so a managed import cannot publish', 1, undefined, error);
 }
 
 /** A refused source filesystem lock admission: print its code, message and fix, and keep it as the cause. */
@@ -497,11 +482,7 @@ export async function runImport(
   // v0.22.13 (PR #490 Q2): shared parseWorkers helper rejects bad input
   // (--workers 0, -3, "foo") with a loud error instead of silently falling
   // through to 1. Mirrors sync.ts's flag handling.
-  const {
-    clampWorkersForConnectionBudget,
-    parseWorkers,
-    resolveMaxConnections,
-  } = await import('../core/sync-concurrency.ts');
+  const { clampWorkersForConnectionBudget, parseWorkers, resolveMaxConnections } = await import('../core/sync-concurrency.ts');
   let workerCount: number;
   try {
     workerCount = parseWorkers(workersArg ?? undefined) ?? 1;
@@ -529,15 +510,16 @@ export async function runImport(
   try {
     dir = resolveImportTargetDir(dirArg);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error(`Import target is not readable: ${dirArg} (${msg})`);
+    console.error(`Import target is not readable: ${dirArg} (${e instanceof Error ? e.message : String(e)})`);
     throw new ImportAbortError(`import target not readable: ${dirArg}`);
   }
 
   const managedImport = await readManagedMode(engine);
   if (managedImport && dir !== resolve(dirArg)) throw symlinkedRootAbort(dirArg, dir);
-  if (managedImport && !opts.managedBookmark && !currentCompanyBrainSync(sourceId) && !writeThroughConfigured(await engine.getConfig('sync.write_through'))) {
-    throw writeThroughOffAbort(sourceId ?? 'default');
+  const preAdmission = managedImport && !opts.managedBookmark && !currentCompanyBrainSync(sourceId) ? await managedImportWriteThroughRefusal(engine, sourceId ?? 'default') : null;
+  if (preAdmission) {
+    console.error(`Error [${preAdmission.code}]: ${preAdmission.message}\nFix: ${preAdmission.suggestion}`);
+    throw new ImportAbortError(preAdmission.message, 1, undefined, preAdmission);
   }
   const singleFile = managedImport && lstatSync(dir).isFile();
   const importRoot = singleFile ? dirname(dir) : dir;
