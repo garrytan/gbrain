@@ -126,7 +126,7 @@ export const stuckRecoveryRepair: RepairHandler = {
     return { applied: result.outcome === 'resolved' && !result.replayed, outcome: result.replayed ? 'replayed' : result.outcome,
       ...(result.blocked_reason ? { reason: result.blocked_reason } : {}),
       detail: { request_id: recovery.request_id, ...(recovery.effect_id ? { effect_id: recovery.effect_id } : {}), keep, request_state: result.request_state,
-        finished_by: result.finished_by, backup_dir: result.backup_dir, next: result.next } };
+        finished_by: result.finished_by, backup_dir: result.backup_dir, next: result.next, ...(result.fix ? { fix: result.fix } : {}) } };
   },
   render(details) {
     const recoveries = (details.recoveries ?? []) as StuckRecovery[];

@@ -69,6 +69,19 @@ export function checkOwner(binding: WorktreeBinding | null, incarnation: string,
   return { reason: null, binding: binding as ActiveOwnerBinding };
 }
 
+/**
+ * #7956: the binding a managed sync of the source runs on from host `hostId`, or null: the source exists and is not
+ * archived, and its binding belongs to that incarnation, is owned by the host, is active and has a local path.
+ * `resolveManagedSyncContext` (sync-discovery.ts) refuses `owner_unavailable` past the same conditions; the conversion
+ * checks its root only on a binding this returns.
+ */
+export function syncOwnerBinding(source: { archived: boolean; incarnation: string } | undefined, binding: WorktreeBinding | null,
+  hostId: string): (WorktreeBinding & { local_path: string }) | null {
+  if (!source || source.archived || !binding || binding.source_incarnation !== source.incarnation || binding.owner_host_id !== hostId
+    || binding.state !== 'active' || !binding.local_path) return null;
+  return binding as WorktreeBinding & { local_path: string };
+}
+
 /** The reason alone; null when the binding is usable. */
 export function ownerUnavailableReason(binding: WorktreeBinding | null, incarnation: string, hostId: string): OwnerUnavailableReason | null {
   return checkOwner(binding, incarnation, hostId).reason;

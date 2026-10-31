@@ -88,6 +88,7 @@ test/get-chunks-paging.test.ts
 test/git-canonical-conversion-g8a.test.ts
 test/git-canonical-conversion-live-writer.test.ts
 test/git-canonical-conversion-no-checkout-7885.test.ts
+test/git-canonical-conversion-owner-root-7956.test.ts
 test/git-canonical-conversion-progress.test.ts
 test/git-canonical-conversion-strict-pass-7866.test.ts
 test/git-canonical-declared-g7a.test.ts

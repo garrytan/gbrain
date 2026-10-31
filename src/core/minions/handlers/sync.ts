@@ -152,6 +152,14 @@ export function makeSyncHandler(engine: BrainEngine): MinionHandler {
         console.error(`[sync] skipped: sync does not apply to ${sourceId ?? 'default'} (gbrain-owned content directory, not a Git checkout).`);
         return { skipped: true, reason: 'sync_not_applicable', source_id: sourceId ?? 'default' };
       }
+      // #7646: a relative stored anchor refuses the same way on every retry, so the job completes as a skip carrying the
+      // ask-the-user fix instead of using up its attempts. The result is readable remotely (get_job): no stored path in it.
+      if ((err as { code?: unknown } | null)?.code === 'sync_anchor_relative') {
+        const refusal = err as { suggestion?: string; fix?: { argv?: string[]; actor?: string; ask_user?: boolean; inputs?: unknown } };
+        console.error(`[sync] skipped: ${refusal.suggestion ?? 'the stored sync path is not absolute on this host'}`);
+        return { skipped: true, reason: 'sync_anchor_relative', source_id: sourceId ?? 'default', suggestion: refusal.suggestion,
+          fix: { argv: refusal.fix?.argv, actor: refusal.fix?.actor, ask_user: refusal.fix?.ask_user, inputs: refusal.fix?.inputs } };
+      }
       throw err;
     }
 

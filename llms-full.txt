@@ -10778,13 +10778,20 @@ A path that is absolute only on another operating system (a Windows drive path
 such as `C:\brain-example`, set by another host sharing the brain, read on Linux
 or macOS) is refused the same way, as not an absolute path on this host. Use
 `set-path` with this host's directory (or `gbrain config set sync.repo_path` for
-the legacy key); `--clear` refuses such a path. An explicit absolute `--repo`
+the legacy key); `--clear` refuses such a path. If the other host owns the
+source, leave the path and sync it there. Doctor warns about such a path on the
+`default` source and leaves another source's to the host that set it.
+On Windows, a root-relative path (`\brain` or `/brain`) names a folder on
+whatever drive gbrain runs from, so it counts as relative. An explicit absolute `--repo`
 passes the refusal, but it never advances the sync position of a source whose
-stored path is relative.
+stored path is relative, or of a `default` source with no path behind a relative
+`sync.repo_path`. A queued `sync` job for such a source completes as a skip
+(`reason: sync_anchor_relative`) carrying the same ask-the-user fix, and
+`gbrain sync --all --json` gives the source's entry its `code` and `fix`.
 
 Until the path is absolute, the main readers do not treat the folder gbrain
 runs from as the source either: page and fact writes skip the file and stay in
-the database (`repo_not_found`, `no_repo_configured`), a captured file keeps
+the database (`repo_not_found`, `no_repo_configured`, `relative_root`), a captured file keeps
 no origin path, matching a folder to its source ignores the path, fence repair
 edits stored pages, managed activation refuses it (`source_changed`, detail
 `source_path_missing`), the dream, autopilot, per-phase and global

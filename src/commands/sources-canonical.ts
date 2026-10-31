@@ -60,7 +60,8 @@ export function describeGitPreview(p: GitConversionPreview): string {
 }
 
 function describeResult(r: GitConversionResult): string {
-  const lines = [`Source ${r.source_id} ${r.status === 'converted' ? 'is git-canonical' : 'is git-canonical, with work left'}: ${r.committed.pages} page(s) committed in ${r.committed.groups} door commit(s), ${r.withheld.pages} private page(s) withheld (${r.withheld.commits.length} removal commit(s)), ${r.holds_cleared} hold(s) cleared, ${r.parked.retried} parked effect(s) retried and ${r.parked.reclassified} reclassified.`];
+  const state = r.status === 'converted' ? 'is git-canonical' : r.after.strict ? 'is git-canonical, with work left' : 'is mixed again (canonical: git was removed while the conversion ran)';
+  const lines = [`Source ${r.source_id} ${state}: ${r.committed.pages} page(s) committed in ${r.committed.groups} door commit(s), ${r.withheld.pages} private page(s) withheld (${r.withheld.commits.length} removal commit(s)), ${r.holds_cleared} hold(s) cleared, ${r.parked.retried} parked effect(s) retried and ${r.parked.reclassified} reclassified.`];
   if (r.push.state === 'pending') lines.push(`Push pending (${r.push.code}): ${r.push.notice}`);
   if (r.status === 'incomplete') lines.push(describeGitPreview(r.after));
   return lines.join('\n');
@@ -141,9 +142,13 @@ export async function runSourcesCanonical(engine: BrainEngine, args: string[]): 
       onProgress => applyGitConversion(engine, parsed.sourceId, parsed.expect!, { noEmbed: parsed.noEmbed, noExtract: parsed.noExtract, onProgress }));
     if (result.status === 'incomplete') {
       const closing = result.closing_passes ? ` and ${result.closing_passes} closing pass(es), with Git still ahead at ${result.after.git_wins.count} path(s)` : '';
-      const error = opError('git_conversion_incomplete', `Source ${parsed.sourceId} is git-canonical, and ${result.after.remaining} item(s) were still open after its strict passes${closing}.`,
-        `Writes landed during the conversion. Git wins on the source now; preview again with gbrain sources canonical ${parsed.sourceId} --to git --dry-run and apply the new hash.`,
-        { docs: DOCS, detail: 'work_left', fix: conversionIncompleteFix(parsed.sourceId) });
+      const error = result.after.strict
+        ? opError('git_conversion_incomplete', `Source ${parsed.sourceId} is git-canonical, and ${result.after.remaining} item(s) were still open after its strict passes${closing}.`,
+          `Writes landed during the conversion. Git wins on the source now; preview again with gbrain sources canonical ${parsed.sourceId} --to git --dry-run and apply the new hash.`,
+          { docs: DOCS, detail: 'work_left', fix: conversionIncompleteFix(parsed.sourceId) })
+        : opError('git_conversion_incomplete', `Source ${parsed.sourceId} is mixed: its canonical: git flag was removed (a --to mixed apply) while the conversion ran, so it did not convert.`,
+          `Nothing is undone: the door commits stay in Git and the source syncs as a mixed source. If it should be git-canonical, preview again with gbrain sources canonical ${parsed.sourceId} --to git --dry-run and apply the new hash.`,
+          { docs: DOCS, detail: 'flag_removed', fix: conversionIncompleteFix(parsed.sourceId) });
       print({ status: 'incomplete', result, ...toAgentError(error, { transport: 'cli', command: 'sources canonical', render: cliRenderContext() }) }, describeResult(result));
       setCliExitVerdict(1);
       return;

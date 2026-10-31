@@ -1,4 +1,4 @@
-import { posix, win32 } from 'node:path';
+import { isHostAbsolutePath, isForeignAbsolutePath } from '../path-confine.ts';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { isConnectorSourceKind } from './connector-identity.ts';
@@ -24,7 +24,7 @@ export async function clearConnectorLocalPath(engine: BrainEngine, sourceId: str
       "SELECT local_path, config->>'kind' AS kind, incarnation FROM sources WHERE id=$1 FOR UPDATE", [sourceId]);
     if (!source) throw new OperationError('not_found', `Source "${sourceId}" not found.`, "Run 'gbrain sources list' to see registered sources.");
     const connector = isConnectorSourceKind(source.kind);
-    if (!connector && source.local_path !== null && (posix.isAbsolute(source.local_path) || win32.isAbsolute(source.local_path))) {
+    if (!connector && source.local_path !== null && (isHostAbsolutePath(source.local_path) || isForeignAbsolutePath(source.local_path))) {
       throw new OperationError('invalid_params', `--clear applies only to connector sources (google, github) and to a relative local_path; "${sourceId}" is a filesystem source whose path is its canonical checkout.`,
         `Point it at its checkout with gbrain sources set-path ${sourceId} <path>, or remove it with gbrain sources remove ${sourceId}.`);
     }
