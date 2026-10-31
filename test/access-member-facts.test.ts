@@ -165,7 +165,8 @@ for (const kind of testBackends()) {
       const operator = 'canaryoperatorprivate harbor ledger budget';
       const orphan = 'canaryorphanmember harbor ledger budget';
       await engine.insertFact({ fact: operator, kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'private' }, { source_id: SRC });
-      await engine.insertFact({ fact: orphan, kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'private', source_markdown_slug: 'memory/members/carol-example' }, { source_id: SRC });
+      await engine.insertFact({ fact: orphan, kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'private' }, { source_id: SRC });
+      await engine.executeRaw('UPDATE facts SET source_markdown_slug = $1 WHERE fact = $2', ['memory/members/carol-example', orphan]);
       for (const hatch of [undefined, '1']) {
         await withEnv({ GBRAIN_REMOTE_PRIVATE_PAGES: hatch }, async () => {
           __resetPrivateVisibilityCacheForTests();
@@ -288,7 +289,8 @@ for (const kind of testBackends()) {
       const embedding = new Float32Array(DIMS);
       embedding[0] = 1;
       const fact = 'Acme example renews its harbor ledger contract for two more years';
-      await engine.insertFact({ fact, kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'private', embedding, embedding_model: model, source_markdown_slug: ACME }, { source_id: SRC });
+      await engine.insertFact({ fact, kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'private', embedding, embedding_model: model }, { source_id: SRC });
+      await engine.executeRaw('UPDATE facts SET source_markdown_slug = $1 WHERE fact = $2', [ACME, fact]);
       const intent = { fact: fact + ' again', kind: 'fact', entity_slug: ACME, visibility: 'private', page_slug: memberPageSlug('alice-example') } as SingleFactIntent;
       expect((await decideSingleFact(engine, SRC, intent, embedding, model)).status).toBe('inserted');
       expect((await decideSingleFact(engine, SRC, { ...intent, page_slug: undefined }, embedding, model)).status).not.toBe('inserted');
