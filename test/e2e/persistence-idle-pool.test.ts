@@ -1,7 +1,7 @@
 /**
  * #5370: an idle resident consumer must let its Postgres pool drain. Idle
  * probes share one reserved connection, every other pooled connection closes
- * through the engine's 20 s idle_timeout, and no LISTEN is involved, so the
+ * through the engine's 10 s idle_timeout, and no LISTEN is involved, so the
  * transaction-mode PgBouncer path behaves the same as a direct server.
  */
 import { describe, expect, test } from 'bun:test';
@@ -23,7 +23,7 @@ const direct = process.env.DATABASE_URL;
 const pooled = process.env.GBRAIN_PGBOUNCER_URL;
 const pooledAdmin = process.env.GBRAIN_PGBOUNCER_DIRECT_URL;
 if (process.env.GBRAIN_CI_REQUIRE_PGBOUNCER === '1' && !(pooled && pooledAdmin)) throw new Error('Idle pool drain requires the configured CI PgBouncer fixture.');
-const IDLE_DRAIN_MS = 28_000;
+const IDLE_DRAIN_MS = 18_000;
 
 async function scratchDatabase(adminUrl: string, clientUrl: string) {
   assertSafeE2eDatabaseUrl(adminUrl);
@@ -95,7 +95,7 @@ describe.skipIf(!direct)('idle persistence consumer on PostgreSQL', () => {
           "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=$1 AND backend_type='client backend'", [db.name]))[0]!.n);
         expect(await backends()).toBeGreaterThanOrEqual(3);
         const started = performance.now();
-        // The pool drains idle_timeout (20 s) after its last pooled statement. The consumer's start-up fan-out and its
+        // The pool drains idle_timeout (10 s) after its last pooled statement. The consumer's start-up fan-out and its
         // background workers are that last statement on a quiet box; a loaded runner can stretch them past the fixed
         // 28 s mark this test used to sleep for, so the drain is awaited (bounded) and then must hold.
         await waitFor(async () => (await backends()) === 1, { timeoutMs: IDLE_DRAIN_MS + 20_000, intervalMs: 500 }).catch(() => undefined);
@@ -128,12 +128,12 @@ describe.skipIf(!direct)('idle persistence consumer on PostgreSQL', () => {
         await engine.executeRaw('SELECT 1');
         const late = performance.now();
         await Bun.sleep(IDLE_DRAIN_MS - 10_000);
-        // 28 s from start, 18 s after the late statement: the pooled backend it used is still inside idle_timeout.
+        // 18 s from start, 8 s after the late statement: the pooled backend it used is still inside idle_timeout.
         expect(await backends()).toBeGreaterThanOrEqual(2);
         await waitFor(async () => (await backends()) === 1, { timeoutMs: 30_000, intervalMs: 500 });
         const drainedMs = performance.now() - late;
-        expect(drainedMs).toBeGreaterThanOrEqual(19_000);
-        expect(drainedMs).toBeLessThan(30_000);
+        expect(drainedMs).toBeGreaterThanOrEqual(9_000);
+        expect(drainedMs).toBeLessThan(20_000);
       });
     } finally { await db.drop(); }
   }, 120_000);
