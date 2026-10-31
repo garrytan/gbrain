@@ -351,7 +351,10 @@ async function readLinkEdges(
   do {
     const { streams, rows } = await read({ ...base, afterId, limit: listing.limit + 1, ...(filtering ? { relationship: { policy: temporal, keep: 'match' as const } } : {}) });
     const page = cutLinkPage(streams, rows, listing.limit);
-    if (filtering) hidden += (await read({ ...base, afterId, throughId: page.nextId, relationship: { policy: temporal, keep: 'hidden' } })).rows.length;
+    if (filtering) {
+      const counted = await read({ ...(linkType ? { linkType } : {}), ...(fromType ? { fromType } : {}), afterId, throughId: page.nextId, relationship: { policy: temporal, keep: 'hidden' }, count: true });
+      for (const stream of counted.streams) hidden += Number((stream[0] as Link & { link_total?: number } | undefined)?.link_total ?? 0);
+    }
     const shaped = filterTemporalLinks(page.rows, temporal);
     kept.push(...shaped.kept);
     hidden += shaped.hidden;
