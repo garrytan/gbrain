@@ -18,7 +18,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { extractManagedStaleLinks } from '../src/core/persistence/links-maintenance.ts';
+import { extractManagedStaleLinks, formatManagedStaleExtraction } from '../src/core/persistence/links-maintenance.ts';
 import { checkLinksExtractionLag } from '../src/commands/doctor.ts';
 import { extractStaleFromDB } from '../src/commands/extract.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
@@ -140,6 +140,25 @@ test('#5761: creating the missing attendee lets the next extraction publish and 
     expect(await attended(engine, sourceId)).toBe(1);
     expect(await marker(engine, sourceId)).toEqual({ blocked: null, at: false, extracted: true });
     expect(await lag(engine, sourceId)).toMatchObject({ stale: 0, blocked: 0 });
+  });
+});
+
+test('#6820: managed extract --stale reports an attendance-blocked page as an attendance skip, not as an edited page', async () => {
+  await managedFixture(async (engine, sourceId) => {
+    const opts = { includeFrontmatter: true, dryRun: false, jsonMode: false, quiet: true, sourceIdFilter: sourceId, catchUp: true };
+    for (const run of [1, 2]) {
+      const result = await extractManagedStaleLinks(engine, { sourceId });
+      const json = JSON.parse(formatManagedStaleExtraction(result, false, true));
+      expect(json.skipped_changed).toBeUndefined();
+      expect(json.skipped_attendance_incomplete).toBe(1);
+      expect(result).toMatchObject({ pages: run === 1 ? 1 : 0, skipped: 1, attendance_skipped: 1 });
+      const text = formatManagedStaleExtraction(result, false, false);
+      expect(text).toContain('Skipped 1 page(s) with unresolved attendance');
+      expect(text).not.toContain('edited during extraction');
+    }
+    const swept = await extractStaleFromDB(engine, opts);
+    expect(swept.skippedAttendanceIncomplete).toBe(1);
+    expect(swept.skippedChanged).toBeUndefined();
   });
 });
 
