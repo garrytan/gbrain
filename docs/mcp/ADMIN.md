@@ -395,8 +395,7 @@ Fix it with today's commands:
   recall, list_pages or any read without it reads the token's full grant.
   The fix is a member-bound or rescoped token (`gbrain auth rescope …`).
 
-Per-member keys (`gbrain access member add <id>`, then
-`gbrain auth create <name> --member <id>`) arrive with gbrain#7812.
+Per-member keys arrive with gbrain#7812.
 
 ## Dashboard API keys
 
