@@ -1168,8 +1168,7 @@ async function dispatchResolvedCall(
     const rerankDegradedCalls = recordRerankDegradation(responseMeta, opts);
     notices.push(...recallInteropNotices(name, result, responseMeta, safeParams,
       { config: ctx.config, transport: dispatchRenderContext(opts).transport, binding: ctx.explicitReadBinding, rerankDegradedCalls }));
-    notices.push(...accessPolicyNotices(name, ctx));
-    notices.push(...await hiddenContentNotices(engine, name, result, ctx, opts));
+    notices.push(...accessPolicyNotices(name, ctx), ...await hiddenContentNotices(engine, name, result, ctx, opts));
     // Monthly backup-coverage: one AGGREGATE notice per process (counts only —
     // never a local path or source id). The refresher runs on the stdio
     // transport ONLY — the WP1/D7 locality axis localOnly ops use; 'http' or
