@@ -4,8 +4,9 @@
  *
  * - memory_recall: plain-text facts, one per line (`- <fact> (<date>; <kind>)`), never page bodies. The caller's own
  *   facts from the last 24 hours on its member page come first, then the facts it may read ranked by the query
- *   (keyword-only unless an embedding provider is configured), deduplicated by fact id, cut at a line boundary with a
- *   final `… N more` line so the text never exceeds max_chars. Fence and heading markers are stripped from fact text.
+ *   (keyword-only unless an embedding provider is configured), deduplicated by fact id, as many whole lines as fit in
+ *   max_chars and no marker line (QM reads every line as a fact; `truncated` says some were left out). Fence and
+ *   heading markers are stripped from fact text.
  * - memory_write: 1-20 facts saved through remember's persistence path (the same writer door, git-first where a repo
  *   exists) onto the attested member's page, readable by that member alone, with provenance `qm:<actor id>; <caller's>`.
  *   Each fact's request id derives from uuidv5(member, idempotency_key), so a key never crosses members and a replay
@@ -60,20 +61,17 @@ export function plainFactText(text: string): string {
     .trim();
 }
 
-/** The lines that fit in maxChars: whole lines, then `… N more` when any were left out; never longer than maxChars. */
+/** The whole lines that fit in maxChars, in order, with no marker line: the first line that would cross the cap ends the list. */
 export function boundFactLines(lines: readonly string[], maxChars: number): { kept: number; text: string } {
-  const full = lines.join('\n');
-  if (full.length <= maxChars) return { kept: lines.length, text: full };
   let kept = 0;
   let used = 0;
   while (kept < lines.length) {
     const next = used + (kept ? 1 : 0) + lines[kept]!.length;
-    if (next + 1 + `… ${lines.length - kept - 1} more`.length > maxChars) break;
+    if (next > maxChars) break;
     used = next;
     kept++;
   }
-  const tail = `… ${lines.length - kept} more`;
-  return { kept, text: kept ? `${lines.slice(0, kept).join('\n')}\n${tail}` : tail };
+  return { kept, text: lines.slice(0, kept).join('\n') };
 }
 
 /** YYYY-MM-DD of a stored time, read from its own fields: a database text value keeps its date as written (a non-ISO

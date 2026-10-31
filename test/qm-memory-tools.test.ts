@@ -6,8 +6,8 @@
  *    with request ids from uuidv5(member, idempotency_key): a replay returns the original receipt, the same key from
  *    two members is two writes, and a write still publishing answers pending with a pollable request_id.
  *    memory_recall answers the person's own recent facts first, then the facts they may read ranked by the query,
- *    one plain line per fact (fence and heading markers stripped, never page bodies), cut at a line boundary with a
- *    final "… N more" line and never longer than max_chars (200-12000, default 6000). Success codes ride
+ *    one plain line per fact (fence and heading markers stripped, never page bodies), as many whole lines as fit and
+ *    no marker line (QM reads every line as a fact), never longer than max_chars (200-12000, default 6000). Success codes ride
  *    structuredContent only; an unlinked actor gets an empty success with code actor_unlinked.
  * 2. Fails when: a member write lands on a shared page or as a world row, a key replays across members, a write runs
  *    without an attested person, recall leaks another member's fact or a page body, own recent facts do not lead,
@@ -62,24 +62,21 @@ const keyedEmbeddings = (onCall?: () => void) => {
 describe('memory_recall text bounds (pure)', () => {
   const lines = Array.from({ length: 40 }, (_, i) => '- fact number ' + i + ' about the harbor ledger (2026-10-30; fact)');
 
-  test('whole lines, then one "… N more" line, never past the cap, at every cap from the minimum up', () => {
+  test('only whole fact lines, no marker line, never past the cap, at every cap from the minimum up', () => {
     for (let max = MEMORY_RECALL_MAX_CHARS.min; max < lines.join('\n').length; max += 7) {
       const { kept, text } = boundFactLines(lines, max);
       expect(text.length).toBeLessThanOrEqual(max);
-      const out = text.split('\n');
-      expect(out.slice(0, kept)).toEqual(lines.slice(0, kept));
+      expect(kept).toBeGreaterThan(0);
       expect(kept).toBeLessThan(lines.length);
-      expect(out).toHaveLength(kept + 1);
-      expect(out[kept]).toBe('… ' + (lines.length - kept) + ' more');
-      const oneMore = lines.slice(0, kept + 1).join('\n') + '\n… ' + (lines.length - kept - 1) + ' more';
-      expect(oneMore.length).toBeGreaterThan(max);
+      expect(text.split('\n')).toEqual(lines.slice(0, kept));
+      expect(lines.slice(0, kept + 1).join('\n').length).toBeGreaterThan(max);
     }
   });
 
   test('a list that fits is returned whole with no tail; an empty list is empty text', () => {
     expect(boundFactLines(lines.slice(0, 3), 6000)).toEqual({ kept: 3, text: lines.slice(0, 3).join('\n') });
     expect(boundFactLines([], 200)).toEqual({ kept: 0, text: '' });
-    expect(boundFactLines(['x'.repeat(500)], 200)).toEqual({ kept: 0, text: '… 1 more' });
+    expect(boundFactLines(['x'.repeat(500)], 200)).toEqual({ kept: 0, text: '' });
   });
 
   test('fence, heading and rule markers are stripped and the fact is one line', () => {
@@ -361,11 +358,11 @@ for (const kind of testBackends()) {
         expect(out.isError).toBe(false);
         expect(out.text.length).toBeLessThanOrEqual(max);
         expect(out.structured!.truncated).toBe(true);
-        const lines = out.text.split('\n');
+        const lines = out.text ? out.text.split('\n') : [];
         const kept = out.structured!.facts.length;
-        expect(lines).toHaveLength(kept + 1);
-        expect(lines[kept]).toMatch(/^… \d+ more$/);
-        for (const line of lines.slice(0, kept)) expect(line).toMatch(/^- Carol harbor .+canarycarol \(\d{4}-\d{2}-\d{2}; fact\)$/);
+        if (max > MEMORY_RECALL_MAX_CHARS.min) expect(kept).toBeGreaterThan(0);
+        expect(lines).toHaveLength(kept);
+        for (const line of lines) expect(line).toMatch(/^- Carol harbor .+canarycarol \(\d{4}-\d{2}-\d{2}; fact\)$/);
       }
       for (const max_chars of [199, 12_001, 500.5, '600']) {
         const out = await recall(carol, 'harbor ledger', { max_chars });

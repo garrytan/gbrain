@@ -135,14 +135,13 @@
     "arguments_checked": "query and max_chars are checked before any read, also for an unlinked person (invalid_params)",
     "content": {
       "line": "- <fact> (<YYYY-MM-DD>; <kind>)",
-      "truncated_tail": "… <N> more",
       "never": [
         "page bodies",
         "fence markers",
         "heading markers",
         "line breaks or control characters inside a fact"
       ],
-      "bounded_by": "max_chars, cut at a line boundary"
+      "bounded_by": "max_chars: as many whole lines as fit; facts left out set structuredContent.truncated, with no marker line, because every line is one fact"
     },
     "order": [
       "own facts from the last 24 hours, newest first",
