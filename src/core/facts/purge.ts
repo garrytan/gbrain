@@ -166,7 +166,7 @@ export async function stagingsHoldingClaim(engine: BrainEngine, sourceId: string
 export async function planFactPurge(engine: BrainEngine, target: PurgeTarget, allSubjects: boolean): Promise<PurgePlan> {
   const subject = allSubjects ? '*' : target.entity_slug ?? '*';
   const facts = await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE source_id=$1 AND visibility=$2
-    AND gbrain_fact_fingerprint(fact)=$3 AND ($4='*' OR entity_slug=$4) ORDER BY id`, [target.source_id, target.visibility, target.fact_hash, subject]);
+    AND gbrain_fact_fingerprint(fact)=$3 AND ($4='*' OR entity_slug=$4) AND NOT ${outcomeMarkerSql('facts')} ORDER BY id`, [target.source_id, target.visibility, target.fact_hash, subject]);
   const factIds = facts.map(f => Number(f.id));
   const takes = (await engine.executeRaw<{ id: number; page_id: number }>(`SELECT DISTINCT k.id,k.page_id FROM takes k JOIN pages p ON p.id=k.page_id
     WHERE p.source_id=$1 AND (k.id IN (SELECT consolidated_into FROM facts WHERE id=ANY($2::bigint[]) AND consolidated_into IS NOT NULL)

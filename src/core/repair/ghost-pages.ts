@@ -47,6 +47,7 @@ import { authorizeWrite } from '../persistence/authority.ts';
 import { getWorktreeBinding, managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { preparePageMutation } from '../persistence/page-prepare.ts';
+import { nativeFileTarget } from '../persistence/native-file-target.ts';
 import { clearDeletionHold, readSyncImportProvenance } from '../persistence/sync-holds.ts';
 import { readRevisionAttestations } from '../persistence/sync-pass.ts';
 import { readDeletionProvenance } from '../persistence/sync-origin-evidence.ts';
@@ -304,9 +305,10 @@ export async function retireGhost(ctx: OperationContext, ghost: GhostPage, owner
  * Preparer for `managed_maintenance_retire_ghost_page`: re-runs the classifier under the approved owner, prepares a
  * `delete_page` with `allowMissingFile`, and refuses unless the prepared file target is the approved path with no
  * bytes (a file restored in between refuses here, or at filesystem publication when it appears later). #7736: a page
- * whose approved path is a recorded non-Markdown file is prepared at its slug path, which must hold no bytes either;
- * the classifier re-checks the recorded file here; one restored after preparation is not seen at publication, and
- * the soft delete stays undoable with `gbrain restore <slug> --force` until the purge.
+ * whose approved path is a recorded non-Markdown file is prepared at its slug path, which must hold no bytes either.
+ * #7967: its file target is then moved to the recorded file, still expecting no bytes, so filesystem publication refuses
+ * a recorded file restored after preparation and the door commits the recorded file's removal (on a git-canonical
+ * source HEAD drops it with the page), never a removal of `<slug>.md`.
  */
 export async function prepareGhostPageRetirement(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
   const ghost = row.intent!.ghost as GhostPage | undefined;
@@ -332,7 +334,8 @@ export async function prepareGhostPageRetirement(engine: BrainEngine, row: Write
   const recordedFile = !/\.mdx?$/i.test(ghost.path) && target === `${ghost.slug}.md`;
   if (!page.file || (target !== ghost.path && !recordedFile)) throw refuse(changed('its canonical file target moved'));
   if (page.file.expectedBeforeHash !== null) throw refuse(restored(ghost));
-  return { ...page, validate: async tx => { await page.validate?.(tx); await authorizeWrite(tx, row.authority, 'delete_page', row.slug); },
+  const file = recordedFile ? { ...page.file, path: nativeFileTarget(page.file.root, join(page.file.root, ghost.path)) } : page.file;
+  return { ...page, file, validate: async tx => { await page.validate?.(tx); await authorizeWrite(tx, row.authority, 'delete_page', row.slug); },
     // GBRA-133: the soft delete is the decision a held deletion of this file waited for, so its hold clears with it.
     apply: async (tx, preimage) => {
       const outcome = await page.apply(tx, preimage);

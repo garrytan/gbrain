@@ -644,7 +644,7 @@ export function commitWriteThroughFile(
   repoPath: string,
   absPath: string,
   slug: string,
-  action: 'write-through' | 'delete write-through' = 'write-through',
+  action: 'write-through' | 'delete write-through' | 'restore write-through' = 'write-through',
 ): boolean {
   try {
     const rel = relative(repoPath, absPath);

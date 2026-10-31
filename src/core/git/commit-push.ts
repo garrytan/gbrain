@@ -524,7 +524,7 @@ function dirtyPaths(root: string, paths: string[]): Set<string> {
 }
 
 /** Drop ledger entries whose file no longer differs from HEAD (the caller holds the commit lock). New lines appended meanwhile go to a fresh ledger file. */
-function settlePending(root: string): void {
+export function settlePending(root: string): void {
   try {
     const file = absGitPath(root, PENDING_NAME);
     const settle = `${file}.settle`;

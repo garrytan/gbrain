@@ -28,6 +28,8 @@ const MARKERS: Array<[string, string]> = [
   ['a marker pair joined by a colon', 'login <REDACTED:user-pattern>:<REDACTED:user-pattern>'],
   ['a marker pair joined by a slash', 'login <REDACTED:user-pattern> / <REDACTED:labeled_credential>'],
   ['a marker ending a sentence', 'login: <REDACTED:labeled_credential>.'],
+  ['a marker ending a clause before more prose', 'login: <REDACTED:labeled_credential>, then the deploy notes'],
+  ['a parenthesized marker ending a sentence', '(credentials <REDACTED:user-pattern>).'],
 ];
 
 const BESIDE: Array<[string, string]> = [
@@ -43,6 +45,9 @@ const GLUED: Array<[string, string]> = [
   ['a password glued onto a marker user', `login <REDACTED:user-pattern>${PW}`],
   ['a password glued onto a bold marker', `login: **<REDACTED:secret>**${PW}`],
   ['a password glued onto a marker after a user name', `creds alice<REDACTED:x>${PW}`],
+  ['#8034: a password glued onto a marker by a comma', `login: <REDACTED:user-pattern>,${PW}`],
+  ['#8034: a password glued onto a marker by a period', `creds <REDACTED:x>.${PW}`],
+  ['#8034: a password glued onto a bold marker by a closing paren', `login: **<REDACTED:secret>**)${PW}`],
 ];
 
 describe('#7997: importer redaction markers and labeled_credential', () => {
@@ -89,5 +94,7 @@ describe('#7997: audit-secrets on a redacted corpus', () => {
     expect(await auditTranscriptSecrets(engine)).toMatchObject({ pages_scanned: 1, pages_affected: 0, hits_total: 0 });
     await conversation('conversations/sessions/2026-10-30-codex-bbbbbbbbbbbb', `intro\n${BESIDE[0]![1]}`);
     expect(await auditTranscriptSecrets(engine)).toMatchObject({ pages_scanned: 2, pages_affected: 1, hits_total: 1, by_pattern: { labeled_credential: 1 } });
+    await conversation('conversations/sessions/2026-10-30-codex-cccccccccccc', `intro\nlogin: <REDACTED:user-pattern>,${PW}`);
+    expect(await auditTranscriptSecrets(engine)).toMatchObject({ pages_scanned: 3, pages_affected: 2, hits_total: 2, by_pattern: { labeled_credential: 2 } });
   });
 });

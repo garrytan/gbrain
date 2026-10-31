@@ -70,6 +70,46 @@ export const DATABASE_REFUSAL_HINT = 'This is not a content conflict: a gbrain p
   + '(serve, autopilot, sync jobs), then retry with a new request ID. If the builds match, report error_detail (it contains no page text) on the gbrain issue tracker. '
   + 'Do not force-write, edit SQL, or disable the guard; ask the user before changing which hosts own the brain.';
 
+/**
+ * #7636/#7780: a guard refused because the database role cannot fully read the writer state it checks. The cause is the
+ * role's visibility, never the build, whichever guard raised it; the owner-only `error_detail.state` names the table.
+ */
+export const UNREADABLE_STATE_HINT = 'A database guard refused this write and nothing was committed: the database role gbrain connects as cannot fully read the writer state the guard checks '
+  + '(row-level security hides it or applies to the role, or a singleton row is missing), so the guard refused instead of reading the brain as unmanaged or the row as absent. '
+  + 'Upgrading gbrain does not fix this. On the brain host run gbrain sources writer status --probe --json; recent_failures[].error_detail.state names the table. '
+  + 'Run gbrain as a role that can read it (the table owner, a role that bypasses RLS, or a scoped role whose policies cover those rows; protocol activation and a change to '
+  + 'which sources are Git-canonical pass only the first two), then retry with a new request ID. A missing persistence_brain or git_canonical_brain row, which gbrain init '
+  + 'never leaves, is a defect: report it on the gbrain issue tracker. Ask the user before changing the database role gbrain connects as. Do not edit SQL or disable the guard.';
+
+/**
+ * The remedy and docs anchor of a database guard refusal whose cause the stored detail establishes: unreadable writer state
+ * (#7636/#7780, any guard) or a persistence protocol guard's typed code (#7777, SQLSTATE 42501). Null for any other refusal.
+ */
+export function guardRefusalHint(code: string | null | undefined, detail: Record<string, unknown> | null | undefined): { suggestion: string; docs: string } | null {
+  if (detail?.origin !== 'database_guard') return null;
+  const protocol = detail.sqlstate === '42501';
+  if (detail.relationship === 'unreadable_state') {
+    return { suggestion: UNREADABLE_STATE_HINT, docs: docsAnchor(protocol ? 'protocol_guard' : 'writer_coordinator_required') };
+  }
+  if (!protocol) return null;
+  const inspect = 'On the brain host run gbrain sources writer status --probe --json';
+  const never = 'Do not edit SQL or disable the guard.';
+  const suggestion = code === 'writer_upgrade_required'
+    ? 'The persistence protocol guard refused this write and nothing was committed: the gbrain process that ran it does not declare the persistence protocol this brain requires '
+      + `(an older gbrain sharing the database). ${inspect} and compare recent_failures[].error_detail.attempt.consumer_version with gbrain --version; `
+      + 'upgrade or restart every older gbrain process (serve, autopilot, sync jobs), then retry with a new request ID. Never lower the protocol floor, edit SQL or disable the guard.'
+    : code === 'writer_not_quiesced'
+      ? 'The persistence protocol guard refused this write and nothing was committed: shared skill publication is not active, or the canonical owner\'s protocol-2 capability '
+        + `changed after it was activated. ${inspect}; stop older writers and direct-file skill servers, then activate shared skill persistence on the canonical host again, `
+        + `and retry with a new request ID. ${never}`
+      : code === 'unsupported_mutation_protocol'
+        ? 'The persistence protocol guard refused a request whose target or protocol does not fit its operation, and nothing was committed: a gbrain defect or a version mismatch '
+          + `between gbrain processes sharing the database. ${inspect}, upgrade or restart every older gbrain process, then submit the write again with a new request ID; `
+          + `an accepted request's target cannot change. ${never}`
+        : code === 'writer_coordinator_required' ? DATABASE_REFUSAL_HINT : null;
+  return suggestion ? { suggestion, docs: docsAnchor('protocol_guard') } : null;
+}
+
 /** #5974: another database trigger (named in write_error_detail.raiser) refused the write. */
 /** #6719: an owner exception's recorded identity (class, errno, frame, build) does not name its cause; nothing proves the database refused it. */
 export const ownerExceptionHint = (requestId: string) => 'An unexpected owner exception ended this write and nothing was committed; its cause is unknown from the recorded identity alone. '
@@ -89,6 +129,8 @@ export function receiptDeliveredHint(receipt: { error_code?: string | null; erro
   error_detail?: Record<string, unknown> | null }):
   { suggestion: string; detail?: string; docs: string } | null {
   const source = receipt.source_id ?? '<source>';
+  const guard = guardRefusalHint(receipt.error_code, receipt.error_detail);
+  if (guard) return { detail: 'database_guard', ...guard };
   switch (receipt.error_code) {
     case 'connector_intent_outdated': {
       const preUpgrade = receipt.error_message === CONNECTOR_INTENT_OUTDATED_PRE_UPGRADE;

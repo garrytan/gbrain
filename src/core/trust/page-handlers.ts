@@ -42,6 +42,7 @@ import type { PageType } from '../types.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { assertInlineBody } from '../page-body/page-shape.ts';
 import type { PageVersion } from '../page-state/version-types.ts';
+import type { WriteThroughResult } from '../write-through.ts';
 import { maintenanceAttribution, principalAttribution, withWriteAttribution } from '../persistence/attribution.ts';
 import { withCoordinatedWrite, withTrustKeep, withTrustPromotion } from '../persistence/context.ts';
 import type { OwnerConfirmation } from './confirm.ts';
@@ -320,26 +321,61 @@ async function publishOwnerPage(engine: BrainEngine, input: PageActionInput, int
       'Fix the checkout (gbrain sources status), then preview the repair again.');
   }
   const writeThrough = file?.ok && file.target ? await import('../write-through.ts') : null;
-  await engine.transaction(tx => withWriteAttribution(tx, { ...attribution, trust }, () => withTrustPromotion(tx, tier, () =>
-    withTrustKeep(tx, FENCE_TABLES, async () => {
-      if ((await tx.readPageSnapshot(input.slug, { sourceId: input.sourceId }))?.revision !== input.expectedRevision) {
-        throw changedSincePreview(pageRef(input.sourceId, input.slug), ACTION_NAMES[intent.mode]);
-      }
-      // forceRechunk: the trust_tier marker is hash-ephemeral, so removing it alone would read as unchanged content.
-      const prior = intent.mode === 'restore_provenance' ? await readPageTrustState(tx, input.sourceId, input.slug) : null;
-      await importFromContent(tx, input.slug, markdown, { sourceId: input.sourceId, noEmbed: true, preserveGateMarkers: intent.mode !== 'revert', forceRechunk: true, allowEmptyOverwrite: intent.mode === 'revert' });
-      if (prior) await recordAgentPageLowering(tx, { operation: TRUST_OWNER_PAGE_OPERATION, source_id: input.sourceId, slug: input.slug }, { tier: prior.tier, revision: prior.revision }, PROVENANCE_PROPOSER);
-      if (writeThrough && file?.ok && file.target) {
-        const written = await writeThrough.writePageThrough(tx, input.slug, { sourceId: input.sourceId, expectedFileBytes: file.target.expectedFileBytes });
-        if (written.skipped === 'file_changed') throw changedSincePreview(pageRef(input.sourceId, input.slug), ACTION_NAMES[intent.mode]);
-        if (!written.written) {
-          throw opError('unavailable', `The page file of ${pageRef(input.sourceId, input.slug)} could not be written (${written.skipped ?? written.error}); nothing was changed.`,
-            'Fix the checkout (gbrain sources status), then preview the repair again.');
+  // #7960: the file is written (and on a hardened checkout committed) inside the transaction, Git first; when the
+  // database commit then fails, the file and its commit are put back so a failed apply leaves both sides unchanged.
+  let rendered = null as WriteThroughResult | null;
+  try {
+    await engine.transaction(tx => withWriteAttribution(tx, { ...attribution, trust }, () => withTrustPromotion(tx, tier, () =>
+      withTrustKeep(tx, FENCE_TABLES, async () => {
+        if ((await tx.readPageSnapshot(input.slug, { sourceId: input.sourceId }))?.revision !== input.expectedRevision) {
+          throw changedSincePreview(pageRef(input.sourceId, input.slug), ACTION_NAMES[intent.mode]);
         }
-      }
-      await closeProposal(tx, intent.proposal, input.by);
-    }))));
+        // forceRechunk: the trust_tier marker is hash-ephemeral, so removing it alone would read as unchanged content.
+        const prior = intent.mode === 'restore_provenance' ? await readPageTrustState(tx, input.sourceId, input.slug) : null;
+        await importFromContent(tx, input.slug, markdown, { sourceId: input.sourceId, noEmbed: true, preserveGateMarkers: intent.mode !== 'revert', forceRechunk: true, allowEmptyOverwrite: intent.mode === 'revert' });
+        if (prior) await recordAgentPageLowering(tx, { operation: TRUST_OWNER_PAGE_OPERATION, source_id: input.sourceId, slug: input.slug }, { tier: prior.tier, revision: prior.revision }, PROVENANCE_PROPOSER);
+        if (writeThrough && file?.ok && file.target) {
+          const written = await writeThrough.writePageThrough(tx, input.slug, { sourceId: input.sourceId, expectedFileBytes: file.target.expectedFileBytes });
+          if (written.skipped === 'file_changed') throw changedSincePreview(pageRef(input.sourceId, input.slug), ACTION_NAMES[intent.mode]);
+          if (!written.written) {
+            throw opError('unavailable', `The page file of ${pageRef(input.sourceId, input.slug)} could not be written (${written.skipped ?? written.error}); nothing was changed.`,
+              'Fix the checkout (gbrain sources status), then preview the repair again.');
+          }
+          rendered = written;
+        }
+        await closeProposal(tx, intent.proposal, input.by);
+      }))));
+  } catch (error) {
+    if (rendered?.path && file?.ok && file.target) await restoreOwnerRepairFile(engine, input.slug, file.target, rendered);
+    throw error;
+  }
 }
+
+/**
+ * #7960: puts back the bytes an owner repair's file held before `rendered` replaced them (removes a file it created), only
+ * while the file still holds what the repair wrote, and commits that restore when the repair's write was committed.
+ * Best-effort: the caller rethrows the database failure either way.
+ */
+async function restoreOwnerRepairFile(engine: BrainEngine, slug: string, target: OwnerRepairTarget, rendered: WriteThroughResult): Promise<void> {
+  const { existsSync, readFileSync, rmSync } = await import('node:fs');
+  const { atomicWriteFileSync } = await import('../atomic-write.ts');
+  const { commitWriteThroughFile } = await import('../brain-repo-durability.ts');
+  const { withSourceFilesystemLock } = await import('../minions/source-filesystem.ts');
+  const path = rendered.path!;
+  try {
+    await withSourceFilesystemLock(engine, target.writeRoot, async () => {
+      if ((existsSync(path) ? readFileSync(path, 'utf-8') : null) !== rendered.content) return;
+      if (target.expectedFileBytes === null) rmSync(path, { force: true });
+      else atomicWriteFileSync(path, target.expectedFileBytes);
+      if (rendered.committed) commitWriteThroughFile(target.writeRoot, path, slug, 'restore write-through');
+    });
+  } catch (error) {
+    console.error(`[trust] ${slug}: the page file could not be restored after the database write failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/** The checkout file an owner repair renders: the bytes it must still find, and the write root its commit goes through. */
+type OwnerRepairTarget = { expectedFileBytes: string | null; writeRoot: string };
 
 /** Write-through outcomes that leave a repair database-only on purpose: no checkout, write-through off, an ignored or db_only target. */
 const DATABASE_ONLY_TARGETS = ['no_repo_configured', 'disabled_by_config', 'not_canonical'];
@@ -352,7 +388,7 @@ const DATABASE_ONLY_TARGETS = ['no_repo_configured', 'disabled_by_config', 'not_
  * next pull would undo a database-only repair). Read-only.
  */
 export async function ownerRepairFile(engine: BrainEngine, sourceId: string, slug: string):
-  Promise<{ ok: true; target: { expectedFileBytes: string | null } | null } | { ok: false; reason: string }> {
+  Promise<{ ok: true; target: OwnerRepairTarget | null } | { ok: false; reason: string }> {
   const { derivedFileTarget } = await import('../cycle/derived-write-through.ts');
   const resolved = await derivedFileTarget(engine, slug, sourceId);
   if (!resolved.ok) return DATABASE_ONLY_TARGETS.includes(resolved.skipped) ? { ok: true, target: null } : { ok: false, reason: resolved.skipped };
@@ -360,7 +396,7 @@ export async function ownerRepairFile(engine: BrainEngine, sourceId: string, slu
   if (await urlCloneReadOnly(engine, sourceId)) return { ok: false, reason: 'url_clone' };
   const { replaceableFile } = await import('../facts/file-body-guard.ts');
   const file = await replaceableFile(engine, sourceId, slug, resolved.target.filePath);
-  return file.ok ? { ok: true, target: { expectedFileBytes: file.expectedFileBytes } } : { ok: false, reason: 'file_database_drift' };
+  return file.ok ? { ok: true, target: { expectedFileBytes: file.expectedFileBytes, writeRoot: resolved.target.writeRoot } } : { ok: false, reason: 'file_database_drift' };
 }
 
 /** Admits the journaled owner page mutation and waits for its publication (the decide_proposal precedent). */

@@ -38,6 +38,7 @@ import { requirePostgresTestDatabase, testBackends } from './helpers/test-backen
 import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { withManagedFixtureWrite } from './helpers/managed-e2e-fixture-write.ts';
+import { durableGitRepo, git } from './helpers/git-publication.ts';
 
 const STORED = { source_kind: 'webhook', ingested_via: 'webhook', ingested_at: '2026-01-02T03:04:05.000Z' };
 const stampsOf = (fm: Record<string, unknown>) => ({ source_kind: fm.source_kind, ingested_via: fm.ingested_via, ingested_at: fm.ingested_at });
@@ -236,6 +237,36 @@ for (const kind of testBackends()) {
         } finally {
           await engine.executeRaw(`UPDATE sources SET local_path = NULL, config = config - 'managed_clone' WHERE id = 'default'`);
         }
+      }, 120_000);
+
+      test.skipIf(!repo)('#7960: a database commit that fails after the page file was committed puts the file and HEAD back; both sides stay unchanged', async () => {
+        const slug = 'inbox/commit-fails';
+        const rel = `${slug}.md`;
+        await seed(slug, STORED);
+        await rewrite(slug, {}, 'oauth_client');
+        durableGitRepo(brainDir, [rel]);
+        const before = { file: fs.readFileSync(fileOf(slug), 'utf8'), head: git(brainDir, 'rev-parse', 'HEAD').trim(), tier: await tierOf(slug), revision: (await page(slug)).revision };
+        const dry = await run(false);
+        expect(dry.affected).toBe(1);
+        const outer = engine;
+        const transaction = Object.getPrototypeOf(outer).transaction as BrainEngine['transaction'];
+        let forced = false;
+        outer.transaction = async function (this: BrainEngine, fn: (tx: BrainEngine) => Promise<unknown>, opts?: Parameters<BrainEngine['transaction']>[1]) {
+          if (this !== outer) return transaction.call(this, fn, opts);
+          return transaction.call(outer, async tx => {
+            const result = await fn(tx);
+            if (!forced && fs.readFileSync(fileOf(slug), 'utf8') !== before.file) { forced = true; throw new Error('forced database commit failure'); }
+            return result;
+          }, opts);
+        } as BrainEngine['transaction'];
+        try {
+          await run(true, { expect: dry.preview_hash }).catch(() => undefined);
+        } finally { delete (outer as { transaction?: unknown }).transaction; }
+        expect(forced).toBe(true);
+        expect({ file: fs.readFileSync(fileOf(slug), 'utf8'), headFile: git(brainDir, 'show', `HEAD:${rel}`), status: git(brainDir, 'status', '--porcelain').trim(),
+          tier: await tierOf(slug), revision: (await page(slug)).revision, proposals: await proposals(slug) })
+          .toEqual({ file: before.file, headFile: before.file, status: '', tier: before.tier, revision: before.revision, proposals: [] });
+        expect(git(brainDir, 'rev-list', '--count', `${before.head}..HEAD`).trim()).toBe('2');
       }, 120_000);
 
       test('#7918: a classified page whose file would re-read higher gets its stored tier as the marker; the row keeps its tier', async () => {

@@ -24,10 +24,10 @@
  * call). PGLite always, Postgres when DATABASE_URL is set.
  */
 import { describe, expect, test } from 'bun:test';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { ChatOpts, ChatResult } from '../../src/core/ai/gateway.ts';
 import { derivedWriteSeams } from '../../src/core/cycle/derived-write-through.ts';
 import { commitPathsLocked } from '../../src/core/git/commit-push.ts';
@@ -279,6 +279,70 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         expect({ commits: commitCount(b) - before, paths: lastCommitPaths(b), dirty: dirty(b),
           body: b.git('show', 'HEAD:concepts/flywheel.md').includes('3 atoms reference this.') })
           .toEqual({ commits: 1, paths: ['concepts/flywheel.md'], dirty: '', body: true });
+      });
+    }, 180_000);
+
+    test('#8092: a refused rewrite of a tracked concept file is written again on the next run, though the concept did not change', async () => {
+      await withBrain(databaseUrl, 'git', async b => {
+        const atoms = (n: number) => Array.from({ length: n }, (_, i) => ({ slug: `atoms/a${i}`, title: `A${i}`, body: `b${i}`, concept_refs: ['flywheel'], visibility: 'world' as const }));
+        await b.engine.setConfig('cycle.synthesize_concepts.write_through', 'true');
+        await runPhaseSynthesizeConcepts(b.engine, { _atoms: atoms(2), sourceId: 'default' });
+        refuseCommits(b);
+        await runPhaseSynthesizeConcepts(b.engine, { _atoms: atoms(3), sourceId: 'default' });
+        const page = await b.engine.getPage('concepts/flywheel', { sourceId: 'default' });
+        expect({ db: page!.compiled_truth.includes('3 atoms reference this.'), dirty: dirty(b),
+          head: b.git('show', 'HEAD:concepts/flywheel.md').includes('3 atoms reference this.') }).toEqual({ db: true, dirty: '', head: false });
+        rmSync(join(b.root, '.git', 'hooks', 'pre-commit'));
+        await runPhaseSynthesizeConcepts(b.engine, { _atoms: atoms(3), sourceId: 'default' });
+        expect({ dirty: dirty(b), head: b.git('show', 'HEAD:concepts/flywheel.md').includes('3 atoms reference this.') }).toEqual({ dirty: '', head: true });
+      });
+    }, 180_000);
+
+    test('#8092: a refused removal of a retired atom\'s file is removed again on the next run, so HEAD stops holding the retired page', async () => {
+      await withBrain(databaseUrl, 'git', async b => {
+        await b.extract(['Renders vs proof'], 'hash-one');
+        const [old] = (await b.atoms()).map(a => a.slug);
+        refuseCommits(b);
+        const refused = await b.extract(['A different lesson'], 'hash-two');
+        expect({ status: refused.status, retired: (await b.atoms(false)).map(a => a.slug), oldFile: existsSync(b.path(old!)), dirty: dirty(b) })
+          .toEqual({ status: 'warn', retired: [old!], oldFile: true, dirty: '' });
+        rmSync(join(b.root, '.git', 'hooks', 'pre-commit'));
+        const retry = await b.extract([], null);
+        expect({ failed: retry.failed, oldFile: existsSync(b.path(old!)), tracked: b.git('ls-files', '--', relOf(old!)), dirty: dirty(b) })
+          .toEqual({ failed: [], oldFile: false, tracked: '', dirty: '' });
+      });
+    }, 180_000);
+
+    test('#8092: a rolled-back path leaves the pending ledger, so a later hand edit there is not swept into another gbrain commit', async () => {
+      await withBrain(databaseUrl, 'git', async b => {
+        refuseCommits(b);
+        await b.extract(['Renders vs proof'], 'hash-one');
+        const [atom] = (await b.atoms()).map(a => a.slug);
+        expect(existsSync(b.path(atom!))).toBe(false);
+        rmSync(join(b.root, '.git', 'hooks', 'pre-commit'));
+        mkdirSync(dirname(b.path(atom!)), { recursive: true });
+        writeFileSync(b.path(atom!), 'A hand-written note at this path.\n');
+        writeFileSync(join(b.root, 'notes.md'), 'writer B\n');
+        commitPathsLocked(b.root, ['notes.md'], 'writer B', { lockWaitMs: 5_000 });
+        expect({ paths: lastCommitPaths(b), dirty: dirty(b) }).toEqual({ paths: ['notes.md'], dirty: `?? ${relOf(atom!)}` });
+      });
+    }, 180_000);
+
+    test('#8092: a busy commit lock is waited for without blocking the event loop', async () => {
+      await withBrain(databaseUrl, 'git', async b => {
+        const holder = spawn('flock', [join(b.root, '.git', 'brain-commit.lock'), 'sleep', '4'], { stdio: 'ignore' });
+        let last = performance.now(), gap = 0;
+        const tick = () => { const now = performance.now(); gap = Math.max(gap, now - last); last = now; };
+        const timer = setInterval(tick, 20);
+        let phase: Awaited<ReturnType<Brain['extract']>>;
+        try {
+          await Bun.sleep(300);
+          phase = await b.extract(['Renders vs proof'], 'hash-one');
+        } finally { tick(); clearInterval(timer); holder.kill('SIGKILL'); }
+        const [atom] = await b.atoms();
+        expect({ status: phase.status, failed: phase.failed, paths: lastCommitPaths(b), dirty: dirty(b) })
+          .toEqual({ status: 'ok', failed: [], paths: [relOf(atom!.slug)], dirty: '' });
+        expect(gap).toBeLessThan(1_000);
       });
     }, 180_000);
   });
