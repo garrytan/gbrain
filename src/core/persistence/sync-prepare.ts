@@ -35,6 +35,7 @@ import { digest, sha256 } from './digest.ts';
 import { preserveProtectedTakes } from './protected-takes.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { sourceMirrorReadOnly } from './mirror-read-only.ts';
+import { writeThroughConfigured } from './switches.ts';
 import { assertConfiguredSyncRoot, assertSyncEntryOrigin, readSyncFile, syncGit, syncRawHash, type SyncRename } from './sync-discovery.ts';
 import { directoryAt } from './sync-entry-fault.ts';
 import { assertSyncPageOrigin, sameSyncOrigin, syncOriginPath, syncOriginScope, type SyncOriginScope } from './sync-origin.ts';
@@ -906,7 +907,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
   // #5409: a read-only mirror keeps its canonical metadata in the database only; its checkout stays the remote's bytes.
   enterClaimStep(clock, 'mirror_check', undefined, 'db');
   const mirrorReadOnly = overlay && await sourceMirrorReadOnly(engine, row.source_id);
-  const canonicalFile = overlay && !mirrorReadOnly ? serializePageToMarkdown(renderedPage, tags) : null;
+  const canonicalFile = overlay && !mirrorReadOnly && writeThroughConfigured(await engine.getConfig('sync.write_through')) ? serializePageToMarkdown(renderedPage, tags) : null;
   const writeback = canonicalWritebackNeeded(row, p, p.content, canonicalFile);
   // A rename projects against the moved page (same id), so its pinned timeline rows carry over.
   enterClaimStep(clock, 'canonical_projections', undefined, 'db');

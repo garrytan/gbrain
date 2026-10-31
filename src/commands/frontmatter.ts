@@ -688,6 +688,10 @@ function printAuditHumanReport(report: AuditReport): void {
   }
   for (const src of report.per_source) {
     console.log(`\n[${src.source_id}] ${src.source_path}`);
+    if (src.status === 'missing') {
+      console.log('  NOT SCANNED: the directory is missing (restore it, or gbrain sources set-path <id> <path>)');
+      continue;
+    }
     if (src.total === 0) {
       console.log('  clean');
       continue;

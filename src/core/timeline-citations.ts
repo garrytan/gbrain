@@ -172,7 +172,7 @@ export function supersededInlineCitationEntries(content: string, opts: CitationO
   return readCitations(content, opts, true).filter(e => !current.has(JSON.stringify([e.date, e.source, e.summary])));
 }
 
-function isValidDate(s: string): boolean {
+export function isValidDate(s: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
   const [y, mo, d] = s.split('-').map(Number);
   if (mo < 1 || mo > 12) return false;
