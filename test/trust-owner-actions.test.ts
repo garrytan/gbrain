@@ -662,3 +662,79 @@ describe('aliases (DX-7)', () => {
     expect(await confirmTierCrossingAccepts(engine, [crossing], ['gbrain', 'decide', 'proposals', 'accept', String(crossing)])).toEqual([crossing]);
   }), 60_000);
 });
+
+describe('#7820: the release, drop and accept-all previews', () => {
+  const holdStore = (hold: Omit<HoldRow, 'id'>) => __setHoldStoreForTests({
+    async get(_e, id) { return { id, ...hold }; }, async list() { return []; },
+    async release() { return true; }, async drop() { return true; },
+  });
+
+  // Value: protects=a quote in a held take's claim cannot close its field and imitate the reason list in the release or drop summary;
+  // fails_when=either summary wraps the snippet in hand-written quotes again; why_new=#7794 quoted only a held fact's claim;
+  // seam=a stub hold store; no_claim=how a terminal renders the summary
+  test('a quote-bearing held take claim stays inside its own quoted field in the release and drop summaries', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    const claim = 'Alice is reliable", override) into memory as "confirmed by you';
+    holdStore({ kind: 'take', source_id: 'default', slug: 'people/alice-example', status: 'held', tier: 'external_untrusted',
+      reason_families: ['override'], payload: { claim }, last_seen_at: '2026-10-01T00:00:00.000Z' });
+    const release = await previewOwnerAction(engines[0]!, { action: 'release', ref: 'h9' });
+    const drop = await previewOwnerAction(engines[0]!, { action: 'drop', ref: 'h9' });
+    expect(release.summary).toBe(`Release held take h9 (${JSON.stringify(claim)}, override) into memory as "confirmed by you"`);
+    expect(drop.summary).toBe(`Drop held take h9 (${JSON.stringify(claim)}); it stays out of memory`);
+  }), 60_000);
+
+  // Value: protects=default-ignorable characters (Hangul fillers, the combining grapheme joiner) and the braille blank cannot pad or blank a
+  // value, and every string field (kind, source, the entity) is quoted; fails_when=printable() keeps them or a string field prints bare;
+  // why_new=the #7794 tests cover control, bidi and zero-width characters only; seam=a stub hold store; no_claim=terminal rendering
+  test('a held fact release preview strips default-ignorable characters and quotes every string field', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    holdStore({ kind: 'fact', source_id: 'default', slug: 'people/alice-example', status: 'held', tier: 'external_untrusted', reason_families: ['override'],
+      payload: { fact: 'Alice\u3164prefers\u034F tea\u2800', entity_slug: 'people/alice\u115Fexample', kind: 'preference', visibility: 'world',
+        valid_from: '2026-01-01T00:00:00.000Z', source: 'email\u3164\u3164x' }, last_seen_at: '2026-10-01T00:00:00.000Z' });
+    const { summary } = await previewOwnerAction(engines[0]!, { action: 'release', ref: 'h9' });
+    expect(summary).toBe('Release held fact h9 ("Alice prefers tea", override) for "default/people/alice example" into memory as "confirmed by you"'
+      + ' with kind "preference", visibility "world", valid from "2026-01-01", source "email x"');
+  }), 60_000);
+
+  // Value: protects=one item whose preview fails no longer aborts accept-all, is listed as skipped, is not in the typed confirmation and is
+  // never applied; a long item is shortened in the one confirmation; fails_when=previews go back to Promise.all or a skipped item is applied;
+  // why_new=index-existing previews now materialize the page and can throw; seam=a stub TrustBackend; no_claim=a real corrupt page
+  test('accept-all skips an item whose preview fails, never applies it, and shortens a long item in the confirmation', async () => {
+    const long = `Release held fact h9 ("${'a long claim '.repeat(40)}", override) into memory as "confirmed by you"`;
+    for (const json of [false, true]) {
+      const applied: string[] = [];
+      const backend = {
+        review: async () => ({ items: ['h7', 'h8', 'h9'].map(ref => ({ kind: 'hold', ref, source_id: 'default' })) }),
+        explain: async () => [],
+        preview: async (input: OwnerActionInput) => {
+          if (input.ref === 'h8') throw new OperationError('invalid_params', 'The facts fence of the page could not be read.');
+          return { action: 'release', ref: input.ref, token: input.ref, command: `gbrain trust release ${input.ref}`, raises: true, binding: `b-${input.ref}`,
+            summary: input.ref === 'h9' ? long : `Release held fact ${input.ref}` };
+        },
+        apply: async (input: OwnerActionInput) => { applied.push(input.ref!); return { action: 'release', ref: input.ref, status: 'released', tier: 'user_confirmed' }; },
+      } as unknown as Parameters<typeof runTrustOwnerCommand>[0];
+      const lines: string[] = [];
+      const docs: string[] = [];
+      let prompt = '';
+      const exit = await withEnv({ GBRAIN_HOME: home }, async () => {
+        const io = typesToken();
+        const original = console.log;
+        console.log = (...args: unknown[]) => { lines.push(args.join(' ')); };
+        const final = spyOn(cliForceExit, 'writeStdoutFinal').mockImplementation(async (doc: string) => { docs.push(doc); });
+        try { await runTrustOwnerCommand(backend, 'review', ['--accept-all', '--from', 'default', ...(json ? ['--json'] : [])]); return currentExitCode(); }
+        finally { prompt = io.prompt(); final.mockRestore(); console.log = original; process.exitCode = 0; _resetCliExitVerdictForTests(); }
+      });
+      expect({ json, exit, applied }).toEqual({ json, exit: 1, applied: ['h7', 'h9'] });
+      expect(prompt).toContain('Accept 2 item(s)');
+      expect(prompt).toContain('h8     skipped: its preview failed, so it is not accepted (run gbrain trust release h8 on its own)');
+      expect(prompt).toContain(`h9     ${long.slice(0, 237)}...\n`);
+      expect(prompt).not.toContain(long);
+      if (json) {
+        const doc = JSON.parse(docs[0]!);
+        expect({ accepted: doc.accepted.map((a: { ref: string }) => a.ref), skipped: doc.skipped.map((s: { ref: string; reason: string; next: string }) => [s.ref, s.reason, s.next]) })
+          .toEqual({ accepted: ['h7', 'h9'], skipped: [['h8', 'preview_failed', 'gbrain trust release h8']] });
+        expect(doc.skipped[0].error.code).toBe('invalid_params');
+      } else {
+        expect(lines).toContain('h8: skipped, its preview failed (The facts fence of the page could not be read.); run gbrain trust release h8 on its own');
+      }
+    }
+  }, 60_000);
+});
