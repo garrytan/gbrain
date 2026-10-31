@@ -26,7 +26,8 @@ import { isOpPageSlug } from '../ops/context.ts';
 import { shellQuote, type Action } from '../agent-output.ts';
 import type { RegistryCode } from '../error-registry.ts';
 import { pageIdentityError } from './page-identity.ts';
-import { contentRefusalError, PAGE_OVER_LIMIT_SUGGESTION, type ContentRefusal } from '../import-screen.ts';
+import { contentRefusalError, PAGE_OVER_LIMIT_SUGGESTION, TAG_TOO_LONG_SUGGESTION, type ContentRefusal } from '../import-screen.ts';
+import { tagLengthHold } from '../tag-limit.ts';
 import { ContentSanityBlockError } from '../content-sanity.ts';
 import { assertPageRevision, type PageSnapshot } from '../page-state/types.ts';
 import { GIT_HOLD_OP, gitHoldFingerprint, gitHoldFix, readGitHold } from './sync-holds.ts';
@@ -694,6 +695,8 @@ export const segmentedTagWork = { flips: 0, hashStreams: 0 };
  * Null when the write gate would scan the whole body (an external_untrusted writer): that write takes the put path.
  */
 export async function prepareSegmentedTagMutation(engine: BrainEngine, row: WriteRequest, snapshot: PageSnapshot, tags: string[]): Promise<PreparedMutation | null> {
+  const tagHold = tagLengthHold(tags);
+  if (tagHold) throw contentRefusalError(tagHold, TAG_TOO_LONG_SUGGESTION, { legacy_error: 'invalid_params' });
   const source = { sourceId: row.source_id };
   const [, pack, storedTier] = await Promise.all([assertKnowledgePublicationAllowed(engine, row),
     loadActivePackForEngine(engine, { remote: row.authority.remote, sourceId: row.source_id }).catch(() => null), storedPageTier(engine, row.source_id, row.slug)]);

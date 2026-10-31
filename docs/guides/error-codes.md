@@ -4293,6 +4293,16 @@ Reasons: `content_directory`.
 |---|---|---|---|---|---|---|
 | A sync pass's checkpoint did not publish because the pass that admitted it no longer holds the source (it ended, or another pass started); the next pass stamps its own checkpoint. | A pass's checkpoint is bound to its drain lease and pass row, so it can never publish after that pass ends. Its receipt is a conflict that records no managed-sync failure and reads superseded in gbrain sources writer failures; a pass that stops with the checkpoint still pending reports disposition superseded instead of a request to resume. | Nothing to repair or resubmit: the pages the pass committed stand. Let the next sync pass run (gbrain sync --source <id> --no-pull), and read gbrain sync status --source <id> --json to confirm the source converges. | agent | `repeat the read that failed` | 1 | no |
 
+### tag_too_long
+
+<a id="tag_too_long"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A page's tag is longer than the 2688 bytes a tag can be, so nothing was written (sync holds the file). | Tags are stored in a btree index whose entries are at most 2704 bytes; a longer tag would fail the database insert (error 54000) and report a storage failure instead of naming the tag (#7052). The message names the tag's position and size, never its text. | Shorten that tag or split it into shorter tags, then write the page again (for a file: edit it, commit and sync). | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#tag_too_long](../../docs/guides/write-refusals.md#tag_too_long)
+
 ### tail_changed
 
 <a id="tail_changed"></a>
