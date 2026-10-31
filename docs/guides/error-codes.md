@@ -1541,7 +1541,7 @@ More: [docs/guides/write-refusals.md#file_too_large](../../docs/guides/write-ref
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Sync held one file because it is not a readable regular file inside the source root (a symlink, a non-regular file or a permission error); the rest of the source synced. | Sync reads only regular files inside the source root and never follows a symlink, which can point anywhere on the host. The file waits in the hold store instead of failing the run, so it never blocks the source, and classic sync re-screens it on every run. | Replace the symlink with the regular file (or delete it), make the file readable to the account gbrain runs as, or leave it out with sync.exclude; the next gbrain sync --source <source> --no-pull re-screens it. | agent | `repeat the read that failed` | 1 | no |
+| Sync held one file because it is not a readable regular file inside the source root (a symlink, a non-regular file or a permission error); the rest of the source synced. | Sync reads only regular files inside the source root and never follows a symlink, which can point anywhere on the host. The file waits in the hold store instead of failing the run, so it never blocks the source, and classic sync re-screens it on every run. | Replace the symlink with the regular file (or delete it), make the file readable to the account that runs gbrain, or leave it out with sync.exclude; the next gbrain sync --source <source> --no-pull re-screens it. | agent | `repeat the read that failed` | 1 | no |
 
 Reasons: `symlink_in_repo`, `symlink_outside_root`, `symlink_dangling`, `symlink_loop`, `permission_denied`, `not_regular_file`.
 
@@ -4107,7 +4107,7 @@ More: [docs/guides/write-refusals.md#slug_page_mismatch](../../docs/guides/write
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The source's registered root on its owner host cannot be read as a directory (gone, unmounted, not a directory, no permission or a symlink loop), so `gbrain sources canonical` planned and wrote nothing. | Converting a source reads its whole checkout; a root that cannot be listed would otherwise surface as a raw filesystem or Git error, or as a missing-checkout refusal whose fix creates an empty repository there. | Restore or remount the directory on the brain host (or make it readable to the account gbrain runs as), compare it with the root gbrain sources writer status --source <source> --json names, then preview again. | host_admin | `gbrain doctor --json` | 1 | no |
+| The source's registered root on its owner host cannot be read as a directory (gone, unmounted, not a directory, no permission or a symlink loop), so `gbrain sources canonical` planned and wrote nothing. | Converting a source reads its whole checkout; a root that cannot be listed would otherwise surface as a raw filesystem or Git error, or as a missing-checkout refusal whose fix creates an empty repository there. | Restore or remount the directory on the brain host (or make it readable to the account that runs gbrain), compare it with the root gbrain sources writer status --source <source> --json names, then preview again. | host_admin | `gbrain doctor --json` | 1 | no |
 
 Reasons: `missing`, `not_directory`, `permission_denied`, `symlink_loop`, `unreadable`.
 

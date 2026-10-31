@@ -200,7 +200,7 @@ export async function assertConversionCaller(engine: BrainEngine, sourceId: stri
 type UnreadableRootReason = 'missing' | 'not_directory' | 'permission_denied' | 'symlink_loop' | 'unreadable';
 const ROOT_ERRNO: Record<string, UnreadableRootReason> = { ENOENT: 'missing', ENOTDIR: 'not_directory', EACCES: 'permission_denied', EPERM: 'permission_denied', ELOOP: 'symlink_loop' };
 const ROOT_STATE: Record<UnreadableRootReason, string> = { missing: 'does not exist (it was moved, deleted or unmounted)', not_directory: 'is not a directory',
-  permission_denied: 'cannot be read by the account gbrain runs as', symlink_loop: 'is a symlink loop', unreadable: 'cannot be read' };
+  permission_denied: 'cannot be read by the account that runs gbrain', symlink_loop: 'is a symlink loop', unreadable: 'cannot be read' };
 
 /** #7956: why the registered root cannot be listed as a directory, or null when it can. */
 function unreadableRoot(root: string): UnreadableRootReason | null {
@@ -221,7 +221,7 @@ async function assertConversionCheckout(sourceId: string, root: string): Promise
   const unreadable = unreadableRoot(root);
   if (unreadable) {
     throw opError('source_root_unreadable', `Source ${sourceId}'s registered root ${root} ${ROOT_STATE[unreadable]}, so nothing was read or written.`,
-      `Restore or remount the directory on the brain host (or make it readable to the account gbrain runs as), compare it with the root gbrain sources writer status --source ${sourceId} --json names, then preview again.`,
+      `Restore or remount the directory on the brain host (or make it readable to the account that runs gbrain), compare it with the root gbrain sources writer status --source ${sourceId} --json names, then preview again.`,
       { reason: unreadable, docs: DOCS, retryable: false, fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'], consent: [], actor: 'agent', requires_exclusive: false,
         why: 'Shows the root the owner registered, to compare with the directory on disk; read-only.', verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] } } });
   }
