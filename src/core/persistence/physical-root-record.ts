@@ -3,6 +3,7 @@ import { execFileSync } from '../spawn.ts';
 import { appendFileSync, closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { OperationError } from '../ops/contract.ts';
+import type { Action } from '../agent-output.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { flushDirectory } from '../fs-durable.ts';
 import { digest, sha256 } from './digest.ts';
@@ -215,10 +216,29 @@ export function samePhysicalBirth(stored: string | null | undefined, live: bigin
   if (value === 0n || live === 0n) return false;
   return (value > live ? value - live : live - value) <= PHYSICAL_BIRTH_TOLERANCE_NS;
 }
+const DIRECTORY_CHANGED_MESSAGE = 'The checkout directory at the recorded root is not the one this owner stamped (its inode or birth time changed) while the owner token, brain, worktree, root and device still match. '
+  + 'Inspect writer status and use the deliberate self-transfer that confirms a relocated root to re-stamp this same path.';
+/** A stored refusal message (a write receipt keeps code and message only) that is the #5914 directory-changed refusal. */
+export const isPhysicalRootDirectoryChangedMessage = (message: string | null | undefined): boolean => message === DIRECTORY_CHANGED_MESSAGE;
+/**
+ * #7671: the relocated-root self-transfer as the refusal's fix, a host-admin step: prepare, then accept. `root` and
+ * `epoch` are filled when the caller holds the binding; otherwise they are inputs read from writer status.
+ */
+export function relocatedRootTransferFix(sourceId: string, binding?: { root: string; epoch: string }): Action {
+  const intent = (phase: string) => ['--admin-intent', `writer_transfer_${phase}`, '--expected-state', '<admin_state>'];
+  const adminState = { name: 'admin_state', how: `admin_state from gbrain sources writer status ${sourceId} --json on the owner host (read it again before the accept)` };
+  const prepare = ['gbrain', 'sources', 'writer', 'transfer', 'prepare', sourceId, '--self-transfer', '--confirm-relocated-root'];
+  return { argv: [...prepare, ...intent('prepare')], preview_argv: [...prepare, '--dry-run'], inputs: [adminState], consent: [], actor: 'host_admin', requires_exclusive: false,
+    docs: 'docs/guides/write-refusals.md#physical_root_directory_changed',
+    why: `Source ${sourceId}'s checkout is a new directory at its recorded path (a restored or copied brain). The self-transfer re-stamps this same path on this host when everything but the directory identity still matches; never remove the ownership markers instead.`,
+    then: { argv: ['gbrain', 'sources', 'writer', 'transfer', 'accept', sourceId, '--path', binding?.root ?? '<root>', '--expected-epoch', binding?.epoch ?? '<owner_epoch>',
+      '--manifest', '<manifest digest printed by prepare>', '--self-transfer', '--confirm-relocated-root', ...intent('accept')],
+    inputs: [adminState, ...(binding ? [] : [{ name: 'root', how: 'the binding root writer status prints' }, { name: 'owner_epoch', how: 'the owner_epoch prepare printed' }])],
+    consent: [], actor: 'host_admin', requires_exclusive: false, why: 'Accepts the self-transfer: ownership stays on this host and writes to the source resume; retry the refused write with the same request_id.' } };
+}
 /** The #5914 exit for a directory recreated at its recorded path; filled with the source and root by lockWorktree (ownership.ts). */
 export function physicalRootDirectoryChangedError(): OperationError {
-  const error = physicalRootError('The checkout directory at the recorded root is not the one this owner stamped (its inode or birth time changed) while the owner token, brain, worktree, root and device still match. '
-    + 'Inspect writer status and use the deliberate self-transfer that confirms a relocated root to re-stamp this same path.');
+  const error = physicalRootError(DIRECTORY_CHANGED_MESSAGE);
   error.detail = 'physical_root_directory_changed';
   error.suggestion = 'On the brain host, run gbrain sources writer status <source> and note admin_state, then gbrain sources writer transfer prepare <source> --self-transfer --confirm-relocated-root '
     + '--admin-intent writer_transfer_prepare --expected-state <admin_state>, then gbrain sources writer transfer accept <source> --path <root> --expected-epoch <epoch> --manifest <manifest digest printed by prepare> '

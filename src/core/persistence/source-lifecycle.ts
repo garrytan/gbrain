@@ -1,4 +1,4 @@
-import { topologyTransaction } from './topology-transaction.ts';
+import { topologyTransaction, withoutStatementCap } from './topology-transaction.ts';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -279,7 +279,8 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
           {fix:readFix('Lists OAuth clients with the source each is bound to.',{argv:['gbrain','auth','clients','--json']})});
         const [impact]=await tx.executeRaw<{count:string}>('SELECT count(*)::text AS count FROM pages WHERE source_id=$1',[input.sourceId]);
         pagesDeleted=Number(impact.count);
-        await tx.executeRaw('DELETE FROM sources WHERE id=$1 AND incarnation=$2::uuid',[input.sourceId,incarnation]);
+        // #7702: the cascade scales with the source's size, not with contention, so only this statement runs uncapped.
+        await withoutStatementCap(tx,()=>tx.executeRaw('DELETE FROM sources WHERE id=$1 AND incarnation=$2::uuid',[input.sourceId,incarnation]));
         await tx.executeRaw('DELETE FROM persistence_source_bindings WHERE source_id=$1 AND source_incarnation=$2::uuid',[input.sourceId,incarnation]);
       }
       const contentReceipts=input.operation==='rebind'?await rebindContentReceipts(tx,worktrees,localHostId(),relocated?undefined:[input.sourceId]):[];

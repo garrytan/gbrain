@@ -262,6 +262,36 @@ for (const kind of testBackends()) {
       expect(await state(f.effectId)).toMatchObject({ state: 'failed', attempts: 1, error_code: 'embedding_budget_refused' });
     });
 
+    check('#7772 a stop signal that fires in the invocation preflight retries as embedding_aborted, not budget-refused', async () => {
+      const f = await fixture();
+      const controller = new AbortController();
+      let calls = 0;
+      let failure: unknown;
+      await run(async () => {
+        controller.abort(new Error('consumer stopped'));
+        try { return await invokeAI({ operation: 'embed', kind: 'embedding', model }, async () => { calls++; return vectors(); }, () => null); }
+        catch (error) { failure = error; throw error; }
+      }, controller.signal);
+      expect(calls).toBe(0);
+      expect(isAIInvocationPolicyError(failure)).toBe(true);
+      expect(await state(f.effectId)).toMatchObject({ state: 'queued', attempts: 1, error_code: 'embedding_aborted' });
+      await due(f.effectId);
+      await run(async () => { calls++; return vectors(); });
+      expect(calls).toBe(1);
+      expect(await state(f.effectId)).toMatchObject({ state: 'committed', attempts: 2 });
+    });
+
+    check('#7772 a real admission refusal while the stop signal is live still fails as budget-refused', async () => {
+      const f = await fixture();
+      const controller = new AbortController();
+      let calls = 0;
+      await withAIInvocationGuard(async () => { throw new Error('budget refused'); }, () => run(async () =>
+        invokeAI({ operation: 'embed', kind: 'embedding', model }, async () => { calls++; return vectors(); }, () => null), controller.signal));
+      expect(controller.signal.aborted).toBe(false);
+      expect(calls).toBe(0);
+      expect(await state(f.effectId)).toMatchObject({ state: 'failed', attempts: 1, error_code: 'embedding_budget_refused' });
+    });
+
     check('rate-limit failures retain the existing provider-hint backoff', async () => {
       const f = await fixture();
       await run(async () => { throw Object.assign(new Error('Please try again in 120s'), { status: 429 }); });

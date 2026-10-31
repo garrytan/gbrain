@@ -2,6 +2,7 @@ import { PENDING_IMPORT, pendingImportRefusal } from './pending-import.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { OperationError } from '../ops/contract.ts';
+import { isPhysicalRootDirectoryChangedMessage, relocatedRootTransferFix } from './physical-root-record.ts';
 import { LANE_BUSY, PersistenceConsumer, type PersistenceConsumerLike, type PrepareMutation } from './consumer.ts';
 import { WaiterOnlyConsumer, type ElectedOwner } from './consumer-election.ts';
 import { RESIDENT_CONSUMER_KINDS, startConsumerHeartbeat, type ConsumerHeartbeat } from './consumer-heartbeat.ts';
@@ -405,6 +406,10 @@ export function writeResponse(row: WriteRequest, hints: { retryAfterMs?: number 
       ? pendingWriteHint(receipt, row.operation)
       : delivered?.suggestion ?? content?.suggestion ?? held?.suggestion ?? terminalReceiptHint(row, reason), delivered?.docs);
   if (delivered?.detail ?? held?.reason) error.detail = delivered?.detail ?? held?.reason;
+  // #7671: a copied or restored checkout; the receipt kept only the message, so name the relocated-root self-transfer here.
+  if (isTerminal(row) && reason === 'recovery_required' && isPhysicalRootDirectoryChangedMessage(row.error_message)) {
+    Object.assign(error, { detail: 'physical_root_directory_changed', fix: relocatedRootTransferFix(row.source_id) });
+  }
   // #6693: a write refused while its page's file awaited import says so, with the wait (remember) or the sync to run first.
   if (isTerminal(row) && reason === 'source_changed' && (row.error_detail as { origin?: unknown } | null | undefined)?.origin === PENDING_IMPORT) {
     const pending = pendingImportRefusal(row, row.authority?.remote === true);

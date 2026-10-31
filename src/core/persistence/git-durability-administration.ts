@@ -16,7 +16,7 @@
  * sends agents around the owner, and leave it for the operator to commit.
  */
 import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { execFileBounded } from '../bounded-child-exec.ts';
 import { classifyGitCheckout } from '../git-checkout.ts';
 import { durableSsrfFlags, GIT_ENV, GIT_ENV_AUTH, GIT_SSRF_SUBCOMMAND_FLAGS } from '../git-remote.ts';
@@ -34,6 +34,7 @@ import { gitDurabilityPolicy, planGitDurabilityCatchUp, requeueGitDurabilityCatc
 import { refusalEnvelope, retryParkedEffects } from './effect-retry.ts';
 import { GIT_PUSH_CODES } from './git-push-holds.ts';
 import { patchManagedDurabilityBlock } from '../brain-repo-durability.ts';
+import { findResolverFile } from '../resolver-filenames.ts';
 
 export const GIT_DURABILITY_PARAMS = ['source_id', 'enable', 'disable', 'pat_file', 'dry_run', 'admin_intent', 'expected_state'] as const;
 
@@ -195,7 +196,18 @@ async function formerWorktreeHolds(engine: BrainEngine, sourceId: string, worktr
 
 export type ParkedPushRefusal = { source_id: string; request_id: string; code: string; message: string; suggestion?: string; fix?: Action };
 export type ParkedPushRetry = { status: 'ok' | 'partial'; requests: number; queued: number; unchanged: number; refused: ParkedPushRefusal[] };
-const REQUEST_REFUSALS = new Set(['permission_denied', 'source_changed', 'write_claim_lost']);
+const REQUEST_REFUSALS = new Set(['permission_denied', 'source_changed', 'write_claim_lost', 'page_not_found']);
+
+/**
+ * #7110: the stored remote authority can no longer see the request's page (it became private), so the retry's
+ * authority check refuses it as page_not_found. That is this request's refusal, not the run's; the trusted local
+ * operator gets the slug and the receipt to read instead of the remote writer's non-disclosing message.
+ */
+function hiddenTargetRefusal(row: { request_id: string; slug: string }): Omit<ParkedPushRefusal, 'source_id' | 'request_id'> {
+  return { code: 'page_not_found', message: `Page ${row.slug} is no longer visible to request ${row.request_id}'s original remote writer, so its parked Git effect was not retried under that writer.`,
+    suggestion: 'The other parked requests were still retried. This one stays parked: no retry runs it under another authority. Read its receipt, then decide with the brain owner whether the page should be visible to that writer again.',
+    fix: readFix(`Reads request ${row.request_id}'s receipt: its source, state and effect outcomes, read-only.`, { argv: ['gbrain', 'write-request', '--', row.request_id] }) };
+}
 
 /**
  * #5808(a): after a credential change, one more attempt for every effect of this
@@ -210,8 +222,8 @@ const REQUEST_REFUSALS = new Set(['permission_denied', 'source_changed', 'write_
  * a host or binding problem (`owner_unavailable`) still stops the whole run.
  */
 export async function retryParkedPushes(engine: BrainEngine, worktreeId: string, dryRun: boolean, codes: readonly string[] = GIT_PUSH_CODES): Promise<ParkedPushRetry> {
-  const rows = await engine.executeRaw<{ source_id: string; id: string; request_id: string }>(`
-    SELECT DISTINCT e.source_id,r.id::text AS id,r.request_id::text AS request_id FROM persistence_effects e
+  const rows = await engine.executeRaw<{ source_id: string; id: string; request_id: string; slug: string }>(`
+    SELECT DISTINCT e.source_id,r.id::text AS id,r.request_id::text AS request_id,r.slug FROM persistence_effects e
       JOIN persistence_requests r ON r.id=e.request_id
      WHERE e.worktree_id=$1::uuid AND e.kind='git' AND e.state='failed' AND e.recovery IS NULL AND NOT (e.data ? 'settled') AND (${HELD_ON_CODES})
      ORDER BY e.source_id,request_id,id`, [worktreeId, [...codes]]);
@@ -224,7 +236,7 @@ export async function retryParkedPushes(engine: BrainEngine, worktreeId: string,
       result = await retryParkedEffects(engine, row.source_id, row.request_id, dryRun, { internalId: row.id, parkedOnly: true, failedCodes: codes });
     } catch (error) {
       if (!(error instanceof OperationError) || !REQUEST_REFUSALS.has(error.code)) throw error;
-      refused.push({ ...target, ...refusalEnvelope(error) });
+      refused.push({ ...target, ...(error.code === 'page_not_found' ? hiddenTargetRefusal(row) : refusalEnvelope(error)) });
       continue;
     }
     if (result?.action === 'owner_revoked') { refused.push({ ...target, ...(result.refusal as ReturnType<typeof refusalEnvelope>) }); continue; }
@@ -277,6 +289,8 @@ async function ownedBinding(engine: BrainEngine, sourceId: string): Promise<Work
 /** The verb. `params` are the raw admin params; the caller has already checked the key set. */
 export async function runGitDurabilityAdministration(engine: BrainEngine, params: Record<string, unknown>): Promise<Record<string, unknown>> {
   const input = parseGitDurabilityParams(params);
+  // #7634: approval and the reviewed state are checked before the token is read or the checkout, credential store or parked pushes change.
+  const expectedState = await requireWriterAdminIntent(engine, 'writer_git_durability', params);
   const binding = await ownedBinding(engine, input.sourceId);
   const root = binding.local_path;
   const token = input.patFile === undefined ? undefined : readPatFile(input.patFile);
@@ -315,7 +329,8 @@ export async function runGitDurabilityAdministration(engine: BrainEngine, params
   // on this managed root it is replaced with the managed variant (a non-page file: the operator commits it).
   if (checkout) {
     const agents = patchManagedDurabilityBlock(root, input.sourceId, input.dryRun);
-    report.agents = { ...agents, ...(agents.status === 'fixed' && !input.dryRun ? { commit: 'The durability block is a non-page file: review it and commit it with plain git; it rides the owner\'s next push.' } : {}) };
+    const file = relative(root, findResolverFile(root) ?? join(root, 'AGENTS.md'));
+    report.agents = { ...agents, ...(agents.status === 'fixed' && !input.dryRun ? { commit: `The durability block is a non-page file: review it and commit it with gbrain git commit-push --path ${root} -m "<msg>" -- ${file}; it rides the owner's next push.` } : {}) };
   }
   if (input.dryRun) {
     const state = await writerAdminState(engine);
@@ -326,7 +341,6 @@ export async function runGitDurabilityAdministration(engine: BrainEngine, params
         consent: token ? ['credentials'] : [], actor: 'agent', requires_exclusive: false, why: 'Applies the previewed Git durability change on the owner host.',
         verify: { argv: ['gbrain', 'sources', 'writer', 'status', input.sourceId, '--json'] } } };
   }
-  const expectedState = await requireWriterAdminIntent(engine, 'writer_git_durability', params);
   const queued = await engine.transaction(async tx => {
     await tx.executeRaw("SELECT set_config('lock_timeout','2000ms',true),set_config('synchronous_commit','on',true)");
     await assertWriterAdminState(tx, expectedState);

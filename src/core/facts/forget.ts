@@ -17,6 +17,7 @@ import type { BrainEngine } from '../engine.ts';
 import { withPageLock } from '../page-lock.ts';
 import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesystemLock } from '../minions/source-filesystem.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
+import { readOnlyCheckout } from '../persistence/mirror-read-only.ts';
 import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
 import { contentHash } from '../utils.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
@@ -247,7 +248,7 @@ export async function forgetFactInFence(
     row.entity_slug !== null;
 
   if (!canFence) return legacyExpire();
-  if (await isWriteThroughDisabled(engine)) return legacyExpire();
+  if (await isWriteThroughDisabled(engine) || await readOnlyCheckout(engine, row.source_id)) return legacyExpire();
 
   // Look up source.local_path.
   const sources = await engine.executeRaw<SourceRow>(
