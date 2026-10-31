@@ -122,7 +122,7 @@ import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from
 import { PAGE_SORT_SQL } from './types.ts';
 import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns, keywordPhraseFactorSql } from './search/sql-ranking.ts';
 import { RARE_TERM_CHUNK_CAP, rankOrFallbackByRarity, rareTermPagesSql, type RareTermPages } from './search/keyword-or-rarity.ts';
 import { keywordArmRows } from './search/keyword-identifier-probe.ts';
 import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment, privatePagesFilterForCaller } from './search/private-visibility.ts';
@@ -1509,7 +1509,7 @@ export class PGLiteEngine implements BrainEngine {
            CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
              THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-           ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', ${rankParam})) * ${sourceFactorCase} AS score,
+           ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', ${rankParam})) * ${keywordPhraseFactorSql(ftsLang, rankParam, opts?.keywordPhrase === true)} * ${sourceFactorCase} AS score,
            CASE WHEN p.updated_at < (
              SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
            ) THEN true ELSE false END AS stale

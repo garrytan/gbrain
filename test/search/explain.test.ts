@@ -114,6 +114,13 @@ describe('diagnoseTrace', () => {
     expect(diagnoseTrace(t, [row('notes/a', 1)], retry)).toMatchObject({ state: 'dropped', code: 'target_dropped_relaxed_keyword' });
   });
 
+  test('#7192: a page folded into a kept row is retrieved as target_collapsed at that row', () => {
+    const t = new TargetTrace({ slug: 'notes/x-copy' });
+    t.observe('arm:keyword', [row('notes/x', 2), row('notes/x-copy', 2)]);
+    const kept = { ...row('notes/x', 2), collapsed: [{ slug: 'notes/x-copy', source_id: 'default', reason: 'twin' }] } as SearchResult;
+    expect(diagnoseTrace(t, [row('notes/a', 3), kept], retry)).toMatchObject({ state: 'retrieved', code: 'target_collapsed', rank: 2 });
+  });
+
   test('no arm → not_retrieved with an expansion retry; no observations → not_recorded', () => {
     const t = new TargetTrace({ slug: 'notes/x' });
     t.observe('arm:vector', [row('notes/a', 1)]);
@@ -124,7 +131,7 @@ describe('diagnoseTrace', () => {
 
 describe('diagnoseProbe', () => {
   const retry = { tool: 'query' as const, arguments: { query: 'q' } };
-  const ok = { source_id: 'default', chunks: 2, current: true, chunker_version: 99 };
+  const ok = { source_id: 'default', chunks: 2, embedded: 2, current: true, chunker_version: 99 };
   test('absent, ambiguous, unindexed, stale and unsealed pages', () => {
     expect(diagnoseProbe({ slug: 's' }, [], { requireSafeChunks: false, retry })!.code).toBe('target_not_found_or_not_visible');
     const amb = diagnoseProbe({ slug: 's' }, [ok, { ...ok, source_id: 'team' }], { requireSafeChunks: false, retry })!;
@@ -134,6 +141,8 @@ describe('diagnoseProbe', () => {
     expect(diagnoseProbe({ slug: 's' }, [{ ...ok, current: false }], { requireSafeChunks: false, retry })!.code).toBe('target_projection_stale');
     expect(diagnoseProbe({ slug: 's' }, [{ ...ok, chunker_version: 1 }], { requireSafeChunks: true, retry })!.code).toBe('target_safe_chunks_uncertified');
     expect(diagnoseProbe({ slug: 's' }, [ok], { requireSafeChunks: true, retry })).toBeNull();
+    expect(diagnoseProbe({ slug: 's' }, [{ ...ok, embedded: 0 }], { requireSafeChunks: false, retry })!.code).toBe('target_not_embedded');
+    expect(amb.fix?.argv).toEqual(['gbrain', 'query', 'q', '--explain-target', 'default:s']);
   });
 });
 
@@ -179,6 +188,12 @@ describe('search / query ops with explain (PGLite, keyless)', () => {
     await operationsByName.search.handler(ctx(false), { query: 'quokka', limit: 1, explain_target: all[1].slug });
     expect(metas.at(-1)?.explain_target).toMatchObject({ state: 'dropped', code: 'target_beyond_limit', last_rank: 2 });
     expect(notices).toContainEqual(expect.objectContaining({ code: 'target_beyond_limit' }));
+    // #7192: the local CLI keeps the fix (rendered into its --json object); a remote caller reads it from the notice only.
+    expect((metas.at(-1)?.explain_target as { fix?: { argv?: string[] } }).fix?.argv).toEqual(['gbrain', 'search', 'quokka', '--limit', '7']);
+    metas.length = 0;
+    await operationsByName.search.handler(ctx(true), { query: 'quokka', limit: 1, explain_target: all[1].slug });
+    expect(metas.at(-1)?.explain_target).toMatchObject({ code: 'target_beyond_limit' });
+    expect((metas.at(-1)?.explain_target as { fix?: unknown }).fix).toBeUndefined();
   });
 
   test('a private page and a nonexistent page look identical to a remote caller', async () => {
@@ -196,5 +211,7 @@ describe('search / query ops with explain (PGLite, keyless)', () => {
     metas.length = 0;
     await operationsByName.query.handler(ctx(false), { query: 'quokka', expand: false, explain_target: 'notes/unrelated' });
     expect((metas.at(-1)?.explain_target as { state: string }).state).toBe('not_retrieved');
+    // #7192: a keyless brain has no vectors anywhere; with the semantic arm off on this call, "no vectors" is not the cause.
+    expect((metas.at(-1)?.explain_target as { code: string }).code).toBe('target_not_retrieved');
   });
 });

@@ -426,6 +426,8 @@ export interface ModeBundle {
    * bundle. Override: `search.rank_priors` (boolean).
    */
   rank_priors: boolean;
+  /** #7175: keyword phrase factor (sql-ranking.ts KEYWORD_PHRASE_FACTOR). Off in every bundle (opt-in). Override: `search.keyword_phrase` (boolean). */
+  keyword_phrase: boolean;
   /**
    * Ranker wave (Phase E2, Cat 13) — arm-confidence-weighted fusion of the
    * LEXICAL arms (arm-confidence.ts). When the keyword arm's scale-free
@@ -535,6 +537,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     diverse_pool_depth: 0,
     collapse: true,
     rank_priors: true,
+    keyword_phrase: false,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
@@ -606,6 +609,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     diverse_pool_depth: 0,
     collapse: true,
     rank_priors: true,
+    keyword_phrase: false,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
@@ -677,6 +681,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     diverse_pool_depth: 0,
     collapse: true,
     rank_priors: true,
+    keyword_phrase: false,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
@@ -751,6 +756,7 @@ export interface SearchKeyOverrides {
   diverse_pool_depth?: number;
   collapse?: boolean;
   rank_priors?: boolean;
+  keyword_phrase?: boolean;
   // Ranker wave (Phase E2) — keyword-arm confidence floor override (null = off; (0, 1]).
   keyword_arm_confidence_floor?: number | null;
   // Ranker wave (Phase E3) — metadata boost gate override (`always` | `lexical`).
@@ -824,6 +830,7 @@ export interface SearchPerCallOpts {
   diverse_pool_depth?: number;
   collapse?: boolean;
   rank_priors?: boolean;
+  keyword_phrase?: boolean;
   // Ranker wave (Phase E2) — keyword-arm confidence floor per-call override (null = off; (0, 1]).
   keyword_arm_confidence_floor?: number | null;
   // Ranker wave (Phase E3) — metadata boost gate per-call override (`always` | `lexical`).
@@ -937,6 +944,7 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     diverse_pool_depth: pick('diverse_pool_depth'),
     collapse: pick('collapse'),
     rank_priors: pick('rank_priors'),
+    keyword_phrase: pick('keyword_phrase'),
     keyword_arm_confidence_floor: pick('keyword_arm_confidence_floor'),
     metadata_boost_gate: pick('metadata_boost_gate'),
     resolved_mode,
@@ -1297,6 +1305,7 @@ export function knobsHash(
     // Collapse and rank priors (append-only, emitted only when turned off).
     ...(knobs.collapse === false ? ['col=0'] : []),
     ...(knobs.rank_priors === false ? ['rpr=0'] : []),
+    ...(knobs.keyword_phrase === true ? ['kph=1'] : []),
   ];
   // #5691 (append-only, no version bump): only a non-empty query prefix adds
   // a part, so every row written without one keeps its key.
@@ -1547,6 +1556,8 @@ export function loadOverridesFromConfig(
   if (col !== undefined) out.collapse = col;
   const rpr = parseBoolKnob(get('search.rank_priors'));
   if (rpr !== undefined) out.rank_priors = rpr;
+  const kph = parseBoolKnob(get('search.keyword_phrase'));
+  if (kph !== undefined) out.keyword_phrase = kph;
   // Ranker wave (Phase E2) — keyword-arm confidence floor: the literal
   // `off`/`null` pins the knob off (null); a number in (0, 1] is the floor;
   // anything else falls through to the bundle. ONE range contract with the
@@ -1623,6 +1634,7 @@ export const KNOB_CONFIG_KEY: Readonly<Record<keyof ModeBundle, string>> = Objec
   diverse_pool_depth: 'search.diverse_pool_depth',
   collapse: 'search.collapse',
   rank_priors: 'search.rank_priors',
+  keyword_phrase: 'search.keyword_phrase',
   keyword_arm_confidence_floor: 'search.keyword_arm_confidence_floor',
   metadata_boost_gate: 'search.metadata_boost_gate',
 });
@@ -1700,7 +1712,7 @@ export async function loadSearchModeConfig(
 }
 
 /** `true`/`1`/`on` → true, `false`/`0`/`off` → false, anything else (or unset) → undefined. */
-function parseBoolKnob(v: string | undefined): boolean | undefined {
+export function parseBoolKnob(v: string | undefined): boolean | undefined {
   if (v === undefined) return undefined;
   const l = v.trim().toLowerCase();
   if (l === 'true' || l === '1' || l === 'on') return true;
