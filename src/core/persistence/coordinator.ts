@@ -11,7 +11,7 @@ import { flushDirectory } from '../fs-durable.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { sha256 } from './digest.ts';
 import { authorizeStoredRequest } from './authority.ts';
-import { localHostId } from './identity.ts';
+import { hostIdFor } from './identity.ts';
 import { acquireWorktree, getWorktreeBinding, guardOwnership, type WorktreeBinding } from './ownership.ts';
 import { chargePreparationAttempt, clearResolvedRecovery, completeWrite, getWriteRequestById, lockCounters, markRecovering, prepareRecovery, releaseUnpublishedClaim } from './journal.ts';
 import type { WaitingOn } from './claim-phase.ts';
@@ -453,7 +453,7 @@ function largeRecoveryRecord(row: WriteRequest, file: PageMutationFile, binding:
 }
 
 export async function publishMutation(engine: BrainEngine, row: WriteRequest, prepared: PreparedMutation,
-  hostId = localHostId(), callerHooks: PublicationHooks = {}): Promise<WriteRequest> {
+  hostId = hostIdFor(engine), callerHooks: PublicationHooks = {}): Promise<WriteRequest> {
   const hooks = withFaultPoints(callerHooks);
   let lock: NativeLockHandle | null = null;
   let releaseCapacity: (() => void) | null = null;
@@ -683,7 +683,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
   }
 }
 
-export async function recoverPublication(engine: BrainEngine, id: string, hostId = localHostId(), alreadyLocked = false,
+export async function recoverPublication(engine: BrainEngine, id: string, hostId = hostIdFor(engine), alreadyLocked = false,
   terminalError?: PublicationFailure, capacityAlreadyHeld = false, hooks: PublicationHooks = {}): Promise<WriteRequest> {
   let row = await getWriteRequestById(engine, id);
   if (!row) throw opError('not_found', 'Write request not found.',

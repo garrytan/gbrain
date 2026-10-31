@@ -26,7 +26,7 @@ import { contentSizeHold, parseMarkdownHead } from '../markdown.ts';
 import { throwIfHeld } from '../trust/gate-outcomes.ts';
 import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequest, intentDigest, type WriteAdmission } from './journal.ts';
 import { submissionAuthority, authorizeStoredRequest } from './authority.ts';
-import { currentVerifiedLocalWriter, localHostId, readLocalWriter, registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
+import { currentVerifiedLocalWriter, hostIdFor, readLocalWriter, registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
 import type { BrainEngine } from '../engine.ts';
 import { claimWorktree, getWorktreeBinding } from './ownership.ts';
 import { clientRequestIdOf, parseMutationPrecondition } from './preconditions.ts';
@@ -163,7 +163,7 @@ async function resolveCaptureFile(ctx: OperationContext, sourceId: string, p: Re
   delete p.local_file;
   const [source] = await ctx.engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [sourceId]);
   const binding = await getWorktreeBinding(ctx.engine, sourceId);
-  let root = binding ? binding.owner_host_id === localHostId() && binding.local_path ? join(binding.local_path, binding.relative_path) : null
+  let root = binding ? binding.owner_host_id === hostIdFor(ctx.engine) && binding.local_path ? join(binding.local_path, binding.relative_path) : null
     : source?.local_path || (sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
   if (root && !isAbsolute(root)) root = null;
   let origin: string | null = null;
@@ -422,7 +422,7 @@ export async function preparePageAdmission(ctx: OperationContext,
   const root = configuredRoot && isAbsolute(configuredRoot) ? configuredRoot : null;
   // Checkout paths belong to a host binding; sources.local_path may name
   // another host's original checkout after a verified ownership transfer.
-  const localRoot = binding ? binding.owner_host_id === localHostId() && binding.local_path
+  const localRoot = binding ? binding.owner_host_id === hostIdFor(ctx.engine) && binding.local_path
     ? join(binding.local_path, binding.relative_path) : null : root;
   // #7324: a declared db_only page is canonical in the database, so its detach restore publishes database-only even
   // where write-through would re-create its file (a managed checkout); assertRestoreOrigin still requires the file gone.
@@ -456,7 +456,7 @@ export async function preparePageAdmission(ctx: OperationContext,
   // #5032: this host publishes the canonical file, and on Windows a ':' in its
   // name cannot be stored; refuse before admission. Database-only writes pass,
   // including read-only mirror sources and pages created while one (#5409).
-  if (writeThrough && binding?.owner_host_id === localHostId() && binding.local_path && isWindowsColonTarget(snapshot?.page.source_path ?? `${slug}.md`)
+  if (writeThrough && binding?.owner_host_id === hostIdFor(ctx.engine) && binding.local_path && isWindowsColonTarget(snapshot?.page.source_path ?? `${slug}.md`)
     && !(snapshot && !snapshot.page.source_path && await isUnboundSourcePage(ctx.engine, sourceId, slug))
     && !await sourceMirrorReadOnly(ctx.engine, sourceId)
     && !(snapshot && !snapshot.page.source_path && await isMirrorOnlyPage(ctx.engine, sourceId, slug))

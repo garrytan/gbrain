@@ -9,6 +9,7 @@ import { flushDirectory } from '../fs-durable.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { sha256 } from './digest.ts';
+import { viewedEngine } from './switches.ts';
 import type { Principal, SqlEngine } from './model.ts';
 import { acquireNativeLock } from './native-lock.ts';
 
@@ -267,8 +268,71 @@ function verifiedFromRow(local: LocalRegistration, row: LocalWriterRow | undefin
   }
   return { principal: { kind: row.lane === 'cli' ? 'local_cli' : 'local_stdio', id: local.id }, grant: row.grant_ceiling, remote: row.lane !== 'cli' };
 }
+/**
+ * Registers a local writer whose credential the host holds as a value: the row in `persistence_local_writers` and no
+ * file. For an engine opened from settings (engine-open.ts) the host keeps the registration where it keeps the other
+ * settings and runs operations inside `withVerifiedLocalRegistration(engine, registration, ...)`, as the server does
+ * for a registration it verified. Idempotent: a registered writer is left as it is; a different credential or lane
+ * under the same id refuses, as the file-backed registration does, and a revoked one is never silently replaced.
+ */
+export async function registerLocalWriterValue(engine: SqlEngine, local: LocalRegistration, grant: LocalGrant = defaultGrant()): Promise<void> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(local.id) || typeof local.credential !== 'string' || local.credential.length < 32
+    || (local.lane !== 'cli' && local.lane !== 'stdio')) {
+    throw opError('writer_identity_invalid', 'The local writer registration is invalid.',
+      'A registration has an id that is a UUID, a credential of at least 32 characters, and a lane, cli or stdio; nothing was registered.');
+  }
+  const [existing] = await engine.executeRaw<LocalWriterRow>(
+    'SELECT revoked_at,credential_hash,lane,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid', [local.id]);
+  if (existing?.revoked_at != null) throw new OperationError('permission_denied', 'This local writer registration was revoked.', 'Explicitly register a new writer to authorize future work.');
+  if (existing && (existing.lane !== local.lane || existing.credential_hash !== sha256(local.credential))) {
+    throw opError('permission_denied', 'Local writer credential does not match this registration.',
+      `Registration ${local.id} exists in this brain's database with another credential or lane, so nothing was registered. Use the registration's own credential, or register a new id.`,
+      { fix: registrationsFix() });
+  }
+  if (!existing) {
+    await engine.executeRaw(`INSERT INTO persistence_local_writers(id,lane,credential_hash,grant_ceiling)
+    VALUES($1::uuid,$2,$3,$4::text::jsonb) ON CONFLICT(id) DO NOTHING`, [local.id, local.lane, sha256(local.credential), JSON.stringify(grant)]);
+    forgetRequestIdentity();
+  }
+}
 export async function revokeLocalWriter(engine: BrainEngine, id: string): Promise<boolean> {
   forgetRequestIdentity();
   const rows = await engine.executeRaw('UPDATE persistence_local_writers SET revoked_at=COALESCE(revoked_at,now()) WHERE id=$1::uuid RETURNING id', [id]);
   return rows.length === 1;
+}
+
+// ─── Host identity by engine ───────────────────────────────────────────────
+// A host that opens an engine from settings alone (engine-open.ts) names its
+// identity instead of minting one into `host.json` under the home directory.
+// The persistence consumer, its heartbeat row and every publication for that
+// engine use the given id; everything else keeps `localHostId()`. Keyed by
+// engine object, as the CLI keys the config it opened each engine with.
+const engineHostIds = new WeakMap<object, string>();
+/** Records the host id `engine` publishes under; `hostIdFor` returns it from then on. */
+export function setEngineHostId(engine: object, id: string): void {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    throw opError('writer_identity_invalid', 'The host id is not a UUID.',
+      `host.id must be a UUID (the persistence tables store host ids as uuid); got ${JSON.stringify(id)}.`);
+  }
+  engineHostIds.set(engine, id.toLowerCase());
+}
+/**
+ * The explicit host id recorded for `engine` or for the engine it stands for: a read-through view
+ * (`registerEngineView`) resolves to the engine it reads through, and a page transaction is an object whose prototype
+ * chain reaches the engine that opened it, so the walk covers both. Undefined when none was given.
+ */
+function explicitHostId(engine: object): string | undefined {
+  for (let owner: object | null = viewedEngine(engine); owner && owner !== Object.prototype; owner = Object.getPrototypeOf(owner)) {
+    const id = engineHostIds.get(owner);
+    if (id) return id;
+  }
+  return undefined;
+}
+/** The host id `engine` was opened with, else this process's file identity (minted on first use). */
+export function hostIdFor(engine: object): string {
+  return explicitHostId(engine) ?? localHostId();
+}
+/** True when `engine` was opened with an explicit host id, so no `host.json` path belongs on its rows. */
+export function hasExplicitHostId(engine: object): boolean {
+  return explicitHostId(engine) !== undefined;
 }

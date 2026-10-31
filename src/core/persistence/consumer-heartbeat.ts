@@ -70,8 +70,9 @@ export interface ConsumerRow {
   restart_required: boolean;
   root_barrier_age_ms: number | null;
   pool: ConsumerPool | null;
-  host_json_path: string;
-  persistence_home: string;
+  /** Where this consumer's identity was minted; null when the host gave the identity at open (engine-open.ts). */
+  host_json_path: string | null;
+  persistence_home: string | null;
   minted_under: Record<string, unknown> | null;
   version: string;
   /** #6650 (migration v243): the owner's boot id and process start time; null on rows an older consumer wrote. */
@@ -200,8 +201,8 @@ export interface ConsumerHeartbeatOpts {
   identity?: ConsumerProcessIdentity;
   /** Receives each renewal failure (the default logs once per failure streak). */
   onError?: (error: unknown) => void;
-  /** The file paths the row carries (default: this process's host.json and persistence home). */
-  paths?: { host_json_path: string; persistence_home: string; minted_under: Record<string, unknown> | null };
+  /** The file paths the row carries (default: this process's host.json and persistence home); all null when the host gave the identity at open. */
+  paths?: { host_json_path: string | null; persistence_home: string | null; minted_under: Record<string, unknown> | null };
 }
 export interface ConsumerHeartbeat {
   /** Renews now (single-flight: a renewal already in flight is awaited instead). Never rejects. */

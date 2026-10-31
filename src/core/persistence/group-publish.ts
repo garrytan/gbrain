@@ -37,7 +37,7 @@ import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { authorizeStoredRequest, storedAuthorizationReads } from './authority.ts';
-import { localHostId } from './identity.ts';
+import { hostIdFor } from './identity.ts';
 import { acquireWorktree, acquireWorktreeShared, getWorktreeBinding, guardOwnership, joinWorktreeLease, MANAGED_MODE_SQL } from './ownership.ts';
 import { isLockOpenFailure, type NativeLockHandle } from './native-lock.ts';
 import { awaitLaneBegin, awaitLaneTurn, LaneAbort, laneApplyBegin, laneClaimed, laneFinished, lanePolicy, stepDownLanes, type LaneState } from './sync-lanes.ts';
@@ -246,7 +246,7 @@ export type TransactionRunner = <T>(fn: (tx: BrainEngine) => Promise<T>) => Prom
 /** #5984 Phase 4.5: foreground writes publishing beside this process's lane groups, until their recovery record is cleared. */
 const publishingBeside = new Set<string>();
 
-export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], prepared: PreparedMutation[], hostId = localHostId(),
+export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], prepared: PreparedMutation[], hostId = hostIdFor(engine),
   hooks: GroupHooks = {}, lane: LaneState | null = null, transaction: TransactionRunner = fn => publicationTransaction(engine, fn)): Promise<GroupPublication> {
   const head = rows[0];
   const none: GroupPublication = { done: null, requeued: [] };
@@ -493,7 +493,7 @@ function seam(name: PublicationBoundary, row: WriteRequest): Promise<void> {
  * released is taken back first; a request the group left recovering or that
  * another worker now holds is returned as it stands.
  */
-export async function publishSingleWrite(engine: BrainEngine, row: WriteRequest, prepared: PreparedMutation, hostId = localHostId(), hooks: GroupHooks = {},
+export async function publishSingleWrite(engine: BrainEngine, row: WriteRequest, prepared: PreparedMutation, hostId = hostIdFor(engine), hooks: GroupHooks = {},
   transaction?: TransactionRunner): Promise<WriteRequest> {
   const single: PublicationHooks = hooks.projectionPending ? { projectionPending: hooks.projectionPending } : {};
   if (engine.kind !== 'postgres' || !singleWrite(row) || !groupable(row, prepared) || !await writeSwitchOn(engine, 'single_write_group').catch(() => true)) {
