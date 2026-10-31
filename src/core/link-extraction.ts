@@ -18,6 +18,8 @@ import { stripCodeBlocks } from './markdown-code.ts';
 import { maskLinksFence } from './links-fence.ts';
 import { targetTakesVerb } from './link-target-roles.ts';
 import { inSuppressedRange, rolePriorSuppressedRanges } from './machine-sections.ts';
+import { PARTNER_ROLE_RE, ADVISOR_ROLE_RE, EMPLOYEE_ROLE_RE, rolePriorPhrases } from './link-role-priors.ts';
+export { rolePriorPhrases } from './link-role-priors.ts';
 import { statedRelationTypes } from './line-grammar.ts';
 import { isValidSourceId } from './source-id.ts';
 import { isDatedTimelineLine, parseInlineCitationTimelineEntries, TIMELINE_LINE_RE, TIMELINE_LINE_RE_CN } from './timeline-citations.ts';
@@ -105,7 +107,7 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
 // belongs to another link in the window no longer types this one; "joined [X] as <role>" reads as works_at.
 // 2026-10-08: held-out-confirmed Q2 units U1, U3, U4 (core/link-typing-units.ts). Re-extract so pages pick these up.
 // A bump needs its entry in EXTRACTOR_BUMP_NOTES (link-extraction-watermark.ts), copied into the CHANGELOG at ship.
-export const LINK_EXTRACTOR_VERSION_TS = '2026-10-08T00:00:00Z';
+export const LINK_EXTRACTOR_VERSION_TS = '2026-10-28T19:58:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -741,6 +743,7 @@ function makeTypeFor(content: string, pageType: PageType, opts: ExtractPageLinks
   const suppressedRanges = rolePriorSuppressedRanges(stripCodeBlocks(content));
   const attendanceRanges = attendanceEvidenceRanges(content);
   const statedType = statedRelationTypes(content, { ...opts.lineGrammar, declaredVerbs: pack?.link_types.map(lt => lt.name) });
+  let derivedRoleText: string | undefined;
   return (ctx, targetSlug, idx, sourceId, bodyReference = true) => {
     const explain = opts.explain;
     const decide = (linkType: string, why: Partial<LinkTypeExplanation> = {}, canonicalAttendance?: boolean) => {
@@ -772,7 +775,7 @@ function makeTypeFor(content: string, pageType: PageType, opts: ExtractPageLinks
       return decide('mentions', { rule: 'page.meeting' });
     }
     const suppressPrior = idx !== undefined && idx >= 0 && inSuppressedRange(suppressedRanges, idx);
-    const roleText = opts.roleText ?? content;
+    const roleText = opts.roleText ?? (derivedRoleText ??= rolePriorPhrases(content).filter((phrase): phrase is string => phrase !== null).join('\n'));
     const trace = traceLinkType(pageType, ctx, suppressPrior ? undefined : roleText, targetSlug,
       opts.targetType ? targetType ?? null : undefined, bodyReference && idx !== undefined && idx >= 0 ? excerptAnchor(content, idx, 240) : undefined, roleText, !!explain);
     const { type, ...why } = trace;
@@ -1319,34 +1322,6 @@ const ZH_INVESTED_RE = /(?:投资|入股|融资|注资|参股)(?:了|的|了?于
 const ZH_ADVISES_RE = /(?:顾问|咨询|指导)(?:了|的)?/;
 const ZH_WORKS_AT_RE = /(?:任职|就职|担任|供职|在.{0,10}(?:工作|上班|负责))(?:于|在|的)?/;
 const ZH_CITED_RE = /(?:引用|援引|提到|提及|转述|摘录)(?:了|的|自)?/;
-
-// Page-role detection: if the source page describes a partner/investor at
-// page level, that's a strong prior for outbound company refs being
-// invested_in even when per-edge context lacks explicit investment verbs.
-const PARTNER_ROLE_RE = /\b(?:partner at|partner of|venture partner|VC partner|invested early|investor at|investor in|portfolio|venture capital|early-stage investor|seed investor|fund [A-Z]|invests across|backs companies)\b/i;
-
-// Advisor role prior: fires when the page-level description indicates the
-// person IS an advisor (not just mentions advising). Broadened in v0.10.5
-// from "full-time/professional/advises multiple" to catch any page that
-// self-identifies the subject as an advisor.
-const ADVISOR_ROLE_RE = /\b(?:full-time advisor|professional advisor|advises (?:multiple|several|various)|is an? (?:advisor|security advisor|technical advisor|strategic advisor|industry advisor|product advisor|senior advisor)|took on advisory roles|(?:her|his|their) advisory (?:work|role|engagement|portfolio)|serves as (?:an )?advisor)\b/i;
-
-// Employee role prior (new in v0.10.5): fires when the page-level description
-// indicates the person IS an employee (senior/staff/lead engineer, director,
-// head, etc.) at some company. Biases outbound company refs on that page
-// toward works_at when per-edge verbs are absent (e.g. possessive phrasings
-// "her work on Delta's pipeline..." where the verb "works" doesn't appear
-// near the slug).
-//
-// Scope: only fires for person-page → company-page links. Companies' own
-// pages mentioning their employees use the page-role layer differently.
-/** The first match of each page-role prior in `text`: joined with newlines, they decide every prior exactly as the whole text does (no prior crosses a line). */
-export function rolePriorPhrases(text: string): Array<string | null> {
-  return [PARTNER_ROLE_RE, ADVISOR_ROLE_RE, EMPLOYEE_ROLE_RE].map(re => re.exec(text)?.[0] ?? null);
-}
-
-const EMPLOYEE_ROLE_RE = /\b(?:is an? (?:senior|staff|principal|lead|backend|frontend|full-?stack|ML|data|security|DevOps|platform)? ?engineer at|is an? (?:senior|staff|principal|lead)? ?(?:developer|designer|product manager|engineering manager|director|VP) (?:at|of)|holds? the (?:CTO|CEO|CFO|COO|CMO|CRO|VP) (?:role|position|seat|title) at|is the (?:CTO|CEO|CFO|COO|CMO|CRO) of|employee at|on the team at|works on .{0,30} at)\b/i;
-
 
 /** A per-edge verb rule. `id` is stable: tests, explainLinkType and development reports name rules by it. */
 interface VerbRule { id: string; re: RegExp; verb: string; unit?: TypingUnit }

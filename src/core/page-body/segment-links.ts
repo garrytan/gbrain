@@ -122,8 +122,10 @@ export async function* bodyWindows(engine: BrainEngine, page: { id: number; slug
 export async function segmentedRoleText(engine: BrainEngine, page: { id: number; slug: string; source_id?: string },
   opts: BodyBlockOptions = {}): Promise<string> {
   const found: Array<string | null> = [null, null, null];
+  const open: string[] = [];
   for await (const block of bodyBlocks(engine, page, opts)) {
-    rolePriorPhrases(block.text).forEach((phrase, i) => { found[i] ??= phrase; });
+    rolePriorPhrases(open.filter(Boolean).join('\n') + '\n' + block.text).forEach((phrase, i) => { found[i] ??= phrase; });
+    openHeadings(block.text, open);
     if (found.every(Boolean)) break;
   }
   return found.filter(Boolean).join('\n');
@@ -271,7 +273,7 @@ export async function openSegmentedLinkSession(engine: BrainEngine, page: Segmen
     const r = run && reading;
     if (r) {
       r.info.chars += block.text.length;
-      rolePriorPhrases(block.text).forEach((phrase, i) => { r.info.roles[i] ??= phrase === null ? null : detachedValue(phrase); });
+      rolePriorPhrases(open.filter(Boolean).join('\n') + '\n' + block.text).forEach((phrase, i) => { r.info.roles[i] ??= phrase === null ? null : detachedValue(phrase); });
       if (r.head.length < CONTEXT_CHARS) r.head += block.text.slice(0, CONTEXT_CHARS - r.head.length);
       r.tail.push(block.text);
       r.tailChars += block.text.length;

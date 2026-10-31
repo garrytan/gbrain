@@ -20,6 +20,8 @@ import { LINK_EXTRACTION_GENERATION_KEY } from './line-grammar.ts';
  * Pinned by test/link-extractor-bump-notes.test.ts.
  */
 export const EXTRACTOR_BUMP_NOTES: Readonly<Record<string, string>> = {
+  '2026-10-28T19:58:00Z': 'Page-role priors ignore machine-written sections and ordinary portfolio text, so every page re-extracts its links once, brain-wide (zero model calls). ' +
+    'Run gbrain extract --stale --catch-up on the brain host to finish re-extraction, including cached segmented link roles.',
   '2026-10-08T00:00:00Z': 'Link typing picks up the held-out-confirmed Q2 units (U1, U3, U4), so every page re-extracts its links once, brain-wide (zero model calls). ' +
     'Plain `gbrain extract --stale` drains it 30 minutes per run and resumes (the cron default); `gbrain extract --stale --catch-up` finishes it in one run on the brain host ' +
     '(about 6 h at 290K pages and 10 ms RTT; each page commits alone, safe to interrupt). `gbrain extract --stale --dry-run --json` reports `actionable: 0` when done.',
