@@ -28,8 +28,8 @@
  * whether a per-turn hook is wired and loads, naming the harness's own
  * inspect command when it does not.
  */
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { dirname, join, sep } from 'node:path';
 import { bunSpawnSync } from '../spawn.ts';
 import { ownedEntryFingerprint } from '../bootstrap/adopted-connections.ts';
 import { codexHookCensus, codexHookGroupRuns, codexHookTrustHash, codexSetupHookGroup, codexSetupTrustEntry, writeCodexSetupHooks, type CodexHookGroup } from '../bootstrap/codex-hooks.ts';
@@ -105,17 +105,32 @@ export function isOtherGbrainEntry(e: Record<string, unknown>, committed = false
   return (!committed && typeof e[GBRAIN_HOOK_MARKER_KEY] === 'string') || !!classifyHarnessHook(e, EVENT, 'any');
 }
 
+/** Claude Code's Linux machine-managed settings and JSON drop-ins. */
+export function claudeManagedSettingsPaths(directory?: string): string[] {
+  const root = directory ?? (process.platform === 'linux' ? join(sep, 'etc', 'claude-code') : undefined);
+  if (!root) return [];
+  let dropins: string[] = [];
+  try {
+    dropins = readdirSync(join(root, 'managed-settings.d'), { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+      .map((entry) => join(root, 'managed-settings.d', entry.name))
+      .sort();
+  } catch { /* missing or unreadable drop-ins do not hide other settings */ }
+  return [join(root, 'managed-settings.json'), ...dropins];
+}
+
 /**
  * Runtime dedupe for the turn-rule lane: another gbrain lane already wires
  * UserPromptSubmit for this harness, and that hook adds the same rule.
  * Fail-open (an unreadable file counts as not wired).
  */
-export function turnRuleHookYields(harness: string, cwd: string): boolean {
+export function turnRuleHookYields(harness: string, cwd: string, opts: { managedSettingsDir?: string } = {}): boolean {
   if (harness === 'codex') {
     // Only a group Codex actually runs (trusted, enabled) carries the rule.
     try { return codexHookCensus(codexHooksPath()).some((g) => g.event === EVENT && (g.lane === 'setup' || g.lane === 'bootstrap') && codexHookGroupRuns(codexHooksPath(), codexConfigPath(), g)); } catch { return false; }
   }
-  return claudePromptEntries(claudeUserSettingsPath()).some((e) => isOtherGbrainEntry(e))
+  return claudeManagedSettingsPaths(opts.managedSettingsDir).some((path) => claudePromptEntries(path).some((e) => isOtherGbrainEntry(e)))
+    || claudePromptEntries(claudeUserSettingsPath()).some((e) => isOtherGbrainEntry(e))
     || claudePromptEntries(join(cwd, '.claude', 'settings.local.json')).some((e) => isOtherGbrainEntry(e))
     || claudePromptEntries(join(cwd, '.claude', 'settings.json')).some((e) => isOtherGbrainEntry(e, true));
 }
