@@ -6,7 +6,6 @@
 # a skill more than 10% over its last diet gets a diet, not another paragraph (CONTRIBUTING.md, "Changing a skill").
 # Columns (tab-separated): skill	max_bytes	last_diet_bytes (- for none)	note
 book-mirror	29391	-	seeded at 26719 bytes
-brain-ops	18304	-	seeded at 16640 bytes
 bulk-ingestion	20834	-	seeded at 18940 bytes
 cold-start	25930	-	seeded at 23572 bytes
 company-brainify	41167	-	seeded at 37424 bytes
