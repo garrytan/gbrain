@@ -60,7 +60,7 @@ describe('graduation inventory', () => {
     expect(new Set(names).size).toBe(names.length);
     const counts: Record<string, number> = {};
     for (const e of GRADUATION_INVENTORY.entries) counts[e.class] = (counts[e.class] ?? 0) + 1;
-    expect(counts).toEqual({ carry: 146, rebind: 2, rebuild: 3, discard: 9, schema_owned: 4 });
+    expect(counts).toEqual({ carry: 149, rebind: 2, rebuild: 3, discard: 9, schema_owned: 4 });
     for (const e of GRADUATION_INVENTORY.entries) {
       expect({ relation: e.relation, reason: e.reason.length > 5, present: e.engines.pglite || e.engines.postgres })
         .toEqual({ relation: e.relation, reason: true, present: true });
@@ -68,7 +68,8 @@ describe('graduation inventory', () => {
     expect(expectedRelations('pglite').filter(r => !expectedRelations('postgres').includes(r))).toEqual(['planner_stats_deltas', 'planner_stats_state']);
     expect(expectedRelations('postgres').filter(r => !expectedRelations('pglite').includes(r))).toEqual(['file_migration_ledger']);
     expect(GRADUATION_INVENTORY.entries.filter(e => e.lossKind === 'security').map(e => e.relation).sort()).toEqual([
-      'access_tokens', 'oauth_clients', 'oauth_codes', 'oauth_grant_audit', 'oauth_tokens', 'persistence_local_writers', 'shared_skill_state']);
+      'access_group_members', 'access_groups', 'access_members', 'access_tokens', 'oauth_clients', 'oauth_codes', 'oauth_grant_audit', 'oauth_tokens',
+      'persistence_local_writers', 'shared_skill_state']);
   });
 
   test('every relation of a fresh schema has a row on each engine', async () => {

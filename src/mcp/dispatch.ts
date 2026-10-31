@@ -14,7 +14,8 @@ import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import type { OperationMeta } from '../core/ops/contract.ts';
 import { loadConfig } from '../core/config.ts';
 import { withRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core/config-snapshot.ts';
-import { withPrivateReadableSources } from '../core/search/private-visibility.ts';
+import { withCallerAccess } from '../core/search/private-visibility.ts';
+import { remoteCallerAccess } from '../core/access/caller.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
@@ -900,7 +901,11 @@ export async function dispatchToolCall(
   const readOnly = operations.find(o => o.name === name)?.mutating === false;
   const privateSources = readOnly && opts.remote !== false && !WORLD_ONLY_PACK_OPS.has(name) ? opts.auth?.privatePages?.sources : undefined;
   const resolved = opts.metaHook && (opts.hotMemoryOff === true || hotMemoryOffIn(params)) ? { ...opts, metaHook: undefined } : opts;
-  const run = () => withPrivateReadableSources(privateSources, () => withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, params, resolved)));
+  // GBRA-218: a remote call also carries its credential's member identity, which every caller-aware read checks page readers against.
+  const run = async () => {
+    const access = opts.remote === false ? { privateReadableSources: [] } : await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport);
+    return withCallerAccess(access, () => withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, params, resolved)));
+  };
   if (name === 'search' || name === 'query') return withSearchConnectionBudget(() => withRequestConfigSnapshot(engine, run));
   return readOnly
     ? withRequestConfigSnapshot(engine, run)

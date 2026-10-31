@@ -354,6 +354,22 @@
         "name": "derived_visibility"
       },
       {
+        "category": "brain",
+        "name": "access_readers_malformed"
+      },
+      {
+        "category": "brain",
+        "name": "access_unknown_readers"
+      },
+      {
+        "category": "brain",
+        "name": "access_recent_narrowings"
+      },
+      {
+        "category": "brain",
+        "name": "access_page_readers_backfill"
+      },
+      {
         "category": "ops",
         "name": "rls"
       },

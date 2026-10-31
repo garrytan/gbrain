@@ -42,6 +42,7 @@ import { safeChunksRepair } from './safe-chunks.ts';
 import { contextualModeRepair } from './contextual-mode.ts';
 import { connectorCheckpointsRepair } from './connector-checkpoints.ts';
 import { requestIndexesRepair } from './request-indexes.ts';
+import { accessRepair } from './access.ts';
 import { connectorFencesRepair } from './connector-fences.ts';
 import { takeSupersessionRepair } from './take-supersession.ts';
 import { acceptedTakesRepair } from './accepted-takes.ts';
@@ -148,6 +149,11 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
     handler: connectorCheckpointsRepair, embeds: 'none', checks: ['connector_checkpoints'],
     summary: 'Delete connector checkpoint rows and retry pointers that no registered connector source can load and that are older than 7 days (#5686). '
       + 'Cleanup only; no journal admission. Rows a pending write still references are kept. Brain-wide.',
+  },
+  access: {
+    handler: accessRepair, embeds: 'none', checks: ['access_page_readers_backfill'],
+    summary: 'Derive the readers of pages written before member access (GBRA-218) whose frontmatter already names readable_by. Until repaired such a page reads as nobody for every remote caller; '
+      + 'the repair only restores reads for the members it names and never widens anything. Updates only rows whose derived value changes; no revision, content hash or embedding change. No journal admission.',
   },
   'request-indexes': {
     handler: requestIndexesRepair, embeds: 'none', checks: ['persistence_request_indexes'],

@@ -43,7 +43,7 @@ import { partitionForActivation, suppressionSummary } from '../eligibility/activ
 import { trustFields } from '../eligibility/labels.ts';
 import { quoteFacts } from '../search/transcript-quote.ts';
 import { eligibilityCacheField, readTrustGeneration } from '../eligibility/generation.ts';
-import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { callerRelaxesPrivacy, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { isConfigTruthy } from '../config.ts';
 
 const DEFAULT_TTL_MS = 30_000;
@@ -153,7 +153,8 @@ export async function getBrainHotMemoryMeta(
   // The operator opt-out (search.remote_private_pages) changes what a world
   // read returns, so it is part of the tier too.
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
-  const tier = ctx.remote === false ? 'all' : excludePrivate ? 'world' : 'world+private-pages';
+  // GBRA-218: on a brain with member restrictions a relaxed read still applies the readers part, so it has its own tier.
+  const tier = ctx.remote === false ? 'all' : !excludePrivate ? 'world+private-pages' : callerRelaxesPrivacy() ? 'world+private-pages-readers' : 'world';
   // encodeCacheField (F5): source_id / session_id are caller-controlled and
   // may contain the '::' delimiter; percent-encode ':' so bumpHotMemoryCache's
   // split('::') can never mis-slice a component.
