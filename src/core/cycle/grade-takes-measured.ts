@@ -11,8 +11,8 @@
  * verdicts with none wrong (upper bound 0.6%); Sonnet 5.5 (121 applied, 1
  * wrong, 3.9%) and Opus 5.5 (2 applied) did not qualify.
  *
- * Nothing auto-resolves today: the cycle runs grade_takes with auto-resolve
- * off. `gbrain takes grades` marks each cached verdict whose judge is not on
+ * The cycle defaults to review-only. Operators may explicitly opt in via
+ * `cycle.grade_takes.auto_resolve.enabled`; the native 0.95 threshold remains. `gbrain takes grades` marks each cached verdict whose judge is not on
  * this list, so a reviewer knows which verdicts no measurement backs.
  */
 import { splitProviderModelId } from '../model-id.ts';

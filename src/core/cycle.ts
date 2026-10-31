@@ -2758,7 +2758,7 @@ async function runCycleUnscoped(
         if (phases.includes('grade_takes')) {
           checkAborted(cycleSignal);
           progress.start('cycle.grade_takes');
-          const { runPhaseGradeTakes } = await import('./cycle/grade-takes.ts');
+          const { runConfiguredPhaseGradeTakes: runPhaseGradeTakes } = await import('./cycle/grade-takes.ts');
           const { result, duration_ms } = await timePhase(() => runPhaseGradeTakes(calibrationCtx, { dryRun, deadlineAtMs: opts.deadlineAtMs ?? null }) as Promise<PhaseResult>, 'grade_takes');
           result.duration_ms = duration_ms;
           phaseResults.push(result);

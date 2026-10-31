@@ -30,6 +30,8 @@ import {
   type JudgeFn,
   type EvidenceRetrieverFn,
 } from '../src/core/cycle/grade-takes.ts';
+import * as gradeTakes from '../src/core/cycle/grade-takes.ts';
+import { readGradeTakesPolicy } from '../src/core/cycle/grade-takes-policy.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine, Take, TakeResolution } from '../src/core/engine.ts';
 
@@ -48,6 +50,7 @@ interface CapturedResolve {
 function buildMockEngine(opts: {
   takes: Take[];
   cachedGrades?: Set<string>; // composite-key strings already in take_grade_cache
+  config?: Record<string, string>;
 }): { engine: BrainEngine; captured: CapturedSql[]; resolves: CapturedResolve[] } {
   const captured: CapturedSql[] = [];
   const resolves: CapturedResolve[] = [];
@@ -55,6 +58,7 @@ function buildMockEngine(opts: {
 
   const engine = {
     kind: 'pglite',
+    async getConfig(key: string) { return opts.config?.[key] ?? null; },
     async listTakes() {
       return opts.takes;
     },
@@ -536,4 +540,32 @@ describe('judge model follows the gateway chat model (label = actual)', () => {
       resetGateway();
     }
   });
+});
+
+
+describe('native cycle operator policy', () => {
+  for (const value of [undefined, 'false', '0', 'no', 'off', 'invalid']) {
+    test(`review-only when opt-in is ${String(value)}`, async () => {
+      const {engine, resolves, captured} = buildMockEngine({takes:[buildTake({id:71,sinceDate:'2020-01-01'})], config:value===undefined?{}:{'cycle.grade_takes.auto_resolve.enabled':value}});
+      const policy=await readGradeTakesPolicy(engine);
+      const result=await gradeTakes.runConfiguredPhaseGradeTakes(buildCtx(engine),{judge:async()=>({verdict:'correct',confidence:0.99,reasoning:'dated outcome evidence'}),evidenceRetriever:async()=> 'Outcome recorded 2025-01-01.'});
+      expect(policy.autoResolve).toBe(false);
+      expect((result.details as Record<string, unknown>).auto_applied).toBe(0);
+      expect(resolves).toHaveLength(0);
+      expect(captured.some(x=>x.sql.includes('INSERT INTO take_grade_cache'))).toBe(true);
+    });
+  }
+  for (const value of ['true','1','yes','on']) {
+    test(`configured ${value} reaches real grading and resolves only high-confidence verdicts`,async()=>{
+      const {engine,resolves}=buildMockEngine({takes:[buildTake({id:81,sinceDate:'2020-01-01'}),buildTake({id:82,sinceDate:'2020-01-01'}),buildTake({id:83,sinceDate:'2020-01-01'})],config:{'cycle.grade_takes.auto_resolve.enabled':value,'models.dream.grade_takes':'claude-cli:claude-sonnet-5-5'}});
+      const policy=await readGradeTakesPolicy(engine);
+      expect(policy.model).toBe('claude-cli:claude-sonnet-5-5');
+      const result=await gradeTakes.runConfiguredPhaseGradeTakes(buildCtx(engine),{judge:async({take})=>({verdict:take.id===83?'unresolvable':'correct',confidence:take.id===82?0.94:0.99,reasoning:'dated outcome evidence'}),evidenceRetriever:async()=> 'Outcome recorded 2025-01-01.'});
+      expect((result.details as Record<string, unknown>).auto_resolve).toBe(true);
+      expect((result.details as Record<string, unknown>).auto_resolve_threshold).toBe(0.95);
+      expect((result.details as Record<string, unknown>).auto_applied).toBe(1);
+      expect(resolves).toHaveLength(1);
+      expect(resolves[0]!.pageId).toBe(181);
+    });
+  }
 });

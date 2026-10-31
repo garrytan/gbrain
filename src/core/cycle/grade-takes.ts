@@ -35,6 +35,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { readGradeTakesPolicy } from './grade-takes-policy.ts';
 import { BaseCyclePhase, effectivePhaseDeadlineMs, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
 import { hybridSearch } from '../search/hybrid.ts';
 import { INTERNAL_BREADTH_SEARCH_OPTS } from '../search/internal-breadth.ts';
@@ -959,6 +960,12 @@ export async function runPhaseGradeTakes(
   opts: GradeTakesOpts = {},
 ) {
   return new GradeTakesPhase().run(ctx, opts);
+}
+
+/** Cycle entry point: read operator policy without growing the cycle dispatcher. */
+export async function runConfiguredPhaseGradeTakes(ctx: OperationContext, opts: GradeTakesOpts = {}) {
+  const policy = ctx.engine ? await readGradeTakesPolicy(ctx.engine) : { autoResolve: false };
+  return runPhaseGradeTakes(ctx, { ...policy, ...opts });
 }
 
 export const __testing = {
