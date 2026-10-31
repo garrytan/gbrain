@@ -51,6 +51,7 @@ import { parseTakesFence } from '../takes-fence.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { utcDate } from './cycle-date.ts';
+import { isConfigTruthy } from '../config.ts';
 
 /**
  * Bump when the judge prompt or the JSON output shape changes. Old verdicts
@@ -206,7 +207,8 @@ export interface GradeTakesOpts extends BasePhaseOpts {
   /** Judge model id; defaults to the configured chat model. */
   model?: string;
   /**
-   * Auto-resolve verdicts above the confidence threshold. D17 default: false.
+   * Auto-resolve verdicts above the confidence threshold. Unset: the
+   * `cycle.grade_takes.auto_resolve.enabled` config key (D17 default: false).
    * When false, every verdict lands in take_grade_cache with applied=false
    * (review-queue posture). When true, verdicts with confidence >= the
    * configured threshold get applied via engine.resolveTake.
@@ -571,7 +573,8 @@ class GradeTakesPhase extends BaseCyclePhase {
     const promptVersion = opts.promptVersion ?? GRADE_TAKES_PROMPT_VERSION;
     const minAgeMonths = opts.minAgeMonths ?? 6;
     const takeLimit = opts.takeLimit ?? 50;
-    const autoResolve = opts.autoResolve ?? false; // D17 default OFF
+    const autoResolve = opts.autoResolve // D17 default OFF; an unreadable key stays off
+      ?? isConfigTruthy(await Promise.resolve(engine.getConfig?.('cycle.grade_takes.auto_resolve.enabled')).catch(() => null));
     const autoResolveThreshold = opts.autoResolveThreshold ?? GRADE_TAKES_AUTO_RESOLVE_THRESHOLD;
     const resolvedByLabel = opts.resolvedByLabel ?? 'gbrain:grade_takes';
     // One resolved string drives the judge call, the verdict-cache key, and

@@ -70,8 +70,8 @@ When storage configuration is present, `gbrain sync` automatically manages `.git
 
 Related doctor coverage: `undeclared_db_only_pages` warns about DB pages with no
 backing file that sit outside every declared `db_only` path. The engine's own
-derive-phase output prefixes (`life/events/`, `atoms/`, `extracts/`,
-`dream-cycle-summaries/`) count as implicitly declared for that check, so healthy
+derive-phase output prefixes (`life/events/`, `atoms/`, `concepts/`, `extracts/`,
+`dream-cycle-summaries/`, and the drift phase's `reports/drift-<date>` report) count as implicitly declared for that check, so healthy
 brains stay quiet without adding them to `gbrain.yml`. They are NOT auto-added to
 `.gitignore` — only explicitly declared `db_only` dirs are. Google and GitHub
 connector sources running under managed persistence without a worktree binding

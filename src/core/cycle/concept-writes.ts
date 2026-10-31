@@ -16,6 +16,7 @@ import { isAvailable } from '../ai/gateway.ts';
 // source-boost's 1.3× 'concepts/' weighting can actually reach them.
 import { importFromContent } from '../import-file.ts';
 import type { ConceptRetryBound } from './concept-retry-bound.ts';
+import { publicationHold } from '../persistence/accepted-pending.ts';
 import {
   conceptProvenanceCovers, replaceConceptProvenanceLinks, CONCEPT_DEFERRAL_CODES, CONCEPT_HOLD_CODES, publishClassicConcept, publishManagedConcepts,
 } from './concept-publication.ts';
@@ -51,6 +52,8 @@ export interface ConceptWriterDeps {
   retries: ConceptRetryBound;
   publicationDeferred: Array<{ concept: string; reason: string }>;
   publicationHeld: Array<{ concept: string; reason: string }>;
+  /** Publications the writer holds (publicationHold): a pending one commits under its request, a contended one is admitted next run. */
+  publicationPending: Array<{ concept: string; reason: string }>;
   linkWarnings: Array<{ concept: string; warning: string }>;
   /** Called once per concept whose publication steps all landed. */
   written: () => void;
@@ -58,13 +61,15 @@ export interface ConceptWriterDeps {
 
 export function conceptWriter(deps: ConceptWriterDeps) {
   const { engine, maintenance, sourceId: src } = deps;
-  // A publication that lost a revision race or would lose canonical
-  // material is recorded and skipped; any other error stops the phase.
+  // A publication that lost a revision race, would lose canonical material or
+  // is held by the writer (#7547: accepted and still pending, or not admitted
+  // on contention) is recorded and skipped; any other error stops the phase.
   const recorded = (write: ConceptWrite, err: unknown): false => {
     const code = (err as { code?: unknown }).code;
     if (typeof code !== 'string') throw err;
     const reason = `${code}: ${(err as Error).message}`;
-    if (CONCEPT_DEFERRAL_CODES.has(code)) deps.publicationDeferred.push({ concept: write.concept, reason });
+    if (publicationHold(err)) deps.publicationPending.push({ concept: write.concept, reason });
+    else if (CONCEPT_DEFERRAL_CODES.has(code)) deps.publicationDeferred.push({ concept: write.concept, reason });
     else if (CONCEPT_HOLD_CODES.has(code)) deps.publicationHeld.push({ concept: write.concept, reason });
     else throw err;
     return false;
@@ -87,8 +92,13 @@ export function conceptWriter(deps: ConceptWriterDeps) {
    * as a warn, the page write stands. Mirrors #3961. Returns whether the concept now goes to world.
    */
   const bankProvenance = async (write: ConceptWrite): Promise<boolean> => {
+    if (write.synthesisMode === 'llm') deps.retries.succeed(`${src}:${write.conceptSlug}`);
+    await bankLinks(write);
+    return write.visibility === 'world' && !write.covered && await conceptProvenanceCovers(engine, src, write.conceptSlug, write.atomSlugs);
+  };
+  /** The edges of a concept at `write.revision` (managed) or its current revision (unmanaged); a failure is a link warning. */
+  const bankLinks = async (write: Pick<ConceptWrite, 'concept' | 'conceptSlug' | 'atomSlugs' | 'revision'>): Promise<void> => {
     const { conceptSlug } = write;
-    if (write.synthesisMode === 'llm') deps.retries.succeed(`${src}:${conceptSlug}`);
     const provenanceLinks: LinkBatchInput[] = [...new Set(write.atomSlugs)].flatMap((atomSlug) => [
       { from_slug: conceptSlug, to_slug: atomSlug, link_type: 'synthesized_from', link_source: 'concept-provenance', context: 'member atom', from_source_id: src, to_source_id: src },
       { from_slug: atomSlug, to_slug: conceptSlug, link_type: 'synthesizes', link_source: 'concept-provenance', context: 'concept synthesized from this atom', from_source_id: src, to_source_id: src },
@@ -112,7 +122,6 @@ export function conceptWriter(deps: ConceptWriterDeps) {
       deps.linkWarnings.push({ concept: write.concept, warning: `provenance links failed: ${msg}` });
       console.error(`[synthesize_concepts] provenance links failed for ${conceptSlug} (non-fatal): ${msg}`);
     }
-    return write.visibility === 'world' && !write.covered && await conceptProvenanceCovers(engine, src, conceptSlug, write.atomSlugs);
   };
   /** One managed batch; each concept settles on its own, and the ones that published carry their new revision. */
   const publishManaged = async (writes: ConceptWrite[], pageVisibility: (write: ConceptWrite) => Visibility): Promise<ConceptWrite[]> => {
@@ -150,5 +159,7 @@ export function conceptWriter(deps: ConceptWriterDeps) {
     },
     /** Managed: publish whatever is queued. */
     flush,
+    /** #7548: an unchanged concept whose edges no longer reach every member banks them again, with no publication. */
+    restoreProvenance: bankLinks,
   };
 }
