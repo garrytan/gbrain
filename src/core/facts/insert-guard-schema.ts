@@ -59,7 +59,7 @@ export const GUARD_OUTCOME_MARKER_SQL = "(i.source IN ('cli:extract-conversation
  */
 export const FACT_INSERT_GUARD_FUNCTION_SQL = `
 CREATE OR REPLACE FUNCTION gbrain_guard_inserted_facts() RETURNS trigger
-  LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+  LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
   DECLARE purged TEXT; stamp_setting TEXT;
   BEGIN
     PERFORM s.id FROM sources s WHERE s.id IN (SELECT i.source_id FROM inserted_facts i) ORDER BY s.id FOR SHARE OF s;

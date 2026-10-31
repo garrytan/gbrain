@@ -82,6 +82,7 @@
 | Writes fail with `connection_inherited_read_only` (SQLSTATE 25006) | [reset the pooler's server connections, stop session-level `SET`, check role defaults](write-refusals.md#connection_inherited_read_only) | brain host | none | `gbrain doctor --json` |
 | [Doctor warns `persistence_session_timeouts` (`session_timeouts_not_applied`)](#session-timeouts-not-applied) | `ALTER ROLE <gbrain role> SET statement_timeout = '5min'` on the database, or accept it: preparation reads carry their own bound | brain host | none (a role default; `destructive` only in that it changes a server setting) | `gbrain doctor --only persistence_session_timeouts --json` |
 | `gbrain init` or `gbrain upgrade` stops with `schema_lock_blocked` naming a pid (or, before #5227, sat in `wait_event_type=Lock` with no output) | let the named session finish, or with the user's agreement end it on the database host: `SELECT pg_terminate_backend(<pid>)`; then rerun the same command ([ENGINES.md](../ENGINES.md#schema-lock-blocked)) | brain host, after the user agrees | `destructive` when it ends another session | the rerun completes; `gbrain doctor --json` shows the schema at head |
+| Doctor `function_search_path` fails: a gbrain function's search_path does not end in `pg_temp` | follow the check's `fix`: below schema v277 it is `gbrain apply-migrations --yes`; past it, run the printed `ALTER FUNCTION` statements as the role that owns each function ([function search path](#function-search-path)) | agent below v277; brain host past it | none | `gbrain doctor --only function_search_path --json` |
 | [`queue_capacity`, `persistence_capacity` or `persistence_request_growth`](#write-capacity) | run the printed `gbrain config set persistence.limits.<limit> <value>` | brain host | none | `gbrain doctor --only persistence_capacity,persistence_request_growth --json` |
 | [`dream_paid_loop`, or dream keeps skipping one transcript](#dream-paid-loop) | fix the cause, then `gbrain dream reset-key --list` and `gbrain dream reset-key '<key>'` | agent, after the user agrees | `paid` (the key is retried) | `gbrain doctor --only dream_paid_loop --json` |
 | [A page exists (`gbrain get <slug>` returns it) but search never finds text from it](memory-boundaries.md#large-pages) | `gbrain reindex --oversized --dry-run --json` lists pages stored before the upgrade with a size-based `embed_skip` marker (without `--dry-run` it keyword-indexes them, free); a page above an operator-lowered `content_sanity.bytes_block` keeps its marker until it is raised; a page the content-quality gate quarantined shows in `gbrain quarantine list` (`gbrain quarantine clear <slug>` re-checks it once the user agrees); a file over the 24 MiB page ceiling was never stored ([`file_too_large`](write-refusals.md#file_too_large)). Its chunks waiting for embedding approval (doctor `partial_embedding`) are a paid step: `gbrain embed --held --dry-run`, then `gbrain embed --held --source <id> --max-usd <N>` as printed | agent for the reindex; the user decides embedding spend, a `bytes_block` change and a quarantine clear | none for the reindex; `paid` for `gbrain embed` | `gbrain reindex --oversized --dry-run --json` lists nothing; `gbrain search "<phrase from deep in the page>"` returns the page |
@@ -892,3 +893,22 @@ decides what to undo: the folder's new `.git` directory and the pages imported
 from it are theirs to review before anything is removed.
 Verify with `gbrain sources status <id> --json` and
 `gbrain doctor --only default_source_local_path --json`.
+
+## Function search path
+
+<a id="function-search-path"></a>
+
+Every gbrain function that pins a `search_path` ends it with `pg_temp`, so a session's temporary table or view named
+like a purge or withdrawal ledger cannot hide that ledger from the guard that reads it (#7632). Migration v277 and the
+end of every migration run append it to each function the migrating role owns; doctor's `function_search_path` check
+names any function still without it, including one re-created by hand without its `SET search_path` clause.
+
+- **Below schema v277**, the check's fix is `gbrain apply-migrations --yes`, which runs v277. Check again afterwards:
+  what is left is owned by another role.
+- **A function another role owns** cannot be altered by the migrating role, so the migration leaves it and names it
+  on stderr during runs that apply migrations. Run the `ALTER FUNCTION public.<function>(<args>) SET search_path = …,
+  pg_temp;` statements the check prints (also in its `details.sql`) on the database host as the role that owns each
+  function, for example with `psql -c "…"` connected as that role. `ALTER FUNCTION … SET` changes neither the owner
+  nor the body, so the next boot's `CREATE OR REPLACE` still succeeds.
+
+Verify with `gbrain doctor --only function_search_path --json`.
