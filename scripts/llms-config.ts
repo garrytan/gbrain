@@ -123,6 +123,27 @@ export const SECTIONS: DocSection[] = [
         includeInFull: false,
       },
       {
+        title: "docs/guides/where-your-memory-lives.md",
+        description:
+          "The quotable answer to \"database, vector store or Markdown?\": Markdown with frontmatter in a folder you own (normally Git) is the record, Postgres with embeddings and keyword search is a rebuildable index, and database-only records (private pages on strict sources, facts with no page, history, receipts) need a database backup. Where the folder is, mixed vs strict sources, what to back up.",
+        path: "docs/guides/where-your-memory-lives.md",
+        includeInFull: false,
+      },
+      {
+        title: "docs/guides/page-anatomy.md",
+        description:
+          "Anatomy of a page on one annotated example: frontmatter keys gbrain reads and stamps, compiled truth, the `<!-- timeline -->` sentinel and `- **YYYY-MM-DD** | Source — Summary` rows, the facts and takes fences, and schema-pack types; links to the four reference docs.",
+        path: "docs/guides/page-anatomy.md",
+        includeInFull: false,
+      },
+      {
+        title: "docs/guides/entity-scoped-facts.md",
+        description:
+          "Different answer per client: `remember --entity` ties a fact to a page, `recall <entity>` reads only that client's facts, `recall --question` with no entity returns a flat list with each row's entity_slug, and a default kept on its own page.",
+        path: "docs/guides/entity-scoped-facts.md",
+        includeInFull: false,
+      },
+      {
         title: "docs/GBRAIN_RECOMMENDED_SCHEMA.md",
         description:
           "MECE directory structure (people/, companies/, concepts/).",
