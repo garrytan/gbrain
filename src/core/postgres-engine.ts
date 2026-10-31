@@ -136,6 +136,9 @@ import * as factsImpl from './engine-sql/facts.ts';
 import * as takesImpl from './engine-sql/takes.ts';
 import * as codeEdgesImpl from './engine-sql/code-edges.ts';
 import * as salienceImpl from './engine-sql/salience.ts';
+import * as pageLookupImpl from './engine-sql/page-lookup.ts';
+import type { FindPagesQuery, FoundPages } from './page-find.ts';
+import type { PageCountQuery, PageCounts, TypeGrouper } from './page-counts.ts';
 import * as healthImpl from './engine-sql/health.ts';
 import { resolveEntityTypes } from './schema-pack/entity-types.ts';
 import * as pagesImpl from './engine-sql/pages.ts';
@@ -971,6 +974,12 @@ export class PostgresEngine implements BrainEngine {
 
   async listPages(filters?: PageFilters): Promise<Page[]> {
     return this.withScopedReadTransaction(filters?.sourceIds, filters?.sourceId, tx => pagesImpl.listPages(scopedRead(this.engineSqlOn(tx)), filters));
+  }
+  async findPages(query: FindPagesQuery): Promise<FoundPages> {
+    return this.withScopedReadTransaction(query.sourceIds, query.sourceId, tx => pageLookupImpl.findPages(scopedRead(this.engineSqlOn(tx)), query));
+  }
+  async countPagesBy(query: PageCountQuery, groupTypes?: TypeGrouper): Promise<PageCounts> {
+    return this.withScopedReadTransaction(query.sourceIds, query.sourceId, tx => pageLookupImpl.countPagesBy(scopedRead(this.engineSqlOn(tx)), query, groupTypes));
   }
 
   async getAllSlugs(opts?: { sourceId?: string }): Promise<Set<string>> {

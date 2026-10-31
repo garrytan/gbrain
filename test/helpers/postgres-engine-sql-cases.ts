@@ -89,6 +89,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'putPage': 'pages', 'deletePage': 'pages', 'deletePages': 'pages', 'resolveSlugsByPaths': 'pages',
   'softDeletePage': 'pages', 'softDeletePages': 'pages', 'restorePage': 'pages', 'purgeDeletedPages': 'pages',
   'refreshPageBody': 'pages', 'updatePageContextualRetrievalState': 'pages', 'listPages': 'pages',
+  'findPages': 'pages', 'countPagesBy': 'pages',
   'getAllSlugs': 'pages', 'listAllPageRefs': 'pages', 'listPrefixSampledPages': 'pages', 'listCorpusSample': 'pages',
   'resolveSlugs': 'pages', 'findByTitleFuzzy': 'pages', 'getPageTimestamps': 'pages',
   'createVersion': 'pages', 'getVersions': 'pages', 'revertToVersion': 'pages', 'updateSlug': 'pages',
@@ -336,6 +337,14 @@ export const SQL_CASES: SqlCase[] = [
     ['effective_after', (e) => e.listPages({ effective_after: '2026-01-01' })],
     ['effective_before', (e) => e.listPages({ effective_before: '2026-01-01' })],
     ['sort', (e) => e.listPages({ sort: 'slug' })],
+  ]),
+  ...variants('findPages', [
+    ['name', (e) => e.findPages({ pattern: { kind: 'name', like: '%acme%', lead: '' }, limit: 50, excludeSlugPrefixes: [] })],
+    ['glob+types+sourceIds+remote', (e) => e.findPages({ pattern: { kind: 'glob', like: 'people/%acme%', lead: 'people/' }, types: ['person'], limit: 10, sourceIds: SRCS, untrusted: { excludePrivate: true }, excludeSlugPrefixes: ['test/', '.raw/'] })],
+  ]),
+  ...variants('countPagesBy', [
+    ['totals', (e) => e.countPagesBy({})],
+    ['grouped+since+remote', (e) => e.countPagesBy({ sourceId: SRC, since: '2026-01-01', untrusted: { excludePrivate: true } }, (types: string[]) => types)],
   ]),
   ...variants('getAllSlugs', [
     ['default', (e) => e.getAllSlugs()],

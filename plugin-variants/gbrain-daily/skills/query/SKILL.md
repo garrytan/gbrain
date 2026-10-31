@@ -71,7 +71,7 @@ This skill guarantees:
    - List pages in gbrain by type or check backlinks for structural queries
    - Narrow with filters instead of grepping the brain checkout: `--types '["meeting"]'`,
      `--match keyword`, `gbrain query "<q>" --since 2026-09-01 --until 2026-09-30`, `--source <id>`.
-     Copyable examples: "Retrieval: gbrain first" in `skills/conventions/brain-first.md`.
+     Every call and flag: "Which gbrain call for which lookup" in `skills/conventions/brain-first.md`.
 3. **Read top results.** Read the top 3-5 pages from gbrain to get full context.
 4. **Synthesize answer** with citations. Every claim traces back to a specific page slug.
 5. **Flag gaps.** If the brain doesn't have info, say "the brain doesn't have information on X" rather than hallucinating. Read the result's notices first (see "When it fails"): a degraded or truncated result is not a gap.

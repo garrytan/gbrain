@@ -145,6 +145,9 @@ import { scopedRead, unscopedExecutor } from './engine-sql/brands.ts';
 import * as codeEdgesImpl from './engine-sql/code-edges.ts';
 import { getEdgesByChunk as getEdgesByChunkPglite, type PgliteCodeEdgesDeps } from './pglite-engine/code-edges.ts';
 import * as salienceImpl from './engine-sql/salience.ts';
+import * as pageLookupImpl from './engine-sql/page-lookup.ts';
+import type { FindPagesQuery, FoundPages } from './page-find.ts';
+import type { PageCountQuery, PageCounts, TypeGrouper } from './page-counts.ts';
 import * as healthImpl from './engine-sql/health.ts';
 import { resolveEntityTypes } from './schema-pack/entity-types.ts';
 import * as pagesImpl from './engine-sql/pages.ts';
@@ -1355,6 +1358,12 @@ export class PGLiteEngine implements BrainEngine {
 
   async listPages(filters?: PageFilters): Promise<Page[]> {
     return plannerRead(this, this._pageTransaction, () => pagesImpl.listPages(scopedRead(this.engineSql), filters));
+  }
+  async findPages(query: FindPagesQuery): Promise<FoundPages> {
+    return plannerRead(this, this._pageTransaction, () => pageLookupImpl.findPages(scopedRead(this.engineSql), query));
+  }
+  async countPagesBy(query: PageCountQuery, groupTypes?: TypeGrouper): Promise<PageCounts> {
+    return plannerRead(this, this._pageTransaction, () => pageLookupImpl.countPagesBy(scopedRead(this.engineSql), query, groupTypes));
   }
 
   async getAllSlugs(opts?: { sourceId?: string }): Promise<Set<string>> {

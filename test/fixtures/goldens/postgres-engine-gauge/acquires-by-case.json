@@ -26,6 +26,8 @@
     "consolidateFact#default": {},
     "countChunklessPagesWithContent#default": {},
     "countChunklessPagesWithContent#sourceId": {},
+    "countPagesBy#grouped+since+remote": {},
+    "countPagesBy#totals": {},
     "countStaleChunks#default": {
       "raw": 1
     },
@@ -72,6 +74,8 @@
     "findOrphanPages#inbound": {},
     "findOrphanPages#sourceId": {},
     "findOrphanPages#sourceIds+excludePrivate": {},
+    "findPages#glob+types+sourceIds+remote": {},
+    "findPages#name": {},
     "findTrajectory#default": {},
     "findTrajectory#event": {},
     "findTrajectory#sourceIds+metric+since+until": {},
