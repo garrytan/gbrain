@@ -161,6 +161,11 @@ export function buildCrossModalProbeCall(args: CrossModalProbeArgs): { argv: str
     args.summaryPath,
     '--max-usd',
     String(args.maxUsd),
+    // Three judges for one question still run together. Starting three
+    // questions reserves nine worst-case outputs, which can reject a cheap
+    // probe before the first answers settle under its configured run cap.
+    '--concurrent',
+    '1',
     '--dimensions',
     PROBE_QA_DIMENSIONS.join(','),
     '--yes',
