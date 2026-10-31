@@ -77,8 +77,8 @@ test/claude-cli-recipe.test.ts	claude-cli LanguageModel — output cap (#6424)	2
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — text-only round trip	4	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — tool use	17	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli recipe registration	2	readFileSync
-test/cli-flag-equals.test.ts	#7619 refusals that keep consent, scope and targets right	26	readFileSync,source-surface-helper
-test/cli-flag-equals.test.ts	#7619 split rules	21	readFileSync,source-surface-helper
+test/cli-flag-equals.test.ts	#7619 refusals that keep consent, scope and targets right	28	readFileSync,source-surface-helper
+test/cli-flag-equals.test.ts	#7619 split rules	22	readFileSync,source-surface-helper
 test/cli-force-exit-teardown-arming.test.ts	cli.ts — disconnect hard-deadline armed at teardown entry, not before the op body	1	readFileSync,source-surface-helper
 test/cli.test.ts	BigInt-safe output normalization (#2450)	5	source-surface-helper
 test/cli.test.ts	CLI structure	2	source-surface-helper

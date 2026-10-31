@@ -599,7 +599,7 @@ describe('db-repair --yes that could not fix the access failure (#7137)', () => 
     expect(doc.fix.argv).toBeUndefined();
     expect(doc.fix.next).toBe('report');
     expect(doc.fix.user_message).toContain('status and its startup log');
-    expect(doc.fix.verify.argv).toEqual(['gbrain', 'db-repair']);
+    expect(doc.fix.verify.argv).toEqual(['gbrain', 'doctor', '--json']);
     expect(readReceipts().filter((r) => r.outcome === 'applied').length).toBe(0);
   });
 

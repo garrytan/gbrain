@@ -310,7 +310,7 @@ function emit(json: boolean, report: JsonReport, humanLines: string[], ranAutoTi
       ? { consent: [], actor: 'user', requires_exclusive: false,
         why: 'gbrain db-repair --yes already ran its bounded retries in this call and the database is still unreachable; running it again repeats them.',
         user_message: `gbrain could not reach the database after its repair attempts (${d?.reason ?? report.reason}). ${d?.remediation ?? ''} Check the database server's status and its startup log; once it accepts connections, re-check with: gbrain db-repair`,
-        verify: { argv: ['gbrain', 'db-repair'] } }
+        verify: { argv: ['gbrain', 'doctor', '--json'] } }
     : report.tier === 'auto'
       ? { argv: ['gbrain', 'db-repair', '--yes'], consent: [], actor: 'agent', requires_exclusive: false,
         why: 'Applies the auto tier the plan names (bounded retries, pending migrations, CREATE EXTENSION vector, starting gbrain\'s own docker container).' }
