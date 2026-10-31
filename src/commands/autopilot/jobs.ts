@@ -10,6 +10,7 @@ import { dirname, join, resolve as resolvePath } from 'path';
 import { execSync } from '../../core/spawn.ts';
 import {
   autopilotLaunchdLabel,
+  autopilotLaunchdLogPaths,
   autopilotWrapperOwner,
   DEFAULT_AUTOPILOT_SYSTEMD_UNIT,
   type AutopilotJob,
@@ -35,11 +36,21 @@ export function legacyStartScriptPath(): string {
 export const shellQuote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 export const unshellQuote = (s: string) => s.replace(/'\\''/g, "'");
 
-/** The wrapper a launchd plist runs (its first ProgramArguments entry). */
+function decodePlistString(value: string): string {
+  return value.replace(/&quot;/g, '"').replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&');
+}
+
+/** The wrapper a launchd plist runs, after the optional local bash launcher. */
 export function plistWrapperPath(plist: string): string | null {
-  const m = /<key>ProgramArguments<\/key>\s*<array>\s*<string>([^<]*)<\/string>/.exec(plist);
-  if (!m) return null;
-  return m[1].replace(/&quot;/g, '"').replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&');
+  const array = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(plist);
+  if (!array) return null;
+  const args = [...array[1].matchAll(/<string>([^<]*)<\/string>/g)].map((m) => decodePlistString(m[1]));
+  return args[0] === '/bin/bash' ? args[1] ?? null : args[0] ?? null;
+}
+
+function plistStandardOutPath(plist: string): string | null {
+  const value = /<key>StandardOutPath<\/key>\s*<string>([^<]*)<\/string>/.exec(plist)?.[1];
+  return value === undefined ? null : decodePlistString(value);
 }
 
 /** The wrapper a systemd unit runs. */
@@ -191,6 +202,8 @@ export interface InstalledJob {
   /** launchd label, systemd unit, start-script path, or the crontab marker. */
   name: string;
   wrapperPath: string | null;
+  /** Existing launchd plists may still direct output to the brain home. */
+  logPath: string | null;
   /** A pre-#5195 shared-name job that runs this non-default brain. */
   legacy: boolean;
 }
@@ -212,12 +225,13 @@ export function detectInstalledJob(job: AutopilotJob): { installed: InstalledJob
     if (text === null) return null;
     const wrapperPath = wrapperOf(text);
     const owner = autopilotWrapperOwner(wrapperPath, job.homeDir);
-    if (legacy) return owner.owner === 'own' ? { target, name, wrapperPath, legacy } : null;
+    const logPath = target === 'macos' ? plistStandardOutPath(text) : null;
+    if (legacy) return owner.owner === 'own' ? { target, name, wrapperPath, logPath, legacy } : null;
     if (owner.owner === 'other') {
       foreign ??= { name, home: owner.home };
       return null;
     }
-    return { target, name, wrapperPath, legacy };
+    return { target, name, wrapperPath, logPath, legacy };
   };
   const candidates: Array<() => InstalledJob | null> = [];
   if (process.platform === 'darwin') {
@@ -237,7 +251,7 @@ export function detectInstalledJob(job: AutopilotJob): { installed: InstalledJob
       const line = crontab.split('\n').find(l => cronLineBelongsToBrain(l, job));
       if (!line) return null;
       const legacy = job.cronMarker !== null && !line.includes(job.cronMarker);
-      return { target: 'linux-cron', name: job.cronMarker ?? 'crontab entry', wrapperPath: scriptWrapperPath(line), legacy };
+      return { target: 'linux-cron', name: job.cronMarker ?? 'crontab entry', wrapperPath: scriptWrapperPath(line), logPath: null, legacy };
     } catch { return null; /* no crontab */ }
   });
   for (const candidate of candidates) {
@@ -269,8 +283,11 @@ export function crontabIndicatesAutopilotInstall(crontab: string): boolean {
  * the definition actually installed (which may be a pre-#5195 shared-name job,
  * or one whose wrapper is gone because the brain moved), and the human lines.
  */
-export function autopilotJobStatus(job: AutopilotJob): { installTarget: InstallTarget | null; report: Record<string, unknown>; lines: string[] } {
+export function autopilotJobStatus(job: AutopilotJob): { installTarget: InstallTarget | null; logPath: string; report: Record<string, unknown>; lines: string[] } {
   const { installed, foreign } = detectInstalledJob(job);
+  const logPath = installed?.target === 'macos'
+    ? installed.logPath ?? autopilotLaunchdLogPaths(process.env.HOME || '', job.launchdLabel).logPath
+    : job.logPath;
   const wrapperMissing = installed?.wrapperPath ? !existsSync(installed.wrapperPath) : false;
   const needsReinstall = installed?.legacy ? 'legacy_shared_job' : wrapperMissing ? 'wrapper_missing' : null;
   const assigned = job.kind !== 'unassigned';
@@ -283,7 +300,7 @@ export function autopilotJobStatus(job: AutopilotJob): { installTarget: InstallT
     cron_marker: job.cronMarker,
     install_id_path: job.installIdPath,
     wrapper_path: job.wrapperPath,
-    log_path: job.logPath,
+    log_path: logPath,
     installed_definition: installed
       ? { target: installed.target, name: installed.name, wrapper_path: installed.wrapperPath, wrapper_exists: !wrapperMissing, legacy_shared_name: installed.legacy }
       : null,
@@ -295,12 +312,12 @@ export function autopilotJobStatus(job: AutopilotJob): { installTarget: InstallT
   if (jobName) lines.push(`Job: ${jobName}${job.suffix ? ` (suffix ${job.suffix})` : ''}`);
   if (job.installIdPath) lines.push(`Install id: ${job.installIdPath}`);
   lines.push(`Wrapper: ${installed?.wrapperPath ?? job.wrapperPath}`);
-  lines.push(`Log: ${job.logPath}`);
+  lines.push(`Log: ${logPath}`);
   if (needsReinstall === 'legacy_shared_job') {
     lines.push(`  This brain runs under the shared job ${installed!.name} from an older gbrain. Give it its own job: ${brainCommand(job.homeDir, '--install')}`);
   } else if (needsReinstall === 'wrapper_missing') {
     lines.push(`  The job runs ${installed!.wrapperPath}, which no longer exists (the brain moved?). Reinstall: ${brainCommand(job.homeDir, '--install')}`);
   }
   if (foreign) lines.push(`  ${foreign.name} runs the brain at ${foreign.home}, not this one.`);
-  return { installTarget: installed?.target ?? null, report, lines };
+  return { installTarget: installed?.target ?? null, logPath, report, lines };
 }
