@@ -752,7 +752,7 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
     // it out of OTHER anchors' reads — its own unqualified reads still widen
     // outward (see sourceFederationState). Collapsing both to "isolated"
     // overstates what an unset flag does.
-    const fedMark = (e as any).archived ? '⚠ archived' : sourceFederationState(rows[i].config);
+    const fedMark = rows[i].archived === true ? '⚠ archived' : sourceFederationState(rows[i].config);
     const pathStr = e.local_path ?? '(no local path)';
     const sync = e.last_sync_at ? `last sync ${e.last_sync_at}` : 'never synced';
     console.log(`  ${e.id.padEnd(20)}  ${fedMark.padEnd(12)}  ${String(e.page_count).padStart(6)} pages  ${sync}`);
