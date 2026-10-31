@@ -3,11 +3,14 @@
  *
  * Architecture (codex round 2 #3 + D11 + D2 + D13):
  *
- * - Op-layer, NOT engine-layer. This module is called from the `search` /
- *   `query` / `get_page` op handlers in `operations.ts` AFTER the engine
- *   returns. Internal callers (sync, migrations, helper flows) bypass the
- *   op layer entirely, so this never fires from `import-file.ts`, the
- *   dream cycle, doctor probes, etc. Pure signal: "a user-facing surface
+ * - Op-layer, NOT engine-layer. The writers are the `search`, `query`,
+ *   `get_page` and `fetch` op handlers and `recall`'s `query` arm (the page
+ *   search it runs beside the facts), each AFTER the engine returns; recall's
+ *   facts-only reads write nothing. test/last-retrieved-writers.test.ts pins
+ *   this list, so a new reader that bumps is a deliberate choice. Internal
+ *   callers (sync, migrations, helper flows) bypass the op layer entirely,
+ *   so this never fires from `import-file.ts`, the dream cycle, doctor
+ *   probes, etc. Pure signal: "a user-facing surface
  *   just surfaced this page."
  *
  * - 5-min throttle (D2). The upsert only moves a timestamp older than
@@ -192,8 +195,8 @@ export const BUMP_LAST_RETRIEVED_SQL = `INSERT INTO page_retrievals (page_id, la
  * MUST NOT await this for the op response. Empty ids list is a no-op.
  *
  * @param engine The BrainEngine handling the op.
- * @param pageIds The page ids surfaced by the op (search hits, query results,
- *   or the single id returned by get_page).
+ * @param pageIds The page ids surfaced by the op (search, query or recall
+ *   query hits, or the single page get_page or fetch returned).
  */
 export function bumpLastRetrievedAt(engine: BrainEngine, pageIds: number[]): void {
   if (pageIds.length === 0) return;
