@@ -16,6 +16,7 @@ import { isAvailable } from '../ai/gateway.ts';
 // source-boost's 1.3× 'concepts/' weighting can actually reach them.
 import { importFromContent } from '../import-file.ts';
 import type { ConceptRetryBound } from './concept-retry-bound.ts';
+import { publicationHold } from '../persistence/accepted-pending.ts';
 import {
   conceptProvenanceCovers, replaceConceptProvenanceLinks, CONCEPT_DEFERRAL_CODES, CONCEPT_HOLD_CODES, publishClassicConcept, publishManagedConcepts,
 } from './concept-publication.ts';
@@ -51,6 +52,8 @@ export interface ConceptWriterDeps {
   retries: ConceptRetryBound;
   publicationDeferred: Array<{ concept: string; reason: string }>;
   publicationHeld: Array<{ concept: string; reason: string }>;
+  /** Publications the writer holds (publicationHold): a pending one commits under its request, a contended one is admitted next run. */
+  publicationPending: Array<{ concept: string; reason: string }>;
   linkWarnings: Array<{ concept: string; warning: string }>;
   /** Called once per concept whose publication steps all landed. */
   written: () => void;
@@ -58,13 +61,15 @@ export interface ConceptWriterDeps {
 
 export function conceptWriter(deps: ConceptWriterDeps) {
   const { engine, maintenance, sourceId: src } = deps;
-  // A publication that lost a revision race or would lose canonical
-  // material is recorded and skipped; any other error stops the phase.
+  // A publication that lost a revision race, would lose canonical material or
+  // is held by the writer (#7547: accepted and still pending, or not admitted
+  // on contention) is recorded and skipped; any other error stops the phase.
   const recorded = (write: ConceptWrite, err: unknown): false => {
     const code = (err as { code?: unknown }).code;
     if (typeof code !== 'string') throw err;
     const reason = `${code}: ${(err as Error).message}`;
-    if (CONCEPT_DEFERRAL_CODES.has(code)) deps.publicationDeferred.push({ concept: write.concept, reason });
+    if (publicationHold(err)) deps.publicationPending.push({ concept: write.concept, reason });
+    else if (CONCEPT_DEFERRAL_CODES.has(code)) deps.publicationDeferred.push({ concept: write.concept, reason });
     else if (CONCEPT_HOLD_CODES.has(code)) deps.publicationHeld.push({ concept: write.concept, reason });
     else throw err;
     return false;

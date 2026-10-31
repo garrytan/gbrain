@@ -326,6 +326,7 @@ export async function runPhaseSynthesizeConcepts(
   // a held concept cannot be republished without losing canonical material.
   const publicationDeferred: Array<{ concept: string; reason: string }> = [];
   const publicationHeld: Array<{ concept: string; reason: string }> = [];
+  const publicationPending: Array<{ concept: string; reason: string }> = [];
   const skippedHumanOwned: string[] = [];
   const skippedDeleted: string[] = [];
   const skippedUnchanged: string[] = [];
@@ -345,7 +346,7 @@ export async function runPhaseSynthesizeConcepts(
     opts.progress?.tick(1, `${conceptsWritten} concepts`);
   };
   const writer = conceptWriter({ engine, maintenance, sourceId: src, importSourceId: opts.sourceId, brainDir: opts.brainDir, writeThrough: conceptFiles !== null,
-    retries, publicationDeferred, publicationHeld, linkWarnings, written: countWritten });
+    retries, publicationDeferred, publicationHeld, publicationPending, linkWarnings, written: countWritten });
   for (const group of atomGroups) {
     const conceptSlug = `concepts/${group.conceptSlug}`;
     // A concept page this phase did not write belongs to a human (or another
@@ -561,14 +562,15 @@ export async function runPhaseSynthesizeConcepts(
       kind: 'concepts',
       source_id: opts.sourceId ?? 'default',
       cost_delta: estimatedSpendUsd,
-      round_completed_delta: failures.length === 0 && publicationDeferred.length === 0 && publicationHeld.length === 0 ? 1 : 0,
+      round_completed_delta: failures.length === 0 && publicationDeferred.length === 0 && publicationHeld.length === 0 && publicationPending.length === 0 ? 1 : 0,
       halt_delta: failures.length > 0 ? 1 : 0, halt_reason: 'item_error',
     });
   }
 
   return reportDerivedWriteThrough({
     phase: 'synthesize_concepts',
-    status: failures.length > 0 || linkWarnings.length > 0 || publicationDeferred.length > 0 || publicationHeld.length > 0 || skippedFileDrift.length > 0 ? 'warn' : 'ok',
+    status: failures.length > 0 || linkWarnings.length > 0 || publicationDeferred.length > 0 || publicationHeld.length > 0 || publicationPending.length > 0
+      || skippedFileDrift.length > 0 ? 'warn' : 'ok',
     duration_ms: 0,
     summary:
       `synthesize_concepts: ${conceptsWritten} concepts ` +
@@ -583,6 +585,7 @@ export async function runPhaseSynthesizeConcepts(
       (skippedRetryBound.length > 0 ? ` (${skippedRetryBound.length} skipped after ${MAX_CONCEPT_ATTEMPTS} failed attempts on unchanged members)` : '') +
       (publicationDeferred.length > 0 ? ` (${publicationDeferred.length} publication(s) deferred: page changed, retried next run)` : '') +
       (publicationHeld.length > 0 ? ` (${publicationHeld.length} publication(s) held: existing page needs import/repair)` : '') +
+      (publicationPending.length > 0 ? ` (${publicationPending.length} publication(s) held by the writer (pending or contended), finished later or retried next run)` : '') +
       (skippedFileDrift.length > 0 ? ` (${skippedFileDrift.length} skipped before synthesis: canonical file differs from the database; ${driftActions.join('; ')})` : ''),
     details: {
       concepts_written: conceptsWritten,
@@ -605,6 +608,7 @@ export async function runPhaseSynthesizeConcepts(
       folded_spellings: foldedSpellings,
       publication_deferred: publicationDeferred,
       publication_held: publicationHeld,
+      publication_pending: publicationPending,
       ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),
       estimated_spend_usd: estimatedSpendUsd,
       budget_usd: budgetCap,
