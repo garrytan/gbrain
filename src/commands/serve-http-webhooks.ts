@@ -15,6 +15,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import type { AuthInfo } from '../core/operations.ts';
 import { executeRawJsonb } from '../core/sql-query.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
+import type { MinionJob } from '../core/minions/types.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { ERROR_CATALOGUE } from '../core/error-catalogue.ts';
 import {
@@ -198,32 +199,35 @@ async function handleGitHubItemEvent(
   }
 
   try {
-    const queue = new MinionQueue(engine);
-    const job = await queue.add(
-      'sync',
-      {
-        sourceId: source.id,
-        noExtract: false,
-        github_item: {
-          repo: ref.repo,
-          number: ref.number,
-          kind: ref.kind,
-          ...(eventName === 'issues' && parsed.action === 'deleted' ? { deleted: true } : {}),
-        },
-        embed_reason: 'webhook',
-      },
-      {
-        priority: -10,
-        idempotency_key: `webhook:item:${source.id}:${ref.repo}:${ref.number}:${Math.floor(Date.now() / 30_000)}`,
-        maxWaiting: 1,
-      },
-    );
+    const job = await submitGitHubItemRefresh(engine, source.id, {
+      ...ref,
+      ...(eventName === 'issues' && parsed.action === 'deleted' ? { deleted: true } : {}),
+    });
     res.status(202).json({ job_id: job.id, source_id: source.id, item: ref });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('webhook: item queue submission error:', msg);
     res.status(500).json({ error: 'queue_submission_failed', message: msg });
   }
+}
+
+/**
+ * Queue a single-item refresh for a verified item event. Param-coalescing folds a
+ * delivery into a still-WAITING job for the same item (same payload) only: a job
+ * for another item never absorbs it (a source-scoped maxWaiting did), and neither
+ * does a job that already started or finished (a 30 s idempotency bucket did), so
+ * a change that lands after the refresh began always gets its own refresh.
+ */
+export async function submitGitHubItemRefresh(
+  engine: BrainEngine,
+  sourceId: string,
+  item: { repo: string; number: number; kind: 'issue' | 'pr'; deleted?: true },
+): Promise<MinionJob> {
+  return new MinionQueue(engine).add(
+    'sync',
+    { sourceId, noExtract: false, github_item: item, embed_reason: 'webhook' },
+    { priority: -10, coalesce_params: true },
+  );
 }
 
 function verifyWebhookSig(cfg: Record<string, unknown>, sigHeader: string, payload: Buffer): boolean {
