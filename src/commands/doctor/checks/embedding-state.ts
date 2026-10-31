@@ -5,7 +5,8 @@
  * (unknown without a covering partial index); every other tier counts exactly.
  *
  * It warns only on what no other check owns: chunks of pages soft-deleted
- * longer than the purge window (fix: `gbrain pages purge-deleted`), and live
+ * longer than the purge window (an age count, not purge eligibility; preview
+ * `gbrain pages purge-deleted --dry-run --json` before requesting approval), and live
  * pages with body text but no chunk rows on a keyed brain (fix: `gbrain embed
  * --stale`). The pending backlog stays the `embeddings` check's warning (it
  * ages the backlog; this check only counts it), and quarantined pages stay
@@ -49,7 +50,7 @@ async function runEmbeddingState(ctx: DoctorContext): Promise<Check[]> {
     if (deleted.within_window > 0) notes.push(`${deleted.within_window} chunk(s) on pages soft-deleted within ${deleted.window_hours}h wait for the purge lifecycle.`);
     if (deleted.past_window > 0 || healable > 0) {
       const warnings: string[] = [];
-      if (deleted.past_window > 0) warnings.push(`${deleted.past_window} chunk(s) belong to pages soft-deleted more than ${deleted.window_hours}h ago; \`gbrain pages purge-deleted\` removes them (preview with --dry-run --json; it is brain-wide and irreversible, so ask the user first).`);
+      if (deleted.past_window > 0) warnings.push(`${deleted.past_window} chunk(s) belong to pages soft-deleted more than ${deleted.window_hours}h ago; \`gbrain pages purge-deleted --dry-run --json\` previews eligible pages. This age count can include pages held for restore or identity recovery, archived sources, or parked purges, so the preview may select fewer pages. Purging is brain-wide and irreversible; ask the user before applying it.`);
       if (healable > 0) warnings.push(`${healable} live page(s) have body text but no chunk rows, so search cannot read their body; \`gbrain embed --stale\` chunks and embeds them (paid).`);
       const fix = embeddingStateFix(deleted.past_window > 0 ? 'deleted_page_chunks' : 'chunkless_healable', { embeddingsEnabled: enabled, verify: doctorVerify('embedding_state') });
       checks.push({ name: 'embedding_state', status: 'warn', message: [summary, ...warnings, ...notes].join(' '),

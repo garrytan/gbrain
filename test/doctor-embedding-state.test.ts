@@ -12,6 +12,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { embeddingStateEntry } from '../src/commands/doctor/checks/embedding-state.ts';
+import { selectPurgeCandidates } from '../src/core/persistence/purge-deleted.ts';
 import { categorizeCheck } from '../src/core/doctor-categories.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 
@@ -34,7 +35,7 @@ beforeEach(async () => {
   await engine.unsetConfig('embedding_disabled');
 });
 
-interface Out { name: string; status: string; message: string; severity?: string; readiness_state?: string; details: Record<string, unknown>; fix?: { argv?: string[]; preview_argv?: string[]; verify?: { argv?: string[] } } }
+interface Out { name: string; status: string; message: string; severity?: string; readiness_state?: string; details: Record<string, unknown>; fix?: { argv?: string[]; preview_argv?: string[]; why?: string; consent?: string[]; actor?: string; verify?: { argv?: string[] } } }
 
 async function run(tier?: 'ops' | 'standard' | 'deep'): Promise<Out> {
   const ctx = { engine, progress: { heartbeat() {} }, ...(tier ? { tier } : {}) } as unknown as DoctorContext;
@@ -98,6 +99,33 @@ describe('doctor embedding_state', () => {
     expect(c.fix?.argv).toEqual(['gbrain', 'pages', 'purge-deleted', '--yes']);
     expect(c.fix?.preview_argv).toEqual(['gbrain', 'pages', 'purge-deleted', '--dry-run', '--json']);
     expect(c.fix?.verify?.argv).toEqual(['gbrain', 'doctor', '--only', 'embedding_state', '--json']);
+  });
+
+  test('purge advice does not promise to remove a derived retirement held for restore', async () => {
+    const id = await page('notes/retired-example', {
+      frontmatter: { retired_by: 'synthesis-resynthesis' }, deletedHoursAgo: 100,
+    });
+    await chunk(id, true);
+    const preview = await selectPurgeCandidates(engine, 72);
+    expect(preview.count).toBe(0);
+    const c = await run('deep');
+    expect(c.details.deleted_page_chunks).toMatchObject({ past_window: 1 });
+    expect(c.message).not.toContain('`gbrain pages purge-deleted` removes them');
+    expect(c.message).toContain('held for restore');
+    expect(c.message).toContain('preview may select fewer pages');
+    expect(c.message).toContain('--dry-run --json');
+    expect(c.message).toContain('ask the user before applying');
+    expect(c.fix?.why).toContain('does not establish purge eligibility');
+    expect(c.fix?.why).toContain('restore and identity holds');
+    expect(c.fix?.why).toContain('purge-deleted --dry-run --json');
+    expect(c.fix?.argv).toEqual(['gbrain', 'pages', 'purge-deleted', '--yes']);
+    expect(c.fix?.consent).toEqual(['destructive']);
+    expect(c.fix?.actor).toBe('agent');
+    expect(c.fix?.preview_argv).toEqual(['gbrain', 'pages', 'purge-deleted', '--dry-run', '--json']);
+    await chunk(await page('notes/purgeable-example', { deletedHoursAgo: 100 }), true);
+    const mixedPreview = await selectPurgeCandidates(engine, 72);
+    expect(mixedPreview.count).toBe(1);
+    expect(mixedPreview.slugs).toEqual(['notes/purgeable-example']);
   });
 
   test('a chunkless page with body text warns on a keyed brain and is info on a keyless one', async () => {

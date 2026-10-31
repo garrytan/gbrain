@@ -29,9 +29,9 @@
  *   from search; doctor `quarantined_pages` owns the warning.
  * - `empty`: a live page with no chunk rows and an empty body
  *   (`compiled_truth` and `timeline` both ''): nothing to index.
- * - `deleted_page_chunks`: chunks on a soft-deleted page. The purge lifecycle
- *   (`gbrain pages purge-deleted`, the autopilot purge phase, 72 h) removes
- *   them; past that window they are overdue.
+ * - `deleted_page_chunks`: chunks on a soft-deleted page. The 72 h age window
+ *   drives this warning, not purge eligibility: restore/identity holds and
+ *   source/park state can retain older pages. Preview the purge before approval.
  * - `chunkless_healable`: a live, unquarantined page with body text and no
  *   chunk rows (`listChunklessPagesWithContent`'s predicate): `gbrain embed
  *   --stale` chunks it before embedding. An `embed_skip` page is included
@@ -58,7 +58,7 @@ export { EMBEDDING_STATES } from './engine-sql/chunks.ts';
 /** The states `unsearchable` sums (pending drops out on a brain keyless by choice). */
 export const UNSEARCHABLE_STATES: readonly EmbeddingState[] = ['pending', 'quarantined', 'empty', 'chunkless_healable'];
 
-/** Hours a soft-deleted page waits before the purge lifecycle removes it (`pages purge-deleted` default). */
+/** Default age threshold for purge consideration; holds and source/park state still apply. */
 export const DELETED_PAGE_PURGE_WINDOW_HOURS = SOFT_DELETE_TTL_HOURS;
 
 export const EMBEDDING_STATE_DOCS = 'docs/guides/troubleshooting.md#embedding-state';
@@ -222,7 +222,7 @@ export function embeddingStateFix(state: EmbeddingState, ctx: { sourceId?: strin
     case 'deleted_page_chunks':
       return { ...base, argv: ['gbrain', 'pages', 'purge-deleted', '--yes'], preview_argv: ['gbrain', 'pages', 'purge-deleted', '--dry-run', '--json'],
         consent: ['destructive'], actor: 'agent',
-        why: `These chunks belong to soft-deleted pages; search never reads them. The purge lifecycle hard-deletes pages soft-deleted more than ${DELETED_PAGE_PURGE_WINDOW_HOURS}h ago (brain-wide, irreversible), taking their chunks with them.` };
+        why: 'These chunks belong to soft-deleted pages; search never reads them. The age count does not establish purge eligibility: restore and identity holds, source archival and parked purges can keep some pages. Preview currently eligible pages with `gbrain pages purge-deleted --dry-run --json` before asking for approval. Applying the brain-wide purge is irreversible and affects only eligible pages.' };
   }
 }
 
