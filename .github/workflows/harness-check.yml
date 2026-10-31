@@ -78,9 +78,9 @@ jobs:
           PIN: ${{ env.HARNESS_EVALS_PIN }}
         run: |
           set -euo pipefail
-          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)" \
-            clone -q --filter=blob:none https://github.com/garrytan/harness-evals "$RUNNER_TEMP/harness-evals"
-          git -C "$RUNNER_TEMP/harness-evals" checkout -q --detach "$PIN"
+          auth="http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          git -c "$auth" clone -q --filter=blob:none https://github.com/garrytan/harness-evals "$RUNNER_TEMP/harness-evals"
+          git -c "$auth" -C "$RUNNER_TEMP/harness-evals" checkout -q --detach "$PIN"
           echo "harness-evals at $(git -C "$RUNNER_TEMP/harness-evals" rev-parse HEAD) (VERSION $(cat "$RUNNER_TEMP/harness-evals/VERSION"))"
       - if: steps.gate.outputs.run == 'true'
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
