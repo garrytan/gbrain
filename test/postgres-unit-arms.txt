@@ -267,7 +267,6 @@ test/managed-sync-preparation-stalled-holds.test.ts
 test/managed-sync-row-parity.test.ts
 test/managed-sync-stale-group-head.test.ts
 test/mcp-sources-not-readable.test.ts
-test/mcp-unreadable-sources-notice.test.ts
 test/member-read-access.test.ts
 test/migration-0-53-host-move-7900.test.ts
 test/migration-persistence-foreground-committed-index.test.ts
