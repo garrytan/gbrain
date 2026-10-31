@@ -353,7 +353,37 @@ function remoteOperationError(value: unknown): OperationError {
   if (isWriteReceipt(value.write_request)) error.writeRequest = publicWriteReceipt(value.write_request);
   if (isWriteRequestId(value.request_id)) error.requestId = value.request_id;
   if (isWriteErrorCode(value.write_error)) error.writeError = value.write_error;
+  if (typeof value.why === 'string') error.why = value.why;
+  if (typeof value.reason === 'string') error.reason = value.reason;
+  if (value.contract_version === 1) error.contractVersion = 1;
+  const fix = wireAction(value.fix);
+  if (fix) error.fix = fix;
   return error;
+}
+
+/**
+ * #7707, #8130: the owner sends a refusal's `fix` already rendered (`toJSON`), or as the stored Action when it never loaded the renderer.
+ * Back to an Action, so a delegated refusal prints the same structured fix as the direct path; a value of any other shape is dropped.
+ */
+function wireAction(value: unknown): Action | undefined {
+  if (!record(value) || !Array.isArray(value.consent) || typeof value.actor !== 'string' || typeof value.why !== 'string'
+    || typeof value.requires_exclusive !== 'boolean') return undefined;
+  const argv = Array.isArray(value.argv) && value.argv.every(arg => typeof arg === 'string') ? value.argv as string[] : undefined;
+  const mcp = record(value.mcp) && typeof value.mcp.tool === 'string' && record(value.mcp.arguments) ? value.mcp as unknown as Action['mcp'] : undefined;
+  if (!argv && !mcp) return undefined;
+  const then = value.then === undefined ? undefined : wireAction(value.then);
+  return {
+    ...(value.next === 'ask_user' || value.ask_user === true ? { ask_user: true as const } : {}),
+    ...(argv ? { argv } : {}), ...(mcp ? { mcp } : {}),
+    consent: value.consent as Action['consent'], actor: value.actor as Action['actor'], why: value.why, requires_exclusive: value.requires_exclusive,
+    ...(typeof value.user_message === 'string' ? { user_message: value.user_message } : {}),
+    ...(record(value.verify) ? { verify: value.verify as Action['verify'] } : {}),
+    ...(typeof value.docs === 'string' ? { docs: value.docs } : {}),
+    ...(Array.isArray(value.inputs) ? { inputs: value.inputs as Action['inputs'] } : {}),
+    ...(typeof value.plan_hash === 'string' ? { plan_hash: value.plan_hash } : {}),
+    ...(Array.isArray(value.preview_argv) && value.preview_argv.every(arg => typeof arg === 'string') ? { preview_argv: value.preview_argv as string[] } : {}),
+    ...(then ? { then } : {}),
+  };
 }
 
 /** One bounded exchange. No automatic reconnect or replay after any request bytes are sent. */
