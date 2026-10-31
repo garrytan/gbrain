@@ -94,6 +94,10 @@ async function attempt(engine: BrainEngine, sql: string, params: unknown[] = [],
     return 'unreachable';
   } catch (error) {
     const message = (error as Error).message;
+    if (UNREADABLE.test(message)) {
+      expect(databaseRefusal(error)).toMatchObject({ code: 'writer_coordinator_required',
+        detail: { origin: 'database_guard', relationship: 'unreadable_state' } });
+    }
     return message === ROLLBACK ? 'ok' : message;
   }
 }

@@ -70,6 +70,33 @@ const GIT_PROTOCOL_PREFIX = 'git_protocol_required:';
 /** trust/schema.ts: the tier trigger's refusal of a raise without owner confirmation. */
 const TRUST_PREFIX = 'trust_raise_refused:';
 const PURGED_PREFIX = 'purged_content:';
+/** #7777: 42501 is also ordinary permission denial. Admit only a protocol guard's exact, fixed diagnostic. */
+const PROTOCOL_UNREADABLE = 'writer_coordinator_required: writer state is unreadable to this database role';
+const PROTOCOL_DISABLED = 'writer_not_quiesced: shared publication is disabled';
+const PROTOCOL_DIAGNOSTICS: Readonly<Record<string, readonly string[]>> = {
+  gbrain_require_persistence_protocol: ['writer_upgrade_required: this mutation requires persistence protocol 2'],
+  gbrain_guard_request_protocol: [PROTOCOL_UNREADABLE, PROTOCOL_DISABLED,
+    'unsupported_mutation_protocol: a request target is immutable',
+    'unsupported_mutation_protocol: skill operations require a typed target',
+    'unsupported_mutation_protocol: invalid skill target',
+    'unsupported_mutation_protocol: invalid page target',
+    'unsupported_mutation_protocol: recovery target mismatch',
+    'writer_not_quiesced: canonical owner capability must be revalidated'],
+  gbrain_guard_effect_protocol: [PROTOCOL_UNREADABLE],
+  gbrain_guard_protocol_activation: [PROTOCOL_UNREADABLE,
+    'writer_upgrade_required: the protocol floor cannot be lowered',
+    'writer_not_quiesced: drain and verify all canonical owners before activation'],
+  gbrain_guard_skill_publication: [PROTOCOL_DISABLED,
+    'writer_coordinator_required: canonical skill writes require a coordinated source capability'],
+};
+
+function protocolRefusal(raiser: string | undefined, message: string): PublicationFailure | null {
+  if (!raiser || !Object.hasOwn(PROTOCOL_DIAGNOSTICS, raiser) || !PROTOCOL_DIAGNOSTICS[raiser]!.includes(message)) return null;
+  const unreadable = message === PROTOCOL_UNREADABLE;
+  return { code: message.slice(0, message.indexOf(':')), message: `${message}. Nothing was committed.`,
+    detail: { origin: 'database_guard', sqlstate: '42501', raiser,
+      ...(unreadable ? { branch: 'unreadable_state', relationship: 'unreadable_state' } : {}) } };
+}
 const RELATIONSHIP_TEXT: Record<string, string> = {
   different_source: 'a row in a source this publication does not own',
   missing_source: 'a row whose source could not be resolved',
@@ -130,12 +157,14 @@ export function databaseRefusal(error: unknown): PublicationFailure | null {
   }
   if (sqlstate === READ_ONLY_SQLSTATE) return { code: 'connection_inherited_read_only', detail: { origin: 'database', sqlstate },
     message: `The database refused this write as read-only (SQLSTATE ${sqlstate}${typeof e.message === 'string' ? `: ${e.message}` : ''}), so nothing was committed: the server connection defaults to read-only transactions (pooler session state left by another client, a role or database default, or a read-only server).` };
-  if (sqlstate !== 'P0001' && sqlstate !== GRADUATION_SQLSTATE) return null;
+  if (sqlstate !== 'P0001' && sqlstate !== GRADUATION_SQLSTATE && sqlstate !== '42501') return null;
   const where = typeof e.where === 'string' ? e.where : '';
   const raiser = ident(/PL\/pgSQL function (?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*)[( ]/.exec(where)?.[1]);
   const table = ident(e.table_name ?? e.table);
   const constraint = typeof (e.constraint_name ?? e.constraint) === 'string' ? String(e.constraint_name ?? e.constraint) : '';
   const message = typeof e.message === 'string' ? e.message : '';
+  // Keep 42501 out of the older prefix-based P0001 paths, including when an outer guard calls another raiser.
+  if (sqlstate === '42501') return protocolRefusal(raiser, message);
   if (sqlstate === GRADUATION_SQLSTATE) {
     const reason = publicationReason(sqlstate, raiser, message);
     return { code: 'storage_error', detail: { origin: raiser ? 'database_trigger' : 'database', sqlstate, ...(raiser ? { raiser } : {}), ...(table ? { table } : {}), reason },
