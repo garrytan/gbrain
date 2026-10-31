@@ -2807,7 +2807,7 @@
           "schema_pack?: string | undefined",
           "search?: { adaptive_return?: boolean; adaptive_return_entity_max?: number; adaptive_return_other_max?: number; adaptive_return_min_keep?: number; vector_legacy_guard?: boolean; hnsw_iterative_scan?: string; cjk_keyword_deadline_ms?: number; keyword_statement_timeout_ms?: number; } | undefined",
           "search_embedding_column?: string | undefined",
-          "self_upgrade?: { mode?: \"auto\" | \"notify\" | \"off\"; channel?: \"latest\" | \"stable\"; mode_prompted?: boolean; quiet_hours?: { start?: number; end?: number; tz?: string; }; failed_versions?: string[]; attempting_version?: string; last_check_ts?: number; last_applied_version?: string; } | undefined",
+          "self_upgrade?: { mode?: \"auto\" | \"notify\" | \"off\"; channel?: \"stable\" | \"alpha\" | \"latest\"; mode_prompted?: boolean; quiet_hours?: { start?: number; end?: number; tz?: string; }; failed_versions?: string[]; attempting_version?: string; last_check_ts?: number; last_applied_version?: string; } | undefined",
           "serve_cli_socket?: boolean | undefined",
           "serve_vector_prewarm?: boolean | undefined",
           "storage?: unknown",

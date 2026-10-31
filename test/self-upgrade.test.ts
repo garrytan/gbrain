@@ -196,27 +196,30 @@ describe('snooze', () => {
     expect(snoozeDurationMs(3)).toBe(7 * 24 * 3600 * 1000);
     expect(snoozeDurationMs(99)).toBe(7 * 24 * 3600 * 1000);
   });
-  test('isSnoozeActive: only for matching version, within window', () => {
+  test('isSnoozeActive: time-based, holds across newer releases, ends at its expiry or on a rollback below the snoozed version', () => {
     const now = 1_000_000_000_000;
-    const rec = { version: '0.43.0', level: 1, ts: now };
+    const rec = { version: '0.43.0', level: 1, ts: now, until: now + 24 * 3600 * 1000 };
     expect(isSnoozeActive(rec, '0.43.0', now + 1000)).toBe(true);
+    expect(isSnoozeActive(rec, '0.44.0', now + 1000)).toBe(true); // a newer release does not end it
+    expect(isSnoozeActive(rec, '0.99.0', now + 23 * 3600 * 1000)).toBe(true);
     expect(isSnoozeActive(rec, '0.43.0', now + 25 * 3600 * 1000)).toBe(false); // expired
-    expect(isSnoozeActive(rec, '0.44.0', now + 1000)).toBe(false); // different version
+    expect(isSnoozeActive(rec, '0.42.0', now + 1000)).toBe(false); // rolled back below the snoozed version
     expect(isSnoozeActive(null, '0.43.0', now)).toBe(false);
   });
-  test('writeSnooze escalates level for same version, resets for new version', async () => {
+  test('writeSnooze escalates per channel whatever version is offered (24h, 48h, 7d), atomically; clearSnooze clears every channel', async () => {
     await withTmpHome(() => {
       const now = 1_700_000_000_000;
-      expect(writeSnooze('0.43.0', now)).toBe(1);
-      expect(writeSnooze('0.43.0', now)).toBe(2);
-      expect(writeSnooze('0.43.0', now)).toBe(3);
-      expect(writeSnooze('0.43.0', now)).toBe(3); // capped
-      expect(writeSnooze('0.44.0', now)).toBe(1); // new version resets
-      const rec = readSnooze();
-      expect(rec?.version).toBe('0.44.0');
-      expect(rec?.level).toBe(1);
+      const h = 3600 * 1000;
+      expect(writeSnooze('0.43.0', now, 'alpha')).toMatchObject({ level: 1, until: now + 24 * h });
+      expect(writeSnooze('0.44.0', now, 'alpha')).toMatchObject({ level: 2, until: now + 48 * h });
+      expect(writeSnooze('0.45.0', now, 'alpha')).toMatchObject({ level: 3, until: now + 7 * 24 * h });
+      expect(writeSnooze('0.46.0', now, 'alpha').level).toBe(3); // capped
+      expect(writeSnooze('0.43.0', now, 'stable').level).toBe(1); // channels are independent
+      expect(readSnooze('alpha')).toMatchObject({ version: '0.46.0', level: 3 });
+      expect(readSnooze('stable')).toMatchObject({ version: '0.43.0', level: 1 });
       clearSnooze();
-      expect(readSnooze()).toBeNull();
+      expect(readSnooze('alpha')).toBeNull();
+      expect(readSnooze('stable')).toBeNull();
     });
   });
   test('corrupt snooze file → null', async () => {
@@ -226,6 +229,8 @@ describe('snooze', () => {
       mkdirSync(gbrainPath(), { recursive: true });
       writeFileSync(gbrainPath('update-snoozed'), 'garbage not three fields here');
       expect(readSnooze()).toBeNull();
+      writeFileSync(gbrainPath('update-snoozed.stable.json'), '{"version":"0.43.0","level":"x"}');
+      expect(readSnooze('stable')).toBeNull();
     });
   });
 });

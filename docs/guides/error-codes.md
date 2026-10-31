@@ -4141,11 +4141,41 @@ More: [docs/guides/multi-source-brains.md#an-unscoped-connection-whose-sources-h
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| `gbrain upgrade --channel stable` (or `self_upgrade.channel stable`) could not name the stable release: the repository's tags could not be read, no release has been promoted to stable yet, or the `stable` tag does not share a commit with a `v<version>` release tag. Nothing was changed. | The stable channel installs only a release a maintainer promoted after the production-shaped soak passed on its exact tree; without that answer it installs nothing rather than guess. | Retry later, or upgrade on the latest channel with `gbrain upgrade --channel latest`. | agent | `gbrain doctor --json` | 1 | no |
+| Retired: an older gbrain could not name the stable release from the repository's tags alone. This build resolves stable from the published evidence record and reports stable_missing, stable_invalid or stable_unreadable instead. | Since GBRA-224 the stable channel is the default and accepts only a release whose evidence record proves its gates passed on that exact tree; a message with this code came from an older build. | Rerun gbrain self-upgrade --check-only --json on this build; it names the current stable code and its fix. Run: gbrain self-upgrade --check-only --json | agent | `gbrain doctor --json` | 1 | no |
 
 Reasons: `unreadable`, `no_stable`, `no_release_tag`.
 
-More: [docs/guides/upgrades-auto-update.md#stable-channel](../../docs/guides/upgrades-auto-update.md#stable-channel)
+More: [docs/guides/upgrades-auto-update.md#stable-channel-errors](../../docs/guides/upgrades-auto-update.md#stable-channel-errors)
+
+### stable_invalid
+
+<a id="stable_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The stable channel has no usable release: the published evidence record is missing, malformed, lacks an evidence key its generation needs (soak_run; matrix_run from the matrix cutover on), or names a version whose release tag is not the stable commit. Nothing was installed. | A stable install accepts only a release whose record proves its gates passed on that exact tree; a record that does not prove it is never trusted, and the client never falls back to alpha by itself. | Wait for a maintainer to repair or re-promote stable, or follow every release on alpha: gbrain config set self_upgrade.channel alpha (or the --channel / GBRAIN_RELEASE_CHANNEL override named in the message). | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/upgrades-auto-update.md#stable-channel-errors](../../docs/guides/upgrades-auto-update.md#stable-channel-errors)
+
+### stable_missing
+
+<a id="stable_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| No release has been promoted to the stable channel yet (no stable tag or no published evidence record), so the stable channel has nothing to install. Nothing was installed. | Stable installs only promoted releases; an empty channel installs nothing rather than guess, and the background update check only reports it. | Wait for the first stable promotion, or follow every release on alpha: gbrain config set self_upgrade.channel alpha (or the --channel / GBRAIN_RELEASE_CHANNEL override named in the message). | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/upgrades-auto-update.md#stable-channel-errors](../../docs/guides/upgrades-auto-update.md#stable-channel-errors)
+
+### stable_unreadable
+
+<a id="stable_unreadable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The stable channel could not be read: the evidence record or the repository's tags did not answer, or the stable tag and the record disagree while a promotion propagates. Nothing was installed. | Without a verified answer the client installs nothing and keeps any earlier verified answer for the notice only; the channel is unchanged. | Retry in a few minutes: gbrain self-upgrade --check-only. Check network access to github.com and raw.githubusercontent.com if it repeats. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/upgrades-auto-update.md#stable-channel-errors](../../docs/guides/upgrades-auto-update.md#stable-channel-errors)
 
 ### stale_unavailable
 

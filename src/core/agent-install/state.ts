@@ -7,6 +7,7 @@ import { flushDirectory } from '../fs-durable.ts';
 import { shouldDropAgentEnv } from './environment.ts';
 import { shellQuote } from '../mcp-registration.ts';
 import type { LocalSharedSkillsResult } from './shared-skills.ts';
+import { INSTALL_REF } from '../install-ref.ts';
 
 export class AgentInstallError extends Error {
   constructor(public code: string, message: string) { super(message); this.name = 'AgentInstallError'; }
@@ -181,7 +182,7 @@ export function writeInstallReceipt(receipt: AgentInstallReceipt): void {
     assertNoSymlinks(helper);
     helperOwned = sha256(readFileSync(helper)) === receipt.owned_files['bin/gbrain-setup'];
   } catch { /* A missing or changed helper is repaired from the recorded package. */ }
-  const ref = /^[a-f0-9]{40}$/.test(receipt.artifact?.source_ref ?? '') ? receipt.artifact!.source_ref : 'latest-stable';
+  const ref = /^[a-f0-9]{40}$/.test(receipt.artifact?.source_ref ?? '') ? receipt.artifact!.source_ref : INSTALL_REF;
   const command = helperOwned ? `bash ${shellQuote(helper)} --json`
     : `curl -fsSL https://raw.githubusercontent.com/garrytan/gbrain/${ref}/scripts/setup-in-agent.sh | bash -s -- --root ${shellQuote(receipt.root)} --harness ${shellQuote(receipt.harness)} --json`;
   receipt.recovery = { command, action: receipt.last_failure

@@ -60,6 +60,7 @@ check-skills-manifest-fresh.sh	buildfresh	exempt	regenerates + diffs
 check-tool-catalog-fresh.sh	buildfresh	exempt	regenerates + diffs
 check-wasm-embedded.sh	buildfresh	exempt	binary embed check
 check-bootstrap-tag.sh	repostate	exempt	VERSION stamp drift check
+check-install-ref.ts	scanner	yes	install pins, runbook and setup-helper fetches name INSTALL_REF (src/core/install-ref.ts); git ls-files under GBRAIN_GUARD_ROOT; unit tests in test/install-ref.test.ts
 check-cli-executable.sh	repostate	exempt	file-mode check
 check-no-tracked-symlinks.sh	repostate	exempt	git index state check
 check-grok-pin.sh	repostate	exempt	pin-stamp drift check (GROK-CLI-PIN.md stamps vs heavy-tests grok-door env); own bun guard tests in test/check-bootstrap-guards.test.ts

@@ -244,6 +244,8 @@ async function spawnWithShims(
     PATH: `${fx.shimDir}:${process.env.PATH ?? ''}`,
     HOME: fx.home,
     GBRAIN_HOME: fx.home,
+    // The install method's own path (alpha); the stable channel has its own suite (upgrade-stable-channel).
+    GBRAIN_RELEASE_CHANNEL: 'alpha',
     GIT_CONFIG_NOSYSTEM: '1',
     GIT_TERMINAL_PROMPT: '0',
     NO_COLOR: '1',

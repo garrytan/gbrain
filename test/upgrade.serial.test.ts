@@ -290,6 +290,8 @@ describe('runUpgrade target verification (#4366)', () => {
       ...process.env,
       HOME: home,
       GBRAIN_HOME: home,
+      // The install method's own path (alpha); the stable channel has its own suite (upgrade-stable-channel).
+      GBRAIN_RELEASE_CHANNEL: 'alpha',
       PATH: `${bin}:${process.env.PATH}`,
     };
     delete env.TEST_TARGET_VERSION;

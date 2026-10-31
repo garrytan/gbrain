@@ -48,6 +48,7 @@ import { FAILSAFE_SCHEMA, load } from 'js-yaml';
 // Personas: the SINGLE validation implementation (the harness-bridge CLI
 // imports the same module), so CLI errors and CI errors match by construction.
 import { loadPersonas, type PersonaDef } from '../src/core/skillpack/personas.ts';
+import { INSTALL_PIN } from '../src/core/install-ref.ts';
 
 // GBRAIN_PLUGIN_TREE_ROOT is the negative-fixture test seam: the manifest
 // test points the generator at a synthetic repo root to prove each curation
@@ -315,7 +316,7 @@ with \`GBRAIN_SURFACE=full\` (the server honors it; new sessions pick it up).`}
 
 ## Requirements
 
-- gbrain CLI installed: \`bun install -g github:garrytan/gbrain#latest-stable\`
+- gbrain CLI installed: \`bun install -g ${INSTALL_PIN}\`
   (the npm package named \`gbrain\` is unrelated — never \`npm install -g gbrain\`).
 - A brain: \`gbrain init\` (the bundled \`setup\` skill walks the full path).
 `,

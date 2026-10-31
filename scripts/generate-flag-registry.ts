@@ -72,8 +72,9 @@ const DELEGATED_MODULES: Record<string, string[]> = {
   forget: ['src/commands/forget-purge.ts'],
   // `upgrade --restart-only --dry-run` is parsed by restartDryRun in
   // upgrade-restart.ts, which refuses --dry-run without --restart-only;
-  // post-upgrade shares upgrade.ts and never takes it.
-  upgrade: ['src/commands/upgrade-restart.ts'],
+  // post-upgrade shares upgrade.ts and never takes it. A plain `upgrade --dry-run`
+  // is the channel preview, parsed by runUpgradeDryRun in upgrade-channel.ts.
+  upgrade: ['src/commands/upgrade-restart.ts', 'src/commands/upgrade-channel.ts'],
 };
 
 /**
