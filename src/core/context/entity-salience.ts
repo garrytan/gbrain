@@ -145,6 +145,12 @@ const HANDLE_RE = /@([A-Za-z0-9_]{2,})/g;
 const CAP_TOKEN = `\\p{Lu}[\\p{L}0-9'’\\-]*(?:\\.\\p{L}[\\p{L}0-9'’\\-]*)*`;
 const CAP_RUN_RE = new RegExp(`${CAP_TOKEN}(?:\\s+${CAP_TOKEN}){0,3}`, 'gu');
 
+// Fact inference needs complete identities such as "Acme 42", "42 Acme"
+// and "3M", not a prefix that may name a different page. Keep retrieval's
+// existing candidate policy unchanged; bare amounts are still not names.
+const FACT_TOKEN = `(?:${CAP_TOKEN}|[0-9][\\p{L}0-9'’\\-]*)`;
+const FACT_RUN_RE = new RegExp(`(?<![\\p{L}\\p{N}_])${FACT_TOKEN}(?:\\s+${FACT_TOKEN}){0,3}(?![\\p{L}\\p{N}_])`, 'gu');
+
 /** Strip a trailing possessive ("Garry's" → "Garry", "Jones’" → "Jones"). */
 function stripPossessive(s: string): string {
   return s.replace(/['’]s$/i, '').replace(/['’]$/i, '');
@@ -183,7 +189,7 @@ const PURE_HIRAGANA_RE = /^[぀-ゟ]+$/u;
  * Deterministic, precision-biased, capped at MAX_CANDIDATES. Deduped on the
  * normalizeAlias() form (so "Garry" and "garry" collapse), first display wins.
  */
-export function extractCandidates(text: string): EntityCandidate[] {
+export function extractCandidates(text: string, opts?: { numericNames?: boolean }): EntityCandidate[] {
   if (!text || typeof text !== 'string') return [];
 
   // Track, per normalized query, its display + whether it was ever seen
@@ -228,8 +234,9 @@ export function extractCandidates(text: string): EntityCandidate[] {
   }
 
   // 2. Capitalized token runs.
-  for (const m of text.matchAll(CAP_RUN_RE)) {
+  for (const m of text.matchAll(opts?.numericNames ? FACT_RUN_RE : CAP_RUN_RE)) {
     const surface = m[0];
+    if (opts?.numericNames && !/\p{Lu}/u.test(surface)) continue;
     const idx = m.index ?? 0;
     consider(surface, surface, !isAtSentenceStart(text, idx));
     // Leading-stopword trim (v0.46.15 identity wave): a sentence-start

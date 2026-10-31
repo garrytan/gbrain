@@ -113,6 +113,10 @@ const SENTENCE_OPENERS = new Set([
  */
 const LABEL_OPENERS = new Set(['work', 'invoice', 'invoiced', 'billed', 'receipt', 'payment']);
 
+// Extractor attribution labels are not an additional person. Resolve them
+// first so a real entity named User or Assistant still competes.
+const ATTRIBUTION_LABELS = new Set(['user', 'assistant']);
+
 /** #7405: ISO 4217 codes; one counts as a unit (not a name) only where every use sits next to an amount ("CHF 80", "80 CHF"). */
 const CURRENCY_CODES = new Set(Intl.supportedValuesOf('currency'));
 
@@ -133,20 +137,42 @@ const DISTINCT_ENTITY_LIMIT = 2;
 export async function inferFactSubject(engine: BrainEngine, sourceId: string, input: InferSubjectInput): Promise<InferResult> {
   const candidates: Array<{ query: string; sentenceStart?: true }> = [
     ...[...new Set(input.fact.match(SLUG_IN_TEXT_RE) ?? [])].map(query => ({ query })),
-    ...extractCandidates(input.fact).filter(c => !c.weak).map(shedOpener),
+    ...extractCandidates(input.fact, { numericNames: true }).filter(c => !c.weak).map(shedOpener),
   ];
   const resolved = new Set<string>();
   const subjects = new Set<string>();
   const misses: Array<Exclude<StrictResolution, { slug: string }>['miss']> = [];
   let vetoed = false;
-  const memo = new Map<string, StrictResolution>();
+  const memo = new Map<string, { resolution: StrictResolution; query: string }>();
   for (const candidate of candidates) {
     const key = candidate.query.toLowerCase();
-    let r = memo.get(key);
+    const cached = memo.get(key);
+    let r = cached?.resolution;
+    if (cached) candidate.query = cached.query;
     if (!r) {
       r = await resolveStrictEntityReference(engine, sourceId, candidate.query,
         { sameName: input.mode === 'relink', excludePrivate: input.excludePrivate });
-      memo.set(key, r);
+      // A complete numeric name wins over its shorter currency/label form.
+      // Only an actual no-page miss permits these syntactic fallbacks; an
+      // ambiguous, private or otherwise unverified identity stays a veto.
+      if (r.slug === null && r.miss === 'no_page') {
+        const words = candidate.query.split(/\s+/);
+        const currency = words.find(word => CURRENCY_CODES.has(word));
+        const amount = currency && words.length === 2 && words.some(word => /^\d[\d,.']*$/.test(word));
+        const label = words.length > 1 && ATTRIBUTION_LABELS.has(words[0]!.toLowerCase());
+        let fallback = amount && isAmountUnit(input.fact, currency!) ? currency : null;
+        if (label) {
+          const attribution = await resolveStrictEntityReference(engine, sourceId, words[0]!,
+            { sameName: input.mode === 'relink', excludePrivate: input.excludePrivate });
+          if (attribution.slug === null && attribution.miss === 'no_page') fallback = words.slice(1).join(' ');
+        }
+        if (fallback) {
+          candidate.query = fallback;
+          r = await resolveStrictEntityReference(engine, sourceId, fallback,
+            { sameName: input.mode === 'relink', excludePrivate: input.excludePrivate });
+        }
+      }
+      memo.set(key, { resolution: r, query: candidate.query });
     }
     if (r.slug !== null) {
       resolved.add(r.slug);
@@ -186,7 +212,8 @@ function shedOpener<T extends { query: string }>(c: T): T {
 
 function isNonName(query: string): boolean {
   if (/\s/.test(query)) return false;
-  return isCommonCapitalizedWord(query) || ROLE_AND_TERM_TOKENS.has(query.toLowerCase());
+  return isCommonCapitalizedWord(query) || ROLE_AND_TERM_TOKENS.has(query.toLowerCase())
+    || ATTRIBUTION_LABELS.has(query.toLowerCase());
 }
 
 const WORD_CHAR = /[\p{L}\p{N}_/-]/u;
