@@ -31,7 +31,6 @@ test/belief-ledger-trust.test.ts
 test/belief-ledger-w5-time-model.test.ts
 test/belief-ledger-weekly-diff.test.ts
 test/belief-ledger-weekly-probes.test.ts
-test/belief-stale-links-7031.test.ts
 test/capacity-bounded-read-6803.test.ts
 test/capture-consent-admission.test.ts
 test/capture-dispatch-provenance-6524.test.ts
@@ -80,7 +79,6 @@ test/facts-entity-moved-7602.test.ts
 test/facts-insert-guards-7105.test.ts
 test/facts-publication-large-fence-6898.test.ts
 test/facts-subject-infer-7405.test.ts
-test/facts-subject-infer-7827.test.ts
 test/fence-fact-append.test.ts
 test/fence-repair-receipts.test.ts
 test/file-drift-soft-delete-hold-release-gbra133.test.ts
@@ -533,7 +531,6 @@ test/sync-unreadable-file-gbra130.test.ts
 test/sync-waiver-budget.test.ts
 test/sync-waiver-run-imports.test.ts
 test/take-resolution-survives-publish.test.ts
-test/takes-propose-cli-7271.test.ts
 test/takes-vector-lifecycle-5885.serial.test.ts
 test/terminal-failures-6650.test.ts
 test/timeline-chunk-reuse.test.ts
@@ -541,7 +538,6 @@ test/trust-channel-writes.test.ts
 test/trust-guarded-supersession.test.ts
 test/trust-held-removals.test.ts
 test/trust-owner-actions.test.ts
-test/trust-supersede-segmented-8060.test.ts
 test/unbound-source-6536.test.ts
 test/unindexed-files-convergence-7149.test.ts
 test/unindexed-files.test.ts

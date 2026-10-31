@@ -90,7 +90,7 @@ async function cmdList(engine: BrainEngine, args: string[]): Promise<void> {
   // a slug.
   const slug = args[0] && !args[0].startsWith('-') ? args[0] : undefined;
   // #7271: there is no status filter here; an ignored --status read as a filtered list.
-  if (args.some(arg => arg === '--status' || arg.startsWith('--status='))) {
+  if (args.includes('--status')) {
     console.error('takes list has no --status filter: it lists active takes, and --expired lists superseded ones. Proposed takes wait in the proposal queue: gbrain takes propose --json');
     process.exit(1);
   }
