@@ -601,6 +601,7 @@ export const CODES = {
   refresh_dirty: { class: 'caller', summary: "The worktree has uncommitted changes." },
   refresh_diverged: { class: 'caller', summary: "The worktree diverged from its upstream; a fast-forward is impossible." },
   refresh_drain_timeout: { class: 'retryable', summary: "In-flight work did not drain before the refresh deadline." },
+  refresh_lock_timeout: { class: 'retryable', summary: "Another database transaction held a row the refresh fence locks past the fence's 5 s lock timeout; nothing moved." },
   refresh_no_upstream: { class: 'caller', summary: "The worktree has no upstream to refresh from." },
   refresh_not_managed: { class: 'host_only', summary: "The source is not managed, so it cannot be refreshed." },
   refresh_not_owner: { class: 'host_only', summary: "This process does not own the worktree it would refresh." },
