@@ -1,4 +1,5 @@
 import { registerManagedFilesystemEngine } from './persistence/filesystem-guard.ts';
+import { assertSchemaReplaySupported } from './schema-version-guard.ts';
 import { writerStamp } from './persistence/writer-versions.ts';
 import { noteRequestConfigWrite, requestConfigRows, requestConfigValue } from './config-snapshot.ts';
 import { replaceDerivedLinks, replaceDerivedLinksBatch, type DerivedLinkBatchItem, type DerivedLinkOrigin, type DerivedLinkReplacementOptions } from './derived-links.ts';
@@ -1130,6 +1131,7 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
+    await assertSchemaReplaySupported(async q => (await this.db.query(q)).rows as Record<string, unknown>[]);
     // Tier 3: snapshot was loaded into PGlite — schema + migrations already
     // applied. Nothing to do. Returns immediately.
     if (this._snapshotLoaded) {

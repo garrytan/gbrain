@@ -1,4 +1,5 @@
 import { tryAcquirePoolLongHold, PoolCapacityError } from './pool-budget.ts';
+import { assertSchemaReplaySupported } from './schema-version-guard.ts';
 import { noteRequestConfigWrite, requestConfigRows, requestConfigValue } from './config-snapshot.ts';
 import { replaceDerivedLinks, replaceDerivedLinksBatch, type DerivedLinkBatchItem, type DerivedLinkOrigin, type DerivedLinkReplacementOptions } from './derived-links.ts';
 import { mutatePageTag } from './page-state/tags.ts';
@@ -611,6 +612,7 @@ export class PostgresEngine implements BrainEngine {
       // error names the holder pid with pg_terminate_backend recovery guidance.
       await acquireInitSchemaAdvisoryLock((q) => conn.unsafe(q));
       try {
+        await assertSchemaReplaySupported(q => conn.unsafe(q));
         // Pre-schema bootstrap: add forward-referenced state the embedded schema
         // blob requires but that older brains don't have yet (issues #366/#375/
         // #378/#396 + #266/#357). Idempotent on fresh installs and modern brains.
