@@ -91,7 +91,7 @@ export const EQUALS_READERS: Readonly<Record<string, readonly string[]>> = {
   'compile-context': ['--target', '--budget', '--include', '--out', '--source'],
   // core/consent.ts:123 parseConsentFlags via enableConsent (decide.ts:348, effects paid); decide reads no --max-* itself.
   'decide enable': ['--max-usd', '--max-cost'],
-  // doctor.ts:417 --scope=brain only (=-only); doctor/budget.ts:68 --tier/--budget-ms; cli/commands/doctor.ts:27 --tier (thin client);
+  // doctor/budget.ts parseDoctorScope --scope (both forms, #7624); doctor/budget.ts:68 --tier/--budget-ms; cli/commands/doctor.ts:27 --tier (thin client);
   // doctor/registry.ts:332 --only; check-resolvable.ts:120 --skills-dir via doctor.ts:460; core/consent.ts:130 --expect (remediate-consent.ts:133).
   doctor: ['--scope', '--tier', '--budget-ms', '--only', '--skills-dir', '--expect'],
   // edge-proposals.ts:81 flag() used only by list (:91,:93); other subs take the first numeric token as the id (:86).
@@ -136,7 +136,7 @@ export const EQUALS_READERS: Readonly<Record<string, readonly string[]>> = {
   lint: ['--exclude'],
   // migrate-graduation.ts:97 flagValue (parseGraduationArgs :121-151); graduation-only flags, the legacy copier (migrate-engine.ts) never reads them.
   migrate: ['--url-env', '--trigger-bypass', '--drain-timeout', '--batch-size', '--expect'],
-  // models.ts:853 doctor mode only (sub selection :818), repeated --skip=<provider>, =-only.
+  // models.ts parseSkipProviders, doctor mode only, repeated --skip <provider> or --skip=<provider> (#7624).
   'models doctor': ['--skip'],
   // core/bounded-listing-cli.ts:15 parseListingFlags via orphans.ts:353.
   orphans: ['--limit', '--cursor'],
