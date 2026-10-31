@@ -30,6 +30,8 @@ import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/privat
 import { __resetHotMemoryCacheForTests, getBrainHotMemoryMeta } from '../src/core/facts/meta-hook.ts';
 import { addMember, bindCredential } from '../src/core/access/members.ts';
 import { linkMember } from '../src/core/access/actor.ts';
+import { memberPageSlug } from '../src/core/access/member-facts.ts';
+import { decideSingleFact, type SingleFactIntent } from '../src/core/facts/single-prepare.ts';
 import { runFactsRelink } from '../src/core/facts/relink.ts';
 import { runPhaseConsolidate } from '../src/core/cycle/phases/consolidate.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
@@ -55,7 +57,7 @@ const ALICE_ID = 'U0ALICE';
 const BOB_ID = 'bob-example@acme.test';
 const ACME = 'companies/acme-example';
 const CANARY = { alice: 'canaryfactalice', bob: 'canaryfactbob' } as const;
-const ATTEST_OPS = ['context_pack', 'delta', 'get_page', 'get_write_request', 'list_write_requests', 'recall', 'remember', 'search', 'whoami'];
+const ATTEST_OPS = ['context_pack', 'delta', 'get_page', 'get_write_request', 'list_write_requests', 'put_page', 'recall', 'remember', 'search', 'whoami'];
 
 for (const kind of testBackends()) {
   describe('member facts and member-scoped reads (' + kind + ', repo-less)', () => {
@@ -159,6 +161,47 @@ for (const kind of testBackends()) {
       expect((await call(who.alice(), 'get_page', { slug: 'memory/members/alice-example' })).all).toContain(CANARY.alice);
     }, 120_000);
 
+    test('a member reads only private facts on its own live member page, never an operator\'s private fact or a page-less member slug', async () => {
+      const operator = 'canaryoperatorprivate harbor ledger budget';
+      const orphan = 'canaryorphanmember harbor ledger budget';
+      await engine.insertFact({ fact: operator, kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'private' }, { source_id: SRC });
+      await engine.insertFact({ fact: orphan, kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'private', source_markdown_slug: 'memory/members/carol-example' }, { source_id: SRC });
+      for (const hatch of [undefined, '1']) {
+        await withEnv({ GBRAIN_REMOTE_PRIVATE_PAGES: hatch }, async () => {
+          __resetPrivateVisibilityCacheForTests();
+          for (const as of [who.alice(), who.bob(), who.bobToken(), who.bare(), who.unbound()]) {
+            for (const params of [{ query: 'harbor ledger budget' }, { entity: ACME }, { since: '2000-01-01' }]) {
+              const out = await call(as, 'recall', params);
+              expect(out.all).not.toContain('canaryoperatorprivate');
+              expect(out.all).not.toContain('canaryorphanmember');
+            }
+          }
+        });
+      }
+      __resetPrivateVisibilityCacheForTests();
+    }, 60_000);
+
+    test('a member stops reading its own facts once its page\'s readers no longer name it', async () => {
+      const bobPage = 'memory/members/bob-example';
+      const [before] = await engine.executeRaw<{ frontmatter: unknown }>('SELECT frontmatter FROM pages WHERE source_id = $1 AND slug = $2', [SRC, bobPage]);
+      await engine.executeRaw(`UPDATE pages SET frontmatter = jsonb_set(frontmatter, '{readable_by}', '["group:team-a"]'::jsonb) WHERE source_id = $1 AND slug = $2`, [SRC, bobPage]);
+      __resetPrivateVisibilityCacheForTests();
+      const [narrowed] = await engine.executeRaw<{ page_readers: string[] }>('SELECT page_readers FROM pages WHERE source_id = $1 AND slug = $2', [SRC, bobPage]);
+      expect(narrowed!.page_readers).toEqual(['group:team-a']);
+      try {
+        for (const hatch of [undefined, '1']) {
+          await withEnv({ GBRAIN_REMOTE_PRIVATE_PAGES: hatch }, async () => {
+            __resetPrivateVisibilityCacheForTests();
+            for (const params of [{ query: 'harbor' }, { entity: ACME }, { since: '2000-01-01' }]) expect((await call(who.bobToken(), 'recall', params)).all).not.toContain(CANARY.bob);
+          });
+        }
+      } finally {
+        await engine.executeRaw('UPDATE pages SET frontmatter = $3::jsonb WHERE source_id = $1 AND slug = $2', [SRC, bobPage, JSON.stringify(before!.frontmatter)]);
+        __resetPrivateVisibilityCacheForTests();
+      }
+      expect((await call(who.bobToken(), 'recall', { query: 'harbor' })).all).toContain(CANARY.bob);
+    }, 60_000);
+
     test('the operator hatch on: an attested or member-bound caller still never reads another member\'s fact', async () => {
       await withEnv({ GBRAIN_REMOTE_PRIVATE_PAGES: '1' }, async () => {
         __resetPrivateVisibilityCacheForTests();
@@ -212,6 +255,19 @@ for (const kind of testBackends()) {
       const replay = await remember(who.bob(), 'Alice signs the harbor charter ' + CANARY.alice + 'r', { request_id: requestId });
       expect(replay.isError).toBe(true);
       expect(replay.all).not.toContain('"id":"' + factId + '"');
+      // A write on a page both can read: the receipt still belongs to the person it was written for.
+      const shared = 'c2-shared-' + randomUUID().slice(0, 6);
+      const content = '---\ntype: note\ntitle: Shared harbor plan\n---\n# Shared harbor plan\n\nShared plan ' + shared + '.';
+      expect((await call(who.alice(), 'put_page', { slug: 'notes/' + shared, content, request_id: shared })).isError).toBe(false);
+      expect((await call(who.alice(), 'get_write_request', { request_id: shared })).isError).toBe(false);
+      for (const as of [who.bob(), who.bare()]) {
+        const got = await call(as, 'get_write_request', { request_id: shared });
+        expect({ isError: got.isError, code: got.json.code ?? got.json.error }).toEqual({ isError: true, code: 'not_found' });
+        expect((await call(as, 'list_write_requests', {})).all).not.toContain(shared);
+      }
+      const bobReplay = await call(who.bob(), 'put_page', { slug: 'notes/' + shared, content, request_id: shared });
+      expect(bobReplay.isError).toBe(true);
+      expect(bobReplay.json.code ?? bobReplay.json.error).toBe('idempotency_conflict');
     }, 60_000);
 
     test('two members saving the same words get two facts, each on its own page', async () => {
@@ -224,6 +280,18 @@ for (const kind of testBackends()) {
       const rows = await engine.executeRaw<{ source_markdown_slug: string }>('SELECT source_markdown_slug FROM facts WHERE fact = $1 AND expired_at IS NULL ORDER BY id', [words]);
       expect(rows.map(r => r.source_markdown_slug)).toEqual(['memory/members/alice-example', 'memory/members/bob-example']);
       expect((await remember(who.alice(), words)).json.id).toBe(a.json.id);
+    }, 60_000);
+
+    test('a member fact never supersedes or dedups against another page\'s fact about the same entity', async () => {
+      const model = 'synthetic:c2-member';
+      await engine.setConfig('facts.supersession_thresholds', JSON.stringify({ [`${model}@${DIMS}`]: 0.95 }));
+      const embedding = new Float32Array(DIMS);
+      embedding[0] = 1;
+      const fact = 'Acme example renews its harbor ledger contract for two more years';
+      await engine.insertFact({ fact, kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'private', embedding, embedding_model: model, source_markdown_slug: ACME }, { source_id: SRC });
+      const intent = { fact: fact + ' again', kind: 'fact', entity_slug: ACME, visibility: 'private', page_slug: memberPageSlug('alice-example') } as SingleFactIntent;
+      expect((await decideSingleFact(engine, SRC, intent, embedding, model)).status).toBe('inserted');
+      expect((await decideSingleFact(engine, SRC, { ...intent, page_slug: undefined }, embedding, model)).status).not.toBe('inserted');
     }, 60_000);
 
     test('a fence rebuild keeps the member fact private on its page; relink and consolidation leave it there', async () => {
@@ -241,13 +309,23 @@ for (const kind of testBackends()) {
     }, 60_000);
 
     test('consolidation never turns member facts into takes on the entity page', async () => {
-      for (const n of ['one', 'two', 'three']) {
-        expect((await remember(who.alice(), `Acme example harbor ledger launch slips to spring ${CANARY.alice}take ${n}`, { entity: ACME })).isError).toBe(false);
+      const BETA = 'companies/beta-example';
+      await importFromContent(engine, BETA, '---\ntype: company\ntitle: Beta Example\n---\n# Beta Example\n\nBeta example ships ledgers.', { sourceId: SRC });
+      expect((await remember(who.alice(), 'Beta example ledger launch slips to spring quarter ' + CANARY.alice + 'take', { entity: BETA })).isError).toBe(false);
+      const local = await dispatchToolCall(engine, 'remember', { fact: 'Beta example ledger launch slips to spring quarter controltake', provenance: 'operator', entity: BETA }, { remote: false, sourceId: SRC });
+      expect(local.isError).not.toBe(true);
+      // Two more copies of each (the write path would dedup them), so each page holds a cluster of three.
+      for (let n = 0; n < 2; n++) {
+        await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, source, source_markdown_slug, confidence, embedding, embedding_model, embedded_text_hash, valid_from)
+          SELECT source_id, entity_slug, fact, kind, visibility, notability, source, source_markdown_slug, confidence, embedding, embedding_model, embedded_text_hash, valid_from - interval '1 day'
+          FROM facts WHERE entity_slug = $1 AND row_num IS NOT NULL`, [BETA]);
       }
+      await engine.executeRaw("UPDATE facts SET valid_from = valid_from - interval '3 days' WHERE entity_slug = $1", [BETA]);
       const result = await runPhaseConsolidate(engine, { sourceId: SRC, minOldestAgeMs: 0, minFactsPerBucket: 2 });
       expect(result.status).not.toBe('fail');
-      const takes = await engine.executeRaw<{ claim: string }>('SELECT t.claim FROM takes t JOIN pages p ON p.id = t.page_id WHERE p.source_id = $1', [SRC]);
-      expect(takes.map(t => t.claim).join('\n')).not.toContain(CANARY.alice);
+      const takes = (await engine.executeRaw<{ claim: string }>('SELECT t.claim FROM takes t JOIN pages p ON p.id = t.page_id WHERE p.source_id = $1', [SRC])).map(t => t.claim).join('\n');
+      expect(takes).toContain('controltake');
+      expect(takes).not.toContain(CANARY.alice);
     }, 60_000);
   });
 }
