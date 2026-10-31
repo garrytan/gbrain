@@ -7,21 +7,28 @@
  *
  * Postgres keeps per-lexeme row shares for `content_chunks.search_vector`
  * (`pg_stats.most_common_elems`, the statistics the planner prices a
- * tsquery with). The retry keeps every term the statistics do not track
- * (rare, so cheap to match, or absent), then adds the tracked terms rarest
+ * tsquery with). The retry prefers terms the statistics do not track
+ * (rare or absent, but not free), then adds the tracked terms rarest
  * first while their estimated matches stay within OR_FALLBACK_MATCH_CAP, and
  * always the rarest tracked one, so a retry never rests on terms that may
  * match nothing. It still ranks with the full OR query (searchKeyword binds
  * the rank query as its own parameter whenever it may relax), so a retained chunk
- * scores exactly as before; a chunk that holds only the dropped, most common
- * terms is no longer a candidate. Without statistics (never analyzed), or
- * when every term fits, the retry is unchanged.
+ * scores exactly as before; a chunk that holds only dropped terms is no
+ * longer a candidate. OR_FALLBACK_TERM_CAP separately bounds
+ * distinct terms, including untracked terms whose union has no row estimate.
+ * Input order breaks untracked ties; one slot is reserved for the rarest
+ * tracked term. This is a width bound, not a guaranteed matching-row bound.
+ * Without statistics (never analyzed), or when every term fits both bounds,
+ * the retry is unchanged.
  */
 
 import { orFallbackTokens } from './sql-ranking.ts';
 
 /** Estimated chunk matches the tracked terms of an OR retry may add: about 0.2 s of ts_rank on the 2M-chunk bench. */
 export const OR_FALLBACK_MATCH_CAP = 20_000;
+
+/** Maximum distinct matching terms: unknown-frequency terms cannot bypass the retry budget. */
+export const OR_FALLBACK_TERM_CAP = 16;
 
 /**
  * A token's statistics: `lexemes` its lexeme count (0 for a stopword),
@@ -51,17 +58,20 @@ export function orTokenSharesSql(ftsLang: string): string {
 
 /**
  * The tokens an OR retry should match, or null to keep every token: the
- * untracked ones, then tracked ones rarest first within `cap` estimated
+ * untracked ones in input order, then tracked ones rarest first within `cap` estimated
  * rows (the rarest tracked one always), stopwords dropped. Null when no word
- * would be dropped.
+ * would be dropped. Both sets share OR_FALLBACK_TERM_CAP slots, reserving
+ * one for the rarest tracked term so absent untracked words cannot starve it.
  */
 export function narrowOrFallbackTokens(tokens: OrTokenShare[], rows: number, cap = OR_FALLBACK_MATCH_CAP): string[] | null {
   if (!(rows > 0)) return null;
-  const words = tokens.filter(t => t.lexemes > 0);
-  const kept = words.filter(t => t.share === null).map(t => t.token);
+  const words = [...new Map(tokens.filter(t => t.lexemes > 0).map(t => [t.token, t])).values()];
   const tracked = words.filter(t => t.share !== null).sort((a, b) => a.share! - b.share!);
+  const kept = words.filter(t => t.share === null)
+    .slice(0, OR_FALLBACK_TERM_CAP - (tracked.length > 0 ? 1 : 0)).map(t => t.token);
   let estimate = 0;
   for (const [i, t] of tracked.entries()) {
+    if (kept.length >= OR_FALLBACK_TERM_CAP) break;
     estimate += t.share! * rows;
     if (i > 0 && estimate > cap) break;
     kept.push(t.token);
