@@ -371,7 +371,7 @@ function onlyResult(checks: Check[], only: ReadonlySet<string>, stopped: boolean
   const kept = checks.filter((c) => only.has(c.name) || (stopped && missing.length > 0 && c.name === 'connection'));
   for (const name of missing) {
     kept.push(stopped
-      ? { name, status: 'warn', message: 'Not run: the database checks stopped early (see the connection check).', fix_unavailable_reason: 'check_errored' }
+      ? { name, status: 'warn', message: 'Not run: the database checks stopped early (see the connection check).', details: { health: 'unknown' }, fix_unavailable_reason: 'check_errored' }
       : infoCheck(name, 'No finding: this check does not apply to this brain right now.', 'not_applicable'));
   }
   return kept;
