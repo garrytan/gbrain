@@ -25,6 +25,7 @@ import { hermesAdapter } from './hermes.ts';
 import { grokAdapter } from './grok.ts';
 import { chatgptExportAdapter } from './chatgpt-export.ts';
 import { claudeExportAdapter } from './claude-export.ts';
+import { limitlessAdapter } from './limitless.ts';
 
 // ── Harness discovery roots (discovery mode only) ───────────────────────────
 
@@ -81,6 +82,9 @@ export function transcriptAdapters(): TranscriptAdapter[] {
     claudeCodeAdapter,
     grokAdapter,
     claudeExportAdapter,
+    // Sniffs "speakerIdentifier"/"lifelogs" and rejects the chat_messages/mapping
+    // keys, so it sits after claude-export and before chatgpt without overlap.
+    limitlessAdapter,
     chatgptExportAdapter,
   ];
 }

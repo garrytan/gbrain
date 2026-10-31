@@ -31,7 +31,8 @@ export type TranscriptFormat =
   | 'hermes'
   | 'grok'
   | 'chatgpt'
-  | 'claude-export';
+  | 'claude-export'
+  | 'limitless';
 
 export interface TranscriptMessage {
   role: 'user' | 'assistant';
@@ -133,6 +134,7 @@ const SLUG_DIRS: Record<TranscriptFormat, string> = {
   grok: 'conversations/sessions',
   chatgpt: 'conversations/chatgpt',
   'claude-export': 'conversations/claude',
+  limitless: 'conversations/limitless',
 };
 
 const HARNESS_FORMATS: ReadonlySet<TranscriptFormat> = new Set([
@@ -183,6 +185,7 @@ export function utcTimestamp(v: unknown): string {
  * Harness sessions:  conversations/sessions/YYYY-MM-DD-<harness>-<hash12>
  * ChatGPT threads:   conversations/chatgpt/YYYY-MM-DD-<titleslug>-<hash12>
  * Claude.ai threads: conversations/claude/YYYY-MM-DD-<titleslug>-<hash12>
+ * Limitless lifelogs: conversations/limitless/YYYY-MM-DD-<titleslug>-<hash12>
  *
  * `dateIso` is the session start (UTC); callers fall back to the first
  * message timestamp when the source lacks a start time. Part pages append

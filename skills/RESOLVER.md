@@ -71,7 +71,7 @@ off until the user opts in, and paid enrichment is a separate choice.
 | "two-tier extraction", "triage then deep read", "smart model routing", "cheap triage expensive analysis" | `skills/two-tier-extraction/SKILL.md` |
 | "bulk ingest", "bulk import", "ingest all", "ingestion pipeline" | `skills/bulk-ingestion/SKILL.md` |
 | "ingest this publication", "ingest this whole blog", "ingest this feed", "ingest this newsletter archive" | `skills/blog-ingest/SKILL.md` |
-| "chatgpt export", "claude export", "perplexity export", "conversation history" | `skills/conversation-archive/SKILL.md` |
+| "chatgpt export", "claude export", "limitless lifelogs", "perplexity export", "conversation history" | `skills/conversation-archive/SKILL.md` |
 | "connect my chatgpt", "connect my claude account", "sync my chat history", "chatgpt oauth", "auto-import my chats", "keep my conversations synced" | `skills/chat-connectors/SKILL.md` |
 | "voice note", "ingest this voice memo", "transcribe and file", "voice note ingest", "save this audio note" | `skills/voice-note-ingest/SKILL.md` |
 | "crawl my archive", "find gold in my archive", "archive crawler", "scan my dropbox for", "mine my old files for" | `skills/archive-crawler/SKILL.md` |

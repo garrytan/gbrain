@@ -47,6 +47,7 @@ import {
 } from '../src/core/transcripts/grok.ts';
 import { chatgptExportAdapter } from '../src/core/transcripts/chatgpt-export.ts';
 import { claudeExportAdapter } from '../src/core/transcripts/claude-export.ts';
+import { limitlessAdapter } from '../src/core/transcripts/limitless.ts';
 import { buildHermesFixture } from './fixtures/transcripts/hermes-fixture-builder.ts';
 import { discoverTranscriptFiles, buildStatusRows } from '../src/core/transcripts/discover.ts';
 import { redactSession } from '../src/core/transcripts/render.ts';
@@ -55,6 +56,7 @@ import { withEnv } from './helpers/with-env.ts';
 
 const CHATGPT_FIXTURE = join(import.meta.dir, 'fixtures', 'transcripts', 'chatgpt-conversations.json');
 const CLAUDE_EXPORT_FIXTURE = join(import.meta.dir, 'fixtures', 'transcripts', 'claude-export.json');
+const LIMITLESS_FIXTURE = join(import.meta.dir, 'fixtures', 'transcripts', 'limitless-lifelogs.json');
 
 const FIXTURE = join(import.meta.dir, 'fixtures', 'conversation-formats', 'claude-code.jsonl');
 const CODEX_FIXTURE = join(import.meta.dir, 'fixtures', 'transcripts', 'codex-rollout.jsonl');
@@ -1092,6 +1094,133 @@ describe('claudeExportAdapter', () => {
   });
 });
 
+// ── Limitless lifelog adapter ───────────────────────────────────────────────
+
+/*
+ * Authoring gate (docs/TESTING.md):
+ * 1. Protects: a Limitless lifelogs JSON file becomes one speaker-labelled
+ *    session per lifelog (nested children included, headings and empty
+ *    lines dropped), keyed on the lifelog id so a re-import is an update.
+ * 2. Fails when: the walk stops at depth one, headings leak in as speech,
+ *    roles or speaker labels flip, offset-only nodes lose their time, a
+ *    headings-only lifelog stops being skipped, or detect() claims another
+ *    format's file (or loses this one).
+ * 3. Not already covered: no other adapter reads this shape or its tree.
+ * 4. No production seam: parse() and detectAdapter() are the public surface.
+ */
+describe('limitlessAdapter', () => {
+  test('one session per spoken lifelog; nested children walked; headings and empty lines dropped', async () => {
+    const { sessions, diag } = await drain(limitlessAdapter.parse(LIMITLESS_FIXTURE));
+    expect(sessions).toHaveLength(1);
+    const s = sessions[0];
+    expect(s.meta.harness).toBe('limitless');
+    expect(s.meta.sessionId).toBe('ll-0001-widget-sync');
+    expect(s.meta.title).toBe('Widget roadmap sync');
+    expect(s.meta.startedAt).toBe('2026-08-12T14:00:00.000Z');
+    expect(s.messages.map((m) => m.text)).toEqual([
+      "Let's lock the widget launch date before the review.",
+      'I can have the launch checklist ready by Thursday.',
+      'Add the pricing page to that list as well.',
+      'Agreed, we will revisit the budget next week.',
+    ]);
+    expect(s.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant', 'assistant']);
+    expect(s.messages.map((m) => m.speaker)).toEqual([undefined, 'alice-example', 'bob-example', 'alice-example']);
+    expect(s.messages[0].timestamp).toBe('2026-08-12T14:00:10.000Z');
+    expect(s.meta.raw).toEqual({
+      lifelog_id: 'll-0001-widget-sync',
+      title: 'Widget roadmap sync',
+      updated_at: '2026-08-12T14:06:00.000Z',
+      is_starred: 'true',
+      source_path: LIMITLESS_FIXTURE,
+    });
+    // The headings-only lifelog is skipped; the file still reports one session.
+    expect(diag.sessions).toBe(1);
+    expect(diag.zeroSessionsReason).toBeUndefined();
+  });
+
+  test('a node with only an offset gets lifelog start + offset', async () => {
+    const { sessions } = await drain(limitlessAdapter.parse(LIMITLESS_FIXTURE));
+    expect(sessions[0].messages[3].timestamp).toBe('2026-08-12T14:01:00.000Z');
+  });
+
+  test('accepts a bare array and counts a node with no usable time as skipped', async () => {
+    const d = tdir();
+    const p = join(d, 'bare.json');
+    writeFileSync(
+      p,
+      JSON.stringify([
+        {
+          id: 'bare-1',
+          title: 'Bare array',
+          startTime: 'not-a-time',
+          contents: [
+            { type: 'blockquote', content: 'no usable time', speakerIdentifier: null },
+            { type: 'blockquote', content: 'has a time', startTime: '2026-08-13T09:00:00.000Z', speakerIdentifier: 'user' },
+          ],
+        },
+      ]),
+    );
+    const { sessions, diag } = await drain(limitlessAdapter.parse(p));
+    expect(sessions[0].messages.map((m) => m.text)).toEqual(['has a time']);
+    expect(diag.skippedLines).toBe(1);
+  });
+
+  test('an offset outside the lifelog span is not trusted; messages come out oldest to newest', async () => {
+    const d = tdir();
+    const p = join(d, 'order.json');
+    writeFileSync(
+      p,
+      JSON.stringify([
+        {
+          id: 'order-1',
+          title: 'Order',
+          startTime: '2026-08-14T10:00:00.000Z',
+          endTime: '2026-08-14T10:10:00.000Z',
+          contents: [
+            { type: 'blockquote', content: 'second', startTime: '2026-08-14T10:05:00.000Z', speakerIdentifier: 'user' },
+            { type: 'blockquote', content: 'epoch-looking offset', startOffsetMs: 1786000000000, speakerIdentifier: null },
+            { type: 'blockquote', content: 'first', startOffsetMs: 1000, speakerIdentifier: null },
+          ],
+        },
+      ]),
+    );
+    const { sessions, diag } = await drain(limitlessAdapter.parse(p));
+    expect(sessions[0].messages.map((m) => m.text)).toEqual(['first', 'second']);
+    expect(diag.skippedLines).toBe(1);
+  });
+
+  test('a file with only headings reports why it yielded nothing', async () => {
+    const d = tdir();
+    const p = join(d, 'headings.json');
+    writeFileSync(p, JSON.stringify({ data: { lifelogs: [{ id: 'h', contents: [{ type: 'heading1', content: 'x' }] }] } }));
+    const { sessions, diag } = await drain(limitlessAdapter.parse(p));
+    expect(sessions).toHaveLength(0);
+    expect(diag.zeroSessionsReason).toMatch(/no lifelogs with blockquote/);
+  });
+
+  test('rejects a file that is neither the envelope nor an array', async () => {
+    const d = tdir();
+    const p = join(d, 'wrong.json');
+    writeFileSync(p, '{"mapping": {}}');
+    await expect(drain(limitlessAdapter.parse(p))).rejects.toThrow(/not a Limitless lifelogs JSON/);
+  });
+
+  test('slug is conversations/limitless/YYYY-MM-DD-<titleslug>-<hex12>', () => {
+    const slug = buildTranscriptSlug('limitless', '2026-08-12T14:00:00.000Z', {
+      sessionId: 'll-0001-widget-sync',
+      title: 'Widget roadmap sync',
+    });
+    expect(slug).toBe(`conversations/limitless/2026-08-12-widget-roadmap-sync-${transcriptSlugId('ll-0001-widget-sync')}`);
+    expect(slug).toMatch(/^conversations\/limitless\/2026-08-12-widget-roadmap-sync-[0-9a-f]{12}$/);
+  });
+
+  test("does not claim other formats' JSON exports", () => {
+    for (const other of [CHATGPT_FIXTURE, CLAUDE_EXPORT_FIXTURE]) {
+      expect(limitlessAdapter.detect(other, readSample(other))).toBe(false);
+    }
+  });
+});
+
 // ── Source hygiene regression [the NUL-byte class] ──────────────────────────
 
 describe('adapter sources stay text-mode', () => {
@@ -1120,6 +1249,7 @@ describe('detection matrix', () => {
       [GROK_FIXTURE, 'grok'],
       [CHATGPT_FIXTURE, 'chatgpt'],
       [CLAUDE_EXPORT_FIXTURE, 'claude-export'],
+      [LIMITLESS_FIXTURE, 'limitless'],
     ];
     for (const [path, format] of cases) {
       const r = detectAdapter(path);

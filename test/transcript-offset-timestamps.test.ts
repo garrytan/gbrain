@@ -13,6 +13,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { claudeExportAdapter } from '../src/core/transcripts/claude-export.ts';
+import { limitlessAdapter } from '../src/core/transcripts/limitless.ts';
 import { claudeCodeAdapter } from '../src/core/transcripts/claude-code.ts';
 import { mapCodexLine } from '../src/core/transcripts/codex.ts';
 import { mapOpenclawLine } from '../src/core/transcripts/openclaw.ts';
@@ -60,6 +61,21 @@ describe('adapters normalize offset timestamps to UTC', () => {
     const s = await first(claudeExportAdapter.parse(p));
     expect(s.messages[0].timestamp).toBe(INSTANT);
     expect(s.meta.startedAt).toBe(INSTANT);
+    expect(Date.parse(roundTrip(s).parsed.messages[0].timestamp)).toBe(Date.parse(INSTANT));
+  });
+
+  test('limitless (offset-stamped startTime normalizes to UTC; offset-only nodes derive from it)', async () => {
+    const p = join(dir, 'lifelogs.json');
+    writeFileSync(p, JSON.stringify({ data: { lifelogs: [{ id: 'l1', title: 'evening chat', startTime: OFFSET,
+      contents: [
+        { type: 'blockquote', content: 'hello', startTime: OFFSET, speakerIdentifier: 'user' },
+        { type: 'blockquote', content: 'later', startOffsetMs: 60000, speakerIdentifier: null },
+      ] }] } }));
+    const s = await first(limitlessAdapter.parse(p));
+    expect(s.messages[0].timestamp).toBe(INSTANT);
+    expect(s.meta.startedAt).toBe(INSTANT);
+    // Derived from the offset-stamped lifelog start, in the same UTC frame.
+    expect(s.messages[1].timestamp).toBe('2026-08-11T05:31:00.000Z');
     expect(Date.parse(roundTrip(s).parsed.messages[0].timestamp)).toBe(Date.parse(INSTANT));
   });
 

@@ -5,7 +5,8 @@
  *   gbrain transcripts recent   — dream-corpus .txt reader (v0.29 surface).
  *   gbrain transcripts ingest   — import dead session logs (Claude Code,
  *                                 Codex, OpenClaw, Hermes, Grok) and consumer
- *                                 chat exports (ChatGPT, Claude.ai) into
+ *                                 chat exports (ChatGPT, Claude.ai) and Limitless
+ *                                 lifelog JSON into
  *                                 conversation pages. Local-only, explicit
  *                                 paths are trusted CLI input; embedding is
  *                                 OFF by default (bulk imports defer to the
@@ -67,6 +68,7 @@ const FORMATS: readonly TranscriptFormat[] = [
   'grok',
   'chatgpt',
   'claude-export',
+  'limitless',
 ];
 
 interface IngestCliOpts {
@@ -210,7 +212,7 @@ skip). Embedding is OFF by default; run the embed backfill later or opt in.
                     (recorded by Claude Code for the provider's scratch cwds;
                     excluded by default to avoid a self-ingestion loop)
   --format F        claude-code | codex | openclaw | hermes | grok |
-                    chatgpt | claude-export (auto-detected when omitted)
+                    chatgpt | claude-export | limitless (auto-detected when omitted)
   --dry-run         Parse + redact + report; writes nothing
   --limit N         Max sessions this run
   --since T         Only sessions newer than ISO time T; the word "last"
@@ -237,7 +239,8 @@ recent — read recent raw dream-corpus transcripts (.txt), newest first:
   --json            JSON output for agents
   Dream-generated outputs (frontmatter dream_generated: true) are skipped.
 
-Notes: consumer exports must be unzipped first (pass conversations.json).
+Notes: consumer exports must be unzipped first (pass conversations.json);
+Limitless takes the lifelogs API response saved as .json.
 On PGLite, stop gbrain serve first (single-writer lock).
 `;
 

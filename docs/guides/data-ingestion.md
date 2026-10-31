@@ -60,7 +60,7 @@ How the open-loop engine decides who's waiting: [`docs/guides/open-loops.md`](op
 
 Your other agents' histories import in one command. `gbrain transcripts ingest`
 parses agent session logs (Claude Code, Codex, OpenClaw, Hermes, Grok Build) and extracted
-consumer chat exports (ChatGPT / Claude.ai `conversations.json`) into readable
+consumer chat exports (ChatGPT / Claude.ai `conversations.json`) and Limitless lifelogs (the lifelogs API response saved as `.json`) into readable
 conversation pages with provenance back to the exact session file. Pattern-based redaction runs over message bodies, titles, speakers, and session
 metadata before anything is written — vendor key prefixes, JWTs, cloud/API key
 shapes, `Bearer` and `Authorization: Basic` headers, database and `http(s)`
@@ -77,11 +77,12 @@ for bulk backfills, and re-runs are free — unchanged sessions skip on content 
 gbrain transcripts ingest                    # discover importable session logs
 gbrain transcripts ingest --all              # import everything discovered
 gbrain transcripts ingest ~/Downloads/conversations.json  # consumer export (unzip first)
+gbrain transcripts ingest ~/Downloads/lifelogs.json        # Limitless lifelogs (one page each, speakers labelled)
 gbrain transcripts ingest --max-bytes 4gb <store>          # oversized store; omit to keep per-format caps
 gbrain transcripts status                    # found vs imported, per harness
 ```
 
-**Say to your agent:** *"Import my conversations from my chatgpt export at ~/Downloads/conversations.json"* — *"Archive my session transcripts"* — and later, *"When did I first discuss agent memory?"* (the archive answers origin questions with dated quotes).
+**Say to your agent:** *"Import my conversations from my chatgpt export at ~/Downloads/conversations.json"* — *"Archive my session transcripts"* — and later, *"When did I first discuss agent memory?"* (the archive answers origin questions with dated quotes) — *"Import my Limitless lifelogs into the brain."* (pages land under `conversations/limitless/`; re-importing an edited lifelog updates the same page).
 
 Codex sessions imported before gbrain read codex 0.153+ rollouts lost their
 user turns (#5163): the pages hold the assistant side only, and `--since last`

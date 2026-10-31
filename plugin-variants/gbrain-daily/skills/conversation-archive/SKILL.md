@@ -12,6 +12,8 @@ description: >
 triggers:
   - "chatgpt export"
   - "claude export"
+  - "limitless"
+  - "lifelog"
   - "perplexity export"
   - "conversation history"
   - "import my conversations"
@@ -24,7 +26,7 @@ writes_pages: true
 writes_to:
   - conversations/
 upstream: conversation-history+transcript-save@fc834ee
-when_to_use: "Use when the user asks: \"chatgpt export\", \"claude export\", \"perplexity export\", \"conversation history\", \"import my conversations\"."
+when_to_use: "Use when the user asks: \"chatgpt export\", \"claude export\", \"limitless\", \"lifelog\", \"perplexity export\"."
 ---
 
 # conversation-archive — AI-Chat Exports + Session Transcripts as Brain Pages
@@ -65,10 +67,11 @@ blob in a downloads folder.
 
 **A native importer now exists: `gbrain transcripts ingest`.** It parses
 agent session logs (Claude Code, Codex, OpenClaw, Hermes, Grok Build) AND
-extracted consumer exports (ChatGPT `conversations.json`, Claude.ai export)
+extracted consumer exports (ChatGPT `conversations.json`, Claude.ai export,
+Limitless lifelogs JSON)
 directly: detection, secret redaction, imessage-slack rendering, one page
 per session, and idempotent re-runs are all native. Prefer it
-over the manual procedure whenever the source is one of those seven
+over the manual procedure whenever the source is one of those eight
 formats:
 
 ```
@@ -106,6 +109,7 @@ using the manual conversion below.
 ```
 conversations/chatgpt/YYYY-MM-DD-<slug>.md      — ChatGPT threads
 conversations/claude/YYYY-MM-DD-<slug>.md       — Claude threads
+conversations/limitless/YYYY-MM-DD-<slug>.md    — Limitless lifelogs
 conversations/perplexity/YYYY-MM-DD-<slug>.md   — Perplexity threads
 conversations/sessions/YYYY-MM-DD-<slug>.md     — agent session transcripts
 ```

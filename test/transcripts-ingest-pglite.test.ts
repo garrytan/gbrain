@@ -14,7 +14,7 @@
  * docs/test-audit/2026-09-29/implementation/lane-pilot.md.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -57,6 +57,12 @@ const CLAUDE_EXPORT_FIXTURE = join(
   'fixtures',
   'transcripts',
   'claude-export.json',
+);
+const LIMITLESS_FIXTURE = join(
+  import.meta.dir,
+  'fixtures',
+  'transcripts',
+  'limitless-lifelogs.json',
 );
 const GROK_FIXTURE = join(
   import.meta.dir,
@@ -553,6 +559,59 @@ describe('all seven formats travel the FULL pipeline (parse → redact → rende
     expect(page!.compiled_truth).toContain('fund-a term sheet date');
     const fm = page!.frontmatter as Record<string, any>;
     expect(fm.transcript_import.harness).toBe('claude-export');
+  });
+});
+
+/*
+ * Authoring gate (docs/TESTING.md):
+ * 1. Protects: importing Limitless lifelogs lands speaker-labelled pages under
+ *    conversations/limitless/, a re-import of the same file is a no-op, and a
+ *    lifelog whose updatedAt and text changed updates the SAME page.
+ * 2. Fails when: the id-derived slug or content-hash skip stops holding for
+ *    this adapter (duplicate pages, or a changed lifelog never refreshing).
+ * 3. Not already covered: the idempotency tests above run other formats only.
+ * 4. No production seam.
+ */
+describe('limitless lifelog import', () => {
+  test('one page under conversations/limitless/ with speaker labels; re-ingest skips; an edited lifelog updates in place', async () => {
+    const r1 = await runTranscriptsIngest(engine, baseOpts([LIMITLESS_FIXTURE]));
+    // Lifelog 2 is headings-only → skipped by the adapter.
+    expect(r1.sessionsImported).toBe(1);
+    expect(r1.pages.imported).toBe(1);
+    const slug = buildTranscriptSlug('limitless', '2026-08-12T14:00:00.000Z', {
+      sessionId: 'll-0001-widget-sync',
+      title: 'Widget roadmap sync',
+    });
+    expect(slug).toContain('conversations/limitless/');
+    const page = await engine.getPage(slug, { sourceId: 'default' });
+    expect(page).not.toBeNull();
+    expect(page!.title).toBe('Widget roadmap sync');
+    expect(page!.compiled_truth).toContain('**alice-example**');
+    expect(page!.compiled_truth).toContain('**bob-example**');
+    expect(page!.compiled_truth).toContain('Add the pricing page to that list as well.');
+    const fm = page!.frontmatter as Record<string, any>;
+    expect(fm.transcript_import.harness).toBe('limitless');
+
+    // Second ingest of the identical file: skipped, nothing rewritten.
+    const r2 = await runTranscriptsIngest(engine, baseOpts([LIMITLESS_FIXTURE]));
+    expect(r2.pages.imported).toBe(0);
+    expect(r2.pages.skipped).toBe(1);
+
+    // Third: same lifelog id, newer updatedAt and one edited line → same slug, content updated.
+    const edited = JSON.parse(readFileSync(LIMITLESS_FIXTURE, 'utf8'));
+    const log = edited.data.lifelogs[0];
+    log.updatedAt = '2026-08-12T15:00:00.000Z';
+    log.contents[0].children[0].content = "Let's lock the widget launch date after the review.";
+    const editedPath = join(tmp, 'limitless-edited.json');
+    writeFileSync(editedPath, JSON.stringify(edited));
+    const r3 = await runTranscriptsIngest(engine, baseOpts([editedPath]));
+    expect(r3.pages.imported).toBe(1);
+    expect(r3.slugsTouched).toEqual([slug]);
+    const updated = await engine.getPage(slug, { sourceId: 'default' });
+    expect(updated!.compiled_truth).toContain('after the review');
+    expect(updated!.compiled_truth).not.toContain('before the review');
+    const all = await engine.listPages({ sourceId: 'default', limit: 100 });
+    expect(all.filter((p) => p.slug.startsWith('conversations/limitless/'))).toHaveLength(1);
   });
 });
 
