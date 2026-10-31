@@ -30,6 +30,7 @@
  * `authorizeLegacyJobs --ids` snapshot digest is byte-identical when computed
  * through this helper.
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine } from '../engine.ts';
 import type { OperationError } from '../ops/contract.ts';
 import { catalogueError } from '../error-catalogue.ts';
@@ -108,7 +109,30 @@ export async function loadApprovedSet<T>(engine: BrainEngine, key: ApprovedSetKe
   return { command: key.command, hash: key.hash, items: saved.items, approved_at: row.approved_at };
 }
 
-/** Drops an approved set once its apply finished. */
+type ApprovalCleanup = { engine: BrainEngine; key: Omit<ApprovedSetKey, 'previewCommand'> };
+const deferredCleanup = new AsyncLocalStorage<ApprovalCleanup[]>();
+
+/**
+ * Item-level cleanup requests belong to the whole batch. Keep them pending
+ * through planning, publication settlement and reporting; a failed, stopped
+ * or throwing run must still be able to load the same approved set on retry.
+ * Async-local state keeps concurrent runs isolated, including transaction-bound engines.
+ */
+export async function withDeferredApprovalCleanup<T>(run: () => Promise<T>, complete: (result: T) => boolean): Promise<T> {
+  const pending: ApprovalCleanup[] = [];
+  const result = await deferredCleanup.run(pending, run);
+  if (complete(result)) {
+    for (const { engine, key } of pending) await clearApprovedSet(engine, key);
+  }
+  return result;
+}
+
+/** Drops an approved set once its apply finished, or defers to its enclosing batch. */
 export async function clearApprovedSet(engine: BrainEngine, key: Omit<ApprovedSetKey, 'previewCommand'>): Promise<void> {
+  const pending = deferredCleanup.getStore();
+  if (pending) {
+    pending.push({ engine, key: { ...key } });
+    return;
+  }
   await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [PREVIEW_APPROVAL_OP, fingerprint(key.command, key.hash)]);
 }
