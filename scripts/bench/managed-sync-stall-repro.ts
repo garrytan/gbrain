@@ -119,6 +119,12 @@ const CHAOS_FOR_MS = Number(flag('chaos-for', '0')) * 1000;
 const CHAOS_STREAM = flag('chaos-stream', 'downstream');
 /** `--chaos-kind lock`: instead of a toxic, one connection through the pooler opens a transaction, runs `--chaos-lock` and holds it (a leaked or pending table lock behind a pooler that dropped statement_timeout). */
 const CHAOS_LOCK = flag('chaos-lock', 'LOCK TABLE pages IN ACCESS EXCLUSIVE MODE');
+/**
+ * #6318: `--sync-preparation-ms <ms>` (0 = the product default) sets `persistence.sync_preparation_ms` before the passes, so a
+ * `--chaos-kind lock` run reaches the budget sooner. The report's `lock_release` lists, per lock episode, the sync process's
+ * statements that waited on a lock longer than the budget plus 3 s while it was held (the assertion is that there are none).
+ */
+const SYNC_PREPARATION_MS = Number(flag('sync-preparation-ms', '0'));
 /** Phase 4.1: `--chaos-repeat N` holds the lock N times (default once), `--chaos-gap <seconds>` apart, so the second hold lands on a run that already recovered once. */
 const CHAOS_REPEAT = Number(flag('chaos-repeat', '1'));
 const CHAOS_GAP_MS = Number(flag('chaos-gap', '300')) * 1000;
@@ -389,19 +395,21 @@ function append(file: string, record: Record<string, unknown>): void { appendFil
 
 async function sampleOnce(row: Row, deep: boolean): Promise<Record<string, unknown>> {
   const t = Date.now();
-  const via = row.poolerUrl ?? row.directUrl;
+  // #6318: under a held lock the pooler's server connections are pinned, so a lock run samples directly (the sampler never waits on the pooler).
+  const via = CHAOS_KIND === 'lock' ? row.directUrl : row.poolerUrl ?? row.directUrl;
   const pooled = await admin(via, async sql => ({
     running: await sql.unsafe(SAMPLE_SQL.running), activity: await sql.unsafe(SAMPLE_SQL.activity), states: await sql.unsafe(SAMPLE_SQL.states),
     committed: Number((await sql.unsafe(SAMPLE_SQL.committedSync))[0]!.n),
     ...(deep ? { failed: await sql.unsafe(SAMPLE_SQL.failed), holds: await sql.unsafe(SAMPLE_SQL.holds) } : {}),
   }), false).catch(error => ({ error: String(error instanceof Error ? error.message : error) }));
   const locks = await admin(harness.adminUrl, sql => sql.unsafe(SAMPLE_SQL.locks, [row.db])).catch(error => [{ error: String(error) }]);
-  const sample: Record<string, unknown> = { t, at: new Date(t).toISOString(), pass: state.pass?.pass ?? null, sync_pid: state.pass?.pid ?? null, via: row.poolerUrl ? 'pooler' : 'direct', ...pooled, locks };
+  const sample: Record<string, unknown> = { t, at: new Date(t).toISOString(), pass: state.pass?.pass ?? null, sync_pid: state.pass?.pid ?? null, via: via === row.poolerUrl ? 'pooler' : 'direct', ...pooled, locks };
   if ('committed' in pooled && typeof pooled.committed === 'number') {
     if (pooled.committed !== state.committed) { state.committed = pooled.committed; state.committedChangedAt = t; }
     sample.committed_stale_ms = t - state.committedChangedAt;
   }
-  if (deep) {
+  // A writer status probe reads pages, so in a lock run it would wait out the held lock and stall the sampler.
+  if (deep && CHAOS_KIND !== 'lock') {
     const status = await runCli(row.home, ['sources', 'writer', 'status', '--probe', '--json'], { GBRAIN_SQL_TRACE: row.trace, GBRAIN_SQL_TRACE_LABEL: 'writer-status' }, 120_000);
     sample.writer_status = status.json ?? { exit: status.code, stdout: status.stdout.slice(-2000), stderr: status.stderr.slice(-2000) };
   }
@@ -621,6 +629,25 @@ async function fenceRepairOnce(row: Row, stop: () => boolean): Promise<void> {
     stderr_tail: r.stderr.slice(-2000), ...(r.json ? {} : { stdout_tail: r.stdout.slice(-2000) }) };
   writeFileSync(join(OUT, 'fence-repair.json'), JSON.stringify(record, null, 2) + '\n');
   log(`fence_repair: exit=${r.code} status=${phase?.status ?? '?'} ${round1(r.wallMs / 1000)}s: ${String(phase?.summary ?? '').slice(0, 300)}`);
+}
+
+/**
+ * #6318: per `--chaos-kind lock` episode, the sync process's statements (its `application_name` carries its pid) seen
+ * waiting on a lock for longer than the preparation budget plus 3 s in the samples taken while the lock was held.
+ */
+function lockRelease(events: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  if (CHAOS_KIND !== 'lock' || !existsSync(join(OUT, 'samples.jsonl'))) return [];
+  const budgetMs = SYNC_PREPARATION_MS > 0 ? SYNC_PREPARATION_MS : 120_000;
+  const samples = readFileSync(join(OUT, 'samples.jsonl'), 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>);
+  return events.filter(e => e.action === 'lock_held').map(held => {
+    const released = events.find(e => e.action === 'lock_released' && e.episode === held.episode);
+    const window = samples.filter(s => Number(s.t) >= Number(held.t) && Number(s.t) < (released ? Number(released.t) : Infinity));
+    const waiting = window.map(s => ({ at: s.at, statements: ((s.activity as Array<Record<string, unknown>> | undefined) ?? [])
+      .filter(a => a.wait_event_type === 'Lock' && Number(a.query_age_ms) > budgetMs + 3000 && s.sync_pid != null && String(a.application_name ?? '').includes(`:${s.sync_pid}:`))
+      .map(a => ({ wait: `${a.wait_event_type}/${a.wait_event}`, query_age_ms: a.query_age_ms, xact_age_ms: a.xact_age_ms, query: String(a.query ?? '').slice(0, 120) })) }));
+    return { episode: held.episode, budget_ms: budgetMs, samples: window.length,
+      max_waiting: Math.max(0, ...waiting.map(w => w.statements.length)), waiting: waiting.filter(w => w.statements.length) };
+  });
 }
 
 /** Holds by code and reason, from the hold records themselves (the status listing is bounded). */
@@ -923,6 +950,7 @@ try {
     via_pooler: await admin(row.poolerUrl ?? row.proxyUrl, showTimeouts, false, resolveSessionTimeouts()).catch(e => String(e)),
     direct: await admin(row.directUrl, showTimeouts, true, resolveSessionTimeouts()).catch(e => String(e)) };
   log(`session timeouts: ${JSON.stringify(report.session_timeouts)}`);
+  if (SYNC_PREPARATION_MS > 0) await mustCli(row.home, ['config', 'set', 'persistence.sync_preparation_ms', String(SYNC_PREPARATION_MS)]);
   save();
   const stop = () => stopped;
   chaosRow = row;
@@ -962,7 +990,7 @@ try {
   const doctorChecks = (doctorFences.json?.checks as Array<Record<string, unknown>> | undefined) ?? [];
   const fenceCheck = doctorChecks.find(c => c.name === 'fence_integrity' || c.check === 'fence_integrity' || c.id === 'fence_integrity') ?? doctorChecks[0] ?? null;
   const unrenderable = ((fenceCheck?.details ?? fenceCheck?.data ?? fenceCheck ?? {}) as Record<string, unknown>).unrenderable_legacy_facts as { total?: number; complete?: boolean; pages?: Array<{ slug: string; rows: Array<{ class: string; reason: string }> }> } | undefined;
-  report.result = { committed_sync_requests: state.committed, chaos: chaosEvents, wedges: state.wedges, stall_debug_last: stallDebug.at(-1) ?? null, backlog_entries: backlogPages.length, states: final.states, stalls: state.stalls,
+  report.result = { committed_sync_requests: state.committed, chaos: chaosEvents, lock_release: lockRelease(chaosEvents), wedges: state.wedges, stall_debug_last: stallDebug.at(-1) ?? null, backlog_entries: backlogPages.length, states: final.states, stalls: state.stalls,
     preparing_claims_observed: preparingClaimsObserved(),
     doctor_fence_integrity: { exit: doctorFences.code, status: fenceCheck?.status ?? null, unrenderable_total: unrenderable?.total ?? null, unrenderable_complete: unrenderable?.complete ?? null,
       unrenderable_by_class: Object.fromEntries([...(unrenderable?.pages ?? []).flatMap(p => p.rows).reduce((m, r) => m.set(`${r.class}/${r.reason}`, (m.get(`${r.class}/${r.reason}`) ?? 0) + 1), new Map<string, number>())]),
