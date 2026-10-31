@@ -15,6 +15,7 @@ import { budgetUnknownCheck } from '../src/commands/doctor/budget.ts';
 import { PAGE_CHECK_LEVELS, PAGE_CHECK_NAMES } from '../src/core/doctor-categories.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runRemoteDoctorTier } from '../src/commands/doctor/remote-tier.ts';
+import { withEnv } from './helpers/with-env.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 
 const ok = (name: string): Check => ({ name, status: 'ok', message: `${name} ok` });
@@ -54,20 +55,19 @@ describe('alert verdict per page-class check', () => {
     const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const home = mkdtempSync(join(tmpdir(), 'alert-advisory-'));
-    const prev = process.env.GBRAIN_HOME;
-    process.env.GBRAIN_HOME = home;
     try {
-      mkdirSync(join(home, '.gbrain', 'migrations'), { recursive: true });
-      writeFileSync(join(home, '.gbrain', 'migrations', 'pending-host-work.jsonl'), JSON.stringify({ type: 'autopilot-install-needs-repo', status: 'pending', detected_at: '2026-10-31T00:00:00.000Z', repo: '/tmp/brain-example', install_argv: ['gbrain', 'autopilot', '--install', '--yes', '--repo', '/tmp/brain-example'], recommendation: 'opt-in' }) + '\n');
-      const suggestion = autopilotInstallPendingCheck();
-      expect(suggestion?.name).toBe('minions_migration');
-      expect(suggestion?.status).toBe('warn');
-      const checks = [...healthy(), suggestion!];
-      expect(computeDoctorReport(checks, { alertRan: ALL }).alert!.level).toBe('none');
-      const pending = [...checks, { name: 'minions_migration', status: 'warn' as const, message: '1 host migration(s) not run yet' }];
-      expect(computeDoctorReport(pending, { alertRan: ALL }).alert!.level).toBe('act');
+      await withEnv({ GBRAIN_HOME: home }, async () => {
+        mkdirSync(join(home, '.gbrain', 'migrations'), { recursive: true });
+        writeFileSync(join(home, '.gbrain', 'migrations', 'pending-host-work.jsonl'), JSON.stringify({ type: 'autopilot-install-needs-repo', status: 'pending', detected_at: '2026-10-31T00:00:00.000Z', repo: '/tmp/brain-example', install_argv: ['gbrain', 'autopilot', '--install', '--yes', '--repo', '/tmp/brain-example'], recommendation: 'opt-in' }) + '\n');
+        const suggestion = autopilotInstallPendingCheck();
+        expect(suggestion?.name).toBe('minions_migration');
+        expect(suggestion?.status).toBe('warn');
+        const checks = [...healthy(), suggestion!];
+        expect(computeDoctorReport(checks, { alertRan: ALL }).alert!.level).toBe('none');
+        const pending = [...checks, { name: 'minions_migration', status: 'warn' as const, message: '1 host migration(s) not run yet' }];
+        expect(computeDoctorReport(pending, { alertRan: ALL }).alert!.level).toBe('act');
+      });
     } finally {
-      if (prev === undefined) delete process.env.GBRAIN_HOME; else process.env.GBRAIN_HOME = prev;
       rmSync(home, { recursive: true, force: true });
     }
   });
