@@ -14,7 +14,7 @@
  * - `reimport`: every other live image; only the importer (fresh OCR, fresh
  *   pixels) can seal it: `gbrain embed --stale --images`.
  */
-import { SAFE_FENCE_CHUNKER_VERSION, chunkGenerationFilter, protectedBodyFilter, safeChunksFilter } from '../search/safe-chunks.ts';
+import { SAFE_FENCE_CHUNKER_VERSION, chunkGenerationFilter, protectedBodyFilter } from '../search/safe-chunks.ts';
 import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
 import { BOUNDED_PREFIX_BYTES } from '../page-window/document.ts';
 
@@ -35,7 +35,8 @@ function importerChunkSql(p: string): string {
 /** A live, unprotected inline image page the importer sealed at or after the safe-chunk fence. Internal aliases only. */
 export function sealableImageSql(p: string): string {
   return `(${p}.page_kind = 'image' AND ${p}.body_storage IS DISTINCT FROM 'segmented' AND NOT ${protectedBodyFilter(p)}
-    AND ${safeChunksFilter(p)} AND ${importerChunkSql(p)} IS TRUE)`;
+    AND ${p}.chunker_version >= 0 AND (${p}.chunker_version >= ${SAFE_FENCE_CHUNKER_VERSION} OR ${p}.source_path IS NULL)
+    AND ${importerChunkSql(p)} IS TRUE)`;
 }
 
 /**
@@ -46,6 +47,7 @@ export function projectionClassSql(p: string, s: string): string {
   return `(CASE WHEN ${s}.archived THEN 'archived'
     WHEN ${p}.page_kind IS DISTINCT FROM 'image' OR ${p}.body_storage = 'segmented' THEN 'text'
     WHEN ${protectedBodyFilter(p)} THEN 'protected'
-    WHEN ${p}.chunker_version >= ${SAFE_FENCE_CHUNKER_VERSION} AND ${importerChunkSql(p)} IS TRUE THEN 'sealable'
+    WHEN ${p}.chunker_version >= 0 AND (${p}.chunker_version >= ${SAFE_FENCE_CHUNKER_VERSION} OR ${p}.source_path IS NULL)
+      AND ${importerChunkSql(p)} IS TRUE THEN 'sealable'
     ELSE 'reimport' END)`;
 }

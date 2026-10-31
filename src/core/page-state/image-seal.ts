@@ -13,6 +13,7 @@ import { jsonRowBatches } from '../batch-rows.ts';
 import { acceptedEmbeddingInputHashes } from '../embedding-input-hash.ts';
 import { embeddingInputContext, embeddingWriteTarget } from './projections.ts';
 import { AGENT_TOOL_LIMIT_MS } from '../agent-output.ts';
+import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 
 /**
  * Measured `sealImageProjections` throughput, the basis of doctor's drain
@@ -123,7 +124,8 @@ export async function sealImageProjections(engine: BrainEngine, opts: { limit?: 
       const done: Array<{ has_visual: boolean }> = [];
       // Only the marker: the importer's keyword vector is still the page's own, since its revision has not moved.
       for (const batch of jsonRowBatches(pages, page => ({ id: Number(page.id), revision: page.revision }))) {
-        done.push(...await tx.executeRaw<{ has_visual: boolean }>(`UPDATE pages SET text_projection_revision=pages.knowledge_revision
+        done.push(...await tx.executeRaw<{ has_visual: boolean }>(`UPDATE pages SET text_projection_revision=pages.knowledge_revision,
+          chunker_version=${SAFE_FENCE_CHUNKER_VERSION}
           FROM jsonb_to_recordset($1::text::jsonb) AS v(id int, revision uuid)
           WHERE pages.id=v.id AND pages.knowledge_revision=v.revision
           RETURNING EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id=pages.id AND c.embedding_image IS NOT NULL
