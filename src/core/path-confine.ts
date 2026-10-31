@@ -140,6 +140,9 @@ export function msysToNativePath(
   return `${drive}:${rest || '\\'}`;
 }
 
+/** The platform the loaded `path` module resolves for: the stored-root verdict follows the module that resolves the root. */
+const PATH_PLATFORM: NodeJS.Platform = sep === '\\' ? 'win32' : 'linux';
+
 /**
  * #7646: is a stored root (`sources.local_path`, `sync.repo_path`) absolute on THIS host? The one predicate sync,
  * `config set`, write-through, `sources set-path --clear` and doctor share. On win32 only a drive path (`C:\\x`, or a
@@ -147,13 +150,13 @@ export function msysToNativePath(
  * root-relative `\\brain` and `/brain`, which resolve against whatever drive gbrain runs from. On POSIX it is
  * `path.posix.isAbsolute`, so a Windows drive path another host stored is not absolute here.
  */
-export function isHostAbsolutePath(p: string, platform: NodeJS.Platform = process.platform): boolean {
+export function isHostAbsolutePath(p: string, platform: NodeJS.Platform = PATH_PLATFORM): boolean {
   if (platform !== 'win32') return posix.isAbsolute(p);
   return /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/])/.test(msysToNativePath(p, platform));
 }
 
 /** #7646: a stored root absolute only on another operating system (a Windows drive or UNC path on POSIX, a POSIX path on win32). */
-export function isForeignAbsolutePath(p: string, platform: NodeJS.Platform = process.platform): boolean {
+export function isForeignAbsolutePath(p: string, platform: NodeJS.Platform = PATH_PLATFORM): boolean {
   if (isHostAbsolutePath(p, platform)) return false;
   return platform === 'win32' ? posix.isAbsolute(p) && !/^[\\/]{2}/.test(p) : isHostAbsolutePath(p, 'win32');
 }
