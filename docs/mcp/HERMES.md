@@ -78,7 +78,7 @@ hook is not healthy ([repair](../guides/repair.md#turn-hook-not-loaded)).
 `--no-instructions` and `--remove` take the hook and its approval out.
 
 Hermes lists gbrain's tools only inside `tool_search`'s description, so with an
-MCP connection the rule also names them (`mcp_gbrain_recall`, `mcp_gbrain_entity`
+MCP connection the rule also names them (`mcp__gbrain__recall`, `mcp__gbrain__entity`
 and the rest) and says to find them with `tool_search`.
 
 Search results also carry `_meta.brain_hot_memory`, the brain's recent facts.
@@ -138,7 +138,8 @@ hermes -z "ask my gbrain brain: what did I import most recently?"
 
 `hermes -z` prints the final answer on stdout (benign notices may appear on
 stderr). Inside Hermes, gbrain's tools appear namespaced as
-`mcp_gbrain_<tool>` (e.g. `mcp_gbrain_search`).
+`mcp__gbrain__<tool>` (e.g. `mcp__gbrain__search`; Hermes releases before July 2026
+used `mcp_gbrain_<tool>`).
 
 ## Headless auth + model pin
 

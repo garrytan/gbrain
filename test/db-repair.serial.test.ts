@@ -556,3 +556,62 @@ describe('db-repair docker arm + healthy-path bonus + rewrite restart note', () 
     expect(logs.join('\n')).toContain('restart them to pick up the new URL');
   });
 });
+
+describe('db-repair --yes that could not fix the access failure (#7137)', () => {
+  // Value: protects=an agent following the operator contract stops after one failed --yes instead of looping on it;
+  // fails_when=an exhausted conn_refused --yes run hands back fix argv [gbrain, db-repair, --yes] with next run;
+  // why_new=no test read the --json fix of an unfixed --yes run; seam=runDbRepair deps in a child process (the
+  // envelope is written to fd 1); no_claim=diagnosing why the local server refuses connections.
+  function runJson(args: string[], probes: number): { status: number | null; doc: Record<string, any>; accessCalls: number } {
+    const repo = join(import.meta.dir, '..');
+    const script = `
+      import { runDbRepair } from ${JSON.stringify(join(repo, 'src/commands/db-repair.ts'))};
+      import { classifyPgAccessError } from ${JSON.stringify(join(repo, 'src/core/pg-access-classify.ts'))};
+      const e = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:5432'), { code: 'ECONNREFUSED' });
+      const d = classifyPgAccessError(e, { url: ${JSON.stringify(PLAIN_PG_URL)}, source: 'config-file' });
+      let calls = 0;
+      const code = await runDbRepair(${JSON.stringify(args)}, {
+        probeAccess: async () => (++calls <= ${probes} ? d : null),
+        probeSchema: async () => null,
+        withEngine: async () => { throw new Error('unexpected database access'); },
+        docker: { available: () => false, state: () => 'absent', start: () => { throw new Error('unexpected service start'); } },
+        sleep: async () => {},
+        now: () => ${FIXED_NOW},
+      });
+      process.stderr.write('ACCESS_CALLS=' + calls + '\\n');
+      process.exitCode = code;
+    `;
+    const env: Record<string, string | undefined> = { ...process.env, GBRAIN_HOME: home };
+    for (const k of ['GBRAIN_DATABASE_URL', 'DATABASE_URL', 'GBRAIN_BRAIN_ID', 'GBRAIN_MOUNTS_PATH']) delete env[k];
+    const r = spawnSync(process.execPath, ['--no-env-file', '-e', script], { cwd: repo, env, encoding: 'utf-8' });
+    const calls = Number(/ACCESS_CALLS=(\d+)/.exec(r.stderr)?.[1] ?? -1);
+    return { status: r.status, doc: JSON.parse(r.stdout), accessCalls: calls };
+  }
+
+  test('an exhausted bounded retry escalates to the user instead of prescribing db-repair --yes again', () => {
+    writeConfig({ engine: 'postgres', database_url: PLAIN_PG_URL });
+    const { status, doc, accessCalls } = runJson(['--yes', '--json'], 99);
+    expect(status).toBe(1);
+    expect(accessCalls).toBe(2);
+    expect(doc.reason).toBe('conn_refused');
+    expect(doc.fixed).toBe(false);
+    expect(doc.applied).toEqual([]);
+    expect(doc.fix.argv).toBeUndefined();
+    expect(doc.fix.next).toBe('report');
+    expect(doc.fix.user_message).toContain('status and its startup log');
+    expect(doc.fix.verify.argv).toEqual(['gbrain', 'db-repair']);
+    expect(readReceipts().filter((r) => r.outcome === 'applied').length).toBe(0);
+  });
+
+  test('without --yes the auto tier is still the next step, and a transient refusal still heals under --yes', () => {
+    writeConfig({ engine: 'postgres', database_url: PLAIN_PG_URL });
+    const diagnose = runJson(['--json'], 99);
+    expect(diagnose.status).toBe(1);
+    expect(diagnose.doc.fix.argv).toEqual(['gbrain', 'db-repair', '--yes']);
+    expect(diagnose.doc.fix.next).toBe('run');
+    const healed = runJson(['--yes', '--json'], 1);
+    expect(healed.status).toBe(0);
+    expect(healed.doc.fixed).toBe(true);
+    expect(healed.doc.applied).toEqual(['bounded_reconnect']);
+  });
+});

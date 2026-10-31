@@ -15,6 +15,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { renderSnapshot, type WatchSnapshot } from '../src/commands/jobs-watch.ts';
+import { parseRefreshMs } from '../src/commands/jobs/watch.ts';
 
 function emptySnap(opts: Partial<WatchSnapshot> = {}): WatchSnapshot {
   return {
@@ -128,5 +129,16 @@ describe('renderSnapshot', () => {
     const a = renderSnapshot(snap, { useAnsi: false });
     const b = renderSnapshot(snap, { useAnsi: false });
     expect(a).toBe(b);
+  });
+});
+
+describe('jobs watch --refresh-ms (#7624)', () => {
+  // Value: protects=gbrain jobs watch --refresh-ms 250 refreshes every 250 ms, as --refresh-ms=250 does;
+  // fails_when=the separate-value form is ignored and the 1000 ms default applies; why_new=no test read
+  // watch's flags; seam=parseRefreshMs; no_claim=validation of the value itself.
+  test('reads --refresh-ms <n> and --refresh-ms=<n>; absent means 1000', () => {
+    expect(parseRefreshMs(['--refresh-ms', '250', '--follow'])).toBe(250);
+    expect(parseRefreshMs(['--refresh-ms=250'])).toBe(250);
+    expect(parseRefreshMs(['--follow'])).toBe(1000);
   });
 });

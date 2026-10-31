@@ -11,6 +11,7 @@ import {
 } from '../chronicle/config.ts';
 import { describeChronicleActivity, readChronicleLedgerStats } from '../chronicle/ledger-stats.ts';
 import { CHRONICLE_REASONS, chronicleBackfillArgv } from '../chronicle/reasons.ts';
+import { chroniclePageDate } from '../chronicle/eligibility.ts';
 import type { Action } from '../agent-output.ts';
 
 const daysAgo = (now: Date, days: number) => new Date(now.getTime() - days * 86_400_000).toISOString().slice(0, 10);
@@ -123,23 +124,34 @@ export const collectChronicle: AdvisorCollector = {
       // Ontology columns may be absent on a brain that hasn't migrated; ignore.
     }
 
-    // 2. Recent meetings not yet in the timeline (coverage gap).
+    // 2. Recent meetings, conversations and calendar events not yet in the timeline (coverage gap).
+    // #7282: "recent" is the page's own date within chronicle.auto_recent_days, the cutoff automatic
+    // extraction applies (older pages skip as `history`); only an undated page falls back to updated_at.
     try {
-      const rows = await ctx.engine.executeRaw<{ n: number }>(
-        `SELECT count(*)::int AS n FROM pages p
-         WHERE p.type IN ('meeting','conversation','calendar-event') AND p.deleted_at IS NULL
-           AND p.updated_at > now() - interval '30 days'
-           AND NOT EXISTS (
-             SELECT 1 FROM timeline_entries te
-             WHERE te.page_id = p.id AND te.event_page_id IS NOT NULL
-           )`,
+      const { recentDays } = await chronicleSettings(ctx.engine);
+      const now = ctx.now ?? new Date();
+      const rows = await ctx.engine.executeRaw<{ type: string; effective_date: Date | string | null; effective_date_source: string | null; fm_date: string | null; fm_start: string | null }>(
+        `SELECT p.type, p.effective_date, p.effective_date_source, p.frontmatter->>'date' AS fm_date, p.frontmatter->>'start' AS fm_start
+           FROM pages p
+          WHERE p.type IN ('meeting','conversation','calendar-event') AND p.deleted_at IS NULL
+            AND p.updated_at > now() - interval '30 days'
+            AND NOT EXISTS (
+              SELECT 1 FROM timeline_entries te
+              WHERE te.page_id = p.id AND te.event_page_id IS NOT NULL
+            )`,
       );
-      const gap = Number(rows[0]?.n ?? 0);
+      const byType = new Map<string, number>();
+      for (const r of rows) {
+        const dated = chroniclePageDate({ effectiveDate: r.effective_date, effectiveDateSource: r.effective_date_source, frontmatter: { date: r.fm_date, start: r.fm_start } });
+        if (dated && dated.getTime() < now.getTime() - recentDays * 86_400_000) continue;
+        byType.set(r.type, (byType.get(r.type) ?? 0) + 1);
+      }
+      const gap = [...byType.values()].reduce((a, b) => a + b, 0);
       if (gap > 0) {
         findings.push({
           id: 'chronicle_coverage_gap',
           severity: 'info',
-          title: `${gap} recent meeting(s) aren't in the timeline yet`,
+          title: `${gap} recent meeting, conversation or calendar page(s) aren't in the timeline yet (${[...byType].map(([t, n]) => `${n} ${t}`).join(', ')})`,
           detail: 'Preview them, then sweep them into events if the user agrees to one paid chat call per page.',
           fix: { command_argv: chronicleBackfillArgv({ since: daysAgo(ctx.now ?? new Date(), 30), dryRun: true }) },
           collector: 'chronicle',

@@ -14,7 +14,7 @@
  */
 
 import { describe, test, expect, afterEach } from 'bun:test';
-import { probeRerankerReachability, resolveLiveRerankerModel } from '../src/commands/models.ts';
+import { parseSkipProviders, probeRerankerReachability, resolveLiveRerankerModel } from '../src/commands/models.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 /**
@@ -126,5 +126,14 @@ describe('probeRerankerReachability — discrimination (#6381)', () => {
     const missing = await probeRerankerReachability(engine, { rerank: stub([{ index: 0, relevanceScore: 0.9 }]) });
     expect(missing?.status).toBe('config');
     expect(missing?.message).toContain('did not return a score for both');
+  });
+});
+
+// Value: protects=models doctor skips a provider named with the separate form; fails_when=--skip openai is ignored, so the provider the operator skipped is probed (tokens spent, exit 1 on a broken key); why_new=#7624; seam=none; no_claim=the probes themselves
+describe('#7624 models doctor --skip', () => {
+  test('reads --skip <provider> and --skip=<provider>, repeatable', () => {
+    expect(parseSkipProviders(['doctor', '--skip', 'openai'])).toEqual(['openai']);
+    expect(parseSkipProviders(['doctor', '--skip=Google', '--skip', 'openai', '--json'])).toEqual(['google', 'openai']);
+    expect(parseSkipProviders(['doctor', '--skip', '--json'])).toEqual([]);
   });
 });
