@@ -36,7 +36,7 @@ FILES="$(find src -type f \( -name '*.ts' -o -name '*.sql' \) -not -path 'src/co
 # perl reads each file whole, finds every CREATE [OR REPLACE] FUNCTION header up
 # to its AS $tag$, skips LANGUAGE sql, and reports headers with no search_path.
 BAD="$(printf '%s\n' "$FILES" | xargs perl -0777 -ne '
-  while (/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([\w."]+)\s*\((.*?)\)\s+RETURNS\s+(.*?)\bAS\s+\$(\w*)\$/gis) {
+  while (/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([\w."]+|\$\{\w+\})\s*\((.*?)\)\s+RETURNS\s+(.*?)\bAS\s+\$(\w*)\$/gis) {
     my ($name, $rest, $start) = ($1, $3, $-[0]);
     next if $rest =~ /\bLANGUAGE\s+sql\b/i;
     next if $rest =~ /search_path/i;
@@ -63,17 +63,22 @@ ALLOWLIST_FILE="src/core/function-search-path.ts"
 ALLOWED=""
 if [ -f "$ALLOWLIST_FILE" ]; then
   ALLOWED="$(perl -0777 -ne 'print join(" ", /'"'"'(\w+)'"'"'/g) if /PINNED_FUNCTION_NAMES\s*=\s*\[(.*?)\]/s && ($_ = $1)' "$ALLOWLIST_FILE")"
+  if [ -z "$ALLOWED" ]; then
+    echo "ERROR: could not read PINNED_FUNCTION_NAMES from $ALLOWLIST_FILE (expected: export const PINNED_FUNCTION_NAMES = [ 'name', ... ])."
+    exit 1
+  fi
 fi
 PATH_BAD="$(printf '%s\n' "$FILES" | GBRAIN_ALLOWED="$ALLOWED" xargs perl -0777 -ne '
   BEGIN { %allowed = map { $_ => 1 } split / /, ($ENV{GBRAIN_ALLOWED} // ""); $check = length($ENV{GBRAIN_ALLOWED} // ""); }
-  while (/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([\w."]+)\s*\((.*?)\)\s+RETURNS\s+(.*?)\bAS\s+\$(\w*)\$/gis) {
+  while (/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([\w."]+|\$\{\w+\})\s*\((.*?)\)\s+RETURNS\s+(.*?)\bAS\s+\$(\w*)\$/gis) {
     my ($name, $rest, $start) = ($1, $3, $-[0]);
-    next unless $rest =~ /search_path\s*(?:=|TO)\s*((?:[\w"]+\s*,\s*)*[\w"]+)/i;
-    my $path = $1;
-    (my $bare = $name) =~ s/^(?:"?public"?\.)?"?([^"]+)"?$/$1/;
+    next unless $rest =~ /search_path/i;
     my $line = 1 + (substr($_, 0, $start) =~ tr/\n//);
+    my $path = $rest =~ /search_path\s*(?:=|TO)\s*((?:[\w"]+\s*,\s*)*[\w"]+)/i ? $1 : "(not a fixed list)";
+    (my $bare = $name) =~ s/^(?:"?public"?\.)?"?([^"]+)"?$/$1/;
+    my $templated = $name =~ /^\$\{/;
     print "$ARGV:$line: $bare (search_path = $path does not end in pg_temp)\n" unless $path =~ /(?:^|,)\s*pg_temp$/i;
-    print "$ARGV:$line: $bare (not in PINNED_FUNCTION_NAMES)\n" if $check && !$allowed{$bare};
+    print "$ARGV:$line: $bare (not in PINNED_FUNCTION_NAMES)\n" if $check && !$templated && !$allowed{$bare};
   }
 ' 2>/dev/null || true)"
 

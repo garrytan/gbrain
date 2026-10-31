@@ -502,13 +502,15 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
         // #7108: apply-migrations and doctor read this to name the migration and the step that helps.
         const timedOut = err instanceof MigrationRetryExhausted ? isStatementTimeoutError(err.lastError) : isStatementTimeoutError(err);
         if (timedOut) await recordMigrationTimeout(engine, m, MIGRATION_PRELUDES.has(m.version), err instanceof MigrationRetryExhausted ? err.lastBlockers.map(b => b.pid) : []);
-        lockRefused = (err as { code?: unknown }).code === 'schema_lock_blocked' || isLockTimeoutError(err);
         throw err;
       }
 
       if (!quietReplay) process.stderr.write(`  [${m.version}] ✓ ${m.name}\n`);
       applied++;
     }
+  } catch (err) {
+    lockRefused = (err as { code?: unknown }).code === 'schema_lock_blocked' || isLockTimeoutError(err);
+    throw err;
   } finally {
     // Never leak the fresh-install quiet flag into a later in-process run —
     // covers every exit path from here on (incl. the pre-flight probe).
