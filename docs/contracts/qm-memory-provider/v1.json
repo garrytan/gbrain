@@ -11,7 +11,7 @@
   "actor": {
     "header": "x-qm-actor",
     "argument": "acting_user",
-    "argument_rule": "optional; on an attested call it must equal the header; with no header it is accepted only from a credential bound to a member and only naming that member (its member id or a canonical id linked to it), and the call then runs exactly as the credential; never chooses the person on its own",
+    "argument_rule": "optional; on an attested call it must equal the header; with no header it is accepted only from a credential bound to a member and only naming that member (its member id or a canonical id linked to it), and the call then runs exactly as the credential, or from a credential bound to no member naming a member its may_act_for lists, and the call then reads only what both the credential and that member may read, never a visibility: private page; never widens what the credential reads",
     "actor_id": {
       "pattern": "^[\\x21-\\x7e]{1,256}$",
       "case_folding": false
@@ -251,7 +251,7 @@
       {
         "code": "actor_not_attested",
         "class": "host_only",
-        "summary": "A call named the person it serves (the x-qm-actor header or the acting_user argument) in a way gbrain does not honour: the credential holds no attest right, the operation is not in its attested operations, the argument differs from the header, names anyone but a member-bound credential's own member, or comes without an attested header from a credential bound to no member, or the id is not 1-256 visible ASCII characters; or a write that saves only as an attested person (memory_write) named none; or the request carries x-qm-audience, a channel audience gbrain does not serve yet. Nothing was read or written.",
+        "summary": "A call named the person it serves (the x-qm-actor header or the acting_user argument) in a way gbrain does not honour: the credential holds no attest right, the operation is not in its attested operations, the argument differs from the header, names anyone but a member-bound credential's own member or a member a may_act_for credential covers, or comes without an attested header from a credential bound to no member and listing no may_act_for, or the id is not 1-256 visible ASCII characters; or a write that saves only as an attested person (memory_write) named none; or the request carries x-qm-audience, a channel audience gbrain does not serve yet. Nothing was read or written.",
         "suggestion": "Read reason: no_attest_right and op_not_attested are the brain operator's call (gbrain auth rescope --client <id> --attest-actor qm [--attest-ops <list>]); argument_mismatch, argument_without_attestation, invalid_actor_id, actor_required and audience_not_supported are fixed in the calling harness.",
         "docs": "docs/guides/write-refusals.md#actor_not_attested",
         "reasons": [
@@ -268,12 +268,12 @@
           {
             "reason": "argument_mismatch",
             "fixed_by": "calling_harness",
-            "fix": "Send acting_user equal to the x-qm-actor header (with no header, on a credential bound to a member: that member id or a canonical id linked to it), or omit it."
+            "fix": "Send acting_user equal to the x-qm-actor header (with no header: on a credential bound to a member, that member id or a canonical id linked to it; on a may_act_for credential, a member it lists), or omit it. One message covers every id a may_act_for credential may not name, existing or not."
           },
           {
             "reason": "argument_without_attestation",
             "fixed_by": "calling_harness",
-            "fix": "Remove acting_user, or send the x-qm-actor header from a credential holding the attest right; a credential bound to no member never sends acting_user alone."
+            "fix": "Remove acting_user, or send the x-qm-actor header from a credential holding the attest right; a credential bound to no member and listing no may_act_for never sends acting_user alone."
           },
           {
             "reason": "invalid_actor_id",

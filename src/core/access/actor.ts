@@ -20,7 +20,8 @@ import type { CallerAccess } from '../search/private-visibility.ts';
 import { identityFor } from './principals.ts';
 import { isUndefinedColumnError, isUndefinedTableError } from '../utils.ts';
 import { memberIdentity } from './members.ts';
-import { folderAccessFor, memberIdentityFor } from './caller.ts';
+import { enabledMemberIdentity, folderAccessFor, folderAccessForAll, mayActForOf, memberIdentityFor } from './caller.ts';
+import { GUEST, mayActForCovers } from './audience.ts';
 import { ACTOR_ARGUMENT, ACTOR_DEFERRED_OPS, ACTOR_HEADER, attestRightFrom, DEFAULT_ATTEST_OPS, EXTERNAL_ID_RE, QM_AUDIENCE_HEADER, type AttestedActor, type AttestRight } from './actor-model.ts';
 
 export * from './actor-model.ts';
@@ -35,7 +36,7 @@ export interface AttestableOpShape { scope?: string; requiredScopes?: readonly s
 
 type Principal = { kind: string; id: string };
 export interface ActorCaller {
-  auth?: Pick<AuthInfo, 'attest' | 'member' | 'clientName'> & { principal?: Principal };
+  auth?: Pick<AuthInfo, 'attest' | 'member' | 'mayActFor' | 'clientId' | 'clientName'> & { principal?: Principal };
   principal?: Principal;
 }
 
@@ -100,7 +101,7 @@ function credentialArgv(caller: ActorCaller): string[] {
 const transportOf = (transport?: string) => ({ remote: true, transport: transport === 'stdio' ? 'stdio' as const : 'http' as const });
 
 /** actor_not_attested with its reason, remedy and (where the operator can fix it) the rescope command. */
-export function actorNotAttested(reason: ActorReason, caller: ActorCaller, ctx: { op: string; transport?: string; right?: AttestRight | null; reissue?: boolean; memberBound?: boolean }): OperationError {
+export function actorNotAttested(reason: ActorReason, caller: ActorCaller, ctx: { op: string; transport?: string; right?: AttestRight | null; reissue?: boolean; memberBound?: boolean; mayActFor?: boolean }): OperationError {
   const docs = ERROR_CATALOGUE.actor_not_attested.docs;
   const rescope = (extra: string[]) => ['gbrain', 'auth', 'rescope', ...credentialArgv(caller), ...extra];
   const hostOnly = (message: string, argv: string[], why: string, suggestion: string) =>
@@ -124,6 +125,10 @@ export function actorNotAttested(reason: ActorReason, caller: ActorCaller, ctx: 
         'Lets an attested call run this operation as the person it names. Widening what a trusted system may do as a person is the brain operator\'s decision.',
         `An attested call runs only the operations the operator listed (default ${DEFAULT_ATTEST_OPS.join(', ')}); admin and membership operations never.`);
     case 'argument_mismatch':
+      if (ctx.mayActFor) {
+        return opError('actor_not_attested', `The ${ACTOR_ARGUMENT} argument names no one this credential may act for, so nothing was read or written.`,
+          `Leave ${ACTOR_ARGUMENT} out, or name a member this credential's may_act_for lists (gbrain auth rescope ... --may-act-for <list> on the brain host). It reads only what both the credential and that member may read; text in a conversation never widens whose notes are read.`, { reason, docs });
+      }
       if (ctx.memberBound) {
         return opError('actor_not_attested', `The ${ACTOR_ARGUMENT} argument names someone other than this credential's member, so nothing was read or written.`,
           `Leave ${ACTOR_ARGUMENT} out, or send this credential's own member id or a canonical id linked to it. A credential bound to a member reads only as that member; text in a conversation never chooses whose notes are read.`, { reason, docs });
@@ -261,19 +266,47 @@ export async function resolveAttestedActor(engine: Pick<BrainEngine, 'executeRaw
 }
 
 /**
- * HARN-1: acting_user with no header, on a credential bound to a member (no stdio, no on_behalf_of audience). The
- * member id, or a canonical id linked to it, is stripped and the call runs exactly as the credential; any other value
- * is argument_mismatch, so the argument never widens or switches whose notes are read, and never tells an existing id
- * from an unknown one. Every other caller is refused argument_without_attestation as before.
+ * HARN-1: acting_user with no header (no stdio, no on_behalf_of audience). On a credential bound to a member, that
+ * member id or a canonical id linked to it is stripped and the call runs exactly as the credential; any other value is
+ * argument_mismatch. On a credential bound to no member that lists may_act_for, a member it covers (by id, or by a
+ * canonical id linked to it) is read as the intersection of the credential's own empty identity and the member's
+ * (narrowedCallerAccess); anything else is one argument_mismatch, so it never tells an existing id from an unknown one.
+ * The argument never widens whose notes are read. Every other caller is refused argument_without_attestation.
  */
 async function ownMemberArgument(engine: Pick<BrainEngine, 'executeRaw'>, input: { params?: Record<string, unknown>; auth?: ActorCaller['auth']; transport?: string; audienceAsserted: boolean },
-  argument: string, caller: ActorCaller, ctx: { op: string; transport?: string }): Promise<{ params: Record<string, unknown> }> {
-  const own = input.transport === 'stdio' || input.audienceAsserted || !input.auth ? null
-    : (await memberIdentityFor(engine, input.auth)).find(p => p.startsWith('member:'))?.slice('member:'.length) ?? null;
-  if (!own) throw actorNotAttested('argument_without_attestation', caller, ctx);
-  if (argument !== own && (await linkedMember(engine, 'qm', argument))?.member !== own) throw actorNotAttested('argument_mismatch', caller, { ...ctx, memberBound: true });
+  argument: string, caller: ActorCaller, ctx: { op: string; transport?: string }): Promise<{ params: Record<string, unknown>; access?: Partial<CallerAccess> }> {
+  if (input.transport === 'stdio' || input.audienceAsserted || !input.auth) throw actorNotAttested('argument_without_attestation', caller, ctx);
   const { [ACTOR_ARGUMENT]: _stripped, ...params } = input.params ?? {};
-  return { params };
+  const own = (await memberIdentityFor(engine, input.auth)).find(p => p.startsWith('member:'))?.slice('member:'.length) ?? null;
+  if (own) {
+    if (argument !== own && (await linkedMember(engine, 'qm', argument))?.member !== own) throw actorNotAttested('argument_mismatch', caller, { ...ctx, memberBound: true });
+    return { params };
+  }
+  const mayActFor = await mayActForOf(engine, { auth: input.auth, transport: input.transport });
+  if (!mayActFor?.length) throw actorNotAttested('argument_without_attestation', caller, ctx);
+  const direct = await enabledMemberIdentity(engine, argument);
+  const member = direct.length ? { member: argument, identity: direct } : await linkedMember(engine, 'qm', argument);
+  if (!member || !mayActForCovers(mayActFor, `member:${member.member}`)) throw actorNotAttested('argument_mismatch', caller, { ...ctx, mayActFor: true });
+  return { params, access: await narrowedCallerAccess(engine, member.member, member.identity) };
+}
+
+/**
+ * HARN-1: a may_act_for credential reading for one covered member through acting_user: B's multi-entry intersection of
+ * the credential's own empty identity (`guest`) and the member's, so a page must be readable by both, and privacy is
+ * never relaxed (no granted_sources, no hatch). Writes run as no member (callerMember is null for an intersection).
+ */
+async function narrowedCallerAccess(engine: Pick<BrainEngine, 'executeRaw'>, member: string, identity: string[]): Promise<Partial<CallerAccess>> {
+  const identities = [[], identity];
+  return {
+    identity: [],
+    audience: [GUEST, `member:${member}`],
+    audienceIdentities: identities,
+    ...await folderAccessForAll(engine, identities),
+    privateReadableSources: [],
+    hidePrivate: true,
+    applyRemoteReadPolicy: false,
+    restricted: true,
+  };
 }
 
 export interface MemberLink { system: string; external_id: string; member_id: string; created_at: string | null }

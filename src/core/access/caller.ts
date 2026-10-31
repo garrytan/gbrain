@@ -41,6 +41,9 @@ async function liveIdentity(engine: Pick<BrainEngine, 'executeRaw'>, memberSql: 
   }
 }
 
+/** HARN-1: an enabled member's identity by exact id; empty when absent, disabled or unreadable. */
+export const enabledMemberIdentity = (engine: Pick<BrainEngine, 'executeRaw'>, id: string) => liveIdentity(engine, '$1', id);
+
 /**
  * The member identity bound to `auth`: the verifier's join when present, else a lookup from its principal; empty
  * when unbound, unknown or unreadable. A write's publication passes only its stored principal, so a member disabled
@@ -110,7 +113,7 @@ export interface AudienceCaller {
  * lookup from the stored principal (a revoked token or deleted client permits nothing), else for a stdio server
  * config mcp.stdio_may_act_for. Unreadable or ill-formed values permit nothing.
  */
-async function mayActForOf(engine: Pick<BrainEngine, 'executeRaw'>, caller: AudienceCaller): Promise<string[] | null> {
+export async function mayActForOf(engine: Pick<BrainEngine, 'executeRaw'>, caller: AudienceCaller): Promise<string[] | null> {
   const auth = caller.auth;
   if (auth?.member !== undefined) return auth.mayActFor ?? null;
   const principal = auth?.principal ?? caller.principal;

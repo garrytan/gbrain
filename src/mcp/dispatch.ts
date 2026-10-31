@@ -938,7 +938,7 @@ export async function dispatchToolCall(
       assertion(e.code as AudienceAuditEvent['outcome'], e.reason);
       return qmMemoryToolResult(name, actorNamed ? actorRefusal(e, opts, name, header, params) : errorResult(e, opts, { op: name }));
     }
-    if (audience || attested?.actor) assertion('accepted');
+    if (audience || attested?.access) assertion('accepted');
     const callParams = attested ? attested.params : params;
     return withCallerAccess(access, async () => {
       const out = await withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, callParams, resolved));
