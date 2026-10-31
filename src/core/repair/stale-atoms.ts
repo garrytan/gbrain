@@ -4,7 +4,8 @@
  *
  * Two classes of live, page-bound (`source_slug`) atoms, never one with
  * `imported_from` and never a file-bound (`source_path`-only) atom:
- *   (a) `origin_gone`: the source page is missing or soft-deleted;
+ *   (a) `origin_gone`: the source page is missing or soft-deleted (the page at
+ *       `source_slug`, else the page a sync rename moved it to, #7462);
  *   (b) `origin_changed`: the atom's 16-character source hash (a managed
  *       `pending:` prefix stripped) differs from its live source page's
  *       current hash, and that page already completed an extraction at its
@@ -12,7 +13,9 @@
  *       `managed-atoms` checkpoint plus a live atom of that page carrying the
  *       hash; unmanaged: a non-managed atom of that page carrying the hash).
  *       A zero-yield extraction is no replacement, so it leaves the earlier
- *       atoms out of this class (#7013).
+ *       atoms out of this class (#7013). A renamed origin's atoms keep their
+ *       old `source_slug` (and owner key, which retires them); a replacement
+ *       extracted under the new slug counts.
  *
  * The kind is explicit-only and preview-bound: the preview lists every atom
  * with its class and saves the set under its hash; `--apply --expect <hash>`
@@ -39,6 +42,7 @@ import { authorizeWrite } from '../persistence/authority.ts';
 import { preparePageMutation } from '../persistence/page-prepare.ts';
 import { bumpAtomGeneration, managedAtomCompletedSql, managedAtomSession, publishManagedAtomGeneration, type AtomOrigin } from '../persistence/atom-maintenance.ts';
 import { atomGenerationAdapter, atomOwnerKey, readAtomInput } from '../generations/adapters/atoms.ts';
+import { atomOriginSlugSql } from '../page-state/atom-origin.ts';
 import { publishGeneration } from '../generations/publish.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
@@ -83,7 +87,7 @@ async function staleAtoms(db: BrainEngine, sourceIds: string[], atomId?: number)
              o.id AS origin_page_id, o.slug AS origin_live_slug, o.source_id AS origin_source_id,
              o.content_hash AS origin_hash, o.deleted_at IS NOT NULL AS origin_deleted
         FROM pages a
-        LEFT JOIN pages o ON o.source_id=a.source_id AND o.slug=a.frontmatter->>'source_slug'
+        LEFT JOIN pages o ON o.source_id=a.source_id AND o.slug=${atomOriginSlugSql('a')}
        WHERE a.source_id=ANY($1::text[]) AND a.type='atom' AND a.deleted_at IS NULL
          AND NULLIF(a.frontmatter->>'source_slug','') IS NOT NULL
          AND NULLIF(a.frontmatter->>'imported_from','') IS NULL
@@ -94,13 +98,13 @@ async function staleAtoms(db: BrainEngine, sourceIds: string[], atomId?: number)
           WHEN origin_hash IS NOT NULL AND atom_hash<>substring(origin_hash from 1 for 16) THEN 'origin_changed'
         END AS class,
         CASE WHEN managed THEN (SELECT ac.fingerprint FROM op_checkpoints ac WHERE ${managedAtomCompletedSql({ sourceId: 'atom.origin_source_id',
-            slug: 'atom.origin_live_slug', pageId: 'atom.origin_page_id', contentHash: 'atom.origin_hash' })}
+            pageId: 'atom.origin_page_id', contentHash: 'atom.origin_hash' })}
             AND EXISTS (SELECT 1 FROM pages r WHERE r.source_id=atom.source_id AND r.type='atom' AND r.deleted_at IS NULL
-              AND r.frontmatter->>'source_slug'=atom.origin_slug
+              AND r.frontmatter->>'source_slug' IN (atom.origin_slug, atom.origin_live_slug)
               AND regexp_replace(COALESCE(r.frontmatter->>'source_hash',''),'^pending:','')=substring(atom.origin_hash from 1 for 16))
             ORDER BY ac.fingerprint LIMIT 1)
           ELSE (SELECT 'unmanaged:'||e.id FROM pages e WHERE e.source_id=atom.source_id AND e.type='atom' AND e.deleted_at IS NULL
-            AND COALESCE(e.frontmatter->>'managed_extraction','')<>'true' AND e.frontmatter->>'source_slug'=atom.origin_slug
+            AND COALESCE(e.frontmatter->>'managed_extraction','')<>'true' AND e.frontmatter->>'source_slug' IN (atom.origin_slug, atom.origin_live_slug)
             AND e.frontmatter->>'source_hash'=substring(atom.origin_hash from 1 for 16) ORDER BY e.id LIMIT 1)
         END AS completion
         FROM atom
