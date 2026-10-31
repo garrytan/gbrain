@@ -64,7 +64,7 @@ export async function runUnindexedFilesPhase(engine: BrainEngine | null, opts: U
     try {
       if (companyBrainProfile(row.config ?? {})) { skipped.push({ source_id: row.id, reason: 'company_source' }); continue; }
       const context = await resolveManagedSyncContext(engine, { sourceId: row.id, noPull: true } as SyncOpts).catch((error: unknown) => {
-        if (['owner_unavailable', 'source_changed', 'writer_coordinator_required'].includes(errorCode(error))) return errorCode(error);
+        if (['owner_unavailable', 'source_changed', 'writer_coordinator_required', 'not_a_git_repo'].includes(errorCode(error))) return errorCode(error);
         throw error;
       });
       if (typeof context === 'string') { skipped.push({ source_id: row.id, reason: context }); continue; }

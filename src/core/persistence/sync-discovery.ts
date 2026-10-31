@@ -35,6 +35,7 @@ import { isReservedSkillBundlePath } from '../skill-reserved-paths.ts';
 import { holdBasisMoved, holdRescreenDue, readGitHoldRetryPaths, readGitSourceHolds, readSyncImportProvenances } from './sync-holds.ts';
 import { readBlobContents, readTreeBlobs, SYNC_READ_BOUND } from './sync-blobs.ts';
 import { gitChildEnv } from '../git-env.ts';
+import { classifyGitCheckout } from '../git-checkout.ts';
 import { readOriginEvidence } from './sync-origin-evidence.ts';
 import { sourceDbOnlyVerdict } from './source-storage.ts';
 import { dbOnlyVerdict, storageConfigFromYaml, unresolvedDbOnlyIn } from '../storage-config.ts';
@@ -267,6 +268,12 @@ export async function resolveManagedSyncContext(engine: BrainEngine, opts: SyncO
     { fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Shows the root the owner registered, to compare with the directory on disk.' } });
   assertConfiguredSyncRoot(root, source.local_path);
+  // Managed writers also support ordinary directory trees. Git maintenance
+  // applies only to committed checkouts; a broken/unreadable checkout must
+  // still fail the probe below rather than being treated as a plain tree.
+  if (classifyGitCheckout(root) === 'not_git') throw opError('not_a_git_repo',
+    'This managed source is an ordinary directory, so Git sync is not applicable.',
+    'Keep using the managed writer for this source. Committed-file maintenance applies only to Git sources.');
   const gitRoot = realpathSync(syncGit(root, ['rev-parse', '--show-toplevel']).trim());
   const requested = realpathSync(opts.srcSubpath ? resolve(opts.repoPath ?? gitRoot, opts.srcSubpath) : opts.repoPath ?? root);
   if (realpathSync.native(requested) !== realpathSync.native(root) || !isWriteTargetContained(realpathSync.native(root), realpathSync.native(gitRoot))) throw opError('source_changed', 'Sync path does not match this source binding.',
