@@ -5804,7 +5804,7 @@ The non-owner `NOBYPASSRLS` isolation test is
 ## Local Postgres
 
 Self-hosted Postgres + pgvector gives you the PostgresEngine without a Supabase
-account. Two paths:
+account. Three paths:
 
 **Homebrew (macOS)**:
 
@@ -5824,6 +5824,32 @@ one step. To point an EXISTING brain config at a different database without
 re-initializing, use `gbrain config set database_url <conn>` — it routes to the
 file plane (`~/.gbrain/config.json`), infers `engine: postgres`, and works even
 when the current database is unreachable.
+
+**Docker Compose (self-hosted)** — a long-lived Postgres + pgvector you start
+and stop yourself, on any OS with Docker:
+
+```bash
+cp docker-compose.selfhost.env.example .env   # then set GBRAIN_SELFHOST_PG_PASSWORD in .env
+docker compose -f docker-compose.selfhost.yml up -d
+gbrain init --url postgresql://gbrain:<password>@localhost:5438/gbrain
+gbrain doctor
+```
+
+`docker-compose.selfhost.yml` runs `pgvector/pgvector:pg16` as container
+`gbrain-selfhost-postgres` on `127.0.0.1:5438` (change it with
+`GBRAIN_SELFHOST_PG_PORT`), with data on the named volume
+`gbrain-selfhost-pgdata` and `restart: unless-stopped`, so the brain survives
+`docker compose restart`, reboots and `down`; only `down -v` deletes the data.
+There is no default password: compose refuses to start until one is set. Use
+letters and digits (the password goes into the connection URL), and set it
+before the first `up`: Postgres applies it only when it creates the data
+directory, so changing it later needs `docker compose -f
+docker-compose.selfhost.yml down -v` (which deletes the data) or an `ALTER ROLE`.
+If you change `GBRAIN_SELFHOST_PG_PORT`, use that port in the `gbrain init` URL. Every
+name differs from the ladder's container below, so the two never collide and
+`gbrain db-repair` does not treat this one as the ladder's.
+
+**Say to your agent:** *"Run GBrain against a self-hosted Postgres in Docker."*
 
 **Ladder-driven (harness installs)** — `gbrain init --prefer-postgres` probes
 for a usable Postgres before falling back to PGLite: an env URL, Supabase

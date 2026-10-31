@@ -1,0 +1,44 @@
+# docker-compose.selfhost.yml
+#
+# Self-hosted Postgres + pgvector for a long-lived gbrain brain. Run it with
+#   cp docker-compose.selfhost.env.example .env   # then set the password
+#   docker compose -f docker-compose.selfhost.yml up -d
+#   gbrain init --url postgresql://gbrain:<password>@localhost:5438/gbrain
+# See docs/ENGINES.md ("Local Postgres").
+#
+# Every name here differs from the init ladder's container (`gbrain-postgres`,
+# host port 5434, volume `gbrain-pgdata`; src/core/docker-postgres.ts), so
+# `gbrain init --prefer-postgres --allow-docker` never adopts or collides with
+# this one, and `gbrain db-repair` leaves it alone. The CI and E2E compose
+# files own 5434-5437. The file is not named docker-compose.yml, so a bare
+# `docker compose up` in a checkout cannot start a database by accident.
+
+# Pinned so the project, network and volume names do not depend on the checkout
+# directory's name (compose would otherwise prefix them with it).
+name: gbrain-selfhost
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: gbrain-selfhost-postgres
+    restart: unless-stopped
+    shm_size: 1g
+    environment:
+      POSTGRES_USER: gbrain
+      POSTGRES_DB: gbrain
+      # No default on purpose: compose refuses to start until one is set.
+      POSTGRES_PASSWORD: ${GBRAIN_SELFHOST_PG_PASSWORD:?set GBRAIN_SELFHOST_PG_PASSWORD in .env}
+    ports:
+      # Loopback only. Change the host side with GBRAIN_SELFHOST_PG_PORT.
+      - "127.0.0.1:${GBRAIN_SELFHOST_PG_PORT:-5438}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gbrain -d gbrain"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - gbrain-selfhost-pgdata:/var/lib/postgresql/data
+
+volumes:
+  gbrain-selfhost-pgdata:
+    name: gbrain-selfhost-pgdata
