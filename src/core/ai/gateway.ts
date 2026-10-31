@@ -480,7 +480,7 @@ export function configureGateway(config: AIGatewayConfig): void {
 /**
  * Configure the gateway for one engine. Every gateway call that runs inside `withEngineScope(engine, ...)`
  * (engine-scope.ts; every operation handler does) reads this config, its own model cache, transports and OpenAI
- * discovery, and its own query-embedding cache scope, so two brains in one process keep their own provider keys,
+ * discovery, so two brains in one process keep their own provider keys,
  * base URLs and models. Calls outside a scope, and calls scoped to an engine nothing was recorded against, keep
  * reading the process-wide config. Takes a built `AIGatewayConfig` (`buildGatewayConfig(config, { env, fileConfig })`
  * builds one from values without reading the home directory or `process.env`). The Anthropic key stash and the AI
@@ -1886,7 +1886,7 @@ export async function embedQuery(
   const cfg = requireConfig();
   const { recipe, modelId } = await resolveEmbeddingProvider(opts?.embeddingModel ?? getEmbeddingModel());
   const dims = opts?.dimensions ?? cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
-  const key = queryEmbedCacheKey(recipe.id, modelId, cfg.base_urls?.[recipe.id] ?? '', dims, input, gw().cacheScope);
+  const key = queryEmbedCacheKey(recipe.id, modelId, cfg.base_urls?.[recipe.id] ?? '', dims, input);
   const cached = hasAIInvocationGuard() ? undefined : cachedQueryEmbedding(key);
   if (cached) return cached;
   const generation = queryEmbedGeneration();

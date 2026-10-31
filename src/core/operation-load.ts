@@ -129,9 +129,9 @@ export function finalizeOperation(op: Operation): void {
 
 /**
  * The handler runs inside its engine's scope (engine-scope.ts), so the gateway
- * configuration, the chat-usage sink and the query-embedding cache it reaches
- * are the ones recorded for `ctx.engine`, when a host recorded any; a process
- * with one engine and no per-engine record is unchanged.
+ * configuration it reaches is the one recorded for `ctx.engine`, when a host
+ * recorded one; a process with one engine and no per-engine record is
+ * unchanged.
  */
 function inEngineScope(handler: Operation['handler']): Operation['handler'] {
   return (ctx, params) => ctx.engine ? withEngineScope(ctx.engine, () => handler(ctx, params)) : handler(ctx, params);

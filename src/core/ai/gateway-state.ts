@@ -13,9 +13,9 @@
  *
  * Only the state that names a brain lives here: which provider keys and base
  * URLs a call uses, which models answer, the clients built from them, the one
- * OpenAI discovery run per reconfigure, and the scope of the query-embedding
- * cache. Adaptive counters that are not identity-bearing (the shrink-on-miss
- * state, the once-per-process warnings) stay module-level in gateway.ts.
+ * OpenAI discovery run per reconfigure. Adaptive counters that are not
+ * identity-bearing (the shrink-on-miss state, the once-per-process warnings)
+ * stay module-level in gateway.ts.
  */
 import type { embedMany, generateObject, generateText } from 'ai';
 import type { BrainEngine } from '../engine.ts';
@@ -53,24 +53,19 @@ export interface GatewayState {
   /** The one OpenAI model discovery run per reconfigure (gateway.ts `discoverBeforeOpenAICall`). */
   discovery: Promise<void> | null;
   transports: GatewayTransports;
-  /** Part of every query-embedding cache key, so a cached vector is only ever served to the state that embedded it. */
-  cacheScope: string;
 }
 
-let scopes = 0;
-
-export function newGatewayState(cacheScope = `engine:${++scopes}`): GatewayState {
+export function newGatewayState(): GatewayState {
   return {
     config: null,
     modelCache: new Map(),
     discoveryEngine: null,
     discovery: null,
     transports: { embed: null, generateText: null, generateObject: null, chat: null, rerank: null, decide: null },
-    cacheScope,
   };
 }
 
-/** Back to unconfigured: no config, no clients, no discovery, no transport overrides. The cache scope is kept. */
+/** Back to unconfigured: no config, no clients, no discovery, no transport overrides. */
 export function resetGatewayState(state: GatewayState): void {
   state.config = null;
   state.modelCache.clear();
@@ -80,7 +75,7 @@ export function resetGatewayState(state: GatewayState): void {
 }
 
 /** The state of a process that configures the gateway once: `configureGateway` writes it, calls outside a scope read it. */
-export const processGatewayState: GatewayState = newGatewayState('process');
+export const processGatewayState: GatewayState = newGatewayState();
 
 let engineStates = new WeakMap<object, GatewayState>();
 

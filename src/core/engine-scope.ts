@@ -1,14 +1,13 @@
 /**
- * Which engine a call runs against, for the modules that keep state per engine
- * but do not take the engine as an argument: the AI gateway's configuration,
- * model cache, transports and discovery (ai/gateway.ts), the chat-usage sink
- * (ai/chat-usage.ts) and the query-embedding cache (ai/query-embed-cache.ts).
+ * Which engine a call runs against, for state kept per engine by code that
+ * does not take the engine as an argument: the AI gateway's configuration,
+ * model cache, transports and discovery (ai/gateway.ts, ai/gateway-state.ts).
  *
  * An operation handler runs inside `withEngineScope(ctx.engine, ...)`
  * (operation-load.ts), so every gateway call it makes resolves that engine's
  * state. A host that opens two engines in one process and drives the gateway
  * directly enters the scope itself. Outside any scope, or for an engine nothing
- * was recorded against, each module keeps its process-wide state, which is what
+ * was recorded against, the gateway keeps its process-wide state, which is what
  * the CLI and `gbrain serve`, one engine per process, use unchanged.
  *
  * `engineOwned` resolves a value recorded against an engine from any object
