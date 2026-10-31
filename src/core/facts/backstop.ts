@@ -39,7 +39,8 @@
 
 import { observationDateFrom, resolveObservationDate, type ObservationDate } from '../ai/date-grounding.ts';
 import { factEventTime } from './event-time.ts';
-import type { BrainEngine, FactInsertStatus, NewFact } from '../engine.ts';
+import type { BrainEngine, FactAttribution, FactInsertStatus, NewFact } from '../engine.ts';
+import { withSpeakerNote } from './speaker-context.ts';
 import type { ResolutionSource } from '../entities/resolve.ts';
 import { isFactsBackstopEligible } from './eligibility.ts';
 import type { PageType } from '../types.ts';
@@ -83,6 +84,11 @@ function annotateUnverifiedResolution(
   if (inferred) return appendContextNote(context, inferenceNote(inferred));
   if (resolutionSource !== 'prefix_expansion') return context;
   return appendContextNote(context, 'entity matched by bare name only (prefix expansion) — unverified, please confirm');
+}
+
+/** #8064: a claim from an agent session's user side is the agent's ('other'); the assistant's own stays. The speaker note rides the context (withSpeakerNote). */
+export function asAgentSpoken<F extends { attributed_to?: FactAttribution | null }>(f: F): F {
+  return f.attributed_to === 'assistant' ? f : { ...f, attributed_to: 'other' };
 }
 
 export interface FactsBackstopCtx {
@@ -129,6 +135,12 @@ export interface FactsBackstopCtx {
   remote?: boolean;
   /** Optional entity hints (extract_facts MCP op forwards these). */
   entityHints?: string[];
+  /**
+   * #8064: the captured session's user turns were written by this agent
+   * (its speaker sidecar), not the owner. Its claims are saved as 'other'
+   * with a speaker note, never as the user's.
+   */
+  speaker?: { principal: string };
   /** Optional visibility tier (default 'private'). extract_facts forwards `world` when caller asks. */
   visibility?: 'private' | 'world';
   /** Override the chat model (extract_facts forwards user's model param when set). */
@@ -782,7 +794,7 @@ async function runPipelineBodyInner(
     isDreamGenerated: input.isDreamGenerated,
     engine: ctx.engine,
     abortSignal,
-    model: ctx.model,
+    model: ctx.model, ...(ctx.speaker ? { userSpeaker: ctx.speaker.principal } : {}),
     notabilityAdmission, observationDate: input.observationDate ?? observationDateFrom(ctx.validFrom ?? ctx.turnAt ?? null),
     ...(managed ? { embedding: managed.embedding ?? null } : {}),
   });
@@ -820,7 +832,7 @@ async function runPipelineBodyInner(
   const { resolveDefaultVisibility } = await import('./visibility.ts');
   const visibility = ctx.visibility ?? (await resolveDefaultVisibility(ctx.engine));
   // #5888: one exact-duplicate check for the capture lanes, before either writer.
-  const { facts, dropped } = await dedupCapturedFacts(ctx, await inferMissingSubjects(ctx, outcome.facts, visibility, input.pageSlug, managed), visibility, resolveEntitySlugWithSource);
+  const { facts, dropped } = await dedupCapturedFacts(ctx, await inferMissingSubjects(ctx, ctx.speaker ? outcome.facts.map(f => asAgentSpoken(f)) : outcome.facts, visibility, input.pageSlug, managed), visibility, resolveEntitySlugWithSource);
   if (!managed) await assertAmbientCaptureAdmissible(ctx.engine, ctx.source);
   if (managed) return withCaptureDrops(dropped, facts.length || !dropped.length ? await publishManagedFacts(ctx.engine, managed, ctx, facts, visibility, input.pageSlug, { withdrawn: 'skip' }) : null);
 
@@ -961,7 +973,7 @@ async function runPipelineBodyInner(
       // DB-only row has no fence to name the page it came from, so the page
       // path's slug fills context when the caller passed no sourceSlug.
       valid_from: factEventTime(f, ctx),
-      context: annotateUnverifiedResolution(ctx.sourceSlug ?? input.pageSlug ?? null, resolutionSource, f.entity_inferred),
+      context: withSpeakerNote(ctx.speaker, annotateUnverifiedResolution(ctx.sourceSlug ?? input.pageSlug ?? null, resolutionSource, f.entity_inferred)),
     };
     await insertDerivedFact(newFact); // legacy DB-only fallback for unparented / thin-client facts (no entity page to fence onto)
   }
@@ -985,7 +997,7 @@ async function runPipelineBodyInner(
       source: f.source,
       // #4206: the caller's source_slug (which page/transcript the turn came
       // from) lands in the fence context cell — visible in recall projections.
-      context: annotateUnverifiedResolution(ctx.sourceSlug ?? null, resolutionSource, f.entity_inferred),
+      context: withSpeakerNote(ctx.speaker, annotateUnverifiedResolution(ctx.sourceSlug ?? null, resolutionSource, f.entity_inferred)),
       visibility,
       confidence: f.confidence,
       // #4206: extractor-derived date wins; then the caller's event time
@@ -1050,7 +1062,7 @@ async function runPipelineBodyInner(
           embedding_model: f.embedding_model ?? null, attributed_to: f.attributed_to ?? null,
           // #4206: caller event-time fallback + provenance context.
           valid_from: factEventTime(f, ctx),
-          context: ctx.sourceSlug ?? input.pageSlug ?? null,
+          context: withSpeakerNote(ctx.speaker, ctx.sourceSlug ?? input.pageSlug ?? null),
         };
         await insertDerivedFact(newFact); // stub-guard / unresolvable-target fallback for unprefixed or fallback-resolved entity slugs (no fenceable page or usable tree)
       }
@@ -1079,7 +1091,7 @@ async function runPipelineBodyInner(
           embedding_model: f.embedding_model ?? null, attributed_to: f.attributed_to ?? null,
           // #4206: caller event-time fallback + provenance context.
           valid_from: factEventTime(f, ctx),
-          context: result.databaseOnlyReason === 'file_database_drift' ? annotateUnverifiedResolution(ctx.sourceSlug ?? input.pageSlug ?? null, groupResolutionSource, f.entity_inferred) : ctx.sourceSlug ?? input.pageSlug ?? null,
+          context: withSpeakerNote(ctx.speaker, result.databaseOnlyReason === 'file_database_drift' ? annotateUnverifiedResolution(ctx.sourceSlug ?? input.pageSlug ?? null, groupResolutionSource, f.entity_inferred) : ctx.sourceSlug ?? input.pageSlug ?? null),
         };
         await insertDerivedFact(newFact); // DB-only fallback when the fence lane declined the write (write_through opt-out race / localPath echo)
       }

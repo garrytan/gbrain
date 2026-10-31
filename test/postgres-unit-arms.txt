@@ -51,6 +51,8 @@ test/consolidate-same-instant-6023.test.ts
 test/conversation-facts-outcome-marker-purge-7778.test.ts
 test/conversation-facts-oversized-sidecar.test.ts
 test/conversation-facts-purged-claim-7438.test.ts
+test/cycle/derived-write-through-commit.test.ts
+test/cycle/dream-reverse-write-commit.test.ts
 test/cycle/synthesize-concepts-merge.test.ts
 test/db-lock-reconnect.test.ts
 test/decide/conflict-proposals-managed.test.ts
@@ -122,6 +124,7 @@ test/import-file-result-callback-gbra130.test.ts
 test/import-frontmatter-key-order-5158.test.ts
 test/import-inline-chunk-keep.test.ts
 test/import-revision-concurrency.test.ts
+test/init-cold-home-embedding.test.ts
 test/keyword-statement-timeout-knob-6495.test.ts
 test/keyword-timeout-negative-cache-6495.test.ts
 test/lane-apply-pipelining.test.ts
@@ -400,6 +403,7 @@ test/persistence-managed-lifecycle.test.ts
 test/persistence-managed-sync.test.ts
 test/persistence-manifest-git-scope.test.ts
 test/persistence-memory-mutations.test.ts
+test/persistence-owner-activity.test.ts
 test/persistence-page-authority.test.ts
 test/persistence-physical-root-device.test.ts
 test/persistence-preactivation-claim.test.ts

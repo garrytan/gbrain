@@ -3595,6 +3595,16 @@ More: [docs/guides/on-commit-sync.md#refresh-required](../../docs/guides/on-comm
 
 More: [docs/guides/write-refusals.md#refresh_source_changed](../../docs/guides/write-refusals.md#refresh_source_changed)
 
+### refresh_sync_timeout
+
+<a id="refresh_sync_timeout"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A refresh's member sync committed nothing within the refresh sync budget. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/write-refusals.md#refresh_sync_timeout](../../docs/guides/write-refusals.md#refresh_sync_timeout)
+
 ### relay_disabled
 
 <a id="relay_disabled"></a>

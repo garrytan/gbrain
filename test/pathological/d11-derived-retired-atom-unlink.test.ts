@@ -65,6 +65,8 @@ async function withBrain(databaseUrl: string | undefined, run: (b: Brain) => Pro
         const root = join(home, 'brain');
         mkdirSync(root, { recursive: true });
         execFileSync('git', ['init', '-q'], { cwd: root });
+        execFileSync('git', ['config', 'user.name', 'Example Writer'], { cwd: root });
+        execFileSync('git', ['config', 'user.email', 'writer@example.invalid'], { cwd: root });
         await engine.executeRaw("UPDATE sources SET local_path = $1 WHERE id = 'default'", [root]);
         await engine.setConfig('cycle.extract_atoms.write_through', 'true');
         const path = (slug: string) => join(root, `${slug}.md`);

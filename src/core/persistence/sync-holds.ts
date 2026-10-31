@@ -203,6 +203,8 @@ export interface GitHoldMeta {
   identity_paths?: string[];
   /** GBRA-130 `page_identity_changed` (`identity_differs`): the frontmatter ids of the page and of the file. */
   identity_ids?: { page: string; file: string };
+  /** #8072 `file_too_large`: the streamed (segmented) preparation read the whole file to refuse it, under this gbrain; it re-screens when the file changes, on retry, or under another gbrain. */
+  streamed?: { gbrain_version: string };
 }
 
 /** #6188: why the last fence repair left a hold in place, and when the maintenance run tries it again (null: it does not). */
@@ -599,12 +601,14 @@ export async function holdBasisMoved(engine: Pick<BrainEngine, 'executeRaw'>, so
  * the file changes. GBRA-133: a `git_object_missing` hold rests on the repository's objects (a fetch restores them
  * under the same blob id), so it re-screens on every sync; a `page_write_failed` hold of a freeze fault (origin `freeze`,
  * S-63) is re-tested by every sync until it has been held `HOLD_ATTEMPTS_NEEDS_HUMAN` times, so a transient fault clears.
+ * #8072: a `file_too_large` hold is re-screened by every sync only while that costs its size (an lstat): one the streamed
+ * preparation refused after reading the whole file (`meta.streamed`) waits for its bytes to change, a retry or another gbrain.
  */
 /** GBRA-133: the `file_drift` screen version; 1 is #7340's rule (a page with no import record compares its file at the baseline commit). */
 export const FILE_DRIFT_VERSION = 1;
 
 export function holdRescreenDue(record: Pick<GitHoldRecord, 'code' | 'meta'>, retried: boolean): boolean {
-  return retried || ['frontmatter_slug_conflict', 'file_too_large', 'rename_held', 'parser_regression', 'content_rejected', 'write_gate_rejected', 'purged_content', 'legacy_slug_conflict', 'origin_conflict', 'page_identity_changed', 'git_object_missing'].includes(record.code)
+  return retried || (record.code === 'file_too_large' && record.meta.streamed?.gbrain_version !== VERSION) || ['frontmatter_slug_conflict', 'rename_held', 'parser_regression', 'content_rejected', 'write_gate_rejected', 'purged_content', 'legacy_slug_conflict', 'origin_conflict', 'page_identity_changed', 'git_object_missing'].includes(record.code)
     // #6712: a transient hold (the write owner stalled, not the file) is retried by every sync until it has been held HOLD_ATTEMPTS_NEEDS_HUMAN times.
     || (outOfAttemptsHold(record.code) && (record.meta.attempts ?? 1) < HOLD_ATTEMPTS_NEEDS_HUMAN)
     || (record.code === 'managed_image_sync_unsupported' && isMultimodalEnabled())
@@ -855,7 +859,8 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
     }
     case 'file_too_large':
       return { argv: ['gbrain', 'config', 'get', 'sync.exclude'], consent: [], actor: 'agent', requires_exclusive: false,
-        why: `${record.path} is over the page size limit. The size limit is fixed, and every page under it syncs and is searchable. Leave the file out of the source: read the current sync.exclude list, then run gbrain config set sync.exclude '<current list>,${record.path}'; or, if it must be in the brain, split it into files under the limit and commit. The next gbrain sync --source ${source} --no-pull clears the hold.`,
+        why: `${record.path} is over the page size limit. The size limit is fixed, and every page under it syncs and is searchable. Leave the file out of the source: read the current sync.exclude list, then run gbrain config set sync.exclude '<current list>,${record.path}'; or, if it must be in the brain, split it into files under the limit and commit. The next gbrain sync --source ${source} --no-pull clears the hold.`
+          + (record.meta.streamed ? ` Sync read the whole file to refuse it, so it does not read it again until it changes, gbrain is upgraded, or gbrain sources retry-held ${source} schedules it (after a setting its message names changes).` : ''),
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'purged_content':
       return { argv: ['gbrain', 'pages', 'purges', 'list', '--source', source], consent: [], actor: 'user', requires_exclusive: false,

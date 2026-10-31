@@ -202,16 +202,18 @@ export function callerIdentity(): readonly string[] {
 }
 
 /**
- * `visiblePredicate` (a privacy-only predicate), widened to rows whose source
- * (`sourceIdSql`, a code-provided column reference) is in the current
- * private-readable set. Never pass a predicate that contains accessAllowedSql:
- * the widening would reach it. The ids are embedded as literals: each passed
+ * `visiblePredicate` (a privacy-only predicate), widened to pages
+ * (`pageAlias`, a code-provided alias) whose source is in the current
+ * private-readable set. A page carrying the `pinned_question` marker never
+ * widens: pinned questions stay owner-private (src/core/questions/pages.ts).
+ * Never pass a predicate that contains accessAllowedSql: the widening would
+ * reach it. The ids are embedded as literals: each passed
  * isValidSourceId, whose alphabet has no quote or backslash.
  */
-export function orPrivateReadableSource(sourceIdSql: string, visiblePredicate: string): string {
+export function orPrivateReadableSource(pageAlias: string, visiblePredicate: string): string {
   const ids = privateReadableSources();
   if (ids.length === 0) return visiblePredicate;
-  return `(${sourceIdSql} IN (${ids.map(id => `'${id}'`).join(', ')}) OR ${visiblePredicate})`;
+  return `((${pageAlias}.source_id IN (${ids.map(id => `'${id}'`).join(', ')}) AND NOT COALESCE(${pageAlias}.frontmatter ? 'pinned_question', false)) OR ${visiblePredicate})`;
 }
 
 /**
@@ -219,12 +221,12 @@ export function orPrivateReadableSource(sourceIdSql: string, visiblePredicate: s
  * relaxed privacy, else widened only to private-readable sources. Never pass
  * a predicate that contains accessAllowedSql or readersAllowedSql.
  */
-export function privacyForCaller(sourceIdSql: string, privacyPredicate: string): string {
-  return currentCallerAccess().hidePrivate ? orPrivateReadableSource(sourceIdSql, privacyPredicate) : 'TRUE';
+export function privacyForCaller(pageAlias: string, privacyPredicate: string): string {
+  return currentCallerAccess().hidePrivate ? orPrivateReadableSource(pageAlias, privacyPredicate) : 'TRUE';
 }
 
 function callerPrivacySql(pageAlias: string, privacyPredicate: string): string {
-  return privacyForCaller(`${pageAlias}.source_id`, privacyPredicate);
+  return privacyForCaller(pageAlias, privacyPredicate);
 }
 
 /** privatePagesFilterFragment for a remote read: the caller's member access, then the privacy part with its grant and hatch. Read sites only; derived-visibility decisions keep the plain fragment. */
@@ -270,6 +272,7 @@ export function isPrivatePageForCaller(page: { type?: string | null; frontmatter
   const access = currentCallerAccess();
   if (!readersAllow(page.frontmatter, access.identity)) return true;
   if (!access.hidePrivate || !isPrivacyPrivatePage(page)) return false;
+  if (typeof page.frontmatter === 'object' && page.frontmatter !== null && (page.frontmatter as Record<string, unknown>).pinned_question != null) return true;
   return !(typeof page.source_id === 'string' && access.privateReadableSources.includes(page.source_id));
 }
 

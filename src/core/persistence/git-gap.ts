@@ -180,16 +180,16 @@ export function isGitCheckout(root: string): boolean {
 }
 
 /**
- * HEAD of the checkout at `root`, listed once with `ls-tree -r -l -z --full-tree` under the source's directory. Null when
- * Git cannot answer (not a checkout, a failed or truncated read).
+ * HEAD of the checkout at `root` (or the commit `rev` names), listed once with `ls-tree -r -l -z --full-tree` under the
+ * source's directory. Null when Git cannot answer (not a checkout, an unknown commit, a failed or truncated read).
  */
-export async function readHeadTree(root: string): Promise<HeadTree | null> {
+export async function readHeadTree(root: string, rev = 'HEAD'): Promise<HeadTree | null> {
   const top = gitLine(root, ['rev-parse', '--show-toplevel']);
   const format = gitLine(root, ['rev-parse', '--show-object-format']);
   if (top === null || (format !== 'sha1' && format !== 'sha256')) return null;
   const gitRoot = realpathSync(top), real = realpathSync(root);
-  const head = hardenedGitSync(root, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], GIT_LIMITS);
-  if (!head.ok) return head.reason === 'exit' && head.status === 1 ? { gitRoot, format, commit: null, blobs: new Map() } : null;
+  const head = hardenedGitSync(root, ['rev-parse', '--verify', '--quiet', `${rev}^{commit}`], GIT_LIMITS);
+  if (!head.ok) return rev === 'HEAD' && head.reason === 'exit' && head.status === 1 ? { gitRoot, format, commit: null, blobs: new Map() } : null;
   const commit = head.stdout.toString('utf8').trim();
   const scope = real === gitRoot ? '' : real.slice(gitRoot.length + 1);
   const blobs = new Map<string, TreeBlob>();

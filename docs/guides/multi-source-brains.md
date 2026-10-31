@@ -169,12 +169,14 @@ grant.
 
 ### Narrow one request with `source_ids`
 
-`search` and `query` take `source_ids`, a list of source ids (CLI:
-`--source-ids source-a,source-b`). The request reads only those sources:
+`search`, `query`, `recall` and `list_pages` take `source_ids`, a list of
+source ids (CLI: `--source-ids source-a,source-b`). The request reads only
+those sources:
 
 - Each id is checked exactly like an explicit `source_id`. A remote agent
-  naming a source outside its grant gets `permission_denied` for the whole
-  request, and a removed or archived source gets `unknown_source`. So the
+  naming a source outside its grant gets `permission_denied` (`scope_denied`
+  from `recall`) for the whole request, and a removed or archived source gets
+  `unknown_source` (`not_found` from `recall`). So the
   list can narrow a request but never widen it.
 - Omitting `source_ids`, or passing `[]` or a blank string, reads every
   source the caller can read, as before.
@@ -183,10 +185,14 @@ grant.
   searched: the result is empty with an `empty_retrieval` notice, never a
   fallback to the wider scope.
 - `__all__` and malformed ids in the list are `invalid_params`.
+- On the starter surface, `recall` and `list_pages` accept `source_ids` but
+  leave it out of their listed schema to keep the tool list small; harness
+  code sets it, and `request_tools` returns the full schema.
 
 Every part of the request reads the narrowed sources: keyword, vector and
 title matches, other names, entity anchoring, saved facts, the CRAG re-run,
-think escalation and evidence delivery.
+think escalation and evidence delivery; on `recall`, every fact arm and the
+page-search arm.
 
 **Say to your agent:** *"Search my brain for the acme-example renewal, but
 only in source-a."*
@@ -250,9 +256,12 @@ who may read it, before any member's bot connects:
 
   A token with no source grant, a federated source the grant does not name,
   and a request's `source_ids` never add a source; `context_pack`, `delta`
-  and writes keep hiding private pages. `--private-pages none` hides them
-  again on the next request, and `gbrain auth list` shows each token's
-  setting.
+  and writes keep hiding private pages. In a named source the grant also
+  opens pages with a privacy alias (`access`, `confidentiality`), atoms,
+  concepts and events derived from private or unknown origins, and pages
+  whose declared lineage is private; pinned questions stay owner-only.
+  `--private-pages none` hides them again on the next request, and
+  `gbrain auth list` shows each token's setting.
 
 > **Warning: one shared source has no boundary inside it.** A bot that answers
 > everyone with one unscoped token over a single source exposes everything in

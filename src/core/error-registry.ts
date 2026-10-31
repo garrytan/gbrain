@@ -608,6 +608,7 @@ export const CODES = {
   refresh_not_managed: { class: 'host_only', summary: "The source is not managed, so it cannot be refreshed." },
   refresh_not_owner: { class: 'host_only', summary: "This process does not own the worktree it would refresh." },
   refresh_source_changed: { class: 'caller', summary: "The source changed during the refresh." },
+  refresh_sync_timeout: { class: 'retryable', summary: "A refresh's member sync committed nothing within the refresh sync budget." },
   relay_disabled: { class: 'caller', summary: "Google connect credential error: relay disabled.", docs: 'docs/guides/google-connect.md#troubleshooting' },
   relay_session_expired: { class: 'caller', summary: "Google connect credential error: relay session expired.", docs: 'docs/guides/google-connect.md#troubleshooting' },
   relay_unreachable: { class: 'retryable', summary: "Google connect credential error: relay unreachable.", docs: 'docs/guides/google-connect.md#troubleshooting' },

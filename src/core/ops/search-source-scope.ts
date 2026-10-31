@@ -26,7 +26,7 @@ export const SOURCE_IDS_PARAM = {
 };
 
 /** `source_ids` as distinct, trimmed source ids; undefined when absent. */
-export function parseSourceIdsParam(ctx: OperationContext, tool: 'search' | 'query', raw: unknown): string[] | undefined {
+export function parseSourceIdsParam(ctx: OperationContext, tool: 'search' | 'query' | 'recall' | 'list_pages', raw: unknown): string[] | undefined {
   if (raw === undefined || raw === null) return undefined;
   // #5390: OpenAI-family MCP clients fill every optional param with an empty value; [] and a blank string mean absent.
   if (Array.isArray(raw) && raw.length === 0) return undefined;
@@ -47,7 +47,7 @@ export function parseSourceIdsParam(ctx: OperationContext, tool: 'search' | 'que
   return [...ids];
 }
 
-/** The sources one search/query request reads; `sourceIds: []` means it reads none. */
+/** The sources one search, query, recall or list_pages request reads; `sourceIds: []` means it reads none. */
 export async function requestSourceScope(ctx: OperationContext, sourceIdParam: string | undefined, sourceIds: string[] | undefined): Promise<{ sourceId?: string; sourceIds?: string[] }> {
   const scope = federatedSearchScope(ctx, sourceIdParam);
   if (sourceIds === undefined) {

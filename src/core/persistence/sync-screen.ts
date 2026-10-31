@@ -229,8 +229,9 @@ export function originConflictHold(entry: Pick<SyncEntry, 'path' | 'sourcePath' 
 /** Wave B: the hold for a file its streamed preparation refused, by the receipt's content-refusal code and message. */
 export function streamedRefusalHold(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld'>, slug: string, pageId: number | null,
   done: Pick<WriteRequest, 'error_code' | 'error_message'>, blobOid: string | null | undefined): HeldEntry {
-  return heldEntry(entry, slug, pageId, { code: done.error_code as ContentRefusal['code'], message: done.error_message ?? 'The streamed import refused this file.' },
+  const held = heldEntry(entry, slug, pageId, { code: done.error_code as ContentRefusal['code'], message: done.error_message ?? 'The streamed import refused this file.' },
     null, blobOid ? { oid: blobOid } : null);
+  return held.code === 'file_too_large' ? { ...held, meta: { ...held.meta, streamed: { gbrain_version: VERSION } } } : held;
 }
 
 export function oversizeHold(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld'>, slug: string, pageId: number | null, size: number | null, blob: TreeBlob | null | undefined): HeldEntry {

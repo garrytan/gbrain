@@ -42,6 +42,7 @@ const EXEMPT = {
   'src/core/persistence/effect-journal.ts': 'post-publication effects; no page text',
   'src/core/repair/file-drift.ts': 'removes a held file whose page is deleted: no live page records the path (re-read under the publication guard), the page row is untouched, and core counts only live pages; --prefer file publishes through file-repair.ts',
   'src/core/repair/captured-facts.ts': 'owner-run repair that expires fact rows (shrinks only)',
+  'src/core/repair/agent-session-facts.ts': 'owner-run repair that re-attributes capture-lane facts and retires their takes (no content added)',
   'src/core/repair/extractor-facts.ts': 'owner-run repair restoring expired fact rows',
   'src/core/repair/redacted-facts.ts': 'owner-run, preview-bound repair rewriting the text of database-only fact rows to words a source page proves; page text is unchanged (fenced rows publish through put_page, preparePageMutation)',
   'src/core/repair/visibility.ts': 'owner-run, preview-first repair that only tightens database-only fact rows from world to private; page text is unchanged (fenced rows and page labels publish through put_page, preparePageMutation)',

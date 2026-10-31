@@ -292,6 +292,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/persistence/sync-prepare.ts` (4): managed sync request preparer.
 - `src/core/persistence/sync-streamed.ts` (1): the streamed sync of a file over the single-string ceiling moves a renamed page (`updateSlug`) in its request's apply, inside the coordinated publication.
 - `src/core/persistence/takes-prepare.ts` (3): takes request preparer.
+- `src/core/repair/agent-session-facts.ts` (2): a `managed_maintenance_agent_session_facts` request on managed brains (database-only fact re-attribution and take retirement); the unmanaged write runs in `maintenanceTransaction`.
 - `src/core/repair/atoms-restore.ts` (3): the unmanaged `gbrain repair atoms-restore` apply archives the retired atom's version, restores it and drops its `retired_by`/`retired_at` stamp in one `maintenanceTransaction`; managed brains publish a `managed_maintenance_restore_reextract_atom` request instead.
 - `src/core/repair/captured-facts.ts` (1): a request on managed brains; the unmanaged captured-facts expiry runs in `maintenanceTransaction`.
 - `src/core/repair/consolidate-ties.ts` (1): `gbrain repair consolidate-ties` reopens facts inside `coordinatedDatabaseWrite` on managed brains (the `relink_facts` operation) and in one `maintenanceTransaction` per fact on unmanaged brains.

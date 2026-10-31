@@ -284,6 +284,53 @@ gbrain recall projects/offsite-example
 Or ask your agent: *"Remember the offsite date from the email I just pasted,
 and note that it came from that email."*
 
+## Sessions an agent launches
+
+An orchestrator that starts worker sessions on your account (`claude -p`,
+`codex exec`) writes each worker's first user turn itself, usually from a
+template. Those turns are not yours, but the transcript looks the same as one
+of your own sessions. Tell gbrain who wrote them with one environment variable
+on the worker's process:
+
+| `GBRAIN_SESSION_AGENT` | What happens |
+|---|---|
+| `<label>` (a-z, 0-9, `.`, `_`, `-`, up to 64) | The session is saved. Claims from its user turns are saved as that agent's (`attributed_to: other`, context `speaker: agent <label>, not the owner`), never as yours. |
+| `off` | Nothing from the session is saved. Context injection still runs. |
+| `owner` | The turns are yours; automatic detection is skipped. |
+| unset | Automatic detection, below. |
+
+```bash
+GBRAIN_SESSION_AGENT=fleet-worker claude -p "$(render-brief task-42)"
+```
+
+`GBRAIN_HOOKS=0` turns off every gbrain hook, context injection included;
+`GBRAIN_SESSION_AGENT=off` turns off only saving.
+
+**Automatic detection.** With the variable unset, the hook treats a session
+as agent-launched when its harness process runs headless (`claude -p` or
+`--print`, `codex exec`) and another `claude` or `codex` process is one of
+its ancestors. Its claims are saved as agent `agent-launched`'s. A headless
+session you start yourself from a terminal is still yours. Detection reads the
+process table and can miss a launcher that detaches its workers, and it never
+fires for a launcher that is not itself claude or codex (a cron job, a script
+or a daemon running `claude -p`). For those the variable is the only signal,
+so set it in any launcher you control.
+
+The marker covers the Claude Code and Codex hook lanes and the facts they
+save. The OpenClaw context-engine lane and dream synthesis do not read it yet.
+
+The marker is a `<session>.speaker.json` file beside the session's corpus
+files, written before any of them. If it cannot be written, nothing from the
+session is saved (heartbeat reason `speaker_write_failed`); `off` records
+`capture_opt_out`. Agent claims are never promoted into your own takes by
+the consolidate phase and are not linked to entity pages as your statements.
+
+Facts saved as yours before this marker existed can be re-attributed:
+`gbrain doctor` (`agent_session_facts`) counts them and `gbrain repair
+agent-session-facts` previews the change ([repair guide](repair.md)). The
+repair changes attribution and retires the takes they produced; it deletes
+nothing.
+
 ## Proving an extraction ran
 
 `extract_facts` has no caller-defined binding field such as a `job_binding`

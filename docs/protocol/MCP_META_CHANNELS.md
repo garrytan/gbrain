@@ -42,7 +42,9 @@ in front of the model without a separate call.
 
 **When it is sent.** On a successful tool call over stdio (`gbrain serve`) and
 over HTTP (`gbrain serve --http`), except `recall`, `extract_facts` and
-`forget_fact`, which already return facts. It is absent when there is nothing
+`forget_fact`, which already return facts, and except a call that names its own
+sources (a non-empty `source_ids`, or a `source_id` other than the connection's
+source), so a narrowed request never carries another source's facts. It is absent when there is nothing
 to send, and it is best-effort: if it cannot be built, the key is left out and
 the tool call still succeeds. It cannot be turned off per call.
 
@@ -138,7 +140,10 @@ beside `arguments` (MCP request-level `_meta`), or inside the tool arguments
 `_meta` into the arguments. That call's response carries no
 `brain_hot_memory`. Other values, or no value, leave the block as it is. A
 channel or shared session should send it on every call. A member's own
-direct-message session can leave it out.
+direct-message session can leave it out. The opt-out removes only this
+`_meta` block: a `context_pack` or `delta` body still lists the connection's
+recent facts, so a channel harness should not call them with a member token
+whose first source is that member's private source.
 
 ```json
 {"jsonrpc": "2.0", "id": 7, "method": "tools/call",

@@ -296,6 +296,8 @@ export interface ExtractInput {
   observationDate?: ObservationDate | null;
   /** Prompt variant; undefined → read `extraction.date_grounding` / `facts.attribution` from config. */
   variant?: ExtractorVariant;
+  /** #8064: the agent (session-speaker label) that wrote the turn's user side; the owner when absent. */
+  userSpeaker?: string;
   /** Optional pre-embedding admission selector for extracted fact tiers. */
   notabilityAdmission?: {
     allowed: readonly FactNotability[];
@@ -652,7 +654,10 @@ export async function extractFactsFromTurnWithOutcome(
     : buildExtractorSystem(admitsLow, variant);
   const responseSchema = factsResponseSchema(variant);
   const dateLine = variant.dateGrounding ? `${observationDateLine(input.observationDate ?? null)}\n` : '';
-  const userContent = `${dateLine}<turn>\n${cleaned}\n</turn>\n\nExtract up to ${cap} facts.${
+  const speakerLine = input.userSpeaker
+    ? `The user turns below were written by the automated agent "${input.userSpeaker}", not by the brain's owner: phrase their claims as "Agent ${input.userSpeaker} …" and attribute them "other".\n`
+    : '';
+  const userContent = `${dateLine}${speakerLine}<turn>\n${cleaned}\n</turn>\n\nExtract up to ${cap} facts.${
     input.entityHints && input.entityHints.length
       ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, input.entityHintsCap ?? ENTITY_HINTS_CAP).join(', ')}.`
       : ''
