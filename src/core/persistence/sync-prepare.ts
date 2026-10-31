@@ -475,7 +475,7 @@ function syncFileProvenance(row: WriteRequest, p: SyncIntent, root: string, impo
     if (!final || final.page.deleted_at != null) return;
     await recordSyncImportProvenance(tx, { source_id: row.source_id, incarnation: row.source_incarnation, page_id: Number(final.page.id), origin: p.sourcePath!,
       raw_sha256: sha256(imported), ...(p.blobOid ? { blob_oid: p.blobOid } : {}), working: p.working === true, gbrain_version: VERSION, revision: final.revision,
-      parser: syncImportParserFor(p.sourcePath!, null), ...syncDiskProvenance(syncDiskBytes(root, p.path!, imported, p.rawHash), p.target) });
+      ...(p.fullEpisode ? { full_episode: p.fullEpisode } : {}), parser: syncImportParserFor(p.sourcePath!, null), ...syncDiskProvenance(syncDiskBytes(root, p.path!, imported, p.rawHash), p.target) });
   };
 }
 
