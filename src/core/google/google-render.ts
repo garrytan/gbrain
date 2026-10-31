@@ -31,16 +31,39 @@ const NOISE_SENDER_SUBSTRINGS = [
   'do-not-reply',
 ];
 
-/**
- * Fixed Google system addresses that carry no human obligation (#5103: the
- * Meet notes digest). Matched by EQUALITY, never as a substring, so a
- * lookalike address on another domain is still treated as a person.
- */
-const GOOGLE_SYSTEM_SENDERS: ReadonlySet<string> = new Set(['gemini-notes@google.com']);
+// These aliases identify automation only as the complete local part, never
+// from a word in the domain or a substring of a person's local part.
+const NOISE_SENDER_LOCAL_PARTS: ReadonlySet<string> = new Set([
+  'no_reply', 'no.reply', 'do_not_reply', 'noresponder', 'no-responder',
+  'notificaciones', 'notificacoes', 'ne-pas-repondre', 'nepasrepondre', 'keine-antwort',
+]);
+
+/** A sender's address components; null means the input had no @ separator. */
+export interface SenderMailbox {
+  localPart: string;
+  domain: string | null;
+}
+
+/** Classify mailbox identity without treating a domain word as a local-part alias. */
+export function isNoiseSenderMailbox(mailbox: SenderMailbox): boolean {
+  const local = mailbox.localPart.toLowerCase();
+  const domain = mailbox.domain?.toLowerCase() ?? null;
+  // #5103: the Meet notes sender is an exact mailbox, not a domain-wide rule.
+  if (local === 'gemini-notes' && domain === 'google.com') return true;
+  // Retain the old substring rules, including notification(s) followed by @.
+  // Checking that boundary explicitly keeps the components separate and also
+  // preserves the string API's historical handling of malformed inputs.
+  if (NOISE_SENDER_SUBSTRINGS.some((p) => local.includes(p) || (domain?.includes(p) ?? false)
+    || (p.endsWith('@') && domain !== null && local.endsWith(p.slice(0, -1))))) return true;
+  return local.length > 0 && domain !== null && NOISE_SENDER_LOCAL_PARTS.has(local);
+}
 
 export function isNoiseSender(fromAddress: string): boolean {
-  const f = fromAddress.toLowerCase();
-  return GOOGLE_SYSTEM_SENDERS.has(f) || NOISE_SENDER_SUBSTRINGS.some((p) => f.includes(p));
+  const at = fromAddress.lastIndexOf('@');
+  return isNoiseSenderMailbox({
+    localPart: at < 0 ? fromAddress : fromAddress.slice(0, at),
+    domain: at < 0 ? null : fromAddress.slice(at + 1),
+  });
 }
 
 const BULK_PRECEDENCE = new Set(['bulk', 'list', 'junk']);

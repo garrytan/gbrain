@@ -11,6 +11,7 @@
  * Pure function — no engine, no I/O. Synthetic data only.
  */
 import { describe, expect, test } from 'bun:test';
+import * as senderRules from '../src/core/google/google-render.ts';
 
 import {
   asksQuestion,
@@ -96,7 +97,50 @@ interface CorpusCase {
     | { type: 'unanswered_inbound' | 'unanswered_outbound'; counterparty: string };
 }
 
+const LOCALIZED_NO_REPLY_ALIASES = [
+  'no_reply', 'no.reply', 'do_not_reply', 'noresponder', 'no-responder',
+  'notificaciones', 'notificacoes', 'ne-pas-repondre', 'nepasrepondre', 'keine-antwort',
+];
+
+// Each contract begins with the existing string API's real regression. The
+// structured checks then distinguish local-part identity from a domain word.
+for (const alias of LOCALIZED_NO_REPLY_ALIASES) {
+  test(`complete mailbox local-part alias: ${alias}`, () => {
+    expect(senderRules.isNoiseSender(`${alias}@example.com`)).toBe(true);
+    expect(senderRules.isNoiseSenderMailbox({ localPart: alias, domain: 'example.com' })).toBe(true);
+    expect(senderRules.isNoiseSenderMailbox({ localPart: 'alice', domain: `${alias}.example` })).toBe(false);
+    expect(senderRules.isNoiseSenderMailbox({ localPart: `${alias}-team`, domain: 'example.com' })).toBe(false);
+    expect(senderRules.isNoiseSenderMailbox({ localPart: `team-${alias}`, domain: 'example.com' })).toBe(false);
+    expect(senderRules.isNoiseSender(alias)).toBe(false);
+    expect(senderRules.isNoiseSender(`${alias}@@example.com`)).toBe(false);
+    expect(senderRules.isNoiseSender(`${alias.toUpperCase()}@EXAMPLE.COM`)).toBe(true);
+  });
+}
+
+test('mailbox classification preserves legacy rules and exact system identity', () => {
+  expect(senderRules.isNoiseSender('no_reply@example.com')).toBe(true);
+  expect(senderRules.isNoiseSender('prefix-notifications@example.com')).toBe(true);
+  expect(senderRules.isNoiseSender('notifications')).toBe(false);
+  expect(senderRules.isNoiseSender('notification@@example.com')).toBe(true);
+  expect(senderRules.isNoiseSender('noreply')).toBe(true);
+  expect(senderRules.isNoiseSenderMailbox({ localPart: 'alice', domain: 'noreply.example' })).toBe(true);
+  expect(senderRules.isNoiseSenderMailbox({ localPart: 'alice', domain: 'notifications.example' })).toBe(false);
+  expect(senderRules.isNoiseSenderMailbox({ localPart: 'gemini-notes', domain: 'google.com' })).toBe(true);
+  expect(senderRules.isNoiseSenderMailbox({ localPart: 'gemini-notes', domain: 'example.com' })).toBe(false);
+  expect(senderRules.isNoiseSenderMailbox({ localPart: 'gemini-notes-extra', domain: 'google.com' })).toBe(false);
+});
+
 const CASES: CorpusCase[] = [
+  ...LOCALIZED_NO_REPLY_ALIASES.map((alias): CorpusCase => ({
+    name: `inbound from localized or separator no-reply alias ${alias} opens no loop`,
+    messages: [msg({ from: `${alias}@example.com`, to: ['me@example.com'], ageHours: 48 })],
+    expect: null,
+  })),
+  ...['alice@example.com', 'notificaciones-team@example.com', 'team-no_reply@example.com'].map((from): CorpusCase => ({
+    name: `human sender ${from} remains reply owed`,
+    messages: [msg({ from, to: ['me@example.com'], ageHours: 48 })],
+    expect: { type: 'unanswered_inbound', counterparty: from },
+  })),
   // ── Inbound: I owe the reply ───────────────────────────────────────────────
   {
     name: 'inbound to me in To:, 48h old → unanswered_inbound',
