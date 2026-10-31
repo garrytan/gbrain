@@ -425,6 +425,7 @@ test/purge-fact.test.ts
 test/purge-global-marker.test.ts
 test/purge-missing-cache-6911.test.ts
 test/purge-read-surfaces.test.ts
+test/purge-root-metafile-7613.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
 test/read-meta-diag.test.ts
 test/recall-page-fill.test.ts
