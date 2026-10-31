@@ -352,6 +352,17 @@ export async function retractRemovedTimelineEntries(
     for (const key of markdownTimelineKeys(text, slug)) if (wanted.has(key)) produced.add(key);
     for (const entry of supersededCitationTimeline(text)) if (wanted.has(tupleKey(entry))) superseded.add(tupleKey(entry));
   };
+  // Older parsers split dated bullet text at the first bare hyphen. Retire
+  // only those rows that reconstruct an exact current markdown row on the
+  // same date; unrelated rows remain subject to version provenance below.
+  const currentEntries = typeof current === 'string'
+    ? extractTimelineFromContent(current, slug)
+    : [];
+  for (const row of extra) {
+    if (row.source === 'markdown') continue;
+    if (currentEntries.some(entry => entry.date === row.date && entry.source === 'markdown'
+      && `${row.source}-${row.summary}` === entry.summary)) produced.add(tupleKey(row));
+  }
   const seen = new Set(typeof current === 'string' ? [] : current.runs ?? []);
   for (const version of versions) {
     if (version.body_storage !== 'segmented') { addText(`${version.compiled_truth}\n${version.timeline ?? ''}`); continue; }
