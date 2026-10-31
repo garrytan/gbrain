@@ -44,6 +44,7 @@ test/company-brain-policy.test.ts
 test/company-brain-runtime.test.ts
 test/consolidate-fenced-close-reimport.test.ts
 test/consolidate-same-instant-6023.test.ts
+test/contact-rows-drift-8109.test.ts
 test/conversation-facts-outcome-marker-purge-7778.test.ts
 test/conversation-facts-oversized-sidecar.test.ts
 test/conversation-facts-purged-claim-7438.test.ts
