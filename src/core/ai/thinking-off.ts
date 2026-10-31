@@ -41,7 +41,11 @@
  * alone is not an off switch: only the native recipes listed here get an
  * option. Every other route is untouched; when it still thinks by default
  * (`isThinkingModel`: Claude 5 behind claude-cli, a local reasoning family,
- * GLM) its cap gets the headroom.
+ * GLM) its cap gets the headroom. A `deepseek` prefix whose configured
+ * `provider_base_urls.deepseek` names another origin (an OpenAI-compatible
+ * proxy such as Ollama Cloud) is not the native route (#7662): it gets no
+ * option, since that server does not honour DeepSeek's switch, and its cap
+ * gets the headroom like any other route that thinks by default.
  *
  * Gemini rows follow Google's generateContent thinking docs; OpenAI rows
  * follow the reasoning guide. Both were checked live on 2026-10-07
@@ -49,6 +53,20 @@
  */
 
 import { splitProviderModelId } from '../model-id.ts';
+import { deepseek } from './recipes/deepseek.ts';
+
+let configuredBaseUrls: Readonly<Record<string, string>> | undefined;
+
+/** The gateway's configured `base_urls`, set by configureGateway and cleared with its state (#7662). */
+export function setThinkingOffBaseUrls(urls: Readonly<Record<string, string>> | undefined): void {
+  configuredBaseUrls = urls;
+}
+
+function nativeDeepseekRoute(): boolean {
+  const url = configuredBaseUrls?.deepseek;
+  if (!url) return true;
+  try { return new URL(url).origin === new URL(deepseek.base_url_default!).origin; } catch { return false; }
+}
 
 export interface ThinkingOffControl {
   /** The provider-options namespace and the keys set there; absent when the route has no per-call option. */
@@ -112,6 +130,7 @@ function openaiControl(model: string): ThinkingOffControl | undefined {
 export function thinkingOffControl(modelStr: string): ThinkingOffControl | undefined {
   const { provider, model: rawModel } = splitProviderModelId(modelStr);
   if (!provider) return undefined;
+  if (provider === 'deepseek' && !nativeDeepseekRoute()) return undefined;
   const model = rawModel.trim().toLowerCase();
   if (provider === 'anthropic' || provider === 'deepseek') return { set: { namespace: provider, options: THINKING_DISABLED }, disables: true };
   if (provider === 'openrouter') return model.startsWith('deepseek/') ? { set: { namespace: provider, options: THINKING_DISABLED }, disables: true } : undefined;
