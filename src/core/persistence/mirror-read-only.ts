@@ -31,10 +31,11 @@ export async function sourceMirrorReadOnly(engine: SqlEngine, sourceId: string, 
  * legacy disk writers (write-through, fact fences, timeline, forget, unfenced facts) skip on it as managed publication does.
  */
 export async function readOnlyCheckout(engine: SqlEngine, sourceId: string, lock = false): Promise<'mirror_read_only' | 'url_clone' | null> {
-  const [row] = await engine.executeRaw<{ read_only: boolean; local_path: string | null; config: unknown }>(
-    `SELECT COALESCE(config->>'mirror_read_only','false')='true' AS read_only, local_path, config FROM sources WHERE id=$1${lock ? ' FOR SHARE' : ''}`, [sourceId]);
+  const [row] = await engine.executeRaw<{ local_path: string | null; config: unknown }>(
+    `SELECT local_path, config FROM sources WHERE id = $1${lock ? ' FOR SHARE' : ''}`, [sourceId]);
   if (!row) return null;
-  if (row.read_only === true) return 'mirror_read_only';
+  const config = typeof row.config === 'string' ? JSON.parse(row.config) as Record<string, unknown> : (row.config ?? {}) as Record<string, unknown>;
+  if (String(config.mirror_read_only) === 'true') return 'mirror_read_only';
   return await urlCloneReadOnly(engine, sourceId, row) ? 'url_clone' : null;
 }
 
