@@ -413,7 +413,7 @@ const open_loops: Operation = {
     id: { type: 'number', description: 'Fetch the single loop with this id (ids come from earlier open_loops results). Matches any status unless `status` is passed; the source scope still applies, and the grouped view omits `text`.' },
     loop_type: { type: 'string', enum: ['commitment_owed_by_me', 'commitment_owed_to_me', 'unanswered_inbound', 'unanswered_outbound', 'decision_pending'], description: 'Filter to one loop type.' },
     counterparty: { type: 'string', description: 'Filter to one counterparty (slug or email).' },
-    limit: { type: 'number', description: 'Grouped: max groups (default 3). Flat: max loops (default 50). The internal fetch is capped at 500 rows; `truncated: true` marks a hit.' },
+    limit: { type: 'number', description: 'Grouped: max groups (default 3). Flat: max loops (default 50); `count` is the number matched (at most 500) and `truncated: true` marks a list cut by this limit or by the 500-row internal cap (then `count` is a lower bound).' },
     include_context: { type: 'boolean', description: 'Attach the counterparty entity card per group (trusted local only). Default true.' },
     source_id: { type: 'string', description: "Scope to one source (e.g. the google source, when the caller's transport is bound elsewhere). Remote callers must hold a grant covering it." },
     all_sources: { type: 'boolean', description: 'Trusted local: span every source in the brain. Remote callers stay inside their grant.' },
@@ -481,21 +481,22 @@ const open_loops: Operation = {
       ...(p.loop_type ? { loopType: p.loop_type as LoopType } : {}),
       ...(p.counterparty ? { counterparty: p.counterparty as string } : {}),
       ...(loopId === undefined ? {} : { loopId }),
-      limit: 500,
+      limit: 501,
     });
+    const capped = loops.length > 500;
+    if (capped) loops.length = 500;
     const freshness = await googleSourceFreshness(ctx, scope);
     const noGoogleSources = freshness.sources.length === 0;
     const partialStaleSources = freshness.stale ? [] : freshness.staleSources;
     const coverage = await heldCoverage(ctx, freshness.sources, trusted);
     const deepLinks = trusted ? await deepLinksFor(ctx, loops) : new Map<string, string>();
 
-    const truncated = loops.length >= 500;
     if (groupBy === 'none') {
       const limit = Math.min(Math.max((p.limit as number | undefined) ?? 50, 1), 500);
       return {
         loops: loops.slice(0, limit).map((l) => loopView(l, trusted, deepLinks)),
         count: loops.length,
-        truncated,
+        truncated: capped || loops.length > limit,
         stale: freshness.stale,
         sources: freshness.sources,
         ...(partialStaleSources.length > 0 ? { stale_sources: partialStaleSources } : {}),
@@ -597,7 +598,7 @@ const open_loops: Operation = {
       no_counterparty: noCounterparty,
       ...(loopId === undefined ? { withheld_noise: await withheldNoise(ctx, freshness.sources) } : {}),
       count: loops.length,
-      truncated,
+      truncated: capped,
       stale: freshness.stale,
       sources: freshness.sources,
       ...(partialStaleSources.length > 0 ? { stale_sources: partialStaleSources } : {}),
