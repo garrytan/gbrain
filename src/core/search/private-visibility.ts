@@ -478,8 +478,8 @@ export async function folderRestricted(engine: Pick<BrainEngine, 'executeRaw'>, 
 }
 
 /** `page` with folder_restricted looked up (folderRestricted), for a page read without it, such as a page snapshot. */
-export async function withFolderRestricted<P extends { source_id: string; slug: string }>(engine: Pick<BrainEngine, 'executeRaw'>, page: P): Promise<P & { folder_restricted: boolean }> {
-  return { ...page, folder_restricted: await folderRestricted(engine, page.source_id, page.slug) };
+export async function withFolderRestricted(engine: Pick<BrainEngine, 'executeRaw'>, page: { source_id: string; slug: string; type?: string | null; frontmatter?: unknown }): Promise<{ type?: string | null; frontmatter?: unknown; folder_restricted: boolean }> {
+  return { type: page.type, frontmatter: page.frontmatter, folder_restricted: await folderRestricted(engine, page.source_id, page.slug) };
 }
 
 /**
