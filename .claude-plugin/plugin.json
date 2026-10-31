@@ -1,6 +1,6 @@
 {
   "name": "gbrain",
-  "version": "0.60.452.0",
+  "version": "0.60.521.0",
   "description": "Personal knowledge brain for your coding agent — hybrid search, synthesis, graph traversal, and durable cross-session memory over Postgres/PGLite with pgvector, plus a curated brain-first skill set.",
   "author": {
     "name": "Garry Tan",
@@ -30,5 +30,18 @@
       ],
       "cwd": "${CLAUDE_PLUGIN_ROOT}"
     }
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "env GBRAIN_HOOK_LANE=plugin \"${CLAUDE_PLUGIN_ROOT}/.agents/gbrain-launcher\" hook user-prompt",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
   }
 }

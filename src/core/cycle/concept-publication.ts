@@ -18,6 +18,7 @@ import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence, stripTakesFence } 
 import { isDbOnly, loadStorageConfig } from '../storage-config.ts';
 import { publishMaintenancePages, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
+import { keepsCanonicalFile } from '../persistence/git-declared.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { acquirePageLock } from '../page-lock.ts';
 import { derivedFileTarget, writeDerivedPageThrough } from './derived-write-through.ts';
@@ -72,7 +73,7 @@ async function prepareManagedConcept(engine: BrainEngine, authority: Maintenance
   if ((snapshot?.revision ?? null) !== expectedRevision) {
     throw Object.assign(new Error('The concept page changed during synthesis.'), { code: 'revision_conflict' });
   }
-  let dbOnly = !snapshot?.page.source_path;
+  let dbOnly = !snapshot || !keepsCanonicalFile(snapshot.page);
   if (!dbOnly) {
     try {
       const storage = loadStorageConfig(brainDir);

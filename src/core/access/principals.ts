@@ -3,7 +3,7 @@
  *
  * A page names its readers in frontmatter `readable_by` (a string or a list).
  * normalizeReaders() is the row twin of the SQL function gbrain_access_readers()
- * (schema migration v274); test/access-principals.test.ts holds the two equal
+ * (schema migration v281); test/access-principals.test.ts holds the two equal
  * on a generated corpus, so the predicate and every TypeScript check agree.
  *
  *   absent key            → null (no page-level restriction)
@@ -13,6 +13,8 @@
 
 export const ACCESS_ID_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 export const NOBODY = '!nobody';
+/** GST-359 C2: where a member's own facts live, `memory/members/<member>` (access/member-facts.ts). */
+export const MEMBER_PAGE_PREFIX = 'memory/members/';
 const MAX_READERS = 256;
 
 export type Principal = `member:${string}` | `group:${string}`;

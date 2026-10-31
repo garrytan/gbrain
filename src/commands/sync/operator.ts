@@ -219,6 +219,8 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
   const live = status.live;
   console.log(`  live: ${live ? `${live.kind}${live.job_id !== null ? ` job #${live.job_id}` : live.id ? ` ${live.id}` : ''}${live.pid ? ` (PID ${live.pid})` : ''} holds the drain lease since ${live.started_at ?? '?'}`
     + `${live.progress ? `, ${live.progress.committed} page(s) committed since` : ''}${live.stalled ? ', STALLED (no commit or save for the stall window)' : ''}` : 'nothing holds the drain lease'}`);
+  const cut = status.interrupted;
+  if (cut) console.log(`  INTERRUPTED: pass ${cut.pass_id.slice(0, 8)} stopped before it ended (last write ${cut.since})${cut.holder ? `; its holder ${cut.holder.kind}${cut.holder.pid ? ` (PID ${cut.holder.pid})` : ''} stopped renewing the lease at ${cut.holder.last_heartbeat_at ?? '?'}${cut.holder.progress ? ` after committing ${cut.holder.progress.committed} page(s)` : ''}` : ''}`);
   const pass = status.convergence?.dry_run === false ? status.convergence : null;
   if (pass) console.log(`  newest pass: ${pass.outcome}${pass.stop_reason ? ` (${pass.stop_reason})` : ''}, round ${pass.round}, pinned ${pass.target.slice(0, 8)}; `
     + `${pass.converged_target ? `last converged at ${pass.converged_target.slice(0, 8)} (${pass.converged_at})` : 'no converged stamp stored'}`);
@@ -279,6 +281,7 @@ export function syncStatusHeadline(status: Pick<SyncStatus, 'source_id' | 'state
     case 'head_blocked': return `Source ${status.source_id} is blocked: its oldest write waits on something only an operator clears.`;
     case 'recovery_blocked': return `Source ${status.source_id} is blocked: a write's recovery record found changed bytes on disk.`;
     case 'pass_unfinished': return `Source ${status.source_id} is resumable: the newest sync pass did not finish; the next sync continues it.`;
+    case 'pass_interrupted': return `Source ${status.source_id} is resumable: the newest sync pass stopped before it ended and no process owns it (killed, crashed or stopped by an unrecorded error); the next sync continues it.`;
     case 'pass_abandoned': return `Source ${status.source_id} is blocked: its sync passes keep stopping before they end; another plain sync will not change that (report what doctor shows).`;
     case 'not_converged': return `Source ${status.source_id} is resumable: the newest sync pass ran out of rounds before every path settled.`;
     case 'settle_mismatch': return `Source ${status.source_id} is resumable: a path keeps settling without reading settled; three passes in a row hold it.`;

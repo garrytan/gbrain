@@ -202,6 +202,17 @@ for (const backend of testBackends()) {
     }, { databaseUrl });
   }, 120_000);
 
+  test(`${backend}: facts from a private transcript publish private on a world-default brain`, async () => {
+    await managedBrain(async brain => {
+      const { engine } = brain;
+      await engine.setConfig('facts.default_visibility', 'world');
+      await putPage(brain, transcript().replace('date: 2026-09-28', 'date: 2026-09-28\nvisibility: private'));
+      const calls = { n: 0 };
+      await extract(engine, calls);
+      expect({ calls: calls.n, visibility: [...new Set((await extractorRows(engine)).map(row => row.visibility))] }).toEqual({ calls: 1, visibility: ['private'] });
+    }, { databaseUrl });
+  });
+
   test(`${backend}: a crash after admission replays the stored batch with zero model calls`, async () => {
     await managedBrain(async brain => {
       const { engine } = brain;

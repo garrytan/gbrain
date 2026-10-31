@@ -140,7 +140,7 @@ describe('#6712 PR 4a convergence shadow (pglite)', () => {
     expect(committed.counts.import ?? 0).toBe(0);
   }, { setup }), 120_000);
 
-  test('probe 46: a parser change on fileSame ∧ dbSame pages is reparse with zero decisions; --full makes every page reparse', () => managedBrain(async ({ engine }) => {
+  test('probe 46: a parser change on fileSame ∧ dbSame pages is reparse with zero decisions; --full makes every page reparse that is not already current', () => managedBrain(async ({ engine }) => {
     expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
     await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys, '{0,parser,parser_version}', '"import=0"')
       WHERE op=$1 AND completed_keys->0->>'origin'='notes/alpha.md'`, [SYNC_IMPORT_PROVENANCE_OP]);
@@ -148,6 +148,11 @@ describe('#6712 PR 4a convergence shadow (pglite)', () => {
     expect(receipt.counts).toEqual({ matched: 2, reparse: 1 });
     expect(receipt.decisions).toEqual({ both: 0, unknown: 0, deleted: 0 });
     expect(receipt.samples.reparse![0]).toMatchObject({ path: 'notes/alpha.md', reason: 'parser or schema pack changed', action: 'owner' });
+    // A current page satisfies the full obligation in place (sync-classify.ts `inPlace`); one chunked at an older chunker
+    // version, which a plain pass leaves matched, is reparsed under --full.
+    expect((await shadowConvergence(engine, { sourceId: 'default', full: true }))!.counts).toEqual({ matched: 2, reparse: 1 });
+    await engine.executeRaw("UPDATE pages SET chunker_version=chunker_version-1 WHERE source_id='default'");
+    expect((await shadowConvergence(engine, { sourceId: 'default' }))!.counts).toEqual({ matched: 2, reparse: 1 });
     expect((await shadowConvergence(engine, { sourceId: 'default', full: true }))!.counts).toEqual({ reparse: 3 });
   }, { setup }), 120_000);
 

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 267201,
-    "stdoutSha256": "9572ed8710168f1ca343b8471caf198aad30542b1e0c007e903f2472235d2c02",
+    "stdoutBytes": 264563,
+    "stdoutSha256": "0d71d7f1367627c5f9c27d3d7a9b09513131117000012eed0d35ab9ede69095f",
     "toolNames": [
       "remember",
       "entity",
@@ -156,8 +156,6 @@
       "purge_fact",
       "list_page_purges",
       "unpurge_page",
-      "memory_recall",
-      "memory_write",
       "find_contradictions",
       "find_experts",
       "find_trajectory",
@@ -840,7 +838,7 @@
         "schema": {
           "properties": {
             "detach": {
-              "description": "Restore a page whose recorded canonical file is gone from the checkout as a database-only page: it forgets the file, so sync never deletes it again. Only accepted when a plain restore refuses with canonical_file_absent; ask the user first.",
+              "description": "Restore a page whose recorded canonical file is gone from the checkout as a database-only page: it forgets the file, so sync never deletes it again. Only accepted when a plain restore refuses with canonical_file_absent, or for a page under a declared storage.db_only dir whose recorded file left the checkout; ask the user first.",
               "type": "boolean"
             },
             "expected_revision": {
@@ -6967,6 +6965,7 @@
         "parameters": {
           "all_subjects": "boolean?",
           "confirm": "string?",
+          "continue": "boolean?",
           "dry_run": "boolean?",
           "expected_revision": "string?",
           "id": "number?",
@@ -6987,6 +6986,10 @@
             "confirm": {
               "description": "The confirmation token from the dry run (first 8 hex of the claim fingerprint).",
               "type": "string"
+            },
+            "continue": {
+              "description": "With status: first continue the purge's sweep of stored derivation results (derivation_sweep pending or stalled), then report.",
+              "type": "boolean"
             },
             "dry_run": {
               "description": "Return the receipt with would-remove counts and the confirmation token; changes nothing.",
@@ -7085,108 +7088,6 @@
           "type": "object"
         },
         "scope": "admin"
-      },
-      {
-        "description": "Facts for the person this call serves, one per line: their own recent facts first, then facts matching query. Never page bodies. For QM; agents use recall.",
-        "idempotent": true,
-        "local_only": false,
-        "mutating": false,
-        "name": "memory_recall",
-        "parameters": {
-          "acting_user": "string?",
-          "max_chars": "number?",
-          "query": "string"
-        },
-        "required_scopes": [],
-        "schema": {
-          "properties": {
-            "acting_user": {
-              "description": "Set by the trusted system: equal to the x-qm-actor header, or omit.",
-              "type": "string"
-            },
-            "max_chars": {
-              "description": "Text cap, 200-12000 (default 6000).",
-              "type": "number"
-            },
-            "query": {
-              "description": "What the turn is about; ranks the facts.",
-              "type": "string"
-            }
-          },
-          "required": [
-            "query"
-          ],
-          "type": "object"
-        },
-        "scope": "read"
-      },
-      {
-        "description": "Save facts for the person this call serves, readable by them alone. Needs an attested person. The same idempotency_key replays the first receipt. For QM; agents use remember.",
-        "idempotent": true,
-        "local_only": false,
-        "mutating": true,
-        "name": "memory_write",
-        "parameters": {
-          "acting_user": "string?",
-          "facts": "array",
-          "idempotency_key": "string"
-        },
-        "required_scopes": [],
-        "schema": {
-          "properties": {
-            "acting_user": {
-              "description": "Set by the trusted system: equal to the x-qm-actor header, or omit.",
-              "type": "string"
-            },
-            "facts": {
-              "description": "1-20 facts.",
-              "items": {
-                "additionalProperties": false,
-                "properties": {
-                  "fact": {
-                    "description": "One claim.",
-                    "type": "string"
-                  },
-                  "kind": {
-                    "description": "Default fact.",
-                    "enum": [
-                      "event",
-                      "preference",
-                      "commitment",
-                      "belief",
-                      "fact"
-                    ],
-                    "type": "string"
-                  },
-                  "provenance": {
-                    "description": "Where it came from (<=200 chars).",
-                    "type": "string"
-                  },
-                  "valid_from": {
-                    "description": "When it became true (ISO 8601).",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "fact",
-                  "provenance"
-                ],
-                "type": "object"
-              },
-              "type": "array"
-            },
-            "idempotency_key": {
-              "description": "1-128 visible ASCII characters; the same key replays this write.",
-              "type": "string"
-            }
-          },
-          "required": [
-            "facts",
-            "idempotency_key"
-          ],
-          "type": "object"
-        },
-        "scope": "write"
       },
       {
         "description": "Return suspected-contradiction findings from the most recent `gbrain eval suspected-contradictions` probe run, optionally filtered by slug and/or severity. Use this when the user asks 'what's inconsistent in my brain', 'show me contradictions about Acme', 'high-severity issues only', or wants to act on the probe's findings without re-running it. Returns {contradictions: [{a, b, severity, axis, confidence, resolution_command}]}. Remote, source-scoped or min_trust callers get only findings whose two sides they can read now (each side re-read live, with source_id, trust_tier and origin) and total_visible instead of the run total. Reads the stored run without triggering a new probe; users run `gbrain eval suspected-contradictions` for that.",

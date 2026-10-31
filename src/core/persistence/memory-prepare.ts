@@ -1,48 +1,33 @@
 import type { BrainEngine, NewFact } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
-import type { Action } from '../agent-output.ts';
 import { opError } from '../ops/contract.ts';
-import { readFix } from '../ops/op-fix.ts';
 import { pageIdentityError } from './page-identity.ts';
 import { assertPageRevision } from '../page-state/types.ts';
-import { factsFenceSection, parseFactsFence, strikeFactRowInPage, upsertFactRow, formatFenceDate } from '../facts-fence.ts';
-import { serializePageToMarkdown } from '../markdown.ts';
-import { pageBodyOverCeilingError } from '../page-body/page-shape.ts';
-import { materializedPage, segmentedOverCeiling } from './segmented-apply.ts';
 import { assertFactNotWithdrawn, decideReplacement, decideSingleFact, prepareFactEmbedding, type SingleFactIntent } from '../facts/single-prepare.ts';
 import { supersededValidUntil } from '../facts/supersede-interval.ts';
 import { factEmbeddingDisabled } from '../embedding-disabled.ts';
 import { engineMutationPrecondition, parseMutationPrecondition } from './preconditions.ts';
-import { preparePageMutation } from './page-prepare.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
 import { appendContextNote, type InferredVia } from '../facts/subject-infer.ts';
 import { inferenceNote } from '../facts/subject-infer-write.ts';
-import { normalizeTargetFences } from '../fence-repair/import-step.ts';
-import { refuseUnparsedRewrite } from '../fence-repair/refusal.ts';
 import { requestChannelTrust } from '../trust/channel.ts';
 import { gateField, gateInput, heldOutcome, loadWriteGateConfig } from '../trust/gate-outcomes.ts';
 import { decideFactWrite, recordFlaggedRow, recordWriteGateHold } from '../write-gate-store.ts';
 import { writeGateRejectedError } from '../write-gate.ts';
 import { lexicalContestCandidate, recordContestedFact, supersessionGuarded } from '../trust/supersede-handlers.ts';
 import { storedTrustTier } from '../trust/tier.ts';
-import { pageFencesNormalized } from '../fence-repair/report.ts';
-import { fenceAppendPendingTier, withPendingFenceRows } from '../eligibility/fence-overlay.ts';
-import { withPageTierKept } from '../trust/fence-append.ts';
+import { fenceAppendPendingTier } from '../eligibility/fence-overlay.ts';
+import { prepareFenceFactAppend, prepareFenceFactCreate, requestReceiptFix, type FenceFactAppend } from '../facts/fence-fact-append.ts';
 import { privateProvenanceFilterFragment, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
 import { tightenToPage } from '../facts/visibility.ts';
 import { noteBelief } from '../belief/ledger.ts';
-import { MEMBER_PAGE_PREFIX, memberPageFrontmatter, onMemberPageSql } from '../access/member-facts.ts';
+import { MEMBER_PAGE_PREFIX, memberPageFrontmatter, memberPageIsOwn, memberPageNotOwned, onMemberPageSql } from '../access/member-facts.ts';
 
-function receiptFix(row: WriteRequest): Action {
-  return row.principal_kind === 'local_cli'
-    ? readFix(`Reads request ${row.request_id}'s durable receipt: its state and outcome, read-only.`, { argv: ['gbrain', 'write-request', '--', row.request_id] })
-    : readFix(`Shows source ${row.source_id}'s writer and requests in flight, including ${row.request_id}, read-only.`, { argv: ['gbrain', 'sources', 'writer', 'status', '--source', row.source_id, '--json'] });
-}
 function conflict(row: WriteRequest): never {
   throw opError('revision_conflict', 'The memory changed during semantic preparation.',
     `Another write changed the facts or entity page in source ${row.source_id} while remember request ${row.request_id} was prepared, so it did not save. Check that request's receipt; once it shows conflict, nothing was saved and remembering the fact again is safe.`,
-    { fix: receiptFix(row) });
+    { fix: requestReceiptFix(row) });
 }
 function candidateState(value: Awaited<ReturnType<typeof decideSingleFact>>): string {
   const c = value.candidate;
@@ -76,30 +61,13 @@ async function activeUnlinkedCopy(engine: BrainEngine, sourceId: string, input: 
   return row ? Number(row.id) : null;
 }
 
-/**
- * GST-359 C2: a member's first fact creates its member page (frontmatter readable_by the member alone) through the
- * same put path as every fence append, so it is git-first wherever a repo exists. The put requires the page still
- * absent; a sibling that created it first makes this attempt conflict and the retry appends to it.
- */
-async function prepareMemberPageCreation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, signal: AbortSignal | undefined, writerTier: Parameters<typeof fenceAppendPendingTier>[0],
-  fenceRow: Omit<Parameters<typeof upsertFactRow>[1], 'rowNum'>): Promise<{ page: PreparedMutation; rowNum: number }> {
-  const [indexed] = await engine.executeRaw<{ n: number }>('SELECT COALESCE(MAX(row_num),0)::int AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [row.source_id, row.slug]);
-  const appended = upsertFactRow(`# Memory of ${row.slug.slice(MEMBER_PAGE_PREFIX.length)}\n`, { ...fenceRow, rowNum: (indexed?.n ?? 0) + 1 });
-  const { expected_revision: _ignored, ...intent } = row.intent ?? {};
-  const content = `${memberPageFrontmatter(row.slug.slice(MEMBER_PAGE_PREFIX.length))}\n${appended.body}`;
-  const page = await withPendingFenceRows({ sourceId: row.source_id, slug: row.slug, rowNums: [appended.rowNum], tier: fenceAppendPendingTier(writerTier) },
-    () => preparePageMutation(engine, { ...row, intent: { ...intent, content, force: false } }, config, undefined, signal));
-  if (page.observedRevision !== null) conflict(row);
-  return { page, rowNum: appended.rowNum };
-}
-
 /** Every retry renders the semantic append from the latest coherent snapshot. */
 export async function prepareMemoryMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, signal?: AbortSignal): Promise<PreparedMutation> {
   signal?.throwIfAborted();
   if (row.operation !== 'remember' || !row.intent) {
     throw opError('storage_error', 'Unknown memory mutation intent.',
       `Request ${row.request_id} in source ${row.source_id} carries no remember intent, so the coordinator cannot apply it and nothing was saved. This is an internal fault: inspect the request, then report it to the user.`,
-      { fix: receiptFix(row) });
+      { fix: requestReceiptFix(row) });
   }
   const p = row.intent;
   const input: SingleFactIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as SingleFactIntent['kind'],
@@ -109,6 +77,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   // GST-359 C2: a member page another write created after this one was accepted is the same page, not a recreation.
   const createdSince = p.member_page === true && row.page_id === null && snapshot !== null && !snapshot.page.deleted_at;
   if ((snapshot?.page.id ?? null) !== row.page_id && !createdSince) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted entity was deleted or recreated.');
+  if (p.member_page === true && snapshot && !memberPageIsOwn(row.slug, snapshot.page.frontmatter)) throw memberPageNotOwned(row.slug);
   // A defaulted visibility never lands broader than the target page as it stands at publication.
   if (p.visibility_defaulted === true && snapshot) input.visibility = tightenToPage(input.visibility, await withFolderRestricted(engine, snapshot.page));
   if (p.expected_revision !== undefined) assertPageRevision(snapshot, engineMutationPrecondition(parseMutationPrecondition(p)));
@@ -160,7 +129,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const validUntil = p.valid_until ? new Date(String(p.valid_until)) : null;
   const validFrom = new Date(String(p.valid_from));
   const context = p.entity_inferred ? appendContextNote(null, inferenceNote(p.entity_inferred as InferredVia)) : undefined;
-  const fact: NewFact = { ...input, source: String(p.provenance).trim(), valid_from: validFrom, valid_until: validUntil,
+  const fact: NewFact & { valid_from: Date } = { ...input, source: String(p.provenance).trim(), valid_from: validFrom, valid_until: validUntil,
     confidence: 1, embedding, embedding_model, source_session: typeof p.session_id === 'string' ? p.session_id : null,
     ...(context ? { context } : {}) };
   // #5575 B3: the row-level write gate at the request's declared tier (ENG-18); a held fact inserts nothing.
@@ -171,62 +140,25 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   if (gate.action === 'reject') throw writeGateRejectedError(gate.assessment);
   if (gate.action === 'hold') return { observedRevision, validate, apply: async tx => heldOutcome(gate.assessment, (await recordWriteGateHold(tx, gate.hold!)).holdId) };
   const retiredUntil = status === 'superseded' ? supersededValidUntil(decision.candidate!, validFrom) : null;
-  let page: PreparedMutation | undefined;
-  let rowNum: number | undefined;
-  let fencesNormalized: Record<string, unknown> = {};
+  // The fact is published as a row of its entity page's facts fence, file before facts row (facts/fence-fact-append.ts).
+  let fence: FenceFactAppend | undefined;
   if (p.fence === true && snapshot) {
-    // Wave B: a segmented page is read back whole up to the single-string ceiling and rewritten through the put path.
-    if (segmentedOverCeiling(snapshot.page)) throw pageBodyOverCeilingError(snapshot.page, 'remember facts fence write');
-    const base = await materializedPage(engine, snapshot.page);
-    // #6188 (D20): the stored fence is normalized in this same write; a residual refuses typed `target_fence_malformed`.
-    const target = await normalizeTargetFences(engine, { sourceId: row.source_id, slug: row.slug, kind: 'facts', page: base });
-    if (target.fixes.length) fencesNormalized = { fences_normalized: pageFencesNormalized({ sourceId: row.source_id, slug: row.slug, fixes: target.fixes,
-      writer: row.principal_kind, path: snapshot.page.source_path ?? null, remote: row.authority.remote }) };
-    // #6696 C9: a facts row the fence does not hold (extraction, a hand edit) still owns its row_num, so the new row numbers past both.
-    const [indexed] = await engine.executeRaw<{ n: number }>('SELECT COALESCE(MAX(row_num),0)::int AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [row.source_id, row.slug]);
-    // #6686: the fence is edited in the section it lives in (a lone timeline fence stays below the sentinel); the other section is kept byte for byte.
-    const section = factsFenceSection(target.page);
-    const fenced = { compiled_truth: target.page.compiled_truth, timeline: target.page.timeline ?? '' };
-    // #6385 R12: an entity fence that does not parse cleanly refuses typed instead of losing the rows it skipped.
-    const appended = refuseUnparsedRewrite(target.page, row.slug, row.source_id, () => upsertFactRow(fenced[section], {
-      claim: input.fact, kind: input.kind, visibility: input.visibility, confidence: 1, notability: 'medium', validFrom: formatFenceDate(validFrom),
-      validUntil: validUntil ? formatFenceDate(validUntil) : undefined, source: fact.source, context,
-      rowNum: Math.max(indexed?.n ?? 0, ...[fenced.compiled_truth, fenced.timeline].flatMap(text => parseFactsFence(text).facts.map(f => f.rowNum))) + 1 }));
-    rowNum = appended.rowNum;
-    let next = { ...fenced, [section]: appended.body };
     const old = decision.candidate;
-    if (status === 'superseded' && old?.source_markdown_slug === row.slug && old.row_num != null) {
-      next = strikeFactRowInPage(next, Number(old.row_num), rowNum, retiredUntil ? formatFenceDate(retiredUntil) : undefined);
-    }
-    const content = serializePageToMarkdown({ ...base, ...next }, snapshot.tags);
-    // Reuse the canonical parser/chunker and durable filesystem publication.
-    // The original caller revision was checked above; this CAS binds this render.
-    // #5575 ENG-1: the new row has no facts row yet; its chunks are cut at the append's tier.
-    page = await withPendingFenceRows({ sourceId: row.source_id, slug: row.slug, rowNums: [appended.rowNum], tier: fenceAppendPendingTier(writerTier) },
-      () => preparePageMutation(engine, { ...row, intent: { ...p, content, expected_revision: observedRevision, force: false } }, config, undefined, signal));
-    if (page.observedRevision !== observedRevision) conflict(row);
+    fence = await prepareFenceFactAppend(engine, row, config, snapshot, { fact, pendingTier: fenceAppendPendingTier(writerTier),
+      supersede: status === 'superseded' && old?.source_markdown_slug === row.slug && old.row_num != null ? { rowNum: Number(old.row_num), validUntil: retiredUntil } : undefined }, signal);
   } else if (p.fence === true && p.member_page === true) {
-    const created = await prepareMemberPageCreation(engine, row, config, signal, writerTier, { claim: input.fact, kind: input.kind, visibility: input.visibility,
-      confidence: 1, notability: 'medium', validFrom: formatFenceDate(validFrom), validUntil: validUntil ? formatFenceDate(validUntil) : undefined, source: fact.source, context });
-    ({ page, rowNum } = created);
+    fence = await prepareFenceFactCreate(engine, row, config, { fact, pendingTier: fenceAppendPendingTier(writerTier),
+      frontmatter: memberPageFrontmatter(row.slug.slice(MEMBER_PAGE_PREFIX.length)), heading: `# Memory of ${row.slug.slice(MEMBER_PAGE_PREFIX.length)}` }, signal);
   }
   // The belief ledger records the superseded fact in its own stream, so that stream's page key is held too.
   const supersededStream = status === 'superseded' ? decision.candidate!.source_markdown_slug ?? decision.candidate!.entity_slug ?? null : null;
   const additionalPageKeys = supersededStream && supersededStream !== row.slug ? [{ sourceId: row.source_id, slug: supersededStream }] : undefined;
+  const page = fence?.prepared ?? undefined;
   return { observedRevision, file: page?.file, ...(page?.exclusiveSources ? { exclusiveSources: page.exclusiveSources } : {}), ...(additionalPageKeys ? { additionalPageKeys } : {}), validate: async tx => { await validate(tx); await page?.validate?.(tx); }, apply: async tx => {
-    const pageReceipt = page ? await withPageTierKept(tx, { sourceId: row.source_id, slug: row.slug }, () => page!.apply(tx)) as { size_state?: unknown } | undefined : undefined;
     let id: number;
-    if (rowNum !== undefined) {
-      const inserted = await tx.insertFacts([{ ...fact, row_num: rowNum, source_markdown_slug: row.slug }], { source_id: row.source_id }); // gbrain-allow-direct-insert: coordinator atomically publishes the prepared canonical fact fence and its new indexed row
-      if (inserted.ids.length !== 1) {
-        const [occupant] = await tx.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num=$3', [row.source_id, row.slug, rowNum]);
-        throw opError('storage_error', 'The new canonical fact row was not indexed.',
-          `The fact row for request ${row.request_id} in source ${row.source_id} was not indexed, so its transaction rolled back.`
-          + (occupant ? ` Row ${rowNum} of ${row.slug} is already held by fact ${occupant.id}.` : '')
-          + ' Inspect the request before remembering again; if it repeats, run gbrain doctor --json and report it to the user.',
-          { fix: receiptFix(row) });
-      }
-      id = inserted.ids[0];
+    let pageReceipt: { size_state?: unknown } | undefined;
+    if (fence) {
+      ({ id, pageReceipt } = await fence.apply(tx));
     } else {
       const inserted = await tx.insertFact(fact, { source_id: row.source_id }); // gbrain-allow-direct-insert: journaled source-scoped semantic publication for subjectless or unresolved entity memory
       id = inserted.id;
@@ -242,7 +174,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     const flagged = gateField(gate.assessment, `f${id}`, await recordFlaggedRow(tx, gate, { table: 'facts', id, sourceId: row.source_id }));
     const superseded = status === 'superseded' ? decision.candidate! : undefined;
     return { ...outcome(id, status, input.entity_slug, validUntil, degraded, p, superseded?.id,
-      superseded !== undefined && superseded.entity_slug == null && input.entity_slug !== null), ...fencesNormalized,
+      superseded !== undefined && superseded.entity_slug == null && input.entity_slug !== null), ...fence?.fencesNormalized,
       ...(contestedBy ? { contested: contestedBy } : {}), ...(flagged ? { gate: flagged } : {}),
       ...(pageReceipt?.size_state ? { size_state: pageReceipt.size_state } : {}) };
   } };

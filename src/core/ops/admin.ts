@@ -3,6 +3,7 @@ import { readPolicyOpts } from './context.ts';
 import { attributeVersions, canReadWriteAttribution } from './attribution.ts';
 import { GET_VERSIONS_DEFAULT_LIMIT, GET_VERSIONS_REMOTE_MAX_LIMIT, pagingLimit, reportVersionPage } from './read-paging.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
+import { fenceTranscriptText, isQuotedPageType } from '../search/transcript-quote.ts';
 /**
  * Admin operation cluster — pure move from operations.ts (v0.46.x tranche 2).
  * Op consts stay module-private; `adminOperations` below lists them in
@@ -246,8 +247,11 @@ const get_versions: Operation = {
         continue;
       }
       if (ctx.remote === false) { out.push(v); continue; }
-      out.push({ ...v, compiled_truth: sanitizeRemoteBody(v.compiled_truth),
-        ...(typeof v.timeline === 'string' ? { timeline: sanitizeRemoteBody(v.timeline) } : {}) });
+      // #8042: a third-party page's version reaches an untrusted reader quoted, as get_page's current body does.
+      const quote = isQuotedPageType(v.type);
+      const body = (text: string) => { const clean = sanitizeRemoteBody(text); return quote && clean ? fenceTranscriptText(clean, String(p.slug)) : clean; };
+      out.push({ ...v, compiled_truth: body(v.compiled_truth),
+        ...(typeof v.timeline === 'string' ? { timeline: body(v.timeline) } : {}), ...(quote ? { quoted: 'transcript' } : {}) });
     }
     return out;
   },

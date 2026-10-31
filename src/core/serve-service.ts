@@ -153,13 +153,16 @@ export interface ServeCommandParams {
   port: number;
   publicUrl: string;
   surface?: 'verbs' | 'starter' | 'full';
+  /** `serve --advertise`: what tools/list shows clients without their own surface. */
+  advertise?: 'verbs' | 'starter' | 'full' | null;
   enableDcr?: boolean;
 }
 
-/** `serve --http --port N --public-url URL [--surface X] [--enable-dcr]` as argv. */
+/** `serve --http --port N --public-url URL [--surface X] [--advertise Y] [--enable-dcr]` as argv. */
 export function serveCommandArgv(p: ServeCommandParams): string[] {
   const argv = ['serve', '--http', '--port', String(p.port), '--public-url', p.publicUrl];
   if (p.surface) argv.push('--surface', p.surface);
+  if (p.advertise) argv.push('--advertise', p.advertise);
   if (p.enableDcr) argv.push('--enable-dcr');
   return argv;
 }
@@ -555,6 +558,8 @@ export interface ExposeReceipt {
   admin_url: string;
   mode: 'tailnet' | 'funnel';
   surface: 'verbs' | 'starter' | 'full';
+  /** The serve's `--advertise`; absent on exposures written before the verbs listing default (they list everything). */
+  advertise?: 'verbs' | 'starter' | 'full';
   enable_dcr: boolean;
   tailscale: { binary: string | null; dns_name: string | null; tailscale_version: string | null };
   service: { target: ServiceTarget; unit_path: string | null; plist_path: string | null; wrapper_path: string; state: ServiceState | 'skipped' };

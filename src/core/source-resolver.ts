@@ -15,7 +15,7 @@
 
 import { readFileSync, lstatSync, type Stats } from 'fs';
 import { syncDispatchRow } from './sync-dispatch-read.ts';
-import { join, dirname, resolve } from 'path';
+import { join, dirname, isAbsolute, resolve } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { requestSnapshotRead } from './config-snapshot.ts';
 import type { ExplicitReadBinding } from './ops/contract.ts';
@@ -125,6 +125,7 @@ async function resolveRegisteredPathMatch(
   registered: RegisteredSource[],
   cwd: string,
 ): Promise<{ id: string; path: string; pathLen: number } | null> {
+  registered = registered.filter(r => isAbsolute(r.local_path));
   if (registered.length === 0) return null;
   const [cwdResolved, resolvedPaths] = await Promise.all([
     realpathOrResolveAsync(cwd),
@@ -149,6 +150,16 @@ async function resolveRegisteredPathMatch(
     if (best) return best;
   }
   return null;
+}
+
+/**
+ * Tier 4 alone: the active registered source whose local_path contains `cwd` (deepest wins, an archived registration
+ * never shadows an active parent), or null. The deferred corpus-session resolution accepts only this evidence (#7868).
+ */
+export async function resolveRegisteredLocalPathSource(engine: BrainEngine, cwd: string): Promise<string | null> {
+  const registered = await listRegisteredLocalPathSources(engine);
+  const best = await resolveRegisteredPathMatch(registered, cwd);
+  return best && registered.find(r => r.id === best.id)?.archived !== true ? best.id : null;
 }
 
 export async function resolveSourceId(
@@ -757,6 +768,7 @@ export async function resolveSourceForRepoPath(
   const dirResolved = realpathOrResolve(dir);
   let best: { id: string; path: string; pathLen: number } | null = null;
   for (const r of registered) {
+    if (!isAbsolute(r.local_path)) continue;
     const p = realpathOrResolve(r.local_path);
     if (dirResolved === p || dirResolved.startsWith(p + '/')) {
       if (!best || p.length > best.pathLen) {

@@ -1,12 +1,14 @@
 /**
  * #7043 (reported by @mikez93): `gbrain repair duplicate-facts` retires exact
  * copies of one active fact. In each group of active facts of one source and
- * visibility with one fingerprint, the oldest row is kept and the others are
+ * visibility with one fingerprint, the oldest fenced row (else the oldest row) is kept and the others are
  * superseded by it (expired_at set, superseded_by the kept row; never a
  * withdrawal). Copies on other entities are listed apart and retired only
  * with --include-cross-entity; near duplicates are never touched; a fenced
  * copy is struck in its page as "superseded by #N" when the kept row is in the
- * same fence and kept otherwise. Explicit-only and preview-bound.
+ * same fence and kept otherwise. G4: a fenced copy is kept over an older
+ * database-only one, so a legacy copy of a fenced claim is retired instead of
+ * holding the fence row. Explicit-only and preview-bound.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -160,13 +162,19 @@ for (const backend of testBackends()) {
       const carol = (await engine.executeRaw<{ id: number; row_num: number }>(
         "SELECT id, row_num FROM facts WHERE source_markdown_slug='people/carol-example' AND expired_at IS NULL ORDER BY row_num")).map(r => ({ id: Number(r.id), row: Number(r.row_num) }));
       expect(carol.map(r => r.row)).toEqual([1, 2]);
+      // G4: an older database-only legacy copy of a fenced claim is retired onto the fence row, never kept over it.
       const dana = await fact('Dana Example plays chess.', 'people/dana-example', '2020-01-01');
       await call('put_page', { slug: 'people/dana-example', content: fencePage('Dana Example', 'Dana Example plays chess.').replace(/\n\| 2 \|[^\n]*/, '') });
+      const [danaFenced] = (await engine.executeRaw<{ id: number }>(
+        "SELECT id FROM facts WHERE source_markdown_slug='people/dana-example' AND row_num=1 AND expired_at IS NULL")).map(r => Number(r.id));
+      // A fenced copy on another page cannot name the kept row, so it is kept.
+      await call('put_page', { slug: 'people/erin-example', content: fencePage('Erin Example', 'Dana Example plays chess.').replace(/\n\| 2 \|[^\n]*/, '') });
 
-      const preview = await repair([]);
+      const preview = await repair(['--include-cross-entity']);
       expect(preview.residuals.fence_kept_elsewhere).toBe(1);
-      expect(preview.listing.some((l: { class: string; item: string }) => l.class === 'fence_kept_elsewhere' && l.item.endsWith(`fact#${dana}`))).toBe(true);
-      await repair(['--apply', '--expect', preview.preview_hash, '--yes']);
+      expect(preview.listing.some((l: { class: string; item: string }) => l.class === 'fence_kept_elsewhere' && l.item.endsWith(`fact#${danaFenced}`))).toBe(true);
+      await repair(['--include-cross-entity', '--apply', '--expect', preview.preview_hash, '--yes']);
+      expect(await state([dana, danaFenced!])).toEqual([{ id: dana, active: false, superseded_by: danaFenced }, { id: danaFenced, active: true, superseded_by: null }]);
 
       expect(await state(carol.map(r => r.id))).toEqual([{ id: carol[0]!.id, active: true, superseded_by: null }, { id: carol[1]!.id, active: false, superseded_by: carol[0]!.id }]);
       const page = await call('get_page', { slug: 'people/carol-example', include_content: true });

@@ -25,6 +25,7 @@ const DIRECTLY_READ_SINGLETONS = [
   'search.image_query.daily_budget_usd_per_client', // ops/image.ts
   'search.image_query.remote_max_bytes',     // ops/image.ts
   'search.mcp_keyword_only',                 // ops/search.ts
+  'search.remote_page_cap',                  // search/remote-page-cap.ts (ops/search.ts)
   REMOTE_PRIVATE_PAGES_KEY,                  // search/private-visibility.ts
   'search.track_retrieval',                  // last-retrieved.ts
   'search.intent_patterns',                  // search/query-intent.ts
@@ -56,6 +57,11 @@ const DIRECTLY_READ_SINGLETONS = [
   'search.entity_anchoring',                 // search/entity-anchor.ts (ops/search.ts)
   'search.query_facts_arm',                  // search/facts-arm.ts (search/query-arms.ts)
   'search.temporal_fact_reserve',            // search/facts-arm.ts (search/query-arms.ts)
+  'search.query_facts_block',                // search/facts-arm.ts (search/query-arms.ts, GBRA-205)
+  'search.saved_facts_supersede',            // search/saved-facts-match.ts (GBRA-205)
+  'search.fact_source_pages',                // search/facts-arm.ts (search/query-arms.ts, GBRA-205)
+  'search.evidence_titles',                  // search/evidence-date.ts (GBRA-205)
+  'search.query_budget_unit',                // search/evidence-delivery.ts via ops/search.ts (GBRA-205)
   PAGE_RANK_CUT_KEY,                         // search/page-rank-cut.ts via evidence-delivery.ts (W5)
   PAGE_RANK_CUT_FACTOR_KEY,
 ];

@@ -68,7 +68,7 @@ Each hold record carries `code`, `reason`, `key`, `line`, `message` (location on
 |------|-----------|
 | `invalid_frontmatter` / `yaml_parse` | Preview `gbrain repair frontmatter --source <id>`; usually `needs_review` with the exact line to fix by hand. |
 | `invalid_frontmatter` / `needs_interpretation` | Preview with `--include-ambiguous`, show the user each per-file diff, apply only what they approve. |
-| `invalid_frontmatter` / `ambiguous_identity_key` or `ambiguous_protected_key` | Never guess. Show the user the line; they decide the one value (`visibility` decides who can read the page). |
+| `invalid_frontmatter` / `ambiguous_identity_key` or `ambiguous_protected_key`; `visibility_noncanonical` | Never guess. Show the user the line; they decide the one value (`visibility` decides who can read the page; page privacy reads only `visibility: private`, lowercase on its own line). |
 | `frontmatter_slug_conflict` | Remove the `slug:` line or move the file; the repair proposes removing it under `--include-ambiguous`. |
 | `file_too_large` | The file is over the fixed page limit (24 MiB for Markdown, 5 MB for code); every page under it is searchable, so never split one that fits. Ask the user to add it to `sync.exclude`, or to split it into files under the limit. A smaller page an MCP transport refused goes by file instead (`docs/guides/memory-boundaries.md#large-page-limits`). |
 | `content_rejected` | The user chose `content_sanity.junk_disposition=reject`; ask before changing it. |
@@ -273,7 +273,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 
 - `gbrain frontmatter validate` exits 1: errors were found (that is the result, not a crash). Parse `errors_by_code` and report counts per source.
 - Before a fix pass, state how many files will change and get the user's agreement; the fix writes `.bak` backups, and YAML_PARSE errors are not always auto-repairable.
-- `gbrain sync` holds a file (`invalid_frontmatter`, `frontmatter_slug_conflict`, `file_too_large`, `content_rejected`): the sync still succeeded. Read the hold (`gbrain sources status <id>`) and follow "Held files" above.
+- `gbrain sync` holds a file (`invalid_frontmatter`, `frontmatter_slug_conflict`, `file_too_large`, `content_rejected`, `visibility_noncanonical`): the sync still succeeded. Read the hold (`gbrain sources status <id>`) and follow "Held files" above.
 - `put_page` refuses a page whose newer file is held: repair the file; retrying the write refuses again.
 
 ## Anti-Patterns

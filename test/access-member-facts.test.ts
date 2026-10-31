@@ -32,6 +32,7 @@ import { addMember, bindCredential } from '../src/core/access/members.ts';
 import { linkMember } from '../src/core/access/actor.ts';
 import { memberPageSlug } from '../src/core/access/member-facts.ts';
 import { decideSingleFact, type SingleFactIntent } from '../src/core/facts/single-prepare.ts';
+import { prepareMemoryMutation } from '../src/core/persistence/memory-prepare.ts';
 import { runFactsRelink } from '../src/core/facts/relink.ts';
 import { runPhaseConsolidate } from '../src/core/cycle/phases/consolidate.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
@@ -57,7 +58,7 @@ const ALICE_ID = 'U0ALICE';
 const BOB_ID = 'bob-example@acme.test';
 const ACME = 'companies/acme-example';
 const CANARY = { alice: 'canaryfactalice', bob: 'canaryfactbob' } as const;
-const ATTEST_OPS = ['cancel_write_request', 'context_pack', 'delta', 'get_page', 'get_write_request', 'list_write_requests', 'put_page', 'recall', 'remember', 'search', 'whoami'];
+const ATTEST_OPS = ['cancel_write_request', 'context_pack', 'delete_page', 'delta', 'edit_page', 'get_page', 'get_write_request', 'list_write_requests', 'put_page', 'recall', 'remember', 'search', 'whoami'];
 
 for (const kind of testBackends()) {
   describe('member facts and member-scoped reads (' + kind + ', repo-less)', () => {
@@ -305,6 +306,82 @@ for (const kind of testBackends()) {
       }
       expect((await call(as.bob, 'get_agent_job', { id: ids.bob })).isError).toBe(false);
       expect((await call(as.bare, 'get_agent_job', { id: ids.bare })).isError).toBe(false);
+      // The agent-scoped job reads and cancel (no header: the client's own lane) never reach a person's job.
+      for (const [op, params] of [['get_job', {}], ['wait_job', { timeout_s: 1 }], ['get_job_progress', {}], ['cancel_job', {}]] as const) {
+        const got = await call(as.bare, op, { id: ids.alice, ...params });
+        expect({ op, isError: got.isError, code: got.json.code ?? got.json.error }).toMatchObject({ op, isError: true });
+        expect(got.all).not.toContain(canary);
+        expect(got.all).not.toContain(prompt);
+      }
+      for (const params of [{}, { status: 'completed' }, { finished_since: '0:0' }]) {
+        const listed = await call(as.bare, 'list_jobs', params);
+        expect(listed.isError, listed.text).toBe(false);
+        expect(listed.all).not.toContain(canary);
+        expect(listed.all).not.toContain('"id":' + ids.alice + ',');
+      }
+      expect((await call(as.bare, 'get_job', { id: ids.bare })).isError).toBe(false);
+      expect((await call(as.bare, 'list_jobs', {})).all).toContain('"id":' + ids.bare + ',');
+      const [state] = await engine.executeRaw<{ status: string }>('SELECT status FROM minion_jobs WHERE id = $1', [ids.alice]);
+      expect(state!.status).toBe('completed');
+      const [bobState] = await engine.executeRaw<{ status: string }>('SELECT status FROM minion_jobs WHERE id = $1', [ids.bob]);
+      expect((await call(as.bare, 'cancel_job', { id: ids.bob })).isError).toBe(true);
+      expect((await engine.executeRaw<{ status: string }>('SELECT status FROM minion_jobs WHERE id = $1', [ids.bob]))[0]!.status).toBe(bobState!.status);
+    }, 60_000);
+
+    test('member pages: nobody else writes one remotely, and a squatted or widened page takes no member fact', async () => {
+      const CAROL_ID = 'U0CAROL';
+      const DAVE_ID = 'U0DAVE';
+      for (const [id, ext] of [['carol-example', CAROL_ID], ['dave-example', DAVE_ID]] as const) {
+        await addMember(engine, id);
+        await linkMember(engine, id, 'qm', ext);
+      }
+      const carol = { token: 'qm', actor: CAROL_ID };
+      const dave = { token: 'qm', actor: DAVE_ID };
+      const squat = '---\ntype: note\ntitle: Memory of carol-example\nreadable_by:\n  - member:bob-example\n  - member:carol-example\n---\n# Memory of carol-example\n';
+      for (const as of [who.bob(), who.bobToken(), who.bare()]) {
+        const put = await call(as, 'put_page', { slug: 'memory/members/carol-example', content: '---\ntype: note\ntitle: Squat\n---\n# Squat\n' });
+        expect({ isError: put.isError, code: put.json.code ?? put.json.error }).toEqual({ isError: true, code: 'permission_denied' });
+        const edit = await call(as, 'edit_page', { slug: 'memory/members/alice-example', expected_revision: '00000000-0000-0000-0000-000000000000', edits: [{ old_text: 'Memory', new_text: 'Mine' }] });
+        expect({ isError: edit.isError, code: edit.json.code ?? edit.json.error }).toEqual({ isError: true, code: 'permission_denied' });
+        const del = await call(as, 'delete_page', { slug: 'memory/members/alice-example' });
+        expect({ isError: del.isError, code: del.json.code ?? del.json.error }).toEqual({ isError: true, code: 'permission_denied' });
+      }
+      const [alicePage] = await engine.executeRaw<{ deleted_at: unknown; page_readers: string[] }>('SELECT deleted_at, page_readers FROM pages WHERE source_id = $1 AND slug = $2', [SRC, 'memory/members/alice-example']);
+      expect(alicePage).toMatchObject({ deleted_at: null, page_readers: ['member:alice-example'] });
+      expect(await engine.executeRaw('SELECT 1 FROM pages WHERE source_id = $1 AND slug = $2', [SRC, 'memory/members/carol-example'])).toHaveLength(0);
+      // A page squatted before Carol's first fact (readers Bob and Carol) takes none of her facts.
+      await importFromContent(engine, 'memory/members/carol-example', squat, { sourceId: SRC });
+      const squatId = 'c2-squat-' + randomUUID().slice(0, 6);
+      const squatted = await remember(carol, 'Carol keeps the harbor ledger key canarycarolsquat', { request_id: squatId });
+      // remember answers in its verb contract: an authorization refusal is scope_denied.
+      expect({ isError: squatted.isError, code: squatted.json.code, message: squatted.json.message }).toMatchObject({ isError: true, code: 'scope_denied', message: expect.stringContaining('does not name its member alone') });
+      expect(await engine.executeRaw('SELECT 1 FROM facts WHERE fact LIKE $1', ['%canarycarolsquat%'])).toHaveLength(0);
+      // Refused at submission: nothing was accepted, so there is no receipt.
+      expect((await call(carol, 'get_write_request', { request_id: squatId })).json.code).toBe('not_found');
+      // Dave's page later made world: his next fact is refused, never saved where every reader recalls it.
+      expect((await remember(dave, 'Dave books the harbor dock canarydaveone')).isError).toBe(false);
+      await importFromContent(engine, 'memory/members/dave-example', '---\ntype: note\ntitle: Memory of dave-example\n---\n# Memory of dave-example\n', { sourceId: SRC });
+      const widened = await remember(dave, 'Dave books the harbor crane canarydavetwo');
+      expect({ isError: widened.isError, code: widened.json.code, message: widened.json.message }).toMatchObject({ isError: true, code: 'scope_denied', message: expect.stringContaining('does not name its member alone') });
+      expect(await engine.executeRaw('SELECT 1 FROM facts WHERE fact LIKE $1', ['%canarydavetwo%'])).toHaveLength(0);
+    }, 120_000);
+
+    test('preparation refuses a member fact once its page no longer names that member alone', async () => {
+      const slug = 'memory/members/erin-example';
+      await importFromContent(engine, slug, '---\ntype: note\ntitle: Memory of erin-example\nreadable_by:\n  - member:bob-example\n  - member:erin-example\n---\n# Memory of erin-example\n', { sourceId: SRC });
+      const row = { operation: 'remember', request_id: 'c2-prepare-' + randomUUID().slice(0, 6), source_id: SRC, slug, page_id: null,
+        intent: { fact: 'Erin signs the harbor lease canaryerinprep', kind: 'fact', visibility: 'private', entity_slug: null, fence: true, member_page: true, valid_from: new Date().toISOString() } };
+      await expect(prepareMemoryMutation(engine, row as never, {} as never)).rejects.toMatchObject({ code: 'permission_denied' });
+    }, 60_000);
+
+    test('a member id whose page slug a repo brain would rename holds no member facts', async () => {
+      for (const id of ['frank--example', 'gina-']) {
+        await addMember(engine, id);
+        await linkMember(engine, id, 'qm', 'U0' + id.replace(/[^a-z]/g, '').toUpperCase());
+        const out = await remember({ token: 'qm', actor: 'U0' + id.replace(/[^a-z]/g, '').toUpperCase() }, 'A harbor fact canaryslug' + id.length);
+        expect({ isError: out.isError, code: out.json.code ?? out.json.error }).toEqual({ isError: true, code: 'invalid_params' });
+        expect(await engine.executeRaw('SELECT 1 FROM pages WHERE source_id = $1 AND slug LIKE $2', [SRC, 'memory/members/' + id.slice(0, 4) + '%'])).toHaveLength(0);
+      }
     }, 60_000);
 
     test('two members saving the same words get two facts, each on its own page', async () => {

@@ -200,6 +200,9 @@ describe('#6712 PR 4b classifier rulings (pglite)', () => {
       [managedCursorKey(incarnation, undefined), JSON.stringify({ sourceId: 'default', incarnation, runId: randomUUID(), index: 1, total: 3, done: false,
         processingOptions: { noEmbed: true, noExtract: true, noSchemaPack: false }, syncOptions: full ? { full: true } : {} })]);
     writeFileSync(join(root, 'notes/a.md'), note('notes/a', 'A committed change of notes/a.')); commit(root, 'change a');
+    // An episode admits a current page without a reparse (sync-classify.ts `inPlace`); b and c carry a stale contextual
+    // mode, which only an open episode re-imports, so a seeded episode shows as their re-import.
+    await engine.executeRaw("UPDATE pages SET contextual_retrieval_mode=NULL WHERE source_id='default' AND slug IN ('notes/b','notes/c')");
     const result = await performManagedSync(engine, { sourceId: 'default', noPull: true });
     expect(result.status).toBe('synced');
     expect([...result.inherited_options ?? []].sort()).toEqual(['noEmbed', 'noExtract']);

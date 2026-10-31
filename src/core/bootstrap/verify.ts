@@ -289,12 +289,12 @@ function checkTokenSweep(ws: string): VerifyCheck {
       return { id, ok: true, warn: true, detail: 'template clone (initialized:false) — placeholder tokens are expected; render before verifying for real' };
     }
     const offenders: string[] = [];
-    for (const t of BOOTSTRAP_TEMPLATES) {
-      const p = join(ws, t.dest);
+    for (const dest of BOOTSTRAP_TEMPLATES.flatMap((t) => (t.openclawDest ? [t.dest, t.openclawDest] : [t.dest]))) {
+      const p = join(ws, dest);
       if (!existsSync(p)) continue;
       const raw = readFileSync(p, 'utf8');
       const tokens = [...raw.matchAll(TOKEN_RE)].map((m) => m[1]);
-      if (tokens.length > 0) offenders.push(`${t.dest} (${[...new Set(tokens)].join(', ')})`);
+      if (tokens.length > 0) offenders.push(`${dest} (${[...new Set(tokens)].join(', ')})`);
     }
     if (offenders.length > 0) {
       return { id, ok: false, detail: `unresolved {{TOKEN}}s in rendered files: ${offenders.join('; ')} — finish the interview and re-run render` };
@@ -362,8 +362,8 @@ function trackedWorkspaceFiles(ws: string): { files: string[]; via: 'git' | 'fal
     /* not a repo — fallback below */
   }
   const files: string[] = [];
-  for (const t of BOOTSTRAP_TEMPLATES) {
-    if (existsSync(join(ws, t.dest))) files.push(t.dest);
+  for (const dest of BOOTSTRAP_TEMPLATES.flatMap((t) => (t.openclawDest ? [t.dest, t.openclawDest] : [t.dest]))) {
+    if (existsSync(join(ws, dest))) files.push(dest);
   }
   if (existsSync(join(ws, 'state', 'interview.json'))) files.push(join('state', 'interview.json'));
   return { files, via: 'fallback' };
@@ -1018,6 +1018,7 @@ async function checkHooksSmoke(engine: BrainEngine, ws: string, sourceId: string
         out += s;
       },
       cwd: ws,
+      turnRule: null,
     });
     const elapsed = Date.now() - t0;
     if (code !== 0) return { id, ok: false, detail: `hook exited ${code} (must fail open with exit 0)` };

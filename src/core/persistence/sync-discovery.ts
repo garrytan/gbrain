@@ -19,7 +19,9 @@ import { resolveSlugRootMode } from '../sync-anchor.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
 import { unboundBindCommand } from './unbound-source.ts';
-import { localHostId } from './identity.ts';
+import { currentVerifiedLocalWriter, localHostId } from './identity.ts';
+import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
+import { trustedCliRequired } from '../ops/op-fix.ts';
 import { ownerUnavailableReason } from './owner-refusal.ts';
 import { sha256 } from './digest.ts';
 import { isWindowsColonTarget } from './native-file-target.ts';
@@ -34,6 +36,8 @@ import { holdBasisMoved, holdRescreenDue, readGitHoldRetryPaths, readGitSourceHo
 import { readBlobContents, readTreeBlobs, SYNC_READ_BOUND } from './sync-blobs.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { readOriginEvidence } from './sync-origin-evidence.ts';
+import { sourceDbOnlyVerdict } from './source-storage.ts';
+import { dbOnlyVerdict, storageConfigFromYaml, unresolvedDbOnlyIn } from '../storage-config.ts';
 import { movedDriftHolds, prescreenSyncEntries, type SyncDriftSide } from './sync-prescreen.ts';
 import { sliceEntries, type SyncSliceCursor, type SyncSliceState } from './sync-slices.ts';
 
@@ -82,6 +86,8 @@ export interface SyncDiscovery { binding: WorktreeBinding; root: string; gitRoot
   workingTreeKept?: string[];
   /** #7130: live pages whose file is absent but Git never committed it (or `.gitignore` excludes it): kept, never deleted. */
   uncommittedKept?: string[];
+  /** #8007: live pages whose file is absent while gbrain.yml's storage section is invalid, so whether each is database-only is unknown: kept, never deleted. */
+  storageInvalidKept?: string[];
   /** #6349 (P4.4): this discovery is one path slice of its target; the checkpoint records it instead of advancing `last_commit` until `done`. */
   slice?: SyncSliceState;
   /** #6729: inexact Git renames split into a delete plus an add (origin form); recorded after the run commits. */
@@ -231,7 +237,11 @@ export async function resolveManagedSyncContext(engine: BrainEngine, opts: SyncO
     `Sync without pulling to import the checkout as it is (CLI: gbrain sync --no-pull --source ${sourceId}; MCP: sync_brain with no_pull: true), or fast-forward and sync the checkout with gbrain sources refresh ${sourceId}.`);
   const forbidden = managedForbiddenFlag(opts);
   if (forbidden) throw managedSyncFlagRefusal(forbidden, sourceId, ['--source', sourceId, '--no-pull']);
-  const [source, binding] = await (rows ?? readManagedSyncRows(engine, sourceId));
+  const [read, binding] = await (rows ?? readManagedSyncRows(engine, sourceId));
+  if (opts.canonicalOverride === 'git' && (currentSubmissionAuthority()?.kind === 'remote_generic' || currentVerifiedLocalWriter()?.remote)) {
+    throw trustedCliRequired('The strict-equivalent pass of a git-canonical conversion runs only from the trusted local CLI.');
+  }
+  const source = read && opts.canonicalOverride === 'git' ? { ...read, config: { ...read.config, canonical: 'git' } } : read;
   if (source?.config?.canonical === 'git' && managedForbiddenFlag(opts, true)) throw managedSyncFlagRefusal('--working-tree', sourceId, ['--source', sourceId, '--no-pull', '--working-tree']);
   if (!source || source.archived || !binding || binding.source_incarnation !== source.incarnation ||
       binding.owner_host_id !== localHostId() || binding.state !== 'active' || !binding.local_path) {
@@ -364,6 +374,35 @@ async function dropUncommittedDeletes(gitRoot: string, tips: Array<string | null
   const kept = deletes.filter(path => evidence.get(unproven.get(path)!) !== 'committed');
   for (const path of kept) entries.delete(path);
   return kept;
+}
+
+/** #8014: a company source's db_only verdict, read from gbrain.yml at its approved commit, never the working tree. */
+function committedDbOnlyVerdict(gitRoot: string, commit: string, root: string): (slug: string) => boolean | 'unknown' {
+  const rel = relative(gitRoot, root).split(sep).join('/');
+  const path = rel ? `${rel}/gbrain.yml` : 'gbrain.yml';
+  try {
+    if (!syncGit(gitRoot, ['ls-tree', '--name-only', commit, '--', path]).trim()) return () => false;
+    const content = syncGit(gitRoot, ['show', `${commit}:${path}`]);
+    const config = storageConfigFromYaml(content, path);
+    if (unresolvedDbOnlyIn(content, config)) return () => 'unknown';
+    return slug => dbOnlyVerdict(slug, config);
+  } catch {
+    return () => 'unknown';
+  }
+}
+
+/**
+ * #7324: a delete under a declared storage.db_only dir is retired (its database row is canonical). #8007: while gbrain.yml's
+ * storage section is invalid, whether a path is database-only is unknown, so its delete is retired too and named.
+ */
+function retireDbOnlyDeletes(entries: readonly SyncEntry[], retired: Set<SyncEntry>, verdict: (slug: string) => boolean | 'unknown'): { storageInvalidKept?: string[] } {
+  const storageInvalidKept: string[] = [];
+  for (const entry of entries) {
+    const dbOnly = entry.action === 'delete' && entry.slug ? verdict(entry.slug) : false;
+    if (dbOnly) retired.add(entry);
+    if (dbOnly === 'unknown') storageInvalidKept.push(entry.path);
+  }
+  return storageInvalidKept.length ? { storageInvalidKept } : {};
 }
 
 export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, context?: ManagedSyncContext,
@@ -510,11 +549,11 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     const included = company.plan.manifest.filter(entry => entry.disposition === 'included');
     const present = new Set(included.map(entry => syncOriginPath(entry.path)));
     for (const entry of included) entries.set(entry.path, { path: entry.path, sourcePath: entry.path, action: 'import', working: false, slug: entry.page!.slug });
-    const pages = await engine.executeRaw<{ source_path: string }>('SELECT source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL', [sourceId]);
+    const pages = await engine.executeRaw<{ source_path: string; slug: string }>('SELECT source_path, slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL', [sourceId]);
     assertDistinctSyncOrigins([...present, ...pages.map(page => page.source_path)]);
     for (const page of pages) {
       const origin = syncOriginPath(page.source_path);
-      if (!present.has(origin)) entries.set(origin, { path: origin, sourcePath: origin, action: 'delete', working: false });
+      if (!present.has(origin)) entries.set(origin, { path: origin, sourcePath: origin, action: 'delete', working: false, slug: page.slug });
     }
   }
   const selected = [...entries.values()].sort((a, b) => a.action.localeCompare(b.action) || a.path.localeCompare(b.path));
@@ -652,6 +691,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
       else winner.renameHeld = held;
     }
   }
+  Object.assign(discovered, retireDbOnlyDeletes(selected, retired, company ? committedDbOnlyVerdict(gitRoot, target, root) : slug => sourceDbOnlyVerdict(root, slug)));
   if (retired.size) discovered.entries = selected.filter(entry => !retired.has(entry));
   if (collisions.length) discovered.slugCollisions = collisions;
   // Identities and origin collisions were resolved over the whole target above; only the frozen manifest is cut.

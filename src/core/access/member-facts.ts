@@ -13,9 +13,11 @@
 import { createHash } from 'node:crypto';
 import type { OperationContext } from '../ops/contract.ts';
 import { callerAccessAllowedSql, currentCallerAccess, folderRestrictedSql } from '../search/private-visibility.ts';
-import { ACCESS_ID_RE } from './principals.ts';
+import { ACCESS_ID_RE, MEMBER_PAGE_PREFIX, normalizeReaders } from './principals.ts';
+import { opError, type OperationError } from '../ops/contract.ts';
+import { slugifyPath } from '../sync.ts';
 
-export const MEMBER_PAGE_PREFIX = 'memory/members/';
+export { MEMBER_PAGE_PREFIX };
 
 export const memberPageSlug = (member: string): string => `${MEMBER_PAGE_PREFIX}${member}`;
 
@@ -28,11 +30,42 @@ export function callerMember(): string | null {
   return member && ACCESS_ID_RE.test(member) ? member : null;
 }
 
-/** The member page a remote memory write goes to, or null when the caller writes as no single member (local or unbound). */
+/**
+ * The member page a remote memory write goes to, or null when the caller writes as no single member (local or
+ * unbound). A member id whose page slug a repo brain would rename on sync (`a--b`, `zed-`) is refused: its facts
+ * would land on another path.
+ */
 export function memberFactPage(ctx: Pick<OperationContext, 'remote'>): string | null {
   if (ctx.remote === false) return null;
   const member = callerMember();
-  return member ? memberPageSlug(member) : null;
+  if (!member) return null;
+  const slug = memberPageSlug(member);
+  if (slugifyPath(slug) !== slug) {
+    throw opError('invalid_params', `Member id ${member} cannot hold member facts: its page ${slug} would be stored as ${slugifyPath(slug)}.`,
+      'Nothing was saved. The brain host gives this person a member id without repeated, leading or trailing separators (gbrain access member add) and links it instead.');
+  }
+  return slug;
+}
+
+/** Whether a member page is that member's own: its readers are exactly the member (a squatted or widened page is not). */
+export function memberPageIsOwn(slug: string, frontmatter: unknown): boolean {
+  const readers = normalizeReaders(frontmatter);
+  return readers?.length === 1 && readers[0] === `member:${slug.slice(MEMBER_PAGE_PREFIX.length)}`;
+}
+
+/** The refusal for a member fact whose member page names any readers but that member alone. */
+export function memberPageNotOwned(slug: string): OperationError {
+  return opError('permission_denied', `${slug} does not name its member alone as its reader, so no member fact is saved there.`,
+    `Nothing was saved. The brain host restores readable_by: [member:${slug.slice(MEMBER_PAGE_PREFIX.length)}] on ${slug}, then the fact can be saved again.`);
+}
+
+/** A remote write under memory/members/ goes only to the caller's own member page; trusted local callers are unaffected. */
+export function assertMemberPageWriter(ctx: Pick<OperationContext, 'remote'>, slug: string, opName: string): void {
+  if (ctx.remote === false || !slug.startsWith(MEMBER_PAGE_PREFIX)) return;
+  const member = callerMember();
+  if (member && slug === memberPageSlug(member)) return;
+  throw opError('permission_denied', `${opName}: ${slug} is written remotely only by its own member.`,
+    `Nothing was written. Pages under ${MEMBER_PAGE_PREFIX} hold one member's own facts; write elsewhere, or save a fact with remember as that member.`);
 }
 
 /** The frontmatter of a member page its first fact creates: the member is its only reader. */

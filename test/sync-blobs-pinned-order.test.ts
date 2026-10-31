@@ -19,8 +19,7 @@ afterAll(() => rmSync(home, { recursive: true, force: true }));
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8',
   env: { ...process.env, GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.com' } }).trim();
 
-function repo(name: string, files: Record<string, string>): { root: string; head: string } {
-  const root = join(home, name);
+function repo(root: string, files: Record<string, string>): { root: string; head: string } {
   mkdirSync(join(root, 'notes'), { recursive: true });
   git(root, 'init', '-q');
   for (const [path, body] of Object.entries(files)) writeFileSync(join(root, path), body);
@@ -28,36 +27,62 @@ function repo(name: string, files: Record<string, string>): { root: string; head
   return { root, head: git(root, 'rev-parse', 'HEAD') };
 }
 
-/** A `git` on PATH that logs each call's arguments, then runs the real git. */
-function counter(): { path: string; catFiles: () => number } {
-  const bin = join(home, 'bin'), log = join(home, 'git.log'), real = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+/**
+ * A `git` on PATH that logs each call's arguments, then runs the real git under the PATH it was created with: the
+ * `git` it finds may itself be a wrapper that searches PATH for the next `git`, which would find this shim again.
+ */
+function counter(dir: string): { path: string; catFiles: () => number } {
+  const bin = join(dir, 'bin'), log = join(dir, 'git.log'), real = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
   mkdirSync(bin, { recursive: true });
-  writeFileSync(join(bin, 'git'), `#!/bin/sh\necho "$*" >> '${log}'\nexec '${real}' "$@"\n`);
+  writeFileSync(join(bin, 'git'), `#!/bin/sh\necho "$*" >> '${log}'\nPATH='${process.env.PATH ?? ''}' exec '${real}' "$@"\n`);
   chmodSync(join(bin, 'git'), 0o755);
   return { path: `${bin}${delimiter}${process.env.PATH ?? ''}`,
     catFiles: () => existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(line => / cat-file --batch$/.test(line)).length : 0 };
 }
 
+/**
+ * A `git` wrapper that runs the first other `git` on PATH, with its own directory left off PATH, as a host's git guard
+ * does (a Capy shared-tree guard puts one first on PATH).
+ */
+function pathWrapper(dir: string): string {
+  const bin = join(dir, 'wrapper');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'git'), ['#!/bin/sh', 'self="${0%/*}"; rest=""; found=""', 'IFS=:', 'for part in $PATH; do',
+    '  [ "$part" = "$self" ] && continue', '  rest="${rest:+$rest:}$part"', '  [ -z "$found" ] && [ -n "$part" ] && [ -x "$part/git" ] && found="$part/git"', 'done',
+    '[ -n "$found" ] || { echo "git: command not found" >&2; exit 127; }', 'PATH="$rest" exec "$found" "$@"', ''].join('\n'));
+  chmodSync(join(bin, 'git'), 0o755);
+  return `${bin}${delimiter}${process.env.PATH ?? ''}`;
+}
+
+/** One window per round, each inside one byte slice: one cat-file per round, whatever the follower order. */
+async function readsInOrder(dir: string): Promise<void> {
+  const paths = Array.from({ length: 6 }, (_, i) => `notes/n${i}.md`);
+  const first = repo(join(dir, 'first'), Object.fromEntries(paths.map((path, i) => [path, `# Note ${i}\n\nbody ${i}\n`])));
+  const second = repo(join(dir, 'second'), Object.fromEntries(paths.map((path, i) => [path, `# Second ${i}\n\nbody ${i}\n`])));
+  const shim = counter(dir);
+  const restore = __setPinnedWindowForTests(null);
+  try {
+    await withEnv({ PATH: shim.path }, async () => {
+      const upcoming = (from: number) => () => paths.slice(from);
+      // Round 0 (sequential freeze): every entry reads in manifest order.
+      for (const [i, path] of paths.entries()) expect(readPinnedContent(first.root, first.head, path, upcoming(i))).toBe(`# Note ${i}\n\nbody ${i}\n`);
+      // Round 1: the head is held without reading content, then its followers finish freezing last-first.
+      expect(readPinnedBlob(second.root, second.head, paths[0]!, upcoming(0))).not.toBeNull();
+      for (const i of [4, 3, 2, 1, 5]) expect(readPinnedContent(second.root, second.head, paths[i]!, upcoming(i))).toBe(`# Second ${i}\n\nbody ${i}\n`);
+      // A re-freeze of an entry already read (a follower frozen again as the next head) reads no Git process either.
+      expect(readPinnedContent(second.root, second.head, paths[2]!, upcoming(2))).toBe('# Second 2\n\nbody 2\n');
+    });
+    expect(shim.catFiles()).toBe(2);
+  } finally { restore(); }
+}
+
 describe.skipIf(process.platform === 'win32')('pinned content reads in a window', () => {
   test('a follower batch that finishes last-first costs the same cat-file processes as one read in order', async () => {
-    const paths = Array.from({ length: 6 }, (_, i) => `notes/n${i}.md`);
-    const first = repo('first', Object.fromEntries(paths.map((path, i) => [path, `# Note ${i}\n\nbody ${i}\n`])));
-    const second = repo('second', Object.fromEntries(paths.map((path, i) => [path, `# Second ${i}\n\nbody ${i}\n`])));
-    const shim = counter();
-    const restore = __setPinnedWindowForTests(null);
-    try {
-      await withEnv({ PATH: shim.path }, async () => {
-        const upcoming = (from: number) => () => paths.slice(from);
-        // Round 0 (sequential freeze): every entry reads in manifest order.
-        for (const [i, path] of paths.entries()) expect(readPinnedContent(first.root, first.head, path, upcoming(i))).toBe(`# Note ${i}\n\nbody ${i}\n`);
-        // Round 1: the head is held without reading content, then its followers finish freezing last-first.
-        expect(readPinnedBlob(second.root, second.head, paths[0]!, upcoming(0))).not.toBeNull();
-        for (const i of [4, 3, 2, 1, 5]) expect(readPinnedContent(second.root, second.head, paths[i]!, upcoming(i))).toBe(`# Second ${i}\n\nbody ${i}\n`);
-        // A re-freeze of an entry already read (a follower frozen again as the next head) reads no Git process either.
-        expect(readPinnedContent(second.root, second.head, paths[2]!, upcoming(2))).toBe('# Second 2\n\nbody 2\n');
-      });
-      // One window per round, each inside one byte slice: one cat-file per round, whatever the follower order.
-      expect(shim.catFiles()).toBe(2);
-    } finally { restore(); }
+    await readsInOrder(join(home, 'ambient'));
+  });
+
+  test('the same reads count the same when the git on PATH is a wrapper that runs the next git on PATH', async () => {
+    const dir = join(home, 'wrapped');
+    await withEnv({ PATH: pathWrapper(dir) }, () => readsInOrder(dir));
   });
 });

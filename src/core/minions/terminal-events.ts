@@ -6,7 +6,7 @@
  * (remove_on_complete / remove_on_fail) and pruned rows are not events.
  */
 import type { BrainEngine } from '../engine.ts';
-import { rowToMinionJob, type MinionJob } from './types.ts';
+import { jobActorSql, NO_JOB_ACTOR, rowToMinionJob, type JobActor, type MinionJob } from './types.ts';
 
 export class TerminalCursorError extends Error {
   constructor(message: string) { super(message); this.name = 'TerminalCursorError'; }
@@ -24,7 +24,7 @@ export function parseTerminalCursor(raw: string): { micros: string; id: number }
 
 const FINISHED_US = "(EXTRACT(EPOCH FROM finished_at) * 1000000)::bigint";
 
-export async function listFinishedSince(engine: BrainEngine, since: string, opts: { queue?: string; name?: string; limit?: number; ownerClientId?: string } = {}): Promise<{ jobs: MinionJob[]; next_cursor: string }> {
+export async function listFinishedSince(engine: BrainEngine, since: string, opts: { queue?: string; name?: string; limit?: number; ownerClientId?: string; ownerActor?: JobActor } = {}): Promise<{ jobs: MinionJob[]; next_cursor: string }> {
   const cursor = parseTerminalCursor(since);
   const params: unknown[] = [cursor.micros, cursor.id];
   const where = [
@@ -34,7 +34,10 @@ export async function listFinishedSince(engine: BrainEngine, since: string, opts
   ];
   if (opts.queue) { params.push(opts.queue); where.push(`queue = $${params.length}`); }
   if (opts.name) { params.push(opts.name); where.push(`name = $${params.length}`); }
-  if (opts.ownerClientId) { params.push(opts.ownerClientId); where.push(`data->>'__owner_client_id' = $${params.length}`); }
+  if (opts.ownerClientId) {
+    params.push(opts.ownerClientId); where.push(`data->>'__owner_client_id' = $${params.length}`);
+    where.push(jobActorSql(params.length + 1)); params.push(...(opts.ownerActor ?? NO_JOB_ACTOR));
+  }
   params.push(Math.max(1, Math.min(500, Math.floor(opts.limit ?? 50))));
   const rows = await engine.executeRaw<Record<string, unknown> & { finished_us: string | number }>(
     `SELECT *, ${FINISHED_US}::text AS finished_us FROM minion_jobs WHERE ${where.join(' AND ')}

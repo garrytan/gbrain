@@ -15,7 +15,7 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { parseMarkdown } from '../src/core/markdown.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { purgeStaleCheckpoints } from '../src/core/op-checkpoint.ts';
-import { renderFactsTable } from '../src/core/facts-fence.ts';
+import { writeSingleFact } from '../src/core/facts/write-single.ts';
 import { recordFactWithdrawal } from '../src/core/facts/withdrawal.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { prepareConnectorMutation } from '../src/core/persistence/connector-sync.ts';
@@ -517,9 +517,15 @@ test('a fact withdrawn between bound connector preparation and publication leave
     await run();
     await disposePersistenceConsumer(engine);
     const slug = 'gh/acme-example/app/1', path = join(f.dir, `${slug}.md`);
-    const original = readFileSync(path, 'utf8'), before = (await engine.readPageSnapshot(slug, { sourceId: f.id }))!;
+    // GBRA-221: a provider body can no longer bring a live fence (renders neutralize it), so the claim reaches the
+    // prepared import the way brain-added facts do: a stored fence the connector carries into the re-render.
+    expect(await writeSingleFact(engine, f.id, { fact: claim, kind: 'fact', entity: slug, visibility: 'world', provenance: 'test evidence', remote: false }))
+      .toMatchObject({ status: 'inserted' });
+    await disposePersistenceConsumer(engine);
+    expect(readFileSync(path, 'utf8')).toContain(claim);
+    const original = readFileSync(path, 'utf8');
     await engine.executeRaw("UPDATE persistence_worktrees SET state='draining' WHERE id=$1::uuid", [f.binding.worktree_id]);
-    body = `Facts: ${renderFactsTable([{ rowNum: 1, claim, kind: 'fact', confidence: 1, visibility: 'world', notability: 'medium', active: true, context: 'test evidence' }])}`;
+    body = 'Updated bound body';
     expect(await withPausedOwnerBudget(() => run())).toMatchObject({ status: 'partial', reason: 'writer_pending' });
     await disposePersistenceConsumer(engine);
     await engine.executeRaw("UPDATE persistence_worktrees SET state='active' WHERE id=$1::uuid", [f.binding.worktree_id]);
@@ -531,6 +537,7 @@ test('a fact withdrawn between bound connector preparation and publication leave
       tx.insertFact({ fact: claim, source: 'remember', visibility: 'world' }, { source_id: f.id }), TEST_WRITE_ATTRIBUTION));
     await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => recordFactWithdrawal(tx, fact.id, f.id, true), TEST_WRITE_ATTRIBUTION));
     const boundaries: string[] = [];
+    const before = (await engine.readPageSnapshot(slug, { sourceId: f.id }))!;
     const outcome = await publishMutation(engine, claimed, prepared, localHostId(), {
       boundary: async name => { boundaries.push(name); }, fileBoundary: name => { boundaries.push(name); } });
     expect(outcome).toMatchObject({ state: 'conflict', error_code: 'revision_conflict' });

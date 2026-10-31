@@ -171,13 +171,14 @@ describe('resolvePreset', () => {
   const flags = (over: Record<string, unknown>) =>
     ({ showToken: false, json: false, name: 'aurora', harness: 'claude-code', ...over }) as any;
 
-  test('daily-driver: snapshot grant, default write source, full surface (S0/D4)', () => {
+  test('daily-driver: snapshot grant, default write source, full surface listing the verbs (S0/D4, GBRA-199)', () => {
     const r = resolvePreset(flags({ preset: 'daily-driver' }));
     expect(r).toEqual({
       scopes: 'read write',
       writeSource: 'default',
       federatedRead: 'snapshot',
       surface: 'full',
+      surfaceSetBy: 'install',
       workspaceDerived: false,
     });
   });

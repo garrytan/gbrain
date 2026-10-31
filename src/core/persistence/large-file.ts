@@ -18,6 +18,7 @@ import { OperationError, opError } from '../ops/contract.ts';
 import { assertManagedFilesystemWrite } from './filesystem-guard.ts';
 import { sha256 } from './digest.ts';
 import type { RecoveryStagingFile } from './staging.ts';
+import { PAGE_CHANGED_DURING_PREPARATION_MESSAGE } from './verb-errors.ts';
 import { faultPoint } from './fault-points.ts';
 
 /** A canonical file of more bytes than this is read, hashed, copied and written in pieces. */
@@ -180,7 +181,7 @@ export async function stageStreamedContent(engine: BrainEngine, path: string, co
         bytes += piece.length;
         await faultPoint('large_file:stage_streaming', { path: streaming });
       }
-      if (bytes !== stage.bytes || hash.digest('hex') !== stage.hash) throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
+      if (bytes !== stage.bytes || hash.digest('hex') !== stage.hash) throw new OperationError('revision_conflict', PAGE_CHANGED_DURING_PREPARATION_MESSAGE, 'Read its current revision and submit the updated intent with a new request_id.');
       fsyncSync(fd);
     } finally { closeSync(fd); }
     if (existsAt(stage.path)) throw opError('unexpected_staging_bytes', 'A file already holds the reserved stage name.',

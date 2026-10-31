@@ -23,7 +23,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine } from '../engine.ts';
 import { isValidSourceId } from '../source-id.ts';
-import { hasReaders, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
+import { hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
 import { validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
@@ -87,7 +87,7 @@ export function accessAllowedForAllSql(pageAlias: string, identities: readonly (
 /**
  * GBRA-218 (PR A2): the folder layer. `folder_rule_ids` holds the source-qualified ids
  * of every applied folder rule whose prefix the slug starts with (a trigger stamps it from the applied rulebook,
- * migration v275); a page passes only when the caller satisfies all of them (`<@`, set semantics), so nested member
+ * migration v282); a page passes only when the caller satisfies all of them (`<@`, set semantics), so nested member
  * and group rules both have to pass. `satisfied` is the caller's satisfied set (CallerAccess.satisfiedRuleIds); an
  * entry that is not a valid qualified id empties it (fail closed). Prefixes under a narrowing still being stamped,
  * or touched by a policy file that does not validate, read as nobody (CallerAccess.folderCoverage). Column tests
@@ -149,7 +149,7 @@ function namesReadersSql(alias: string): string {
  * declared `derived_from` names one. Read-time, so derivatives written before
  * the origin gained readers are covered; new derivations are stamped private
  * by isDerivationPrivate. The lineage test lives in the SQL function
- * gbrain_access_origin_restricted (migration v274) behind a cheap type and
+ * gbrain_access_origin_restricted (migration v281) behind a cheap type and
  * key guard, so a read plans one function call instead of four subplans. Both
  * parts lead with column tests (page_readers IS NULL, type) so the planner's
  * row estimate follows column statistics instead of a default guess.
@@ -188,7 +188,7 @@ export function privatePagesFilterFragmentFast(pageAlias: string): string {
  *    (GBRAIN_REMOTE_PRIVATE_PAGES=1 or search.remote_private_pages=visible);
  *  - restricted: false only inside a remote request on a brain whose config
  *    access.restrictions_present was unset when the request began. Then no
- *    page named readers at that moment and none predates the migration (v274
+ *    page named readers at that moment and none predates the migration (v281
  *    sets the flag when one does), so every readers value is in the derived
  *    column: accessAllowedSql tests only page_readers IS NULL and
  *    folder_rule_ids IS NULL (live, so a page gaining readers or a folder rule
@@ -196,7 +196,7 @@ export function privatePagesFilterFragmentFast(pageAlias: string): string {
  *    write) and skips lineage, member matching and the frontmatter test, whose
  *    per-row JSONB read cost keyword search about 3%. The flag is sticky and set
  *    in the same transaction as the first page that names readers, the first
- *    member and the first folder rule or pending folder prefix (v275).
+ *    member and the first folder rule or pending folder prefix (v282).
  * Outside any record (local CLI, jobs, cycles) the identity is empty, no
  * source is private-readable and hidePrivate follows the process's hatch
  * state, so caller-aware fragments still fail closed on restricted pages.
@@ -538,8 +538,8 @@ export async function folderRestricted(engine: Pick<BrainEngine, 'executeRaw'>, 
 }
 
 /** `page` with folder_restricted looked up (folderRestricted), for a page read without it, such as a page snapshot. */
-export async function withFolderRestricted<P extends { source_id: string; slug: string }>(engine: Pick<BrainEngine, 'executeRaw'>, page: P): Promise<P & { folder_restricted: boolean }> {
-  return { ...page, folder_restricted: await folderRestricted(engine, page.source_id, page.slug) };
+export async function withFolderRestricted(engine: Pick<BrainEngine, 'executeRaw'>, page: { source_id: string; slug: string; type?: string | null; frontmatter?: unknown }): Promise<{ type?: string | null; frontmatter?: unknown; folder_restricted: boolean }> {
+  return { type: page.type, frontmatter: page.frontmatter, folder_restricted: await folderRestricted(engine, page.source_id, page.slug) };
 }
 
 /**
@@ -605,18 +605,19 @@ export function privateTimelineEventFilterForCaller(timelineAlias: string): stri
  */
 /**
  * GBRA-218: privateProvenanceFilterFragment for the fact reads a caller gates on `excludePrivate`. The readers part
- * always applies, judged as the caller: a fact held in or extracted from a page that names readers reaches only the
- * callers that page admits (none outside a caller record); the privacy part is dropped when an operator relaxed
- * privacy for this remote read, which is what the hatches did to these reads before member access (`excludePrivate`
- * was false then). Outside a remote record nothing relaxes it.
+ * always applies (a world fact held in or extracted from a page that names readers stays hidden from every remote
+ * caller, as with the plain fragment); the privacy part is dropped when an operator relaxed privacy for this remote
+ * read, which is what the hatches did to these reads before member access (`excludePrivate` was false then).
+ * Outside a remote record nothing relaxes it. GST-359 C2: a fact on a member page (`memory/members/<member>`) alone
+ * is judged as the caller (its member identity, or every audience entry), so its member reads it back.
  */
 export function privateProvenanceFilterUnderPolicy(factAlias: string): string {
-  // GST-359 C2: judged as the caller (its member identity, or every audience entry), so a fact on a page that names
-  // readers reaches exactly the callers who read that page; outside a caller record the identity is empty (hide all).
   const access = currentCallerAccess();
   const identity = access.audienceIdentities.length ? { all: access.audienceIdentities } : access.identity;
-  return `NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id ` +
-    `AND pp.slug = ${factAlias}.source_markdown_slug AND NOT ${readPolicyFragment('pp', identity, !callerRelaxesPrivacy(), access.satisfiedRuleIds)})`;
+  const hide = !callerRelaxesPrivacy();
+  const memberPage = `starts_with(pp.slug, '${MEMBER_PAGE_PREFIX}')`;
+  return `NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug ` +
+    `AND NOT CASE WHEN ${memberPage} THEN ${readPolicyFragment('pp', identity, hide, access.satisfiedRuleIds)} ELSE ${readPolicyFragment('pp', [], hide)} END)`;
 }
 
 /** True only inside a remote caller record whose read an operator relaxed (the env hatch or the config opt-out). */

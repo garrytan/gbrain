@@ -27,6 +27,7 @@ import { fileMatchesSnapshot } from './page-prepare.ts';
 import type { ManagedSyncContext } from './sync-discovery.ts';
 import { readBlobs } from './sync-git-stream.ts';
 import { readGitSourceHolds } from './sync-holds.ts';
+import { sourceDbOnlyVerdict } from './source-storage.ts';
 import { readDeletionProvenance } from './sync-origin-evidence.ts';
 import { levelReuseAllowed, SYNC_LEVEL_REUSE_KEY } from './sync-tree-reuse.ts';
 import type { ShadowLevel, ShadowPath } from './sync-pass.ts';
@@ -76,7 +77,7 @@ export async function applyHeldDeletions(engine: BrainEngine, level: ShadowLevel
       return hold?.code === 'file_drift' && hold.meta.state === 'file_gone' && !hold.meta.reason && hold.meta.held_deletion?.page_revision !== entry.revision;
     });
   }
-  const batch = [...fresh, ...held].filter(entry => !state.screened.has(entry.path)).slice(0, Math.max(0, PASS_HELD_DELETION_MAX - state.screened.size));
+  const batch = [...fresh, ...held].filter(entry => !state.screened.has(entry.path) && sourceDbOnlyVerdict(level.root, entry.slug!) === false).slice(0, Math.max(0, PASS_HELD_DELETION_MAX - state.screened.size));
   if (!batch.length) return;
   for (const entry of batch) state.screened.add(entry.path);
   const verdicts = await proveHeldDeletions(engine, level, context, batch, holdPath);

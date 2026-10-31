@@ -581,7 +581,7 @@ export async function maybeDelegateManagedSyncToServe(engine: BrainEngine, args:
   }
   // 4. Socket + secret: the serve bound to this source, else the legacy URL-keyed socket.
   const { sock, secret } = deps.socket ? await deps.socket(sourceId)
-    : { sock: await hookResolveSocketForConfig(cfg, sourceId), secret: readIpcSecretForConfig(cfg) };
+    : { sock: await hookResolveSocketForConfig(cfg, sourceId, { delegation: true }), secret: readIpcSecretForConfig(cfg) };
   if (!sock || !existsSync(sock) || !secret) {
     return own('no_socket', fallbackLine(pid, 'the running gbrain serve exposes no sync IPC socket (older gbrain, or GBRAIN_SERVE_SYNC_IPC=0 on the serve)', false));
   }

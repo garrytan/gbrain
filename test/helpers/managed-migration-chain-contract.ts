@@ -27,8 +27,9 @@ async function brainState(engine: BrainEngine) {
 
 /**
  * CEO-E1 / Eng harness: the real runner walks every registered orchestrator
- * migration on a managed brain whose legacy content targets v0.13.1
- * (grandfather), v0.28.0 (takes backfill) and v0.32.2 (fact adoption).
+ * migration on a managed brain whose legacy content targets v0.28.0 (takes
+ * backfill) and v0.32.2 (fact adoption); v0.13.1 must leave every page's
+ * frontmatter alone (#7814).
  */
 export async function runManagedMigrationChain(databaseUrl: string | undefined, expect: typeof bunExpect): Promise<void> {
   const fixture = await managedChainFixture(databaseUrl);
@@ -49,7 +50,7 @@ export async function runManagedMigrationChain(databaseUrl: string | undefined, 
     }
     expect(JSON.stringify(ledger)).not.toContain('writer_coordinator_required');
 
-    expect(phaseDetail(ledger, '0.13.1', 'grandfather')).toBe('touched=2 skipped=0 failed=0');
+    expect(phaseDetail(ledger, '0.13.1', 'grandfather')).toStartWith('retired (#7814)');
     expect(phaseDetail(ledger, '0.28.0', 'backfill')).toBe('extract-takes scanned 2 pages; 1 had fenced takes; upserted 2 rows');
     expect(phaseDetail(ledger, '0.32.2', 'fence_facts')).toContain('scanned=3 fenced=3 pages=2');
     expect(phaseDetail(ledger, '0.32.2', 'verify')).toBe('pages_checked=2');
@@ -58,6 +59,7 @@ export async function runManagedMigrationChain(databaseUrl: string | undefined, 
     let settled: Awaited<ReturnType<typeof brainState>>;
     try {
       settled = await brainState(engine);
+      expect(await engine.executeRaw("SELECT slug FROM pages WHERE frontmatter ? 'validate'")).toEqual([]);
       expect(settled.takes.map(t => [t.slug, t.row_num, t.active])).toEqual([[LEGACY_FILE_SLUG, 1, true], [LEGACY_FILE_SLUG, 2, true]]);
       const byId = new Map(settled.facts.map(f => [Number(f.id), f]));
       const { seed } = fixture;
@@ -106,8 +108,8 @@ export async function runExhaustedCapacityChain(databaseUrl: string | undefined,
     const refused = await fixture.applyMigrations();
     expect(refused.exitCode, transcript(refused)).toBe(1);
     const ledger = fixture.ledger();
-    expect(ledger.filter(e => e.status !== 'complete').map(e => e.version)).toEqual(['0.13.1']);
-    const detail = phaseDetail(ledger, '0.13.1', 'grandfather');
+    expect(ledger.filter(e => e.status !== 'complete').map(e => e.version)).toEqual(['0.28.0']);
+    const detail = phaseDetail(ledger, '0.28.0', 'backfill');
     expect(detail).toStartWith('write_quota_exhausted: Write capacity exhausted: principal permanent request IDs (0 used of 0).');
     expect(detail).toContain(`gbrain config set ${key} `);
 

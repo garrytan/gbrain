@@ -4,7 +4,7 @@
  * Every source with a policy has one access_policy_state row (its lock), an
  * append-only access_policy_revisions log of desired rulebooks, and the
  * applied rulebook in access_rules, which page writes stamp folder_rule_ids
- * from (migration v275). The store (`sources.config.access_store`, git or
+ * from (migration v282). The store (`sources.config.access_store`, git or
  * database) only decides where desired revisions come from: `gbrain access rule`
  * on a database store, the committed `.gbrain/access.yml` on a git store
  * (policy-git.ts). From there the lifecycle is the same:

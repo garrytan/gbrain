@@ -188,7 +188,7 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
-          "message": "Bun <bun-version> (minimum 1.4.0)",
+          "message": "Bun <bun-version> (minimum 1.4.4)",
           "name": "bun_runtime",
           "status": "ok"
         },
@@ -272,7 +272,7 @@
             "next": "report",
             "requires_exclusive": false,
             "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
-            "why": "Register `<absolute path to gbrain> serve --surface full` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+            "why": "Register `<absolute path to gbrain> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
           },
           "message": "No agent harness was detected. Wire one when the user picks an agent app.",
           "name": "harness_wiring",

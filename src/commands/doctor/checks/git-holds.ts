@@ -1,6 +1,6 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
-import { gitHoldFix, holdRepairSteps, readGitHoldListing, readGitImageHoldCounts, readSyncHoldPolicy } from '../../../core/persistence/sync-holds.ts';
+import { GIT_HOLD_OP, gitHoldFix, holdRepairSteps, readGitHoldListing, readGitImageHoldCounts, readSyncHoldPolicy } from '../../../core/persistence/sync-holds.ts';
 import { coverageRoute, readHeldCoverage } from '../../../core/persistence/held-reads.ts';
 import { fenceReceiptLocation } from '../../../core/fence-repair/refusal.ts';
 import { readFenceAutoRepair, type FenceAutoRepair } from '../../../core/fence-repair/hold-fix.ts';
@@ -8,6 +8,7 @@ import { summarizeFenceCensus } from '../../../core/fence-repair/census.ts';
 import { agentFix } from '../check-fix.ts';
 import { isContentRefusal } from '../../../core/import-screen.ts';
 import { SETTLE_MISMATCH_STREAK } from '../../../core/persistence/sync-pass-row.ts';
+import { noncanonicalPrivateRequest } from '../../../core/persistence/visibility-request.ts';
 
 const SAMPLE_PATHS = 5;
 
@@ -29,6 +30,9 @@ const SAMPLE_PATHS = 5;
  * streak, or a `settle_mismatch` streak that becomes a hold) is listed under
  * `details.passes` with its reason, stop reason, the time it began and the
  * paths whose settle keeps mismatching, and warns even with no file held.
+ * #7848: `details.visibility_noncanonical` counts the files held `visibility_noncanonical` and the live stored pages
+ * whose frontmatter asks for private in a spelling page privacy does not read (written before sync and import held
+ * such files, on a repo-less brain too); a stored page warns even with no file held. Nothing is repaired.
  */
 export async function gitHeldFilesCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   try {
@@ -55,12 +59,22 @@ export async function gitHeldFilesCheck(engine: BrainEngine, sourceIds?: string[
         argv: steps.argv, next: steps.text };
     });
     const held = sources.reduce((sum, source) => sum + source.held, 0);
+    const noncanonical = await readNoncanonicalPrivate(engine, sourceIds);
+    const storedNote = noncanonical.stored ? ` ${noncanonical.stored} stored page(s) ask for visibility: private in a spelling page privacy does not read, so they are world-readable `
+      + `(first: ${noncanonical.first.map(page => `${page.source_id}:${page.slug}`).join(', ')}); rewrite each with visibility: private on its own frontmatter line (put_page, or edit its file and sync).` : '';
     const details = { held, source_ids: sources.map(source => source.source_id), sources: sources.map(({ argv: _argv, ...source }) => source), escalate_count: policy.escalateCount,
-      ...(fences ? { fences, auto_repair: auto } : {}), ...(passes.length ? { passes } : {}), docs: 'docs/guides/repair.md#held-files' };
+      ...(fences ? { fences, auto_repair: auto } : {}), ...(passes.length ? { passes } : {}),
+      ...(noncanonical.held || noncanonical.stored ? { visibility_noncanonical: { held: noncanonical.held, stored: noncanonical.stored } } : {}), docs: 'docs/guides/repair.md#held-files' };
     if (!held && passes.length) return { name: 'git_held_files', status: 'warn', details,
-      message: `No Git source files are held, but managed sync does not converge.${passNote}`,
+      message: `No Git source files are held, but managed sync does not converge.${passNote}${storedNote}`,
       fix: agentFix(['gbrain', 'sync', 'status', '--source', passes[0]!.source_id, '--json'],
         'Read-only: the convergence of the source, the reason its passes stop and the next step (a hold to reconcile, a blocked step, or the resume command).', 'git_held_files', { docs: 'docs/guides/repair.md#held-files' }) };
+    if (!held && noncanonical.stored) {
+      const first = noncanonical.first[0]!;
+      return { name: 'git_held_files', status: 'warn', details, message: `No Git source files are held.${storedNote}`,
+        fix: agentFix(['gbrain', 'get', '--source', first.source_id, '--', first.slug], `Read-only: shows page ${first.slug} with its revision; rewrite its frontmatter with visibility: private on its own line, lowercase.`,
+          'git_held_files', { docs: 'docs/guides/write-refusals.md#visibility_noncanonical' }) };
+    }
     if (!held) return { name: 'git_held_files', status: 'ok', message: 'No Git source files are held.', details };
     const escalated = sources.filter(source => source.escalated);
     const single = sources.length === 1 ? sources[0]! : undefined;
@@ -78,7 +92,7 @@ export async function gitHeldFilesCheck(engine: BrainEngine, sourceIds?: string[
         + 'A page whose newer file is held is read-only for put_page until the file is repaired, so do not retry a refused write. '
         + `Inspect with ${sources.map(source => source.status).join('; ')}; `
         + (sources.some(source => source.fences || source.stalled) ? `then ${sources.map(source => `${source.source_id}: ${source.next}`).join('; ')}.` : `preview the fix with ${sources.map(source => source.repair).join('; ')}.`)
-        + passNote,
+        + passNote + storedNote,
       fix: single
         ? agentFix(single.argv, fenceOnly ? `Previews the fence repair of each held file of ${single.source_id} (read-only, no model call): ${single.next}.`
           : stalledOnly ? `Shows what the write owner of ${single.source_id} was stuck on (read-only); the held files are fine. ${single.next}.`
@@ -96,6 +110,21 @@ export async function gitHeldFilesCheck(engine: BrainEngine, sourceIds?: string[
       message: `Git source holds could not be inspected: ${error instanceof Error ? error.message : String(error)}. Health is unknown.`,
       details: { held: 0, health: 'unknown' } };
   }
+}
+
+/** #7848: `visibility_noncanonical` holds, and live stored pages `noncanonicalPrivateRequest` reads as asking for private (first five named). */
+async function readNoncanonicalPrivate(engine: BrainEngine, sourceIds?: string[]): Promise<{ held: number; stored: number; first: Array<{ source_id: string; slug: string }> }> {
+  const ids = sourceIds ?? null;
+  const [heldRow] = await engine.executeRaw<{ n: number | string }>(`SELECT count(*)::int AS n FROM op_checkpoints x
+      JOIN sources s ON x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
+    WHERE x.op=$1 AND x.completed_keys->0->>'code'='visibility_noncanonical' AND s.archived IS NOT TRUE AND ($2::text[] IS NULL OR s.id=ANY($2::text[]))`, [GIT_HOLD_OP, ids]);
+  const candidates = await engine.executeRaw<{ source_id: string; slug: string; frontmatter: Record<string, unknown> | string | null }>(`SELECT p.source_id, p.slug, p.frontmatter
+    FROM pages p JOIN sources s ON s.id=p.source_id
+    WHERE p.deleted_at IS NULL AND s.archived IS NOT TRUE AND ($1::text[] IS NULL OR p.source_id=ANY($1::text[])) AND jsonb_typeof(p.frontmatter)='object'
+      AND EXISTS (SELECT 1 FROM jsonb_object_keys(p.frontmatter) k WHERE lower(k)='visibility') AND p.frontmatter->>'visibility' IS DISTINCT FROM 'private'
+    ORDER BY p.source_id, p.slug`, [ids]);
+  const stored = candidates.filter(row => noncanonicalPrivateRequest('', typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter));
+  return { held: Number(heldRow?.n ?? 0), stored: stored.length, first: stored.slice(0, SAMPLE_PATHS).map(({ source_id, slug }) => ({ source_id, slug })) };
 }
 
 /** Whether the maintenance run repairs fence holds by itself, as one sentence ('' when nothing says). */

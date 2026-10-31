@@ -301,7 +301,7 @@ function finalize(config: RobotConfig, model: ReferenceModel, extra: Partial<Rob
   for (const v of locks.violations) model.violate({ class: 'lock_order', detail: `${v.rule}: ${v.detail}` });
   const trace = model.violations.length ? [...model.world.observations.values()].map(o =>
     `${o.id} ${o.kind} ${o.actor}@${o.source} ${o.status}${o.code ? `/${o.code}` : ''}${o.values.revision ? ` rev=${o.values.revision}` : ''}`
-    + `${o.receipt ? ` receipt=${o.receipt.state}` : ''}${o.status === 'refused' ? ` ${JSON.stringify(o.raw).slice(0, 300)}` : ''}`) : undefined;
+    + `${o.receipt ? ` receipt=${o.receipt.state}` : ''}${o.status === 'refused' || o.kind === 'sync' || o.kind === 'connector_publish' ? ` ${JSON.stringify(o.raw).slice(0, 300)}` : ''}`) : undefined;
   const deferredOf = (v: Violation) => KNOWN_DEFERRALS.find(k => k.class === v.class && k.match.test(v.detail));
   const deferred = model.violations.filter(v => deferredOf(v)).map(v => ({ ...v, todo: deferredOf(v)!.todo }));
   const violations = model.violations.filter(v => !deferredOf(v));

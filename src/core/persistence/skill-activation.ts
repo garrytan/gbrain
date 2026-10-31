@@ -9,6 +9,7 @@ import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from '.
 import { assertWriterAdminState, WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { assertWriterAdminUnlocked } from './admin-lock.ts';
 import { notQuiescedError } from './blocking-effects.ts';
+import { NOT_PAGE_EMBEDDING_LEASE } from '../page-embedding-lease.ts';
 
 export async function activateSharedSkillPersistence(engine: BrainEngine,
   options: { confirmQuiesced?: boolean; dryRun?: boolean; expectedState?: string } = {}): Promise<{ activated: boolean; protocol_version: 2; filesystem_sources: number; drift_audit?: ActivationReport['drift_audit'] }> {
@@ -58,7 +59,7 @@ export async function activateSharedSkillPersistence(engine: BrainEngine,
       const identity = (rows: WorktreeBinding[]) => JSON.stringify(rows.map(row => [row.source_id, row.source_incarnation, row.worktree_id,
         row.owner_host_id, String(row.owner_epoch), String(row.topology_generation), row.relative_path, row.local_path, row.coordination_path]));
       if (identity(current) !== identity(initial)
-        || (await tx.executeRaw('SELECT id FROM gbrain_cycle_locks LIMIT 1')).length) throw quiescence();
+        || (await tx.executeRaw(`SELECT id FROM gbrain_cycle_locks WHERE ${NOT_PAGE_EMBEDDING_LEASE} LIMIT 1`)).length) throw quiescence();
       if ((await tx.executeRaw("SELECT id FROM persistence_requests WHERE state IN ('queued','running','recovering') OR recovery IS NOT NULL LIMIT 1")).length
         || (await tx.executeRaw("SELECT id FROM persistence_effects WHERE state IN ('queued','running') OR recovery IS NOT NULL LIMIT 1")).length) {
         throw await notQuiescedError(tx, quiescence().message, { queuedEffects: true });

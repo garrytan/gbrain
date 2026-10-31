@@ -48,6 +48,7 @@ const RECEIPT_COVERAGE: Record<string, Coverage> = {
   'src/core/trust/page-handlers.ts': { sites: 1, tables: ['pages', 'facts', 'takes', 'timeline_entries'], todo: 'TODO(receipts): owner tier decisions (confirm/lower) change only trust_tier/write_origin in withCoordinatedWrite as maintenance without a request; publish them as owner requests' },
   'src/core/trust/backfill.ts': { sites: 3, tables: ['pages', 'facts', 'takes', 'timeline_entries'], todo: 'TODO(receipts): gbrain trust backfill and claim-sources --relower (#6533) set legacy trust_tier/write_origin (no content column) as attributed coordinated maintenance without a request; publish each batch as a maintenance intent' },
   'src/core/repair/frontmatter-keys.ts': { sites: 1, tables: ['pages'], todo: 'TODO(receipts): gbrain repair frontmatter-keys (#6454) strips the four parser-reserved keys from pages.frontmatter (no content column) in withCoordinatedWrite batches as explicit-only maintenance without a request; publish each batch as a maintenance intent' },
+  'src/core/repair/secret-spans.ts': { sites: 1, tables: ['pages', 'facts', 'takes', 'timeline_entries'], todo: 'TODO(receipts): gbrain repair secret-spans (GST-327) replaces credential spans in preview-approved pages, their facts, takes and timeline rows in withCoordinatedWrite as explicit-only maintenance without a request, with its own per-page op_checkpoints receipt; publish each page as a maintenance intent' },
   'src/core/cycle/concept-publication.ts': { sites: 1, tables: [], other: 'concept provenance links (links is not a guarded table)' },
   'src/core/persistence/links-maintenance.ts': { sites: 1, tables: [], other: 'derived links and the pages attendance-blocked stamp (a physical column the guard exempts)' },
   'src/core/persistence/database-write.ts': { sites: 1, tables: [], other: 'manual links and chronicle ontology observations (unguarded tables)' },
@@ -60,7 +61,7 @@ const RECEIPT_COVERAGE: Record<string, Coverage> = {
 };
 
 /** Facts/takes writers allowed without a receipt this wave, each with its TODO above. */
-const RECEIPT_EXCEPTIONS = new Set(['src/core/bootstrap/verify.ts', 'src/core/trust/backfill.ts', 'src/core/trust/held-removals.ts', 'src/core/trust/owner-actions.ts', 'src/core/trust/page-handlers.ts']);
+const RECEIPT_EXCEPTIONS = new Set(['src/core/bootstrap/verify.ts', 'src/core/repair/secret-spans.ts', 'src/core/trust/backfill.ts', 'src/core/trust/held-removals.ts', 'src/core/trust/owner-actions.ts', 'src/core/trust/page-handlers.ts']);
 
 const ROOT = join(import.meta.dir, '..');
 

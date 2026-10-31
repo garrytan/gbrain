@@ -76,7 +76,7 @@ export function tightenToPage(visibility: FactVisibility, page: { type?: string 
 /** tightenToPage for a page of `sourceId` known by its slug, its folder restriction looked up (folderRestricted). */
 export async function tightenToStoredPage(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, visibility: FactVisibility,
   page: { slug: string; type?: string | null; frontmatter?: unknown }): Promise<FactVisibility> {
-  return tightenToPage(visibility, { ...page, folder_restricted: await folderRestricted(engine, sourceId, page.slug) });
+  return tightenToPage(visibility, { type: page.type, frontmatter: page.frontmatter, folder_restricted: await folderRestricted(engine, sourceId, page.slug) });
 }
 
 /**
