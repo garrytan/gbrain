@@ -624,7 +624,10 @@ SKILL_DRIFT_UNKNOWN_FLAG skills/x/SKILL.md:42 'gbrain doctor --jsn' (did you mea
 A line that shows a wrong invocation on purpose carries
 `<!-- skill-drift-ok: <reason> -->` (on that line or the one before). An
 existing finding nobody can fix yet goes in `scripts/skill-drift-baseline.txt`,
-which only shrinks.
+which only shrinks. A command that skills call with a second word but that
+declares no subcommands can only have its flags checked; declare its
+subcommands in `src/cli/subcommands.ts`, or (for a positional argument) list it
+in `scripts/skill-drift-undeclared-subcommands.txt`, which also only shrinks.
 
 **Size budget.** A `SKILL.md` over 16 KB needs a row in
 `skills/skill-budgets.tsv` and stays under its ceiling; a description stays
@@ -636,6 +639,8 @@ loads, place every fact on its level, cut what the model already knows, and
 keep the slim version only if a blinded before/after eval on tasks written
 before cutting shows agents do at least as well. Then set its row's
 `last_diet_bytes` and lower the ceiling to the new size plus 10%.
+`gbrain skillpack health <skill>` applies the same limits to an installed
+copy and prints the fix for each finding.
 
 **Verify** by rerunning the case that prompted the change in a fresh session,
 plus any test that asserts the skill's text.

@@ -8,7 +8,8 @@ import type { CliSurface } from '../core/skill-drift.ts';
 import { CLI_ONLY } from './command-table.ts';
 import { ROUTERS } from './subcommands.ts';
 import { OPERATION_MANIFEST, cliOps } from './op-manifest.ts';
-import { cliAliases, findUnknownFlag, validateCommandFlags } from './main.ts';
+import { cliAliases, validateCommandFlags } from './flag-validation.ts';
+import { findUnknownFlag } from './flag-equals.ts';
 import { parseGlobalFlags } from '../core/cli-options.ts';
 import { CLI_FLAG_REGISTRY } from '../core/cli-flag-registry.generated.ts';
 
@@ -16,6 +17,7 @@ export function cliSurface(): CliSurface {
   const opNames = OPERATION_MANIFEST.map(op => op.name);
   const opSet = new Set(opNames);
   return {
+    isCliOnly: command => CLI_ONLY.has(command),
     isCommand: name => CLI_ONLY.has(name) || cliOps.has(name) || cliAliases.has(name),
     subcommands: command => ROUTERS[command]?.bareHelpFirst ? ROUTERS[command]!.subcommands : undefined,
     stripGlobalFlags: argv => parseGlobalFlags(argv).rest,

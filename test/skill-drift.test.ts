@@ -4,6 +4,7 @@ import { cliSurface } from '../src/cli/skill-surface.ts';
 
 const fake: CliSurface = {
   isCommand: n => ['pages', 'doctor', 'search'].includes(n),
+  isCliOnly: n => ['pages', 'doctor'].includes(n),
   subcommands: c => (c === 'pages' ? ['purge-deleted', 'status'] : undefined),
   stripGlobalFlags: argv => argv.filter(a => a !== '--quiet'),
   unknownFlag: (c, args) => args.find(a => a.startsWith('--') && !['--json', '--dry-run', '--limit'].includes(a)) ?? null,
@@ -47,9 +48,14 @@ describe('analyzeSkillDrift', () => {
     expect(r.findings.every(f => f.remedy.length > 0 && f.line > 0)).toBe(true);
   });
 
-  test('counts invocations whose subcommands are not declared instead of calling them drift', () => {
+  test('counts invocations whose subcommands are not declared instead of calling them drift, naming the command', () => {
     const r = analyzeSkillDrift('f', skill('`gbrain doctor anything --json`\n`gbrain unknowncmd --x`'), fake);
-    expect(r).toEqual({ findings: [], invocations: 1, subcommandUnverified: 1 });
+    expect(r).toEqual({ findings: [], invocations: 1, subcommandUnverified: 1, undeclaredCommands: ['doctor'] });
+  });
+
+  test('an operation\'s positional argument, a bare flag or a placeholder is not an undeclared subcommand', () => {
+    const r = analyzeSkillDrift('f', skill('`gbrain search "q" --limit 5`\n`gbrain doctor --json`\n`gbrain doctor <check>`'), fake);
+    expect(r).toMatchObject({ invocations: 3, subcommandUnverified: 0, undeclaredCommands: [] });
   });
 
   test('placeholder values and flags never count as drift', () => {

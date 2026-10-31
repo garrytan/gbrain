@@ -20,6 +20,7 @@
  */
 
 import { resolverHealthEntry, retrievalReflexEntry, skillConformanceEntry } from './checks/skill-group.ts';
+import { skillHealthEntry } from './checks/skill-health.ts';
 import {
   bootstrapChecksEntry,
   memorableRelayEntry,
@@ -175,6 +176,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   resolverHealthEntry,
   retrievalReflexEntry,
   skillConformanceEntry,
+  skillHealthEntry,
   bootstrapChecksEntry,
   memorableRelayEntry,
   connectorsEntry,

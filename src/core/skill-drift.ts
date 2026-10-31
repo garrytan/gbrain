@@ -23,6 +23,8 @@ export interface DriftFinding {
 
 export interface CliSurface {
   isCommand(name: string): boolean;
+  /** A command the CLI dispatches itself (not an operation): its second word may be a subcommand. */
+  isCliOnly(name: string): boolean;
   /** Declared subcommands, or undefined when the command dispatches them by hand (not verifiable). */
   subcommands(command: string): readonly string[] | undefined;
   /** argv after global flags are stripped; argv[0] is the command. */
@@ -43,8 +45,10 @@ export interface Invocation {
 export interface DriftReport {
   findings: DriftFinding[];
   invocations: number;
-  /** Invocations of commands whose subcommands are not declared, so only their flags were checked. */
+  /** Invocations of CLI commands with a second word but no declared subcommands, so only their flags were checked. */
   subcommandUnverified: number;
+  /** Those commands, sorted (scripts/skill-drift-undeclared-subcommands.txt holds the accepted ones). */
+  undeclaredCommands: string[];
 }
 
 const SHELL_FENCES = new Set(['', 'bash', 'sh', 'shell', 'zsh', 'console']);
@@ -176,6 +180,7 @@ export function analyzeSkillDrift(file: string, markdown: string, surface: CliSu
   const findings: DriftFinding[] = [];
   let invocations = 0;
   let subcommandUnverified = 0;
+  const undeclared = new Set<string>();
   for (const inv of extractInvocations(markdown)) {
     let argv: string[];
     try {
@@ -188,8 +193,12 @@ export function analyzeSkillDrift(file: string, markdown: string, surface: CliSu
     invocations++;
     const declared = surface.subcommands(command);
     const sub = inv.argv[inv.argv.indexOf(command) + 1];
-    if (!declared) subcommandUnverified++;
-    else if (sub && !sub.startsWith('-') && sub !== 'help' && !isPlaceholder(sub) && !declared.includes(sub)) {
+    if (!declared) {
+      if (surface.isCliOnly(command) && sub && !sub.startsWith('-') && !isPlaceholder(sub)) {
+        subcommandUnverified++;
+        undeclared.add(command);
+      }
+    } else if (sub && !sub.startsWith('-') && sub !== 'help' && !isPlaceholder(sub) && !declared.includes(sub)) {
       const suggestion = nearest(sub, declared);
       findings.push({
         code: 'SKILL_DRIFT_UNKNOWN_SUBCOMMAND', file, line: inv.line, token: `${command} ${sub}`, snippet: inv.snippet, suggestion: suggestion && `${command} ${suggestion}`,
@@ -216,7 +225,7 @@ export function analyzeSkillDrift(file: string, markdown: string, surface: CliSu
       remedy: `'${name}' is not a gbrain operation${suggestion ? `; did you mean ${suggestion}` : ''}. Declare a real operation or a host tool (shell, web_search, ...)`,
     });
   }
-  return { findings, invocations, subcommandUnverified };
+  return { findings, invocations, subcommandUnverified, undeclaredCommands: [...undeclared].sort() };
 }
 
 /** Size of a skill's frontmatter `description:` value in bytes (0 when absent). */

@@ -83,6 +83,23 @@ from "you changed X." Applied hunks align everything to gbrain. Use
 `--dry-run` first to preview, or run plain `reference` to inspect the
 diff before letting auto-apply touch anything.
 
+### `gbrain skillpack health [<skill>] [--skills-dir PATH] [--json] [--strict]`
+
+Read-only. For the active skills folder (the harness or workspace skills
+dir, else the bundled skills) it reports each skill's bytes against its
+budget, growth past 10% over its last diet, description size, missing
+frontmatter triggers, and every `gbrain` command, flag or tool the skill
+shows that this gbrain does not have. Each finding carries what was
+observed, what was expected, the edit or command that fixes it (for an
+unedited copy of a bundled skill, `gbrain skillpack reference <skill>`
+first) and a verify command. A folder with no skills manifest or
+`skills.lock.json` is checked only for copies of gbrain's bundled skills,
+so other agents' skills are never reported. It reads files only, so it
+works the same on a brain with no git repository.
+
+`gbrain doctor` runs it as `skill_health` (it warns only on drift),
+`gbrain maintain` and `gbrain skillpack-check` print its one-line summary.
+
 ### `gbrain skillpack migrate-fence [--workspace PATH] [--dry-run]`
 
 One-shot conversion for workspaces still on the legacy managed-block
@@ -259,6 +276,8 @@ gbrain skillpack remove --harness claude-code --skill query
 - **gbrain shipped a new version, want to see what's changed**
   → `reference` (read-only) or `reference --apply-clean-hunks` (auto);
   for harness installs → `reference --harness <h>`
+- **Find skills that grew too big or show commands this gbrain doesn't
+  have** → `health` (read-only)
 - **Upgrading from the legacy managed-block model** → `migrate-fence` (one-shot)
 - **Cleanup after `migrate-fence`** → `scrub-legacy-fence-rows`
 - **Lift your fork's skill back into gbrain** → `harvest` + the
