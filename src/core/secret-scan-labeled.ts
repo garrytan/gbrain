@@ -212,6 +212,7 @@ const PAIR_USER_TAIL_RE = /([^\s/:"'`*]+)["'`]?\s*[/:]\s*["'`]?$/;
  */
 export function labeledValueIsCredential(value: string, form: 'single' | 'pair' | 'cli', head = ''): boolean {
   if (value.length < 3 || isStopword(value)) return false;
+  if (form === 'pair' && head.endsWith('<REDACTED:') && /^[A-Za-z0-9_-]{1,64}>[*_]{0,2}$/.test(value)) return false;
   // A flag's "value" starting with `-` is the next flag; a typed password may start with `-` (W12 S1).
   if (form === 'cli' && value.startsWith('-')) return false;
   // Only a single env-style label carries a setting suffix (`PASSWORD_FILE=`); a pair's user half may look like one (W12 S2).
