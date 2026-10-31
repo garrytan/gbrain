@@ -436,11 +436,21 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
         docs: 'docs/guides/shared-checkout-git.md#outcomes' } });
   }
   const before = indexEntries(root, rel);
-  const add = withIndexRetry(root, ['add', '-A', '--', ...literalPathspecs(rel)], 'git add');
-  if (add.code !== 0) {
-    throw opError('commit_paths_invalid', 'git add refused the given paths.', add.stderr.trim().slice(0, 300) || 'Check the paths exist or are tracked.');
-  }
   try {
+    // Update tracked paths first: Git rejects `add -A` for a tracked deletion
+    // beneath an ignored directory. Add only visible untracked files afterward.
+    const trackedMatches = git(root, ['ls-files', '--cached', '-z', '--', ...literalPathspecs(rel)]).stdout
+      .split('\0').filter(Boolean);
+    if (trackedMatches.length) {
+      const tracked = withIndexRetry(root, ['add', '-u', '--', ...literalPathspecs(trackedMatches)], 'git add');
+      if (tracked.code !== 0) throw opError('commit_paths_invalid', 'git add refused the given paths.', tracked.stderr.trim().slice(0, 300) || 'Check the paths exist or are tracked.');
+    }
+    const untracked = git(root, ['ls-files', '--others', '--exclude-standard', '-z', '--', ...literalPathspecs(rel)]).stdout
+      .split('\0').filter(Boolean);
+    if (untracked.length) {
+      const add = withIndexRetry(root, ['add', '-A', '--', ...literalPathspecs(untracked)], 'git add');
+      if (add.code !== 0) throw opError('commit_paths_invalid', 'git add refused the given paths.', add.stderr.trim().slice(0, 300) || 'Check the paths exist or are tracked.');
+    }
     const paths = withRenamePartners(root, rel);
     const partners = paths.filter(p => !insideSourceRoots(p, scope.roots));
     if (partners.length) throw outsideRootError(root, scope.roots, partners, 'A staged rename would commit');
