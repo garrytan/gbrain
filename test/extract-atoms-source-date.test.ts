@@ -7,8 +7,11 @@
  * with the extraction input, before the model call, and serialized into the
  * atom's frontmatter `date`, so classic import and managed publication
  * (test/helpers/managed-atoms-contract.ts) store the same date.
+ * A transcript-derived atom has no source page; it takes the transcript's
+ * own frontmatter date or the date in its file path, and stays undated
+ * (import fallback) when the transcript has neither.
  * Regression: dropping the stamp, reading the date after inference, or
- * borrowing a date for a transcript-derived atom (no source page).
+ * dating a transcript atom by the extraction run.
  * Model calls go through the `_chat` seam; persistence is real PGLite.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -70,16 +73,27 @@ describe('#6720 atom content dates', () => {
     }, 60_000);
   }
 
-  test('a transcript-derived atom has no source page and borrows no date', async () => {
-    const sourceId = 'atom-date-transcript';
-    await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
-    const result = await runPhaseExtractAtoms(engine, {
-      sourceId, _pages: [], _transcripts: [{ filePath: '/fake/2026-07-09-call.txt', content: body, contentHash: 'ab'.repeat(32) }],
-      _chat: async () => reply(),
-    });
-    expect(result.details?.atoms_extracted).toBe(1);
-    const atom = await onlyAtom(sourceId);
-    expect(atom.frontmatter.date).toBeUndefined();
-    expect(atom.effective_date_source).not.toBe('date');
-  }, 60_000);
+  for (const fx of [
+    { id: 'filename', path: '/fake/2026-07-09-call.txt', fm: '', date: '2026-07-09T00:00:00.000Z' },
+    { id: 'folder', path: '/fake/2026-07-09/call.txt', fm: '', date: '2026-07-09T00:00:00.000Z' },
+    { id: 'frontmatter', path: '/fake/2026-07-09-call.md', fm: '---\ndate: 2026-05-04\n---\n', date: '2026-05-04T00:00:00.000Z' },
+    { id: 'undated', path: '/fake/call.txt', fm: '', date: undefined },
+    { id: 'plain-text header', path: '/fake/2026-07-09-call.txt', fm: '--- BEGIN TRANSCRIPT\n', date: '2026-07-09T00:00:00.000Z' },
+  ]) {
+    test(`a transcript-derived atom carries the transcript's ${fx.id} date, not the run date`, async () => {
+      const sourceId = `atom-date-transcript-${fx.id}`;
+      await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+      const result = await runPhaseExtractAtoms(engine, {
+        sourceId, _pages: [], _transcripts: [{ filePath: fx.path, content: fx.fm + body, contentHash: 'ab'.repeat(32) }],
+        _chat: async () => reply(),
+      });
+      expect(result.details?.atoms_extracted).toBe(1);
+      const atom = await onlyAtom(sourceId);
+      expect(atom.frontmatter.date).toBe(fx.date);
+      if (fx.date) {
+        expect(new Date(atom.effective_date!).toISOString()).toBe(fx.date);
+        expect(atom.effective_date_source).toBe('date');
+      } else expect(atom.effective_date_source).toBe('fallback');
+    }, 60_000);
+  }
 });
