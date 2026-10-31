@@ -1025,8 +1025,7 @@ const delta: Operation = {
     // anything else (true, undefined via cast bypass) is remote. Remote callers
     // use their auth client id; an auth-LESS or blank-id remote (stdio MCP)
     // gets the shared 'remote' sentinel — never collapsed into 'local'.
-    // GST-359 C2: plus the caller's identity (attested actor, member, audience), so two people behind one credential
-    // and one session id never share a cursor.
+    // GST-359 C2: plus the caller's identity, so two people behind one credential and one session id never share a cursor.
     const clientId = ctx.remote === false ? null : callerSessionKey(ctx.auth?.clientId?.trim() || 'remote');
     const includePrivate = p.include_private === true && ctx.remote === false;
     const budgetTokens =

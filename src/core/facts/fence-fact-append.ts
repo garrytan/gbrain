@@ -82,7 +82,7 @@ async function insertFenceFactRow(tx: BrainEngine, row: WriteRequest, rowNum: nu
 }
 
 /** One fact as its fence cell at `rowNum` (`fenceRowOf`, the one renderer). */
-function fenceCellFor(fact: FenceFactAppendInput['fact'], rowNum: number): string {
+function fenceCellFor(fact: FenceFactAppendInput['fact'], rowNum: number): ReturnType<typeof fenceRowOf> {
   return fenceRowOf({ kind: (fact.kind ?? 'fact') as FenceRowInput['kind'], visibility: fact.visibility ?? 'private', context: fact.context ?? null, valid_from: fact.valid_from,
     valid_until: fact.valid_until ?? null, source: fact.source, claim_metric: fact.claim_metric ?? null, claim_value: fact.claim_value ?? null,
     claim_unit: fact.claim_unit ?? null, claim_period: fact.claim_period ?? null, attributed_to: fact.attributed_to ?? null,

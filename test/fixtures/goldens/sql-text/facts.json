@@ -165,8 +165,8 @@
               "string",
               "number"
             ],
-            "sql": "SELECT id, valid_from, claim_metric, claim_value, claim_unit, claim_period, event_type, fact, source_session, source_markdown_slug, CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model') AND embedded_text_hash=md5(fact) THEN embedding::text END AS embedding FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND visibility = 'world' ORDER BY valid_from DESC, id DESC LIMIT $3",
-            "textSha256": "55ca2eb5d74f4f7566b4dd3dfd3d79654c944663074682b5784cae2231c78f8b"
+            "sql": "SELECT id, valid_from, claim_metric, claim_value, claim_unit, claim_period, event_type, fact, source_session, source_markdown_slug, CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model') AND embedded_text_hash=md5(fact) THEN embedding::text END AS embedding FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND facts.visibility IN ('world') ORDER BY valid_from DESC, id DESC LIMIT $3",
+            "textSha256": "01222e07f4977ffd962888111f177ee83926d52e8266ea6952e0199ea496e1e6"
           }
         ],
         "event": [
@@ -177,8 +177,8 @@
               "string",
               "number"
             ],
-            "sql": "SELECT id, valid_from, claim_metric, claim_value, claim_unit, claim_period, event_type, fact, source_session, source_markdown_slug, CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model') AND embedded_text_hash=md5(fact) THEN embedding::text END AS embedding FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND visibility = 'world' AND event_type IS NOT NULL ORDER BY valid_from DESC, id DESC LIMIT $3",
-            "textSha256": "2d81a91a6a2c7cf11e8bdfdad66d5d64d567f3bed17f5fab1fbd70a12e3bb3d0"
+            "sql": "SELECT id, valid_from, claim_metric, claim_value, claim_unit, claim_period, event_type, fact, source_session, source_markdown_slug, CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model') AND embedded_text_hash=md5(fact) THEN embedding::text END AS embedding FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND facts.visibility IN ('world') AND event_type IS NOT NULL ORDER BY valid_from DESC, id DESC LIMIT $3",
+            "textSha256": "0a55f46d99d8fdc71379f84d183507ae5689edafd8fdc2bd36ec952a103d4d2d"
           }
         ],
         "sourceIds+metric+since+until": [
@@ -516,13 +516,12 @@
               "string",
               "array<string>",
               "array<string>",
-              "array<string>",
               "string",
               "number",
               "number"
             ],
-            "sql": "SELECT * FROM facts WHERE source_id = $1 AND entity_slug = $2 AND consolidated_at IS NULL AND kind = ANY($3::text[]) AND visibility = ANY($4::text[]) AND source != ALL($5::text[]) AND fact ILIKE $6 ESCAPE '\\' ORDER BY valid_from DESC, id DESC LIMIT $7 OFFSET $8",
-            "textSha256": "be494a6935e25722d68ceaee7a2d67aa12a45b886a5154165e73c8be1f06e461"
+            "sql": "SELECT * FROM facts WHERE source_id = $1 AND entity_slug = $2 AND consolidated_at IS NULL AND kind = ANY($3::text[]) AND facts.visibility IN ('world') AND source != ALL($4::text[]) AND fact ILIKE $5 ESCAPE '\\' ORDER BY valid_from DESC, id DESC LIMIT $6 OFFSET $7",
+            "textSha256": "58c970e9c7c1ca7b38e5dc67dd6d0507ac9c63a37a4c45f52a775a1517fb51eb"
           }
         ],
         "default": [
@@ -548,13 +547,12 @@
               "string",
               "array<string>",
               "array<string>",
-              "array<string>",
               "string",
               "number",
               "number"
             ],
-            "sql": "SELECT * FROM facts WHERE source_id = $1 AND source_session = $2 AND consolidated_at IS NULL AND kind = ANY($3::text[]) AND visibility = ANY($4::text[]) AND source != ALL($5::text[]) AND fact ILIKE $6 ESCAPE '\\' ORDER BY created_at DESC, id DESC LIMIT $7 OFFSET $8",
-            "textSha256": "869e7e5ad9aeab19b81e704f439f4043c269defe2fbcb30e57b23c37cea8fded"
+            "sql": "SELECT * FROM facts WHERE source_id = $1 AND source_session = $2 AND consolidated_at IS NULL AND kind = ANY($3::text[]) AND facts.visibility IN ('world') AND source != ALL($4::text[]) AND fact ILIKE $5 ESCAPE '\\' ORDER BY created_at DESC, id DESC LIMIT $6 OFFSET $7",
+            "textSha256": "4303ab045786dbf0844e317c08c07529b3ee46488b3330077d46c0f4e5ec6f28"
           }
         ],
         "default": [
@@ -603,11 +601,10 @@
             "params": [
               "string",
               "string",
-              "array<string>",
               "number"
             ],
-            "sql": "SELECT *, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at_iso FROM facts WHERE source_id = $1 AND created_at > $2::text::timestamptz AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND visibility = ANY($3::text[]) ORDER BY created_at ASC, id ASC LIMIT $4",
-            "textSha256": "8918057b510da33d9b032fdefda14dfd7c9f5e67dd28b763ee8823cfa87b42f5"
+            "sql": "SELECT *, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at_iso FROM facts WHERE source_id = $1 AND created_at > $2::text::timestamptz AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND facts.visibility IN ('world') ORDER BY created_at ASC, id ASC LIMIT $3",
+            "textSha256": "5224220754538ac8d17fd002c25dcd00c4ad3ad5634f77b111c0ffebd2ed7b31"
           }
         ]
       },
@@ -623,12 +620,11 @@
               "array<string>",
               "string",
               "array<string>",
-              "array<string>",
               "number",
               "number"
             ],
-            "sql": "SELECT * FROM facts WHERE source_id = $1 AND COALESCE(valid_from, created_at) >= $2 AND entity_slug = $3 AND source_session = $4 AND source != ALL($5::text[]) AND fact ILIKE $6 ESCAPE '\\' AND consolidated_at IS NULL AND kind = ANY($7::text[]) AND visibility = ANY($8::text[]) ORDER BY COALESCE(valid_from, created_at) DESC, id DESC LIMIT $9 OFFSET $10",
-            "textSha256": "1b9e94f79ae9ab62cb04bc9501d94a5b3c7e02b6b208f25f3ec7c840e9d2e978"
+            "sql": "SELECT * FROM facts WHERE source_id = $1 AND COALESCE(valid_from, created_at) >= $2 AND entity_slug = $3 AND source_session = $4 AND source != ALL($5::text[]) AND fact ILIKE $6 ESCAPE '\\' AND consolidated_at IS NULL AND kind = ANY($7::text[]) AND facts.visibility IN ('world') ORDER BY COALESCE(valid_from, created_at) DESC, id DESC LIMIT $8 OFFSET $9",
+            "textSha256": "08ec05ff5a0d3ab9d0e87cc53c862b889f562e2af8c6959238905f2e48a80cbe"
           }
         ],
         "default": [
@@ -663,11 +659,10 @@
             "params": [
               "string",
               "Date",
-              "array<string>",
               "number"
             ],
-            "sql": "SELECT * FROM facts WHERE source_id = $1 AND superseded_by IS NOT NULL AND COALESCE(expired_at, valid_until) >= $2 AND visibility = ANY($3::text[]) ORDER BY COALESCE(expired_at, valid_until) DESC, id DESC LIMIT $4",
-            "textSha256": "5df970c375dc85b29e4d5fca79616dc18bbd6090717d96be62472c7fa38177ed"
+            "sql": "SELECT * FROM facts WHERE source_id = $1 AND superseded_by IS NOT NULL AND COALESCE(expired_at, valid_until) >= $2 AND facts.visibility IN ('world') ORDER BY COALESCE(expired_at, valid_until) DESC, id DESC LIMIT $3",
+            "textSha256": "8b156f6248ef869384a1f72a2f97a3578dca517f9ad8da801f01252d26f43b9e"
           }
         ]
       },

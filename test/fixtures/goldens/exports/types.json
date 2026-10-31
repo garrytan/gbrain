@@ -6119,8 +6119,8 @@
         "members": [
           "add: (name: string, data?: Record<string, unknown>, opts?: Partial<MinionJobInput>, trusted?: TrustedSubmitOpts) => Promise<MinionJob>",
           "addAttachment: (jobId: number, input: AttachmentInput) => Promise<Attachment>",
-          "cancelJob: (id: number, opts?: { ownerClientId?: string; }) => Promise<MinionJob | null>",
-          "cancelJobs: (ids: number[], opts?: { reason?: string; rootStatuses?: MinionJobStatus[]; ownerClientId?: string; }) => Promise<MinionJob[]>",
+          "cancelJob: (id: number, opts?: { ownerClientId?: string; ownerActor?: JobActor; }) => Promise<MinionJob | null>",
+          "cancelJobs: (ids: number[], opts?: { reason?: string; rootStatuses?: MinionJobStatus[]; ownerClientId?: string; ownerActor?: JobActor; }) => Promise<MinionJob[]>",
           "claim: (lockToken: string, lockDurationMs: number, queue: string, registeredNames: string[], opts?: { excludeWatchdogSuspects?: boolean; excludeNames?: string[]; }) => Promise<MinionJob | null>",
           "classifyPrivateQueueForRecovery: (queueName: string) => Promise<\"orphan\" | \"live\" | \"unowned\" | \"not_orphan\">",
           "completeJob: (id: number, lockToken: string, result?: Record<string, unknown>) => Promise<MinionJob | null>",
