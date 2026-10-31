@@ -38,6 +38,7 @@
   "test/doctor-image-embedding-coverage.test.ts": 8379,
   "test/doctor-keyword-plan-6495.test.ts": 2724,
   "test/doctor-routing-skill-pack-source.test.ts": 2451,
+  "test/doctor-session-lane-gbra133.test.ts": 3770,
   "test/doctor-sync-freshness-skill-pack-6076.test.ts": 4137,
   "test/embed-stale-images-managed-6529.test.ts": 12913,
   "test/embedding-completion-atomic.serial.test.ts": 9621,

@@ -92,6 +92,7 @@ import { contentDriftSweepEntry } from './checks/content-drift-sweep.ts';
 import { connectorAccountMismatchEntry } from './checks/connector-account-mismatch.ts';
 import { legacyJobAuthorityEntry } from './checks/legacy-job-authority.ts';
 import { legacyTokenGrantsEntry } from './checks/legacy-token-grants.ts';
+import { unscopedMultiUserTokenEntry } from './checks/unscoped-multi-user-token.ts';
 import { grantNewOpsEntry } from './checks/grant-new-ops.ts';
 import { linksExtractionLagEntry, syncFreshnessEntry, searchModeEntry } from './checks/sync-search.ts';
 import { persistenceConsumersEntry, serveBuildDriftEntry } from './checks/persistence-consumers.ts';
@@ -130,6 +131,7 @@ import { fenceIntegrityEntry } from './checks/fence-integrity.ts';
 import { outsideContentFencesEntry } from './checks/outside-content-fences.ts';
 import { dbAheadOfGitEntry } from './checks/db-ahead-of-git.ts';
 import { gitIndexLagEntry } from './checks/git-index-lag.ts';
+import { sessionLaneBudgetEntry } from './checks/session-lane.ts';
 import { syncConfigKeysEntry } from './checks/sync-config-keys.ts';
 import { ghostPagesEntry } from './checks/ghost-pages.ts';
 import { originTwinsEntry } from './checks/origin-twins.ts';
@@ -255,6 +257,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   legacyJobAuthorityEntry,
   legacyTokenGrantsEntry,
   grantNewOpsEntry,
+  unscopedMultiUserTokenEntry,
   indexAuditEntry,
   imageAssetsEntry,
   imageEmbeddingCoverageEntry,
@@ -281,6 +284,8 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   trustReleaseUnpreviewedEntry,
   coreMemoryEntry,
   persistenceConsumersEntry,
+  // GBRA-133: this role's session connections across every process, against the pooler's limit (read-only).
+  sessionLaneBudgetEntry,
   runtimeBuildSkewEntry,
   cliSocketRefusalsEntry,
   atomHeldFailedEntry,

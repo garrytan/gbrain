@@ -10,6 +10,49 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Autopilot upgrades and restarts get safer on a shared Mac, a paused queue stops looking wedged, and doctor gains two read-only checks: one counts the pooler's session lane across every gbrain process, the other warns when one unscoped token serves several people.**
+
+**The serve restart after a self-upgrade now tries once per installed build, leaves alone a serve service installed for another brain, and no longer freezes the autopilot while it runs.** #7478 had the relaunched autopilot restart the serve its installed service runs when that serve was still on the old build. Three gaps came out of its review (#8013). A restart that came back unverified was tried again by every autopilot relaunch, because the attempt was only remembered in memory. On macOS, where the autopilot doesn't filter processes by `GBRAIN_HOME`, one brain's autopilot could restart the `com.gbrain.serve` installed for another brain on the same OS user. And the restart command ran synchronously for up to ten minutes, which stopped the daemon's timers and signal handling while `systemctl --user restart` waited for the old serve to stop.
+
+Now `serve-restart-attempt.json` under the brain's `.gbrain` directory remembers the build the restart was tried on, so each build gets one attempt across relaunches. The autopilot restarts the serve service only when its plist or unit starts this brain's own serve wrapper, and audits any other case as `skipped` / `manual`. The restart command runs asynchronously with a 120-second cap.
+
+**On macOS, an autopilot for a brain on an external volume now starts under launchd instead of exiting 78, and an autopilot pause no longer makes the worker restart itself every ten minutes or makes doctor call the held queue wedged.** launchd opens a job's program and its log files before the job runs. When those sat on a volume other than the home folder, as they do for a brain on an external `GBRAIN_HOME`, launchd ended every spawn with exit code 78 (`EX_CONFIG`) and no pid, even though the same wrapper ran fine by hand. `gbrain autopilot --install` now detects a brain home on another volume, has launchd start the wrapper through `/bin/bash`, and writes the job's logs to `~/Library/Logs/gbrain/<label>.log` and `.err`. The wrapper and every brain file stay under `GBRAIN_HOME`, and `--status` reads the new log path. A brain on the home volume gets the same plist as before. Re-run `--install` to move an existing job onto the new layout.
+
+An autopilot pause (`gbrain autopilot pause`, or the marker a migration sets) stops the worker's job claims. The worker's own no-progress watchdog didn't know that: with jobs waiting and nothing completing, it emitted `stalled` and the autopilot restarted its worker about every ten minutes for as long as the pause lasted. Now the watchdog restarts its clock while either marker is present, so a long pause can't trip it the moment the pause clears. The database liveness probe keeps running, and a real stall after resume is still caught. Doctor's `wedged_queue` reports a queue held by a pause as a warning that says which pause holds it and how it clears, instead of failing with advice to restart the worker.
+
+Contributed by @Masashi-Ono0611 (reports #8017 and #7966, and the approaches in #8018 and #7968).
+
+Contributed by @Masashi-Ono0611 (reports #8017 and #7966, and the approaches in #8018 and #7968).
+
+**New doctor check `session_lane_budget` counts this database role's session connections across every gbrain process against the pooler's limit.** Every gbrain process opens its own pools (serve's ordinary pool, each process's direct pool, a sync's import workers), and a pooler's per-role session limit (Supavisor `pool_size`) is shared by all of them. Nothing counted them together, so a host running a serve, a cron sync, a jobs worker and an MCP stdio server could exhaust the lane (`EMAXCONNSESSION`) with every process inside its own pool and no warning before the first refusal. The check reads `pg_stat_activity` once (no query text), attributes each `gbrain <kind>:<pid>:<nonce>` connection to a process kind and host, counts pooler and other connections apart, and warns at 80% of the limit with the kinds holding the most. Behind a pooler, set `GBRAIN_SESSION_LANE_LIMIT` to the pooler's per-role limit; with no pooler it compares with `max_connections` less the reserved slots. PGLite: not applicable. No default changes.
+
+**An install that hands one unscoped credential to an agent several people talk to now says so, loudly, and doctor reports it.** In the HARN-13 host-harness pilot, one bot token over a brain that held many channels' chat made agents answer people with other people's messages: telling the agent gbrain was live cost 9 to 21 points of pass rate, and every added cross-scope failure cited a channel page the bot grant returned. Until per-member keys arrive (gbrain#7812), gbrain cannot tell those people apart, so it warns.
+
+The `unscoped_multi_user_token` safety notice fires from `gbrain setup openclaw|hermes|grok-bot|muse`, from `setup claude-code` when a chat-channel plugin is enabled, from `mcp grant` and `connect` for a bot harness or a grant that reads chat from 2+ channels, from `skillpack scaffold` into an OpenClaw or Hermes workspace, and from `auth create` and `auth register-client` when the new credential reads chat from 2+ channels. It names the fixes that exist today (a one-source grant, `sources unfederate`, `GBRAIN_SOURCE` for a stdio agent, `visibility: private`, `source_ids` or `--source`), and says plainly when the chat sits in one source and no source grant can separate it. The new read-only doctor check `unscoped_multi_user_token` runs the same detection over every active token, OAuth client and wired local agent. No grant, default or scoping behaviour changes, and no exit code moves.
+
+### Itemized changes
+
+- `src/commands/upgrade-restart.ts`: the per-build attempt marker in `restartServeAfterSelfUpgrade`; the ownership check before `restartStaleServeService` collects processes; `hostExecutor` spawns asynchronously and kills a command past its timeout (120 s for the autopilot's serve restart, 600 s for `gbrain upgrade --restart-only` as before).
+- `src/core/serve-service.ts`: `serveServiceRunsWrapper` reads the launchd plist or the systemd unit and checks that it starts this brain's wrapper.
+- `src/core/upgrade-restart.ts`: `RestartExecutor.run` may return a promise, and `runRestartSteps` awaits each command.
+- Docs: the Restart section of `docs/guides/upgrades-auto-update.md` and the `upgrade-restart.ts` key-files entry.
+- Tests: `test/autopilot-serve-restart-8013.test.ts`.
+- `src/core/autopilot-paths.ts`: `autopilotLaunchdHostPaths` compares the brain home's volume with the home folder's; on macOS `resolveAutopilotJob` takes its log paths from it and sets `launchdViaBash` for a brain on another volume.
+- `src/commands/autopilot.ts` and `src/commands/autopilot/jobs.ts`: `generateLaunchdPlist` writes `/bin/bash` before the wrapper when `launchdViaBash` is set; `installLaunchd` creates the log directory; `plistWrapperPath` reads the wrapper after `/bin/bash`, so job ownership, status and uninstall keep working.
+- `src/core/minions/worker.ts`: the non-supervised stall watchdog treats `autopilotPaused()` as a hold.
+- `src/commands/doctor/checks/queue-jobs.ts`: `wedged_queue` returns `warn` with `details.paused` (`operator` or `cooperative`) while a pause marker is present.
+- Docs: `docs/guides/live-sync.md` (log location for an external brain on macOS), `docs/guides/queue-operations-runbook.md` (a paused queue), and the `worker.ts` key-files entry.
+- Tests: `test/autopilot-launchd-external-home-8017.test.ts` and `test/autopilot-pause-watchdog-7966.test.ts`.
+- `src/core/session-lane.ts` (new) and `src/commands/doctor/checks/session-lane.ts` (new): the session-lane census and the `session_lane_budget` check, registered after `persistence_consumers`; `docs/ENGINES.md#pool-sizing` names the remedies. The Postgres doctor goldens mask that check's live census.
+- Tests: `test/doctor-session-lane-gbra133.test.ts` (fixed rows, real PGLite, real Postgres), added to the Postgres unit arms.
+- `src/core/grants/shared-exposure.ts` (new): the detection (bot harnesses, Claude Code channel plugins, the chat-channel census over a credential's or stdio server's read set), the notice and its fix.
+- `src/commands/doctor/checks/unscoped-multi-user-token.ts` (new), registered in the doctor registry and categories; doctor goldens regenerated for the new check.
+- The install routes: `src/commands/setup.ts`, `mcp.ts`, `harness-connect.ts`, `skillpack/scaffold.ts`, `auth.ts`. Warnings go to stderr and into `notices` or `warnings` of a `--json` result.
+- `src/core/error-registry.ts`: the notice code. `docs/mcp/ADMIN.md#one-token-several-people`, `skills/mcp-access/SKILL.md`.
+- Tests: `test/shared-exposure.test.ts`, `test/shared-exposure-routes.test.ts` (PGLite brains with no repository).
+
 ## [0.60.529.0] - 2026-10-31
 
 **A pull request that adds a file to the PGLite snapshot inputs no longer gets stopped at gstack's pregate secrets check by its own workflow cache keys (#8107).**

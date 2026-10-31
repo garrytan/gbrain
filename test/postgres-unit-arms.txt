@@ -59,6 +59,7 @@ test/doctor-frontmatter-holds.test.ts
 test/doctor-image-embedding-coverage.test.ts
 test/doctor-keyword-plan-6495.test.ts
 test/doctor-routing-skill-pack-source.test.ts
+test/doctor-session-lane-gbra133.test.ts
 test/doctor-sync-freshness-skill-pack-6076.test.ts
 test/embed-once-per-content-version.serial.test.ts
 test/embed-stale-images-managed-6529.test.ts

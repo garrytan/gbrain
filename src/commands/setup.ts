@@ -31,6 +31,7 @@ import { inspectTurnHook, TURN_HOOK_NATIVE_INSPECT, turnHookFix, verifyTurnHook,
 import { opError, OperationError } from '../core/ops/contract.ts';
 import { cliRenderContext, renderCliError, renderNotice, type Action, type Notice } from '../core/agent-output.ts';
 import { writeCliNotices } from '../core/interop-notices.ts';
+import { claudeCodeChannelPlugins, renderedExposure, sharedTokenNotice, writeExposureNotice } from '../core/grants/shared-exposure.ts';
 import { setupFirstRunNotices } from './init-first-run.ts';
 import { hostedOptionMuted, hostedOptionNotice, writeHostedOption } from '../core/onboard/hosted-option.ts';
 import { writeJsonDocument } from '../core/cli-force-exit.ts';
@@ -724,14 +725,17 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   const surface = flags.surface ?? (isRegistrationSurface(envSurface) ? envSurface : undefined);
   const access: BrainFirstAccess = { kind: 'mcp', server: flags.name, ...(surface ? { surface } : {}) };
   const mcp = { setup: flags.instructionsOnly ? 'unchanged' as const : 'manual' as const, docs: adapter.guide };
+  const exposure = flags.remove ? null : sharedTokenNotice({ kind: 'stdio', harness }, { harness });
+  const notices = renderedExposure(exposure);
   if (!isBrainFirstHarness(harness)) {
     const pasted: BrainFirstAccess = adapter.connection === 'thin-cli' ? { kind: 'cli', launcher: flags.gbrainBin ?? 'gbrain' } : access;
     const snippet = renderBrainFirstSnippet(harness, pasted, 'delete this block');
     if (out.json) {
       await writeJsonDocument(`${JSON.stringify({ harness, dry_run: flags.dryRun, remove: flags.remove, instructions_only: true,
-        instructions: { action: 'print', snippet, where: `${adapter.label}'s custom or system instructions` }, mcp }, null, 2)}\n`, (t) => process.stdout.write(t));
+        instructions: { action: 'print', snippet, where: `${adapter.label}'s custom or system instructions` }, mcp, notices }, null, 2)}\n`, (t) => process.stdout.write(t));
       return 0;
     }
+    writeExposureNotice(exposure);
     console.log(`${adapter.label} has no instruction file gbrain can write. Paste this block into its custom or system instructions (keep the markers so a later paste replaces it):\n`);
     console.log(snippet);
     console.log(adapter.connection === 'thin-cli'
@@ -766,9 +770,10 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   const check = !off && !flags.dryRun && instructions?.decision.value === 'accepted' && !flags.noHooks && process.env.GBRAIN_HOOKS !== '0' && turnHook && turnHook.action !== 'print' && turnHook.action !== 'remove' ? verifyTurnHook(harness, { projectDir }) : null;
   const code = instructions?.action === 'preserve' || (check && !check.ok) ? 1 : 0;
   if (out.json) {
-    await writeJsonDocument(`${JSON.stringify({ harness, dry_run: flags.dryRun, remove: flags.remove, instructions_only: true, instructions, ...(turnHook ? { turn_hook: turnHook } : {}), ...(check ? { turn_hook_check: check } : {}), mcp }, null, 2)}\n`, (t) => process.stdout.write(t));
+    await writeJsonDocument(`${JSON.stringify({ harness, dry_run: flags.dryRun, remove: flags.remove, instructions_only: true, instructions, ...(turnHook ? { turn_hook: turnHook } : {}), ...(check ? { turn_hook_check: check } : {}), mcp, notices }, null, 2)}\n`, (t) => process.stdout.write(t));
     return code;
   }
+  writeExposureNotice(exposure);
   if (instructions) say(out, flags.remove ? describeBrainFirstOutcome(instructions, flags.dryRun) : describeInstructions(instructions, flags.dryRun));
   if (turnHook) say(out, `  ${(flags.dryRun && (turnHook.action === 'write' || turnHook.action === 'remove') ? `would ${turnHook.action}` : turnHook.action).padEnd(8)} ${'turn hook'.padEnd(7)} ${turnHook.detail}${'snippet' in turnHook && turnHook.snippet ? `:\n${turnHook.snippet.replace(/^/gm, '    ')}` : ''}${'commands' in turnHook && turnHook.commands ? `:\n${turnHook.commands.map((c) => `    ${c}`).join('\n')}` : ''}${'next' in turnHook && turnHook.next ? `; wire it with: ${turnHook.next}` : ''}`);
   else if (!off && placed) say(out, `  note     ${'turn hook'.padEnd(7)} ${adapter.label} has no per-turn hook gbrain can install; the rule reaches it through ${target.path} only.`);
@@ -806,13 +811,15 @@ async function finish(out: Out, doc: {
 }): Promise<number> {
   const harness = doc.harness ?? 'claude-code';
   const state = doc.states.at(-1) ?? null;
+  const exposure = harness === 'claude-code' && !doc.remove ? sharedTokenNotice({ kind: 'stdio', harness }, { channelPlugins: claudeCodeChannelPlugins() }) : null;
+  const notices = exposure ? [...doc.notices, exposure] : doc.notices;
   if (out.json) {
     await writeJsonDocument(`${JSON.stringify({
       harness, dry_run: doc.dryRun, remove: doc.remove ?? false,
       ...(doc.target ? { target: doc.target } : {}), ...(doc.consent ? { consent: doc.consent } : {}),
       steps: doc.steps, preserved: doc.preserved ?? [], instructions: doc.instructions ?? null, ...(doc.turnHook ? { turn_hook_check: doc.turnHook } : {}), states: doc.states, state, verify: doc.verify,
       capability: capabilityRows(harness)[0], capability_table_version: SETUP_CAPABILITY_TABLE_VERSION,
-      notes: doc.notes, notices: doc.notices.map((n) => renderNotice(n, cliRenderContext())),
+      notes: doc.notes, notices: notices.map((n) => renderNotice(n, cliRenderContext())),
     }, null, 2)}\n`, (t) => process.stdout.write(t));
     return 0;
   }
@@ -825,7 +832,7 @@ async function finish(out: Out, doc: {
     : 'Next: open a new Claude Code session (config is read at session start) and check that /mcp lists gbrain.');
   if (state && !doc.remove) say(out, 'Memory: save what the user asks you to remember as a fact with gbrain remember "<fact>", naming its entity and provenance (MCP tool: remember). '
     + 'World-visible facts (the default) are pushed into new sessions; a private fact is not (local CLI recall only). capture writes a page, not a fact.');
-  writeCliNotices(doc.notices.filter((n) => n.code !== 'hosted_option'));
+  writeCliNotices(notices.filter((n) => n.code !== 'hosted_option'));
   if (doc.notices.some((n) => n.code === 'hosted_option')) writeHostedOption('setup', new Set());
   return 0;
 }

@@ -2524,6 +2524,13 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "No credential or local agent can read chat from several channels without a per-person scope.",
+            "name": "unscoped_multi_user_token",
+            "status": "ok"
+          },
+          {
             "category": "brain",
             "elapsed_ms": "<volatile>",
             "message": "No image assets indexed yet",
@@ -3436,6 +3443,18 @@
             "elapsed_ms": "<volatile>",
             "message": "This process's host identity (<home>/.gbrain/persistence/host.json) owns every binding this filesystem holds.",
             "name": "host_identity_mismatch",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "docs": "docs/ENGINES.md#pool-sizing"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: PGLite has no connection pool to share.",
+            "name": "session_lane_budget",
+            "readiness_state": "not_applicable",
+            "severity": "info",
             "status": "ok"
           },
           {
@@ -7405,6 +7424,13 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "No credential or local agent can read chat from several channels without a per-person scope.",
+            "name": "unscoped_multi_user_token",
+            "status": "ok"
+          },
+          {
             "category": "brain",
             "elapsed_ms": "<volatile>",
             "message": "No image assets indexed yet",
@@ -8317,6 +8343,18 @@
             "elapsed_ms": "<volatile>",
             "message": "This process's host identity (<home>/.gbrain/persistence/host.json) owns every binding this filesystem holds.",
             "name": "host_identity_mismatch",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "docs": "docs/ENGINES.md#pool-sizing"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: PGLite has no connection pool to share.",
+            "name": "session_lane_budget",
+            "readiness_state": "not_applicable",
+            "severity": "info",
             "status": "ok"
           },
           {

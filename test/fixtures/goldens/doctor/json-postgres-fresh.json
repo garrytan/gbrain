@@ -2211,6 +2211,13 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "elapsed_ms": "<volatile>",
+          "message": "No credential or local agent can read chat from several channels without a per-person scope.",
+          "name": "unscoped_multi_user_token",
+          "status": "ok"
+        },
+        {
           "category": "brain",
           "elapsed_ms": "<volatile>",
           "message": "No image assets indexed yet",
@@ -3000,6 +3007,14 @@
           "message": "This process's host identity (<home>/.gbrain/persistence/host.json) owns every binding this filesystem holds.",
           "name": "host_identity_mismatch",
           "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": "<live-census>",
+          "elapsed_ms": "<volatile>",
+          "message": "<live-census>",
+          "name": "session_lane_budget",
+          "status": "<live-census>"
         },
         {
           "category": "ops",

@@ -5,6 +5,7 @@ import { installHarnessConnection, type inlineTokenReceipt } from '../core/harne
 import { normalizeMcpUrl } from '../core/mcp-registration.ts';
 import { validateHarnessArguments } from '../core/harness/arguments.ts';
 import { readHarnessConnectionStatus } from '../core/harness/status.ts';
+import { renderedExposure, sharedTokenNotice, writeExposureNotice } from '../core/grants/shared-exposure.ts';
 
 export async function runHarnessConnect(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
@@ -29,7 +30,9 @@ export async function runHarnessConnect(args: string[]): Promise<void> {
     const result = args.includes('--install') || args.includes('--remove')
       ? await installHarnessConnection(c, { harness: harness.id, name: value('--name'), root: value('--root'), remove: args.includes('--remove'), credentialsFile: path, freshToken: args.includes('--fresh-token'), ...(args.includes('--no-instructions') ? { instructions: false } : {}) })
       : { ...credentialReceipt(c), status: 'prepared', harness: harness.id, documentation: harness.guide, next_action: 'Run this command with --install inside the intended harness environment. Keep the credential file private.' };
-    console.log(JSON.stringify(result, null, args.includes('--json') ? undefined : 2));
+    const exposure = args.includes('--remove') ? null : sharedTokenNotice({ kind: 'oauth_client', id: c.client_id }, { harness: harness.id });
+    writeExposureNotice(exposure);
+    console.log(JSON.stringify(exposure ? { ...result, warnings: renderedExposure(exposure) } : result, null, args.includes('--json') ? undefined : 2));
     const token = result as Partial<ReturnType<typeof inlineTokenReceipt>>;
     if (!args.includes('--json') && token.token_storage === 'inline' && token.if_exposed) {
       console.error(`The bearer token is stored inline in ${token.config_path}; this output never prints it. Renew it with: ${token.renew_command}`);

@@ -285,12 +285,14 @@ Once the relaunched autopilot runs the new build, it checks the serve that the
 installed serve service runs (`com.gbrain.serve` under launchd,
 `gbrain-serve.service` under systemd). If that serve is on an older build, the
 autopilot restarts it through the service and verifies that it came back on
-the new build. It does this once per autopilot process, under the swap's own
+the new build. It tries once per installed build (`serve-restart-attempt.json`
+remembers the attempt across autopilot relaunches), under the swap's own
 auto-mode, quiet-hours and idle gates, and records it in the self-upgrade
 audit as `restart_serve` (`applied`, or `skipped` with `manual` or
 `unverified`). It leaves alone a serve that the service does not run (one
-started by hand or from another install), the jobs supervisor and MCP
-servers. For those, doctor's `runtime_build_skew` fails while two builds run,
+started by hand or from another install), a serve service installed for
+another brain on the same OS user (its wrapper is under another
+`GBRAIN_HOME`), the jobs supervisor and MCP servers. For those, doctor's `runtime_build_skew` fails while two builds run,
 and `gbrain upgrade --restart-only` is its fix.
 
 <a id="restart-and-verify"></a>

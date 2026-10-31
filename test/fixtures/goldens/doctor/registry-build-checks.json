@@ -759,6 +759,10 @@
       },
       {
         "category": "ops",
+        "name": "unscoped_multi_user_token"
+      },
+      {
+        "category": "ops",
         "name": "index_audit"
       },
       {
@@ -932,6 +936,10 @@
       {
         "category": "ops",
         "name": "host_identity_mismatch"
+      },
+      {
+        "category": "ops",
+        "name": "session_lane_budget"
       },
       {
         "category": "ops",

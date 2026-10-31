@@ -391,6 +391,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'postgres_cancellation_driver',
   'plugin_lane_collision',
   'pool_budget',
+  // GBRA-133: session connections across every process vs the pooler's per-role limit (doctor/checks/session-lane.ts).
+  'session_lane_budget',
   'progressive_batch_audit_health',
   'queue_health',
   // #4578: brain-wide maintenance jobs dying at their deadline.
@@ -410,6 +412,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'legacy_token_null_scope',
   // D4: grants whose operation snapshot or stored surface keeps operations their scopes allow out of reach.
   'grant_new_ops_available',
+  // GST-363: credentials or local bot agents reading chat from several channels with no per-person scope.
+  'unscoped_multi_user_token',
   'reranker_health',
   'rls',
   // #7632: every gbrain function that pins a search_path ends it with pg_temp.
