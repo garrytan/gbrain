@@ -148,9 +148,14 @@ async function factObservationDates(
   return out;
 }
 
-/** A page title as one inert line: angle brackets and U+0085 become spaces, double quotes single quotes, whitespace runs one space. */
+/**
+ * A page title as one inert line: bidi overrides, isolates and marks (U+202A-U+202E, U+2066-U+2069, U+200E, U+200F,
+ * U+061C) are removed so a title cannot reorder how the header renders; angle brackets and C0/C1 control characters
+ * become spaces, double quotes single quotes, whitespace runs one space.
+ */
 export function evidenceTitle(title: string | null | undefined): string {
-  return (title ?? '').replace(/[<>\u0085]/g, ' ').replace(/"/g, "'").replace(/\s+/g, ' ').trim();
+  return (title ?? '').replace(/[\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/g, '').replace(/[<>\u0000-\u001F\u007F-\u009F]/g, ' ')
+    .replace(/"/g, "'").replace(/\s+/g, ' ').trim();
 }
 
 /** A page header line with the page's title after the bracket, on one line; an empty title adds nothing. */
