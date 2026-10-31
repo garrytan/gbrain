@@ -67,7 +67,8 @@ for (const enabled of [false, true]) {
         { sourceId: source, sourcePath: 'people/example.md', noEmbed: true, remote: false });
       const before = (await db.readPageSnapshot(slug, { sourceId: source }))!;
       const file = join(root, 'people/example.md');
-      writeFileSync(file, serializePageToMarkdown({ ...before.page, frontmatter: { file_field: 'kept' } }, before.tags));
+      // A file-only tag besides the frontmatter fields: frontmatter-only drift no longer blocks remember (#8109); tag drift does, and reconcile unions tags.
+      writeFileSync(file, serializePageToMarkdown({ ...before.page, frontmatter: { file_field: 'kept' } }, [...before.tags, 'pooled-example']));
       const binding = await claimWorktree(db, source, root);
       const registration = await registerLocalWriter(db, 'cli');
       await db.executeRaw('UPDATE persistence_brain SET enabled=$1 WHERE singleton=1', [enabled]);

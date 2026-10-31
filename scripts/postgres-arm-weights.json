@@ -31,6 +31,7 @@
   "test/company-brain-policy.test.ts": 19588,
   "test/company-brain-runtime.test.ts": 23895,
   "test/consolidate-same-instant-6023.test.ts": 17190,
+  "test/contact-rows-drift-8109.test.ts": 13000,
   "test/conversation-facts-oversized-sidecar.test.ts": 4085,
   "test/cycle/synthesize-concepts-merge.test.ts": 11041,
   "test/db-lock-reconnect.test.ts": 4653,
