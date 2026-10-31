@@ -11,6 +11,8 @@ import { runPersistenceAdministration } from '../src/core/persistence/administra
 import { acquireWorktree, claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
 import { assertPhysicalRoot } from '../src/core/persistence/physical-root.ts';
+import { maintenancePreflight } from '../src/core/persistence/prepared-maintenance.ts';
+import { tryAcquireNativeLock } from '../src/core/persistence/native-lock.ts';
 import * as rootRecord from '../src/core/persistence/physical-root-record.ts';
 import { PHYSICAL_ROOT_MARKER, physicalRootReservationPath } from '../src/core/persistence/physical-root-record.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -108,6 +110,28 @@ for (const kind of testBackends()) describe(`physical root device change (${kind
     await engine.executeRaw("UPDATE persistence_topology_changes SET state='failed' WHERE $1::uuid=ANY(worktree_ids)", [binding.worktree_id]);
     assertPhysicalRoot(f.root, { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path });
     expect((await put(f, 'notes/second-write')).state).toBe('committed');
+  }), 60_000);
+
+  test('#7760: maintenance preflight takes the same locked device-only re-stamp; a busy lock refuses and leaves the stamp', () => fixture(async f => {
+    const previous = String(BigInt(f.live) + 1n);
+    const binding = await reboot(f.root, f.source, previous);
+    await engine.executeRaw("UPDATE persistence_topology_changes SET state='failed' WHERE $1::uuid=ANY(worktree_ids)", [binding.worktree_id]);
+    const preflight = () => withVerifiedLocalRegistration(engine, f.registration, () => maintenancePreflight(engine, f.source));
+    const held = (await tryAcquireNativeLock(binding.coordination_path!))!;
+    expect(held).not.toBeNull();
+    try {
+      await expect(preflight()).rejects.toMatchObject({ code: 'recovery_required', detail: 'physical_root_device_changed' });
+      expect(readJson(join(f.root, PHYSICAL_ROOT_MARKER)).device).toBe(previous);
+      expect(readJson(physicalRootReservationPath(f.root)).initialDevice).toBe(previous);
+    } finally { await held.release(); }
+    expect((await preflight())?.binding?.worktree_id).toBe(binding.worktree_id);
+    expect(readJson(join(f.root, PHYSICAL_ROOT_MARKER)).device).toBe(f.live);
+    expect(readJson(physicalRootReservationPath(f.root)).initialDevice).toBe(f.live);
+    const marker = join(f.root, PHYSICAL_ROOT_MARKER), original = readJson(marker);
+    writeJson(marker, { ...original, device: previous, inode: String(BigInt(original.inode) + 1n) });
+    await expect(preflight()).rejects.toMatchObject({ code: 'recovery_required' });
+    expect(readJson(marker).device).toBe(previous);
+    writeJson(marker, original);
   }), 60_000);
 
   test('a re-stamp interrupted after its database commit finishes on the next locked write', () => fixture(async f => {
