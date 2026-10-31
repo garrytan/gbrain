@@ -381,6 +381,7 @@ export const SECTIONS: DocSection[] = [
         description: "Data integrity recovery.",
         path: "docs/integrations/reliability-repair.md",
         // Linked, not inlined: the GBRA-224 W3 troubleshooting rows put llms-full.txt over FULL_SIZE_BUDGET.
+        // Linked, not inlined: the INSTALL_FOR_AGENTS.md Opt-ins list (GBRA-224 W5) put llms-full.txt over FULL_SIZE_BUDGET.
         includeInFull: false,
       },
     ],
