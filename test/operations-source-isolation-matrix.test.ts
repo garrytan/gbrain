@@ -153,6 +153,7 @@ const MATRIX: Row[] = [
     expectScoped: r => { expect(r === null || leakToken(r) === null).toBe(true); } },
   { name: 'entity_identity_list', mode: 'isolated', args: {} },
   { name: 'list_pages', mode: 'isolated', args: { limit: 100 } },
+  { name: 'find_pages', mode: 'isolated', args: { pattern: '*', limit: 100 } },
   { name: 'search', mode: 'isolated', args: { query: 'BETAMARKER', limit: 20 } },
   { name: 'query', mode: 'isolated', args: { query: 'BETAMARKER', limit: 20 } },
   // search_exact echoes its phrase, so the probe reads the matches and the unreadable-page sample.

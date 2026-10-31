@@ -187,6 +187,9 @@ CHECKS=(
   # Goal (a) (refactor wave 1): engine SQL only shrinks; baseline
   # scripts/engine-sql-baseline.tsv.
   "check:engine-sql-ratchet"
+  # GBRA-248 W1: world reads in src/core (loadConfig, env, fs, module state,
+  # spawn, process hooks) only fall; baseline scripts/core-world-reads-baseline.tsv.
+  "check:core-world-reads"
   # GBRA-161: derived-retire writers only shrink; reviewed ceilings in
   # docs/architecture/derived-census.tsv.
   "check:derived-census"

@@ -61,6 +61,7 @@ import { routeCommand } from './command-route.ts';
 import type { CliOptions } from '../core/cli-options.ts';
 import { RemoteMcpError, extractResponseMeta } from '../core/remote-mcp-error.ts';
 import { assertSingleSourceScopeFlag, checkHostHonoredParams, hintAmbientNarrowing, type AmbientSourceBinding } from './source-scope.ts';
+import { formatFindPages, formatStatsBy } from './format-page-lookup.ts';
 import { maybePromptForUpgrade } from '../core/thin-client-upgrade-prompt.ts';
 import { CLI_FLAG_REGISTRY } from '../core/cli-flag-registry.generated.ts';
 import { SEARCH_SUBCOMMANDS, cliHelpRequested } from './subcommands.ts';
@@ -79,7 +80,7 @@ import {
 } from './command-table.ts';
 import { formatRememberResult } from './remember-format.ts';
 import { formatEntityResult, markEntityMiss } from './entity-format.ts';
-import { applyCliOpNotices, captureCapacityNotices, captureOpNotice, captureRetrievalNotices, retrievalIncompleteLine } from './op-notices.ts';
+import { applyCliOpNotices, captureCapacityNotices, captureOpNotice, captureRetrievalNotices, retrievalIncompleteLine, withExplainTargetJson } from './op-notices.ts';
 import { admitAcrossCliCalls } from '../core/notice-ledger.ts';
 import { searchTimingsDocument, searchTimingsLine, timeCliPhase } from './search-timings.ts';
 
@@ -1585,13 +1586,13 @@ function describeEmptyRetrieval(): string {
     parts.push(`retrieved ${m.retrieved_count} before trimming`);
   }
   // Ranking-only stages (a skipped reranker) never cause a miss — keep the
-  // "clean miss" verdict honest.
+  // "retrieval healthy" verdict honest.
   const stages = Array.isArray(m.degraded)
     ? [...new Set((m.degraded as Array<{ stage?: string }>).filter(affectsRecall).map(d => d?.stage).filter(Boolean))]
     : [];
   parts.push(stages.length > 0
     ? `degraded: ${stages.join(', ')}`
-    : 'clean miss — no retrieval degradation');
+    : 'retrieval healthy; try the display name or --match hybrid before concluding the brain has nothing');
   return ` (${parts.join('; ')})`;
 }
 
@@ -1672,7 +1673,7 @@ export function formatResult(
         if (incompleteNotice) process.stderr.write(incompleteNotice);
         // --explain --json: the same per-row score_details object MCP `explain: true` returns.
         if (getCliOptions().explain) for (const r of results) r.score_details ??= require('../core/search/explain-formatter.ts').buildScoreDetails(r);
-        return JSON.stringify(searchTimingsDocument(answerId ? results.map(r => ({ ...r, answer_id: answerId })) : results, meta), null, 2) + '\n';
+        return JSON.stringify(withExplainTargetJson(params, meta, searchTimingsDocument(answerId ? results.map(r => ({ ...r, answer_id: answerId })) : results, meta)), null, 2) + '\n';
       }
       // T15/FOV-1: an empty result names its cause when the pipeline told us
       // (degradation stages from _meta.retrieval / the local meta capture) —
@@ -1698,8 +1699,10 @@ export function formatResult(
       const tags = result as string[];
       return tags.length > 0 ? tags.join(', ') + '\n' : 'No tags.\n';
     }
+    case 'find_pages': return formatFindPages(result);
     case 'get_stats': {
       const s = result as any;
+      if (Array.isArray(s?.groups)) return formatStatsBy(s);
       const lines = [
         `Pages:     ${s.page_count}`,
         `Chunks:    ${s.chunk_count}`,

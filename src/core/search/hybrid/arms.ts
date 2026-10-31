@@ -367,6 +367,7 @@ export async function runVectorArms(
         pushVectorList(vectorArms, unifiedList, 'original');
         queryEmbedding = unifiedEmbedding;
         unifiedDone = true;
+        req.imageArmRan = true;
       }
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
@@ -402,6 +403,7 @@ export async function runVectorArms(
         r.modality = r.modality ?? 'image';
       }
       imageVectorList = imageList;
+      req.imageArmRan = true;
     } catch (err) {
       // Fail-open per behavioral invariant 2.
       const reason = err instanceof Error ? err.message : String(err);

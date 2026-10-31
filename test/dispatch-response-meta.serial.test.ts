@@ -82,13 +82,13 @@ describe('dispatch response meta (WP2/D3/D8)', () => {
     expect(retrieval.degraded).toEqual([{ stage: 'embed_unavailable' }]);
   });
 
-  test('clean miss → second block says clean miss, degraded absent', async () => {
+  test('clean miss → second block says retrieval healthy, degraded absent', async () => {
     nextResults = [];
     nextMeta = { vector_enabled: true, expansion_applied: false, detail_resolved: null };
     const out = await callSearch();
     expect(out.content.length).toBe(3);
     expect(out.content[1].text).toContain('Keyword matches: 0 pages');
-    expect(out.content[2].text).toContain('clean miss');
+    expect(out.content[2].text).toContain('retrieval healthy');
     const retrieval = (out._meta as Record<string, any>).retrieval;
     expect(retrieval.degraded).toBeUndefined();
     expect(retrieval.vector_enabled).toBe(true);
@@ -127,7 +127,7 @@ describe('buildEmptyRetrievalBlock (unit)', () => {
   test('a ranking-only stage (reranker_skipped) never impairs recall → still a clean miss', async () => {
     const { buildEmptyRetrievalBlock } = await import('../src/mcp/dispatch.ts');
     const out = buildEmptyRetrievalBlock({ retrieved_count: 0, degraded: [{ stage: 'reranker_skipped', reason: 'no_key' }] });
-    expect(out).toContain('clean miss');
+    expect(out).toContain('retrieval healthy');
     expect(out).not.toContain('reranker_skipped');
     const mixed = buildEmptyRetrievalBlock({ retrieved_count: 0, degraded: [{ stage: 'reranker_skipped' }, { stage: 'embed_unavailable', reason: 'no_provider' }] });
     expect(mixed).toContain('degraded: embed_unavailable.');

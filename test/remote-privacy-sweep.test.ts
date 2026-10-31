@@ -157,6 +157,7 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   get_page: { slug: WORLD_FENCE_SLUG, include_content: true },
   fetch: { id: WORLD_FENCE_SLUG },
   list_pages: {},
+  find_pages: { pattern: '*' },
   search: { query: 'WORLDSWEEP' },
   // 'SWEEP_' is inside every PRIVATE sentinel too: the literal scan must still return only world text.
   search_exact: { phrase: 'SWEEP_' },
@@ -254,6 +255,7 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   get_page: 'data',
   fetch: 'data',
   list_pages: 'data',
+  find_pages: 'data',
   search: 'data',
   search_exact: 'data',
   query: 'data',
@@ -828,11 +830,12 @@ describe('known-leak discrimination anchors (#4546 / #4549)', () => {
   // (sentinels never live in slugs — legit "Page not found: <slug>" echoes
   // would false-positive). Ops that return slug LISTS derived from data
   // (not echoes of a requested slug) get targeted anchors instead.
-  it('slug-list arms never name the private page slug (find_anomalies / find_orphans / list_pages / delta / salience)', async () => {
+  it('slug-list arms never name the private page slug (find_anomalies / find_orphans / list_pages / find_pages / delta / salience)', async () => {
     for (const [op, params] of [
       ['find_anomalies', {}],
       ['find_orphans', {}],
       ['list_pages', {}],
+      ['find_pages', { pattern: '*' }],
       ['delta', { since: SINCE_EPOCH }],
       ['get_recent_salience', {}],
     ] as const) {

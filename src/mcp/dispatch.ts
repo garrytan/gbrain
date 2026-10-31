@@ -491,7 +491,7 @@ export function buildEmptyRetrievalBlock(retrieval: unknown): string | null {
     .filter((s): s is string => typeof s === 'string' && s.length > 0);
   parts.push(stages.length > 0
     ? `degraded: ${[...new Set(stages)].join(', ')}.`
-    : 'no retrieval degradation — this is a clean miss.');
+    : 'retrieval healthy (no recall-impairing stage). Try the display name, a synonym or hybrid match (the default) before concluding the brain has nothing.');
   if (typeof r.hint === 'string' && r.hint.length > 0) parts.push(`hint: ${r.hint}`);
   return parts.join(' ');
 }

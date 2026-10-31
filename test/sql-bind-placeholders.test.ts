@@ -9,7 +9,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { SearchOpts } from '../src/core/types.ts';
 import { fileClaimCandidatesQuery } from '../src/core/persistence/file-claims.ts';
-import { buildKeywordCountStatement, buildKeywordPagesStatement } from '../src/core/search/keyword-statement.ts';
+import { buildKeywordCountStatement, buildKeywordHandlePagesStatement, buildKeywordPagesStatement } from '../src/core/search/keyword-statement.ts';
 
 function referenced(sql: string): number[] {
   return [...new Set([...sql.matchAll(/\$(\d+)(?!\d)/g)].map(m => Number(m[1])))].sort((a, b) => a - b);
@@ -38,7 +38,7 @@ describe('keyword statements', () => {
       afterDate: '2026-01-01', beforeDate: '2026-12-31', sourceIds: ['default', 'other'],
     }],
   ];
-  for (const query of ['quasar budget', '혈당', '혈당 관리']) {
+  for (const query of ['quasar budget', '혈당', '혈당 관리', '"dan-example" OR quasar']) {
     for (const [label, opts] of filterSets) {
       test(`count: ${JSON.stringify(query)} with ${label}`, () => {
         expectEveryBindReferenced(buildKeywordCountStatement(query, opts));
@@ -48,5 +48,10 @@ describe('keyword statements', () => {
         expectEveryBindReferenced(buildKeywordPagesStatement(query, opts, { limit: 10, offset: 5, after: { score: 0.5, page_id: 7 } }));
       });
     }
+  }
+  for (const [label, opts] of filterSets) {
+    test(`slug handles only (GBRA-108) with ${label}`, () => {
+      expectEveryBindReferenced(buildKeywordHandlePagesStatement('"dan-example" OR quasar', ['dan-example'], opts, 20));
+    });
   }
 });
