@@ -831,3 +831,19 @@ export interface SubagentResult {
    */
   oneshot_skipped?: boolean;
 }
+
+/**
+ * GST-359 C2: the attested actor an agent job belongs to. submit_agent stores it in the accepted grant
+ * (`submission_authority.grant.actor`); every owner-fenced job read and cancel also matches it, so behind one attest
+ * client a job is visible only to the person it was submitted for, and a job without one only to unattested calls.
+ */
+export type JobActor = readonly [string, string, string];
+
+/** The actor of a caller without an attested one. */
+export const NO_JOB_ACTOR: JobActor = ['', '', ''];
+
+/** SQL: the job's accepted actor equals the three parameters starting at `$first`. `alias` is a code-provided table alias. */
+export function jobActorSql(first: number, alias?: string): string {
+  const actor = `${alias ? alias + '.' : ''}submission_authority->'grant'->'actor'`;
+  return ['system', 'external_id', 'member'].map((key, i) => `COALESCE(${actor}->>'${key}', '') = $${first + i}::text`).join(' AND ');
+}

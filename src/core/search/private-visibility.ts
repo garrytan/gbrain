@@ -23,7 +23,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine } from '../engine.ts';
 import { isValidSourceId } from '../source-id.ts';
-import { hasReaders, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
+import { hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
 import { validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
@@ -605,18 +605,19 @@ export function privateTimelineEventFilterForCaller(timelineAlias: string): stri
  */
 /**
  * GBRA-218: privateProvenanceFilterFragment for the fact reads a caller gates on `excludePrivate`. The readers part
- * always applies, judged as the caller: a fact held in or extracted from a page that names readers reaches only the
- * callers that page admits (none outside a caller record); the privacy part is dropped when an operator relaxed
- * privacy for this remote read, which is what the hatches did to these reads before member access (`excludePrivate`
- * was false then). Outside a remote record nothing relaxes it.
+ * always applies (a world fact held in or extracted from a page that names readers stays hidden from every remote
+ * caller, as with the plain fragment); the privacy part is dropped when an operator relaxed privacy for this remote
+ * read, which is what the hatches did to these reads before member access (`excludePrivate` was false then).
+ * Outside a remote record nothing relaxes it. GST-359 C2: a fact on a member page (`memory/members/<member>`) alone
+ * is judged as the caller (its member identity, or every audience entry), so its member reads it back.
  */
 export function privateProvenanceFilterUnderPolicy(factAlias: string): string {
-  // GST-359 C2: judged as the caller (its member identity, or every audience entry), so a fact on a page that names
-  // readers reaches exactly the callers who read that page; outside a caller record the identity is empty (hide all).
   const access = currentCallerAccess();
   const identity = access.audienceIdentities.length ? { all: access.audienceIdentities } : access.identity;
-  return `NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id ` +
-    `AND pp.slug = ${factAlias}.source_markdown_slug AND NOT ${readPolicyFragment('pp', identity, !callerRelaxesPrivacy(), access.satisfiedRuleIds)})`;
+  const hide = !callerRelaxesPrivacy();
+  const memberPage = `starts_with(pp.slug, '${MEMBER_PAGE_PREFIX}')`;
+  return `NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug ` +
+    `AND NOT CASE WHEN ${memberPage} THEN ${readPolicyFragment('pp', identity, hide, access.satisfiedRuleIds)} ELSE ${readPolicyFragment('pp', [], hide)} END)`;
 }
 
 /** True only inside a remote caller record whose read an operator relaxed (the env hatch or the config opt-out). */

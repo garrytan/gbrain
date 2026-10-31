@@ -14,7 +14,7 @@ import type {
   MinionJob, MinionJobInput, MinionJobStatus, InboxMessage, TokenUpdate,
   MinionQueueOpts, ChildDoneMessage, ChildOutcome, Attachment, AttachmentInput,
 } from './types.ts';
-import { rowToMinionJob, rowToInboxMessage, rowToAttachment } from './types.ts';
+import { rowToMinionJob, rowToInboxMessage, rowToAttachment, jobActorSql, NO_JOB_ACTOR, type JobActor } from './types.ts';
 import { WATCHDOG_SUSPECT_MARK, releaseWatchdogClaim, requeueCoRunnerStalls, unmarkedJobSql } from './watchdog-attribution.ts';
 export { WATCHDOG_SUSPECT_MARK } from './watchdog-attribution.ts';
 import { coalesceOnIdempotencyKey, decideCoalesce, insertOrCoalesce } from './idempotency-coalesce.ts';
@@ -772,8 +772,8 @@ export class MinionQueue {
    *
    * Returns the *root* (the job matching id), not an arbitrary descendant.
    */
-  async cancelJob(id: number, opts?: { ownerClientId?: string }): Promise<MinionJob | null> {
-    const cancelled = await this.cancelJobs([id], opts?.ownerClientId ? { ownerClientId: opts.ownerClientId } : undefined);
+  async cancelJob(id: number, opts?: { ownerClientId?: string; ownerActor?: JobActor }): Promise<MinionJob | null> {
+    const cancelled = await this.cancelJobs([id], opts?.ownerClientId ? { ownerClientId: opts.ownerClientId, ownerActor: opts.ownerActor } : undefined);
     const root = cancelled.find(j => j.id === id);
     return root ?? null;
   }
@@ -1032,7 +1032,7 @@ export class MinionQueue {
    * every surface keyed on a reason prefix (jobs stats, doctor) would
    * silently report zero without this parameter.
    */
-  async cancelJobs(ids: number[], opts?: { reason?: string; rootStatuses?: MinionJobStatus[]; ownerClientId?: string }): Promise<MinionJob[]> {
+  async cancelJobs(ids: number[], opts?: { reason?: string; rootStatuses?: MinionJobStatus[]; ownerClientId?: string; ownerActor?: JobActor }): Promise<MinionJob[]> {
     if (ids.length === 0) return [];
     // opts.rootStatuses re-checks each ROOT id's status ATOMICALLY inside the
     // cancel UPDATE's CTE seed. The waiting-TTL sweep passes ['waiting'] to
@@ -1055,7 +1055,7 @@ export class MinionQueue {
           SELECT id, 0 AS d FROM minion_jobs
            WHERE id = ANY($1::int[])
              AND ($3::text[] IS NULL OR status = ANY($3::text[]))
-             AND ($4::text IS NULL OR data->>'__owner_client_id' = $4::text)
+             AND ($4::text IS NULL OR (data->>'__owner_client_id' = $4::text AND ${jobActorSql(5)}))
           UNION ALL
           SELECT m.id, descendants.d + 1
             FROM minion_jobs m
@@ -1077,7 +1077,7 @@ export class MinionQueue {
          WHERE id IN (SELECT id FROM descendants)
            AND status IN ('waiting','active','delayed','waiting-children','paused')
          RETURNING *`,
-        [ids, opts?.reason ?? null, rootStatuses, ownerClientId]
+        [ids, opts?.reason ?? null, rootStatuses, ownerClientId, ...(opts?.ownerActor ?? NO_JOB_ACTOR)]
       );
       if (rows.length === 0) return [];
 

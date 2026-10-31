@@ -30,7 +30,7 @@ import { prepareMemoryMutation } from './memory-prepare.ts';
 import { retryWriteAdmission } from './admission-retry.ts';
 import { privateProvenanceFilterFragment, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
 import { markBeliefCommits } from '../belief/append.ts';
-import { memberFactPage } from '../access/member-facts.ts';
+import { memberFactPage, memberPageIsOwn, memberPageNotOwned } from '../access/member-facts.ts';
 
 export { prepareMemoryMutation } from './memory-prepare.ts';
 /** Only semantic appends without an explicit caller revision can be recomputed. */
@@ -91,6 +91,7 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
     throw opError('page_not_found', 'The target entity is not writable by this caller.',
       `Entity page ${slug} in source ${sourceId} is deleted or not visible to this caller, so nothing was saved. Remember the fact against a visible entity, or without an entity (it is then filed under memory/unattributed).`);
   }
+  if (memberPage && snapshot && !memberPageIsOwn(memberPage, snapshot.page.frontmatter)) throw memberPageNotOwned(memberPage);
   if (inferred && !snapshot) throw new InferredTargetRejected('NO_ENTITY');
   // Wave B: a segmented entity page over the single-string ceiling cannot take a fence row; named or inferred, the save refuses
   // before admission instead of misfiling it. Below the ceiling an inferred target's checks read the page back whole, as preparation does.

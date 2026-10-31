@@ -251,7 +251,7 @@ access member link <member> --qm <id>` (`unlink`, `links`). Its `x-qm-actor`
 header then runs each attested operation as that member, never reading private
 pages; see [attested-actor refusals](../guides/write-refusals.md#attested-actor-refusals).
 `remember` saves to the person's own page `memory/members/<member>` (private,
-read back only by that member), and `delta` cursors, write receipts
+read back only by that member, written remotely by no one else), and `delta` cursors, write receipts
 (`get_write_request`, `list_write_requests`, `cancel_write_request`) and agent
 jobs (`submit_agent`, `get_agent_job`) belong to the person they were made for.
 Not attestable yet, because what they read or write is not yet kept to the
