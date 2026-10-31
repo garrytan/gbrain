@@ -371,6 +371,45 @@ for (const kind of testBackends()) {
       }
     }, 120_000);
 
+    test('generic recall takes max_chars: whole facts in order, no marker, structured truncated, invalid values refused; without it recall is unchanged (HARN-15)', async () => {
+      const ENTITY = 'companies/harn-recall-example';
+      for (let i = 0; i < 12; i++) {
+        await engine.insertFact({ fact: 'Harn recall world fact ' + String(i).padStart(2, '0') + ' ' + 'ledger detail '.repeat(6) + 'canaryharnrecall', kind: 'fact', entity_slug: ENTITY, source: 'test', visibility: 'world' }, { source_id: SRC });
+      }
+      const recallAll = (args: Record<string, unknown> = {}) => call({ token: 'plain' }, 'recall', { entity: ENTITY, ...args });
+      const base = await recallAll();
+      expect(base.isError).toBe(false);
+      expect(base.json.facts.length).toBe(12);
+      expect('truncated' in base.json).toBe(false);
+      expect(base.json.total).toBe(12);
+      const again = await recallAll();
+      expect(Object.keys(again.json).sort()).toEqual(Object.keys(base.json).sort());
+      const baseIds = base.json.facts.map((f: { id: number }) => f.id);
+      for (const max_chars of [MEMORY_RECALL_MAX_CHARS.min, 500, 1000]) {
+        const out = await recallAll({ max_chars });
+        expect(out.isError).toBe(false);
+        const facts = out.json.facts as Array<{ id: number; fact: string }>;
+        expect(facts.length).toBeGreaterThan(0);
+        expect(facts.length).toBeLessThan(12);
+        expect(facts.map(f => f.fact).join('\n').length).toBeLessThanOrEqual(max_chars);
+        expect(facts.map(f => f.id)).toEqual(baseIds.slice(0, facts.length));
+        const next = base.json.facts[facts.length].fact as string;
+        expect(facts.map(f => f.fact).join('\n').length + 1 + next.length).toBeGreaterThan(max_chars);
+        expect(out.json.truncated).toBe(true);
+        expect(out.json.total).toBe(facts.length);
+        expect(out.text).not.toMatch(/\d+ more|truncated at/i);
+      }
+      const roomy = await recallAll({ max_chars: MEMORY_RECALL_MAX_CHARS.max });
+      expect(roomy.json.truncated).toBe(false);
+      expect(roomy.json.facts.map((f: { id: number }) => f.id)).toEqual(baseIds);
+      for (const max_chars of [199, 12_001, 500.5, '600']) {
+        const out = await recallAll({ max_chars });
+        expect(out.isError).toBe(true);
+        expect(out.json.code ?? out.json.error).toBe('invalid_params');
+        expect(out.text).not.toContain('canaryharnrecall');
+      }
+    }, 120_000);
+
     test('an unlinked person gets an empty success whose code rides structuredContent only', async () => {
       const out = await recall({ token: 'qm', actor: 'U0NOBODY' }, 'budget ledger');
       expect(out.isError).toBe(false);

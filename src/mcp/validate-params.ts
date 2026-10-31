@@ -204,10 +204,10 @@ export function findUnknownParams(op: Operation, params: Record<string, unknown>
 }
 
 /**
- * Render the model-visible warn-mode notice lines (one per unknown key) that
- * dispatch appends as an extra text content block on the RESULT — the same
- * D8 second-block mechanism that carries empty-retrieval loudness, so the
- * grace period actually corrects clients instead of warning into a void.
+ * The warn-mode notice lines (one per unknown key) hosts before HARN-15 appended
+ * as an extra content block. Dispatch no longer sends it (the warning lives in
+ * `_meta.warnings` only, so harnesses never store it in a turn); it stays the
+ * reference for the old-host block `ignoredRemoteParams` still parses.
  */
 export function buildUnknownParamWarnBlock(warnings: UnknownParamWarning[]): string {
   return warnings

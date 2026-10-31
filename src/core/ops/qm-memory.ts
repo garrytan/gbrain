@@ -86,7 +86,7 @@ export function isoDate(value: Date | string | null | undefined): string {
 
 const invalid = (message: string, suggestion: string): OperationError => opError('invalid_params', message, suggestion);
 
-function parseMaxChars(raw: unknown): number {
+export function parseMaxChars(raw: unknown): number {
   if (raw === undefined || raw === null) return MEMORY_RECALL_MAX_CHARS.default;
   const { min, max } = MEMORY_RECALL_MAX_CHARS;
   if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < min || raw > max) {

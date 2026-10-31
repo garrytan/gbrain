@@ -97,7 +97,7 @@ for (const kind of testBackends()) {
       const text = out.content.map(c => c.text).join('\n');
       let json: Record<string, unknown> = {};
       try { json = JSON.parse(text); } catch { /* prose */ }
-      return { isError: out.isError === true, text, json, meta: out._meta, structured: out.structuredContent as { error?: Record<string, unknown> } | undefined };
+      return { isError: out.isError === true, text, first: out.content[0]?.text, json, meta: out._meta, structured: out.structuredContent as { error?: Record<string, unknown> } | undefined };
     }
     const qm = () => clients.qm!.token;
     const getAs = (actor: string | undefined, key: Key, bearer = qm(), extra: Record<string, unknown> = {}) =>
@@ -128,7 +128,12 @@ for (const kind of testBackends()) {
       await register('plain');
       await bindCredential(engine, { kind: 'client', id: await register('defaults') }, { attestActor: 'qm' });
       await register('code', ['authorization_code']);
-      for (const name of ['qm', 'plain', 'defaults']) await issue(name);
+      await bindCredential(engine, { kind: 'client', id: await register('alice') }, { member: 'alice-example' });
+      await bindCredential(engine, { kind: 'client', id: await register('agent') }, { mayActFor: ['member:alice-example', 'member:bob-example'] });
+      for (const name of ['qm', 'plain', 'defaults', 'alice', 'agent']) await issue(name);
+      const aliceLegacy = await mintLegacyToken(engine, { name: 'qm-alice-legacy', scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [SRC] });
+      tokens.aliceLegacy = { id: aliceLegacy.id, token: aliceLegacy.token };
+      await bindCredential(engine, { kind: 'token', id: aliceLegacy.id }, { member: 'alice-example' });
       await engine.executeRaw("UPDATE oauth_clients SET private_pages = 'granted_sources' WHERE client_id = $1", [clients.qm!.id]);
       const minted = await mintLegacyToken(engine, { name: 'qm-legacy', scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [SRC] });
       tokens.legacy = { id: minted.id, token: minted.token };
@@ -218,6 +223,43 @@ for (const kind of testBackends()) {
       await refused(getAs(ALICE_ID, 'alice', qm(), { acting_user: 'L'.repeat(257) }), 'actor_not_attested', 'invalid_actor_id');
       await refused(getAs(ALICE_ID, 'alice', qm(), { acting_user: 7 }), 'actor_not_attested', 'invalid_actor_id');
     }, 120_000);
+
+    test('HARN-1: on a member-bound credential, acting_user naming its own member runs exactly as the token; anyone else is argument_mismatch', async () => {
+      const canaries = (text: string) => (Object.keys(PAGES) as Key[]).filter(k => text.includes(PAGES[k].canary));
+      for (const bearer of [clients.alice!.token, tokens.aliceLegacy!.token]) {
+        expect((await getAs(undefined, 'alice', bearer)).text).toContain(PAGES.alice.canary);
+        for (const key of Object.keys(PAGES) as Key[]) {
+          const plain = await getAs(undefined, key, bearer);
+          for (const id of ['alice-example', ALICE_ID, OIDC_ID]) {
+            const named = await getAs(undefined, key, bearer, { acting_user: id });
+            expect({ isError: named.isError, first: named.first }).toEqual({ isError: plain.isError, first: plain.first });
+            expect(named.meta?.access).toEqual(plain.meta?.access);
+            expect(named.text).not.toContain('acting_user');
+            expect(JSON.stringify(named.meta?.warnings ?? [])).not.toContain('acting_user');
+          }
+        }
+        const search = (extra: Record<string, unknown>) => call(bearer, 'search', { query: 'harbor ledger qm notes', match: 'keyword', fields: 'full', limit: 30, ...extra });
+        const own = canaries((await search({})).text);
+        expect(own).toEqual(expect.arrayContaining(['alice', 'both', 'open']));
+        expect(own).not.toContain('bob');
+        expect(canaries((await search({ acting_user: 'alice-example' })).text)).toEqual(own);
+        expect(canaries((await search({ acting_user: ALICE_ID })).text)).toEqual(own);
+        for (const id of ['bob-example', BOB_ID, 'dan-example', 'nobody-example', 'U0NOBODY']) {
+          for (const key of ['bob', 'alice'] as Key[]) await refused(getAs(undefined, key, bearer, { acting_user: id }), 'actor_not_attested', 'argument_mismatch');
+          await refused(search({ acting_user: id }), 'actor_not_attested', 'argument_mismatch');
+        }
+        await refused(getAs(ALICE_ID, 'alice', bearer, { acting_user: ALICE_ID }), 'actor_not_attested', 'argument_without_attestation');
+        await refused(call(bearer, 'get_page', { slug: PAGES.alice.slug, acting_user: 'alice-example' }, { obo: 'alice-example' }), 'actor_not_attested', 'argument_without_attestation');
+      }
+    }, 120_000);
+
+    test('HARN-1: acting_user never widens a credential bound to no member: a may_act_for credential, a bare credential and stdio are refused', async () => {
+      for (const id of ['alice-example', ALICE_ID, 'bob-example']) {
+        for (const bearer of [clients.agent!.token, clients.plain!.token, null]) {
+          await refused(call(bearer, 'get_page', { slug: PAGES.alice.slug, acting_user: id }), 'actor_not_attested', 'argument_without_attestation');
+        }
+      }
+    }, 60_000);
 
     test('the right follows the token\'s grant: an authorization-code token of an attest client is not attested', async () => {
       const hash = createHash('sha256').update(qm()).digest('hex');

@@ -47,7 +47,6 @@ import {
   findInvalidParam,
   schemaInvalidParams,
   findUnknownParams,
-  buildUnknownParamWarnBlock,
   resolveStrictParamsMode,
 } from './validate-params.ts';
 import { backupCheckDisabled, backupNagGate, backupNoticeText, loadBackupStatus } from '../core/backup/status-file.ts';
@@ -925,7 +924,7 @@ export async function dispatchToolCall(
     const header = opts.actor?.header ?? undefined;
     const actorNamed = header !== undefined || opts.actor?.audience != null || (!!params && Object.prototype.hasOwnProperty.call(params, ACTOR_ARGUMENT));
     const assertion = (outcome: AudienceAuditEvent['outcome'], reason?: string) => logAudienceAssertion({ outcome, op: name,
-      audience: [...(attested?.access.audience ?? audience ?? [])], transport: opts.transport ?? 'unknown',
+      audience: [...(attested?.access?.audience ?? audience ?? [])], transport: opts.transport ?? 'unknown',
       principal: opts.auth?.principal ? `${opts.auth.principal.kind}:${opts.auth.principal.id}` : opts.transport === 'stdio' ? 'local_stdio' : 'unknown',
       ...(actorNamed ? { actor: { system: 'qm', ...(header && EXTERNAL_ID_RE.test(header) ? { external_id: header } : {}), ...(reason ? { reason } : {}) } } : {}) });
     try {
@@ -933,13 +932,13 @@ export async function dispatchToolCall(
       audience = parseAudience(opts.onBehalfOf);
       attested = await resolveAttestedActor(engine, { channels: opts.actor, params, op: name, opShape: operations.find(o => o.name === name),
         auth: opts.auth, transport: opts.transport, audienceAsserted: audience !== null });
-      access = attested ? attested.access : await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience);
+      access = attested?.access ?? await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience);
     } catch (e) {
       if (!(e instanceof OperationError) || !/^(on_behalf_of_|actor_)/.test(String(e.code))) throw e;
       assertion(e.code as AudienceAuditEvent['outcome'], e.reason);
       return qmMemoryToolResult(name, actorNamed ? actorRefusal(e, opts, name, header, params) : errorResult(e, opts, { op: name }));
     }
-    if (audience || attested) assertion('accepted');
+    if (audience || attested?.actor) assertion('accepted');
     const callParams = attested ? attested.params : params;
     return withCallerAccess(access, async () => {
       const out = await withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, callParams, resolved));
@@ -1221,12 +1220,6 @@ async function dispatchResolvedCall(
     // Cat 40 (#5932) evidence blocks (type-filter notice, other names, saved facts) are retrieval
     // data, not advice: they stay plain extra text blocks right after content[0], as measured.
     const evidenceBlocks = retrievalNoticeBlocks(result, responseMeta.retrieval).slice(emptyBlock ? 1 : 0);
-    // WP3/D8: warn-mode unknown-param notices ride the same channel, so the
-    // grace period actually corrects clients (old thin-clients read content[0]
-    // only — skew-safe). One notice per ignored parameter.
-    for (const w of unknownParamWarnings) {
-      notices.push({ code: 'unknown_param', kind: 'info', why: buildUnknownParamWarnBlock([w]) });
-    }
     // Lane F (F3): degraded recall and a source binding that narrowed an empty read.
     const rerankDegradedCalls = recordRerankDegradation(responseMeta, opts);
     notices.push(...recallInteropNotices(name, result, responseMeta, safeParams,

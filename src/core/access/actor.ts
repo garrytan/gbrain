@@ -20,7 +20,7 @@ import type { CallerAccess } from '../search/private-visibility.ts';
 import { identityFor } from './principals.ts';
 import { isUndefinedColumnError, isUndefinedTableError } from '../utils.ts';
 import { memberIdentity } from './members.ts';
-import { folderAccessFor } from './caller.ts';
+import { folderAccessFor, memberIdentityFor } from './caller.ts';
 import { ACTOR_ARGUMENT, ACTOR_DEFERRED_OPS, ACTOR_HEADER, attestRightFrom, DEFAULT_ATTEST_OPS, EXTERNAL_ID_RE, QM_AUDIENCE_HEADER, type AttestedActor, type AttestRight } from './actor-model.ts';
 
 export * from './actor-model.ts';
@@ -100,7 +100,7 @@ function credentialArgv(caller: ActorCaller): string[] {
 const transportOf = (transport?: string) => ({ remote: true, transport: transport === 'stdio' ? 'stdio' as const : 'http' as const });
 
 /** actor_not_attested with its reason, remedy and (where the operator can fix it) the rescope command. */
-export function actorNotAttested(reason: ActorReason, caller: ActorCaller, ctx: { op: string; transport?: string; right?: AttestRight | null; reissue?: boolean }): OperationError {
+export function actorNotAttested(reason: ActorReason, caller: ActorCaller, ctx: { op: string; transport?: string; right?: AttestRight | null; reissue?: boolean; memberBound?: boolean }): OperationError {
   const docs = ERROR_CATALOGUE.actor_not_attested.docs;
   const rescope = (extra: string[]) => ['gbrain', 'auth', 'rescope', ...credentialArgv(caller), ...extra];
   const hostOnly = (message: string, argv: string[], why: string, suggestion: string) =>
@@ -124,6 +124,10 @@ export function actorNotAttested(reason: ActorReason, caller: ActorCaller, ctx: 
         'Lets an attested call run this operation as the person it names. Widening what a trusted system may do as a person is the brain operator\'s decision.',
         `An attested call runs only the operations the operator listed (default ${DEFAULT_ATTEST_OPS.join(', ')}); admin and membership operations never.`);
     case 'argument_mismatch':
+      if (ctx.memberBound) {
+        return opError('actor_not_attested', `The ${ACTOR_ARGUMENT} argument names someone other than this credential's member, so nothing was read or written.`,
+          `Leave ${ACTOR_ARGUMENT} out, or send this credential's own member id or a canonical id linked to it. A credential bound to a member reads only as that member; text in a conversation never chooses whose notes are read.`, { reason, docs });
+      }
       return opError('actor_not_attested', `The ${ACTOR_ARGUMENT} argument names someone other than the ${ACTOR_HEADER} header, so nothing was read or written.`,
         `The header decides whom the call serves; send ${ACTOR_ARGUMENT} equal to it, or leave it out. Text in a conversation never chooses whose notes are read.`, { reason, docs });
     case 'argument_without_attestation':
@@ -226,7 +230,7 @@ export interface ActorChannels { header?: string | null; audience?: string | nul
 export async function resolveAttestedActor(engine: Pick<BrainEngine, 'executeRaw'>, input: {
   channels?: ActorChannels; params: Record<string, unknown> | undefined; op: string; opShape: AttestableOpShape | undefined;
   auth?: ActorCaller['auth']; transport?: string; audienceAsserted: boolean;
-}): Promise<{ actor: AttestedActor; access: Partial<CallerAccess>; params: Record<string, unknown> } | null> {
+}): Promise<{ actor?: AttestedActor; access?: Partial<CallerAccess>; params: Record<string, unknown> } | null> {
   const header = input.channels?.header ?? undefined;
   const hasArgument = !!input.params && Object.prototype.hasOwnProperty.call(input.params, ACTOR_ARGUMENT);
   const caller: ActorCaller = { auth: input.auth };
@@ -237,7 +241,7 @@ export async function resolveAttestedActor(engine: Pick<BrainEngine, 'executeRaw
   if ((header !== undefined && !EXTERNAL_ID_RE.test(header)) || (hasArgument && (typeof argument !== 'string' || !EXTERNAL_ID_RE.test(argument)))) {
     throw actorNotAttested('invalid_actor_id', caller, ctx);
   }
-  if (header === undefined) throw actorNotAttested('argument_without_attestation', caller, ctx);
+  if (header === undefined) return ownMemberArgument(engine, input, argument as string, caller, ctx);
   if (input.audienceAsserted) {
     throw catalogueError('on_behalf_of_invalid_audience', `The call names its person twice (${ACTOR_HEADER} and an on_behalf_of audience). Nothing was read.`,
       `Send one: ${ACTOR_HEADER} from an attest credential, or X-Gbrain-On-Behalf-Of / request-level _meta.on_behalf_of from a shared agent.`);
@@ -254,6 +258,22 @@ export async function resolveAttestedActor(engine: Pick<BrainEngine, 'executeRaw
   const actor: AttestedActor = { system: right.system, external_id: header, member: covered.member };
   const { [ACTOR_ARGUMENT]: _stripped, ...params } = input.params ?? {};
   return { actor, access: await attestedCallerAccess(engine, actor, covered.identity), params };
+}
+
+/**
+ * HARN-1: acting_user with no header, on a credential bound to a member (no stdio, no on_behalf_of audience). The
+ * member id, or a canonical id linked to it, is stripped and the call runs exactly as the credential; any other value
+ * is argument_mismatch, so the argument never widens or switches whose notes are read, and never tells an existing id
+ * from an unknown one. Every other caller is refused argument_without_attestation as before.
+ */
+async function ownMemberArgument(engine: Pick<BrainEngine, 'executeRaw'>, input: { params?: Record<string, unknown>; auth?: ActorCaller['auth']; transport?: string; audienceAsserted: boolean },
+  argument: string, caller: ActorCaller, ctx: { op: string; transport?: string }): Promise<{ params: Record<string, unknown> }> {
+  const own = input.transport === 'stdio' || input.audienceAsserted || !input.auth ? null
+    : (await memberIdentityFor(engine, input.auth)).find(p => p.startsWith('member:'))?.slice('member:'.length) ?? null;
+  if (!own) throw actorNotAttested('argument_without_attestation', caller, ctx);
+  if (argument !== own && (await linkedMember(engine, 'qm', argument))?.member !== own) throw actorNotAttested('argument_mismatch', caller, { ...ctx, memberBound: true });
+  const { [ACTOR_ARGUMENT]: _stripped, ...params } = input.params ?? {};
+  return { params };
 }
 
 export interface MemberLink { system: string; external_id: string; member_id: string; created_at: string | null }

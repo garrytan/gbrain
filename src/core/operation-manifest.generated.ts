@@ -5762,6 +5762,10 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         ],
         "description": "Lowest trust tier to return (the connection floor still applies).",
         "fullSurfaceOnly": true
+      },
+      "max_chars": {
+        "type": "integer",
+        "description": "Cap on fact (then results) text, 200-12000; whole items only, truncated says if cut."
       }
     },
     "scope": "read",

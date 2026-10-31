@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 267560,
-    "stdoutSha256": "25f870be62f4c5b6726a56665a8c684939ac62aa6cbf6daed7ebfc97d6bbf413",
+    "stdoutBytes": 267766,
+    "stdoutSha256": "8b3611e7dedd6b96b2a04c29f1ad7e7b4e9a05b4a65464f184f3afd82d00e28a",
     "toolNames": [
       "remember",
       "entity",
@@ -6650,6 +6650,7 @@
           "include_expired": "boolean?",
           "include_pending": "boolean?",
           "limit": "number?",
+          "max_chars": "integer?",
           "min_trust": "string?",
           "query": "string?",
           "question": "string?",
@@ -6694,6 +6695,10 @@
             "limit": {
               "description": "Per-arm max (default 50, cap 100).",
               "type": "number"
+            },
+            "max_chars": {
+              "description": "Cap on fact (then results) text, 200-12000; whole items only, truncated says if cut.",
+              "type": "integer"
             },
             "min_trust": {
               "description": "Lowest trust tier to return (the connection floor still applies).",

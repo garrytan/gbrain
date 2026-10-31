@@ -1662,9 +1662,9 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     const warnings = warned._meta?.warnings;
     expect(Array.isArray(warnings)).toBe(true);
     expect(warnings.some((w: any) => w.code === 'unknown_param' && w.param === 'bogus_unknown_param')).toBe(true);
-    // The model-visible warn notice rides as an extra content block (D8).
-    expect(warned.content.some((c: any) => typeof c.text === 'string'
-      && c.text.includes('unknown parameter "bogus_unknown_param"'))).toBe(true);
+    // HARN-15: the warning lives in _meta.warnings only; no content block names it.
+    expect(JSON.stringify(warned.content)).not.toContain('bogus_unknown_param');
+    expect(JSON.stringify(warned.content)).not.toContain('unknown_param');
 
     // Control (anti-vacuity): same op with only declared params.
     const clean = await mcpToolResult(token, 'tools/call', {

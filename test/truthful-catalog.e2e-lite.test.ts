@@ -462,9 +462,9 @@ describe('E5 truthful catalog — legacy bearer transport (real HTTP, PGLite)', 
       const meta = result._meta as { warnings?: Array<{ code: string; param: string }> } | undefined;
       expect(meta?.warnings?.[0]?.code).toBe('unknown_param');
       expect(meta?.warnings?.[0]?.param).toBe('e5_garbage_probe');
-      // The model-visible grace-period notice rides the second content block.
+      // HARN-15: the warning lives in _meta.warnings only; no content block names it.
       const blocks = result.content.map(c => c.text);
-      expect(blocks.some(t => t.includes('unknown parameter "e5_garbage_probe"'))).toBe(true);
+      expect(blocks.some(t => t.includes('e5_garbage_probe'))).toBe(false);
     } finally {
       await engine.setConfig('mcp.strict_params', 'reject');
     }
