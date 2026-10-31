@@ -146,7 +146,7 @@ export function recordManagedRoots(brainId: string, records: ManagedRootRecord[]
     changed = writePrivateRecord(file, value) || changed;
     if (existsSync(root) && statSync(root).isDirectory()) {
       // #7338: a datastore is marked in its own directory, never in the metadata of a repository that happens to enclose it.
-      const metadata = record.datastore ? null : enclosingGitMetadata(root);
+      const metadata = record.datastore ? null : gitMetadataDirectory(root);
       const marker = metadata ? join(metadata, 'gbrain-managed.json') : join(root, '.gbrain-managed');
       if (!existsSync(marker)) writePrivateRecord(marker, JSON.stringify({ version: 1, managed: true, brain_id: brainId, ...(modeEpoch !== undefined ? { mode_epoch: modeEpoch } : {}) }));
     }
