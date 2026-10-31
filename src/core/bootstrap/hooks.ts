@@ -1131,7 +1131,7 @@ export type CodexMcpRegistration = Omit<ClaudeMcpRegistration, 'scope'>;
  * (binary first) — the dispatcher execs them; nothing here touches the
  * filesystem or the network. Shape per TARGETS['claude-code-2026-08'].
  *
- * The serve argv comes from `stdioServeArgv`: `--surface full` by default
+ * The serve argv comes from `stdioServeArgv`: `--surface starter` by default
  * (REGISTRATION_SURFACE; bootstrap's contract — put_page, get_page,
  * add_timeline_entry, search, query — stays callable, and a pre-existing `mcp_surface: verbs` config row cannot
  * narrow a pinned registration), listing the memory verbs and request_tools
