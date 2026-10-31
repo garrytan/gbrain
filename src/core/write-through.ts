@@ -23,11 +23,11 @@ import { hasSourceFilesystemLock, withSourceFilesystemLock, assertSourceFilesyst
  */
 
 import { existsSync, statSync, mkdirSync, unlinkSync, readdirSync, readFileSync } from 'fs';
-import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from 'path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { atomicWriteFileSync } from './atomic-write.ts';
 import type { BrainEngine } from './engine.ts';
 import { isRelativeFileUri, serializePageToMarkdown, resolvePageFilePath, resolveSourceLocalFilePath } from './markdown.ts';
-import { isWriteTargetContained, msysToNativePath } from './path-confine.ts';
+import { isForeignAbsolutePath, isHostAbsolutePath, isWriteTargetContained, msysToNativePath } from './path-confine.ts';
 import { readSlugRootMode, resolveSlugRootMode, type SlugRootMode } from './sync-anchor.ts';
 import { resolveSlugForPath } from './sync.ts';
 import { PUSH_SCAN_MAX_FILE_BYTES } from './page-size-policy.ts';
@@ -124,6 +124,14 @@ export interface WritePageThroughOpts {
 }
 
 export function withNoRepoWriteThroughWarning<T extends { written: boolean; skipped?: string; warning?: string }>(result: T, sourceId: string, operation = 'put_page'): T {
+  if (!result.written && result.skipped === 'relative_root') {
+    return {
+      ...result,
+      warning:
+        `${operation} wrote only to the database for source '${sourceId}': its stored repo path is not an absolute directory on this host, so no durable markdown file was created. ` +
+        `Ask the operator to run gbrain sources set-path ${sourceId} <absolute-directory> before relying on the write.`,
+    } as T;
+  }
   if (result.written || result.skipped !== 'no_repo_configured') return result;
   return {
     ...result,
@@ -300,9 +308,8 @@ export async function otherSourceOwning(engine: BrainEngine, sourceId: string, p
   const target = identity(path);
   return rows.find(row => {
     // #7630: a live source's relative local_path names no known tree, so like any unresolvable spelling it counts as a match.
-    // An absolute path written by another OS (C:\ on POSIX) is not relative, the same reading doctor and --clear use.
-    const native = msysToNativePath(row.local_path);
-    if (!posix.isAbsolute(native) && !win32.isAbsolute(native)) return relativeOwns && !row.archived;
+    // An absolute path written by another OS (C:\ on POSIX) is not relative, the same reading sync, doctor and --clear use.
+    if (!isHostAbsolutePath(row.local_path) && !isForeignAbsolutePath(row.local_path)) return relativeOwns && !row.archived;
     const other = identity(row.local_path);
     if (target === null || other === null) return true;
     const rel = relative(other, target);
@@ -382,7 +389,7 @@ export async function resolvePageWriteTarget(
 
   if (sourceLocalPath) {
     // #7630: a relative local_path (a legacy ".") names whatever directory gbrain runs from, never the source's tree.
-    if (!isAbsolute(sourceLocalPath) || !existsSync(sourceLocalPath) || !statSync(sourceLocalPath).isDirectory()) {
+    if (!isHostAbsolutePath(sourceLocalPath) || !existsSync(sourceLocalPath) || !statSync(sourceLocalPath).isDirectory()) {
       return { ok: false, skipped: 'repo_not_found' };
     }
     filePath = recordedPath
@@ -396,7 +403,7 @@ export async function resolvePageWriteTarget(
     if (!repoPath) {
       return { ok: false, skipped: 'no_repo_configured' };
     }
-    if (!isAbsolute(repoPath) || !existsSync(repoPath) || !statSync(repoPath).isDirectory()) {
+    if (!isHostAbsolutePath(repoPath) || !existsSync(repoPath) || !statSync(repoPath).isDirectory()) {
       return { ok: false, skipped: 'repo_not_found' };
     }
     const pageRoot = sourceId === 'default' ? repoPath : join(repoPath, '.sources', sourceId);

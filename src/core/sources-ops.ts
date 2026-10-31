@@ -40,7 +40,7 @@ import { managedPersistenceEnabled } from './persistence/ownership.ts';
 
 import { existsSync, mkdirSync, renameSync, rmSync, lstatSync, realpathSync } from 'fs';
 import { join, dirname, basename, isAbsolute, resolve as resolvePath } from 'path';
-import { isPathContained, msysToNativePath } from './path-confine.ts';
+import { isHostAbsolutePath, isPathContained, msysToNativePath } from './path-confine.ts';
 import { mkdirPrivate } from './atomic-write.ts';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
@@ -885,6 +885,8 @@ export interface RemoveResult {
   pages_deleted: number;
   clone_removed: boolean;
   clone_path: string | null;
+  /** #7646: why a gbrain-managed clone was left on disk (`relative_path`: its stored path names no fixed directory). */
+  clone_skipped_reason?: 'relative_path';
   dryRun: boolean;
 }
 
@@ -960,9 +962,13 @@ export async function removeSource(
   const gManaged = ghCfg.kind === 'google' && ghCfg.g_managed === true;
   const cloneRoot = gbrainPath('clones');
   let cloneRemoved = false;
-  if (!opts.keepStorage && src.local_path && (remoteUrl || ghManaged || gManaged) && !isAbsolute(src.local_path)) {
+  let cloneSkippedReason: RemoveResult['clone_skipped_reason'];
+  if (!opts.keepStorage && src.local_path && (remoteUrl || ghManaged || gManaged) && !isHostAbsolutePath(src.local_path)) {
+    cloneSkippedReason = 'relative_path';
+    const cloneDir = defaultCloneDir(opts.id);
     console.error(
-      `[gbrain] WARN: clone cleanup skipped for "${opts.id}": its stored local_path "${src.local_path}" is relative, so it would name the current directory. Delete the clone by hand if you still want it gone.`,
+      `[gbrain] WARN: clone cleanup skipped for "${opts.id}": its stored local_path "${src.local_path}" is not absolute on this host, so it would name the current directory. ` +
+      (existsSync(cloneDir) ? `gbrain's clone directory for this source is ${cloneDir}; delete it by hand if you still want it gone (a later sources add ${opts.id} --url refuses while it holds files).` : 'Delete the clone by hand if you still want it gone.'),
     );
   } else if (
     !opts.keepStorage &&
@@ -1000,6 +1006,7 @@ export async function removeSource(
     pages_deleted: pageCount,
     clone_removed: cloneRemoved,
     clone_path: src.local_path,
+    ...(cloneSkippedReason ? { clone_skipped_reason: cloneSkippedReason } : {}),
     dryRun: false,
   };
 }
@@ -1082,7 +1089,7 @@ export async function recloneIfMissing(
   }
   const remoteUrl = getRemoteUrl(src.config);
   if (!remoteUrl || !src.local_path) return false;
-  if (!isAbsolute(src.local_path)) {
+  if (!isHostAbsolutePath(src.local_path)) {
     throw new SourceOpError('unmanaged_path',
       `Refusing to re-clone "${id}": its stored local_path "${src.local_path}" is relative, so it would name the current directory. Run gbrain sources set-path ${id} <absolute-directory>, then retry.`);
   }

@@ -39,7 +39,7 @@
  * only a plan with no work left is a completed conversion; otherwise the source stays strict (Git wins) and the
  * remaining categories are reported. `--to mixed` removes the flag and changes nothing else.
  */
-import { lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { SyncOpts, SyncResult } from '../../commands/sync.ts';
@@ -59,10 +59,11 @@ import { commitThroughDoor } from './git-door.ts';
 import { gitRootAhead, pushGitRoot } from './effect-git.ts';
 import { DURABILITY_NOT_ENABLED_REASON, gitDurabilityPolicy } from './git-durability-policy.ts';
 import { currentVerifiedLocalWriter, localHostId } from './identity.ts';
-import { acquireWorktree, getWorktreeBinding, readManagedMode } from './ownership.ts';
+import { acquireWorktree, readManagedMode } from './ownership.ts';
 import { inspectDurabilityCheckout } from './git-durability-administration.ts';
 import { classifyGitCheckout } from '../git-checkout.ts';
-import { resolveManagedSyncContext, type ManagedSyncContext } from './sync-discovery.ts';
+import { readManagedSyncRows, resolveManagedSyncContext, type ManagedSyncContext } from './sync-discovery.ts';
+import { syncOwnerBinding } from './owner-refusal.ts';
 import { readShadowLevel } from './sync-pass.ts';
 import { isPrivacyClass, type PrivacyClass } from './git-declared.ts';
 import { classifySyncPath } from './sync-classify.ts';
@@ -196,12 +197,34 @@ export async function assertConversionCaller(engine: BrainEngine, sourceId: stri
       user_message: `Source ${sourceId} can only become git-canonical on a brain with managed writes, and this brain is not managed. Should it move to managed writes first?` } });
 }
 
+type UnreadableRootReason = 'missing' | 'not_directory' | 'permission_denied' | 'symlink_loop' | 'unreadable';
+const ROOT_ERRNO: Record<string, UnreadableRootReason> = { ENOENT: 'missing', ENOTDIR: 'not_directory', EACCES: 'permission_denied', EPERM: 'permission_denied', ELOOP: 'symlink_loop' };
+const ROOT_STATE: Record<UnreadableRootReason, string> = { missing: 'does not exist (it was moved, deleted or unmounted)', not_directory: 'is not a directory',
+  permission_denied: 'cannot be read by the account gbrain runs as', symlink_loop: 'is a symlink loop', unreadable: 'cannot be read' };
+
+/** #7956: why the registered root cannot be listed as a directory, or null when it can. */
+function unreadableRoot(root: string): UnreadableRootReason | null {
+  try {
+    if (!statSync(root).isDirectory()) return 'not_directory';
+    accessSync(root, constants.R_OK | constants.X_OK);
+    return null;
+  } catch (error) { return ROOT_ERRNO[(error as NodeJS.ErrnoException).code ?? ''] ?? 'unreadable'; }
+}
+
 /**
  * #7885: a root with no Git checkout, or one whose branch has no commit yet, has nothing to convert into. The plan refuses
- * before it reads anything, and the source keeps working as it is (the database is its record). A root it cannot read
- * (gone, unmounted, not a directory) is left to the context resolution, which owns those refusals.
+ * before it reads anything, and the source keeps working as it is (the database is its record). #7956: a root it cannot
+ * read (gone, unmounted, not a directory, no permission, a symlink loop) refuses source_root_unreadable, never a raw
+ * filesystem or Git error and never a checkout refusal whose fix would create a repository there.
  */
 async function assertConversionCheckout(sourceId: string, root: string): Promise<void> {
+  const unreadable = unreadableRoot(root);
+  if (unreadable) {
+    throw opError('source_root_unreadable', `Source ${sourceId}'s registered root ${root} ${ROOT_STATE[unreadable]}, so nothing was read or written.`,
+      `Restore or remount the directory on the brain host (or make it readable to the account gbrain runs as), compare it with the root gbrain sources writer status --source ${sourceId} --json names, then preview again.`,
+      { reason: unreadable, docs: DOCS, retryable: false, fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'], consent: [], actor: 'agent', requires_exclusive: false,
+        why: 'Shows the root the owner registered, to compare with the directory on disk; read-only.', verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] } } });
+  }
   if (classifyGitCheckout(root) === 'unknown') return;
   let code: 'git_checkout_required' | 'git_branch_unborn';
   try { await inspectDurabilityCheckout(root); return; }
@@ -227,8 +250,9 @@ const strictContext = (context: ManagedSyncContext): ManagedSyncContext => ({ ..
 
 /** The read-only plan of `--to git`; its preview is what the CLI prints and the apply binds to. */
 export async function planGitConversion(engine: BrainEngine, sourceId: string): Promise<GitConversionPlan> {
-  const binding = await getWorktreeBinding(engine, sourceId);
-  if (binding?.local_path && binding.owner_host_id === localHostId() && binding.state === 'active') await assertConversionCheckout(sourceId, resolve(binding.local_path, binding.relative_path));
+  const [source, binding] = await readManagedSyncRows(engine, sourceId);
+  const owned = syncOwnerBinding(source, binding, localHostId());
+  if (owned) await assertConversionCheckout(sourceId, resolve(owned.local_path, owned.relative_path));
   const context = await resolveManagedSyncContext(engine, { sourceId, noPull: true, dryRun: true });
   const pages: GitGapPage[] = [];
   const equal = new Map<string, PageRevision>();
@@ -573,7 +597,7 @@ export async function applyGitConversion(engine: BrainEngine, sourceId: string, 
     passOrThrow(sourceId, 'strict_pass_closing', await pass('strict_pass_closing', after.git_wins.count), progress);
     after = (await planGitConversion(engine, sourceId)).preview;
   }
-  return { status: after.remaining === 0 ? 'converted' : 'incomplete', source_id: sourceId, head: after.head, committed, withheld, holds_cleared: holdsCleared, parked, push,
+  return { status: after.strict && after.remaining === 0 ? 'converted' : 'incomplete', source_id: sourceId, head: after.head, committed, withheld, holds_cleared: holdsCleared, parked, push,
     closing_passes: closing, after };
 }
 

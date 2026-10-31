@@ -10,6 +10,45 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**The strict git door cleans up after a killed index refresh and no longer fails on pages committed with a legacy file mode. Stored source paths are judged absolute by one rule everywhere. Conversion, stuck-recovery and repair messages now name the right next step (#7755, #7717, #7646, #7956, #7715).**
+
+This is the door and stored-root half of the persistence/door follow-up wave (#8124). Each fix has a regression test that fails on master.
+
+### Itemized changes
+
+- **Strict door index refresh (#7755, #7756, #7757, #7758).**
+  - While holding the index lock, the refresh removes index copies (`index.gbrain-<pid>-*`) that a killed gbrain process left in the git directory, and keeps any copy whose process is still alive.
+  - On Windows it retries a briefly refused rename of the refreshed index (EPERM, EBUSY or EACCES) before it reports "commit landed, index not updated".
+  - A failed close of the door's `index.lock` no longer skips cleanup or hides the landed-commit failure.
+  - Tests now pin that the door holds its own lock open during the refresh, and the abandoned-lock test reads the door's own verdict.
+- **Strict door outcomes (#7717).**
+  - A page committed with a legacy file mode (100664) gets no mode-only commit for unchanged bytes. With `core.fileMode=false`, its writes commit as 100644 instead of failing `git_unavailable`.
+  - A replay refused `git_index_conflict` after its commit landed now says HEAD already holds its bytes.
+  - The `git_target_changed` advice names the third outcome and `--source`.
+- **Stored source paths (#7646).**
+  - One predicate (`isHostAbsolutePath` / `isForeignAbsolutePath`) decides absoluteness for sync, `config set`, write-through, `set-path --clear` and doctor. On Windows, `\brain` and `/brain` count as relative.
+  - `--repo ./` is refused like `--repo .` when the stored anchor is relative.
+  - An explicit foreign `--repo` can no longer advance `default`'s last commit through a relative `sync.repo_path`.
+  - A queued sync job on a relative anchor completes as a skip that carries the fix, instead of using up its attempts.
+  - `sync --all --json` entries carry `code`, `why` and `fix`.
+  - Page and fact writes on a relative root record `relative_root`.
+  - Doctor's relative-path scan can no longer hide the whole check.
+  - `gbrain dream` passes the phase's ask-the-user fix through.
+  - Writer-failure advice is corrected for compacted rows and for loop, proposal, trust and relink writes. The grouped `filter` keeps `--operation`.
+  - The behavior notice lists releases in order.
+  - `sources remove` reports a skipped clone cleanup and names gbrain's clone directory.
+  - A stray `--path` on `agent`, `autopilot` and `dream` is accepted again for one release.
+- **Git-canonical conversion (#7956).**
+  - `gbrain sources canonical <id> --to git` refuses a root it can't read with `source_root_unreadable` and a fix.
+  - An archived or re-registered source refuses `owner_unavailable` instead of `git_checkout_required`.
+  - An apply whose source was switched back to mixed while it ran reports `incomplete`, not `converted`.
+- **Repair and write messages (#7715, #7910, #7881).**
+  - On a git-canonical source, `repair stuck-recovery --keep disk` tells you to commit (`gbrain git commit-push`) or restore the kept edit, then sync, instead of reconciling.
+  - `repair url-clone-fences` lists a held file once, and no longer says sync holds the restored file.
+  - A local streamed `put`/`capture` refused `visibility_not_applied` uses the page-write wording.
+
 ## [0.60.529.0] - 2026-10-31
 
 **A pull request that adds a file to the PGLite snapshot inputs no longer gets stopped at gstack's pregate secrets check by its own workflow cache keys (#8107).**

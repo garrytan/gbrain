@@ -55,6 +55,11 @@ const EXTRA_FLAGS: Record<string, string[]> = {
   // Deferred persistence routing reaches runForget in recall.ts two levels deep;
   // `forget --purge` hands off from there to src/commands/forget-purge.ts.
   forget: ['--reason', '--request-id', '--purge', '--dry-run', '--yes', '--match', '--status', '--vacuum', '--all-subjects'],
+  // #7646: none of these reads --path; the scan picked it up from a warning string #7640 reworded. Accepted and ignored for
+  // one more release so a stray --path keeps working; drop these three after v0.60.530.0.
+  agent: ['--path'],
+  autopilot: ['--path'],
+  dream: ['--path'],
 };
 
 /**

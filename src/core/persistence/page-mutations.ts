@@ -5,6 +5,7 @@ import { fenceNormalizedNotice, type FencesNormalized } from '../fence-repair/re
 import { parseFenceRepairReceipt } from '../fence-repair/receipt.ts';
 import { realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { isHostAbsolutePath } from '../path-confine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
 import { VERSION } from '../../version.ts';
@@ -165,7 +166,7 @@ async function resolveCaptureFile(ctx: OperationContext, sourceId: string, p: Re
   const binding = await getWorktreeBinding(ctx.engine, sourceId);
   let root = binding ? binding.owner_host_id === localHostId() && binding.local_path ? join(binding.local_path, binding.relative_path) : null
     : source?.local_path || (sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
-  if (root && !isAbsolute(root)) root = null;
+  if (root && !isHostAbsolutePath(root)) root = null;
   let origin: string | null = null;
   try { if (root) origin = relative(realpathSync(root), realpathSync(file)); } catch { /* unreadable or absent root */ }
   if (!root || !origin || isAbsolute(origin) || origin === '..' || origin.startsWith(`..${sep}`) || !/\.mdx?$/i.test(origin)) {
@@ -419,7 +420,7 @@ export async function preparePageAdmission(ctx: OperationContext,
   const sandbox = ctx.viaSubagent === true && !(ctx.allowedSlugPrefixes?.length);
   const configuredWriteThrough = !/^(false|0|off|no)$/i.test(writeThroughSetting ?? 'true');
   const configuredRoot = source.local_path || repoPath;
-  const root = configuredRoot && isAbsolute(configuredRoot) ? configuredRoot : null;
+  const root = configuredRoot && isHostAbsolutePath(configuredRoot) ? configuredRoot : null;
   // Checkout paths belong to a host binding; sources.local_path may name
   // another host's original checkout after a verified ownership transfer.
   const localRoot = binding ? binding.owner_host_id === localHostId() && binding.local_path
@@ -432,7 +433,7 @@ export async function preparePageAdmission(ctx: OperationContext,
   if (sandbox) authority.databaseOnlyReason = 'subagent_sandbox';
   else if (databaseOnly) authority.databaseOnlyReason = databaseOnly;
   else if (!configuredWriteThrough) authority.databaseOnlyReason = 'disabled_by_config';
-  else if (!root && !binding) authority.databaseOnlyReason = 'no_repo_configured';
+  else if (!root && !binding) authority.databaseOnlyReason = configuredRoot ? 'relative_root' : 'no_repo_configured';
   if (p.local_dir !== undefined) {
     let matches = false;
     if (ctx.remote === false && typeof p.local_dir === 'string' && localRoot) {

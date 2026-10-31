@@ -27,7 +27,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
 import { existsSync, realpathSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { isHostAbsolutePath } from '../path-confine.ts';
 import { opError } from '../ops/contract.ts';
 import { resolveSlugForPath, unsyncableReason, type SyncableReason } from '../sync.ts';
 import { parseMarkdownHead } from '../markdown.ts';
@@ -115,7 +115,7 @@ export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, 
   const status = ['gbrain', 'sources', 'status', sourceId, '--json'];
   if (!source || source.archived) throw opError('not_found', `Source ${sourceId} is not registered or is archived.`, 'List the registered sources and pass one of their ids.',
     { fix: readFix('Lists the registered sources.', ['gbrain', 'sources', 'list', '--json'], ['gbrain', 'sources', 'list', '--json']) });
-  if (source.local_path && !isAbsolute(source.local_path)) throw opError('sync_anchor_relative', `Source ${sourceId} has a relative local_path, which names no fixed directory, so its paths cannot be resolved.`,
+  if (source.local_path && !isHostAbsolutePath(source.local_path)) throw opError('sync_anchor_relative', `Source ${sourceId} has a relative local_path, which names no fixed directory, so its paths cannot be resolved.`,
     'Ask the user which directory holds the checkout, then run gbrain sources set-path on the host that holds it.',
     { fix: { argv: ['gbrain', 'sources', 'set-path', sourceId, '<dir>'], consent: [], actor: 'user', ask_user: true, requires_exclusive: false,
       inputs: [{ name: 'dir', how: "The absolute path of the directory that holds this source's checkout, from the user; never the current directory by default." }],

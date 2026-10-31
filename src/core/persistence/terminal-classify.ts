@@ -296,7 +296,11 @@ function route(input: TerminalInput): Partial_ {
         why: 'The page changed after the caller read it. Read the current revision and resubmit against it with a new request id.',
         verify: { argv: failuresArgv(source) } } };
   }
-  if (FAULT_CODES.has(code)) return fromTable('sync_fault', code, origin, faultAction(code, input), null, input.error_message);
+  if (FAULT_CODES.has(code)) {
+    const verdict = fromTable('sync_fault', code, origin, faultAction(code, input), null, input.error_message);
+    // #7646: a fault no sync and no caller retries offers only the read-only inspect, so its safe actions say so too.
+    return inspectOnlyFault(code, input) ? { ...verdict, safe_actions: ['none'] } : verdict;
+  }
   const entry = (CODES as Record<string, { class: string } | undefined>)[code];
   if (!entry) return diagnosis(input, code, origin, `The write ended with code ${code}, which this build does not know.`);
   if (entry.class === 'server') {
@@ -340,7 +344,8 @@ function schemaMissingVerdict(input: TerminalInput, code: string, origin: string
 
 /** #7630: the caller-submitted page and memory writes a caller resubmits; no sync replays them. */
 const RESUBMITTED_WRITES = new Set(['put_page', 'put_pages', 'capture', 'delete_page', 'restore_page', 'revert_version', 'edit_page', 'append_page', 'remember', 'forget', 'forget_fact',
-  'add_tag', 'remove_tag', 'add_link', 'remove_link', 'add_timeline_entry', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve', 'takes_remove']);
+  'add_tag', 'remove_tag', 'add_link', 'remove_link', 'add_timeline_entry', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve', 'takes_remove',
+  'loops_close', 'decide_proposal', 'trust_owner_page', 'trust_release', 'relink_facts']);
 
 /**
  * #7630: the operation a fault's fix depends on. A reconcile or managed write (import, repair, quarantine clear,
@@ -348,6 +353,21 @@ const RESUBMITTED_WRITES = new Set(['put_page', 'put_pages', 'capture', 'delete_
  */
 export function faultOperation(operation: string, intentKind: string | null | undefined): string {
   return operation === 'put_page' && intentKind && (intentKind === 'canonical_reconcile' || intentKind.startsWith('managed_')) ? intentKind : operation;
+}
+
+/**
+ * #7646: a caller resubmits its own write. A compacted `put_page` lost its intent kind, so it may be a reconcile or a
+ * managed write stored as one: it gets the read-only inspect, never the resubmit advice.
+ */
+function resubmitted(input: TerminalInput): boolean {
+  return RESUBMITTED_WRITES.has(input.operation) && !(input.operation === 'put_page' && input.compacted && !input.intent_kind);
+}
+
+/** #7646: a retryable fault on a write that is neither a sync, a reconcile, a managed write nor a caller's resubmittable write. */
+function inspectOnlyFault(code: string, input: TerminalInput): boolean {
+  const operation = faultOperation(input.operation, input.intent_kind);
+  return classifySyncFault({ code }).safe_actions[0] === 'retry' && input.operation !== 'submit_job' && !operation.startsWith('managed_')
+    && operation !== 'canonical_reconcile' && !resubmitted(input);
 }
 
 /**
@@ -366,7 +386,7 @@ function faultAction(code: string, input: TerminalInput): Action {
   if (v.safe_actions[0] === 'retry' && operation === 'canonical_reconcile') {
     return syncRetry(input.source_id, `The canonical reconcile recorded ${code} (${v.class}); the next sync re-admits a keep_db reconcile, and a \`gbrain sources reconcile\` run is retried by running it again.`);
   }
-  if (v.safe_actions[0] === 'retry' && input.operation !== 'submit_job' && !RESUBMITTED_WRITES.has(input.operation)) {
+  if (inspectOnlyFault(code, input)) {
     return inspect(input.source_id, `The ${input.operation} operation ended ${code}; it was not part of a sync, so a sync does not retry it. Writer status names what holds it, read-only.`, v.human_reason);
   }
   if (v.safe_actions[0] === 'retry' && input.operation !== 'submit_job') {

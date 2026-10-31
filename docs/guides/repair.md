@@ -1018,7 +1018,13 @@ The preview lists a terminal request as `refused` with the reason and offers
 no choice for it. After `--keep disk` the database page still holds the
 content from before the write, so the page shows as file/database drift until
 you reconcile it: `gbrain sources reconcile <source> <slug> --brain host
---preview`. The command never reports the page as repaired.
+--preview`. On a git-canonical (strict) source Git is the parent, so the kept
+bytes are an uncommitted edit instead: publish it with
+`gbrain git commit-push --path <checkout> -m "<message>" -- <path>`, or discard
+it with `git -C <checkout> restore -- <path>`, then run
+`gbrain sync --source <source> --no-pull`; `git status --porcelain -- <path>`
+and `gbrain sync status --source <source> --json` verify it. The item's `fix`
+asks the user which (#7715). The command never reports the page as repaired.
 
 The apply runs under the worktree lock, so the resident recovery pass cannot
 interleave. Each step is journaled (`op_checkpoints`, op
@@ -2557,8 +2563,10 @@ again. A file whose HEAD bytes would not import as its page is listed under the
 hold's code (`visibility_noncanonical` for a `Visibility: private` that page privacy
 does not read): apply keeps its rows database-only and restores the file from
 HEAD so the clone can pull the upstream fix, but does not import HEAD, reports
-`held` with the code and leaves the page at its last imported version; sync
-holds the file until upstream fixes it (#7897). Each restored file is first backed up under
+`held` with the code and leaves the page at its last imported version. The
+restored file equals HEAD, so sync does not screen it again and records no
+hold; the page changes once an upstream fix is pulled and synced (#7897). Such
+a file is an apply item, not a residual (#7910). Each restored file is first backed up under
 `~/.gbrain/backups/url-clone-fences/`. Its rows stay active and recallable as
 database-only facts, HEAD's bytes are imported as the page (as sync would
 import them, except for a held file above), and only then is the file restored; each step is idempotent, so

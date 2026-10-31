@@ -164,6 +164,36 @@ describe('gbrain repair stuck-recovery', () => {
     expect(next.indexOf('--auto-additive')).toBeLessThan(next.indexOf(`gbrain sync --source ${s.sourceId} --no-pull`));
   }));
 
+  for (const strict of [true, false]) {
+    // Value: protects=on a git-canonical source the --keep disk follow-up says commit (or restore) then sync, with an ask_user fix whose verify is git status then sync status, and never sends the operator to a database-side reconcile; a mixed source keeps the reconcile follow-up and no fix; fails_when=nextStep ignores the source's mode; why_new=every --keep disk test ran on a mixed source; seam=none; no_claim=that the commit then imports (the door and sync tests cover it)
+    test(`#7715: --keep disk on a ${strict ? 'strict (git-canonical)' : 'mixed'} source ${strict ? 'hands off to commit-then-sync, not reconcile' : 'keeps the reconcile follow-up'}`, () => run(async () => {
+      const s = await stuck({ prior: PRIOR, after: AFTER, disk: EDITED });
+      if (strict) await engine.executeRaw(`UPDATE sources SET config = config || '{"canonical":"git"}'::jsonb WHERE id=$1`, [s.sourceId]);
+      const checkout = (await getWorktreeBinding(engine, s.sourceId, localHostId()))!.local_path!;
+      const preview = await repair(s.sourceId);
+      const result = await repair(s.sourceId, { apply: true, expect: preview.preview_hash, keep: 'disk' });
+      expect(result.outcomes).toEqual({ resolved: 1 });
+      expect(readFileSync(s.path, 'utf8')).toBe(EDITED);
+      const detail = result.outcome_items![0]!.detail!;
+      const next = String(detail.next);
+      if (!strict) {
+        expect(next).toContain(`gbrain sources reconcile ${s.sourceId} page --brain host --preview --auto-additive`);
+        expect(detail.fix).toBeUndefined();
+        return;
+      }
+      expect(next).not.toContain('sources reconcile');
+      expect(next).toContain('the kept bytes are an uncommitted edit at page.md');
+      expect(next).toContain(`gbrain git commit-push --path ${checkout} -m "<message>" -- page.md, then gbrain sync --source ${s.sourceId} --no-pull`);
+      expect(next).toContain(`git -C ${checkout} restore -- page.md, then gbrain sync --source ${s.sourceId} --no-pull`);
+      expect(next).toContain(`git -C ${checkout} status --porcelain -- page.md`);
+      expect(next.indexOf('status --porcelain')).toBeLessThan(next.indexOf(`gbrain sync status --source ${s.sourceId} --json`));
+      expect(detail.fix).toMatchObject({ ask_user: true, argv: ['gbrain', 'git', 'commit-push', '--path', checkout, '-m', '<MESSAGE>', '--', 'page.md'],
+        inputs: [{ name: 'MESSAGE' }], verify: { argv: ['git', '-C', checkout, 'status', '--porcelain', '--', 'page.md'] },
+        then: { argv: ['gbrain', 'sync', '--source', s.sourceId, '--no-pull'], verify: { argv: ['gbrain', 'sync', 'status', '--source', s.sourceId, '--json'] } } });
+      expect(String((detail.fix as { user_message: string }).user_message)).toContain('Publish it');
+    }));
+  }
+
   test('absent prior (the write was a create): the preview says so, and --keep prior unlinks the edited file after backing it up', () => run(async () => {
     const s = await stuck({ prior: null, after: AFTER, disk: EDITED });
     const out = await cli(['stuck-recovery', '--source', s.sourceId]);
