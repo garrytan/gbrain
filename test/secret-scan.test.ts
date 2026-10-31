@@ -119,6 +119,24 @@ describe('scanText — pattern classes', () => {
     expect(scanText(text)).toEqual([]);
   });
 
+  test('a key right after a JSON string escape or a percent-escape fires; one glued to an identifier does not', () => {
+    const text = [
+      `{"out":"line\\n${OPENAI}"}`,
+      `{"out":"col\\t${GHP}\\r${AWS}"}`,
+      `q=%22${SLACK}&next=%3D${ANTHROPIC}`,
+      `id=prefix${OPENAI} token_${GHP}`,
+    ].join('\n');
+    expect(scanText(text).map((f) => [f.pattern, f.line])).toEqual([
+      ['openai', 1], ['github_token', 2], ['aws_access_key', 2], ['anthropic', 3], ['slack', 3],
+    ]);
+    expect(redactFindings(text).text).toBe([
+      '{"out":"line\\n<REDACTED:openai>"}',
+      '{"out":"col\\t<REDACTED:github_token>\\r<REDACTED:aws_access_key>"}',
+      'q=%22<REDACTED:slack>&next=%3D<REDACTED:anthropic>',
+      `id=prefix${OPENAI} token_${GHP}`,
+    ].join('\n'));
+  });
+
   test('previews and findings NEVER contain the secret value', () => {
     const text = `a=${OPENAI}\nb=${SLACK}\npem:\n${PEM}`;
     const findings = scanText(text);

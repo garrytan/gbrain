@@ -104,7 +104,8 @@ export { createScanWork, type ScanWork } from './secret-scan-work.ts';
 //
 // Each core pattern is compiled with a left boundary group `(^|[^A-Za-z0-9_])`
 // so prefixes embedded inside longer identifiers ("risk-assessment…",
-// "task-…") never fire. Order matters: 'anthropic' precedes 'openai' and the
+// "task-…") never fire; ESCAPE_BOUNDARIES twins catch a key right after a JSON
+// or percent escape. Order matters: 'anthropic' precedes 'openai' and the
 // per-line claimed-span set prevents a `sk-ant-…` key from double-reporting
 // as a generic `sk-` match.
 //
@@ -127,6 +128,8 @@ interface CompiledPattern {
   entropyGated?: boolean;
   /** See CorePattern.precheck. */
   precheck?: (line: string) => boolean;
+  /** An ESCAPE_BOUNDARIES twin: runs only on a line holding this character. */
+  escape?: '\\' | '%';
   /** See CorePattern.validate; `head` is the match text before the value. */
   validate?: (value: string, head: string) => boolean;
   /** Runs only on the line after one that ends in a dangling credential label of this form. */
@@ -722,25 +725,43 @@ function assignmentValueIsSecretShaped(value: string): boolean {
  * One compiled set per option combination. scanInternal is synchronous and
  * resets each pattern's lastIndex before every line, so the 'g' regexes are
  * safe to share; recompiling them per call cost a search response about a
- * millisecond per scanned field (GBRA-156).
+ * millisecond per scanned field (GBRA-156). Indexed by the line's escape mask
+ * (1: holds `\`, 2: holds `%`), so a line holding neither runs no twin.
  */
-const compiledPatterns = new Map<string, CompiledPattern[]>();
+const compiledPatterns = new Map<string, CompiledPattern[][]>();
 
-function compilePatterns(opts: ScanOpts): CompiledPattern[] {
+function compilePatterns(opts: ScanOpts): CompiledPattern[][] {
   const key = `${opts.highEntropy === true}|${opts.labeledCredentials === true}`;
   let compiled = compiledPatterns.get(key);
-  if (!compiled) compiledPatterns.set(key, compiled = buildPatterns(opts));
+  if (!compiled) {
+    const all = buildPatterns(opts);
+    compiledPatterns.set(key, compiled = [0, 1, 2, 3].map((mask) => all.filter((p) => !p.escape || mask & (p.escape === '\\' ? 1 : 2))));
+  }
   return compiled;
 }
 
+/**
+ * Twins of the default left boundary for a key right after a literal `\n`/`\r`/`\t`
+ * JSON escape or a `%XX` percent-escape, which end in a word character. Each twin
+ * follows the pattern it copies (same name, same attribution order) and runs only on
+ * lines holding its `escape` character (see compilePatterns): folding them into
+ * the boundary group costs the regex engine its fast path.
+ */
+const ESCAPE_BOUNDARIES = [['(\\\\[nrt])', '\\'], ['(%[0-9A-Fa-f]{2})', '%']] as const;
+
 function buildPatterns(opts: ScanOpts): CompiledPattern[] {
-  const out: CompiledPattern[] = CORE_PATTERNS.map((p) => ({
-    name: p.name,
-    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- p.source is a compile-time literal from CORE_PATTERNS (never caller input); every pattern uses bounded quantifiers, pinned by test/secret-scan-perf.test.ts
-    re: new RegExp(p.prebuilt ? p.source : `(^|[^A-Za-z0-9_])(${p.source})`, p.flags ?? 'g'),
-    ...(p.precheck ? { precheck: p.precheck } : {}),
-    ...(p.validate ? { validate: p.validate } : {}),
-  }));
+  const out: CompiledPattern[] = CORE_PATTERNS.flatMap((p) => {
+    const compile = (source: string, escape?: '\\' | '%'): CompiledPattern => ({
+      name: p.name,
+      // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- p.source is a compile-time literal from CORE_PATTERNS (never caller input); every pattern uses bounded quantifiers, pinned by test/secret-scan-perf.test.ts
+      re: new RegExp(source, p.flags ?? 'g'),
+      ...(p.precheck ? { precheck: p.precheck } : {}),
+      ...(p.validate ? { validate: p.validate } : {}),
+      ...(escape ? { escape } : {}),
+    });
+    if (p.prebuilt) return [compile(p.source)];
+    return [compile(`(^|[^A-Za-z0-9_])(${p.source})`), ...ESCAPE_BOUNDARIES.map(([b, e]) => compile(`${b}(${p.source})`, e))];
+  });
   if (opts.highEntropy) {
     // Group layout matches the core shape: group 1 = the keyword anchor
     // through the `=`/`:` (and opening quote), group 2 = value.
@@ -899,7 +920,7 @@ function insideClaim(claims: PemClaim[], start: number, end: number): boolean {
 }
 
 function scanInternal(text: string, opts: ScanOpts): RawHit[] {
-  const patterns = compilePatterns(opts);
+  const patternSets = compilePatterns(opts);
   const work = opts.work;
   // PEM blocks first: their full-span value must be redacted before any
   // per-line replacement can touch the region (base64 bodies never match the
@@ -955,7 +976,7 @@ function scanInternal(text: string, opts: ScanOpts): RawHit[] {
       spans.all.push({ pattern, value, start });
       hits.push({ pattern, value, start, abs: lineStart + start, from: lineStart + from, line: i + 1, lineText: line, spans });
     };
-    for (const p of patterns) {
+    for (const p of patternSets[(line.includes('\\') ? 1 : 0) | (line.includes('%') ? 2 : 0)]!) {
       if (p.continuation && p.continuation !== dangling) continue;
       if (p.precheck && !p.precheck(line)) continue;
       p.re.lastIndex = 0;
