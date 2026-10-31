@@ -10,6 +10,23 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Eight doctor, repair and maintenance fixes: checks that claimed ok or complete without measuring now say so, and two warnings that pointed operators at actions that could not help are gone (#8137).**
+
+`doctor embedding_state` warned that thousands of deleted-page chunks were overdue and recommended a brain-wide irreversible purge that would remove almost none of them, because the purge holds derived retirements for 30 days. It now counts overdue chunks with the purge's own predicates and reports held chunks as information. `autopilot --status` and doctor's `global_maintenance_stalled` could keep a stalled verdict for up to a day after a clean pass; the pass now refreshes it.
+
+### Itemized changes
+
+- `doctor raw_provenance` exempts a generated page only when `raw_trace_exempt` is `true`; an explicit `false` no longer hides missing provenance (#8039).
+- `doctor --fast --only <check>` marks the report incomplete when the early stop skipped a selected check (#8114).
+- `doctor maintenance_write_drift` reports unknown (warn) instead of ok when candidates exist but none can be compared on this host (#8115).
+- `gbrain repair <kind> --apply` keeps its approved set when the last approved item fails, so the printed `--expect` command resumes instead of refusing `preview_changed` (#8058).
+- A clean brain-wide maintenance pass refreshes the verdict `autopilot --status` and doctor read, so a stalled warning clears with the pass (#7854).
+- `doctor embedding_state` warns only on deleted-page chunks `gbrain pages purge-deleted` would remove; `deleted_page_chunks` gains `purgeable` and `held` (#7825).
+- Maintenance preflight (dream `lint` and friends) recovers from a device-only physical-root change under the writer lock, as ordinary writes already did; any other identity change still refuses and a busy lock still fails closed (#7760).
+- Purging a deleted page drops that page's held fence generations, which no later write could settle, so doctor `generation_held` no longer warns about a page that no longer exists (#7774).
+
 ## [0.60.529.0] - 2026-10-31
 
 **A pull request that adds a file to the PGLite snapshot inputs no longer gets stopped at gstack's pregate secrets check by its own workflow cache keys (#8107).**
