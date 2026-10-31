@@ -11,7 +11,7 @@
  * names, so its existing importers are unaffected.
  */
 
-import { parseInlineCitationTimelineEntries, findTimelineSourceDelimiter, parseTimelineEntries } from './link-extraction.ts';
+import { parseInlineCitationTimelineEntries, findTimelineSourceDelimiter, parseTimelineEntries, resolveMarkdownLinkSlug } from './link-extraction.ts';
 import { isDatedTimelineLine, supersededInlineCitationEntries } from './timeline-citations.ts';
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from './engine.ts';
@@ -104,6 +104,13 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
 
 type TimelineTuple = Pick<ExtractedTimelineEntry, 'date' | 'source' | 'summary'>;
 const tupleKey = (e: TimelineTuple) => JSON.stringify([e.date, e.source, e.summary]);
+const historicalTupleKey = (e: TimelineTuple, slug: string) => {
+  // A legacy plain slug aliases only a link proven to name that same local target.
+  // Other labels/destinations remain exact identities, including historical rows.
+  const link = /^\[([^\[\]\(\)\\\r\n]+)\]\(([^\[\]\(\)\\?#:\s]+\.md)\)$/.exec(e.source);
+  const source = link && link[0] === e.source && link[1] !== 'markdown' && resolveMarkdownLinkSlug(slug, link[2]!) === link[1] ? link[1] : e.source;
+  return JSON.stringify([e.date, source, e.summary]);
+};
 
 /**
  * #6226: the tuples the inline-citation pass of either parser filed for this
@@ -134,9 +141,9 @@ export function hasExtractorDetail(row: { source: string; detail?: string | null
  * Reconciliation keeps and retracts against this union, so the file and DB
  * extraction paths never undo each other's rows.
  */
-function markdownTimelineKeys(text: string, slug: string): Set<string> {
-  const keys = new Set(extractTimelineFromContent(text, slug).map(tupleKey));
-  for (const entry of parseTimelineEntries(text)) keys.add(tupleKey({ ...entry, source: entry.source ?? '' }));
+function markdownTimelineKeys(text: string, slug: string, keyOf: (row: TimelineTuple) => string = tupleKey): Set<string> {
+  const keys = new Set(extractTimelineFromContent(text, slug).map(keyOf));
+  for (const entry of parseTimelineEntries(text)) keys.add(keyOf({ ...entry, source: entry.source ?? '' }));
   return keys;
 }
 
@@ -335,22 +342,25 @@ export async function retractRemovedTimelineEntries(
   current: string | TimelineTextKeys,
   opts: { dryRun?: boolean; storedRows?: ReadonlyArray<StoredTimelineTuple>; stop?: () => boolean; expectedRevision?: string } = {},
 ): Promise<Array<TimelineTuple & { id: number }>> {
+  const keyOf = tupleKey;
+  const historicalKeyOf = (row: TimelineTuple) => historicalTupleKey(row, slug);
   const kept = typeof current === 'string' ? markdownTimelineKeys(current, slug) : current.kept;
   const within = typeof current === 'string' ? undefined : current.within;
   const rows = opts.storedRows ?? await storedTimelineRows(engine, sourceId, slug);
-  const extra = rows.filter(row => !kept.has(tupleKey(row)) && (!within || within.has(tupleKey(row))));
+  const extra = rows.filter(row => !kept.has(keyOf(row)) && (!within || within.has(keyOf(row))));
   if (!extra.length) return [];
   const versions = await engine.executeRaw<{ compiled_truth: string | null; timeline: string | null; body_storage: string; page_id: number; generation: number | null }>(
     `SELECT DISTINCT v.compiled_truth, v.timeline, v.body_storage, v.page_id, v.body_generation AS generation FROM page_versions v JOIN pages p ON p.id = v.page_id
       WHERE p.source_id = $1 AND p.slug = $2`, [sourceId, slug]);
-  const wanted = new Set(extra.map(tupleKey));
+  const wanted = new Set(extra.map(keyOf));
+  const wantedHistorical = new Set(extra.map(historicalKeyOf));
   const produced = new Set<string>();
   // #6226: rows the older citation reading filed for this text or a stored version.
-  const superseded = new Set(typeof current === 'string' ? supersededCitationTimeline(current).map(tupleKey)
+  const superseded = new Set(typeof current === 'string' ? supersededCitationTimeline(current).map(keyOf)
     : [...wanted].filter(key => current.superseded.has(key)));
   const addText = (text: string) => {
-    for (const key of markdownTimelineKeys(text, slug)) if (wanted.has(key)) produced.add(key);
-    for (const entry of supersededCitationTimeline(text)) if (wanted.has(tupleKey(entry))) superseded.add(tupleKey(entry));
+    for (const key of markdownTimelineKeys(text, slug, historicalKeyOf)) if (wantedHistorical.has(key)) produced.add(key);
+    for (const entry of supersededCitationTimeline(text)) if (wanted.has(keyOf(entry))) superseded.add(keyOf(entry));
   };
   const seen = new Set(typeof current === 'string' ? [] : current.runs ?? []);
   for (const version of versions) {
@@ -358,7 +368,7 @@ export async function retractRemovedTimelineEntries(
     for await (const block of retainedGenerationBlocks(engine, { id: Number(version.page_id), slug, sourceId }, Number(version.generation),
       { seen, ...(opts.stop ? { stop: opts.stop } : {}) })) addText(block);
   }
-  const found = extra.filter(row => produced.has(tupleKey(row)) || (superseded.has(tupleKey(row)) && hasExtractorDetail(row)))
+  const found = extra.filter(row => produced.has(historicalKeyOf(row)) || (superseded.has(keyOf(row)) && hasExtractorDetail(row)))
     .map(({ detail: _detail, ...row }) => row);
   if (!found.length) return [];
   // W1 #6783 §12 (a): a row more trusted than the page's restatement, or held by an open contest, stays; the owner decides.
