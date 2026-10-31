@@ -143,5 +143,14 @@ CREATE TRIGGER access_rules_mark_restricted AFTER INSERT ON access_rules
 DROP TRIGGER IF EXISTS access_pending_coverage_mark_restricted ON access_pending_coverage;
 CREATE TRIGGER access_pending_coverage_mark_restricted AFTER INSERT ON access_pending_coverage
   FOR EACH ROW EXECUTE FUNCTION gbrain_access_mark_restricted();
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) THEN
+    ALTER TABLE access_policy_state ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE access_rules ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE access_policy_revisions ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE access_pending_coverage ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE access_policy_migrations ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
 `,
 };
