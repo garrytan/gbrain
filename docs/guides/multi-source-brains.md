@@ -252,13 +252,18 @@ it, before any member's bot connects:
   ```
 
   A token with no source grant, a federated source the grant does not name,
-  and a request's `source_ids` never add a source; `context_pack`, `delta`
-  and writes keep hiding private pages. In a named source the grant also
-  opens pages with a privacy alias (`access`, `confidentiality`), atoms,
-  concepts and events derived from private or unknown origins, and pages
-  whose declared lineage is private; pinned questions stay owner-only.
-  `--private-pages none` hides them again on the next request, and
-  `gbrain auth list` shows each token's setting.
+  and a request's `source_ids` never add a source. The grant applies to
+  search, query, recall, entity and the page, chunk, version, timeline, link
+  and graph reads; `context_pack`, `delta`, `think`, recorded-time reads
+  (`known_as_of`) and writes keep hiding private pages even in a granted
+  source, so a page the agent can open may read as missing there. In a
+  named source the grant also opens pages with a privacy alias (`access`,
+  `confidentiality`), atoms, concepts and events derived from private or
+  unknown origins, and pages whose declared lineage is private; pinned
+  questions stay owner-only. `--private-pages none` hides them again on the
+  next request, and `gbrain auth list` shows each token's setting. A harness
+  token rotation (`gbrain setup`, `gbrain bootstrap harness`) does not carry
+  the grant; it prints the rescope that grants it again.
 
 > **Warning: one shared source has no boundary inside it.** A bot that answers
 > everyone with one unscoped token over a single source exposes everything in

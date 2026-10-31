@@ -1011,7 +1011,7 @@ export async function getVersions<B extends boolean = true>(
   opts?: GetVersionsOpts<B>,
 ): Promise<PageVersionRows<B>> {
     const privacy = opts?.excludePrivate
-      ? trustedSql(`AND ${orPrivateReadableSource('p', `${privatePagesFilterFragment('p')} AND ${privateSnapshotFilterFragment('pv')}`)}`) : sqlFragment``;
+      ? trustedSql(`AND ${orPrivateReadableSource('p', `${privatePagesFilterFragment('p')} AND ${privateSnapshotFilterFragment('pv')}`)} AND NOT COALESCE(pv.frontmatter ? 'pinned_question', false)`) : sqlFragment``;
     const scope = opts?.sourceIds && opts.sourceIds.length > 0
       ? sqlFragment`AND p.source_id = ANY(${opts.sourceIds}::text[])`
       : opts?.sourceId ? sqlFragment`AND p.source_id = ${opts.sourceId}` : sqlFragment``;

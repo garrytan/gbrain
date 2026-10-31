@@ -144,7 +144,13 @@ function resultLine(r: OwnerActionResult): string {
   return `${r.ref}: ${r.status}${tier}`;
 }
 
-/** DX-15: accept every matching item after one typed confirmation. */
+/** The longest line one item gets in the accept-all confirmation; `gbrain trust explain <ref>` shows it in full. */
+const ACCEPT_ALL_ITEM_MAX = 240;
+
+/**
+ * DX-15: accept every matching item after one typed confirmation. An item whose preview fails is listed as skipped:
+ * it is not in the confirmation and is never applied (#7820).
+ */
 async function acceptAll(backend: TrustBackend, args: string[], json: boolean): Promise<void> {
   const filter = reviewFilter(args);
   if (!filter.sourceId && !filter.kind && !filter.since) {
@@ -157,32 +163,40 @@ async function acceptAll(backend: TrustBackend, args: string[], json: boolean): 
     if (json) await writeStdoutFinal(`${JSON.stringify({ accepted: [], skipped: [] }, null, 2)}\n`); else console.log('Nothing matches those filters.');
     return;
   }
-  const previews = await Promise.all(inputs.map(input => backend.preview(input)));
+  const settled = await Promise.allSettled(inputs.map(input => backend.preview(input)));
+  const skipped = settled.flatMap((s, i) => s.status === 'rejected' ? [{ ref: inputs[i]!.ref!, reason: 'preview_failed',
+    error: s.reason instanceof OperationError ? s.reason.toJSON() : String(s.reason), next: `gbrain trust ${inputs[i]!.action} ${inputs[i]!.ref}` }] : []);
+  const previewed = settled.flatMap((s, i) => s.status === 'fulfilled' ? [{ input: inputs[i]!, preview: s.value }] : []);
+  const previews = previewed.map(p => p.preview);
   const command = ['gbrain', 'trust', 'review', '--accept-all', ...args.filter(a => a !== '--accept-all' && a !== '--json')];
   const token = `all-${createHash('sha256').update(previews.map(p => `${p.ref}:${p.binding}`).join('\n')).digest('hex').slice(0, 8)}`;
-  const summary = [`Accept ${previews.length} item(s):`, ...previews.map(p => `  ${p.ref.padEnd(6)} ${p.summary}`)].join('\n');
-  await requireOwnerConfirmation(LOCAL_CTX, { ref: `${previews.length} items`, token, summary, command });
+  const line = (p: OwnerActionPreview) => p.summary.length > ACCEPT_ALL_ITEM_MAX ? `${p.summary.slice(0, ACCEPT_ALL_ITEM_MAX - 3)}...` : p.summary;
+  const summary = [`Accept ${previews.length} item(s):`, ...previews.map(p => `  ${p.ref.padEnd(6)} ${line(p)}`),
+    ...skipped.map(s => `  ${s.ref.padEnd(6)} skipped: its preview failed, so it is not accepted (run ${s.next} on its own)`),
+    ...(previews.some(p => p.summary.length > ACCEPT_ALL_ITEM_MAX) ? ['  A line ending in ... is shortened; gbrain trust explain <ref> shows the item in full.'] : [])].join('\n');
+  if (previews.length) await requireOwnerConfirmation(LOCAL_CTX, { ref: `${previews.length} items`, token, summary, command });
   const accepted: OwnerActionResult[] = [];
   const pending: Array<{ ref: string; request_id: string; poll: string }> = [];
   let uncovered = 0;
   const failed: Array<{ ref: string; error: unknown }> = [];
-  for (let i = 0; i < inputs.length; i++) {
-    try { accepted.push(await backend.apply(inputs[i]!, previews[i]!.binding, previews[i]!.raises)); }
+  for (const { input, preview } of previewed) {
+    try { accepted.push(await backend.apply(input, preview.binding, preview.raises)); }
     catch (error) {
       const receipt = pendingReceiptOf(error);
       if (receipt && !acceptPendingCovers(receipt)) uncovered++;
-      if (receipt) pending.push({ ref: previews[i]!.ref, request_id: receipt.request_id,
+      if (receipt) pending.push({ ref: preview.ref, request_id: receipt.request_id,
         poll: pollCommand(receipt.request_id, (error as { fix?: { argv?: readonly string[] } }).fix, cliRenderContext().routing) });
-      else failed.push({ ref: previews[i]!.ref, error: error instanceof OperationError ? error.toJSON() : String(error) });
+      else failed.push({ ref: preview.ref, error: error instanceof OperationError ? error.toJSON() : String(error) });
     }
   }
-  if (json) await writeStdoutFinal(`${JSON.stringify({ accepted, pending, failed }, null, 2)}\n`);
+  if (json) await writeStdoutFinal(`${JSON.stringify({ accepted, pending, failed, skipped }, null, 2)}\n`);
   else {
     for (const r of accepted) console.log(resultLine(r));
     for (const p of pending) console.log(`${p.ref}: accepted, still pending (request ${p.request_id}; check with ${p.poll})`);
     for (const f of failed) console.log(`${f.ref}: not applied (${(f.error as { message?: string }).message ?? String(f.error)})`);
+    for (const s of skipped) console.log(`${s.ref}: skipped, its preview failed (${(s.error as { message?: string }).message ?? String(s.error)}); run ${s.next} on its own`);
   }
-  if (failed.length) setCliExitVerdict(1);
+  if (failed.length || skipped.length) setCliExitVerdict(1);
   else if (pending.length && (!acceptPendingRequested(getCliOptions().acceptPending) || uncovered > 0)) setCliExitVerdict(PENDING_WRITE_EXIT_CODE);
 }
 
