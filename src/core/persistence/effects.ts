@@ -662,7 +662,9 @@ async function recordFailure(engine: BrainEngine, effect: PersistenceEffect, err
     if (code === 'embedding_configuration') {
       await failEffect(engine, effect, 'embedding_configuration'); return;
     }
-    if ((code !== 'embedding_storage_unavailable' && isAIInvocationPolicyError(error)) || (error as { tag?: string } | null)?.tag === 'BUDGET_EXHAUSTED') {
+    // The invocation guard marks anything its preflight throws as a policy refusal, `signal.throwIfAborted()` included.
+    // A stopped consumer is not a refusal: with the signal aborted the effect is retried as `embedding_aborted` below.
+    if ((code !== 'embedding_storage_unavailable' && !signal?.aborted && isAIInvocationPolicyError(error)) || (error as { tag?: string } | null)?.tag === 'BUDGET_EXHAUSTED') {
       await failEffect(engine, effect, 'embedding_budget_refused'); return;
     }
     if (!signal?.aborted && normalizeAIError(error) instanceof AIConfigError) {
