@@ -515,6 +515,14 @@
       },
       {
         "category": "ops",
+        "name": "dream_write_deferred"
+      },
+      {
+        "category": "ops",
+        "name": "embedding_restamp_stalled"
+      },
+      {
+        "category": "ops",
         "name": "writer_version"
       },
       {

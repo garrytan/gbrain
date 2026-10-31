@@ -10005,6 +10005,8 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 | `gbrain init` or `gbrain upgrade` stops with `schema_lock_blocked` naming a pid (or, before #5227, sat in `wait_event_type=Lock` with no output) | let the named session finish, or with the user's agreement end it on the database host: `SELECT pg_terminate_backend(<pid>)`; then rerun the same command ([ENGINES.md](../ENGINES.md#schema-lock-blocked)) | brain host, after the user agrees | `destructive` when it ends another session | the rerun completes; `gbrain doctor --json` shows the schema at head |
 | [`queue_capacity`, `persistence_capacity` or `persistence_request_growth`](#write-capacity) | run the printed `gbrain config set persistence.limits.<limit> <value>` | brain host | none | `gbrain doctor --only persistence_capacity,persistence_request_growth --json` |
 | [`dream_paid_loop`, or dream keeps skipping one transcript](#dream-paid-loop) | fix the cause, then `gbrain dream reset-key --list` and `gbrain dream reset-key '<key>'` | agent, after the user agrees | `paid` (the key is retried) | `gbrain doctor --only dream_paid_loop --json` |
+| [`dream_write_deferred`](#dream-write-deferred) | `gbrain write-request -- <id>`, then `gbrain sources writer status --source <id> --json` | agent | none | `gbrain doctor --only dream_write_deferred --json` |
+| [`embedding_restamp_stalled`](#embedding-restamp-stalled) | fix the named error, then `gbrain dream --phase embed --json` | agent | `paid` for stale chunks only | `gbrain doctor --only embedding_restamp_stalled --json` |
 | [A page exists (`gbrain get <slug>` returns it) but search never finds text from it](memory-boundaries.md#large-pages) | `gbrain reindex --oversized --dry-run --json` lists pages stored before the upgrade with a size-based `embed_skip` marker (without `--dry-run` it keyword-indexes them, free); a page above an operator-lowered `content_sanity.bytes_block` keeps its marker until it is raised; a page the content-quality gate quarantined shows in `gbrain quarantine list` (`gbrain quarantine clear <slug>` re-checks it once the user agrees); a file over the 24 MiB page ceiling was never stored ([`file_too_large`](write-refusals.md#file_too_large)). Its chunks waiting for embedding approval (doctor `partial_embedding`) are a paid step: `gbrain embed --held --dry-run`, then `gbrain embed --held --source <id> --max-usd <N>` as printed | agent for the reindex; the user decides embedding spend, a `bytes_block` change and a quarantine clear | none for the reindex; `paid` for `gbrain embed` | `gbrain reindex --oversized --dry-run --json` lists nothing; `gbrain search "<phrase from deep in the page>"` returns the page |
 | [Search answers look keyword-only on a large Postgres brain](#hybrid-search-returns-only-keyword-hits) | read doctor's `vector_plan`; run the index command it prints | brain host | none | `gbrain doctor --only vector_plan --json` |
 | [Broad keyword queries take about 8 s and come back vector-only (`keyword_arm_failed`, or `skipped_after_timeout` for 10 minutes after a timeout) on a large Postgres brain](#keyword-search-times-out-on-a-large-postgres-brain) | read doctor's `keyword_plan`; narrow with `--source-id`, or raise `search.keyword_statement_timeout_ms` on the brain host and restart the serving process | brain host | none | `gbrain doctor --only keyword_plan --json` |
@@ -10208,6 +10210,10 @@ A running sync is not one of these: `gbrain repair fences` now runs during a cat
 <a id="doctor-ops-tier"></a>**`gbrain doctor` is slow on a large brain, or you need to see what is wrong in seconds?** Run `gbrain doctor --tier ops --json`: only the operator sections (write capacity, unresolved write failures, a managed sync cursor that stopped moving, [receipt compaction](repair.md#receipt-compaction) freshness, a serve on an older build, schema-pack consistency, embedding state) under a 4000 ms deadline (`--budget-ms <n>`). A section the deadline cut off reads unknown (`details.health: "unknown"`, `reason: "budget"`, `exact: false`), never clear; the report says `complete: false` and lists it in `unknown_sections`; rerun it with `gbrain doctor --only <name> --json`. On PGLite, serve-only sections read `not_applicable` and the report stays complete. The default doctor runs the same sections first and bounds each check and a plain `--json` run ([doctor budgets](repair.md#doctor-budgets)); above `doctor.orphan_ratio.full_scan_max_pages` pages (default 50000) it samples `orphan_ratio`, and `--tier deep` scans fully. From a thin client, `gbrain doctor --tier ops` (or `--only persistence_capacity`) asks the serve: an admin token gets the ops report, a read token the `get_brain_health` bands (no raw counts), and a serve that predates the ops tier refuses `doctor_tier_unavailable` (run it on the brain host, or upgrade and restart the serve). Agents without a shell call MCP `get_brain_health` (read) or `run_doctor` with `tier: "ops"` (admin).
 
 <a id="dream-paid-loop"></a>**Dream keeps skipping one transcript, or doctor warns `dream_paid_loop`?** A dream key died `dream.breaker.max_dead_submissions` times (default 3) in 24 hours and is refused so it stops billing you. Fix the cause, then `gbrain dream reset-key --list` and `gbrain dream reset-key '<key>'`. See [the paid-loop breaker](../operations/spend-controls.md#dream-paid-loop-breaker-dreambreakermax_dead_submissions).
+
+<a id="dream-write-deferred"></a>**Doctor warns `dream_write_deferred`?** A purge or consolidate write is still pending 3 passes after its publish wait; each pass re-reads its receipt before submitting more for that source. Read the named receipt; `dream.write_deferral.enabled false` restores the failing phase.
+
+<a id="embedding-restamp-stalled"></a>**Doctor warns `embedding_restamp_stalled`?** The free signature restamp the embed phase runs first failed 3 runs in a row; the message names the error. `embed.restamp.enabled false` turns it off.
 
 **Hourly cron sync keeps timing out on a federated brain?** Switch your
 cron to a per-source loop with shell `timeout(1)` doing the OS-level kill
@@ -10854,89 +10860,6 @@ need the user's confirmation (documented legacy; changing it is a v2 item).
 
 The per-command exit changes that came with contract v1 (v0.60.46.0) are in
 the [CHANGELOG](../../CHANGELOG.md#exit-code-changes-by-command).
-
----
-
-## docs/integrations/reliability-repair.md
-
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/integrations/reliability-repair.md
-
-# Reliability repair
-
-Two data-corruption classes can affect a brain on real Postgres or Supabase:
-JSONB values stored double-encoded, and markdown bodies truncated at import.
-`gbrain doctor` detects both, and the standalone `gbrain repair-jsonb`
-command fixes the mechanically fixable class. PGLite brains are not affected
-(PGLite parses text to jsonb natively, so the double-encode never happens
-there).
-
-## What the checks look for
-
-**JSONB double-encode.** Writing `${JSON.stringify(x)}::jsonb` through
-postgres.js stores a JSONB *string literal* instead of an object.
-`frontmatter ->> 'key'` returns NULL; GIN indexes are ineffective. Columns
-checked: `pages.frontmatter`, `raw_data.data`, `ingest_log.pages_updated`,
-`files.metadata`. The write-side rule that prevents it is in
-`docs/ENGINES.md` ("JSONB writes: never double-encode").
-
-**Markdown body truncation.** A page whose `compiled_truth` is much shorter
-than its `raw_data.data ->> 'content'` lost body content at import time (for
-example, when a `---` horizontal rule was treated as a body/timeline
-delimiter). Wiki-style pages with multiple `##`/`###` sections are the usual
-casualty.
-
-## Detect
-
-```
-gbrain doctor
-```
-
-Reports two checks:
-
-- `jsonb_integrity` — counts double-encoded rows per table and points you
-  at `gbrain repair-jsonb`.
-- `markdown_body_completeness` — heuristic for pages whose `compiled_truth`
-  is suspiciously short compared to `raw_data.data ->> 'content'`. A page
-  stored in segments has no `compiled_truth` column to compare, so it is not
-  checked; the check reports how many with `skipped_segmented: N`.
-
-## Repair
-
-For JSONB (mechanically fixable):
-
-```
-gbrain repair-jsonb
-```
-
-Runs `UPDATE <table> SET <col> = (<col>#>>'{}')::jsonb WHERE jsonb_typeof(<col>) = 'string'`
-across every affected column. Idempotent. Second run reports 0 rows. Use
-`--dry-run` to preview, `--json` for structured output. The `v0_12_2`
-version migration runs this automatically on `gbrain upgrade`.
-
-For truncated markdown bodies (source-dependent): the importer skips a file
-whose content hash has not changed, and trailing whitespace is trimmed before
-hashing, so a re-import needs a real edit to the page body. Make the edit, then
-re-import:
-
-```
-gbrain sync                  # git-backed brain: commit the edit first
-gbrain sync --working-tree   # or import the uncommitted working tree
-gbrain import <brain-root> --fresh   # or re-import the root you originally imported;
-                                     # --fresh ignores a resume checkpoint that would skip the path
-```
-
-gbrain cannot recover content that is already lost if you no longer have
-the source markdown file. `gbrain doctor` tells you which pages look short;
-you decide whether to re-import from source or accept the truncation.
-
-## Verify
-
-```
-gbrain doctor
-```
-
-All four `jsonb_integrity` rows should read zero. `markdown_body_completeness`
-should match your expectations for the corpus.
 
 ---
 

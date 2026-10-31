@@ -10,6 +10,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import type { DiscoveredTranscript } from './transcript-discovery.ts';
+import type { PhaseResult } from '../cycle.ts';
 
 /**
  * #5145: split transcripts into already-synthesized and candidates BEFORE the
@@ -211,4 +212,27 @@ export function findLegacyCompletion(
     if (seen.size === n) return 'chunked';
   }
   return null;
+}
+
+/**
+ * #5848: the synthesize result for a window with zero candidates: no model call, no queue, no budget spend. Status
+ * stays ok (not skipped) so finishDeferredPostprocess still finishes outputs an earlier pass deferred (#6757).
+ */
+export function noCandidates(summary: string, details: Record<string, unknown>): PhaseResult {
+  return { phase: 'synthesize', status: 'ok', duration_ms: 0, summary, details: { reason: 'no_candidates', transcripts_processed: 0, pages_written: 0, ...details } };
+}
+
+/**
+ * #5848: a classic real run whose every discovered transcript is already synthesized returns here, before triage,
+ * the manifest context and the fan-out; it stamps the cooldown as a fully completed run would and reports each
+ * transcript's skip reason. A managed run never comes here: it re-attaches completed children for publication.
+ */
+export async function noNewTranscripts(engine: BrainEngine, transcripts: DiscoveredTranscript[],
+  partition: Pick<Awaited<ReturnType<typeof partitionCompletedSynthesis>>, 'retainedSkips' | 'successfulV2Keys' | 'synthesisIdentity'>): Promise<PhaseResult> {
+  await engine.setConfig('dream.synthesize.last_completion_ts', new Date().toISOString());
+  const skips = transcripts.map(t => ({ filePath: t.filePath, reason: partition.retainedSkips.get(t.filePath)
+    ?? (findSynthV2Completion(partition.successfulV2Keys, t.filePath, t.contentHash.slice(0, 16), partition.synthesisIdentity) === 'chunked'
+      ? 'already_synthesized_v2_chunked' : 'already_synthesized_v2_single_chunk') }));
+  return noCandidates(`no new transcripts to synthesize (${transcripts.length} already synthesized)`, { transcripts_discovered: transcripts.length,
+    synthesis_state: { candidates: 0, already_synthesized: transcripts.length }, children_submitted: 0, skips });
 }
