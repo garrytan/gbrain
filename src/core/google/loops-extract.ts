@@ -26,7 +26,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { managedFactWritePreflight } from '../facts/managed-fact-write.ts';
-import { loadSuppressions, upsertOpenLoop, type LoopType } from '../loops/loops-store.ts';
+import { loadSuppressions, upsertOpenLoop, MUTE_RECHECK, MUTED, type LoopType, type OpenLoopRow } from '../loops/loops-store.ts';
 import { isCalendarSystemMail, isNoiseSender, sha8 } from './google-render.ts';
 import { hasBulkCategory } from './gmail-categories.ts';
 import { isExcludedByLabels, loadLoopsExclusionPolicy, NO_EXCLUSION, pageLabelIds, type LoopsExclusionPolicy } from './loops-exclusion.ts';
@@ -312,6 +312,57 @@ export class LoopsExtractRetryableError extends Error {
   }
 }
 
+/** Evidence identity + legacy adoption, only after the current quotes validate. */
+async function prepareLoopIdentities(engine: BrainEngine, payload: LoopsExtractPayload, threadId: string,
+  extraction: LoopsExtraction, verbatim: (quote: string) => string) {
+  // #7289: identity follows validated evidence, not the judge's paraphrase.
+  // Keep the historical text formula only when no verbatim quote survived.
+  const keyFor = (direction: string, text: string, quote: string): string => `commit:${sha8(JSON.stringify({
+    t: threadId, d: direction, ...(quote ? { q: quote.replace(/\s+/g, ' ').trim() } : { x: text.toLowerCase() }),
+  }))}`;
+  const unique = <T extends { text: string; quote: string }>(items: T[], direction: (item: T) => string): T[] => {
+    const seen = new Set<string>();
+    return items.filter(item => {
+      const key = keyFor(direction(item), item.text, item.quote);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+  // Collapse BEFORE facts/edges too; dedup at the loop upsert alone would
+  // still publish several paraphrased commitment facts for one obligation.
+  extraction.commitments = unique(extraction.commitments, c => c.direction);
+  extraction.decisions_pending = unique(extraction.decisions_pending, () => 'decision');
+
+  // Existing installs used text-keyed rows. Retain their public id, fact and
+  // close guard rather than minting a new quote-keyed loop on the first run.
+  // Never delete/merge old duplicates; prefer a closed row, then the oldest
+  // identity, so re-extraction cannot evade an operator's previous close.
+  const previous = extraction.commitments.length || extraction.decisions_pending.length
+    ? await engine.executeRaw<Pick<OpenLoopRow, 'dedup_key' | 'loop_type' | 'summary' | 'evidence' | 'fact_id' | 'status' | 'last_activity_at' | 'closed_by' | 'counterparty_email'>>(
+      `SELECT dedup_key, loop_type, summary, evidence, fact_id, status, last_activity_at, closed_by, counterparty_email FROM open_loops
+       WHERE source_id = $1 AND thread_id = $2 AND detector = 'llm_extract'
+       ORDER BY (status <> 'open') DESC, id ASC`, [payload.sourceId, threadId]) : [];
+  const previousByKey = new Map<string, typeof previous[number]>();
+  for (const row of previous) {
+    const direction = row.loop_type === 'decision_pending' ? 'decision'
+      : row.loop_type === 'commitment_owed_by_me' ? 'owed_by_me'
+        : row.loop_type === 'commitment_owed_to_me' ? 'owed_to_me' : null;
+    if (!direction) continue;
+    const evidence = typeof row.evidence === 'string' ? JSON.parse(row.evidence) as OpenLoopRow['evidence'] : row.evidence;
+    for (const e of evidence) {
+      // A legacy receipt must belong to this page and still be verbatim in
+      // the current input. Never use invented or unrelated evidence to alias.
+      const quote = e.page_slug === payload.slug && e.quote ? verbatim(e.quote) : '';
+      if (!quote) continue;
+      const key = keyFor(direction, row.summary, quote);
+      if (!previousByKey.has(key)) previousByKey.set(key, row);
+    }
+    if (!previousByKey.has(row.dedup_key)) previousByKey.set(row.dedup_key, row);
+  }
+  return { keyFor, previousByKey };
+}
+
 export async function runLoopsExtract(
   engine: BrainEngine,
   payload: LoopsExtractPayload,
@@ -449,10 +500,13 @@ export async function runLoopsExtract(
   const restore = (s: string): string => restoreNeutralized(s, rawContent).text;
   const verbatim = (q: string): string => {
     const restored = q ? restore(q) : q;
-    return restored && haystack.includes(wsNorm(restored)) ? restored : '';
+    const normalized = wsNorm(restored);
+    return normalized && haystack.includes(normalized) ? restored : '';
   };
   for (const c of extraction.commitments) { c.text = restore(c.text); c.quote = verbatim(c.quote); }
   for (const d of extraction.decisions_pending) { d.text = restore(d.text); d.quote = verbatim(d.quote); }
+
+  const { keyFor, previousByKey } = await prepareLoopIdentities(engine, payload, threadId, extraction, verbatim);
 
   const loopIds: number[] = [];
   const messageDate = typeof fm.date === 'string' ? fm.date : new Date().toISOString();
@@ -462,13 +516,22 @@ export async function runLoopsExtract(
   const gateCfg = await derivedGateConfig(engine);
 
   for (const c of extraction.commitments) {
+    const key = keyFor(c.direction, c.text, c.quote);
+    const prior = previousByKey.get(key);
     const loopType: LoopType =
       c.direction === 'owed_by_me' ? 'commitment_owed_by_me' : 'commitment_owed_to_me';
     const counterpartyRef = c.counterparty_name || c.counterparty_email || null;
 
     // Projection 1 — facts row (fence-first, deduped/superseding).
-    let factId: number | null = null;
-    try {
+    let factId: number | null = prior?.fact_id == null ? null : Number(prior.fact_id);
+    // The same quoted obligation already has a fact; a paraphrase must not
+    // replace it or resurrect a retired fact on unchanged activity. Preserve
+    // the store's newer-activity/unmute reopen policy; open rows may retry a
+    // failed best-effort projection (NULL fact_id).
+    const reopening = prior && prior.status !== 'open'
+      && (Date.parse(messageDate) > new Date(prior.last_activity_at).getTime() || prior.closed_by === MUTE_RECHECK)
+      && (prior.closed_by !== MUTED || prior.counterparty_email !== (c.counterparty_email || null));
+    if (!prior || reopening || (prior.status === 'open' && factId === null)) try {
       const fact = {
         fact: c.text,
         provenance: `email thread "${(page.title ?? '').slice(0, 80)}" (${payload.slug})`,
@@ -514,7 +577,7 @@ export async function runLoopsExtract(
     }
 
     // Projection 2 — the loop row itself.
-    const dedupKey = `commit:${sha8(JSON.stringify({ t: threadId, d: c.direction, x: c.text.toLowerCase() }))}`;
+    const dedupKey = prior?.dedup_key ?? key;
     const { id } = await upsertOpenLoop(engine, {
       sourceId: payload.sourceId,
       dedupKey,
@@ -557,7 +620,8 @@ export async function runLoopsExtract(
   }
 
   for (const d of extraction.decisions_pending) {
-    const dedupKey = `commit:${sha8(JSON.stringify({ t: threadId, d: 'decision', x: d.text.toLowerCase() }))}`;
+    const key = keyFor('decision', d.text, d.quote);
+    const dedupKey = previousByKey.get(key)?.dedup_key ?? key;
     const { id } = await upsertOpenLoop(engine, {
       sourceId: payload.sourceId,
       dedupKey,
