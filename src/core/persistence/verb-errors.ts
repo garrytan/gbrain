@@ -8,6 +8,17 @@ import { fenceLocationFromMessage, fenceWhere } from '../fence-repair/refusal.ts
 import { FACT_WITHDRAWN_SUGGESTION } from '../facts/withdrawal.ts';
 import { CHECKPOINT_MOVED_MESSAGE } from './sync-slug-mode.ts';
 import { PAGE_CHANGED_AFTER_READ_MESSAGE } from '../page-state/types.ts';
+import { readFix } from '../ops/op-fix.ts';
+import { ERROR_CATALOGUE } from '../error-catalogue.ts';
+import { SOURCE_CHECKOUT_MISSING } from './publication-failure.ts';
+
+/** GST-465: a page write to a source whose canonical checkout is missing on this host. The path is left to the read-only fix, which a remote caller cannot run. */
+export function sourceCheckoutMissingRefusal(sourceId: string, slug: string | null): OperationError {
+  return opError('recovery_required', `The canonical checkout of source '${sourceId}' is missing on this host, so ${slug ? `the file of ${slug}` : 'the page file'} was not written.`,
+    'Nothing was written. Restore the checkout at the path the command in fix shows (from a backup or the machine it came from), then submit again with a new request_id; an empty directory recreated there does not help. How to recover the source is the user\'s decision.',
+    { detail: SOURCE_CHECKOUT_MISSING, docs: ERROR_CATALOGUE.source_checkout_missing.docs,
+      fix: readFix(`Shows source ${sourceId}'s canonical binding and the checkout path this host registered for it, read-only.`, { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] }) });
+}
 
 /** The refusal of a fact-batch completion request whose per-entity requests did not all commit (facts-prepare.ts). */
 export const FACTS_BATCH_INCOMPLETE_MESSAGE = 'Some extracted facts have not committed.';
