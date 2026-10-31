@@ -14,20 +14,23 @@
  * grouped per slug. Each slug is resolved with the strict resolver (identity
  * evidence only: exact page, organization directory variant, unique alias;
  * never a bare-name guess or a slugify) and classified:
- *   - rehome: one live entity page answers; its database-only facts move.
+ *   - rehome: one live entity page answers; database-only facts and rows
+ *     owned by the removed entity's own fence move.
  *   - ambiguous / unverified / unresolved: listed, never moved.
- *   - fence_owned: every fact of the slug is a page's Facts table row, whose
- *     page text the repair does not rewrite; listed, never moved.
+ *   - fence_owned: every fact belongs to another page's Facts table;
+ *     listed, never moved.
  *
  * Explicit-only and preview-bound: the preview lists every page-less slug with
  * its class and the fact ids it would move, prints a hash and saves the
  * rehome set; `--apply --expect <hash>` moves exactly that set. An apply
  * rechecks each slug in its own transaction (still page-less, target still
- * live, the same database-only fact ids) and keeps it as
+ * live, the same movable fact ids) and keeps it as
  * `changed_since_preview` otherwise. A duplicate ontology observation is
  * dropped before the move (B-10). On a managed brain each slug commits as one
  * coordinated database-only write on both slugs' keys. Nothing runs on
- * upgrade, and no page is rewritten.
+ * upgrade, and no page is rewritten. Removed self-owned rows become unfenced
+ * rows of the survivor, preserving ids and claim provenance while escaping
+ * the removed page's purge set; normal fence adoption can publish them later.
  */
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
@@ -43,7 +46,7 @@ export interface PagelessEntity {
   source_id: string;
   /** The page-less `entity_slug`. */
   slug: string;
-  /** Database-only facts (no fence row) carrying it, in id order: the rows a rehome moves. */
+  /** Movable facts carrying it, in id order. */
   ids: number[];
   /** Facts carrying it that are a page's Facts table row; never moved. */
   fenced: number;
@@ -52,12 +55,20 @@ export interface PagelessEntity {
   target: string | null;
 }
 
+// Only the deleted entity's own fence can be detached without rewriting a live
+// page. Other pages' fence positions remain authoritative. Alias f is shared
+// by classification, locked revalidation, deduplication and the update.
+const MOVABLE = `(f.row_num IS NULL OR (f.source_markdown_slug IS NOT DISTINCT FROM f.entity_slug AND EXISTS (
+  SELECT 1 FROM pages owner WHERE owner.source_id = f.source_id
+    AND owner.slug = f.entity_slug AND owner.deleted_at IS NOT NULL)))`;
+const MOVED_SOURCE = 'CASE WHEN f.row_num IS NOT NULL THEN $3::text ELSE f.source_markdown_slug END';
+
 /** Every page-less entity slug of these sources, classified, in (source, slug) order. Read-only. */
 export async function classifyPagelessEntities(engine: BrainEngine, sourceIds: string[]): Promise<PagelessEntity[]> {
   const rows = await engine.executeRaw<{ source_id: string; slug: string; ids: Array<number | string> | null; fenced: number | string }>(`
     SELECT f.source_id, f.entity_slug AS slug,
-           array_agg(f.id ORDER BY f.id) FILTER (WHERE f.row_num IS NULL) AS ids,
-           count(*) FILTER (WHERE f.row_num IS NOT NULL) AS fenced
+           array_agg(f.id ORDER BY f.id) FILTER (WHERE ${MOVABLE}) AS ids,
+           count(*) FILTER (WHERE NOT ${MOVABLE}) AS fenced
       FROM facts f
      WHERE f.source_id = ANY($1::text[]) AND f.entity_slug IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
@@ -86,7 +97,7 @@ const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.executeRaw
   'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
 
 const hashOf = (scope: RepairScope, sources: unknown, entities: PagelessEntity[]) =>
-  previewHash({ kind: 'facts-rehome-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids }, entities });
+  previewHash({ kind: 'facts-rehome-v2', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids }, entities });
 
 function item(entity: PagelessEntity, index: number, hash: string, last: boolean): RehomeItem {
   return { cursor: { phase: 1, id: index }, source_id: entity.source_id, slug: entity.slug, chars: 0, action: 'rehome',
@@ -134,12 +145,13 @@ export const factsRehomeRepair: RepairHandler = {
       const [state] = await tx.executeRaw<{ from_live: boolean; to_live: boolean; ids: Array<number | string> | null }>(`
         SELECT EXISTS (SELECT 1 FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL) AS from_live,
                EXISTS (SELECT 1 FROM pages WHERE source_id = $1 AND slug = $3 AND deleted_at IS NULL) AS to_live,
-               (SELECT array_agg(id ORDER BY id) FROM facts WHERE source_id = $1 AND entity_slug = $2 AND row_num IS NULL) AS ids`,
+               (SELECT array_agg(f.id ORDER BY f.id) FROM facts f WHERE f.source_id = $1 AND f.entity_slug = $2 AND ${MOVABLE}) AS ids`,
         [entity.source_id, entity.slug, target]);
       if (!state || state.from_live || !state.to_live || JSON.stringify((state.ids ?? []).map(Number)) !== JSON.stringify(entity.ids)) return false;
-      await dropRekeyDuplicates(tx, entity.source_id, { where: 'f.entity_slug = $2 AND f.row_num IS NULL', entity: '$3::text', sms: 'f.source_markdown_slug',
+      await dropRekeyDuplicates(tx, entity.source_id, { where: `f.entity_slug = $2 AND ${MOVABLE}`, entity: '$3::text', sms: MOVED_SOURCE,
         params: [entity.slug, target] });
-      await tx.executeRaw('UPDATE facts SET entity_slug = $3 WHERE source_id = $1 AND entity_slug = $2 AND row_num IS NULL', [entity.source_id, entity.slug, target]);
+      await tx.executeRaw(`UPDATE facts f SET entity_slug = $3, source_markdown_slug = ${MOVED_SOURCE}, row_num = NULL
+        WHERE f.source_id = $1 AND f.entity_slug = $2 AND ${MOVABLE}`, [entity.source_id, entity.slug, target]);
       return true;
     };
     const managed = await coordinatedDatabaseWrite({ ...ctx, sourceId: entity.source_id }, RELINK_OPERATION, target, [entity.slug, target], tx => move(tx));
