@@ -28,6 +28,12 @@ export interface SavedFactMatch { id: number; fact: string; entity_slug: string 
   /** With `search.saved_facts_supersede` on: the newer returned fact that corrects this one. */
   corrected_by?: number }
 
+/** Correction decisions precede the cap: entity enrichment must not restore a dropped claim as current. */
+export interface SavedFactMatches {
+  facts: Array<SavedFactMatch & CollapseColumns & { collapsed_ids?: number[] }>;
+  correctedBy: Map<number, number>;
+}
+
 /** Default on (set false to turn off): a newer saved fact carrying a correction cue is returned ahead of the older fact it corrects, which is labelled `corrected_by`. */
 export const SAVED_FACTS_SUPERSEDE_KEY = 'search.saved_facts_supersede';
 /** Cues that withdraw what was said, so they correct without stating a new figure. */
@@ -85,12 +91,12 @@ async function savedFactsSupersedeEnabled(engine: { getConfig(key: string): Prom
  * stating no figure that withdraws nothing. A corrected fact whose corrector
  * the five-fact cap leaves out is dropped.
  */
-export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceId?: string; sourceIds?: string[]; minTrust?: TrustTier }, queryText: string, otherNames: string[] = []): Promise<Array<SavedFactMatch & CollapseColumns>> {
+export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceId?: string; sourceIds?: string[]; minTrust?: TrustTier }, queryText: string, otherNames: string[] = []): Promise<SavedFactMatches> {
   // A query naming one of two declared names also matches facts saved under the other.
   if (otherNames.length) queryText += ` ${otherNames.join(' ')}`;
   const terms = [...new Set(queryText.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}'-]+/gu) ?? [])]
     .filter(t => t.length >= 3 && !FACT_MATCH_STOPWORDS.has(t) && !QUESTION_FRAME_WORDS.has(t)).slice(0, 12);
-  if (terms.length === 0 || !ctx.emitResponseMeta) return [];
+  if (terms.length === 0 || !ctx.emitResponseMeta) return { facts: [], correctedBy: new Map() };
   const sources = scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default'];
   const [excludePrivate, supersede] = await Promise.all([resolveExcludePrivatePages(ctx.engine, ctx.remote), savedFactsSupersedeEnabled(ctx.engine)]);
   const active = `f.source_id = ANY($1::text[])
@@ -173,17 +179,18 @@ export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceI
       ...admitted.filter(r => r.fact.corrected_by && correcting.has(r.fact.id)).sort((a, b) => b.at - a.at || b.fact.id - a.fact.id),
       ...admitted.filter(r => r.fact.corrected_by && !correcting.has(r.fact.id))] : admitted;
     const kept = (await collapseFactReads(ctx.engine, ordered.map(r => r.fact))).slice(0, 5);
-    if (!supersede) return kept;
+    if (!supersede) return { facts: kept, correctedBy: new Map() };
     // A label names the returned fact that stands for its corrector. A corrected fact whose corrector the cap or
     // the collapse left out is dropped rather than shown as current.
-    const correctedBy = new Map(ordered.map(r => [r.fact.id, r.fact.corrected_by]));
+    const correctedBy = new Map(ordered.flatMap(r => r.fact.corrected_by === undefined ? [] : [[r.fact.id, r.fact.corrected_by] as const]));
     const shownAs = new Map(kept.flatMap(r => (r.collapsed_ids ?? [r.id]).map(id => [id, r.id] as const)));
-    return kept.flatMap(({ corrected_by, ...r }) => {
+    const facts = kept.flatMap(({ corrected_by, ...r }) => {
       const by = (r.collapsed_ids ?? [r.id]).map(id => shownAs.get(correctedBy.get(id) ?? -1)).find(c => c !== undefined && c !== r.id);
       if (by !== undefined) return [{ ...r, corrected_by: by }];
       return corrected_by === undefined ? [r] : [];
     });
+    return { facts, correctedBy };
   } catch {
-    return [];
+    return { facts: [], correctedBy: new Map() };
   }
 }
