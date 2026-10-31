@@ -10,6 +10,21 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Skills can no longer drift from the CLI or grow without a reviewer seeing it.**
+
+Every `gbrain ...` invocation a bundled skill shows now runs through the dispatcher's own subcommand and unknown-flag checks in CI, and every operation-shaped `tools:` entry must be a real operation. A PR that renames a command or flag fails until it updates the skills that name it, with the file, line, nearest valid name and the edit to make. Each SKILL.md over 16 KB has a size ceiling in `skills/skill-budgets.tsv` (today's size plus 10%), new skills stay within 16 KB and descriptions within 1 KB. `CONTRIBUTING.md` gains "Changing a skill", the update ladder adapted from skill-diet (MIT): fix it below the skill first, edit the existing line instead of appending, update the skill in the same PR as the code, and record `Skill-size:` before and after in the commit message.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A skill shows `gbrain config sett ...` or `gbrain doctor --jsn` | passed CI; an agent following it got an error | `bun run check:skill-health` fails with the nearest valid name |
+| A skill declares a `tools:` entry that is not an operation | passed | fails with the nearest operation |
+| A SKILL.md grows past its ceiling, or a new one passes 16 KB | passed | fails; raising a ceiling is a reviewer-visible edit |
+| `skills-commit-gate.sh` | four checks | also runs the skill health guard and prints `Skill-size:` lines for staged skills |
+
 ## [0.60.529.0] - 2026-10-31
 
 **A pull request that adds a file to the PGLite snapshot inputs no longer gets stopped at gstack's pregate secrets check by its own workflow cache keys (#8107).**

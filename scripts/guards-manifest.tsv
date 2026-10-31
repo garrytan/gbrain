@@ -32,6 +32,7 @@ check-search-path.sh	scanner	yes	GBRAIN_GUARD_ROOT seam; schema base files incl.
 check-skill-brain-first.sh	scanner	yes	runs this checkout's doctor skill_brain_first over <root>/skills; GBRAIN_GUARD_ROOT seam
 check-skill-publication.ts	scanner	yes	A-NEW-3: bundled SKILL.md files (skills/, plugin/, plugin-variants/) through normalizeSkillFiles + skillMetadata; GBRAIN_GUARD_ROOT seam
 check-skill-refs.mjs	scanner	todo
+check-skill-health.ts	scanner	yes	GBRA-225: skill drift (every gbrain invocation in skills/ passes the dispatcher's own subcommand and unknown-flag checks; operation-shaped frontmatter tools are real ops; shrink-only scripts/skill-drift-baseline.txt) and size (skills/skill-budgets.tsv ceilings, 16 KB cap for unlisted skills, 1 KB descriptions); GBRAIN_GUARD_ROOT seam; bad-<variant> fixtures
 check-source-config-leak.sh	scanner	yes	GBRAIN_GUARD_ROOT seam; bad-<dir> fixtures cover serve-http-*.ts, engine-sql/, sync/, doctor/checks/
 check-source-id-projection.sh	scanner	yes	GBRAIN_GUARD_ROOT seam; portable word boundaries (mawk has no \b, so the guard matched nothing on Ubuntu before); scans engine façades, module dirs and engine-sql/
 check-source-scope-onboard.sh	scanner	yes	onboard SQL sites need source_id scoping or a brain-wide marker; GBRAIN_GUARD_ROOT seam

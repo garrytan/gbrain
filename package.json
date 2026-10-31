@@ -84,6 +84,7 @@
     "check:resolver": "bun src/cli.ts check-resolvable --strict --skills-dir skills/",
     "check:skill-brain-first": "bash scripts/check-skill-brain-first.sh",
     "check:skill-publication": "bun scripts/check-skill-publication.ts",
+    "check:skill-health": "bun scripts/check-skill-health.ts",
     "check:plugin-tree": "bash scripts/check-plugin-tree.sh",
     "check:wasm": "bash scripts/check-wasm-embedded.sh",
     "check:pglite-embedded": "bash scripts/check-pglite-embedded.sh",

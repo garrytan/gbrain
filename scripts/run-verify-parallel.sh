@@ -102,6 +102,8 @@ CHECKS=(
   "check:skill-brain-first"
   # A-NEW-3: bundled SKILL.md files pass the shared-skill publication parser.
   "check:skill-publication"
+  # GBRA-225: skill drift against the live CLI surface, and per-skill size ceilings.
+  "check:skill-health"
   "check:conversation-parser"
   "check:resolver"
   "check:privacy"
