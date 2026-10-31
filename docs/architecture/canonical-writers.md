@@ -78,7 +78,10 @@ worktree native lock while claims stop (`fenced`), verifies HEAD and runs
 ordinary managed `--no-pull` sync that follows, so every imported page is a
 journaled request. A durable `persistence_worktree_refreshes` row lets a
 restarted owner converge an interrupted refresh without adopting an unverified
-HEAD. Remote sync retains the
+HEAD. With `sources.refresh_publish_diverged` on (the user's standing consent,
+default off), a diverged refresh first runs the keep-checkout publish, which
+pushes HEAD merged with the upstream in memory and never moves the checkout or
+writes the database, then fast-forwards as above. Remote sync retains the
 original `submit_job` principal, admin/source/operation ceiling and normalized
 payload; runtime options cannot expand that grant and current revocation is
 checked before publication.

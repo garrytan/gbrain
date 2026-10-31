@@ -19,5 +19,7 @@ export const RUNTIME_READER_CONFIG_KEYS: readonly string[] = [
   'writer.lint_on_put_page', // output/post-write.ts lint after put_page, default off
   'context.hot_memory.session_only', // facts/meta-hook.ts, read by the turn_context and context_pack IPC handlers: hot memory never falls back to other sessions' facts, default off
   'serve.cli_socket', // config.ts loadConfigWithEngine (snapshot only) → serve.ts: a Postgres serve answers CLI reads over a private Unix socket, default off
+  'sources.refresh_fetch_timeout_ms', 'sources.refresh_drain_wait_ms', // persistence/worktree-refresh.ts: refresh fetch bound (default 120 s) and drain wait (default 60 s), in ms
+  'sources.refresh_publish_diverged', // persistence/worktree-refresh.ts (#7686): refresh publishes a diverged checkout's local commits merged with the upstream before fast-forwarding, default off
   'serve.vector_prewarm', // config.ts loadConfigWithEngine (snapshot only) → serve.ts: a Postgres serve prewarms the HNSW indexes into shared_buffers at start when they fit, default off
 ];
