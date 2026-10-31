@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -8,8 +8,14 @@ import { exportDatabaseContent } from '../src/core/shared-skills/migration-expor
 import { parseMarkdown } from '../src/core/markdown.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { runSharedSkillsMigration } from '../src/core/shared-skills/migration.ts';
-import { claimWorktree } from '../src/core/persistence/ownership.ts';
+import { randomUUID } from 'node:crypto';
+import { claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { activateSharedSkillPersistence } from '../src/core/persistence/skill-activation.ts';
+import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
+import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
+import { contentSetupKey, setupSharedBrainContent } from '../src/core/shared-skills/setup.ts';
+import { assertSharedSkillPersistence } from '../src/core/persistence/protocol.ts';
+import { addSource } from '../src/core/sources-ops.ts';
 
 async function fixture(run: (ctx: OperationContext, home: string) => Promise<void>) {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-content-export-'));
@@ -104,6 +110,19 @@ test('existing owned root gains packaged skills while preserving knowledge and o
   expect((await ctx.engine.getPage('notes/example', { sourceId: 'default' }))!.compiled_truth).toBe('A saved observation.');
 }), 120_000);
 
+test('DB-only exports register protocol rows for sources claimed after shared activation', () => fixture(async (ctx, home) => {
+  for (const sourceId of ['export-one', 'export-two']) {
+    await addSource(ctx.engine, { id: sourceId });
+    await ctx.engine.putPage(`notes/${sourceId}`, { type: 'note', title: sourceId, compiled_truth: `Content for ${sourceId}.`, timeline: '', frontmatter: { visibility: 'private' } }, { sourceId });
+  }
+  const defaultRoot = join(home, 'default-root'); mkdirSync(defaultRoot);
+  await ctx.engine.executeRaw("UPDATE sources SET local_path=$1 WHERE id='default'", [defaultRoot]);
+  await claimWorktree(ctx.engine, 'default', defaultRoot);
+  await activateSharedSkillPersistence(ctx.engine, { confirmQuiesced: true });
+  for (const sourceId of ['export-one', 'export-two']) expect((await exportDatabaseContent(ctx, { sourceId, root: join(home, sourceId), confirmQuiesced: true, backup: 'operator_verified' })).status).toBe('complete');
+  expect(await ctx.engine.executeRaw(`SELECT b.source_id,p.protocol_version FROM persistence_source_bindings b JOIN persistence_writer_protocols p ON p.worktree_id=b.worktree_id WHERE b.source_id IN ('export-one','export-two') ORDER BY b.source_id`)).toEqual([{ source_id: 'export-one', protocol_version: 2 }, { source_id: 'export-two', protocol_version: 2 }]);
+}), 120_000);
+
 test('DB export uses the selected source schema and retains its custom types', () => fixture(async (ctx, home) => {
   await ctx.engine.setConfig('schema_pack', 'gbrain-base-v2');
   await ctx.engine.setConfig('schema_pack.source.default', 'company-brain');
@@ -140,4 +159,54 @@ test('a source schema change during export refuses binding and remains a checkpo
   const resumed = await exportDatabaseContent(ctx, options);
   expect(resumed.status).toBe('conflict');
   expect(resumed.conflicts[0].reason).toContain('source schema or ingestion policy changed');
+}), 120_000);
+
+async function selfTransfer(engine: OperationContext['engine'], sourceId: string) {
+  const path = (await getWorktreeBinding(engine, sourceId))!.local_path!;
+  const prepared = await runPersistenceAdministration(engine, 'writer_transfer_prepare', { source_id: sourceId, self_transfer: true, ...await reviewedWriterIntent(engine, 'writer_transfer_prepare') }) as { owner_epoch: string; manifest: { digest: string } };
+  await runPersistenceAdministration(engine, 'writer_transfer_accept', { source_id: sourceId, path, expected_epoch: prepared.owner_epoch, manifest: prepared.manifest.digest, self_transfer: true, ...await reviewedWriterIntent(engine, 'writer_transfer_accept') });
+}
+const protocolEpoch = (engine: OperationContext['engine'], sourceId: string) => engine.executeRaw(`SELECT w.owner_epoch::text AS owner_epoch,p.owner_epoch::text AS protocol_epoch FROM persistence_source_bindings b JOIN persistence_worktrees w ON w.id=b.worktree_id JOIN persistence_writer_protocols p ON p.worktree_id=w.id AND p.host_id=w.owner_host_id WHERE b.source_id=$1`, [sourceId]);
+async function bindSource(ctx: OperationContext, home: string, id: string) {
+  const root = join(home, id); mkdirSync(root);
+  if (id !== 'default') await addSource(ctx.engine, { id });
+  await ctx.engine.executeRaw('UPDATE sources SET local_path=$1 WHERE id=$2', [root, id]);
+  await claimWorktree(ctx.engine, id, root);
+  return root;
+}
+async function plantIncomplete(ctx: OperationContext, sourceId: string, root: string) {
+  const [source] = await ctx.engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [sourceId]);
+  const [brain] = await ctx.engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
+  const stat = statSync(root);
+  await ctx.engine.setConfig(contentSetupKey(sourceId, source.incarnation), JSON.stringify({ version: 1, brain_id: brain.brain_id, source_id: sourceId, source_incarnation: source.incarnation, root, repository_kind: 'content_directory', backup: 'not_verified', status: 'action_required', stage: 'owner', pending_actions: [], owned_root: true, fresh_root_activation: false, root_identity: { device: stat.dev, inode: stat.ino } }));
+}
+test('export retry after self-transfer keeps owner_epoch and writer_not_quiesced', () => fixture(async (ctx, home) => {
+  const root = join(home, 'content'), options = { sourceId: 'default', root, confirmQuiesced: true, backup: 'operator_verified' as const };
+  expect((await exportDatabaseContent(ctx, options)).status).toBe('complete');
+  await selfTransfer(ctx.engine, 'default');
+  expect((await exportDatabaseContent(ctx, options)).status).toBe('complete');
+  expect(await protocolEpoch(ctx.engine, 'default')).toEqual([{ owner_epoch: '2', protocol_epoch: '1' }]);
+  await expect(assertSharedSkillPersistence(ctx.engine, 'default')).rejects.toMatchObject({ code: 'writer_not_quiesced' });
+}), 120_000);
+test('incomplete setup resume after self-transfer keeps owner_epoch and writer_not_quiesced', () => fixture(async (ctx, home) => {
+  const root = await bindSource(ctx, home, 'resume');
+  await bindSource(ctx, home, 'default');
+  await activateSharedSkillPersistence(ctx.engine, { confirmQuiesced: true });
+  await selfTransfer(ctx.engine, 'resume');
+  await plantIncomplete(ctx, 'resume', root);
+  let refused: unknown;
+  try { await setupSharedBrainContent(ctx, { sourceId: 'resume' }); } catch (error) { refused = error; }
+  expect(await protocolEpoch(ctx.engine, 'resume')).toEqual([{ owner_epoch: '2', protocol_epoch: '1' }]);
+  expect(refused).toMatchObject({ code: 'writer_not_quiesced' });
+}), 120_000);
+test('setup inserts no local protocol row for a binding owned by another host', () => fixture(async (ctx, home) => {
+  const root = await bindSource(ctx, home, 'foreign');
+  await bindSource(ctx, home, 'default');
+  await activateSharedSkillPersistence(ctx.engine, { confirmQuiesced: true });
+  const binding = (await getWorktreeBinding(ctx.engine, 'foreign'))!;
+  await ctx.engine.executeRaw('UPDATE persistence_worktrees SET owner_host_id=$2::uuid WHERE id=$1::uuid', [binding.worktree_id, randomUUID()]);
+  await ctx.engine.executeRaw('DELETE FROM persistence_writer_protocols WHERE worktree_id=$1::uuid', [binding.worktree_id]);
+  await plantIncomplete(ctx, 'foreign', root);
+  await setupSharedBrainContent(ctx, { sourceId: 'foreign' }).catch(() => undefined);
+  expect(await ctx.engine.executeRaw('SELECT host_id FROM persistence_writer_protocols WHERE worktree_id=$1::uuid', [binding.worktree_id])).toEqual([]);
 }), 120_000);
