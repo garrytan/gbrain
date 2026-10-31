@@ -97,6 +97,21 @@ describe('rawProvenanceCheck (#1978, warn-only v1)', () => {
     expect((await rawProvenanceCheck(engine as unknown as BrainEngine)).status).toBe('ok');
   });
 
+  test('an explicitly false exemption does not exempt (#8039)', async () => {
+    await engine.putPage('synthesis/false-exemption', {
+      type: 'synthesis', title: 'False exemption', compiled_truth: 'body', timeline: '',
+      frontmatter: { raw_trace_exempt: false },
+    });
+    const result = await rawProvenanceCheck(engine as unknown as BrainEngine);
+    expect(result.status).toBe('warn');
+    expect(result.message).toContain('synthesis/false-exemption');
+    await engine.executeRaw(
+      `UPDATE pages SET frontmatter = frontmatter || '{"raw_trace_exempt": true, "raw_trace_exempt_reason": "reviewed"}'::jsonb
+        WHERE slug = 'synthesis/false-exemption'`,
+    );
+    expect((await rawProvenanceCheck(engine as unknown as BrainEngine)).status).toBe('ok');
+  });
+
   test('query failure degrades to warn, never throws', async () => {
     const broken = { executeRaw: async () => { throw new Error('boom'); } } as unknown as BrainEngine;
     const result = await rawProvenanceCheck(broken);
