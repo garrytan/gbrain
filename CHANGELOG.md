@@ -31,6 +31,7 @@ identifiers and attribution are available in the pre-removal Git revision
 - On a brain with any restriction, the escape hatches no longer turn the remote read filter off, and secondary surfaces (proactive brief, retrieval reflex, entity resolution, known-as-of) hide restricted pages from every remote caller, listed members included.
 - A credential bound to a disabled or removed member is refused at verification (`access_member_disabled`).
 - Works the same on a repo-less brain: members, groups and bindings live in the database.
+- The member-access SQL functions end their pinned `search_path` with `pg_temp`, like every other gbrain function (#7632), and frontmatter recovery never guesses a duplicated `readable_by` key: the file is held until a person fixes it.
 
 **A shared brain can now let each member's agent read that member's own private pages, and nobody else's. Access tokens and OAuth clients have a new private-pages grant: `none` for every token and client, existing or new, so remote reads keep hiding `visibility: private` pages exactly as before until the brain host opts a connection in with `gbrain auth rescope --token <name> --private-pages granted-sources` (or `--client <client_id>`). An opted-in connection then reads private pages only in the sources its grant names.**
 

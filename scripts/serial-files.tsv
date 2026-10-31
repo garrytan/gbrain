@@ -3,6 +3,8 @@
 # Before adding a row, run: bash scripts/check-test-isolation.sh --as-parallel <file>  (docs/TESTING.md#when-to-quarantine-instead-of-fix)
 path	class	reason
 test/http-db-config.serial.test.ts	global-state	global-state: binds HTTP listeners; drains process-wide pending eval capture registry; withEnv scopes GBRAIN_HOME and GBRAIN_CONTRIBUTOR_MODE
+test/access-as.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (src/cli.ts --as) that each open one on-disk PGLite brain and take its file lock in a temp GBRAIN_HOME; the cases seed and read that one brain in order
+test/access-binding.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (auth create|rescope|register-client, access member) that each open one on-disk PGLite brain and take its file lock in a temp GBRAIN_HOME; later cases read the bindings earlier ones wrote
 test/admin-grant-outcome.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect; binds local servers/ports
 test/advisor-backup-coverage.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_BACKUP_CHECK)
 test/agent-error-surfaces.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)

@@ -47,7 +47,7 @@ ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS may_act_for TEXT[];
 ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS member_id TEXT;
 ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS may_act_for TEXT[];
 CREATE OR REPLACE FUNCTION gbrain_access_norm_readers(vals TEXT[]) RETURNS TEXT[]
-  LANGUAGE sql IMMUTABLE PARALLEL SAFE SET search_path = pg_catalog AS $fn$
+  LANGUAGE sql IMMUTABLE PARALLEL SAFE SET search_path = pg_catalog, pg_temp AS $fn$
   SELECT CASE WHEN count(*) > 0 AND bool_and(n IS NOT NULL) THEN array_agg(DISTINCT n COLLATE "C" ORDER BY n COLLATE "C") ELSE ARRAY['!nobody'] END
   FROM (
     SELECT CASE
@@ -58,7 +58,7 @@ CREATE OR REPLACE FUNCTION gbrain_access_norm_readers(vals TEXT[]) RETURNS TEXT[
   ) AS normalized
 $fn$;
 CREATE OR REPLACE FUNCTION gbrain_access_readers(fm JSONB) RETURNS TEXT[]
-  LANGUAGE sql IMMUTABLE PARALLEL SAFE SET search_path = pg_catalog, public AS $fn$
+  LANGUAGE sql IMMUTABLE PARALLEL SAFE SET search_path = pg_catalog, public, pg_temp AS $fn$
   SELECT CASE
     WHEN fm IS NULL OR jsonb_typeof(fm) <> 'object' OR NOT (fm ? 'readable_by') THEN NULL
     WHEN jsonb_typeof(fm->'readable_by') = 'string' THEN gbrain_access_norm_readers(ARRAY[fm->>'readable_by'])
@@ -69,7 +69,7 @@ CREATE OR REPLACE FUNCTION gbrain_access_readers(fm JSONB) RETURNS TEXT[]
     ELSE ARRAY['!nobody'] END
 $fn$;
 CREATE OR REPLACE FUNCTION gbrain_access_origin_restricted(p_id INTEGER, p_source_id TEXT, p_type TEXT, fm JSONB) RETURNS boolean
-  LANGUAGE plpgsql STABLE PARALLEL SAFE SET search_path = pg_catalog, public AS $fn$
+  LANGUAGE plpgsql STABLE PARALLEL SAFE SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN
   IF p_type = 'atom' THEN
     IF EXISTS (SELECT 1 FROM pages o WHERE o.source_id = p_source_id AND o.slug = fm->>'source_slug' AND o.frontmatter ? 'readable_by') THEN
@@ -96,7 +96,7 @@ BEGIN
 END
 $fn$;
 CREATE OR REPLACE FUNCTION gbrain_access_mark_restricted() RETURNS trigger
-  LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+  LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM config WHERE key = 'access.restrictions_present' AND value = '1') THEN
     INSERT INTO config (key, value) VALUES ('access.restrictions_present', '1')
@@ -106,7 +106,7 @@ BEGIN
 END
 $fn$;
 CREATE OR REPLACE FUNCTION gbrain_access_derive_page_readers() RETURNS trigger
-  LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+  LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN
   NEW.page_readers := CASE WHEN NEW.frontmatter ? 'readable_by' THEN gbrain_access_readers(NEW.frontmatter) ELSE NULL END;
   RETURN NEW;
