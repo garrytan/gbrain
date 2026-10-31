@@ -28,7 +28,7 @@ export async function topologyTransaction<T>(engine: BrainEngine, run: (tx: Brai
       return scoped(engine, tx, run);
     });
   } catch (error) {
-    if (['55P03','57014'].includes((error as { code?: string }).code ?? '')) {
+    if ((error as { code?: string }).code === '55P03') {
       throw new OperationError('write_pending', 'The source transaction exceeded its bounded database wait.', 'Retry the same lifecycle request_id after the current writer finishes.');
     }
     throw error;
