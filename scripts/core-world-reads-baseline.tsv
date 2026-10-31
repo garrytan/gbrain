@@ -706,6 +706,7 @@ src/core/persistence/reconcile.ts	load_config	1	W6: settings plane out of the co
 src/core/persistence/recovery-resolve.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/resolve-paths.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/root-registry.ts	fs_import	1	W5: repo-less persistence for hosts
+src/core/persistence/rows-behind.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/persistence/screening-paths.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/persistence/segmented-mirror-gate.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/persistence/service.ts	module_collection	8	W6: per-engine state, or mark as a constant table
@@ -844,6 +845,7 @@ src/core/repair/origin-twins-heal.ts	load_config	1	W6: settings plane out of the
 src/core/repair/origin-twins.ts	fs_import	2	W7: filesystem boundary moves to the local app
 src/core/repair/registry.ts	load_config	1	W6: settings plane out of the core
 src/core/repair/rename-identity.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/repair/rows-behind.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/segmented-mirror.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/slug-autoheal.ts	load_config	1	W6: settings plane out of the core
 src/core/repair/slug-conflicts.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -897,6 +899,7 @@ src/core/search/hybrid/request.ts	process_env	1	W6: settings plane out of the co
 src/core/search/image-loader.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/search/image-vector-presence.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/search/mode-switch-ux.ts	process_env	1	W6: settings plane out of the core
+src/core/search/private-visibility.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/search/private-visibility.ts	module_collection	3	W6: per-engine state, or mark as a constant table
 src/core/search/private-visibility.ts	process_env	1	W6: settings plane out of the core
 src/core/search/projection-readiness.ts	module_collection	1	W6: per-engine state, or mark as a constant table
