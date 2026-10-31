@@ -24,6 +24,9 @@ import { durableGitRepo, git } from './helpers/git-publication.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { resolveRepairScope, runRepair } from '../src/core/repair/core.ts';
 import { visibilityRepair } from '../src/core/repair/visibility.ts';
+import { terminalFailuresCheck } from '../src/commands/doctor/checks/persistence-requests.ts';
+import { readTerminalFailures } from '../src/core/persistence/terminal-failures.ts';
+import { classifyTerminal } from '../src/core/persistence/terminal-classify.ts';
 
 type FixtureOptions = { databaseUrl?: string; setup?: (f: { engine: BrainEngine; root: string }) => Promise<void> };
 async function fixture(run: (f: { engine: BrainEngine; ctx: OperationContext; home: string; root: string; slug: string }) => Promise<void>,
@@ -75,6 +78,36 @@ async function queuedGrandfatherEndsWithoutWriting(databaseUrl?: string) {
 }
 
 test('a queued managed_grandfather request ends in conflict without writing', () => queuedGrandfatherEndsWithoutWriting(), 120_000);
+
+// #7837: doctor reads the refused grandfather receipt as history with a "retired grandfather, nothing to do" note, also
+// after compaction nulls its intent and message, instead of generic revision_conflict advice to resubmit.
+test('doctor persistence_terminal_failures reads a retired grandfather receipt as history, before and after compaction', () => fixture(async ({ engine, ctx, slug }) => {
+  const before = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;
+  const authority = await submissionAuthority(ctx, 'put_page', 'default', before.sourceIncarnation, slug);
+  const binding = await getWorktreeBinding(engine, 'default');
+  const request = await admitWrite(engine, { principal: await requestPrincipalForContext(ctx), operation: 'put_page', sourceId: 'default', sourceIncarnation: before.sourceIncarnation,
+    pageId: before.page.id, slug, requestId: randomUUID(), authority, callerIntent: { migration: '0.13.1', expected_revision: before.revision },
+    intent: { kind: 'managed_grandfather', expected_revision: before.revision }, worktreeId: binding?.worktree_id, topologyGeneration: binding?.topology_generation });
+  await waitForWrite(engine, request, ctx.config, 30_000).catch(() => undefined);
+  expect(await engine.executeRaw('SELECT state,error_code,error_detail->>\'origin\' AS origin FROM persistence_requests WHERE request_id=$1::uuid', [request.request_id]))
+    .toEqual([{ state: 'conflict', error_code: 'revision_conflict', origin: 'grandfather_retired' }]);
+  const expectHistory = async () => {
+    const check = (await terminalFailuresCheck(engine))!;
+    expect(check).toMatchObject({ status: 'ok', details: { unresolved: { rows: 0, distinct_slugs: 0 }, historical_rows: 1 } });
+    expect(check.message).toContain('Historical: 1 row(s)');
+    const listing = await readTerminalFailures(engine, { sourceId: 'default', state: 'all' });
+    expect(listing.status === 'ok' && listing.rows?.map(row => [row.request_id, row.category, row.historical, row.safe_actions])).toEqual([[request.request_id, 'retired_operation', true, ['none']]]);
+    const verdict = classifyTerminal({ source_id: 'default', slug, operation: 'put_page', state: 'conflict', error_code: 'revision_conflict', error_detail: { origin: 'grandfather_retired' },
+      recovery: null, blocked_reason: null, compacted: true, request_id: request.request_id })!;
+    expect(verdict.action.why).toContain('Retired grandfather, nothing to do');
+  };
+  await expectHistory();
+  await engine.transaction(async tx => {
+    await declarePersistenceProtocol(tx);
+    await tx.executeRaw('UPDATE persistence_requests SET intent=NULL,error_message=NULL,compacted=true WHERE request_id=$1::uuid', [request.request_id]);
+  });
+  await expectHistory();
+}), 120_000);
 test.skipIf(!process.env.DATABASE_URL)('Postgres: a queued managed_grandfather request ends in conflict without writing',
   () => queuedGrandfatherEndsWithoutWriting(process.env.DATABASE_URL), 120_000);
 

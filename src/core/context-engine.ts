@@ -134,6 +134,11 @@ function hostSessionTarget(raw: unknown): Record<string, string> | null {
   return target.sessionId ? target : null;
 }
 
+/** #8080: an OpenClaw sub-agent session key (`agent:<id>:subagent:<uuid>`, nested lineage included, or a bare `subagent:` key). */
+export function isOpenClawSubagentKey(key: unknown): boolean {
+  return typeof key === 'string' && /^(agent:[^:]+:)?subagent:/i.test(key.trim());
+}
+
 /** Test-only: reset the lazy-load state so a test can re-exercise the load path. */
 export function __resetSdkLoadStateForTests(): void {
   _sdkLoaded = false;
@@ -1084,7 +1089,7 @@ export function createGBrainContextEngine(ctx: {
 
   /** compact()-side: spool-first checkpoint over the ladder. Never throws. */
   async function runCompactCheckpoint(params: {
-    sessionId?: unknown; sessionFile?: unknown; sessionTarget?: unknown;
+    sessionId?: unknown; sessionKey?: unknown; sessionFile?: unknown; sessionTarget?: unknown;
   }, deadlineHit: () => boolean = () => false): Promise<Record<string, unknown>> {
     // Host-supplied id, sanitized to the hook lane's charset before ANY
     // filename/key use (pre-landing review, security: OpenClaw session keys
@@ -1122,6 +1127,12 @@ export function createGBrainContextEngine(ctx: {
     // #6268: the session's frozen source rides in the segment NAME, inside the spool.
     const { root, dir, stamp, source } = await (await import('./context/corpus-source.ts')).openSessionCorpus(await engineCorpusDir(cfg), sessionId, { cwd: workspaceDir, harness: 'openclaw' });
     const segName = (hash: string) => segs.segmentFileName(sessionId, hash, stamp);
+    // #8080: a sub-agent session's user turns are its parent agent's brief: the speaker marker precedes its first segment.
+    if (isOpenClawSubagentKey(params.sessionKey) || isOpenClawSubagentKey((params.sessionTarget as { sessionKey?: unknown } | null | undefined)?.sessionKey)) {
+      const speaker = await import('./context/session-speaker.ts');
+      const marked = speaker.bankAsSpeaker(dir, sessionId, { kind: 'agent', principal: speaker.DETECTED_PRINCIPAL, source: 'detected' }, 'openclaw');
+      if (marked.bank !== true) return { status: 'skipped', reason: marked.reason };
+    }
     await recordOpenclawSeat(dir, sessionId, sessionFile ?? target?.storePath ?? null);
     (await import('./context/capture-consent.ts')).recordCaptureIfOff(cfg, `${dir}/${segName(segs.segmentHash(rendered.text))}`, rendered.text, source);
     const w = segs.writeSegment(dir, sessionId, rendered.text, stamp);
@@ -1240,6 +1251,7 @@ export function createGBrainContextEngine(ctx: {
       if (await rung3WriterHeld(pg, sourceId)) return { status: 'banked', reason: 'writer_coordinator_required' };
       if (deadlineHit()) return { status: 'banked', reason: 'deadline' };
       const { runFactsPipeline } = await import('./facts/backstop.ts');
+      const speaker = (await import('./context/session-speaker.ts')).speakerOf(fullPath); // #8080: the session's agent speaker, as the sweep and harvest pass it
       const abort = new AbortController();
       // Inner backstop timer PLUS a poll of the outer compact() deadline —
       // the outer budget started before this rung, so when it wins the race
@@ -1253,6 +1265,7 @@ export function createGBrainContextEngine(ctx: {
           sourceId,
           sessionId,
           source: 'hook:compact',
+          ...speaker,
           mode: 'inline',
           remote: false,
           abortSignal: abort.signal,

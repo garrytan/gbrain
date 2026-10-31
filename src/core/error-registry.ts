@@ -677,6 +677,7 @@ export const CODES = {
   source_mismatch: { class: 'caller', summary: "The request names a different source than the one this serve is bound to; it is refused, never rerouted." },
   source_not_ready: { class: 'caller', summary: "A committed source and approved schema are required." },
   source_profile_no_backfill: { class: 'unavailable', summary: "This source profile disables automatic embedding backfill." },
+  source_pages_remain: { class: 'host_only', summary: "A source delete did not cascade to the source's pages, so it was rolled back and the source and its pages are unchanged.", why: "Every source delete relies on the pages -> sources ON DELETE CASCADE foreign key; without it the pages would stay live with no sources row, where no write, export or per-source audit can reach them (#7072)." },
   source_referenced: { class: 'caller', summary: "OAuth clients still reference this source." },
   source_root_conflict: { class: 'caller', summary: "Multiple active sources alias this canonical skill root; resolve ownership before publishing." },
   source_writeback_required: { class: 'host_only', summary: "Canonical preparation requires a source-content correction; this profile never writes repository files." },

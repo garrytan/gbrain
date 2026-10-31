@@ -25,6 +25,7 @@ import { gbrainPath } from './config.ts';
 import { isMissingSchemaObject } from './utils.ts';
 import { deleteSourceRow, EXPIRED_ARCHIVE_SQL, UNVERIFIED_ARCHIVE_SQL, unverifiedArchiveReason } from './source-delete.ts';
 import { ItemRun } from './item-failure.ts';
+import { OperationError } from './ops/contract.ts';
 import { cliRenderContext, renderAction, type RenderedAction } from './agent-output.ts';
 
 // ── Types ───────────────────────────────────────────────────
@@ -493,7 +494,10 @@ export async function purgeExpiredSources(
     const result:PurgeExpiredResult={purged:[],blocked:await unverifiedArchives(engine)};
     for(const source of candidates){
       try{const receipt=await runManagedSourceLifecycle(engine,{operation:'purge',sourceId:source.id,expectedIncarnation:source.incarnation,confirmDestructive:true,expiredOnly:true});if(!receipt.noop)result.purged.push(source.id);}
-      catch(error){result.blocked.push({id:source.id,reason:error instanceof Error?error.message:'Source lifecycle could not finish.'});}
+      catch(error){
+        const code=error instanceof OperationError&&error.code==='source_pages_remain'?error.code:undefined;
+        result.blocked.push({id:source.id,reason:error instanceof Error?error.message:'Source lifecycle could not finish.',...(code?{code,fix:renderAction((error as OperationError).fix!,cliRenderContext())}:{})});
+      }
     }
     return result;
   }
@@ -545,6 +549,10 @@ export async function purgeExpiredSources(
     } catch (err) {
       // SQLSTATE 23503 foreign_key_violation — same detection idiom as
       // oauth-provider.ts's delete path for this exact FK.
+      if (err instanceof OperationError && err.code === 'source_pages_remain') {
+        blocked.push({ id, code: err.code, reason: `${err.message} ${err.suggestion}`, fix: renderAction(err.fix!, cliRenderContext()) });
+        continue;
+      }
       if ((err as { code?: string })?.code === '23503') {
         blocked.push({
           id,

@@ -2118,7 +2118,9 @@ Then each take of kind `fact` held by you that is still active and unresolved,
 and whose every contributing fact is no longer yours, is retired: struck in its
 page's takes fence when the page holds it, otherwise made inactive in the
 database. The preview lists those as `take_to_retire`. A fact or take that
-changed since the preview reports `changed_since_preview` and is kept.
+changed since the preview reports `changed_since_preview` and is kept; a fact
+that already reads as the agent's with its speaker note (a resumed apply whose
+accepted request committed meanwhile) reports `reattributed`.
 
 <a id="redacted-facts"></a>
 ### Redacted facts

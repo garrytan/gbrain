@@ -152,6 +152,56 @@ describe('hook banking with a session speaker', () => {
   });
 });
 
+describe('#8080 speaker notes: first record wins, a differing speaker is reported', () => {
+  const ws = () => { const w = join(tmp, 'ws'); mkdirSync(w, { recursive: true }); return w; };
+  const end = (env: Record<string, string>, ancestry: AncestorProcess[], sid = 's-agent', more: { role: 'user' | 'assistant'; text: string }[] = []) => {
+    const t = writeTurns([{ role: 'user', text: BRIEF }, { role: 'assistant', text: 'ok' }, ...more]);
+    return runHook(['session-end'], { ...io, transcriptRoot: t.root, env, processAncestry: () => ancestry,
+      stdin: JSON.stringify({ session_id: sid, transcript_path: t.path, cwd: ws() }) });
+  };
+  const last = async () => { const hb = (await readHeartbeatTail(1))[0]; return [hb?.outcome, hb?.reason]; };
+
+  test('the owner resuming an agent session banks as before and notes speaker_mismatch; the sidecar stays', async () => {
+    writeConfig();
+    await end({ GBRAIN_SESSION_AGENT: 'fleet-worker' }, []);
+    expect((await last())[1]).not.toBe('speaker_mismatch');
+    await end({}, [ORCH]);
+    expect(await last()).toEqual(['degraded', 'speaker_mismatch']);
+    expect(readSpeakerSidecar(corpus(), 's-agent')).toMatchObject({ principal: 'fleet-worker', source: 'env' });
+    expect(files().some((f) => f.startsWith('s-agent') && f.endsWith('.txt'))).toBe(true);
+  });
+
+  test('a different agent label notes speaker_mismatch and keeps the first record', async () => {
+    writeConfig();
+    await end({ GBRAIN_SESSION_AGENT: 'fleet-worker' }, []);
+    await end({ GBRAIN_SESSION_AGENT: 'other-worker' }, []);
+    expect(await last()).toEqual(['degraded', 'speaker_mismatch']);
+    expect(readSpeakerSidecar(corpus(), 's-agent')?.principal).toBe('fleet-worker');
+  });
+
+  test('an agent continuing a session the owner already banked banks nothing and notes speaker_mismatch', async () => {
+    writeConfig();
+    await end({}, [ORCH]);
+    expect(readSpeakerSidecar(corpus(), 's-agent')).toBeNull();
+    const banked = files().filter((f) => f.startsWith('s-agent') && f.endsWith('.txt'));
+    expect(banked.length).toBeGreaterThan(0);
+    await end({}, [WORKER, SHELL, ORCH], 's-agent', [{ role: 'user', text: 'continue the sweep' }, { role: 'assistant', text: 'done' }]);
+    expect(await last()).toEqual(['degraded', 'speaker_mismatch']);
+    expect(readSpeakerSidecar(corpus(), 's-agent')).toBeNull();
+    expect(files().filter((f) => f.startsWith('s-agent') && f.endsWith('.txt'))).toEqual(banked);
+  });
+
+  test('GBRAIN_SESSION_AGENT=owner still saves as the owner, and notes a session detection finds agent-launched', async () => {
+    writeConfig();
+    await end({ GBRAIN_SESSION_AGENT: 'owner' }, [WORKER, SHELL, ORCH]);
+    expect(await last()).toEqual(['degraded', 'speaker_owner_override_detected']);
+    expect(readSpeakerSidecar(corpus(), 's-agent')).toBeNull();
+    expect(files().some((f) => f.startsWith('s-agent') && f.endsWith('.txt'))).toBe(true);
+    await end({ GBRAIN_SESSION_AGENT: 'owner' }, [ORCH], 's-own');
+    expect((await last())[1]).toBeUndefined();
+  });
+});
+
 describe('#8028 user-prompt skips harness prompts', () => {
   for (const prompt of ['<task-notification>\n<task-id>t1</task-id> done</task-notification>', '  <teammate-message from="lead">rebase now</teammate-message>']) {
     test('no turn context for ' + prompt.trim().slice(0, 20), async () => {

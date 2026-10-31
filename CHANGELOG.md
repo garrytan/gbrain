@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A fix wave for follow-ups in persistence, the session corpus and agent-launched sessions (#8128): a source delete no longer strands its pages, synthesis holds name a fix that works, and an agent's turns stop being saved as yours.**
+
+- **A source delete never leaves its pages behind (#7072).** An expired-archive purge, `gbrain sources purge` or `sources remove` now refuses with `source_pages_remain` and changes nothing when the database would not cascade the delete to the source's pages (the pages-to-sources foreign key is missing, does not cascade or its trigger is disabled). The nightly purge lists that source under `blocked` and moves on. Brains whose foreign key is intact purge as before, and pages an earlier purge already stranded are not touched.
+- **Retired grandfather receipts read as history (#7837).** Doctor's `persistence_terminal_failures` no longer tells you to resubmit pages an older gbrain queued for the retired v0.13.1 `validate: false` stamp. Those receipts count as history with a "retired grandfather, nothing to do" note, including after compaction.
+- **Every synthesis hold names the fix that releases it (#7849).** The dream corpus mapping lists every held session file, including nested and `.md` files. `--assign-corpus` is suggested only for unstamped or unresolved holds, and holds from an archived source point at `gbrain sources restore`. Doctor's memory-writeback check counts swept holds too.
+- **An agent's sessions are not read as you talking (#8080).** Dream synthesis labels agent-launched sessions, and OpenClaw sub-agent compaction marks them before saving. When an agent continues a session already saved as yours (for example `claude -p --continue`), gbrain saves nothing from it and reports `speaker_mismatch`, so your earlier turns stay yours. Other resumes keep the original record and are reported in the hook heartbeat, as is an inherited `GBRAIN_SESSION_AGENT=owner` that hides an agent session.
+- **`gbrain repair agent-session-facts --apply` is cheaper and safer (#8080).** It reads your session corpus once per run instead of once per page. On a managed brain, a slow database write no longer leaves a page's in-page rows attributed to you, and a resumed apply reports rows that are already fixed as re-attributed.
+
 ## [0.60.529.0] - 2026-10-31
 
 **A pull request that adds a file to the PGLite snapshot inputs no longer gets stopped at gstack's pregate secrets check by its own workflow cache keys (#8107).**

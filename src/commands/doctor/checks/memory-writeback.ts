@@ -122,18 +122,20 @@ async function sessionCorpusDir(engine: BrainEngine, fileCfg: ReturnType<typeof 
 
 /**
  * #6268: captured session files held because nothing proves their source
- * (legacy top-level files on a multi-source brain, or sessions whose source
- * never resolved). Only the operator can say where they belong, so the
- * warning names the preview command. Records `details.corpus_source_holds`.
+ * (legacy files on a multi-source brain, or sessions whose source never
+ * resolved), counted as the operator mapping lists them: already-swept files
+ * included, since dream synthesis and extract_atoms still hold them (#7849).
+ * Only the operator can say where they belong, so the warning names the
+ * preview command. Records `details.corpus_source_holds`.
  */
 async function corpusSourceHoldProblem(engine: BrainEngine, fileCfg: ReturnType<typeof loadConfig>, details: Record<string, unknown>): Promise<string | null> {
   const sources = await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id LIMIT 2');
-  const holds = listCorpusSourceHolds(await sessionCorpusDir(engine, fileCfg), sources.length === 1);
+  const holds = listCorpusSourceHolds(await sessionCorpusDir(engine, fileCfg), sources.length === 1, { includeIngested: true });
   details.corpus_source_holds = { legacy_unstamped: holds.legacy_unstamped, unresolved: holds.unresolved, sessions: holds.sessions.length };
   const held = holds.legacy_unstamped + holds.unresolved;
   if (held === 0) return null;
   return `${held} captured session file(s) from ${holds.sessions.length} session(s) are held because nothing records which source they belong to `
-    + '(written before corpus files carried their source, or the session never resolved one); they are not extracted until mapped. '
+    + '(written before corpus files carried their source, or the session never resolved one); nothing extracts, synthesizes or mines them for atoms until they are mapped. '
     + 'Ask the user which source they belong to, preview with gbrain sweep --assign-corpus <source>, then add --apply';
 }
 

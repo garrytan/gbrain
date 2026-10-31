@@ -28,7 +28,7 @@ export const PUBLIC_BY_TERMINAL: Readonly<Record<TerminalCategory, PublicCategor
   operator_cancelled: 'superseded', caller_conflict: 'conflict', file_conflict: 'drift', canonical_file_missing: 'file_missing', fence_unrenderable: 'defect',
   writer_guard: 'defect', database_refusal: 'config', owner_exception: 'defect', legacy_publication_refusal: 'superseded',
   sync_fault: 'defect', transport: 'transient', caller_refusal: 'content_refused', gbrain_defect: 'defect', diagnosis_required: 'defect',
-  schema_missing: 'storage',
+  schema_missing: 'storage', retired_operation: 'superseded',
 };
 
 /** Fault codes (holds, run stops, receipts) by name; a test pins that every `SYNC_FAULT_TABLE` code is here. */
