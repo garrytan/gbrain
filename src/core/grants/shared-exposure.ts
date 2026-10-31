@@ -177,8 +177,7 @@ export function remedyText(s: ExposureSubject, census?: ChatCensus | null): stri
     steps.push(`the chat sits in one source (${census!.chat_sources[0]}), so a source grant cannot separate it`);
   }
   steps.push('mark pages nobody else may see visibility: private (hidden from every remote caller while search.remote_private_pages stays off)');
-  steps.push('narrow single calls with source_ids on search and query (MCP) or --source (CLI)');
-  return `Fix: ${steps.join('; ')}. Per-member keys (gbrain access member add <id>, then gbrain auth create <name> --member <id>) arrive with gbrain#7812 and are not in this version.`;
+  return `Fix: ${steps.join('; ')}. source_ids narrows only the call that sends it, so recall, list_pages or any read without it reads the token's full grant; the fix is ${splitBySource(census) ? 'a member-bound or rescoped token (gbrain auth rescope …)' : 'a member-bound token'}, not per-call narrowing. Per-member keys (gbrain access member add <id>, then gbrain auth create <name> --member <id>) arrive with gbrain#7812 and are not in this version.`;
 }
 
 export function exposureFix(s: ExposureSubject, census?: ChatCensus | null): Action {
