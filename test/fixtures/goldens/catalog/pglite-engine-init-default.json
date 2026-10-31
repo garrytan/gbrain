@@ -1695,14 +1695,14 @@
           "1 group_id text/text NOT NULL",
           "2 member_id text/text NOT NULL"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "access_groups": {
         "columns": [
           "1 id text/text NOT NULL",
           "2 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "access_members": {
         "columns": [
@@ -1713,7 +1713,7 @@
           "5 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "6 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "access_pending_coverage": {
         "columns": [
@@ -1724,7 +1724,7 @@
           "5 detail jsonb/jsonb NULL",
           "6 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "access_policy_migrations": {
         "columns": [
@@ -1736,7 +1736,7 @@
           "6 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "7 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "access_policy_revisions": {
         "columns": [
@@ -1753,14 +1753,14 @@
           "11 applied_at timestamp with time zone/timestamptz NULL",
           "12 approved_at timestamp with time zone/timestamptz NULL"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "access_policy_state": {
         "columns": [
           "1 source_id text/text NOT NULL",
           "2 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "access_rules": {
         "columns": [
@@ -1772,7 +1772,7 @@
           "6 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "7 created_by text/text NULL"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "access_tokens": {
         "columns": [

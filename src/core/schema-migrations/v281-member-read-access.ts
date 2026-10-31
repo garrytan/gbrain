@@ -125,5 +125,12 @@ INSERT INTO config (key, value)
   SELECT 'access.restrictions_present', '1'
   WHERE EXISTS (SELECT 1 FROM pages WHERE frontmatter ? 'readable_by') OR EXISTS (SELECT 1 FROM access_members)
   ON CONFLICT (key) DO UPDATE SET value = '1';
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) THEN
+    ALTER TABLE access_members ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE access_groups ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE access_group_members ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
 `,
 };

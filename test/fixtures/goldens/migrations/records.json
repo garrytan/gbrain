@@ -4550,8 +4550,8 @@
         "idempotent": true,
         "name": "member_read_access",
         "sql": {
-          "length": 5992,
-          "sha256": "717b58dd097275d8a5116be7fbe7c6920452d25ad01cac17c019f35b2ee91add"
+          "length": 6338,
+          "sha256": "482913b07ebd9603c0cd04329ae5f15d9d26e85bae3fa527ec7bf03b025ea0b3"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -4563,8 +4563,8 @@
         "idempotent": true,
         "name": "folder_access_rules",
         "sql": {
-          "length": 6524,
-          "sha256": "4547e2cfb314f2b61e8d8e141fd7596ffa6161cacafb54f050e2894ab0e4213c"
+          "length": 7012,
+          "sha256": "a74227a69b34046546f4a38b8f553012d67391f09da6d444a9c25aed747e8375"
         },
         "sqlFor": "absent",
         "transaction": "absent",
