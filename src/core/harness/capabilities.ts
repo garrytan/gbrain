@@ -337,11 +337,12 @@ export async function resolveAuthCapabilities(auth: AuthInfo, engine: BrainEngin
     operationScopesAllowed(auth.scopes, op)
     && opAllowedForBoundClient(auth, op) && !disabled.has(op.name)).map(op => op.name);
   // F2: config-plane readiness in the HTTP view (probed entries are host posture, never sent over HTTP).
-  const { configReadiness, readinessHttpView } = await import('../readiness.ts');
+  const { readinessHttpView } = await import('../readiness.ts');
+  const { effectiveReadiness } = await import('../effective-readiness.ts');
   return {
     ...describeAuthCapabilities(auth, { surface, visibleOperations, delegatedTools: grantCatalog().delegateToolNames }),
     grant_diagnosis: await resolveGrantDiagnosis(auth, engine, config, { surfaceCeiling: opts.surfaceCeiling, disabled }),
-    readiness: readinessHttpView(configReadiness(config, { transport: 'http' }).entries),
+    readiness: readinessHttpView(await effectiveReadiness(engine, config, 'http')),
   };
 }
 

@@ -81,7 +81,7 @@ export interface ReadinessCache {
 export const EMBEDDINGS_REASONS = [
   'configured', 'embedding_disabled', 'not_configured', 'key_missing', 'unknown_model', 'remote_brain',
 ] as const;
-export const CHAT_LLM_REASONS = ['configured', 'not_configured', 'remote_brain'] as const;
+export const CHAT_LLM_REASONS = ['configured', 'not_configured', 'remote_brain', 'model_unavailable', 'probe_failed', 'probe_timeout'] as const;
 export const WORKER_REASONS = [
   'worker_running', 'no_pending_jobs', 'no_worker', 'engine_unreachable', 'probe_failed', 'probe_timeout',
 ] as const;

@@ -42,14 +42,15 @@ const whoami: Operation = {
     // where code conditionally trusted on `scopes.includes('admin')` instead
     // of `ctx.remote === false`. Empty scopes array forces clients to
     // special-case `transport: 'local'` explicitly.
-    // F2: config-plane readiness (sync, in-memory config) rides every shape.
-    const { configReadiness, readinessHttpView } = await import('../readiness.ts');
-    const readiness = (transport: 'cli' | 'stdio' | 'http') => {
-      const entries = configReadiness(ctx.config, { transport }).entries;
+    // Connected callers check the same engine-resolved model route as workers.
+    const { readinessHttpView } = await import('../readiness.ts');
+    const { effectiveReadiness } = await import('../effective-readiness.ts');
+    const readiness = async (transport: 'cli' | 'stdio' | 'http') => {
+      const entries = await effectiveReadiness(ctx.engine, ctx.config, transport);
       return transport === 'http' ? readinessHttpView(entries) : entries;
     };
     if (ctx.remote === false) {
-      return { transport: 'local', scopes: [], readiness: readiness('cli') };
+      return { transport: 'local', scopes: [], readiness: await readiness('cli') };
     }
     // #1061: stdio MCP is remote/untrusted by design but has no per-token
     // auth (local pipe) — a known transport, not a bug. Report it instead of
@@ -63,7 +64,7 @@ const whoami: Operation = {
         if (verified.remote) scopes = verified.grant.scopes;
       } catch { /* no registration: no scopes */ }
       const session = ctx.stdioSurface;
-      return { transport: 'stdio', scopes, ...(session ? { surface: session.surface, surface_source: session.source } : {}), readiness: readiness('stdio') };
+      return { transport: 'stdio', scopes, ...(session ? { surface: session.surface, surface_source: session.source } : {}), readiness: await readiness('stdio') };
     }
     if (!ctx.auth) {
       throw opError(
@@ -90,7 +91,7 @@ const whoami: Operation = {
       scopes: ctx.auth.scopes,
       expires_at: null,
       grant_diagnosis: await resolveGrantDiagnosis(ctx.auth, ctx.engine, ctx.config, { surfaceCeiling: ctx.surfaceCeiling }),
-      readiness: readiness('http'),
+      readiness: await readiness('http'),
     };
   },
   cliHints: { name: 'whoami' },
