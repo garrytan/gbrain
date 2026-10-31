@@ -37,6 +37,7 @@ import { httpInstructionTools } from './initialize-context.ts';
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
 import { operations, operationsByName, opAllowedForBoundClient } from '../core/operations.ts';
 import { scopeDeniedError } from '../core/ops/op-fix.ts';
+import { ON_BEHALF_OF_HEADER } from '../core/access/audience.ts';
 import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
 import type { AuthInfo } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
@@ -552,7 +553,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           transport: 'http', inboundFrameBytes: bodyCap,
           takesHoldersAllowList: auth.takesHoldersAllowList,
           sourceId: auth.sourceId,
-          ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
+          ...(localFederated ? { localFederatedSourceIds: localFederated } : {}), onBehalfOf: { header: req.headers.get(ON_BEHALF_OF_HEADER) ?? undefined, requestMeta: params?._meta },
           // #1336: thread the token's federated_read grant so read ops scope
           // to the operator-granted sources via sourceScopeOpts.
           auth: auth.auth,

@@ -79,6 +79,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   rederiveHiddenSql: 'src/core/eligibility/sql.ts: constant needs_rederive NOT EXISTS predicate over a literal table name and caller alias; no values',
   privateProvenanceFilterFragment: 'src/core/search/private-visibility.ts: constant fact-provenance visibility predicate over a caller alias',
   readersAllowedSql: 'src/core/search/private-visibility.ts: GBRA-218 readers predicate over a caller alias; splices only identities that pass validIdentity (member:/group: plus [a-z0-9._-]), else none',
+  callerReadersAllowedSql: 'src/core/search/private-visibility.ts: GBRA-231 readersAllowedSql for the current caller, one conjunct per audience identity; each identity passes validIdentity',
   privacyForCaller: 'src/core/search/private-visibility.ts: the caller privacy arm (TRUE, or the given predicate ORed with private-readable source ids checked by isValidSourceId); callers pass a constant alias and a vetted predicate builder',
   privateProvenanceFilterUnderPolicy: 'src/core/search/private-visibility.ts: constant fact-provenance predicate (readers part with no identity, privacy part dropped only under an operator relaxation); no values',
   stagingNeedsTextSql: 'src/core/page-body/schema.ts: constant live-staging text-reference EXISTS predicate over a caller text alias; no values (Wave B purge)',

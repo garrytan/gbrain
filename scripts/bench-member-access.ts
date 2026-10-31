@@ -10,7 +10,10 @@
  * runs on two revisions are directly comparable; on a revision without member
  * tables only the 0% cell runs. --rules adds that many folder rules (A2) on
  * prefixes no page lives under, so the cell measures what the folder layer
- * costs a brain whose pages it does not restrict.
+ * costs a brain whose pages it does not restrict. On a revision with shared agents (GBRA-231), restricted shares
+ * add two cells for a bot token whose harness names an audience: `aud1` (the member alone) and `aud2` (the member and
+ * a second member who reads the same restricted pages, so recall matches the member's). A search that fails, loses its
+ * vector arm or reports any degraded stage (other than the reranker this keyless bench never configures) stops the run.
  *
  * Usage: bun scripts/bench-member-access.ts [--pages 5000] [--queries 60] [--shares 0,0.2,0.8] [--rules 0] [--json]
  */
@@ -60,7 +63,7 @@ async function newEngine(): Promise<PGLiteEngine> {
 /** Page i: its readers at this restricted share (null = open) and whether the member may read it. */
 function pageSpec(i: number, share: number): { readers: string | null; memberReads: boolean } {
   const restricted = share > 0 && (share >= 0.5 ? i % 5 !== 0 : i % Math.round(1 / share) === 0);
-  return { readers: restricted ? (i % 2 === 0 ? '[alice-example]' : '[group:team-b]') : null, memberReads: !restricted || i % 2 === 0 };
+  return { readers: restricted ? (i % 2 === 0 ? '[alice-example, alice-twin]' : '[group:team-b]') : null, memberReads: !restricted || i % 2 === 0 };
 }
 
 async function seed(engine: PGLiteEngine, share: number): Promise<void> {
@@ -91,47 +94,57 @@ async function runCell(share: number, rules: number) {
   const unbound = await mint('bench-unbound');
   const alice = await mint('bench-alice');
   if (bindMember) await engine.executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id = $1::uuid', [alice.id, 'alice-example']);
+  const audiences = bindMember && await import('../src/core/access/audience.ts').then(() => true, () => false);
+  const bot = audiences ? await mint('bench-bot') : null;
+  if (bot) {
+    await engine.executeRaw("INSERT INTO access_members (id) VALUES ('alice-twin') ON CONFLICT DO NOTHING");
+    await engine.executeRaw("UPDATE access_tokens SET may_act_for = ARRAY['member:alice-example', 'member:alice-twin'] WHERE id = $1::uuid", [bot.id]);
+  }
   const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
 
-  async function remote(token: string, params: Record<string, unknown>) {
+  async function remote(token: string, params: Record<string, unknown>, header?: string) {
     const auth = await provider.verifyAccessToken(token) as unknown as AuthInfo;
     const sourceId = auth.sourceId ?? 'default';
     const localFederated = await noGrantFederatedScope(engine, auth.hasSourceGrant, sourceId);
     const t0 = performance.now();
     const out = await dispatchToolCall(engine, 'search', params, { remote: true, transport: 'http', auth, sourceId,
-      takesHoldersAllowList: auth.takesHoldersAllowList ?? ['world'], ...(localFederated ? { localFederatedSourceIds: localFederated } : {}) });
+      takesHoldersAllowList: auth.takesHoldersAllowList ?? ['world'], ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
+      ...(header ? { onBehalfOf: { header } } : {}) } as Parameters<typeof dispatchToolCall>[3]);
     const text = out.content.map(c => c.text).join('\n');
-    if (out.isError || text.includes('vector_arm_failed')) throw new Error(`bench search degraded or failed: ${text.slice(0, 300)}`);
+    const degraded = ((out._meta?.retrieval as { degraded?: Array<{ stage?: string }> } | undefined)?.degraded ?? []).filter(d => d.stage !== 'reranker_skipped');
+    if (out.isError || text.includes('vector_arm_failed') || degraded.length) throw new Error(`bench search degraded or failed: ${JSON.stringify(degraded)} ${text.slice(0, 300)}`);
     return { ms: performance.now() - t0, text };
   }
   const slugsIn = (text: string) => [...new Set(text.match(/notes\/page-\d+/g) ?? [])];
 
   const cells: Record<string, unknown>[] = [];
   for (const match of ['keyword', 'hybrid'] as const) {
-    const times: Record<string, number[]> = { unbound: [], member: [] };
-    let hits = 0, possible = 0;
+    const whos = bot ? ['unbound', 'member', 'aud1', 'aud2'] as const : ['unbound', 'member'] as const;
+    const times: Record<string, number[]> = Object.fromEntries(whos.map(w => [w, []]));
+    const hits: Record<string, number> = {}, possible: Record<string, number> = {};
     for (let q = 0; q < QUERIES + 5; q++) {
       const page = share > 0 ? [...Array(PAGES).keys()].filter(j => pageSpec(j, share).memberReads)[(q * 7919) % PAGES % Math.max(1, Math.round(PAGES * (share >= 0.5 ? 0.6 : 0.9)))] ?? 0 : (q * 7919) % PAGES;
       const query = `${wordOf(page, q % 12)} ${wordOf(page, (q + 5) % 12)}`;
       const params = { query, limit: 10, ...(match === 'keyword' ? { match: 'keyword' } : {}) };
-      const order = q % 2 === 0 ? (['unbound', 'member'] as const) : (['member', 'unbound'] as const);
+      const order = whos.map((_, k) => whos[(k + q) % whos.length]!);
       for (const who of order) {
-        const { ms, text } = await remote(who === 'member' ? alice.token : unbound.token, params);
-        if (q >= 5) times[who].push(ms);
-        if (who === 'member' && share > 0 && q >= 5) {
+        const { ms, text } = await (who === 'aud1' ? remote(bot!.token, params, 'alice-example') : who === 'aud2' ? remote(bot!.token, params, 'alice-example, alice-twin')
+          : remote(who === 'member' ? alice.token : unbound.token, params));
+        if (q >= 5) times[who]!.push(ms);
+        if (who !== 'unbound' && share > 0 && q >= 5) {
           const words = query.split(' ');
           const want = Array.from({ length: PAGES }, (_, j) => j)
             .filter(j => pageSpec(j, share).memberReads && words.every(w => Array.from({ length: 12 }, (_, k) => wordOf(j, k)).includes(w)))
             .slice(0, 10).map(j => `notes/page-${j}`);
           const got = new Set(slugsIn(text));
-          hits += want.filter(s => got.has(s)).length;
-          possible += want.length;
+          hits[who] = (hits[who] ?? 0) + want.filter(s => got.has(s)).length;
+          possible[who] = (possible[who] ?? 0) + want.length;
         }
       }
     }
-    for (const who of ['unbound', 'member'] as const) {
-      cells.push({ share, rules, who, match, p50: +pct(times[who], 0.5).toFixed(2), p95: +pct(times[who], 0.95).toFixed(2),
-        ...(who === 'member' && possible ? { hit_at_10: +(hits / possible).toFixed(3) } : {}) });
+    for (const who of whos) {
+      cells.push({ share, rules, who, match, p50: +pct(times[who]!, 0.5).toFixed(2), p95: +pct(times[who]!, 0.95).toFixed(2),
+        ...(possible[who] ? { hit_at_10: +(hits[who]! / possible[who]!).toFixed(3) } : {}) });
     }
   }
   await engine.disconnect();

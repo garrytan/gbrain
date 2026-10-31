@@ -20,6 +20,7 @@ import { readClientGrant } from '../core/grants/service.ts';
 import { resolveTokenGrant } from '../core/grants/legacy-token.ts';
 import { isPrivacyPrivatePage } from '../core/search/private-visibility.ts';
 import { identityFor, normalizePrincipal, normalizeReaders, readersAllow } from '../core/access/principals.ts';
+import { mayActForCovers, singleMemberAudience, type AudiencePrincipal } from '../core/access/audience.ts';
 import {
   addGroup, addMember, assertAccessId, disableMember, enableMember, getMember, legacyTokenByName, listGroups, listMembers,
   parseIdList, previewRemoveGroup, previewRemoveMember, removeGroup, removeGroupMembers, removeMember, type MemberRecord,
@@ -177,10 +178,13 @@ export async function accessCheck(engine: BrainEngine, target: { token?: string;
       } else if (principal.startsWith('group:') && !(await listGroups(engine, principal.slice(6))).length) {
         throw opError('access_member_invalid', `--as names group "${principal.slice(6)}", which does not exist.`, 'List groups with gbrain access group list.', { reason: 'unknown_group', why: 'An audience names existing groups only.' });
       }
-      audience.push({ principal, covered_by_may_act_for: !!mayActFor && (mayActFor.includes('*') || mayActFor.includes(principal)) });
+      audience.push({ principal, covered_by_may_act_for: mayActForCovers(mayActFor, principal as AudiencePrincipal) });
     }
     result.audience = audience;
-    result.explanation += ' may_act_for is stored only in this release; shared-agent audiences are enforced by a later release.';
+    const missing = audience.filter(a => !a.covered_by_may_act_for).map(a => a.principal);
+    result.explanation += missing.length
+      ? ` A request naming this audience is refused (on_behalf_of_not_permitted): may_act_for does not list ${missing.join(', ')}.`
+      : ` A request naming this audience reads only the pages every entry may read${singleMemberAudience(audience.map(a => a.principal)) ? '' : ' and no visibility: private page'}, within the grant above.`;
   }
   return result;
 }

@@ -1,7 +1,8 @@
 import { opError } from '../ops/contract.ts';
-import { callerAccessAllowedSql, callerIdentity, currentCallerAccess, readPolicyFragment, readRemotePolicyNow, withCallerAccess } from '../search/private-visibility.ts';
+import { callerAccessAllowedSql, callerIdentities, currentCallerAccess, readPolicyFragment, readRemotePolicyNow, withCallerAccess } from '../search/private-visibility.ts';
 import { parseMarkdown } from '../markdown.ts';
-import { folderAccessFor, memberIdentityFor } from '../access/caller.ts';
+import { folderAccessForAll, memberIdentityFor, resolveAudienceIdentities } from '../access/caller.ts';
+import type { AudiencePrincipal } from '../access/audience.ts';
 import { hasReaders, normalizePrincipal, normalizeReaders, readersAllow, NOBODY } from '../access/principals.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import type { SqlEngine, WriteAuthority } from './model.ts';
@@ -40,12 +41,27 @@ export async function authorizePageVisibility(engine: SqlEngine, authority: Writ
   const policy = await readRemotePolicyNow(engine);
   const hidePrivate = (authority.excludePrivate ?? true) || !policy.privacyRelaxed;
   if (!hidePrivate && !policy.restricted) return;
-  const identity = policy.restricted ? await memberIdentityFor(engine, authority) : [];
-  const folder = policy.restricted ? await folderAccessFor(engine, identity) : { satisfiedRuleIds: [], folderCoverage: [] };
-  const fragment = withCallerAccess({ folderCoverage: folder.folderCoverage }, () => readPolicyFragment('pages', identity, hidePrivate, folder.satisfiedRuleIds));
+  const identities = policy.restricted ? await writerIdentities(engine, authority) : [[]];
+  const folder = policy.restricted ? await folderAccessForAll(engine, identities) : { satisfiedRuleIds: [], folderCoverage: [] };
+  const fragment = withCallerAccess({ folderCoverage: folder.folderCoverage }, () => readPolicyFragment('pages', { all: identities }, hidePrivate, folder.satisfiedRuleIds));
   const rows = await engine.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2
     AND NOT (${fragment}) LIMIT 1`, [authority.sourceId, slug]);
   if (rows.length) throw pageNotVisibleError();
+}
+
+/**
+ * The identities a stored write is checked under, re-resolved live: the principal's member, or (GBRA-231) every entry
+ * of the audience it was accepted for, bounded by the principal's live may_act_for. An audience no longer permitted
+ * or naming a disabled member resolves to the guest identity, which reads no restricted page (fail closed).
+ */
+async function writerIdentities(engine: SqlEngine, authority: WriteAuthority): Promise<string[][]> {
+  if (!authority.actingFor?.length) return [await memberIdentityFor(engine, authority)];
+  try {
+    return await resolveAudienceIdentities(engine, { principal: authority.principal, transport: authority.principal.kind === 'local_stdio' ? 'stdio' : 'http' },
+      authority.actingFor as AudiencePrincipal[]);
+  } catch {
+    return [[]];
+  }
 }
 
 /**
@@ -68,7 +84,8 @@ export async function remoteTargetHidden(engine: SqlEngine, remote: boolean | un
  * YAML form) and keeps the page readable by the writer's `identity`. Checked at submission with the request's
  * identity and again at preparation with the identity re-resolved from the stored principal.
  */
-export function assertRemoteReadersValid(frontmatter: unknown, identity: readonly string[]): void {
+export function assertRemoteReadersValid(frontmatter: unknown, identity: readonly string[] | readonly (readonly string[])[], audience?: readonly string[] | null): void {
+  const identities = identity.length && typeof identity[0] !== 'string' ? identity as readonly (readonly string[])[] : [identity as readonly string[]];
   if (!hasReaders(frontmatter)) return;
   const value = (frontmatter as Record<string, unknown>).readable_by;
   if (normalizeReaders(frontmatter)?.[0] === NOBODY) {
@@ -81,16 +98,21 @@ export function assertRemoteReadersValid(frontmatter: unknown, identity: readonl
     throw catalogueError('readable_by_invalid', `readable_by is invalid: ${what}.`,
       `Nothing was written. Member and group ids are lower-case letters, digits, '.', '_' and '-' (1-64 characters); write the field as ${example} and submit again with a new request_id.`);
   }
-  if (!readersAllow(frontmatter, identity)) {
+  if (!identities.every(id => readersAllow(frontmatter, id))) {
+    if (audience?.length) {
+      throw catalogueError('readable_by_invalid', 'readable_by would leave this page unreadable by the audience this connection acts for.',
+        `Nothing was written. Every audience entry (${audience.join(', ')}) must stay a reader, and a guest can read no page that names readers; write the page without readable_by changes, or ask the user to change the readers on the brain host.`);
+    }
+    const one = identities[0] ?? [];
     throw catalogueError('readable_by_invalid', 'readable_by would leave this page unreadable by this connection.',
-      `Nothing was written. Keep this connection's member${identity.length ? ` (${identity.join(', ')})` : ' (this connection is bound to none)'} or one of its groups in readable_by, or ask the user to change the readers on the brain host.`);
+      `Nothing was written. Keep this connection's member${one.length ? ` (${one.join(', ')})` : ' (this connection is bound to none)'} or one of its groups in readable_by, or ask the user to change the readers on the brain host.`);
   }
 }
 
 /** A remote put_page's readable_by, checked with the request's identity before anything is admitted (preparation checks it again). */
 export function assertSubmittedReaders(remote: boolean | undefined, slug: unknown, content: unknown): void {
   if (remote === false || typeof content !== 'string' || !content.includes('readable_by')) return;
-  assertRemoteReadersValid(parseMarkdown(content, typeof slug === 'string' ? slug : 'page').frontmatter, callerIdentity());
+  assertRemoteReadersValid(parseMarkdown(content, typeof slug === 'string' ? slug : 'page').frontmatter, callerIdentities(), currentCallerAccess().audience);
 }
 
 /**
@@ -104,7 +126,7 @@ export async function remoteReadersChecked<T extends { parsedPage: { frontmatter
     throw catalogueError('readable_by_invalid', 'This write removes readable_by from a page that names readers.',
       'Nothing was written. A remote write keeps the readable_by line: read the page with get_page include_content:true and keep its frontmatter, or ask the user to widen the page on the brain host.');
   }
-  assertRemoteReadersValid(after, await memberIdentityFor(engine, authority));
+  assertRemoteReadersValid(after, await writerIdentities(engine, authority), authority.actingFor);
   return prepared;
 }
 

@@ -1310,6 +1310,7 @@ export function knobsHash(
   if (ctx?.excludePrivate === true) {
     const access = currentCallerAccess();
     if (access.identity.length) parts.push(`xid=${createHash('sha256').update(access.identity.join(',')).digest('hex').slice(0, 16)}`);
+    if (access.audienceIdentities.length) parts.push(`xau=${createHash('sha256').update(JSON.stringify(access.audienceIdentities)).digest('hex').slice(0, 16)}`);
     if (!access.hidePrivate) parts.push('xhp=0');
   }
   const h = createHash('sha256');

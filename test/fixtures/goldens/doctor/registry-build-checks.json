@@ -386,6 +386,10 @@
         "name": "access_policy_store_mismatch"
       },
       {
+        "category": "brain",
+        "name": "access_may_act_for_wildcard"
+      },
+      {
         "category": "ops",
         "name": "rls"
       },

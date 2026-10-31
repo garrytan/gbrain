@@ -23,7 +23,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine } from '../engine.ts';
 import { isValidSourceId } from '../source-id.ts';
-import { hasReaders, readersAllow, validIdentity } from '../access/principals.ts';
+import { hasReaders, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
 import { validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
@@ -70,8 +70,18 @@ export function privacyPartSql(pageAlias: string): string {
  * embedded as literals; anything else empties it (fail closed).
  */
 export function accessAllowedSql(pageAlias: string, identity: readonly string[], satisfied: readonly string[] = satisfiedFor(identity)): string {
+  return accessAllowedForAllSql(pageAlias, [identity], satisfied);
+}
+
+/**
+ * GBRA-231 (shared agents): accessAllowedSql for an audience. A page passes only when every identity in
+ * `identities` meets its readers (one conjunct each; a guest's empty identity meets no readers), and its folder rules
+ * are all in `satisfied` (for an audience, the intersection of every entry's satisfied set).
+ */
+export function accessAllowedForAllSql(pageAlias: string, identities: readonly (readonly string[])[], satisfied: readonly string[]): string {
   if (!currentCallerAccess().restricted) return `(${pageAlias}.page_readers IS NULL AND ${pageAlias}.folder_rule_ids IS NULL)`;
-  return `(${readersAllowedSql(pageAlias, identity)} AND ${folderRulesAllowedSql(pageAlias, satisfied)} AND ${originAllowedSql(pageAlias)})`;
+  const readers = (identities.length ? identities : [[]]).map(identity => readersAllowedSql(pageAlias, identity)).join(' AND ');
+  return `(${readers} AND ${folderRulesAllowedSql(pageAlias, satisfied)} AND ${originAllowedSql(pageAlias)})`;
 }
 
 /**
@@ -193,6 +203,14 @@ export function privatePagesFilterFragmentFast(pageAlias: string): string {
  */
 export interface CallerAccess {
   identity: readonly string[];
+  /**
+   * GBRA-231 (shared agents): the normalized audience a request asserted (member:<id>, group:<g>, guest), or null.
+   * Reported in _meta.access and whoami, carried by queued writes and agent jobs. With one entry, `identity` is that
+   * entry's identity; with more, `identity` is empty (a site that reads it alone over-hides) and
+   * `audienceIdentities` holds one identity per entry, every one of which must meet a page's readers.
+   */
+  audience: readonly string[] | null;
+  audienceIdentities: readonly (readonly string[])[];
   /** GBRA-218 (A2): the source-qualified folder-rule ids (`<source>:<rule>`) the identity satisfies, from the applied rulebook. */
   satisfiedRuleIds: readonly string[];
   /** GBRA-218 (A2): prefixes that read as nobody (a narrowing being stamped, an invalid policy file); prefix '' is the whole source. */
@@ -209,7 +227,7 @@ const callerAccessStore = new AsyncLocalStorage<CallerAccess>();
 
 /** The current read's caller-access record (see CallerAccess). */
 export function currentCallerAccess(): CallerAccess {
-  return callerAccessStore.getStore() ?? { identity: [], satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), applyRemoteReadPolicy: false, restricted: true, remotePolicy: null };
+  return callerAccessStore.getStore() ?? { identity: [], audience: null, audienceIdentities: [], satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), applyRemoteReadPolicy: false, restricted: true, remotePolicy: null };
 }
 
 /** Runs `fn` under `access` merged over the current record; an invalid identity or source id empties that set (fail closed). */
@@ -218,9 +236,16 @@ export function withCallerAccess<T>(access: Partial<CallerAccess>, fn: () => T):
   const identity = access.identity ?? base.identity;
   const sources = access.privateReadableSources ?? base.privateReadableSources;
   const validIds = identity.length > 0 && validIdentity(identity);
-  const satisfied = validIds ? access.satisfiedRuleIds ?? (access.identity ? [] : base.satisfiedRuleIds) : [];
+  const fresh = access.identity !== undefined || access.audienceIdentities !== undefined;
+  const audienceIdentities = (access.audienceIdentities ?? (fresh ? [] : base.audienceIdentities))
+    .map(id => id.length && validIdentity(id) ? Object.freeze([...new Set(id)].sort()) : Object.freeze([] as string[]));
+  const audience = access.audience !== undefined ? access.audience : fresh ? null : base.audience;
+  const satisfiedOk = validIds || audienceIdentities.some(id => id.length > 0);
+  const satisfied = satisfiedOk ? access.satisfiedRuleIds ?? (fresh ? [] : base.satisfiedRuleIds) : [];
   return callerAccessStore.run(Object.freeze({
-    identity: validIds ? Object.freeze([...new Set(identity)].sort()) : Object.freeze([]),
+    identity: validIds && audienceIdentities.length <= 1 ? Object.freeze([...new Set(identity)].sort()) : Object.freeze([]),
+    audience: audience && audience.every(validAudienceEntry) ? Object.freeze([...audience]) : audience ? Object.freeze([GUEST_ENTRY]) : null,
+    audienceIdentities: Object.freeze(audienceIdentities.length > 1 ? audienceIdentities : []),
     satisfiedRuleIds: satisfied.length && satisfied.every(validQualifiedRuleId) ? Object.freeze([...new Set(satisfied)].sort()) : Object.freeze([]),
     folderCoverage: Object.freeze([...(access.folderCoverage ?? base.folderCoverage)].map(c => Object.freeze({ source_id: c.source_id, prefix: c.prefix }))),
     privateReadableSources: sources.length && sources.every(isValidSourceId) ? Object.freeze([...new Set(sources)]) : Object.freeze([]),
@@ -246,9 +271,36 @@ export function privateReadableSources(): readonly string[] {
   return currentCallerAccess().privateReadableSources;
 }
 
-/** The current caller's member identity; empty outside a bound remote read or a local --as. */
+/** The current caller's member identity; empty outside a bound remote read or a local --as, and for an audience of several entries (see callerIdentities). */
 export function callerIdentity(): readonly string[] {
   return currentCallerAccess().identity;
+}
+
+/** GBRA-231: every identity a page's readers must meet for the current caller: one per audience entry, else the caller's own. */
+export function callerIdentities(): readonly (readonly string[])[] {
+  const access = currentCallerAccess();
+  return access.audienceIdentities.length ? access.audienceIdentities : [access.identity];
+}
+
+/** GBRA-231: readersAllow for the current caller (every audience entry must be a reader). */
+export function callerReadersAllow(frontmatter: unknown): boolean {
+  return callerIdentities().every(identity => readersAllow(frontmatter, identity));
+}
+
+/** GBRA-231: readersAllowedSql for the current caller, one conjunct per audience entry. */
+export function callerReadersAllowedSql(alias: string, row: 'page' | 'snapshot' = 'page'): string {
+  return callerIdentities().map(identity => readersAllowedSql(alias, identity, row)).join(' AND ');
+}
+
+const GUEST_ENTRY = 'guest';
+function validAudienceEntry(entry: string): boolean {
+  return entry === GUEST_ENTRY || normalizePrincipal(entry) === entry;
+}
+
+function callerAccessSql(pageAlias: string): string {
+  const access = currentCallerAccess();
+  return access.audienceIdentities.length ? accessAllowedForAllSql(pageAlias, access.audienceIdentities, access.satisfiedRuleIds)
+    : accessAllowedSql(pageAlias, access.identity);
 }
 
 /**
@@ -281,12 +333,12 @@ function callerPrivacySql(pageAlias: string, privacyPredicate: string): string {
 
 /** privatePagesFilterFragment for a remote read: the caller's member access, then the privacy part with its grant and hatch. Read sites only; derived-visibility decisions keep the plain fragment. */
 export function privatePagesFilterForCaller(pageAlias: string): string {
-  return `(${accessAllowedSql(pageAlias, callerIdentity())} AND ${callerPrivacySql(pageAlias, privacyPartSql(pageAlias))})`;
+  return `(${callerAccessSql(pageAlias)} AND ${callerPrivacySql(pageAlias, privacyPartSql(pageAlias))})`;
 }
 
 /** The mandatory member-access part alone (readers and lineage) for the current caller; privacy is not tested. */
 export function callerAccessAllowedSql(pageAlias: string): string {
-  return accessAllowedSql(pageAlias, callerIdentity());
+  return callerAccessSql(pageAlias);
 }
 
 /**
@@ -295,13 +347,14 @@ export function callerAccessAllowedSql(pageAlias: string): string {
  * part, then the privacy part unless `hidePrivate` is false. With an empty
  * identity and `hidePrivate` it equals privatePagesFilterFragment.
  */
-export function readPolicyFragment(pageAlias: string, identity: readonly string[], hidePrivate: boolean, satisfied?: readonly string[]): string {
-  return `(${accessAllowedSql(pageAlias, identity, satisfied)} AND ${hidePrivate ? privacyPartSql(pageAlias) : 'TRUE'})`;
+export function readPolicyFragment(pageAlias: string, identity: readonly string[] | { all: readonly (readonly string[])[] }, hidePrivate: boolean, satisfied?: readonly string[]): string {
+  const access = 'all' in identity ? accessAllowedForAllSql(pageAlias, identity.all, satisfied ?? []) : accessAllowedSql(pageAlias, identity, satisfied);
+  return `(${access} AND ${hidePrivate ? privacyPartSql(pageAlias) : 'TRUE'})`;
 }
 
 /** privatePagesFilterFragmentFast for a remote read. */
 export function privatePagesFilterFastForCaller(pageAlias: string): string {
-  return `(${accessAllowedSql(pageAlias, callerIdentity())} AND ${callerPrivacySql(pageAlias, privacyPartFastSql(pageAlias))})`;
+  return `(${callerAccessSql(pageAlias)} AND ${callerPrivacySql(pageAlias, privacyPartFastSql(pageAlias))})`;
 }
 
 /** The fast form of privacyPartSql (see privatePagesFilterFragmentFast). */
@@ -320,7 +373,7 @@ function privacyPartFastSql(pageAlias: string): string {
  */
 export function isPrivatePageForCaller(page: { type?: string | null; frontmatter?: unknown; source_id?: string | null }): boolean {
   const access = currentCallerAccess();
-  if (!readersAllow(page.frontmatter, access.identity)) return true;
+  if (!callerReadersAllow(page.frontmatter)) return true;
   if (!access.hidePrivate || !isPrivacyPrivatePage(page)) return false;
   if (typeof page.frontmatter === 'object' && page.frontmatter !== null && (page.frontmatter as Record<string, unknown>).pinned_question != null) return true;
   return !(typeof page.source_id === 'string' && access.privateReadableSources.includes(page.source_id));
@@ -719,7 +772,8 @@ export async function accessRestrictionsPresent(engine: BrainEngine): Promise<bo
  * member-access restriction, where the hatches keep their pre-GBRA-218
  * meaning. With restrictions present the fragment still applies under a
  * hatch: caller-aware fragments relax only their privacy part, and the
- * member-access part (accessAllowedSql) stays mandatory.
+ * member-access part (accessAllowedSql) stays mandatory. A shared-agent audience the hatch does not relax (a
+ * channel: several entries, a group or a guest) always applies it, restrictions or not.
  */
 export async function resolveExcludePrivatePages(
   engine: BrainEngine,
@@ -727,5 +781,7 @@ export async function resolveExcludePrivatePages(
 ): Promise<boolean> {
   if (remote === false) return currentCallerAccess().applyRemoteReadPolicy;
   if (!await remotePrivacyRelaxed(engine)) return true;
+  const access = currentCallerAccess();
+  if (access.audience?.length && access.hidePrivate) return true;
   return accessRestrictionsPresent(engine);
 }

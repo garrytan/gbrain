@@ -22,7 +22,11 @@ export interface RemoteAgentAuthority {
   version: 1;
   kind: 'remote_agent';
   principal: { kind: 'oauth_client'; id: string };
-  grant: { scopes: string[]; sourceId: string; sourceCreatedAt: string; allowedTools: string[]; allowedSlugPrefixes: string[] };
+  /**
+   * GBRA-231: `actingFor` is the audience a shared agent asserted when it submitted the job. Every tool call the job
+   * makes reads as that audience, re-resolved against the client's live may_act_for, never as the client's own member.
+   */
+  grant: { scopes: string[]; sourceId: string; sourceCreatedAt: string; allowedTools: string[]; allowedSlugPrefixes: string[]; actingFor?: string[] };
   payloadHash: string;
 }
 export interface RemoteJobAuthority {
@@ -79,6 +83,7 @@ export function parseSubmissionAuthority(value: unknown): SubmissionAuthority | 
         typeof g.sourceId !== 'string' || !isValidSourceId(g.sourceId) || typeof g.sourceCreatedAt !== 'string' ||
         !Array.isArray(g.allowedTools) || !g.allowedTools.length || !g.allowedTools.every(v => typeof v === 'string' && v.length) ||
         !Array.isArray(g.allowedSlugPrefixes) || !g.allowedSlugPrefixes.every(v => typeof v === 'string') ||
+        (g.actingFor !== undefined && (!Array.isArray(g.actingFor) || !g.actingFor.length || g.actingFor.length > 50 || !g.actingFor.every(v => typeof v === 'string' && v.length))) ||
         typeof a.payloadHash !== 'string' || !/^[a-f0-9]{64}$/.test(a.payloadHash)) return null;
     return structuredClone(a) as unknown as RemoteAgentAuthority;
   }
@@ -255,10 +260,13 @@ export async function prepareRemoteAgent(ctx: OperationContext, data: Record<str
     'submit_agent needs an OAuth client holding the agent scope and bound to the one source named in source_id. Ask the brain host operator for such a client, or ask the user to run gbrain agent run on the brain host.');
   const [source] = await ctx.engine.executeRaw<Record<string, unknown>>('SELECT archived, created_at FROM sources WHERE id = $1', [data.source_id]);
   if (!source || source.archived !== false) deny('agent source must be active', `Source ${data.source_id} is archived or missing. Name an active source in source_id.`);
+  const { currentCallerAccess } = await import('../search/private-visibility.ts');
+  const actingFor = currentCallerAccess().audience;
   const authority: RemoteAgentAuthority = {
     version: 1, kind: 'remote_agent', principal: { kind: 'oauth_client', id: principal.id },
     grant: { scopes: [...ctx.auth!.scopes], sourceId: data.source_id, sourceCreatedAt: new Date(source.created_at as string).toISOString(),
-      allowedTools: [...data.allowed_tools as string[]], allowedSlugPrefixes: [...data.allowed_slug_prefixes as string[]] },
+      allowedTools: [...data.allowed_tools as string[]], allowedSlugPrefixes: [...data.allowed_slug_prefixes as string[]],
+      ...(actingFor?.length ? { actingFor: [...actingFor] } : {}) },
     payloadHash: authorityDigest(data),
   };
   if (!parseSubmissionAuthority(authority)) deny('invalid agent grant', 'Send allowed_tools as a non-empty list of tool names and allowed_slug_prefixes as a list of strings.');

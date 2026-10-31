@@ -144,6 +144,21 @@ A remote read of a page under a rule needs the caller's member to be on every ru
 
 On a git-backed source the same rules live in `.gbrain/access.yml`: `rule add|rm` commit it through `gbrain git commit-push`, a hand edit takes effect when you commit it and run `gbrain sync`, and a widening commit stays held until `gbrain access apply` approves it (recorded in `.gbrain/access.approved`). A source keeps the store it had when its first rule was created; `gbrain access rule migrate --source <id>` (preview, then `--yes`) moves the rules when you attach or remove a repo. Remote callers cannot write `.gbrain/`.
 
+**Shared agents: one agent, each person's view.** When one agent serves everyone (a Slack or Telegram bot), its harness code names whom each turn serves, and the agent reads only what all of them may read. List the people its credential may act for, then have the harness send the audience on every MCP request:
+
+```bash
+gbrain auth rescope --token team-bot --may-act-for alice-example,bob-example,group:team-a,guest
+gbrain access check --token team-bot --as alice-example,guest   # what that audience reads, and whether may_act_for covers it
+```
+
+```text
+X-Gbrain-On-Behalf-Of: alice-example                  # a DM with Alice (gbrain serve --http)
+X-Gbrain-On-Behalf-Of: alice-example, bob-example, guest   # a channel with a non-member in it
+"_meta": { "on_behalf_of": ["alice-example"] }          # request-level _meta, a sibling of arguments (stdio and HTTP)
+```
+
+A page is returned only when every audience entry may read it (`guest` reads no restricted page, `group:team-a` counts as one entry for a large channel), within the agent's own source grant. The agent's `--private-pages granted-sources` and the operator hatches relax `visibility: private` only when the audience is exactly one member; a channel never sees a private page. The audience is read on every call, so a DM followed by a channel turn gets each its own view. An entry outside `may_act_for` refuses `on_behalf_of_not_permitted` (the operator widens the list with the command it prints), a disabled or unknown member refuses `on_behalf_of_unknown_member`, and an audience inside tool arguments, where conversation text could set it, refuses `on_behalf_of_in_arguments`. Every response carries the applied view in `_meta.access`, and `whoami` returns it as `access.applied` for a model whose harness hides `_meta`. Writes and `submit_agent` jobs keep the audience they were made for and re-check it before they commit or call a tool. A local stdio server takes its list from `gbrain config set mcp.stdio_may_act_for <list>`. `*` permits any member, lets the harness learn which member and group ids exist from the refusals, and `gbrain doctor` warns about it (`access_may_act_for_wildcard`). Each assertion is appended to `~/.gbrain/audit/access-audience-YYYY-Www.jsonl`. Where each person runs their own agent, a credential bound to that person's member stays the simpler setup. Shared agents work the same on a repo-less brain: `may_act_for` and the audience are database and request state.
+
 For most company-brain installs (10+ teammates each with their own AI client), Model A is the right starting point. If you're running the fat-agent-serves-everyone pattern from the personal-brain tutorial, Model B is genuinely simpler. You can also mix: separate sources for the obviously-different ones (customer notes vs internal-only) AND a `partners/<slug>/` convention inside the shared source for per-person workspace.
 
 ### Per-person folder structure inside each source

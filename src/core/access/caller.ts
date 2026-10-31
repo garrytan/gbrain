@@ -15,14 +15,20 @@ import type { BrainEngine } from '../engine.ts';
 import type { AuthInfo } from '../ops/contract.ts';
 import { readRemotePolicyNow, remotePrivacyRelaxed, type CallerAccess, type FolderCoverage } from '../search/private-visibility.ts';
 import { ACCESS_ID_RE, identityFor, normalizePrincipal } from './principals.ts';
+import { catalogueError } from '../error-catalogue.ts';
+import { hostOnlyError } from '../ops/op-fix.ts';
+import { currentCallerAccess } from '../search/private-visibility.ts';
+import { GUEST, STDIO_MAY_ACT_FOR_KEY, mayActForCovers, singleMemberAudience, type AudiencePrincipal } from './audience.ts';
+import { parseMayActFor } from './members.ts';
 
 /** Config key binding a local stdio MCP server to one member. */
 export const STDIO_MEMBER_KEY = 'mcp.stdio_member';
 
-const MEMBER_SQL = (member: string) => `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+const MEMBERS_WHERE_SQL = (predicate: string) => `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
-  WHERE m.id = (${member}) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
+  WHERE ${predicate} AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
   GROUP BY m.id`;
+const MEMBER_SQL = (member: string) => MEMBERS_WHERE_SQL(`m.id = (${member})`);
 
 async function liveIdentity(engine: Pick<BrainEngine, 'executeRaw'>, memberSql: string, param: string): Promise<string[]> {
   try {
@@ -71,32 +77,186 @@ export async function stdioMemberIdentity(engine: BrainEngine): Promise<string[]
  * stamped, an invalid policy file). An unreadable rulebook satisfies nothing and covers everything (fail closed).
  */
 export async function folderAccessFor(engine: Pick<BrainEngine, 'executeRaw'>, identity: readonly string[]): Promise<{ satisfiedRuleIds: string[]; folderCoverage: FolderCoverage[] }> {
+  return folderAccessForAll(engine, [identity]);
+}
+
+/**
+ * GBRA-231: folderAccessFor for an audience. A rule is satisfied only when every identity meets its readers, so the
+ * satisfied set is the intersection of each entry's set (empty when any entry, a guest included, meets none).
+ */
+export async function folderAccessForAll(engine: Pick<BrainEngine, 'executeRaw'>, identities: readonly (readonly string[])[]): Promise<{ satisfiedRuleIds: string[]; folderCoverage: FolderCoverage[] }> {
   try {
-    const rules = identity.length
-      ? await engine.executeRaw<{ source_id: string; rule_id: string }>('SELECT source_id, rule_id FROM access_rules WHERE readable_by && $1::text[]', [[...identity]])
+    const union = [...new Set(identities.flat())];
+    const rules = union.length && identities.length && identities.every(id => id.length > 0)
+      ? await engine.executeRaw<{ source_id: string; rule_id: string; readable_by: string[] }>('SELECT source_id, rule_id, readable_by FROM access_rules WHERE readable_by && $1::text[]', [union])
       : [];
+    const satisfied = rules.filter(r => identities.every(id => (r.readable_by ?? []).some(reader => id.includes(reader))));
     const coverage = await engine.executeRaw<{ source_id: string; prefix: string }>('SELECT DISTINCT source_id, prefix FROM access_pending_coverage ORDER BY source_id, prefix');
-    return { satisfiedRuleIds: rules.map(r => `${r.source_id}:${r.rule_id}`).sort(), folderCoverage: coverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })) };
+    return { satisfiedRuleIds: satisfied.map(r => `${r.source_id}:${r.rule_id}`).sort(), folderCoverage: coverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })) };
   } catch {
     return { satisfiedRuleIds: [], folderCoverage: [{ source_id: '!unreadable', prefix: '' }] };
   }
 }
 
-/** The CallerAccess fields for a remote operation (identity, privacy relaxation and the GBRA-156 private-readable set). */
-export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | undefined, privateSources: readonly string[] | undefined, transport?: string): Promise<Partial<CallerAccess>> {
+/** Who asserts an audience: a verified credential (live call), a stored principal (a queued write or job), or a stdio server. */
+export interface AudienceCaller {
+  auth?: Pick<AuthInfo, 'member' | 'mayActFor' | 'clientId' | 'clientName'> & { principal?: { kind: string; id: string } };
+  principal?: { kind: string; id: string };
+  transport?: string;
+}
+
+/**
+ * The may_act_for list that bounds `caller`: the verifier's join on a live call (read on every request), else a live
+ * lookup from the stored principal (a revoked token or deleted client permits nothing), else for a stdio server
+ * config mcp.stdio_may_act_for. Unreadable or ill-formed values permit nothing.
+ */
+async function mayActForOf(engine: Pick<BrainEngine, 'executeRaw'>, caller: AudienceCaller): Promise<string[] | null> {
+  const auth = caller.auth;
+  if (auth?.member !== undefined) return auth.mayActFor ?? null;
+  const principal = auth?.principal ?? caller.principal;
+  try {
+    if (principal?.kind === 'legacy_token') {
+      const [row] = await engine.executeRaw<{ may_act_for: unknown }>('SELECT may_act_for FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL', [principal.id]);
+      return Array.isArray(row?.may_act_for) ? row!.may_act_for as string[] : null;
+    }
+    if (principal?.kind === 'oauth_client') {
+      const [row] = await engine.executeRaw<{ may_act_for: unknown }>('SELECT may_act_for FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL', [principal.id]);
+      return Array.isArray(row?.may_act_for) ? row!.may_act_for as string[] : null;
+    }
+    if (principal?.kind === 'local_stdio' || (!auth && !principal && caller.transport === 'stdio')) {
+      const [row] = await engine.executeRaw<{ value: string | null }>('SELECT value FROM config WHERE key = $1', [STDIO_MAY_ACT_FOR_KEY]);
+      const raw = row?.value?.trim();
+      return raw ? parseMayActFor(raw) : null;
+    }
+  } catch { /* unreadable: permits nothing */ }
+  return null;
+}
+
+function audienceNotPermitted(caller: AudienceCaller, audience: readonly AudiencePrincipal[], mayActFor: readonly string[] | null, missing: readonly string[]) {
+  const principal = caller.auth?.principal ?? caller.principal;
+  const list = [...new Set([...(mayActFor ?? []), ...audience])].sort().join(',');
+  const target = principal?.kind === 'legacy_token' ? { handle: `token ${caller.auth?.clientName ?? principal.id}`, argv: ['gbrain', 'auth', 'rescope', ...(caller.auth?.clientName ? ['--token', caller.auth.clientName] : ['--id', principal.id]), '--may-act-for', list] }
+    : principal?.kind === 'oauth_client' ? { handle: `OAuth client ${principal.id}`, argv: ['gbrain', 'auth', 'rescope', '--client', principal.id, '--may-act-for', list] }
+    : { handle: 'this stdio server', argv: ['gbrain', 'config', 'set', STDIO_MAY_ACT_FOR_KEY, list] };
+  return hostOnlyError({ remote: true, transport: caller.transport === 'stdio' || target.handle === 'this stdio server' ? 'stdio' : 'http' }, 'on_behalf_of_not_permitted',
+    `This connection (${target.handle}) may not act for ${missing.join(', ')}, so nothing was read.`,
+    target.argv,
+    'Lets this credential act for the whole audience. Widening whose notes a shared agent may read is the brain operator\'s decision, never the agent\'s.',
+    { suggestion: `A shared agent acts only for the people its credential lists in may_act_for. The brain operator decides whether to approve the audience ${audience.join(', ')} by running the command in fix on the brain host; until then, call without the audience.` });
+}
+
+function audienceUnknown(principal: string) {
+  const group = principal.startsWith('group:');
+  return catalogueError('on_behalf_of_unknown_member', `The audience names ${principal}, which is not ${group ? 'a group' : 'an enabled member'} on this brain, so nothing was read.`,
+    `Name enabled members and existing groups only; a person who is not a member joins the audience as guest. The brain operator checks the ids with gbrain access ${group ? 'group' : 'member'} list${group ? '' : ' --all'}.`);
+}
+
+/**
+ * GBRA-231: the identities of an asserted audience, in order: a member's live identity (itself and its groups), a
+ * group as itself, a guest as the empty identity. Every entry must be in the caller's live may_act_for
+ * (on_behalf_of_not_permitted, checked first so it never confirms whether an id exists) and name an enabled member
+ * or an existing group (on_behalf_of_unknown_member). Read on every call, so a revoked permission or a disabled
+ * member takes effect at once.
+ */
+export async function resolveAudienceIdentities(engine: Pick<BrainEngine, 'executeRaw'>, caller: AudienceCaller, audience: readonly AudiencePrincipal[]): Promise<string[][]> {
+  const mayActFor = await mayActForOf(engine, caller);
+  const missing = audience.filter(p => !mayActForCovers(mayActFor, p));
+  if (missing.length) throw audienceNotPermitted(caller, audience, mayActFor, missing);
+  const memberIds = audience.filter(p => p.startsWith('member:')).map(p => p.slice('member:'.length));
+  const groupIds = audience.filter(p => p.startsWith('group:')).map(p => p.slice('group:'.length));
+  const members = new Map<string, string[]>();
+  const groups = new Set<string>();
+  try {
+    if (memberIds.length) {
+      for (const row of await engine.executeRaw<{ id: string; groups: string[] }>(MEMBERS_WHERE_SQL('m.id = ANY($1::text[])'), [memberIds])) {
+        members.set(row.id, (row.groups ?? []).filter(g => normalizePrincipal(`group:${g}`) === `group:${g}`));
+      }
+    }
+    if (groupIds.length) for (const row of await engine.executeRaw<{ id: string }>('SELECT id FROM access_groups WHERE id = ANY($1::text[])', [groupIds])) groups.add(row.id);
+  } catch { /* unreadable: every entry reads as unknown below */ }
+  return audience.map(p => {
+    if (p === GUEST) return [];
+    if (p.startsWith('group:')) { if (!groups.has(p.slice(6))) throw audienceUnknown(p); return [p]; }
+    const id = p.slice('member:'.length);
+    const memberGroups = members.get(id);
+    if (!memberGroups) throw audienceUnknown(p);
+    return identityFor(id, memberGroups);
+  });
+}
+
+/**
+ * The CallerAccess fields for a remote operation (identity, privacy relaxation and the GBRA-156 private-readable set).
+ * GBRA-231: with an asserted `audience` the identities are the audience's (resolveAudienceIdentities, which refuses
+ * an entry outside may_act_for or naming no member), the source grant stays the caller's, and the caller's privacy
+ * relaxation (granted_sources, an operator hatch) applies only when the audience is exactly one member: a channel
+ * (several entries, a group or a guest) sees no visibility: private page.
+ */
+export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | undefined, privateSources: readonly string[] | undefined, transport?: string, audience?: readonly AudiencePrincipal[] | null): Promise<Partial<CallerAccess>> {
   const [relaxed, remotePolicy] = await Promise.all([remotePrivacyRelaxed(engine), readRemotePolicyNow(engine)]);
   const restricted = remotePolicy.restricted;
+  if (audience?.length) {
+    const identities = await resolveAudienceIdentities(engine, { auth, transport }, audience);
+    const single = singleMemberAudience(audience);
+    return {
+      identity: identities.length === 1 ? identities[0]! : [],
+      audience: [...audience],
+      audienceIdentities: identities.length > 1 ? identities : [],
+      ...(restricted ? await folderAccessForAll(engine, identities) : { satisfiedRuleIds: [], folderCoverage: [] }),
+      privateReadableSources: single ? privateSources ?? [] : [],
+      hidePrivate: single ? !relaxed : true,
+      applyRemoteReadPolicy: false,
+      restricted,
+      remotePolicy,
+    };
+  }
   const identity = !restricted ? []
     : !auth && transport === 'stdio' ? await stdioMemberIdentity(engine)
     : await memberIdentityFor(engine, auth);
   return {
     identity,
+    audience: null,
+    audienceIdentities: [],
     ...(restricted ? await folderAccessFor(engine, identity) : { satisfiedRuleIds: [], folderCoverage: [] }),
     privateReadableSources: privateSources ?? [],
     hidePrivate: !relaxed,
     applyRemoteReadPolicy: false,
     restricted,
     remotePolicy,
+  };
+}
+
+/**
+ * GBRA-231: the view a remote call was answered under, as `_meta.access` on every remote response and `access.applied`
+ * in whoami: the member and groups it read as (none for an audience of several entries), the asserted audience, the
+ * applied folder-rule revision of each source the credential is granted (every source for an unauthenticated stdio
+ * server; null on a brain with no restriction) and the privacy relaxation in force.
+ */
+export interface AppliedAccess {
+  member: string | null;
+  groups: string[];
+  audience: string[] | null;
+  policy_rev: Record<string, number> | null;
+  relaxation: 'none' | 'granted_sources' | 'operator';
+}
+
+export async function appliedAccessSummary(engine: Pick<BrainEngine, 'executeRaw'>, auth?: AuthInfo, sourceIds: readonly (string | undefined)[] = []): Promise<AppliedAccess> {
+  const access = currentCallerAccess();
+  const member = access.identity.find(p => p.startsWith('member:'))?.slice('member:'.length) ?? null;
+  let policyRev: Record<string, number> | null = null;
+  if (access.restricted) {
+    try {
+      const rows = await engine.executeRaw<{ source_id: string; rev: number | string | null }>(
+        'SELECT source_id, max(revision) FILTER (WHERE applied_at IS NOT NULL) AS rev FROM access_policy_revisions GROUP BY source_id ORDER BY source_id');
+      const visible = auth ? new Set([auth.sourceId, ...(auth.allowedSources ?? []), ...sourceIds].filter(Boolean)) : null;
+      policyRev = Object.fromEntries(rows.filter(r => r.rev !== null && (!visible || visible.has(r.source_id))).map(r => [r.source_id, Number(r.rev)]));
+    } catch { policyRev = null; }
+  }
+  return {
+    member,
+    groups: access.identity.filter(p => p.startsWith('group:')).map(p => p.slice('group:'.length)),
+    audience: access.audience ? [...access.audience] : null,
+    policy_rev: policyRev,
+    relaxation: !access.hidePrivate ? 'operator' : access.privateReadableSources.length ? 'granted_sources' : 'none',
   };
 }
 

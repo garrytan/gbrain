@@ -962,6 +962,19 @@ same on a repo-less brain and on a git-backed one.
 | <a id="access_policy_invalid"></a>`access_policy_invalid` | A source's committed `.gbrain/access.yml` (or a file given to `gbrain access rule import`) does not validate. The last applied rules stay in force and every prefix the file names reads as nobody for remote callers (the whole source when the file does not parse), so a typo never opens a folder. | `gbrain access rule list --source <id>` shows each problem with its line. Fix the file, commit it with `gbrain git commit-push`, and run `gbrain sync --source <id> --no-pull`. |
 | <a id="access_policy_pending"></a>`access_policy_pending` | A narrowing change to a source's folder rules is still being stamped onto its pages, so pages under the folders it touches read as nobody for remote callers until it finishes (other folders keep the last applied rules). Remote reads carry this as a notice: an empty answer there is not proof of no notes. | Wait and retry. If it stays pending the apply was interrupted: on the brain host run `gbrain access resume --source <id>` (database store) or `gbrain sync --source <id> --no-pull` (git store); `gbrain access rule status --source <id>` shows the pending folders. |
 
+## Shared-agent refusals
+
+A shared agent's harness names the audience a request serves in the `X-Gbrain-On-Behalf-Of` header or request-level
+`_meta.on_behalf_of`. These refusals come before any read, and none reveals page content. `may_act_for` and members
+live in the database, so they are the same on a repo-less brain.
+
+| Code | What happened | What to do |
+|---|---|---|
+| <a id="on_behalf_of_invalid_audience"></a>`on_behalf_of_invalid_audience` | The audience is empty, holds more than 50 entries, holds an entry that is not a member id, `group:<id>` or `guest`, or the header and `_meta.on_behalf_of` name different audiences (`_meta.on_behalf_of` must be a list of strings). Nothing was read. | Fix the harness code that sets it: 1-50 entries, the same in both channels when both are sent. Name a `group:<id>` for a channel larger than 50 people. |
+| <a id="on_behalf_of_unknown_member"></a>`on_behalf_of_unknown_member` | The audience names a member who is disabled, removed or was never added, or a group that does not exist. It is refused rather than read as a guest. Nothing was read. | Name enabled members and existing groups only (`gbrain access member list --all`, `gbrain access group list`); a person who is not a member joins the audience as `guest`. |
+| <a id="on_behalf_of_not_permitted"></a>`on_behalf_of_not_permitted` | The credential's `may_act_for` (for a stdio server, config `mcp.stdio_may_act_for`) does not list every audience entry. The message names the credential and the entries it may not act for. Nothing was read. | The brain operator decides: `fix` carries `gbrain auth rescope --token <name> --may-act-for <list>` (or `--client <id>`, or `gbrain config set mcp.stdio_may_act_for <list>`) with the full list to approve. The agent never runs it; until then, call without the audience. |
+| <a id="on_behalf_of_in_arguments"></a>`on_behalf_of_in_arguments` | A tool call carried `on_behalf_of` in its arguments (top level or an arguments-level `_meta`), where conversation text could set it. Nothing was read. | Remove it from the arguments. Harness code sends the audience as the header or request-level `_meta.on_behalf_of`; a stdio client that cannot set request-level `_meta` uses a credential bound to one member or config `mcp.stdio_member`. |
+
 ## Related
 
 - [Concurrent writes and durable receipts](concurrent-writes.md) — receipt states, retries, capacity limits
