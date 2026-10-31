@@ -4563,8 +4563,8 @@
         "idempotent": true,
         "name": "folder_access_rules",
         "sql": {
-          "length": 6524,
-          "sha256": "4547e2cfb314f2b61e8d8e141fd7596ffa6161cacafb54f050e2894ab0e4213c"
+          "length": 7012,
+          "sha256": "a74227a69b34046546f4a38b8f553012d67391f09da6d444a9c25aed747e8375"
         },
         "sqlFor": "absent",
         "transaction": "absent",
