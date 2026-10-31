@@ -1346,9 +1346,7 @@ export async function runPhaseExtractAtoms(
         continue;
       }
       const concurrent = managed && origin ? await concurrentAtomBatch(engine, managed, origin, err) : null; // #7923
-      if (concurrent === 'done') { duplicatesSkipped++; continue; }
-      if (concurrent === 'held') { heldFailed++; continue; }
-      if (concurrent === 'pending') { writesPending++; continue; }
+      if (concurrent) { if (concurrent === 'done') duplicatesSkipped++; else if (concurrent === 'held') heldFailed++; else writesPending++; continue; }
       const written = managed && origin ? await atomWriteFailure(engine, managed, origin, err) : null; // #7514: never a provider error
       if (written) { hardFailureCount++; failures.push({ source: originLabel, ...written }); continue; }
       // gbrain#4148: classify. Transient provider/infra errors (timeouts,
