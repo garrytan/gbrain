@@ -129,6 +129,14 @@
         "scripts/*-weights.metadata.json"
       ],
       "reason": "shard-weight metadata records GitHub Actions run ids and commit counts, never phone numbers"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        ".github/workflows/*.yml"
+      ],
+      "pattern": "pglite-snapshot-(?:default-)?\\$\\{\\{ runner\\.os \\}\\}-\\$\\{\\{ hashFiles\\('[\\w./*-]+'(?:, '[\\w./*-]+')*\\) \\}\\}$",
+      "reason": "GitHub Actions cache keys: the whole value is pglite-snapshot-[default-]${{ runner.os }}-${{ hashFiles('<path globs>') }}, never a credential"
     }
   ]
 }
