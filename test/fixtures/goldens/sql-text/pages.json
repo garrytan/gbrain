@@ -1764,6 +1764,28 @@
               "string",
               "string",
               "string",
+              "string",
+              "array<string>",
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE facts SET context = $1::text || CASE WHEN strpos(context, $2) > 0 THEN substring(context from strpos(context, $3)) ELSE '' END WHERE source_id = $4 AND source = ANY($5::text[]) AND btrim(split_part(context, $6, 1)) = $7 AND entity_slug IS NULL AND source_markdown_slug IS NULL AND row_num IS NULL AND expired_at IS NULL",
+            "textSha256": "5974f635d84bf62766d3a7faee0c7756ad336b758f84375b622015c7034535c8"
+          },
+          {
+            "event": "savepoint-release",
+            "lane": "tx>sp"
+          },
+          {
+            "event": "savepoint",
+            "lane": "tx>sp"
+          },
+          {
+            "lane": "tx>sp",
+            "params": [
+              "string",
+              "string",
+              "string",
               "string"
             ],
             "sql": "DELETE FROM page_aliases a WHERE a.source_id = $1 AND a.slug = $2 AND EXISTS (SELECT 1 FROM page_aliases o WHERE o.source_id = $3 AND o.slug = $4 AND o.alias_norm = a.alias_norm AND o.origin = a.origin)",
