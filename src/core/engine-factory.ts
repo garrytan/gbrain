@@ -33,10 +33,12 @@ export async function createEngine(config: EngineConfig): Promise<BrainEngine> {
   // per-caller wiring. #4480: registration is a STACK entry, deregistered on
   // engine.disconnect — a short-lived secondary engine (migrate target,
   // doctor probe) no longer permanently steals the ledger, and records never
-  // route to a closed engine. Concurrent multi-engine attribution remains
-  // top-of-stack best-effort; the sink is fail-open, so a not-yet-migrated
-  // engine never breaks a chat call.
-  const deregisterUsageSink = registerChatUsageSink(makeEngineChatUsageSink(engine));
+  // route to a closed engine. The sink is registered as THIS engine's, so a
+  // call scoped to the engine (every operation handler; engine-scope.ts) logs
+  // here even with other engines open; a call outside any scope logs to the
+  // top of the stack. The sink is fail-open, so a not-yet-migrated engine
+  // never breaks a chat call.
+  const deregisterUsageSink = registerChatUsageSink(makeEngineChatUsageSink(engine), engine);
   const origDisconnect = engine.disconnect.bind(engine);
   engine.disconnect = async (): Promise<void> => {
     deregisterUsageSink();

@@ -1459,7 +1459,7 @@ cross-subsystem duplicate entries, and byte caps for the entry docs and referenc
 | **R2** | `mock.module(...)` anywhere in the file | `*.serial.test.ts` |
 | **R3** | `new PGLiteEngine(` outside ~50 lines after a `beforeAll(` line | The canonical block (below) in `beforeAll(` |
 | **R4** | `new PGLiteEngine(` without `engine.disconnect(` in an `afterAll(` block | `afterAll(() => engine.disconnect())` |
-| **R5** | `configureGateway(` with no `resetGateway(`: the gateway leaks to later files | `afterAll(() => resetGateway())`; a child-script-only call takes `isolation-lint: R5-subprocess-only` |
+| **R5** | `configureGateway(` or `*ForEngine(` with no `resetGateway(`: it leaks to later files | `afterAll(() => resetGateway())`; a child-script-only call takes `isolation-lint: R5-subprocess-only` |
 | **R6** | `currentExitCode(` with no verdict reset outside an after-hook | `beforeEach(() => _resetCliExitVerdictForTests())` |
 | **R7** | `__unconfigureGatewayForTests(` or `_clearGatewayForTests(` with no `resetGateway(` in an after-hook: an inline restore does not survive a throw or a `-t` filter | `afterEach(() => resetGateway())` (#6514) |
 | **R9** | A process-global hook (see the script) with no undo in an after-hook | Its undo in `afterEach` |

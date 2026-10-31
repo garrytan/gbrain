@@ -2,9 +2,12 @@
  * Per-process cache of resolved query embeddings, used only by
  * `gateway.embedQuery` (document embeds never use it).
  *
- * The key is the recipe, the resolved model id, the base-URL override, the
- * effective dimensions and the exact string sent to the provider, so a hit is
- * the vector the provider would have been asked for. Map order is the LRU
+ * The key is the gateway state's cache scope (`process`, or one per engine
+ * configured with `configureGatewayForEngine`), the recipe, the resolved model
+ * id, the base-URL override, the effective dimensions and the exact string
+ * sent to the provider, so a hit is the vector the provider would have been
+ * asked for by that same brain: two engines in one process never share a
+ * vector, even for the same text under the same model. Map order is the LRU
  * order (512 entries, 10-minute TTL). Only resolved vectors are stored, never
  * an in-flight promise, so one caller's abort or failure cannot reach another
  * caller; reads and writes copy, so a caller mutating its vector cannot change
@@ -19,8 +22,8 @@ const TTL_MS = 10 * 60_000;
 const entries = new Map<string, { vector: Float32Array; expiresAt: number }>();
 let generation = 0;
 
-export function queryEmbedCacheKey(recipeId: string, modelId: string, baseUrl: string, dims: number, input: string): string {
-  return JSON.stringify([recipeId, modelId, baseUrl, dims, 'query', input]);
+export function queryEmbedCacheKey(recipeId: string, modelId: string, baseUrl: string, dims: number, input: string, scope = 'process'): string {
+  return JSON.stringify([scope, recipeId, modelId, baseUrl, dims, 'query', input]);
 }
 
 /** A copy of the live entry for `key` (refreshed as most recently used), or null. */

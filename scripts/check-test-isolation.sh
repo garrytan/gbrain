@@ -18,7 +18,7 @@
 #  R4: any file that creates `new PGLiteEngine(` must call `.disconnect(`
 #      inside an `afterAll(` block. Without disconnect, engines leak across
 #      file boundaries within a shard process.
-#  R5: a file whose code calls `configureGateway(` must also call
+#  R5: a file whose code calls `configureGateway(` or `configureGatewayForEngine(` must also call
 #      `resetGateway(` in its code (normally from afterAll/afterEach). The
 #      AI gateway is one object per process, so whatever a file configures
 #      (embedding model and width, keys, base URLs) is still in force for
@@ -148,7 +148,7 @@ fi
 ENV_MUTATION_PATTERN='process\.env\.[A-Za-z_][A-Za-z_0-9]*[[:space:]]*=[^=]|process\.env\[[^]]+\][[:space:]]*=[^=]|delete[[:space:]]+process\.env\.|delete[[:space:]]+process\.env\[|Object\.assign[[:space:]]*\([[:space:]]*process\.env|Reflect\.set[[:space:]]*\([[:space:]]*process\.env'
 MODULE_MOCK_PATTERN='mock\.module[[:space:]]*\('
 ENGINE_PATTERN='new PGLiteEngine[[:space:]]*\('
-GATEWAY_PATTERN='configureGateway[[:space:]]*\('
+GATEWAY_PATTERN='configureGateway(ForEngine)?[[:space:]]*\('
 GATEWAY_OPT_OUT='isolation-lint: R5-subprocess-only'
 # Comment removal for R5, line by line: a block comment that opens at the
 # start of a line (JSDoc included) is dropped through its closing */, and a
@@ -195,7 +195,7 @@ GATEWAY_CODE_SCAN='
     code = $0
     sub(/(^|[[:space:];,(){}])\/\/.*$/, "", code)
     if (code ~ /resetGateway[[:space:]]*\(/) restored = 1
-    if (code ~ /configureGateway[[:space:]]*\(/) calls = calls NR ":" $0 "\n"
+    if (code ~ /configureGateway(ForEngine)?[[:space:]]*\(/) calls = calls NR ":" $0 "\n"
   }
   END { if (calls != "" && !restored) printf "%s", calls }
 '
