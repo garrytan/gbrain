@@ -47,7 +47,13 @@ export const DOOR_WAIT_MS = 60_000;
 /** The CLI's wait for trust_apply over the owner socket: the door's own wait plus room for the owner's work before admission. */
 export const OWNER_APPLY_TIMEOUT_MS = DOOR_WAIT_MS + 30_000;
 
-interface ReleaseIntent { hold_id: number; last_seen_at: string; by: string; mode: 'append' | 'index-existing'; row_num?: number; cell_fields?: string }
+/**
+ * The journaled release. #7821: an index-existing release is journaled as `index-previewed` with the approved cell
+ * fields' digest, a mode a preparer built before the field preview (#7656) does not know, so that preparer refuses it
+ * with nothing written instead of indexing fields the owner never saw. `index-existing` is the mode such older CLIs
+ * wrote: with `cell_fields` (a build between the two fixes) it prepares as `index-previewed` does.
+ */
+interface ReleaseIntent { hold_id: number; last_seen_at: string; by: string; mode: 'append' | 'index-existing' | 'index-previewed'; row_num?: number; cell_fields?: string }
 
 const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
 
@@ -56,7 +62,7 @@ function decidedMeanwhile(holdId: number): Error {
 }
 
 /** Where a held fact publishes: its own fence row (index-existing) or a new row on its entity's page; null takes the database-only release. */
-function releaseTarget(hold: Pick<WriteGateHold, 'slug' | 'payload'>): { slug: string; mode: ReleaseIntent['mode']; rowNum?: number } | null {
+function releaseTarget(hold: Pick<WriteGateHold, 'slug' | 'payload'>): { slug: string; mode: 'append' | 'index-existing'; rowNum?: number } | null {
   const rowNum = hold.payload.row_num;
   if (typeof rowNum === 'number' && Number.isSafeInteger(rowNum) && hold.slug) return { slug: hold.slug, mode: 'index-existing', rowNum };
   const entity = str(hold.payload.entity_slug);
@@ -159,7 +165,7 @@ export async function submitTrustRelease(engine: BrainEngine, holdId: number, by
       binding = await claimWorktree(engine, hold.source_id, write.root, undefined, undefined, { automatic: true });
     }
   }
-  const intent: ReleaseIntent = { hold_id: hold.id, last_seen_at: hold.last_seen_at, by, mode: target.mode,
+  const intent: ReleaseIntent = { hold_id: hold.id, last_seen_at: hold.last_seen_at, by, mode: target.mode === 'index-existing' ? 'index-previewed' : 'append',
     ...(target.rowNum !== undefined ? { row_num: target.rowNum, cell_fields: cellFieldsDigest(cell) } : {}) };
   const row = await admitWrite(engine, {
     principal, operation: TRUST_RELEASE_OPERATION, sourceId: hold.source_id, sourceIncarnation: source.incarnation, slug: target.slug,
@@ -173,10 +179,17 @@ export async function submitTrustRelease(engine: BrainEngine, holdId: number, by
 /** The coordinator preparer for `trust_release` (persistence/service.ts). */
 export async function prepareTrustReleaseMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
   const intent = row.intent as unknown as ReleaseIntent | null;
+  const indexed = intent?.mode === 'index-existing' || intent?.mode === 'index-previewed';
+  const approvedUnpreviewed = intent?.mode === 'index-existing' && intent.cell_fields === undefined;
   if (row.operation !== TRUST_RELEASE_OPERATION || row.authority.remote || !intent || !Number.isSafeInteger(intent.hold_id) || typeof intent.last_seen_at !== 'string'
-    || typeof intent.by !== 'string' || (intent.mode !== 'append' && intent.mode !== 'index-existing') || (intent.mode === 'index-existing' && (!Number.isSafeInteger(intent.row_num) || typeof intent.cell_fields !== 'string'))) {
+    || typeof intent.by !== 'string' || (intent.mode !== 'append' && !indexed) || (indexed && !Number.isSafeInteger(intent.row_num))
+    || (indexed && !approvedUnpreviewed && typeof intent.cell_fields !== 'string')) {
     throw opError('confirmation_required', 'This release is not confirmed by the owner; nothing was changed.',
       'Run gbrain trust release on the brain host in an interactive terminal.');
+  }
+  if (approvedUnpreviewed) {
+    throw opError('preview_changed', `h${intent.hold_id} was approved before the release preview showed its fence row's fields; nothing was changed and the fact stays held.`,
+      `Run gbrain trust release h${intent.hold_id} again: it shows the row's fields and asks for a new confirmation.`);
   }
   const current = (hold: WriteGateHold | null): hold is WriteGateHold =>
     hold !== null && hold.kind === 'fact' && hold.status === 'held' && hold.last_seen_at === intent.last_seen_at && hold.source_id === row.source_id;
@@ -195,10 +208,10 @@ export async function prepareTrustReleaseMutation(engine: BrainEngine, row: Writ
   };
   const claim = { fact: fact.fact, kind: fact.kind ?? 'fact', visibility: fact.visibility ?? 'private', entity_slug: fact.entity_slug ?? null };
   await assertFactNotWithdrawn(engine, row.source_id, claim);
-  const append = await prepareFenceFactAppend(engine, row, config, snapshot, intent.mode === 'index-existing'
+  const append = await prepareFenceFactAppend(engine, row, config, snapshot, indexed
     ? { mode: 'index-existing', rowNum: intent.row_num!, fact, pendingTier: 'user_confirmed' }
     : { fact, pendingTier: 'user_confirmed' });
-  if (intent.mode === 'index-existing') {
+  if (indexed) {
     const cell = await cellAt(engine, snapshot.page, intent.row_num!);
     if (cell && ((cell.context ?? null) !== (str(p.context) ?? null) || (cell.source ?? FENCE_SOURCE_DEFAULT) !== (str(p.source) ?? FENCE_SOURCE_DEFAULT))) {
       throw opError('fence_row_changed', `Fence row ${intent.row_num} of ${row.slug} was edited after h${hold.id} was held (held_row_edited); nothing was changed and the fact stays held.`,
@@ -218,7 +231,7 @@ export async function prepareTrustReleaseMutation(engine: BrainEngine, row: Writ
   return {
     ...(page ?? {}), observedRevision: snapshot.revision,
     trust: { tier: 'user_confirmed', origin: { channel: 'trust_release', ...(hold.request_id ? { request_id: hold.request_id } : {}),
-      ...(intent.mode === 'index-existing' ? { fields_previewed: true as const } : {}) } },
+      ...(indexed ? { fields_previewed: true as const } : {}) } },
     validate: async tx => { await lockHold(tx); await assertFactNotWithdrawn(tx, row.source_id, claim); await page?.validate?.(tx); },
     apply: tx => withTrustPromotion(tx, 'user_confirmed', async () => {
       if (!(await releaseWriteGateHold(tx, intent.hold_id, intent.by))) throw decidedMeanwhile(intent.hold_id);
