@@ -72,7 +72,7 @@ import {
   redactToken,
   validateToken,
 } from '../mcp-registration.ts';
-import { carryLegacyGrant, mintLegacyToken, readActiveTokenPermissions, revokeLegacyTokenById, type MintedLegacyToken } from '../token-mint.ts';
+import { carryLegacyGrant, mintLegacyToken, readActiveTokenPermissions, readActiveTokenPrivatePages, revokeLegacyTokenById, uncarriedPrivatePagesNote, type MintedLegacyToken } from '../token-mint.ts';
 import { generateToken } from '../utils.ts';
 import { readCredentials, writeCredentials, type HarnessCredentials } from '../harness/credentials.ts';
 import { installSharedSkillsConnection, type SharedSkillsConnectionOptions } from '../harness/shared-skills.ts';
@@ -482,19 +482,20 @@ export async function mintHarnessToken(opts: Parameters<NonNullable<HarnessDeps[
       }
     }
     const prior = opts.carry && await readActiveTokenPermissions(engine, opts.carry.fromId);
+    const uncarried = opts.carry && prior !== undefined && await readActiveTokenPrivatePages(engine, opts.carry.fromId) === 'granted_sources' ? { uncarriedPrivatePages: 'granted_sources' as const } : {};
     if (prior !== undefined && opts.carry && opts.allowedOperations) {
       const carried = carryLegacyGrant(prior, { ...opts.carry, allowedOperations: opts.allowedOperations,
         ...(sourceGrant && sourceGrant.length > 0 ? { sourceGrant } : {}) });
       const minted = await mintLegacyToken(engine, { name: opts.name, scopes: opts.scopes, ...carried });
-      return { ...minted, withheldOperations: carried.withheldOperations };
+      return { ...minted, withheldOperations: carried.withheldOperations, ...uncarried };
     }
-    return await mintLegacyToken(engine, {
+    return { ...await mintLegacyToken(engine, {
       name: opts.name,
       takesHolders: ['world'],
       scopes: opts.scopes,
       ...(opts.allowedOperations !== undefined ? { allowedOperations: opts.allowedOperations } : {}),
       ...(sourceGrant && sourceGrant.length > 0 ? { sourceGrant } : {}),
-    });
+    }), ...uncarried };
   } finally {
     await engine.disconnect();
   }
@@ -1285,6 +1286,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       }
       tokens.set(host, minted.token);
       if (minted.withheldOperations?.length) d.log(withheldOperationsNote(minted.name, minted.withheldOperations.length));
+      if (minted.uncarriedPrivatePages) d.log(uncarriedPrivatePagesNote(minted.name, minted.uncarriedPrivatePages));
       receipt.harness_tokens![host] = { id: minted.id, name: minted.name, minted: true };
       if (host === hosts[0]) {
         receipt.token.id = minted.id;
