@@ -116,7 +116,7 @@ describe('folder access rules, git store', () => {
     const applied = await cli(engine, ['apply', '--source', SRC, '--yes', '--expect', preview.plan_hash]);
     expect({ outcome: applied.git.outcome, path: applied.git.path }).toEqual({ outcome: 'committed_local', path: '.gbrain/access.approved' });
     expect(git(root, 'log', '-1', '--format=%s')).toContain('approve folder rules');
-    expect(readCommittedPolicy(root).approved).toContain('id: team');
+    expect((await readCommittedPolicy(root)).approved).toContain('id: team');
     expect((await policyStatus(engine, SRC)).rules.map(r => r.id)).toEqual(['team']);
     expect((await stamps(engine))['partners/alice-example/plan']).toEqual([`${SRC}:team`]);
   }, 120_000);
@@ -157,7 +157,7 @@ describe('folder access rules, git store', () => {
   test('gbrain access rule add on a git source commits access.yml through the door and applies it at once', async () => {
     const r = await cli(engine, ['rule', 'add', '--source', SRC, '--prefix', 'partners/alice-example/', '--readers', 'alice-example', '--id', 'alice', '--yes']);
     expect({ store: r.store, state: r.state, outcome: r.git.outcome, path: r.git.path }).toEqual({ store: 'git', state: 'applied', outcome: 'committed_local', path: POLICY_FILE });
-    expect(readCommittedPolicy(root).yml).toContain('id: alice');
+    expect((await readCommittedPolicy(root)).yml).toContain('id: alice');
     expect(git(root, 'status', '--porcelain')).toBe('');
     expect((await stamps(engine))['partners/alice-example/plan']).toEqual([`${SRC}:alice`, `${SRC}:team`]);
   }, 120_000);
@@ -169,7 +169,7 @@ describe('folder access rules, git store', () => {
         expect(() => commitPolicyFile(root, POLICY_FILE, () => 'version: 1\nrules: []\n', 'should not land')).toThrow(expect.objectContaining({ code: 'commit_lock_busy' }));
       });
     } finally { lock.release(); }
-    expect(readCommittedPolicy(root).yml).toContain('id: alice');
+    expect((await readCommittedPolicy(root)).yml).toContain('id: alice');
     expect(git(root, 'status', '--porcelain')).toBe('');
   }, 60_000);
 
@@ -201,7 +201,7 @@ describe('folder access rules, git store', () => {
     expect((await policyStatus(engine, SRC)).rules).toEqual(rules);
     const toGit = await cli(engine, ['rule', 'migrate', '--source', SRC, '--yes']);
     expect({ to: toGit.to, phase: toGit.phase, sync: toGit.receipts.sync }).toEqual({ to: 'git', phase: 'switched', sync: 'unchanged' });
-    expect(readCommittedPolicy(root).yml).toContain('id: alice');
+    expect((await readCommittedPolicy(root)).yml).toContain('id: alice');
     expect((await policyStatus(engine, SRC)).rules).toEqual(rules);
   }, 120_000);
 

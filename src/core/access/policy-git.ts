@@ -21,6 +21,8 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readSyncAnchor } from '../sync-anchor.ts';
+import { gitChildEnv } from '../git-env.ts';
+import { gitAsync } from '../sync-git.ts';
 import { acquireCommitLock, checkoutRoot, commitAndPush, COMMIT_LOCK_ENV, type CommitPushResult } from '../git/commit-push.ts';
 import { parsePolicyYaml, rulebookDigest, serializePolicyYaml, type FolderRule, type PolicyProblem } from './folder-rules.ts';
 import { clearPolicyInvalid, getRevision, listRevisions, markPolicyInvalid, proposeRevision, readAccessStore, writeAccessStore, type ProposalResult, type RestampProgress } from './policy.ts';
@@ -39,21 +41,28 @@ export async function sourcePolicyRoot(engine: BrainEngine, sourceId: string): P
 
 /** Whether `root` is inside a git work tree. */
 export function isGitWorkTree(root: string): boolean {
-  const r = spawnSync('git', ['-C', root, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8' });
+  const r = spawnSync('git', ['-C', root, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8', env: gitChildEnv() });
   return r.status === 0 && r.stdout.trim() === 'true';
 }
 
 function gitShow(root: string, rev: string, path: string): string | null {
-  const r = spawnSync('git', ['show', `${rev}:./${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
+  const r = spawnSync('git', ['show', `${rev}:./${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, env: gitChildEnv() });
   return r.status === 0 ? r.stdout : null;
+}
+
+/** isGitWorkTree without blocking the event loop, for sync (a resident runs it in-process on a commit). */
+async function isGitWorkTreeAsync(root: string): Promise<boolean> {
+  return gitAsync(root, ['rev-parse', '--is-inside-work-tree'], { silenceStderr: true }).then(out => out === 'true', () => false);
 }
 
 export interface CommittedPolicy { yml: string | null; approved: string | null; commit: string | null }
 
 /** The policy files as committed at `rev` (never the working tree), and the last commit that touched access.yml. */
-export function readCommittedPolicy(root: string, rev = 'HEAD'): CommittedPolicy {
-  const log = spawnSync('git', ['log', '-1', '--format=%h %an', rev, '--', POLICY_FILE], { cwd: root, encoding: 'utf8' });
-  return { yml: gitShow(root, rev, POLICY_FILE), approved: gitShow(root, rev, APPROVED_FILE), commit: log.status === 0 && log.stdout.trim() ? log.stdout.trim() : null };
+export async function readCommittedPolicy(root: string, rev = 'HEAD'): Promise<CommittedPolicy> {
+  const show = (path: string) => gitAsync(root, ['show', `${rev}:./${path}`], { silenceStderr: true, raw: true }).catch(() => null);
+  const [yml, approved, log] = await Promise.all([show(POLICY_FILE), show(APPROVED_FILE),
+    gitAsync(root, ['log', '-1', '--format=%h %an', rev, '--', POLICY_FILE], { silenceStderr: true }).catch(() => '')]);
+  return { yml, approved, commit: log || null };
 }
 
 export interface GitPolicySyncResult {
@@ -71,7 +80,7 @@ export interface GitPolicySyncResult {
 export async function syncGitPolicy(engine: BrainEngine, sourceId: string, root: string, opts: { rev?: string; onProgress?: (p: RestampProgress) => void } = {}): Promise<GitPolicySyncResult> {
   const store = await readAccessStore(engine, sourceId);
   if (store === 'database') return { source_id: sourceId, state: 'skipped', reason: 'database_store' };
-  const files = readCommittedPolicy(root, opts.rev ?? 'HEAD');
+  const files = await readCommittedPolicy(root, opts.rev ?? 'HEAD');
   if (files.yml === null && files.approved === null && store !== 'git') return { source_id: sourceId, state: 'skipped', reason: 'no_policy' };
   let approvedFile: GitPolicySyncResult['approved_file'] = 'absent';
   if (files.approved !== null) {
@@ -170,7 +179,7 @@ export async function writeApprovedFile(root: string, rules: FolderRule[], messa
 
 /** Sync's hook: apply the committed policy of a source when its store is git (or unset and the commit holds a policy file). */
 export async function syncAccessPolicyAt(engine: BrainEngine, sourceId: string, root: string | null | undefined, rev = 'HEAD', log?: (line: string) => void): Promise<GitPolicySyncResult | null> {
-  if (!root || !existsSync(root) || !isGitWorkTree(root)) return null;
+  if (!root || !existsSync(root) || !await isGitWorkTreeAsync(root)) return null;
   const result = await syncGitPolicy(engine, sourceId, root, { rev });
   if (result.state === 'skipped') return result;
   if (result.state === 'invalid') {

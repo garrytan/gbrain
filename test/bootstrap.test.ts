@@ -163,6 +163,9 @@ describe('PGLiteEngine#applyForwardReferenceBootstrap', () => {
         -- The v230 trust generation trigger's WHEN reads pages.source_id, slug and
         -- deleted_at; a pre-v0.18 brain predates it (v230 recreates it).
         DROP TRIGGER IF EXISTS trust_generation_update ON pages;
+        -- The v282 folder-rule stamp trigger fires on UPDATE OF source_id; a
+        -- pre-v0.18 brain predates it too (v282 recreates it).
+        DROP TRIGGER IF EXISTS pages_access_stamp_folder_rules ON pages;
         ALTER TABLE pages DROP COLUMN IF EXISTS source_id;
         DROP TABLE IF EXISTS sources CASCADE;
       `);
@@ -220,6 +223,9 @@ describe('PGLiteEngine#applyForwardReferenceBootstrap', () => {
         -- The v230 trust generation trigger's WHEN reads pages.source_id, slug and
         -- deleted_at; a pre-v0.18 brain predates it (v230 recreates it).
         DROP TRIGGER IF EXISTS trust_generation_update ON pages;
+        -- The v282 folder-rule stamp trigger fires on UPDATE OF source_id; a
+        -- pre-v0.18 brain predates it too (v282 recreates it).
+        DROP TRIGGER IF EXISTS pages_access_stamp_folder_rules ON pages;
         ALTER TABLE pages DROP COLUMN IF EXISTS source_id;
         DROP TABLE IF EXISTS sources CASCADE;
         ALTER TABLE links DROP CONSTRAINT IF EXISTS links_resolution_type_check;

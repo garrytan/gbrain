@@ -94,7 +94,7 @@ export function folderRulesAllowedSql(alias: string, satisfied: readonly string[
  * everything. Outside any caller record the prefixes are read live, so a page under a pending prefix stays hidden.
  */
 function coverageSql(alias: string): string {
-  if (!callerAccessStore.getStore()) return ` AND NOT gbrain_access_pending_covers(${alias}.source_id, ${alias}.slug)`;
+  if (!callerAccessStore.getStore()) return ` AND NOT EXISTS (SELECT 1 FROM access_pending_coverage pc WHERE pc.source_id = ${alias}.source_id AND starts_with(${alias}.slug, pc.prefix))`;
   const coverage = currentCallerAccess().folderCoverage;
   if (!coverage.length) return '';
   return coverage.map(c => !isValidSourceId(c.source_id) || (c.prefix !== '' && !validPrefix(c.prefix)) ? ' AND FALSE'
