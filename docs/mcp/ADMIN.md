@@ -343,6 +343,61 @@ range and every grant change is refused until it is fixed. Add the
 example `gbrain auth rescope-client CLIENT_ID --token-ttl 7776000 --dry-run --json`,
 then apply the same flags without `--dry-run`.
 
+## One token, several people
+
+A credential has no per-person scope until per-member keys arrive
+(gbrain#7812). An agent that several people talk to (a Slack, Telegram or
+Discord bot, a shared OpenClaw or Hermes, Claude Code with a chat-channel
+plugin) reads everything its one grant reaches, so it can answer one person
+with pages only another person may read. In a measured multi-user pilot with
+one unscoped bot token, telling the agent that gbrain was live lowered pass
+rates by 9 to 21 points, and every added cross-scope failure cited a channel
+page the bot grant returned.
+
+gbrain warns with `unscoped_multi_user_token` (a safety notice) when an
+install route sets up such access:
+
+| Route | Warns when |
+|---|---|
+| `gbrain setup openclaw`, `setup hermes`, `setup grok-bot`, `setup muse` | always (a bot harness) |
+| `gbrain setup claude-code` | a chat-channel plugin (telegram, discord, slack, imessage, whatsapp, signal) is enabled |
+| `gbrain mcp grant`, `gbrain connect` | the harness is a bot harness, or the grant reads chat from 2+ channels |
+| `gbrain skillpack scaffold` | the target is OpenClaw's or Hermes's own workspace |
+| `gbrain auth create`, `gbrain auth register-client` | the new credential reads chat from 2+ channels |
+
+Chat pages are the slack, DM, iMessage, Discord, Telegram, WhatsApp, Signal,
+SMS, chat and channel page types that a remote caller can see. A channel is
+the page's `channel`, `chat` or `conversation` frontmatter, a leading
+`#name` in its title, or else its source; every DM page counts as its own
+channel. The warning goes to stderr (an `[AGENT]` block when stdout is not a
+terminal) and into the `notices` or `warnings` list of a `--json` result.
+It never changes a grant or an exit code.
+
+`gbrain doctor --only unscoped_multi_user_token` runs the same detection over
+every active token and OAuth client, and over the local agents setup wired: it
+warns when one of them reads chat from 2+ channels, and reports a wired bot
+harness with no such chat as information. A remote `run_doctor` caller gets a
+count, never credential names.
+
+Fix it with today's commands:
+
+- When the channels sit in different sources, grant one audience's source
+  only: `gbrain auth rescope --token <name> --sources <source>` (or
+  `--client <id>`), or for a new harness grant
+  `gbrain mcp grant <name> --source <source> --federated-read <source>`. Keep
+  a channel's source out of unscoped reads with `gbrain sources unfederate <id>`.
+- For a local stdio agent, set `GBRAIN_SOURCE=<source>` in its MCP server
+  environment.
+- When the chat sits in one source, a source grant cannot separate it: mark
+  the pages nobody else may see `visibility: private` (hidden from every
+  remote caller while `search.remote_private_pages` stays off).
+- Don't rely on `source_ids`: it narrows only the call that sends it, so
+  recall, list_pages or any read without it reads the token's full grant.
+  The fix is a member-bound or rescoped token (`gbrain auth rescope …`).
+
+Per-member keys (`gbrain access member add <id>`, then
+`gbrain auth create <name> --member <id>`) arrive with gbrain#7812.
+
 ## Dashboard API keys
 
 **Say to your agent:** *"Make a read-only API key for my notes app."* The

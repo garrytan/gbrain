@@ -93,9 +93,11 @@ const DELEGATED_MODULES: Record<string, string[]> = {
  * direct-pool-profile.ts reads other commands'
  * argv to pick the process's pool profile (`sync --watch`, `serve --access`):
  * serve imports it for the read-only check, and its `--watch` made
- * `gbrain serve --watch` pass validation.
+ * `gbrain serve --watch` pass validation. grants/shared-exposure.ts (GST-363)
+ * names other commands' flags (auth rescope, mcp grant, doctor) in warning
+ * text that setup, mcp, connect, skillpack and auth print.
  */
-const EXCLUDED_MODULES = ['thin-client-routing.ts', 'persistence-delegate.ts', 'job-isolation.ts', 'strict-args.ts', 'direct-pool-profile.ts', 'flag-equals.ts'];
+const EXCLUDED_MODULES = ['thin-client-routing.ts', 'persistence-delegate.ts', 'job-isolation.ts', 'strict-args.ts', 'direct-pool-profile.ts', 'flag-equals.ts', 'shared-exposure.ts'];
 
 function isExcludedModule(p: string): boolean {
   // Basename comparison is path-separator agnostic: on Windows p ends in

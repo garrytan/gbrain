@@ -29,11 +29,15 @@ import { SkillpackManifestError } from '../../core/skillpack/manifest-v1.ts';
 import { VERSION } from '../../version.ts';
 import { findGbrainOrDie, resolveWorkspace } from './shared.ts';
 import { consentGate } from '../../core/consent-cli.ts';
+import { botHarnessForWorkspace, sharedTokenNotice, writeExposureNotice } from '../../core/grants/shared-exposure.ts';
 
 export async function cmdScaffold(args: string[]): Promise<void> {
   // Harness lane (cathedral-7): `--harness <h>` installs a persona-curated
   // set into a harness's native skills dir instead of a workspace.
   if (args.some(a => a === '--harness' || a.startsWith('--harness='))) {
+    const i = args.indexOf('--harness');
+    const harness = i >= 0 ? args[i + 1] : args.find(a => a.startsWith('--harness='))!.slice('--harness='.length);
+    if (!args.includes('--help') && !args.includes('-h')) writeExposureNotice(sharedTokenNotice({ kind: 'stdio', harness: harness ?? '' }, { harness }));
     const { cmdScaffoldHarness } = await import('./harness.ts');
     await cmdScaffoldHarness(args);
     return;
@@ -89,6 +93,8 @@ export async function cmdScaffold(args: string[]): Promise<void> {
   //   3. Bare kebab AND matches a bundled-skill slug   → bundled (v0.36 path)
   //   4. Bare kebab AND NOT a bundled-skill slug       → third-party via registry
   const targetWorkspace = resolveWorkspace({ workspace });
+  const botHarness = botHarnessForWorkspace(targetWorkspace);
+  if (botHarness) writeExposureNotice(sharedTokenNotice({ kind: 'stdio', harness: botHarness }, { harness: botHarness }));
 
   const isThirdPartyShape = !all && name !== null && /[\/:]|\.(tgz|tar\.gz)$/.test(name);
 

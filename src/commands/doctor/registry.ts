@@ -92,6 +92,7 @@ import { contentDriftSweepEntry } from './checks/content-drift-sweep.ts';
 import { connectorAccountMismatchEntry } from './checks/connector-account-mismatch.ts';
 import { legacyJobAuthorityEntry } from './checks/legacy-job-authority.ts';
 import { legacyTokenGrantsEntry } from './checks/legacy-token-grants.ts';
+import { unscopedMultiUserTokenEntry } from './checks/unscoped-multi-user-token.ts';
 import { grantNewOpsEntry } from './checks/grant-new-ops.ts';
 import { linksExtractionLagEntry, syncFreshnessEntry, searchModeEntry } from './checks/sync-search.ts';
 import { persistenceConsumersEntry, serveBuildDriftEntry } from './checks/persistence-consumers.ts';
@@ -255,6 +256,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   connectorAccountMismatchEntry,
   legacyJobAuthorityEntry,
   legacyTokenGrantsEntry,
+  unscopedMultiUserTokenEntry,
   grantNewOpsEntry,
   indexAuditEntry,
   imageAssetsEntry,
