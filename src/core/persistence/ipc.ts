@@ -353,13 +353,16 @@ function remoteOperationError(value: unknown): OperationError {
   if (isWriteReceipt(value.write_request)) error.writeRequest = publicWriteReceipt(value.write_request);
   if (isWriteRequestId(value.request_id)) error.requestId = value.request_id;
   if (isWriteErrorCode(value.write_error)) error.writeError = value.write_error;
+  if (typeof value.why === 'string') error.why = value.why;
+  if (typeof value.reason === 'string') error.reason = value.reason;
+  if (value.contract_version === 1) error.contractVersion = 1;
   const fix = wireAction(value.fix);
   if (fix) error.fix = fix;
   return error;
 }
 
 /**
- * #7707: the owner sends a refusal's `fix` already rendered (`toJSON`), or as the stored Action when it never loaded the renderer.
+ * #7707, #8130: the owner sends a refusal's `fix` already rendered (`toJSON`), or as the stored Action when it never loaded the renderer.
  * Back to an Action, so a delegated refusal prints the same structured fix as the direct path; a value of any other shape is dropped.
  */
 function wireAction(value: unknown): Action | undefined {

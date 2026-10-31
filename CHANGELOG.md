@@ -19,7 +19,7 @@ Writer status for a `recovery_required` refresh now reads the checkout HEAD: at 
 ### Itemized changes
 
 - `src/core/persistence/worktree-refresh.ts`: the owner scan checks member progress before it takes the refresh lock, caches a syncing orphan it could not complete because of its HEAD, fails one row (not the scan) on a lock error, and prunes its caches each scan (#7712, #7728, #7730, #7731); `refreshHolderReport` reads HEAD (#7712, #7731); `next` is host-scoped and shell-quoted (#7731).
-- `src/core/persistence/ipc.ts`: a refusal's `fix` survives the owner socket (#7707).
+- `src/core/persistence/ipc.ts`: a refusal's `fix`, `why`, `reason` and `contract_version` survive the owner socket (#7707, #8130).
 - Tests: the #7679 state matrix gains the `--abandon` action for every kind (#7718-#7727, #7729), plus red tests for the owner scan's syncing filter and test 7's adoption guard (#7708) and the unreadable-lock branch (#7728).
 
 ## [0.60.529.0] - 2026-10-31

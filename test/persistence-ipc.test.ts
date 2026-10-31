@@ -222,7 +222,7 @@ describe('dedicated persistence IPC', () => {
     await expect(startPersistenceIpcServer(path, { brainId: BRAIN, dispatch: async () => ({}) })).rejects.toThrow('not a socket');
     expect(readFileSync(path, 'utf8')).toBe('keep');
   });
-  test('#7707: a refusal\'s structured fix survives the owner socket, so a delegated sources refresh prints the direct path\'s v1 fix', async () => {
+  test('#7707, #8130: a refusal\'s structured fix, why and reason survive the owner socket, so a delegated sources refresh prints the direct path\'s v1 fix', async () => {
     // Value: protects=a refusal delegated to a resident owner keeps its structured fix (argv, actor, ask_user) instead of falling back to the
     // prose suggestion; fails_when=remoteOperationError drops `fix`; why_new=test 4e reads the direct path only; seam=an owner whose
     // administration throws the refusal; no_claim=a real resident refresh.
@@ -232,6 +232,9 @@ describe('dedicated persistence IPC', () => {
       error.fix = { argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', '/tmp/brain-example', '--json'], consent: [], actor: 'user',
         ask_user: true, requires_exclusive: false, why: 'HEAD has a local commit the upstream lacks.', user_message: 'Push the local commit of source-a?',
         docs: 'docs/guides/write-refusals.md#refresh_diverged' };
+      error.why = 'The checkout holds a commit the upstream lacks.';
+      error.reason = 'local_commits';
+      error.contractVersion = 1;
       return error;
     };
     const result = await startPersistenceIpcServer(path, { brainId: BRAIN, dispatch: async () => ({}), administer: async () => { throw refusal(); } });
@@ -249,5 +252,6 @@ describe('dedicated persistence IPC', () => {
     const direct = printed(refusal()).fix;
     expect(direct).toMatchObject({ argv: refusal().fix!.argv, next: 'ask_user', actor: 'user' });
     expect(printed(delegated as OperationError).fix).toEqual(direct);
+    expect((delegated as OperationError).toJSON()).toMatchObject({ why: 'The checkout holds a commit the upstream lacks.', reason: 'local_commits', contract_version: 1 });
   });
 });
