@@ -52,3 +52,7 @@ fb1cee45c18357eb43d537715b2a8dc43fafc70f:test/google-api-access-cmd-7073.serial.
 # #7483 (GBRA-190): the dummy header marker in test/connectors-header-redaction-7483.test.ts (commit e670a328) read as
 # generic-api-key; the tree now names it MARKER. This history-only fingerprint is not a secret.
 e670a32809a7038c9a63d9dfbf4480f8ab545db2:test/connectors-header-redaction-7483.test.ts:generic-api-key:25
+# #8107 pregate cache-key allowlist (GBRA-218): synthetic ghp_-shaped probes in test/pregate-allowlist-cache-keys.test.ts (commit eb4ffd05)
+# read as github-pat; the tree now builds them at runtime. These history-only fingerprints are not secrets.
+eb4ffd053fa032905b93b4e8e7a66e8ae89a721c:test/pregate-allowlist-cache-keys.test.ts:github-pat:41
+eb4ffd053fa032905b93b4e8e7a66e8ae89a721c:test/pregate-allowlist-cache-keys.test.ts:github-pat:42
