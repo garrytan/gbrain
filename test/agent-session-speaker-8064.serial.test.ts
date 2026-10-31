@@ -154,8 +154,8 @@ describe('hook banking with a session speaker', () => {
 
 describe('#8080 speaker notes: first record wins, a differing speaker is reported', () => {
   const ws = () => { const w = join(tmp, 'ws'); mkdirSync(w, { recursive: true }); return w; };
-  const end = (env: Record<string, string>, ancestry: AncestorProcess[], sid = 's-agent') => {
-    const t = writeTurns([{ role: 'user', text: BRIEF }, { role: 'assistant', text: 'ok' }]);
+  const end = (env: Record<string, string>, ancestry: AncestorProcess[], sid = 's-agent', more: { role: 'user' | 'assistant'; text: string }[] = []) => {
+    const t = writeTurns([{ role: 'user', text: BRIEF }, { role: 'assistant', text: 'ok' }, ...more]);
     return runHook(['session-end'], { ...io, transcriptRoot: t.root, env, processAncestry: () => ancestry,
       stdin: JSON.stringify({ session_id: sid, transcript_path: t.path, cwd: ws() }) });
   };
@@ -179,12 +179,16 @@ describe('#8080 speaker notes: first record wins, a differing speaker is reporte
     expect(readSpeakerSidecar(corpus(), 's-agent')?.principal).toBe('fleet-worker');
   });
 
-  test('an agent continuing a session the owner already banked notes speaker_mismatch', async () => {
+  test('an agent continuing a session the owner already banked banks nothing and notes speaker_mismatch', async () => {
     writeConfig();
     await end({}, [ORCH]);
     expect(readSpeakerSidecar(corpus(), 's-agent')).toBeNull();
-    await end({}, [WORKER, SHELL, ORCH]);
+    const banked = files().filter((f) => f.startsWith('s-agent') && f.endsWith('.txt'));
+    expect(banked.length).toBeGreaterThan(0);
+    await end({}, [WORKER, SHELL, ORCH], 's-agent', [{ role: 'user', text: 'continue the sweep' }, { role: 'assistant', text: 'done' }]);
     expect(await last()).toEqual(['degraded', 'speaker_mismatch']);
+    expect(readSpeakerSidecar(corpus(), 's-agent')).toBeNull();
+    expect(files().filter((f) => f.startsWith('s-agent') && f.endsWith('.txt'))).toEqual(banked);
   });
 
   test('GBRAIN_SESSION_AGENT=owner still saves as the owner, and notes a session detection finds agent-launched', async () => {

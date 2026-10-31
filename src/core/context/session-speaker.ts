@@ -23,8 +23,9 @@
  * Sidecar `<sessionId>.speaker.json` (0600, tmp+rename) beside the corpus
  * files, written BEFORE any corpus file of the session; the first record is
  * kept. Its absence means the owner. A resolved speaker that differs from the
- * record (or an agent in a session the owner already banked) is noted as
- * `speaker_mismatch` (#8080), never rewritten.
+ * record is noted as `speaker_mismatch` (#8080), never rewritten; an agent in
+ * a session the owner already banked banks nothing (`speaker_mismatch`), since
+ * a sidecar would re-attribute the owner's banked turns.
  */
 
 import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -181,21 +182,23 @@ function sessionHasCorpusFiles(dir: string, sessionId: string): boolean {
 }
 
 type BankDecision =
-  { bank: true; reasons: string[] } | { bank: 'skip' | 'failed'; reason: 'capture_opt_out' | 'speaker_write_failed'; reasons: string[] };
+  { bank: true; reasons: string[] } | { bank: 'skip' | 'failed'; reason: 'capture_opt_out' | 'speaker_write_failed' | 'speaker_mismatch'; reasons: string[] };
 
 /**
  * The hook's banking decision for one event: `bank: true` (an agent speaker
  * is recorded first), `'skip'` (the launcher opted out) or `'failed'` (the
- * marker could not be written, so nothing is banked rather than banking an
- * agent session as the owner's). `reasons` are heartbeat notes; a speaker
- * that differs from the recorded one adds `speaker_mismatch` (#8080).
+ * marker could not be written, or an agent continues a session already banked
+ * as the owner's, so nothing is banked rather than mixing the two). `reasons`
+ * are heartbeat notes; a speaker that differs from the recorded one adds
+ * `speaker_mismatch` (#8080).
  */
 export function bankAsSpeaker(dir: string, sessionId: string, speaker: SessionSpeaker, harness: string): BankDecision {
   if (speaker.kind === 'skip') return { bank: 'skip', reason: 'capture_opt_out', reasons: [] };
   const recorded = readSpeakerSidecar(dir, sessionId);
   if (speaker.kind === 'owner') return { bank: true, reasons: recorded ? ['speaker_mismatch'] : [] };
   const reasons = speaker.invalid ? ['speaker_label_invalid'] : [];
-  if (recorded ? recorded.principal !== speaker.principal : sessionHasCorpusFiles(dir, sessionId)) reasons.push('speaker_mismatch');
+  if (!recorded && sessionHasCorpusFiles(dir, sessionId)) return { bank: 'failed', reason: 'speaker_mismatch', reasons };
+  if (recorded && recorded.principal !== speaker.principal) reasons.push('speaker_mismatch');
   try {
     writeSpeakerSidecar(dir, sessionId, speaker, harness);
   } catch {

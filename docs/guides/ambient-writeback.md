@@ -326,9 +326,10 @@ The marker is a `<session>.speaker.json` file beside the session's corpus
 files, written before any of them; the first record is kept. If it cannot be
 written, nothing from the session is saved (heartbeat reason
 `speaker_write_failed`); `off` records `capture_opt_out`. A resumed session
-whose speaker differs from the record (you resuming a worker's session, or an
-agent's `claude -p --continue` in a session already saved as yours) keeps the
-record and reports `speaker_mismatch`. Agent claims are never promoted into your own takes by
+whose speaker differs from the record (you resuming a worker's session, or
+another agent label) keeps the record and reports `speaker_mismatch`. An
+agent's `claude -p --continue` in a session already saved as yours saves
+nothing and reports `speaker_mismatch`, so your earlier turns stay yours. Agent claims are never promoted into your own takes by
 the consolidate phase and are not linked to entity pages as your statements.
 
 Facts saved as yours before this marker existed can be re-attributed:
