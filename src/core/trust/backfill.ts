@@ -178,13 +178,15 @@ function classifier(cols: Columns, assumeClaimed: readonly string[] = [], ceilin
   /**
    * A page's rule: its signals, and on a claimed source operator_curated lowered by every frontmatter signal
    * an owner sync would apply (`frontmatterTrustCaps`), so a claim never lifts a captured, clipped, imported
-   * or marked page above what it says it is.
+   * or marked page above what it says it is. A `trust_tier: unknown` marker is not one of those caps (an old
+   * agent edit stamped it on pages that were only unclassified, marker-repair.ts), so it never keeps a claimed
+   * page at unknown.
    */
   const pageRule = (p: string, s: string, r: string) => {
     const terms = pageTerms(p, s, r);
     const c = claimed(s);
     if (!c) return least(terms);
-    const caps = cols.has('pages', 'frontmatter') ? frontmatterTrustCapsSql(`${p}.frontmatter`) : [];
+    const caps = cols.has('pages', 'frontmatter') ? frontmatterTrustCapsSql(`${p}.frontmatter`, { ignoreUnknownMarker: true }) : [];
     return `CASE WHEN ${c} AND ${legacyRowSql('pages', p, ceilings)} THEN ${least([String(rank('operator_curated')), ...caps, ...terms])} ELSE ${least(terms)} END`;
   };
   const hasTrust = cols.has('pages', 'trust_tier');
