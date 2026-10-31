@@ -1022,7 +1022,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 162 table(s) the applied migrations create exist.",
+          "message": "All 165 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
