@@ -50,7 +50,7 @@ export const KNOWN_DEFERRALS: { class: ViolationClass; match: RegExp; todo: stri
 
 export type ViolationClass = 'lost_write' | 'duplicate_apply' | 'untrue_receipt' | 'wedge' | 'withdrawal_permanence'
   | 'source_isolation' | 'authorization' | 'caller_bound_replay' | 'projection_drift' | 'missing_attribution' | 'orphan_rows' | 'effects_not_terminal'
-  | 'untyped_error' | 'lock_order';
+  | 'untyped_error' | 'lock_order' | 'read_failure';
 /** Violations that always block a ship (see the plan's bug-fix bound). */
 export const SAFETY_CLASSES: ReadonlySet<ViolationClass> = new Set(['lost_write', 'duplicate_apply', 'untrue_receipt', 'wedge',
   'withdrawal_permanence', 'source_isolation', 'authorization', 'caller_bound_replay']);
@@ -366,7 +366,11 @@ export class ReferenceModel {
   private async checkProjection(stage: string, live: { id: number; source_id: string; slug: string }[]): Promise<void> {
     for (const row of live) {
       const page = await this.readPage('local', row.source_id, row.slug);
-      const content = String(page?.content ?? '');
+      if (!page) {
+        this.violate({ class: 'read_failure', detail: `${stage}: get_page of live page ${row.source_id}/${row.slug} failed (${this.lastReadError ?? 'no page returned'}); its fences were not compared with the rows` });
+        continue;
+      }
+      const content = String(page.content ?? '');
       const takes = parseTakesFence(content).takes;
       const dbTakes = await this.q<{ row_num: number; claim: string; active: boolean }>(
         'SELECT row_num,claim,active FROM takes WHERE page_id=$1 ORDER BY row_num', [row.id]);

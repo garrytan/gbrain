@@ -1073,7 +1073,7 @@ async function runPipelineBodyInner(
       // didn't (null-localPath echo, or the write_through flag flipped
       // mid-pipeline across the config-cache TTL). Route the group to the
       // legacy DB-only path — never drop facts.
-      if (result.databaseOnlyReason !== 'url_clone' && result.databaseOnlyReason !== 'file_database_drift') warnOnce(
+      if (!result.databaseOnlyReason) warnOnce(
         'facts:fence-write-unexpected-fallback',
         `[facts] writeFactsToFence returned legacyFallback for slug=${slug} despite localPath being set — routing to DB-only inserts.`,
       );

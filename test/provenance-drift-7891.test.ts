@@ -238,6 +238,22 @@ for (const kind of testBackends()) {
         }
       }, 120_000);
 
+      test.skipIf(!repo)('#7098: a page of a source marked mirror-readonly is listed needs_review, not repaired in the database alone', async () => {
+        const slug = 'inbox/read-only-mirror';
+        await seed(slug, STORED);
+        await rewrite(slug, {}, 'oauth_client');
+        const before = fs.readFileSync(fileOf(slug), 'utf8');
+        await engine.executeRaw(`UPDATE sources SET config = COALESCE(config, '{}'::jsonb) || '{"mirror_read_only":true}'::jsonb WHERE id = 'default'`);
+        try {
+          const dry = await run(false);
+          expect(dry.affected).toBe(0);
+          expect(dry.listing.map((entry: Record<string, string>) => [entry.class, entry.detail])).toEqual([['needs_review', expect.stringContaining('mirror_read_only')]]);
+          expect(fs.readFileSync(fileOf(slug), 'utf8')).toBe(before);
+        } finally {
+          await engine.executeRaw(`UPDATE sources SET config = config - 'mirror_read_only' WHERE id = 'default'`);
+        }
+      }, 120_000);
+
       test('#7918: a classified page whose file would re-read higher gets its stored tier as the marker; the row keeps its tier', async () => {
         const slug = 'inbox/derived-unmarked';
         await seed(slug, {}, 'agent_written');

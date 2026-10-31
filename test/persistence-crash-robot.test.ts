@@ -251,6 +251,37 @@ describe('injected session drops', () => {
     });
   }, 120_000);
 
+  // #7651: a projection check whose page read failed compared an empty fence with the fact rows and reported
+  // projection_drift (seed 5105, pooler_disconnect). A failed read of a live page is a read failure, never an empty page.
+  test('a failed page read in the projection check is a read failure with its error, not projection drift', async () => {
+    await robotBrain(async ({ world }) => {
+      const source = world.remotes[0].sourceId;
+      const model = new ReferenceModel(world);
+      const put = descriptor('put', 'put_page', 'local', source, { slug: 'notes/alpha', content: pageBody('notes/alpha', 'mk-put0') });
+      const fact = descriptor('fact', 'remember', 'local', source, { fact: 'Alpha fact mk-fact0', entity: 'notes/alpha' });
+      world.descriptors = new Map([put, fact].map(d => [d.id, d]));
+      for (const d of [put, fact]) {
+        const seen = await executeOp(world, d);
+        expect(seen.status).toBe('committed');
+        model.beginStep(false);
+        await model.observe(d, seen);
+      }
+      await model.checkGlobal('before the failed read');
+      expect(model.violations).toEqual([]);
+
+      const engine = world.engine;
+      const read = engine.readPageSnapshot;
+      engine.readPageSnapshot = (async (slug: string, ...rest: never[]) => {
+        if (slug === 'notes/alpha') throw Object.assign(new Error('storage read failed mid-drop'), { code: 'storage_unavailable' });
+        return read.call(engine, slug, ...rest);
+      }) as typeof read;
+      try { await model.checkGlobal('after ov6'); } finally { engine.readPageSnapshot = read; }
+      expect(model.violations.map(v => v.class)).toEqual(['read_failure']);
+      expect(model.violations[0].detail).toContain(`after ov6: get_page of live page ${source}/notes/alpha failed`);
+      expect(model.violations[0].detail).toContain('storage read failed mid-drop');
+    });
+  }, 120_000);
+
   test('a drop round counts once it terminated a session, including a round still in flight', async () => {
     const drops = new SessionDrops();
     expect(await drops.injectedBefore()).toBe(false);

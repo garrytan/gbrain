@@ -270,6 +270,7 @@ test/migration-0-53-host-move-7900.test.ts
 test/migration-persistence-foreground-committed-index.test.ts
 test/migration-persistence-request-id-index.test.ts
 test/migration-persistence-request-slug-index.test.ts
+test/mirror-readonly-write-through-7098.test.ts
 test/on-commit-embedding.serial.test.ts
 test/oneshot-consumer-direct-route.test.ts
 test/oneshot-housekeeping-cli.test.ts
@@ -418,6 +419,7 @@ test/persistence-write-interrupted.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
 test/physical-root-birth-tolerance-6501.test.ts
+test/physical-root-copied-brain-fix-7671.test.ts
 test/provenance-drift-7891.test.ts
 test/provenance-stamps-7873.test.ts
 test/purge-fact.test.ts

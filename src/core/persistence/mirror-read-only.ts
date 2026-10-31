@@ -23,10 +23,19 @@ import { urlCloneReadOnly } from '../url-clone.ts';
 
 /** `lock`: inside a publication, hold the source row so a concurrent mode change waits for this write. */
 export async function sourceMirrorReadOnly(engine: SqlEngine, sourceId: string, lock = false): Promise<boolean> {
+  return await readOnlyCheckout(engine, sourceId, lock) !== null;
+}
+
+/**
+ * Why the source's checkout is never written, or null: `mirror_read_only` (the flag) or `url_clone` (#6946). #7098: the
+ * legacy disk writers (write-through, fact fences, timeline, forget, unfenced facts) skip on it as managed publication does.
+ */
+export async function readOnlyCheckout(engine: SqlEngine, sourceId: string, lock = false): Promise<'mirror_read_only' | 'url_clone' | null> {
   const [row] = await engine.executeRaw<{ read_only: boolean; local_path: string | null; config: unknown }>(
     `SELECT COALESCE(config->>'mirror_read_only','false')='true' AS read_only, local_path, config FROM sources WHERE id=$1${lock ? ' FOR SHARE' : ''}`, [sourceId]);
-  if (!row) return false;
-  return row.read_only === true || await urlCloneReadOnly(engine, sourceId, row);
+  if (!row) return null;
+  if (row.read_only === true) return 'mirror_read_only';
+  return await urlCloneReadOnly(engine, sourceId, row) ? 'url_clone' : null;
 }
 
 /** Marks a page this publication stored database-only because its source is a read-only mirror and it has no recorded file. */

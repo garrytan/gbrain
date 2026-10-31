@@ -430,6 +430,13 @@ write on, except for pages created while the source was a mirror: those have
 no file in the checkout and stay database-only. Git effects of a mirror's
 writes (for example a `forget`) complete as skipped. The flag is off by default.
 
+On a brain without managed persistence the flag holds the same way: page
+write-through (`sync --full` re-exports, `brainstorm --save`), fact fences,
+timeline entries, `forget`, the extract cycle's fence pass and owner trust
+repairs leave the checkout untouched and keep the write in the database (a
+trust repair is listed `needs_review` instead), reporting `mirror_read_only`
+(#7098). The dream cycle's reverse-written pages are not gated yet.
+
 A managed brain never pulls inside a cycle. Advance a managed checkout with
 one command on its owner host:
 
@@ -611,8 +618,8 @@ writers, Git effects belong to the persistence outbox; generated legacy push
 helpers refuse to run rather than bypass that ownership boundary. See the
 [concurrent-write guide](concurrent-writes.md). On a managed root the owner
 commits and pushes page writes (`gbrain sources writer git-durability <source>
---enable`), files that are not pages are committed with plain git and ride the
-owner's next push, the checkout is never pulled or rebased, and the durability
+--enable`), files that are not pages are committed with
+`gbrain git commit-push -m "<msg>" -- <paths>` and ride the owner's next push, the checkout is never pulled or rebased, and the durability
 block below is regenerated in its managed form by that verb; see
 [files that are not pages](../architecture/topologies.md#files-that-are-not-pages).
 
