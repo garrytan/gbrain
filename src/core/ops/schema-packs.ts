@@ -34,19 +34,11 @@ const get_active_schema_pack: Operation = {
   params: {},
   scope: 'read',
   handler: async (ctx) => {
+    const { engineSchemaInput } = await import('../schema-pack/engine-resolution.ts');
     const { loadActivePack, resolveActivePackNameOnly } = await import('../schema-pack/load-active.ts');
-    const { loadConfig } = await import('../config.ts');
-    const cfg = loadConfig();
-    const sourceOpts: Record<string, unknown> = {};
-    if (ctx.sourceId) sourceOpts.sourceId = ctx.sourceId;
-    // #3792: thread the DB-plane schema_pack (tier 4) so this identity
-    // packet reports the SAME pack the engine actually queries with.
-    let dbConfig: string | undefined;
-    try {
-      dbConfig = (await ctx.engine.getConfig('schema_pack')) ?? undefined;
-    } catch { /* engine.config may not exist on very old brains */ }
-    const resolution = resolveActivePackNameOnly({ cfg, remote: ctx.remote ?? true, dbConfig, ...sourceOpts });
-    const pack = await loadActivePack({ cfg, remote: ctx.remote ?? true, dbConfig, ...sourceOpts });
+    const input = await engineSchemaInput(ctx.engine, { remote: ctx.remote ?? true, sourceId: ctx.sourceId });
+    const resolution = resolveActivePackNameOnly(input);
+    const pack = await loadActivePack(input);
     const primitiveSummary: Record<string, number> = {};
     for (const t of pack.manifest.page_types) {
       primitiveSummary[t.primitive] = (primitiveSummary[t.primitive] ?? 0) + 1;
@@ -210,13 +202,8 @@ const schema_explain_type: Operation = {
   },
   scope: 'read',
   handler: async (ctx, p) => {
-    const { loadActivePack } = await import('../schema-pack/load-active.ts');
-    const { loadConfig } = await import('../config.ts');
-    const { readDbSchemaPack } = await import('../schema-pack/best-effort.ts');
-    const cfg = loadConfig();
-    // #4653: tier-4 DB-plane schema_pack, same read get_active_schema_pack does.
-    const dbConfig = await readDbSchemaPack(ctx.engine);
-    const pack = await loadActivePack({ cfg, remote: ctx.remote ?? true, sourceId: ctx.sourceId, dbConfig });
+    const { loadActivePackForEngine } = await import('../schema-pack/engine-resolution.ts');
+    const pack = await loadActivePackForEngine(ctx.engine, { remote: ctx.remote ?? true, sourceId: ctx.sourceId });
     const found = pack.manifest.page_types.find((t) => t.name === p.type);
     if (!found) return { error: 'type_not_found', type: p.type as string, pack: pack.manifest.name };
     return { schema_version: 1, pack: pack.manifest.name, type: found };
