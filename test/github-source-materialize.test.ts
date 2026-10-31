@@ -241,7 +241,101 @@ async function pageSlugs(engine: PGLiteEngine): Promise<string[]> {
   return rows.map((r) => r.slug);
 }
 
+/**
+ * Wrap the fixture so the issues list pages two rows at a time and honours
+ * sort (created | updated, default created) and direction (default desc), as
+ * GitHub does. `beforePage2` runs once, after page 1 was served: writes that
+ * land while a sweep is paging the list.
+ */
+function pagedIssues(fx: ReturnType<typeof makeFixture>, base: ReturnType<typeof buildFetch>) {
+  const hook: { beforePage2: (() => void) | null } = { beforePage2: null };
+  const fetchImpl = async (url: string, init?: RequestInit): Promise<Response> => {
+    const u = new URL(url);
+    if (u.pathname !== `/repos/${REPO}/issues`) return base(url, init);
+    const page = Number(u.searchParams.get('page') ?? '1');
+    if (page === 2 && hook.beforePage2) { const run = hook.beforePage2; hook.beforePage2 = null; run(); }
+    const since = u.searchParams.get('since');
+    const key = (it: FixtureItem) => (u.searchParams.get('sort') === 'updated' ? it.updated_at : String(it.number).padStart(6, '0'));
+    const asc = u.searchParams.get('direction') === 'asc';
+    const all = [...fx.items.values()]
+      .filter((it) => !since || it.updated_at >= since)
+      .sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0) * (asc ? 1 : -1));
+    const rows = all.slice((page - 1) * 2, page * 2).map((it) => ({
+      number: it.number, title: `Item ${it.number}`, state: it.state, updated_at: it.updated_at,
+      ...(it.kind === 'pr' ? { pull_request: { url: `https://api.github.com/repos/${REPO}/pulls/${it.number}` } } : {}),
+    }));
+    const headers: Record<string, string> = { 'x-ratelimit-remaining': '4900', 'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 3600) };
+    if (page * 2 < all.length) {
+      u.searchParams.set('page', String(page + 1));
+      headers.link = `<${u.toString()}>; rel="next"`;
+    }
+    return new Response(JSON.stringify(rows), { status: 200, headers });
+  };
+  return { hook, fetchImpl };
+}
+
+const newIssue = (number: number, updated_at: string): FixtureItem => ({
+  number, kind: 'issue', state: 'open', updated_at, body: `New issue ${number}.`, labels: [], assignees: [], comments: [], reviews: [],
+});
+
 describe('github-source materialize', () => {
+  test('an item created while the issues list is paged is not lost behind a later-page edit', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-midpage-'));
+    const fx = makeFixture();
+    const { hook, fetchImpl } = pagedIssues(fx, buildFetch(fx));
+    try {
+      await insertSource(engine, dir);
+      await withEnv({ GH_TOKEN: 'test-token' }, async () => {
+        await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true }, fetchImpl);
+        // All three items change before the next delta, so its list pages: [3, 2], [1].
+        fx.items.get(1)!.updated_at = '2026-08-10T00:00:00Z';
+        fx.items.get(2)!.updated_at = '2026-08-11T00:00:00Z';
+        fx.items.get(3)!.updated_at = '2026-08-12T00:00:00Z';
+        // After page 1 is read, issue 4 is created, then issue 1 is edited.
+        hook.beforePage2 = () => {
+          fx.items.set(4, newIssue(4, '2026-08-13T00:00:00Z'));
+          fx.items.get(1)!.updated_at = '2026-08-14T00:00:00Z';
+          fx.items.get(1)!.body = 'Edited mid-sweep.';
+        };
+        await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc' }, fetchImpl);
+        // The next quiet delta must pick up both writes.
+        const res = await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc' }, fetchImpl);
+        expect(res.status).toBe('synced');
+        expect(await pageSlugs(engine)).toContain('gh/acme/app/4');
+        expect(readFileSync(join(dir, 'gh', REPO, '1.md'), 'utf-8')).toContain('Edited mid-sweep.');
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('an open PR edited mid-sweep does not lift the cursor past an item the sweep missed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-midpage-pr-'));
+    const fx = makeFixture();
+    const { hook, fetchImpl } = pagedIssues(fx, buildFetch(fx));
+    try {
+      await insertSource(engine, dir);
+      await withEnv({ GH_TOKEN: 'test-token' }, async () => {
+        await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true }, fetchImpl);
+        fx.items.get(1)!.updated_at = '2026-08-10T00:00:00Z';
+        fx.items.get(2)!.updated_at = '2026-08-11T00:00:00Z';
+        fx.items.get(3)!.updated_at = '2026-08-12T00:00:00Z';
+        // After page 1 is read, issue 4 is created, then open PR 2 is edited:
+        // the open-PR list must not report PR 2's newer updated_at as seen.
+        hook.beforePage2 = () => {
+          fx.items.set(4, newIssue(4, '2026-08-13T00:00:00Z'));
+          fx.items.get(2)!.updated_at = '2026-08-14T00:00:00Z';
+        };
+        await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc' }, fetchImpl);
+        const res = await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc' }, fetchImpl);
+        expect(res.status).toBe('synced');
+        expect(await pageSlugs(engine)).toContain('gh/acme/app/4');
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('bootstrap imports all items, sweep is a no-op, delta picks up changes', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ghsrc-sync-'));
     const fx = makeFixture();

@@ -443,20 +443,25 @@ export async function enumerateRepoItems(
   opts: { since?: string; signal?: AbortSignal } = {},
 ): Promise<{ issues: RawIssueListItem[]; prs: RawPullListItem[] }> {
   const sinceQuery = opts.since ? `&since=${encodeURIComponent(opts.since)}` : '';
+  // Open PRs get head sha so we can refresh checks cheaply. Listed BEFORE the
+  // issues list so no updated_at seen here is newer than that list's view: a
+  // write landing mid-sweep can never lift the cursor past an item it missed.
+  const openPrs = await client.fetchAllPages<RawPullListItem>(
+    `/repos/${repo}/pulls?state=open`,
+    opts,
+  );
   // The issues endpoint returns PRs too; we classify by the pull_request key.
+  // Newest-updated first: an item created or edited while the list is paged
+  // moves to page 1 (already read), so it is missed by this sweep but stays
+  // above the cursor, and it never shifts an unread item onto a read page.
   const all = await client.fetchAllPages<RawIssueListItem>(
-    `/repos/${repo}/issues?state=all${sinceQuery}`,
+    `/repos/${repo}/issues?state=all&sort=updated&direction=desc${sinceQuery}`,
     opts,
   );
   const issues = all.filter((i) => !i.pull_request);
   const prsFromIssues = all.filter((i) => i.pull_request);
   const updatedByNumber = new Map(prsFromIssues.map((i) => [i.number, i.updated_at]));
   const prNumbers = prsFromIssues.map((i) => i.number);
-  // Open PRs get head sha so we can refresh checks cheaply.
-  const openPrs = await client.fetchAllPages<RawPullListItem>(
-    `/repos/${repo}/pulls?state=open`,
-    opts,
-  );
   const openByNumber = new Map(openPrs.map((p) => [p.number, p]));
   const prs: RawPullListItem[] = [];
   for (const n of prNumbers) {
