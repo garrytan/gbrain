@@ -22,13 +22,16 @@
  *   The subprocess is spawned from a dedicated tmpdir so claude-cli's
  *   CLAUDE.md auto-discovery has no local files to find. `--system-prompt`
  *   replaces the default system prompt; `--disable-slash-commands` skips
- *   skill resolution. User-level ~/.claude/CLAUDE.md still loads because
- *   the only way to skip it is `--bare`, which forces ANTHROPIC_API_KEY
- *   auth and defeats the whole point of this provider. The ~42k cached
- *   tokens from user-level instructions are accepted as a cost-trivial
- *   trade-off on the subscription path. #4119: when those user-level
- *   instructions must NOT leak into a measurement (SkillOpt rollouts),
- *   set GBRAIN_CLAUDE_CLI_HERMETIC_CONFIG — see resolveHermeticConfigDir.
+ *   skill resolution. `--setting-sources ""` (claude CLI 2.1.314 or newer,
+ *   see claudeCliSupportsEmptySettingSources) stops the child reading
+ *   user-level ~/.claude/CLAUDE.md and settings while keeping the
+ *   subscription login; `--bare` would also skip them but forces
+ *   ANTHROPIC_API_KEY auth and defeats the whole point of this provider.
+ *   On an older or unidentifiable CLI the flag is left off and the user-level
+ *   CLAUDE.md still loads (about 42k cached tokens). #4119: when those
+ *   user-level instructions must NOT leak into a measurement (SkillOpt
+ *   rollouts), set GBRAIN_CLAUDE_CLI_HERMETIC_CONFIG — see
+ *   resolveHermeticConfigDir.
  *
  * doStream is not yet implemented; the model declares no streaming. Callers
  * (gateway.toolLoop primarily) use doGenerate.
@@ -362,6 +365,80 @@ function claudeCliVersion(env: NodeJS.ProcessEnv): string | null {
   return /\d+\.\d+\.\d+/.exec(typeof r.stdout === 'string' ? r.stdout : '')?.[0] ?? null;
 }
 
+/** First claude CLI whose `--setting-sources` fully excludes the sources it is
+ * not given (earlier versions still applied some excluded settings). */
+export const MIN_SETTING_SOURCES_CLI_VERSION = '2.1.314';
+
+export function versionAtLeast(version: string | null, min: string): boolean {
+  if (!version) return false;
+  const a = version.split('.').map(part => parseInt(part, 10) || 0);
+  const b = min.split('.').map(part => parseInt(part, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0);
+    if (d !== 0) return d > 0;
+  }
+  return true;
+}
+
+const settingSourcesSupport = new Map<string, boolean>();
+const settingSourcesProbes = new Map<string, Promise<boolean>>();
+
+/** `claude --version` without blocking the event loop; null on a non-zero exit,
+ * timeout, spawn failure or unreadable output. Shared by every caller, so it
+ * takes no per-call abort signal. */
+function probeClaudeCliVersion(): Promise<string | null> {
+  return new Promise(resolve => {
+    let out = '';
+    let settled = false;
+    const done = (version: string | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(version);
+    };
+    const child = spawn(claudeBin(), ['--version'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const timer = setTimeout(() => { child.kill('SIGKILL'); done(null); }, 3_000);
+    timer.unref?.();
+    child.stdout.on('data', chunk => { out += String(chunk); });
+    child.on('error', () => done(null));
+    child.on('close', code => done(code === 0 ? (/\d+\.\d+\.\d+/.exec(out)?.[0] ?? null) : null));
+  });
+}
+
+/** Whether `--setting-sources ""` is safe to pass. Concurrent first calls share
+ * one `--version` probe; a parsed answer is remembered per binary for the
+ * process, an unreadable one is not (the flag stays off for that call and the
+ * next call probes again). An aborted call stops waiting; the probe goes on. */
+export async function claudeCliSupportsEmptySettingSources(signal?: AbortSignal): Promise<boolean> {
+  const bin = claudeBin();
+  const known = settingSourcesSupport.get(bin);
+  if (known !== undefined) return known;
+  let probe = settingSourcesProbes.get(bin);
+  if (!probe) {
+    probe = probeClaudeCliVersion().then(version => {
+      settingSourcesProbes.delete(bin);
+      if (version === null) return false;
+      const supported = versionAtLeast(version, MIN_SETTING_SOURCES_CLI_VERSION);
+      settingSourcesSupport.set(bin, supported);
+      return supported;
+    });
+    settingSourcesProbes.set(bin, probe);
+  }
+  if (!signal) return probe;
+  if (signal.aborted) throw new Error('claude-cli adapter aborted');
+  return new Promise<boolean>((resolve, reject) => {
+    const onAbort = () => reject(new Error('claude-cli adapter aborted'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    probe!.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
+
+/** Test seam: forget the remembered per-binary answers. */
+export function resetSettingSourcesSupport(): void {
+  settingSourcesSupport.clear();
+  settingSourcesProbes.clear();
+}
+
 /**
  * #6918: Claude Code thinks by default on Claude 5 models, and the API needs
  * thinking.budget_tokens of at least 1024 and below max_tokens, so a call
@@ -379,13 +456,14 @@ export function thinkingDisabledBelowFloor(maxOutputTokens: number | undefined):
  * the parsed `--output-format json` envelope. Aborts propagate to SIGTERM on
  * the child.
  */
-function runClaude(
+async function runClaude(
   systemPrompt: string,
   userPrompt: string,
   model: string,
   signal?: AbortSignal,
   maxOutputTokens?: number,
 ): Promise<ClaudeRun> {
+  const settingSourcesOk = await claudeCliSupportsEmptySettingSources(signal);
   return new Promise((resolve, reject) => {
     // #6424: forward the call's output cap. The inline --settings env sits
     // above the user's settings.json env block, so both carry it.
@@ -452,6 +530,9 @@ function runClaude(
     if (hermeticConfigDir) env.CLAUDE_CONFIG_DIR = hermeticConfigDir;
     if (outputCap) env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = outputCap;
     if (thinkingOff) env.MAX_THINKING_TOKENS = '0';
+    // Keep the user's own CLAUDE.md, memory and settings out of the child
+    // while the subscription login stays usable (unlike --bare).
+    if (settingSourcesOk) args.push('--setting-sources', '');
     const child = spawn(claudeBin(), args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: ensureCleanCwd(),
