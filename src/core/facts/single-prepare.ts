@@ -10,7 +10,7 @@ import { readSupersessionThreshold } from './supersession-threshold.ts';
 import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
 import { pageNotVisibleError } from '../persistence/page-visibility.ts';
 import { slugUnderBoundPrefixes } from '../ops/context.ts';
-import { onMemberPageSql } from '../access/member-facts.ts';
+import { memberWithdrawalSubject, onMemberPageSql, withdrawalCoversFactSql } from '../access/member-facts.ts';
 
 export type FactCandidate = FactRow & { source_markdown_slug: string | null; row_num: number | null };
 export interface FactDecision { status: 'inserted' | 'duplicate' | 'superseded'; candidate: FactCandidate | null; }
@@ -42,7 +42,7 @@ export async function prepareFactEmbedding(fact: string, signal?: AbortSignal, d
  */
 export async function assertFactNotWithdrawn(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean } = {}): Promise<void> {
   await assertFactNotPurged(engine, sourceId, input);
-  if (await isFactWithdrawn(engine, sourceId, input.visibility, input.fact, input.entity_slug)) throw await factWithdrawnRefusal(engine, sourceId, input, opts);
+  if (await isFactWithdrawn(engine, sourceId, input.visibility, input.fact, input.entity_slug, memberWithdrawalSubject(input.page_slug))) throw await factWithdrawnRefusal(engine, sourceId, input, opts);
 }
 
 /**
@@ -51,27 +51,29 @@ export async function assertFactNotWithdrawn(engine: BrainEngine, sourceId: stri
  * (or that no row backs). It covers the exact normalized claim only.
  */
 export async function factWithdrawnRefusal(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean } = {}): Promise<OperationError> {
+  // GST-359 D: a member writing to its own member page sees that page's withdrawn rows.
+  const seen = (param: number) => `(${privateProvenanceFilterFragment('f')} OR COALESCE(f.source_markdown_slug = $${param}::text, false))`;
   if (opts.excludePrivate) {
     const [backing] = await engine.executeRaw<{ visible: boolean; hidden: boolean }>(`SELECT
-        COALESCE(bool_or(${privateProvenanceFilterFragment('f')}), false) AS visible,
-        COALESCE(bool_or(NOT (${privateProvenanceFilterFragment('f')})), false) AS hidden
+        COALESCE(bool_or(${seen(5)}), false) AS visible,
+        COALESCE(bool_or(NOT ${seen(5)}), false) AS hidden
       FROM facts f JOIN fact_withdrawals w ON w.source_id=f.source_id AND w.visibility=f.visibility
         AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
-        AND (w.subject='*' OR w.subject=COALESCE(f.entity_slug,'*'))
+        AND ${withdrawalCoversFactSql('w', 'f')}
       WHERE f.source_id=$1 AND f.visibility=$2 AND f.expired_at IS NOT NULL
-        AND gbrain_fact_fingerprint(f.fact)=gbrain_fact_fingerprint($3) AND (w.subject='*' OR w.subject=$4::text)`,
-    [sourceId, input.visibility, input.fact, input.entity_slug]);
+        AND gbrain_fact_fingerprint(f.fact)=gbrain_fact_fingerprint($3) AND (w.subject='*' OR w.subject=$4::text OR w.subject=$5::text)`,
+    [sourceId, input.visibility, input.fact, input.entity_slug, memberWithdrawalSubject(input.page_slug)]);
     if (backing?.hidden && !backing.visible) return pageNotVisibleError();
   }
   const [row] = await engine.executeRaw<{ subject: string; withdrawn_at: string; visibility: 'world' | 'private' }>(`SELECT w.subject,w.visibility,w.withdrawn_at::text AS withdrawn_at
     FROM fact_withdrawals w LEFT JOIN facts f ON f.source_id=w.source_id AND f.visibility=w.visibility AND f.expired_at IS NOT NULL
-      AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact)) AND (w.subject='*' OR w.subject=COALESCE(f.entity_slug,'*'))
+      AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact)) AND ${withdrawalCoversFactSql('w', 'f')}
     WHERE w.source_id=$1 AND w.visibility=$2 AND w.fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v1($3))
-      AND (w.subject='*' OR w.subject=$4::text)
+      AND (w.subject='*' OR w.subject=$4::text OR w.subject=$6::text)
     GROUP BY w.subject,w.visibility,w.withdrawn_at
-    HAVING $5::boolean=false OR COALESCE(bool_or(${privateProvenanceFilterFragment('f')}), false) OR NOT COALESCE(bool_or(f.id IS NOT NULL), false)
+    HAVING $5::boolean=false OR COALESCE(bool_or(${seen(6)}), false) OR NOT COALESCE(bool_or(f.id IS NOT NULL), false)
     ORDER BY (w.subject<>'*') DESC, w.withdrawn_at DESC LIMIT 1`,
-  [sourceId, input.visibility, input.fact, input.entity_slug, opts.excludePrivate === true]);
+  [sourceId, input.visibility, input.fact, input.entity_slug, opts.excludePrivate === true, memberWithdrawalSubject(input.page_slug)]);
   const error = verbError('invalid_params', FACT_WITHDRAWN_MESSAGE, FACT_WITHDRAWN_SUGGESTION);
   if (row) error.withdrawn = { at: new Date(row.withdrawn_at).toISOString(), subject: row.subject === '*' ? 'all_entities' : row.subject, visibility: row.visibility };
   return error;
@@ -174,7 +176,7 @@ export async function decideReplacement(engine: BrainEngine, sourceId: string, i
   const [target] = await engine.executeRaw<FactCandidate & { withdrawn: boolean }>(`SELECT f.*,
       EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
         AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
-        AND (w.subject='*' OR w.subject=COALESCE(f.entity_slug,'*'))) AS withdrawn
+        AND ${withdrawalCoversFactSql('w', 'f')}) AS withdrawn
     FROM facts f WHERE f.id=$1 AND f.source_id=$2${opts.excludePrivate ? ` AND ${privateProvenanceFilterFragment('f')}` : ''}${opts.lock ? ' FOR UPDATE OF f' : ''}`, [targetId, sourceId]);
   if (!target || (opts.remote && target.visibility !== 'world')) throw notFound();
   // #5913 [R2]: a slug-bound writer learns nothing about a fact outside its prefixes; the answer is the missing-id one.

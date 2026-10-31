@@ -9,6 +9,7 @@ import { privateProvenanceFilterFragment } from '../search/private-visibility.ts
 import { coverageActive, noteBelief, readLedgerSource, withBeliefBatch } from '../belief/ledger.ts';
 import { createPageVersion } from '../page-state/versions.ts';
 import { validateSlug } from '../utils.ts';
+import { factWithdrawalSubjectSql, onMemberPageSql } from '../access/member-facts.ts';
 
 export interface WithdrawalCommit {
   withdrawn: boolean;
@@ -51,15 +52,18 @@ export function reviewWithdrawOn(raw: string | null | undefined): boolean {
 
 export async function recordFactWithdrawal(
   engine: BrainEngine, id: number, sourceId: string, worldOnly = false,
-  opts: { requestId?: string; publicationId?: string; semanticReview?: boolean; excludePrivate?: boolean; beliefReport?: { appended: number } } = {},
+  opts: { requestId?: string; publicationId?: string; semanticReview?: boolean; excludePrivate?: boolean; beliefReport?: { appended: number }; memberPage?: string } = {},
 ): Promise<WithdrawalCommit> {
+  // GST-359 D: an attested person's own member-page fact (memberPage) is admitted besides world facts; the caller checked it.
+  const admit = `AND ($3::boolean=false OR visibility='world' OR (visibility='private' AND source_markdown_slug=$4::text))${opts.excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`;
+  const pageScoped = `(${onMemberPageSql('facts')} AND source_markdown_slug=$4)`;
   return engine.transaction(async tx => {
     // A managed caller takes this EXCLUSIVE source lock before authority,
     // counters and request rows. Repeating an already-held lock is safe.
     await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
     const visible = await tx.executeRaw<{ visibility: 'private' | 'world'; fact: string; fact_hash: string; subject: string }>(
-      `SELECT visibility,fact,gbrain_fact_fingerprint(fact) AS fact_hash,COALESCE(entity_slug,'*') AS subject FROM facts WHERE id=$1 AND source_id=$2
-        AND ($3::boolean=false OR visibility='world')${opts.excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`, [id, sourceId, worldOnly]);
+      `SELECT visibility,fact,gbrain_fact_fingerprint(fact) AS fact_hash,${factWithdrawalSubjectSql('facts')} AS subject FROM facts WHERE id=$1 AND source_id=$2
+        ${admit}`, [id, sourceId, worldOnly, opts.memberPage ?? null]);
     if (!visible.length) return { withdrawn: false, pages: [] };
     const { visibility, fact, fact_hash, subject } = visible[0];
     // Discovery is keyed on the claim and its subject: a subject-scoped
@@ -71,14 +75,14 @@ export async function recordFactWithdrawal(
     const affected = existing.length ? [] : await discoverWithdrawalTargets(tx, sourceId, [{ visibility, fact_hash, subject, claim: fact }]).catch(withdrawalDiscoveryFailure);
     // The belief ledger's streams of the facts this withdrawal expires (fence pages and database-only subjects), locked with the pages.
     const streams = (await tx.executeRaw<{ slug: string }>(`SELECT DISTINCT COALESCE(source_markdown_slug, entity_slug) AS slug FROM facts
-      WHERE source_id=$1 AND visibility=$2 AND gbrain_fact_fingerprint(fact)=$3 AND ($4='*' OR entity_slug=$4) AND expired_at IS NULL
+      WHERE source_id=$1 AND visibility=$2 AND gbrain_fact_fingerprint(fact)=$3 AND ($4='*' OR entity_slug=$4 OR ${pageScoped}) AND expired_at IS NULL
         AND COALESCE(source_markdown_slug, entity_slug) IS NOT NULL`, [sourceId, visibility, fact_hash, subject]))
       .map(r => r.slug).filter(slug => { try { validateSlug(slug); return true; } catch { return false; } });
     const slugs = [...new Set([...affected.map(page => page.slug), ...streams])];
     await tx.lockPageKeys(slugs.map(slug => ({ sourceId, slug })));
     const rows = await tx.executeRaw<{ visibility: string; fact: string; subject: string }>(
-      `SELECT visibility,fact,COALESCE(entity_slug,'*') AS subject FROM facts WHERE id=$1 AND source_id=$2
-        AND ($3::boolean=false OR visibility='world')${opts.excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''} FOR UPDATE`, [id, sourceId, worldOnly]);
+      `SELECT visibility,fact,${factWithdrawalSubjectSql('facts')} AS subject FROM facts WHERE id=$1 AND source_id=$2
+        ${admit} FOR UPDATE`, [id, sourceId, worldOnly, opts.memberPage ?? null]);
     if (!rows.length) return { withdrawn: false, pages: [] };
     const row = rows[0];
     const ledger = affected.length ? await readLedgerSource(tx, sourceId) : null;
@@ -98,7 +102,7 @@ export async function recordFactWithdrawal(
         VALUES ($1,$2,$4,gbrain_fact_fingerprint($3)) ON CONFLICT DO NOTHING RETURNING fact_hash`, [sourceId,row.visibility,row.fact,row.subject]);
       const expired = await tx.executeRaw<{ id: number }>(`UPDATE facts SET expired_at=now(),valid_until=LEAST(COALESCE(valid_until,now()),now())
         WHERE source_id=$1 AND visibility=$2 AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3)
-          AND ($4='*' OR entity_slug=$4) AND expired_at IS NULL RETURNING id`, [sourceId,row.visibility,row.fact,row.subject]);
+          AND ($4='*' OR entity_slug=$4 OR ${pageScoped}) AND expired_at IS NULL RETURNING id`, [sourceId,row.visibility,row.fact,row.subject]);
       noteBelief({ kind: 'withdrawn', factIds: expired.map(r => Number(r.id)) });
       if (!inserted.length) return { withdrawn: false, pages: [] };
       // Overnight semantic review (decide review lane): queued with the ledger row so a late commit is never skipped.
@@ -216,13 +220,14 @@ export async function assertPreparedFactWithdrawals(engine: BrainEngine, sourceI
 
 /** Explicit remember is not an implicit restore operation for that entity. A purged claim counts as withdrawn for every writer. */
 export async function isFactWithdrawn(
-  engine: BrainEngine, sourceId: string, visibility: string, claim: string, entitySlug: string | null,
+  engine: BrainEngine, sourceId: string, visibility: string, claim: string, entitySlug: string | null, memberPage: string | null = null,
 ): Promise<boolean> {
+  // GST-359 D: `memberPage` (a claim saved on a member page) also matches that page's own withdrawals.
   const rows = await engine.executeRaw(`SELECT 1 FROM fact_withdrawals
     WHERE source_id=$1 AND visibility=$2 AND fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v1($3))
-      AND (subject = '*' OR subject = $4::text)
+      AND (subject = '*' OR subject = $4::text OR subject = $5::text)
     UNION ALL SELECT 1 FROM fact_purges WHERE source_id=$1 AND visibility=$2 AND fact_hash=gbrain_fact_fingerprint($3)
-      AND (subject = '*' OR subject = $4::text) LIMIT 1`, [sourceId,visibility,claim,entitySlug]);
+      AND (subject = '*' OR subject = $4::text) LIMIT 1`, [sourceId,visibility,claim,entitySlug,memberPage]);
   return rows.length > 0;
 }
 

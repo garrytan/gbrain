@@ -96,7 +96,7 @@ const ALICE_ID = 'U0ALICE';
 const BOB_ID = 'oidc:3f2a:bob-example';
 const CAROL_ID = 'carol-example@acme.test';
 const ACME = 'companies/acme-example';
-const ATTEST_OPS = ['get_write_request', 'memory_recall', 'memory_write'];
+const ATTEST_OPS = ['forget', 'forget_fact', 'get_write_request', 'memory_recall', 'memory_write', 'remember'];
 
 for (const kind of testBackends()) {
   describe('memory_recall and memory_write (' + kind + ', repo-less)', () => {
@@ -122,7 +122,7 @@ for (const kind of testBackends()) {
       return { out, isError: out.isError === true, text, json, structured: out.structuredContent as Record<string, any> | undefined,
         all: text + JSON.stringify(out._meta ?? {}) + JSON.stringify(out.structuredContent ?? {}) };
     }
-    const write = (as: Who, facts: Array<Record<string, unknown>>, key: string = randomUUID(), extra: { writeWaitMs?: number } = {}) =>
+    const write = (as: Who, facts: Array<Record<string, unknown>>, key: string = randomUUID(), extra: { writeWaitMs?: number } = { writeWaitMs: 30_000 }) =>
       call(as, 'memory_write', { facts, idempotency_key: key }, extra);
     const recall = (as: Who, query: string, args: Record<string, unknown> = {}) => call(as, 'memory_recall', { query, ...args });
     const factRows = (needle: string) => engine.executeRaw<Record<string, any>>(
@@ -323,6 +323,40 @@ for (const kind of testBackends()) {
       const line = out.text.split('\n').find(l => l.includes('canaryfence'));
       expect(line).toMatch(/^- Harbor rules keep the ledger canaryfence \(\d{4}-\d{2}-\d{2}; fact\)$/);
     }, 60_000);
+
+    test('forget and forget_fact withdraw the person\'s own member-page fact there alone, never another member\'s or a world fact', async () => {
+      const claim = 'Shared standup moved to Thursdays canaryforget';
+      const a = await write(alice, [{ fact: claim, provenance: 'turn 11' }]);
+      const b = await write(bob, [{ fact: claim, provenance: 'turn 11' }]);
+      const [aliceId] = a.structured!.fact_ids;
+      const [bobId] = b.structured!.fact_ids;
+      const [worldRow] = await factRows('canaryworld');
+      const active = async (id: string) => (await engine.executeRaw<{ expired_at: unknown }>('SELECT expired_at FROM facts WHERE id = $1', [Number(id)]))[0]?.expired_at === null;
+      for (const [op, id] of [['forget', bobId], ['forget_fact', bobId], ['forget', String(worldRow!.id)], ['forget_fact', String(worldRow!.id)]] as const) {
+        const out = await call(alice, op, { id: op === 'forget' ? id : Number(id) });
+        expect(out.isError).toBe(true);
+        expect(['not_found', 'fact_not_found']).toContain(out.json.code);
+      }
+      expect(await active(bobId!)).toBe(true);
+      expect(await active(String(worldRow!.id))).toBe(true);
+      const forgot = await call(alice, 'forget', { id: aliceId, reason: 'moved back' });
+      expect(forgot.isError).toBe(false);
+      expect(await active(aliceId!)).toBe(false);
+      expect(await active(bobId!)).toBe(true);
+      const [ledger] = await engine.executeRaw<{ subject: string }>('SELECT subject FROM fact_withdrawals WHERE source_id = $1 AND fact_hash = gbrain_fact_fingerprint($2)', [SRC, claim]);
+      expect(ledger!.subject).toBe('memory/members/alice-example');
+      expect((await recall(alice, 'standup Thursdays')).all).not.toContain('canaryforget');
+      expect((await recall(bob, 'standup Thursdays')).text).toContain(claim);
+      const again = await write(alice, [{ fact: claim, provenance: 'turn 12' }]);
+      expect(again.isError).toBe(true);
+      expect(again.text).toContain('fact_withdrawn');
+      const carolCopy = await write(carol, [{ fact: claim, provenance: 'turn 12' }]);
+      expect(carolCopy.structured!.status).toBe('committed');
+      const second = await write(alice, [{ fact: 'Alice drafts the harbor memo canaryforgetfact', provenance: 'turn 13' }]);
+      const viaFactOp = await call(alice, 'forget_fact', { id: Number(second.structured!.fact_ids[0]) });
+      expect(viaFactOp.isError).toBe(false);
+      expect(await active(second.structured!.fact_ids[0])).toBe(false);
+    }, 120_000);
 
     test('a keyless brain ranks by keyword and makes no embedding call', async () => {
       let embedCalls = 0;

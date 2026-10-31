@@ -5,6 +5,7 @@ import { discoverWithdrawalTargets, withdrawalDiscoveryFailure, WITHDRAWAL_LIMIT
 import type { PersistenceEffect } from './effect-model.ts';
 import { guardEffectSource } from './effect-recovery.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
+import { withdrawalCoversFactSql } from '../access/member-facts.ts';
 
 export function targetedWithdrawalEffect(effect: PersistenceEffect): boolean {
   if (effect.data.version === undefined) return false;
@@ -37,7 +38,7 @@ export async function upgradeWithdrawalEffect(engine: BrainEngine, effect: Persi
       FROM persistence_requests r JOIN facts f ON r.intent->>'id' ~ '^[0-9]+$' AND f.id=(r.intent->>'id')::bigint AND f.source_id=$1
       JOIN fact_withdrawals w ON w.source_id=f.source_id AND w.visibility=f.visibility
         AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
-        AND (w.subject='*' OR w.subject=COALESCE(f.entity_slug,'*'))
+        AND ${withdrawalCoversFactSql('w', 'f')}
       WHERE r.id=$2::uuid ORDER BY w.visibility,w.fact_hash,w.subject`, [effect.source_id, effect.request_id]);
     const claims = requested.length ? requested : await tx.executeRaw<WithdrawalClaim>(`SELECT visibility,fact_hash,subject FROM fact_withdrawals
       WHERE source_id=$1 ORDER BY visibility,fact_hash,subject LIMIT $2`, [effect.source_id, WITHDRAWAL_LIMITS.targets + 1]);

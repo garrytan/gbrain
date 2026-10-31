@@ -69,6 +69,25 @@ export function onMemberPageSql(alias: string): string {
 }
 
 /**
+ * GST-359 D: the withdrawal-ledger subject of a fact, as SQL. A fact on a member page is withdrawn for that page alone
+ * (its slug), so forgetting it never reaches another member's copy of the same claim; any other fact keeps its entity
+ * ('*' without one).
+ */
+export function factWithdrawalSubjectSql(alias: string): string {
+  return `CASE WHEN ${onMemberPageSql(alias)} THEN ${alias}.source_markdown_slug ELSE COALESCE(${alias}.entity_slug, '*') END`;
+}
+
+/** Whether withdrawal row `w` covers fact `f`, as SQL: every subject ('*'), the fact's entity, or the member page it sits on. */
+export function withdrawalCoversFactSql(w: string, f: string): string {
+  return `(${w}.subject = '*' OR ${w}.subject = COALESCE(${f}.entity_slug, '*') OR (${onMemberPageSql(f)} AND ${w}.subject = ${f}.source_markdown_slug))`;
+}
+
+/** The member page a claim is checked on for withdrawals, or null: `slug` when it is one, so a page-scoped withdrawal applies there alone. */
+export function memberWithdrawalSubject(slug: string | null | undefined): string | null {
+  return slug && slug.startsWith(MEMBER_PAGE_PREFIX) ? slug : null;
+}
+
+/**
  * Facts whose source page names readers or sits under a folder rule, as SQL. Derivations that write their output onto
  * another page (consolidation into takes, relinking onto an entity page) skip them: the output would lose the readers.
  */

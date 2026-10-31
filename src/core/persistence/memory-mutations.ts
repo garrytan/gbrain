@@ -28,9 +28,9 @@ import { requestAttribution } from './attribution.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
 import { prepareMemoryMutation } from './memory-prepare.ts';
 import { retryWriteAdmission } from './admission-retry.ts';
-import { privateProvenanceFilterFragment, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
+import { currentCallerAccess, privateProvenanceFilterFragment, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
 import { markBeliefCommits } from '../belief/append.ts';
-import { memberFactPage } from '../access/member-facts.ts';
+import { memberFactAdmitSql, memberFactPage, memberPageSlug } from '../access/member-facts.ts';
 
 export { prepareMemoryMutation } from './memory-prepare.ts';
 /** Only semantic appends without an explicit caller revision can be recomputed. */
@@ -330,6 +330,10 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   if (!Number.isSafeInteger(id) || id <= 0) throw verbError(operation === 'forget' ? 'not_found' : 'fact_not_found',
     `No fact with id "${rawId}".`, 'Pass the fact id returned by remember or recall.');
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
+  // GST-359 D: an attested person withdraws only facts on their own member page, and only there (the page is the
+  // withdrawal's subject), so another member's copy of the same claim stays active and rememberable.
+  const actor = ctx.remote !== false ? currentCallerAccess().actor : undefined;
+  const ownPage = actor ? memberPageSlug(actor.member) : null;
   // #5575 I3: a remote caller cannot forget a fact more trusted than its own writes; the owner is asked instead.
   if (ctx.remote !== false && Number.isSafeInteger(id) && id > 0) await guardRemoteForget(ctx.engine, { sourceId, factId: id, principal, reason, excludePrivate });
   // Retry the whole withdrawal, so source/principal guards and the connection
@@ -354,11 +358,13 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
       return prior;
     }
     const [fact] = await tx.executeRaw<WithdrawalTarget>(`SELECT id,entity_slug,source_markdown_slug,expired_at,trust_tier FROM facts
-      WHERE id=$1 AND source_id=$2 AND ($3::boolean=false OR visibility='world')${excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''} FOR UPDATE`, [id, sourceId, ctx.remote !== false]);
+      WHERE id=$1 AND source_id=$2 AND ${ownPage ? memberFactAdmitSql('facts')
+        : `($3::boolean=false OR visibility='world')${excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`} FOR UPDATE`,
+    ownPage ? [id, sourceId] : [id, sourceId, ctx.remote !== false]);
     if (!fact) throw verbError(operation === 'forget' ? 'not_found' : 'fact_not_found',
       `No fact with id "${rawId}".`, 'Ids come from remember/recall. Recall the entity first to find the right fact.');
     if (ctx.remote !== false && supersessionGuarded('agent_written', fact.trust_tier)) throw remoteForgetRaced(id);
-    await refuseForgetReachingOtherCopies(tx, sourceId, fact, ctx.remote !== false, excludePrivate);
+    if (!ownPage) await refuseForgetReachingOtherCopies(tx, sourceId, fact, ctx.remote !== false, excludePrivate);
     const slug = fact.source_markdown_slug ?? fact.entity_slug ?? 'memory/unattributed';
     enforceClientSlugFence(ctx, slug, operation); enforceSubagentSlugFence(ctx, slug, operation);
     const authority = await submissionAuthority({ ...ctx, engine: tx }, operation, sourceId, source.incarnation, slug);
@@ -368,7 +374,9 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
     return withCoordinatedWrite(tx, [sourceId], async () => {
       // Even an expired legacy fact acquires a ledger so a stale import cannot
       // reactivate it. Internal affected-page identities never enter the receipt.
-      withdrawn = (await recordFactWithdrawal(tx, id, sourceId, ctx.remote !== false, { requestId: row.id, semanticReview, excludePrivate, beliefReport })).pages;
+      withdrawn = (await recordFactWithdrawal(tx, id, sourceId, ctx.remote !== false, ownPage
+        ? { requestId: row.id, semanticReview: false, memberPage: ownPage, beliefReport }
+        : { requestId: row.id, semanticReview, excludePrivate, beliefReport })).pages;
       if (reason) await tx.executeRaw(`UPDATE facts SET context=concat_ws(' | ',NULLIF(context,''),$3::text)
         WHERE id=$1 AND source_id=$2`, [id, sourceId, `forgotten: ${reason}`]);
       if (operation === 'forget_fact' && fact.expired_at !== null) {

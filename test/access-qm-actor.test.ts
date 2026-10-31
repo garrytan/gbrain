@@ -401,11 +401,12 @@ for (const kind of testBackends()) {
         expect(() => parseAttestOps('get_page,' + op, lookup)).toThrow(/cannot run yet/);
         await expect(bindCredential(engine, { kind: 'client', id: clients.qm!.id }, { attestActor: 'qm', attestOps: ['get_page', op] })).rejects.toMatchObject({ code: 'invalid_params' });
       }
-      // GST-359 C2 keyed remember, delta, the write receipts and agent jobs to the person (test/access-member-facts.test.ts).
-      for (const op of ['capture', 'extract_facts', 'forget', 'forget_fact', 'takes_add', 'list_write_conflicts']) {
+      // GST-359 C2 keyed remember, delta, the write receipts and agent jobs to the person (test/access-member-facts.test.ts);
+      // D keyed forget and forget_fact to the person's own member page (test/qm-memory-tools.test.ts).
+      for (const op of ['capture', 'extract_facts', 'takes_add', 'list_write_conflicts']) {
         expect(ACTOR_DEFERRED_OPS.has(op)).toBe(true);
       }
-      for (const op of ['get_agent_job', 'submit_agent', 'get_write_request', 'list_write_requests', 'cancel_write_request', 'delta', 'remember']) {
+      for (const op of ['get_agent_job', 'submit_agent', 'get_write_request', 'list_write_requests', 'cancel_write_request', 'delta', 'remember', 'forget', 'forget_fact']) {
         expect(ACTOR_DEFERRED_OPS.has(op)).toBe(false);
       }
       const { clientId, clientSecret } = await provider().registerClientManual('qm-jobs-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], SRC);
@@ -415,7 +416,7 @@ for (const kind of testBackends()) {
       const bearer = (await provider().exchangeClientCredentials(clientId, clientSecret!)).access_token;
       const deferredCalls: Array<[string, Record<string, unknown>]> = [
         ['list_write_conflicts', {}], ['capture', { content: 'note' }], ['extract_facts', { text: 'x' }],
-        ['forget_fact', { id: '1' }], ['takes_add', { page_slug: PAGES.alice.slug, claim: 'x' }],
+        ['takes_add', { page_slug: PAGES.alice.slug, claim: 'x' }],
       ];
       for (const [op, params] of deferredCalls) {
         const out = await refused(call(bearer, op, params, { actor: ALICE_ID }), 'actor_not_attested', 'op_not_attested');

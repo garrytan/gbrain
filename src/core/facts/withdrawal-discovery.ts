@@ -7,6 +7,7 @@ import { fenceTooLargeError, readStoredFence } from '../page-body/read-range.ts'
 import { FENCE_MAX_BYTES } from '../page-body/limits.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../facts-fence.ts';
 import type { BodyRegion } from '../page-body/types.ts';
+import { onMemberPageSql } from '../access/member-facts.ts';
 
 export const WITHDRAWAL_LIMITS = { targets: 256, targetBytes: 1024 * 1024, scanMs: 10_000, batch: 128, matchRows: 16_384, matchBytes: 8 * 1024 * 1024 } as const;
 export interface WithdrawalTarget { slug: string; page_id: number; revision: string }
@@ -129,7 +130,7 @@ export async function discoverWithdrawalTargets(engine: BrainEngine, sourceId: s
     FROM jsonb_to_recordset($2::text::jsonb) k(visibility text,fact_hash text,subject text,norm text)
     JOIN facts f ON f.source_id=$1 AND f.visibility=k.visibility
       AND gbrain_fact_fingerprint(f.fact)=COALESCE(encode(sha256(convert_to(k.norm,'UTF8')),'hex'),k.fact_hash)
-      AND (k.subject='*' OR f.entity_slug=k.subject)
+      AND (k.subject='*' OR f.entity_slug=k.subject OR (${onMemberPageSql('f')} AND f.source_markdown_slug=k.subject))
     JOIN pages p ON p.source_id=f.source_id AND p.slug=COALESCE(f.source_markdown_slug,f.entity_slug)`, [sourceId, keys]);
   for (const row of provenance) affected.add(row.id);
   if (affected.size > WITHDRAWAL_LIMITS.targets) await refuseAffected(engine, sourceId, affected);
