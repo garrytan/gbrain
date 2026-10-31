@@ -1691,14 +1691,14 @@
           "1 group_id text/text NOT NULL",
           "2 member_id text/text NOT NULL"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "access_groups": {
         "columns": [
           "1 id text/text NOT NULL",
           "2 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "access_members": {
         "columns": [
@@ -1709,7 +1709,7 @@
           "5 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "6 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "access_pending_coverage": {
         "columns": [

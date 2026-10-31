@@ -4550,8 +4550,8 @@
         "idempotent": true,
         "name": "member_read_access",
         "sql": {
-          "length": 5992,
-          "sha256": "717b58dd097275d8a5116be7fbe7c6920452d25ad01cac17c019f35b2ee91add"
+          "length": 6338,
+          "sha256": "482913b07ebd9603c0cd04329ae5f15d9d26e85bae3fa527ec7bf03b025ea0b3"
         },
         "sqlFor": "absent",
         "transaction": "absent",
