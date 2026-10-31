@@ -21,6 +21,7 @@ export type TouchpointKind =
 export type Implementation =
   | 'native-openai'
   | 'native-google'
+  | 'native-vertex'
   | 'native-anthropic'
   | 'openai-compatible'
   | 'claude-cli';
@@ -74,6 +75,12 @@ export interface EmbeddingTouchpoint {
    * DEFAULT_MAX_CHUNK_TOKENS.
    */
   max_input_tokens?: Readonly<Record<string, number>>;
+  /**
+   * Maximum UTF-16 code units accepted for one input before the gateway's
+   * legacy truncation boundary. Providers that reject long inputs rather than
+   * silently truncating set this so the caller can split and retry explicitly.
+   */
+  max_input_chars?: number;
   dims_options?: number[]; // for Matryoshka-aware providers
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string; // ISO date

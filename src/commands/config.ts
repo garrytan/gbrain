@@ -269,6 +269,7 @@ export const FILE_PLANE_API_KEYS: readonly string[] = [
   'litellm_api_key',
   'together_api_key',
   'google_api_key',
+  'google_vertex_project', 'google_vertex_location', 'google_vertex_account', 'google_vertex_gcloud_path', // #729: gcloud OAuth, not keys; file plane only
   'azure_openai_api_key', // #4031: mergedProviderEnv reads the file plane only
 ];
 

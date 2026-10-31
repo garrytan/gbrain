@@ -67,6 +67,68 @@ describe('embeddingProviderConfigured (recipe-aware helper)', () => {
     // (a config-plane key is genuinely usable by the gateway).
     expect(HOSTED_EMBED_KEY_CONFIG.GOOGLE_GENERATIVE_AI_API_KEY).toBe('google_api_key');
     expect(HOSTED_EMBED_KEY_CONFIG.DASHSCOPE_API_KEY).toBe('dashscope_api_key');
+    expect(HOSTED_EMBED_KEY_CONFIG.GOOGLE_VERTEX_PROJECT).toBe('google_vertex_project');
+    expect(HOSTED_EMBED_KEY_CONFIG.GOOGLE_VERTEX_LOCATION).toBe('google_vertex_location');
+    expect(HOSTED_EMBED_KEY_CONFIG.GOOGLE_VERTEX_ACCOUNT).toBe('google_vertex_account');
+    expect(HOSTED_EMBED_KEY_CONFIG.GOOGLE_VERTEX_GCLOUD_PATH).toBe('google_vertex_gcloud_path');
+  });
+
+  test('file-only Vertex configuration requires every trusted setting', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('fs');
+    const { join } = await import('path');
+    const { tmpdir } = await import('os');
+    const { withEnv } = await import('./helpers/with-env.ts');
+    const tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-vertex-cfg-test-'));
+    const fileOnlyVertexConfig = {
+      engine: 'pglite',
+      database_path: '/tmp/x',
+      google_vertex_project: 'file-only-project',
+      google_vertex_location: 'us-central1',
+      google_vertex_account: 'file-only@example.test',
+      google_vertex_gcloud_path: process.execPath,
+    };
+    const vertexEnvKeys = [
+      'GOOGLE_VERTEX_PROJECT',
+      'GOOGLE_VERTEX_LOCATION',
+      'GOOGLE_VERTEX_ACCOUNT',
+      'GOOGLE_VERTEX_GCLOUD_PATH',
+    ];
+    try {
+      mkdirSync(join(tmpHome, '.gbrain'), { recursive: true });
+      writeFileSync(join(tmpHome, '.gbrain', 'config.json'), JSON.stringify(fileOnlyVertexConfig));
+      await withEnv({
+        GBRAIN_HOME: tmpHome,
+        GOOGLE_VERTEX_PROJECT: undefined,
+        GOOGLE_VERTEX_LOCATION: undefined,
+        GOOGLE_VERTEX_ACCOUNT: undefined,
+        GOOGLE_VERTEX_GCLOUD_PATH: undefined,
+      }, async () => {
+        const { loadConfigFileOnly } = await import('../src/core/config.ts');
+        const { buildGatewayConfig } = await import('../src/core/ai/build-gateway-config.ts');
+        const fileCfg = loadConfigFileOnly()!;
+        const resolveFileOnlyKey = (config: object) => (envVar: string) => {
+          const cfgField = HOSTED_EMBED_KEY_CONFIG[envVar];
+          return !!(cfgField ? (config as Record<string, unknown>)[cfgField] : undefined);
+        };
+
+        expect(buildGatewayConfig(fileCfg).env).toMatchObject({
+          GOOGLE_VERTEX_PROJECT: 'file-only-project',
+          GOOGLE_VERTEX_LOCATION: 'us-central1',
+          GOOGLE_VERTEX_ACCOUNT: 'file-only@example.test',
+          GOOGLE_VERTEX_GCLOUD_PATH: process.execPath,
+        });
+        expect(embeddingProviderConfigured('vertex:gemini-embedding-001', resolveFileOnlyKey(fileCfg))).toBe(true);
+
+        for (const missingEnvKey of vertexEnvKeys) {
+          const cfgField = HOSTED_EMBED_KEY_CONFIG[missingEnvKey]!;
+          const incompleteConfig = { ...fileCfg } as Record<string, unknown>;
+          delete incompleteConfig[cfgField];
+          expect(embeddingProviderConfigured('vertex:gemini-embedding-001', resolveFileOnlyKey(incompleteConfig))).toBe(false);
+        }
+      });
+    } finally {
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
   });
 
   // #2662: end-to-end regression through the REAL file-plane loader

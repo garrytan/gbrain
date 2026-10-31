@@ -8,6 +8,7 @@
 import type { Recipe } from '../types.ts';
 import { openai } from './openai.ts';
 import { google } from './google.ts';
+import { vertex } from './vertex.ts';
 import { anthropic } from './anthropic.ts';
 import { claudeCli } from './claude-cli.ts';
 import { ollama } from './ollama.ts';
@@ -35,6 +36,7 @@ import { typesafe } from './typesafe.ts';
 const ALL: Recipe[] = [
   openai,
   google,
+  vertex,
   anthropic,
   claudeCli,
   ollama,

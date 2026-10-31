@@ -126,6 +126,11 @@ export interface GBrainConfig {
    * caveat) as voyage_api_key above.
    */
   google_api_key?: string;
+  /** Vertex AI (#729): non-secret file-plane project/location and the explicit gcloud account/executable (ai/vertex-auth.ts). */
+  google_vertex_project?: string;
+  google_vertex_location?: string;
+  google_vertex_account?: string;
+  google_vertex_gcloud_path?: string;
   /**
    * Azure OpenAI API key (#4031). File-plane slot folded into the gateway env
    * as AZURE_OPENAI_API_KEY (the name the azure-openai recipe reads). Same
@@ -1261,6 +1266,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'litellm_api_key',
   'together_api_key',
   'google_api_key',
+  'google_vertex_project', 'google_vertex_location', 'google_vertex_account', 'google_vertex_gcloud_path',
   'azure_openai_api_key',
   'azure_openai_endpoint',
   'azure_openai_deployment',

@@ -48,6 +48,10 @@ export const CONFIG_API_KEY_ENV = [
   ['litellm_api_key', 'LITELLM_API_KEY'],
   ['together_api_key', 'TOGETHER_API_KEY'],
   ['google_api_key', 'GOOGLE_GENERATIVE_AI_API_KEY'],
+  ['google_vertex_project', 'GOOGLE_VERTEX_PROJECT'],
+  ['google_vertex_location', 'GOOGLE_VERTEX_LOCATION'],
+  ['google_vertex_account', 'GOOGLE_VERTEX_ACCOUNT'],
+  ['google_vertex_gcloud_path', 'GOOGLE_VERTEX_GCLOUD_PATH'],
   // #4031: the Azure key was the only member of the group below left unfolded,
   // so a config.json-only setup failed every embed from keyless shells
   // (launchd/cron/MCP) while `config show` looked complete.

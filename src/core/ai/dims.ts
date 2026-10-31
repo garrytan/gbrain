@@ -195,6 +195,20 @@ export function dimsProviderOptions(
       }
       return undefined;
     }
+    case 'native-vertex':
+      if (matchId === 'gemini-embedding-001') {
+        return {
+          vertex: {
+            outputDimensionality: dims,
+            taskType: inputType === 'query' ? 'RETRIEVAL_QUERY' : 'RETRIEVAL_DOCUMENT',
+            autoTruncate: false,
+          },
+        };
+      }
+      if (matchId === 'gemini-embedding-2') {
+        return { vertex: { outputDimensionality: dims, autoTruncate: false } };
+      }
+      return undefined;
     case 'native-anthropic':
       // Anthropic has no embedding model.
       return undefined;
