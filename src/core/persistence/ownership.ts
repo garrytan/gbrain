@@ -256,9 +256,10 @@ async function lockWorktree(binding: WorktreeBinding, waitMs: number, signal: Ab
  */
 export const MANAGED_WRITER_PROBE_WAIT_MS = 1000;
 
-/** Acquire-and-release probe of the worktree lock within MANAGED_WRITER_PROBE_WAIT_MS; false when it stayed busy. */
-export async function probeWorktreeWriter(binding: WorktreeBinding, engine?: BrainEngine): Promise<boolean> {
-  const lock = await acquireWorktree(binding, MANAGED_WRITER_PROBE_WAIT_MS, undefined, engine);
+/** Acquire-and-release probe; maintenance callers can supply their remaining wait budget. */
+export async function probeWorktreeWriter(binding: WorktreeBinding, engine?: BrainEngine,
+  waitMs = MANAGED_WRITER_PROBE_WAIT_MS): Promise<boolean> {
+  const lock = await acquireWorktree(binding, waitMs, undefined, engine);
   if (!lock) return false;
   await lock.release();
   return true;
