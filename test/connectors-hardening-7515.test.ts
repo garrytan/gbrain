@@ -327,7 +327,7 @@ describe('#7515 (d) a run is bounded', () => {
     }
   });
 
-  test('client: a deadline stops before the next request and before a Retry-After wait that would pass it', async () => {
+  test('client: a deadline stops before the next request and before a server-error retry that would pass it', async () => {
     const clock = { t: NOW_MS };
     let calls = 0;
     const client = okClient({ now: () => clock.t, deadlineAt: NOW_MS + 2_500 }, () => { calls++; clock.t += 1_000; });
@@ -337,8 +337,8 @@ describe('#7515 (d) a run is bounded', () => {
 
     const sleeps: number[] = [];
     const limited = new ConnectorClient({
-      baseUrl: CHATGPT_BASE_URL, headers: async () => ({}), minDelayMs: 0, now: () => NOW_MS, deadlineAt: NOW_MS + 10_000,
-      sleep: async (ms: number) => { sleeps.push(ms); }, fetchImpl: async () => json({ error: 'slow down' }, 429, { 'retry-after': '60' }),
+      baseUrl: CHATGPT_BASE_URL, headers: async () => ({}), minDelayMs: 0, now: () => NOW_MS, deadlineAt: NOW_MS + 500,
+      sleep: async (ms: number) => { sleeps.push(ms); }, fetchImpl: async () => json({ error: 'unavailable' }, 503),
     } as never);
     await expect(limited.fetchJSON('/x')).rejects.toMatchObject({ name: 'ConnectorRunLimitError', reason: 'deadline' });
     expect(sleeps).toEqual([]);

@@ -2,7 +2,7 @@
  * #7482: a bot challenge on any status, and sustained rate limiting, stop the connector sync instead of retrying.
  *
  * 1. Protects: cf-mitigated: challenge (any status), a challenge page on a 5xx, and a redirect to a challenge all
- *    classify as forbidden; a 429 that outlasts its retries, or asks for a Retry-After over the cap, ends the run as
+ *    classify as forbidden; the first 429, regardless of Retry-After, ends the run as
  *    rate_limited at once; CONSECUTIVE_FETCH_FAILURE_LIMIT failed fetches in a row stop the run as partial with
  *    stopReason consecutive_fetch_failures when each failure is provider-wide (5xx or no response), and no later
  *    conversation is requested; 404s and other item errors never trip it.
@@ -70,18 +70,20 @@ describe('#7482 ConnectorClient rate limiting is bounded', () => {
     expect(sleeps).toEqual([]);
   });
 
-  test('sustained 429s: the existing 4 retries, then ConnectorRateLimitedError', async () => {
-    const sleeps: number[] = [];
-    let calls = 0;
-    const client = new ConnectorClient({
-      baseUrl: 'https://chatgpt.com', headers: async () => ({}), minDelayMs: 0,
-      sleep: async (ms) => { sleeps.push(ms); },
-      fetchImpl: async () => { calls++; return json429('2'); },
+  for (const retryAfter of [undefined, '0', '2', new Date(1_900_000_000_000).toUTCString()]) {
+    test(`first 429 stops without waiting, Retry-After=${retryAfter ?? 'absent'} (#7689)`, async () => {
+      const sleeps: number[] = [];
+      let calls = 0;
+      const client = new ConnectorClient({
+        baseUrl: 'https://chatgpt.com', headers: async () => ({}), minDelayMs: 0,
+        sleep: async (ms) => { sleeps.push(ms); },
+        fetchImpl: async () => { calls++; return json429(retryAfter); },
+      });
+      await expect(client.fetchJSON('/x')).rejects.toBeInstanceOf(ConnectorRateLimitedError);
+      expect(calls).toBe(1);
+      expect(sleeps).toEqual([]);
     });
-    await expect(client.fetchJSON('/x')).rejects.toBeInstanceOf(ConnectorRateLimitedError);
-    expect(calls).toBe(5);
-    expect(sleeps).toEqual([2000, 2000, 2000, 2000]);
-  });
+  }
 });
 
 let engine: PGLiteEngine;
@@ -137,13 +139,13 @@ describe('#7482 runConnectorSync stops instead of retrying', () => {
     expect(state.hits['forced:/backend-api/conversation/:503']).toBe(3);
   });
 
-  test('sustained 429s on conversation detail → rate_limited after the first conversation\'s retries', async () => {
+  test('first 429 on conversation detail → rate_limited with no retry or later detail', async () => {
     const state = newFixtureState(conversations(8));
     state.script.push({ pathIncludes: '/backend-api/conversation/', status: 429, body: { error: 'slow down' }, headers: { 'retry-after': '1' } });
     const r = await sync(state);
     expect(r.status).toBe('rate_limited');
     expect(r.hint).toMatch(/rate limit/i);
-    expect(state.hits['forced:/backend-api/conversation/:429']).toBe(5);
+    expect(state.hits['forced:/backend-api/conversation/:429']).toBe(1);
     expect(r.fetchErrors).toBe(0);
     expect(await engine.getConfig(watermarkKey('chatgpt', 'default'))).toBeNull();
   });
@@ -153,7 +155,7 @@ describe('#7482 runConnectorSync stops instead of retrying', () => {
     state.script.push({ pathIncludes: 'limit=28', status: 429, body: { error: 'slow down' }, headers: { 'retry-after': '1' } });
     const r = await sync(state);
     expect(r.status).toBe('rate_limited');
-    expect(state.hits['forced:limit=28:429']).toBe(5);
+    expect(state.hits['forced:limit=28:429']).toBe(1);
     expect(state.hits['forced:/backend-api/conversation/:429'] ?? 0).toBe(0);
     expect(detailHits(state)).toBe(0);
   });
