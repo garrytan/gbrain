@@ -450,10 +450,18 @@ for (const kind of testBackends()) {
 }
 
 describe('shared agents on an unrestricted brain (pglite, repo-less)', () => {
-  test('a channel audience never sees a private page under the operator hatch before any member exists', async () => {
-    const engine = new PGLiteEngine();
+  let engine: PGLiteEngine;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
     await engine.connect({ engine: 'pglite' } as never);
     await engine.initSchema();
+  }, 120_000);
+  afterAll(async () => {
+    __resetPrivateVisibilityCacheForTests();
+    await engine.disconnect();
+  });
+
+  test('a channel audience never sees a private page under the operator hatch before any member exists', async () => {
     try {
       await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1)', ['obo-open-src']);
       await importFromContent(engine, 'notes/quiet', '---\ntype: note\ntitle: Quiet\nvisibility: private\n---\n# Quiet\n\nHarbor ledger canaryoboopenquiet.', { sourceId: 'obo-open-src', noEmbed: true });
@@ -476,7 +484,6 @@ describe('shared agents on an unrestricted brain (pglite, repo-less)', () => {
       });
     } finally {
       __resetPrivateVisibilityCacheForTests();
-      await engine.disconnect();
     }
   }, 120_000);
 });
