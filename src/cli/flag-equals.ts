@@ -21,6 +21,8 @@
  *  - keep the token where the handler on this path reads the `=` form
  *    (EQUALS_READERS, keyed by command or `command sub`), empty values
  *    included: that handler owns refusing them;
+ *  - on a path that reads no value flag (NO_VALUE_FLAG_PATHS), refuse a
+ *    value flag with advice to leave it out;
  *  - elsewhere, refuse an empty value or one that looks like a flag (`-y`, `--x`);
  *  - split `--flag value` when the command's own table declares a value;
  *  - refuse every other `=` form with the separate-token spelling. Splitting
@@ -225,19 +227,36 @@ export const OWN_EQUALS_PARSERS: ReadonlySet<string> = new Set([
   'takes add', 'takes remove', 'takes resolve', 'takes supersede', 'takes update',
 ]);
 
-/** Switches a command reads with `args.includes` whose name takes a value elsewhere; the command's own reading wins. */
+/**
+ * Switches a command reads with `args.includes` whose name takes a value
+ * elsewhere, or that no shared switch evidence (curated help, the operation
+ * manifest) covers: `agent` has no curated help, so its `--follow` and
+ * `--detach` need an entry here. The command's own reading wins.
+ */
 export const COMMAND_SWITCHES: Readonly<Record<string, readonly string[]>> = {
   sync: ['--detail'],
   schema: ['--fields'],
   agent: ['--follow', '--detach'],
   dream: ['--unsafe-bypass-dream-guard'],
   embed: ['--stale'],
+  'edge-proposals': ['--all-held', '--all-applied'],
 };
 
 /** Value flags of a command with no curated help that every path reads as `--flag <value>` (migrate-engine.ts parseArgs, migrate-graduation.ts flagValue and routesToGraduation); their `=` form splits. */
 export const COMMAND_VALUES: Readonly<Record<string, readonly string[]>> = {
   migrate: ['--to', '--url'],
 };
+
+/**
+ * Paths (`command sub`) whose handler reads no value flag, only switches and
+ * positionals: an `=` value flag there refuses with advice to drop it, never
+ * `--flag <value>`, because the separate value would become the target
+ * (edge-proposals.ts takes the first numeric token as the proposal id, so
+ * `accept --limit 5 12` acts on proposal 5).
+ */
+export const NO_VALUE_FLAG_PATHS: ReadonlySet<string> = new Set([
+  'edge-proposals show', 'edge-proposals accept', 'edge-proposals reject', 'edge-proposals undo', 'edge-proposals date', 'edge-proposals retry',
+]);
 
 /** Paths (`command sub`) whose handler treats a bare `--` as the end of its options; everywhere else the scan continues past it. */
 export const END_OF_OPTIONS: ReadonlySet<string> = new Set(['agent run', 'frontmatter validate']);
@@ -304,6 +323,8 @@ export async function splitFlagEquals(command: string, args: readonly string[]):
       ? [`${where} reads no = form`, `Check the flag in ${where} --help: write a switch on its own (a value never turns it off), or a value as the next argument.`]
       : isSwitch
       ? [`${flag} is a switch and takes no value`, `Write ${flag} on its own, or leave it out.`]
+      : NO_VALUE_FLAG_PATHS.has(`${keyed} ${sub}`)
+      ? [`${where} does not read ${flag}`, `Leave ${flag} out: written as ${flag} <value>, the value would be read as a positional argument (such as an id).`]
       : value === '' || /^-[-A-Za-z]/.test(value)
         ? [`the value is empty or looks like a flag`, `Write ${flag} <value> with the value as the next argument.`]
         : own === undefined && /^(true|false|yes|no|y|n|on|off|0|1)$/i.test(value)

@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs';
 import { Glob } from 'bun';
 import { CLI_ONLY, cliOnlyFlagArgs, validateCommandFlags } from '../src/cli/main.ts';
 import { CLI_FLAG_REGISTRY } from '../src/core/cli-flag-registry.generated.ts';
-import { COMMAND_VALUES, END_OF_OPTIONS, EQUALS_READERS, OWN_EQUALS_PARSERS, directEntryArgs, findUnknownFlag, knownSwitches, splitFlagEquals } from '../src/cli/flag-equals.ts';
+import { COMMAND_VALUES, END_OF_OPTIONS, EQUALS_READERS, NO_VALUE_FLAG_PATHS, OWN_EQUALS_PARSERS, directEntryArgs, findUnknownFlag, knownSwitches, splitFlagEquals } from '../src/cli/flag-equals.ts';
 import { CLI_COMMANDS } from '../src/cli/command-table.ts';
 import { SEARCH_SUBCOMMANDS } from '../src/cli/subcommands.ts';
 import { SYNC_FLAGS } from '../src/core/sync-flags.ts';
@@ -569,6 +569,34 @@ describe('#7619 refusals that keep consent, scope and targets right', () => {
       const kind = rest.length === 1 ? 'value' : rest[0] === '5' ? 'switch' : 'prompt';
       expect([flag, kind]).toEqual([flag, RUN_VALUE_FLAGS.has(flag) ? 'value' : BOOLEAN_TAIL_FLAGS.has(flag) ? 'switch' : 'prompt']);
     }
+  });
+
+  // Value: protects=the agent run leading zone skips a value flag's value, so an = flag after it is read as a leading flag and gets the two-argument advice; fails_when=the value-skip is removed and the value ends the zone, so the = flag is read as prompt text with advice to move it before the prompt it already precedes; why_new=no row put an = flag after a value flag and its value (#7672 item 6); seam=none; no_claim=agent run's own parse after the gate
+  test('agent run reads an = flag after a value flag and its value as a leading flag', async () => {
+    for (const [args, flag] of [[['run', '--model', 'opus', '--tools=read', 'go'], '--tools'], [['run', '--source', 'source-a', '--detach', '--max-turns=2', 'go'], '--max-turns']] as const) {
+      const r = await cliOnlyFlagArgs('agent', [...args]);
+      expect('refusal' in r && r.refusal.message).toContain(`${flag}=…`);
+      expect('refusal' in r && r.refusal.message).toContain('as two arguments');
+      expect('refusal' in r && r.refusal.message).not.toContain('before the prompt');
+    }
+  });
+
+  // Value: protects=an = value flag on an edge-proposals path that reads no value flag refuses with advice to drop it; fails_when=the refusal advises --limit <value>, and the handler then takes that value as the proposal id (accept --limit 5 12 acts on proposal 5); why_new=the generic two-argument advice assumed every path reads the flag (#7672 item 4); seam=none; no_claim=the list path, which reads --limit= itself
+  test('edge-proposals paths that read no value flag say to drop an = value flag', async () => {
+    const { EDGE_PROPOSALS_SUBCOMMANDS } = await import('../src/cli/subcommands.ts');
+    expect([...NO_VALUE_FLAG_PATHS].sort()).toEqual(EDGE_PROPOSALS_SUBCOMMANDS.filter(s => s !== 'list').map(s => `edge-proposals ${s}`).sort());
+    for (const sub of ['show', 'accept', 'reject', 'undo', 'date', 'retry']) {
+      for (const flag of ['--limit', '--source']) {
+        const r = await cliOnlyFlagArgs('edge-proposals', [sub, `${flag}=5`, '12']);
+        expect('refusal' in r && r.refusal.code).toBe('invalid_params');
+        expect('refusal' in r && r.refusal.message).toContain(`gbrain edge-proposals ${sub} does not read ${flag}`);
+        expect('refusal' in r && r.refusal.suggestion).toContain(`Leave ${flag} out`);
+        expect('refusal' in r && r.refusal.suggestion).not.toContain(`Write ${flag} <value>`);
+      }
+    }
+    expect(await refusalFor('edge-proposals', ['retry', '--all-held=1'])).toContain('--all-held is a switch');
+    expect(await refusalFor('edge-proposals', ['undo', '--all-applied=true'])).toContain('--all-applied is a switch');
+    expect(await argvFor('edge-proposals', ['list', '--limit=5', '--status=all'])).toEqual(['list', '--limit=5', '--status=all']);
   });
 
   test('the hand-parsed search subcommands refuse an = form without vouching for the flag', async () => {
