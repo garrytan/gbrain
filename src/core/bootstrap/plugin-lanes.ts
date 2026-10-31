@@ -96,7 +96,12 @@ function claudePluginEnabled(settingsPath: string, name: string): string | null 
     if (!enabled || typeof enabled !== 'object') return null;
     const prefix = `${name}@`;
     for (const [key, value] of Object.entries(enabled)) {
-      if (key.startsWith(prefix) && value === true) return key;
+      // The bundled variants also provide the gbrain MCP name. Restrict
+      // these aliases to our marketplace; similarly named plugins elsewhere
+      // are not evidence that this MCP server is installed.
+      const bundledVariant = name === 'gbrain'
+        && (key === 'gbrain-daily@gbrain' || key === 'gbrain-coding@gbrain');
+      if ((key.startsWith(prefix) || bundledVariant) && value === true) return key;
     }
     return null;
   } catch {
