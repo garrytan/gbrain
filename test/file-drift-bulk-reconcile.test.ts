@@ -185,6 +185,28 @@ for (const backend of testBackends()) describe(`C7 bulk file-drift reconcile (${
     return JSON.parse(lines.join('\n'));
   }
 
+  test('#8049 an impossible timeline date refuses only its page and healthy siblings still preview and apply', () => fixture(async ({ root, sourceId, ctx }) => {
+    const bad = 'notes/impossible-date';
+    const good = 'notes/valid-date';
+    for (const slug of [bad, good]) await put(ctx, slug, `---\ntype: note\ntitle: ${slug}\n---\nOriginal ${slug}.\n`);
+    drift(root, bad, text => `${text}\n## Timeline\n- **2026-02-30** | journal — Impossible day.\n`);
+    drift(root, good, text => `${text}\n## Timeline\n- **2024-02-29** | journal — Leap day.\n`);
+    const badBytes = readFileSync(join(root, `${bad}.md`));
+    const badBefore = await engine.readPageSnapshot(bad, { sourceId });
+    const before = await requests(sourceId);
+    const preview = (await json(['file-drift', '--source', sourceId, '--slug', bad, '--slug', good, '--prefer', 'file'])).results[0]!;
+    expect(preview).toMatchObject({ mode: 'dry_run', affected: 1, residuals: { refused_invalid_params: 1 } });
+    expect(preview.sample).toEqual([`${sourceId}:${good}`]);
+    expect(preview.listing).toContainEqual({ item: `${sourceId}:${bad}`, class: 'refused', detail: expect.stringContaining('calendar date') });
+    expect(await requests(sourceId)).toBe(before);
+    const applied = (await json(argvFromCommand(String(preview.apply_command))!.slice(2))).results[0]!;
+    expect(applied).toMatchObject({ applied: 1, complete: true, outcomes: { repaired: 1 } });
+    expect((await engine.getTimeline(good, { sourceId })).map(row => new Date(row.date).toISOString().slice(0, 10))).toEqual(['2024-02-29']);
+    expect(await engine.readPageSnapshot(bad, { sourceId })).toEqual(badBefore);
+    expect(readFileSync(join(root, `${bad}.md`))).toEqual(badBytes);
+    expect(await engine.getTimeline(bad, { sourceId })).toEqual([]);
+  }), 240_000);
+
   test('--all-drifted --only concepts/** previews 3 of 4 drifted pages, and executing the exact returned command applies exactly those 3', () => fixture(async ({ root, sourceId, ctx }) => {
     await driftedPages(root, ctx);
     const preview = (await json(['file-drift', '--source', sourceId, '--all-drifted', '--only', 'concepts/**', '--prefer', 'database'])).results[0]!;

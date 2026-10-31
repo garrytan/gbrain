@@ -31,6 +31,7 @@ import { fenceOwnerKey, readFenceBlocks, TAKE_FENCE_KIND } from '../generations/
 import { projectFactFenceGeneration } from '../generations/adapters/fact-rows.ts';
 import { projectTakeFenceGeneration } from '../generations/adapters/take-rows.ts';
 import { linksFenceProjectionRows, projectLinksFence } from '../links-fence-projection.ts';
+import { assertTimelineDate } from '../timeline-date.ts';
 
 const FENCE_PAIRS=[{begin:FACTS_FENCE_BEGIN,end:FACTS_FENCE_END},{begin:TAKES_FENCE_BEGIN,end:TAKES_FENCE_END}];
 
@@ -676,6 +677,9 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
   const storedRows = prior ? await storedTimeline(engine, prior.page.id) : [];
   const prior_ = prior ? await priorView(engine, prior.page, slug, storedRows) : null;
   const { timeline, exactIncoming, pinned } = classifyTimeline(storedRows, page, prior_?.rows ?? null, slug, writer, policy);
+  // Validate incoming projections during preparation, not after a preview has
+  // approved them or a publication has started deleting prior rows.
+  for (const entry of timeline.values()) assertTimelineDate(entry.date);
   const deletionRows = pinned.filter(row => row.action === 'delete')
     .map(({ id, date, source, summary, detail, state }) => ({ id, date, source, summary, detail, removed: state === 'removed' || state === 'removed_marked' }));
   const refreshRows = pinned.filter(row => row.action === 'refresh_detail')
