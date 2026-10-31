@@ -2895,7 +2895,7 @@ export function defaultMaxOutputTokens(modelStr: string | undefined): number {
   return isThinkingModel(modelStr) ? THINKING_MODEL_MAX_OUTPUT_TOKENS : DEFAULT_MAX_OUTPUT_TOKENS;
 }
 /** The cap `chat({ thinking: 'off', maxTokens: requested })` sends (thinking-off.ts table); judge preflight estimates price with it. */
-export const thinkingOffOutputCap = (modelStr: string, requested: number): number => thinkingOffMaxOutputTokens(modelStr, requested, isThinkingModel(modelStr), THINKING_MODEL_MAX_OUTPUT_TOKENS);
+export const thinkingOffOutputCap = (modelStr: string, requested: number): number => thinkingOffMaxOutputTokens(modelStr, requested, isThinkingModel(modelStr), THINKING_MODEL_MAX_OUTPUT_TOKENS, _config?.base_urls?.deepseek);
 
 /**
  * Deep-serialize a tool output into a plain JSON value for the AI SDK v6
@@ -3679,7 +3679,7 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
   applyConfiguredChatProviderOptions(providerOptions, cfg, recipe.id, modelId);
   // Call-scoped options merge last so they win over configured siblings.
   providerOptions = deepMergeRecords(providerOptions, opts.providerOptions);
-  if (opts.thinking === 'off') applyThinkingOff(providerOptions, `${recipe.id}:${modelId}`);
+  if (opts.thinking === 'off') applyThinkingOff(providerOptions, `${recipe.id}:${modelId}`, cfg.base_urls?.[recipe.id]);
 
   // Derive ONE canonical cache-control value AFTER config merging and reuse
   // it for every breakpoint (system block, last tool def, call-level). If
