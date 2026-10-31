@@ -27,7 +27,8 @@ import type { TrustTier } from '../trust/tier.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { factsFtsDocument, getFtsLanguage } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
-import { privateProvenanceFilterFragment } from './private-visibility.ts';
+import { privateProvenanceFilterUnderPolicy } from './private-visibility.ts';
+import { factVisibilitySql } from '../access/member-facts.ts';
 import { quarantinedProvenanceFilterFragment } from '../quarantine.ts';
 import { namedEntity } from './entity-anchor.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
@@ -140,8 +141,8 @@ function poolPredicate(scope: FactPoolScope, filters: FactPoolFilters | undefine
     filters?.includeExpired ? 'f.source_id = ANY($1::text[])' : 'f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL',
     filters?.includeExpired ? 'f.source != ALL($2::text[])' : '(f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($2::text[])',
     quarantinedProvenanceFilterFragment('f'),
-    ...(scope.remote ? [`f.visibility = 'world'`] : []),
-    ...(scope.excludePrivate ? [privateProvenanceFilterFragment('f')] : []),
+    ...(scope.remote ? [factVisibilitySql('f', ['world'])] : []),
+    ...(scope.excludePrivate ? [privateProvenanceFilterUnderPolicy('f')] : []),
     projectionEligibleSql('facts', 'f', { floor: scope.minTrust, suppressFlagged: scope.suppressFlagged }),
   ];
   if (filters?.entities) {

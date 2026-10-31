@@ -34,6 +34,7 @@ import { localHostId } from './identity.ts';
 import { MANAGED_SYNC_PASS_OP } from './sync-pass-row.ts';
 import { BACKOFF_ELAPSED } from './transient-retry.ts';
 import { segmentWriteScope } from '../page-body/ingest.ts';
+import { sameAttestedActor } from '../access/member-facts.ts';
 import {
   isTerminal, principalKey, requestPrincipal, recoveryFiles,
   type JournalLimits, type Principal, type RecoveryRecord, type RequestState,
@@ -233,7 +234,8 @@ export function intentDigest(a: Pick<WriteAdmission, 'operation' | 'sourceId' | 
   return digest({ operation: a.operation, source_id: a.sourceId, slug: a.slug, intent: a.callerIntent });
 }
 export function assertReplayIntent(row: WriteRequest, expectedDigest: string): WriteRequest {
-  if (row.digest !== expectedDigest) throw opError('idempotency_conflict', 'This request_id was used for a different write; send a new one or omit it.',
+  // GST-359 C2: a request_id another person's attested write used is a different write, never a replay of it.
+  if (row.digest !== expectedDigest || !sameAttestedActor(row.authority?.actingFor)) throw opError('idempotency_conflict', 'This request_id was used for a different write; send a new one or omit it.',
     'A request_id is reused only to retry the same write. Send this write again with a new request_id or without one; the earlier write keeps its receipt.',
     { fix: readFix(`Reads the earlier write's receipt (request ${row.request_id}), read-only.`, row.principal_kind === 'local_cli'
       ? { argv: ['gbrain', 'write-request', '--', row.request_id] }

@@ -10,6 +10,7 @@ import { readSupersessionThreshold } from './supersession-threshold.ts';
 import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
 import { pageNotVisibleError } from '../persistence/page-visibility.ts';
 import { slugUnderBoundPrefixes } from '../ops/context.ts';
+import { onMemberPageSql } from '../access/member-facts.ts';
 
 export type FactCandidate = FactRow & { source_markdown_slug: string | null; row_num: number | null };
 export interface FactDecision { status: 'inserted' | 'duplicate' | 'superseded'; candidate: FactCandidate | null; }
@@ -17,6 +18,12 @@ export interface SingleFactIntent {
   fact: string; kind: FactRow['kind']; visibility: FactRow['visibility']; entity_slug: string | null;
   /** Speaker of the new claim; a fact another known speaker asserted is never its duplicate. */
   attributed_to?: FactAttribution | null;
+  /**
+   * GST-359 C2: the member page a member's fact goes to (access/member-facts.ts). Its duplicates and supersession
+   * candidates are only facts on that page (the writer's own, so the readers filter is not applied to them); a write
+   * with no page_slug never matches a fact on any member page.
+   */
+  page_slug?: string;
 }
 /** Provider work belongs to preparation, never to a page/source transaction. `disabled`: the brain opted out of embedding. */
 export async function prepareFactEmbedding(fact: string, signal?: AbortSignal, disabled = false): Promise<{ embedding: Float32Array | null; embedding_model: string | null; degraded: boolean }> {
@@ -105,13 +112,14 @@ export async function decideSingleFact(engine: BrainEngine, sourceId: string, in
   const [exact] = await engine.executeRaw<FactCandidate>(`SELECT * FROM facts WHERE source_id=$1
     AND entity_slug IS NOT DISTINCT FROM $2 AND visibility=$3 AND expired_at IS NULL
     AND (valid_until IS NULL OR valid_until>now()) AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($4)
-    AND ($5::text IS NULL OR attributed_to IS NULL OR attributed_to=$5)${opts.excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}
-    ORDER BY id LIMIT 1`, [sourceId, input.entity_slug, input.visibility, input.fact, input.attributed_to ?? null]);
+    AND ($5::text IS NULL OR attributed_to IS NULL OR attributed_to=$5)${opts.excludePrivate && !input.page_slug ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}
+    AND ${input.page_slug ? 'source_markdown_slug=$6' : `($6::text IS NULL AND NOT ${onMemberPageSql('facts')})`}
+    ORDER BY id LIMIT 1`, [sourceId, input.entity_slug, input.visibility, input.fact, input.attributed_to ?? null, input.page_slug ?? null]);
   if (exact) return { status: 'duplicate', candidate: { ...exact, id: Number(exact.id) } };
   if (embedding && input.entity_slug) {
     const candidates = await listSupersessionCandidates(engine, sourceId, input.entity_slug, input.fact, embedding, embeddingModel, undefined, input.attributed_to ?? null);
     const metadata = await engine.executeRaw<{ id: number; source_markdown_slug: string | null; row_num: number | null; trust_tier: FactRow['trust_tier'] }>(
-      `SELECT id,source_markdown_slug,row_num,trust_tier FROM facts WHERE source_id=$1 AND id=ANY($2::int[])${opts.excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`,
+      `SELECT id,source_markdown_slug,row_num,trust_tier FROM facts WHERE source_id=$1 AND id=ANY($2::int[])${opts.excludePrivate && !input.page_slug ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`,
       [sourceId, candidates.map(c => c.id)]);
     let candidate: FactCandidate | null = null;
     let score = -1;
@@ -123,7 +131,7 @@ export async function decideSingleFact(engine: BrainEngine, sourceId: string, in
       // side effect. Cross-page supersession requires a separate multi-page op.
       if (!c.embedding || c.visibility !== input.visibility || c.expired_at ||
         c.valid_until && new Date(c.valid_until).getTime() <= Date.now() ||
-        c.source_markdown_slug && c.source_markdown_slug !== input.entity_slug) continue;
+        (input.page_slug ? c.source_markdown_slug !== input.page_slug : c.source_markdown_slug && c.source_markdown_slug !== input.entity_slug)) continue;
       const next = cosineSimilarity(embedding, c.embedding);
       if (next > score) { score = next; candidate = c; }
     }

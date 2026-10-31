@@ -12,6 +12,7 @@ import type { Principal, SqlEngine, WriteAuthority, WriteRequest } from './model
 import { authorizePageVisibility, excludesPrivateWrites } from './page-visibility.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import { parseStoredActor, storedActorIdentity } from '../access/actor.ts';
+import { sameAttestedActor } from '../access/member-facts.ts';
 import { pipelined, transactionMemo } from '../page-state/transactions.ts';
 
 function deny(message: string): never { throw new OperationError('permission_denied', message, 'Inspect the current writer registration and source/operation grants.'); }
@@ -271,6 +272,8 @@ export async function ownRequestAccessible(ctx: OperationContext, row: WriteRequ
     const engine = onceReads(ctx.engine);
     const auth = await submissionAuthority({ ...ctx, engine }, row.operation, row.source_id, row.source_incarnation, row.slug);
     if (auth.principal.kind !== row.principal_kind || auth.principal.id !== row.principal_id) return false;
+    // GST-359 C2: under one attest credential, a receipt belongs to the person it was written for.
+    if (!sameAttestedActor(row.authority?.actingFor)) return false;
     await authorizeStoredRequest(engine, row);
     return true;
   } catch (error) {

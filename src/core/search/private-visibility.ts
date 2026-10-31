@@ -605,14 +605,18 @@ export function privateTimelineEventFilterForCaller(timelineAlias: string): stri
  */
 /**
  * GBRA-218: privateProvenanceFilterFragment for the fact reads a caller gates on `excludePrivate`. The readers part
- * always applies (a world fact held in or extracted from a page that names readers stays hidden from every remote
- * caller, as with the plain fragment); the privacy part is dropped when an operator relaxed privacy for this remote
- * read, which is what the hatches did to these reads before member access (`excludePrivate` was false then).
- * Outside a remote record nothing relaxes it.
+ * always applies, judged as the caller: a fact held in or extracted from a page that names readers reaches only the
+ * callers that page admits (none outside a caller record); the privacy part is dropped when an operator relaxed
+ * privacy for this remote read, which is what the hatches did to these reads before member access (`excludePrivate`
+ * was false then). Outside a remote record nothing relaxes it.
  */
 export function privateProvenanceFilterUnderPolicy(factAlias: string): string {
+  // GST-359 C2: judged as the caller (its member identity, or every audience entry), so a fact on a page that names
+  // readers reaches exactly the callers who read that page; outside a caller record the identity is empty (hide all).
+  const access = currentCallerAccess();
+  const identity = access.audienceIdentities.length ? { all: access.audienceIdentities } : access.identity;
   return `NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id ` +
-    `AND pp.slug = ${factAlias}.source_markdown_slug AND NOT ${readPolicyFragment('pp', [], !callerRelaxesPrivacy())})`;
+    `AND pp.slug = ${factAlias}.source_markdown_slug AND NOT ${readPolicyFragment('pp', identity, !callerRelaxesPrivacy(), access.satisfiedRuleIds)})`;
 }
 
 /** True only inside a remote caller record whose read an operator relaxed (the env hatch or the config opt-out). */

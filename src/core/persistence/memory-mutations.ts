@@ -30,6 +30,7 @@ import { prepareMemoryMutation } from './memory-prepare.ts';
 import { retryWriteAdmission } from './admission-retry.ts';
 import { privateProvenanceFilterFragment, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
 import { markBeliefCommits } from '../belief/append.ts';
+import { memberFactPage } from '../access/member-facts.ts';
 
 export { prepareMemoryMutation } from './memory-prepare.ts';
 /** Only semantic appends without an explicit caller revision can be recomputed. */
@@ -78,8 +79,9 @@ class InferredTargetRejected extends Error { constructor(readonly warning: Entit
  * malformed fences and any owner claim, so it can fall back instead.
  */
 async function planRememberTarget(ctx: OperationContext, sourceId: string, source: RememberSource, entitySlug: string | null,
-  inferred: { fact: string; visibility: string } | null, call: RememberCall) {
-  const slug = entitySlug ?? 'memory/unattributed';
+  inferred: { fact: string; visibility: string } | null, call: RememberCall, memberPage: string | null = null) {
+  // GST-359 C2: a member's remote fact goes to its own member page, created by the first one; the entity is metadata only.
+  const slug = memberPage ?? entitySlug ?? 'memory/unattributed';
   validatePageSlug(slug);
   enforceClientSlugFence(ctx, slug, 'remember'); enforceSubagentSlugFence(ctx, slug, 'remember');
   const authority = await submissionAuthority(ctx, 'remember', sourceId, source.incarnation, slug);
@@ -92,7 +94,7 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
   if (inferred && !snapshot) throw new InferredTargetRejected('NO_ENTITY');
   // Wave B: a segmented entity page over the single-string ceiling cannot take a fence row; named or inferred, the save refuses
   // before admission instead of misfiling it. Below the ceiling an inferred target's checks read the page back whole, as preparation does.
-  if (entitySlug !== null && snapshot && segmentedOverCeiling(snapshot.page)) {
+  if ((entitySlug !== null || memberPage) && snapshot && segmentedOverCeiling(snapshot.page)) {
     throw segmentedRememberRefusal(slug, sourceId, inferred !== null, await rememberCarry(ctx, call, snapshot.page));
   }
   const whole = inferred && snapshot && isSegmentedPage(snapshot.page) ? await materializedPage(ctx.engine, snapshot.page) : snapshot?.page;
@@ -100,7 +102,7 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
     || parseFactsFence(whole!.compiled_truth).warnings.length)) throw new InferredTargetRejected('ENTITY_LINK_FAILED');
   // Preserve the stub guard: a fallback name remains DB-only until a real
   // entity page exists. No placeholder page is created by remember.
-  const fence = entitySlug !== null && snapshot !== null;
+  const fence = memberPage !== null || (entitySlug !== null && snapshot !== null);
   const sandbox = ctx.viaSubagent === true && !(ctx.allowedSlugPrefixes?.length);
   const configuredWriteThrough = !/^(false|0|off|no)$/i.test(await ctx.engine.getConfig('sync.write_through') ?? 'true');
   const writeThrough = configuredWriteThrough && !sandbox;
@@ -108,7 +110,7 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
   else if (!configuredWriteThrough) authority.databaseOnlyReason = 'disabled_by_config';
   // An inferred link never designates an owner or reports a missing one.
   const target = fence ? await resolveFactWriteTarget(ctx.engine, sourceId, source,
-    { sandbox, fileBacked: Boolean(snapshot!.page.source_path), remote: ctx.remote !== false }).catch((error: unknown) => {
+    { sandbox, fileBacked: Boolean(snapshot?.page.source_path), remote: ctx.remote !== false }).catch((error: unknown) => {
     if (inferred && error instanceof OperationError) throw new InferredTargetRejected('ENTITY_LINK_FAILED');
     throw error;
   }) : null;
@@ -189,19 +191,22 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   const validUntil = parseTtlParam(p.ttl);
   const entity = typeof p.entity === 'string' && !isNullLikeEntity(p.entity) ? p.entity.trim() : null;
   const resolved = entity ? await resolveRememberEntity(ctx, sourceId, entity) : null;
-  const call: RememberCall = { p, visibilityDefaulted: opts.visibilityDefaulted === true };
-  const inference = entity === null ? await inferRememberTarget(ctx, sourceId, source, call) : null;
+  // GST-359 C2: a remote member's fact is private, on its member page, and never inferred onto another page.
+  const memberPage = memberFactPage(ctx);
+  const call: RememberCall = memberPage ? { p: { ...p, visibility: 'private', infer_entity: false }, visibilityDefaulted: false }
+    : { p, visibilityDefaulted: opts.visibilityDefaulted === true };
+  const inference = entity === null && !memberPage ? await inferRememberTarget(ctx, sourceId, source, call) : null;
   const linked = inference && 'target' in inference ? inference : null;
   const entitySlug = linked?.target.slug ?? resolved?.slug ?? null;
   // A source-scoped absent identity serializes subjectless facts. Bound writers
   // cannot use it to escape their namespace grant.
-  const { slug, authority, snapshot, fence, binding, writeThrough } = linked?.target ?? await planRememberTarget(ctx, sourceId, source, entitySlug, null, call);
+  const { slug, authority, snapshot, fence, binding, writeThrough } = linked?.target ?? await planRememberTarget(ctx, sourceId, source, entitySlug, null, call, memberPage);
   const { assertFactNotWithdrawn, decideReplacement, replacementVisibility } = await import('../facts/single-prepare.ts');
   const defaultedVisibility = await rememberVisibility(ctx, call, snapshot?.page);
   const visibility = call.visibilityDefaulted && p.replaces !== undefined && p.replaces !== null
     ? await replacementVisibility(ctx.engine, sourceId, Number(p.replaces), defaultedVisibility, { remote: ctx.remote !== false })
     : defaultedVisibility;
-  const factIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as never, visibility, entity_slug: entitySlug };
+  const factIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as never, visibility, entity_slug: entitySlug, ...(memberPage ? { page_slug: memberPage } : {}) };
   // Fail fast on an invalid target or a withdrawn claim; the coordinator re-checks both under its locks before publishing.
   if (p.replaces !== undefined && p.replaces !== null) {
     // Fail fast on an invalid target; the coordinator re-checks it under the row lock before publishing.
@@ -214,7 +219,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
     // The transport's session (MCP `_meta.session_id`) is recorded on the fact, as extract_facts records
     // it, so recall's session_id filter finds single facts too. Identity only — never a trust surface.
     intent: { ...callerIntent, entity_slug: entitySlug, fence, valid_from: typeof p.valid_from === 'string' ? new Date(p.valid_from).toISOString() : new Date().toISOString(), valid_until: validUntil?.toISOString() ?? null,
-      visibility, ...(call.visibilityDefaulted ? { visibility_defaulted: true } : {}),
+      visibility, ...(call.visibilityDefaulted ? { visibility_defaulted: true } : {}), ...(memberPage ? { member_page: true } : {}),
       ...(linked ? { entity_inferred: linked.via } : {}), ...(inference && 'warning' in inference ? { entity_warning: inference.warning } : {}),
       session_id: ctx.sessionId ?? null },
     authority, worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null });

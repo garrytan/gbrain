@@ -32,6 +32,7 @@ import { withPageTierKept } from '../trust/fence-append.ts';
 import { privateProvenanceFilterFragment, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
 import { tightenToPage } from '../facts/visibility.ts';
 import { noteBelief } from '../belief/ledger.ts';
+import { MEMBER_PAGE_PREFIX, memberPageFrontmatter, onMemberPageSql } from '../access/member-facts.ts';
 
 function receiptFix(row: WriteRequest): Action {
   return row.principal_kind === 'local_cli'
@@ -66,11 +67,30 @@ function outcome(id: number, status: 'inserted' | 'duplicate' | 'superseded', en
 
 /** The newest active fact in this source and visibility that states the same normalized claim without an entity. */
 async function activeUnlinkedCopy(engine: BrainEngine, sourceId: string, input: SingleFactIntent, excludePrivate: boolean): Promise<number | null> {
+  // GST-359 C2: a member's fact links only its own page's unlinked copy; no other write links one on a member page.
   const [row] = await engine.executeRaw<{ id: number }>(`SELECT id FROM facts
     WHERE source_id=$1 AND visibility=$2 AND entity_slug IS NULL AND expired_at IS NULL
-      AND (valid_until IS NULL OR valid_until > now()) AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3)${excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}
-    ORDER BY id DESC LIMIT 1`, [sourceId, input.visibility, input.fact]);
+      AND (valid_until IS NULL OR valid_until > now()) AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3)${excludePrivate && !input.page_slug ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}
+      AND ${input.page_slug ? 'source_markdown_slug=$4' : `($4::text IS NULL AND NOT ${onMemberPageSql('facts')})`}
+    ORDER BY id DESC LIMIT 1`, [sourceId, input.visibility, input.fact, input.page_slug ?? null]);
   return row ? Number(row.id) : null;
+}
+
+/**
+ * GST-359 C2: a member's first fact creates its member page (frontmatter readable_by the member alone) through the
+ * same put path as every fence append, so it is git-first wherever a repo exists. The put requires the page still
+ * absent; a sibling that created it first makes this attempt conflict and the retry appends to it.
+ */
+async function prepareMemberPageCreation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, signal: AbortSignal | undefined, writerTier: Parameters<typeof fenceAppendPendingTier>[0],
+  fenceRow: Omit<Parameters<typeof upsertFactRow>[1], 'rowNum'>): Promise<{ page: PreparedMutation; rowNum: number }> {
+  const [indexed] = await engine.executeRaw<{ n: number }>('SELECT COALESCE(MAX(row_num),0)::int AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [row.source_id, row.slug]);
+  const appended = upsertFactRow(`# Memory of ${row.slug.slice(MEMBER_PAGE_PREFIX.length)}\n`, { ...fenceRow, rowNum: (indexed?.n ?? 0) + 1 });
+  const { expected_revision: _ignored, ...intent } = row.intent ?? {};
+  const content = `${memberPageFrontmatter(row.slug.slice(MEMBER_PAGE_PREFIX.length))}\n${appended.body}`;
+  const page = await withPendingFenceRows({ sourceId: row.source_id, slug: row.slug, rowNums: [appended.rowNum], tier: fenceAppendPendingTier(writerTier) },
+    () => preparePageMutation(engine, { ...row, intent: { ...intent, content, force: false } }, config, undefined, signal));
+  if (page.observedRevision !== null) conflict(row);
+  return { page, rowNum: appended.rowNum };
 }
 
 /** Every retry renders the semantic append from the latest coherent snapshot. */
@@ -83,9 +103,12 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   }
   const p = row.intent;
   const input: SingleFactIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as SingleFactIntent['kind'],
-    visibility: (p.visibility ?? 'world') as SingleFactIntent['visibility'], entity_slug: p.entity_slug as string | null };
+    visibility: (p.visibility ?? 'world') as SingleFactIntent['visibility'], entity_slug: p.entity_slug as string | null,
+    ...(p.member_page === true ? { page_slug: row.slug } : {}) };
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
-  if ((snapshot?.page.id ?? null) !== row.page_id) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted entity was deleted or recreated.');
+  // GST-359 C2: a member page another write created after this one was accepted is the same page, not a recreation.
+  const createdSince = p.member_page === true && row.page_id === null && snapshot !== null && !snapshot.page.deleted_at;
+  if ((snapshot?.page.id ?? null) !== row.page_id && !createdSince) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted entity was deleted or recreated.');
   // A defaulted visibility never lands broader than the target page as it stands at publication.
   if (p.visibility_defaulted === true && snapshot) input.visibility = tightenToPage(input.visibility, await withFolderRestricted(engine, snapshot.page));
   if (p.expected_revision !== undefined) assertPageRevision(snapshot, engineMutationPrecondition(parseMutationPrecondition(p)));
@@ -182,6 +205,10 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     page = await withPendingFenceRows({ sourceId: row.source_id, slug: row.slug, rowNums: [appended.rowNum], tier: fenceAppendPendingTier(writerTier) },
       () => preparePageMutation(engine, { ...row, intent: { ...p, content, expected_revision: observedRevision, force: false } }, config, undefined, signal));
     if (page.observedRevision !== observedRevision) conflict(row);
+  } else if (p.fence === true && p.member_page === true) {
+    const created = await prepareMemberPageCreation(engine, row, config, signal, writerTier, { claim: input.fact, kind: input.kind, visibility: input.visibility,
+      confidence: 1, notability: 'medium', validFrom: formatFenceDate(validFrom), validUntil: validUntil ? formatFenceDate(validUntil) : undefined, source: fact.source, context });
+    ({ page, rowNum } = created);
   }
   // The belief ledger records the superseded fact in its own stream, so that stream's page key is held too.
   const supersededStream = status === 'superseded' ? decision.candidate!.source_markdown_slug ?? decision.candidate!.entity_slug ?? null : null;

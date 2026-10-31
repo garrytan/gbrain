@@ -5,8 +5,9 @@
  *
  *   - Best-effort: own try/catch in the dispatcher; any error here degrades
  *     to no-_meta rather than failing the tool call.
- *   - Cache key is (source_id, session_id, hash(takesHoldersAllowList sorted)).
- *     Visibility-aware: cache entries don't bleed across token tiers.
+ *   - Cache key is (source_id, session_id, hash(takesHoldersAllowList sorted),
+ *     caller identity hash). Visibility-aware: cache entries don't bleed across
+ *     token tiers or across the people one credential reads for.
  *   - 30s TTL per session. A successful mutating tool call on the engine
  *     drops that engine's entries (`invalidateHotMemoryForEngine`, called by
  *     dispatch on every MCP transport), and every hit revalidates the
@@ -44,6 +45,7 @@ import { trustFields } from '../eligibility/labels.ts';
 import { eligibilityCacheField, readTrustGeneration } from '../eligibility/generation.ts';
 import { callerRelaxesPrivacy, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { isConfigTruthy } from '../config.ts';
+import { callerIdentityKey } from '../access/member-facts.ts';
 
 const DEFAULT_TTL_MS = 30_000;
 const DEFAULT_TOP_K = 10;
@@ -132,7 +134,8 @@ export async function getBrainHotMemoryMeta(
   // Don't inject on tool calls that themselves manipulate hot memory —
   // the agent doesn't need the brain's hot memory wrapped around its own
   // recall response.
-  if (name === 'recall' || name === 'extract_facts' || name === 'forget_fact') return undefined;
+  // GST-359 C2: nor on QM's memory pair, whose own answer is the member's memory.
+  if (name === 'recall' || name === 'extract_facts' || name === 'forget_fact' || name === 'memory_recall' || name === 'memory_write') return undefined;
 
   const sourceId = ctx.sourceId ?? 'default';
   // CX2-11: session identity is the TYPED OperationContext.sessionId field,
@@ -186,7 +189,10 @@ export async function getBrainHotMemoryMeta(
   }
   // The effective eligibility is part of the key: two connections with
   // different floors never share an entry.
-  const cacheKey = `${engineCacheField(ctx.engine)}::${encodeCacheField(sourceId)}::${tier}::${encodeCacheField(sessionId ?? '_')}::${allowListHash}::${encodeCacheField(eligibilityCacheField(policy))}::${sessionOnly ? 'session-only' : 'fallback'}`;
+  // GST-359 C2: and the caller's identity (attested actor, member, audience): a member's own private facts ride the
+  // payload, so two people behind one credential and one session id never share an entry. Unbound callers add nothing.
+  const identityKey = ctx.remote === false ? '' : callerIdentityKey();
+  const cacheKey = `${engineCacheField(ctx.engine)}::${encodeCacheField(sourceId)}::${tier}::${encodeCacheField(sessionId ?? '_')}::${allowListHash}::${encodeCacheField(eligibilityCacheField(policy))}::${sessionOnly ? 'session-only' : 'fallback'}${identityKey ? `::xid=${identityKey}` : ''}`;
 
   // Cache hit?
   const cached = _cache.get(cacheKey);

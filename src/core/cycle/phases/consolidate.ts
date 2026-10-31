@@ -40,6 +40,7 @@ import { DEFAULT_WRITE_GATE_CONFIG, type WriteGateConfig } from '../../write-gat
 import { loadImportSanityConfig } from '../../import-screen.ts';
 import { decideTakeWrite, recordFlaggedRow, recordWriteGateHold, type GatedRowDecision } from '../../write-gate-store.ts';
 import type { TaintInput, WriteTrust } from '../../trust/tier.ts';
+import { readersSourcedFactSql } from '../../access/member-facts.ts';
 
 export interface ConsolidatePhaseOpts {
   dryRun?: boolean;
@@ -183,6 +184,7 @@ export async function runPhaseConsolidate(
         AND (attributed_to IS NULL OR attributed_to = 'user')
         AND ($2::boolean=false OR visibility='world')
         AND ($1::text IS NULL OR source_id=$1)
+        AND NOT ${readersSourcedFactSql('facts')}
       GROUP BY source_id, entity_slug
       HAVING COUNT(*) >= $3
     `, [opts.sourceId ?? null, managed, minPerBucket]);
@@ -227,7 +229,10 @@ export async function runPhaseConsolidate(
       });
       // Takes here are the user's own (holder 'self'): a claim the assistant or
       // a named third party asserted is never promoted into one.
-      const unconsolidated = candidates.filter(f => (!managed || f.visibility === 'world') && (!f.attributed_to || f.attributed_to === 'user'));
+      // GST-359 C2: a fact on a page that names readers (a member page) never becomes a take on the entity page.
+      const restricted = new Set((await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND ${readersSourcedFactSql('facts')}`,
+        [candidates.map(f => f.id)])).map(row => Number(row.id)));
+      const unconsolidated = candidates.filter(f => !restricted.has(f.id) && (!managed || f.visibility === 'world') && (!f.attributed_to || f.attributed_to === 'user'));
       if (unconsolidated.length < minPerBucket) {
         bucketsSkipped += 1;
         continue;
