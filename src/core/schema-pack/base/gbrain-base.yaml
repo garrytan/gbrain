@@ -98,6 +98,8 @@ page_types:
   - name: concept
     primitive: concept
     path_prefixes:
+      # Dream synthesis and creator filing use concepts/; wiki paths remain supported.
+      - concepts/
       - wiki/concepts/
       - wiki/concept/
     aliases: []
