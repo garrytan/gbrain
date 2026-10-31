@@ -187,7 +187,7 @@
   "migrations/v0.7.0.md": "97c2740445a10b1c5c7123c17dbd625fa27a94095b85d27c2b278da756c4c59a",
   "migrations/v0.8.0.md": "1919ff8b8f3680612ff888e7cfcc0d86ece5d5304ae19af4497bdf40b050561a",
   "migrations/v0.8.1.md": "fad7341cfb5e02545fb8a23221d12ab395fc3d8db15d1d8ee8a18844aea6563a",
-  "migrations/v0.9.0.md": "773fab0a8d7f330576265a3f510c1f318f47789b6136c46d43e08121acbc20eb",
+  "migrations/v0.9.0.md": "733914417aca16e476d9ab76044380a5ff83039a81f9b541dd47c7be0083bc4d",
   "migrations/v0.9.1.md": "75761bad6c0ad37b69ec8197c6a678bb6a1484f9a76e4b70f2d1e86dc80102b3",
   "minion-orchestrator/SKILL.md": "9522cf2a740ab92f58a46dc054703649724f97dd080c699310cadcf4307d8e54",
   "minion-orchestrator/routing-eval.jsonl": "501ed2e19cb16847ff8425219d246b7a774de1accd42cb28fd44edbb64204992",
