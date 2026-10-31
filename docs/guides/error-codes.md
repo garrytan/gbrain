@@ -101,7 +101,7 @@ More: [docs/guides/write-refusals.md#access_member_id_retired](../../docs/guides
 |---|---|---|---|---|---|---|
 | A member or group id given to an access command, a credential binding or --as is ill-formed or names no usable member, so nothing was read or changed. | Ids are matched exactly against page readers; an unknown or disabled member is refused rather than read as unbound, so a typo never previews or binds the wrong view. | Check the id with gbrain access member list --all, or add the member first. Run: gbrain access member list --all --json | agent | `gbrain access member list --all --json` | 1 | no |
 
-Reasons: `ill_formed`, `unknown`, `disabled`, `removed`, `exists`, `unknown_group`.
+Reasons: `ill_formed`, `unknown`, `disabled`, `removed`, `exists`, `unknown_group`, `invalid_external_id`, `link_exists`, `unknown_link`.
 
 More: [docs/guides/write-refusals.md#access_member_invalid](../../docs/guides/write-refusals.md#access_member_invalid)
 
@@ -158,6 +158,28 @@ More: [docs/guides/write-refusals.md#access_rule_invalid](../../docs/guides/writ
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | This batch is unknown or outside the retained replay window. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
+
+### actor_not_attested
+
+<a id="actor_not_attested"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A call named the person it serves (the x-qm-actor header or the acting_user argument) in a way gbrain does not honour: the credential holds no attest right, the operation is not in its attested operations, the argument differs from the header or comes without an attested header, or the id is not 1-256 visible ASCII characters. Nothing was read or written. | Naming a person decides whose notes are read and written as; only a credential the brain operator granted the attest right may do it, only for the operations it lists, and text in a conversation never chooses it. | Read reason: no_attest_right and op_not_attested are the brain operator's call (gbrain auth rescope --client <id> --attest-actor qm [--attest-ops <list>]); argument_mismatch, argument_without_attestation and invalid_actor_id are fixed in the calling harness. | user | `gbrain doctor --json` | 1 | no |
+
+Reasons: `no_attest_right`, `op_not_attested`, `argument_mismatch`, `argument_without_attestation`, `invalid_actor_id`.
+
+More: [docs/guides/write-refusals.md#actor_not_attested](../../docs/guides/write-refusals.md#actor_not_attested)
+
+### actor_unlinked
+
+<a id="actor_unlinked"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An attested call named a person whose canonical id is not linked to an enabled member of this brain (never linked, unlinked, or the member is disabled or removed), so nothing was read or written. | An attested call reads and writes as exactly one member; an unknown person is refused rather than read as a guest, and unlinking or disabling takes effect on the next call. | The brain operator links the id to its member: gbrain access member link <member> --qm <id> (or enables the member). | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/write-refusals.md#actor_unlinked](../../docs/guides/write-refusals.md#actor_unlinked)
 
 ### admin_policy_enforced
 
