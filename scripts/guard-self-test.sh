@@ -108,8 +108,10 @@ done
 # (new guards can't silently skip classification).
 for f in scripts/check-*.sh scripts/check-*.mjs scripts/check-*.ts; do
   base="$(basename "$f")"
-  # The .ts companion of check-engine-dynamic-import is an implementation file.
+  # The .ts companions of check-engine-dynamic-import and check-core-ambient-reads
+  # are implementation files; their .sh entries carry the manifest rows.
   [ "$base" = "check-engine-dynamic-import.ts" ] && continue
+  [ "$base" = "check-core-ambient-reads.ts" ] && continue
   if ! grep -q "^${base}	" "$MANIFEST"; then
     echo "FAIL  $base: no row in $MANIFEST — classify it (scanner|buildfresh|repostate)"
     failures=$((failures + 1))

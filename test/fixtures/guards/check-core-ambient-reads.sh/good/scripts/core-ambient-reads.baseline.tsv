@@ -1,0 +1,5 @@
+path	kind	count
+src/core/reader.ts	config-load	1
+src/core/reader.ts	module-collection	1
+src/core/reader.ts	process-env	2
+src/core/shrunk.ts	process-env	2

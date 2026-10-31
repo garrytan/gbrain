@@ -158,6 +158,7 @@
     "check:core-guard-coverage": "node scripts/check-core-guard-coverage.mjs",
     "check:function-size": "bun scripts/check-function-size.ts",
     "check:item-allowlist-catches": "bun scripts/check-item-allowlist-catches.ts",
+    "check:core-ambient-reads": "bash scripts/check-core-ambient-reads.sh",
     "check:layering": "bun scripts/check-layering.ts",
     "check:ai-sdk-importers": "bun scripts/check-ai-sdk-importers.ts",
     "check:durable-flush": "bun scripts/check-durable-flush.ts",

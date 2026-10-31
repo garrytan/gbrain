@@ -169,6 +169,10 @@ CHECKS=(
   # GBRA-130: per-item catches that test an error code against a list and
   # rethrow the rest only shrink; baseline scripts/item-allowlist-catches-baseline.tsv.
   "check:item-allowlist-catches"
+  # Core ambient reads (config-loader calls, process.env reads, module-level
+  # Map/Set) per src/core file only shrink; baseline
+  # scripts/core-ambient-reads.baseline.tsv (TS AST, ~2s).
+  "check:core-ambient-reads"
   # EO10 (refactor wave 1): engine-sql/ and schema-migrations/ never import
   # back up into the engine façades or migrate.ts (ESM TDZ cycles).
   "check:layering"
