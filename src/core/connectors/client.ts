@@ -172,6 +172,65 @@ export class ConnectorClient {
   private readonly log: (msg: string) => void;
   private lastRequestAt = 0;
 
+  /**
+   * Drain one Microsoft Graph mail delta round. The caller durably applies each
+   * message (including @removed tombstones) before saving the returned cursor.
+   * Application callers supply a user id; delegated callers may use `me`.
+   * Replaying after a failed apply is intentional: apply must upsert by id.
+   */
+  async drainMailDelta(
+    mailbox: string,
+    folder: string,
+    apply: (message: Record<string, unknown>) => Promise<void>,
+    opts: { cursor?: string; signal?: AbortSignal } = {},
+  ): Promise<string> {
+    const root = mailbox === 'me' ? '/me' : `/users/${encodeURIComponent(mailbox)}`;
+    const path = `/v1.0${root}/mailFolders/${encodeURIComponent(folder)}/messages/delta`;
+    const validate = (link: unknown): string => {
+      if (typeof link !== 'string' || !link) throw new Error('Graph mail delta link is missing');
+      const url = new URL(link);
+      if (url.origin !== 'https://graph.microsoft.com' || url.pathname !== path ||
+          url.username || url.password || url.hash) {
+        throw new Error('Graph mail delta link is outside the selected mailbox folder');
+      }
+      return url.href;
+    };
+    if (this.origin !== 'https://graph.microsoft.com') throw new Error('Graph mail requires the Graph origin');
+    let next = validate(opts.cursor ?? `https://graph.microsoft.com${path}`);
+    const visited = new Set<string>();
+    const seen = new Map<string, string>();
+    // Bound malformed or endlessly changing pagination; never return a cursor
+    // for an incomplete round.
+    for (let page = 0; page < 1_000; page++) {
+      opts.signal?.throwIfAborted();
+      if (visited.has(next)) throw new Error('Graph mail pagination repeated a link');
+      visited.add(next);
+      const body = await this.fetchJSON<Record<string, unknown>>(next, opts);
+      if (!Array.isArray(body.value)) throw new Error('Graph mail delta response has no message list');
+      const more = body['@odata.nextLink'];
+      const delta = body['@odata.deltaLink'];
+      if ((more !== undefined) === (delta !== undefined)) {
+        throw new Error('Graph mail delta response must have exactly one continuation link');
+      }
+      const continuation = validate(more ?? delta);
+      for (const item of body.value) {
+        if (!item || typeof item !== 'object' || Array.isArray(item) ||
+            typeof item.id !== 'string' || !item.id) throw new Error('Graph mail message has no identity');
+        // Identical repeats are redundant, but an updated message or tombstone
+        // for the same id later in the round must still be applied.
+        const revision = JSON.stringify(item);
+        if (seen.get(item.id) === revision) continue;
+        opts.signal?.throwIfAborted();
+        await apply(item);
+        seen.set(item.id, revision);
+      }
+      opts.signal?.throwIfAborted();
+      if (delta !== undefined) return continuation;
+      next = continuation;
+    }
+    throw new Error('Graph mail pagination exceeded its page limit');
+  }
+
   constructor(opts: ConnectorClientOpts) {
     this.baseUrl = opts.baseUrl.replace(/\/$/, '');
     this.origin = new URL(this.baseUrl).origin;

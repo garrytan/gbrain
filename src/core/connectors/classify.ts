@@ -13,7 +13,7 @@
  * Collapsing the two would send a re-auth-able user down the dead-end path.
  */
 
-import { parseRetryAfterMs } from '../github-source.ts';
+import { parseRetryAfterMs } from '../retry-after.ts';
 
 export type ClassifyKind =
   | 'ok'

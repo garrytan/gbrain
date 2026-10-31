@@ -6,6 +6,8 @@ import { ConnectorHoldSession, connectorHoldsResult } from './connectors/connect
 export { isValidRepoName, parseGitHubSourceConfig } from './github-source-config.ts';
 export { AppTokenProvider, mintAppInstallationToken } from './github-app-token.ts';
 import { AppTokenProvider } from './github-app-token.ts';
+import { parseRetryAfterMs } from './retry-after.ts';
+export { parseRetryAfterMs } from './retry-after.ts';
 import { slugifyPath } from './sync.ts';
 /**
  * github-source — GitHub issues/PR sync for the `github` source kind.
@@ -310,19 +312,6 @@ export class GitHubClient {
     }
     return out;
   }
-}
-
-/**
- * Retry-After is either delta-seconds or an HTTP-date (RFC 9110 §10.2.3).
- * Returns milliseconds to wait, or null when absent/unparseable — never NaN,
- * which would turn the backoff sleep into a hot retry loop.
- */
-export function parseRetryAfterMs(value: string | null, nowMs: number = Date.now()): number | null {
-  if (value === null || value.trim() === '') return null;
-  const secs = Number(value);
-  if (Number.isFinite(secs)) return Math.max(0, secs * 1000);
-  const dateMs = Date.parse(value);
-  return Number.isFinite(dateMs) ? Math.max(0, dateMs - nowMs) : null;
 }
 
 /** Thrown when pagination hits the safety cap; callers treat enumeration as incomplete. */
