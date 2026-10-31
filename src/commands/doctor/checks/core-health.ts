@@ -549,7 +549,8 @@ export async function rawProvenanceCheck(engine: BrainEngine): Promise<Check> {
   const where = `
         p.deleted_at IS NULL
     AND (COALESCE(p.frontmatter->>'dream_generated', '') = 'true' OR p.type = 'synthesis')
-    AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ?| ARRAY['raw_trace', 'raw_source', 'source_uri', 'raw_trace_exempt'])
+    AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ?| ARRAY['raw_trace', 'raw_source', 'source_uri'])
+    AND p.frontmatter->'raw_trace_exempt' IS DISTINCT FROM 'true'::jsonb
     AND NOT (p.type = 'atom'
       AND COALESCE(p.frontmatter->>'extracted_by', '') LIKE 'extract\\_atoms%'
       AND COALESCE(p.frontmatter, '{}'::jsonb) ?| ARRAY['source_slug', 'source_path'])
