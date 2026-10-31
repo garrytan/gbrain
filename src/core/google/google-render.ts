@@ -329,9 +329,12 @@ export function calendarRelPath(ev: CalendarEventData): string {
   return `calendar/${yyyy}/${mm}/${yyyy}-${mm}-${day}-${subjectSlug(ev.summary)}-${sha8(ev.id)}.md`;
 }
 
-/** Cancelled instances return null (and the caller reconciles deletions). */
+/** Cancellations and routine availability blocks return null; the sweep retires their pages. */
 export function renderCalendarEventPage(ev: CalendarEventData): RenderedPage | null {
   if (ev.status === 'cancelled') return null;
+  // Use provider semantics rather than guessing from titles or attendee counts:
+  // private, solo and recurring meetings can still contain useful knowledge.
+  if (ev.eventType === 'focusTime' || ev.eventType === 'outOfOffice' || ev.eventType === 'workingLocation') return null;
   const attendees = ev.attendees.filter((a) => a.email.length > 0);
   const fm: string[] = [
     '---',

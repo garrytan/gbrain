@@ -558,6 +558,7 @@ export class GmailClient extends GoogleApiClient {
 // ── Calendar ─────────────────────────────────────────────────────────────────
 
 interface RawCalendarEvent {
+  eventType?: string;
   id: string;
   etag?: string;
   status?: string;
@@ -575,6 +576,7 @@ interface RawCalendarEvent {
 
 function calendarEvent(e: RawCalendarEvent, account: string): CalendarEventData {
   return {
+    ...(e.eventType ? { eventType: e.eventType } : {}),
     id: e.id,
     ...(e.etag ? { etag: e.etag } : {}),
     summary: e.summary ?? '(no title)',

@@ -337,6 +337,8 @@ export interface GmailThreadData {
 }
 
 export interface CalendarEventData {
+  /** Provider event type; routine availability blocks are not meetings. */
+  eventType?: string;
   /** Recurrence-instance id when expanded (singleEvents=true). */
   id: string;
   /** The event's revision: a held event whose etag changed upstream is re-attempted (GBRA-130 A-3). */
