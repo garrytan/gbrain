@@ -36,14 +36,15 @@ for (const kind of testBackends()) {
       const page = await pageRow(slug);
       return (await brain.engine.readManifest(Number(page.id))).map(r => [r.region, Number(r.byteStart), r.byteLen, Buffer.from(r.sha256).toString('hex')]);
     };
-    /** One append with its work counters and the manifest rows it wrote. */
+    /** One append with its work counters and the manifest rows it wrote; its commit and effects finish before it returns. */
     const measured = async (slug: string) => {
       const before = await pageRow(slug);
       const tail = (await brain.engine.readManifest(Number(before.id), { lastN: 1 }))[0]!.byteLen;
       Object.assign(spliceWork, { segmented: 0, read: 0, rows: 0 });
       const res = await brain.call('append_page', { slug, text: TEXT, request_id: randomUUID() });
-      expect(res).toMatchObject({ isError: false });
       const work = { ...spliceWork };
+      await brain.settled();
+      expect(res).toMatchObject({ isError: false });
       const [written] = await brain.engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM page_body_manifest WHERE page_id=$1 AND gen_from=$2',
         [before.id, Number(before.body_generation) + 1]);
       return { res: res.body, work, tail, written: Number(written!.n) };

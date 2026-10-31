@@ -92,6 +92,8 @@ import { canonicalOriginPage, originConflictMessage, originTwinsFix } from '../p
 import { assertReconcileOutputPath, assertReconcileSize } from '../persistence/reconcile-backup.ts';
 import { authorizeReconcile, runReconcileApply } from '../persistence/reconcile.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
+import { segmentedOverCeiling } from '../persistence/segmented-apply.ts';
+import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 import { recordsNoFileOrigin } from '../persistence/unbound-pages.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope } from './core.ts';
 
@@ -481,6 +483,15 @@ async function refuseForeignOrigin(engine: BrainEngine, sourceId: string, slug: 
     { detail: 'origin_conflict', fix: originTwinsFix(sourceId) });
 }
 
+/** The refusal of a page stored in segments over PAGE_MAX_BYTES (24 MiB), up to which the reconcile reads its body whole. */
+function overCeilingRefusal(sourceId: string, slug: string, page: { source_path?: string | null; body_bytes?: number | null }): OperationError {
+  return opError('page_body_segmented',
+    `gbrain repair file-drift: page ${slug} (source ${sourceId}) stores its ${Number(page.body_bytes ?? 0)}-byte body in segments, over the 24 MiB (${PAGE_MAX_BYTES}-byte) limit up to which file-drift reads the body whole. Nothing was read or changed.`,
+    `File-drift compares and rewrites a page stored in segments whole, which works up to 24 MiB; this page is larger, so retrying refuses the same way. Resolve it by hand: read the stored page in pieces with the command in fix, make the canonical file ${page.source_path ?? `${slug}.md`} the copy to keep (on a Git source, commit it with gbrain git commit-push), then sync source ${sourceId}.`,
+    { fix: readFix("Returns the page's outline and its first window, with next_cursor to read on.", { argv: ['gbrain', 'get', '--source', sourceId, '--body', 'auto', '--', slug],
+      mcp: { tool: 'get_page', arguments: { slug, source_id: sourceId, body: 'auto' } } }) });
+}
+
 /**
  * One drifted page resolved with `prefer` winning, as a ready reconcile preview: the preferred side's decisions over
  * reconcile's protections, the size check, and the exceptions. Throws `invalid_params` when a path still needs a
@@ -489,6 +500,8 @@ async function refuseForeignOrigin(engine: BrainEngine, sourceId: string, slug: 
 export async function prepareDriftPage(engine: BrainEngine, sourceId: string, slug: string, prefer: DriftSide, assessmentAt: string,
   opts: { fileGone?: boolean } = {}): Promise<ArtifactPage> {
   const snapshotRow = await engine.readPageSnapshot(slug, { sourceId });
+  // A page stored in segments is reconciled read back whole up to 24 MiB (readReconcileState); a larger one refuses here.
+  if (snapshotRow && segmentedOverCeiling(snapshotRow.page)) throw overCeilingRefusal(sourceId, slug, snapshotRow.page);
   if (snapshotRow?.page.source_path) await refuseForeignOrigin(engine, sourceId, slug, snapshotRow.page.source_path);
   const adopt = !opts.fileGone && !!snapshotRow && recordsNoFileOrigin(snapshotRow.page);
   const state = await readReconcileState(engine, sourceId, slug, assessmentAt, { adoptSlugPath: adopt, ...(opts.fileGone ? { fileGone: true } : {}) });
@@ -806,7 +819,7 @@ export const fileDriftRepair: RepairHandler = {
         } catch (error) {
           if (!(error instanceof OperationError) || ['owner_unavailable', 'writer_registration_required'].includes(error.code)) throw error;
           count(`refused_${error.code}`);
-          listing.push({ item: `${sourceId}:${label}`, class: 'refused', detail: `${error.code}: ${error.message}` });
+          listing.push({ item: `${sourceId}:${label}`, class: 'refused', detail: `${error.code}: ${error.message}${error.code === 'page_body_segmented' && error.suggestion ? ` ${error.suggestion}` : ''}` });
         }
       }
     });
@@ -885,6 +898,9 @@ export const fileDriftRepair: RepairHandler = {
       outcome = retired.applied ? { applied: true, outcome: 'repaired', detail: { request_id: requestId, prefer: 'file', action: 'soft_delete' } }
         : { applied: false, outcome: 'changed_since_preview', reason: retired.outcome === 'file_restored' ? 'file_restored' : 'revision_conflict', detail: { request_id: requestId, message: retired.reason } };
     } else try {
+      // Refused before admission: a page that grew past 24 MiB since the preview takes no request id and stores no receipt.
+      const live = await ctx.engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
+      if (live && segmentedOverCeiling(live.page)) throw overCeilingRefusal(page.source_id, page.slug, live.page);
       await asLocalCli(ctx.engine, () => runReconcileApply(ctx.engine, { source_id: page.source_id, slug: page.slug, preview: artifact.preview, request_id: requestId,
         ...(artifact.prefer === 'file' ? { keep_file_bytes: true } : {}) }));
       outcome = { applied: true, outcome: 'repaired', detail: { request_id: requestId, prefer: artifact.prefer } };
