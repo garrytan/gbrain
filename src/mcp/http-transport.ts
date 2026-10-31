@@ -555,8 +555,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           takesHoldersAllowList: auth.takesHoldersAllowList,
           sourceId: auth.sourceId,
           ...(localFederated ? { localFederatedSourceIds: localFederated } : {}), onBehalfOf: { header: req.headers.get(ON_BEHALF_OF_HEADER) ?? undefined, requestMeta: params?._meta },
-          actor: { header: req.headers.get(ACTOR_HEADER) ?? undefined },
-          // #1336: thread the token's federated_read grant so read ops scope
+          actor: { header: req.headers.get(ACTOR_HEADER) ?? undefined }, // #1336: thread the token's federated_read grant so read ops scope
           // to the operator-granted sources via sourceScopeOpts.
           auth: auth.auth,
           // MEMORY_VERBS v1 [c1/c2]: fail-closed surface enforcement here too.
