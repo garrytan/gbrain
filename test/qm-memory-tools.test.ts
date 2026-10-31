@@ -108,7 +108,7 @@ const BOB_ID = 'oidc:3f2a:bob-example';
 const CAROL_ID = 'carol-example@acme.test';
 const DAVE_ID = 'U0DAVE';
 const ACME = 'companies/acme-example';
-const ATTEST_OPS = ['forget', 'forget_fact', 'get_write_request', 'memory_recall', 'memory_write', 'remember'];
+const ATTEST_OPS = ['forget', 'forget_fact', 'get_write_request', 'memory_recall', 'memory_write'];
 
 for (const kind of testBackends()) {
   describe('memory_recall and memory_write (' + kind + ', repo-less)', () => {

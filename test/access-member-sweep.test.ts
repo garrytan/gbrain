@@ -81,11 +81,13 @@ for (const kind of testBackends()) {
       try { return await Promise.race([run, timeout]); } finally { clearTimeout(timer); }
     }
 
-    async function sweep(callers: Who[]): Promise<{ leaks: string[]; ran: number; revealing: Set<string> }> {
+    async function sweep(callers: Who[], opts: { readsOnly?: boolean } = {}): Promise<{ leaks: string[]; ran: number; revealing: Set<string> }> {
       const leaks: string[] = [];
       const revealing = new Set<string>();
       let ran = 0;
       for (const op of operations) {
+        // The owner's non-vacuity sweep only reads: an attested forget (GST-359 D) would withdraw the owner's own canary.
+        if (opts.readsOnly && op.mutating) continue;
         for (const args of sweepArgs(op, fixture)) {
           for (const as of callers) {
             const out = await call(as, op.name, args);
@@ -135,7 +137,7 @@ for (const kind of testBackends()) {
       expect((await call(alice, 'recall', { query: fixture.words })).all).toContain(CANARY);
       expect((await call(alice, 'get_page', { slug: fixture.memberSlug })).all).toContain(CANARY);
       expect((await call(alice, 'get_page', { slug: 'notes/alice-only' })).all).toContain(PAGE_CANARY);
-      const { revealing } = await withEnv(NO_KEYS, () => sweep([alice]));
+      const { revealing } = await withEnv(NO_KEYS, () => sweep([alice], { readsOnly: true }));
       for (const op of ['recall', 'get_page', 'get_chunks', 'search', 'query']) expect(revealing).toContain(op);
     }, 1_800_000);
 

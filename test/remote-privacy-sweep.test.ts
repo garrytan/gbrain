@@ -163,6 +163,8 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   query: { query: 'WORLDSWEEP' },
   assemble_evidence: { hits: [{ source_id: 'default', slug: WORLD_FENCE_SLUG, chunk_id: 0 }], return_unit: 'page' },
   recall: { entity: WORLD_PAGE_SLUG },
+  memory_recall: { query: WORLD.fact },
+  memory_write: { facts: [{ fact: 'fresh sweep fact', provenance: 'sweep' }], idempotency_key: 'sweep-key' },
   entity: { name: WORLD_PAGE_SLUG },
   synthesize: { entity: WORLD_PAGE_SLUG },
   delta: { since: SINCE_EPOCH },
@@ -259,6 +261,7 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   query: 'data',
   assemble_evidence: 'data',
   recall: 'data',
+  memory_recall: 'data',
   entity: 'data',
   delta: 'data',
   context_pack: 'data',
@@ -355,6 +358,8 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   advisor: 'denied',
   // mutating ops (fresh-slug targets; envelope-echo checks only)
   remember: 'ok',
+  // GST-359 D: memory_write saves only as an attested person; the sweep's callers attest none (actor_required).
+  memory_write: 'error',
   forget: 'error',
   purge_fact: 'error',
   list_page_purges: 'error',
