@@ -47,6 +47,20 @@ Receipts are database-only bookkeeping on every brain, with or without a Git rep
 - Read paths no longer pass git's global `--literal-pathspecs` flag. `test/git-env-guard.test.ts` refuses it anywhere in `src`, and `literalPathspecs('')` throws.
 - `test/sync-relative-anchor-refusal-7630.test.ts` is split into three files of about 22 s each, well under run-e2e's 180 s per-file cap.
 
+---
+
+**A frontmatter-only disagreement between a page's file and its database copy no longer blocks an unrelated `remember`, a contact row whose `last_used` moved forward reconciles automatically, and duplicated contact rows can be collapsed with one previewed repair (#8109).**
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A person page's file differs from the database only in frontmatter (for example one contact row's `last_used` moved forward), and an agent saves a fact | `remember` refused `source_changed` (`file_database_drift`) until someone reconciled the page | the fact lands; the file keeps its own frontmatter with the new body, and the frontmatter drift stays for reconcile. Body, timeline, title, type, tag and policy or privacy key drift still refuse, and so does a write that changes frontmatter |
+| `gbrain sources reconcile <source> <slug> --preview --auto-additive` on a contact row whose only change is a later `last_used` | `review` (`list_entries_changed_or_reordered`) | `auto` (rule `contacts_activity_advance`); a removed, reordered or otherwise changed row, or a date moved backward or into the future, still needs review. Unquoted YAML dates compare as dates |
+| Pages whose frontmatter `contacts:` list repeats a `(type, value)` row | no repair | `gbrain repair contact-rows [--source <id>] [--slug <slug>]...` keeps one row per `(type, value)` with the newest `last_used` (rows that differ in another field and every distinct value stay). It previews (writes nothing), then `--apply --expect <hash> --yes` rewrites exactly the previewed pages through revision-bound `put_page`: the file through the coordinated writer on sources with a checkout, the database on repo-less brains. Drifted pages are listed `needs_reconcile` with the reconcile command |
+
+Nothing runs on upgrade.
+
 ## [0.60.529.0] - 2026-10-31
 
 **A pull request that adds a file to the PGLite snapshot inputs no longer gets stopped at gstack's pregate secrets check by its own workflow cache keys (#8107).**

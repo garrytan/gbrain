@@ -37,6 +37,7 @@ import { REPAIR_KINDS, runRepair, type RepairHandler, type RepairKind, type Repa
 import { timelineRepair } from './timeline.ts';
 import { timelineCommentsRepair } from './timeline-comments.ts';
 import { timelineOrderRepair } from './timeline-order.ts';
+import { contactRowsRepair } from './contact-rows.ts';
 import { visibilityRepair } from './visibility.ts';
 import { safeChunksRepair } from './safe-chunks.ts';
 import { contextualModeRepair } from './contextual-mode.ts';
@@ -362,6 +363,20 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'run keep the first copy; near duplicates are only counted. Later timeline sections join the first one only when nothing but bullets moves. A '
       + 'page with a line the parser cannot place, or that would not read back with the same text and timeline rows, is listed needs_human. --slug '
       + '<slug> narrows. Preview-bound: --apply --expect <hash> --yes rewrites exactly the previewed pages through revision-bound put_page; runs only when named.',
+  },
+  'contact-rows': {
+    handler: contactRowsRepair, embeds: 'effect', checks: [], explicit_only: true, preview_bound: true, consent: 'destructive',
+    consentText: {
+      what: 'Rewrite the previewed pages so each frontmatter contacts list keeps one row per (type, value)',
+      why: 'The preview listed each page whose contacts list repeats a (type, value) row, with its row counts and the page revision it read.',
+      risk: 'Only the contacts key changes: repeated rows collapse into the first, keeping the newest last_used; rows that differ in any other field and every distinct value stay. A page that changed since the preview refuses the apply (preview_changed). Managed sources commit the file through the Git effect; undo with git revert or gbrain revert.',
+      user_message: 'Collapse the previewed duplicated contact rows? One row per (type, value) is kept, with the newest last_used',
+    },
+    summary: 'Collapse duplicated frontmatter contact rows (#8109): a writer that appended a {type, value, last_used} row on every touch left the same value '
+      + 'many times. Keeps one row per (type, value), in first-seen order, with the newest last_used; a row that differs in another field is kept, and no '
+      + 'distinct value is dropped. A page whose canonical file differs from the database is listed needs_reconcile with the --auto-additive reconcile '
+      + 'command. --slug <slug> narrows. Preview-bound: --apply --expect <hash> --yes rewrites exactly the previewed pages through revision-bound put_page '
+      + '(the canonical file on sources with a checkout, the database on repo-less ones); runs only when named.',
   },
   fences: {
     handler: fencesRepair, embeds: 'effect', checks: ['fence_integrity'], preview_bound: true, spends: 'llm',
