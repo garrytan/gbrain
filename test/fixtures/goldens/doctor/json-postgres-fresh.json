@@ -3003,6 +3003,14 @@
         },
         {
           "category": "ops",
+          "details": "<live-census>",
+          "elapsed_ms": "<volatile>",
+          "message": "<live-census>",
+          "name": "session_lane_budget",
+          "status": "<live-census>"
+        },
+        {
+          "category": "ops",
           "details": {
             "builds": [],
             "count": 0,

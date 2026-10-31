@@ -217,6 +217,7 @@
       "  [OK] two_consumers_on_host: PGLite admits one process; no consumer heartbeat rows are kept.",
       "  [OK] consumers_without_heartbeat: PGLite admits one process; no consumer heartbeat rows are kept.",
       "  [OK] host_identity_mismatch: This process's host identity (<home>/.gbrain/persistence/host.json) owns every binding this filesystem holds.",
+      "  [INFO] session_lane_budget: Not applicable: PGLite has no connection pool to share.",
       "  [OK] runtime_build_skew: No long-running gbrain process (serve, jobs supervisor, worker) is running on this host.",
       "  [OK] cli_socket_refusals: The warm CLI socket refused no CLI call in the last 24 hours.",
       "  [OK] extract_atoms_held_failed: No managed atom page or transcript is held after repeated extraction failures.",

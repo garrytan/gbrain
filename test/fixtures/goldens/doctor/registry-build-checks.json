@@ -935,6 +935,10 @@
       },
       {
         "category": "ops",
+        "name": "session_lane_budget"
+      },
+      {
+        "category": "ops",
         "name": "runtime_build_skew"
       },
       {

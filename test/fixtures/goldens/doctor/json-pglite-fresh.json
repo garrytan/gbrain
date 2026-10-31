@@ -3001,6 +3001,18 @@
         {
           "category": "ops",
           "details": {
+            "docs": "docs/ENGINES.md#pool-sizing"
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: PGLite has no connection pool to share.",
+          "name": "session_lane_budget",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
             "builds": [],
             "count": 0,
             "docs": "docs/guides/troubleshooting.md#runtime-build-skew",
