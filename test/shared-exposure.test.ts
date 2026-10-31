@@ -142,10 +142,13 @@ describe('signals and the warning', () => {
     const one = sharedTokenNotice({ kind: 'oauth_client', id: 'c1' }, { census: within })!;
     expect(one.why).toContain('the chat sits in one source (default), so a source grant cannot separate it');
     expect(one.why).not.toContain('auth rescope');
+    expect(one.why).toContain('the fix is a member-bound token, not per-call narrowing');
+    expect(split.why).toContain('the fix is a member-bound or rescoped token (gbrain auth rescope …), not per-call narrowing');
     expect(one.fix!.argv).toBeUndefined();
     for (const n of [split, one]) {
       expect(n.why).toContain('visibility: private');
-      expect(n.why).toContain('source_ids on search and query (MCP) or --source (CLI)');
+      expect(n.why).toContain('source_ids narrows only the call that sends it, so recall, list_pages or any read without it reads the token\'s full grant');
+      expect(n.why).not.toContain('narrow single calls');
       expect(n.why).toContain('gbrain auth create <name> --member <id>) arrive with gbrain#7812');
       expect(n.user_message).toBe(n.fix!.user_message);
     }
