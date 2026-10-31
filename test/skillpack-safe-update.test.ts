@@ -17,7 +17,7 @@ import { runScaffold } from '../src/core/skillpack/scaffold.ts';
 import {
   DIFF_LINE_CAP, recordScaffoldBases, runSkillpackRestore, runSkillpackUpdate, setSkillPinned, skillsRootKey, type UpdateOptions,
 } from '../src/core/skillpack/safe-update.ts';
-import { listJournals, sha256 } from '../src/core/skillpack/update-journal.ts';
+import { journalDir, listJournals, sha256 } from '../src/core/skillpack/update-journal.ts';
 import { loadState, saveState } from '../src/core/skillpack/state.ts';
 import {
   SKILLS_LOCK_HISTORY_FILENAME, SKILLS_MANIFEST_FILENAME, computeSkillsManifest, droppedHistoryEntries, loadVerifiedSkillsLockHistory,
@@ -311,6 +311,27 @@ describe('restore', () => {
     expect(second.files.every(f => f.action === 'already_restored')).toBe(true);
     expect([read(env, 'demo/SKILL.md'), read(env, 'demo/references/notes.md'), read(env, 'other/SKILL.md')]).toEqual(snapshot);
     expect(snapshot[0]).toBe(V1['demo/SKILL.md']);
+  });
+
+  test('refuses a journal whose backup path leaves the journal directory (.. or absolute)', async () => {
+    const env = setup();
+    await scaffold(env);
+    release(env.gbrainRoot, V2);
+    const { journal } = await update(env, { slugs: ['demo'] });
+    const journalPath = join(env.backups, journal!, 'journal.json');
+    const pristine = readFileSync(journalPath, 'utf-8');
+    const outside = join(dirname(env.backups), 'outside-canary.md');
+    writeFileSync(outside, V1['demo/SKILL.md']);
+    for (const escape of ['../../outside-canary.md', outside]) {
+      const tampered = JSON.parse(pristine);
+      for (const s of tampered.skills) for (const f of s.files) if (f.rel === 'demo/SKILL.md') f.backup = escape;
+      writeFileSync(journalPath, JSON.stringify(tampered));
+      await expect(runSkillpackRestore({ id: journal!, statePath: env.statePath, backups: env.backups })).rejects.toMatchObject({ code: 'target_escape' });
+      expect(read(env, 'demo/SKILL.md')).toBe(V2['demo/SKILL.md']);
+    }
+    for (const id of ['..', '../escape', outside]) {
+      expect(() => journalDir(id, env.backups)).toThrow(expect.objectContaining({ code: 'skillpack_journal_not_found' }));
+    }
   });
 });
 

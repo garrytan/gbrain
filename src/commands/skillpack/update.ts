@@ -33,7 +33,7 @@ export const UPDATE_HELP =
   '2 a skill failed and was rolled back (files touched and restore command printed).';
 
 function workspaceSkillsRoot(workspace: string | null): string {
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- workspace is the local operator's own --workspace arg; skillpack update runs only on the trusted local CLI (never MCP/remote)
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- root selection, not a child join: the operator's own --workspace (trusted local CLI only) plus the constant 'skills'; a symlinked skills dir is a supported root, and every child path under it goes through confinedSkillChildWrite
   return skillsRootKey(join(resolveWorkspace({ workspace }), 'skills'));
 }
 

@@ -197,8 +197,7 @@ export function classifySkill(ctx: ClassifyContext, slug: string): SkillOutcome 
   outcome.reason = reason;
   if (!ctx.noDiff && reason !== 'pinned') {
     outcome.diffs = changed.filter(f => f.pre !== null).map(f => ({
-      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- f.rel passed confinedSkillChildWrite in classifySkill (an escaping rel is skipped as unsafe_target before this read)
-      rel: f.rel, ...boundedRedactedDiff(readFileSync(join(ctx.skillsRoot, f.rel)), readFileSync(f.source), f.rel),
+      rel: f.rel, ...boundedRedactedDiff(readFileSync(confinedSkillChildWrite(ctx.skillsRoot, f.rel, { dryRun: true })), readFileSync(f.source), f.rel),
     }));
   }
   return outcome;
@@ -226,8 +225,7 @@ export function defaultValidator(skillsRoot: string): (root: string, slug: strin
   }
   return (root, slug) => {
     const problems: string[] = [];
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- slug is a bundled-manifest skill that classified and applied; read-only conformance check
-    const content = readFileSync(join(root, slug, 'SKILL.md'), 'utf-8');
+    const content = readFileSync(confinedSkillChildWrite(root, `${slug}/SKILL.md`, { dryRun: true }), 'utf-8');
     const fm = content.startsWith('---') ? parseSkillFrontmatter(content) : null;
     if (!fm?.name) problems.push(`conformance: ${slug}/SKILL.md has no frontmatter with a name`);
     if (fm?.triggers?.length && !loadSkillTriggerIndex(root).some(e => e.skillPath === `${slug}/SKILL.md` || e.skillPath.endsWith(`/${slug}/SKILL.md`))) {
@@ -249,8 +247,7 @@ export function defaultValidator(skillsRoot: string): (root: string, slug: strin
 function removeStaleStages(skillsRoot: string): void {
   if (!existsSync(skillsRoot)) return;
   for (const name of readdirSync(skillsRoot)) {
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- name is a direct readdirSync entry of skillsRoot carrying the gbrain stage prefix
-    if (name.startsWith(STAGE_PREFIX)) rmSync(join(skillsRoot, name), { recursive: true, force: true });
+    if (name.startsWith(STAGE_PREFIX)) rmSync(confinedSkillChildWrite(skillsRoot, name, { dryRun: true }), { recursive: true, force: true });
   }
 }
 
@@ -284,8 +281,7 @@ async function applySkill(ctx: ApplyContext, outcome: SkillOutcome, js: JournalS
     return { ...outcome, result: 'failed', failure, touched: renamed.map(f => f.rel), rollback_skipped: rollbackSkipped };
   };
   mkdirSync(skillsRoot, { recursive: true });
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- constant STAGE_PREFIX under the skills root
-  const stage = mkdtempSync(join(skillsRoot, STAGE_PREFIX));
+  const stage = mkdtempSync(confinedSkillChildWrite(skillsRoot, STAGE_PREFIX, { dryRun: true }));
   try {
     const staged: string[] = [];
     for (const [i, f] of changed.entries()) {
@@ -294,8 +290,7 @@ async function applySkill(ctx: ApplyContext, outcome: SkillOutcome, js: JournalS
       if (f.rel === `${outcome.slug}/SKILL.md` && !parseSkillFrontmatter(bytes.toString('utf-8'))?.name) {
         return fail(`staged ${f.rel} has no frontmatter with a name`, 'abandoned');
       }
-      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- String(i) under the fresh mkdtemp stage directory
-      const path = join(stage, String(i));
+      const path = confinedSkillChildWrite(stage, String(i), { dryRun: true });
       writeFileSync(path, bytes);
       staged.push(path);
     }
@@ -307,8 +302,7 @@ async function applySkill(ctx: ApplyContext, outcome: SkillOutcome, js: JournalS
     writeJournal(ctx.journal, ctx.backups);
     try {
       for (const file of js.files) {
-        // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- file.rel passed confinedSkillChildWrite in classifySkill; the read feeds a hash-verified backup
-        if (file.pre !== null) file.backup = backupFile(ctx.journal.id, file.rel, join(skillsRoot, file.rel), file.pre, ctx.backups);
+        if (file.pre !== null) file.backup = backupFile(ctx.journal.id, file.rel, confinedSkillChildWrite(skillsRoot, file.rel, { dryRun: true }), file.pre, ctx.backups);
       }
     } catch (err) {
       return fail(`changed since classification: ${(err as Error).message}`, 'abandoned');
@@ -351,7 +345,7 @@ export async function runSkillpackUpdate(opts: UpdateOptions): Promise<UpdateRes
   const backups = opts.backups ?? backupsRoot();
   const manifest = loadBundleManifest(opts.gbrainRoot);
   const slugs = opts.slugs ?? bundledSkillSlugs(manifest);
-  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- gbrainRoot is the install's own root (findGbrainOrDie)
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- root selection, not a child join: the install's own root (findGbrainOrDie) plus the constant 'skills'
   const history = loadVerifiedSkillsLockHistory(join(opts.gbrainRoot, 'skills'));
   const pending = pendingJournals({ root: backups, skillsRoot: opts.skillsRoot }).map(j => j.id);
   if (pending.length && !opts.dryRun) {
