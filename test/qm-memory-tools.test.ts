@@ -95,6 +95,7 @@ const SRC = 'qm-memory';
 const ALICE_ID = 'U0ALICE';
 const BOB_ID = 'oidc:3f2a:bob-example';
 const CAROL_ID = 'carol-example@acme.test';
+const DAVE_ID = 'U0DAVE';
 const ACME = 'companies/acme-example';
 const ATTEST_OPS = ['forget', 'forget_fact', 'get_write_request', 'memory_recall', 'memory_write', 'remember'];
 
@@ -135,7 +136,7 @@ for (const kind of testBackends()) {
       __resetPrivateVisibilityCacheForTests();
       __resetHotMemoryCacheForTests();
       await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [SRC]);
-      for (const id of ['alice-example', 'bob-example', 'carol-example']) await addMember(engine, id);
+      for (const id of ['alice-example', 'bob-example', 'carol-example', 'dave-example']) await addMember(engine, id);
       await importFromContent(engine, ACME, '---\ntype: company\ntitle: Acme Example\n---\n# Acme Example\n\nAcme example harbor ledger canarypagebody budget notes.', { sourceId: SRC });
       const register = async (name: string) => {
         const c = await provider().registerClientManual('d-' + name + '-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], SRC);
@@ -150,6 +151,7 @@ for (const kind of testBackends()) {
       await linkMember(engine, 'alice-example', 'qm', ALICE_ID);
       await linkMember(engine, 'bob-example', 'qm', BOB_ID);
       await linkMember(engine, 'carol-example', 'qm', CAROL_ID);
+      await linkMember(engine, 'dave-example', 'qm', DAVE_ID);
     }, 120_000);
 
     afterAll(async () => {
@@ -220,6 +222,18 @@ for (const kind of testBackends()) {
       expect(named.structured!.status).toBe('committed');
     }, 60_000);
 
+    test('a squatted member page (readers beyond its member) takes no memory_write, and its receipt is not left behind', async () => {
+      const dave: Who = { token: 'qm', actor: DAVE_ID };
+      const squat = '---\ntype: note\ntitle: Memory of dave-example\nreadable_by:\n  - member:bob-example\n  - member:dave-example\n---\n# Memory of dave-example\n';
+      await importFromContent(engine, 'memory/members/dave-example', squat, { sourceId: SRC });
+      const key = randomUUID();
+      const out = await write(dave, [{ fact: 'Dave keeps the harbor ledger key canarydavesquat', provenance: 'turn 5' }], key);
+      expect({ isError: out.isError, code: out.json.code, message: out.json.message }).toMatchObject({ isError: true, code: 'scope_denied', message: expect.stringContaining('does not name its member alone') });
+      expect(await factRows('canarydavesquat')).toHaveLength(0);
+      expect((await call(dave, 'get_write_request', { request_id: await memoryWriteRequestId('dave-example', key, 0) })).json.code).toBe('not_found');
+      expect((await recall(bob, 'harbor ledger key')).all).not.toContain('canarydavesquat');
+    }, 60_000);
+
     test('invalid facts and keys are refused before anything is saved', async () => {
       const bad: Array<Record<string, unknown>> = [
         { facts: [], idempotency_key: 'k1' },
@@ -253,8 +267,10 @@ for (const kind of testBackends()) {
     }, 60_000);
 
     test('recall leads with the person\'s own recent facts, then readable facts ranked by the query, never another member\'s or a page body', async () => {
-      await write(alice, [{ fact: 'Alice moved standup to Tuesdays canaryownrecent', provenance: 'turn 2' }]);
-      await write(alice, [{ fact: 'Alice owns the budget ledger review canaryownold', provenance: 'turn 0' }]);
+      for (const [fact, provenance] of [['Alice moved standup to Tuesdays canaryownrecent', 'turn 2'], ['Alice owns the budget ledger review canaryownold', 'turn 0']]) {
+        const saved = await write(alice, [{ fact, provenance }]);
+        expect(saved.structured?.status ?? saved.text).toBe('committed');
+      }
       await engine.executeRaw("UPDATE facts SET created_at = now() - interval '3 days', valid_from = now() - interval '3 days' WHERE source_id = $1 AND fact LIKE '%canaryownold%'", [SRC]);
       await write(bob, [{ fact: 'Bob audits the budget ledger canarybobonly', provenance: 'turn 3' }]);
       await engine.insertFact({ fact: 'Acme budget ledger closes in March canaryworld', kind: 'event', entity_slug: ACME, source: 'test', visibility: 'world' }, { source_id: SRC });
