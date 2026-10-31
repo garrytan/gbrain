@@ -1185,6 +1185,8 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
     writeGate: { tier: 'external_untrusted', origin: { channel: `connector:${p.connector}`, connector: String(p.connector), source_uri: p.sourcePath }, requestId: row.id },
     prepareFrontmatter: page => {
       if (snapshot?.page.frontmatter.visibility === 'private') page.frontmatter.visibility = 'private';
+      const trustTier = snapshot?.page.frontmatter.trust_tier;
+      if (typeof trustTier === 'string') page.frontmatter.trust_tier = trustTier;
     },
     prepare: async value => { prepared = value; return value.result; } });
   if (!prepared || prepared.slug !== row.slug) throw connectorPublicationRefusal('revision_conflict', result.error ?? 'A different page owns this connector content.', row,
