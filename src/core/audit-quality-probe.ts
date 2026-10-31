@@ -54,6 +54,9 @@ export interface QualityProbeFailure {
 
 export interface QualityProbeAuditEvent {
   ts: string;
+  /** Shared by the initial execution and its one bounded repair. Spend is per attempt. */
+  run_id?: string;
+  attempt?: number;
   /** Verdict from the cross-modal batch summary (or short-circuit reason). */
   outcome: QualityProbeOutcome;
   /** Exit code of the underlying batch (0/1/2/-1 when short-circuited). */
@@ -110,6 +113,8 @@ export interface QualityProbeAuditEvent {
 
 /** Fields copied onto the row only when the caller set them (rows written before #5506 lack them). */
 const OPTIONAL_EVENT_FIELDS = [
+  'run_id',
+  'attempt',
   'fixture_sha8',
   'detail',
   'reader_model',

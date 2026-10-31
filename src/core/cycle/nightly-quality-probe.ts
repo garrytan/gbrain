@@ -24,7 +24,7 @@
  * handles missing-provider cases).
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { tmpdir } from 'node:os';
@@ -47,6 +47,7 @@ import {
 } from '../budget/budget-tracker.ts';
 import { resolveAuditDir } from '../minions/handlers/shell-audit.ts';
 import type { CrossModalBatchSummary } from './nightly-probe-adapters.ts';
+import type { ProbeInputResult } from './nightly-probe-completeness.ts';
 import { NightlyProbeModelRoutesError, type NightlyProbeModelRoutes } from './nightly-probe-routes.ts';
 
 /** Run-once gate window in ms. 24h matches the "nightly" cadence. */
@@ -116,12 +117,13 @@ export interface NightlyProbeDeps {
     outputPath: string;
     searchConfigSnapshot?: Record<string, string>;
     modelRoutes?: NightlyProbeModelRoutes;
-  }) => Promise<void>;
+  }) => Promise<void | ProbeInputResult>;
   /** Runs the cross-modal batch; returns exit code (0/1/2). */
   runCrossModalBatch: (args: {
     batchPath: string;
     summaryPath: string;
     maxUsd: number;
+    expectedQuestionIds?: string[];
     modelRoutes?: NightlyProbeModelRoutes;
   }) => Promise<{ exitCode: number; summary?: CrossModalBatchSummary }>;
   /** Now provider — overridable for tests of the 24h rate limit. */
@@ -368,8 +370,9 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
 
   // Tempdir for the per-question hypothesis JSONL + batch summary.
   const workDir = fs.mkdtempSync(path.join(tmpdir(), 'nightly-probe-'));
-  const lmeOutPath = path.join(workDir, 'lme-output.jsonl');
-  const summaryPath = path.join(workDir, 'summary.json');
+  const runId = randomUUID();
+  let attemptDir = workDir;
+  let attemptNumber = 1;
 
   // Set once a stage that makes model calls starts: the routes the run
   // uses (#5872), the meter pricing its chat calls (#5506) and the run
@@ -408,15 +411,25 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
     });
     capFields = { cap_usd: maxUsd, cap_source: policy.capSource };
     const runTracker = tracker;
+    // One repair of incomplete execution, never a retry of a complete quality
+    // failure. Both attempts retain the same routes, cap and budget tracker;
+    // audit rows meter their own spend, so summing them never double-charges.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+    attemptNumber = attempt;
+    attemptDir = path.join(workDir, String(attempt));
+    fs.mkdirSync(attemptDir);
     meter = { calls: 0, cost_usd: 0, unpriced_calls: 0, ...(policy.pricingOverrides ? { pricing_overrides: policy.pricingOverrides } : {}) };
     const runMeter = meter;
-    await withBudgetTracker(runTracker, () => withChatCallMeter(runMeter, () =>
+    const lmeOutPath = path.join(attemptDir, 'lme-output.jsonl');
+    const summaryPath = path.join(attemptDir, 'summary.json');
+    const input = await withBudgetTracker(runTracker, () => withChatCallMeter(runMeter, () =>
       deps.runLongMemEval({ fixturePath, outputPath: lmeOutPath, searchConfigSnapshot, modelRoutes })));
     if (runTracker.exhausted) {
       const fields = stopped();
       process.stderr.write(`[nightly-quality-probe] ${fields.detail}\n`);
       logQualityProbeEvent({
         outcome: 'budget_exceeded',
+        run_id: runId, attempt,
         exit_code: 1,
         pass_count: 0,
         fail_count: 0,
@@ -428,20 +441,25 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
         ...routeFields(modelRoutes),
         ...spendFields(runMeter),
         ...capFields,
-        ...keepReceipts(workDir, deps.now()),
+        ...keepReceipts(attemptDir, deps.now()),
       });
       return { outcome: 'budget_exceeded', exit_code: 1, detail: fields.detail };
     }
-    const { exitCode, summary } = await withBudgetTracker(runTracker, () => withChatCallMeter(runMeter, () =>
+    const { exitCode, summary } = input && !input.completeness.complete
+      ? { exitCode: 2, summary: { verdict: 'error', pass_count: 0, fail_count: 0, inconclusive_count: 0, error_count: 0,
+        est_cost_usd: 0, completeness: input.completeness } as CrossModalBatchSummary }
+      : await withBudgetTracker(runTracker, () => withChatCallMeter(runMeter, () =>
       deps.runCrossModalBatch({
         batchPath: lmeOutPath,
         summaryPath,
         maxUsd,
         modelRoutes,
+        ...(input ? { expectedQuestionIds: input.questionIds } : {}),
       })));
 
     const verdict: NightlyProbeResult['outcome'] = (() => {
       if (runTracker.exhausted) return 'budget_exceeded';
+      if (summary?.completeness?.complete === false) return 'error';
       if (summary) {
         if (summary.verdict === 'pass') return 'pass';
         if (summary.verdict === 'fail') return 'fail';
@@ -457,12 +475,14 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
 
     const failures = outcome !== 'pass' ? summary?.failures : undefined;
     const digest = summary && outcome !== 'pass' ? failureDigest(summary, failures ?? []) : undefined;
-    const detail = collapse
+    const incomplete = summary?.completeness?.complete === false;
+    const detail = incomplete ? 'Incomplete nightly probe: not every fixture question received an answer and a verdict.' : collapse
       ? `${collapse} (batch verdict: ${verdict})${digest ? `; ${digest}` : ''}`
       : digest;
     logQualityProbeEvent({
       outcome,
-      exit_code: exitCode,
+      exit_code: incomplete ? 2 : exitCode,
+      run_id: runId, attempt,
       pass_count: summary?.pass_count ?? 0,
       fail_count: summary?.fail_count ?? 0,
       inconclusive_count: summary?.inconclusive_count ?? 0,
@@ -471,16 +491,20 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
       fixture_sha8: fixtureSha8,
       ...(detail ? { detail } : {}),
       ...(collapse ? { reason: 'panel_collapsed' } : {}),
+      ...(incomplete ? { reason: 'incomplete' } : {}),
       ...stopped(),
       ...routeFields(modelRoutes),
       ...(summary ? panelFields(summary) : {}),
       ...(failures?.length ? { failures: failures.slice(0, AUDIT_MAX_FAILURES) } : {}),
       ...spendFields(runMeter),
       ...capFields,
-      ...(outcome !== 'pass' ? keepReceipts(workDir, deps.now()) : {}),
+      ...(outcome !== 'pass' || attempt === 2 ? keepReceipts(attemptDir, deps.now()) : {}),
     });
 
-    return { outcome, exit_code: exitCode, ...(detail ? { detail } : {}) };
+    if (attempt === 1 && incomplete && summary?.completeness?.retryable && !runTracker.exhausted && !collapse) continue;
+    return { outcome, exit_code: incomplete ? 2 : exitCode, ...(detail ? { detail } : {}) };
+    }
+    throw new Error('nightly probe attempt bound exhausted');
   } catch (err) {
     const budget = stopped();
     const outcome = budget.reason ? 'budget_exceeded' : 'error';
@@ -489,6 +513,7 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
     logQualityProbeEvent({
       outcome,
       exit_code: 1,
+      run_id: runId, attempt: attemptNumber,
       pass_count: 0,
       fail_count: 0,
       inconclusive_count: 0,
@@ -500,7 +525,7 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
       ...routeFields(modelRoutes),
       ...(meter ? spendFields(meter) : {}),
       ...capFields,
-      ...keepReceipts(workDir, deps.now()),
+      ...keepReceipts(attemptDir, deps.now()),
     });
     return { outcome, exit_code: 1, detail };
   } finally {
@@ -549,8 +574,8 @@ function keepReceipts(workDir: string, now: Date): Partial<QualityProbeAuditEven
     const files = ['summary.json', 'lme-output.jsonl'].filter(f => fs.existsSync(path.join(workDir, f)));
     if (files.length === 0) return {};
     const root = path.join(resolveAuditDir(), RECEIPTS_DIR);
-    const dir = path.join(root, now.toISOString().replace(/[:.]/g, '-'));
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(root, { recursive: true });
+    const dir = fs.mkdtempSync(path.join(root, now.toISOString().replace(/[:.]/g, '-') + '-'));
     for (const f of files) fs.copyFileSync(path.join(workDir, f), path.join(dir, f));
     const kept = fs.readdirSync(root).sort();
     for (const old of kept.slice(0, Math.max(0, kept.length - RECEIPTS_KEPT))) {
