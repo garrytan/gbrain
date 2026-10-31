@@ -166,9 +166,9 @@ export function shutdown() { return app.close(); }
 });
 
 describe('#5001 the five languages whose inventory grows re-chunk on their own, like the Lua grammar swap', () => {
-  test('CHUNKER_VERSION is unchanged; typescript, tsx, javascript, python and ruby carry revision 1', () => {
+  test('CHUNKER_VERSION is unchanged; typescript, tsx, javascript, python and ruby carry revision 2', () => {
     expect(CHUNKER_VERSION).toBe(8);
-    for (const language of ['typescript', 'tsx', 'javascript', 'python', 'ruby'] as const) expect(GRAMMAR_REVISIONS[language]).toBe(1);
+    for (const language of ['typescript', 'tsx', 'javascript', 'python', 'ruby'] as const) expect(GRAMMAR_REVISIONS[language]).toBe(2);
     expect(grammarOnlyDrift('8;lua=1', chunkerStamp())).toEqual(new Set(['typescript', 'tsx', 'javascript', 'python', 'ruby']));
   });
 });

@@ -150,8 +150,9 @@ export const CHUNKER_VERSION = 8;
  * lua 1: tree-sitter-grammars v0.3.0 replaced a build whose scanner ran every
  * parse after the first on uninitialized state; Lua defs now become chunks.
  * typescript/tsx/javascript/python/ruby 1 (#5001): top-level call statements become `__module__` chunks (code-module-chunks.ts).
+ * typescript/tsx/javascript/python/ruby 2 (#5001): so do top-level `if`/`for`/`try` blocks and anonymous definitions holding a call.
  */
-export const GRAMMAR_REVISIONS: Partial<Record<SupportedCodeLanguage, number>> = { lua: 1, typescript: 1, tsx: 1, javascript: 1, python: 1, ruby: 1 };
+export const GRAMMAR_REVISIONS: Partial<Record<SupportedCodeLanguage, number>> = { lua: 1, typescript: 2, tsx: 2, javascript: 2, python: 2, ruby: 2 };
 /** The `sources.chunker_version` gate value: a change forces the next sync to walk every file (hash compare, no re-import of unchanged hashes). */
 export const chunkerStamp = (): string => [String(CHUNKER_VERSION), ...Object.entries(GRAMMAR_REVISIONS).map(([lang, rev]) => `${lang}=${rev}`)].join(';');
 
@@ -199,6 +200,8 @@ export interface CodeChunkMetadata {
   symbolNameQualified?: string | null;
   /** N13-1: a const/let/var whose value is a function — merge-protected (def-types.ts). */
   definesFunction?: boolean;
+  /** #5001: a named top-level node that contains a call; a merged run holding one keeps the `__module__` identity. */
+  holdsCall?: boolean;
 }
 
 export interface CodeChunk {
@@ -803,7 +806,7 @@ async function chunkParsedLanguage(
 
     const root = (tree as any).rootNode;
     const topLevelTypes = TOP_LEVEL_TYPES[language]!;
-    const semanticNodes = root.namedChildren.filter((n: any) => topLevelTypes.has(n.type) || moduleStatementSymbol(n, language) !== null);
+    const semanticNodes = root.namedChildren.filter((n: any) => topLevelTypes.has(n.type) || moduleStatementSymbol(n, language, false) !== null);
 
     if (semanticNodes.length === 0) {
       return { chunks: fallbackChunks(source, filePath, language, opts), edges: [] };
@@ -834,8 +837,10 @@ async function chunkParsedLanguage(
       // declaration; top-level chunk still uses the outer node's range
       // so the header shows the `export` keyword for completeness.
       const nestableNode = findNestableParent(node, nestedConfig);
-      const moduleSymbol = moduleStatementSymbol(node, language); // #5001: a top-level statement containing a call
-      const symbolName = moduleSymbol?.symbolName ?? extractSymbolName(nestableNode ?? node);
+      const definedName = topLevelTypes.has(node.type) ? extractSymbolName(nestableNode ?? node) : null;
+      // #5001: a top-level statement or anonymous definition containing a call is module-level code
+      const moduleSymbol = moduleStatementSymbol(node, language, definedName !== null);
+      const symbolName = moduleSymbol?.symbolName ?? definedName;
       // For SQL `statement` wrappers, the meaningful type lives on the inner
       // child. extractSymbolName already dives in for the name; mirror that
       // here so chunk headers say "table users" not "statement users".
@@ -846,7 +851,7 @@ async function chunkParsedLanguage(
         ? normalizeSymbolType(typeNode.namedChild(0).type)
         : normalizeSymbolType(typeNode.type));
 
-      if (nestableNode && symbolName && nestedConfig) {
+      if (nestableNode && !moduleSymbol && symbolName && nestedConfig) {
         const before = chunks.length;
         emitNestedScoped(nestableNode, [], source, filePath, language, nestedConfig, chunks);
         if (chunks.length > before) continue;
@@ -861,6 +866,7 @@ async function chunkParsedLanguage(
           parentSymbolPath: [],
         });
         if (declaresFunctionValue(typeNode)) chunk.metadata.definesFunction = true;
+        if (!moduleSymbol && moduleStatementSymbol(node, language, false)) chunk.metadata.holdsCall = true;
         chunks.push(chunk);
         continue;
       }
