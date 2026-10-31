@@ -34,7 +34,7 @@ describe('function_search_path doctor check (#7632)', () => {
     expect({ functions, fix }).toEqual({
       functions: ['gbrain_fts_input(text)', 'gbrain_refuse_purged_page()'],
       fix: [
-        'ALTER FUNCTION public.gbrain_fts_input(t text) SET search_path = pg_catalog, pg_temp;',
+        'ALTER FUNCTION public.gbrain_fts_input(text) SET search_path = pg_catalog, pg_temp;',
         'ALTER FUNCTION public.gbrain_refuse_purged_page() SET search_path = pg_catalog, public, pg_temp;',
       ],
     });
@@ -54,27 +54,27 @@ describe('function_search_path doctor check (#7632)', () => {
     expect(await functionSearchPathProblems(engine)).toEqual({ functions: [], fix: [] });
   }, 120_000);
 
-  test('a gbrain function re-created without any search_path is named, with a fix that pins one (#7688)', async () => {
-    await engine.runMigration(0, `ALTER FUNCTION gbrain_try_jsonb(text) RESET search_path`);
-    expect(await functionSearchPathProblems(engine)).toEqual({
-      functions: ['gbrain_try_jsonb(text)'],
-      fix: ['ALTER FUNCTION public.gbrain_try_jsonb(input text) SET search_path = pg_catalog, public, pg_temp;'],
-    });
-    await engine.runMigration(0, (await functionSearchPathProblems(engine)).fix.join('\n'));
-    expect(await functionSearchPathProblems(engine)).toEqual({ functions: [], fix: [] });
-  }, 120_000);
-
-  test('at or past v277 the check fails with the ALTER as a host-admin psql fix and the SQL in details (#7688)', async () => {
+  test('at or past v277 the check fails with the ALTER in its message and details, and no runnable fix (#7688)', async () => {
     await engine.runMigration(0, `ALTER FUNCTION gbrain_refuse_purged_take() SET search_path = pg_catalog, public`);
+    const sql = 'ALTER FUNCTION public.gbrain_refuse_purged_take() SET search_path = pg_catalog, public, pg_temp;';
     const [check] = await run(engine);
     expect(check).toMatchObject({
-      name: 'function_search_path', status: 'fail',
-      fix: { argv: ['psql', '-c', 'ALTER FUNCTION public.gbrain_refuse_purged_take() SET search_path = pg_catalog, public, pg_temp;'], actor: 'host_admin', consent: [],
-        verify: { argv: ['gbrain', 'doctor', '--only', 'function_search_path', '--json'] }, docs: 'docs/guides/troubleshooting.md#function-search-path' },
-      details: { functions: ['gbrain_refuse_purged_take()'], sql: ['ALTER FUNCTION public.gbrain_refuse_purged_take() SET search_path = pg_catalog, public, pg_temp;'] },
+      name: 'function_search_path', status: 'fail', fix_unavailable_reason: 'no_safe_automatic_fix',
+      details: { functions: ['gbrain_refuse_purged_take()'], sql: [sql], docs: 'docs/guides/troubleshooting.md#function-search-path' },
     });
-    expect(check!.message).toContain('as the role that owns each function');
+    expect(check!.fix).toBeUndefined();
+    expect(check!.message).toContain(`as the role that owns each function (migration v277 and every migration run already did the ones the migrating role owns): ${sql}`);
     await engine.runMigration(0, `ALTER FUNCTION gbrain_refuse_purged_take() SET search_path = pg_catalog, public, pg_temp`);
+  }, 120_000);
+
+  test('the printed ALTER names argument types only, never a caller-chosen argument name (#7688)', async () => {
+    await engine.runMigration(0, `CREATE FUNCTION public.gbrain_try_jsonb("$(touch x)" int) RETURNS jsonb LANGUAGE plpgsql SET search_path = pg_catalog, public AS $f$ BEGIN RETURN NULL; END $f$`);
+    try {
+      const { fix } = await functionSearchPathProblems(engine);
+      expect(fix).toEqual(['ALTER FUNCTION public.gbrain_try_jsonb(integer) SET search_path = pg_catalog, public, pg_temp;']);
+    } finally {
+      await engine.runMigration(0, 'DROP FUNCTION public.gbrain_try_jsonb(int)');
+    }
   }, 120_000);
 
   test('below v277 the check points at gbrain apply-migrations --yes instead of hand-written ALTERs (#7688)', async () => {

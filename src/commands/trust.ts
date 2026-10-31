@@ -144,12 +144,15 @@ function resultLine(r: OwnerActionResult): string {
   return `${r.ref}: ${r.status}${tier}`;
 }
 
-/** The longest line one item gets in the accept-all confirmation; `gbrain trust explain <ref>` shows it in full. */
-const ACCEPT_ALL_ITEM_MAX = 240;
+/**
+ * The longest summary one item may have in the accept-all confirmation. A longer item is skipped, never shortened: the
+ * owner confirms only text they were shown in full, and the item is released or confirmed on its own (#7820).
+ */
+const ACCEPT_ALL_ITEM_MAX = 1_000;
 
 /**
- * DX-15: accept every matching item after one typed confirmation. An item whose preview fails is listed as skipped:
- * it is not in the confirmation and is never applied (#7820).
+ * DX-15: accept every matching item after one typed confirmation. An item whose preview fails, or whose summary is too
+ * long to show in one list, is listed as skipped: it is not in the confirmation and is never applied (#7820).
  */
 async function acceptAll(backend: TrustBackend, args: string[], json: boolean): Promise<void> {
   const filter = reviewFilter(args);
@@ -164,16 +167,18 @@ async function acceptAll(backend: TrustBackend, args: string[], json: boolean): 
     return;
   }
   const settled = await Promise.allSettled(inputs.map(input => backend.preview(input)));
-  const skipped = settled.flatMap((s, i) => s.status === 'rejected' ? [{ ref: inputs[i]!.ref!, reason: 'preview_failed',
-    error: s.reason instanceof OperationError ? s.reason.toJSON() : String(s.reason), next: `gbrain trust ${inputs[i]!.action} ${inputs[i]!.ref}` }] : []);
-  const previewed = settled.flatMap((s, i) => s.status === 'fulfilled' ? [{ input: inputs[i]!, preview: s.value }] : []);
+  const skipped = settled.flatMap((s, i) => {
+    const next = `gbrain trust ${inputs[i]!.action} ${inputs[i]!.ref}`;
+    if (s.status === 'rejected') return [{ ref: inputs[i]!.ref!, reason: 'preview_failed', error: s.reason instanceof OperationError ? s.reason.toJSON() : String(s.reason), next }];
+    return s.value.summary.length > ACCEPT_ALL_ITEM_MAX ? [{ ref: inputs[i]!.ref!, reason: 'summary_too_long', next }] : [];
+  });
+  const previewed = settled.flatMap((s, i) => s.status === 'fulfilled' && s.value.summary.length <= ACCEPT_ALL_ITEM_MAX ? [{ input: inputs[i]!, preview: s.value }] : []);
   const previews = previewed.map(p => p.preview);
   const command = ['gbrain', 'trust', 'review', '--accept-all', ...args.filter(a => a !== '--accept-all' && a !== '--json')];
   const token = `all-${createHash('sha256').update(previews.map(p => `${p.ref}:${p.binding}`).join('\n')).digest('hex').slice(0, 8)}`;
-  const line = (p: OwnerActionPreview) => p.summary.length > ACCEPT_ALL_ITEM_MAX ? `${p.summary.slice(0, ACCEPT_ALL_ITEM_MAX - 3)}...` : p.summary;
-  const summary = [`Accept ${previews.length} item(s):`, ...previews.map(p => `  ${p.ref.padEnd(6)} ${line(p)}`),
-    ...skipped.map(s => `  ${s.ref.padEnd(6)} skipped: its preview failed, so it is not accepted (run ${s.next} on its own)`),
-    ...(previews.some(p => p.summary.length > ACCEPT_ALL_ITEM_MAX) ? ['  A line ending in ... is shortened; gbrain trust explain <ref> shows the item in full.'] : [])].join('\n');
+  const why = (reason: string) => reason === 'preview_failed' ? 'its preview failed' : 'it is too long to confirm in one list';
+  const summary = [`Accept ${previews.length} item(s):`, ...previews.map(p => `  ${p.ref.padEnd(6)} ${p.summary}`),
+    ...skipped.map(s => `  ${s.ref.padEnd(6)} skipped: ${why(s.reason)}, so it is not accepted (run ${s.next} on its own)`)].join('\n');
   if (previews.length) await requireOwnerConfirmation(LOCAL_CTX, { ref: `${previews.length} items`, token, summary, command });
   const accepted: OwnerActionResult[] = [];
   const pending: Array<{ ref: string; request_id: string; poll: string }> = [];
@@ -194,7 +199,7 @@ async function acceptAll(backend: TrustBackend, args: string[], json: boolean): 
     for (const r of accepted) console.log(resultLine(r));
     for (const p of pending) console.log(`${p.ref}: accepted, still pending (request ${p.request_id}; check with ${p.poll})`);
     for (const f of failed) console.log(`${f.ref}: not applied (${(f.error as { message?: string }).message ?? String(f.error)})`);
-    for (const s of skipped) console.log(`${s.ref}: skipped, its preview failed (${(s.error as { message?: string }).message ?? String(s.error)}); run ${s.next} on its own`);
+    for (const s of skipped) console.log(`${s.ref}: skipped, ${why(s.reason)}${'error' in s ? ` (${(s.error as { message?: string }).message ?? String(s.error)})` : ''}; run ${s.next} on its own`);
   }
   if (failed.length || skipped.length) setCliExitVerdict(1);
   else if (pending.length && (!acceptPendingRequested(getCliOptions().acceptPending) || uncovered > 0)) setCliExitVerdict(PENDING_WRITE_EXIT_CODE);

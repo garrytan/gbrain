@@ -901,14 +901,14 @@ Verify with `gbrain sources status <id> --json` and
 Every gbrain function that pins a `search_path` ends it with `pg_temp`, so a session's temporary table or view named
 like a purge or withdrawal ledger cannot hide that ledger from the guard that reads it (#7632). Migration v277 and the
 end of every migration run append it to each function the migrating role owns; doctor's `function_search_path` check
-names any function still without it, including one re-created by hand without its `SET search_path` clause.
+names any function whose pinned path still lacks it.
 
 - **Below schema v277**, the check's fix is `gbrain apply-migrations --yes`, which runs v277. Check again afterwards:
   what is left is owned by another role.
 - **A function another role owns** cannot be altered by the migrating role, so the migration leaves it and names it
-  on stderr during runs that apply migrations. Run the `ALTER FUNCTION public.<function>(<args>) SET search_path = …,
-  pg_temp;` statements the check prints (also in its `details.sql`) on the database host as the role that owns each
-  function, for example with `psql -c "…"` connected as that role. `ALTER FUNCTION … SET` changes neither the owner
-  nor the body, so the next boot's `CREATE OR REPLACE` still succeeds.
+  on stderr during runs that apply migrations. Run the `ALTER FUNCTION public.<function>(<argument types>) SET
+  search_path = …, pg_temp;` statements the check prints (also in its `details.sql`) on the database host, connected
+  to this brain's database as the role that owns each function. `ALTER FUNCTION … SET` changes neither the owner nor
+  the body, so the next boot's `CREATE OR REPLACE` still succeeds.
 
 Verify with `gbrain doctor --only function_search_path --json`.

@@ -81,6 +81,19 @@ describe('check-search-path.sh', () => {
     expect(run.out).not.toContain('src/schema.sql:1:');
   });
 
+  it('checks a templated function name and a FROM CURRENT path, and refuses an allowlist it cannot read (#7688)', () => {
+    write('src/a.ts', 'const s = `CREATE OR REPLACE FUNCTION ${FN}() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$ BEGIN RETURN NEW; END $fn$`;\n');
+    write('src/b.sql', 'CREATE OR REPLACE FUNCTION current_path() RETURNS trigger LANGUAGE plpgsql SET search_path FROM CURRENT AS $fn$ BEGIN RETURN NEW; END $fn$;\n');
+    const run = guard();
+    expect(run.code).toBe(1);
+    expect(run.out).toContain('src/a.ts:1: ${FN} (search_path = pg_catalog, public does not end in pg_temp)');
+    expect(run.out).toContain('src/b.sql:1: current_path (search_path = (not a fixed list) does not end in pg_temp)');
+    write('src/core/function-search-path.ts', 'export const PINNED_FUNCTION_NAMES = Object.freeze(new Set());\n');
+    const unreadable = guard();
+    expect(unreadable.code).toBe(1);
+    expect(unreadable.out).toContain('could not read PINNED_FUNCTION_NAMES');
+  });
+
   it('exempts LANGUAGE sql functions and historical migration bodies', () => {
     write('src/core/facts/fn.ts', 'const s = `CREATE OR REPLACE FUNCTION inlinable(claim TEXT) RETURNS TEXT\n    LANGUAGE SQL IMMUTABLE STRICT AS $fn$ SELECT pg_catalog.lower(claim) $fn$`;\n');
     write('src/core/schema-migrations/v001-old.ts', 'const s = `CREATE OR REPLACE FUNCTION old_fn() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$`;\n');

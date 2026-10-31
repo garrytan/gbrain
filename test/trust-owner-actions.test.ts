@@ -695,10 +695,11 @@ describe('#7820: the release, drop and accept-all previews', () => {
   }), 60_000);
 
   // Value: protects=one item whose preview fails no longer aborts accept-all, is listed as skipped, is not in the typed confirmation and is
-  // never applied; a long item is shortened in the one confirmation; fails_when=previews go back to Promise.all or a skipped item is applied;
+  // never applied; a summary too long to show in full is skipped the same way, never shortened; fails_when=previews go back to Promise.all,
+  // a long summary is truncated in the confirmation, or a skipped item is applied;
   // why_new=index-existing previews now materialize the page and can throw; seam=a stub TrustBackend; no_claim=a real corrupt page
-  test('accept-all skips an item whose preview fails, never applies it, and shortens a long item in the confirmation', async () => {
-    const long = `Release held fact h9 ("${'a long claim '.repeat(40)}", override) into memory as "confirmed by you"`;
+  test('accept-all skips an item whose preview fails or whose summary is too long to show, and never applies either', async () => {
+    const long = `Release held fact h9 ("${'a long claim '.repeat(80)}", override) into memory as "confirmed by you" with visibility "world"`;
     for (const json of [false, true]) {
       const applied: string[] = [];
       const backend = {
@@ -722,18 +723,19 @@ describe('#7820: the release, drop and accept-all previews', () => {
         try { await runTrustOwnerCommand(backend, 'review', ['--accept-all', '--from', 'default', ...(json ? ['--json'] : [])]); return currentExitCode(); }
         finally { prompt = io.prompt(); final.mockRestore(); console.log = original; process.exitCode = 0; _resetCliExitVerdictForTests(); }
       });
-      expect({ json, exit, applied }).toEqual({ json, exit: 1, applied: ['h7', 'h9'] });
-      expect(prompt).toContain('Accept 2 item(s)');
+      expect({ json, exit, applied }).toEqual({ json, exit: 1, applied: ['h7'] });
+      expect(prompt).toContain('Accept 1 item(s)');
       expect(prompt).toContain('h8     skipped: its preview failed, so it is not accepted (run gbrain trust release h8 on its own)');
-      expect(prompt).toContain(`h9     ${long.slice(0, 237)}...\n`);
-      expect(prompt).not.toContain(long);
+      expect(prompt).toContain('h9     skipped: it is too long to confirm in one list, so it is not accepted (run gbrain trust release h9 on its own)');
+      expect(prompt).not.toContain('a long claim');
       if (json) {
         const doc = JSON.parse(docs[0]!);
         expect({ accepted: doc.accepted.map((a: { ref: string }) => a.ref), skipped: doc.skipped.map((s: { ref: string; reason: string; next: string }) => [s.ref, s.reason, s.next]) })
-          .toEqual({ accepted: ['h7', 'h9'], skipped: [['h8', 'preview_failed', 'gbrain trust release h8']] });
+          .toEqual({ accepted: ['h7'], skipped: [['h8', 'preview_failed', 'gbrain trust release h8'], ['h9', 'summary_too_long', 'gbrain trust release h9']] });
         expect(doc.skipped[0].error.code).toBe('invalid_params');
       } else {
         expect(lines).toContain('h8: skipped, its preview failed (The facts fence of the page could not be read.); run gbrain trust release h8 on its own');
+        expect(lines).toContain('h9: skipped, it is too long to confirm in one list; run gbrain trust release h9 on its own');
       }
     }
   }, 60_000);

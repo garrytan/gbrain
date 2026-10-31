@@ -232,7 +232,7 @@ function releasedFields(hold: HoldRow, cell: ParsedFact | null): string {
     : [['kind', typeof p.kind === 'string' && p.kind ? p.kind : 'fact'], ['visibility', p.visibility === 'world' ? 'world' : 'private'], ['valid from', date(p.valid_from)],
       ['valid until', date(p.valid_until)], ['source', p.source], ['context', p.context]];
   const shown = entries.filter(([, v]) => v !== undefined && v !== null && v !== '')
-    .map(([k, v]) => `${k} ${k === 'context' || typeof v === 'string' ? quoted(v) : printable(v)}`).join(', ');
+    .map(([k, v]) => `${k} ${typeof v === 'number' && Number.isFinite(v) ? printable(v) : quoted(v)}`).join(', ');
   return cell ? ` with fence row ${cell.rowNum} as it stands: ${shown}` : ` with ${shown}`;
 }
 /**
