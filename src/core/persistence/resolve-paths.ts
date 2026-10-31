@@ -26,6 +26,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
+import { literalPathspecs } from '../git-env.ts';
 import { existsSync, realpathSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { opError } from '../ops/contract.ts';
@@ -90,7 +91,7 @@ interface TreeRow { path: string; oid: string; size: number }
 function lsTree(gitRoot: string, commit: string | null, paths: string[]): Map<string, TreeRow> {
   const out = new Map<string, TreeRow>();
   if (!commit || !paths.length) return out;
-  const raw = syncGit(gitRoot, ['--literal-pathspecs', 'ls-tree', '-l', '-z', commit, '--', ...paths]);
+  const raw = syncGit(gitRoot, ['ls-tree', '-l', '-z', commit, '--', ...literalPathspecs(paths)]);
   for (const row of raw.split('\0')) {
     const tab = row.indexOf('\t');
     if (tab < 0) continue;

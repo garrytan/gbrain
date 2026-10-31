@@ -1,7 +1,10 @@
 /**
  * A database-only brain for the append_page / segmented edit_page tests (Wave B PR 3): PGLite, or an isolated
  * Postgres database when kind is 'postgres'; `pages.segmented_storage` on; a fake embedder that records every text it
- * is asked to embed; `call` runs one MCP tool call as the trusted local CLI, or as a remote writer bound to notes/.
+ * is asked to embed; `call` runs one MCP tool call as the trusted local CLI, or as a remote writer bound to notes/, and
+ * waits for its write to commit (WRITE_WAIT_MS, not the 5 s agent default a loaded runner can outlast; `wait_ms` still
+ * sets a shorter one); `settled` waits until no write request or effect is still open, so a case's commit and its
+ * effects finish inside that case.
  */
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,6 +22,8 @@ import { materializeSegmentedBody } from '../../src/core/page-body/ingest.ts';
 import { isolatedPersistencePostgres } from './persistence-postgres.ts';
 import { withEnv } from './with-env.ts';
 
+const WRITE_WAIT_MS = 300_000;
+
 export interface AppendBrain {
   engine: BrainEngine;
   /** The canonical checkout when opened with `repo` (write-through on), else null. */
@@ -28,6 +33,8 @@ export interface AppendBrain {
   /** A direct import (the seed path for pages too large to put in one call). */
   seed(slug: string, content: string): Promise<void>;
   call(name: string, params: Record<string, unknown>, opts?: { remote?: boolean }): Promise<{ isError: boolean; body: Record<string, any> }>;
+  /** Resolves once no write request is queued, running or recovering and no effect is queued or running. */
+  settled(): Promise<void>;
   /** The stored body (truth + timeline), however it is stored. */
   body(slug: string): Promise<{ storage: string; truth: string; timeline: string }>;
   close(): Promise<void>;
@@ -66,10 +73,19 @@ export async function openAppendBrain(kind: 'pglite' | 'postgres', opts: { repo?
     seed: async (slug, content) => { await importFromContent(engine, slug, content, { noEmbed: true }); },
     call: async (name, params, opts = {}) => withEnv(env, async () => {
       const response = await withVerifiedLocalRegistration(engine, opts.remote ? remote : cli, () => dispatchToolCall(engine, name, params, {
-        remote: opts.remote === true, config: { engine: kind }, sourceId: 'default', ...(opts.remote ? { auth: remoteAuth } : {}),
+        remote: opts.remote === true, config: { engine: kind }, sourceId: 'default', writeWaitMs: WRITE_WAIT_MS, ...(opts.remote ? { auth: remoteAuth } : {}),
         logger: { info() {}, warn() {}, error() {} } }));
       return { isError: response.isError === true, body: JSON.parse((response.content[0] as { text: string }).text) };
     }),
+    settled: async () => {
+      const deadline = performance.now() + WRITE_WAIT_MS;
+      const open = () => engine.executeRaw<{ kind: string; state: string }>("SELECT 'request' AS kind, state FROM persistence_requests WHERE state IN ('queued','running','recovering')"
+        + " UNION ALL SELECT 'effect:' || kind AS kind, state FROM persistence_effects WHERE state IN ('queued','running')");
+      for (let rows = await open(); rows.length; rows = await open()) {
+        if (performance.now() > deadline) throw new Error(`writes did not settle: ${JSON.stringify(rows)}`);
+        await Bun.sleep(25);
+      }
+    },
     body: async slug => {
       const [row] = await engine.executeRaw<{ id: number; body_storage: string; compiled_truth: string | null; timeline: string | null }>(
         "SELECT id, body_storage, compiled_truth, timeline FROM pages WHERE source_id='default' AND slug=$1", [slug]);

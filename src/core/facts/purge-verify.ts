@@ -25,7 +25,7 @@ import { gbrainPath } from '../config.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { DELETION_INVENTORY, OUT_OF_REACH_RESIDUALS, type InventoryEntry } from '../deletion-inventory.ts';
 import type { PurgePlan, PurgeTarget } from './purge.ts';
-import { gitChildEnv } from '../git-env.ts';
+import { gitChildEnv, literalPathspecs } from '../git-env.ts';
 import { segmentedBodyContains } from '../page-body/segment-rewrite.ts';
 import { derivationAfterSql, derivationBatchRows, derivationNeedles, derivationPurgeState, recordDerivationStatement,
   type DerivationKey, type DerivationPendingReason, type DerivationStallReason, type DerivationSweepState } from '../page-body/segment-derive.ts';
@@ -393,7 +393,7 @@ export async function gitResidualCommits(root: string, paths: readonly string[],
   if (!paths.length || !existsSync(join(root, '.git'))) return { store: 'git_history', status: 'out_of_reach', reason: 'no_repository', detail: 'No brain repository is recorded for these pages.' };
   const needles = [escapeFenceCell(claim).toLowerCase(), claim.toLowerCase()];
   return new Promise(resolve => {
-    const child = spawn('git', ['-C', root, '--literal-pathspecs', 'log', '--all', '--format=commit %H %cI', '-p', '--no-color', '--no-ext-diff', '--', ...paths],
+    const child = spawn('git', ['-C', root, 'log', '--all', '--format=commit %H %cI', '-p', '--no-color', '--no-ext-diff', '--', ...literalPathspecs(paths)],
       { stdio: ['ignore', 'pipe', 'ignore'], env: gitChildEnv({ GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1' }) });
     const commits: Array<{ commit: string; committed_at: string }> = [];
     let current: { commit: string; committed_at: string } | null = null, bytes = 0, tail = '', bounded: string | null = null;

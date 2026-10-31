@@ -379,10 +379,10 @@ function indexConflict(root: string, staged: Target[]): OperationError {
   return opError('git_index_conflict', `${paths.join(', ')} in ${root} has a staged change that is not committed, so this write committed nothing and the index was left as it was.`,
     'Commit the staged change, or unstage it (git restore --staged -- <path> keeps the file on disk), then retry the write with a new request_id.', {
       detail: paths.join(','),
-      fix: { ask_user: true, argv: ['git', '-C', root, 'restore', '--staged', '--', ...paths], consent: [], actor: 'user', requires_exclusive: false,
+      fix: { ask_user: true, argv: ['git', '-C', root, 'restore', '--staged', '--', ...literalPathspecs(paths)], consent: [], actor: 'user', requires_exclusive: false,
         why: 'The door commits a path only while its index entry equals HEAD\'s, so a staged change is never overwritten or committed under a gbrain commit. Unstaging keeps the file on disk; committing it publishes that change.',
         user_message: `${paths.join(', ')} in ${root} has a staged change that is not committed, so gbrain did not commit its write there. Commit the staged change, or unstage it (its bytes stay on disk), then retry the write?`,
-        verify: { argv: ['git', '-C', root, 'diff', '--cached', '--name-only', '--', ...paths] } },
+        verify: { argv: ['git', '-C', root, 'diff', '--cached', '--name-only', '--', ...literalPathspecs(paths)] } },
     });
 }
 

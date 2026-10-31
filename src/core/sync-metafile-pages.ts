@@ -9,7 +9,7 @@
 import { execFileSync } from './spawn.ts';
 import { closeSync, lstatSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
-import { gitChildEnv } from './git-env.ts';
+import { gitChildEnv, literalPathspecs } from './git-env.ts';
 import { readBlobBytes, type TreeBlob } from './persistence/sync-blobs.ts';
 import type { BrainEngine } from './engine.ts';
 import { isNestedSkipMetafile, metafileIsPage, METAFILE_HEAD_BYTES, SYNC_METAFILE_PAGES_KEY, SYNC_SKIP_FILES, type MetafilePagesMode } from './sync.ts';
@@ -142,7 +142,7 @@ export function levelMetafilePages(mode: MetafilePagesMode, gitRoot: string, com
 
 /** The metafile-named blobs of `commit`'s tree under `scope` (one `ls-tree`), Git-root relative. */
 export function listMetafileNamedBlobs(gitRoot: string, commit: string, scope = ''): Array<{ path: string; oid: string; size: number }> {
-  const rows = git(gitRoot, ['--literal-pathspecs', 'ls-tree', '-r', '-l', '-z', commit, ...(scope ? ['--', scope] : [])], '', 512 * 1024 ** 2).toString('utf8').split('\0');
+  const rows = git(gitRoot, ['ls-tree', '-r', '-l', '-z', commit, ...(scope ? ['--', ...literalPathspecs([scope])] : [])], '', 512 * 1024 ** 2).toString('utf8').split('\0');
   const out: Array<{ path: string; oid: string; size: number }> = [];
   for (const row of rows) {
     const tab = row.indexOf('\t');

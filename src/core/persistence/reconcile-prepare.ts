@@ -29,6 +29,7 @@ import { verifyReconcileBackup } from './reconcile-backup.ts';
 import { assertAutoDecisions } from './reconcile-additive.ts';
 import { admissionAllows, readSyncAdmission } from './sync-admission.ts';
 import { bindOrigin } from './origin-guard.ts';
+import { materializedSnapshot } from './segmented-apply.ts';
 
 const pageFix = (sourceId: string, slug: string): Action => readFix(`Shows page ${slug} in source ${sourceId} as stored now, with its revision, read-only.`,
   { argv: ['gbrain', 'get', '--source', sourceId, '--', slug] });
@@ -168,6 +169,7 @@ export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRe
   const ready = prepared.ready;
   return {
     observedRevision: state.snapshot.revision, trust: await ownerImportTrust(engine, row, prepared.result.frontmatter, state.path),
+    ...(ready.afterCommit ? { afterCommit: ready.afterCommit } : {}),
     file: { path: state.path, root: state.root, content, expectedBeforeHash: absent ? null : state.pins.raw_file_hash },
     // A database-only page matched by its slug path always records that file as its origin.
     noop: ready.noop && sha256(content) === state.pins.raw_file_hash && state.origin === 'recorded',
@@ -179,15 +181,15 @@ export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRe
       await ready.validate(tx);
     },
     apply: async tx => {
-      await ready.apply(tx);
+      const applied = await ready.apply(tx);
       if (state.originSourcePath) {
         await bindOrigin(tx, { sourceId: row.source_id, slug: row.slug, sourcePath: state.originSourcePath, onlyIfUnset: true, liveOnly: true });
       }
       // The page has a canonical origin (adopted above, or already recorded, #6536): drop the #5254 database-only classification.
       await tx.executeRaw(`UPDATE pages SET database_only_reason=NULL WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL
         AND database_only_reason IN ('unbound_source', 'origin_twin', 'mirror_read_only') AND source_path IS NOT NULL`, [row.source_id, row.slug]);
-      if (!ready.noop) { await prepared.project!(tx); await sealPageTextProjection(tx, row.slug, row.source_id); }
-      const final = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id });
+      if (!ready.noop) { await prepared.project!(tx); if (!applied?.segmented) await sealPageTextProjection(tx, row.slug, row.source_id); }
+      const final = await materializedSnapshot(tx, await tx.readPageSnapshot(row.slug, { sourceId: row.source_id }));
       const scanStateTransferred = final ? await transferLegacyAtomPageState(tx, state.snapshot, final) : false;
       const reading = reconcileFileReading(readFileSync(state.path, 'utf8'), state.importPath, final?.page ?? state.snapshot.page);
       const file = parseMarkdown(reading.content, row.slug);
