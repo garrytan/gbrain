@@ -853,7 +853,7 @@ const query: Operation = {
     snippet_chars: SNIPPET_CHARS_PARAM,
     return_unit: RETURN_UNIT_PARAM,
     return_window: RETURN_WINDOW_PARAM,
-    token_budget: { type: 'number', description: 'Evidence token cap.', fullSurfaceOnly: true },
+    token_budget: { type: 'number', description: 'Evidence token cap. Without return_unit it caps the chunk payload; with search.query_budget_unit=auto it is the hard delivery cap (below 32 refused).', fullSurfaceOnly: true },
     expand: { type: 'boolean', description: 'Default off; one LLM call, rarely helps.' },
     detail: { type: 'string', description: 'low (compiled truth), medium (default) or high (all chunks).', fullSurfaceOnly: true },
     fields: FIELDS_PARAM,

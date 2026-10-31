@@ -1501,7 +1501,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "token_budget": {
         "type": "number",
-        "description": "Evidence token cap.",
+        "description": "Evidence token cap. Without return_unit it caps the chunk payload; with search.query_budget_unit=auto it is the hard delivery cap (below 32 refused).",
         "fullSurfaceOnly": true
       },
       "expand": {
