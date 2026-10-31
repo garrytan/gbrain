@@ -35,9 +35,10 @@
  * argument and lazy-imports the resolver.
  */
 
-import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, type Dirent } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import { pruneDir } from '../sync.ts';
 import {
   CORPUS_UNRESOLVED_STAMP,
   SESSION_SOURCE_LOCK_SUFFIX,
@@ -310,7 +311,7 @@ export async function resolveCorpusFileSource(
 }
 
 export interface CorpusSourceHolds {
-  /** Top-level files with no `.ingested` sidecar and no evidence of their source. */
+  /** Corpus files outside the spool (top-level or nested, `.txt` or `.md`) with no evidence of their source. */
   legacy_unstamped: number;
   /** Spool files stamped unresolved whose session record still names no source (on a sole-source brain, only those with no recorded cwd). */
   unresolved: number;
@@ -321,20 +322,26 @@ export interface CorpusSourceHolds {
 /**
  * Doctor/CLI view of the held files that only an operator mapping can
  * release (a multi-source brain's legacy files and unresolved sessions).
- * Engine-free; `soleSource` is the caller's `SELECT id FROM sources` answer.
- * `includeIngested` (the operator mapping) also lists sessions the sweep already
- * extracted: dream synthesis holds them too until their source is known (#7805).
+ * Walks what dream discovery walks (#7849): every `.txt` and `.md` file under
+ * the corpus, nested folders included, with sync's descent pruning; a file
+ * directly in the spool is a spool file, any other is legacy, as routing reads
+ * it. Engine-free; `soleSource` is the caller's `SELECT id FROM sources`
+ * answer. `includeIngested` also lists sessions the sweep already extracted:
+ * dream synthesis holds them too until their source is known (#7805).
  */
 export function listCorpusSourceHolds(corpusDir: string, soleSource: boolean, opts: { includeIngested?: boolean } = {}): CorpusSourceHolds {
   const out: CorpusSourceHolds = { legacy_unstamped: 0, unresolved: 0, sessions: [] };
   const spool = corpusSpoolDir(corpusDir);
   const sessions = new Set<string>();
-  const scan = (dir: string, location: CorpusFileLocation) => {
-    let names: string[];
-    try { names = readdirSync(dir); } catch { return; }
-    const present = new Set(names);
-    for (const name of names) {
-      if (!name.endsWith('.txt') || (!opts.includeIngested && present.has(name + '.ingested'))) continue;
+  const scan = (dir: string) => {
+    let entries: Dirent[];
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    const present = new Set(entries.map(entry => entry.name));
+    const location: CorpusFileLocation = dir === spool ? 'spool' : 'legacy';
+    for (const entry of entries) {
+      const name = entry.name;
+      if (entry.isDirectory()) { if (pruneDir(name, dir)) scan(join(dir, name)); continue; }
+      if (!(name.endsWith('.txt') || name.endsWith('.md')) || (!opts.includeIngested && present.has(name + '.ingested'))) continue;
       const sid = corpusFileSessionId(name);
       const record = readSessionSource(spool, sid);
       if (record?.source_id) continue;
@@ -349,8 +356,7 @@ export function listCorpusSourceHolds(corpusDir: string, soleSource: boolean, op
       sessions.add(sid);
     }
   };
-  scan(spool, 'spool');
-  scan(corpusDir, 'legacy');
+  scan(corpusDir);
   out.sessions = [...sessions].sort();
   return out;
 }
