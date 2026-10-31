@@ -30,7 +30,7 @@ import { dispatchToolCall, type ToolResult } from '../src/mcp/dispatch.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { __resetHotMemoryCacheForTests, getBrainHotMemoryMeta } from '../src/core/facts/meta-hook.ts';
 import { addMember, bindCredential } from '../src/core/access/members.ts';
-import { linkMember } from '../src/core/access/actor.ts';
+import { attestRightOf, linkedMember, linkMember } from '../src/core/access/actor.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { boundFactLines, memoryWriteRequestId, plainFactText, MEMORY_RECALL_MAX_CHARS } from '../src/core/ops/qm-memory.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
@@ -80,6 +80,17 @@ describe('memory_recall text bounds (pure)', () => {
   test('fence, heading and rule markers are stripped and the fact is one line', () => {
     expect(plainFactText('## Plan\n' + TICKS + 'ts\nharbor ledger\n' + TICKS + '\n---\n~~~ next ~~~')).toBe('Plan ts harbor ledger next');
     expect(plainFactText('#1 priority is the harbor')).toBe('#1 priority is the harbor');
+  });
+
+  test('a database failure while re-resolving a stored actor is rethrown, never read as unlinked or as no attest right', async () => {
+    const failing = (code: string, message: string) => ({ executeRaw: async () => { throw Object.assign(new Error(message), { code }); } }) as never;
+    const principal = { principal: { kind: 'oauth_client', id: 'c1' } } as never;
+    for (const [code, message] of [['25P02', 'current transaction is aborted, commands ignored until end of transaction block'], ['55P03', 'canceling statement due to lock timeout']]) {
+      await expect(linkedMember(failing(code, message), 'qm', ALICE_ID)).rejects.toThrow(message);
+      await expect(attestRightOf(failing(code, message), principal)).rejects.toThrow(message);
+    }
+    expect(await linkedMember(failing('42P01', 'relation "access_member_links" does not exist'), 'qm', ALICE_ID)).toBeNull();
+    expect(await attestRightOf(failing('42703', 'column "attest_actor" does not exist'), principal)).toBeNull();
   });
 
   test('request ids are uuidv5 per member: one key gives different ids to two members and the same id on replay', async () => {
@@ -216,6 +227,7 @@ for (const kind of testBackends()) {
       for (const [as, extra, code, reason] of cases) {
         const out = await call(as, 'memory_write', { facts: [{ fact: 'Refused write canaryrefused', provenance: 'x' }], idempotency_key: randomUUID(), ...extra });
         expect({ isError: out.isError, code: out.json.code, reason: out.json.reason }).toEqual({ isError: true, code, reason });
+        expect(out.structured?.error).toMatchObject({ code, ...(reason ? { reason } : {}) });
       }
       expect(await factRows('canaryrefused')).toHaveLength(0);
       const named = await call(alice, 'memory_write', { facts: [{ fact: 'Named write canarynamed', provenance: 'x' }], idempotency_key: randomUUID(), acting_user: ALICE_ID });
@@ -249,6 +261,7 @@ for (const kind of testBackends()) {
         const out = await call(alice, 'memory_write', params);
         expect(out.isError).toBe(true);
         expect(out.json.code).toBe('invalid_params');
+        expect(out.structured?.error).toMatchObject({ code: 'invalid_params', message: out.json.message });
       }
       expect(await factRows('canarybad')).toHaveLength(0);
       const fits = await write(alice, [{ fact: 'Max provenance canaryfits', provenance: 'x'.repeat(200) }], 'k'.repeat(128));

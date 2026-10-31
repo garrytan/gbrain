@@ -18,6 +18,7 @@ import { hostOnlyError } from '../ops/op-fix.ts';
 import { catalogueError, ERROR_CATALOGUE } from '../error-catalogue.ts';
 import type { CallerAccess } from '../search/private-visibility.ts';
 import { identityFor } from './principals.ts';
+import { isUndefinedColumnError, isUndefinedTableError } from '../utils.ts';
 import { memberIdentity } from './members.ts';
 import { folderAccessFor } from './caller.ts';
 import { ACTOR_ARGUMENT, ACTOR_DEFERRED_OPS, ACTOR_HEADER, attestRightFrom, DEFAULT_ATTEST_OPS, EXTERNAL_ID_RE, type AttestedActor, type AttestRight } from './actor-model.ts';
@@ -55,7 +56,11 @@ export async function attestRightOf(engine: Pick<BrainEngine, 'executeRaw'>, cal
       const cc = Array.isArray(row?.grant_types) && (row!.grant_types as unknown[]).includes('client_credentials') && row!.confidential === true;
       return attestRightFrom(row, cc ? 'client_credentials' : null, row?.member_id);
     }
-  } catch { /* unreadable (a schema before the attest columns): no right */ }
+  } catch (e) {
+    // A schema before the attest columns has no right. Any other failure (a lock timeout, an aborted transaction) is
+    // rethrown: read as "no right" it would refuse a stored write for good instead of letting it retry.
+    if (!isUndefinedTableError(e) && !isUndefinedColumnError(e, 'attest_')) throw e;
+  }
   return null;
 }
 
@@ -143,7 +148,7 @@ export function actorUnlinked(externalId: string, transport?: string): Operation
   { docs: ERROR_CATALOGUE.actor_unlinked.docs });
 }
 
-/** The enabled member linked to (system, external_id), with its identity; null when unlinked, disabled or unreadable. */
+/** The enabled member linked to (system, external_id), with its identity; null when unlinked, disabled or the link tables are missing. */
 export async function linkedMember(engine: Pick<BrainEngine, 'executeRaw'>, system: string, externalId: string): Promise<{ member: string; groups: string[]; identity: string[] } | null> {
   try {
     const [row] = await engine.executeRaw<{ id: string; groups: string[] | null }>(
@@ -153,7 +158,10 @@ export async function linkedMember(engine: Pick<BrainEngine, 'executeRaw'>, syst
     if (!row) return null;
     const groups = row.groups ?? [];
     return { member: row.id, groups, identity: identityFor(row.id, groups) };
-  } catch {
+  } catch (e) {
+    // GST-359 D: only a schema before the link tables reads as unlinked. A database failure (an aborted transaction under
+    // a concurrent publication, a lock timeout) is rethrown, so a stored write retries instead of failing as actor_unlinked.
+    if (!isUndefinedTableError(e)) throw e;
     return null;
   }
 }

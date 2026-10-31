@@ -254,8 +254,11 @@ pages; see [attested-actor refusals](../guides/write-refusals.md#attested-actor-
 read back only by that member, written remotely by no one else), and `delta` cursors, write receipts
 (`get_write_request`, `list_write_requests`, `cancel_write_request`) and agent
 jobs (`submit_agent`, `get_agent_job`) belong to the person they were made for.
-Not attestable yet, because what they read or write is not yet kept to the
-person: `list_write_conflicts`, `capture`, `extract_facts`, `forget`, `forget_fact` and `takes_add|update|resolve|supersede`.
+QM's memory pair, `memory_recall` and `memory_write`, reads and saves that
+person's facts ([QM guide](../guides/qm.md)); `forget` and `forget_fact` withdraw
+only a fact on the person's own page. Not attestable yet, because what they
+read or write is not yet kept to the person: `list_write_conflicts`, `capture`,
+`extract_facts` and `takes_add|update|resolve|supersede`.
 `gbrain access check --token <name>` shows the
 result ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape)).
 

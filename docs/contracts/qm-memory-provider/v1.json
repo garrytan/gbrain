@@ -233,6 +233,7 @@
           "code": "string",
           "message": "string",
           "reason": "string?",
+          "write_error": "string?",
           "fix": "object?"
         }
       }

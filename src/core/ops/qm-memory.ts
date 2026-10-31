@@ -237,12 +237,18 @@ const memory_write: Operation = {
 /**
  * A successful memory_recall or memory_write result as QM reads it: the model's text alone in `content` (notices stay
  * in `_meta.gbrain_notices`, so memory_recall's text stays within max_chars) and the result in `structuredContent`.
- * Refusals, dry runs and every other tool pass through unchanged.
+ * A refusal keeps its JSON text block and gains `structuredContent.error` (code, message, reason, fix), as the actor
+ * refusals carry it, so QM classifies every error from structuredContent. Dry runs and every other tool pass through.
  */
 export function qmMemoryToolResult<T extends { content: Array<{ type: 'text'; text: string }>; isError?: boolean; structuredContent?: Record<string, unknown> }>(name: string, out: T): T {
-  if (!QM_MEMORY_OPS.has(name) || out.isError) return out;
+  if (!QM_MEMORY_OPS.has(name)) return out;
   let result: unknown;
   try { result = JSON.parse(out.content[0]?.text ?? ''); } catch { return out; }
+  if (out.isError) {
+    if (out.structuredContent || !result || typeof result !== 'object') return out;
+    const env = result as Record<string, unknown>;
+    return { ...out, structuredContent: { error: { code: env.code, message: env.message, ...(env.reason ? { reason: env.reason } : {}), ...(env.write_error ? { write_error: env.write_error } : {}), ...(env.fix ? { fix: env.fix } : {}) } } };
+  }
   if (!result || typeof result !== 'object' || 'dry_run' in result) return out;
   const { text, ...structured } = result as Record<string, unknown>;
   return { ...out, content: [{ type: 'text', text: typeof text === 'string' ? text : '' }], structuredContent: structured };
