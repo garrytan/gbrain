@@ -256,9 +256,14 @@ async function lockWorktree(binding: WorktreeBinding, waitMs: number, signal: Ab
  */
 export const MANAGED_WRITER_PROBE_WAIT_MS = 1000;
 
-/** Acquire-and-release probe of the worktree lock within MANAGED_WRITER_PROBE_WAIT_MS; false when it stayed busy. */
-export async function probeWorktreeWriter(binding: WorktreeBinding, engine?: BrainEngine): Promise<boolean> {
-  const lock = await acquireWorktree(binding, MANAGED_WRITER_PROBE_WAIT_MS, undefined, engine);
+/**
+ * Acquire-and-release probe of the worktree lock within `waitMs` (MANAGED_WRITER_PROBE_WAIT_MS by default);
+ * false when it stayed busy. #7461: atom maintenance passes its longer publish wait, since the previous
+ * batch's Git effects can hold the lock past the default.
+ */
+export async function probeWorktreeWriter(binding: WorktreeBinding, engine?: BrainEngine,
+  waitMs = MANAGED_WRITER_PROBE_WAIT_MS, signal?: AbortSignal): Promise<boolean> {
+  const lock = await acquireWorktree(binding, waitMs, signal, engine);
   if (!lock) return false;
   await lock.release();
   return true;

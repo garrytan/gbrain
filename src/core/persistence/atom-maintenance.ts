@@ -11,7 +11,7 @@ import { authorizeStoredRequest, authorizeWrite, submissionAuthority } from './a
 import { currentVerifiedLocalWriter, localHostId, registerLocalWriter } from './identity.ts';
 import { admitWriteInTransaction, getWriteRequest, receiptFor } from './journal.ts';
 import { digest, requireUuid, sha256 } from './digest.ts';
-import { getWorktreeBinding, managedPersistenceEnabled, probeWorktreeWriter, type WorktreeBinding } from './ownership.ts';
+import { getWorktreeBinding, MANAGED_WRITER_PROBE_WAIT_MS, managedPersistenceEnabled, probeWorktreeWriter, type WorktreeBinding } from './ownership.ts';
 import { isConnectorSourceKind } from './connector-identity.ts';
 import { preparePageMutation } from './page-prepare.ts';
 import { assertPersistenceAccepting, waitForWrite, writeResponse } from './service.ts';
@@ -120,7 +120,7 @@ export async function atomDrainOwnerRefusal(engine: BrainEngine, sourceId: strin
 }
 
 export async function managedAtomSession(engine: BrainEngine, sourceId: string, retry?: { requestId: string; retryId: string },
-  wait: MaintenanceWriteWait = new MaintenanceWriteWait()): Promise<ManagedAtomSession | null> {
+  wait: MaintenanceWriteWait = new MaintenanceWriteWait(), signal?: AbortSignal): Promise<ManagedAtomSession | null> {
   if (!(await managedPersistenceEnabled(engine))) return null;
   assertPersistenceAccepting(engine);
   const caller = currentSubmissionAuthority();
@@ -150,7 +150,7 @@ export async function managedAtomSession(engine: BrainEngine, sourceId: string, 
     `No extraction was started for source ${sourceId}. Check its canonical owner: run atom extraction on the host that owns the checkout, or have the user claim the checkout on this host with gbrain sources writer claim.`,
     { fix: ownerStatusFix(sourceId) });
   if (writeThrough && binding) {
-    if (!await probeWorktreeWriter(binding, engine)) throw opError('writer_lock_unavailable', 'The canonical atom writer is busy; no extraction was started.',
+    if (!await probeWorktreeWriter(binding, engine, wait.probeMs(MANAGED_WRITER_PROBE_WAIT_MS), signal)) throw opError('writer_lock_unavailable', 'The canonical atom writer is busy; no extraction was started.',
       `Another write holds source ${sourceId}'s canonical writer. Nothing was started, so run the atom drain again once the owner status shows it idle.`,
       { fix: ownerStatusFix(sourceId) });
   }

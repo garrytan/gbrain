@@ -705,7 +705,7 @@ export async function runPhaseExtractAtoms(
 ): Promise<PhaseResult> {
   const sourceId = opts.sourceId ?? 'default';
   const chat = opts._chat ?? gatewayChat;
-  const managed = await managedAtomSession(engine, sourceId, opts._managedRetry, opts.attempt?.writeWait);
+  const managed = await managedAtomSession(engine, sourceId, opts._managedRetry, opts.attempt?.writeWait, opts.signal);
   // v0.41.2.1: loadConfigWithEngine() so the dream.* DB-plane merge from Phase 1 reaches this phase.
   let transcriptDirs: { session_corpus_dir?: string; meeting_transcripts_dir?: string } | undefined;
   try {
