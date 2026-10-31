@@ -81,7 +81,7 @@ export interface HostIdentityMismatch {
 }
 
 type OwnerBinding = { worktree_id: string; owner_host_id: string; local_path: string; created_at: string; source_ids: string[] | null };
-type OwnerRow = { host_id: string; host_json_path: string; persistence_home: string; minted_under: unknown; renewed_at: string };
+type OwnerRow = { host_id: string; host_json_path: string | null; persistence_home: string | null; minted_under: unknown; renewed_at: string };
 
 /** The `GBRAIN_HOME` parent value a supervisor sets so this process mints under the owner's home: the owner's `gbrain_home`, else its persistence home's grandparent (`<home>/.gbrain/persistence`). */
 function fixEnv(owner: OwnerRow | undefined): string | null {

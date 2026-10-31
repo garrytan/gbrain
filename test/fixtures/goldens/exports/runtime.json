@@ -640,6 +640,10 @@
       "./engine-factory": [
         "createEngine"
       ],
+      "./engine-open": [
+        "DEFAULT_SETTINGS_POOL_MAX",
+        "openEngine"
+      ],
       "./eval/longmemeval/reader": [
         "READER_MAX_SESSION_CHARS",
         "READER_MAX_TOKENS",

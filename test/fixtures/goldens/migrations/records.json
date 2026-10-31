@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 281,
+    "count": 282,
     "gaps": [
       17,
       18,
@@ -94,7 +94,7 @@
       "verifyProjectionStatistics": "0d231b04ecfbc5a4109d6fca9567bf4e8c9e9db6c3fbbb35212e026579ed6f67",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 286,
+    "latest": 287,
     "records": [
       {
         "handler": {
@@ -2288,8 +2288,8 @@
         "idempotent": true,
         "name": "durable_concurrent_persistence",
         "sql": {
-          "length": 15532,
-          "sha256": "d18cf500d26ac27f68e4cdeb71e9c23220c33505b6b08100377e91fcdf1a82a8"
+          "length": 15514,
+          "sha256": "bcb454dda31afeb11b5bd1f8cbae128481a3063562daf8f7e3e27b443e7eb204"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -3372,8 +3372,8 @@
         "idempotent": true,
         "name": "persistence_consumers",
         "sql": {
-          "length": 687,
-          "sha256": "6fb93119db92219ea691ec8ad27a664f8f369628779932ef94709318e33fe542"
+          "length": 669,
+          "sha256": "beead17603848a232ecff7c16f5e3dd37b8bc06c7dc3b78ba595d40fcbe8ec1f"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -4648,6 +4648,19 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 286
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "persistence_consumers_identity_given_at_open",
+        "sql": {
+          "length": 155,
+          "sha256": "c9ddf007306e5b6e56933ac7f45e1489c6c754daf37073dd23125ab01cd3c1fe"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 287
       }
     ],
     "versions": [
@@ -4931,7 +4944,8 @@
       283,
       284,
       285,
-      286
+      286,
+      287
     ]
   },
   "normalizer": "migrations-record-v1"

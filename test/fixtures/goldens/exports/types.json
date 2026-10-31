@@ -4420,6 +4420,34 @@
         ]
       }
     ],
+    "./engine-open": [
+      {
+        "kind": "variable",
+        "name": "DEFAULT_SETTINGS_POOL_MAX",
+        "signature": [
+          "4"
+        ]
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "database: { url?: string; path?: string; }",
+          "engine: \"postgres\" | \"pglite\"",
+          "host?: { id: string; } | undefined",
+          "keyword_statement_timeout_ms?: number | undefined",
+          "pglite?: { shared_buffers?: string; } | undefined",
+          "pool?: { max?: number; } | undefined"
+        ],
+        "name": "EngineSettings"
+      },
+      {
+        "kind": "function",
+        "name": "openEngine",
+        "signature": [
+          "(settings: EngineSettings) => Promise<BrainEngine>"
+        ]
+      }
+    ],
     "./eval/longmemeval/reader": [
       {
         "kind": "variable",
