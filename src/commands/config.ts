@@ -30,7 +30,7 @@ import {
 // two surfaces can't drift again. Match on word-segments to avoid
 // false-positives (e.g. `monkey` doesn't match `key`).
 export function isSensitiveConfigKey(key: string): boolean {
-  const lower = key.toLowerCase();
+  const lower = key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
   // Word-boundary matches: foo_key, foo.key, key_foo, key, api_key, ...
   return /(^|[._-])(key|secret|token|password|pwd|passwd|auth)([._-]|$)/.test(lower);
 }
@@ -273,11 +273,26 @@ export const FILE_PLANE_API_KEYS: readonly string[] = [
 ];
 
 export function redactConfigValue(key: string, value: string): string {
+  if (isSensitiveConfigKey(key)) return '***';
+  // Object-valued settings reach get/set as JSON. Redact each leaf using
+  // its own key, including credentials inside arrays and camelCase fields.
+  if (/^\s*[\[{]/.test(value)) {
+    try {
+      const redact = (field: string, item: unknown): unknown => {
+        if (isSensitiveConfigKey(field)) return '***';
+        if (Array.isArray(item)) return item.map(entry => redact('', entry));
+        if (item !== null && typeof item === 'object') {
+          return Object.fromEntries(Object.entries(item).map(([k, v]) => [k, redact(k, v)]));
+        }
+        return typeof item === 'string' ? redactConfigValue(field, item) : item;
+      };
+      return JSON.stringify(redact(key, JSON.parse(value)));
+    } catch { /* Plain strings that resemble JSON retain scalar handling. */ }
+  }
   // Both scheme spellings — the old local regex only matched postgresql://,
   // so a postgres:// DSN's password echoed in the clear. redactPgUrl is the
   // canonical single home (drops the whole userinfo, both schemes).
   if (/postgres(ql)?:\/\//.test(value)) return redactPgUrl(value);
-  if (isSensitiveConfigKey(key)) return '***';
   return value;
 }
 
@@ -675,7 +690,7 @@ async function showConfig(engine: BrainEngine): Promise<void> {
     const display = typeof v === 'string'
       ? redactConfigValue(k, v)
       : v !== null && typeof v === 'object'
-        ? (isSensitiveConfigKey(k) ? '***' : JSON.stringify(v))
+        ? redactConfigValue(k, JSON.stringify(v))
         : v;
     console.log(`  ${k}: ${display}`);
   }
