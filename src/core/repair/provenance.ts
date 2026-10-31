@@ -19,7 +19,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { OperationError, opError } from '../ops/contract.ts';
-import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
+import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, retireAfterLastItem, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { ownerRepairFile, repairPageMarker, restorePageProvenance } from '../trust/page-handlers.ts';
 import { plannedDigest, readPageDrift, scanProvenanceDrift, type DriftItem } from '../trust/provenance-drift.ts';
@@ -153,14 +153,12 @@ export const provenanceRepair: RepairHandler = {
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { page, hash, includeAmbiguous, last } = entry as ProvenanceItem;
-    try {
+    return retireAfterLastItem(ctx.engine, 'provenance', hash, last, async () => {
       if (await stillPlanned(ctx.engine, page, includeAmbiguous) !== 'planned') return { applied: false, outcome: 'changed_since_preview', reason: 'the page changed since the preview' };
       const input = { sourceId: page.source_id, slug: page.slug, expectedRevision: page.revision, confirmation: { via: 'preview_hash' as const }, config: ctx.config };
       const result = page.action === 'restamp' ? await repairPageMarker(ctx.engine, input)
         : await restorePageProvenance(ctx.engine, { ...input, planned: page.planned, includeAmbiguous });
       return { applied: true, outcome: page.action === 'restamp' ? 'restamped' : 'restored', detail: { tier: result.tier, prior_tier: result.prior_tier } };
-    } finally {
-      if (last) await clearApprovedSet(ctx.engine, { command: 'provenance', hash });
-    }
+    });
   },
 };

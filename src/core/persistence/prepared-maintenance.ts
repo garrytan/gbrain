@@ -4,7 +4,7 @@ import { boundedReads } from './bounded-reads.ts';
 import { join } from 'node:path';
 import type { BrainEngine, FactRow } from '../engine.ts';
 import { loadConfig, type GBrainConfig } from '../config.ts';
-import { opError, type OperationContext, type OperationError } from '../ops/contract.ts';
+import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
@@ -14,7 +14,7 @@ import { fenceCellReadBackProblem, formatFenceDate, parseFactsFence, renderFacts
 import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
 import { submissionAuthority, authorizeStoredRequest, authorizeWrite } from './authority.ts';
 import { currentVerifiedLocalWriter, localHostId, registerLocalWriter } from './identity.ts';
-import { getWorktreeBinding, managedPersistenceEnabled, type WorktreeBinding } from './ownership.ts';
+import { acquireWorktree, getWorktreeBinding, managedPersistenceEnabled, type WorktreeBinding } from './ownership.ts';
 import { checkOwner, ownerUnavailableError } from './owner-refusal.ts';
 import { admitWrite, admitWriteInTransaction, assertReplayIntent, getWriteRequest, intentDigest, type WriteAdmission } from './journal.ts';
 import { assertRefusalBreakerClosed } from './refusal-breaker.ts';
@@ -120,7 +120,15 @@ export async function maintenancePreflight(engine: BrainEngine, sourceId: string
         { fix: ownerStatusFix(sourceId) });
     }
     await nativeLockCapability();
-    assertPhysicalRoot(owner.binding.local_path, { worktreeId: owner.binding.worktree_id, coordinationPath: owner.binding.coordination_path });
+    try {
+      assertPhysicalRoot(owner.binding.local_path, { worktreeId: owner.binding.worktree_id, coordinationPath: owner.binding.coordination_path });
+    } catch (error) {
+      // #7760: a device-only change takes the ordinary write's locked, ownership-verified re-stamp (#5604); a busy lock keeps the refusal.
+      if (!(error instanceof OperationError) || error.detail !== 'physical_root_device_changed') throw error;
+      const lock = await acquireWorktree(owner.binding, 0, undefined, engine);
+      if (!lock) throw error;
+      await lock.release();
+    }
   }
   if (!writeThrough) writer.databaseOnlyReason = 'disabled_by_config';
   else if (!binding) writer.databaseOnlyReason = 'no_repo_configured';

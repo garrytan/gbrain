@@ -1824,7 +1824,10 @@ once to an instant the preview and apply carry), `--key <owner>`
 - `--mode release-held` publishes a held result once: `shrunk`, `valve` and
   `attempts_exhausted` always, `oversize` after `generations.max_items` was
   raised. `no_proof`, `fence_absent`, `segmented_unsupported` and `tie` are
-  refused, because releasing them would supply the proof they lack.
+  refused, because releasing them would supply the proof they lack. On a
+  managed brain, purging the page (`gbrain delete --purge`, or the purge of an
+  expired tombstone) drops its fence holds, since the purge deletes the rows
+  they would retire.
 
 The preview saves the set under its hash; `--apply --expect <hash> --yes`
 applies exactly that set and rechecks each key under its locks

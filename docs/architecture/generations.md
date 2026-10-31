@@ -195,8 +195,8 @@ count), `generation_held` (warn) and `generation_pending` (warn).
 
 ## Purge
 
-A page purge nulls the purged item's preimages and every held proposal naming it; a fact purge nulls every preimage and
-proposal carrying the claim (`ledger-scrub.ts`). Restore then refuses that item (`no_preimage`).
+A page purge nulls the purged item's preimages and every held proposal naming it, and drops the page's fence holds (it
+deletes every row they would retire); a fact purge nulls every preimage and proposal carrying the claim (`ledger-scrub.ts`). Restore then refuses that item (`no_preimage`).
 
 ## Census
 

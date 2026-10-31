@@ -66,7 +66,7 @@ import { dailyLedger, FENCE_REPAIR_LEDGER, nextUtcMidnight } from '../budget/dai
 import { pricingSetCommand } from '../budget/no-pricing.ts';
 import type { CapSource } from '../consent.ts';
 import { sha256 } from '../persistence/digest.ts';
-import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
+import { loadApprovedSet, previewChangedError, previewHash, retireAfterLastItem, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { clearGitHold, readGitHold, readGitSourceHolds, recordContentHoldRepair, recordHoldAttempt, type ContentHoldRepairState, type GitHoldRecord } from '../persistence/sync-holds.ts';
 import { rotate, rotationAfter, rotationBrain, rotationKeyOf, saveRotation } from './rotation.ts';
 import { confinedRepairTarget, prepareRepairPublication, repairScreenConfig, submitManagedFileRepair } from '../persistence/file-repair.ts';
@@ -533,9 +533,8 @@ export const slugConflictsRepair: RepairHandler = {
     if (ctx.remote !== false) throw trustedCliRequired('gbrain repair slug-conflicts writes files and may call a paid model, so it runs only from the trusted local CLI or the maintenance job on the brain host.');
     const { entry, hash, last } = raw as ConflictItem;
     try {
-      return await applyConflict(ctx, entry, { embed: opts?.embed === true, expect: hash, allowanceUsd: opts?.llmAllowanceUsd, deadline: opts?.deadline, noLlm: opts?.noLlm === true });
+      return await retireAfterLastItem(ctx.engine, 'slug-conflicts', hash, last, () => applyConflict(ctx, entry, { embed: opts?.embed === true, expect: hash, allowanceUsd: opts?.llmAllowanceUsd, deadline: opts?.deadline, noLlm: opts?.noLlm === true }));
     } finally {
-      if (hash && last) await clearApprovedSet(ctx.engine, { command: 'slug-conflicts', hash });
       if (!hash) await saveRotation(ctx.engine, ROTATION_OP, await rotationBrain(ctx.engine), rotationKey(entry)).catch(() => undefined);
     }
   },

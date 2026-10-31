@@ -5,7 +5,8 @@
  * (unknown without a covering partial index); every other tier counts exactly.
  *
  * It warns only on what no other check owns: chunks of pages soft-deleted
- * longer than the purge window (fix: `gbrain pages purge-deleted`), and live
+ * longer than the purge window that the purge would remove (fix: `gbrain
+ * pages purge-deleted`; chunks its holds keep are information), and live
  * pages with body text but no chunk rows on a keyed brain (fix: `gbrain embed
  * --stale`). The pending backlog stays the `embeddings` check's warning (it
  * ages the backlog; this check only counts it), and quarantined pages stay
@@ -37,7 +38,7 @@ async function runEmbeddingState(ctx: DoctorContext): Promise<Check[]> {
       return checks;
     }
     const counts = state.counts;
-    const deleted = state.deleted_page_chunks as { within_window: number; past_window: number; window_hours: number };
+    const deleted = state.deleted_page_chunks as { within_window: number; past_window: number; purgeable: number; held: number; window_hours: number };
     const enabled = state.embeddings_enabled === true;
     const healable = enabled ? counts.chunkless_healable ?? 0 : 0;
     const listed = (Object.keys(LABELS) as EmbeddingState[]).filter(s => counts[s] !== undefined).map(s => `${counts[s]} ${LABELS[s]}`).join(', ');
@@ -47,19 +48,20 @@ async function runEmbeddingState(ctx: DoctorContext): Promise<Check[]> {
     if ((counts.quarantined ?? 0) > 0) notes.push('Quarantined pages are reviewed under quarantined_pages.');
     if ((counts.keyword_only ?? 0) > 0) notes.push('Keyword-only chunks sit on embed_skip pages by design (split the page or approve a higher content_sanity.bytes_block; `gbrain pages unsearchable --state keyword_only` lists them).');
     if (deleted.within_window > 0) notes.push(`${deleted.within_window} chunk(s) on pages soft-deleted within ${deleted.window_hours}h wait for the purge lifecycle.`);
-    if (deleted.past_window > 0 || healable > 0) {
+    if (deleted.held > 0) notes.push(`${deleted.held} chunk(s) on pages soft-deleted more than ${deleted.window_hours}h ago are held from the purge by design (a derived retirement inside generations.restore_days, a restorable atom, an open rename-identity pair or an archived source).`);
+    if (deleted.purgeable > 0 || healable > 0) {
       const warnings: string[] = [];
-      if (deleted.past_window > 0) warnings.push(`${deleted.past_window} chunk(s) belong to pages soft-deleted more than ${deleted.window_hours}h ago; \`gbrain pages purge-deleted\` removes them (preview with --dry-run --json; it is brain-wide and irreversible, so ask the user first).`);
+      if (deleted.purgeable > 0) warnings.push(`${deleted.purgeable} chunk(s) belong to pages soft-deleted more than ${deleted.window_hours}h ago; \`gbrain pages purge-deleted\` removes them (preview with --dry-run --json; it is brain-wide and irreversible, so ask the user first).`);
       if (healable > 0) warnings.push(`${healable} live page(s) have body text but no chunk rows, so search cannot read their body; \`gbrain embed --stale\` chunks and embeds them (paid).`);
-      const fix = embeddingStateFix(deleted.past_window > 0 ? 'deleted_page_chunks' : 'chunkless_healable', { embeddingsEnabled: enabled, verify: doctorVerify('embedding_state') });
+      const fix = embeddingStateFix(deleted.purgeable > 0 ? 'deleted_page_chunks' : 'chunkless_healable', { embeddingsEnabled: enabled, verify: doctorVerify('embedding_state') });
       checks.push({ name: 'embedding_state', status: 'warn', message: [summary, ...warnings, ...notes].join(' '),
-        details: { ...details, code: deleted.past_window > 0 ? 'deleted_page_chunks_overdue' : 'chunkless_pages_healable' }, ...(fix ? { fix } : {}) });
+        details: { ...details, code: deleted.purgeable > 0 ? 'deleted_page_chunks_overdue' : 'chunkless_pages_healable' }, ...(fix ? { fix } : {}) });
       return checks;
     }
     const message = [summary, ...notes].join(' ');
     if (!enabled) {
       checks.push(infoCheck('embedding_state', message, 'disabled_by_choice', keylessEnablementFix(), details));
-    } else if ((counts.keyword_only ?? 0) > 0 || deleted.within_window > 0) {
+    } else if ((counts.keyword_only ?? 0) > 0 || deleted.within_window > 0 || deleted.held > 0) {
       checks.push(infoCheck('embedding_state', message, (counts.keyword_only ?? 0) > 0 ? 'disabled_by_choice' : 'not_applicable', undefined, details));
     } else {
       checks.push({ name: 'embedding_state', status: 'ok', message, details });

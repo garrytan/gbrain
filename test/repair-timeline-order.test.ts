@@ -113,6 +113,29 @@ for (const backend of testBackends()) {
       await expect(apply(second.preview_hash!)).rejects.toMatchObject({ code: 'preview_changed' });
     }, { databaseUrl, setup: gitRoot }), 180_000);
 
+    test('#8058: a last item that throws keeps the approved set, so the printed apply resumes with the same --expect', () => managedBrain(async ({ engine, ctx }) => {
+      await put(ctx, 'source-a', 'people/carol-example', doc('Carol Example', 'A synthetic person on a database-only source.', CAROL));
+      const scope = await resolveRepairScope(engine, 'source-a');
+      const preview = await (await repairRunner(engine, { apply: false, logger })).run('timeline-order', scope, { explicit: true, sourceFlag: 'source-a' });
+      expect(preview.affected).toBe(1);
+      let fail = true;
+      const flaky = new Proxy(engine, { get(target, key) {
+        if (key === 'executeRaw') return (sql: string, params?: unknown[], o?: unknown) => {
+          if (fail && sql.startsWith('SELECT state FROM persistence_requests WHERE request_id=$1::uuid')) { fail = false; throw new Error('synthetic connection reset'); }
+          return target.executeRaw(sql, params, o as never);
+        };
+        const value = Reflect.get(target, key, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      } }) as BrainEngine;
+      const apply = (on: BrainEngine) => repairRunner(on, { apply: true, logger }).then(runner => runner.run('timeline-order', scope,
+        { explicit: true, sourceFlag: 'source-a', expect: preview.preview_hash! }));
+      await expect(apply(flaky)).rejects.toThrow('synthetic connection reset');
+      expect(await timelineOf(engine, 'source-a', 'people/carol-example')).toBe(CAROL);
+      const resumed = await apply(engine);
+      expect(resumed).toMatchObject({ applied: 1, complete: true, outcomes: { reordered: 1 } });
+      await expect(apply(engine)).rejects.toMatchObject({ code: 'preview_changed' });
+    }, { databaseUrl, setup: gitRoot }), 180_000);
+
     test('--slug narrows the preview and its hash; a page whose database-only rows the write would materialize is kept', () => managedBrain(async ({ engine, ctx }) => {
       await put(ctx, 'default', 'people/alice-example', doc('Alice Example', 'Alice Example is a synthetic person.', ALICE));
       await put(ctx, 'default', 'people/dana-example', doc('Dana Example', 'A synthetic person.', CAROL));
