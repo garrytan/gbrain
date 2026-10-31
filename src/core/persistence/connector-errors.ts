@@ -79,7 +79,7 @@ export const UNREADABLE_STATE_HINT = 'A database guard refused this write and no
   + 'Upgrading gbrain does not fix this. On the brain host run gbrain sources writer status --probe --json; recent_failures[].error_detail.state names the table. '
   + 'Run gbrain as a role that can read it (the table owner, a role that bypasses RLS, or a scoped role whose policies cover those rows; protocol activation and a change to '
   + 'which sources are Git-canonical pass only the first two), then retry with a new request ID. A missing persistence_brain or git_canonical_brain row, which gbrain init '
-  + 'never leaves, is a defect: report it on the gbrain issue tracker. Do not edit SQL or disable the guard.';
+  + 'never leaves, is a defect: report it on the gbrain issue tracker. Ask the user before changing the database role gbrain connects as. Do not edit SQL or disable the guard.';
 
 /**
  * The remedy and docs anchor of a database guard refusal whose cause the stored detail establishes: unreadable writer state
