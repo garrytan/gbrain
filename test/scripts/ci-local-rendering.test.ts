@@ -39,7 +39,7 @@ describe('ci-local command rendering', () => {
   const cases = [
     { phaseExit: 0, missingTool: '' },
     { phaseExit: 7, missingTool: '' },
-    ...['git', 'python3', 'ps', 'psql', 'cc', 'jq'].map(missingTool => ({ phaseExit: 0, missingTool })),
+    ...['git', 'python3', 'ps', 'psql', 'cc', 'jq', 'curl'].map(missingTool => ({ phaseExit: 0, missingTool })),
   ];
   for (const { phaseExit, missingTool } of cases) {
     test(`preserves stderr and exit ${phaseExit}; missing prerequisite ${missingTool || 'none'}`, () => {
@@ -51,7 +51,7 @@ describe('ci-local command rendering', () => {
         mkdirSync(bin);
         // Execute the actual runner template, with installation/configuration
         // commands stubbed so this regression needs neither Docker nor root.
-        for (const name of ['bun', 'git', 'python3', 'ps', 'psql', 'cc', 'jq']) {
+        for (const name of ['bun', 'git', 'python3', 'ps', 'psql', 'cc', 'jq', 'curl']) {
           writeFileSync(join(bin, name), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
         }
         writeFileSync(join(bin, 'apt-get'), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$INSTALL_LOG"\n', { mode: 0o755 });
@@ -88,7 +88,7 @@ describe('ci-local command rendering', () => {
         expect(result.stdout.includes('phase completed')).toBe(phaseExit === 0);
         expect(existsSync(join(home, '__RUN_PHASES__1'))).toBe(false);
         if (missingTool) {
-          expect(readFileSync(installLog, 'utf8')).toBe('update -qq\ninstall -y -qq git ca-certificates python3 procps postgresql-client jq build-essential\n');
+          expect(readFileSync(installLog, 'utf8')).toBe('update -qq\ninstall -y -qq git ca-certificates curl python3 procps postgresql-client jq build-essential\n');
         } else {
           expect(existsSync(installLog)).toBe(false);
         }
