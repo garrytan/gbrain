@@ -25,7 +25,9 @@
  *     absent. It may also carry `Foreground: { <sessionId>: { Web/TCP … } }`
  *     (other terminals' foreground serve sessions) and
  *     `TCP['443'].TCPForward` (a raw TCP forward on :443, no HTTPS handler).
- *   - Publish: `tailscale serve --bg <port>` / `tailscale funnel --bg <port>`.
+ *   - Publish: `tailscale serve --bg <port>` / `tailscale funnel --bg <port>`;
+ *     `--https=<port>` in front picks another HTTPS listener than :443 (Funnel
+ *     accepts only 443, 8443 and 10000; plain serve takes any port).
  *     When HTTPS certificates (or the Funnel attribute) are NOT enabled these
  *     do not fail: the CLI prints an enablement URL and WAITS for the operator
  *     (interactive), so the caller pre-checks `CertDomains` / `funnelCapable`
@@ -204,13 +206,23 @@ export function tailscaleInstallPlan(platform: string, hasBrew: boolean): Tailsc
 // `tailscaleLoginArgv`, which may need `sudo` in front and so returns full argv)
 // ---------------------------------------------------------------------------
 
-export function tailscaleServeArgv(port: number, opts: { funnel?: boolean } = {}): string[] {
-  return [opts.funnel ? 'funnel' : 'serve', '--bg', String(port)];
+/** The HTTPS port `tailscale serve|funnel` listens on when none is chosen. */
+export const DEFAULT_TAILSCALE_HTTPS_PORT = 443;
+/** The only HTTPS ports Tailscale Funnel accepts (`tailscale funnel --https=<port>`); plain `serve` takes any port. */
+export const TAILSCALE_FUNNEL_HTTPS_PORTS: readonly number[] = [443, 8443, 10000];
+
+/** `--https=<port>` only when the port is not the default, so the default argv stays what it always was. */
+function httpsFlag(httpsPort: number | undefined): string[] {
+  return httpsPort !== undefined && httpsPort !== DEFAULT_TAILSCALE_HTTPS_PORT ? [`--https=${httpsPort}`] : [];
 }
 
-/** Turn OUR `/` mount on `:443` off — `--set-path=/` scopes `off` to that one mount (never `serve reset`). */
-export function tailscaleServeOffArgv(opts: { funnel?: boolean } = {}): string[] {
-  return [opts.funnel ? 'funnel' : 'serve', '--https=443', '--set-path=/', 'off'];
+export function tailscaleServeArgv(port: number, opts: { funnel?: boolean; httpsPort?: number } = {}): string[] {
+  return [opts.funnel ? 'funnel' : 'serve', ...httpsFlag(opts.httpsPort), '--bg', String(port)];
+}
+
+/** Turn OUR `/` mount on `:443` (or `:<httpsPort>`) off — `--set-path=/` scopes `off` to that one mount (never `serve reset`). */
+export function tailscaleServeOffArgv(opts: { funnel?: boolean; httpsPort?: number } = {}): string[] {
+  return [opts.funnel ? 'funnel' : 'serve', `--https=${opts.httpsPort ?? DEFAULT_TAILSCALE_HTTPS_PORT}`, '--set-path=/', 'off'];
 }
 
 export const TAILSCALE_STATUS_ARGV: readonly string[] = ['status', '--json'];
@@ -299,8 +311,10 @@ export function normalizeDnsName(raw: string): string {
   return raw.trim().replace(/\.+$/, '').toLowerCase();
 }
 
-export function publicUrlFromDnsName(dnsName: string): string {
-  return `https://${normalizeDnsName(dnsName)}`;
+/** `https://<dns>`; a non-default HTTPS port is part of the origin (`https://<dns>:8443`). */
+export function publicUrlFromDnsName(dnsName: string, httpsPort: number = DEFAULT_TAILSCALE_HTTPS_PORT): string {
+  const origin = `https://${normalizeDnsName(dnsName)}`;
+  return httpsPort === DEFAULT_TAILSCALE_HTTPS_PORT ? origin : `${origin}:${httpsPort}`;
 }
 
 /** Returns null when `stdout` is not a JSON object (the caller classifies stderr). */
@@ -410,12 +424,15 @@ function collectServeHandlers(block: ServeConfigLike, foreground: boolean, funne
       });
     }
   }
-  // A raw TCP forward on :443 owns the port outright (no HTTPS handler can
-  // coexist), so it surfaces as a non-proxy root handler the caller treats as
-  // foreign.
-  const forward = tcp['443']?.TCPForward;
-  if (typeof forward === 'string' && forward.trim()) {
-    handlers.push({ host: '', port: 443, path: '/', proxy: null, proxyPort: null, funnel: false, foreground, tcpForward: forward.trim() });
+  // A raw TCP forward on a port owns it outright (no HTTPS handler can
+  // coexist), so it surfaces as a non-proxy root handler on that port the
+  // caller treats as foreign.
+  for (const [tcpPort, entry] of Object.entries(tcp)) {
+    const forward = entry?.TCPForward;
+    const n = Number(tcpPort);
+    if (typeof forward === 'string' && forward.trim() && Number.isInteger(n) && n > 0) {
+      handlers.push({ host: '', port: n, path: '/', proxy: null, proxyPort: null, funnel: false, foreground, tcpForward: forward.trim() });
+    }
   }
   return tcp['443']?.HTTPS === true;
 }
@@ -458,14 +475,14 @@ export function parseServeStatusStrict(stdout: string): ServeStatusView | null {
   return { https443, handlers, funnelHosts };
 }
 
-/** Every `/` handler on `:443` (ours or someone else's). */
-export function findRootHandlers(view: ServeStatusView): ServeHandler[] {
-  return view.handlers.filter(h => h.port === 443 && h.path === '/');
+/** Every `/` handler on `:443` — or on `:<httpsPort>` — (ours or someone else's). */
+export function findRootHandlers(view: ServeStatusView, httpsPort: number = DEFAULT_TAILSCALE_HTTPS_PORT): ServeHandler[] {
+  return view.handlers.filter(h => h.port === httpsPort && h.path === '/');
 }
 
-/** The `/` handler on `:443` that proxies to `port`, or null. */
-export function findProxiedHandler(view: ServeStatusView, port: number): ServeHandler | null {
-  return findRootHandlers(view).find(h => h.proxyPort === port) ?? null;
+/** The `/` handler on `:443` (or `:<httpsPort>`) that proxies to `port`, or null. */
+export function findProxiedHandler(view: ServeStatusView, port: number, httpsPort: number = DEFAULT_TAILSCALE_HTTPS_PORT): ServeHandler | null {
+  return findRootHandlers(view, httpsPort).find(h => h.proxyPort === port) ?? null;
 }
 
 // ---------------------------------------------------------------------------

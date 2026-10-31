@@ -10,6 +10,21 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.530.0] - 2026-11-01
+
+**`gbrain mcp expose` can publish on another HTTPS port than `:443`: `--https-port 8443` (or `10000`) lets a host whose `:443` is already served by another program put its brain on Tailscale, including through Funnel.**
+
+Port 443 was hard-coded into every step: the `tailscale serve|funnel` argv, the foreign-handler check and its refusal texts, the receipt, `--status`, `--remove`, the dry-run plan and the help. On a host where another program owns `tailscale serve` on `:443` (seen with a foreground `tailscale serve --bg=false` session), expose refused with `foreign_serve_config`, and `--force` rightly cannot take a foreground session over. `--https-port N` (default `443`) now flows through all of it: `--https=<port>` on the serve, funnel and off argv, the handler check on that port (a handler on `:443` no longer blocks an expose on `:8443`, and one on `:8443` does), the public URL (`https://<name>:8443`; unchanged for 443), the receipt (`https_port`, absent on older receipts, which stay `:443`), the receipt-less recovery, the re-run hints and the consent argv. With `--funnel` only `443`, `8443` and `10000` are accepted (Tailscale Funnel's ports); anything else is refused before consent and before any change as `funnel_https_port_unsupported`, naming the three. Behaviour and output for the default port are unchanged.
+
+### Itemized changes
+
+- `src/commands/mcp-expose.ts`: `--https-port`, the Funnel port gate, the port in the handler check, URL, receipt, `--status`, `--remove` (with and without a receipt), plan, help and re-run commands.
+- `src/core/tailscale.ts`: `DEFAULT_TAILSCALE_HTTPS_PORT`, `TAILSCALE_FUNNEL_HTTPS_PORTS`; `tailscaleServeArgv`, `tailscaleServeOffArgv`, `publicUrlFromDnsName`, `findRootHandlers` and `findProxiedHandler` take the port (default 443); a `TCPForward` on any port surfaces as a root handler on that port.
+- `src/core/serve-service.ts`: optional `https_port` on the expose receipt (a non-number is no receipt).
+- `src/core/cli-flag-registry.generated.ts`: regenerated (`--https-port` under `mcp`).
+- `docs/guides/remote-mcp.md`: the flag, and a paragraph for hosts whose `:443` is taken.
+- Tests: `test/mcp-expose.test.ts` (the fake tailnet keeps one mount per HTTPS port; argv for serve, funnel and off, URL and receipt, `--status`/`--remove` on a receipt with and without the field, the foreign check per port, the Funnel refusal, the receipt-less recovery, the default unchanged), `test/tailscale.test.ts` (argv builders, URL helper, per-port handler finders).
+
 ## [0.60.529.0] - 2026-10-31
 
 **A pull request that adds a file to the PGLite snapshot inputs no longer gets stopped at gstack's pregate secrets check by its own workflow cache keys (#8107).**

@@ -553,6 +553,8 @@ export interface ExposeReceipt {
   created_at: string;
   updated_at: string;
   port: number;
+  /** The HTTPS port the Tailscale handler listens on; absent on receipts written before `--https-port` (they are :443). */
+  https_port?: number;
   public_url: string;
   mcp_url: string;
   admin_url: string;
@@ -581,6 +583,7 @@ const isStringOrNull = (v: unknown): v is string | null => v === null || typeof 
 function isExposeReceipt(v: unknown): v is ExposeReceipt {
   if (!isRecord(v)) return false;
   if (v.version !== 1 || typeof v.port !== 'number' || typeof v.public_url !== 'string') return false;
+  if (v.https_port !== undefined && typeof v.https_port !== 'number') return false;
   if (typeof v.mcp_url !== 'string' || typeof v.admin_url !== 'string' || typeof v.admin_token_file !== 'string') return false;
   if (typeof v.mode !== 'string' || !RECEIPT_MODES.includes(v.mode)) return false;
   const service = v.service;

@@ -8,6 +8,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   classifyTailscaleError, defaultCommandRunner, findProxiedHandler, findRootHandlers, findTailscaleBinary, isSystemTailscaleBinary, normalizeDnsName,
   parseServeStatusStrict, parseTailscaleStatus, publicUrlFromDnsName, tailscaleInstallPlan, tailscaleLoginArgv, tailscaleManualLoginCommand, tailscaleServeArgv, tailscaleServeOffArgv,
+  DEFAULT_TAILSCALE_HTTPS_PORT, TAILSCALE_FUNNEL_HTTPS_PORTS,
   TAILSCALE_ACCEPT_DNS_COMMAND, TAILSCALE_ADMIN_ACL_URL, TAILSCALE_ADMIN_DNS_URL, TAILSCALE_BINARY_CANDIDATES, TAILSCALE_DOWNLOAD_URL,
   TAILSCALE_FUNNEL_CAPABILITY, TAILSCALE_FUNNEL_KB_URL, type CommandRunOptions,
 } from '../src/core/tailscale.ts';
@@ -81,6 +82,13 @@ describe('parseTailscaleStatus', () => {
     expect(normalizeDnsName('Host.Tail.ts.net.')).toBe('host.tail.ts.net');
     expect(publicUrlFromDnsName('Host.Tail.ts.net.')).toBe('https://host.tail.ts.net');
   });
+  test('publicUrlFromDnsName: a non-default HTTPS port is part of the origin; 443 (explicit or default) is not', () => {
+    expect(DEFAULT_TAILSCALE_HTTPS_PORT).toBe(443);
+    expect(publicUrlFromDnsName('Host.Tail.ts.net.', 8443)).toBe('https://host.tail.ts.net:8443');
+    expect(publicUrlFromDnsName('host.tail.ts.net', 10000)).toBe('https://host.tail.ts.net:10000');
+    expect(publicUrlFromDnsName('host.tail.ts.net', 443)).toBe('https://host.tail.ts.net');
+    expect(publicUrlFromDnsName('host.tail.ts.net', 443)).toBe(publicUrlFromDnsName('host.tail.ts.net'));
+  });
 });
 
 describe('findTailscaleBinary', () => {
@@ -134,6 +142,16 @@ describe('argv builders', () => {
     expect(tailscaleServeOffArgv()).toEqual(['serve', '--https=443', '--set-path=/', 'off']);
     expect(tailscaleServeOffArgv({ funnel: true })).toEqual(['funnel', '--https=443', '--set-path=/', 'off']);
     expect(tailscaleServeOffArgv().join(' ')).not.toContain('reset');
+  });
+  test('--https=<port> rides the publish and off argv only for a non-default HTTPS port; Funnel allows exactly 443, 8443 and 10000', () => {
+    expect(tailscaleServeArgv(3131, { httpsPort: 8443 })).toEqual(['serve', '--https=8443', '--bg', '3131']);
+    expect(tailscaleServeArgv(3131, { funnel: true, httpsPort: 10000 })).toEqual(['funnel', '--https=10000', '--bg', '3131']);
+    expect(tailscaleServeArgv(3131, { httpsPort: 443 })).toEqual(['serve', '--bg', '3131']);
+    expect(tailscaleServeArgv(3131, { funnel: true, httpsPort: 443 })).toEqual(tailscaleServeArgv(3131, { funnel: true }));
+    expect(tailscaleServeOffArgv({ httpsPort: 8443 })).toEqual(['serve', '--https=8443', '--set-path=/', 'off']);
+    expect(tailscaleServeOffArgv({ funnel: true, httpsPort: 10000 })).toEqual(['funnel', '--https=10000', '--set-path=/', 'off']);
+    expect(tailscaleServeOffArgv({ httpsPort: 443 })).toEqual(tailscaleServeOffArgv());
+    expect([...TAILSCALE_FUNNEL_HTTPS_PORTS]).toEqual([443, 8443, 10000]);
   });
   test('login: linux sets the operator first, then a FLAGLESS sudo up; macOS is a plain up', () => {
     expect(tailscaleLoginArgv('linux', 'alice-example')).toEqual({ setOperator: ['sudo', 'tailscale', 'set', '--operator=alice-example'], up: ['sudo', 'tailscale', 'up'] });
@@ -209,6 +227,27 @@ describe('parseServeStatusStrict + handler lookup', () => {
     expect(view.handlers.find(h => h.proxyPort === 3131)?.foreground).toBe(false);
     expect(findRootHandlers(view)).toHaveLength(2);
     expect(findProxiedHandler(view, 9000)?.foreground).toBe(true);
+  });
+  test('handlers on another HTTPS port are found only when that port is asked for; a TCPForward on :8443 is a root handler on :8443', () => {
+    const view = parseServeStatusStrict(JSON.stringify({
+      TCP: { '443': { HTTPS: true }, '8443': { HTTPS: true } },
+      Web: {
+        'your-machine.your-tailnet.ts.net:443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:8080' } } },
+        'your-machine.your-tailnet.ts.net:8443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:3131' } } },
+      },
+      AllowFunnel: { 'your-machine.your-tailnet.ts.net:8443': true },
+    }))!;
+    expect(view.handlers).toHaveLength(2);
+    expect(findRootHandlers(view).map(h => h.proxyPort)).toEqual([8080]);
+    expect(findRootHandlers(view, 8443).map(h => h.proxyPort)).toEqual([3131]);
+    expect(findProxiedHandler(view, 3131)).toBeNull();
+    expect(findProxiedHandler(view, 3131, 8443)).toMatchObject({ port: 8443, proxyPort: 3131, funnel: true });
+    expect(findProxiedHandler(view, 8080, 8443)).toBeNull();
+    expect(findProxiedHandler(view, 8080, 443)?.port).toBe(443);
+    const fwd = parseServeStatusStrict(JSON.stringify({ TCP: { '8443': { TCPForward: '127.0.0.1:5432' } } }))!;
+    expect(fwd.handlers).toEqual([{ host: '', port: 8443, path: '/', proxy: null, proxyPort: null, funnel: false, foreground: false, tcpForward: '127.0.0.1:5432' }]);
+    expect(findRootHandlers(fwd)).toEqual([]);
+    expect(findRootHandlers(fwd, 8443)).toHaveLength(1);
   });
   test("TCP['443'].TCPForward surfaces as a non-proxy root handler on :443", () => {
     const view = parseServeStatusStrict(JSON.stringify({ TCP: { '443': { TCPForward: '127.0.0.1:5432' } } }))!;

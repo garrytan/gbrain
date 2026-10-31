@@ -46,8 +46,10 @@ interface TailnetOpts {
   funnelCapable?: boolean;
   /** Self.CapMap verbatim (overrides funnelCapable). */
   capMap?: Record<string, unknown>;
-  /** Pre-existing root handlers: port → funnel flag. */
+  /** Pre-existing root handlers on :443: port → funnel flag. */
   existingHandlers?: Record<number, boolean>;
+  /** Pre-existing root handlers on OTHER HTTPS ports: https port → (proxied port → funnel flag). */
+  existingHandlersOn?: Record<number, Record<number, boolean>>;
   publishStatus?: number | null;
   publishStderr?: string;
   /** `--bg` exits 0 but registers nothing (the CLI lied). */
@@ -85,7 +87,10 @@ function fakeTailnet(o: TailnetOpts = {}): Fake {
   const home = temp();
   const ts = o.binary ?? TS;
   const serveDir = join(home, '.gbrain', 'serve');
-  const handlers: Record<number, boolean> = { ...(o.existingHandlers ?? {}) };
+  /** https port → (proxied port → funnel flag); :443 is where `existingHandlers` and a plain `--bg` land. */
+  const handlersByHttpsPort: Record<number, Record<number, boolean>> = { 443: { ...(o.existingHandlers ?? {}) } };
+  for (const [hp, hs] of Object.entries(o.existingHandlersOn ?? {})) handlersByHttpsPort[Number(hp)] = { ...hs };
+  const httpsPortOf = (argv: string[]) => Number(argv.find(a => a.startsWith('--https='))?.slice('--https='.length) ?? 443);
   let state = o.backendState ?? 'Running';
   let serviceStarted = false;
   const calls: string[][] = [];
@@ -104,11 +109,15 @@ function fakeTailnet(o: TailnetOpts = {}): Fake {
   const serveDoc = () => {
     const web: Record<string, unknown> = {};
     const allow: Record<string, boolean> = {};
-    for (const [port, funnel] of Object.entries(handlers)) {
-      web[`${DNS}:443`] = { Handlers: { '/': { Proxy: `http://127.0.0.1:${port}` } } };
-      if (funnel) allow[`${DNS}:443`] = true;
+    const tcp: Record<string, unknown> = { '443': { HTTPS: true } };
+    for (const [httpsPort, handlers] of Object.entries(handlersByHttpsPort)) {
+      for (const [port, funnel] of Object.entries(handlers)) {
+        tcp[httpsPort] = { HTTPS: true };
+        web[`${DNS}:${httpsPort}`] = { Handlers: { '/': { Proxy: `http://127.0.0.1:${port}` } } };
+        if (funnel) allow[`${DNS}:${httpsPort}`] = true;
+      }
     }
-    return JSON.stringify({ TCP: { '443': { HTTPS: true } }, Web: web, AllowFunnel: allow });
+    return JSON.stringify({ TCP: tcp, Web: web, AllowFunnel: allow });
   };
   const run: CommandRunner = async (argv, runOpts) => {
     calls.push(argv);
@@ -122,15 +131,16 @@ function fakeTailnet(o: TailnetOpts = {}): Fake {
     if (joined === `${ts} serve status --json`) return { status: 0, stdout: serveDoc(), stderr: '' };
     if (argv[0] === 'sudo' && argv[1] === ts && argv[2] === 'set') return { status: o.setOperatorStatus ?? 0, stdout: '', stderr: o.setOperatorStatus ? 'set: permission denied' : '' };
     if ((argv[0] === 'sudo' && argv[1] === ts && argv[2] === 'up') || (argv[0] === ts && argv[1] === 'up')) { state = o.afterUp ?? 'Running'; return { status: 0, stdout: '', stderr: '' }; }
-    if (argv[0] === ts && (argv[1] === 'serve' || argv[1] === 'funnel') && argv[2] === '--bg') {
+    if (argv[0] === ts && (argv[1] === 'serve' || argv[1] === 'funnel') && argv.includes('--bg')) {
       if (o.publishStatus !== undefined && o.publishStatus !== 0) return { status: o.publishStatus, stdout: '', stderr: o.publishStderr ?? 'boom' };
       if (o.publishNoop) return { status: 0, stdout: '', stderr: '' };
-      for (const k of Object.keys(handlers)) delete handlers[Number(k)];
-      handlers[Number(argv[3])] = o.publishedFunnel ?? (argv[1] === 'funnel');
+      // `[serve|funnel] [--https=N] --bg <port>`: one `/` mount per HTTPS port; a plain `--bg` is :443.
+      const target = Number(argv[argv.indexOf('--bg') + 1]);
+      handlersByHttpsPort[httpsPortOf(argv)] = { [target]: o.publishedFunnel ?? (argv[1] === 'funnel') };
       return { status: 0, stdout: '', stderr: '' };
     }
-    if (argv[0] === ts && argv[2] === '--https=443' && argv[3] === '--set-path=/' && argv[4] === 'off') {
-      for (const k of Object.keys(handlers)) delete handlers[Number(k)];
+    if (argv[0] === ts && argv[2]?.startsWith('--https=') && argv[3] === '--set-path=/' && argv[4] === 'off') {
+      delete handlersByHttpsPort[httpsPortOf(argv)];
       return { status: 0, stdout: '', stderr: '' };
     }
     if (argv[0] === 'open') return { status: 0, stdout: '', stderr: '' };
@@ -160,7 +170,7 @@ function fakeTailnet(o: TailnetOpts = {}): Fake {
         if (serviceStarted && (o.localHealthyAfterStart ?? true)) return { ok: true, status: 200 };
         throw new Error('ECONNREFUSED');
       }
-      if (url.startsWith(`https://${DNS}/`)) { if (o.tailnetHealthy ?? true) return { ok: true, status: 200 }; throw new Error('cert pending'); }
+      if (url.startsWith(`https://${DNS}/`) || url.startsWith(`https://${DNS}:`)) { if (o.tailnetHealthy ?? true) return { ok: true, status: 200 }; throw new Error('cert pending'); }
       throw new Error(`unexpected fetch ${url}`);
     },
     // The default tcpProbe opens a real loopback socket; the fake never does.
@@ -557,6 +567,257 @@ describe('tailscale steps', () => {
     expect(calls.indexOf(`${TS} funnel --https=443 --set-path=/ off`)).toBeLessThan(calls.indexOf(`${TS} serve --bg 3131`));
     expect(calls.some(c => c.includes('reset'))).toBe(false);
     expect(readExposeReceipt(receiptPath(f.serveDir))?.mode).toBe('tailnet');
+  });
+});
+
+describe('--https-port: another HTTPS listener than :443', () => {
+  /** A receipt for a handler on :8443 (the shape a `--https-port 8443` run writes). */
+  const receiptOn8443 = (f: Fake, over: Partial<ExposeReceipt> = {}) => fullReceipt(f, {
+    https_port: 8443, public_url: `https://${DNS}:8443`, mcp_url: `https://${DNS}:8443/mcp`, admin_url: `https://${DNS}:8443/admin`, ...over,
+  });
+  test('parse: default 443, bounds checked, value required', () => {
+    expect(parseExposeArgs([])).toMatchObject({ httpsPort: 443 });
+    expect(parseExposeArgs(['--https-port', '8443'])).toMatchObject({ httpsPort: 8443, port: 3131 });
+    expect(() => parseExposeArgs(['--https-port', '70000'])).toThrow('invalid --https-port');
+    expect(() => parseExposeArgs(['--https-port', 'abc'])).toThrow('invalid --https-port');
+    expect(() => parseExposeArgs(['--https-port'])).toThrow('requires a value');
+    expect(MCP_EXPOSE_HELP).toContain('--https-port');
+    expect(MCP_EXPOSE_HELP).toContain('8443');
+    expect(MCP_EXPOSE_HELP).toContain('10000');
+  });
+  test('the default stays :443 — no --https= on the publish argv, no https_port in the receipt, URL without a port, off on --https=443', async () => {
+    const f = fakeTailnet();
+    expect(await runMcpExpose(['--yes', '--json'], f.deps)).toBe(0);
+    const calls = joinedCalls(f);
+    expect(calls).toContain(`${TS} serve --bg 3131`);
+    expect(calls.filter(c => c.includes('--bg')).some(c => c.includes('--https='))).toBe(false);
+    const doc = jsonDoc(f);
+    expect(doc.receipt.public_url).toBe(`https://${DNS}`);
+    expect(doc.receipt.mcp_url).toBe(`https://${DNS}/mcp`);
+    expect('https_port' in doc.receipt).toBe(false);
+    expect(Object.keys(JSON.parse(readFileSync(receiptPath(f.serveDir), 'utf-8')))).not.toContain('https_port');
+    expect(checkOf(doc, 'tailscale.publish')?.detail).toBe(`${DNS}:443/ -> http://127.0.0.1:3131`);
+    expect(doc.plan ?? checkOf(doc, 'plan')?.detail).toContain('tailscale serve --bg 3131');
+    expect(doc.next_actions.join('\n')).not.toContain('--https-port');
+    f.calls.length = 0;
+    f.stdout.length = 0;
+    expect(await runMcpExpose(['--remove', '--yes', '--json'], f.deps)).toBe(0);
+    expect(joinedCalls(f)).toContain(`${TS} serve --https=443 --set-path=/ off`);
+  });
+  test('--https-port 8443 publishes with `serve --https=8443 --bg`, the URL and receipt carry the port, --status and --remove act on that handler', async () => {
+    const f = fakeTailnet();
+    expect(await runMcpExpose(['--https-port', '8443', '--yes', '--json'], f.deps)).toBe(0);
+    const calls = joinedCalls(f);
+    expect(calls).toContain(`${TS} serve --https=8443 --bg 3131`);
+    expect(calls).not.toContain(`${TS} serve --bg 3131`);
+    const doc = jsonDoc(f);
+    expect(doc.status).toBe('exposed');
+    expect(doc.receipt).toMatchObject({ port: 3131, https_port: 8443, public_url: `https://${DNS}:8443`, mcp_url: `https://${DNS}:8443/mcp`, admin_url: `https://${DNS}:8443/admin` });
+    expect(readExposeReceipt(receiptPath(f.serveDir))).toMatchObject({ https_port: 8443, public_url: `https://${DNS}:8443` });
+    expect(checkOf(doc, 'tailscale.publish')?.detail).toBe(`${DNS}:8443/ -> http://127.0.0.1:3131`);
+    expect(checkOf(doc, 'plan')?.detail).toContain('tailscale serve --https=8443 --bg 3131');
+    expect(f.fetches).toContain(`https://${DNS}:8443/health`);
+    expect(checkOf(doc, 'verify.tailnet')?.detail).toBe(`https://${DNS}:8443/health: ok`);
+    expect(f.stderr.join('\n')).toContain(`MCP URL   https://${DNS}:8443/mcp`);
+    expect(doc.next_actions.join('\n')).toContain(`--url https://${DNS}:8443/mcp`);
+    // the wrapper bakes the public URL with the port
+    expect(readFileSync(wrapperPath(f.serveDir), 'utf-8')).toContain(`https://${DNS}:8443`);
+    // --status reads the receipt's port and finds the :8443 handler (there is none on :443)
+    f.stdout.length = 0;
+    expect(await runMcpExpose(['--status', '--json'], f.deps)).toBe(0);
+    const st = jsonDoc(f);
+    expect(st.status).toBe('exposed');
+    expect(checkOf(st, 'tailscale.publish')?.detail).toBe(`${DNS}:8443/ -> http://127.0.0.1:3131`);
+    expect(f.fetches).toContain(`https://${DNS}:8443/health`);
+    // --remove turns off exactly the :8443 mount
+    f.calls.length = 0;
+    f.stdout.length = 0;
+    expect(await runMcpExpose(['--remove', '--yes', '--json'], f.deps)).toBe(0);
+    const rm = joinedCalls(f);
+    expect(rm).toContain(`${TS} serve --https=8443 --set-path=/ off`);
+    expect(rm.some(c => c.includes('--https=443'))).toBe(false);
+    expect(checkOf(jsonDoc(f), 'tailscale.publish')?.detail).toContain('serve off: exit 0');
+    expect(existsSync(receiptPath(f.serveDir))).toBe(false);
+  });
+  test('--funnel --https-port 8443 and 10000 publish via `funnel --https=<port> --bg`; --remove turns funnel off on that port', async () => {
+    const f = fakeTailnet({ funnelCapable: true });
+    expect(await runMcpExpose(['--funnel', '--https-port', '8443', '--yes', '--json'], f.deps)).toBe(0);
+    expect(joinedCalls(f)).toContain(`${TS} funnel --https=8443 --bg 3131`);
+    const doc = jsonDoc(f);
+    expect(doc.receipt).toMatchObject({ mode: 'funnel', https_port: 8443, mcp_url: `https://${DNS}:8443/mcp` });
+    expect(checkOf(doc, 'tailscale.publish')?.detail).toBe(`${DNS}:8443/ -> http://127.0.0.1:3131 (funnel)`);
+    f.calls.length = 0;
+    f.stdout.length = 0;
+    expect(await runMcpExpose(['--remove', '--yes', '--json'], f.deps)).toBe(0);
+    expect(joinedCalls(f)).toContain(`${TS} funnel --https=8443 --set-path=/ off`);
+    expect(joinedCalls(f).some(c => c.includes('--https=443'))).toBe(false);
+    const g = fakeTailnet({ funnelCapable: true });
+    expect(await runMcpExpose(['--funnel', '--https-port', '10000', '--yes', '--json'], g.deps)).toBe(0);
+    expect(joinedCalls(g)).toContain(`${TS} funnel --https=10000 --bg 3131`);
+    expect(jsonDoc(g).receipt.public_url).toBe(`https://${DNS}:10000`);
+  });
+  test('--funnel --https-port 9443 is refused before consent and before any change, naming 443, 8443 and 10000; --dry-run shows the refusal and exits 0', async () => {
+    const f = fakeTailnet({ funnelCapable: true });
+    expect(await runMcpExpose(['--funnel', '--https-port', '9443', '--yes', '--json'], f.deps)).toBe(1);
+    const doc = jsonDoc(f);
+    expect(doc).toMatchObject({ status: 'error', reason: 'funnel_https_port_unsupported' });
+    expect(doc.message).toContain('443, 8443 and 10000');
+    expect(doc.message).toContain('--https-port 9443');
+    expect(checkOf(doc, 'plan')).toMatchObject({ status: 'fail' });
+    expect(checkOf(doc, 'plan')?.detail).toContain('REFUSED (--funnel --https-port 9443)');
+    expect(checkOf(doc, 'consent')).toBeUndefined();
+    expect(checkOf(doc, 'tailscale.publish')).toBeUndefined();
+    expect(doc.next_actions).toEqual(['gbrain mcp expose --https-port 8443 --funnel --yes', 'gbrain mcp expose --https-port 9443 --yes']);
+    expect(joinedCalls(f).some(c => c.includes('--bg') || c.includes(' up') || c.startsWith('systemctl --user restart'))).toBe(false);
+    expect(f.fetches).toEqual([]);
+    expect(existsSync(f.serveDir)).toBe(false);
+    // without --funnel the same port is an ordinary tailnet-only serve
+    const g = fakeTailnet();
+    expect(await runMcpExpose(['--https-port', '9443', '--yes', '--json'], g.deps)).toBe(0);
+    expect(joinedCalls(g)).toContain(`${TS} serve --https=9443 --bg 3131`);
+    const h = fakeTailnet({ funnelCapable: true });
+    expect(await runMcpExpose(['--dry-run', '--funnel', '--https-port', '9443', '--json'], h.deps)).toBe(0);
+    const hdoc = jsonDoc(h);
+    expect(hdoc.status).toBe('planned');
+    expect(hdoc.plan.join('\n')).toContain('WOULD BE REFUSED (--funnel --https-port 9443)');
+    expect(existsSync(h.serveDir)).toBe(false);
+  });
+  test('the foreign-handler check consults the chosen port: a foreign :443 handler (background or foreground) does not block :8443, a foreign :8443 handler does', async () => {
+    // OpenClaw-style: someone else owns :443 — expose on 8443 goes through and leaves :443 alone
+    const f = fakeTailnet({ existingHandlers: { 8080: false } });
+    expect(await runMcpExpose(['--https-port', '8443', '--yes', '--json'], f.deps)).toBe(0);
+    expect(joinedCalls(f)).toContain(`${TS} serve --https=8443 --bg 3131`);
+    expect(jsonDoc(f).status).toBe('exposed');
+    const after = JSON.parse((await f.run([TS, 'serve', 'status', '--json'])).stdout);
+    expect(after.Web[`${DNS}:443`].Handlers['/'].Proxy).toBe('http://127.0.0.1:8080');
+    expect(after.Web[`${DNS}:8443`].Handlers['/'].Proxy).toBe('http://127.0.0.1:3131');
+    // a foreground session on :443 (which --force can never take over) is no obstacle on :8443 either
+    const fg = fakeTailnet();
+    const inner = fg.deps.run!;
+    fg.deps.run = async (argv, o) => {
+      if (argv.join(' ') === `${TS} serve status --json`) {
+        const base = JSON.parse((await inner(argv, o)).stdout);
+        fg.calls.push(argv);
+        return { status: 0, stdout: JSON.stringify({ ...base, Foreground: { '42': { Web: { [`${DNS}:443`]: { Handlers: { '/': { Proxy: 'http://127.0.0.1:9000' } } } } } } }), stderr: '' };
+      }
+      return inner(argv, o);
+    };
+    expect(await runMcpExpose(['--https-port', '8443', '--yes', '--json'], fg.deps)).toBe(0);
+    expect(joinedCalls(fg)).toContain(`${TS} serve --https=8443 --bg 3131`);
+    // the same foreground session, when expose wants :443, is still refused (unchanged default behaviour)
+    const fg443 = fakeTailnet();
+    const inner443 = fg443.deps.run!;
+    fg443.deps.run = async (argv, o) => {
+      if (argv.join(' ') === `${TS} serve status --json`) {
+        fg443.calls.push(argv);
+        return { status: 0, stdout: JSON.stringify({ Foreground: { '42': { Web: { [`${DNS}:443`]: { Handlers: { '/': { Proxy: 'http://127.0.0.1:9000' } } } } } } }), stderr: '' };
+      }
+      return inner443(argv, o);
+    };
+    expect(await runMcpExpose(['--yes', '--force', '--json'], fg443.deps)).toBe(1);
+    expect(jsonDoc(fg443).reason).toBe('foreign_serve_config');
+    // a foreign handler ON :8443 blocks an :8443 expose, worded with the real port
+    const g = fakeTailnet({ existingHandlersOn: { 8443: { 8080: false } } });
+    expect(await runMcpExpose(['--https-port', '8443', '--yes', '--json'], g.deps)).toBe(1);
+    const gdoc = jsonDoc(g);
+    expect(gdoc.reason).toBe('foreign_serve_config');
+    expect(gdoc.message).toContain('tailscale serve already proxies :8443 to');
+    expect(gdoc.message).toContain(`${DNS}:8443/ -> http://127.0.0.1:8080`);
+    expect(checkOf(gdoc, 'tailscale.publish')?.detail).toContain("someone else's serve config on :8443");
+    expect(joinedCalls(g).some(c => c.includes('--bg'))).toBe(false);
+    // and that same :8443 handler does not block the default :443 expose
+    const h = fakeTailnet({ existingHandlersOn: { 8443: { 8080: false } } });
+    expect(await runMcpExpose(['--yes', '--json'], h.deps)).toBe(0);
+    expect(joinedCalls(h)).toContain(`${TS} serve --bg 3131`);
+    // --force on :8443 takes the :8443 handler over
+    const i = fakeTailnet({ existingHandlersOn: { 8443: { 8080: false } } });
+    expect(await runMcpExpose(['--https-port', '8443', '--yes', '--force', '--json'], i.deps)).toBe(0);
+    expect(joinedCalls(i)).toContain(`${TS} serve --https=8443 --bg 3131`);
+  });
+  test('--status and --remove read the port from the receipt; a receipt without https_port is :443; the rollback off uses the port', async () => {
+    // a receipt for :8443 with the handler on :8443 and a foreign handler on :443
+    const f = fakeTailnet({ existingHandlers: { 8080: false }, existingHandlersOn: { 8443: { 3131: false } } });
+    writeExposeReceipt(receiptPath(f.serveDir), receiptOn8443(f));
+    expect(await runMcpExpose(['--status', '--json'], f.deps)).toBe(1); // service skipped + no local server → unhealthy, but the handler check is what matters here
+    const st = jsonDoc(f);
+    expect(checkOf(st, 'tailscale.publish')).toMatchObject({ status: 'ok', detail: `${DNS}:8443/ -> http://127.0.0.1:3131` });
+    expect(f.fetches).toContain(`https://${DNS}:8443/health`);
+    f.calls.length = 0;
+    f.stdout.length = 0;
+    expect(await runMcpExpose(['--remove', '--yes', '--json'], f.deps)).toBe(0);
+    const rm = joinedCalls(f);
+    expect(rm).toContain(`${TS} serve --https=8443 --set-path=/ off`);
+    expect(rm.some(c => c.includes('--https=443'))).toBe(false);
+    expect(checkOf(jsonDoc(f), 'plan')?.detail).toContain('turn off OUR :8443 handler');
+    const after = JSON.parse((await f.run([TS, 'serve', 'status', '--json'])).stdout);
+    expect(after.Web[`${DNS}:443`].Handlers['/'].Proxy).toBe('http://127.0.0.1:8080');
+    expect(after.Web[`${DNS}:8443`]).toBeUndefined();
+    // the same receipt when the :8443 handler is gone: --status fails naming :8443
+    const g = fakeTailnet({ existingHandlers: { 3131: false } });
+    writeExposeReceipt(receiptPath(g.serveDir), receiptOn8443(g));
+    expect(await runMcpExpose(['--status', '--json'], g.deps)).toBe(1);
+    expect(checkOf(jsonDoc(g), 'tailscale.publish')).toMatchObject({ status: 'fail', detail: 'no :8443 handler proxies to port 3131' });
+    // an older receipt (no https_port) keeps meaning :443
+    const h = fakeTailnet({ existingHandlers: { 3131: false }, existingHandlersOn: { 8443: { 3131: false } } });
+    writeExposeReceipt(receiptPath(h.serveDir), fullReceipt(h));
+    expect(await runMcpExpose(['--status', '--json'], h.deps)).toBe(1);
+    expect(checkOf(jsonDoc(h), 'tailscale.publish')).toMatchObject({ status: 'ok', detail: `${DNS}:443/ -> http://127.0.0.1:3131` });
+    h.calls.length = 0;
+    h.stdout.length = 0;
+    expect(await runMcpExpose(['--remove', '--yes', '--json'], h.deps)).toBe(0);
+    expect(joinedCalls(h)).toContain(`${TS} serve --https=443 --set-path=/ off`);
+    expect(joinedCalls(h).some(c => c.includes('--https=8443'))).toBe(false);
+    // a receipt whose https_port is not a number is no receipt at all
+    const i = fakeTailnet();
+    mkdirSync(i.serveDir, { recursive: true });
+    writeFileSync(receiptPath(i.serveDir), JSON.stringify({ ...fullReceipt(i), https_port: '8443' }));
+    expect(readExposeReceipt(receiptPath(i.serveDir))).toBeNull();
+    // rollback after a throw past this run's publish turns the :8443 handler off with --https=8443
+    const j = fakeTailnet();
+    const innerJ = j.deps.run!;
+    j.deps.run = async (argv, o) => {
+      if (argv.join(' ').startsWith('systemctl --user restart')) throw new Error('supervisor exploded');
+      return innerJ(argv, o);
+    };
+    expect(await runMcpExpose(['--https-port', '8443', '--yes', '--json'], j.deps)).toBe(1);
+    const jdoc = jsonDoc(j);
+    expect(checkOf(jdoc, 'rollback')?.detail).toContain('tailscale serve --https=8443 --set-path=/ off: turned off again');
+    expect(joinedCalls(j)).toContain(`${TS} serve --https=8443 --set-path=/ off`);
+    expect(existsSync(receiptPath(j.serveDir))).toBe(false);
+  });
+  test('receipt-less recovery: --status/--remove --https-port 8443 look for the handler on :8443 and echo the flag in the recovery command', async () => {
+    const f = fakeTailnet({ existingHandlersOn: { 8443: { 3131: false } } });
+    expect(await runMcpExpose(['--status', '--https-port', '8443', '--json'], f.deps)).toBe(1);
+    const doc = jsonDoc(f);
+    expect(doc).toMatchObject({ status: 'error', reason: 'leftovers_without_receipt' });
+    expect(checkOf(doc, 'tailscale.publish')).toMatchObject({ status: 'warn', detail: 'a :8443 handler proxies http://127.0.0.1:3131 without a receipt' });
+    expect(doc.next_actions).toEqual(['gbrain mcp expose --remove --yes --force --https-port 8443']);
+    // the default port does not see it
+    const g = fakeTailnet({ existingHandlersOn: { 8443: { 3131: false } } });
+    expect(await runMcpExpose(['--status', '--json'], g.deps)).toBe(2);
+    expect(jsonDoc(g)).toMatchObject({ status: 'not_exposed' });
+    // the recovery command turns the :8443 handler off
+    const h = fakeTailnet({ existingHandlersOn: { 8443: { 3131: false } } });
+    expect(await runMcpExpose(['--remove', '--yes', '--force', '--https-port', '8443', '--json'], h.deps)).toBe(0);
+    const hdoc = jsonDoc(h);
+    expect(hdoc).toMatchObject({ status: 'removed', reason: 'recovered_without_receipt' });
+    expect(checkOf(hdoc, 'plan')?.detail).toContain('turn off the :8443 handler proxying http://127.0.0.1:3131');
+    expect(joinedCalls(h)).toContain(`${TS} serve --https=8443 --set-path=/ off`);
+    // the consent argv for the non-interactive refusal reproduces --https-port
+    const i = fakeTailnet({ existingHandlersOn: { 8443: { 3131: false } } });
+    expect(await runMcpExpose(['--remove', '--force', '--https-port', '8443', '--json'], i.deps)).toBe(2);
+    expect(jsonDoc(i).fix.argv).toEqual(['gbrain', 'mcp', 'expose', '--remove', '--force', '--https-port', '8443', '--yes']);
+  });
+  test('the re-run hint and the approved command carry --https-port', async () => {
+    const f = fakeTailnet();
+    expect(await runMcpExpose(['--https-port', '8443', '--json'], f.deps)).toBe(2);
+    const doc = jsonDoc(f);
+    expect(doc).toMatchObject({ status: 'pending', reason: 'confirmation_required' });
+    expect(doc.next_actions).toContain('gbrain mcp expose --https-port 8443 --yes');
+    expect(doc.fix.argv).toEqual(['gbrain', 'mcp', 'expose', '--https-port', '8443', '--yes']);
+    const g = fakeTailnet();
+    expect(await runMcpExpose(['--json'], g.deps)).toBe(2);
+    expect(jsonDoc(g).fix.argv).toEqual(['gbrain', 'mcp', 'expose', '--yes']);
   });
 });
 

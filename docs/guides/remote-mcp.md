@@ -135,23 +135,24 @@ client supports. The printed admin URL opens a login page; it does not sign in.
 ## Command surface
 
 ```
-gbrain mcp expose [--port N] [--funnel] [--surface verbs|starter|full] [--enable-dcr]
+gbrain mcp expose [--port N] [--https-port N] [--funnel] [--surface verbs|starter|full] [--enable-dcr]
                   [--no-tailscale] [--no-service] [--no-install] [--force]
                   [--dry-run] [--yes] [--json]
 gbrain mcp expose --status [--json]
-gbrain mcp expose --remove [--yes] [--json]
+gbrain mcp expose --remove [--yes] [--https-port N] [--json]
 ```
 
 | Flag | Meaning |
 | --- | --- |
 | `--port N` | Local port for `gbrain serve --http` (default `3131`). Tailscale proxies `:443` on your MagicDNS name to it. With `--status` or `--remove` and no receipt, the port whose leftover `:443` handler is looked for and cleaned up. |
+| `--https-port N` | The HTTPS port Tailscale listens on for this brain (default `443`). A non-443 port becomes part of the URL (`https://your-machine.your-tailnet.ts.net:8443/mcp`) and of the receipt, so `--status` and `--remove` act on that handler. With `--funnel` only `443`, `8443` and `10000` are accepted (`funnel_https_port_unsupported` otherwise, before anything changes). With `--status` or `--remove` and no receipt, the port whose leftover handler is looked for. |
 | `--funnel` | Public HTTPS via Tailscale Funnel instead of tailnet-only Serve. Required for cloud agents. |
 | `--surface verbs\|starter\|full` | Tool surface, listed in full. Default: `full` with `--advertise verbs` (lists the memory verbs and `request_tools`; all stays callable). Older exposures keep their listing. |
 | `--enable-dcr` | Turn on self-service client registration on the served server (off by default; every self-registered connection still stops for your approval in the admin dashboard). |
 | `--no-tailscale` | Skip Tailscale entirely: install the service on loopback only, publish nothing. Exclusive with `--funnel`. |
 | `--no-service` | Do not create a user service; only publish a server you run yourself. Also the way to publish from a host with no brain config (`no_brain_config`). |
 | `--no-install` | Never install Tailscale; print the install plan and exit 1 when it is missing. |
-| `--force` | Replace a `/` handler on `:443` that already proxies another local port. With `--remove`: also delete the admin token file, and — without a receipt — turn off a `:443` handler for `--port` that no wrapper, unit or service of gbrain's corroborates. |
+| `--force` | Replace a `/` handler on the HTTPS port (`:443`, or `--https-port`) that already proxies another local port. With `--remove`: also delete the admin token file, and — without a receipt — turn off that port's handler for `--port` that no wrapper, unit or service of gbrain's corroborates. |
 | `--dry-run` | Print the plan and stop (exit 0). Exclusive with `--status`. |
 | `--yes` | Skip the consent prompt (required for non-interactive runs). |
 | `--json` | One JSON document on stdout: `{ status, receipt, checks: [{name, status, detail}], next_actions, reason?, message? }`; prose goes to stderr. |
@@ -159,6 +160,18 @@ gbrain mcp expose --remove [--yes] [--json]
 `--status` and `--remove` are exclusive with each other. Defaults: port
 3131, tailnet-only, `--surface full --advertise verbs`, DCR off, service installed whenever a
 supervisor exists.
+
+**When `:443` is already taken.** Another program may own `tailscale serve`
+on `:443` (a foreground `tailscale serve` session, a reverse proxy, another
+agent's worker); `expose` then refuses with `foreign_serve_config`, and `--force`
+cannot take a foreground session over. Publish on a second HTTPS listener
+instead: `gbrain mcp expose --https-port 8443` (tailnet-only accepts any port),
+or `gbrain mcp expose --funnel --https-port 8443` for cloud agents. Tailscale
+Funnel serves exactly three ports, `443`, `8443` and `10000`, so `--funnel` with
+any other `--https-port` is refused before anything changes. The port is part of
+the URL you hand to clients (`https://your-machine.your-tailnet.ts.net:8443/mcp`)
+and is recorded in the receipt, so a later `--status` or `--remove` checks and
+clears that handler and leaves `:443` alone.
 
 ### `--status`
 
