@@ -317,7 +317,10 @@ or a daemon running `claude -p`). For those the variable is the only signal,
 so set it in any launcher you control.
 
 The marker covers the Claude Code and Codex hook lanes and the facts they
-save. The OpenClaw context-engine lane and dream synthesis do not read it yet.
+save. The OpenClaw context engine marks a sub-agent session (session key
+`agent:<id>:subagent:<uuid>`) as agent `agent-launched`'s, since its user turns
+are the parent agent's brief. Dream synthesis reads the marker too and tells
+the model that the session's user turns are the agent's, never yours.
 
 The marker is a `<session>.speaker.json` file beside the session's corpus
 files, written before any of them. If it cannot be written, nothing from the

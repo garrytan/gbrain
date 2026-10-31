@@ -19,6 +19,7 @@ import { realpathOrResolve, resolvedPrefixContained } from '../path-confine.ts';
 import { CORPUS_SPOOL_SUBDIR, corpusFileSessionId } from '../context/corpus-segments.ts';
 import { withoutOffPeriodTurns } from '../context/capture-consent.ts';
 import { readSeatSidecar } from '../context/seat.ts';
+import { corpusFileSpeaker } from '../context/session-speaker.ts';
 import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
@@ -36,6 +37,8 @@ export interface DiscoveredTranscript {
   inferredDate: string | null;
   /** #4618: the capturing seat from the session's `.seat.json` sidecar, when one exists. */
   seat?: string;
+  /** #8080: the agent that wrote the session's user turns (its `.speaker.json` sidecar); absent means the owner. */
+  speaker?: string;
 }
 
 export interface DiscoverOpts {
@@ -350,6 +353,7 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
         basename: baseName,
         inferredDate,
         ...(seat ? { seat } : {}),
+        ...transcriptSpeaker(filePath),
       });
     }
   }
@@ -409,6 +413,7 @@ export function readSingleTranscript(
     basename: baseName,
     inferredDate: dateMatch ? dateMatch[1] : null,
     ...(seat ? { seat } : {}),
+    ...transcriptSpeaker(filePath),
   };
 }
 
@@ -444,6 +449,12 @@ function transcriptSeat(filePath: string): string | undefined {
   const name = basename(filePath);
   const key = name.endsWith('.txt') ? corpusFileSessionId(name) : name.replace(/\.md$/, '');
   return readSeatSidecar(dirname(filePath), key)?.seat;
+}
+
+/** #8080: a `.txt` corpus file's agent speaker (the session's speaker sidecar beside it), as a spread; the owner adds nothing. */
+function transcriptSpeaker(filePath: string): { speaker?: string } {
+  const speaker = filePath.endsWith('.txt') ? corpusFileSpeaker(filePath) : undefined;
+  return speaker ? { speaker: speaker.principal } : {};
 }
 
 // ── #4419: imported type: conversation pages (database discovery) ───────

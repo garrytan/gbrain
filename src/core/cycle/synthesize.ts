@@ -2888,7 +2888,7 @@ function buildSynthesisPrompt(
 CONTEXT
 ${dateContextLine}
 - Transcript hash suffix (USE THIS in slugs): ${hashSuffix}
-- Source file basename: ${baseSlugSegment}${chunkBanner}${priorContradictionsBlock}${triageMapBlock}${linkManifestBlock}${allowedPathsBlock}
+- Source file basename: ${baseSlugSegment}${t.speaker ? `\n- Speaker: this session was launched by the automated agent "${t.speaker}". Its user turns are that agent's brief, not the user's words: never present them as what the user said, requested or prefers; attribute them to Agent ${t.speaker}.` : ''}${chunkBanner}${priorContradictionsBlock}${triageMapBlock}${linkManifestBlock}${allowedPathsBlock}
 
 OUTPUT POLICY (ALL of these are required)
 1. Quote the user verbatim. Quotation marks are ONLY for spans reproducible EXACTLY from the transcript below — if you cannot reproduce a span exactly, paraphrase it WITHOUT quotation marks. Do not paraphrase memorable phrasings you can quote exactly.
