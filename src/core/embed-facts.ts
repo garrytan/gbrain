@@ -19,6 +19,8 @@ import { estimateTokens } from './chunkers/token-estimate.ts';
 import { eligibleFactEmbedding, staleFactEmbedding, readOversizedStaleFacts, oversizedFactLine, OVERSIZED_FACT_FIX } from './facts/embedding-identity.ts';
 
 export interface EmbedFactsOpts extends EmbedFactsOptions {
+  /** Trusted in-process opt-in only; CLI and owner-proxy wire options retain refusal. */
+  oversizedStrategy?: 'refuse' | 'bounded-prefix';
   signal?: AbortSignal;
   assertOwned?: (tx: BrainEngine) => Promise<void>;
   /** Internal full migration: drain the finite census under the migration's lease and signal, with no wall-clock budget. */
@@ -59,7 +61,10 @@ export function refusedFactsLine(result: Pick<EmbedFactsResult, 'refused_oversiz
 }
 
 export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts, selectedConfig: GBrainConfig | null = null): Promise<EmbedFactsResult> {
-  const { signal: externalSignal, assertOwned, migrationDrain, ...wireOptions } = opts;
+  const { signal: externalSignal, assertOwned, migrationDrain, oversizedStrategy = 'refuse', ...wireOptions } = opts;
+  if (oversizedStrategy !== 'refuse' && oversizedStrategy !== 'bounded-prefix') {
+    throw new Error('Unsupported oversized fact strategy');
+  }
   opts = { ...validateEmbedFactsOptions(wireOptions), signal: migrationDrain?.signal ?? externalSignal,
     assertOwned: migrationDrain?.assertOwned ?? assertOwned };
   const batchSize = opts.batchSize ?? 100;
@@ -100,6 +105,7 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
   const maxFacts = migrationDrain ? initial.count : opts.maxFacts ?? 100;
   const maxTokens = resolveMaxChunkTokens();
   const refused = async () => {
+    if (oversizedStrategy === 'bounded-prefix') return 0;
     const rows = await readOversizedStaleFacts(engine, { sourceId: opts.sourceId, model, dims, maxTokens });
     result.refused_oversized = rows.length;
     result.refused_samples = rows.slice(0, 5).map(row => oversizedFactLine(row, maxTokens));
@@ -156,12 +162,26 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
        ORDER BY f.id LIMIT $7`, [...params, afterId, initial.lastId, Math.min(batchSize, maxFacts - result.attempted)]);
     if (!batch.length) break;
     const lastId = batch[batch.length - 1].id;
-    const fitting = batch.filter(row => estimateTokens(row.fact) <= maxTokens);
+    const fitting = batch.filter(row => oversizedStrategy === 'bounded-prefix' || estimateTokens(row.fact) <= maxTokens);
+    // The retrieval input is separate from canonical text and its CAS/hash identity.
+    // A UTF-8 byte bound is conservative for token estimation, including astral text.
+    const inputs = fitting.map(row => {
+      if (estimateTokens(row.fact) <= maxTokens) return row.fact;
+      let prefix = '';
+      let bytes = 0;
+      for (const point of row.fact) {
+        const size = Buffer.byteLength(point, 'utf8');
+        if (bytes + size > maxTokens) break;
+        prefix += point;
+        bytes += size;
+      }
+      return prefix;
+    });
     if (!fitting.length) { afterId = lastId; continue; }
     result.attempted += fitting.length;
     try {
       signal.throwIfAborted();
-      const inputCeiling = fitting.reduce((sum, row) => sum + Math.max(1, Buffer.byteLength(row.fact, 'utf8')), 0);
+      const inputCeiling = inputs.reduce((sum, input) => sum + Math.max(1, Buffer.byteLength(input, 'utf8')), 0);
       const vectors = await withAIInvocationGuard(async call => {
         signal.throwIfAborted();
         if (call.kind !== 'embedding') throw new Error('Fact backfill permits embedding calls only');
@@ -178,7 +198,7 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
           if (!usage) result.cost_estimated = true;
           tracker.record({ modelId: call.model, reservation, kind: 'embed', inputTokens: usage?.inputTokens ?? inputCeiling, outputTokens: 0 });
         } };
-      }, () => embed(fitting.map(row => row.fact), {
+      }, () => embed(inputs, {
         abortSignal: signal, embeddingModel: model, dimensions: dims, inputType: 'document',
       }), { inherit: true });
       signal.throwIfAborted();
@@ -198,6 +218,7 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
           throw new Error('Embedding model changed during fact backfill; rerun the scoped preview');
         }
         let count = 0;
+        const partialIds: string[] = [];
         for (let i = 0; i < fitting.length; i++) {
           signal.throwIfAborted();
           const rows = await tx.executeRaw(
@@ -206,13 +227,17 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
              WHERE ${eligible} AND f.id=$5::bigint AND f.xmin::text=$6 RETURNING f.id::text`,
             [...params, fitting[i].id, fitting[i].version, `[${Array.from(vectors[i]).join(',')}]`]);
           count += rows.length;
+          if (rows.length && inputs[i] !== fitting[i].fact) partialIds.push(fitting[i].id);
         }
         signal.throwIfAborted();
-        return count;
+        return { count, partialIds };
       });
-      result.embedded += installed;
-      if (installed !== fitting.length) {
-        result.failures += fitting.length - installed;
+      for (const id of installed.partialIds) {
+        console.error(`[embed] fact ${id} (source ${opts.sourceId}): partial retrieval representation (bounded-prefix); full stored text retained.`);
+      }
+      result.embedded += installed.count;
+      if (installed.count !== fitting.length) {
+        result.failures += fitting.length - installed.count;
         result.failure_samples.push('Fact state changed during embedding; changed rows were not overwritten. Rerun the scoped preview.');
         result.stopped = 'failed';
         break;
