@@ -21,7 +21,7 @@
 
 import { spawn } from '../spawn.ts';
 import { closeSync, mkdirSync, openSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { resolveAuditDir } from '../audit/audit-writer.ts';
 
 export interface DetachedStderrSink {
@@ -65,6 +65,16 @@ export function closeDetachedStderrSink(sink: DetachedStderrSink): void {
 }
 
 /**
+ * The argv after execPath that re-runs this CLI (#7532). A bun or node
+ * runtime needs the CLI script first. A compiled binary IS the CLI: its
+ * script is the embedded `/$bunfs/root/...` entry, which Bun inserts again on
+ * its own, so passing it would become the command and fail as unknown.
+ */
+export function supervisorArgv(execPath: string, cliScript: string, childArgs: string[]): string[] {
+  return ['bun', 'bun.exe', 'node', 'node.exe'].includes(basename(execPath)) ? [cliScript, ...childArgs] : childArgs;
+}
+
+/**
  * Re-exec the CLI as a fully detached supervisor: stdin/stdout ignored,
  * stderr on the durable sink (NEVER 'inherit' — the #4418 regression).
  */
@@ -74,7 +84,7 @@ export function spawnDetachedSupervisor(
   childArgs: string[],
 ): { pid: number | undefined; stderrPath: string | null } {
   const sink = openDetachedStderrSink();
-  const child = spawn(execPath, [cliScript, ...childArgs], {
+  const child = spawn(execPath, supervisorArgv(execPath, cliScript, childArgs), {
     detached: true,
     stdio: ['ignore', 'ignore', sink.fd],
     env: process.env,

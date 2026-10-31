@@ -50,7 +50,6 @@ export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
   { key: 'trust.backfill_completed_at', reason: 'memory-trust backfill completion marker' },
   { key: 'trust.kill_switch', reason: 'receipt written by gbrain trust disable/enable --all' },
   { key: 'schema_pack.source.', prefix: true, reason: 'per-source schema pack binding written by gbrain schema commands' },
-  { key: 'brainstorm.domain_bank.prefixes:', prefix: true, reason: 'brainstorm domain-bank prefix cache' },
   { key: 'backfill.', prefix: true, reason: 'resumable backfill checkpoints (backfill-base.ts checkpointKey)' },
   { key: 'shared_skills.export.v1.', prefix: true, reason: 'shared-skills migration export receipts' },
   { key: 'shared_skills.content.v1.', prefix: true, reason: 'shared-skills content setup state per source incarnation' },
