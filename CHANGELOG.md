@@ -12,16 +12,18 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
-**Remote search stays clean after an extraction. The commit door's dry run now refuses whatever the real run refuses. You can stop tracking a file through the door. And an older gbrain can no longer roll back a newer schema.**
+**Remote search stays clean after an extraction, the commit door's dry run refuses whatever the real run refuses, and an older gbrain can no longer roll back a newer schema. A frontmatter-only disagreement no longer blocks an unrelated `remember`, and `gbrain repair file-drift --apply` now works on pages stored in segments.**
 
-These are four fixes to the Git-canonical door and the schema it guards.
+### The Git-canonical door
+
+Four fixes to the Git-canonical door and the schema it guards.
 
 - **Extract receipts.** Receipts used to stay unchunked, so every remote `search` and `query` on an extracted source reported `safe_index_pending` until someone ran a repair. They are now sealed in the transaction that writes them.
 - **Dry run.** `gbrain git commit-push --dry-run` used to pass paths that the real run then refused: a sparse-checkout exclusion, a path outside the source root, or another writer's staged file. It now runs the real run's checks and exits 1 with the same error. A tracked file deleted or modified under an ignore rule such as `*` now commits through the door too.
 - **Untrack.** Hygiene scripts that need `git rm --cached` now have a door path: `--untrack`.
 - **Older binaries.** An older gbrain binary that runs `gbrain init` or `apply-migrations` against a brain that a newer gbrain migrated now refuses with `client_behind`. Before, it reinstalled its own older function bodies.
 
-### How to use it
+#### How to use it
 
 ```bash
 gbrain git commit-push --dry-run -m "notes" -- notes/b/new.md     # exits 1 with the real run's refusal, takes no lock, writes nothing
@@ -29,7 +31,7 @@ gbrain git commit-push --untrack -m "stop tracking build output" -- build/out.js
 gbrain doctor --only schema_function_bodies                         # installed function bodies vs this binary's
 ```
 
-### What changed
+#### What changed
 
 | Situation | Before | Now |
 |---|---|---|
@@ -42,22 +44,36 @@ gbrain doctor --only schema_function_bodies                         # installed 
 
 Receipts are database-only bookkeeping on every brain, with or without a Git repository. They are never exported to Git, and a canonical conversion classes them `derive_folder`. The `client_behind` refusal, the doctor check and the receipt fix behave the same on a repo-less brain. `--untrack` and the dry-run checks need a checkout, as `commit-push` always has.
 
-### For contributors
+#### For contributors
 
 - Read paths no longer pass git's global `--literal-pathspecs` flag. `test/git-env-guard.test.ts` refuses it anywhere in `src`, and `literalPathspecs('')` throws.
 - `test/sync-relative-anchor-refusal-7630.test.ts` is split into three files of about 22 s each, well under run-e2e's 180 s per-file cap.
 
----
+### Frontmatter-only drift and contact rows (#8109)
 
-**A frontmatter-only disagreement between a page's file and its database copy no longer blocks an unrelated `remember`, a contact row whose `last_used` moved forward reconciles automatically, and duplicated contact rows can be collapsed with one previewed repair (#8109).**
+A contact row whose `last_used` moved forward now reconciles automatically, and duplicated contact rows can be collapsed with one previewed repair.
 
-### What changed
+#### What changed
 
 | Situation | Before | Now |
 |---|---|---|
 | A person page's file differs from the database only in frontmatter (for example one contact row's `last_used` moved forward), and an agent saves a fact | `remember` refused `source_changed` (`file_database_drift`) until someone reconciled the page | the fact lands; the file keeps its own frontmatter with the new body, and the frontmatter drift stays for reconcile. Body, timeline, title, type, tag and policy or privacy key drift still refuse, and so does a write that changes frontmatter |
 | `gbrain sources reconcile <source> <slug> --preview --auto-additive` on a contact row whose only change is a later `last_used` | `review` (`list_entries_changed_or_reordered`) | `auto` (rule `contacts_activity_advance`); a removed, reordered or otherwise changed row, or a date moved backward or into the future, still needs review. Unquoted YAML dates compare as dates |
 | Pages whose frontmatter `contacts:` list repeats a `(type, value)` row | no repair | `gbrain repair contact-rows [--source <id>] [--slug <slug>]...` keeps one row per `(type, value)` with the newest `last_used` (rows that differ in another field and every distinct value stay). It previews (writes nothing), then `--apply --expect <hash> --yes` rewrites exactly the previewed pages through revision-bound `put_page`: the file through the coordinated writer on sources with a checkout, the database on repo-less brains. Drifted pages are listed `needs_reconcile` with the reconcile command |
+
+Nothing runs on upgrade.
+
+### File-drift repair on segmented pages
+
+`gbrain repair file-drift --apply` (and `gbrain sources reconcile --apply`, which runs the same apply) used to refuse every page stored in segments: first `invalid_params` from the reconcile validator, then `page_body_segmented` after admission, which kept the request's lifetime id and its terminal bytes. It now resolves such pages up to 24 MiB, for `--prefer file` and `--prefer database`, held or not, on a repo brain and on a repo-less brain. Nothing new writes the database before Git: on a strict source the door commits the file before the row.
+
+#### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| `repair file-drift --apply` on a segmented page | Refused `invalid_params`, or `page_body_segmented` after admission (lifetime id and terminal bytes kept) | Applies. The page keeps its timeline region and the live drift check agrees afterwards |
+| A held inline page whose file grew past the segment threshold | Same refusals | Publishes segmented with the file's body |
+| A page over 24 MiB | Refused after admission | Refused before admission in the preview and the apply, naming `gbrain get --body auto` and the manual fix. No lifetime id, receipt or request row |
 
 Nothing runs on upgrade.
 
