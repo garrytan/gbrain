@@ -327,9 +327,20 @@ async function brainId(engine: BrainEngine): Promise<string> {
   return brain?.brain_id ?? 'host';
 }
 
-function pageItem(page: ApprovedPage, hash: string, index: number, last: boolean, options: AgentSessionOptions, indexes: Map<string | null, CorpusIndex>): PageItem {
-  return { cursor: { phase: page.facts ? 0 : 1, id: index }, source_id: page.source_id, slug: page.slug, chars: 0,
-    action: page.facts ? `re-attribute ${page.facts.length} agent-session fact(s)` : `retire ${page.takes!.length} take(s)`, page, hash, last, options, indexes };
+/**
+ * One item per write, in cursor order. A fact page with both database-only and fenced rows is two items, the fenced one
+ * after every fact page (`id` = page count + index), so a database write still pending never skips the page's fenced
+ * rows and the runner holds the fenced rewrite until that write settles, like any later write to the same page.
+ */
+function pageItems(approved: ApprovedPage[], hash: string, options: AgentSessionOptions, indexes: Map<string | null, CorpusIndex>): PageItem[] {
+  const parts = approved.flatMap((page, i) => {
+    const fenced = page.facts?.filter(f => f.row_num !== null) ?? [];
+    return !fenced.length || fenced.length === page.facts!.length ? [{ page, id: i }]
+      : [{ page: { ...page, facts: page.facts!.filter(f => f.row_num === null) }, id: i }, { page: { ...page, facts: fenced }, id: approved.length + i }];
+  }).sort((a, b) => Number(!a.page.facts) - Number(!b.page.facts) || a.id - b.id);
+  return parts.map(({ page, id }, i) => ({ cursor: { phase: page.facts ? 0 : 1, id }, source_id: page.source_id, slug: page.slug, chars: 0,
+    action: page.facts ? `re-attribute ${page.facts.length} agent-session fact(s)` : `retire ${page.takes!.length} take(s)`, page, hash, last: i === parts.length - 1,
+    options, indexes }));
 }
 
 function groupByPage<T extends { source_id: string; slug: string }>(rows: T[], make: (first: T) => ApprovedPage, field: 'facts' | 'takes'): ApprovedPage[] {
@@ -372,7 +383,7 @@ export const agentSessionFactsRepair: RepairHandler = {
         detail: `row ${take.row_num}; contributing facts ${take.fact_ids.join(', ')}` });
       for (const path of unreadable_corpus_files) listing.push({ item: path, class: 'unreadable_corpus_file',
         detail: 'not read (check its permissions); facts of its sessions are counted unclassifiable and kept' });
-      return { items: approved.map((page, i) => pageItem(page, hash, i, i === approved.length - 1, options, new Map())), preview_hash: hash, listing,
+      return { items: pageItems(approved, hash, options, new Map()), preview_hash: hash, listing,
         residuals: { evidenced: count('evidenced'), ambiguous: count('ambiguous'), excluded: count('excluded'), unclassifiable, not_suspect, takes_to_retire: takes.length,
           ...(unreadable_corpus_files.length ? { unreadable_corpus_files: unreadable_corpus_files.length } : {}) } };
     }
@@ -386,9 +397,7 @@ export const agentSessionFactsRepair: RepairHandler = {
     if (approved.items.some(page => page.include_ambiguous !== includeAmbiguous || JSON.stringify(page.scope) !== scopeKey || page.options !== optionsKey)) {
       throw previewChangedError(opts.expect, command);
     }
-    const indexes = new Map<string | null, CorpusIndex>();
-    const items = approved.items.map((page, i) => pageItem(page, opts.expect!, i, i === approved.items.length - 1, options, indexes))
-      .filter(item => afterCursor(item.cursor, after));
+    const items = pageItems(approved.items, opts.expect, options, new Map()).filter(item => afterCursor(item.cursor, after));
     if (!items.length) await clearApprovedSet(engine, { command: COMMAND, hash: opts.expect });
     return { items, preview_hash: opts.expect, residuals: { approved_pages: approved.items.length, pending_pages: items.length } };
   },
@@ -398,6 +407,11 @@ export const agentSessionFactsRepair: RepairHandler = {
     const done: number[] = [];
     if (page.facts) {
       const live = new Map((await classifyAgentSessionFacts(engine, [page.source_id], { ...options, ids: page.facts.map(f => f.id), indexes })).candidates.map(c => [c.id, c]));
+      const gone = page.facts.filter(f => !live.has(f.id));
+      const settled = gone.length ? await engine.executeRaw<{ id: number | string; context: string | null }>(
+        "SELECT id, context FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[]) AND attributed_to='other' AND expired_at IS NULL AND superseded_by IS NULL",
+        [page.source_id, gone.map(f => f.id)]) : [];
+      done.push(...gone.filter(f => settled.some(row => Number(row.id) === f.id && (row.context ?? '').includes(speakerContextNote(f.principal)))).map(f => f.id));
       const unchanged = page.facts.filter(f => {
         const current = live.get(f.id);
         return !!current && (['class', 'reason', 'principal', 'fact_hash', 'slug', 'row_num'] as const).every(field => current[field] === f[field]);

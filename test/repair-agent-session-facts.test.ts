@@ -9,7 +9,7 @@
  * rows in place; a fact/self take is retired only when every contributing fact is non-user; nothing is deleted; the
  * apply is bound to the preview hash and flags; a fact edited since the preview is kept.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import * as fs from 'node:fs';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -29,13 +29,18 @@ import { randomUUID } from 'node:crypto';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
+import { __setMaintenanceWriteWaitForTests } from '../src/core/persistence/maintenance-wait.ts';
+import { getCliOptions, setCliOptions } from '../src/core/cli-options.ts';
+import { resolveRepairScope } from '../src/core/repair/core.ts';
+import { repairRunner } from '../src/core/repair/registry.ts';
 
 const ALICE = 'people/alice-example';
 const ACME = 'companies/acme-example';
 const BRIEF = 'You are worker agent seven for the release crew. Read the brief below, follow the repository rules, keep commits small, '
   + 'and report back to the coordinator with a summary of what changed and what is still open.';
 
-interface RepairJson { results: Array<{ affected: number; residuals: Record<string, number>; apply_command: string; applied: number;
+interface RepairJson { results: Array<{ affected: number; preview_hash?: string; residuals: Record<string, number>; apply_command: string; applied: number;
   listing?: Array<{ item: string; class: string; detail?: string }>; outcomes?: Record<string, number> }> }
 
 async function repair(engine: BrainEngine, args: string[]): Promise<RepairJson> {
@@ -296,6 +301,67 @@ describe('gbrain repair agent-session-facts, managed repo-less brain', () => {
         await seedEntity(engine, root, ALICE, 'Alice Example', 'person');
         await seedEntity(engine, root, ACME, 'Acme Example', 'company');
       } });
+    } finally { rmSync(base, { recursive: true, force: true }); }
+  }, 180_000);
+
+  /** Holds the first publication `ms` and makes maintenance publishes report pending at once, so a database-only write stays accepted and pending. */
+  const slowFirstPublication = (ms: number) => {
+    let seen = 0;
+    installFaultHook(async point => { if (point === 'consumer:prepared' && seen++ === 0) await new Promise(resolve => setTimeout(resolve, ms)); });
+    restoreWait = __setMaintenanceWriteWaitForTests(0);
+  };
+  let restoreWait: (() => void) | undefined;
+  afterEach(() => { installFaultHook(undefined); restoreWait?.(); restoreWait = undefined; });
+
+  test('a database-only write still pending does not skip the fenced rows of its page (#8080)', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'gbrain-agent-session-pending-'));
+    try {
+      const { corpus } = corpusFixture(base);
+      await managedBrain(async ({ engine }) => {
+        await engine.setConfig('dream.synthesize.session_corpus_dir', corpus);
+        const fenced = (await writeSingleFact(engine, 'default', { fact: 'Alice Example prefers terse status updates', entity: ALICE, provenance: 'hook:writeback', sessionId: 'sess-sidecar' })).id;
+        const dbOnly = await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], async () => Number((await tx.executeRaw<{ id: number }>(
+          `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, source_session, attributed_to)
+            VALUES ('default', $1, 'Alice Example dislikes long meetings', 'preference', 'private', 'hook:writeback', 'sess-sidecar', 'user') RETURNING id`, [ALICE]))[0]!.id),
+        TEST_WRITE_ATTRIBUTION));
+        expect((await engine.executeRaw<{ row_num: number | null }>('SELECT row_num FROM facts WHERE id=$1', [dbOnly]))[0]!.row_num).toBeNull();
+        const preview = await repair(engine, []);
+        expect(classes(preview)).toEqual({ [fenced]: 'evidenced', [dbOnly]: 'evidenced' });
+        slowFirstPublication(1_500);
+        await repair(engine, applyArgs(preview));
+        for (const id of [fenced, dbOnly]) expect(await attribution(engine, id)).toMatchObject({ attributed_to: 'other', active: true });
+        expect((await engine.readPageSnapshot(ALICE, { sourceId: 'default' }))!.page.compiled_truth).toContain(speakerContextNote('worker-a'));
+        expect((await agentSessionFactsCheck(engine)).status).toBe('ok');
+      }, { setup: async ({ engine, root }) => { await seedEntity(engine, root, ALICE, 'Alice Example', 'person'); } });
+    } finally { rmSync(base, { recursive: true, force: true }); }
+  }, 180_000);
+
+  test('a resumed apply reports rows its accepted request already re-attributed as reattributed, not changed since the preview (#8080)', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'gbrain-agent-session-resume-'));
+    try {
+      const { corpus } = corpusFixture(base);
+      await managedBrain(async ({ engine }) => {
+        await engine.setConfig('dream.synthesize.session_corpus_dir', corpus);
+        const dbOnly = (await writeSingleFact(engine, 'default', { fact: 'Carol Absent dislikes long meetings', entity: 'Carol Absent', provenance: 'hook:writeback', sessionId: 'sess-sidecar' })).id;
+        const preview = await repair(engine, []);
+        expect(classes(preview)).toEqual({ [dbOnly]: 'evidenced' });
+        const scope = await resolveRepairScope(engine);
+        const run = { explicit: true, expect: preview.results[0].preview_hash! };
+        const quiet = { info() {}, warn() {}, error() {} };
+        slowFirstPublication(1_500);
+        const previous = getCliOptions();
+        setCliOptions({ ...previous, writeWaitMs: 0 });
+        let first;
+        try { first = await (await repairRunner(engine, { apply: true, noEmbed: true, logger: quiet })).run('agent-session-facts', scope, run); }
+        finally { setCliOptions(previous); }
+        expect(first.stopped?.reason).toBe('write_pending');
+        const until = Date.now() + 15_000;
+        while ((await attribution(engine, dbOnly)).attributed_to !== 'other' && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 100));
+        expect((await attribution(engine, dbOnly)).attributed_to).toBe('other');
+        const resumed = await (await repairRunner(engine, { apply: true, noEmbed: true, logger: quiet })).run('agent-session-facts', scope, run);
+        expect(resumed.outcomes).toEqual({ reattributed: 1 });
+        expect(resumed.stopped).toBeUndefined();
+      });
     } finally { rmSync(base, { recursive: true, force: true }); }
   }, 180_000);
 });
