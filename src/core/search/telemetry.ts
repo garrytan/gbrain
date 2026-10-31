@@ -28,6 +28,12 @@
  * UTC ISO date (YYYY-MM-DD). Cross-midnight calls land in distinct buckets
  * automatically.
  *
+ * Buckets are kept per engine: a search records against the engine it ran on
+ * (`recordSearchTelemetry(engine, ...)`), and the flush writes each engine's
+ * buckets to that engine, so two brains open in one process each get their own
+ * rows and neither sees the other's searches. A process with one engine sees
+ * one set of buckets, as before.
+ *
  * Per-process bucketing means stdio MCP, HTTP MCP, and CLI processes each
  * maintain their own buffers. Stats are directional, not exact — acceptable
  * because the consumer is the operator (or an agent running `gbrain search
@@ -118,22 +124,48 @@ const FLUSH_INTERVAL_MS = 60_000;
  * the flush on its EXACT boundary, not a hard-coded copy that drifts. */
 export const FLUSH_THRESHOLD_CALLS = 100;
 
+/** The bucket owner of a record made with no engine: flushed to the first engine wired (`setEngine`). */
+const FIRST_ENGINE: object = Object.freeze({});
+
+function emptyBucket(date: string, mode: string, intent: string): Bucket {
+  return {
+    date,
+    mode,
+    intent,
+    count: 0,
+    sum_results: 0,
+    sum_tokens: 0,
+    sum_budget_dropped: 0,
+    cache_hit: 0,
+    cache_miss: 0,
+    sum_rank1_score: 0,
+    count_rank1: 0,
+    rank1_lt_solid: 0,
+    rank1_solid: 0,
+    rank1_high: 0,
+  };
+}
+
 /**
  * Per-process telemetry singleton. Each gbrain process (CLI, stdio MCP,
  * HTTP MCP) gets one instance. The flush timer is installed lazily by the
  * first `setEngine()` call, not by `record()`, so importing this module has
  * no side effects and a caller can wire an engine without recording. No exit
- * hooks are installed — see `ensureExitHook`.
+ * hooks are installed — see `ensureExitHook`. Buckets are kept per engine
+ * (the engine a record names, else the first engine wired) and flushed to
+ * that engine, so several engines in one process share the timer and the
+ * drain but never a row.
  */
 class TelemetryWriter {
-  private buckets = new Map<string, Bucket>();
+  /** Buckets by the engine they flush to, then by `${date}::${mode}::${intent}`. */
+  private buckets = new Map<object, Map<string, Bucket>>();
   private pendingCount = 0;
   private engine: BrainEngine | null = null;
   private timer: NodeJS.Timeout | null = null;
   private exitHookInstalled = false;
   private flushInFlight: Promise<void> | null = null;
 
-  /** Wire the engine. Called once per process at search-time. Subsequent calls are a no-op. */
+  /** Wire the first engine. Called once per process at search-time. Subsequent calls are a no-op. */
   setEngine(engine: BrainEngine): void {
     if (!this.engine) {
       this.engine = engine;
@@ -142,36 +174,39 @@ class TelemetryWriter {
     }
   }
 
+  /** The buckets flushed to `engine` (the first engine wired when none is named). */
+  private bucketsFor(engine: BrainEngine | null): Map<string, Bucket> {
+    const owner = engine && engine !== this.engine ? engine : FIRST_ENGINE;
+    let buckets = this.buckets.get(owner);
+    if (!buckets) {
+      buckets = new Map();
+      this.buckets.set(owner, buckets);
+    }
+    return buckets;
+  }
+
+  private bucketCount(): number {
+    let n = 0;
+    for (const buckets of this.buckets.values()) n += buckets.size;
+    return n;
+  }
+
   /**
-   * Record a search call. Sync — never blocks the hot path. Returns
-   * immediately after bumping the in-memory bucket. Flush is async +
-   * fire-and-forget.
+   * Record a search call against `engine` (the first engine wired when
+   * omitted). Sync — never blocks the hot path. Returns immediately after
+   * bumping the in-memory bucket. Flush is async + fire-and-forget.
    */
-  record(meta: HybridSearchMeta, opts: { results_count: number; tokens_estimate?: number; rank1_score?: number } = { results_count: 0 }): void {
+  record(meta: HybridSearchMeta, opts: { results_count: number; tokens_estimate?: number; rank1_score?: number } = { results_count: 0 }, engine: BrainEngine | null = null): void {
     const date = nowDate();
     const mode = meta.mode ?? 'unset';
     const intent = meta.intent ?? 'unset';
     const key = `${date}::${mode}::${intent}`;
+    const buckets = this.bucketsFor(engine);
 
-    let b = this.buckets.get(key);
+    let b = buckets.get(key);
     if (!b) {
-      b = {
-        date,
-        mode,
-        intent,
-        count: 0,
-        sum_results: 0,
-        sum_tokens: 0,
-        sum_budget_dropped: 0,
-        cache_hit: 0,
-        cache_miss: 0,
-        sum_rank1_score: 0,
-        count_rank1: 0,
-        rank1_lt_solid: 0,
-        rank1_solid: 0,
-        rank1_high: 0,
-      };
-      this.buckets.set(key, b);
+      b = emptyBucket(date, mode, intent);
+      buckets.set(key, b);
     }
 
     b.count += 1;
@@ -194,12 +229,12 @@ class TelemetryWriter {
     // WP2/T3 — empty-result cause rollup. Cache HITS are excluded: an empty
     // hit slice is an offset-past-end artifact, not a retrieval failure.
     if (opts.results_count === 0 && meta.cache?.status !== 'hit') {
-      this.bumpReserved(date, EMPTY_RESULT_MODE, classifyEmptyResultCause(meta));
+      this.bumpReserved(buckets, date, EMPTY_RESULT_MODE, classifyEmptyResultCause(meta));
     }
     // W3 — rerank gate counters (reserved rows). Cache hits replay a stored
     // decision, not a new one, so they are excluded.
     if (meta.rerank_gate && meta.cache?.status !== 'hit') {
-      for (const counter of rerankGateCounters(meta.rerank_gate)) this.bumpReserved(date, RERANK_GATE_TELEMETRY_MODE, counter);
+      for (const counter of rerankGateCounters(meta.rerank_gate)) this.bumpReserved(buckets, date, RERANK_GATE_TELEMETRY_MODE, counter);
     }
 
     this.pendingCount += 1;
@@ -213,27 +248,12 @@ class TelemetryWriter {
    * RERANK_GATE_TELEMETRY_MODE). Only `count` carries signal on these rows —
    * every other column stays 0 and the flush SQL is unchanged (zero new DDL).
    */
-  private bumpReserved(date: string, mode: string, intent: string): void {
+  private bumpReserved(buckets: Map<string, Bucket>, date: string, mode: string, intent: string): void {
     const key = `${date}::${mode}::${intent}`;
-    let b = this.buckets.get(key);
+    let b = buckets.get(key);
     if (!b) {
-      b = {
-        date,
-        mode,
-        intent,
-        count: 0,
-        sum_results: 0,
-        sum_tokens: 0,
-        sum_budget_dropped: 0,
-        cache_hit: 0,
-        cache_miss: 0,
-        sum_rank1_score: 0,
-        count_rank1: 0,
-        rank1_lt_solid: 0,
-        rank1_solid: 0,
-        rank1_high: 0,
-      };
-      this.buckets.set(key, b);
+      b = emptyBucket(date, mode, intent);
+      buckets.set(key, b);
     }
     b.count += 1;
   }
@@ -249,7 +269,7 @@ class TelemetryWriter {
    */
   async flush(): Promise<void> {
     if (this.flushInFlight) return this.flushInFlight;
-    if (!this.engine || this.buckets.size === 0) {
+    if (!this.engine || this.bucketCount() === 0) {
       this.pendingCount = 0;
       return;
     }
@@ -259,10 +279,13 @@ class TelemetryWriter {
     this.buckets = new Map();
     this.pendingCount = 0;
 
-    const engine = this.engine;
+    const firstEngine = this.engine;
     this.flushInFlight = (async () => {
       try {
-        for (const b of snapshot.values()) {
+        for (const [owner, buckets] of snapshot) {
+          // Each engine's buckets go to that engine; a closed engine's fail per bucket below and are dropped.
+          const engine = owner === FIRST_ENGINE ? firstEngine : (owner as BrainEngine);
+          for (const b of buckets.values()) {
           try {
             await engine.executeRaw(
               `INSERT INTO search_telemetry
@@ -288,6 +311,7 @@ class TelemetryWriter {
           } catch {
             // swallow — telemetry write must never break the hot path.
             // Per-bucket isolation: one bad row doesn't lose the others.
+          }
           }
         }
       } finally {
@@ -320,17 +344,17 @@ class TelemetryWriter {
 
   /** #4143 — whether any bucket is buffered (drain path fast-check). */
   hasBuffered(): boolean {
-    return this.buckets.size > 0;
+    return this.bucketCount() > 0;
   }
 
-  /** Test-only — read the current bucket count without draining. */
+  /** Test-only — read the current bucket count, over every engine, without draining. */
   bucketCountForTest(): number {
-    return this.buckets.size;
+    return this.bucketCount();
   }
 
-  /** Test-only — read a specific bucket (returns null if absent). */
-  bucketForTest(date: string, mode: string, intent: string): Readonly<Bucket> | null {
-    return this.buckets.get(`${date}::${mode}::${intent}`) ?? null;
+  /** Test-only — read a specific bucket of `engine` (the first engine wired when omitted); null if absent. */
+  bucketForTest(date: string, mode: string, intent: string, engine: BrainEngine | null = null): Readonly<Bucket> | null {
+    return this.buckets.get(engine && engine !== this.engine ? engine : FIRST_ENGINE)?.get(`${date}::${mode}::${intent}`) ?? null;
   }
 
   private ensureTimer(): void {
@@ -442,7 +466,8 @@ registerBackgroundWorkDrainer({
 
 /**
  * Convenience entry point for hot-path callers. Wires the engine lazily
- * and records the call. Never throws.
+ * and records the call against it, so the row lands in the brain that was
+ * searched, whichever engine was wired first. Never throws.
  */
 export function recordSearchTelemetry(
   engine: BrainEngine,
@@ -452,7 +477,7 @@ export function recordSearchTelemetry(
   try {
     const w = getTelemetryWriter();
     w.setEngine(engine);
-    w.record(meta, opts);
+    w.record(meta, opts, engine);
   } catch {
     // swallow — telemetry is best-effort.
   }

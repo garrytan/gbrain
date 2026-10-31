@@ -3,6 +3,7 @@
  *
  * v0.14 exports:
  *   - configureGateway(config) — called once by cli.ts connectEngine()
+ *   - configureGatewayForEngine(engine, config): one config per engine for a host with several (gateway-state.ts)
  *   - embed(texts)              — embedding for put_page + import
  *   - embedOne(text)            — convenience wrapper
  *   - expand(query)             — query expansion for hybrid search
@@ -21,7 +22,12 @@
  *     rotation (via configureGateway()) invalidates stale entries.
  */
 
-import type { embedMany, generateObject, generateText, JSONSchema7, Output } from 'ai';
+import type { JSONSchema7, Output } from 'ai';
+import {
+  currentGatewayState, dropEngineGatewayStates, gatewayStateFor, newGatewayState, processGatewayState, recordEngineGatewayState,
+  resetGatewayState, type ChatTransport, type EmbedManyFn, type GatewayState, type GatewayTransports, type GenerateObjectFn,
+  type GenerateTextFn, type RerankTransport,
+} from './gateway-state.ts';
 import { jsonSchema } from '@ai-sdk/provider-utils';
 import { installAiSdkWarningWriter } from './sdk-warnings.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -137,10 +143,14 @@ const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 // `DEFAULT_RERANKER_MODEL` imported from ./defaults.ts (ONE constant, shared with
 // the mode bundles) — `voyage:rerank-3-lite` (was `voyage:rerank-2.5` from v0.48.2).
 
-let _config: AIGatewayConfig | null = null;
+/**
+ * The state a call reads (gateway-state.ts): the state recorded for the engine in scope by `configureGatewayForEngine`,
+ * else the process-wide one `configureGateway` writes. Config, model cache, transports and discovery all live there.
+ */
+const gw = currentGatewayState;
+const processState = processGatewayState;
 /** #5137: provider auth errors echo keys; scrub every key in effect before the text leaves the gateway. */
-const redactKeys = (text: string): string => redactProviderKeys(text, _config?.env ?? {});
-const _modelCache = new Map<string, any>();
+const redactKeys = (text: string): string => redactProviderKeys(text, gw().config?.env ?? {});
 
 /**
  * Materialize `applyResolveAuth`'s SDK-shaped result ({apiKey}|{headers}) into
@@ -163,7 +173,7 @@ export function authToHeaders(auth: { apiKey?: string; headers?: Record<string, 
  * are deliberately left unchanged.
  */
 export function configureGatewayIfUninitialized(): void {
-  if (_config) return;
+  if (processState.config) return;
   const config = loadConfig();
   if (config) configureGateway(buildGatewayConfig(config));
 }
@@ -174,9 +184,6 @@ export function configureGatewayIfUninitialized(): void {
  * `__setEmbedTransportForTests` to drive recursion + fast-path scenarios
  * without hitting a real provider. Production never reads the override.
  */
-type EmbedManyFn = typeof embedMany;
-type GenerateTextFn = typeof generateText;
-type GenerateObjectFn = typeof generateObject;
 // The AI SDK (and the OpenTelemetry API it pulls in) loads at the first
 // provider call, not when the gateway is configured, so a command that never
 // calls a model never pays for its module graph.
@@ -185,12 +192,21 @@ const loadAiSdk = () => (aiSdk ??= import('ai'));
 const sdkEmbedMany = (async (opts: Parameters<EmbedManyFn>[0]) => (await loadAiSdk()).embedMany(opts)) as EmbedManyFn;
 const sdkGenerateText = (async (opts: Parameters<GenerateTextFn>[0]) => (await loadAiSdk()).generateText(opts)) as GenerateTextFn;
 const sdkGenerateObject = (async (opts: Parameters<GenerateObjectFn>[0]) => (await loadAiSdk()).generateObject(opts as never)) as GenerateObjectFn;
-let _embedTransport: EmbedManyFn = sdkEmbedMany;
-let _generateTextTransport: GenerateTextFn = sdkGenerateText;
-// Test-only seam for expand()'s structured-output SDK call. Mirrors
-// _generateTextTransport (see __setGenerateObjectTransportForTests). Never
-// swapped in production — expand() always calls the real generateObject.
-let _generateObjectTransport: GenerateObjectFn = sdkGenerateObject;
+// Transport overrides live on the gateway state: an engine's when one is configured, else the process-wide state;
+// an engine state with no override of its own falls back to the process-wide override, then to the SDK. The
+// generateObject seam serves expand()'s structured-output call (see __setGenerateObjectTransportForTests).
+const embedTransport = (): EmbedManyFn => gw().transports.embed ?? processState.transports.embed ?? sdkEmbedMany;
+const generateTextTransport = (): GenerateTextFn => gw().transports.generateText ?? processState.transports.generateText ?? sdkGenerateText;
+const generateObjectTransport = (): GenerateObjectFn => gw().transports.generateObject ?? processState.transports.generateObject ?? sdkGenerateObject;
+const chatTransport = (): ChatTransport | null => gw().transports.chat ?? processState.transports.chat;
+const rerankTransport = (): RerankTransport => gw().transports.rerank ?? processState.transports.rerank ?? ((u, init) => fetch(u, init));
+/** The transports a __set*TransportForTests seam writes: the engine's when one is named (it must be configured), else the process-wide. */
+function transportsOf(engine: object | undefined): GatewayTransports {
+  if (!engine) return processState.transports;
+  const state = gatewayStateFor(engine);
+  if (!state) throw new AIConfigError('No gateway is configured for this engine. Call configureGatewayForEngine() first.');
+  return state.transports;
+}
 // Adversarial F5 (#4121): recipes that DECLARE structured-output support but
 // reject json_schema at call time would otherwise pay the rejected attempt —
 // and a pessimistic '.failed' budget record — on EVERY expand() call
@@ -199,12 +215,8 @@ let _generateObjectTransport: GenerateObjectFn = sdkGenerateObject;
 const _structuredOutputRejectedRecipes = new Set<string>();
 // v0.41.6.0 D1: tests that install a transport stub also pass the
 // embedding-creds preflight, matching the chat-transport fast-path
-// pattern. Set when __setEmbedTransportForTests is called with a
-// non-null fn; cleared when called with null or on resetGateway().
-let _embedTransportInstalled = false;
-// Test-only seam for chat(). When set, chat() skips provider resolution and
-// returns this function's result directly. See __setChatTransportForTests.
-let _chatTransport: ((opts: ChatOpts) => Promise<ChatResult>) | null = null;
+// pattern (chat() skips provider resolution when a chat transport is set).
+const embedTransportInstalled = (): boolean => embedTransport() !== sdkEmbedMany;
 
 /**
  * Per-recipe shrink-on-miss state. When a recipe's pre-split misses the
@@ -455,9 +467,33 @@ export function recipeSupportsStructuredOutputs(recipe: Recipe): boolean {
   return recipe.touchpoints.chat?.supports_structured_outputs === true;
 }
 
-/** Configure the gateway. Called by cli.ts#connectEngine. Clears cached models. */
+/**
+ * Configure the process-wide gateway. Called by cli.ts#connectEngine. Clears cached models. A process with one
+ * engine never needs more; a host with several engines configures each with `configureGatewayForEngine`.
+ */
 export function configureGateway(config: AIGatewayConfig): void {
-  _config = {
+  applyGatewayConfig(processState, config);
+  stashGatewayAnthropicKeyFromEnv(config.env); // #2119: filter + rationale in anthropic-key.ts
+  installAICallLogFromEnv();
+}
+
+/**
+ * Configure the gateway for one engine. Every gateway call that runs inside `withEngineScope(engine, ...)`
+ * (engine-scope.ts; every operation handler does) reads this config, its own model cache, transports and OpenAI
+ * discovery, and its own query-embedding cache scope, so two brains in one process keep their own provider keys,
+ * base URLs and models. Calls outside a scope, and calls scoped to an engine nothing was recorded against, keep
+ * reading the process-wide config. Takes a built `AIGatewayConfig` (`buildGatewayConfig(config, { env, fileConfig })`
+ * builds one from values without reading the home directory or `process.env`). The Anthropic key stash and the AI
+ * call log are process-wide seams and stay with `configureGateway`.
+ */
+export function configureGatewayForEngine(engine: object, config: AIGatewayConfig): void {
+  const state = gatewayStateFor(engine) ?? newGatewayState();
+  applyGatewayConfig(state, config);
+  recordEngineGatewayState(engine, state);
+}
+
+function applyGatewayConfig(state: GatewayState, config: AIGatewayConfig): void {
+  state.config = {
     embedding_model: config.embedding_model,
     embedding_identity_unverified: config.embedding_identity_unverified,
     // #1292/D6: do NOT fabricate a default here. Every gateway-internal reader
@@ -481,15 +517,14 @@ export function configureGateway(config: AIGatewayConfig): void {
     provider_chat_options: config.provider_chat_options,
     env: config.env,
   };
-  stashGatewayAnthropicKeyFromEnv(config.env); // #2119: filter + rationale in anthropic-key.ts
-  _modelCache.clear();
+  state.modelCache.clear();
+  state.discovery = null;
   clearQueryEmbedCache();
   _shrinkState.clear();
   // A (re)configure is a new env snapshot: a key that appeared or vanished
   // since the last no_key audit row deserves a fresh once-per-process row.
   _noKeyNoticed.clear();
-  warnRecipesMissingBatchTokens();
-  installAICallLogFromEnv();
+  warnRecipesMissingBatchTokens(state.config);
 }
 
 /**
@@ -501,7 +536,7 @@ export function configureGateway(config: AIGatewayConfig): void {
  * here would reset those to file-plane-only values). No-op before configure.
  */
 export function refreshGatewayEnvFromFilePlane(): void {
-  if (!_config) return;
+  if (!processState.config) return;
   let cfg: GBrainConfig | null = null;
   try {
     cfg = loadConfig();
@@ -513,8 +548,8 @@ export function refreshGatewayEnvFromFilePlane(): void {
   // boot fold installed from provider_base_urls.{anthropic,openai}. File-plane
   // only (cfg is loadConfig() here), preserving the mount-safety rule that
   // DB-plane base_urls never steer native keys.
-  _config = { ..._config, env: foldNativeBaseUrlsFromFilePlane(cfg, mergedProviderEnv(cfg, process.env)) };
-  _modelCache.clear();
+  processState.config = { ...processState.config, env: foldNativeBaseUrlsFromFilePlane(cfg, mergedProviderEnv(cfg, process.env)) };
+  processState.modelCache.clear();
   clearQueryEmbedCache();
 }
 
@@ -535,16 +570,16 @@ export function refreshGatewayEnvFromFilePlane(): void {
  * of hand-waving "config-build time."
  *
  * Idempotent. Safe to call multiple times. Returns the resolved gateway
- * config for callers who want to inspect what landed.
+ * config for callers who want to inspect what landed. Resolves into the
+ * engine's own state when `configureGatewayForEngine` recorded one, else
+ * into the process-wide state.
  */
 export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise<AIGatewayConfig> {
-  _discoveryEngine = engine;
-  _discovery = null;
-  return resolveGatewayModels(engine);
+  const state = gatewayStateFor(engine) ?? processState;
+  state.discoveryEngine = engine;
+  state.discovery = null;
+  return resolveGatewayModels(engine, state);
 }
-
-let _discoveryEngine: BrainEngine | null = null;
-let _discovery: Promise<void> | null = null;
 
 /**
  * #6607: OpenAI model discovery runs once per reconfigure, just before an
@@ -557,22 +592,23 @@ let _discovery: Promise<void> | null = null;
 async function discoverBeforeOpenAICall(modelStr: string | undefined): Promise<void> {
   if (!modelStr) return;
   try { if (resolveRecipe(modelStr).recipe.id !== 'openai') return; } catch { return; }
-  _discovery ??= (async () => {
+  const state = gw();
+  state.discovery ??= (async () => {
     try {
-      const cfg = requireConfig();
+      const cfg = requireStateConfig(state);
       const { refreshLatestOpenAIModels, latestOpenAITiers } = await import('./openai-latest.ts');
       const before = JSON.stringify(latestOpenAITiers());
       await refreshLatestOpenAIModels({ env: cfg.env ?? process.env, baseUrl: resolveNativeBaseUrl('openai', cfg) });
-      if (_discoveryEngine && JSON.stringify(latestOpenAITiers()) !== before) await resolveGatewayModels(_discoveryEngine);
+      if (state.discoveryEngine && JSON.stringify(latestOpenAITiers()) !== before) await resolveGatewayModels(state.discoveryEngine, state);
     } catch {
       // Fail-open: the call proceeds on the models already resolved.
     }
   })();
-  await _discovery;
+  await state.discovery;
 }
 
-async function resolveGatewayModels(engine: BrainEngine): Promise<AIGatewayConfig> {
-  const cfg = requireConfig();
+async function resolveGatewayModels(engine: BrainEngine, state: GatewayState): Promise<AIGatewayConfig> {
+  const cfg = requireStateConfig(state);
 
   // Resolve every model (each walks a 5-tier chain plus alias expansion, and
   // the legacy DB pins below) against ONE config snapshot: per-key reads add
@@ -627,13 +663,16 @@ async function resolveGatewayModels(engine: BrainEngine): Promise<AIGatewayConfi
   const expansionFull = newExpansion.includes(':') ? newExpansion : prefixWithProviderFrom(cfg.expansion_model ?? DEFAULT_EXPANSION_MODEL, newExpansion);
   const chatFull = newChat.includes(':') ? newChat : prefixWithProviderFrom(cfg.chat_model ?? DEFAULT_CHAT_MODEL, newChat);
 
-  _config = { ...cfg, expansion_model: expansionFull, chat_model: chatFull };
-  setGatewayModelSource('expansion', expansionFull, dbExpansion ? { source: 'config_key', origin: 'expansion_model' } : gatewayModelSource('expansion', expansionDetailed, expansionEffective));
-  setGatewayModelSource('chat', chatFull, dbChat ? { source: 'config_key', origin: 'chat_model' } : gatewayModelSource('chat', chatDetailed, chatEffective));
-  _modelCache.clear();
+  state.config = { ...cfg, expansion_model: expansionFull, chat_model: chatFull };
+  // Model provenance (gateway-model-sources.ts) is a process-wide read for the CLI's one engine.
+  if (state === processState) {
+    setGatewayModelSource('expansion', expansionFull, dbExpansion ? { source: 'config_key', origin: 'expansion_model' } : gatewayModelSource('expansion', expansionDetailed, expansionEffective));
+    setGatewayModelSource('chat', chatFull, dbChat ? { source: 'config_key', origin: 'chat_model' } : gatewayModelSource('chat', chatDetailed, chatEffective));
+  }
+  state.modelCache.clear();
   clearQueryEmbedCache();
   _shrinkState.clear();
-  return _config;
+  return state.config;
 }
 
 /** Carry over the provider prefix from `original` when `bare` lacks one. */
@@ -662,9 +701,9 @@ const _warnedRecipes = new Set<string>();
  * The warning calls that out before production traffic hits it, while avoiding
  * unrelated startup noise from recipes the current brain is not using.
  */
-function warnRecipesMissingBatchTokens(): void {
+function warnRecipesMissingBatchTokens(config: AIGatewayConfig): void {
   const configuredProviderIds = new Set<string>();
-  for (const model of [_config?.embedding_model, _config?.embedding_multimodal_model]) {
+  for (const model of [config.embedding_model, config.embedding_multimodal_model]) {
     if (!model) continue;
     const providerId = model.split(':')[0];
     if (providerId) configuredProviderIds.add(providerId);
@@ -710,20 +749,13 @@ export function __setGatewayResetBaselineForTests(
 
 /** Clear every piece of module state. Shared by both reset flavors. */
 function clearGatewayState(): void {
-  _config = null;
-  _discoveryEngine = null;
-  _discovery = null;
+  resetGatewayState(processState); // config, discovery, model cache and transport overrides
+  dropEngineGatewayStates(); // every per-engine state with them
   clearGatewayModelSources();
   stashGatewayAnthropicKeyFromEnv(undefined); // gateway-owned snapshot dies with the config
-  _modelCache.clear();
   clearQueryEmbedCache();
   _shrinkState.clear();
-  _embedTransport = sdkEmbedMany;
-  _generateTextTransport = sdkGenerateText;
-  _generateObjectTransport = sdkGenerateObject;
   _structuredOutputRejectedRecipes.clear();
-  _embedTransportInstalled = false;
-  _chatTransport = null;
   _warnedRecipes.clear();
 }
 
@@ -772,9 +804,8 @@ export function __unconfigureGatewayForTests(): void {
  *
  * @internal exported for tests; not part of the public gateway API.
  */
-export function __setEmbedTransportForTests(fn: EmbedManyFn | null): void {
-  _embedTransport = fn ?? sdkEmbedMany;
-  _embedTransportInstalled = fn !== null;
+export function __setEmbedTransportForTests(fn: EmbedManyFn | null, engine?: object): void {
+  transportsOf(engine).embed = fn;
   clearQueryEmbedCache();
 }
 
@@ -788,8 +819,8 @@ export const __clearQueryEmbedCacheForTests = clearQueryEmbedCache;
  *
  * @internal exported for tests; not part of the public gateway API.
  */
-export function __setGenerateTextTransportForTests(fn: GenerateTextFn | null): void {
-  _generateTextTransport = fn ?? sdkGenerateText;
+export function __setGenerateTextTransportForTests(fn: GenerateTextFn | null, engine?: object): void {
+  transportsOf(engine).generateText = fn;
 }
 
 /**
@@ -799,8 +830,8 @@ export function __setGenerateTextTransportForTests(fn: GenerateTextFn | null): v
  *
  * @internal exported for tests; not part of the public gateway API.
  */
-export function __setGenerateObjectTransportForTests(fn: GenerateObjectFn | null): void {
-  _generateObjectTransport = fn ?? sdkGenerateObject;
+export function __setGenerateObjectTransportForTests(fn: GenerateObjectFn | null, engine?: object): void {
+  transportsOf(engine).generateObject = fn;
 }
 
 /**
@@ -814,23 +845,25 @@ export function __setGenerateObjectTransportForTests(fn: GenerateObjectFn | null
  *
  * @internal exported for tests; not part of the public gateway API.
  */
-export function __setChatTransportForTests(
-  fn: ((opts: ChatOpts) => Promise<ChatResult>) | null,
-): void {
-  _chatTransport = fn;
+export function __setChatTransportForTests(fn: ChatTransport | null, engine?: object): void {
+  transportsOf(engine).chat = fn;
 }
 
 /** The live gateway config, or throw if unconfigured. Exported for the
  *  `models doctor` base-URL probe (which reads the same merged config the
  *  gateway calls with, inside its own fail-open guard). */
 export function requireConfig(): AIGatewayConfig {
-  if (!_config) {
+  return requireStateConfig(gw());
+}
+
+function requireStateConfig(state: GatewayState): AIGatewayConfig {
+  if (!state.config) {
     throw new AIConfigError(
       'AI gateway is not configured. Call configureGateway() during engine connect.',
       'This is a gbrain bug — file an issue at https://github.com/garrytan/gbrain/issues',
     );
   }
-  return _config;
+  return state.config;
 }
 
 /** Public config accessors (for schema setup, doctor, etc.). */
@@ -932,21 +965,22 @@ export type EmbeddingDiagnosis =
   | { ok: false; reason: 'missing_env'; model: string; provider: string; recipeId: string; missingEnvVars: string[] };
 
 export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
-  if (_config?.embedding_identity_unverified && !modelOverride) {
+  const config = gw().config;
+  if (config?.embedding_identity_unverified && !modelOverride) {
     return { ok: false, reason: 'unknown_provider', model: 'unconfigured', provider: 'unconfigured', message: unverifiedEmbeddingIdentityError().message };
   }
   // Test-transport fast path: matches the `if (touchpoint === 'chat' &&
   // _chatTransport) return true` shortcut in isAvailable() so tests that
   // install an embed transport stub also pass the preflight without
   // having to configure real provider env vars.
-  if (_embedTransportInstalled) {
-    const modelStr = modelOverride ?? _config?.embedding_model ?? DEFAULT_EMBEDDING_MODEL;
+  if (embedTransportInstalled()) {
+    const modelStr = modelOverride ?? config?.embedding_model ?? DEFAULT_EMBEDDING_MODEL;
     return { ok: true, model: modelStr, provider: '<test-transport>', recipeId: '<test-transport>' };
   }
 
-  if (!_config) return { ok: false, reason: 'no_gateway_config' };
+  if (!config) return { ok: false, reason: 'no_gateway_config' };
 
-  const modelStr = modelOverride ?? _config.embedding_model ?? DEFAULT_EMBEDDING_MODEL;
+  const modelStr = modelOverride ?? config.embedding_model ?? DEFAULT_EMBEDDING_MODEL;
   if (!modelStr) return { ok: false, reason: 'no_model_configured' };
 
   let parsed;
@@ -999,7 +1033,7 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
   // listed models via model_dims, so those must not fail preflight when
   // embedding_dimensions is unset — only genuinely unknown ids do.
   const recipeDeclaredDims = embeddingDimsForModel(recipe, parsed.modelId);
-  if ((isUserProvided || recipeDeclaredDims === 0) && !_config!.embedding_dimensions) {
+  if ((isUserProvided || recipeDeclaredDims === 0) && !config.embedding_dimensions) {
     return {
       ok: false,
       reason: 'user_provided_dims_unset',
@@ -1014,9 +1048,9 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
   // keyless local OpenAI-compatible server, so the override satisfies the
   // key requirement — mirrors instantiateEmbedding's placeholder path.
   const keylessBaseUrl =
-    recipe.implementation === 'native-openai' && !!resolveNativeBaseUrl('openai', _config);
+    recipe.implementation === 'native-openai' && !!resolveNativeBaseUrl('openai', config);
   const missing = required.filter(
-    k => !_config!.env[k] && !(keylessBaseUrl && k === 'OPENAI_API_KEY'),
+    k => !config.env[k] && !(keylessBaseUrl && k === 'OPENAI_API_KEY'),
   );
   if (missing.length > 0) {
     return {
@@ -1057,11 +1091,12 @@ export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string):
   // gateway is "available" for tests that exercise the whole pipeline without
   // configuring real providers. See __setChatTransportForTests /
   // __setEmbedTransportForTests.
-  if (touchpoint === 'chat' && _chatTransport) return true;
+  if (touchpoint === 'chat' && chatTransport()) return true;
 
   if (touchpoint === 'embedding') return diagnoseEmbedding(modelOverride).ok;
 
-  if (!_config) return false;
+  const config = gw().config;
+  if (!config) return false;
   try {
     const modelStr =
       modelOverride
@@ -1085,7 +1120,7 @@ export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string):
     // For openai-compatible without auth requirements (Ollama local), treat as always-available.
     const required = recipe.auth_env?.required ?? [];
     if (required.length === 0) return true;
-    return required.every(k => !!_config!.env[k]);
+    return required.every(k => !!config.env[k]);
   } catch {
     return false;
   }
@@ -1432,11 +1467,12 @@ async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any;
   const cfg = requireConfig();
 
   const cacheKey = `emb:${recipe.id}:${parsed.modelId}:${cfg.base_urls?.[recipe.id] ?? ''}`;
-  const cached = _modelCache.get(cacheKey);
+  const modelCache = gw().modelCache;
+  const cached = modelCache.get(cacheKey);
   if (cached) return { model: cached, recipe, modelId: parsed.modelId };
 
   const model = instantiateEmbedding(recipe, parsed.modelId, cfg);
-  _modelCache.set(cacheKey, model);
+  modelCache.set(cacheKey, model);
   return { model, recipe, modelId: parsed.modelId };
 }
 
@@ -1768,7 +1804,7 @@ async function embedSubBatch(
   try {
     const maxRetries = hasAIInvocationGuard() ? 0 : opts?.maxRetries ?? __budgetStore.getStore()?.providerRetries; // PR 4 (Wave B incremental derivation, transcripts): an embed in a metered page step makes only the attempts it reserved for
     const callTransport = () => invokeAI({ operation: 'gateway.embed', kind: 'embedding', model: `${recipe.id}:${modelId}`,
-      maxInputTokens: embedRequestMaxInputTokens(texts, recipe, modelId), maxOutputTokens: 0, estimatedInputTokens: Math.ceil(texts.reduce((n, text) => n + text.length, 0) / (recipe.touchpoints.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN)) }, () => _embedTransport({
+      maxInputTokens: embedRequestMaxInputTokens(texts, recipe, modelId), maxOutputTokens: 0, estimatedInputTokens: Math.ceil(texts.reduce((n, text) => n + text.length, 0) / (recipe.touchpoints.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN)) }, () => embedTransport()({
       model,
       values: texts,
       providerOptions: providerOpts,
@@ -1799,7 +1835,7 @@ async function embedSubBatch(
     const embeddings: number[][] = result.embeddings.map((e: number[]) => fitMatryoshkaPrefix(recipe, modelId, e, expectedDims)); // PR #5921
     for (const embedding of embeddings) {
       if (Array.isArray(embedding) && embedding.length !== expectedDims) {
-        throw embeddingDimMismatchError(modelId, embedding.length, expectedDims, `gbrain migrate --embedding-model ${getEmbeddingModel()} --embedding-dimensions ${embedding.length}`, { provider: recipe.id, baseUrl: _config?.base_urls?.[recipe.id], defaultBaseUrl: recipe.base_url_default });
+        throw embeddingDimMismatchError(modelId, embedding.length, expectedDims, `gbrain migrate --embedding-model ${getEmbeddingModel()} --embedding-dimensions ${embedding.length}`, { provider: recipe.id, baseUrl: gw().config?.base_urls?.[recipe.id], defaultBaseUrl: recipe.base_url_default });
       }
     }
 
@@ -1850,7 +1886,7 @@ export async function embedQuery(
   const cfg = requireConfig();
   const { recipe, modelId } = await resolveEmbeddingProvider(opts?.embeddingModel ?? getEmbeddingModel());
   const dims = opts?.dimensions ?? cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
-  const key = queryEmbedCacheKey(recipe.id, modelId, cfg.base_urls?.[recipe.id] ?? '', dims, input);
+  const key = queryEmbedCacheKey(recipe.id, modelId, cfg.base_urls?.[recipe.id] ?? '', dims, input, gw().cacheScope);
   const cached = hasAIInvocationGuard() ? undefined : cachedQueryEmbedding(key);
   if (cached) return cached;
   const generation = queryEmbedGeneration();
@@ -2371,11 +2407,12 @@ async function resolveExpansionProvider(modelStr: string): Promise<{ model: any;
   const cfg = requireConfig();
 
   const cacheKey = `exp:${recipe.id}:${parsed.modelId}:${cfg.base_urls?.[recipe.id] ?? ''}`;
-  const cached = _modelCache.get(cacheKey);
+  const modelCache = gw().modelCache;
+  const cached = modelCache.get(cacheKey);
   if (cached) return { model: cached, recipe, modelId: parsed.modelId };
 
   const model = instantiateExpansion(recipe, parsed.modelId, cfg);
-  _modelCache.set(cacheKey, model);
+  modelCache.set(cacheKey, model);
   return { model, recipe, modelId: parsed.modelId };
 }
 
@@ -2517,7 +2554,7 @@ export async function expand(query: string): Promise<string[]> {
   });
 
   try {
-    await discoverBeforeOpenAICall(_config?.expansion_model);
+    await discoverBeforeOpenAICall(gw().config?.expansion_model);
     const requestedModelId = getExpansionModel();
     const { model, recipe, modelId } = await resolveExpansionProvider(requestedModelId);
     const modelLabel = `${recipe.id}:${modelId}`;
@@ -2545,7 +2582,7 @@ export async function expand(query: string): Promise<string[]> {
     const viaText = async (countsAsCall = true): Promise<string[]> => {
       let textResult: Awaited<ReturnType<GenerateTextFn>>;
       try {
-        textResult = await guardedExpansion(modelLabel, _generateTextTransport, {
+        textResult = await guardedExpansion(modelLabel, generateTextTransport(), {
           model,
           abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
           prompt: expansionPrompt,
@@ -2586,7 +2623,7 @@ export async function expand(query: string): Promise<string[]> {
       // generic, so `object` would be `{}`.)
       let result: { object?: unknown; usage?: unknown };
       try {
-        result = await guardedExpansion(modelLabel, _generateObjectTransport, {
+        result = await guardedExpansion(modelLabel, generateObjectTransport(), {
           model,
           schema: ExpansionSchema,
           // Name the schema. On the native-anthropic path the SDK turns the schema
@@ -2620,7 +2657,7 @@ export async function expand(query: string): Promise<string[]> {
       // schema (strict validation), and fall back to the text path if it is
       // rejected at call time so a mis-declared capability never drops expansion.
       try {
-        const result = await guardedExpansion(modelLabel, _generateObjectTransport, {
+        const result = await guardedExpansion(modelLabel, generateObjectTransport(), {
           model,
           schema: ExpansionSchema,
           // Same schema name+description as the native branch above: an
@@ -2663,7 +2700,8 @@ export async function expand(query: string): Promise<string[]> {
   } catch (err) {
     if (isAIInvocationPolicyError(err)) throw err;
     // Expansion is best-effort: on failure, fall back to the original query alone.
-    const normalized = normalizeAIError(err, `expand(${_config?.expansion_model ?? ''})`, redactKeys, gatewayModelNotFoundHint('expansion', _config?.expansion_model ?? ''));
+    const expansionModel = gw().config?.expansion_model ?? '';
+    const normalized = normalizeAIError(err, `expand(${expansionModel})`, redactKeys, gatewayModelNotFoundHint('expansion', expansionModel));
     if (normalized instanceof AIConfigError) {
       console.warn(`[ai.gateway] expansion disabled: ${normalized.message}`);
     }
@@ -2690,7 +2728,7 @@ export async function expand(query: string): Promise<string[]> {
 export async function generateOcrText(imageBytes: Buffer, mime: string): Promise<string> {
   // Unconfigured gateway stays a silent '' no-op (the pre-#4107 isAvailable
   // gate's behavior), never a requireConfig() throw.
-  if (!_config) return '';
+  if (!gw().config) return '';
   const ocrModel = getImageOcrModel();
   // Fail-closed on a misconfigured OCR model (provider without an expansion
   // touchpoint, or unkeyed): '' rather than silently OCRing with the
@@ -2720,7 +2758,7 @@ export async function generateOcrText(imageBytes: Buffer, mime: string): Promise
     recordOnTracker(tracker, { modelId: ocrModelId, requestedModelId: ocrModel, label, reservation, ...usage });
   let result: Awaited<ReturnType<GenerateTextFn>>;
   try {
-    result = await guardedGeneration(ocrModelId, _generateTextTransport, {
+    result = await guardedGeneration(ocrModelId, generateTextTransport(), {
       model,
       maxOutputTokens: OCR_MAX_OUTPUT_TOKENS,
       // v0.42.20.0 (codex) — OCR is a 5th unbounded generateText entry point.
@@ -3295,11 +3333,12 @@ async function resolveChatProvider(modelStr: string): Promise<{ model: any; reci
   const cfg = requireConfig();
 
   const cacheKey = `chat:${recipe.id}:${parsed.modelId}:${cfg.base_urls?.[recipe.id] ?? ''}`;
-  const cached = _modelCache.get(cacheKey);
+  const modelCache = gw().modelCache;
+  const cached = modelCache.get(cacheKey);
   if (cached) return { model: cached, recipe, modelId: parsed.modelId };
 
   const model = instantiateChat(recipe, parsed.modelId, cfg);
-  _modelCache.set(cacheKey, model);
+  modelCache.set(cacheKey, model);
   return { model, recipe, modelId: parsed.modelId };
 }
 
@@ -3539,9 +3578,10 @@ export function toAISDKTools(tools: ChatToolDef[] | undefined): Record<string, a
 }
 
 export async function chat(opts: ChatOpts): Promise<ChatResult> {
-  await discoverBeforeOpenAICall(opts.model ?? _config?.chat_model);
-  const fallbackChain = opts.allowFallback === false ? undefined : _config?.chat_fallback_chain;
-  if (fallbackChain?.length) return chatWithFallback(opts, opts.model ?? getChatModel(), fallbackChain, chat, { onRefusal: _config?.chat_fallback_on_refusal !== false });
+  const config = gw().config;
+  await discoverBeforeOpenAICall(opts.model ?? config?.chat_model);
+  const fallbackChain = opts.allowFallback === false ? undefined : config?.chat_fallback_chain;
+  if (fallbackChain?.length) return chatWithFallback(opts, opts.model ?? getChatModel(), fallbackChain, chat, { onRefusal: config?.chat_fallback_on_refusal !== false });
   const tracker = __budgetStore.getStore() ?? null;
   const modelStrEarly = opts.model ?? getChatModel();
 
@@ -3586,12 +3626,13 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
 
   // Test seam: when a test transport is installed, route through it without
   // touching provider resolution, AI SDK, or any network. See
-  // __setChatTransportForTests. Production paths see _chatTransport === null.
-  if (_chatTransport) {
+  // __setChatTransportForTests. Production paths see no chat transport.
+  const testTransport = chatTransport();
+  if (testTransport) {
     let res: ChatResult | null = null;
     let threw: unknown = null;
     try {
-      res = await invokeAI(chatInvocation('gateway.chat', modelStrEarly, maxOutputTokens), () => _chatTransport!(opts), sdkInvocationUsage);
+      res = await invokeAI(chatInvocation('gateway.chat', modelStrEarly, maxOutputTokens), () => testTransport(opts), sdkInvocationUsage);
       // #4218 success boundary (test-transport lane): same accounting call as
       // the production path below so transport-driven tests exercise it.
       recordChatUsage({
@@ -3747,7 +3788,7 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
     ? jsonSchemaOutput(opts.responseSchema)
     : undefined;
 
-  const generate = (out: typeof output) => guardedGeneration(modelStr, _generateTextTransport, {
+  const generate = (out: typeof output) => guardedGeneration(modelStr, generateTextTransport(), {
     model,
     system: systemParam,
     messages: toModelMessages(repairToolPairing(opts.messages), cacheControlValue) as any,
@@ -4296,13 +4337,8 @@ export interface RerankResult {
  * install a stub via `__setRerankTransportForTests` to exercise the call-site
  * pipeline without hitting the network. Production never reads the override.
  */
-type RerankTransport = (
-  url: string,
-  init: RequestInit,
-) => Promise<Response>;
-let _rerankTransport: RerankTransport | null = null;
-export function __setRerankTransportForTests(fn: RerankTransport | null): void {
-  _rerankTransport = fn;
+export function __setRerankTransportForTests(fn: RerankTransport | null, engine?: object): void {
+  transportsOf(engine).rerank = fn;
 }
 
 const DEFAULT_RERANK_TIMEOUT_MS = 5000;
@@ -4339,7 +4375,7 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   const cfg = requireConfig();
   if (tp.wire_format === 'typesafe-systemone') { // System One reranker: packed score questions via the decide core (#5178 contract)
     if (recipe.authPresent && !recipe.authPresent(cfg.env)) { noKeyOnce(modelStr, 'TYPESAFE_API_KEY', input.query, input.documents.length); throw new RerankError(`Reranker ${modelStr} needs TYPESAFE_API_KEY (not set) — rerank skipped, results pass through unreranked.`, 'no_key'); }
-    return rerankViaDecide(input, { model: modelStr, modelId: parsed.modelId, maxPayloadBytes: tp.max_payload_bytes, defaultTimeoutMs: DEFAULT_RERANK_TIMEOUT_MS, tracker, transport: _rerankTransport ?? ((u, init) => fetch(u, init)),
+    return rerankViaDecide(input, { model: modelStr, modelId: parsed.modelId, maxPayloadBytes: tp.max_payload_bytes, defaultTimeoutMs: DEFAULT_RERANK_TIMEOUT_MS, tracker, transport: rerankTransport(),
       url: `${applyOpenAICompatConfig(recipe, cfg).baseURL.replace(/\/$/, '')}${tp.path ?? '/systemone'}`, headers: { ...authToHeaders(applyResolveAuth(recipe, cfg, 'reranker')), 'Content-Type': 'application/json' } });
   }
   // v0.48.2 `no_key` preflight — fail-open, audit-only, once per process per
@@ -4448,7 +4484,7 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
     });
   };
   try {
-    const transport: RerankTransport = _rerankTransport ?? ((u, init) => fetch(u, init));
+    const transport: RerankTransport = rerankTransport();
     const maxInputTokens = rerankRequestMaxInputTokens(input.query, input.documents);
     const resp = await invokeAI({ operation: 'gateway.rerank', kind: 'rerank', model: modelStr, maxInputTokens, estimatedInputTokens: Math.ceil(rerankChars / (recipe.touchpoints.embedding?.chars_per_token ?? 4)) }, () => transport(url, {
       method: 'POST',
@@ -4511,10 +4547,9 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
 
 // ---- Decide (System One; logic in src/core/ai/decide/) ----
 
-let _decideTransport: RerankTransport | null = null;
 /** Test seam for System One decide requests (same shape as the rerank seam). */
-export function __setDecideTransportForTests(fn: RerankTransport | null): void { _decideTransport = fn; }
-export function decideTransport(): RerankTransport { return _decideTransport ?? ((u, init) => fetch(u, init)); }
+export function __setDecideTransportForTests(fn: RerankTransport | null, engine?: object): void { transportsOf(engine).decide = fn; }
+export function decideTransport(): RerankTransport { return gw().transports.decide ?? processState.transports.decide ?? ((u, init) => fetch(u, init)); }
 /** One logical typed decision; see src/core/ai/decide/index.ts and docs/architecture/decide.md. */
 export function decide(req: DecideRequest, ctx: DecideContext): Promise<DecideResult> { return runDecide(req, ctx); }
 

@@ -33,6 +33,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { engineInScope, engineOwned } from '../engine-scope.ts';
 import { canonicalLookup, priceAtPromptSize } from '../model-pricing.ts';
 import { priceFor, type PricingOverrides } from '../budget/reservation-cost.ts';
 
@@ -98,19 +99,32 @@ export function withChatCallMeter<T>(meter: ChatCallMeter, fn: () => T): T {
  * sink, and once that engine disconnected every later record was swallowed
  * by a closed engine. Registration now returns a deregister handle; the
  * engine factory calls it on engine.disconnect, restoring the previous live
- * sink. Records route to the TOP live entry (still single-writer —
- * simultaneous multi-brain attribution stays documented best-effort).
+ * sink. A record made inside an engine's scope (engine-scope.ts; every
+ * operation handler runs in one) goes to the sink registered for that engine,
+ * so two brains in one process each keep their own ledger; a record outside a
+ * scope, or for an engine with no sink of its own, goes to the TOP live entry.
  */
-interface SinkEntry { sink: ChatUsageSink }
+interface SinkEntry { sink: ChatUsageSink; engine?: object }
 let _sinks: SinkEntry[] = [];
+const _sinksByEngine = new WeakMap<object, SinkEntry>();
 
-/** Register a usage sink. Returns an idempotent deregister handle. */
-export function registerChatUsageSink(sink: ChatUsageSink): () => void {
-  const entry: SinkEntry = { sink };
+/** Register a usage sink, as `engine`'s own when given. Returns an idempotent deregister handle. */
+export function registerChatUsageSink(sink: ChatUsageSink, engine?: object): () => void {
+  const entry: SinkEntry = engine ? { sink, engine } : { sink };
   _sinks.push(entry);
+  if (engine) _sinksByEngine.set(engine, entry);
   return () => {
     _sinks = _sinks.filter((e) => e !== entry);
+    if (engine && _sinksByEngine.get(engine) === entry) _sinksByEngine.delete(engine);
   };
+}
+
+/** The sink a record goes to: the scoped engine's own while it is registered, else the top live entry. */
+function liveSink(): ChatUsageSink | null {
+  const engine = engineInScope();
+  const own = engine ? engineOwned(_sinksByEngine, engine) : undefined;
+  if (own && _sinks.includes(own)) return own.sink;
+  return _sinks.length > 0 ? _sinks[_sinks.length - 1]!.sink : null;
 }
 
 /**
@@ -173,7 +187,7 @@ export function recordChatUsage(input: {
 }): void {
   const meter = __chatMeterStore.getStore();
   if (meter) meter.calls++;
-  const sink = _sinks.length > 0 ? _sinks[_sinks.length - 1]!.sink : null;
+  const sink = liveSink();
   const pricedMeter = meter && meter.cost_usd !== undefined ? meter : null;
   if (!sink && !pricedMeter) return;
   try {
@@ -210,8 +224,8 @@ export function recordChatUsage(input: {
 /**
  * Standard sink: INSERT into chat_usage_log via the engine's executeRaw.
  * Positional parameters only — no JSONB, no string-built SQL. Registered by
- * the engine factory (last engine created wins; multi-brain processes log
- * against the most recently created engine — documented best-effort).
+ * the engine factory as the engine's own sink, so a call scoped to the engine
+ * logs there; a call outside any scope logs to the most recently created engine.
  */
 export function makeEngineChatUsageSink(engine: {
   executeRaw: (sql: string, params?: unknown[]) => Promise<unknown>;

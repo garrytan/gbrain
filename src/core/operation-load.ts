@@ -11,6 +11,7 @@
  */
 import type { Operation } from './ops/contract.ts';
 import { withOutputRedaction } from './search/output-redaction.ts';
+import { withEngineScope } from './engine-scope.ts';
 import { OPERATION_LOADERS } from './operation-loaders.generated.ts';
 
 // ---------------------------------------------------------------------------
@@ -123,7 +124,17 @@ export function finalizeOperation(op: Operation): void {
   if (op.area === undefined && OP_AREAS[op.name] !== undefined) {
     op.area = OP_AREAS[op.name];
   }
-  op.handler = withOutputRedaction(op);
+  op.handler = inEngineScope(withOutputRedaction(op));
+}
+
+/**
+ * The handler runs inside its engine's scope (engine-scope.ts), so the gateway
+ * configuration, the chat-usage sink and the query-embedding cache it reaches
+ * are the ones recorded for `ctx.engine`, when a host recorded any; a process
+ * with one engine and no per-engine record is unchanged.
+ */
+function inEngineScope(handler: Operation['handler']): Operation['handler'] {
+  return (ctx, params) => ctx.engine ? withEngineScope(ctx.engine, () => handler(ctx, params)) : handler(ctx, params);
 }
 
 /** The finalized operation named `name`, loading only the module that defines it. */
