@@ -146,3 +146,20 @@ test('a job at its deadline publishes without waiting and defers the write', asy
     expect(states[0].state).not.toBe('committed');
   });
 }, 60_000);
+
+// B336: the old 30-second concept wait failed after a paid narrative even
+// though its one accepted publication committed shortly afterwards.
+test('an explicit concept wait keeps the same admitted write through a writer held beyond 30 seconds', async () => {
+  await fixture(async (engine, sourceId) => {
+    const authority = (await maintenancePreflight(engine, sourceId, undefined, { publishWaitMs: 45_000 }))!;
+    const lock = (await acquireWorktree((await getWorktreeBinding(engine, sourceId))!, 1000))!;
+    const release = setTimeout(() => { void lock.release(); }, 32_000);
+    try {
+      const receipt = await publishMaintenancePage(engine, authority, 'wiki/concept-long-wait', page(9), { expectedRevision: null });
+      expect((receipt.write_request as { state: string }).state).toBe('committed');
+      const [count] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM persistence_requests WHERE source_id=$1 AND slug='wiki/concept-long-wait'", [sourceId]);
+      expect(Number(count.n)).toBe(1);
+      expect((await engine.getPage('wiki/concept-long-wait', { sourceId }))?.compiled_truth).toContain('Maintenance output 9.');
+    } finally { clearTimeout(release); await lock.release(); }
+  });
+}, 60_000);

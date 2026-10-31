@@ -33,12 +33,15 @@ export function maintenancePublishWaitMs(): number { return testWaitMs ?? MAINTE
 
 export class MaintenanceWriteWait {
   private pending = false;
-  constructor(private readonly deadlineAtMs: number | null = null, private readonly now: () => number = Date.now) {}
+  constructor(private readonly deadlineAtMs: number | null = null, private readonly now: () => number = Date.now,
+    private readonly publishWaitMs = MAINTENANCE_WRITE_WAIT_MS) {
+    if (!Number.isInteger(publishWaitMs) || publishWaitMs <= 0 || publishWaitMs > 300_000) throw new RangeError('maintenance_publish_wait_invalid');
+  }
 
   /** The wait for the job's next publish. */
   ms(): number {
     if (this.pending) return 0;
-    const base = testWaitMs ?? MAINTENANCE_WRITE_WAIT_MS;
+    const base = testWaitMs ?? this.publishWaitMs;
     return this.deadlineAtMs == null ? base : Math.max(0, Math.min(base, this.deadlineAtMs - this.now()));
   }
 

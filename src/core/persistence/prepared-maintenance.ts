@@ -82,7 +82,7 @@ export async function maintenanceCallerPreflight(engine: BrainEngine, sourceId: 
 }
 
 export async function maintenancePreflight(engine: BrainEngine, sourceId: string, root?: string,
-  opts: { deadlineAtMs?: number | null } = {}): Promise<MaintenanceAuthority | null> {
+  opts: { deadlineAtMs?: number | null; publishWaitMs?: number } = {}): Promise<MaintenanceAuthority | null> {
   if (!await managedPersistenceEnabled(engine)) return null;
   assertPersistenceAccepting(engine);
   const job = currentSubmissionAuthority();
@@ -106,7 +106,7 @@ export async function maintenancePreflight(engine: BrainEngine, sourceId: string
   // (its local_path is the connector's state directory, not a canonical checkout).
   if (!binding && isConnectorSourceKind(source.kind)) {
     writer.databaseOnlyReason = 'connector_database';
-    return { writer, binding: null, wait: new MaintenanceWriteWait(opts.deadlineAtMs) };
+    return { writer, binding: null, wait: new MaintenanceWriteWait(opts.deadlineAtMs, Date.now, opts.publishWaitMs) };
   }
   const writeThrough = !/^(false|0|off|no)$/i.test(await engine.getConfig('sync.write_through') ?? 'true');
   const configuredRoot = source.local_path || (sourceId === 'default' ? await engine.getConfig('sync.repo_path') : null);
@@ -124,7 +124,7 @@ export async function maintenancePreflight(engine: BrainEngine, sourceId: string
   }
   if (!writeThrough) writer.databaseOnlyReason = 'disabled_by_config';
   else if (!binding) writer.databaseOnlyReason = 'no_repo_configured';
-  return { writer, binding: writeThrough ? binding : null, wait: new MaintenanceWriteWait(opts.deadlineAtMs) };
+  return { writer, binding: writeThrough ? binding : null, wait: new MaintenanceWriteWait(opts.deadlineAtMs, Date.now, opts.publishWaitMs) };
 }
 
 async function validateMaintenance(engine: BrainEngine, authority: MaintenanceAuthority, slug: string): Promise<void> {

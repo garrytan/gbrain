@@ -159,6 +159,11 @@ Output ONLY the summary paragraph (3-5 sentences). No headers, no JSON,
 no preamble. Write in plain English, present-tense voice. Synthesize what
 the atoms collectively SAY about the concept; don't enumerate the atoms.`;
 
+// Concept narratives are already paid for before admission. Keep waiting on
+// that same accepted publication through ordinary writer queue pressure.
+// The shared pending short-circuit, outer job deadline and dollar caps remain.
+export const CONCEPT_PUBLISH_WAIT_MS = 180_000;
+
 export async function runPhaseSynthesizeConcepts(
   engine: BrainEngine,
   opts: SynthesizeConceptsOpts = {},
@@ -319,7 +324,7 @@ export async function runPhaseSynthesizeConcepts(
   // #5484: a managed brain refuses the legacy importFromContent writer. Claim
   // maintenance authority before any model spend so a missing canonical owner
   // fails fast; null on an unmanaged brain.
-  const maintenance = opts.dryRun ? null : await maintenancePreflight(engine, opts.sourceId ?? 'default', opts.brainDir);
+  const maintenance = opts.dryRun ? null : await maintenancePreflight(engine, opts.sourceId ?? 'default', opts.brainDir, { publishWaitMs: CONCEPT_PUBLISH_WAIT_MS });
   const conceptFiles = await derivedWriteThrough(engine, 'synthesize_concepts', opts.sourceId ?? 'default', { managed: maintenance !== null, dryRun: opts.dryRun ?? false });
   // Managed publication outcomes, kept out of `failures` (LLM fallback). A
   // deferred concept moved under a concurrent writer and is retried next run;
@@ -583,6 +588,7 @@ export async function runPhaseSynthesizeConcepts(
       (skippedFileDrift.length > 0 ? ` (${skippedFileDrift.length} skipped before synthesis: canonical file differs from the database; ${driftActions.join('; ')})` : ''),
     details: {
       concepts_written: conceptsWritten,
+      publish_wait_ms: CONCEPT_PUBLISH_WAIT_MS,
       tier_counts: tierCounts,
       synthesis_mode_counts: synthesisModeCounts,
       groups_found: atomGroups.length,
