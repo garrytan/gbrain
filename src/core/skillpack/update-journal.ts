@@ -92,12 +92,14 @@ export function journalDir(id: string, root = backupsRoot()): string {
     throw new OperationError('skillpack_journal_not_found', `'${id}' is not a skillpack backup id.`,
       'List the backups with gbrain skillpack restore --list.');
   }
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- id matched the backup-id pattern above (timestamp digits, T, Z, '-' and six hex)
   return join(root, id);
 }
 
 export function writeJournal(journal: Journal, root = backupsRoot()): void {
   const dir = journalDir(journal.id, root);
   mkdirSync(dir, { recursive: true });
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- dir came from journalDir, which validated the id
   const path = join(dir, 'journal.json');
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   writeFileSync(tmp, JSON.stringify(journal, null, 2) + '\n', { mode: 0o600 });
@@ -105,6 +107,7 @@ export function writeJournal(journal: Journal, root = backupsRoot()): void {
 }
 
 export function readJournal(id: string, root = backupsRoot()): Journal {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- journalDir validated the id
   const path = join(journalDir(id, root), 'journal.json');
   if (!existsSync(path)) {
     throw new OperationError('skillpack_journal_not_found', `No skillpack backup '${id}' under ${root}.`,
@@ -150,6 +153,7 @@ export function pruneJournals(root = backupsRoot(), now = Date.now()): string[] 
 /** Copy `target` into the journal's backup tree and verify the copy hashes to `expected`. */
 export function backupFile(journalId: string, rel: string, target: string, expected: string, root = backupsRoot()): string {
   const backupRel = `files/${rel}`;
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- rel passed confinedSkillChildWrite during classification; dest stays under the validated journal dir
   const dest = join(journalDir(journalId, root), backupRel);
   mkdirSync(dirname(dest), { recursive: true });
   copyFileSync(target, dest);
@@ -161,6 +165,7 @@ export function backupFile(journalId: string, rel: string, target: string, expec
 export function replaceFile(target: string, bytes: Buffer): void {
   assertLegacySkillFilesystemWrite(target);
   mkdirSync(dirname(target), { recursive: true });
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- target passed assertLegacySkillFilesystemWrite; the temp name is pid + UUID in the same directory
   const tmp = join(dirname(target), `.gbrain-skillpack-${process.pid}-${randomUUID()}.tmp`);
   writeFileSync(tmp, bytes);
   try {
@@ -183,6 +188,7 @@ export function undoFile(journalId: string, skillsRoot: string, file: JournalFil
     unlinkSync(target);
     return true;
   }
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- file.backup is read from the user's own journal and its bytes are hash-checked against file.pre before any write
   const bytes = readFileSync(join(journalDir(journalId, root), file.backup));
   if (sha256(bytes) !== file.pre) {
     throw new OperationError('skillpack_backup_corrupt', `The backup of ${file.rel} in ${journalId} does not hash to the journal's pre-update hash.`,
