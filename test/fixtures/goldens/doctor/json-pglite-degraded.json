@@ -2298,7 +2298,7 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
-          "message": "Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: life/events/ atoms/ concepts/ extracts/ dream-cycle-summaries/).",
+          "message": "Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: life/events/ atoms/ concepts/ extracts/ dream-cycle-summaries/ reports/drift-).",
           "name": "undeclared_db_only_pages",
           "status": "ok"
         },

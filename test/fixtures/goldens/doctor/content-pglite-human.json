@@ -191,7 +191,7 @@
       "  [INFO] cycle_freshness: No full cycle yet for 'default', 'notes': they hold no pages or only pages from the last 24h, so there is nothing to consolidate yet.",
       "  [OK] content_hash_duplicates: No same-source content-hash duplicate groups",
       "  [OK] code_chunk_metadata: All code-page chunks carry symbol metadata",
-      "  [OK] undeclared_db_only_pages: Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: life/events/ atoms/ concepts/ extracts/ dream-cycle-summaries/).",
+      "  [OK] undeclared_db_only_pages: Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: life/events/ atoms/ concepts/ extracts/ dream-cycle-summaries/ reports/drift-).",
       "  [OK] db_only_collector_collision: No configured collectors declare output paths",
       "  [OK] managed_sync_latency: No commit→searchable samples in the last 24 h (no managed sync imported a new commit).",
       "  [INFO] commit_notifier: sync.on_commit is off; residents still run explicit sync requests. notifier for default: none running; idle; notifier for notes: none running; idle.",
