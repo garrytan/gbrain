@@ -254,7 +254,7 @@ export function verbError(
 }
 
 export interface ParamDef {
-  type: 'string' | 'number' | 'boolean' | 'object' | 'array';
+  type: 'string' | 'number' | 'integer' | 'boolean' | 'object' | 'array';
   required?: boolean;
   description?: string;
   default?: unknown;

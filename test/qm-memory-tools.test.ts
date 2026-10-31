@@ -32,7 +32,12 @@ import { __resetHotMemoryCacheForTests, getBrainHotMemoryMeta } from '../src/cor
 import { addMember, bindCredential } from '../src/core/access/members.ts';
 import { attestRightOf, linkedMember, linkMember } from '../src/core/access/actor.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { boundFactLines, memoryWriteRequestId, plainFactText, MEMORY_RECALL_MAX_CHARS } from '../src/core/ops/qm-memory.ts';
+import { boundFactLines, isoDate, memoryWriteRequestId, plainFactText, MEMORY_RECALL_MAX_CHARS } from '../src/core/ops/qm-memory.ts';
+import { mintLegacyToken } from '../src/core/token-mint.ts';
+import { startHttpTransport } from '../src/mcp/http-transport.ts';
+import { RateLimiter } from '../src/mcp/rate-limit.ts';
+import { BEHAVIOR_CHANGES } from '../src/core/behavior-change-notice.ts';
+import { withTrustPromotion } from '../src/core/persistence/context.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -82,6 +87,33 @@ describe('memory_recall text bounds (pure)', () => {
     expect(plainFactText('#1 priority is the harbor')).toBe('#1 priority is the harbor');
   });
 
+  test('every Unicode line break and control character becomes a space, so one fact is always one line', () => {
+    const breaks = ['\u0085', '\u2028', '\u2029', '\u001b[31m', '\u0007', '\u009b', '\r', '\u000b', '\u000c', '\u007f', '\u0000'];
+    for (const b of breaks) {
+      const out = plainFactText('harbor' + b + '## ledger' + b + 'notes');
+      expect(out).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/);
+      expect(out.startsWith('harbor ')).toBe(true);
+      expect(out.endsWith('notes')).toBe(true);
+    }
+    expect(plainFactText('a\u2028## heading\u0085---\u0085b')).toBe('a heading b');
+  });
+
+  test('dates render from their own year, month and day: years 1-99 are never read as 19xx or 20xx', () => {
+    expect(isoDate('0050-03-01 00:00:00+00')).toBe('0050-03-01');
+    expect(isoDate('0005-06-07 12:00:00+00')).toBe('0005-06-07');
+    const early = new Date(Date.UTC(2000, 0, 1));
+    early.setUTCFullYear(50, 2, 1);
+    expect(isoDate(early)).toBe('0050-03-01');
+    expect(isoDate(new Date(Date.UTC(2026, 9, 30, 23, 59)))).toBe('2026-10-30');
+    expect(isoDate(null)).toBe('undated');
+    expect(isoDate('not a date')).toBe('undated');
+  });
+
+  test('the C1 behavior-change row no longer says forget and forget_fact are not attestable; the D row discloses the audience refusal', () => {
+    expect(String(BEHAVIOR_CHANGES.find(r => r.id === 'qm_attested_actor_gst359')!.text)).not.toMatch(/forget/);
+    expect(String(BEHAVIOR_CHANGES.find(r => r.id === 'qm_memory_provider_gst359')!.text)).toContain('audience_not_supported');
+  });
+
   test('a database failure while re-resolving a stored actor is rethrown, never read as unlinked or as no attest right', async () => {
     const failing = (code: string, message: string) => ({ executeRaw: async () => { throw Object.assign(new Error(message), { code }); } }) as never;
     const principal = { principal: { kind: 'oauth_client', id: 'c1' } } as never;
@@ -117,7 +149,7 @@ for (const kind of testBackends()) {
     const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
     const tokens: Record<string, string> = {};
     const verify = async (bearer: string) => await provider().verifyAccessToken(bearer) as unknown as AuthInfo;
-    type Who = { token: string; actor?: string };
+    type Who = { token: string; actor?: string; audience?: string };
     const alice: Who = { token: 'qm', actor: ALICE_ID };
     const bob: Who = { token: 'qm', actor: BOB_ID };
     const carol: Who = { token: 'qm', actor: CAROL_ID };
@@ -125,7 +157,7 @@ for (const kind of testBackends()) {
     async function call(as: Who, op: string, params: Record<string, unknown>, extra: { writeWaitMs?: number } = {}) {
       const out: ToolResult = await dispatchToolCall(engine, op, { ...params }, {
         remote: true, transport: 'http', auth: await verify(tokens[as.token]!), sourceId: SRC, takesHoldersAllowList: ['world'],
-        ...(as.actor !== undefined ? { actor: { header: as.actor } } : {}), ...extra,
+        ...(as.actor !== undefined || as.audience !== undefined ? { actor: { header: as.actor, ...(as.audience !== undefined ? { audience: as.audience } : {}) } } : {}), ...extra,
         metaHook: (name, ctx) => getBrainHotMemoryMeta(name, ctx),
       });
       const text = out.content.map(c => c.text).join('\n');
@@ -158,7 +190,15 @@ for (const kind of testBackends()) {
       const bobKey = await register('bob');
       await bindCredential(engine, { kind: 'client', id: bobKey.id }, { member: 'bob-example' });
       const plain = await register('plain');
-      for (const [name, c] of [['qm', qm], ['bob', bobKey], ['plain', plain]] as const) tokens[name] = (await provider().exchangeClientCredentials(c.id, c.secret)).access_token;
+      const qmDefault = await register('qmdefault');
+      await bindCredential(engine, { kind: 'client', id: qmDefault.id }, { attestActor: 'qm' });
+      for (const [name, c] of [['qm', qm], ['bob', bobKey], ['plain', plain], ['qmdefault', qmDefault]] as const) tokens[name] = (await provider().exchangeClientCredentials(c.id, c.secret)).access_token;
+      const legacy = await mintLegacyToken(engine, { name: 'qm-mem-legacy-' + randomUUID().slice(0, 8), scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [SRC] });
+      await bindCredential(engine, { kind: 'token', id: legacy.id }, { attestActor: 'qm', attestOps: ATTEST_OPS });
+      tokens.legacy = legacy.token;
+      const legacyRead = await mintLegacyToken(engine, { name: 'qm-mem-legacy-ro-' + randomUUID().slice(0, 8), scopes: ['read'], takesHolders: ['world'], sourceGrant: [SRC] });
+      await bindCredential(engine, { kind: 'token', id: legacyRead.id }, { attestActor: 'qm', attestOps: ATTEST_OPS });
+      tokens.legacyRead = legacyRead.token;
       await linkMember(engine, 'alice-example', 'qm', ALICE_ID);
       await linkMember(engine, 'bob-example', 'qm', BOB_ID);
       await linkMember(engine, 'carol-example', 'qm', CAROL_ID);
@@ -386,6 +426,143 @@ for (const kind of testBackends()) {
       expect(viaFactOp.isError).toBe(false);
       expect(await active(second.structured!.fact_ids[0])).toBe(false);
     }, 120_000);
+
+    test('a request carrying x-qm-audience is refused before any work, with or without the actor header (wave 2 is not served yet)', async () => {
+      const before = await factRows('canaryaudience');
+      for (const as of [{ ...alice, audience: 'WyJVMEJPQiJd' }, { token: 'qm', audience: 'WyJVMEJPQiJd' }, { token: 'bob', audience: '' }, { token: 'plain', audience: 'x' }] as Who[]) {
+        for (const [op, args] of [['memory_recall', { query: 'budget ledger' }], ['memory_write', { facts: [{ fact: 'Audience write canaryaudience', provenance: 'turn 1' }], idempotency_key: randomUUID() }],
+          ['get_page', { slug: ACME }], ['forget', { id: '1' }]] as const) {
+          const out = await call(as, op, args);
+          expect({ op, isError: out.isError, code: out.json.code, reason: out.json.reason }).toEqual({ op, isError: true, code: 'actor_not_attested', reason: 'audience_not_supported' });
+          expect(out.structured?.error).toMatchObject({ code: 'actor_not_attested', reason: 'audience_not_supported' });
+          expect(out.all).not.toContain('canary');
+        }
+      }
+      expect(await factRows('canaryaudience')).toEqual(before);
+    }, 60_000);
+
+    test('the legacy bearer transport refuses x-qm-audience on every method before any work, and its scope refusal of a memory tool carries structuredContent.error', async () => {
+      const server = await startHttpTransport({ port: 0, engine, surface: 'full', limiters: {
+        ip: new RateLimiter({ limit: 10_000, windowMs: 60_000, lruCap: 100 }),
+        token: new RateLimiter({ limit: 10_000, windowMs: 60_000, lruCap: 100 }),
+      } });
+      try {
+        const post = async (token: string, headers: Record<string, string>, body: Record<string, unknown>) => {
+          const res = await fetch('http://127.0.0.1:' + server.port + '/mcp', {
+            method: 'POST', headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json', ...headers },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 7, ...body }),
+          });
+          return await res.json() as { result?: Record<string, any>; error?: { code: number; message: string; data?: Record<string, unknown> } };
+        };
+        const recallCall = { method: 'tools/call', params: { name: 'memory_recall', arguments: { query: 'budget ledger' } } };
+        for (const headers of [{ 'x-qm-actor': ALICE_ID, 'x-qm-audience': 'WyJVMEJPQiJd' }, { 'X-QM-Audience': 'WyJVMEJPQiJd' }] as Array<Record<string, string>>) {
+          const called = await post(tokens.legacy!, headers, recallCall);
+          expect(called.result!.isError).toBe(true);
+          expect(called.result!.structuredContent.error).toMatchObject({ code: 'actor_not_attested', reason: 'audience_not_supported' });
+          expect(JSON.stringify(called)).not.toContain('canary');
+          for (const method of ['tools/list', 'resources/list', 'resources/read']) {
+            const out = await post(tokens.legacy!, headers, { method, params: method === 'resources/read' ? { uri: 'gbrain://capabilities' } : {} });
+            expect(out.result).toBeUndefined();
+            expect(out.error!.data).toMatchObject({ code: 'actor_not_attested', reason: 'audience_not_supported' });
+          }
+        }
+        expect(JSON.stringify(await post(tokens.legacy!, { 'x-qm-actor': ALICE_ID }, recallCall))).toContain('canary');
+        const denied = await post(tokens.legacyRead!, { 'x-qm-actor': ALICE_ID }, { method: 'tools/call', params: { name: 'memory_write', arguments: { facts: [{ fact: 'x', provenance: 'y' }], idempotency_key: randomUUID() } } });
+        expect(denied.result!.isError).toBe(true);
+        expect(denied.result!.structuredContent.error).toMatchObject({ code: 'insufficient_scope' });
+      } finally {
+        server.stop(true);
+      }
+    }, 60_000);
+
+    test('attested and member-bound forget judge ownership first: a fact off the caller\'s own member page is not_found and files no owner proposal', async () => {
+      await engine.insertFact({ fact: 'Acme harbor charter is confirmed canaryconfirmed', kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'world' }, { source_id: SRC });
+      const [confirmed] = await factRows('canaryconfirmed');
+      await engine.transaction(tx => withTrustPromotion(tx, 'user_confirmed', () => tx.executeRaw("UPDATE facts SET trust_tier = 'user_confirmed' WHERE id = $1", [confirmed!.id])));
+      const proposals = async () => Number((await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM trust_proposals'))[0]!.n);
+      const start = await proposals();
+      const a = await write(alice, [{ fact: 'Alice tends the harbor lamps canaryownforget', provenance: 'turn 20' }]);
+      const bobOwn = await call({ token: 'bob' }, 'remember', { fact: 'Bob tends the harbor bell canarybobforget', provenance: 'turn 20' });
+      expect(bobOwn.isError).toBe(false);
+      const [bobRow] = await factRows('canarybobforget');
+      expect(bobRow).toMatchObject({ visibility: 'private', source_markdown_slug: 'memory/members/bob-example' });
+      for (const as of [alice, { token: 'bob' }] as Who[]) {
+        for (const [op, id] of [['forget', String(confirmed!.id)], ['forget_fact', Number(confirmed!.id)]] as const) {
+          const out = await call(as, op, { id });
+          expect({ isError: out.isError, code: out.json.code }).toEqual({ isError: true, code: op === 'forget' ? 'not_found' : 'fact_not_found' });
+        }
+      }
+      expect(await proposals()).toBe(start);
+      const crossed = await call({ token: 'bob' }, 'forget', { id: a.structured!.fact_ids[0] });
+      expect(crossed.json.code).toBe('not_found');
+      const own = await call({ token: 'bob' }, 'forget', { id: String(bobRow!.id) });
+      expect(own.isError).toBe(false);
+      const active = async (id: unknown) => (await engine.executeRaw<{ expired_at: unknown }>('SELECT expired_at FROM facts WHERE id = $1', [Number(id)]))[0]?.expired_at === null;
+      expect(await active(bobRow!.id)).toBe(false);
+      expect(await active(a.structured!.fact_ids[0])).toBe(true);
+      expect(await active(confirmed!.id)).toBe(true);
+    }, 120_000);
+
+    test('the default attested operations read the person\'s own write receipt; another person and the bare client get not_found', async () => {
+      const qmd = (actor?: string): Who => ({ token: 'qmdefault', ...(actor ? { actor } : {}) });
+      const out = await write(qmd(ALICE_ID), [{ fact: 'Alice books the night ferry canarydefaultreceipt', provenance: 'turn 21' }], randomUUID(), { writeWaitMs: 0 });
+      expect(out.structured!.status).toBe('pending');
+      const id = out.structured!.request_id;
+      const own = await call(qmd(ALICE_ID), 'get_write_request', { request_id: id });
+      expect(own.isError).toBe(false);
+      expect(own.all).toContain(id);
+      for (const as of [qmd(BOB_ID), qmd()]) {
+        const other = await call(as, 'get_write_request', { request_id: id });
+        expect({ isError: other.isError, code: other.json.code }).toEqual({ isError: true, code: 'not_found' });
+      }
+    }, 60_000);
+
+    test('valid_from is a strict ISO date or time in years 0001-9999, checked for the whole batch before any write, so the key is never poisoned', async () => {
+      const key = 'qm-poison-' + randomUUID();
+      const good = { fact: 'Alice signs the harbor lease canarypoisongood', provenance: 'turn 22' };
+      for (const valid_from of ['10000-01-01', '2026-02-30', 'March 3, 2026', '2026-10-30T25:00:00Z', '0000-01-01', '+010000-01-01T00:00:00Z', '2026-10-30 10:00', '20261030']) {
+        const out = await write(alice, [good, { fact: 'Alice leaves canarypoisonbad', provenance: 'turn 22', valid_from }], key);
+        expect({ valid_from, isError: out.isError, code: out.json.code }).toEqual({ valid_from, isError: true, code: 'invalid_params' });
+        const viaRemember = await call({ token: 'bob' }, 'remember', { fact: 'Bob note canarypoisonremember', provenance: 'turn 22', valid_from });
+        expect({ valid_from, code: viaRemember.json.code, message: viaRemember.json.message }).toEqual({ valid_from, code: 'invalid_params', message: expect.stringContaining('valid_from') });
+      }
+      expect(await factRows('canarypoison')).toHaveLength(0);
+      const saved = await write(alice, [good], key);
+      expect(saved.structured!.status).toBe('committed');
+      for (const valid_from of ['0001-01-01', '9999-12-31', '2026-10-30T10:00:00Z', '2026-10-30T10:00:00.123+05:30', '2024-02-29']) {
+        const ok = await write(alice, [{ fact: 'Valid date ' + valid_from + ' canaryvalidfrom', provenance: 'turn 23', valid_from }]);
+        expect({ valid_from, status: ok.structured?.status ?? ok.text }).toEqual({ valid_from, status: 'committed' });
+      }
+      await write(alice, [{ fact: 'Alice found the old harbor stone canaryyearfifty', provenance: 'turn 24', valid_from: '0050-03-01' }]);
+      const line = (await recall(alice, 'old harbor stone')).text.split('\n').find(l => l.includes('canaryyearfifty'));
+      expect(line).toMatch(/\(0050-03-01; fact\)$/);
+    }, 120_000);
+
+    test('caller provenance with control characters or its own qm: prefix is refused, and duplicate facts in one call are one fact in the reply', async () => {
+      for (const provenance of ['qm:U0EVE; turn 1', 'QM:U0EVE', ' qm:spoof', 'turn\u0000one', 'turn\u001b[2Jone', 'turn\u0085one', 'turn\u2028one', 'turn\none']) {
+        const out = await write(alice, [{ fact: 'Provenance check canaryprov', provenance }]);
+        expect({ provenance, code: out.json.code }).toEqual({ provenance, code: 'invalid_params' });
+      }
+      expect(await factRows('canaryprov')).toHaveLength(0);
+      const dup = await write(alice, [{ fact: 'Alice repeats herself canarydup', provenance: 'turn 25' }, { fact: 'Alice repeats herself canarydup', provenance: 'turn 26' }]);
+      expect(dup.structured!.status).toBe('committed');
+      expect(dup.structured!.fact_ids).toHaveLength(1);
+      expect(dup.out.content).toEqual([{ type: 'text', text: 'Saved 1 fact(s).' }]);
+      expect(await factRows('canarydup')).toHaveLength(1);
+    }, 60_000);
+
+    test('an unlinked person\'s recall still validates its arguments first, and a surface-hidden memory tool refuses with structuredContent.error', async () => {
+      const nobody: Who = { token: 'qm', actor: 'U0NOBODY' };
+      for (const args of [{ query: 'harbor', max_chars: 5 }, { query: 'harbor', max_chars: 200.5 }, { max_chars: 400 }, { query: 7 }]) {
+        const out = await call(nobody, 'memory_recall', args);
+        expect({ isError: out.isError, code: out.json.code }).toEqual({ isError: true, code: 'invalid_params' });
+        expect(out.structured?.error).toMatchObject({ code: 'invalid_params' });
+      }
+      const hidden: ToolResult = await dispatchToolCall(engine, 'memory_recall', { query: 'harbor' }, {
+        remote: true, transport: 'http', auth: await verify(tokens.qm!), sourceId: SRC, actor: { header: ALICE_ID }, allowedOps: new Set(['get_page']) });
+      expect(hidden.isError).toBe(true);
+      expect((hidden.structuredContent as { error: { code: string } }).error.code).toBe('unknown_tool');
+    }, 60_000);
 
     test('a keyless brain ranks by keyword and makes no embedding call', async () => {
       let embedCalls = 0;

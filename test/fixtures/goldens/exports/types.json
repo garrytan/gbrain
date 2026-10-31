@@ -6544,7 +6544,7 @@
           "items?: ParamDef | undefined",
           "properties?: Record<string, ParamDef> | undefined",
           "required?: boolean | undefined",
-          "type: \"string\" | \"number\" | \"boolean\" | \"object\" | \"array\""
+          "type: \"string\" | \"number\" | \"boolean\" | \"object\" | \"integer\" | \"array\""
         ],
         "name": "ParamDef"
       },

@@ -24,6 +24,7 @@ import { currentCallerAccess, resolveExcludePrivatePages } from '../search/priva
 import { callerMember, memberPageSlug } from '../access/member-facts.ts';
 import { ACTOR_ARGUMENT, ACTOR_HEADER } from '../access/actor-model.ts';
 import { uuidV5 } from '../persistence/preconditions.ts';
+import { isStrictIsoDateTime } from '../utils.ts';
 
 export const QM_MEMORY_OPS: ReadonlySet<string> = new Set(['memory_recall', 'memory_write']);
 export const MEMORY_RECALL_MAX_CHARS = { min: 200, max: 12_000, default: 6_000 } as const;
@@ -39,6 +40,7 @@ export const IDEMPOTENCY_KEY_RE = /^[\x21-\x7e]{1,128}$/;
 /** remember's input kinds (MEMORY_VERBS v1, frozen); a stored `idea` can still come back from memory_recall. */
 export const MEMORY_WRITE_KINDS = ['event', 'preference', 'commitment', 'belief', 'fact'] as const;
 const FACT_KEYS = new Set(['fact', 'provenance', 'kind', 'valid_from']);
+const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 /** Namespace of the per-member request-id namespaces. Changing it orphans every journaled memory_write receipt. */
 export const QM_MEMORY_REQUEST_NAMESPACE = '6b3e9f2a-41c7-4d58-9a0e-2f7c5d1b8e63';
 
@@ -46,12 +48,14 @@ const actorParam: ParamDef = { type: 'string', description: `Set by the trusted 
 
 export interface RecallFact { id: string; text: string; date: string; kind: string }
 
-/** Fact text as one plain line: fence and heading markers and rules removed, whitespace collapsed. */
+/** Fact text as one plain line: fence and heading markers and rules removed, every line break and control character a space. */
 export function plainFactText(text: string): string {
   return text
+    .replace(/[\r\v\f\u0085\u2028\u2029]/g, '\n')
     .replace(/^[ \t]{0,3}#{1,6}(?=\s|$)/gm, '')
     .replace(/^[ \t]*(?:-{3,}|\*{3,}|_{3,}|={3,})[ \t]*$/gm, '')
     .replace(/`{3,}|~{3,}/g, '')
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -72,10 +76,15 @@ export function boundFactLines(lines: readonly string[], maxChars: number): { ke
   return { kept, text: kept ? `${lines.slice(0, kept).join('\n')}\n${tail}` : tail };
 }
 
-const isoDate = (value: Date | string | null | undefined): string => {
-  const t = value instanceof Date ? value : value ? new Date(value) : null;
-  return t && Number.isFinite(t.getTime()) ? t.toISOString().slice(0, 10) : 'undated';
-};
+/** YYYY-MM-DD of a stored time, read from its own fields: a database text value keeps its date as written (a non-ISO
+ * parse reads year 50 as 1950), a Date its UTC year, month and day; 'undated' outside years 0001-9999. */
+export function isoDate(value: Date | string | null | undefined): string {
+  const written = typeof value === 'string' ? /^(\d{4})-(\d{2})-(\d{2})(?![\d])/.exec(value.trim()) : null;
+  if (written) return written[1] === '0000' ? 'undated' : written.slice(1).join('-');
+  const t = value instanceof Date ? value : null;
+  if (!t || !Number.isFinite(t.getTime()) || t.getUTCFullYear() < 1 || t.getUTCFullYear() > 9999) return 'undated';
+  return [String(t.getUTCFullYear()).padStart(4, '0'), String(t.getUTCMonth() + 1).padStart(2, '0'), String(t.getUTCDate()).padStart(2, '0')].join('-');
+}
 
 const invalid = (message: string, suggestion: string): OperationError => opError('invalid_params', message, suggestion);
 
@@ -86,6 +95,12 @@ function parseMaxChars(raw: unknown): number {
     throw invalid(`max_chars must be a whole number from ${min} to ${max}.`, `Omit max_chars for ${MEMORY_RECALL_MAX_CHARS.default}, or pass a whole number from ${min} to ${max}.`);
   }
   return raw;
+}
+
+/** memory_recall's arguments, checked before any read (and before an unlinked person's empty answer): query and max_chars. */
+export function recallArguments(p: Record<string, unknown> | undefined): { query: string; maxChars: number } {
+  if (typeof p?.query !== 'string') throw invalid('query is required and must be a string.', 'Pass what the turn is about as query.');
+  return { query: p.query.trim().slice(0, MEMORY_RECALL_QUERY_CHARS), maxChars: parseMaxChars(p.max_chars) };
 }
 
 type ReadPolicy = { excludePrivate: boolean; eligibility: Awaited<ReturnType<typeof resolveReadEligibility>> };
@@ -110,14 +125,13 @@ const memory_recall: Operation = {
   description: 'Facts for the person this call serves, one per line: their own recent facts first, then facts matching query. Never page bodies. For QM; agents use recall.',
   params: {
     query: { type: 'string', required: true, description: 'What the turn is about; ranks the facts.' },
-    max_chars: { type: 'number', description: `Text cap, ${MEMORY_RECALL_MAX_CHARS.min}-${MEMORY_RECALL_MAX_CHARS.max} (default ${MEMORY_RECALL_MAX_CHARS.default}).` },
+    max_chars: { type: 'integer', description: `Text cap in UTF-16 code units, ${MEMORY_RECALL_MAX_CHARS.min}-${MEMORY_RECALL_MAX_CHARS.max} (default ${MEMORY_RECALL_MAX_CHARS.default}).` },
     [ACTOR_ARGUMENT]: actorParam,
   },
   scope: 'read',
   annotations: { title: 'memory_recall (QM memory read)', readOnlyHint: true },
   handler: async (ctx, p) => {
-    const maxChars = parseMaxChars(p.max_chars);
-    const query = typeof p.query === 'string' ? p.query.trim().slice(0, MEMORY_RECALL_QUERY_CHARS) : '';
+    const { query, maxChars } = recallArguments(p);
     const scope = federatedSearchScope(ctx, undefined);
     const sources = [...new Set(scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default'])];
     const read: ReadPolicy = { excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote), eligibility: await resolveReadEligibility(ctx, {}) };
@@ -129,7 +143,10 @@ const memory_recall: Operation = {
     })).rows : [];
     const seen = new Set<number>();
     const rows = [...own, ...ranked].filter(r => !seen.has(r.id) && !!seen.add(r.id));
-    const plain = rows.map(r => ({ id: String(r.id), text: plainFactText(r.fact), date: isoDate(r.valid_from ?? r.created_at), kind: String(r.kind) }));
+    // The date as the database writes it: a driver's timestamp parse reads years 1-99 as 19xx.
+    const written = new Map(rows.length ? (await ctx.engine.executeRaw<{ id: number | string; d: string }>(
+      `SELECT id, to_char(COALESCE(valid_from, created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS d FROM facts WHERE id = ANY($1::bigint[])`, [rows.map(r => r.id)])).map(r => [Number(r.id), r.d]) : []);
+    const plain = rows.map(r => ({ id: String(r.id), text: plainFactText(r.fact), date: isoDate(written.get(Number(r.id)) ?? r.valid_from ?? r.created_at), kind: String(r.kind) }));
     const { redactRetrievalOutput } = await import('../search/output-redaction.ts');
     const facts: RecallFact[] = (ctx.remote === false ? plain : redactRetrievalOutput(plain, {}, { uncapped: true }).results).filter(f => f.text);
     const { kept, text } = boundFactLines(facts.map(f => `- ${f.text} (${f.date}; ${f.kind})`), maxChars);
@@ -161,11 +178,14 @@ function parseFacts(raw: unknown, actorId: string): Array<Record<string, unknown
     if (!provenance || provenance.length > MEMORY_WRITE_PROVENANCE_MAX) {
       throw invalid(`${at}.provenance must be 1 to ${MEMORY_WRITE_PROVENANCE_MAX} characters.`, 'Pass where the fact came from, for example "slack:C0123/p1700000000".');
     }
+    if (CONTROL_RE.test(f.provenance as string) || /^qm:/i.test(provenance)) {
+      throw invalid(`${at}.provenance must be one line of text that does not start with qm:.`, 'gbrain adds qm:<actor id> itself; pass only where the fact came from, without line breaks or control characters.');
+    }
     if (f.kind !== undefined && !(MEMORY_WRITE_KINDS as readonly unknown[]).includes(f.kind)) {
       throw invalid(`${at}.kind is not a fact kind.`, `Use one of: ${MEMORY_WRITE_KINDS.join(', ')}, or omit it (fact).`);
     }
-    if (f.valid_from !== undefined && (typeof f.valid_from !== 'string' || !Number.isFinite(Date.parse(f.valid_from)))) {
-      throw invalid(`${at}.valid_from must be an ISO 8601 date or time.`, 'Pass when the fact became true, for example "2026-10-30", or omit it.');
+    if (f.valid_from !== undefined && !isStrictIsoDateTime(f.valid_from)) {
+      throw invalid(`${at}.valid_from must be an ISO 8601 date or time in years 0001-9999.`, 'Pass when the fact became true as YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS][Z|±HH:MM], for example "2026-10-30", or omit it.');
     }
     return { fact, provenance: `qm:${actorId}; ${provenance}`, ...(f.kind !== undefined ? { kind: f.kind } : {}), ...(f.valid_from !== undefined ? { valid_from: f.valid_from } : {}) };
   });
@@ -224,12 +244,13 @@ const memory_write: Operation = {
       }
     }
     const pending = saved.filter(s => s.pending).map(s => s.request_id);
+    const factIds = [...new Set(saved.flatMap(s => s.fact_id ? [s.fact_id] : []))];
     return {
       status: pending.length ? 'pending' : 'committed',
       request_id: pending[0] ?? items[0]!.request_id,
-      fact_ids: saved.flatMap(s => s.fact_id ? [s.fact_id] : []),
+      fact_ids: factIds,
       ...(pending.length ? { pending_request_ids: pending } : {}),
-      text: pending.length ? `Accepted ${items.length} fact(s); ${pending.length} still publishing.` : `Saved ${items.length} fact(s).`,
+      text: pending.length ? `Accepted ${factIds.length + pending.length} fact(s); ${pending.length} still publishing.` : `Saved ${factIds.length} fact(s).`,
     };
   },
 };

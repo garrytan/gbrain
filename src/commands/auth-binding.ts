@@ -1,7 +1,7 @@
 /** GBRA-218: the member-binding flags shared by auth create, rescope and register-client. */
 import type { BrainEngine } from '../core/engine.ts';
 import { memberIdentity, parseMayActFor, parseMemberFlag, type BindingPatch, type BindingResult } from '../core/access/members.ts';
-import { ATTEST_SYSTEMS, parseAttestOps } from '../core/access/actor.ts';
+import { ATTEST_SYSTEMS, DEFAULT_ATTEST_OPS, parseAttestOps } from '../core/access/actor.ts';
 import { operationsByName } from '../core/operations.ts';
 import { opError } from '../core/ops/contract.ts';
 import { usageError } from '../cli/cli-error.ts';
@@ -12,7 +12,7 @@ const NEEDS: Record<Flag, string> = {
   '--member': 'Pass a member id, or none to unbind (gbrain access member list).',
   '--may-act-for': 'Pass a comma-separated list of member ids, group:<id>, guest or *, or none.',
   '--attest-actor': 'Pass qm (the system whose x-qm-actor header this credential may send), or none.',
-  '--attest-ops': 'Pass a comma-separated list of operations an attested call may run (default memory_recall,memory_write).',
+  '--attest-ops': 'Pass a comma-separated list of operations an attested call may run (default get_write_request,memory_recall,memory_write).',
 };
 
 function parseAttestActor(value: string): string | null {
@@ -52,6 +52,6 @@ export async function checkBindingTarget(engine: BrainEngine, patch: BindingPatc
 }
 
 export function bindingLine(b: BindingResult, dryRun = false): string {
-  const attest = b.attest_actor ? `; attests actor: ${b.attest_actor} for ${(b.attest_ops ?? ['memory_recall', 'memory_write']).join(', ')}` : '';
+  const attest = b.attest_actor ? `; attests actor: ${b.attest_actor} for ${(b.attest_ops ?? DEFAULT_ATTEST_OPS).join(', ')}` : '';
   return `  Member: ${b.member ?? 'none'}; may act for: ${b.may_act_for?.join(', ') ?? 'none'}${attest}${b.changed ? (dryRun ? ' (preview, not written)' : ' (updated)') : ''}`;
 }

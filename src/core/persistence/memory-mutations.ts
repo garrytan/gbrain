@@ -28,9 +28,9 @@ import { requestAttribution } from './attribution.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
 import { prepareMemoryMutation } from './memory-prepare.ts';
 import { retryWriteAdmission } from './admission-retry.ts';
-import { currentCallerAccess, privateProvenanceFilterFragment, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
+import { privateProvenanceFilterFragment, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
 import { markBeliefCommits } from '../belief/append.ts';
-import { memberFactAdmitSql, memberFactPage, memberPageIsOwn, memberPageNotOwned, memberPageSlug } from '../access/member-facts.ts';
+import { callerMember, memberFactAdmitSql, memberFactPage, memberPageIsOwn, memberPageNotOwned, memberPageSlug } from '../access/member-facts.ts';
 
 export { prepareMemoryMutation } from './memory-prepare.ts';
 /** Only semantic appends without an explicit caller revision can be recomputed. */
@@ -331,12 +331,17 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   if (!Number.isSafeInteger(id) || id <= 0) throw verbError(operation === 'forget' ? 'not_found' : 'fact_not_found',
     `No fact with id "${rawId}".`, 'Pass the fact id returned by remember or recall.');
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
-  // GST-359 D: an attested person withdraws only facts on their own member page, and only there (the page is the
-  // withdrawal's subject), so another member's copy of the same claim stays active and rememberable.
-  const actor = ctx.remote !== false ? currentCallerAccess().actor : undefined;
-  const ownPage = actor ? memberPageSlug(actor.member) : null;
+  // GST-359 D: a remote caller that is one member (an attested person or a member-bound credential) withdraws only facts
+  // on its own member page, and only there (the page is the withdrawal's subject), so another member's copy of the same
+  // claim stays active and rememberable. Ownership is judged first: any other fact is not_found before a trust check,
+  // so no owner proposal is filed and its tier is never disclosed.
+  const member = ctx.remote !== false ? callerMember() : null;
+  const ownPage = member ? memberPageSlug(member) : null;
+  const notFound = () => verbError(operation === 'forget' ? 'not_found' : 'fact_not_found',
+    `No fact with id "${rawId}".`, 'Ids come from remember/recall. Recall the entity first to find the right fact.');
+  if (ownPage && !(await ctx.engine.executeRaw(`SELECT 1 FROM facts WHERE id=$1 AND source_id=$2 AND ${memberFactAdmitSql('facts')}`, [id, sourceId])).length) throw notFound();
   // #5575 I3: a remote caller cannot forget a fact more trusted than its own writes; the owner is asked instead.
-  if (ctx.remote !== false && Number.isSafeInteger(id) && id > 0) await guardRemoteForget(ctx.engine, { sourceId, factId: id, principal, reason, excludePrivate });
+  if (ctx.remote !== false) await guardRemoteForget(ctx.engine, { sourceId, factId: id, principal, reason, excludePrivate });
   // Retry the whole withdrawal, so source/principal guards and the connection
   // are released before backoff. Admission must not retry a nested savepoint.
   let withdrawn: WithdrawalCommit['pages'] = [];
@@ -362,8 +367,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
       WHERE id=$1 AND source_id=$2 AND ${ownPage ? memberFactAdmitSql('facts')
         : `($3::boolean=false OR visibility='world')${excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`} FOR UPDATE`,
     ownPage ? [id, sourceId] : [id, sourceId, ctx.remote !== false]);
-    if (!fact) throw verbError(operation === 'forget' ? 'not_found' : 'fact_not_found',
-      `No fact with id "${rawId}".`, 'Ids come from remember/recall. Recall the entity first to find the right fact.');
+    if (!fact) throw notFound();
     if (ctx.remote !== false && supersessionGuarded('agent_written', fact.trust_tier)) throw remoteForgetRaced(id);
     if (!ownPage) await refuseForgetReachingOtherCopies(tx, sourceId, fact, ctx.remote !== false, excludePrivate);
     const slug = fact.source_markdown_slug ?? fact.entity_slug ?? 'memory/unattributed';

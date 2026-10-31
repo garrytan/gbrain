@@ -35,7 +35,7 @@ const KEYLESS: Record<string, string> = Object.fromEntries(Object.entries(proces
 describeE2E('/mcp memory_recall and memory_write over keyless serve --http', () => {
   let serverProcess: ReturnType<typeof import('child_process').spawn> | null = null;
   let engine: PostgresEngine;
-  const tokens: Record<'qm' | 'plain', string> = { qm: '', plain: '' };
+  const tokens: Record<'qm' | 'plain' | 'readonly', string> = { qm: '', plain: '', readonly: '' };
   const cli = (...args: string[]) => execFileSync('bun', ['run', 'src/cli.ts', ...args], { cwd: process.cwd(), env: KEYLESS, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 
   beforeAll(async () => {
@@ -44,7 +44,9 @@ describeE2E('/mcp memory_recall and memory_write over keyless serve --http', () 
     const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
     const qm = await provider.registerClientManual('qm-mem-e2e-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], 'default');
     const plain = await provider.registerClientManual('qm-mem-e2e-plain-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], 'default');
-    expect(cli('auth', 'rescope', '--client', qm.clientId, '--attest-actor', 'qm')).toContain('attests actor: qm for memory_recall, memory_write');
+    const readonly = await provider.registerClientManual('qm-mem-e2e-ro-' + randomUUID().slice(0, 8), ['client_credentials'], 'read', [], 'default');
+    expect(cli('auth', 'rescope', '--client', readonly.clientId, '--attest-actor', 'qm')).toContain('attests actor: qm');
+    expect(cli('auth', 'rescope', '--client', qm.clientId, '--attest-actor', 'qm')).toContain('attests actor: qm for get_write_request, memory_recall, memory_write');
     expect(cli('auth', 'rescope', '--client', qm.clientId, '--attest-actor', 'qm', '--attest-ops', 'forget,memory_recall,memory_write')).toContain('forget, memory_recall, memory_write');
     expect(cli('access', 'member', 'link', 'alice-example', '--qm', ALICE_ID)).toContain('Linked qm:' + ALICE_ID);
     expect(cli('access', 'member', 'link', 'bob-example', '--qm', BOB_ID)).toContain('-> bob-example');
@@ -60,7 +62,7 @@ describeE2E('/mcp memory_recall and memory_write over keyless serve --http', () 
       if (!up) await new Promise(r => setTimeout(r, 500));
     }
     if (!up) throw new Error('Server failed to start within 15s.\nstderr: ' + stderr.slice(-500));
-    for (const [key, c] of [['qm', qm], ['plain', plain]] as const) {
+    for (const [key, c] of [['qm', qm], ['plain', plain], ['readonly', readonly]] as const) {
       const res = await fetch(BASE + '/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ grant_type: 'client_credentials', client_id: c.clientId, client_secret: c.clientSecret! }) });
       expect(res.status).toBe(200);
@@ -77,18 +79,21 @@ describeE2E('/mcp memory_recall and memory_write over keyless serve --http', () 
     await teardownDB();
   }, 30_000);
 
-  async function tool(who: 'qm' | 'plain', name: string, args: Record<string, unknown>, actor?: string) {
+  async function rpc(who: 'qm' | 'plain' | 'readonly', body: Record<string, unknown>, headers: Record<string, string> = {}) {
     const res = await fetch(BASE + '/mcp', {
       method: 'POST',
-      headers: { Authorization: 'Bearer ' + tokens[who], 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream',
-        ...(actor !== undefined ? { 'x-qm-actor': actor } : {}) },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+      headers: { Authorization: 'Bearer ' + tokens[who], 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...headers },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, ...body }),
     });
     expect(res.status).toBe(200);
     expect(res.headers.get('mcp-session-id')).toBeNull();
     const text = (await res.text()).trim();
-    const parsed = JSON.parse(text.startsWith('{') ? text : text.split('\n').filter(l => l.startsWith('data:')).pop()!.slice(5).trim()) as { result: Record<string, any> };
-    const r = parsed.result;
+    return JSON.parse(text.startsWith('{') ? text : text.split('\n').filter(l => l.startsWith('data:')).pop()!.slice(5).trim()) as { result?: Record<string, any>; error?: { code: number; message: string; data?: Record<string, unknown> } };
+  }
+
+  async function tool(who: 'qm' | 'plain' | 'readonly', name: string, args: Record<string, unknown>, actor?: string, headers: Record<string, string> = {}) {
+    const parsed = await rpc(who, { method: 'tools/call', params: { name, arguments: args } }, { ...(actor !== undefined ? { 'x-qm-actor': actor } : {}), ...headers });
+    const r = parsed.result!;
     const body = (r.content as Array<{ text: string }>).map(c => c.text).join('\n');
     let json: Record<string, any> = {};
     try { json = JSON.parse(body); } catch { /* plain text */ }
@@ -125,6 +130,30 @@ describeE2E('/mcp memory_recall and memory_write over keyless serve --http', () 
       expect(out.structured?.error).toMatchObject({ code });
     }
     expect(await engine.executeRaw("SELECT 1 FROM facts WHERE fact LIKE '%canarye2erefused%'")).toHaveLength(0);
+  }, 60_000);
+
+  test('x-qm-audience is refused before any work, with or without x-qm-actor, on tools/call, tools/list and resources', async () => {
+    for (const actor of [ALICE_ID, undefined]) {
+      for (const [name, args] of [['memory_recall', { query: 'harbor ledger' }], ['memory_write', { facts: [{ fact: 'x canarye2eaudience', provenance: 'y' }], idempotency_key: randomUUID() }]] as const) {
+        const out = await tool('qm', name, args, actor, { 'x-qm-audience': 'WyJVMEJPQiJd' });
+        expect({ isError: out.isError, code: out.json.code, reason: out.json.reason }).toEqual({ isError: true, code: 'actor_not_attested', reason: 'audience_not_supported' });
+        expect(out.structured?.error).toMatchObject({ code: 'actor_not_attested', reason: 'audience_not_supported' });
+        expect(out.text).not.toContain('canarye2e');
+      }
+      const headers = { 'x-qm-audience': 'WyJVMEJPQiJd', ...(actor ? { 'x-qm-actor': actor } : {}) };
+      for (const [method, params] of [['tools/list', {}], ['resources/list', {}], ['resources/read', { uri: 'gbrain://capabilities' }]] as const) {
+        const out = await rpc('qm', { method, params }, headers);
+        expect(out.result).toBeUndefined();
+        expect(out.error!.data).toMatchObject({ code: 'actor_not_attested', reason: 'audience_not_supported' });
+      }
+    }
+    expect(await engine.executeRaw("SELECT 1 FROM facts WHERE fact LIKE '%canarye2eaudience%'")).toHaveLength(0);
+  }, 60_000);
+
+  test('a scope refusal of a memory tool carries structuredContent.error like every other refusal', async () => {
+    const out = await tool('readonly', 'memory_write', { facts: [{ fact: 'x canarye2ereadonly', provenance: 'y' }], idempotency_key: randomUUID() }, ALICE_ID);
+    expect(out.isError).toBe(true);
+    expect(out.structured?.error).toMatchObject({ code: 'insufficient_scope', message: out.json.message });
   }, 60_000);
 
   test('forget withdraws only the person\'s own fact', async () => {

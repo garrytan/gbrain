@@ -17,6 +17,7 @@
     },
     "system": "qm",
     "default_attest_ops": [
+      "get_write_request",
       "memory_recall",
       "memory_write"
     ],
@@ -45,8 +46,8 @@
             "description": "What the turn is about; ranks the facts."
           },
           "max_chars": {
-            "type": "number",
-            "description": "Text cap, 200-12000 (default 6000)."
+            "type": "integer",
+            "description": "Text cap in UTF-16 code units, 200-12000 (default 6000)."
           },
           "acting_user": {
             "type": "string",
@@ -125,18 +126,21 @@
         "min": 200,
         "max": 12000,
         "default": 6000,
-        "whole_number": true
+        "whole_number": true,
+        "unit": "UTF-16 code units (JavaScript string length)"
       },
       "query_chars_ranked": 2000,
       "own_recent_window_hours": 24
     },
+    "arguments_checked": "query and max_chars are checked before any read, also for an unlinked person (invalid_params)",
     "content": {
       "line": "- <fact> (<YYYY-MM-DD>; <kind>)",
       "truncated_tail": "… <N> more",
       "never": [
         "page bodies",
         "fence markers",
-        "heading markers"
+        "heading markers",
+        "line breaks or control characters inside a fact"
       ],
       "bounded_by": "max_chars, cut at a line boundary"
     },
@@ -186,8 +190,11 @@
         "commitment",
         "belief",
         "fact"
-      ]
+      ],
+      "provenance": "one line: no line breaks or control characters, and not starting with qm: (gbrain adds qm:<actor id> itself)",
+      "valid_from": "YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS[.fraction]][Z|±HH:MM], a real calendar day in years 0001-9999"
     },
+    "validation": "every fact is checked before any is saved: one bad fact refuses the whole call with invalid_params and the idempotency_key stays unused",
     "saved_as": {
       "page": "memory/members/<member>",
       "readers": [
@@ -207,7 +214,8 @@
         "fact_ids": [
           "string"
         ]
-      }
+      },
+      "fact_ids": "distinct; facts repeating one claim in a call share one id, and <N> counts distinct facts"
     },
     "pending": {
       "content": "Accepted <N> fact(s); <M> still publishing.",
@@ -238,12 +246,13 @@
         }
       }
     },
+    "applies_to": "every refusal of memory_recall and memory_write, including the transport's scope and unknown-tool refusals",
     "codes": [
       {
         "code": "actor_not_attested",
         "class": "host_only",
-        "summary": "A call named the person it serves (the x-qm-actor header or the acting_user argument) in a way gbrain does not honour: the credential holds no attest right, the operation is not in its attested operations, the argument differs from the header or comes without an attested header, or the id is not 1-256 visible ASCII characters; or a write that saves only as an attested person (memory_write) named none. Nothing was read or written.",
-        "suggestion": "Read reason: no_attest_right and op_not_attested are the brain operator's call (gbrain auth rescope --client <id> --attest-actor qm [--attest-ops <list>]); argument_mismatch, argument_without_attestation, invalid_actor_id and actor_required are fixed in the calling harness.",
+        "summary": "A call named the person it serves (the x-qm-actor header or the acting_user argument) in a way gbrain does not honour: the credential holds no attest right, the operation is not in its attested operations, the argument differs from the header or comes without an attested header, or the id is not 1-256 visible ASCII characters; or a write that saves only as an attested person (memory_write) named none; or the request carries x-qm-audience, a channel audience gbrain does not serve yet. Nothing was read or written.",
+        "suggestion": "Read reason: no_attest_right and op_not_attested are the brain operator's call (gbrain auth rescope --client <id> --attest-actor qm [--attest-ops <list>]); argument_mismatch, argument_without_attestation, invalid_actor_id, actor_required and audience_not_supported are fixed in the calling harness.",
         "docs": "docs/guides/write-refusals.md#actor_not_attested",
         "reasons": [
           {
@@ -275,6 +284,11 @@
             "reason": "actor_required",
             "fixed_by": "calling_harness",
             "fix": "memory_write saves only as an attested person: send x-qm-actor from a credential holding the attest right."
+          },
+          {
+            "reason": "audience_not_supported",
+            "fixed_by": "calling_harness",
+            "fix": "Send the call without x-qm-audience; channel turns are refused until wave 2 and nothing is read or written."
           }
         ]
       },
@@ -312,19 +326,48 @@
         "code": "insufficient_scope",
         "class": "host_only",
         "summary": "The connection lacks the OAuth scope the operation requires.",
-        "docs": "docs/guides/error-codes.md#insufficient_scope"
+        "docs": "docs/guides/error-codes.md#insufficient_scope",
+        "note": "The credential lacks the OAuth scope the tool needs (memory_write needs write); refused by the transport before the call runs."
       },
       {
-        "code": "rate_limited",
-        "class": "retryable",
-        "summary": "The request was rate-limited; retry after the stated delay.",
-        "docs": "docs/guides/error-codes.md#rate_limited"
+        "code": "unknown_tool",
+        "class": "caller",
+        "summary": "The named tool does not exist or is not callable on this connection.",
+        "docs": "docs/guides/error-codes.md#unknown_tool",
+        "note": "The tool is not callable on this connection (its surface or bound-operation list leaves it out)."
+      },
+      {
+        "code": "not_found",
+        "class": "caller",
+        "summary": "The requested resource does not exist or is not visible to this caller.",
+        "docs": "docs/guides/error-codes.md#not_found",
+        "note": "get_write_request for a receipt that is not this person's, or forget for a fact that is not on this person's own member page."
+      },
+      {
+        "code": "fact_not_found",
+        "class": "caller",
+        "summary": "Fact not found.",
+        "docs": "docs/guides/error-codes.md#fact_not_found",
+        "note": "forget_fact for a fact that is not on this person's own member page."
+      },
+      {
+        "code": "unavailable",
+        "class": "unavailable",
+        "summary": "A required dependency or capability cannot serve this request.",
+        "docs": "docs/guides/error-codes.md#unavailable",
+        "note": "memory_recall could not read the fact candidates (a database failure); retry the same call."
       }
     ]
   },
   "wave_2": {
     "audience_header": "x-qm-audience",
     "encoding": "base64url of a JSON array of canonical ids",
-    "status": "reserved; not honoured yet"
+    "status": "refused until wave 2",
+    "refusal": {
+      "code": "actor_not_attested",
+      "reason": "audience_not_supported",
+      "tools_call": "errors.shape, with or without x-qm-actor",
+      "other_methods": "JSON-RPC error -32600 whose data carries code and reason (tools/list, resources/list, resources/read)"
+    }
   }
 }

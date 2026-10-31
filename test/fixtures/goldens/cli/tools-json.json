@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 267537,
-    "stdoutSha256": "a8833d13e72c68b0bbae9ab86c55ab9ab2d870e31fa28dc835bef295152005e9",
+    "stdoutBytes": 267560,
+    "stdoutSha256": "25f870be62f4c5b6726a56665a8c684939ac62aa6cbf6daed7ebfc97d6bbf413",
     "toolNames": [
       "remember",
       "entity",
@@ -7099,7 +7099,7 @@
         "name": "memory_recall",
         "parameters": {
           "acting_user": "string?",
-          "max_chars": "number?",
+          "max_chars": "integer?",
           "query": "string"
         },
         "required_scopes": [],
@@ -7110,8 +7110,8 @@
               "type": "string"
             },
             "max_chars": {
-              "description": "Text cap, 200-12000 (default 6000).",
-              "type": "number"
+              "description": "Text cap in UTF-16 code units, 200-12000 (default 6000).",
+              "type": "integer"
             },
             "query": {
               "description": "What the turn is about; ranks the facts.",

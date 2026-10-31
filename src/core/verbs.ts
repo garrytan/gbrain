@@ -29,6 +29,7 @@ import { recordFunnelEvent, recordRememberOutcome } from './funnel.ts';
 import type { Operation } from './operations.ts';
 import { WRITE_RECEIPT_SCHEMA, WRITE_REQUEST_PARAM, AGENT_CONTENT_PARAMS, CONTENT_ORIGIN_PARAM } from './persistence/params.ts';
 import { WRITE_ERROR_CODES } from './persistence/types.ts';
+import { isStrictIsoDateTime } from './utils.ts';
 
 /** Frozen protocol version for the MEMORY_VERBS v1 verb set. Single source of truth. */
 export const MEMORY_VERBS_VERSION = 1;
@@ -168,11 +169,11 @@ const remember: Operation = {
         'Use "world" (default — agents can recall it) or "private" (local CLI reads only).',
       );
     }
-    if (p.valid_from !== undefined && (typeof p.valid_from !== 'string' || !Number.isFinite(Date.parse(p.valid_from)))) {
+    if (p.valid_from !== undefined && !isStrictIsoDateTime(p.valid_from)) {
       throw verbError(
         'invalid_params',
-        'valid_from must be an ISO 8601 date or time.',
-        'Pass when the fact was said or became true, e.g. valid_from: "2026-03-01", or omit it.',
+        'valid_from must be an ISO 8601 date or time in years 0001-9999.',
+        'Pass when the fact was said or became true as YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS][Z|±HH:MM], e.g. valid_from: "2026-03-01", or omit it.',
       );
     }
     if (p.content_origin !== undefined && !CONTENT_ORIGIN_PARAM.enum!.includes(p.content_origin as string)) {

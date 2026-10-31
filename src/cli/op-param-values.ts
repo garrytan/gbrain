@@ -15,9 +15,9 @@ export function opParamValue(op: OperationMeta, key: string, def: ParamDef | und
   if (!def) return raw;
   const name = positional ? `<${key}>` : `--${key.replace(/_/g, '-')}`;
   const usage = `gbrain ${op.cliHints?.name ?? op.name}`;
-  if (def.type === 'number') {
+  if (def.type === 'number' || def.type === 'integer') {
     const n = Number(raw);
-    if (raw.trim() !== '' && Number.isFinite(n)) return n;
+    if (raw.trim() !== '' && (def.type === 'integer' ? Number.isInteger(n) : Number.isFinite(n))) return n;
     const example = typeof def.default === 'number' ? def.default : 10;
     throw usageError(`${name} must be a number; got '${inertText(raw, 40)}'.`,
       `Pass a number, e.g. ${usage} ${positional ? example : `${name} ${example}`}.`);

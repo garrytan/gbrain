@@ -5,10 +5,12 @@
 
 /** The header the trusted system sets on every HTTP request of a call (case-insensitive). */
 export const ACTOR_HEADER = 'x-qm-actor';
+/** QM's channel-audience header (wave 2). Not served yet: any request carrying it is refused before any work. */
+export const QM_AUDIENCE_HEADER = 'x-qm-audience';
 /** The tool argument the system also sends; equal to the header on an attested call, stripped before the handler. */
 export const ACTOR_ARGUMENT = 'acting_user';
 export const ATTEST_SYSTEMS: readonly string[] = ['qm'];
-export const DEFAULT_ATTEST_OPS: readonly string[] = ['memory_recall', 'memory_write'];
+export const DEFAULT_ATTEST_OPS: readonly string[] = ['get_write_request', 'memory_recall', 'memory_write'];
 /**
  * Operations no attested call may run yet: what they read or write is not keyed to the person, so one person could
  * change or see another's (a conflict list across writers) or write facts and takes every reader sees. GST-359 C2

@@ -163,7 +163,7 @@ A page is returned only when every audience entry may read it (`guest` reads no 
 
 ```bash
 gbrain auth register-client qm --grant-types client_credentials --scopes "read write"
-gbrain auth rescope --client <client_id> --attest-actor qm      # default ops: memory_recall,memory_write
+gbrain auth rescope --client <client_id> --attest-actor qm      # default ops: get_write_request,memory_recall,memory_write
 gbrain access member link alice-example --qm U0ALICE            # --dry-run previews; unlink and links manage them
 ```
 

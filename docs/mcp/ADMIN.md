@@ -246,7 +246,7 @@ what every named person may read.
 A trusted system that already knows who each person is (QM) instead holds the
 attest right: register a client-credentials client, grant it with `gbrain auth
 rescope --client <id> --attest-actor qm [--attest-ops <op,...>]` (default
-`memory_recall,memory_write`), and link each person's canonical id with `gbrain
+`get_write_request,memory_recall,memory_write`), and link each person's canonical id with `gbrain
 access member link <member> --qm <id>` (`unlink`, `links`). Its `x-qm-actor`
 header then runs each attested operation as that member, never reading private
 pages; see [attested-actor refusals](../guides/write-refusals.md#attested-actor-refusals).
@@ -256,7 +256,8 @@ read back only by that member, written remotely by no one else), and `delta` cur
 jobs (`submit_agent`, `get_agent_job`) belong to the person they were made for.
 QM's memory pair, `memory_recall` and `memory_write`, reads and saves that
 person's facts ([QM guide](../guides/qm.md)); `forget` and `forget_fact` withdraw
-only a fact on the person's own page. Not attestable yet, because what they
+only a fact on the person's own page (also for a credential bound to a member).
+A request carrying `x-qm-audience` is refused (`audience_not_supported`). Not attestable yet, because what they
 read or write is not yet kept to the person: `list_write_conflicts`, `capture`,
 `extract_facts` and `takes_add|update|resolve|supersede`.
 `gbrain access check --token <name>` shows the

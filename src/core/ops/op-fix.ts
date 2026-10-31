@@ -87,7 +87,7 @@ function exampleValue(def: ParamDef | undefined, choices: readonly string[] | un
   if (choices?.length) return choices[0];
   if (def?.default !== undefined) return def.default;
   switch (def?.type) {
-    case 'number': return 10;
+    case 'number': case 'integer': return 10;
     case 'boolean': return true;
     case 'array': return [];
     case 'object': return {};

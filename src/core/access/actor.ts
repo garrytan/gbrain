@@ -21,7 +21,7 @@ import { identityFor } from './principals.ts';
 import { isUndefinedColumnError, isUndefinedTableError } from '../utils.ts';
 import { memberIdentity } from './members.ts';
 import { folderAccessFor } from './caller.ts';
-import { ACTOR_ARGUMENT, ACTOR_DEFERRED_OPS, ACTOR_HEADER, attestRightFrom, DEFAULT_ATTEST_OPS, EXTERNAL_ID_RE, type AttestedActor, type AttestRight } from './actor-model.ts';
+import { ACTOR_ARGUMENT, ACTOR_DEFERRED_OPS, ACTOR_HEADER, attestRightFrom, DEFAULT_ATTEST_OPS, EXTERNAL_ID_RE, QM_AUDIENCE_HEADER, type AttestedActor, type AttestRight } from './actor-model.ts';
 
 export * from './actor-model.ts';
 
@@ -29,7 +29,7 @@ const ATTESTABLE_SCOPES = new Set(['read', 'write', 'agent']);
 
 
 
-export type ActorReason = 'no_attest_right' | 'op_not_attested' | 'argument_mismatch' | 'argument_without_attestation' | 'invalid_actor_id' | 'actor_required';
+export type ActorReason = 'no_attest_right' | 'op_not_attested' | 'argument_mismatch' | 'argument_without_attestation' | 'invalid_actor_id' | 'actor_required' | 'audience_not_supported';
 /** The operation metadata attestability reads (a subset of Operation, so this module never imports the registry). */
 export interface AttestableOpShape { scope?: string; requiredScopes?: readonly string[]; localOnly?: boolean; cliOnly?: unknown }
 
@@ -132,6 +132,9 @@ export function actorNotAttested(reason: ActorReason, caller: ActorCaller, ctx: 
     case 'actor_required':
       return opError('actor_not_attested', `${ctx.op} writes only as an attested person, and this call names none (no ${ACTOR_HEADER} header on a credential holding the attest right), so nothing was written.`,
         `Send ${ACTOR_HEADER} with the person's canonical id from a credential the brain operator granted the attest right (gbrain auth rescope --client <id> --attest-actor qm). To save a fact as yourself, call remember.`, { reason, docs });
+    case 'audience_not_supported':
+      return opError('actor_not_attested', `This request carries ${QM_AUDIENCE_HEADER} (a channel audience), which this brain does not serve yet, so nothing was read or written.`,
+        `Send the call without ${QM_AUDIENCE_HEADER}. Channel turns are refused until wave 2; a call for one person sends ${ACTOR_HEADER} alone.`, { reason, docs });
     case 'invalid_actor_id':
       return opError('actor_not_attested', `The ${ACTOR_HEADER} header or the ${ACTOR_ARGUMENT} argument is not a canonical person id (1-256 visible ASCII characters), so nothing was read or written.`,
         'Fix the harness code that sets the header: send the canonical id unchanged, with no spaces or control characters.', { reason, docs });
@@ -211,7 +214,8 @@ export async function attestedCallerAccess(engine: Pick<BrainEngine, 'executeRaw
 }
 
 /** The actor channel a transport read from the request: the header value, undefined when absent. Never tool arguments. */
-export interface ActorChannels { header?: string | null }
+/** The headers the HTTP transport read: x-qm-actor, and x-qm-audience (refused on every call while it is not served). */
+export interface ActorChannels { header?: string | null; audience?: string | null }
 
 /**
  * The attested-actor decision for one remote call, made before any work. Null when the call names no actor (no header,
@@ -225,8 +229,9 @@ export async function resolveAttestedActor(engine: Pick<BrainEngine, 'executeRaw
 }): Promise<{ actor: AttestedActor; access: Partial<CallerAccess>; params: Record<string, unknown> } | null> {
   const header = input.channels?.header ?? undefined;
   const hasArgument = !!input.params && Object.prototype.hasOwnProperty.call(input.params, ACTOR_ARGUMENT);
-  if (header === undefined && !hasArgument) return null;
   const caller: ActorCaller = { auth: input.auth };
+  if (input.channels?.audience != null) throw actorNotAttested('audience_not_supported', caller, { op: input.op, transport: input.transport });
+  if (header === undefined && !hasArgument) return null;
   const ctx = { op: input.op, transport: input.transport };
   const argument = hasArgument ? input.params![ACTOR_ARGUMENT] : undefined;
   if ((header !== undefined && !EXTERNAL_ID_RE.test(header)) || (hasArgument && (typeof argument !== 'string' || !EXTERNAL_ID_RE.test(argument)))) {

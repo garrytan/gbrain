@@ -3,7 +3,8 @@
 `v1.json` is the contract between gbrain and QM's memory provider: the two tools
 (`memory_recall`, `memory_write`) with their argument schemas, output shapes and
 limits, the `x-qm-actor` header and actor id pattern, every error code and
-`actor_not_attested` reason with its fix, and the operations not attestable yet.
+`actor_not_attested` reason with its fix, the operations not attestable yet, and
+the `x-qm-audience` header, refused until wave 2.
 
 It is generated from the live operation registry by
 `bun scripts/build-qm-memory-contract.ts` (part of `bun run regen:all`), and

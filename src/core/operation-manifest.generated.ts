@@ -6126,8 +6126,8 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "description": "What the turn is about; ranks the facts."
       },
       "max_chars": {
-        "type": "number",
-        "description": "Text cap, 200-12000 (default 6000)."
+        "type": "integer",
+        "description": "Text cap in UTF-16 code units, 200-12000 (default 6000)."
       },
       "acting_user": {
         "type": "string",

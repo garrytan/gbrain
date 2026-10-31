@@ -29,7 +29,13 @@ describe('QM memory-provider contract v1', () => {
     expect(fixture.transport).toMatchObject({ session: 'stateless', success_codes_in: 'structuredContent' });
     expect(fixture.unlinked_recall).toEqual({ isError: false, ...unlinkedRecallResult() });
     expect(fixture.unlinked_recall.structuredContent).toEqual({ facts: [], truncated: false, code: 'actor_unlinked' });
-    expect(fixture.memory_recall.limits.max_chars).toEqual({ min: 200, max: 12000, default: 6000, whole_number: true });
+    expect(fixture.memory_recall.limits.max_chars).toEqual({ min: 200, max: 12000, default: 6000, whole_number: true, unit: 'UTF-16 code units (JavaScript string length)' });
+    expect(fixture.tools.find((t: { name: string }) => t.name === 'memory_recall').input_schema.properties.max_chars.type).toBe('integer');
+    expect(fixture.wave_2).toMatchObject({ audience_header: 'x-qm-audience', status: 'refused until wave 2', refusal: { code: 'actor_not_attested', reason: 'audience_not_supported' } });
+    expect(fixture.actor.default_attest_ops).toEqual(['get_write_request', 'memory_recall', 'memory_write']);
+    const codes = fixture.errors.codes.map((c: { code: string }) => c.code);
+    expect(codes).not.toContain('rate_limited');
+    for (const code of ['unavailable', 'unknown_tool', 'not_found', 'fact_not_found']) expect(codes).toContain(code);
     expect(fixture.memory_write.limits.facts).toEqual({ min: 1, max: 20 });
     expect(fixture.actor.deferred_ops).not.toContain('forget');
     expect(fixture.actor.deferred_ops).not.toContain('forget_fact');

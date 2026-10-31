@@ -17,8 +17,8 @@ import { withRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core
 import { withCallerAccess } from '../core/search/private-visibility.ts';
 import { appliedAccessSummary, remoteCallerAccess } from '../core/access/caller.ts';
 import { audienceInArguments, audienceInArgumentsError, logAudienceAssertion, parseAudience, type AudienceAuditEvent, type AudienceChannels, type AudiencePrincipal } from '../core/access/audience.ts';
-import { ACTOR_ARGUMENT, EXTERNAL_ID_RE, resolveAttestedActor, type ActorChannels } from '../core/access/actor.ts';
-import { qmMemoryToolResult, unlinkedRecallResult } from '../core/ops/qm-memory.ts';
+import { ACTOR_ARGUMENT, actorNotAttested, EXTERNAL_ID_RE, resolveAttestedActor, type ActorChannels } from '../core/access/actor.ts';
+import { qmMemoryToolResult, recallArguments, unlinkedRecallResult } from '../core/ops/qm-memory.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
@@ -923,7 +923,7 @@ export async function dispatchToolCall(
     let attested: Awaited<ReturnType<typeof resolveAttestedActor>> = null;
     let access: Awaited<ReturnType<typeof remoteCallerAccess>>;
     const header = opts.actor?.header ?? undefined;
-    const actorNamed = header !== undefined || (!!params && Object.prototype.hasOwnProperty.call(params, ACTOR_ARGUMENT));
+    const actorNamed = header !== undefined || opts.actor?.audience != null || (!!params && Object.prototype.hasOwnProperty.call(params, ACTOR_ARGUMENT));
     const assertion = (outcome: AudienceAuditEvent['outcome'], reason?: string) => logAudienceAssertion({ outcome, op: name,
       audience: [...(attested?.access.audience ?? audience ?? [])], transport: opts.transport ?? 'unknown',
       principal: opts.auth?.principal ? `${opts.auth.principal.kind}:${opts.auth.principal.id}` : opts.transport === 'stdio' ? 'local_stdio' : 'unknown',
@@ -937,7 +937,7 @@ export async function dispatchToolCall(
     } catch (e) {
       if (!(e instanceof OperationError) || !/^(on_behalf_of_|actor_)/.test(String(e.code))) throw e;
       assertion(e.code as AudienceAuditEvent['outcome'], e.reason);
-      return actorNamed ? actorRefusal(e, opts, name, header) : errorResult(e, opts, { op: name });
+      return qmMemoryToolResult(name, actorNamed ? actorRefusal(e, opts, name, header, params) : errorResult(e, opts, { op: name }));
     }
     if (audience || attested) assertion('accepted');
     const callParams = attested ? attested.params : params;
@@ -960,8 +960,9 @@ export async function dispatchToolCall(
  * actor_unlinked as a success instead (GST-359 D): empty content and structuredContent {facts: [], truncated: false,
  * code: 'actor_unlinked'}, the code also in `_meta.access`, so a person not yet linked reads nothing and QM's turn goes on.
  */
-function actorRefusal(e: OperationError, opts: DispatchOpts, op: string, header: string | undefined): ToolResult {
+function actorRefusal(e: OperationError, opts: DispatchOpts, op: string, header: string | undefined, params: Record<string, unknown> | undefined): ToolResult {
   if (op === 'memory_recall' && e.code === 'actor_unlinked') {
+    try { recallArguments(params); } catch (invalid) { if (invalid instanceof OperationError) return actorRefusal(invalid, opts, op, header, params); throw invalid; }
     return { ...unlinkedRecallResult(), _meta: { access: { code: 'actor_unlinked', member: null, groups: [], audience: null, actor: { system: 'qm', external_id: header } } } };
   }
   const out = errorResult(e, opts, { op });
@@ -970,6 +971,17 @@ function actorRefusal(e: OperationError, opts: DispatchOpts, op: string, header:
     out.structuredContent = { error: { code: env.code, message: env.message, ...(env.reason ? { reason: env.reason } : {}), ...(env.fix ? { fix: env.fix } : {}) } };
   } catch { /* the text block still carries the code */ }
   return out;
+}
+
+/**
+ * GST-359 D: the refusal both HTTP transports give a request carrying x-qm-audience (a channel audience gbrain does
+ * not serve yet), before any work: the tools/call result (with structuredContent.error) and the JSON-RPC error for
+ * every other method that would read (tools/list, resources).
+ */
+export function audienceRefusal(op: string, opts: Pick<DispatchOpts, 'auth' | 'transport'>): { result: ToolResult; rpc: { code: number; message: string; data: Record<string, unknown> } } {
+  const e = actorNotAttested('audience_not_supported', { auth: opts.auth }, { op, transport: opts.transport });
+  return { result: actorRefusal(e, { remote: true, ...opts }, op, undefined, undefined),
+    rpc: { code: -32600, message: `actor_not_attested: ${e.message}`, data: { code: 'actor_not_attested', reason: 'audience_not_supported', message: e.message } } };
 }
 
 /** The response-meta hook's keys, or its failure message; never rejects (a hook failure degrades to no keys). */
