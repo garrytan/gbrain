@@ -35,6 +35,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
 import { digest } from '../persistence/digest.ts';
+import { withDeferredApprovalCleanup } from '../persistence/preview-approval.ts';
 import { readJournalLimits, journalLimitKey } from '../persistence/limits.ts';
 import { isTerminal, principalKey } from '../persistence/model.ts';
 import { getWriteRequest } from '../persistence/journal.ts';
@@ -344,7 +345,10 @@ export async function runRepair(ctx: OperationContext, handler: RepairHandler, s
     /** Test seam: who publishes this run's admissions (default: this process's consumer, else a live full one on this host). */
     publicationOwner?: () => Promise<{ alive: boolean; owner: string }> }): Promise<RepairResult> {
   // #6696 (A5): an approved local repair is the operator's own write; a maintenance cycle's background scope still wins.
-  return withAdmissionOrigin('interactive', () => runRepairScoped(ctx, handler, scope, opts));
+  return withAdmissionOrigin('interactive', () => withDeferredApprovalCleanup(
+    () => runRepairScoped(ctx, handler, scope, opts),
+    result => opts.apply && result.complete && !result.stopped && result.failed.length === 0,
+  ));
 }
 
 async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, scope: RepairScope,
@@ -456,7 +460,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
   for (const [index, item] of pending.entries()) {
     const remaining = pending.length - index;
     opts.progress?.tick(1, `${item.source_id}:${item.slug}`);
-    // A preview-bound kind may retire its approved set with its last item, so every earlier receipt settles before that item runs.
+    // Settle earlier approved writes before the last item; approval cleanup itself waits for the whole run.
     const lastApproved = !!opts.expect && index === plan.items.length - 1;
     // An item on a page this run's pending write is still changing waits for it, so it writes the page's new revision.
     const samePage = unresolved.some(open => open.item.source_id === item.source_id && open.item.slug === item.slug);

@@ -10,11 +10,14 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
+import { OperationError } from '../src/core/ops/contract.ts';
+import { loadApprovedSet } from '../src/core/persistence/preview-approval.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { maintenanceAttribution } from '../src/core/persistence/attribution.ts';
 import { parseMarkdown } from '../src/core/markdown.ts';
-import { resolveRepairScope } from '../src/core/repair/core.ts';
+import { resolveRepairScope, runRepair } from '../src/core/repair/core.ts';
+import { timelineOrderRepair } from '../src/core/repair/timeline-order.ts';
 import { AUTO_REPAIR_REGISTRY, repairRunner } from '../src/core/repair/registry.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { durableGitRepo } from './helpers/git-publication.ts';
@@ -48,6 +51,70 @@ const timelineOf = async (engine: BrainEngine, sourceId: string, slug: string) =
 for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
   describe(`#7247 gbrain repair timeline-order (${backend})`, () => {
+    for (const failure of ['first_item', 'last_item', 'write_pending', 'unexpected_error'] as const) {
+      test(`keeps approval after ${failure} and resumes the same preview`, () => managedBrain(async ({ engine, ctx }) => {
+        for (const slug of ['people/first-example', 'people/last-example']) {
+          await put(ctx, 'source-a', slug, doc(slug, 'Synthetic repair recovery fixture.', CAROL));
+        }
+        const scope = await resolveRepairScope(engine, 'source-a');
+        const preview = await (await repairRunner(engine, { apply: false, logger })).run('timeline-order', scope, { explicit: true });
+        const hash = preview.preview_hash!;
+        const run = async () => (await repairRunner(engine, { apply: true, logger })).run('timeline-order', scope, { explicit: true, expect: hash });
+        const original = engine.executeRaw;
+        let calls = 0;
+        engine.executeRaw = async function<T = Record<string, unknown>>(sql: string, params?: unknown[], opts?: Parameters<BrainEngine['executeRaw']>[2]): Promise<T[]> {
+          if (sql === 'SELECT state FROM persistence_requests WHERE request_id=$1::uuid') {
+            calls++;
+            if (calls === (failure === 'first_item' ? 1 : 2)) {
+              if (failure === 'unexpected_error') throw new Error('synthetic storage failure');
+              throw new OperationError(failure === 'write_pending' ? 'write_pending' : 'invalid_params', 'synthetic temporary refusal', 'retry');
+            }
+          }
+          return original.call(this, sql, params, opts) as Promise<T[]>;
+        };
+        try {
+          if (failure === 'unexpected_error') await expect(run()).rejects.toThrow('synthetic storage failure');
+          else {
+            const failed = await run();
+            if (failure === 'write_pending') expect(failed.stopped?.reason).toBe('write_pending');
+            else expect(failed.failed).toHaveLength(1);
+          }
+        } finally { engine.executeRaw = original; }
+        // A failed last item must not consume approval, nor may a later successful item erase an earlier failure.
+        expect((await loadApprovedSet(engine, { command: 'timeline-order', hash, previewCommand: 'gbrain repair timeline-order' })).items).toHaveLength(2);
+        const resumed = await run();
+        expect(resumed).toMatchObject({ complete: true, failed: [] });
+        for (const slug of ['people/first-example', 'people/last-example']) {
+          expect((await timelineOf(engine, 'source-a', slug)).trim()).toBe('## Timeline\n\n- **2020-01-01** | import — First\n- **2021-01-01** | import — Second\n- **2022-01-01** | import — Third');
+        }
+        await expect(loadApprovedSet(engine, { command: 'timeline-order', hash, previewCommand: 'gbrain repair timeline-order' })).rejects.toMatchObject({ code: 'preview_changed' });
+      }, { databaseUrl, setup: gitRoot }), 180_000);
+    }
+
+    for (const ending of ['limited', 'report_throw', 'report_stop'] as const) {
+      test(`keeps approval through ${ending} and resumes publication`, () => managedBrain(async ({ engine, ctx }) => {
+        for (const slug of ['people/first-example', 'people/last-example']) {
+          await put(ctx, 'source-a', slug, doc(slug, 'Synthetic repair completion fixture.', CAROL));
+        }
+        const scope = await resolveRepairScope(engine, 'source-a');
+        const preview = await runRepair(ctx, timelineOrderRepair, scope, { apply: false, explicit: true });
+        const hash = preview.preview_hash!;
+        const options = { apply: true, explicit: true, expect: hash };
+        const handler = { ...timelineOrderRepair, async report() {
+          // A last-item cleanup request must still leave approval readable while reporting.
+          expect((await loadApprovedSet(engine, { command: 'timeline-order', hash, previewCommand: 'p' })).items).toHaveLength(2);
+          if (ending === 'report_throw') throw new Error('synthetic report failure');
+          return { stopped: { reason: 'write_pending', message: 'synthetic report hold' } };
+        } };
+        if (ending === 'report_throw') await expect(runRepair(ctx, handler, scope, options)).rejects.toThrow('synthetic report failure');
+        else if (ending === 'limited') expect((await runRepair(ctx, timelineOrderRepair, scope, { ...options, limit: 1 })).complete).toBe(false);
+        else expect((await runRepair(ctx, handler, scope, options)).stopped?.reason).toBe('write_pending');
+        expect((await loadApprovedSet(engine, { command: 'timeline-order', hash, previewCommand: 'p' })).items).toHaveLength(2);
+        expect(await runRepair(ctx, timelineOrderRepair, scope, options)).toMatchObject({ complete: true, failed: [] });
+        await expect(loadApprovedSet(engine, { command: 'timeline-order', hash, previewCommand: 'p' })).rejects.toMatchObject({ code: 'preview_changed' });
+      }, { databaseUrl, setup: gitRoot }), 180_000);
+    }
+
     test('preview writes nothing; a stale or moved preview refuses; the apply rewrites exactly the planned pages; a second preview is empty', () => managedBrain(async ({ engine, ctx, root }) => {
       await put(ctx, 'default', 'people/alice-example', doc('Alice Example', 'Alice Example is a synthetic person.', ALICE));
       await put(ctx, 'default', 'companies/acme-example', doc('Acme Example', 'A synthetic company.', ACME));

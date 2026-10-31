@@ -15,7 +15,7 @@ import { OperationError } from '../src/core/ops/contract.ts';
 import { purgeStaleCheckpoints } from '../src/core/op-checkpoint.ts';
 import { authorityDigest } from '../src/core/minions/submission-authority.ts';
 import { APPROVAL_MAX_AGE_DAYS, PREVIEW_APPROVAL_OP, clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet,
-  type PreviewApprovalCommand } from '../src/core/persistence/preview-approval.ts';
+  withDeferredApprovalCleanup, type PreviewApprovalCommand } from '../src/core/persistence/preview-approval.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 
@@ -128,6 +128,50 @@ for (const kind of testBackends()) {
       await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)`,
         [PREVIEW_APPROVAL_OP, `authorize-legacy:${hash}`, JSON.stringify([{ command: 'authorize-legacy', hash }])]);
       expect((await refusal(() => loadApprovedSet(engine, { command: 'authorize-legacy', hash, previewCommand: COMMANDS[0]!.preview }))).code).toBe('preview_changed');
+    });
+
+    test('concurrent cleanup scopes retain failed batches and retire only completed batches', async () => {
+      const key = (name: string) => ({ command: 'extractor-facts' as const, hash: previewHash(name), previewCommand: 'p' });
+      const held = key('held'), finished = key('finished'), direct = key('direct');
+      for (const k of [held, finished, direct]) await saveApprovedSet(engine, k, [k.hash]);
+      const ready = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const retained = withDeferredApprovalCleanup(async () => {
+        await clearApprovedSet(engine, held);
+        ready.resolve();
+        await release.promise;
+        expect((await loadApprovedSet(engine, held)).items).toEqual([held.hash]);
+        return false;
+      }, result => result);
+      await ready.promise;
+      try {
+        await withDeferredApprovalCleanup(async () => {
+          await clearApprovedSet(engine, finished);
+          expect((await loadApprovedSet(engine, finished)).items).toEqual([finished.hash]);
+          return true;
+        }, result => result);
+        await expect(loadApprovedSet(engine, finished)).rejects.toMatchObject({ code: 'preview_changed' });
+        // Non-batch callers still clear immediately even while another batch is waiting.
+        await clearApprovedSet(engine, direct);
+        await expect(loadApprovedSet(engine, direct)).rejects.toMatchObject({ code: 'preview_changed' });
+      } finally { release.resolve(); await retained; }
+      expect((await loadApprovedSet(engine, held)).items).toEqual([held.hash]);
+    });
+
+    test('nested successful cleanup waits for its outer batch, including throws', async () => {
+      const key = { command: 'stale-atoms' as const, hash: previewHash('nested'), previewCommand: 'p' };
+      await saveApprovedSet(engine, key, [1]);
+      await expect(withDeferredApprovalCleanup(async () => {
+        await withDeferredApprovalCleanup(async () => { await clearApprovedSet(engine, key); return true; }, result => result);
+        expect((await loadApprovedSet(engine, key)).items).toEqual([1]);
+        throw new Error('report failed');
+      }, () => true)).rejects.toThrow('report failed');
+      expect((await loadApprovedSet(engine, key)).items).toEqual([1]);
+      await withDeferredApprovalCleanup(async () => {
+        await withDeferredApprovalCleanup(async () => { await clearApprovedSet(engine, key); return true; }, result => result);
+        return true;
+      }, result => result);
+      await expect(loadApprovedSet(engine, key)).rejects.toMatchObject({ code: 'preview_changed' });
     });
 
     test('clearApprovedSet removes only that set', async () => {
