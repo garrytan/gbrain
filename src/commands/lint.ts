@@ -19,7 +19,8 @@ import { readSourceFileSync, writeSourceFileSync, hasSourceFilesystemLock, withS
  */
 
 import { readdirSync, statSync, lstatSync, existsSync } from 'fs';
-import { join, relative, dirname } from 'path';
+import { join, relative, dirname, basename } from 'path';
+import { Lexer } from 'marked';
 import { isAborted } from '../core/abort-check.ts';
 import { parseMarkdown, type ParseValidationCode } from '../core/markdown.ts';
 import { parseDateLoose } from '../core/effective-date.ts';
@@ -131,7 +132,7 @@ function findLeadingPreamble(content: string): { start: number; end: number } | 
  * `missing-created` rule. `created` first for the legacy name; the rest are
  * what effective-date resolution and the native serializer actually write.
  */
-const TEMPORAL_KEYS = ['created', 'event_date', 'date', 'published', 'captured_at', 'ingested_at'] as const;
+const TEMPORAL_KEYS = ['created', 'event_date', 'date', 'published', 'captured_at', 'ingested_at', 'mirrored_at'] as const;
 
 /**
  * Per-call options for `lintContent`. Tests pass content-sanity opts
@@ -225,6 +226,19 @@ export function lintContent(content: string, filePath: string, opts: LintContent
   // #6538: in the body, a YYYY-MM-DD token followed by `-word`, `.ext` or `/` is a filename/path template
   // (`YYYY-MM-DD-topic.md`), not an unfilled date; frontmatter stays strict.
   const prose = stripCodeBlocks(content).split('\n');
+  // CommonMark indented code is documentation too. Use block tokens so an
+  // indented list continuation remains prose; preserve original line lengths.
+  let tokenLine = 0;
+  for (const token of Lexer.lex(content)) {
+    const lineCount = (token.raw.match(/\n/g) ?? []).length;
+    if (token.type === 'code' && token.codeBlockStyle === 'indented') {
+      const maskedLines = lineCount + (token.raw.endsWith('\n') ? 0 : 1);
+      for (let i = tokenLine; i < tokenLine + maskedLines && i < prose.length; i++) {
+        prose[i] = prose[i].replace(/[^\r]/g, ' ');
+      }
+    }
+    tokenLine += lineCount;
+  }
   const frontmatterLines = content.startsWith('---') ? lines.indexOf('---', 1) : -1;
   for (let i = 0; i < lines.length; i++) {
     const datePlaceholder = i <= frontmatterLines ? /\bYYYY-MM-DD\b/ : /\bYYYY-MM-DD\b(?![-./][A-Za-z0-9]|\/)/;
@@ -242,14 +256,23 @@ export function lintContent(content: string, filePath: string, opts: LintContent
     const fmEnd = content.indexOf('---', 3);
     if (fmEnd > 0) {
       const fm = content.slice(3, fmEnd);
-      if (!fm.match(/^title:/m)) {
+      // Published native skill artifacts have name/description rather than
+      // brain-page title/type/date. Match their exact directory contract and
+      // parsed YAML; an arbitrary note or malformed skill gets no exemption.
+      const skillArtifact = basename(filePath) === 'SKILL.md'
+        && basename(dirname(dirname(filePath))) === 'skills'
+        && parsed.frontmatter.name === basename(dirname(filePath))
+        && typeof parsed.frontmatter.description === 'string'
+        && parsed.frontmatter.description.trim().length > 0
+        && !(parsed.errors?.length);
+      if (!skillArtifact && !fm.match(/^title:/m)) {
         issues.push({
           file: filePath, line: 1, rule: 'missing-title',
           message: 'Frontmatter missing required field: title',
           fixable: false,
         });
       }
-      if (!fm.match(/^type:/m)) {
+      if (!skillArtifact && !fm.match(/^type:/m)) {
         issues.push({
           file: filePath, line: 1, rule: 'missing-type',
           message: 'Frontmatter missing required field: type',
@@ -273,7 +296,12 @@ export function lintContent(content: string, filePath: string, opts: LintContent
       // it is never fixable (ingest time is not creation time, see #3958).
       // A block YAML could not read is already a frontmatter-yaml-parse finding.
       const yamlUnreadable = parsed.errors?.some(e => e.code === 'YAML_PARSE') ?? false;
-      if (!yamlUnreadable && !TEMPORAL_KEYS.some(key => parseDateLoose(parsed.frontmatter[key]) !== null)) {
+      // Calendar serializers retain the event's start (not a made-up creation
+      // time). End alone is insufficient; unrelated note fields stay strict.
+      const calendarStart = ['meeting', 'event', 'calendar-event'].includes(parsed.type)
+        && parseDateLoose(parsed.frontmatter.start) !== null;
+      if (!skillArtifact && !yamlUnreadable && !calendarStart
+          && !TEMPORAL_KEYS.some(key => parseDateLoose(parsed.frontmatter[key]) !== null)) {
         issues.push({
           file: filePath, line: 1, rule: 'missing-created',
           message: `Frontmatter has no parseable date under any of: ${TEMPORAL_KEYS.join(', ')}`,
