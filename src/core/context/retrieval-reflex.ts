@@ -55,6 +55,8 @@ export { reflexPointerRationale } from './reflex-rationale.ts';
 /** Default cap on pointers injected per turn (config: retrieval_reflex_max_pointers). */
 export const DEFAULT_MAX_POINTERS = 3;
 const SYNOPSIS_MAX = 160;
+/** Assistant-only exact-title hits on broad hubs add noise to proactive context. */
+const POPULAR_TITLE_BACKLINK_LIMIT = 300;
 
 // #3746 — pure-CJK norm (every char in the shared Han/kana/hangul ranges).
 // These norms get the extra exact-title/exact-slug arm: CJK candidates are
@@ -211,12 +213,40 @@ export interface ResolvePointersOpts {
 }
 
 export interface PageRow {
+  id?: number;
   slug: string;
   source_id: string;
   title: string;
   type: string | null;
   frontmatter: Record<string, unknown> | null;
   compiled_truth: string | null;
+}
+
+type ResolvedCandidate = { slug: string; source_id: string; arm: ResolveArm; matchedNorm?: string; userMention?: boolean };
+
+function resolverState(candidates: EntityCandidate[]) {
+  const displayByNorm = new Map<string, string>();
+  const userMentionByNorm = new Map(candidates.map((c) => [
+    normalizeAlias(c.query),
+    (c as EntityCandidate & { userMention?: boolean }).userMention,
+  ]));
+  const resolved: ResolvedCandidate[] = [];
+  const seen = new Set<string>();
+  // Neither source ids nor slugs contain spaces, so this separator is safe.
+  const keyOf = (src: string, slug: string) => `${src} ${slug}`;
+  const push = (slug: string, src: string, arm: ResolveArm, matchedNorm?: string) => {
+    if (!slug) return;
+    const k = keyOf(src, slug);
+    const userMention = matchedNorm ? userMentionByNorm.get(matchedNorm) : undefined;
+    if (!seen.has(k)) {
+      seen.add(k);
+      resolved.push({ slug, source_id: src, arm, matchedNorm, userMention });
+    } else if (userMention === true) {
+      const existing = resolved.find((p) => keyOf(p.source_id, p.slug) === k);
+      if (existing) existing.userMention = true;
+    }
+  };
+  return { displayByNorm, resolved, keyOf, push };
 }
 
 /**
@@ -241,7 +271,7 @@ export async function resolveEntitiesToPointers(
 
   // display lookup keyed by normalized query, so resolved slugs can recover a
   // human surface form for the pointer label.
-  const displayByNorm = new Map<string, string>();
+  const { displayByNorm, resolved, keyOf, push } = resolverState(candidates);
   const aliasNorms: string[] = [];
   const titlesLc: string[] = [];
   const exactSlugs: string[] = [];
@@ -308,18 +338,6 @@ export async function resolveEntitiesToPointers(
 
   // Ordered set of resolved (source, slug) pairs with arm provenance —
   // alias hits pushed first → higher confidence.
-  const resolved: Array<{ slug: string; source_id: string; arm: ResolveArm; matchedNorm?: string }> = [];
-  const seen = new Set<string>();
-  // Neither source ids nor slugs contain spaces, so a space separator is safe.
-  const keyOf = (src: string, slug: string) => `${src} ${slug}`;
-  const push = (slug: string, src: string, arm: ResolveArm, matchedNorm?: string) => {
-    if (!slug) return;
-    const k = keyOf(src, slug);
-    if (!seen.has(k)) {
-      seen.add(k);
-      resolved.push({ slug, source_id: src, arm, matchedNorm });
-    }
-  };
   // Arm 1 — alias-first. Unambiguous single-slug hits only, per source (no
   // engine-interface change for federation). Guarded: pre-v110 brains throw
   // "relation page_aliases does not exist" — swallow and continue.
@@ -413,7 +431,7 @@ export async function resolveEntitiesToPointers(
     // class ("Labs", "Systems" as pseudo-surnames).
     rows = useSurnameArm
       ? await engine.executeRaw<PageRow>(
-          `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
+          `SELECT p.id, p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
              FROM pages p
             WHERE p.deleted_at IS NULL ${privacySql}
               AND p.source_id = ANY($1::text[])
@@ -424,7 +442,7 @@ export async function resolveEntitiesToPointers(
           [sourceIds, titlesLc, exactSlugs, slugSuffixes, surnamePatterns],
         )
       : await engine.executeRaw<PageRow>(
-          `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
+          `SELECT p.id, p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
              FROM pages p
             WHERE p.deleted_at IS NULL ${privacySql}
               AND p.source_id = ANY($1::text[])
@@ -560,10 +578,12 @@ export async function resolveEntitiesToPointers(
     rowByKey.set(keyOf(r.source_id, r.slug), r); push(r.slug, r.source_id, 'weak-title', (r.title ?? '').toLowerCase());
   }
 
+  const pointerCandidates = await suppressPopularAssistantTitles(engine, resolved, rowByKey, sourceIds, opts.excludePrivate !== false);
+
   const trust = await gatePointerCandidates(engine, resolved, opts); // #5575 gate; then pointers by confidence, suppression + cap
   const suppression = opts.suppression ?? 'slug-and-title';
   const pointers: ReflexPointer[] = [];
-  for (const { slug, source_id, arm, matchedNorm } of await preferEntityTitleMatches(engine, resolved, m => rowByKey.get(keyOf(m.source_id, m.slug)), m => trust.has(pageKey(m)), slugToNorm)) {
+  for (const { slug, source_id, arm, matchedNorm } of await preferEntityTitleMatches(engine, pointerCandidates, m => rowByKey.get(keyOf(m.source_id, m.slug)), m => trust.has(pageKey(m)), slugToNorm)) {
     const row = rowByKey.get(keyOf(source_id, slug));
     if (!row || !trust.has(pageKey({ source_id, slug }))) continue;
     // Suppression: already present in PRIOR context. The current turn is
@@ -586,6 +606,33 @@ export async function resolveEntitiesToPointers(
 
   if (!pointers.length) return null;
   return { pointers, text: renderPointerBlock(pointers) };
+}
+
+async function suppressPopularAssistantTitles(
+  engine: BrainEngine,
+  resolved: ResolvedCandidate[],
+  rowsByKey: Map<string, PageRow>,
+  sourceIds: string[],
+  excludePrivate: boolean,
+): Promise<ResolvedCandidate[]> {
+  const assistantTitles = resolved.filter((pointer) => pointer.arm === 'title' && pointer.userMention === false)
+    .map((pointer) => ({ pointer, pageId: rowsByKey.get(`${pointer.source_id} ${pointer.slug}`)?.id }))
+    .filter((row): row is { pointer: ResolvedCandidate; pageId: number } =>
+      row.pageId !== undefined && Number.isInteger(row.pageId));
+  if (!assistantTitles.length) return resolved;
+  try {
+    const counts = await engine.getBacklinkCounts(
+      [...new Set(assistantTitles.map((row) => row.pageId))],
+      { sourceIds, ...(excludePrivate ? { excludePrivate: true } : {}) },
+    );
+    const suppressed = new Set(assistantTitles
+      .filter((row) => (counts.get(row.pageId) ?? 0) >= POPULAR_TITLE_BACKLINK_LIMIT)
+      .map((row) => `${row.pointer.source_id} ${row.pointer.slug}`));
+    return resolved.filter((pointer) => !suppressed.has(`${pointer.source_id} ${pointer.slug}`));
+  } catch {
+    /* Popularity is an optional precision guard; a failed count keeps the title hit. */
+    return resolved;
+  }
 }
 
 /**
