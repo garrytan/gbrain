@@ -507,6 +507,82 @@
             },
             "message": "dream_paid_loop did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with gbrain doctor --only dream_paid_loop --budget-ms 0 --json --brain host, run the full tier (gbrain doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
             "reason": "not_run"
+          },
+          {
+            "budget_ms": "<volatile>",
+            "check": "dream_write_deferred",
+            "code": "doctor_alert_unknown",
+            "fix": {
+              "actor": "agent",
+              "argv": [
+                "gbrain",
+                "doctor",
+                "--only",
+                "dream_write_deferred",
+                "--budget-ms",
+                "0",
+                "--json",
+                "--brain",
+                "host"
+              ],
+              "command": "gbrain doctor --only dream_write_deferred --budget-ms 0 --json --brain host",
+              "consent": [],
+              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/troubleshooting.md#doctor-alert",
+              "next": "run",
+              "requires_exclusive": false,
+              "verify": {
+                "argv": [
+                  "gbrain",
+                  "doctor",
+                  "--only",
+                  "dream_write_deferred",
+                  "--json",
+                  "--brain",
+                  "host"
+                ]
+              },
+              "why": "Measures only this check now, with no overall budget; read-only."
+            },
+            "message": "dream_write_deferred did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with gbrain doctor --only dream_write_deferred --budget-ms 0 --json --brain host, run the full tier (gbrain doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
+            "reason": "not_run"
+          },
+          {
+            "budget_ms": "<volatile>",
+            "check": "embedding_restamp_stalled",
+            "code": "doctor_alert_unknown",
+            "fix": {
+              "actor": "agent",
+              "argv": [
+                "gbrain",
+                "doctor",
+                "--only",
+                "embedding_restamp_stalled",
+                "--budget-ms",
+                "0",
+                "--json",
+                "--brain",
+                "host"
+              ],
+              "command": "gbrain doctor --only embedding_restamp_stalled --budget-ms 0 --json --brain host",
+              "consent": [],
+              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/troubleshooting.md#doctor-alert",
+              "next": "run",
+              "requires_exclusive": false,
+              "verify": {
+                "argv": [
+                  "gbrain",
+                  "doctor",
+                  "--only",
+                  "embedding_restamp_stalled",
+                  "--json",
+                  "--brain",
+                  "host"
+                ]
+              },
+              "why": "Measures only this check now, with no overall budget; read-only."
+            },
+            "message": "embedding_restamp_stalled did not run (the database checks did not run, or this tier or report skips it), so its health is unknown, not clear. Measure it with gbrain doctor --only embedding_restamp_stalled --budget-ms 0 --json --brain host, run the full tier (gbrain doctor --alert --tier standard --json) or raise the alert budget (--budget-ms).",
+            "reason": "not_run"
           }
         ]
       },
