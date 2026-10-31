@@ -3,7 +3,8 @@
  *
  * A phase whose runner throws (for example a managed-brain refusal) returns a
  * `fail` phase result carrying the typed error, so later phases in the same
- * job still run; the job's status still reports the failure. Containment
+ * job still run; the job's status still reports the failure. Accepted pending
+ * writes warn with their receipt command and do not count as paid failures. Containment
  * never swallows cancellation, a lost cycle lease or budget exhaustion: those
  * stop the job exactly as before. A contained failure after paid model calls
  * is recorded for doctor's dream_paid_loop check.
@@ -15,6 +16,7 @@ import { BudgetExhausted } from '../budget/budget-tracker.ts';
 import { withChatCallMeter } from '../ai/chat-usage.ts';
 import { withAIAttribution } from '../ai/invocation-guard.ts';
 import { recordContainedPaidFailure } from './dream-breaker.ts';
+import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { cliRenderContext, toAgentError, type RenderedAction } from '../agent-output.ts';
 
 /** Errors that must stop the whole job instead of failing one phase. */
@@ -45,6 +47,18 @@ export async function timeContainedPhase<T extends PhaseResult>(containment: Pha
   } catch (error) {
     if (isUncontainedPhaseError(error, containment.signal)) throw error;
     const err = error instanceof Error ? error : new Error(String(error));
+    const pending = acceptedPendingReceipt(error);
+    if (pending) {
+      return {
+        result: {
+          phase, status: 'warn', duration_ms: 0,
+          summary: `${phase}: write ${pending.request_id} accepted and still pending; check gbrain write-request ${pending.request_id}`,
+          details: {},
+          ...phaseErrorSiblings(err, phase),
+        },
+        duration_ms: Math.round(performance.now() - start),
+      };
+    }
     const rawCode = (err as { code?: unknown }).code;
     const code = typeof rawCode === 'string' ? rawCode : 'UNKNOWN';
     let paidLoopRecorded = false;

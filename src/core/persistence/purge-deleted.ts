@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { acceptedPendingReceipt } from './accepted-pending.ts';
 import type { BrainEngine } from '../engine.ts';
 import { loadConfig } from '../config.ts';
 import type { OperationContext } from '../ops/contract.ts';
@@ -252,12 +253,13 @@ export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours:
  * and so does an unmanaged recorded tombstone whose delete failed (GBRA-130 A-49: `failed` without `error`).
  */
 export function purgePhaseStatus(result: DeletedPagePurge): 'ok' | 'warn' | 'fail' {
-  return result.error ? 'fail' : result.inactive || result.parked || result.capacity_deferred || result.failed || result.held ? 'warn' : 'ok';
+  return result.error ? 'fail' : result.inactive || result.parked || result.capacity_deferred || result.failed || result.held || result.blocked.some(b => b.code === 'write_pending') ? 'warn' : 'ok';
 }
 
-/** The purge phase summary's note on the pages it did not submit (empty when there are none). */
+/** The purge phase summary's note on pages still waiting (empty when there are none). */
 export function purgePhaseNote(result: DeletedPagePurge): string {
   const parts = [result.inactive ? `${result.inactive} waiting on a writer in recovery` : '', !result.error && result.failed ? `${result.failed} failed (see details)` : '',
+    ...result.blocked.filter(b => b.code === 'write_pending').map(b => b.reason),
     result.parked ? `${result.parked} parked (gbrain doctor: purge_parked_pages)` : '',
     result.capacity_deferred ? `${result.capacity_deferred} deferred to the next run (write capacity in use)` : '',
     result.held ? `${result.held} deleted by a managed sync held for review (gbrain pages purge-deleted --dry-run; purge with --yes or restore each)` : ''].filter(Boolean);
@@ -330,6 +332,13 @@ export async function purgeDeletedPagesCoordinated(engine: BrainEngine, olderTha
       slugs.push(row.slug);
       if (row.park) await clearPurgePark(engine, row.key);
     } catch (error) {
+      const pending = acceptedPendingReceipt(error);
+      if (pending) {
+        deferred++;
+        blocked.push({ source_id: row.source_id, slug: row.slug, code: 'write_pending',
+          reason: `Write ${pending.request_id} accepted and still pending; check gbrain write-request ${pending.request_id}` });
+        continue;
+      }
       if (isWriteCapacityWait(error)) { deferRest(`Not submitted: ${error.message}; the next run submits it.`); break; }
       const code = typeof (error as { code?: unknown })?.code === 'string' ? (error as { code: string }).code : null;
       const reason = error instanceof Error ? error.message : String(error);
@@ -338,7 +347,7 @@ export async function purgeDeletedPagesCoordinated(engine: BrainEngine, olderTha
       blocked.push({ source_id: row.source_id, slug: row.slug, code, reason });
     }
   }
-  const failures = blocked.filter(b => !b.code || !DEFERRAL_CODES.has(b.code) && b.code !== 'writer_not_active' && b.code !== 'purge_parked' && b.code !== 'write_capacity_deferred' && b.code !== 'sync_delete_unreviewed');
+  const failures = blocked.filter(b => !b.code || !DEFERRAL_CODES.has(b.code) && b.code !== 'write_pending' && b.code !== 'writer_not_active' && b.code !== 'purge_parked' && b.code !== 'write_capacity_deferred' && b.code !== 'sync_delete_unreviewed');
   const error = failed > 0 ? { class: 'ManagedPurgeFailed', code: 'managed_purge_failed',
     message: `${failed} expired page(s) could not be purged through the coordinator: ${failures.slice(0, 3)
       .map(b => `${b.source_id}/${b.slug}: ${b.reason}`).join('; ')}` } : undefined;
