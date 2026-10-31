@@ -112,3 +112,10 @@ export async function loadApprovedSet<T>(engine: BrainEngine, key: ApprovedSetKe
 export async function clearApprovedSet(engine: BrainEngine, key: Omit<ApprovedSetKey, 'previewCommand'>): Promise<void> {
   await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [PREVIEW_APPROVAL_OP, fingerprint(key.command, key.hash)]);
 }
+
+/** Applies one approved item and drops the set once the last item returns; an item that throws keeps the set, so the printed apply resumes with the same hash. */
+export async function retireAfterLastItem<T>(engine: BrainEngine, command: PreviewApprovalCommand, hash: string | null | undefined, last: boolean, apply: () => Promise<T>): Promise<T> {
+  const outcome = await apply();
+  if (last && hash) await clearApprovedSet(engine, { command, hash });
+  return outcome;
+}

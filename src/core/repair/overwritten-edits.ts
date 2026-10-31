@@ -24,7 +24,7 @@ import { localHostId } from '../persistence/identity.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
 import { fileMatchesSnapshot } from '../persistence/page-prepare.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
-import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
+import { loadApprovedSet, previewChangedError, previewHash, retireAfterLastItem, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { overwriteContent, overwriteDigest, scanOverwrittenEdits, type OverwrittenEdit } from '../persistence/overwritten-edits.ts';
 import { readTreeBlobs, readBlobContents } from '../persistence/sync-blobs.ts';
 import { syncGit, syncGitPath } from '../persistence/sync-discovery.ts';
@@ -123,11 +123,7 @@ export const overwrittenEditsRepair: RepairHandler = {
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { edit, hash, last } = entry as EditItem;
-    try {
-      return await restoreEdit(ctx, entry, edit);
-    } finally {
-      if (last) await clearApprovedSet(ctx.engine, { command: 'overwritten-edits', hash });
-    }
+    return retireAfterLastItem(ctx.engine, 'overwritten-edits', hash, last, () => restoreEdit(ctx, entry, edit));
   },
   render(details) {
     const lines: string[] = [];

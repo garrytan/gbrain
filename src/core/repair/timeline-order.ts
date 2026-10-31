@@ -30,7 +30,7 @@ import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { digest } from '../persistence/digest.ts';
 import { pendingTimelineRows, storedCanonicalTimeline } from '../persistence/canonical-projections.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
-import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
+import { loadApprovedSet, previewChangedError, previewHash, retireAfterLastItem, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { orderTimeline, type TimelineOrderHold } from '../timeline-order.ts';
 import { segmentedTimelineNote, segmentedTimelinePages } from './timeline.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
@@ -185,7 +185,7 @@ export const timelineOrderRepair: RepairHandler = {
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { page, hash, last } = entry as OrderItem;
-    try {
+    return retireAfterLastItem(ctx.engine, 'timeline-order', hash, last, async () => {
       const requestId = requestIdOf(hash, page);
       const [done] = await ctx.engine.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE request_id=$1::uuid', [requestId]);
       const detail = { moved: page.moved, duplicates: page.duplicates, sections_joined: page.sections_joined };
@@ -197,8 +197,6 @@ export const timelineOrderRepair: RepairHandler = {
       await submitPageMutation(ctx, { operation: 'put_page', params: { slug: page.slug, source_id: page.source_id, content: verdict.content,
         expected_revision: snapshot.revision, request_id: requestId } });
       return { applied: true, outcome: 'reordered', detail };
-    } finally {
-      if (last) await clearApprovedSet(ctx.engine, { command: 'timeline-order', hash });
-    }
+    });
   },
 };

@@ -58,7 +58,7 @@ import { loadRepairBusySet, repairBusy, repairBusyMessage, type RepairBusySet } 
 import { fenceWhere } from '../fence-repair/refusal.ts';
 import type { SyncRename } from '../persistence/sync-discovery.ts';
 import { canonicalRepairFields, confinedRepairTarget, managedRepairRoot, prepareRepairPublication, repairScreenConfig, submitManagedFileRepair } from '../persistence/file-repair.ts';
-import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
+import { loadApprovedSet, previewChangedError, previewHash, retireAfterLastItem, saveApprovedSet } from '../persistence/preview-approval.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { materializedSnapshot, segmentedOverCeiling } from '../persistence/segmented-apply.ts';
 import { pageBodyOverCeilingError } from '../page-body/page-shape.ts';
@@ -509,8 +509,7 @@ export const frontmatterRepair: RepairHandler = {
   },
   async apply(ctx, entry, opts): Promise<RepairItemOutcome> {
     const { repair, selection, hash, last } = entry as FrontmatterItem;
-    try { return await applyRepair(ctx, repair, selection, opts?.embed === true); }
-    finally { if (last) await clearApprovedSet(ctx.engine, { command: 'frontmatter', hash }); }
+    return retireAfterLastItem(ctx.engine, 'frontmatter', hash, last, () => applyRepair(ctx, repair, selection, opts?.embed === true));
   },
   render(details, opts) {
     const d = details as unknown as FrontmatterPreviewDetails;

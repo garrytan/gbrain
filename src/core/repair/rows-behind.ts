@@ -26,7 +26,7 @@ import { sourceContext, type GhostOwner } from '../ghost-pages.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { prepareRepairPublication, repairScreenConfig, submitManagedFileRepair } from '../persistence/file-repair.ts';
 import { readBlobs } from '../persistence/git-gap.ts';
-import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
+import { loadApprovedSet, previewChangedError, previewHash, retireAfterLastItem, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { ROWS_BEHIND_DOCS, rowRefusal, scanRowsBehind, type RowBehind } from '../persistence/rows-behind.ts';
 import { SYNC_READ_BOUND } from '../persistence/sync-blobs.ts';
 import { readGitHold, writeGitHold, type GitHoldRecord } from '../persistence/sync-holds.ts';
@@ -129,11 +129,7 @@ export const rowsBehindRepair: RepairHandler = {
   },
   async apply(ctx, entry, opts): Promise<RepairItemOutcome> {
     const { row, hash, last } = entry as RowItem;
-    try {
-      return await applyRow(ctx, row, opts?.embed !== false);
-    } finally {
-      if (last) await clearApprovedSet(ctx.engine, { command: 'rows-behind', hash });
-    }
+    return retireAfterLastItem(ctx.engine, 'rows-behind', hash, last, () => applyRow(ctx, row, opts?.embed !== false));
   },
   render(details) {
     return [`  checkpoint ${String(details.checkpoint ?? '').slice(0, 12)}; each re-import goes through the managed import of the committed file (no file is written); guide: ${details.docs}`];

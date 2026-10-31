@@ -44,7 +44,7 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairCursor } from './core.ts';
-import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
+import { loadApprovedSet, previewChangedError, previewHash, retireAfterLastItem, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { createProgress, startHeartbeat } from '../progress.ts';
 import { cliOptsToProgressOptions, getCliOptions } from '../cli-options.ts';
 
@@ -376,7 +376,7 @@ export const visibilityRepair: RepairHandler = {
   async apply(ctx, entry) {
     const item = entry as VisibilityItem;
     const target = item.target ?? item.cursor;
-    try {
+    return retireAfterLastItem(ctx.engine, 'visibility', item.hash, !!item.last, async () => {
       if (target.phase === 4) return await applyFactItem(ctx, item, target.id);
       const snapshot = await ctx.engine.readPageSnapshot(item.slug, { sourceId: item.source_id });
       if (!snapshot || !item.change || Number(snapshot.page.id) !== target.id) return false;
@@ -388,9 +388,7 @@ export const visibilityRepair: RepairHandler = {
         content: serializePageToMarkdown(page, snapshot.tags), expected_revision: snapshot.revision,
         request_id: await repairRequestId(ctx, 'visibility', item, snapshot.revision) } });
       return true;
-    } finally {
-      if (item.last && item.hash) await clearApprovedSet(ctx.engine, { command: 'visibility', hash: item.hash });
-    }
+    });
   },
 };
 
