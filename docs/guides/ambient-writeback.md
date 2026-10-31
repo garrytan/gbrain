@@ -296,7 +296,7 @@ on the worker's process:
 |---|---|
 | `<label>` (a-z, 0-9, `.`, `_`, `-`, up to 64) | The session is saved. Claims from its user turns are saved as that agent's (`attributed_to: other`, context `speaker: agent <label>, not the owner`), never as yours. |
 | `off` | Nothing from the session is saved. Context injection still runs. |
-| `owner` | The turns are yours; automatic detection is skipped. |
+| `owner` | The turns are yours. Detection still runs, only to report a session it finds agent-launched (heartbeat reason `speaker_owner_override_detected`), so an `owner` inherited by a worker is visible. |
 | unset | Automatic detection, below. |
 
 ```bash
@@ -323,9 +323,12 @@ are the parent agent's brief. Dream synthesis reads the marker too and tells
 the model that the session's user turns are the agent's, never yours.
 
 The marker is a `<session>.speaker.json` file beside the session's corpus
-files, written before any of them. If it cannot be written, nothing from the
-session is saved (heartbeat reason `speaker_write_failed`); `off` records
-`capture_opt_out`. Agent claims are never promoted into your own takes by
+files, written before any of them; the first record is kept. If it cannot be
+written, nothing from the session is saved (heartbeat reason
+`speaker_write_failed`); `off` records `capture_opt_out`. A resumed session
+whose speaker differs from the record (you resuming a worker's session, or an
+agent's `claude -p --continue` in a session already saved as yours) keeps the
+record and reports `speaker_mismatch`. Agent claims are never promoted into your own takes by
 the consolidate phase and are not linked to entity pages as your statements.
 
 Facts saved as yours before this marker existed can be re-attributed:

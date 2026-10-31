@@ -80,7 +80,7 @@ import {
 } from '../core/context/corpus-segments.ts';
 import { openSessionCorpus } from '../core/context/corpus-source.ts';
 import { hookLaneLabel, resolveSeat, seatReasonHint, writeSeatSidecar } from '../core/context/seat.ts';
-import { bankAsSpeaker, resolveSessionSpeaker, type AncestorProcess } from '../core/context/session-speaker.ts';
+import { hookSpeakerDecision, type AncestorProcess } from '../core/context/session-speaker.ts';
 import { gateWritebackTurn, WRITEBACK_SKIP_REASONS } from '../core/facts/writeback-gate.ts';
 import { resolveWritebackConfigFromFile } from '../core/facts/writeback-config.ts';
 import { recordCaptureIfOff } from '../core/context/capture-consent.ts';
@@ -1683,10 +1683,9 @@ async function clearDriftStatus(harness: string): Promise<void> {
   } catch { /* absent or unreadable: nothing to clear */ }
 }
 
-/** #8064: whether this session may be banked; an agent speaker is recorded first, and a failed record banks nothing. */
+/** #8064: whether this session may be banked; an agent speaker is recorded first, and a failed record banks nothing (#8080 notes ride `reasons`). */
 function hookSpeaker(io: HookIo, dir: string, sessionId: string) {
-  const speaker = resolveSessionSpeaker({ env: io.env ?? process.env, ...(io.processAncestry ? { ancestry: io.processAncestry } : {}) });
-  return bankAsSpeaker(dir, sessionId, speaker, io.harness ?? 'claude-code');
+  return hookSpeakerDecision(dir, sessionId, { env: io.env ?? process.env, ...(io.processAncestry ? { ancestry: io.processAncestry } : {}) }, io.harness ?? 'claude-code');
 }
 
 function captureSeat(io: HookIo, dir: string, sessionId: string, transcriptPath: string | undefined): string[] {
