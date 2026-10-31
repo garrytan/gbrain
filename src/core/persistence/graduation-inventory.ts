@@ -29,6 +29,9 @@ const ORPHAN_EFFECT = "state IN ('queued','running','failed')";
 export const GRADUATION_INVENTORY: Inventory = {
   version: 1,
   entries: [
+    carry('access_group_members', 'security', 'Group membership behind readable_by group:<id> grants; without it carried pages would resolve readers differently.'),
+    carry('access_groups', 'security', 'Access groups that readable_by names; carried so grants keep meaning the same people.'),
+    carry('access_members', 'security', 'Brain members that readable_by member:<id> names; carried so per-page readers stay the same people.'),
     carry('access_tokens', 'security', 'Legacy bearer tokens and their unified grant columns; token hashes keep authorizing on the target.'),
     carry('belief_commit_marks', 'user_data', 'Belief ledger post-commit observations; without them carried events would read as unproven (W2 visibility).'),
     carry('belief_events', 'user_data', 'The belief ledger: recorded history Markdown cannot rebuild; event keys carry no ids, and the id order and sequence carry verbatim.'),
