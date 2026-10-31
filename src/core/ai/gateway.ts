@@ -39,7 +39,7 @@ import { BudgetTracker, type BudgetReservation } from '../budget/budget-tracker.
 import { failedCallUsage, recordOnTracker } from './budget-record.ts';
 import { estimateChatInputTokens } from './chat-input-estimate.ts';
 import { chatWithFallback, normalizeChatFallbackChain } from './chat-fallback.ts';
-import { applyThinkingOff, thinkingOffMaxOutputTokens } from './thinking-off.ts';
+import { applyThinkingOff, setThinkingOffBaseUrls, thinkingOffMaxOutputTokens } from './thinking-off.ts';
 import type {
   AIGatewayConfig,
   EmbedMultimodalOpts,
@@ -482,6 +482,7 @@ export function configureGateway(config: AIGatewayConfig): void {
     env: config.env,
   };
   stashGatewayAnthropicKeyFromEnv(config.env); // #2119: filter + rationale in anthropic-key.ts
+  setThinkingOffBaseUrls(config.base_urls);
   _modelCache.clear();
   clearQueryEmbedCache();
   _shrinkState.clear();
@@ -711,6 +712,7 @@ export function __setGatewayResetBaselineForTests(
 /** Clear every piece of module state. Shared by both reset flavors. */
 function clearGatewayState(): void {
   _config = null;
+  setThinkingOffBaseUrls(undefined);
   _discoveryEngine = null;
   _discovery = null;
   clearGatewayModelSources();

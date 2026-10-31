@@ -348,8 +348,16 @@ export async function probeTargetReranker(
 export async function persistEmbeddingFileConfig(
   toModel: string,
   toDims: number,
+  engine?: BrainEngine,
 ): Promise<void> {
-  const { loadConfig, loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
+  const { loadConfig, loadConfigFileOnly, loadConfigWithEngine, saveConfig } = await import('../core/config.ts');
+  // #7666: the gateway this process embeds with after apply must keep the
+  // DB-plane overlay (provider_base_urls.*, DB-plane credentials) the probe
+  // ran against; file/env still win per key, and nothing DB-sourced is saved.
+  const effective = async () => {
+    const fileEnv = loadConfig();
+    return engine && fileEnv ? await loadConfigWithEngine(engine, fileEnv) : fileEnv;
+  };
   const { configureGateway } = await import('../core/ai/gateway.ts');
   const { buildGatewayConfig } = await import('../core/ai/build-gateway-config.ts');
   // Round-2 #2: read the FILE plane, not env-merged loadConfig(). Persisting
@@ -368,7 +376,7 @@ export async function persistEmbeddingFileConfig(
     const envPinsTarget = envFullyPinsTarget(toModel, toDims);
     if (envPinsTarget) {
       serr('  [migrate] no ~/.gbrain/config.json — env-canonical mode: GBRAIN_EMBEDDING_* pins the target; keep it set for every gbrain process.');
-      const merged = loadConfig();
+      const merged = await effective();
       if (merged) configureGateway(buildGatewayConfig(merged));
       return;
     }
@@ -393,7 +401,7 @@ export async function persistEmbeddingFileConfig(
   // Reconfigure the in-process gateway from the MERGED view (env still wins
   // at runtime; when env is set it matches the target — the ≠ case was
   // refused before apply).
-  const merged = loadConfig();
+  const merged = await effective();
   configureGateway(buildGatewayConfig(merged ?? fileCfg));
 }
 
@@ -707,7 +715,7 @@ export async function executeMigrationFlow(
 
     const applied = await applyEmbeddingMigration(engine, plan, {
       ignoreEnvOverride: opts.ignoreEnvOverride,
-      persistConfig: (m, d) => persistEmbeddingFileConfig(m, d),
+      persistConfig: (m, d, tx) => persistEmbeddingFileConfig(m, d, tx),
       assertOwned,
     });
     if (applied.status === 'refused') return { status: 'refused_env', warning: applied.warning };
