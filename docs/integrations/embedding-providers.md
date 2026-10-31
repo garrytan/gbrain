@@ -40,6 +40,7 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 | `anthropic` | (no embedding model — chat only) | — | — | — | — |
 | `deepseek` | (no embedding model — chat only) | — | — | — | — |
 | `groq` | (no embedding model — chat only) | — | — | — | — |
+| `particle` | (no embedding model — chat only: `particle:particle-1`, `PARTICLE_API_KEY`) | — | — | — | — |
 
 **Note on local providers.** Ollama, llama-server and LM Studio have no required API key, so they don't show up in env-detection auto-pick. Pick them explicitly with `--embedding-model ollama:<model>` to avoid silently routing to a daemon that may not be running. Ollama can also run local chat/expansion models; set those routes explicitly with `gbrain config set models.chat ollama:<model>` and related per-task model keys.
 

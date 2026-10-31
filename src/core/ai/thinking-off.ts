@@ -19,6 +19,8 @@
  *   - Gemini 2.5 Flash and Flash-Lite: `thinkingConfig: { thinkingBudget: 0 }`
  *   - OpenAI models that accept `reasoningEffort: 'none'` (gpt-5.1, 5.2, 5.4,
  *     5.5 and the 5.6 family)
+ *   - Particle (`particle`; thinking is on by default): `reasoningEffort:
+ *     'none'`, sent as `reasoning_effort` on Chat Completions
  * Routes that cannot turn reasoning off send their floor and get the
  * thinking-model output headroom, because reasoning bills against the cap and
  * a judge-sized cap could come back empty:
@@ -136,6 +138,7 @@ export function thinkingOffControl(modelStr: string): ThinkingOffControl | undef
   if (provider === 'openrouter') return model.startsWith('deepseek/') ? { set: { namespace: provider, options: THINKING_DISABLED }, disables: true } : undefined;
   if (provider === 'google') return googleControl(model);
   if (provider === 'openai') return openaiControl(model);
+  if (provider === 'particle') return { set: { namespace: provider, options: { reasoningEffort: 'none' } }, disables: true };
   return undefined;
 }
 

@@ -238,6 +238,14 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   'deepseek:deepseek-flash':              { input:  0.30, output:  1.20 },
   'deepseek:deepseek-v4-flash':           { input:  0.30, output:  1.20 },
   'deepseek:deepseek-v4-pro':             { input:  1.32, output:  3.96 },
+  // Particle (read 2026-10-31 at https://platform.particle.ai): reasoning
+  // bills as output. Requests name `particle-1`; responses report
+  // `particle-ai/particle-1`, so both ids price. Particle lists cached input
+  // at $0.03/M; like other non-Anthropic rows this one carries no cache
+  // field until that rate is verified, so caps price cached input at the
+  // input rate, an upper bound.
+  'particle:particle-1':                  { input:  0.25, output:  1.00 },
+  'particle:particle-ai/particle-1':      { input:  0.25, output:  1.00 },
   // ── Z.ai / GLM (via LiteLLM proxy) ───────────────────────────────────
   // GLM-5.2 from Z.ai: $1.40/M input, $4.40/M output (verified 2026-08-16
   // against OpenRouter provider listings — z.ai's own direct rates).
