@@ -18,10 +18,10 @@ import { STDIO_MAY_ACT_FOR_KEY } from '../../../core/access/audience.ts';
 const name = 'access_may_act_for_wildcard';
 const SAMPLE = 20;
 
-async function runSharedAgentAccess(ctx: DoctorContext): Promise<Check[]> {
+async function sharedAgentVerdict(ctx: DoctorContext): Promise<Check> {
   const engine = connectedEngine(ctx);
   if (!(await accessRestrictionsPresent(engine).catch(() => true))) {
-    return [infoCheck(name, 'Not applicable: no page names readers and no member exists.', 'not_applicable')];
+    return infoCheck(name, 'Not applicable: no page names readers and no member exists.', 'not_applicable');
   }
   try {
     const rows = await engine.executeRaw<{ kind: 'token' | 'client'; id: string; name: string }>(
@@ -34,22 +34,29 @@ async function runSharedAgentAccess(ctx: DoctorContext): Promise<Check[]> {
     const stdioWild = (stdio?.value ?? '').split(',').map(s => s.trim()).includes('*');
     const named = [...rows.map(r => `${r.kind} ${r.name}`), ...(stdioWild ? [`config ${STDIO_MAY_ACT_FOR_KEY}`] : [])];
     const details = { credentials: rows.map(r => ({ kind: r.kind, name: r.name })), stdio: stdioWild, truncated: rows.length === SAMPLE };
-    if (!named.length) return [{ name, status: 'ok', details, message: 'No credential may act for every member (no may_act_for holds *).' }];
+    if (!named.length) return { name, status: 'ok', details, message: 'No credential may act for every member (no may_act_for holds *).' };
     const first = rows[0];
-    return [{ name, status: 'warn', details,
+    return { name, status: 'warn', details,
       message: `${named.length} credential(s) may act for any member (may_act_for holds *): ${named.slice(0, 5).join(', ')}. `
         + 'A harness using one can name any enabled member as its audience and read what that member reads. List the people it serves instead.',
       fix: first
         ? agentFix(['gbrain', 'access', 'check', first.kind === 'token' ? '--token' : '--client', first.kind === 'token' ? first.name : first.id, '--json'],
           'Read-only: shows the credential\'s grant and may_act_for. Ask the user which members, groups or guest it serves before narrowing it with gbrain auth rescope ... --may-act-for <list>.', name, { ask_user: true })
-        : agentFix(['gbrain', 'config', 'get', STDIO_MAY_ACT_FOR_KEY], `Read-only: shows ${STDIO_MAY_ACT_FOR_KEY}. Ask the user whom the stdio server serves before replacing * with that list.`, name, { ask_user: true }) }];
+        : agentFix(['gbrain', 'config', 'get', STDIO_MAY_ACT_FOR_KEY], `Read-only: shows ${STDIO_MAY_ACT_FOR_KEY}. Ask the user whom the stdio server serves before replacing * with that list.`, name, { ask_user: true }) };
   } catch (error) {
-    return [checkError(name, `run ${name}`, error)];
+    return checkError(name, `run ${name}`, error);
   }
 }
 
+async function runSharedAgentAccess(ctx: DoctorContext): Promise<Check[]> {
+  const checks: Check[] = [];
+  const { name: _name, ...verdict } = await sharedAgentVerdict(ctx);
+  checks.push({ name: 'access_may_act_for_wildcard', ...verdict });
+  return checks;
+}
+
 export const sharedAgentAccessEntry: DoctorEntry = {
-  name,
-  emits: [name],
+  name: 'access_may_act_for_wildcard',
+  emits: ['access_may_act_for_wildcard'],
   run: runSharedAgentAccess,
 };

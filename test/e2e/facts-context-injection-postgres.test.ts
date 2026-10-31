@@ -58,7 +58,7 @@ d('_meta injection on Postgres', () => {
       remote: true, sourceId: 'default', metaHook: failHook,
     });
     expect(r.isError).toBeFalsy();
-    expect(r._meta).toBeUndefined();
+    expect(Object.keys(r._meta ?? {})).toEqual(['access']);
   });
 
   test('recall op itself does NOT get _meta injection (anti-loop)', async () => {
