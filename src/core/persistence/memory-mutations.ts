@@ -27,6 +27,7 @@ import { withCoordinatedWrite } from './context.ts';
 import { requestAttribution } from './attribution.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
 import { prepareMemoryMutation } from './memory-prepare.ts';
+import { readWithdrawalBudgetMs, withdrawalAdmissionBudgetMs } from '../facts/withdrawal-budget.ts';
 import { retryWriteAdmission } from './admission-retry.ts';
 import { privateProvenanceFilterFragment, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { markBeliefCommits } from '../belief/append.ts';
@@ -331,6 +332,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   // are released before backoff. Admission must not retry a nested savepoint.
   let withdrawn: WithdrawalCommit['pages'] = [];
   const beliefReport = { appended: 0 };
+  const discoveryBudgetMs = await readWithdrawalBudgetMs(ctx.engine);
   const done = await retryWriteAdmission(requestId, remaining => ctx.engine.transaction(async tx => {
     withdrawn = [];
     beliefReport.appended = 0;
@@ -363,7 +365,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
     return withCoordinatedWrite(tx, [sourceId], async () => {
       // Even an expired legacy fact acquires a ledger so a stale import cannot
       // reactivate it. Internal affected-page identities never enter the receipt.
-      withdrawn = (await recordFactWithdrawal(tx, id, sourceId, ctx.remote !== false, { requestId: row.id, semanticReview, excludePrivate, beliefReport })).pages;
+      withdrawn = (await recordFactWithdrawal(tx, id, sourceId, ctx.remote !== false, { requestId: row.id, semanticReview, excludePrivate, beliefReport, discoveryBudgetMs })).pages;
       if (reason) await tx.executeRaw(`UPDATE facts SET context=concat_ws(' | ',NULLIF(context,''),$3::text)
         WHERE id=$1 AND source_id=$2`, [id, sourceId, `forgotten: ${reason}`]);
       if (operation === 'forget_fact' && fact.expired_at !== null) {
@@ -374,7 +376,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
         : { id, expired: true, path: 'legacy_db', reason: reason ?? 'forgotten' };
       return completeWrite(tx, row, 'committed', { ...outcome, persistence: { mode: 'database' } });
     }, requestAttribution(row));
-  }), undefined, error => ctx.engine.reconnect({ error }));
+  }), withdrawalAdmissionBudgetMs(discoveryBudgetMs), error => ctx.engine.reconnect({ error }));
   if (beliefReport.appended && done.state === 'committed') await markBeliefCommits(ctx.engine, [done.id]).catch(() => undefined);
   // The commit removed the withdrawn pages' chunks. Rebuild them before
   // acknowledging: a CLI process exits without a resident projection worker.

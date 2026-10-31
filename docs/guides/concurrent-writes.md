@@ -499,7 +499,8 @@ a subjectless (`*`) withdrawal shortlists across the source. Recorded
 provenance uses the fact fingerprint index.
 
 The limits are 256 affected pages in a target manifest no larger than 1 MiB, a
-10-second checked scan budget, a 16,384-row/8 MiB input limit per matching
+10-second checked scan budget (host setting `facts.withdrawal_budget_ms`, integer
+1,000..120,000 milliseconds; absent or invalid values use 10,000), a 16,384-row/8 MiB input limit per matching
 batch, and a 16,384-marker parsing limit per body, enforced during a linear
 scan. These are capacity limits, not a latency guarantee or permission to spend
 on providers. `withdrawal_capacity` or `withdrawal_provenance` refuses the
@@ -518,7 +519,15 @@ forget the entity-scoped copies of the fact first (each withdrawal changes only
 its own entity's pages), or edit the claim out of pages that should not carry
 it. Time-budget refusals on a common claim need host-operator investigation,
 not an unchanged retry, source deletion or a forced cursor reset. There is no
-override that trades away complete discovery.
+override that trades away complete discovery. On a large or slow database, a host
+operator can measure the read-only scan and set `gbrain config set
+facts.withdrawal_budget_ms 60000` before a new attempt. This changes only the
+complete-scan time allowance; every target, byte, subject, visibility and malformed
+fence check remains enforced. The database admission window uses the same frozen
+budget plus five seconds for authorization and receipt commitment, so it cannot
+cancel the scan at the unrelated five-second ordinary-write limit. Restore the
+setting with `gbrain config unset facts.withdrawal_budget_ms` when finished.
+A timeout still commits nothing; never split/delete the source to evade it.
 
 Queued legacy `source_scan` effects upgrade through the same discovery, keyed
 on the request's own forgotten fact; only when that fact row is gone does the

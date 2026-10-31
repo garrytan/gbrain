@@ -52,7 +52,7 @@ export function reviewWithdrawOn(raw: string | null | undefined): boolean {
 
 export async function recordFactWithdrawal(
   engine: BrainEngine, id: number, sourceId: string, worldOnly = false,
-  opts: { requestId?: string; publicationId?: string; semanticReview?: boolean; excludePrivate?: boolean; beliefReport?: { appended: number } } = {},
+  opts: { requestId?: string; publicationId?: string; semanticReview?: boolean; excludePrivate?: boolean; beliefReport?: { appended: number }; discoveryBudgetMs?: number } = {},
 ): Promise<WithdrawalCommit> {
   return engine.transaction(async tx => {
     // A managed caller takes this EXCLUSIVE source lock before authority,
@@ -69,7 +69,7 @@ export async function recordFactWithdrawal(
     const existing = await tx.executeRaw(`SELECT 1 FROM fact_withdrawals
       WHERE source_id=$1 AND visibility=$2 AND fact_hash IN ($3,gbrain_fact_fingerprint_v1($5)) AND (subject='*' OR subject=$4) LIMIT 1`,
     [sourceId, visibility, fact_hash, subject, fact]);
-    const affected = existing.length ? [] : await discoverWithdrawalTargets(tx, sourceId, [{ visibility, fact_hash, subject, claim: fact }]).catch(withdrawalDiscoveryFailure);
+    const affected = existing.length ? [] : await discoverWithdrawalTargets(tx, sourceId, [{ visibility, fact_hash, subject, claim: fact }], opts.discoveryBudgetMs).catch(withdrawalDiscoveryFailure);
     // The belief ledger's streams of the facts this withdrawal expires (fence pages and database-only subjects), locked with the pages.
     const streams = (await tx.executeRaw<{ slug: string }>(`SELECT DISTINCT COALESCE(source_markdown_slug, entity_slug) AS slug FROM facts
       WHERE source_id=$1 AND visibility=$2 AND gbrain_fact_fingerprint(fact)=$3 AND ($4='*' OR entity_slug=$4) AND expired_at IS NULL

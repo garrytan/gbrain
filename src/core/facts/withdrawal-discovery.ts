@@ -6,6 +6,7 @@ import { withdrawalFenceBlocks, ambiguousWithdrawalFenceSegments } from './withd
 import { fenceTooLargeError, readStoredFence } from '../page-body/read-range.ts';
 import { FENCE_MAX_BYTES } from '../page-body/limits.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../facts-fence.ts';
+import { readWithdrawalBudgetMs } from './withdrawal-budget.ts';
 import type { BodyRegion } from '../page-body/types.ts';
 
 export const WITHDRAWAL_LIMITS = { targets: 256, targetBytes: 1024 * 1024, scanMs: 10_000, batch: 128, matchRows: 16_384, matchBytes: 8 * 1024 * 1024 } as const;
@@ -109,10 +110,10 @@ async function* splitFactsFences(engine: BrainEngine, sourceId: string, keyed: r
  * in SQL by those tokens, streamed by keyset, then verified exactly. Work and
  * the target bound scale with the claim's affected set, never with source size.
  */
-export async function discoverWithdrawalTargets(engine: BrainEngine, sourceId: string, claims: readonly WithdrawalClaim[]): Promise<WithdrawalTarget[]> {
+export async function discoverWithdrawalTargets(engine: BrainEngine, sourceId: string, claims: readonly WithdrawalClaim[], budgetMs?: number): Promise<WithdrawalTarget[]> {
   if (!claims.length) return [];
   if (claims.length > WITHDRAWAL_LIMITS.targets) refuse();
-  const deadline = performance.now() + WITHDRAWAL_LIMITS.scanMs;
+  const deadline = performance.now() + (budgetMs ?? await readWithdrawalBudgetMs(engine));
   const keyed = await engine.executeRaw<KeyedClaim>(`WITH w AS (
       SELECT w.visibility,w.fact_hash,COALESCE(w.subject,'*') AS subject,gbrain_fact_normalize(COALESCE(w.claim,
         (SELECT f.fact FROM facts f WHERE f.source_id=$1 AND f.visibility=w.visibility AND gbrain_fact_fingerprint(f.fact)=w.fact_hash LIMIT 1),
