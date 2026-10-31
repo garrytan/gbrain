@@ -458,12 +458,10 @@ export function storageConfigFromYaml(content: string, yamlPath: string): Storag
 }
 
 /**
- * Derive-phase output prefixes the engine itself writes as DB-only machine
- * output (issue #2784, reported by @alexputici). These are re-derivable by
- * design and rarely file-backed, so the `undeclared_db_only_pages` doctor
- * check treats them as implicitly declared db_only. They are deliberately
- * NOT merged into `loadStorageConfig` — doing so would auto-gitignore these
- * dirs via `manageGitignore` and silently kill ingestion for brains that DO
+ * Generated output prefixes the engine writes as DB-only machine output. The
+ * `undeclared_db_only_pages` doctor check treats them as implicitly declared
+ * db_only. They stay out of `loadStorageConfig` so `manageGitignore` does not
+ * auto-gitignore these dirs and silently kill ingestion for brains that DO
  * file-back them (the exact #2788 silent-death class).
  */
 export const DERIVE_PHASE_DB_ONLY_DEFAULTS: readonly string[] = [
@@ -476,10 +474,11 @@ export const DERIVE_PHASE_DB_ONLY_DEFAULTS: readonly string[] = [
   'concepts/',
   'extracts/',
   'dream-cycle-summaries/',
+  'reports/',
 ];
 
 /**
- * Declared db_only dirs plus the derive-phase defaults, deduped.
+ * Declared db_only dirs plus the built-in generated-output defaults, deduped.
  *
  * `declared` is lowercased before the union (issue #3766): its only consumer
  * (`checkUndeclaredDbOnlyPages`) matches these prefixes against page `slug`

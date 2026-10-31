@@ -3,16 +3,9 @@
 Read a file's entry before editing it. This page routes to bounded subsystem
 references; **do not load the whole directory**.
 
-Find a path's entry:
-
-```bash
-rg -n -F 'src/core/ops/pages.ts' docs/architecture/key-files/
-```
-
-Ranges use each entry's first path; an entry can document several
-files. Search when a path crosses subsystems.
-Edit the subsystem entry, not this page, when behavior changes.
-Keep entries current-state: history belongs in `CHANGELOG.md` and Git.
+Find entries with `rg -n -F 'src/core/ops/pages.ts' docs/architecture/key-files/`.
+Entries may span files; search across subsystems.
+Keep entries current-state; history belongs in Git and `CHANGELOG.md`.
 Where a new storage method, migration, doctor check, command, route or sync
 phase goes: [CONTRIBUTING.md](../../CONTRIBUTING.md#where-does-my-change-go).
 A branch from before refactor wave 1 follows the generated
@@ -62,7 +55,8 @@ link it here rather than raising the cap.
 | [Commit notifier](key-files/commit-notifier.md) | `src/core/notifier/` |
 | [Core Services (3/3)](key-files/core-services-3.md) | `src/core/think/index.ts` through `src/core/verbs/usage-log.ts` |
 | [Core Utilities (1/2)](key-files/core-utilities-1.md) | `archive-crawler-config.ts` through `remediation-checkpoint.ts`; [`cycle.ts`](key-files/core-cycle-primitive.md) |
-| [Core Utilities (2/2)](key-files/core-utilities-2.md) | `src/core/repair/` through `src/core/utils.ts` |
+| [Core Utilities (2/2)](key-files/core-utilities-2.md) | `src/core/repair/` through `src/core/utils.ts`, except storage configuration |
+| [Storage configuration](key-files/storage-configuration.md) | Storage tiers and generated database-only paths |
 | [Engines (1/2)](key-files/engines-1.md) | `src/core/connection-manager.ts` through `pglite-repair.ts` |
 | [Engines (2/2)](key-files/engines-2.md) | `src/core/pglite-resetwal.ts` through `worker-pool.ts` |
 | [Entrypoints And Docs](key-files/entrypoints-and-docs.md) | `.agents/gbrain-launcher` through `templates/` |
