@@ -123,7 +123,8 @@ interface ApprovedPage {
   takes?: AgentSessionTake[];
 }
 
-interface PageItem extends RepairItem { page: ApprovedPage; hash: string; last: boolean; options: AgentSessionOptions }
+/** `indexes`: the run's corpus index by corpus dir, shared by every item of one run (each run plans new items). */
+interface PageItem extends RepairItem { page: ApprovedPage; hash: string; last: boolean; options: AgentSessionOptions; indexes: Map<string | null, CorpusIndex> }
 
 interface FactRow {
   id: number | string; source_id: string; source_session: string | null; fact: string; visibility: string; entity_slug: string | null;
@@ -239,7 +240,7 @@ const targetSlug = (row: Pick<FactRow, 'source_markdown_slug' | 'entity_slug'>) 
 
 /** Read-only: every user-attributed (or unattributed) capture-lane fact of these sources from a suspect session, classified, in (source, page, id) order. */
 export async function classifyAgentSessionFacts(db: BrainEngine, sourceIds: string[],
-  opts: AgentSessionOptions & { corpusDir?: string | null; ids?: number[] } = {}): Promise<AgentSessionFactsClassification> {
+  opts: AgentSessionOptions & { corpusDir?: string | null; ids?: number[]; indexes?: Map<string | null, CorpusIndex> } = {}): Promise<AgentSessionFactsClassification> {
   const rows = await db.executeRaw<FactRow>(`
     SELECT f.id, f.source_id, f.source_session, f.fact, f.visibility, f.entity_slug, f.row_num, f.source_markdown_slug, f.attributed_to, f.context,
            EXISTS (SELECT 1 FROM facts a WHERE a.source_id=f.source_id AND a.id<>f.id AND a.expired_at IS NULL AND a.superseded_by IS NULL
@@ -253,8 +254,9 @@ export async function classifyAgentSessionFacts(db: BrainEngine, sourceIds: stri
        AND (f.attributed_to IS NULL OR f.attributed_to='user') AND ($3::bigint[] IS NULL OR f.id=ANY($3::bigint[]))
      ORDER BY f.source_id, f.id`, [sourceIds, [...CAPTURE_LANES], opts.ids ?? null]);
   if (!rows.length) return { candidates: [], unclassifiable: 0, not_suspect: 0, unreadable_corpus_files: [] };
-  const corpusDir = opts.corpusDir === undefined ? await db.getConfig(CORPUS_KEY) : opts.corpusDir;
-  const index = corpusIndex(corpusDir ?? null);
+  const corpusDir = (opts.corpusDir === undefined ? await db.getConfig(CORPUS_KEY) : opts.corpusDir) ?? null;
+  const index = opts.indexes?.get(corpusDir) ?? corpusIndex(corpusDir);
+  opts.indexes?.set(corpusDir, index);
   const cwdPrefixes = (opts.cwdPrefixes ?? []).map(canonicalPath);
   const verdicts = new Map<string, Verdict>();
   const verdict = (sourceSession: string | null): Verdict => {
@@ -325,9 +327,9 @@ async function brainId(engine: BrainEngine): Promise<string> {
   return brain?.brain_id ?? 'host';
 }
 
-function pageItem(page: ApprovedPage, hash: string, index: number, last: boolean, options: AgentSessionOptions): PageItem {
+function pageItem(page: ApprovedPage, hash: string, index: number, last: boolean, options: AgentSessionOptions, indexes: Map<string | null, CorpusIndex>): PageItem {
   return { cursor: { phase: page.facts ? 0 : 1, id: index }, source_id: page.source_id, slug: page.slug, chars: 0,
-    action: page.facts ? `re-attribute ${page.facts.length} agent-session fact(s)` : `retire ${page.takes!.length} take(s)`, page, hash, last, options };
+    action: page.facts ? `re-attribute ${page.facts.length} agent-session fact(s)` : `retire ${page.takes!.length} take(s)`, page, hash, last, options, indexes };
 }
 
 function groupByPage<T extends { source_id: string; slug: string }>(rows: T[], make: (first: T) => ApprovedPage, field: 'facts' | 'takes'): ApprovedPage[] {
@@ -370,7 +372,7 @@ export const agentSessionFactsRepair: RepairHandler = {
         detail: `row ${take.row_num}; contributing facts ${take.fact_ids.join(', ')}` });
       for (const path of unreadable_corpus_files) listing.push({ item: path, class: 'unreadable_corpus_file',
         detail: 'not read (check its permissions); facts of its sessions are counted unclassifiable and kept' });
-      return { items: approved.map((page, i) => pageItem(page, hash, i, i === approved.length - 1, options)), preview_hash: hash, listing,
+      return { items: approved.map((page, i) => pageItem(page, hash, i, i === approved.length - 1, options, new Map())), preview_hash: hash, listing,
         residuals: { evidenced: count('evidenced'), ambiguous: count('ambiguous'), excluded: count('excluded'), unclassifiable, not_suspect, takes_to_retire: takes.length,
           ...(unreadable_corpus_files.length ? { unreadable_corpus_files: unreadable_corpus_files.length } : {}) } };
     }
@@ -384,17 +386,18 @@ export const agentSessionFactsRepair: RepairHandler = {
     if (approved.items.some(page => page.include_ambiguous !== includeAmbiguous || JSON.stringify(page.scope) !== scopeKey || page.options !== optionsKey)) {
       throw previewChangedError(opts.expect, command);
     }
-    const items = approved.items.map((page, i) => pageItem(page, opts.expect!, i, i === approved.items.length - 1, options))
+    const indexes = new Map<string | null, CorpusIndex>();
+    const items = approved.items.map((page, i) => pageItem(page, opts.expect!, i, i === approved.items.length - 1, options, indexes))
       .filter(item => afterCursor(item.cursor, after));
     if (!items.length) await clearApprovedSet(engine, { command: COMMAND, hash: opts.expect });
     return { items, preview_hash: opts.expect, residuals: { approved_pages: approved.items.length, pending_pages: items.length } };
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
-    const { page, hash, last, options } = entry as PageItem;
+    const { page, hash, last, options, indexes } = entry as PageItem;
     const engine = ctx.engine;
     const done: number[] = [];
     if (page.facts) {
-      const live = new Map((await classifyAgentSessionFacts(engine, [page.source_id], { ...options, ids: page.facts.map(f => f.id) })).candidates.map(c => [c.id, c]));
+      const live = new Map((await classifyAgentSessionFacts(engine, [page.source_id], { ...options, ids: page.facts.map(f => f.id), indexes })).candidates.map(c => [c.id, c]));
       const unchanged = page.facts.filter(f => {
         const current = live.get(f.id);
         return !!current && (['class', 'reason', 'principal', 'fact_hash', 'slug', 'row_num'] as const).every(field => current[field] === f[field]);

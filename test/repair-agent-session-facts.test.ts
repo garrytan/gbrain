@@ -9,7 +9,8 @@
  * rows in place; a fact/self take is retired only when every contributing fact is non-user; nothing is deleted; the
  * apply is bound to the preview hash and flags; a fact edited since the preview is kept.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import * as fs from 'node:fs';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -211,6 +212,20 @@ describe('gbrain repair agent-session-facts, unmanaged repo-less brain', () => {
     expect((await attribution(engine, agentFact)).attributed_to).toBe('other');
     expect(await takeActive(engine, ownerTake)).toBe(true);
   });
+
+  test('one apply run walks the session corpus once, however many pages it re-attributes (#8080)', async () => {
+    const ids: number[] = [];
+    for (const entity of [ALICE, ACME, 'people/bob-example']) ids.push(await insert(`Prefers terse status updates on ${entity}`, 'sess-sidecar', { entity }));
+    const preview = await repair(engine, []);
+    expect(preview.results[0].residuals).toMatchObject({ evidenced: 3 });
+    const walks = spyOn(fs, 'readdirSync');
+    try {
+      const applied = await repair(engine, applyArgs(preview));
+      expect(applied.results[0].outcomes).toEqual({ reattributed: 3 });
+      expect(walks.mock.calls.filter(([dir]) => dir === corpus).length).toBe(1);
+    } finally { walks.mockRestore(); }
+    for (const id of ids) expect(await attribution(engine, id)).toMatchObject({ attributed_to: 'other', context: speakerContextNote('worker-a'), active: true });
+  }, 120_000);
 
   test('a fact edited after the preview reports changed_since_preview and keeps its attribution', async () => {
     const id = await insert('Prefers tea', 'sess-sidecar');
