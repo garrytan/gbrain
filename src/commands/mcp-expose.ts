@@ -476,6 +476,19 @@ function rerunCommand(opts: ExposeOptions, extra = ''): string {
   return `gbrain mcp expose${args2(opts)} --yes${extra}`;
 }
 
+/**
+ * The receipt-less `--remove` for THIS run's `--port` / `--https-port`, printed
+ * when a run stops after `tailscale serve|funnel --bg` and before the receipt.
+ * `--force` is included when nothing of gbrain's (the wrapper, the unit file)
+ * would corroborate the handler yet — without it that `--remove` would leave
+ * the handler as "not proven to be ours".
+ */
+function receiptlessRecovery(d: Resolved, target: ServiceTarget, opts: ExposeOptions): string {
+  const unitFile = target === 'macos' ? d.plistPath : target === 'linux-systemd' ? d.unitPath : null;
+  const corroborated = existsSync(wrapperPathFor(d.serveDir)) || (unitFile !== null && existsSync(unitFile));
+  return recoveryCommand(opts.port, !corroborated, opts.httpsPort);
+}
+
 interface ConsentExtra {
   yes: boolean;
   /** Carried into the `pending` document (the `--remove` receipt). */
@@ -569,7 +582,7 @@ interface PublishedThisRun { binary: string; hadHandlerBefore: boolean }
  * disk (`receiptWritten`), nothing is torn down: `--remove` can find it all.
  * Returns the error to re-throw, its message naming the handler state.
  */
-async function rollbackAfterThrow(d: Resolved, s: Session, opts: ExposeOptions, published: PublishedThisRun | null, error: unknown, receiptWritten: boolean): Promise<Error> {
+async function rollbackAfterThrow(d: Resolved, s: Session, opts: ExposeOptions, target: ServiceTarget, published: PublishedThisRun | null, error: unknown, receiptWritten: boolean): Promise<Error> {
   const message = error instanceof Error ? error.message : String(error);
   if (receiptWritten) {
     // The early receipt is on disk: the handler and service are findable, so
@@ -599,6 +612,9 @@ async function rollbackAfterThrow(d: Resolved, s: Session, opts: ExposeOptions, 
     outcome = `NOT turned off (${offError instanceof Error ? offError.message : String(offError)}; run \`tailscale serve status\`)`;
     s.check('rollback', 'warn', `tailscale ${offArgv.join(' ')}: ${outcome}; no receipt written`);
   }
+  // A handler that survived (or whose state is unknown) is a receipt-less
+  // leftover: name the recovery that looks at this run's port.
+  if (outcome !== 'turned off again') s.nextActions.push('tailscale serve status', receiptlessRecovery(d, target, opts));
   return new Error(`${message} — the tailscale handler published by this run was ${outcome}; no receipt written`);
 }
 
@@ -732,10 +748,11 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
   const listeningBefore = await probeOccupied(d, opts.port, localHealthUrl);
   if (listeningBefore && !opts.noService && (!existing || existing.port !== opts.port)) {
     s.check('service', 'fail', `something already answers on 127.0.0.1:${opts.port} (a TCP connect was accepted or ${localHealthUrl} answered) and no expose receipt claims it`);
-    s.nextActions.push('gbrain mcp expose --remove --yes', rerunCommand(opts, ' --no-service'));
+    const recovery = recoveryCommand(opts.port, false, opts.httpsPort);
+    s.nextActions.push(recovery, rerunCommand(opts, ' --no-service'));
     return s.finish('error', 1, {
       reason: 'foreign_listener',
-      message: `Something already answers on 127.0.0.1:${opts.port} and no expose receipt claims it. Stop it, pick another --port, or pass --no-service to only publish it. If this is a gbrain server left behind by an interrupted \`gbrain mcp expose\`, run \`gbrain mcp expose --remove --yes\` first.`,
+      message: `Something already answers on 127.0.0.1:${opts.port} and no expose receipt claims it. Stop it, pick another --port, or pass --no-service to only publish it. If this is a gbrain server left behind by an interrupted \`gbrain mcp expose\`, run \`${recovery}\` first.`,
     });
   }
 
@@ -919,8 +936,11 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
     if (!confirmed) {
       const why = afterRead.view ? `serve status shows no / handler for port ${opts.port}` : describeServeReadFailure(d, afterRead).detail;
       s.check('tailscale.publish', 'fail', `tailscale ${publishArgv.join(' ')} exited 0 but ${why}${await restorePrevious()}`);
-      s.nextActions.push('tailscale serve status', 'gbrain mcp expose --remove --yes');
-      return s.finish('error', 1, { reason: 'tailscale_publish_unconfirmed', message: `Tailscale accepted the command but ${afterRead.view ? 'does not show the handler' : 'its serve status could not be read afterwards'}. Run \`tailscale serve status\` to inspect; \`gbrain mcp expose --remove --yes\` clears a handler for port ${opts.port} without a receipt (add --force when no wrapper or service of gbrain's is on this host yet).` });
+      // No receipt exists yet: the recovery command must carry the same
+      // --port / --https-port, or the receipt-less --remove looks at :443.
+      const recovery = receiptlessRecovery(d, target, opts);
+      s.nextActions.push('tailscale serve status', recovery);
+      return s.finish('error', 1, { reason: 'tailscale_publish_unconfirmed', message: `Tailscale accepted the command but ${afterRead.view ? 'does not show the handler' : 'its serve status could not be read afterwards'}. Run \`tailscale serve status\` to inspect; \`${recovery}\` clears a handler for port ${opts.port} without a receipt${recovery.includes('--force') ? '' : ' (add --force when no wrapper or service of gbrain\'s is on this host yet)'}.` });
     }
     if (confirmed.funnel !== opts.funnel) {
       s.check('tailscale.publish', 'warn', `handler present but funnel=${confirmed.funnel} (wanted ${opts.funnel})`);
@@ -1039,7 +1059,7 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
       s.check('verify.tailnet', 'skipped', opts.noTailscale ? '--no-tailscale' : 'local server not confirmed yet');
     }
   } catch (error) {
-    throw await rollbackAfterThrow(d, s, opts, published, error, receiptWritten);
+    throw await rollbackAfterThrow(d, s, opts, target, published, error, receiptWritten);
   }
 
   // 10. receipt — the settled state (created_at kept; a supervisor that was

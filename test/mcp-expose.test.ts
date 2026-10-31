@@ -879,6 +879,102 @@ describe('--https-port: another HTTPS listener than :443', () => {
     expect(await runMcpExpose(['--https-port', '8443', '--yes', '--json'], i.deps)).toBe(0);
     expect(joinedCalls(i)).toContain(`${TS} serve --https=8443 --bg 3131`);
   });
+  test('recovery commands printed before the receipt exists keep --https-port (and --port), carry --force only when nothing corroborates the handler, and actually clear the handler', async () => {
+    /** The serve-status read that follows `--bg` fails once: tailscale_publish_unconfirmed with the handler live and no receipt. */
+    const failStatusOnceAfterPublish = (f: Fake) => {
+      const inner = f.deps.run!;
+      let armed = false;
+      f.deps.run = async (argv, o) => {
+        if (argv[0] === TS && argv.includes('--bg')) { const r = await inner(argv, o); armed = true; return r; }
+        if (armed && argv.join(' ') === `${TS} serve status --json`) { armed = false; f.calls.push(argv); return { status: 1, stdout: '', stderr: 'Access denied' }; }
+        return inner(argv, o);
+      };
+    };
+    const argvOf = (cmd: string) => [...cmd.split(' ').slice(3), '--json'];
+    // (a) Funnel on :8443, verification fails before the receipt: the printed command names the port (and --force: no wrapper or unit yet)
+    const f = fakeTailnet({ funnelCapable: true });
+    failStatusOnceAfterPublish(f);
+    expect(await runMcpExpose(['--funnel', '--https-port', '8443', '--yes', '--json'], f.deps)).toBe(1);
+    const doc = jsonDoc(f);
+    expect(doc).toMatchObject({ status: 'error', reason: 'tailscale_publish_unconfirmed' });
+    const printed = 'gbrain mcp expose --remove --yes --force --https-port 8443';
+    expect(doc.next_actions).toEqual(['tailscale serve status', printed]);
+    expect(doc.message).toContain(`\`${printed}\` clears a handler for port 3131 without a receipt`);
+    expect(doc.message).not.toContain('add --force');
+    expect(existsSync(receiptPath(f.serveDir))).toBe(false);
+    expect(existsSync(f.serveDir)).toBe(false);
+    expect(JSON.parse((await f.run([TS, 'serve', 'status', '--json'])).stdout).AllowFunnel[`${DNS}:8443`]).toBe(true);
+    // (b) running exactly that command turns the :8443 Funnel handler off and never says "nothing to remove"
+    f.calls.length = 0;
+    f.stdout.length = 0;
+    f.stderr.length = 0;
+    expect(await runMcpExpose(argvOf(printed), f.deps)).toBe(0);
+    const rm = jsonDoc(f);
+    expect(rm).toMatchObject({ status: 'removed', reason: 'recovered_without_receipt' });
+    expect(joinedCalls(f)).toContain(`${TS} funnel --https=8443 --set-path=/ off`);
+    expect(joinedCalls(f).some(c => c.includes('--https=443'))).toBe(false);
+    expect(f.stderr.join('\n')).not.toContain('nothing to remove');
+    expect(f.stderr.join('\n')).toContain('Removed the leftovers of an interrupted publish.');
+    expect(JSON.parse((await f.run([TS, 'serve', 'status', '--json'])).stdout).Web[`${DNS}:8443`]).toBeUndefined();
+    // the bare command the old code printed does not find it (it looks at :443) — the port in the hint is what makes the recovery work
+    const bare = fakeTailnet({ funnelCapable: true });
+    failStatusOnceAfterPublish(bare);
+    expect(await runMcpExpose(['--funnel', '--https-port', '8443', '--yes', '--json'], bare.deps)).toBe(1);
+    bare.stdout.length = 0;
+    expect(await runMcpExpose(['--remove', '--yes', '--force', '--json'], bare.deps)).toBe(0);
+    expect(jsonDoc(bare)).toMatchObject({ status: 'not_exposed' });
+    expect(JSON.parse((await bare.run([TS, 'serve', 'status', '--json'])).stdout).AllowFunnel[`${DNS}:8443`]).toBe(true);
+    // (c) with a wrapper from an earlier run on disk the hint has no --force; it works as printed and with --force added
+    for (const extra of [[], ['--force']]) {
+      const g = fakeTailnet({ funnelCapable: true });
+      mkdirSync(g.serveDir, { recursive: true });
+      writeFileSync(wrapperPath(g.serveDir), '#!/bin/sh\n');
+      failStatusOnceAfterPublish(g);
+      expect(await runMcpExpose(['--funnel', '--https-port', '8443', '--yes', '--json'], g.deps)).toBe(1);
+      const gdoc = jsonDoc(g);
+      const gPrinted = 'gbrain mcp expose --remove --yes --https-port 8443';
+      expect(gdoc.next_actions).toEqual(['tailscale serve status', gPrinted]);
+      expect(gdoc.message).toContain('add --force');
+      g.calls.length = 0;
+      g.stdout.length = 0;
+      g.stderr.length = 0;
+      expect(await runMcpExpose([...argvOf(gPrinted), ...extra], g.deps)).toBe(0);
+      expect(jsonDoc(g)).toMatchObject({ status: 'removed', reason: 'recovered_without_receipt' });
+      expect(joinedCalls(g)).toContain(`${TS} funnel --https=8443 --set-path=/ off`);
+      expect(g.stderr.join('\n')).not.toContain('nothing to remove');
+      expect(existsSync(wrapperPath(g.serveDir))).toBe(false);
+    }
+    // (d) the default port prints the command without --https-port and clears :443 as before
+    const i = fakeTailnet();
+    failStatusOnceAfterPublish(i);
+    expect(await runMcpExpose(['--yes', '--json'], i.deps)).toBe(1);
+    const idoc = jsonDoc(i);
+    expect(idoc.next_actions).toEqual(['tailscale serve status', 'gbrain mcp expose --remove --yes --force']);
+    expect(idoc.next_actions.join('\n')).not.toContain('--https-port');
+    i.calls.length = 0;
+    i.stdout.length = 0;
+    expect(await runMcpExpose(argvOf('gbrain mcp expose --remove --yes --force'), i.deps)).toBe(0);
+    expect(jsonDoc(i)).toMatchObject({ status: 'removed', reason: 'recovered_without_receipt' });
+    expect(joinedCalls(i)).toContain(`${TS} serve --https=443 --set-path=/ off`);
+    // --port rides along too
+    const j = fakeTailnet();
+    failStatusOnceAfterPublish(j);
+    expect(await runMcpExpose(['--port', '4000', '--https-port', '10000', '--yes', '--json'], j.deps)).toBe(1);
+    expect(jsonDoc(j).next_actions).toContain('gbrain mcp expose --remove --yes --force --port 4000 --https-port 10000');
+    // rollback: a throw after this run's publish whose `off` fails leaves a receipt-less handler — the hint names the port (the wrapper exists by then, so no --force)
+    const k = fakeTailnet();
+    const innerK = k.deps.run!;
+    k.deps.run = async (argv, o) => {
+      if (argv.join(' ').startsWith('systemctl --user restart')) throw new Error('supervisor exploded');
+      if (argv[0] === TS && argv.includes('--set-path=/') && argv.includes('off')) { k.calls.push(argv); return { status: 1, stdout: '', stderr: 'nope' }; }
+      return innerK(argv, o);
+    };
+    expect(await runMcpExpose(['--https-port', '8443', '--yes', '--json'], k.deps)).toBe(1);
+    const kdoc = jsonDoc(k);
+    expect(checkOf(kdoc, 'rollback')?.detail).toContain('tailscale serve --https=8443 --set-path=/ off: NOT turned off');
+    expect(kdoc.next_actions).toEqual(['tailscale serve status', 'gbrain mcp expose --remove --yes --https-port 8443']);
+    expect(existsSync(receiptPath(k.serveDir))).toBe(false);
+  });
   test('the re-run hint and the approved command carry --https-port', async () => {
     const f = fakeTailnet();
     expect(await runMcpExpose(['--https-port', '8443', '--json'], f.deps)).toBe(2);
@@ -2275,7 +2371,8 @@ describe('tailscale serve status fails closed', () => {
     expect(doc).toMatchObject({ status: 'error', reason: 'tailscale_publish_unconfirmed' });
     expect(doc.message).toContain('could not be read afterwards');
     expect(doc.message).toContain('--force');
-    expect(doc.next_actions).toContain('gbrain mcp expose --remove --yes');
+    // nothing of gbrain's is on disk yet, so the printed recovery already carries --force (a bare --remove would leave the handler as "not proven to be ours")
+    expect(doc.next_actions).toContain('gbrain mcp expose --remove --yes --force');
     expect(checkOf(doc, 'tailscale.publish')?.detail).toContain('exited 0 but could not read tailscale serve status (exit 1): needs_operator');
     expect(joinedCalls(f)).toContain(`${TS} serve --bg 3131`);
     expect(checkOf(doc, 'admin_token')).toBeUndefined();
