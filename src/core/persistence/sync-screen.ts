@@ -377,12 +377,20 @@ export async function screenFrozenImport(engine: BrainEngine, input: FrozenImpor
 /**
  * Dry run: screens every pending import entry read-only (batched Git reads)
  * and lists the holds a real run would record. Entries the screen cannot
- * judge are reported in `screen_skipped`, never as holds.
+ * judge are reported in `screen_skipped`, never as holds. #7087: the counts are the changes still to publish (a
+ * prescreened no-op and a fenced unowned deletion change nothing); they replace the cursor's committed counts.
  */
 export async function dryRunScreen(engine: BrainEngine, discovery: SyncDiscovery & { index?: number }, run: SyncScreenRun | null, retryCommand: string): Promise<{
-  dry_run: true; would_hold?: GitHoldItem[]; would_hold_count?: number; would_normalize?: Array<{ path: string; classes: string[] }>; would_normalize_count?: number;
+  dry_run: true; added: number; modified: number; deleted: number; renamed: number; would_hold?: GitHoldItem[]; would_hold_count?: number; would_normalize?: Array<{ path: string; classes: string[] }>; would_normalize_count?: number;
   screen_skipped?: Array<{ path: string; code: string }> }> {
-  if (!run || discovery.companyPlan) return { dry_run: true };
+  const planned = { added: 0, modified: 0, deleted: 0, renamed: 0 };
+  for (const entry of discovery.entries.slice(discovery.index ?? 0)) {
+    if (entry.action === 'delete') { if (!entry.unownedDeletion) planned.deleted++; }
+    else if (entry.renameFrom) planned.renamed++;
+    else if (entry.pageId == null) planned.added++;
+    else if (!entry.prescreened) planned.modified++;
+  }
+  if (!run || discovery.companyPlan) return { dry_run: true, ...planned };
   const entries = discovery.entries.slice(discovery.index ?? 0).filter(entry => entry.action === 'import' && entry.slug);
   const committed = entries.filter(entry => !entry.working);
   const blobs = readTreeBlobs(discovery.gitRoot, discovery.target, committed.map(entry => syncGitPath(discovery, entry.path)));
@@ -423,7 +431,7 @@ export async function dryRunScreen(engine: BrainEngine, discovery: SyncDiscovery
       skipped.push({ path: entry.path, code: error instanceof OperationError ? error.code : 'storage_error' });
     }
   }
-  return { dry_run: true, ...(held.length ? { would_hold: held.slice(0, run.policy.cap), would_hold_count: held.length } : {}),
+  return { dry_run: true, ...planned, ...(held.length ? { would_hold: held.slice(0, run.policy.cap), would_hold_count: held.length } : {}),
     ...(normalized.length ? { would_normalize: normalized.slice(0, run.policy.cap), would_normalize_count: normalized.length } : {}),
     ...(skipped.length ? { screen_skipped: skipped } : {}) };
 }

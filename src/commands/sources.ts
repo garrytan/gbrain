@@ -116,6 +116,7 @@ interface SourceListEntry {
   pull_strategy: 'rebase' | 'merge';
   page_count: number;
   last_sync_at: string | null;
+  archived: boolean;
 }
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -734,6 +735,7 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
       pull_strategy: pullStrategyOf(parseConfig(r.config)),
       page_count: pageCount,
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at).toISOString() : null,
+      archived: r.archived === true,
     });
   }
 
@@ -752,7 +754,7 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
     // it out of OTHER anchors' reads — its own unqualified reads still widen
     // outward (see sourceFederationState). Collapsing both to "isolated"
     // overstates what an unset flag does.
-    const fedMark = (e as any).archived ? '⚠ archived' : sourceFederationState(rows[i].config);
+    const fedMark = e.archived ? '⚠ archived' : sourceFederationState(rows[i].config);
     const pathStr = e.local_path ?? '(no local path)';
     const sync = e.last_sync_at ? `last sync ${e.last_sync_at}` : 'never synced';
     console.log(`  ${e.id.padEnd(20)}  ${fedMark.padEnd(12)}  ${String(e.page_count).padStart(6)} pages  ${sync}`);
