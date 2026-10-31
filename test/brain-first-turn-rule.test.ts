@@ -98,14 +98,19 @@ describe('per-turn rule: Claude Code and Codex user-prompt hook', () => {
 });
 
 describe('per-turn rule names the tools where tool_search hides them', () => {
-  test('OpenClaw: names the gbrain tools and the tool_search / tool_call route; Hermes: names mcp_<server>_<tool>', () => {
+  test('OpenClaw names the tool_search route; Hermes names callable MCP tools', () => {
     const starter = { kind: 'mcp', server: 'gbrain', surface: 'starter' } as const;
     const openclaw = renderBrainFirstTurnRule(starter, 'openclaw');
     expect(openclaw).toContain('find them with `tool_search` (search "gbrain recall") and run them with `tool_call`');
     expect(openclaw).toContain('`recall`, `entity`, `search`, `query` on the `gbrain` MCP server');
     expect(openclaw).toContain('tool_search shows them as external data');
     const hermes = renderBrainFirstTurnRule({ kind: 'mcp', server: 'brain', surface: 'verbs' }, 'hermes');
-    expect(hermes).toContain('find them with `tool_search` (they register as `mcp_brain_recall`, `mcp_brain_entity`, `mcp_brain_remember`)');
+    expect(hermes).toContain('find them with `tool_search` (they register as `mcp__brain__recall`, `mcp__brain__entity`, `mcp__brain__remember`)');
+    const hermesDefault = renderBrainFirstTurnRule({ kind: 'mcp', server: 'gbrain' }, 'hermes');
+    expect(hermesDefault).toContain('mcp__gbrain__recall');
+    expect(hermesDefault).toContain('mcp__gbrain__entity');
+    expect(hermesDefault).toContain('mcp__gbrain__search');
+    expect(hermesDefault).toContain('mcp__gbrain__query');
     // Claude Code and Codex list MCP tools directly; a CLI launcher needs no discovery.
     expect(renderBrainFirstTurnRule(starter, 'claude-code')).not.toContain('tool_search');
     expect(renderBrainFirstTurnRule(starter)).not.toContain('tool_search');
