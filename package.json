@@ -164,6 +164,7 @@
     "check:schema-error-predicates": "bun scripts/check-schema-error-predicates.ts",
     "check:windows-hide": "bun scripts/check-windows-hide.ts",
     "check:engine-sql-ratchet": "bun scripts/check-engine-sql-ratchet.ts",
+    "check:core-world-reads": "bun scripts/check-core-world-reads.ts",
     "check:derived-census": "bun scripts/check-derived-census.ts",
     "check:chunk-visibility": "bun scripts/check-chunk-visibility.ts",
     "check:page-body-readers": "bun scripts/check-page-body-readers.ts",
