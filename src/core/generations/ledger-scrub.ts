@@ -20,7 +20,9 @@ export async function scrubGenerationLedger(tx: BrainEngine, sourceId: string, t
       RETURNING 1`, [sourceId, target.slug]);
     const fences = await tx.executeRaw(`UPDATE derived_generations SET completeness=completeness - 'fence'::text, updated_at=now()
       WHERE source_id=$1 AND owner_key='page:' || $2::text AND completeness->'fence' IS NOT NULL RETURNING 1`, [sourceId, target.slug]);
-    return { derived_generation_items: items.length, derived_generations: held.length + fences.length };
+    const orphanedFenceHolds = await tx.executeRaw(`DELETE FROM derived_generations WHERE source_id=$1 AND owner_key='page:' || $2::text
+      AND kind IN ('fact_fence','take_fence') AND state='held' RETURNING 1`, [sourceId, target.slug]);
+    return { derived_generation_items: items.length, derived_generations: held.length + fences.length + orphanedFenceHolds.length };
   }
   const needles = target.needles.filter(Boolean).flatMap(needle => [needle.toLowerCase(), JSON.stringify(needle).slice(1, -1).toLowerCase()]);
   if (!needles.length) return { derived_generation_items: 0, derived_generations: 0 };
