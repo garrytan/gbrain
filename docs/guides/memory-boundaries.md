@@ -396,7 +396,7 @@ mention after the real fence. Pinned by `test/fence-marker-code-context.test.ts`
 ("remote privacy boundary" and "remote page replacement").
 
 Markdown export is a portable view of pages, **not a full database backup**.
-DB-only facts and pages, revision history, the belief ledger (what the brain
+DB-only facts and pages (extract receipts included), revision history, the belief ledger (what the brain
 had recorded, and when; `gbrain beliefs`), withdrawal state, jobs, settings,
 and authentication records may not be recoverable from Markdown. Use the engine's
 full backup/restore path and verify a restore into a separate location. Treat

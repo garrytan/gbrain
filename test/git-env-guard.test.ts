@@ -74,6 +74,36 @@ test('the guard catches implicit and explicit process.env inheritance and accept
   expect(unscrubbedGitSpawns('x.ts', "execSync(`git ${args.join(' ')}`, { env: gitChildEnv(), cwd: root });")).toEqual([]);
 });
 
+/**
+ * #7793: Git exports a global pathspec switch (`--literal-pathspecs` and friends, or GIT_LITERAL_PATHSPECS and friends in a
+ * spawn's env) to every hook, textconv and filter helper the command starts, so a pathspec gbrain builds is made literal
+ * per path with `literalPathspecs` instead. `git-env.ts` names the switches to strip them from the environment, and a step may
+ * pin one off (`GIT_GLOB_PATHSPECS: '0'`).
+ */
+const GLOBAL_PATHSPEC_SWITCH = /--(?:literal|glob|noglob|icase)-pathspecs\b|\bGIT_(?:LITERAL|GLOB|NOGLOB|ICASE)_PATHSPECS\b(?!\s*:\s*'0')/;
+
+export function globalPathspecSwitches(path: string, source: string): string[] {
+  return source.split('\n').flatMap((line, i) => /^\s*(\*|\/\/|\/\*)/.test(line) || !GLOBAL_PATHSPEC_SWITCH.test(line) ? [] : [`${path}:${i + 1}`]);
+}
+
+test('no Git call under src passes a global pathspec switch', () => {
+  const offenders = files(join(ROOT, 'src')).flatMap(file => {
+    const rel = relative(ROOT, file).split('\\').join('/');
+    return rel === 'src/core/git-env.ts' ? [] : globalPathspecSwitches(rel, readFileSync(file, 'utf8'));
+  });
+  expect(offenders).toEqual([]);
+});
+
+test('the global-switch guard catches flags and env spellings and skips comments', () => {
+  expect(globalPathspecSwitches('x.ts', "execFileSync('git', ['--literal-pathspecs', 'log', '-p'], opts);")).toEqual(['x.ts:1']);
+  expect(globalPathspecSwitches('x.ts', "spawn('git', ['-C', root, '--glob-pathspecs', 'ls-files']);")).toEqual(['x.ts:1']);
+  expect(globalPathspecSwitches('x.ts', "const env = gitChildEnv({ GIT_LITERAL_PATHSPECS: '1' });")).toEqual(['x.ts:1']);
+  expect(globalPathspecSwitches('x.ts', "const env = { GIT_GLOB_PATHSPECS: '0', GIT_ICASE_PATHSPECS: '0' };")).toEqual([]);
+  expect(globalPathspecSwitches('x.ts', "const a = 1;\nargs.push('--icase-pathspecs');")).toEqual(['x.ts:2']);
+  expect(globalPathspecSwitches('x.ts', "// never --literal-pathspecs here\n/** or GIT_LITERAL_PATHSPECS */\n * nor --noglob-pathspecs")).toEqual([]);
+  expect(globalPathspecSwitches('x.ts', "git(root, ['ls-tree', '--', ...literalPathspecs(paths)]);")).toEqual([]);
+});
+
 test('PENDING names only files that still need the hunk', () => {
   for (const rel of PENDING) expect({ rel, unscrubbed: unscrubbedGitSpawns(rel, readFileSync(join(ROOT, rel), 'utf8')).length > 0 }).toEqual({ rel, unscrubbed: true });
 });

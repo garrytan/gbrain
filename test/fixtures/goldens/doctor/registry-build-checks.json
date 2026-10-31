@@ -374,6 +374,10 @@
         "name": "schema_missing_tables"
       },
       {
+        "category": "meta",
+        "name": "schema_function_bodies"
+      },
+      {
         "category": "ops",
         "name": "rls_event_trigger"
       },
