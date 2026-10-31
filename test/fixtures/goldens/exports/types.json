@@ -5409,6 +5409,13 @@
       },
       {
         "kind": "function",
+        "name": "pageRelativeMarkdownSlugs",
+        "signature": [
+          "(pageSlug: string, href: string) => string[]"
+        ]
+      },
+      {
+        "kind": "function",
         "name": "parseInlineCitationTimelineEntries",
         "signature": [
           "(content: string, opts?: CitationOpts) => InlineCitationTimelineCandidate[]"
