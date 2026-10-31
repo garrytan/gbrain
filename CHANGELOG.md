@@ -10,6 +10,105 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Train R, seven pull requests in one release. Searches that name a page by an identifier (`#412`, `INV-2026-00417`) or a handle (`dan-example`) now find it. New `gbrain find` / `find_pages` finds a page by name, path prefix or glob, and `gbrain stats --by source,type` counts pages by kind. `query --explain-target --json` carries its diagnosis. There's an opt-in keyword phrase factor (off by default), an advisory harness check on pull requests, new docs, and guardrails for the embedded core.**
+
+### Identifiers and handles in search (#7491, #7492, #7497)
+
+**A question that names a page by an identifier ("What did the latest weekly digest (#412) say?") now returns the page holding `#412`, even when the question's other words keep it from matching every word and near-identical template pages tie with it on meaning. A handle such as `dan-example` now finds the page it names (`people/dan-example`) in keyword search, quoted or not. The coverage notice also stops blaming indexing for unrelated image pages.**
+
+#### Identifiers in questions
+
+| Situation | Before | Now |
+|---|---|---|
+| No chunk holds every word of the question, and the any-word retry ranks the page holding `#412` first | the retry's rows are dropped before fusion whenever semantic search returns anything, so on a brain of near-identical template pages an older copy won | the keyword arm runs one more statement matching every identifier the question names, with the same scope, visibility and filters as the strict search; its rows vote like strict rows, and a title holding the identifier leads the title arm |
+| Long pages repeat the question's common words ("say", "report") | they outranked the short chunk holding the identifier once, so the page fell out of the keyword arm | the identifier match comes first, and the any-word retry ranks rare words first for questions of up to 12 words (it was 4) |
+| One unrelated chunk happens to hold every word, the number included | that chunk was the only keyword row; the page holding the identifier never entered the arm | the identifier rows follow the strict rows, so the page is a keyword candidate again |
+
+An identifier is a `#` number, a run of 6 or more digits, a code such as INV-2026-00417, an email, a URL or a phone number, asked together with other words. Queries without one, a quoted phrase or a `-` negation run exactly as before, and the any-word rows that don't hold an identifier are still dropped while semantic search is healthy.
+
+#### Handles in keyword search
+
+| Situation | Before | Now |
+|---|---|---|
+| `gbrain search '"dan-example" OR "erin-example"' --match keyword`, where the person pages hold the handles only in their slugs | the pages that mention the handles came back, never the pages they name: a hyphenated handle only matches text holding the literal handle | the pages whose slug ends in each handle (`people/dan-example`, `people/erin-example`) are listed and counted first |
+| The same query with `--types '["person"]'` | no results | the two person pages |
+| The same query in hybrid search | quoted terms skip the any-word retry, so the title arm found nothing either | the named pages lead the keyword arm, as rows that count like strict keyword rows |
+| A search that matches nothing while every retrieval stage ran | the CLI said "clean miss — no retrieval degradation" and MCP "this is a clean miss", which agents read as "the brain has no page for this" | "retrieval healthy", followed by the next things to try (the display name, a synonym, hybrid search) before concluding the brain has nothing; the query skill says the same |
+
+A handle is a hyphenated token with a letter in it, bare or quoted on its own (`acme-example-2` counts, `2026-10-24` does not), and resolves only to a page whose slug ends in exactly that handle. A negated handle (`-dan-example`) or one inside a longer quoted phrase is not resolved. The named pages pass the same filters as any keyword match: `--types`, the caller's sources, and for remote callers no private or quarantined page.
+
+#### Coverage notice
+
+| Situation | Before | Now |
+|---|---|---|
+| A pending image page's slug contains the query's digits (`412` in `frames/t004120`) | counted as able to match the query | a query word counts only as a whole word of the title or slug |
+| Pending image pages and a text-only search | counted, although text search never returns image pages | counted only when an image search arm ran |
+| The `projection_pending` part of `degraded_recall` | "recently written pages are not in the search index yet" for every page | text pages "are being indexed"; image pages "will not be indexed on their own" and wait for `gbrain projections drain` or a paid re-import, with doctor's `text_projection_readiness` check as the fix |
+
+**Say to your agent:** *"What did the latest weekly digest (#412) say?"*
+
+#### What to watch for after you upgrade
+
+- A search naming an identifier costs one more keyword statement, served by the full-text index. Other searches run the same statements as before, except that an any-word retry of 5 to 12 words now also runs the bounded rare-word read and, when a rare word is found, one more retry statement (both already ran for retries of up to 4 words). The rare-word read skips stopwords, and on Postgres it skips words the column statistics already estimate as common, so its cost follows the question's rare words, not its length.
+- A query with a hyphenated token costs one more index lookup on page slugs: one more statement in hybrid search, and one more arm of the same statement with `--match keyword`. `keyword_total` and the `--match keyword` count include the named pages.
+- Pages that hold the identifier but not the other words can now rank above pages that match the question's meaning better. The page holding every word still comes first among keyword rows.
+- `_meta.retrieval.coverage.could_affect` can carry `pending_images`, and `could_affect.pending_projection` can drop for queries whose digits or short words used to match unrelated slugs.
+- A script that matched the text `clean miss` in an empty result should match `retrieval healthy` instead; `_meta.retrieval` is unchanged.
+- Nothing is rewritten on upgrade, no setting changed, and there is no schema migration.
+
+### Find a page by name, count pages by kind (#7191, #7233)
+
+Agents fell back to the filesystem for two kinds of lookup that gbrain had no direct answer for: finding the page called X or under path Y, and counting pages of each kind.
+
+| Situation | Before | Now |
+|---|---|---|
+| Find a page by name or path | `ls`, `find` or `grep` on the checkout, or a ranked search | `gbrain find <name\|prefix\|glob> [--type T] [--source S] [--limit N]` (MCP `find_pages`). A bare name matches a title or the last slug segment, served by the trigram indexes. A prefix (contains `/`) or a glob (`*`, `?`) matches the slug or `source_path`. Rows sort by slug, with `total` and `complete`. The default limit is 50, capped at 500 locally and 100 remotely, and `limit_clamped_from` says when the cap applied |
+| Count pages by kind or source | `gbrain stats` gave brain-wide totals only | `gbrain stats --by source,type [--since 30d] [--collapse-aliases]` (MCP `get_stats` gains `by`, `since` and `collapse_aliases`) reports page counts beside distinct-slug counts, so twins across sources show. `--collapse-aliases` folds type aliases through the active schema pack |
+| Which call for which lookup | spread across the skills | one table in `skills/conventions/brain-first.md`, copied into AGENTS.md, INSTALL_FOR_AGENTS.md, skills/RESOLVER.md and the bootstrap template by `bun run regen:all` |
+
+Remote callers get the shared read policy (private pages, trust floor, quarantine), their source grant, and the ranked-search hard excludes (`test/`, `.raw/`), so every remote `find` hit is also readable through remote `get_page`. On Postgres these reads run with JIT off. On a 305k-page brain at 40 ms RTT, a cold `find` costs about as much as `gbrain get` of one page (about 1.0 to 1.2 s). No migration.
+
+### `--explain-target` in CLI JSON, and an opt-in keyword phrase factor (#7192, #7175, #7198)
+
+- `gbrain query "<q>" --explain-target <source>:<slug> --json` now prints `{ "results": [...], "explain_target": {...} }`, with the fix as a command (`next`, `argv`, `command`); without `--explain-target` the output stays a bare array. New causes: `target_not_embedded` (the page has chunks but no vectors), the failed arm named in `target_not_retrieved`, `target_collapsed` (folded into a kept row), and each arm's rank in `target_beyond_limit`. MCP is unchanged: remote callers get the diagnosis in `_meta.explain_target` without `fix`, and private targets still answer like nonexistent ones.
+- `gbrain config set search.keyword_phrase true` doubles the keyword score of a chunk that matches the query as one phrase (`phraseto_tsquery`), in the keyword arm on both engines and in keyword mode. It is off in every mode bundle, so default ranking and the default knob hash do not change; opting in appends `kph=1`.
+
+### Advisory harness check on pull requests (#7673)
+
+**Pull requests now get an advisory `harness-check`: a keyless run of harness-evals' gbrain check against the pull request's commit that fails only when a member is shown a page outside their grant.**
+
+- New workflow `.github/workflows/harness-check.yml` (not a required check). It builds harness-evals' gbrain sidecar image for the pull request's head commit, runs `scripts/gbrain-check.ts` without a key, and gates on the cross-scope page count being zero. Every other failed assertion (tool counts, retrieval, install bundle, installer files) is a warning in the job log and summary.
+- The job reads one secret, `HARNESS_EVALS_READ_TOKEN` (read-only, harness-evals Contents). Without it the job skips with a notice and succeeds; a pull request from a fork is refused. No model key and no paid trial.
+- Docs: `docs/ci-event-parity.md#harness-check` (what it runs, the gate, the skip, a sample run and how to bump the harness-evals pin).
+
+### Docs (#7609, #7787)
+
+- New guides: [git-canonical sources](docs/guides/git-canonical.md), [anatomy of a page](docs/guides/page-anatomy.md), [where your memory lives](docs/guides/where-your-memory-lives.md) and [entity-scoped facts](docs/guides/entity-scoped-facts.md).
+- `docs/architecture/brains-and-sources.md` explains git as the parent of a source with a checkout. `docs/guides/memory-boundaries.md` covers adding to or uploading a large page. `docs/mcp/TOOL_REFERENCE.md` gains `source_ids` and pointers to `search_exact` and `append_page`. README and llms.txt link the new pages.
+- `scripts/check-key-files-current-state.sh` no longer caps README.md; the KEY_FILES.md cap stays.
+
+### Embedded-core guardrails (#8098)
+
+Guardrails for the embedded core: a ratchet on what `src/core` reads from the process and the machine, a two-brains-in-one-process suite, a hermeticity test, and an upgrade-from-the-previous-release harness. Nothing changes for local users.
+
+The planned embedded core lets one server process run many brains, each opened from its own settings. This release adds the guards that wave and every later one is measured against, with no runtime change. `bun run check:core-world-reads` (in `bun run verify`) counts, per file in `src/core`, `loadConfig` calls, environment reads, `fs` imports, module-level collections, spawn imports, process-wide hooks and `AsyncLocalStorage` stores, and fails when a count rises or a baseline row goes stale. The two-engine suite opens two brains in one process on PGLite and Postgres and shows what they still share today (AI keys and model clients, the query-embedding cache, the usage and telemetry sinks, link semantics, the admission and retrieval-tracking caches, page-lock names and home paths, and on Postgres the connection pool), each case naming the wave that fixes it. The upgrade harness opens a brain and keyless config written by the previous release, as a repository brain, a content-directory brain and a no-root brain, and requires the same page, schema, resolved settings and untouched config file.
+
+#### Itemized changes
+
+- New guard `scripts/check-core-world-reads.ts` with baseline `scripts/core-world-reads-baseline.tsv` (rows only fall; `--prune` lowers stale rows).
+- New two-engine isolation suite (`test/two-engine-isolation.serial.test.ts`, `test/e2e/two-engine-isolation.test.ts`), hermeticity test (`test/embedded-hermeticity.test.ts`, expected to fail until W7) and upgrade harness (`test/upgrade-from-previous-release.slow.test.ts`, `test/e2e/upgrade-from-previous-release.test.ts`).
+- New example `examples/embedded-two-brains.ts` (two PGLite brains in one process).
+- Docs: [running gbrain on servers today](docs/guides/servers-today.md) and the planned [embedded core](docs/architecture/topologies.md#embedded-core-planned), including the opt-in `embedded_core` setting later waves add (nothing reads it yet) and which wave moves each piece of per-process state.
+- The 0.60.524.0 entry now names the command that exits 10 correctly: `gbrain trust review --accept-all`.
+
+### What to watch for after you upgrade
+
+- Nothing is rewritten on upgrade, no default changed, and there is no schema migration.
+- A script that matched `clean miss` in an empty search result should match `retrieval healthy`.
+- A script that parsed `query --explain-target --json` as a bare array should read `.results`.
+
 ## [0.60.529.0] - 2026-10-31
 
 **A pull request that adds a file to the PGLite snapshot inputs no longer gets stopped at gstack's pregate secrets check by its own workflow cache keys (#8107).**
@@ -91,7 +190,7 @@ Atom and concept write-through and the reverse-written synthesis, patterns and c
 
 **A brain moved or restored under a new host identity no longer leaves writes pending forever behind an `--accept-pending` exit 0, and a keyless re-init from a cold `GBRAIN_HOME` no longer switches an embedded brain to keyword-only (GBRA-248 W0).**
 
-A managed source publishes only through the host that owns its checkout. When a brain moved to another machine, was restored from a backup, or ran in a container that restarted with a fresh `GBRAIN_HOME`, the new process got a new host identity, its writes queued for the old owner, and nothing said that owner was gone: the receipt read as an ordinary pending write and `--accept-pending` (or `GBRAIN_ACCEPT_PENDING=1`) exited 0, so hooks and cron treated writes that would never publish as saved. A pending receipt now flags that owner (reason `owner_unavailable` with a new `diagnostic.owner` block holding its last activity, which older clients ignore; doctor names the host) when it runs no live consumer and has been quiet for more than 24 hours, or at once on PGLite when this process holds the database file under another identity. `--accept-pending` does not cover such a write: `gbrain put`, `gbrain call`, brainstorm saves and `gbrain trust accept --all` exit 10 and say why. A consumer's clean stop now stamps the worktrees its host owns, so a stopped owner is not mistaken for a gone one. The owner host never sees the block, a repo-less (database-only) write never names an owner, and nothing claims or transfers ownership. New doctor check `owner_host_stale` lists the waiting writes with the owner and the read-only next step.
+A managed source publishes only through the host that owns its checkout. When a brain moved to another machine, was restored from a backup, or ran in a container that restarted with a fresh `GBRAIN_HOME`, the new process got a new host identity, its writes queued for the old owner, and nothing said that owner was gone: the receipt read as an ordinary pending write and `--accept-pending` (or `GBRAIN_ACCEPT_PENDING=1`) exited 0, so hooks and cron treated writes that would never publish as saved. A pending receipt now flags that owner (reason `owner_unavailable` with a new `diagnostic.owner` block holding its last activity, which older clients ignore; doctor names the host) when it runs no live consumer and has been quiet for more than 24 hours, or at once on PGLite when this process holds the database file under another identity. `--accept-pending` does not cover such a write: `gbrain put`, `gbrain call`, brainstorm saves and `gbrain trust review --accept-all` exit 10 and say why. A consumer's clean stop now stamps the worktrees its host owns, so a stopped owner is not mistaken for a gone one. The owner host never sees the block, a repo-less (database-only) write never names an owner, and nothing claims or transfers ownership. New doctor check `owner_host_stale` lists the waiting writes with the owner and the read-only next step.
 
 `gbrain init` with no provider key in reach falls back to keyless. Run from a cold home against a database that already had an embedding model and vectors, it wrote `embedding_disabled: true` into the new config file, and the brain stopped embedding. When that fallback was implicit and the database holds vectors, init now keeps the database's stored model and width in the config file instead and prints the key to set and `gbrain embed --stale`. A fresh keyless install, a keyless brain with no vectors, an explicit `--no-embedding` and a database that already disables embeddings behave as before. New doctor check `embedding_plane_disagreement` finds brains the old behavior left in that state and prints the `gbrain init --force --embedding-model …` enable for the same model.
 
