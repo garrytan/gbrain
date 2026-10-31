@@ -35,6 +35,7 @@
  */
 import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import { isLazyConfigKey } from '../config-snapshot.ts';
 import { OperationError } from '../ops/contract.ts';
 import { authorizeStoredRequest, storedAuthorizationReads } from './authority.ts';
 import { localHostId } from './identity.ts';
@@ -210,7 +211,9 @@ export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads
       stable.has(flat(sql)) && (!opts?.signal || opts.timeoutMs !== undefined)
         ? once(JSON.stringify([flat(sql), params ?? null]), () => target.executeRaw(sql, params)) : target.executeRaw(sql, params, opts);
     // GBRA-75 wave 10: every config key a member reads comes from one config read for the group (the same value per key).
-    if (key === 'getConfig') return (name: string) => once('config:*', () => target.getAllConfig()).then(all => Object.hasOwn(all, name) ? all[name]! : null);
+    if (key === 'getConfig') return (name: string) => isLazyConfigKey(name)
+      ? once(`config:${name}`, () => target.getConfig(name))
+      : once('config:*', () => target.getAllConfig()).then(all => Object.hasOwn(all, name) ? all[name]! : null);
     if (key === 'getAllConfig') return () => once('config:*', () => target.getAllConfig()).then(all => ({ ...all }));
     if (imports && key === 'readPageSnapshot') return (slug: string, opts?: Parameters<BrainEngine['readPageSnapshot']>[1]) =>
       imports.snapshot(slug, opts) ?? target.readPageSnapshot(slug, opts);
