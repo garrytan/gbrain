@@ -178,6 +178,7 @@
       "  [OK] legacy_token_grant_shape: Every active legacy token uses the unified grant columns. The permissions mirror for older gbrain binaries is kept until 2026-11-04.",
       "  [OK] legacy_token_grant_drift: No legacy token grant has drifted from its permissions mirror.",
       "  [OK] legacy_token_null_scope: Every active legacy token has explicit scopes.",
+      "  [OK] unscoped_multi_user_token: No credential or local agent can read chat from several channels without a per-person scope.",
       "  [OK] grant_new_ops_available: Every active client and token can call the operations its scopes allow.",
       "  [OK] image_assets: No image assets indexed yet",
       "  [OK] ocr_health: OCR not in use (or no images ingested with OCR opt-in)",

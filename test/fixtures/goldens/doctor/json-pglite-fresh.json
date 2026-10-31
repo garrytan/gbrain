@@ -2181,6 +2181,13 @@
         },
         {
           "category": "ops",
+          "elapsed_ms": "<volatile>",
+          "message": "No credential or local agent can read chat from several channels without a per-person scope.",
+          "name": "unscoped_multi_user_token",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
           "details": {
             "docs": "docs/mcp/ADMIN.md#grants-that-cannot-reach-new-operations",
             "grants": [],

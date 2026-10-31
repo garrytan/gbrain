@@ -10,6 +10,20 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**An install that hands one unscoped credential to an agent several people talk to now says so, loudly, and doctor reports it.** In the HARN-13 host-harness pilot, one bot token over a brain that held many channels' chat made agents answer people with other people's messages: telling the agent gbrain was live cost 9 to 21 points of pass rate, and every added cross-scope failure cited a channel page the bot grant returned. Until per-member keys arrive (gbrain#7812), gbrain cannot tell those people apart, so it warns.
+
+The `unscoped_multi_user_token` safety notice fires from `gbrain setup openclaw|hermes|grok-bot|muse`, from `setup claude-code` when a chat-channel plugin is enabled, from `mcp grant` and `connect` for a bot harness or a grant that reads chat from 2+ channels, from `skillpack scaffold` into an OpenClaw or Hermes workspace, and from `auth create` and `auth register-client` when the new credential reads chat from 2+ channels. It names the fixes that exist today (a one-source grant, `sources unfederate`, `GBRAIN_SOURCE` for a stdio agent, `visibility: private`, `source_ids` or `--source`), and says plainly when the chat sits in one source and no source grant can separate it. The new read-only doctor check `unscoped_multi_user_token` runs the same detection over every active token, OAuth client and wired local agent. No grant, default or scoping behaviour changes, and no exit code moves.
+
+### Itemized changes
+
+- `src/core/grants/shared-exposure.ts` (new): the detection (bot harnesses, Claude Code channel plugins, the chat-channel census over a credential's or stdio server's read set), the notice and its fix.
+- `src/commands/doctor/checks/unscoped-multi-user-token.ts` (new), registered in the doctor registry and categories; doctor goldens regenerated for the new check.
+- The install routes: `src/commands/setup.ts`, `mcp.ts`, `harness-connect.ts`, `skillpack/scaffold.ts`, `auth.ts`. Warnings go to stderr and into `notices` or `warnings` of a `--json` result.
+- `src/core/error-registry.ts`: the notice code. `docs/mcp/ADMIN.md#one-token-several-people`, `skills/mcp-access/SKILL.md`.
+- Tests: `test/shared-exposure.test.ts`, `test/shared-exposure-routes.test.ts` (PGLite brains with no repository).
+
 ## [0.60.519.0] - 2026-10-30
 
 **The unit lane now runs 28 shards instead of 22, on shard weights refreshed from the Oct 30 nightly. With the fresh weights, every one of 22 shards would be planned at 624.4 s against the 600 s per-shard budget; at 28 shards the largest is 490.6 s.**

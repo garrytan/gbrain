@@ -62,6 +62,8 @@ process, delete its lock, or start another server to obtain administration.
 - **Create:** machine access uses `mcp grant NAME --harness ID` with a private
   handoff. Native OAuth uses `mcp admin register NAME --redirect-uri URI`; choose
   the actual callback and authentication method, not a guessed vendor default.
+  A `unscoped_multi_user_token` warning means people sharing that agent can see
+  each other's chat: relay it and its fix before several people use the agent.
 - **Setup:** `setup ID --harness ID` reads the actual client method. For a mixed
   registration, explicitly select `--flow authorization-code` or
   `--flow client-credentials`. Ordinary output contains no secret; confidential
