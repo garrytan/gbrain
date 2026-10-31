@@ -109,6 +109,10 @@ describe('#7619 table: every registered CLI_ONLY flag', () => {
 describe('#7619 split rules', () => {
   afterEach(() => _resetCliOptionsForTest());
 
+  test('doctor --scope=<v> splits into --scope <v>, which doctor reads (#7624)', async () => {
+    expect(await argvFor('doctor', ['--scope=brain'])).toEqual(['--scope', 'brain']);
+  });
+
   test('a value containing = splits at the first =', async () => {
     expect(await argvFor('serve', ['--public-url=https://brain.example.com/?a=b'])).toEqual(['--public-url', 'https://brain.example.com/?a=b']);
   });
@@ -238,7 +242,6 @@ describe('#7619 split rules', () => {
     expect(await argvFor('config', ['set', 'k', '--x=true'])).toEqual(['set', 'k', '--x=true']);
     expect(await argvFor('pages', ['purge-deleted', '--older-than=72'])).toEqual(['purge-deleted', '--older-than=72']);
     expect(await argvFor('embed', ['--pace=gentle'])).toEqual(['--pace=gentle']);
-    expect(await argvFor('doctor', ['--scope=brain'])).toEqual(['--scope=brain']);
     expect(await argvFor('search', ['--limit=5'])).toEqual(['--limit=5']);
     expect(await argvFor('retrieval-upgrade', ['--yes=true'])).toEqual(['--yes=true']);
     expect(await argvFor('migrate', ['embeddings', '--to=x'])).toEqual(['embeddings', '--to=x']);

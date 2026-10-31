@@ -91,9 +91,9 @@ export const EQUALS_READERS: Readonly<Record<string, readonly string[]>> = {
   'compile-context': ['--target', '--budget', '--include', '--out', '--source'],
   // core/consent.ts:123 parseConsentFlags via enableConsent (decide.ts:348, effects paid); decide reads no --max-* itself.
   'decide enable': ['--max-usd', '--max-cost'],
-  // doctor/budget.ts parseDoctorScope --scope (both forms, #7624); doctor/budget.ts:68 --tier/--budget-ms; cli/commands/doctor.ts:27 --tier (thin client);
+  // doctor/budget.ts:68 --tier/--budget-ms; cli/commands/doctor.ts:27 --tier (thin client); --scope is split (parseDoctorScope reads both forms, #7624);
   // doctor/registry.ts:332 --only; check-resolvable.ts:120 --skills-dir via doctor.ts:460; core/consent.ts:130 --expect (remediate-consent.ts:133).
-  doctor: ['--scope', '--tier', '--budget-ms', '--only', '--skills-dir', '--expect'],
+  doctor: ['--tier', '--budget-ms', '--only', '--skills-dir', '--expect'],
   // edge-proposals.ts:81 flag() used only by list (:91,:93); other subs take the first numeric token as the id (:86).
   'edge-proposals list': ['--status', '--limit'],
   // embed.ts:841 parsePaceArgs (--pace bare or =mode); core/consent.ts:126 via embed-consent.ts:129 and held-embedding.ts:234.
@@ -130,7 +130,7 @@ export const EQUALS_READERS: Readonly<Record<string, readonly string[]>> = {
   'jobs supervisor': ['--job-isolation'],
   // jobs/shared.ts:121 parseJobIsolationFlag via jobs/work.ts:114.
   'jobs work': ['--job-isolation'],
-  // jobs/watch.ts:11 reads only --refresh-ms=N.
+  // jobs/watch.ts parseRefreshMs reads --refresh-ms N and --refresh-ms=N (#7624).
   'jobs watch': ['--refresh-ms'],
   // lint.ts:929 runLint.
   lint: ['--exclude'],
