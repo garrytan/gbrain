@@ -248,8 +248,10 @@ attest right: register a client-credentials client, grant it with `gbrain auth
 rescope --client <id> --attest-actor qm [--attest-ops <op,...>]` (default
 `memory_recall,memory_write`), and link each person's canonical id with `gbrain
 access member link <member> --qm <id>` (`unlink`, `links`). Its `x-qm-actor`
-header then reads and writes as that member, never private pages; see
-[attested-actor refusals](../guides/write-refusals.md#attested-actor-refusals).
+header then runs each attested operation as that member, never reading private
+pages; see [attested-actor refusals](../guides/write-refusals.md#attested-actor-refusals).
+Not attestable yet, because what they read or write is not yet kept to the
+person: `submit_agent`, `get_agent_job`, `get_write_request`, `list_write_requests`, `cancel_write_request`, `list_write_conflicts`, `delta`, `remember`, `capture`, `extract_facts`, `forget`, `forget_fact` and `takes_add|update|resolve|supersede`.
 `gbrain access check --token <name>` shows the
 result ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape)).
 
