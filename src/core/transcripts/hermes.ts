@@ -2,11 +2,12 @@
  * hermes.ts — Hermes state.db (SQLite) adapter (cathedral-4).
  *
  * ONE store file holds MANY sessions (hermes-agent DEFAULT_DB_PATH =
- * <hermes home>/state.db). Reads are COPY-THEN-READ by default: readonly
- * opens of a WAL-mode SQLite database require write access to the -shm
- * sidecar and can intermittently lock against a live writer, so the adapter
- * copies the DB (+ -wal/-shm sidecars when present) to a temp dir and reads
- * the copy — deterministic, zero lock races, cleaned up in finally.
+ * <hermes home>/state.db). Reads are SNAPSHOT-THEN-READ: the adapter opens
+ * the live store read-only just long enough for `VACUUM INTO` to write a
+ * transactionally coherent copy (main file + un-checkpointed WAL frames) to
+ * a temp dir, then reads the copy and removes it in finally. Copying the
+ * main file and its -wal/-shm sidecars as separate files tears when a live
+ * writer checkpoints between the copies (#7067).
  *
  * Schema verified against the INSTALLED hermes-agent v0.20.0 source
  * (hermes_state_common.py SCHEMA_SQL) — sessions(id, source, display_name,
@@ -17,7 +18,7 @@
  * the runtime backstop.
  */
 
-import { copyFileSync, existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { Database } from 'bun:sqlite';
@@ -156,9 +157,9 @@ export const hermesAdapter: TranscriptAdapter = {
   async *parse(path: string, opts: ParseSessionsOpts = {}): AsyncGenerator<ParsedSession, FileDiagnostics> {
     const cap = opts.maxBytes ?? HERMES_DB_HARD_CAP;
     const size = statSync(path).size;
-    // The cap bounds the TOTAL copied (db + sidecars) — a runaway WAL can
-    // dwarf the main file, and only capping the db would let the copy blow
-    // through temp storage while advertising a 512MB bound.
+    // The cap bounds the TOTAL store (db + sidecars) — a runaway WAL can
+    // dwarf the main file, and only capping the db would let the snapshot
+    // blow through temp storage while advertising a 512MB bound.
     let totalBytes = size;
     for (const suffix of ['-wal', '-shm']) {
       if (existsSync(path + suffix)) totalBytes += statSync(path + suffix).size;
@@ -169,18 +170,19 @@ export const hermesAdapter: TranscriptAdapter = {
       );
     }
 
-    // Copy-then-read: DB plus WAL/SHM sidecars so un-checkpointed writes are
-    // visible in the copy. A live writer can checkpoint BETWEEN the copies —
-    // the resulting torn snapshot surfaces as a schema/corruption error from
-    // the sessions query below, lands in the drift lane, and (because drift
-    // freezes the watermark) is safely retried by the next run.
+    // VACUUM INTO runs inside one read transaction, so the snapshot holds
+    // exactly one committed state (WAL frames included) even while a live
+    // writer commits and checkpoints; the source connection is read-only.
     const tmp = mkdtempSync(join(tmpdir(), 'gbrain-hermes-'));
     const copyPath = join(tmp, basename(path));
     let sessions = 0;
     try {
-      copyFileSync(path, copyPath);
-      for (const suffix of ['-wal', '-shm']) {
-        if (existsSync(path + suffix)) copyFileSync(path + suffix, copyPath + suffix);
+      const source = new Database(path, { readonly: true });
+      try {
+        source.exec('PRAGMA busy_timeout = 5000');
+        source.query('VACUUM INTO ?').run(copyPath);
+      } finally {
+        source.close();
       }
 
       const db = new Database(copyPath, { readonly: true });
