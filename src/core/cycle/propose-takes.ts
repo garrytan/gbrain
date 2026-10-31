@@ -166,6 +166,21 @@ export interface ProposedTake {
   served_model?: string;
 }
 
+/** Conservative non-claim gate: reject operational fragments, not substantive bets.
+ * Full semantic gradeability remains the extractor's job. Anchored patterns keep
+ * predictions mentioning quotas, colors, or technology choices eligible.
+ */
+function isOperationalFragment(claim: string): boolean {
+  const text = claim.trim().replace(/[.!]+$/, '').trim();
+  if (/^(?:the\s+)?[\w -]+\s+(?:stays?|remains?|is)\s+(?:red|green|amber|yellow)$/i.test(text)) return true;
+  if (/^(?:quota|budget|requests?|tokens?|credits?)\s+(?:remaining|left)\s*:\s*[\d,.]+(?:\s+\w+)?$/i.test(text)) return true;
+  if (/^[\d,.]+\s+(?:requests?|tokens?|credits?|slots?)\s+(?:remaining|left)$/i.test(text)) return true;
+  // A rationale or predicted consequence turns a recommendation into a judgment.
+  if (/^(?:should|must|needs?\s+to|needs?)\s+/i.test(text)
+    && !/\b(?:because|will|would|expect|predict)\b/i.test(text)) return true;
+  return /^(?:options?|choose|pick)\s*:\s*[^:]+(?:\s\/\s|\sor\s|\s\|\s)[^:]+$/i.test(text);
+}
+
 /**
  * #5425 (opt-in, `dream.propose_takes.attribution_rules=true`): speaker and
  * withdrawal rules for conversation pages, proposed by @clatyceo. Off by
@@ -1067,6 +1082,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
       failures.succeed(sourceId, page.slug, ch);
       llmHalt.reset();
       if (attributionChecks) proposals = downgradeAssistantOnlyHolders(proposals, body);
+      proposals = proposals.filter(p => !isOperationalFragment(p.claim_text));
 
       // Write proposals to take_proposals. #2138: the idempotency key is
       // per-CLAIM — take_proposals_idempotency_idx folds md5(claim_text) into
