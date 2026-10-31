@@ -17,7 +17,7 @@ import { ensureWellFormed } from './text-safe.ts';
 import { stripCodeBlocks } from './markdown-code.ts';
 import { maskLinksFence } from './links-fence.ts';
 import { targetTakesVerb } from './link-target-roles.ts';
-import { inSuppressedRange, rolePriorSuppressedRanges } from './machine-sections.ts';
+import { inSuppressedRange, roleTriggerText, rolePriorSuppressedRanges } from './machine-sections.ts';
 import { statedRelationTypes } from './line-grammar.ts';
 import { isValidSourceId } from './source-id.ts';
 import { isDatedTimelineLine, parseInlineCitationTimelineEntries, TIMELINE_LINE_RE, TIMELINE_LINE_RE_CN } from './timeline-citations.ts';
@@ -739,6 +739,7 @@ function makeTypeFor(content: string, pageType: PageType, opts: ExtractPageLinks
   // `content` (stripCodeBlocks and the wikilink mask are length-preserving,
   // so indices line up); idx < 0 / undefined keeps the old behavior.
   const suppressedRanges = rolePriorSuppressedRanges(stripCodeBlocks(content));
+  const roleText = opts.roleText ?? roleTriggerText(content);
   const attendanceRanges = attendanceEvidenceRanges(content);
   const statedType = statedRelationTypes(content, { ...opts.lineGrammar, declaredVerbs: pack?.link_types.map(lt => lt.name) });
   return (ctx, targetSlug, idx, sourceId, bodyReference = true) => {
@@ -772,7 +773,6 @@ function makeTypeFor(content: string, pageType: PageType, opts: ExtractPageLinks
       return decide('mentions', { rule: 'page.meeting' });
     }
     const suppressPrior = idx !== undefined && idx >= 0 && inSuppressedRange(suppressedRanges, idx);
-    const roleText = opts.roleText ?? content;
     const trace = traceLinkType(pageType, ctx, suppressPrior ? undefined : roleText, targetSlug,
       opts.targetType ? targetType ?? null : undefined, bodyReference && idx !== undefined && idx >= 0 ? excerptAnchor(content, idx, 240) : undefined, roleText, !!explain);
     const { type, ...why } = trace;
