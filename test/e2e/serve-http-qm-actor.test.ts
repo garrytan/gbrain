@@ -146,6 +146,19 @@ describeE2E('/mcp attested actor (x-qm-actor) over serve --http', () => {
     expect(fix.argv).toEqual(['gbrain', 'auth', 'rescope', '--client', plainClientId, '--attest-actor', 'qm']);
   }, 60_000);
 
+  test('under the header tools/list lists only the attested operations and resources/read refuses', async () => {
+    const list = async (actor?: string) => ((await rpc('qm', { method: 'tools/list', params: {} }, actor)).rpc.result.tools as Array<{ name: string }>).map(t => t.name).sort();
+    expect(await list(ALICE_ID)).toEqual(['get_page', 'search']);
+    const plainList = await list();
+    expect(plainList).toContain('get_page');
+    expect(plainList.length).toBeGreaterThan(2);
+    const read = async (actor?: string) => (await rpc('qm', { method: 'resources/read', params: { uri: 'gbrain://capabilities' } }, actor)).rpc as { result?: { contents: unknown[] }; error?: { message: string; data?: { code?: string } } };
+    const refused = await read(ALICE_ID);
+    expect(refused.result).toBeUndefined();
+    expect(refused.error?.data?.code).toBe('actor_not_attested');
+    expect((await read()).result?.contents.length).toBe(1);
+  }, 60_000);
+
   test('unlinking with the CLI refuses the next call', async () => {
     expect(cli('access', 'member', 'unlink', '--qm', BOB_ID, '--dry-run')).toContain('Would unlink');
     expect((await get('qm', PAGES.bob.slug, BOB_ID)).text).toContain(PAGES.bob.canary);
