@@ -79,15 +79,23 @@ export function describeJudges(tasks: ReadonlyArray<{ judge: Judge }>): string {
   return blocks.join('\n');
 }
 
-const FAILURE_REFLECT_SYSTEM = `You are SkillOpt's optimizer. You analyze AGENT FAILURE TRAJECTORIES and propose specific edits to a SKILL document so the agent does better next time.
-
-Output ONLY a single JSON object on one or more lines:
+/**
+ * The output format and edit ops both reflect modes must emit. `validateEdits`
+ * accepts exactly these op and field names, and a call only sees its own system
+ * prompt (a success-only batch never sends the failure prompt), so each prompt
+ * embeds this block itself (#7257).
+ */
+const REFLECT_EDIT_SCHEMA = `Output ONLY a single JSON object on one or more lines:
 {"edits": [{"op": "add|replace|delete", ...}, ...]}
 
 Edit ops:
   add:      {"op": "add", "anchor": "<exact heading text>", "content": "<new markdown>", "reason": "<one sentence>"}
   replace:  {"op": "replace", "target": "<exact text to find>", "replacement": "<new text>", "reason": "<one sentence>"}
-  delete:   {"op": "delete", "target": "<exact text to remove>", "reason": "<one sentence>"}
+  delete:   {"op": "delete", "target": "<exact text to remove>", "reason": "<one sentence>"}`;
+
+const FAILURE_REFLECT_SYSTEM = `You are SkillOpt's optimizer. You analyze AGENT FAILURE TRAJECTORIES and propose specific edits to a SKILL document so the agent does better next time.
+
+${REFLECT_EDIT_SCHEMA}
 
 Rules:
 - Each edit MUST address a SPECIFIC failure pattern you observed.
@@ -100,7 +108,7 @@ Rules:
 
 const SUCCESS_REFLECT_SYSTEM = `You are SkillOpt's optimizer. You analyze AGENT SUCCESS TRAJECTORIES and propose specific edits to a SKILL document so the agent CONSISTENTLY does what worked here.
 
-Output format and rules are identical to the failure-reflect mode — same {edits: [...]} shape.
+${REFLECT_EDIT_SCHEMA}
 
 When successes are present, look for: which rules were FOLLOWED to produce success, which rules could be MADE EXPLICIT (not yet stated, but exemplified), which anti-patterns the agent successfully AVOIDED that should be stated.
 
