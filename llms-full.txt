@@ -3124,7 +3124,11 @@ brain rather than making another bundled copy. Follow the
 and preserve edited files.
 
 If you're running an agent platform (OpenClaw, Hermes, or any repo with a workspace),
-scaffold the bundled skills into it. On OpenClaw, install the brain-first core:
+scaffold the bundled skills into it. On OpenClaw the primary route is the
+per-turn rule that `gbrain setup openclaw` installs
+([OpenClaw guide](docs/mcp/OPENCLAW.md#brain-first-instructions)): in
+harness-evals a rule beside each turn was followed on 97-100% of turns and a
+listed skill on 1-3%. Skills are the fallback. Install the brain-first core:
 
 ```bash
 gbrain skillpack scaffold --harness openclaw --workspace /path/to/agent/workspace

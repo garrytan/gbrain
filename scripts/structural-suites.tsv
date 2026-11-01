@@ -263,6 +263,7 @@ test/openclaw-assemble-node-loadable.test.ts	(file-level)	4	readFileSync
 test/openclaw-plugin-manifest.test.ts	bundled-skill reference closure (nothing bundled points at a non-bundled skill)	1	readFileSync
 test/openclaw-plugin-manifest.test.ts	plugin membership curation (skills = plugin ∪ exclusions, disjoint)	9	readFileSync
 test/openclaw-plugin-manifest.test.ts	root OpenClaw plugin manifest	2	readFileSync
+test/openclaw-route.test.ts	OpenClaw route	4	readFileSync
 test/paid-lanes-switch-5903.test.ts	#5903 e2e-status accepts a skipped tier2 only under GBRAIN_PAID_LANES=0	9	readFileSync
 test/persistence-git-subdir-origin.test.ts	(file-level)	6	readFileSync
 test/persistence-request-indexes.test.ts	(file-level)	4	readFileSync
