@@ -25,7 +25,7 @@
 import { realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { removeHermesTurnHook, syncHermesTurnHook } from '../core/setup/hermes-turn-hook.ts';
-import { removeOpenclawTurnPlugin, syncOpenclawTurnPlugin } from '../core/setup/openclaw-turn-plugin.ts';
+import { openclawTurnPluginDir, openclawTurnPluginHasDifferentRule, removeOpenclawTurnPlugin, syncOpenclawTurnPlugin } from '../core/setup/openclaw-turn-plugin.ts';
 import { isTurnRuleHarness, removeTurnRuleHook, syncTurnRuleHook, type TurnHookOutcome, type TurnRuleHarness } from '../core/setup/turn-hook.ts';
 import { inspectTurnHook, TURN_HOOK_NATIVE_INSPECT, turnHookFix, verifyTurnHook, type TurnHookVerdict } from '../core/setup/turn-hook-check.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
@@ -750,6 +750,9 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   else {
     say(out, `Target (${adapter.label}): ${target.path} (${target.role})`);
     const decision = resolveBrainFirstDecision(flags.instructions, priorBrainFirst(harness, target.path));
+    if (harness === 'openclaw' && flags.workspace && decision.value === 'accepted' && openclawTurnPluginHasDifferentRule(access)) {
+      return refuse(opError('invalid_params', 'The OpenClaw per-turn rule is shared by every agent and already differs from the rule requested for this workspace.', 'Keep the installed shared rule, or rerun without --workspace to change it for every agent.'), out);
+    }
     instructions = syncBrainFirst({ target, access, decision, writer: `gbrain setup ${harness}`, dryRun: flags.dryRun });
   }
   const off = flags.remove || instructions?.decision.value === 'declined';
@@ -759,7 +762,10 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   const turnHook = !off && !placed ? null : harness === 'hermes'
     ? (off ? removeHermesTurnHook({ hermesHome: dirname(target.path), dryRun: flags.dryRun }) : syncHermesTurnHook({ hermesHome: dirname(target.path), access, dryRun: flags.dryRun }))
     : harness === 'openclaw'
-      ? (off ? removeOpenclawTurnPlugin({ dryRun: flags.dryRun }) : syncOpenclawTurnPlugin({ access, dryRun: flags.dryRun }))
+      ? (off ? flags.workspace
+        ? { action: 'skip' as const, path: openclawTurnPluginDir(), detail: 'workspace-scoped setup leaves the per-turn rule plugin installed because it is shared by every agent' }
+        : removeOpenclawTurnPlugin({ dryRun: flags.dryRun })
+        : syncOpenclawTurnPlugin({ access, dryRun: flags.dryRun }))
       : isTurnRuleHarness(harness) ? turnRuleHookFor(harness, off, flags, projectDir, rerun.join(' ')) : null;
   // Loud failure: an accepted install whose per-turn hook does not load exits non-zero and names the harness's own check.
   // A 'print' outcome installed nothing and already names the step that does, so it is reported, not verified.

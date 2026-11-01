@@ -50,6 +50,19 @@ export function openclawTurnPluginFiles(access: BrainFirstAccess): Record<string
   };
 }
 
+/** Whether a workspace-scoped setup would replace the rule shared by all agents. */
+export function openclawTurnPluginHasDifferentRule(access: BrainFirstAccess): boolean {
+  const path = join(openclawTurnPluginDir(), 'index.js');
+  if (!existsSync(path)) return false;
+  try {
+    const source = readFileSync(path, 'utf8');
+    const match = /^const RULE = (.+);$/m.exec(source);
+    return !match || JSON.parse(match[1]!) !== renderBrainFirstTurnRule(access, 'openclaw');
+  } catch {
+    return true;
+  }
+}
+
 type Run = (argv: string[]) => { ok: boolean; output: string };
 
 function defaultRun(argv: string[]): { ok: boolean; output: string } {
