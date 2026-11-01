@@ -30,6 +30,7 @@ import { getContentFlag } from '../quarantine.ts';
 import { fileHeldField, readHeldPages } from '../persistence/held-reads.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs, isPrivatePageForCaller } from '../search/private-visibility.ts';
+import { unquoteAnyTranscriptText } from '../search/transcript-quote.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
 import { listPagesPagination, listingTruncatedNotice } from './list-pages-pagination.ts';
 import { OperationError, opError, type Operation, type OperationContext } from './contract.ts';
@@ -313,9 +314,8 @@ const fetch_page: Operation = {
       const pin = authorizedReadPin(ctx, page, snapshot!.bodyGeneration, p.min_trust, missing);
       return fetchWindowResult(ctx, { page, visibleBody: visibleBody as Page, revision: snapshot!.revision, tags, quarantined, trust: readable.trust, extras: {}, pin, quote: quotesBody(ctx, page, readable.trust), neutralize: neutralizesBody(ctx, page) }, id, identity ? decodeDeepResearchAnchor(id) : null);
     }
-    return {
-      id: identity ? id : page.slug,
-      title: quotedPageMeta(page, quotesBody(ctx, page, readable.trust)).title,
+    const meta = quotedPageMeta(page, quotesBody(ctx, page, readable.trust), tags);
+    return { id: identity ? id : page.slug, title: meta.title,
       text: projectFetchText(visibleBody as Page, tags, quarantined, readable.trust, quotesBody(ctx, page, readable.trust), neutralizesBody(ctx, page)),
       // Pages have no public http home; a stable brain-local URI satisfies
       // the contract's citation slot without inventing a fake web URL.
@@ -325,7 +325,7 @@ const fetch_page: Operation = {
         type: page.type,
         source_id: page.source_id,
         updated_at: page.updated_at,
-        tags, ...(quarantined ? { quarantined } : {}), ...readable.trust, ...(quotesBody(ctx, page, readable.trust) ? { quoted: 'transcript' } : {}),
+        tags: meta.tags, ...(quarantined ? { quarantined } : {}), ...readable.trust, ...(quotesBody(ctx, page, readable.trust) ? { quoted: 'transcript' } : {}),
       },
     };
   },
@@ -613,7 +613,7 @@ const list_pages: Operation = {
     // the pages such consumers exist to find.
     const rows = scope.sourceIds?.length === 0 ? [] : await ctx.engine.listPages({
       type: p.type as any,
-      tag: p.tag as string,
+      tag: typeof p.tag === 'string' && ctx.remote !== false ? unquoteAnyTranscriptText(p.tag) : p.tag as string,
       limit: limit + 1,
       offset,
       includeDeleted: (p.include_deleted as boolean) === true,
