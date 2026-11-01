@@ -91,6 +91,7 @@ test/facts-publication-large-fence-6898.test.ts
 test/facts-subject-infer-7405.test.ts
 test/fence-fact-append.test.ts
 test/fence-repair-receipts.test.ts
+test/fenced-embed-reuse-6961.test.ts
 test/file-drift-soft-delete-hold-release-gbra133.test.ts
 test/forecast-journal.test.ts
 test/frontmatter-reserved-keys-6454.test.ts
@@ -468,9 +469,11 @@ test/retrieval-coverage-notices.test.ts
 test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts
 test/scripts/test-stress-postgres.test.ts
+test/search-entity-facts-eligibility.test.ts
 test/search-read-keyword-bound.test.ts
 test/search-remote-page-cap.test.ts
 test/search-transcript-quote-8384.test.ts
+test/search-transcript-quote-8384b.test.ts
 test/search-transcript-quote-budget.test.ts
 test/search-transcript-quote-coverage.test.ts
 test/search-transcript-quote-followups.test.ts

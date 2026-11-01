@@ -23,7 +23,7 @@ import { assertTimelineNotOmitted, isTimelineSection, timelineSectionOf, type Ti
 import { contentOriginTier } from '../trust/tier.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 import { contentSizeHold, frontmatterBodyOffset, parseMarkdownHead } from '../markdown.ts';
-import { dataFrontmatter } from '../data-frontmatter.ts';
+import { dataFrontmatter, dumpFrontmatterYaml } from '../data-frontmatter.ts';
 import { throwIfHeld } from '../trust/gate-outcomes.ts';
 import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequest, intentDigest, type WriteAdmission } from './journal.ts';
 import { submissionAuthority, authorizeStoredRequest } from './authority.ts';
@@ -273,13 +273,41 @@ function unquotedStrings(value: unknown, slug: string): unknown {
 /**
  * #8377: a quoted read's reading shape fences the title and each frontmatter string as `slug`'s (a whole-markdown read is
  * fenced once instead, and its metadata is the page's own). YAML indents those fences, so the body's unquote misses them.
+ * #8384: only the top-level keys that held a fence are rewritten; every other line keeps the bytes the caller sent, so a
+ * naive datetime keeps its brain-timezone reading. A fenced key not found on its own line, or a line rewrite that does not
+ * parse back to the unquoted values (a flow mapping continued on an unindented line, an anchor another key aliases),
+ * rewrites the whole block.
  */
 function unquotedFrontmatter(sent: string, content: string, slug: string): string {
   const offset = frontmatterBodyOffset(content);
   if (!offset || !frontmatterBodyOffset(sent) || !content.slice(0, offset).includes('```text')) return content;
   const { frontmatter } = parseMarkdownHead(content);
   const data = unquotedStrings(frontmatter, slug) as Record<string, unknown>;
-  return JSON.stringify(data) === JSON.stringify(frontmatter) ? content : dataFrontmatter.stringify('', data) + content.slice(offset);
+  const fenced = new Set(Object.keys(data).filter(k => JSON.stringify(data[k]) !== JSON.stringify(frontmatter[k])));
+  if (!fenced.size) return content;
+  const lines = content.slice(0, offset).split('\n');
+  const open = lines.findIndex(l => l.trim() === '---');
+  const close = lines.findIndex((l, i) => i > open && l.trim() === '---');
+  const out = lines.slice(0, open + 1);
+  for (let i = open + 1; i < close;) {
+    let end = i + 1;
+    while (end < close && /^(?:[ \t]|-(?:[ \t]|\r?$)|\r?$)/.test(lines[end]!)) end++;
+    const m = /^(?:"([^"]*)"|'([^']*)'|([^\s#'"-][^:]*?))[ \t]*:(?:[ \t]|\r?$)/.exec(lines[i]!);
+    const key = m?.[1] ?? m?.[2] ?? m?.[3];
+    if (key !== undefined && fenced.delete(key)) {
+      const eol = lines[i]!.endsWith('\r') ? '\r' : '';
+      out.push(...dumpFrontmatterYaml({ [key]: data[key] }).trimEnd().split('\n').map(l => l + eol));
+    } else out.push(...lines.slice(i, end));
+    i = end;
+  }
+  const whole = dataFrontmatter.stringify('', data) + content.slice(offset);
+  if (fenced.size) return whole;
+  const partial = [...out, ...lines.slice(close)].join('\n') + content.slice(offset);
+  try {
+    return JSON.stringify(parseMarkdownHead(partial).frontmatter) === JSON.stringify(data) ? partial : whole;
+  } catch {
+    return whole;
+  }
 }
 
 async function unquotedPutContent(engine: BrainEngine, sourceId: string, slug: string, content: string): Promise<string> {

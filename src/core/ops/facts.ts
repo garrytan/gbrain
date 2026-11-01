@@ -855,7 +855,7 @@ const context_pack: Operation = {
       // rendered line plus its rendered (since-filtered) thread lines.
       const itemBudget = budgetTokens - packHeaderCost() - coreTokens - (pullBrief?.text ? estimateTokens(pullBrief.text) : 0);
       const cardCost = (c: (typeof cards)[number]) =>
-        lineCost(renderCardLine(c, walk.home)) + threadsOf(c).reduce((n, t) => n + lineCost(renderThreadLine(t)), 0);
+        lineCost(renderCardLine(c, walk.home, ctx.remote !== false)) + threadsOf(c).reduce((n, t) => n + lineCost(renderThreadLine(t)), 0);
       const cardPack = itemBudget > 0 ? packToBudget(cards, cardCost, itemBudget) : dropAll(cards);
       cards = cardPack.items;
       // #6724: a dropped card's facts go with it; entity facts pack before hot memory, and a fact in both is priced once.
@@ -872,7 +872,7 @@ const context_pack: Operation = {
       const mentionBudget = remaining - factPack.meta.used - lineCost('') - lineCost(NEWER_MENTIONS_HEADER);
       const withMentions = cards.filter((c) => c.newer_mentions);
       const mentionPack = mentionBudget > 0
-        ? packToBudget(withMentions, (c) => renderNewerMentionLines(c, walk.home).reduce((n, l) => n + lineCost(l), 0), mentionBudget)
+        ? packToBudget(withMentions, (c) => renderNewerMentionLines(c, walk.home, ctx.remote !== false).reduce((n, l) => n + lineCost(l), 0), mentionBudget)
         : dropAll(withMentions);
       const keptMentions = new Set(mentionPack.items);
       cards = cards.map((c) => (c.newer_mentions && !keptMentions.has(c) ? { ...c, newer_mentions: undefined } : c));
@@ -892,7 +892,7 @@ const context_pack: Operation = {
     // structured arrays report — the assembler's pre-budget rendering would
     // overrun the declared budget_tokens. budget_used reports that text.
     const recordLines = cards.flatMap(renderRecordLines);
-    const basePack = entities.length === 0 ? '' : budgetTokens !== null ? renderPack(cards, open_threads, facts, undefined, walk.home, entityFacts) : res.text;
+    const basePack = entities.length === 0 ? '' : budgetTokens !== null ? renderPack(cards, open_threads, facts, undefined, walk.home, entityFacts, ctx.remote !== false) : res.text;
     const packText = recordLines.length ? [basePack, ['', RECORDS_HEADER, ...recordLines].join('\n')].filter(Boolean).join('\n') : basePack;
     const text = [coreText, pullBrief?.text ?? '', packText].filter(Boolean).join('\n\n');
     const budgetUsed = budgetTokens !== null ? estimateTokens(text) : undefined;

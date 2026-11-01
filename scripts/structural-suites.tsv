@@ -340,7 +340,7 @@ test/scripts/nightly-issue.test.ts	nightly-watch incidents	9	readFileSync
 test/scripts/nightly-issue.test.ts	nightly-watch routing and guard	9	readFileSync
 test/scripts/nightly-issue.test.ts	operator messages carry docs anchors that resolve	1	readFileSync
 test/scripts/postgres-lane-coverage.test.ts	check-postgres-lane-coverage.ts	9	readFileSync
-test/scripts/postgres-unit-arms.test.ts	postgres-unit-arms list	13	readFileSync
+test/scripts/postgres-unit-arms.test.ts	postgres-unit-arms list	14	readFileSync
 test/scripts/promote-stable.test.ts	promote-stable.yml	2	readFileSync
 test/scripts/regen-all.test.ts	regen:all	5	readFileSync
 test/scripts/require-executed-tests.test.ts	require-executed-tests	9	readFileSync

@@ -26,6 +26,13 @@ describe('postgres-unit-arms list', () => {
     expect(list.files.length).toBeGreaterThan(50);
   });
 
+  test('every weight in both committed weight files names a listed arm file', () => {
+    const listed = new Set(readArmsList(REPO).files);
+    for (const file of ['scripts/postgres-arm-weights.json', 'scripts/postgres-arm-weights-postgres-only.json']) {
+      expect(Object.keys(JSON.parse(readFileSync(join(REPO, file), 'utf8'))).filter(name => !listed.has(name))).toEqual([]);
+    }
+  });
+
   test('the two CI shards cover every listed file exactly once', () => {
     const all = cli('list').stdout.trim().split('\n');
     const shards = [1, 2].map(n => cli('shard', String(n), '2').stdout.trim().split('\n'));
