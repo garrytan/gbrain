@@ -18,7 +18,7 @@ import { segmentSynopsisInputHashes, segmentSynopsisLead } from './page-body/seg
  * A stored row an import keeps: its id and the index it holds now (a kept row whose new chunk sits elsewhere moves
  * there). `vector`: the row holds one, so moving it is a vector-index write (page-state/chunk-moves.ts).
  */
-export interface KeptChunkRow { id: number; chunk_index: number; vector: boolean }
+export interface KeptChunkRow { id: number; chunk_index: number; vector: boolean; projected_byte_start: number | null; projected_byte_end: number | null }
 
 /**
  * A13 reuse for one page import: copies each stored vector the reuse gate
@@ -62,6 +62,8 @@ export async function reuseStoredChunkVectors(
     chunk.language ?? null, chunk.symbol_name ?? null, chunk.symbol_type ?? null, chunk.start_line ?? null, chunk.end_line ?? null,
     chunk.parent_symbol_path ?? null, chunk.doc_comment ?? null, chunk.symbol_name_qualified ?? null, chunk.modality ?? 'text']);
   const key = (chunk: { chunk_source?: string | null; chunk_text: string }) => `${chunk.chunk_source}\0${chunk.chunk_text}`;
+  const kept = (row: Chunk, vector: boolean): KeptChunkRow => ({ id: row.id, chunk_index: row.chunk_index, vector,
+    projected_byte_start: row.projected_byte_start ?? null, projected_byte_end: row.projected_byte_end ?? null });
   // A stored row at the chunk's own index first, then FIFO by source + text: one page can hold two identical chunks.
   const atIndex = new Map(stored.map(chunk => [chunk.chunk_index, chunk]));
   const matches = new Map<number, Chunk>();
@@ -76,7 +78,7 @@ export async function reuseStoredChunkVectors(
     if (row.model) into[i].model = row.model;
     // The stored row already holds exactly what this chunk would insert (identity, vector, recorded input and text
     // hash, no image or multimodal vector the insert would drop), so it can stay, moved to this chunk's index.
-    reused.set(i, recorded.get(row.chunk_index) != null && textOnly.has(row.chunk_index) && identity(row) === identity(into[i]) ? { id: row.id, chunk_index: row.chunk_index, vector: true } : null);
+    reused.set(i, recorded.get(row.chunk_index) != null && textOnly.has(row.chunk_index) && identity(row) === identity(into[i]) ? kept(row, true) : null);
   }
   // A stored row that never got a vector stays in place under a new chunk that
   // will not get one either (a --no-embed or deferred write): the same upsert
@@ -87,7 +89,7 @@ export async function reuseStoredChunkVectors(
     for (const row of all) {
       const i = byIndex.get(row.chunk_index);
       if (i === undefined || reused.has(i) || into[i]!.embedding || !unembedded.has(row.chunk_index)) continue;
-      if (identity(row) === identity(into[i]!)) reused.set(i, { id: row.id, chunk_index: row.chunk_index, vector: false });
+      if (identity(row) === identity(into[i]!)) reused.set(i, kept(row, false));
     }
   }
   return reused;

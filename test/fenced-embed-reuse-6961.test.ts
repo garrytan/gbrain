@@ -33,6 +33,8 @@ const FENCE = (rows: string[]) => ['## Facts', '<!--- gbrain:facts:begin -->',
   ...rows.map((claim, i) => `| ${i + 1} | ${claim} | fact | 1.0 | world | medium | 2017-01-01 |  | chat |  |`), '<!--- gbrain:facts:end -->', ''].join('\n');
 const PERSON = (facts: string[]) => `---\ntitle: Alice Example\ntype: person\n---\n# Alice Example\n\n${
   ['alpha', 'bravo', 'charlie', 'delta'].map(w => `## Section ${w}\n\n${paragraph(w)}`).join('\n\n')}\n\n${FENCE(facts)}`;
+const MIDDLE = (facts: string[]) => `---\ntitle: Alice Example\ntype: person\n---\n# Alice Example\n\n## Section alpha\n\n${paragraph('alpha')}\n\n${
+  FENCE(facts)}\n${['bravo', 'charlie', 'delta'].map(w => `## Section ${w}\n\n${paragraph(w)}`).join('\n\n')}\n`;
 const FACTS = ['Alice Example works at Acme Example', 'Alice Example lives in Springfield'];
 const APPENDED = 'Alice Example joined the board of Fund A';
 
@@ -62,6 +64,22 @@ for (const backend of testBackends()) describe(`#6961 fenced page vector reuse (
     expect(embedded.some(text => text.includes(APPENDED))).toBe(true);
     for (const text of embedded) expect(text).not.toMatch(/alpha0 |bravo0 |charlie0 /);
     expect((await engine.getChunks(slug, { includeEmbedding: true, includeUnsealed: true })).every(chunk => chunk.embedding)).toBe(true);
+  }, 120_000);
+
+  // Value: protects=a kept row after a mid-page fact append carries its chunk's new byte span, so chunk-centered reads
+  //   still locate it; fails_when=a kept row at an unchanged index keeps the span of the previous body; why_new=fenced
+  //   pages rewrote every row before #6961, so their spans were always fresh; seam=a fresh import of the same body
+  test('a mid-page fact append keeps every chunk span current', async () => {
+    const slug = 'people/alice-example-middle';
+    const spans = async (s: string) => (await engine.getChunks(s, { includeUnsealed: true }))
+      .map(chunk => [chunk.chunk_index, chunk.projected_byte_start ?? null, chunk.projected_byte_end ?? null]);
+    await importFromContent(engine, slug, MIDDLE(FACTS));
+    const total = await chunkCount(slug);
+    embedded = [];
+    await importFromContent(engine, slug, MIDDLE([...FACTS, APPENDED]));
+    expect(embedded.length).toBeLessThan(total);
+    await importFromContent(engine, 'people/alice-example-middle-fresh', MIDDLE([...FACTS, APPENDED]));
+    expect(await spans(slug)).toEqual(await spans('people/alice-example-middle-fresh'));
   }, 120_000);
 
   // Value: protects=a fenced page never reuses a vector whose input is unproven (no recorded embedding input), so no

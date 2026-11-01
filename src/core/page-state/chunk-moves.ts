@@ -66,15 +66,22 @@ export function planMoveWaves(moves: readonly ChunkMove[], occupied: ReadonlyMap
  * publication), `defer` says the vector-index writes (moves of rows with a vector, inserts of chunks carrying one) pass
  * CHUNK_VECTOR_WRITE_BUDGET, so the publication leaves the replacement to `continueDeferredProjection`.
  */
-export function planImportChunkWrites(fresh: readonly ChunkInput[], kept: ReadonlyMap<number, { id: number; chunk_index: number; vector: boolean }>, bounded: boolean):
+export function planImportChunkWrites(fresh: readonly ChunkInput[],
+  kept: ReadonlyMap<number, { id: number; chunk_index: number; vector: boolean; projected_byte_start?: number | null; projected_byte_end?: number | null }>, bounded: boolean):
   { waves: ChunkMove[][]; defer: boolean } {
-  const moves = [...kept].filter(([i, row]) => row.chunk_index !== fresh[i]!.chunk_index).map(([i, row]) => ({ id: row.id, from: row.chunk_index,
+  const move = (i: number, row: { id: number; chunk_index: number; vector: boolean }): ChunkMove => ({ id: row.id, from: row.chunk_index,
     to: fresh[i]!.chunk_index, projected_byte_start: fresh[i]!.projected_byte_start ?? null, projected_byte_end: fresh[i]!.projected_byte_end ?? null,
-    ...(row.vector ? {} : { vectorless: true }) }));
+    ...(row.vector ? {} : { vectorless: true }) });
+  const moves = [...kept].filter(([i, row]) => row.chunk_index !== fresh[i]!.chunk_index).map(([i, row]) => move(i, row));
+  // #6961: a row kept at its own index whose chunk's span moved (earlier text grew) takes the new span in a last wave;
+  // a span-only update changes no indexed column, so it adds no HNSW entry and is not counted against the budget.
+  const respans = [...kept].filter(([i, row]) => row.chunk_index === fresh[i]!.chunk_index && row.projected_byte_start !== undefined
+    && (row.projected_byte_start !== (fresh[i]!.projected_byte_start ?? null) || row.projected_byte_end !== (fresh[i]!.projected_byte_end ?? null))).map(([i, row]) => move(i, row));
   const vectorInserts = fresh.filter((chunk, i) => !kept.has(i) && (chunk.embedding || chunk.embedding_image)).length;
   const plan = planMoveWaves(moves, new Map([...kept.values()].map(row => [row.chunk_index, row.id])),
     bounded ? Math.max(0, CHUNK_VECTOR_WRITE_BUDGET - vectorInserts) : Number.POSITIVE_INFINITY);
-  return { waves: plan.waves, defer: bounded && fresh.length > 0 && (!plan.done || vectorInserts > CHUNK_VECTOR_WRITE_BUDGET) };
+  return { waves: respans.length ? [...plan.waves, respans] : plan.waves,
+    defer: bounded && fresh.length > 0 && (!plan.done || vectorInserts > CHUNK_VECTOR_WRITE_BUDGET) };
 }
 
 /** One UPDATE per wave; a landed row takes its new chunk's span, a parked row keeps its own until it lands. */
