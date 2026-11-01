@@ -42,7 +42,7 @@ import { realpathOrResolve } from '../core/path-confine.ts';
 import { slog } from '../core/console-prefix.ts';
 import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
 import { importAnalyzeEveryPages, maybeRefreshPlannerStats, PLANNER_STATS_REPAIR_COMMAND } from '../core/planner-stats.ts';
-import { importManagedFile, nextImportBatch, settleManagedImportBatch } from '../core/persistence/import-mutations.ts';
+import { importManagedFile, managedImportWriteThroughRefusal, nextImportBatch, settleManagedImportBatch } from '../core/persistence/import-mutations.ts';
 import { acceptedPendingReceipt } from '../core/persistence/accepted-pending.ts';
 import { estimateCostFromChars, lookupEmbeddingPrice } from '../core/embedding-pricing.ts';
 import { getEmbeddingModel } from '../core/ai/gateway.ts';
@@ -482,11 +482,7 @@ export async function runImport(
   // v0.22.13 (PR #490 Q2): shared parseWorkers helper rejects bad input
   // (--workers 0, -3, "foo") with a loud error instead of silently falling
   // through to 1. Mirrors sync.ts's flag handling.
-  const {
-    clampWorkersForConnectionBudget,
-    parseWorkers,
-    resolveMaxConnections,
-  } = await import('../core/sync-concurrency.ts');
+  const { clampWorkersForConnectionBudget, parseWorkers, resolveMaxConnections } = await import('../core/sync-concurrency.ts');
   let workerCount: number;
   try {
     workerCount = parseWorkers(workersArg ?? undefined) ?? 1;
@@ -514,13 +510,17 @@ export async function runImport(
   try {
     dir = resolveImportTargetDir(dirArg);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error(`Import target is not readable: ${dirArg} (${msg})`);
+    console.error(`Import target is not readable: ${dirArg} (${e instanceof Error ? e.message : String(e)})`);
     throw new ImportAbortError(`import target not readable: ${dirArg}`);
   }
 
   const managedImport = await readManagedMode(engine);
   if (managedImport && dir !== resolve(dirArg)) throw symlinkedRootAbort(dirArg, dir);
+  const preAdmission = managedImport && !opts.managedBookmark && !currentCompanyBrainSync(sourceId) ? await managedImportWriteThroughRefusal(engine, sourceId ?? 'default') : null;
+  if (preAdmission) {
+    console.error(`Error [${preAdmission.code}]: ${preAdmission.message}\nFix: ${preAdmission.suggestion}`);
+    throw new ImportAbortError(preAdmission.message, 1, undefined, preAdmission);
+  }
   const singleFile = managedImport && lstatSync(dir).isFile();
   const importRoot = singleFile ? dirname(dir) : dir;
 

@@ -61,6 +61,7 @@ import {
 import { bodyBlocks, detachedValue } from '../page-body/segment-blocks.ts';
 import { commitRuns, derivationScope, keyDigest, planRuns, readRuns, SegmentDerivationRaced, type DeriveRun } from '../page-body/segment-derive.ts';
 import { canonicalJson } from '../belief/keys.ts';
+import { beliefCoveredSources, unmanagedBeliefPoint } from '../belief/projection-point.ts';
 import { classifyItemFailure } from '../item-failure.ts';
 import { linkableTypesFor, loadSourcePack, parseNameList, readMentionPolicy, type MentionPolicy, type PackTypes } from './policy.ts';
 import { deriveEntityAliases, type DerivedAlias } from './aliases.ts';
@@ -550,7 +551,12 @@ async function reconcileSource(engine: BrainEngine, sourceId: string, gazetteer:
     }
     if (!readable.length) continue;
     await opts.beforePublish?.(readable.map(p => Number(p.id)));
+    // #7031: on a belief-covered source the link changes are an unmanaged projection point, like derived links; the
+    // page keys are locked first, as every publisher locks them before the page rows.
+    let beliefs = null as ReturnType<typeof unmanagedBeliefPoint> | null;
     const outcome = await engine.transaction(async tx => {
+      const journaled = (await beliefCoveredSources(tx, [sourceId])).has(sourceId);
+      if (journaled) await tx.lockPageKeys(readable.map(p => ({ sourceId: p.source_id, slug: p.slug })));
       if (!sameGenerations(generations, await readGenerations(tx, genSources, true))) return null;
       const current = new Map((await tx.executeRaw<{ id: number; revision: string }>(
         `SELECT id, knowledge_revision::text AS revision FROM pages WHERE id = ANY($1::int[]) AND deleted_at IS NULL FOR SHARE`,
@@ -572,12 +578,18 @@ async function reconcileSource(engine: BrainEngine, sourceId: string, gazetteer:
         .map(m => `${p.id}\0${m.source_id}\0${m.slug}`)));
       const have = new Set(existing.map(r => `${r.from_page_id}\0${r.to_source_id}\0${r.to_slug}`));
       const drop = existing.filter(r => !want.has(`${r.from_page_id}\0${r.to_source_id}\0${r.to_slug}`)).map(r => Number(r.id));
-      if (drop.length) await tx.executeRaw('DELETE FROM links WHERE id = ANY($1::int[])', [drop]);
       const add: LinkBatchInput[] = fresh.flatMap(p => (found.get(Number(p.id)) ?? [])
         .filter(m => want.has(`${p.id}\0${m.source_id}\0${m.slug}`) && !have.has(`${p.id}\0${m.source_id}\0${m.slug}`))
         .map(m => ({ from_slug: p.slug, to_slug: m.slug, link_type: 'mentions', link_source: 'mentions', context: m.name,
           from_source_id: p.source_id, to_source_id: m.source_id })));
-      const created = add.length ? await tx.addLinksBatch(add, { auditSite: 'extract.mentions' }) : 0; // gbrain-allow-direct-insert: mention pass — reconciling write of the scan's own plain mention rows
+      const write = async () => {
+        if (drop.length) await tx.executeRaw('DELETE FROM links WHERE id = ANY($1::int[])', [drop]);
+        return add.length ? await tx.addLinksBatch(add, { auditSite: 'extract.mentions' }) : 0; // gbrain-allow-direct-insert: mention pass — reconciling write of the scan's own plain mention rows
+      };
+      const dropped = new Set(existing.filter(r => drop.includes(Number(r.id))).map(r => Number(r.from_page_id)));
+      const changed = fresh.filter(p => dropped.has(Number(p.id))).map(p => p.slug).concat(add.map(link => link.from_slug));
+      if (journaled && changed.length) beliefs = unmanagedBeliefPoint(sourceId, changed, 'mention_pass');
+      const created = beliefs ? await beliefs.run(tx, write) : await write();
       await tx.executeRaw(
         `INSERT INTO page_mention_state (page_id, source_id, mention_revision, mention_version, mention_generation, mentions_scanned_at)
          SELECT id, $1, rev::uuid, $4, $5::bigint, now() FROM unnest($2::int[], $3::text[]) AS x(id, rev)
@@ -586,6 +598,7 @@ async function reconcileSource(engine: BrainEngine, sourceId: string, gazetteer:
         [sourceId, fresh.map(p => p.id), fresh.map(p => p.revision), MENTION_EXTRACTOR_VERSION, generations.get(sourceId) ?? '0']);
       return { fresh: fresh.length, created, removed: drop.length };
     });
+    await beliefs?.commit(engine);
     if (!outcome) { result.skipped += readable.length; return; }
     result.pages += outcome.fresh;
     result.skipped += readable.length - outcome.fresh;

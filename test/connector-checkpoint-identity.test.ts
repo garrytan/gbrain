@@ -15,7 +15,7 @@ import { resumeCheckpoint } from '../src/core/persistence/connector-sync.ts';
 import { connectorCheckpointsRepair, ORPHAN_CHECKPOINT_MIN_AGE_DAYS } from '../src/core/repair/connector-checkpoints.ts';
 import { resolveRepairScope, runRepair } from '../src/core/repair/core.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { createConnectorFixture, options, json, googleConfig, contact, withPausedOwnerBudget } from './helpers/connector-fixture.ts';
+import { createConnectorFixture, options, json, googleConfig, contact, withPausedOwnerBudget, isPeopleAccessProbe } from './helpers/connector-fixture.ts';
 
 const { engines, env, source, boundSource, setup, teardown } = createConnectorFixture();
 beforeAll(setup, 120_000);
@@ -46,6 +46,8 @@ function peopleFetcher(opts: { rotate?: boolean; rewalk?: boolean; onList?: () =
     const u = new URL(url);
     if (url.includes('/settings/sendAs')) return json({ sendAs: [] });
     if (u.pathname.endsWith('/people/me')) return json({ resourceName: 'people/me', emailAddresses: [{ value: googleConfig.g_account, metadata: { primary: true } }] });
+    if (isPeopleAccessProbe(url)) return json({ connections: [] });
+    if (u.pathname.endsWith('/v1/userinfo')) return json({ email: googleConfig.g_account });
     if (u.pathname.endsWith('/people/me/connections')) {
       await opts.onList?.();
       const token = opts.rotate ? `contacts-${++sweep}` : 'contacts-stable';

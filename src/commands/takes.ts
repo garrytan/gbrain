@@ -50,22 +50,6 @@ function flagPresent(args: string[], name: string): boolean {
   return args.includes(name);
 }
 
-async function resolveBrainDir(engine: BrainEngine | null, explicitDir: string | null): Promise<string> {
-  if (explicitDir) {
-    if (!existsSync(explicitDir)) {
-      console.error(`--dir path does not exist: ${explicitDir}`);
-      process.exit(1);
-    }
-    return explicitDir;
-  }
-  if (engine) {
-    const configured = await engine.getConfig('sync.repo_path');
-    if (configured && existsSync(configured)) return configured;
-  }
-  console.error('No brain directory configured. Pass --dir <path> or run `gbrain init` first.');
-  process.exit(1);
-}
-
 /**
  * Map a TakesWriteError to the historical CLI error surface (stderr + exit 1).
  * Message text preserves the pre-extraction wording users and scripts saw.
@@ -105,6 +89,11 @@ async function cmdList(engine: BrainEngine, args: string[]): Promise<void> {
   // takes — CLI parity with the takes_list operation. A leading flag is not
   // a slug.
   const slug = args[0] && !args[0].startsWith('-') ? args[0] : undefined;
+  // #7271: there is no status filter here; an ignored --status read as a filtered list.
+  if (args.includes('--status')) {
+    console.error('takes list has no --status filter: it lists active takes, and --expired lists superseded ones. Proposed takes wait in the proposal queue: gbrain takes propose --json');
+    process.exit(1);
+  }
   const json = flagPresent(args, '--json');
   const holder = flagValue(args, '--who');
   const kind = flagValue(args, '--kind') as string | undefined;
@@ -535,11 +524,15 @@ async function cmdPropose(engine: BrainEngine, args: string[], sourceId: string)
       console.error(`Invalid --kind "${kind}". Expected fact, take, bet or hunch.`);
       process.exit(1);
     }
-    const brainDir = await resolveBrainDir(engine, dirArg ?? null);
+    if (dirArg !== undefined && !existsSync(dirArg)) {
+      console.error(`--dir path does not exist: ${dirArg}`);
+      process.exit(1);
+    }
+    const claim = flagValue(args, '--claim');
     try {
-      const { proposal, rowNum } = await acceptProposal({ engine, brainDir, sourceId, actedBy, config: loadConfig() ?? { engine: 'pglite' },
-        ...(dirArg ? { localDir: resolvePath(dirArg) } : {}) }, id, { claim: flagValue(args, '--claim'), weight, holder: flagValue(args, '--who'), kind });
-      console.log(`Accepted proposal #${id} → take #${rowNum} on ${proposal.page_slug}.`);
+      const { proposal, rowNum } = await acceptProposal({ engine, sourceId, actedBy, config: loadConfig() ?? { engine: 'pglite' },
+        ...(dirArg ? { localDir: resolvePath(dirArg) } : {}) }, id, { claim, weight, holder: flagValue(args, '--who'), kind });
+      console.log(`Accepted proposal #${id} → take #${rowNum} on ${proposal.page_slug}: ${claim ?? proposal.claim_text}`);
     } catch (err) {
       if (err instanceof TakeProposalError) {
         console.error(err.message);

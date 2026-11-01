@@ -48,6 +48,7 @@ function clientsFor(routes: Routes): { clients: GoogleIdentityClients; calls: st
     if (path.endsWith('/users/me/profile')) return routes.gmail?.() ?? json({ emailAddress: OWNER, historyId: '1' });
     if (path.endsWith('/calendars/primary')) return routes.calendar?.() ?? json({ id: OWNER });
     if (path.endsWith('/people/me')) return routes.people?.() ?? json({ emailAddresses: [{ value: OWNER, metadata: { primary: true } }] });
+    if (path.endsWith('/people/me/connections')) return routes.people?.() ?? json({ connections: [] });
     if (path.endsWith('/userinfo')) return routes.userinfo?.() ?? json({ email: OWNER });
     throw new Error(`unexpected route ${url}`);
   };
