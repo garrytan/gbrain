@@ -314,9 +314,7 @@ const fetch_page: Operation = {
       return fetchWindowResult(ctx, { page, visibleBody: visibleBody as Page, revision: snapshot!.revision, tags, quarantined, trust: readable.trust, extras: {}, pin, quote: quotesBody(ctx, page, readable.trust), neutralize: neutralizesBody(ctx, page) }, id, identity ? decodeDeepResearchAnchor(id) : null);
     }
     const meta = quotedPageMeta(page, quotesBody(ctx, page, readable.trust), tags);
-    return {
-      id: identity ? id : page.slug,
-      title: meta.title,
+    return { id: identity ? id : page.slug, title: meta.title,
       text: projectFetchText(visibleBody as Page, tags, quarantined, readable.trust, quotesBody(ctx, page, readable.trust), neutralizesBody(ctx, page)),
       // Pages have no public http home; a stable brain-local URI satisfies
       // the contract's citation slot without inventing a fake web URL.
