@@ -14,6 +14,9 @@ import type { Migration } from './types.ts';
 // as that page's for lineage, so a derivative written against it stays under
 // the page's rules even after another page takes the slug (it can only hide
 // more). A purge removes the rows that point at the purged page.
+// A role that row-level security keeps from reading the history would read it
+// empty and lose that lineage, so gbrain_access_state_unreadable() counts it with
+// the access tables: such a role reads every page as covered.
 // No schema.sql mirror: like v282 and v283, it exists only through migrations.
 // Provisional number: renumbered at the merge slot.
 export const v285: Migration = {
@@ -29,6 +32,15 @@ CREATE TABLE IF NOT EXISTS slug_rename_history (
   PRIMARY KEY (source_id, old_slug, new_slug)
 );
 CREATE INDEX IF NOT EXISTS slug_rename_history_new_idx ON slug_rename_history (source_id, new_slug);
+CREATE OR REPLACE FUNCTION gbrain_access_state_unreadable() RETURNS boolean
+  LANGUAGE sql STABLE PARALLEL SAFE SET search_path = pg_catalog, public, pg_temp AS $fn$
+  SELECT EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['access_policy_state', 'access_rules', 'access_pending_coverage', 'slug_rename_history']::pg_catalog.regclass[]) AS t(rel)
+    WHERE pg_catalog.row_security_active(t.rel) AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid OPERATOR(pg_catalog.=) t.rel::pg_catalog.oid AND p.polpermissive
+        AND p.polcmd::pg_catalog.text OPERATOR(pg_catalog.=) ANY (ARRAY['*', 'r']::pg_catalog.text[])
+        AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id)
+          WHERE CASE WHEN r.id OPERATOR(pg_catalog.=) 0::pg_catalog.oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END)))
+$fn$;
 CREATE OR REPLACE FUNCTION gbrain_access_origin_restricted(p_id INTEGER, p_source_id TEXT, p_type TEXT, fm JSONB) RETURNS boolean
   LANGUAGE plpgsql STABLE PARALLEL SAFE SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN

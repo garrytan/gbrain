@@ -4628,8 +4628,8 @@
         "idempotent": true,
         "name": "slug_rename_history",
         "sql": {
-          "length": 3888,
-          "sha256": "ec30275c848d20d293708f077f624e591de819e1deb0c58bb708b6e9de6c16fb"
+          "length": 4735,
+          "sha256": "968c36b28c95a4eb7b1324771770968b39d38c67d70188ff97e1f1ca16ea5a1c"
         },
         "sqlFor": "absent",
         "transaction": "absent",

@@ -160,6 +160,16 @@ function docsRecipe(role: string): string {
     expect(outcome).toEqual({ value: { record: false, unruled: false, live: false, restricted: true } });
   });
 
+  test('a scoped role that cannot read the rename history reads every page as covered', async () => {
+    await policies(['slug_rename_history']);
+    const outcome = await asScoped(async tx => ({
+      record: await remoteReads(tx, 'notes/y', ALICE),
+      live: await liveReads(tx, 'notes/y'),
+      restricted: await folderRestricted(tx, 'default', 'notes/y'),
+    }));
+    expect(outcome).toEqual({ value: { record: false, live: false, restricted: true } });
+  });
+
   test('the docs/ENGINES.md access recipe, applied verbatim, stamps the rule and keeps the normal read', async () => {
     await policies(ACCESS_TABLES);
     const recipe = docsRecipe(SCOPED);
