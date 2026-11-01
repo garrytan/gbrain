@@ -159,6 +159,41 @@ export interface EmbeddingTouchpoint {
    * noise for them.
    */
   no_batch_cap?: true;
+  /**
+   * Exact token counting through the backend's own tokenizer (llama.cpp's
+   * llama-server publishes one over HTTP). When declared, `embed()` asks the
+   * server for the real token count of the texts it is about to send and
+   * plans its sub-batches from those numbers, instead of estimating
+   * `characters / chars_per_token` — the estimate drifts badly on CJK and
+   * code, where one character is often one token. A declared
+   * `max_input_tokens` entry then cuts an over-cap input at a real token
+   * boundary rather than at a byte offset.
+   *
+   * Opt-in and off by default: a recipe without this field plans exactly as
+   * it did before (see `src/core/ai/embed-tokenize.ts`).
+   */
+  tokenizer?: EmbeddingTokenizer;
+}
+
+/**
+ * A backend's own tokenizer, reachable over HTTP: llama.cpp's `llama-server`
+ * answers POST `/tokenize` with the exact token ids of a text and POST
+ * `/detokenize` with the text those ids spell. Both live at the server ROOT,
+ * not under the OpenAI-compatible `/v1` mount the recipe's base URL ends at.
+ */
+export interface EmbeddingTokenizer {
+  /** Tokenize endpoint path, e.g. `/tokenize`. */
+  path: string;
+  /**
+   * Detokenize endpoint path, e.g. `/detokenize`. Needed to cut an input at a
+   * token boundary; without it counts are still exact, over-cap inputs are
+   * just left as they are.
+   */
+  detokenizer?: string;
+  /** Sent as `add_special`; defaults to false, llama-server's own default. */
+  add_special?: boolean;
+  /** Per-request HTTP timeout in ms; defaults to 2000. */
+  timeout_ms?: number;
 }
 
 /**

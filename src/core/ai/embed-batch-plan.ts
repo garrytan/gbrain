@@ -46,6 +46,11 @@ export function truncateEmbedInputs(texts: ReadonlyArray<string | null | undefin
  *   responsible for applying any safety-factor shrink before passing in.
  * @param charsPerToken - Provider-specific character density. Defaults to
  *   `DEFAULT_CHARS_PER_TOKEN` (4) when omitted, matching OpenAI tiktoken.
+ * @param exactCounts - Positional token counts measured by the backend's own
+ *   tokenizer (`countTokens` in embed-tokenize.ts). When supplied they replace
+ *   the `text.length / charsPerToken` estimate for that position; a missing
+ *   entry still falls back to the estimate. Callers that pass nothing keep the
+ *   estimate path exactly as before.
  *
  * @internal exported for tests; not part of the public gateway API.
  */
@@ -53,14 +58,16 @@ export function splitByTokenBudget(
   texts: string[],
   budgetTokens: number,
   charsPerToken: number = DEFAULT_CHARS_PER_TOKEN,
+  exactCounts?: ReadonlyArray<number>,
 ): string[][] {
   const ratio = charsPerToken > 0 ? charsPerToken : DEFAULT_CHARS_PER_TOKEN;
   const batches: string[][] = [];
   let current: string[] = [];
   let currentTokens = 0;
 
-  for (const text of texts) {
-    const estTokens = Math.ceil(text.length / ratio);
+  for (let i = 0; i < texts.length; i++) {
+    const text = texts[i]!;
+    const estTokens = exactCounts?.[i] ?? Math.ceil(text.length / ratio);
     if (current.length > 0 && currentTokens + estTokens > budgetTokens) {
       batches.push(current);
       current = [];
@@ -98,12 +105,18 @@ export function capBatchItems(texts: string[], maxItems: number): string[][] {
  * one); recipes without either ride one request. The hard COUNT cap
  * (e.g. llama-server's 32) then re-splits any oversized batch, and
  * `no_batch_cap` recipes default to NO_BATCH_CAP_SUB_BATCH_ITEMS (#3875).
+ *
+ * `tokenCounts` are exact counts from the backend's own tokenizer, positional
+ * and already aligned with `texts`; supply them and the budget is spent on
+ * measured tokens instead of the chars-per-token estimate. Callers that omit
+ * them (every preflight, every recipe without a declared tokenizer) get the
+ * pre-existing plan.
  */
-export function planEmbedRequests(texts: string[], recipe: Recipe, safetyFactor: number, envMaxBatchTokens?: number): string[][] {
+export function planEmbedRequests(texts: string[], recipe: Recipe, safetyFactor: number, envMaxBatchTokens?: number, tokenCounts?: ReadonlyArray<number>): string[][] {
   const embedding = recipe.touchpoints?.embedding;
   const maxBatchTokens = embedding?.max_batch_tokens ?? envMaxBatchTokens;
   const tokenBatches = maxBatchTokens
-    ? splitByTokenBudget(texts, Math.floor(maxBatchTokens * safetyFactor), embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN)
+    ? splitByTokenBudget(texts, Math.floor(maxBatchTokens * safetyFactor), embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN, tokenCounts)
     : [texts];
   const maxBatchItems = embedding?.max_batch_items ?? (embedding?.no_batch_cap === true ? NO_BATCH_CAP_SUB_BATCH_ITEMS : undefined);
   return maxBatchItems ? tokenBatches.flatMap(b => capBatchItems(b, maxBatchItems)) : tokenBatches;

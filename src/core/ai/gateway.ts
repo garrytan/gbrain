@@ -34,6 +34,7 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { z } from 'zod';
 
 import { DEFAULT_CHARS_PER_TOKEN, DEFAULT_SAFETY_FACTOR, embedRequestMaxInputTokens, planEmbedRequests, rerankRequestMaxInputTokens, truncateEmbedInputs } from './embed-batch-plan.ts';
+import { serverTokenBudget } from './embed-tokenize.ts';
 export { splitByTokenBudget, capBatchItems, NO_BATCH_CAP_SUB_BATCH_ITEMS } from './embed-batch-plan.ts';
 import { BudgetTracker, type BudgetReservation } from '../budget/budget-tracker.ts';
 import { failedCallUsage, recordOnTracker } from './budget-record.ts';
@@ -1528,6 +1529,9 @@ const MIN_SUB_BATCH = 1;
  * embed(texts)
  *   ├─ resolve recipe + model
  *   ├─ truncate each text to EMBED_MAX_CHARS (8000)
+ *   ├─ if the recipe declares embedding.tokenizer (llama-server): exact counts
+ *   │     from the backend, over-cap inputs cut at a token boundary;
+ *   │     any failure keeps the chars_per_token estimate below
  *   ├─ read recipe.touchpoints.embedding.{max_batch_tokens, chars_per_token, safety_factor}
  *   │
  *   ├─ if max_batch_tokens declared (Voyage path):
@@ -1629,12 +1633,18 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const envCap = Number.isFinite(envCapRaw) && envCapRaw > 0 ? envCapRaw : undefined;
   // #4616: empty inputs never reach the provider; screenEmbeddings refuses them per item.
   const sent = sendableEmbeddingInputs(truncated);
-  const batches = sent.length ? planEmbedRequests(sent.map(i => truncated[i]!), recipe, effectiveSafetyFactor(recipe), envCap) : [];
+  // Exact counts from the backend's own tokenizer when the recipe declares one
+  // (llama-server); otherwise — or on any failure — the chars_per_token
+  // estimate below keeps its pre-existing behaviour.
+  const { texts: sendTexts, counts: tokenCounts } = await tokenBudgetFromServer(sent.map(i => truncated[i]!), recipe, modelId, cfg, opts?.abortSignal);
+  const batches = sent.length
+    ? planEmbedRequests(sendTexts, recipe, effectiveSafetyFactor(recipe), envCap, tokenCounts ?? undefined)
+    : [];
 
   // Reserve the worst-case batch tokens after every preflight that can throw
   // (dims, batch planning), so a config error leaves no hold; record() below settles it.
   const charsPerToken = recipe.touchpoints?.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
-  const totalChars = truncated.reduce((s, t) => s + t.length, 0);
+  const totalChars = sendTexts.reduce((s, t) => s + t.length, 0);
   const reservation = tracker?.reserve({
     modelId: `${recipe.id}:${modelId}`, estimatedInputTokens: Math.ceil(totalChars / Math.max(charsPerToken, 1)), maxOutputTokens: 0, kind: 'embed', label: 'gateway.embed',
   });
@@ -1680,6 +1690,31 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
       });
     }
   }
+}
+
+/**
+ * `serverTokenBudget` (embed-tokenize.ts) for the texts `embed()` is about to
+ * send, when the recipe declares its backend's own tokenizer — llama-server's
+ * `/tokenize` + `/detokenize`. Resolves the base URL exactly as the embed
+ * request itself does; a recipe without a tokenizer, or one whose URL cannot
+ * be resolved, gets no counts and the estimate path below.
+ */
+async function tokenBudgetFromServer(
+  sentTexts: string[],
+  recipe: Recipe,
+  modelId: string,
+  cfg: AIGatewayConfig,
+  signal?: AbortSignal,
+): Promise<{ texts: string[]; counts: number[] | null }> {
+  const embedding = recipe.touchpoints?.embedding;
+  if (!embedding?.tokenizer) return { texts: sentTexts, counts: null };
+  let baseUrl: string;
+  try {
+    baseUrl = applyOpenAICompatConfig(recipe, cfg).baseURL;
+  } catch {
+    return { texts: sentTexts, counts: null };
+  }
+  return serverTokenBudget(sentTexts, { baseUrl, tokenizer: embedding.tokenizer, maxInputTokens: embedding.max_input_tokens?.[modelId], signal });
 }
 
 /**

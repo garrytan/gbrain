@@ -203,6 +203,8 @@ The recipe marks Ollama chat as **not** tool-capable. That is enough for local r
 
 User-driven models: launch llama-server with `--model <gguf-path> --embeddings`, then run `gbrain init --embedding-model llama-server:<your-id> --embedding-dimensions <N>`. gbrain trusts the dimension you declare (you know the GGUF you launched); the recipe refuses the implicit shorthand `--model llama-server` because there's no canonical first model.
 
+Token counts for this recipe are exact, not estimated: llama-server serves its own tokenizer at `/tokenize` and `/detokenize` (both at the server root — `/v1/tokenize` is a 404), so gbrain asks the launched model for the real token count of the chunks it is about to send and sizes its sub-batches from those numbers. That matters most for CJK, where one character is often one token and the 4-chars-per-token estimate runs 2-4x low. If the endpoints cannot answer — a llama.cpp build without them, or a server that is restarting — gbrain falls back to the `chars_per_token` estimate and the embedding proceeds as before.
+
 ### LM Studio (local)
 
 LM Studio's OpenAI-compatible local server, on default port 1234 (distinct from Ollama's 11434 and llama-server's 8080). No env required — the local server ignores auth. Optional `LMSTUDIO_BASE_URL` (default `http://localhost:1234/v1`) and `LMSTUDIO_API_KEY`.

@@ -44,6 +44,12 @@ export const llamaServer: Recipe = {
       // The token-budget split can't bound item count, so cap it here. A
       // server launched with a larger `-b` can raise this. v0.32 (#779).
       max_batch_items: 32,
+      // llama.cpp answers /tokenize and /detokenize at the server root, so
+      // gbrain can ask the launched model's own tokenizer for exact counts
+      // instead of estimating chars/token (a CJK chunk estimates 2-4x low at 4).
+      // No max_input_tokens: the per-input ceiling is the launched
+      // --ctx-size, which only the operator knows.
+      tokenizer: { path: '/tokenize', detokenizer: '/detokenize', add_special: false },
     },
     chat: {
       // The model id is the value supplied to llama-server's --alias flag.
