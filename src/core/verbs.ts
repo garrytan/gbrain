@@ -119,7 +119,9 @@ const remember: Operation = {
       const { runRememberBatch } = await import('./remember-batch.ts');
       return runRememberBatch(ctx, p, remember.handler, (code, message, suggestion) => verbError(code as never, message, suggestion));
     }
-    const fact = typeof p.fact === 'string' ? p.fact.trim() : '';
+    const { unquoteFactText } = await import('./search/transcript-quote.ts');
+    // #8377: a fact an agent copied out of a quoted read (recall, context_pack, hot memory) is stored without the fence.
+    const fact = typeof p.fact === 'string' ? (ctx.remote === false ? p.fact : unquoteFactText(p.fact)).trim() : '';
     if (!fact) {
       throw verbError(
         'invalid_params',

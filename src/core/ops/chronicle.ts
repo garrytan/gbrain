@@ -8,8 +8,10 @@
  */
 
 import type { Operation, OperationContext } from './contract.ts';
+import type { ChronicleTimelineRow } from '../types.ts';
 import { readPolicyOpts, sourceScopeOpts } from './context.ts';
 import { invalidParam } from './op-fix.ts';
+import { quoteTimelineRows } from './timeline-quote.ts';
 
 // ── Remote diary redaction (fail-closed) ─────────────────────────────────
 // The exact mechanism the ontology siblings use (`ctx.remote !== false` →
@@ -26,6 +28,10 @@ function redactDiaryTimeline<
     !(r.page_slug ?? '').startsWith(DIARY_PREFIX) &&
     !(r.event_slug ?? '').startsWith(DIARY_PREFIX) &&
     !(r.source ?? '').includes(DIARY_PREFIX));
+}
+/** The rows a remote reader gets: diary rows redacted, then each entry below the owner's tier quoted as its own page's (GST-687). */
+function remoteTimeline(ctx: OperationContext, rows: ChronicleTimelineRow[]) {
+  return quoteTimelineRows(ctx, r => r.page_slug, redactDiaryTimeline(ctx, rows));
 }
 
 // ── v0.42.x — Life Chronicle (#2390) timeline read ops ───────────────────
@@ -49,7 +55,7 @@ const chronicle_day: Operation = {
     narrative: { type: 'boolean', description: 'Also return a prose day-by-day narrative.' },
   },
   handler: async (ctx, p) => {
-    const rows = redactDiaryTimeline(ctx, await ctx.engine.getTimelineForDate(String(p.date), {
+    const rows = await remoteTimeline(ctx, await ctx.engine.getTimelineForDate(String(p.date), {
       week: p.week === true,
       limit: typeof p.limit === 'number' ? p.limit : undefined,
       ...await readPolicyOpts(ctx),
@@ -76,7 +82,7 @@ const chronicle_on_this_day: Operation = {
     date: { type: 'string', description: 'Anchor day YYYY-MM-DD (default today); matches its month-day in prior years.' },
     limit: { type: 'number', description: 'Max rows (default 50).' },
   },
-  handler: async (ctx, p) => redactDiaryTimeline(ctx, await ctx.engine.getOnThisDay({
+  handler: async (ctx, p) => remoteTimeline(ctx, await ctx.engine.getOnThisDay({
     date: typeof p.date === 'string' ? p.date : undefined,
     limit: typeof p.limit === 'number' ? p.limit : undefined,
     ...await readPolicyOpts(ctx),
@@ -99,7 +105,7 @@ const chronicle_since: Operation = {
     limit: { type: 'number', description: 'Max rows (default 200).' },
   },
   handler: async (ctx, p) => {
-    return redactDiaryTimeline(ctx, await ctx.engine.getSince(String(p.date), {
+    return remoteTimeline(ctx, await ctx.engine.getSince(String(p.date), {
       kind: typeof p.kind === 'string' ? p.kind : undefined,
       limit: typeof p.limit === 'number' ? p.limit : undefined,
       ...await readPolicyOpts(ctx),
@@ -302,7 +308,7 @@ const volunteer_chronicle: Operation = {
     });
     // Same fail-closed diary redaction as the timeline reads: the loader
     // redacts diary-sourced ONTOLOGY; the recent timeline is redacted here.
-    return { ...result, recent_timeline: redactDiaryTimeline(ctx, result.recent_timeline) };
+    return { ...result, recent_timeline: await remoteTimeline(ctx, result.recent_timeline) };
   },
   cliHints: { name: 'orient' },
 };

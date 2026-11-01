@@ -16,7 +16,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { prepareMarkdownChunks } from '../src/core/markdown-chunks.ts';
 import { getBrainHotMemoryMeta } from '../src/core/facts/meta-hook.ts';
-import { neutralizeToolCalls } from '../src/core/search/transcript-quote.ts';
+import { fenceTranscriptText, neutralizeToolCalls, unquoteTranscriptText } from '../src/core/search/transcript-quote.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { asOwner } from './helpers/owner-tier.ts';
@@ -230,8 +230,11 @@ for (const backend of testBackends()) {
       const page = await ok('get_page', { slug, include_content: true });
       expect(cell(page, CODE.conversation)).toBe('fenced');
       expect(page.compiled_truth).toBe(`${MARKER(slug)}\n${FENCE}text\n${stored.compiled_truth}\n${FENCE}`);
-      expect(page.content).toContain(page.compiled_truth);
-      expect(page.content).toContain(stored.compiled_truth);
+      // #8377: content is fenced whole, its frontmatter inside the quote.
+      const markdown = unquoteTranscriptText(page.content, slug);
+      expect(page.content).toBe(fenceTranscriptText(markdown, slug));
+      expect(markdown.startsWith('---\n')).toBe(true);
+      expect(markdown).toContain(stored.compiled_truth);
       await ok('put_page', { slug, content: page.content.replace('noted.', 'noted (checked).'), expected_revision: page.revision });
       const after = (await engine.getPage(slug))!.compiled_truth;
       expect(after).toBe(stored.compiled_truth.replace('noted.', 'noted (checked).'));

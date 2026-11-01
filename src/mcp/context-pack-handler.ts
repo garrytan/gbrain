@@ -195,6 +195,8 @@ export function makeContextPackIpcHandler(
       since: state?.last_wake_at ?? undefined,
       maxEntities: PUSH_PACK_MAX_ENTITIES,
       deadlineMs: CONTEXT_PACK_SERVER_BUDGET_MS,
+      // #8377 (decision A): injected into a model's context, so hot and entity facts below the owner's tier are quoted.
+      untrusted: true,
       // includePrivate NEVER set on the push path (D2=A).
       // Cathedral 5: banked checkpoint links ride the assembled pack so the
       // post-compaction SessionStart renders them (fail-open []; links that

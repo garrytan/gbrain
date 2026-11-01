@@ -471,6 +471,7 @@ test/search-read-keyword-bound.test.ts
 test/search-remote-page-cap.test.ts
 test/search-transcript-quote-budget.test.ts
 test/search-transcript-quote-coverage.test.ts
+test/search-transcript-quote-followups.test.ts
 test/search-transcript-quote-legacy-claim.test.ts
 test/search-transcript-quote-tiers.test.ts
 test/search-transcript-quote.test.ts
@@ -558,6 +559,7 @@ test/timeline-chunk-reuse.test.ts
 test/trust-channel-writes.test.ts
 test/trust-guarded-supersession.test.ts
 test/trust-held-removals.test.ts
+test/trust-keep-maintenance-reimport-8352.test.ts
 test/trust-owner-actions.test.ts
 test/unbound-source-6536.test.ts
 test/unindexed-files-convergence-7149.test.ts

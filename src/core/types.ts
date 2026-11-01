@@ -1781,6 +1781,7 @@ export interface ChronicleTimelineRow {
   event_slug: string | null;  // the type:event page, when this is an event projection
   effective_date: string | null; // event page effective_date — drives intra-day order
   kind: string | null;        // event.kind from the event page frontmatter
+  trust_tier: string | null;  // the row's stored tier (GST-687: below the owner's, quoted for an agent reader)
 }
 
 export interface ChronicleTimelineOpts extends PageReadScope {

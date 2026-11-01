@@ -18,6 +18,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../src/core/takes-fence.ts';
 import { operationsByName } from '../src/core/operations.ts';
+import { fenceTranscriptText } from '../src/core/search/transcript-quote.ts';
 
 let engine: PGLiteEngine;
 let alicePageId: number;
@@ -64,7 +65,7 @@ describe('per-token takes-holder allow-list — takes_list', () => {
     const takes = parseResult(result) as Array<{ holder: string; claim: string }>;
     expect(takes).toHaveLength(1);
     expect(takes[0].holder).toBe('world');
-    expect(takes[0].claim).toBe('CEO of Acme');
+    expect(takes[0].claim).toBe(fenceTranscriptText('CEO of Acme', 'people/alice-example')); // #8377: quoted below the owner's tier
   });
 
   test('allow-list ["world", "dana"] returns world + dana, hides brain hunches', async () => {

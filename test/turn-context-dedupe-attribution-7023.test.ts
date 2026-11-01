@@ -3,7 +3,8 @@
  * renderFactLine, and the cross-turn dedupe key is that rendered line, so an
  * assistant-attributed or external_untrusted fact injected once this session
  * is not injected on every later prompt, and an assistant claim keeps its
- * `(assistant said)` prefix instead of reading as the user's.
+ * `(assistant said)` prefix instead of reading as the user's. #8377: the hook quotes a fact below the owner's tier, so each
+ * fact is a block (its fence closes on its own line), and a fact injected before it was quoted still matches.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -31,7 +32,7 @@ async function seedHotFacts() {
   await engine.executeRaw(`UPDATE facts SET trust_tier = 'external_untrusted' WHERE id = $1`, [ext.id]);
 }
 
-const factLines = (text: string) => text.split('\n').filter((l) => l.includes('-FACT '));
+const factLines = (text: string) => text.split(/\n(?=- )/).filter((l) => l.includes('-FACT '));
 
 for (const backend of testBackends()) {
   describe(backend, () => {
@@ -60,7 +61,7 @@ for (const backend of testBackends()) {
       expect(lines.find((l) => l.includes(ASSISTANT_FACT))!.startsWith('- (assistant said) ')).toBe(true);
       const external = lines.find((l) => l.includes(EXTERNAL_FACT))!;
       expect(external.startsWith('- <external-data trust="external_untrusted"')).toBe(true);
-      expect(external).toContain(`${EXTERNAL_FACT}</external-data> [companies/acme-example] (`);
+      expect(external).toContain(`${EXTERNAL_FACT}\n\`\`\`\n</external-data> [companies/acme-example] (`);
     });
 
     test('assistant-attributed and external_untrusted facts injected once are not injected again', async () => {

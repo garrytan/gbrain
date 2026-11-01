@@ -50,7 +50,7 @@ import { inlineRegions, inlineTailDigest } from '../page-body/tail-digest.ts';
 import { TIMELINE_SEPARATOR } from '../page-window/document.ts';
 import { renderTrustedText, type TrustFields } from '../eligibility/labels.ts';
 import { fenceTranscriptText, neutralizeToolCalls } from '../search/transcript-quote.ts';
-import { pageTrustForRead, type QuarantinedView } from './get-page-projection.ts';
+import { pageTrustForRead, quotedPageMeta, type QuarantinedView } from './get-page-projection.ts';
 import { chunkGenerationProbe, chunkManifestReads } from '../search/safe-chunks.ts';
 import { GET_PAGE_SLICE_PARAMS, parseSliceRequest, readGrep, readSection, sliceCharBudget, type SliceRequest } from './get-page-slice.ts';
 
@@ -468,8 +468,8 @@ export async function readPartialBody(ctx: OperationContext, input: PartialReadI
   const neutralize = input.neutralize === true && req.view !== 'markdown';
   const wrap = (text: string) => envelopeText(neutralize && text ? neutralizeToolCalls(text) : text, quarantined, trust, input.quote ? page.slug : null);
   const base: Record<string, unknown> = {
-    slug: page.slug, source_id: page.source_id, type: page.type, title: page.title, revision, tags,
-    frontmatter: page.frontmatter ?? {}, ...(page.deleted_at ? { deleted_at: page.deleted_at } : {}),
+    slug: page.slug, source_id: page.source_id, type: page.type, revision, tags, ...quotedPageMeta({ slug: page.slug, title: page.title, frontmatter: page.frontmatter ?? {} }, input.quote === true),
+    ...(page.deleted_at ? { deleted_at: page.deleted_at } : {}),
     ...(trust ?? {}), ...extras, ...(input.quote ? { quoted: 'transcript' } : {}),
   };
   const omitted = quarantined?.body_omitted === true;
@@ -609,7 +609,7 @@ export async function fetchWindowResult(ctx: OperationContext, input: PartialRea
   const w = partial.window ?? { text: '' };
   return {
     id,
-    title: page.title,
+    title: quotedPageMeta(page, input.quote === true).title,
     text: w.text,
     url: deepResearchPageUrl(page.source_id, page.slug),
     metadata: {

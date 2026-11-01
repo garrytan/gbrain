@@ -16,7 +16,7 @@ import type { Page } from '../types.ts';
 import { decodeDeepResearchAnchor, decodeDeepResearchId, deepResearchPageUrl } from '../deep-research-id.ts';
 import { PageSnapshotAmbiguousError, type PageSnapshot } from '../page-state/types.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { neutralizesBody, pageTrustForRead, projectFetchText, projectGetPage, quotesBody, readQuarantined } from './get-page-projection.ts';
+import { neutralizesBody, pageTrustForRead, projectFetchText, projectGetPage, quotedPageMeta, quotesBody, readQuarantined } from './get-page-projection.ts';
 import { assertLargePageAdmission } from '../persistence/large-page-guard.ts';
 import { assertFullReadFits, bodyBytes, fetchWindowResult, GET_PAGE_BODY_PARAMS, inlineBodyBytes, parseBodyRequest, readPartialBody, segmentedFullReadError, authorizedReadPin } from './get-page-body.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
@@ -313,7 +313,7 @@ const fetch_page: Operation = {
     }
     return {
       id: identity ? id : page.slug,
-      title: page.title,
+      title: quotedPageMeta(page, quotesBody(ctx, page, readable.trust)).title,
       text: projectFetchText(visibleBody as Page, tags, quarantined, readable.trust, quotesBody(ctx, page, readable.trust), neutralizesBody(ctx, page)),
       // Pages have no public http home; a stable brain-local URI satisfies
       // the contract's citation slot without inventing a fake web URL.

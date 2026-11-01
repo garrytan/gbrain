@@ -69,6 +69,18 @@ function enveloped(text: string, fields: TrustFields | undefined): string {
   return text ? renderTrustedText(text, { trust_tier: 'external_untrusted', origin: fields?.origin ?? 'quarantined' }) : text;
 }
 
+/**
+ * #8377: a quoted page's title and frontmatter as an untrusted reader gets them, each string fenced as `slug`'s
+ * (frontmatter keys stay); with `quote` false, as stored. The round-trip `content` is fenced whole instead.
+ */
+export function quotedPageMeta(page: Pick<Page, 'slug' | 'title' | 'frontmatter'>, quote: boolean): Pick<Page, 'title' | 'frontmatter'> {
+  if (!quote) return { title: page.title, frontmatter: page.frontmatter };
+  const fence = (value: unknown): unknown => typeof value === 'string' ? (value ? fenceTranscriptText(value, page.slug) : value)
+    : Array.isArray(value) ? value.map(fence)
+    : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fence(v)])) : value;
+  return { title: fence(page.title) as string, frontmatter: fence(page.frontmatter ?? {}) as Page['frontmatter'] };
+}
+
 export interface GetPageProjectionOpts {
   revision: string;
   tags: string[];
@@ -118,13 +130,14 @@ export function projectGetPage(stored: Page, o: GetPageProjectionOpts) {
   const { revision, tags, resolved_slug, content_flag, quarantined } = o;
   const fence = (text: string) => (text ? fenceTranscriptText(text, stored.slug) : text);
   const summarize = o.neutralize === true && (!o.includeContent || o.readingContent === true);
-  const read = (text: string) => fence(summarize && text ? neutralizeToolCalls(text) : text);
-  const page = o.quote ? { ...stored, compiled_truth: read(stored.compiled_truth), timeline: read(stored.timeline) } : stored;
+  const plain = summarize ? { ...stored, compiled_truth: stored.compiled_truth && neutralizeToolCalls(stored.compiled_truth), timeline: stored.timeline && neutralizeToolCalls(stored.timeline) } : stored;
+  const page = o.quote ? { ...plain, ...quotedPageMeta(stored, true), compiled_truth: fence(plain.compiled_truth), timeline: fence(plain.timeline) } : stored;
   const omitted = quarantined?.body_omitted === true;
   const wrap = quarantined?.body_enveloped === true;
   const visibleBody = omitted ? { ...page, compiled_truth: '', timeline: '' }
     : wrap ? { ...page, compiled_truth: enveloped(page.compiled_truth, o.trust), timeline: enveloped(page.timeline, o.trust) } : page;
-  const content = () => wrap ? enveloped(serializePageToMarkdown(page, tags), o.trust) : serializePageToMarkdown(visibleBody, tags);
+  const markdown = () => o.quote ? fence(serializePageToMarkdown(plain, tags)) : serializePageToMarkdown(stored, tags);
+  const content = () => wrap ? enveloped(markdown(), o.trust) : markdown();
   const extras = {
     ...(quarantined ? { quarantined } : {}), ...(o.quote ? { quoted: 'transcript' as const } : {}),
     ...(o.timeline_entries !== undefined ? { timeline_entries: o.timeline_entries } : {}),

@@ -16,6 +16,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operations, OperationError, type OperationContext } from '../src/core/operations.ts';
 import { decodeDeepResearchId } from '../src/core/deep-research-id.ts';
+import { fenceTranscriptText } from '../src/core/search/transcript-quote.ts';
 
 let engine: PGLiteEngine;
 const fetch_op = operations.find(o => o.name === 'fetch')!;
@@ -78,7 +79,7 @@ describe('fetch op (#4039 deep-research contract)', () => {
   test('returns the OpenAI {id,title,text,url,metadata} shape for a slug id', async () => {
     const res = (await fetch_op.handler(ctxOf(), { id: 'people/alice-example' })) as Record<string, unknown>;
     expect(res.id).toBe('people/alice-example');
-    expect(res.title).toBe('Alice Example');
+    expect(res.title).toBe(fenceTranscriptText('Alice Example', 'people/alice-example')); // #8377: a remote reader gets a page below the owner's tier quoted, title included
     expect(String(res.text)).toContain('Alice runs widget-co.');
     expect(String(res.url)).toBe('gbrain://page/default/people/alice-example');
     const metadata = res.metadata as Record<string, unknown>;

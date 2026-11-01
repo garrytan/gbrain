@@ -149,7 +149,7 @@ export async function getTimelineForDate(exec: LegacyUnscopedRead, date: string,
     const lower = opts?.week ? sqlFragment`date_trunc('week', ${date}::date)::date` : sqlFragment`${date}::date`;
     const upper = opts?.week ? sqlFragment`(date_trunc('week', ${date}::date) + interval '6 days')::date` : sqlFragment`${date}::date`;
     const rows = (await exec.run(sqlFragment`
-      SELECT te.date::text AS date, te.summary, te.detail, te.source,
+      SELECT te.date::text AS date, te.summary, te.detail, te.source, te.trust_tier,
              te.page_id, p.slug AS page_slug,
              te.event_page_id, ep.slug AS event_slug,
              ep.effective_date::text AS effective_date,
@@ -170,7 +170,7 @@ export async function getSince(exec: LegacyUnscopedRead, date: string, opts?: Ch
     const limit = opts?.limit ?? 200;
     const kindCond = opts?.kind ? sqlFragment`AND ep.frontmatter->'event'->>'kind' = ${opts.kind}` : sqlFragment``;
     const rows = (await exec.run(sqlFragment`
-      SELECT te.date::text AS date, te.summary, te.detail, te.source,
+      SELECT te.date::text AS date, te.summary, te.detail, te.source, te.trust_tier,
              te.page_id, p.slug AS page_slug,
              te.event_page_id, ep.slug AS event_slug,
              ep.effective_date::text AS effective_date,
@@ -192,7 +192,7 @@ export async function getOnThisDay(exec: LegacyUnscopedRead, opts?: PageReadScop
     const limit = opts?.limit ?? 50;
     const target = opts?.date ? sqlFragment`${opts.date}::date` : sqlFragment`current_date`;
     const rows = (await exec.run(sqlFragment`
-      SELECT te.date::text AS date, te.summary, te.detail, te.source,
+      SELECT te.date::text AS date, te.summary, te.detail, te.source, te.trust_tier,
              te.page_id, p.slug AS page_slug,
              te.event_page_id, ep.slug AS event_slug,
              ep.effective_date::text AS effective_date,

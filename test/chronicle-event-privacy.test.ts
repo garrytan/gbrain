@@ -20,6 +20,7 @@ import type { OperationContext } from '../src/core/ops/contract.ts';
 import { runChronicleExtract } from '../src/core/chronicle/extract-events.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
+import { fenceTranscriptText, unquoteTranscriptText } from '../src/core/search/transcript-quote.ts';
 
 let engine: BrainEngine;
 let closeEngine: () => Promise<void>;
@@ -82,7 +83,12 @@ describe('remote callers', () => {
   });
 
   test('chronicle_day, chronicle_since and chronicle_on_this_day drop their projections', async () => {
-    const summaries = (rows: unknown) => (rows as Array<{ summary: string }>).map((r) => r.summary).sort();
+    // #8377: a remote reader gets each row's summary quoted as its page's (the rows are below the owner's tier).
+    const summaries = (rows: unknown) => (rows as Array<{ summary: string; page_slug: string }>).map((r) => {
+      const text = unquoteTranscriptText(r.summary, r.page_slug);
+      expect(r.summary).toBe(fenceTranscriptText(text, r.page_slug));
+      return text;
+    }).sort();
     expect(summaries(await operationsByName.chronicle_day.handler(ctx(true), { date: day }))).toEqual(['Worldwide launch sync']);
     expect(summaries(await operationsByName.chronicle_since.handler(ctx(true), { date: lastYearDay })))
       .toEqual(['Worldwide anniversary launch', 'Worldwide launch sync']);

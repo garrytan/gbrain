@@ -22,6 +22,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
+import { fenceTranscriptText } from '../src/core/search/transcript-quote.ts';
 
 let engine: PGLiteEngine;
 
@@ -289,7 +290,7 @@ describe('far-endpoint: alpha row whose event_page_id points at a beta page', ()
     for (const [label, mk] of [['scalar', remoteScalar], ['federated', remoteFederated]] as const) {
       const rows = await chronicle_day.handler(mk(), { date: CROSS_DATE }) as any[];
       expect(`${label}:${rows.length}`).toBe(`${label}:1`);
-      expect(rows[0].summary).toBe('alpha cross row summary'); // alpha's own data survives
+      expect(rows[0].summary).toBe(fenceTranscriptText('alpha cross row summary', 'meetings/alpha-sync')); // alpha's own data survives, quoted (#8377)
       expect(rows[0].page_slug).toBe('meetings/alpha-sync');
       expect(`${label}:${rows[0].event_slug}`).toBe(`${label}:null`);
       expect(`${label}:${rows[0].effective_date}`).toBe(`${label}:null`);

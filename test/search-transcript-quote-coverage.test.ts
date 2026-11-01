@@ -251,7 +251,9 @@ for (const backend of testBackends()) {
           await dispatchToolCall(engine, 'get_page', { slug, include_content: true }, remote));
         expect(page.quoted).toBe('transcript');
         expect(inside(page.compiled_truth, slug)).toBe(stored);
-        expect(page.content).toContain(page.compiled_truth);
+        // #8377: content is fenced whole, its frontmatter (title included) inside the quote.
+        expect(inside(page.content, slug).startsWith('---\n')).toBe(true);
+        expect(inside(page.content, slug)).toContain(stored);
         const win = remoteJson<{ window: { text: string }; quoted?: string }>(
           await dispatchToolCall(engine, 'get_page', { slug, body: 'window', lines: { from: 1, count: 2 } }, remote));
         expect(win.quoted).toBe('transcript');
