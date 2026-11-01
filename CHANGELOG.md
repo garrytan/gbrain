@@ -10,6 +10,22 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Agents connected over MCP now get a quoted page's title on search rows, its tags, and a chronicle event's kind quoted too, and a remote `put_page` of a whole-markdown read saved with CRLF line endings stores the page instead of its fence.**
+
+Before, a remote reader got a page's title raw on `search` and `query` rows, its tags raw on `get_page`, `fetch` and `get_tags`, a context card's title outside the card's trust label, and a chronicle row's `kind` (from an event page an agent may have rewritten) raw, while the rest of each row was quoted. A whole-markdown read whose line endings an editor converted to CRLF was stored with the read's marker and fence in the body and its frontmatter lost. A fenced title pasted into frontmatter next to a naive datetime (`date: 2026-10-03 23:30:00`) moved that date to UTC, so `effective_date` could land on another day. Local reads and owner-tier text are unchanged.
+
+### Itemized changes
+
+- Remote `put_page` unfences a whole-markdown read whose lines end in CRLF, closing fence kept or replaced, and stores what a plain CRLF write of the unfenced markdown stores.
+- `search`, `query`, `assemble_evidence` and remote `recall` rows quote a quoted row's `title` with its text (`fenceTranscriptRows`).
+- `context_pack` and the pushed pack render a card below the owner's tier with its title under the card's trust label.
+- Remote `get_page` (every shape), `fetch` and `get_tags` quote a quoted page's tags; remote `add_tag` and `remove_tag` take a tag copied out of those reads without the fence.
+- The chronicle reads and `volunteer_chronicle` quote an event row's `kind` by its event page's type and tier; `--narrative` keeps that fence on its own lines.
+- Remote `put_page` rewrites only the frontmatter keys that held a fence, so every other line (a naive datetime included) keeps the bytes sent.
+- Tests: `test/search-transcript-quote-8384b.test.ts` (PGLite and Postgres), red on master for each change.
+
 ## [0.60.539.0] - 2026-11-01
 
 **A remote `put_page` of a page an agent read whole now keeps its frontmatter and the code blocks it added, and timeline sources and ontology values are quoted below "your notes" like the rest of their rows.**

@@ -313,9 +313,10 @@ const fetch_page: Operation = {
       const pin = authorizedReadPin(ctx, page, snapshot!.bodyGeneration, p.min_trust, missing);
       return fetchWindowResult(ctx, { page, visibleBody: visibleBody as Page, revision: snapshot!.revision, tags, quarantined, trust: readable.trust, extras: {}, pin, quote: quotesBody(ctx, page, readable.trust), neutralize: neutralizesBody(ctx, page) }, id, identity ? decodeDeepResearchAnchor(id) : null);
     }
+    const meta = quotedPageMeta(page, quotesBody(ctx, page, readable.trust), tags);
     return {
       id: identity ? id : page.slug,
-      title: quotedPageMeta(page, quotesBody(ctx, page, readable.trust)).title,
+      title: meta.title,
       text: projectFetchText(visibleBody as Page, tags, quarantined, readable.trust, quotesBody(ctx, page, readable.trust), neutralizesBody(ctx, page)),
       // Pages have no public http home; a stable brain-local URI satisfies
       // the contract's citation slot without inventing a fake web URL.
@@ -325,7 +326,7 @@ const fetch_page: Operation = {
         type: page.type,
         source_id: page.source_id,
         updated_at: page.updated_at,
-        tags, ...(quarantined ? { quarantined } : {}), ...readable.trust, ...(quotesBody(ctx, page, readable.trust) ? { quoted: 'transcript' } : {}),
+        tags: meta.tags, ...(quarantined ? { quarantined } : {}), ...readable.trust, ...(quotesBody(ctx, page, readable.trust) ? { quoted: 'transcript' } : {}),
       },
     };
   },

@@ -28,7 +28,7 @@ import { estimateTokens as cl100kTokens, cl100kAvailable } from '../chunkers/tok
 import { estimateTokens as heuristicTokens } from './token-budget.ts';
 import { redactRetrievalOutput } from './output-redaction.ts';
 import { buildSnippetMarker } from './snippet-cap.ts';
-import { deliveredQuoteText, fenceTranscriptRows, neutralizeTranscriptRows } from './transcript-quote.ts';
+import { deliveredQuoteText, deliveredQuoteTitle, fenceTranscriptRows, neutralizeTranscriptRows } from './transcript-quote.ts';
 import { stampPageTrust } from '../eligibility/stamp.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
 import { chunkGenerationFilter, chunkManifestReads, currentTextProjectionFilter, safeChunksFilter, requiresSafeChunks } from './safe-chunks.ts';
@@ -1465,7 +1465,7 @@ function redactDelivered(results: DeliveredSearchResult[], tokenizer: 'cl100k' |
  * and `dropped` are rewritten from the recount. Runs only when the delivery
  * carries `auto_packing`; everything else is returned as is. With `quote`
  * (search/query and assemble_evidence) a conversation row counts inside its
- * quote fence (#7600), and with `untrusted` (a remote reader) so does a row below the owner's tier (GST-687);
+ * quote fence (#7600), and with `untrusted` (a remote reader) so does a row below the owner's tier (GST-687), its title included (#8384);
  * deliverEvidence's own cap (recall) counts the text as returned.
  */
 export function capEvidenceToBudget<T extends SearchResult & { delivered?: DeliveredEvidence }>(results: T[], delivery: DeliveryMeta, quote = false, untrusted = false): T[] {
@@ -1478,7 +1478,8 @@ export function capEvidenceToBudget<T extends SearchResult & { delivered?: Deliv
   const out: T[] = [];
   for (const r of results) {
     const asDelivered = (text: string) => (quote ? deliveredQuoteText(r, text, delivery.date_header === true, untrusted) : text);
-    const titleTok = count(r.title);
+    const asTitle = (title: string) => (quote ? deliveredQuoteTitle(r, title, untrusted) : title);
+    const titleTok = count(asTitle(r.title ?? ''));
     const textTok = count(asDelivered(r.chunk_text));
     if (titleTok + textTok <= remaining) {
       remaining -= titleTok + textTok;
@@ -1489,19 +1490,19 @@ export function capEvidenceToBudget<T extends SearchResult & { delivered?: Deliv
     const quoted = asDelivered(source) !== source;
     const fenceTok = quoted ? count(asDelivered(source)) - count(source) : 0;
     if (out.length > 0 && remaining - titleTok - cutTok - fenceTok < CUT_BODY_MIN) { lost++; continue; }
-    const titleRoom = Math.max(0, remaining - cutTok - fenceTok - CUT_BODY_MIN);
-    const title = titleTok > titleRoom ? sliceToTokenCount(r.title ?? '', titleRoom, tokenizer) : r.title ?? '';
-    let room = remaining - count(title) - cutTok - fenceTok;
+    const titleRoom = Math.max(0, remaining - cutTok - fenceTok - (titleTok - count(r.title)) - CUT_BODY_MIN);
+    const title = count(r.title) > titleRoom ? sliceToTokenCount(r.title ?? '', titleRoom, tokenizer) : r.title ?? '';
+    let room = remaining - count(asTitle(title)) - cutTok - fenceTok;
     let body = '';
     let text = '';
     for (;;) {
       body = sliceToTokenCount(source, Math.max(0, room), tokenizer).replace(/\s+$/, '');
       text = body + EVIDENCE_CUT_MARKER;
-      const over = count(title) + count(asDelivered(text)) - remaining;
+      const over = count(asTitle(title)) + count(asDelivered(text)) - remaining;
       if (!quoted || over <= 0 || room <= 0) break;
       room -= over;
     }
-    remaining -= count(title) + count(asDelivered(text));
+    remaining -= count(asTitle(title)) + count(asDelivered(text));
     const row = { ...r, title, chunk_text: text } as T;
     if (r.delivered) {
       const spans = r.delivered.match_spans.filter(s => s.start < body.length).map(s => ({ ...s, end: Math.min(s.end, body.length) }));

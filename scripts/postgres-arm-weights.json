@@ -442,6 +442,7 @@
   "test/search-read-keyword-bound.test.ts": 5120,
   "test/search-remote-page-cap.test.ts": 7365,
   "test/search-transcript-quote-8384.test.ts": 16171,
+  "test/search-transcript-quote-8384b.test.ts": 8866,
   "test/search-transcript-quote-budget.test.ts": 6435,
   "test/search-transcript-quote-coverage.test.ts": 18524,
   "test/search-transcript-quote-followups.test.ts": 11639,
