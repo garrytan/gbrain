@@ -19,7 +19,6 @@ Vector reuse was turned off for every page with a protected fence, so each write
 ### Itemized changes
 
 - **Fenced page reuse (#6961).** A fenced page now reuses a stored vector when its recorded embedding input equals the one the import would embed, the same check every other page gets. The stored index must still be sealed by the fence-safe chunker, so a reused vector's text holds no private fence row. A chunk whose text changed, such as the fence chunk a new fact lands in, is embedded again. On a fenced page the importer reuses only vectors with a recorded embedding input, so a legacy vector with none is embedded again. A one-row fact append on a five-chunk entity page now makes one embedding call instead of five. Contributed by @javieraldape (#7055, rewritten on master).
-- **Kept chunk spans (#6961).** A chunk row kept at its own index now takes its chunk's new byte span when earlier text on the page grew, so `get_page` windows around a chunk and search chunk windows point into the current body. Before, only rows that moved to another index got the new span.
 
 ## [0.60.539.0] - 2026-11-01
 

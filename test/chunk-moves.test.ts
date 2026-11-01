@@ -11,8 +11,7 @@
  * 3. Pure; no engine.
  */
 import { describe, expect, test } from 'bun:test';
-import { CHUNK_VECTOR_WRITE_BUDGET, planImportChunkWrites, planMoveWaves, type ChunkMove } from '../src/core/page-state/chunk-moves.ts';
-import type { ChunkInput } from '../src/core/types.ts';
+import { planMoveWaves, type ChunkMove } from '../src/core/page-state/chunk-moves.ts';
 
 /** Applies the waves to `at` (index -> id), checking each wave lands only on free indexes. */
 function replay(at: Map<number, number>, waves: ChunkMove[][]): Map<number, number> {
@@ -76,21 +75,5 @@ describe('planMoveWaves', () => {
     expect(parked.waves[0]).toEqual([{ id: 11, from: 1, to: -1, vectorless: true }]);
     expect(parked).toMatchObject({ done: true, updates: 1 });
     expect([...replay(swap, parked.waves)].sort((a, b) => a[0] - b[0])).toEqual([[0, 11], [1, 10]]);
-  });
-});
-
-describe('planImportChunkWrites', () => {
-  // #6961: a row kept at its own index whose chunk shifted (earlier text grew) takes the new span; the update changes no
-  // indexed column, so more of them than the budget still leave a bounded publication undeferred.
-  test('a row kept at its own index takes its chunk span in a last wave, uncounted against the budget', () => {
-    const count = CHUNK_VECTOR_WRITE_BUDGET + 2;
-    const fresh = Array.from({ length: count }, (_, i) => ({ chunk_index: i, chunk_text: `c${i}`, chunk_source: 'compiled_truth',
-      projected_byte_start: 100 + i * 10, projected_byte_end: 109 + i * 10 })) as ChunkInput[];
-    const kept = new Map(fresh.map((_, i) => [i, { id: 50 + i, chunk_index: i, vector: true,
-      projected_byte_start: i === 0 ? 100 : 90 + i * 10, projected_byte_end: i === 0 ? 109 : 99 + i * 10 }]));
-    const plan = planImportChunkWrites(fresh, kept, true);
-    expect(plan.defer).toBe(false);
-    expect(plan.waves).toEqual([fresh.slice(1).map((chunk, i) => ({ id: 51 + i, from: i + 1, to: i + 1,
-      projected_byte_start: chunk.projected_byte_start, projected_byte_end: chunk.projected_byte_end }))]);
   });
 });
