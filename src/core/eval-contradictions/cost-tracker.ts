@@ -22,6 +22,7 @@
 import type { CostBreakdown } from './types.ts';
 import { splitProviderModelId } from '../model-id.ts';
 import { ANTHROPIC_PRICING } from '../anthropic-pricing.ts';
+import { priceFor, type PricingOverrides } from '../budget/reservation-cost.ts';
 
 /**
  * Chat prices come from the canonical table via the bare-keyed
@@ -42,7 +43,10 @@ const DEFAULT_PER_CALL_OUTPUT_TOKENS = 80;
 const ESTIMATE_NOTE =
   'approximate; provider accounting is post-call. --budget-usd is a soft ceiling — mid-run stop on cumulative > cap.';
 
-function pricingFor(modelId: string): { input: number; output: number } {
+function pricingFor(modelId: string, overrides?: PricingOverrides): { input: number; output: number } {
+  const resolved = priceFor(modelId, 'chat', overrides);
+  if (resolved) return resolved.pricing;
+
   // v0.41.21.0: route through splitProviderModelId so slash-prefixed ids
   // (`anthropic/claude-sonnet-4-6`) hit the pricing table. Pre-fix the
   // exact-key match silently fell back to Haiku on every non-bare lookup
@@ -69,10 +73,11 @@ export function estimateUpperBoundCost(opts: {
   pairCount: number;
   queryCount: number;
   judgeModel: string;
+  pricingOverrides?: PricingOverrides;
   perCallInputTokens?: number;
   perCallOutputTokens?: number;
 }): number {
-  const judgePricing = pricingFor(opts.judgeModel);
+  const judgePricing = pricingFor(opts.judgeModel, opts.pricingOverrides);
   const inTok = opts.perCallInputTokens ?? DEFAULT_PER_CALL_INPUT_TOKENS;
   const outTok = opts.perCallOutputTokens ?? DEFAULT_PER_CALL_OUTPUT_TOKENS;
   const judgeCost =
@@ -87,13 +92,15 @@ export class CostTracker {
   private judgeUsd = 0;
   private embeddingUsd = 0;
   private cap: number;
+  private pricingOverrides?: PricingOverrides;
 
-  constructor(opts: { capUsd: number }) {
+  constructor(opts: { capUsd: number; pricingOverrides?: PricingOverrides }) {
     this.cap = Math.max(0, opts.capUsd);
+    this.pricingOverrides = opts.pricingOverrides;
   }
 
   recordJudgeCall(modelId: string, usage: { inputTokens: number; outputTokens: number }): void {
-    const p = pricingFor(modelId);
+    const p = pricingFor(modelId, this.pricingOverrides);
     this.judgeUsd +=
       (usage.inputTokens / 1_000_000) * p.input + (usage.outputTokens / 1_000_000) * p.output;
   }

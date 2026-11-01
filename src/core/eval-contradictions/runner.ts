@@ -35,7 +35,7 @@ import { buildSourceTierBreakdown, classifySlugTier } from './cross-source.ts';
 import { shouldSkipForDateMismatch } from './date-filter.ts';
 import { withBudgetTracker } from '../ai/gateway.ts';
 import { resolveTierDefault } from '../model-config.ts';
-import { BudgetTracker, BudgetExhausted } from '../budget/budget-tracker.ts';
+import { BudgetTracker, BudgetExhausted, loadPricingOverrides } from '../budget/budget-tracker.ts';
 import { judgeContradiction, type JudgeInput, type JudgeOutput } from './judge.ts';
 import { JudgeErrorCollector } from './judge-errors.ts';
 import { buildHotPages } from './severity-classify.ts';
@@ -283,12 +283,13 @@ async function _runContradictionProbeInner(opts: RunnerOpts): Promise<RunnerResu
   const budgetUsd = opts.budgetUsd ?? 5.0;
   const maxPairChars = opts.maxPairChars ?? DEFAULT_MAX_PAIR_CHARS;
   const judgeFn = opts.judgeFn ?? judgeContradiction;
+  const pricingOverrides = await loadPricingOverrides(opts.engine);
   const searchFn =
     opts.searchFn ??
     ((engine, query, o) => hybridSearch(engine, query, { limit: o.limit }));
 
   const errs = new JudgeErrorCollector();
-  const tracker = new CostTracker({ capUsd: budgetUsd });
+  const tracker = new CostTracker({ capUsd: budgetUsd, pricingOverrides });
   const cache = new JudgeCache({ engine: opts.engine, modelId: judgeModel, disabled: !!opts.noCache });
 
   // Pre-flight: pair count = queries × min(topK*(topK-1)/2 + topK, 50).
@@ -298,6 +299,7 @@ async function _runContradictionProbeInner(opts: RunnerOpts): Promise<RunnerResu
     pairCount: opts.queries.length * conservativePairsPerQuery,
     queryCount: opts.queries.length,
     judgeModel,
+    pricingOverrides,
   });
   if (estimated > budgetUsd && !opts.yesOverride) {
     throw new PreFlightBudgetError(estimated, budgetUsd);
