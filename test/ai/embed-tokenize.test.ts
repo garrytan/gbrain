@@ -9,7 +9,10 @@
  *   - every failure (reject, 404, non-JSON, malformed body) is all-or-nothing:
  *     countTokens returns null, and embed() then plans exactly like the
  *     chars_per_token estimate — byte for byte;
- *   - measured counts drive the sub-batch split where the estimate would not;
+ *   - the FIRST failure cancels the batch (no n/timeout preflight) and the
+ *     whole preflight is capped by a deadline, so a hung server still falls
+ *     back promptly;
+ *   - the tokenizer requests carry the same auth headers as the embed call; *   - measured counts drive the sub-batch split where the estimate would not;
  *   - truncateTextToTokens cuts at a token boundary and returns the
  *     detokenized prefix;
  *   - a recipe that declares no tokenizer issues no extra request at all.
@@ -17,9 +20,9 @@
  * fetch is stubbed per test (no network); the gateway's embedding transport is
  * the __setEmbedTransportForTests seam.
  */
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test';
 import { __setEmbedTransportForTests, configureGateway, embed, resetGateway } from '../../src/core/ai/gateway.ts';
-import { __clearTokenizeCacheForTests, countTokens, truncateTextToTokens } from '../../src/core/ai/embed-tokenize.ts';
+import { __clearTokenizeCacheForTests, countTokens, TOKENIZE_CONCURRENCY, truncateTextToTokens } from '../../src/core/ai/embed-tokenize.ts';
 import { planEmbedRequests } from '../../src/core/ai/embed-batch-plan.ts';
 import { __setTestRecipesForTests } from '../../src/core/ai/recipes/index.ts';
 import { llamaServer } from '../../src/core/ai/recipes/llama-server.ts';
@@ -125,6 +128,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  jest.useRealTimers();
   __setEmbedTransportForTests(null);
   __setTestRecipesForTests([]);
   resetGateway();
@@ -207,6 +211,97 @@ describe('countTokens', () => {
     const texts = Array.from({ length: 20 }, (_, i) => `text-${i}`);
     expect(await countTokens(texts, { baseUrl: BASE_URL, tokenizer: TOKENIZER })).toEqual(texts.map(() => 3));
     expect(peak).toBe(8);
+  });
+});
+
+// --------- auth forwarding ---------
+
+describe('the tokenizer carries the embed auth', () => {
+  test('countTokens and truncateTextToTokens send the supplied headers on every request', async () => {
+    const seen: Array<Record<string, string>> = [];
+    globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+      seen.push(init?.headers as Record<string, string>);
+      return String(input).endsWith('/tokenize')
+        ? jsonResponse({ tokens: Array.from({ length: 9 }, (_, i) => i) })
+        : jsonResponse({ content: TRUNCATED_TEXT });
+    }) as unknown as typeof fetch;
+
+    const headers = { Authorization: 'Bearer sk-local', 'x-org': 'gbrain' };
+    expect(await countTokens(['alpha'], { baseUrl: BASE_URL, tokenizer: TOKENIZER, headers })).toEqual([9]);
+    expect(await truncateTextToTokens('alpha', 4, { baseUrl: BASE_URL, tokenizer: TOKENIZER, headers })).toBe(TRUNCATED_TEXT);
+
+    // one /tokenize for the count, then /tokenize + /detokenize for the cut.
+    expect(seen).toHaveLength(3);
+    for (const sent of seen) {
+      expect(sent.Authorization).toBe('Bearer sk-local');
+      expect(sent['x-org']).toBe('gbrain');
+      expect(sent['content-type']).toBe('application/json');
+    }
+  });
+
+  test('embed() forwards the recipe embedding auth to the tokenizer endpoints', async () => {
+    const seen: Array<Record<string, string>> = [];
+    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+      seen.push(init?.headers as Record<string, string>);
+      return jsonResponse({ tokens: [1, 2] });
+    }) as unknown as typeof fetch;
+
+    // llama-server started with --api-key: the embed transport authenticates,
+    // so the preflight must present the same header instead of 401-ing.
+    const keyed: Recipe = { ...TOKENIZER_RECIPE, auth_env: { required: [], optional: ['LLAMA_SERVER_API_KEY'] } };
+    __setTestRecipesForTests([keyed]);
+    configureGateway({
+      embedding_model: `${keyed.id}:${MODEL_ID}`,
+      embedding_dimensions: DIMS,
+      base_urls: { [keyed.id]: BASE_URL },
+      env: { LLAMA_SERVER_API_KEY: 'sk-local' },
+    });
+
+    await embed(['alpha', 'beta']);
+    expect(seen).toHaveLength(2);
+    expect(seen.every(sent => sent.Authorization === 'Bearer sk-local')).toBe(true);
+  });
+});
+
+// --------- fail fast ---------
+
+describe('a failing tokenizer stops the preflight', () => {
+  test('the first failure cancels the in-flight requests and schedules no more', async () => {
+    let calls = 0;
+    let cancelled = 0;
+    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+      calls += 1;
+      if (calls === 1) throw new TypeError('connection refused');
+      // Never settles on its own: only the fail-fast abort releases it.
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => { cancelled += 1; reject(new Error('aborted')); });
+      });
+    }) as unknown as typeof fetch;
+
+    const texts = Array.from({ length: 100 }, (_, i) => `text-${i}`);
+    const started = Date.now();
+    expect(await countTokens(texts, { baseUrl: BASE_URL, tokenizer: TOKENIZER })).toBeNull();
+    expect(Date.now() - started).toBeLessThan(1000);
+    // One wave issued — not one per cache miss — and every request still in
+    // flight was cancelled rather than awaited for its own timeout.
+    expect(calls).toBe(TOKENIZE_CONCURRENCY);
+    expect(cancelled).toBe(TOKENIZE_CONCURRENCY - 1);
+  });
+
+  test('a hung preflight still returns null once the deadline elapses', async () => {
+    jest.useFakeTimers();
+    let cancelled = 0;
+    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => { cancelled += 1; reject(new Error('aborted')); });
+      });
+    }) as unknown as typeof fetch;
+
+    const pending = countTokens(['alpha', 'beta'], { baseUrl: BASE_URL, tokenizer: TOKENIZER, deadlineMs: 50 });
+    expect(cancelled).toBe(0);
+    jest.advanceTimersByTime(50);
+    expect(await pending).toBeNull();
+    expect(cancelled).toBe(2);
   });
 });
 

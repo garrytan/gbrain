@@ -1695,9 +1695,9 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
 /**
  * `serverTokenBudget` (embed-tokenize.ts) for the texts `embed()` is about to
  * send, when the recipe declares its backend's own tokenizer — llama-server's
- * `/tokenize` + `/detokenize`. Resolves the base URL exactly as the embed
- * request itself does; a recipe without a tokenizer, or one whose URL cannot
- * be resolved, gets no counts and the estimate path below.
+ * `/tokenize` + `/detokenize`. Resolves the base URL and the auth headers
+ * exactly as the embed request does; a recipe without a tokenizer, or one
+ * whose URL or auth cannot be resolved, gets no counts and the estimate path.
  */
 async function tokenBudgetFromServer(
   sentTexts: string[],
@@ -1708,13 +1708,13 @@ async function tokenBudgetFromServer(
 ): Promise<{ texts: string[]; counts: number[] | null }> {
   const embedding = recipe.touchpoints?.embedding;
   if (!embedding?.tokenizer) return { texts: sentTexts, counts: null };
-  let baseUrl: string;
   try {
-    baseUrl = applyOpenAICompatConfig(recipe, cfg).baseURL;
+    const { baseURL } = applyOpenAICompatConfig(recipe, cfg);
+    const headers = authToHeaders(applyResolveAuth(recipe, cfg, 'embedding'));
+    return serverTokenBudget(sentTexts, { baseUrl: baseURL, headers, tokenizer: embedding.tokenizer, maxInputTokens: embedding.max_input_tokens?.[modelId], signal });
   } catch {
     return { texts: sentTexts, counts: null };
   }
-  return serverTokenBudget(sentTexts, { baseUrl, tokenizer: embedding.tokenizer, maxInputTokens: embedding.max_input_tokens?.[modelId], signal });
 }
 
 /**

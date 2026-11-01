@@ -33,6 +33,10 @@ export const TOKENIZE_CONCURRENCY = 8;
 /** Per-request timeout when the recipe declares none: llama-server answers
  *  /tokenize in under a millisecond on a warm server. */
 export const TOKENIZE_TIMEOUT_MS = 2000;
+/** Ceiling on the WHOLE counting preflight. Fail-fast already bounds a dead
+ *  endpoint to one timeout; this bounds a merely slow one — a 100-input batch
+ *  at 8 in flight and 2 s each would otherwise take ~26 s to give up. */
+export const TOKENIZE_PREFLIGHT_DEADLINE_MS = 5000;
 /** Cache ceiling: one entry per distinct text, evicted oldest-first. */
 export const TOKENIZE_CACHE_MAX_ENTRIES = 10_000;
 
@@ -42,6 +46,18 @@ export interface TokenizeOpts {
   tokenizer: EmbeddingTokenizer;
   /** Caller's cancellation; aborts the tokenize requests with the embed. */
   signal?: AbortSignal;
+  /**
+   * Raw headers for every tokenizer request: the embedding transport's own
+   * auth, built by the gateway's `authToHeaders` from its `applyResolveAuth`
+   * and passed in — never re-derived here — so the preflight authenticates
+   * exactly like the embed request beside it. A llama-server started with
+   * `--api-key` answers /tokenize instead of 401-ing, which would otherwise
+   * silently disable exact counting for that deployment.
+   */
+  headers?: Record<string, string>;
+  /** Ceiling on the whole counting preflight in ms; defaults to
+   *  TOKENIZE_PREFLIGHT_DEADLINE_MS. */
+  deadlineMs?: number;
 }
 
 /** TokenizeOpts plus the per-input cap `serverTokenBudget` cuts against. */
@@ -132,10 +148,11 @@ function readTokenIds(body: unknown): number[] | null {
   return tokens as number[];
 }
 
-async function postJson(url: string, payload: unknown, signal: AbortSignal): Promise<unknown> {
+/** One POST, with the embed transport's auth headers riding along. */
+async function postJson(url: string, payload: unknown, signal: AbortSignal, headers?: Record<string, string>): Promise<unknown> {
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { ...headers, 'content-type': 'application/json' },
     body: JSON.stringify(payload),
     signal,
   });
@@ -151,7 +168,7 @@ async function postJson(url: string, payload: unknown, signal: AbortSignal): Pro
 async function postTokenize(text: string, addSpecial: boolean, opts: TokenizeOpts): Promise<TokenizeOutcome> {
   const url = endpointUrl(opts.baseUrl, opts.tokenizer.path);
   try {
-    const body = await postJson(url, { content: text, add_special: addSpecial }, timeoutSignal(opts.signal, opts.tokenizer.timeout_ms ?? TOKENIZE_TIMEOUT_MS));
+    const body = await postJson(url, { content: text, add_special: addSpecial }, timeoutSignal(opts.signal, opts.tokenizer.timeout_ms ?? TOKENIZE_TIMEOUT_MS), opts.headers);
     const ids = readTokenIds(body);
     return ids ? { ok: true, ids } : { ok: false, reason: `${url} answered an unexpected body` };
   } catch (err) {
@@ -164,33 +181,65 @@ async function postTokenize(text: string, addSpecial: boolean, opts: TokenizeOpt
  *
  * One POST per cache miss, at most `TOKENIZE_CONCURRENCY` in flight, each
  * bounded by `tokenizer.timeout_ms` (2000 by default) and the caller's signal.
- * ALL-OR-NOTHING: a single non-2xx, timeout, non-JSON or malformed body makes
- * the whole call return `null` — a partly-measured batch would split on two
- * different metrics and silently under-budget the request.
+ * FAIL FAST: the first non-2xx, timeout, non-JSON or malformed body cancels
+ * the requests still in flight and stops scheduling the rest, so a dead
+ * /tokenize costs ONE timeout instead of one per queued text — the normal
+ * paginator hands over 100 inputs, which at 8 in flight and 2 s each is 26 s
+ * of preflight before the caller's estimate fallback could even start.
+ * `deadlineMs` caps the whole preflight as a second belt, for a server that
+ * answers — slowly — every time.
+ * ALL-OR-NOTHING: any such failure makes the whole call return `null` — a
+ * partly-measured batch would split on two different metrics and silently
+ * under-budget the request.
  */
 export async function countTokens(texts: string[], opts: TokenizeOpts): Promise<number[] | null> {
   if (!texts.length) return [];
   const addSpecial = opts.tokenizer.add_special ?? false;
   const counts: number[] = new Array(texts.length);
-  const misses: number[] = [];
+  const queue: number[] = [];
   for (let i = 0; i < texts.length; i++) {
     const cached = readCached(cacheKey(texts[i]!, addSpecial));
-    if (cached === undefined) misses.push(i);
+    if (cached === undefined) queue.push(i);
     else counts[i] = cached;
   }
-  if (!misses.length) return counts;
+  if (!queue.length) return counts;
 
-  const outcomes = await mapPool(misses, TOKENIZE_CONCURRENCY, i => postTokenize(texts[i]!, addSpecial, opts));
-  for (let k = 0; k < misses.length; k++) {
-    const outcome = outcomes[k]!;
-    if (!outcome.ok) {
-      noteFallback(outcome.reason, opts.baseUrl);
-      return null;
+  const declaredDeadline = opts.deadlineMs ?? TOKENIZE_PREFLIGHT_DEADLINE_MS;
+  const deadlineMs = declaredDeadline > 0 ? declaredDeadline : TOKENIZE_PREFLIGHT_DEADLINE_MS;
+  // One controller carries both the fail-fast and the deadline: whichever
+  // fires first aborts the requests still in flight.
+  const stop = new AbortController();
+  let failure: string | null = null;
+  const timer = setTimeout(() => {
+    failure ??= `preflight deadline of ${deadlineMs}ms exceeded`;
+    stop.abort();
+  }, deadlineMs);
+  const requestOpts: TokenizeOpts = { ...opts, signal: opts.signal ? AbortSignal.any([opts.signal, stop.signal]) : stop.signal };
+
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const index = queue.shift();
+      // Queued items return at once: the batch is all-or-nothing either way,
+      // and the caller's fallback must start within one round trip.
+      if (index === undefined || failure !== null) return;
+      const outcome = await postTokenize(texts[index]!, addSpecial, requestOpts);
+      if (!outcome.ok) {
+        failure ??= outcome.reason;
+        stop.abort();
+        return;
+      }
+      counts[index] = outcome.ids.length;
+      writeCached(cacheKey(texts[index]!, addSpecial), outcome.ids.length);
     }
-    const index = misses[k]!;
-    const count = outcome.ids.length;
-    counts[index] = count;
-    writeCached(cacheKey(texts[index]!, addSpecial), count);
+  };
+  try {
+    await Promise.all(Array.from({ length: Math.min(TOKENIZE_CONCURRENCY, queue.length) }, () => worker()));
+  } finally {
+    clearTimeout(timer);
+  }
+  if (failure !== null) {
+    noteFallback(failure, opts.baseUrl);
+    return null;
   }
   return counts;
 }
@@ -213,7 +262,7 @@ export async function truncateTextToTokens(text: string, maxTokens: number, opts
 
   const url = endpointUrl(opts.baseUrl, detokenizer);
   try {
-    const body = await postJson(url, { tokens: outcome.ids.slice(0, maxTokens) }, timeoutSignal(opts.signal, opts.tokenizer.timeout_ms ?? TOKENIZE_TIMEOUT_MS));
+    const body = await postJson(url, { tokens: outcome.ids.slice(0, maxTokens) }, timeoutSignal(opts.signal, opts.tokenizer.timeout_ms ?? TOKENIZE_TIMEOUT_MS), opts.headers);
     const content = (body as { content?: unknown } | null)?.content;
     // An empty cut would drop the input from the request entirely; hand the
     // decision back to the caller instead.
@@ -253,19 +302,4 @@ export async function serverTokenBudget(
     counts[i] = maxInputTokens;
   }
   return { texts: cut, counts };
-}
-
-/** Run `fn` over `items` with at most `limit` promises in flight, order kept. */
-async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    for (;;) {
-      const index = next++;
-      if (index >= items.length) return;
-      out[index] = await fn(items[index]!);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return out;
 }
