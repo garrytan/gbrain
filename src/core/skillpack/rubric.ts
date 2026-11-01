@@ -15,6 +15,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join, relative } from 'path';
 
 import { parseMarkdown } from '../markdown.ts';
+import { parseRoutingFixtures } from '../routing-eval.ts';
 import { loadSkillpackManifest, SkillpackManifestError, type SkillpackManifest } from './manifest-v1.ts';
 
 /** Dimension category. */
@@ -152,9 +153,9 @@ const DIMENSIONS: Array<
           failures.push(`${skillPath}/routing-eval.jsonl missing`);
           continue;
         }
-        const lines = readFileSync(evalFile, 'utf-8').split('\n').filter((l) => l.trim().length > 0);
-        if (lines.length < 5) {
-          failures.push(`${skillPath}/routing-eval.jsonl has ${lines.length} intents (need >= 5)`);
+        const { fixtures } = parseRoutingFixtures(readFileSync(evalFile, 'utf-8'), evalFile);
+        if (fixtures.length < 5) {
+          failures.push(`${skillPath}/routing-eval.jsonl has ${fixtures.length} intents (need >= 5)`);
         }
       }
       return failures.length === 0
@@ -220,7 +221,8 @@ const DIMENSIONS: Array<
         };
       }
       const content = readFileSync(path, 'utf-8');
-      const versionEntryRe = new RegExp(`##\\s+\\[?${input.manifest.version.replace(/\./g, '\\.')}\\]?`);
+      const escapedVersion = input.manifest.version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const versionEntryRe = new RegExp(`^##[ \\t]+\\[?${escapedVersion}(?:\\]|\\s|$)`, 'm');
       if (!versionEntryRe.test(content)) {
         return {
           passed: false,

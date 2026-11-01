@@ -273,6 +273,34 @@ export interface LoadResult {
   malformed: { file: string; line: number; raw: string; error: string }[];
 }
 
+/** Parse routing fixtures from one JSONL file using the evaluator's line rules. */
+export function parseRoutingFixtures(content: string, fixturePath: string): LoadResult {
+  const fixtures: RoutingFixture[] = [];
+  const malformed: LoadResult['malformed'] = [];
+  const lines = content.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i].trim();
+    if (!raw) continue;
+    if (raw.startsWith('//') || raw.startsWith('#')) continue;
+    try {
+      const obj = JSON.parse(raw) as RoutingFixture;
+      if (typeof obj.intent !== 'string') {
+        malformed.push({ file: fixturePath, line: i + 1, raw, error: `missing required field 'intent' (found keys: ${Object.keys(obj).join(', ')})` });
+        continue;
+      }
+      fixtures.push({ ...obj, source: fixturePath });
+    } catch (err) {
+      malformed.push({
+        file: fixturePath,
+        line: i + 1,
+        raw,
+        error: (err as Error).message,
+      });
+    }
+  }
+  return { fixtures, malformed };
+}
+
 export function loadRoutingFixtures(skillsDir: string): LoadResult {
   const fixtures: RoutingFixture[] = [];
   const malformed: LoadResult['malformed'] = [];
@@ -300,27 +328,9 @@ export function loadRoutingFixtures(skillsDir: string): LoadResult {
     } catch {
       continue;
     }
-    const lines = content.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const raw = lines[i].trim();
-      if (!raw) continue;
-      if (raw.startsWith('//') || raw.startsWith('#')) continue;
-      try {
-        const obj = JSON.parse(raw) as RoutingFixture;
-        if (typeof obj.intent !== 'string') {
-          malformed.push({ file: fixturePath, line: i + 1, raw, error: `missing required field 'intent' (found keys: ${Object.keys(obj).join(', ')})` });
-          continue;
-        }
-        fixtures.push({ ...obj, source: fixturePath });
-      } catch (err) {
-        malformed.push({
-          file: fixturePath,
-          line: i + 1,
-          raw,
-          error: (err as Error).message,
-        });
-      }
-    }
+    const parsed = parseRoutingFixtures(content, fixturePath);
+    fixtures.push(...parsed.fixtures);
+    malformed.push(...parsed.malformed);
   }
   return { fixtures, malformed };
 }
