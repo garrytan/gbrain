@@ -744,6 +744,24 @@ function headScores(body: string, candidates: readonly PatternEntry[]): Scored[]
   })));
 }
 
+/** Score every candidate against the whole body, sharing its ordinary line split. */
+function fullBodyScores(body: string, candidates: readonly PatternEntry[]): Scored[] {
+  const lines = getNonBlankLines(body);
+  return sortScored(candidates.map((entry) => ({
+    entry,
+    score: entry.id === 'python-dict-utterance'
+      ? scorePatternFull(body, entry)
+      : scoreFromLines(lines, entry),
+    priority: priorityOf(entry.id),
+  })));
+}
+
+function structureGateRejects(entry: PatternEntry, messages: readonly MatchedMessage[]): boolean {
+  const minTurns = entry.repeat_speaker_min_turns;
+  return minTurns !== undefined && messages.length >= minTurns &&
+    new Set(messages.map((message) => message.speaker)).size === messages.length;
+}
+
 /**
  * The built-in pattern a page's head picks by parseConversation's head
  * pass, or null when that pass would not decide alone: the best head
@@ -844,8 +862,19 @@ function scoringTrack(): { line(raw: string): void; finish(): string | null } {
       const i = BUILTIN_PATTERNS.indexOf(top.entry);
       const score = top.entry.score_full_body && !fullBodyScored ? value(full, i) : top.score;
       if (score < SCORING_MIN_ACCEPTANCE) return null;
-      const gate = gates[i];
-      if (gate && !gate.repeated && gate.turns >= top.entry.repeat_speaker_min_turns!) return null;
+      const gateRejects = (candidate: Scored) => {
+        const index = BUILTIN_PATTERNS.indexOf(candidate.entry);
+        const gate = gates[index];
+        return gate !== null && gate !== undefined && !gate.repeated &&
+          gate.turns >= candidate.entry.repeat_speaker_min_turns!;
+      };
+      if (gateRejects(top)) {
+        const rescued = ranked(full).find((candidate) =>
+          candidate.entry !== top.entry &&
+          candidate.score >= SCORING_MIN_ACCEPTANCE &&
+          !gateRejects(candidate));
+        return rescued?.entry.id ?? null;
+      }
       return top.entry.id;
     },
   };
@@ -921,13 +950,7 @@ export function parseConversation(
   // pre-splitting ONCE to avoid 12 redundant body splits.
   let fullBodyScored = false;
   if (scored[0].score < SCORING_HEAD_TRIGGER_THRESHOLD) {
-    const allLines = getNonBlankLines(body);
-    scored = candidates.map((entry) => ({
-      entry,
-      score: entry.id === 'python-dict-utterance' ? scorePatternFull(body, entry) : scoreFromLines(allLines, entry),
-      priority: priorityOf(entry.id),
-    }));
-    sortScored(scored);
+    scored = fullBodyScores(body, candidates);
     fullBodyScored = true;
     // NOTE: patterns_scored stays as scored.length (= candidate
     // count, typically 12) even when the fallback runs — the
@@ -935,7 +958,7 @@ export function parseConversation(
     // attempts" (Codex P2 #7).
   }
 
-  const top = scored[0];
+  let top = scored[0];
   const patternsScored = scored.length;
 
   // v0.41.29.0 (Codex F1): broad no-time patterns (`bold-name-no-time`,
@@ -946,8 +969,9 @@ export function parseConversation(
   // the page mis-parses as a conversation. When the winner is flagged
   // `score_full_body` and we have NOT already scored full-body, recompute
   // its score over the whole document so the floor judges true density.
-  // We do NOT re-pick the winner: the head pick is already the best
-  // candidate; this only tightens its acceptance (a real transcript
+  // This acceptance check does NOT re-pick the winner: the head pick is
+  // already the best candidate. A later structure-gate rejection can
+  // re-rank alternatives over the full body (a real transcript
   // stays ~1.0; a 3/200-label notes page drops to ~0.015 → no_match).
   if (top.entry.score_full_body && !fullBodyScored) {
     top.score = scorePatternFull(body, top.entry);
@@ -969,25 +993,35 @@ export function parseConversation(
     };
   }
 
-  const diag = { unrecognized_headings: [] as string[], date_fallback_count: 0 };
-  const messages = applyPattern(body, top.entry, dateCtx, diag);
+  let diag = { unrecognized_headings: [] as string[], date_fallback_count: 0 };
+  let messages = applyPattern(body, top.entry, dateCtx, diag);
 
   // Structure gate (N12-1): enough turns with every speaker distinct is a
   // list of labels, not a conversation.
-  const minTurns = top.entry.repeat_speaker_min_turns;
-  if (
-    minTurns !== undefined &&
-    messages.length >= minTurns &&
-    new Set(messages.map((m) => m.speaker)).size === messages.length
-  ) {
-    return {
-      messages: [],
-      phase: 'no_match',
-      patterns_scored: patternsScored,
-      unmatched_line_count: opts.diagnostic
-        ? body.split(/\r?\n/).filter((l) => l.trim().length > 0).length
-        : undefined,
-    };
+  if (structureGateRejects(top.entry, messages)) {
+    let rescued = false;
+    const alternatives = fullBodyScores(body, candidates.filter((entry) => entry !== top.entry));
+    for (const candidate of alternatives) {
+      if (candidate.score < SCORING_MIN_ACCEPTANCE) break;
+      const candidateDiag = { unrecognized_headings: [] as string[], date_fallback_count: 0 };
+      const candidateMessages = applyPattern(body, candidate.entry, dateCtx, candidateDiag);
+      if (structureGateRejects(candidate.entry, candidateMessages)) continue;
+      top = candidate;
+      diag = candidateDiag;
+      messages = candidateMessages;
+      rescued = true;
+      break;
+    }
+    if (!rescued) {
+      return {
+        messages: [],
+        phase: 'no_match',
+        patterns_scored: patternsScored,
+        unmatched_line_count: opts.diagnostic
+          ? body.split(/\r?\n/).filter((l) => l.trim().length > 0).length
+          : undefined,
+      };
+    }
   }
 
   // Timezone warning surface (D19).
