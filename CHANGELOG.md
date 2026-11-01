@@ -18,7 +18,7 @@ Vector reuse was turned off for every page with a protected fence, so each write
 
 ### Itemized changes
 
-- **Fenced page reuse (#6961).** A fenced page now reuses a stored vector when its recorded embedding input equals the one the import would embed, the same check every other page gets. The stored index must still be sealed by the fence-safe chunker, so a reused vector's text holds no private fence row. A chunk whose text changed, such as the fence chunk a new fact lands in, is embedded again. A legacy vector with no recorded input is never reused on a fenced page, because nothing proves what text it was computed from. A one-row fact append on a five-chunk entity page now makes one embedding call instead of five. Contributed by @javieraldape (#7055, rewritten on master).
+- **Fenced page reuse (#6961).** A fenced page now reuses a stored vector when its recorded embedding input equals the one the import would embed, the same check every other page gets. The stored index must still be sealed by the fence-safe chunker, so a reused vector's text holds no private fence row. A chunk whose text changed, such as the fence chunk a new fact lands in, is embedded again. The importer never reuses a legacy vector with no recorded input on a fenced page, because nothing proves what text it was computed from. A one-row fact append on a five-chunk entity page now makes one embedding call instead of five. Contributed by @javieraldape (#7055, rewritten on master).
 
 ## [0.60.539.0] - 2026-11-01
 
