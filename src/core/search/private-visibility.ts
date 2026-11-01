@@ -102,10 +102,11 @@ export function folderRulesAllowedSql(alias: string, satisfied: readonly string[
 
 /**
  * The pending or invalid prefixes of the current record as a conjunct (empty when none); an ill-formed entry hides
- * everything. Outside any caller record the prefixes are read live, so a page under a pending prefix stays hidden.
+ * everything. Outside any caller record the prefixes are read live, so a page under a pending prefix stays hidden;
+ * a database role that row-level security keeps from reading them reads every page as covered.
  */
 function coverageSql(alias: string): string {
-  if (!callerAccessStore.getStore()) return ` AND NOT EXISTS (SELECT 1 FROM access_pending_coverage pc WHERE pc.source_id = ${alias}.source_id AND starts_with(${alias}.slug, pc.prefix))`;
+  if (!callerAccessStore.getStore()) return ` AND NOT EXISTS (SELECT 1 FROM access_pending_coverage pc WHERE pc.source_id = ${alias}.source_id AND starts_with(${alias}.slug, pc.prefix)) AND NOT (SELECT gbrain_access_state_unreadable())`;
   const coverage = currentCallerAccess().folderCoverage;
   if (!coverage.length) return '';
   return coverage.map(c => !isValidSourceId(c.source_id) || (c.prefix !== '' && !validPrefix(c.prefix)) ? ' AND FALSE'
@@ -518,9 +519,12 @@ export function derivationPrivateSql(alias: string): string {
   return `(NOT ${privateSnapshotFilterFragment(alias)} OR ${privacyAliasSql(alias)} OR ${namesReadersSql(alias)} OR ${folderRestrictedSql(alias)})`;
 }
 
-/** GBRA-218 (A2): the page row sits under an applied folder rule (its stamp) or a pending or invalid folder prefix. */
+/**
+ * GBRA-218 (A2): the page row sits under an applied folder rule (its stamp) or a pending or invalid folder prefix, or
+ * this database role cannot read the folder access tables.
+ */
 export function folderRestrictedSql(alias: string): string {
-  return `(${alias}.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(${alias}.source_id, ${alias}.slug))`;
+  return `(${alias}.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(${alias}.source_id, ${alias}.slug) OR (SELECT gbrain_access_state_unreadable()))`;
 }
 
 /**
@@ -530,7 +534,7 @@ export function folderRestrictedSql(alias: string): string {
 export async function folderRestricted(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string): Promise<boolean> {
   try {
     const [row] = await engine.executeRaw<{ restricted: boolean }>(
-      'SELECT (gbrain_access_folder_rules($1, $2) IS NOT NULL OR gbrain_access_pending_covers($1, $2)) AS restricted', [sourceId, slug]);
+      'SELECT (gbrain_access_folder_rules($1, $2) IS NOT NULL OR gbrain_access_pending_covers($1, $2) OR gbrain_access_state_unreadable()) AS restricted', [sourceId, slug]);
     return row?.restricted === true;
   } catch {
     return true;

@@ -1,4 +1,5 @@
 import type { Migration } from './types.ts';
+import { requireMaintainerPoliciesSql } from '../derived-state-maintainers.ts';
 
 // Applied by src/core/migrate.ts on the next initSchema(); see docs/ENGINES.md
 // ("Canonical schema sources") for when schema.sql or a TS fragment also changes.
@@ -25,6 +26,12 @@ import type { Migration } from './types.ts';
 // read-time lineage test treats an origin under a folder rule or a covered
 // prefix as restricted. Nothing is rewritten on upgrade: with no rule, every
 // page keeps folder_rule_ids NULL.
+// A role that neither owns these tables nor bypasses RLS reads them empty, so
+// nothing here may read empty as "no rule": the stamp refuses the write
+// (writer_coordinator_required, unreadable_state, as v281 does), and where
+// gbrain_access_state_unreadable() holds, reads and the derivation-privacy
+// test treat every page as covered and the policy commands refuse.
+// No SECURITY DEFINER (#7659).
 // No schema.sql mirror: like v282, these exist only through migrations.
 // Provisional number: renumbered at the merge slot.
 export const v283: Migration = {
@@ -87,6 +94,15 @@ CREATE OR REPLACE FUNCTION gbrain_access_folder_rules(p_source TEXT, p_slug TEXT
   SELECT array_agg(p_source || ':' || r.rule_id ORDER BY r.rule_id COLLATE "C")
     FROM access_rules r WHERE r.source_id = p_source AND starts_with(p_slug, r.prefix)
 $fn$;
+CREATE OR REPLACE FUNCTION gbrain_access_state_unreadable() RETURNS boolean
+  LANGUAGE sql STABLE PARALLEL SAFE SET search_path = pg_catalog, public, pg_temp AS $fn$
+  SELECT EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['access_policy_state', 'access_rules', 'access_pending_coverage']::pg_catalog.regclass[]) AS t(rel)
+    WHERE pg_catalog.row_security_active(t.rel) AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid OPERATOR(pg_catalog.=) t.rel::pg_catalog.oid AND p.polpermissive
+        AND p.polcmd::pg_catalog.text OPERATOR(pg_catalog.=) ANY (ARRAY['*', 'r']::pg_catalog.text[])
+        AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id)
+          WHERE CASE WHEN r.id OPERATOR(pg_catalog.=) 0::pg_catalog.oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END)))
+$fn$;
 CREATE OR REPLACE FUNCTION gbrain_access_pending_covers(p_source TEXT, p_slug TEXT) RETURNS boolean
   LANGUAGE sql STABLE PARALLEL SAFE SET search_path = pg_catalog, public, pg_temp AS $fn$
   SELECT EXISTS (SELECT 1 FROM access_pending_coverage c WHERE c.source_id = p_source AND starts_with(p_slug, c.prefix))
@@ -94,6 +110,8 @@ $fn$;
 CREATE OR REPLACE FUNCTION gbrain_access_stamp_folder_rules() RETURNS trigger
   LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN
+  ${requireMaintainerPoliciesSql('access_policy_state', ['SELECT', 'UPDATE'])}
+  ${requireMaintainerPoliciesSql('access_rules', ['SELECT'])}
   IF EXISTS (SELECT 1 FROM access_policy_state s WHERE s.source_id = NEW.source_id) THEN
     PERFORM 1 FROM access_policy_state s WHERE s.source_id = NEW.source_id FOR SHARE;
     NEW.folder_rule_ids := gbrain_access_folder_rules(NEW.source_id, NEW.slug);

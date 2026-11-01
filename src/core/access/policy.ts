@@ -145,7 +145,17 @@ const key = (r: FolderRule) => `${r.id}\u0000${r.prefix}`;
  * Makes `target` the applied rulebook inside the caller's locked transaction. Rules whose (id, prefix) pair is new get
  * pending coverage until the restamp finishes. Returns whether pages need restamping.
  */
+/** Refuses when row-level security keeps this database role from reading the folder access tables (they would read as empty). */
+async function requireReadableAccessState(engine: Exec): Promise<void> {
+  const [row] = await engine.executeRaw<{ unreadable: boolean }>('SELECT gbrain_access_state_unreadable() AS unreadable');
+  if (row?.unreadable) {
+    throw opError('permission_denied', 'This database role cannot read the folder access tables (row-level security hides them), so no folder rule was changed, applied or cleared.',
+      'Run it as the owner of the access tables, or give this role the policies in docs/ENGINES.md ("Folder access tables").', { docs: 'docs/ENGINES.md#folder-access-tables' });
+  }
+}
+
 async function installRulebook(tx: Exec, sourceId: string, target: readonly FolderRule[], revision: number, actor: string): Promise<boolean> {
+  await requireReadableAccessState(tx);
   const current = await appliedRules(tx, sourceId);
   const before = new Map(current.map(r => [r.id, r]));
   const after = new Map(target.map(r => [r.id, r]));
@@ -179,6 +189,7 @@ export interface RestampProgress { pages_scanned: number; pages_restamped: numbe
  * written meanwhile, the pending coverage goes, and pending revisions count as applied, atomically.
  */
 export async function restampSource(engine: BrainEngine, sourceId: string, opts: { batch?: number; onProgress?: (p: RestampProgress) => void } = {}): Promise<RestampProgress> {
+  await requireReadableAccessState(engine);
   const batch = opts.batch ?? RESTAMP_BATCH;
   const progress: RestampProgress = { pages_scanned: 0, pages_restamped: 0 };
   let after = 0;
@@ -279,6 +290,7 @@ export async function proposeRevision(engine: BrainEngine, sourceId: string, des
 /** Finishes an interrupted narrowing (pending coverage or stamps that drifted from the applied rulebook). Idempotent. */
 export async function resumePolicy(engine: BrainEngine, sourceId: string, onProgress?: (p: RestampProgress) => void): Promise<RestampProgress & { pending_before: string[] }> {
   await readAccessStore(engine, sourceId);
+  await requireReadableAccessState(engine);
   const pending = (await coverageRows(engine, sourceId)).filter(c => c.reason === 'pending').map(c => c.prefix);
   const [state] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM access_policy_state WHERE source_id = $1', [sourceId]);
   if (!state?.n) return { pages_scanned: 0, pages_restamped: 0, pending_before: [] };
@@ -431,5 +443,6 @@ export async function markPolicyInvalid(engine: BrainEngine, sourceId: string, p
 }
 
 export async function clearPolicyInvalid(engine: Exec, sourceId: string): Promise<void> {
+  await requireReadableAccessState(engine);
   await engine.executeRaw(`DELETE FROM access_pending_coverage WHERE source_id = $1 AND reason = 'invalid'`, [sourceId]);
 }

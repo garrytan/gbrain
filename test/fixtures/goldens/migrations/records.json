@@ -45,7 +45,7 @@
       "PERSISTENCE_REQUEST_SLUG_INTENT_INDEX": "5f2e4a3dde452e610fe7eaae949642c00d7c61a363b1cd344d7f0917db233aa5",
       "PERSISTENCE_SYNC_RUN_INDEXES": "e1b12613c5fd2facb850e6857b0bddcf49b2478ec258fa226fe15e71e55df9c1",
       "PERSISTENCE_SYNC_WATERMARK_INDEX": "93523954a30e8483717f07ec97a3e0cd062b15d8a60cc759281054b06c23bb40",
-      "PINNED_FUNCTION_NAMES": "701225b24141cec2c3faa1dbfc80ac86a0c5fe41440204eeca2f0c8b2873ee0e",
+      "PINNED_FUNCTION_NAMES": "aa10ffdebfc6025cbd0235255d01682f16026426ce2383fcd0db57f024e356f1",
       "PLANNER_REPAIR_TABLES": "008725595e099adba279d4292661eb4a59930b777c35db43c340220f7f12e093",
       "TABLES": "3fc77a0fccb525f9b791098f9eae27b19adaa3f5dadbabcff2a719137cbc3ef8",
       "TOKEN_TTL_MAX_SECONDS": "f4a45bec6ec0bacc859dc57732ceb76cec7eb72f242b5a6c89d47190d0525ab4",
@@ -4583,8 +4583,8 @@
         "idempotent": true,
         "name": "folder_access_rules",
         "sql": {
-          "length": 7048,
-          "sha256": "54c5690108691d5a49e1d7981236646e5e4be04ee386229eb30cb294eb0ad9a2"
+          "length": 9609,
+          "sha256": "7d754ee2a64386296663b3482d6eb55c9feacb5529fbba389bf25802a05b942d"
         },
         "sqlFor": "absent",
         "transaction": "absent",

@@ -74,7 +74,8 @@ export async function stdioMemberIdentity(engine: BrainEngine): Promise<string[]
 /**
  * GBRA-218 (A2): the folder-rule part of a caller's record, read live from the applied rulebook: the
  * source-qualified ids of the rules `identity` satisfies, and every prefix that reads as nobody (a narrowing being
- * stamped, an invalid policy file). An unreadable rulebook satisfies nothing and covers everything (fail closed).
+ * stamped, an invalid policy file). An unreadable rulebook satisfies nothing and covers everything (fail closed), and so
+ * does one row-level security hides from this database role.
  */
 export async function folderAccessFor(engine: Pick<BrainEngine, 'executeRaw'>, identity: readonly string[]): Promise<{ satisfiedRuleIds: string[]; folderCoverage: FolderCoverage[] }> {
   return folderAccessForAll(engine, [identity]);
@@ -91,7 +92,8 @@ export async function folderAccessForAll(engine: Pick<BrainEngine, 'executeRaw'>
       ? await engine.executeRaw<{ source_id: string; rule_id: string; readable_by: string[] }>('SELECT source_id, rule_id, readable_by FROM access_rules WHERE readable_by && $1::text[]', [union])
       : [];
     const satisfied = rules.filter(r => identities.every(id => (r.readable_by ?? []).some(reader => id.includes(reader))));
-    const coverage = await engine.executeRaw<{ source_id: string; prefix: string }>('SELECT DISTINCT source_id, prefix FROM access_pending_coverage ORDER BY source_id, prefix');
+    const coverage = await engine.executeRaw<{ source_id: string; prefix: string }>(`SELECT * FROM (SELECT DISTINCT source_id, prefix FROM access_pending_coverage
+      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id, prefix`);
     return { satisfiedRuleIds: satisfied.map(r => `${r.source_id}:${r.rule_id}`).sort(), folderCoverage: coverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })) };
   } catch {
     return { satisfiedRuleIds: [], folderCoverage: [{ source_id: '!unreadable', prefix: '' }] };
