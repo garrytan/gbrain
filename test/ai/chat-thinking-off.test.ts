@@ -2,12 +2,16 @@
  * #5331: `ChatOpts.thinking: 'off'` turns thinking off per call without the
  * call site knowing each provider's option shape.
  *
- * Drives the real gateway against a local stub of the Anthropic Messages and
+ * Drives the real gateway against an intercepted fetch stub of the Anthropic Messages and
  * OpenAI-compatible chat completions APIs and asserts the request body that
  * leaves gbrain, per route: native Anthropic (a configured thinking object is
  * replaced, cache control survives), DeepSeek, OpenRouter DeepSeek, a route
  * with no switch that does not think (unchanged), and a route with no switch
  * that thinks by default (keeps thinking, gets the thinking output headroom).
+ *
+ * Custom-endpoint regression: protects the emitted thinking option and cap.
+ * Prefix-only routing sends a native switch to a foreign endpoint; the old
+ * DeepSeek case only exercised the native contract. No production seam is added.
  *
  * W9F item 5: the per-model capability table for native Google (the
  * generateContent request is caught at `fetch`, since the Google route takes
@@ -20,57 +24,51 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { chat, configureGateway, resetGateway, THINKING_MODEL_MAX_OUTPUT_TOKENS } from '../../src/core/ai/gateway.ts';
 import { applyThinkingOff } from '../../src/core/ai/thinking-off.ts';
+import { deepseek } from '../../src/core/ai/recipes/deepseek.ts';
 
-let server: ReturnType<typeof Bun.serve>;
 let bodies: any[] = [];
 const realFetch = globalThis.fetch;
 
 beforeAll(() => {
   globalThis.fetch = (async (input: any, init?: any) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    if (!url.startsWith('https://generativelanguage.googleapis.com/')) return realFetch(input, init);
-    bodies.push(JSON.parse(String(init?.body)));
+    if (new URL(url).pathname.includes("generateContent")) {
+      bodies.push(JSON.parse(String(init?.body)));
+      return Response.json({
+        candidates: [{ content: { role: "model", parts: [{ text: "{\"ok\":true}" }] }, finishReason: "STOP" }],
+        usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 },
+      });
+    }
+    const body = JSON.parse(String(init?.body));
+    bodies.push(body);
+    if (new URL(url).pathname.endsWith('/responses')) {
+      return Response.json({
+        id: 'resp_stub', object: 'response', created_at: 0, status: 'completed', model: body.model,
+        output: [{
+          type: 'message', id: 'msg_stub', status: 'completed', role: 'assistant',
+          content: [{ type: 'output_text', text: '{"ok":true}', annotations: [] }],
+        }],
+        incomplete_details: null,
+        usage: { input_tokens: 1, output_tokens: 1, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } },
+      });
+    }
+    if (new URL(url).pathname.endsWith('/messages')) {
+      return Response.json({
+        id: 'msg_stub', type: 'message', role: 'assistant', model: body.model,
+        content: [{ type: 'text', text: '{"ok":true}' }],
+        stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 },
+      });
+    }
     return Response.json({
-      candidates: [{ content: { role: 'model', parts: [{ text: '{"ok":true}' }] }, finishReason: 'STOP' }],
-      usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 },
+      id: 'chatcmpl_stub', object: 'chat.completion', created: 0, model: body.model,
+      choices: [{ index: 0, message: { role: 'assistant', content: '{"ok":true}' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
     });
   }) as typeof fetch;
-  server = Bun.serve({
-    port: 0,
-    hostname: '127.0.0.1',
-    async fetch(req) {
-      const body = await req.json();
-      bodies.push(body);
-      if (new URL(req.url).pathname.endsWith('/responses')) {
-        return Response.json({
-          id: 'resp_stub', object: 'response', created_at: 0, status: 'completed', model: body.model,
-          output: [{
-            type: 'message', id: 'msg_stub', status: 'completed', role: 'assistant',
-            content: [{ type: 'output_text', text: '{"ok":true}', annotations: [] }],
-          }],
-          incomplete_details: null,
-          usage: { input_tokens: 1, output_tokens: 1, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } },
-        });
-      }
-      if (new URL(req.url).pathname.endsWith('/messages')) {
-        return Response.json({
-          id: 'msg_stub', type: 'message', role: 'assistant', model: body.model,
-          content: [{ type: 'text', text: '{"ok":true}' }],
-          stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 },
-        });
-      }
-      return Response.json({
-        id: 'chatcmpl_stub', object: 'chat.completion', created: 0, model: body.model,
-        choices: [{ index: 0, message: { role: 'assistant', content: '{"ok":true}' }, finish_reason: 'stop' }],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      });
-    },
-  });
 });
 
 afterAll(() => {
   globalThis.fetch = realFetch;
-  server.stop(true);
   resetGateway();
 });
 
@@ -79,8 +77,10 @@ beforeEach(() => {
   resetGateway();
 });
 
-function configure(model: string, providerChatOptions?: Record<string, Record<string, unknown>>): void {
-  const base = `http://127.0.0.1:${server.port}/v1`;
+function configure(model: string, providerChatOptions?: Record<string, Record<string, unknown>>, deepseekBase?: string): void {
+  const customEndpoint = new URL(deepseek.base_url_default!);
+  customEndpoint.port = '8443';
+  const base = customEndpoint.href;
   configureGateway({
     chat_model: model,
     env: {
@@ -88,7 +88,7 @@ function configure(model: string, providerChatOptions?: Record<string, Record<st
       OPENAI_API_KEY: 'stub', OPENAI_BASE_URL: base, GOOGLE_GENERATIVE_AI_API_KEY: 'stub',
       DEEPSEEK_API_KEY: 'stub', OPENROUTER_API_KEY: 'stub', ZHIPUAI_API_KEY: 'stub', GROQ_API_KEY: 'stub',
     },
-    base_urls: { deepseek: base, openrouter: base, zhipu: base, groq: base },
+    base_urls: { deepseek: deepseekBase ?? deepseek.base_url_default!, openrouter: base, zhipu: base, groq: base },
     ...(providerChatOptions ? { provider_chat_options: providerChatOptions } : {}),
   });
 }
@@ -128,12 +128,26 @@ describe("chat({ thinking: 'off' }) request bodies (#5331)", () => {
   });
 
   test('DeepSeek (thinks by default) gets its documented thinking switch', async () => {
-    configure('deepseek:deepseek-v4-flash');
+    configure('deepseek:deepseek-v4-flash', undefined, deepseek.base_url_default);
 
     await judgeCall('deepseek:deepseek-v4-flash');
 
     expect(bodies[0].thinking).toEqual({ type: 'disabled' });
     expect(bodies[0].max_tokens).toBe(2000);
+  });
+
+  test('DeepSeek prefix on a custom endpoint skips the native switch and retains reasoning headroom', async () => {
+    const endpoint = new URL(deepseek.base_url_default!);
+    endpoint.port = '8443';
+    configure('deepseek:deepseek-v4-flash', undefined, endpoint.href);
+
+    const result = await judgeCall('deepseek:deepseek-v4-flash', {
+      responseSchema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false },
+    });
+
+    expect(result.text).toBe('{"ok":true}');
+    expect(bodies[0].thinking).toBeUndefined();
+    expect(bodies[0].max_tokens).toBe(THINKING_MODEL_MAX_OUTPUT_TOKENS);
   });
 
   test('OpenRouter-hosted DeepSeek gets the same switch', async () => {
