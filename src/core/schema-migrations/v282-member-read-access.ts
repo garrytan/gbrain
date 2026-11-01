@@ -41,7 +41,6 @@ CREATE TABLE IF NOT EXISTS access_group_members (
 );
 CREATE INDEX IF NOT EXISTS access_group_members_member_idx ON access_group_members (member_id);
 ALTER TABLE pages ADD COLUMN IF NOT EXISTS page_readers TEXT[];
-CREATE INDEX IF NOT EXISTS pages_page_readers_gin ON pages USING gin (page_readers) WHERE page_readers IS NOT NULL;
 ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS member_id TEXT;
 ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS may_act_for TEXT[];
 ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS member_id TEXT;

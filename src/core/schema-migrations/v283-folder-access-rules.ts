@@ -40,7 +40,6 @@ export const v283: Migration = {
   idempotent: true,
   sql: `
 ALTER TABLE pages ADD COLUMN IF NOT EXISTS folder_rule_ids TEXT[];
-CREATE INDEX IF NOT EXISTS pages_folder_rule_ids_gin ON pages USING gin (folder_rule_ids) WHERE folder_rule_ids IS NOT NULL;
 CREATE TABLE IF NOT EXISTS access_policy_state (
   source_id TEXT PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()

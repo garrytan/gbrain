@@ -14,6 +14,8 @@
  *    unreadable page, a listed member is refused its own page, a malformed or
  *    lock-out readable_by is written, or a stored write still publishes after
  *    its member was disabled.
+ *    A member who satisfies a folder rule writes the pages under it (the
+ *    publication fast path must not read folder-ruled pages as unopenable).
  * 3. Existing coverage (member-read-access) pins reads only.
  * 4. Real seams: tokens minted by the token service and bound with SQL, verified
  *    by the serve --http verifier, dispatched through MCP dispatch; the durable
@@ -31,6 +33,7 @@ import { __resetPrivateVisibilityCacheForTests, withCallerAccess } from '../src/
 import { remoteCallerAccess } from '../src/core/access/caller.ts';
 import { submissionAuthority, authorizeStoredRequest } from '../src/core/persistence/authority.ts';
 import { admitWrite } from '../src/core/persistence/journal.ts';
+import { proposeRevision } from '../src/core/access/policy.ts';
 import type { AuthInfo, OperationContext } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -203,6 +206,33 @@ for (const kind of testBackends()) {
         await engine.executeRaw("UPDATE access_tokens SET member_id = 'alice-example' WHERE name = 'alice'");
       }
     }, 120_000);
+
+    test('a member satisfying a folder rule writes pages under it through the durable write path; an unlisted member is still refused', async () => {
+      const slug = 'partners/alice-example/plan';
+      await importFromContent(engine, slug, '---\ntype: note\ntitle: Alice plan\n---\n# Alice plan\n\nPlan canaryawfolder.', { sourceId: SRC, noEmbed: true });
+      const applied = await proposeRevision(engine, SRC, [{ id: 'alice', prefix: 'partners/alice-example/', readable_by: ['member:alice-example'] }], { origin: 'cli', store: 'database' });
+      expect(applied.state).toBe('applied');
+      expect((await call('alice', 'get_page', { slug })).text).toContain('canaryawfolder');
+      const before = await state(slug);
+      for (const [op, params] of [['put_page', { slug, content: '---\ntype: note\ntitle: Alice plan\n---\n# Alice plan\n\nBob rewrote this.', expected_revision: await revision(slug) }],
+        ['add_tag', { slug, tag: 'bob-tag' }], ['delete_page', { slug }]] as const) {
+        const out = await call('bob', op, params as Record<string, unknown>);
+        expect({ op, code: out.json.code }).toEqual({ op, code: 'page_not_found' });
+        expect(out.text).not.toContain('canaryawfolder');
+      }
+      expect(await state(slug)).toEqual(before);
+      const put = await call('alice', 'put_page', { slug, content: '---\ntype: note\ntitle: Alice plan\n---\n# Alice plan\n\nPlan canaryawfolder. Alice wrote this.', expected_revision: await revision(slug) });
+      expect({ op: 'put_page', isError: put.isError, code: put.json.code }).toEqual({ op: 'put_page', isError: false, code: undefined });
+      for (const [op, params] of [['add_tag', { slug, tag: 'alice-tag' }], ['add_timeline_entry', { slug, date: '2026-01-03', summary: 'Plan call' }]] as const) {
+        const out = await call('alice', op, params as Record<string, unknown>);
+        expect({ op, isError: out.isError, code: out.json.code }).toEqual({ op, isError: false, code: undefined });
+      }
+      const after = await state(slug);
+      expect({ body: after.body.includes('Alice wrote this.'), tags: after.tags, timeline: after.timeline }).toEqual({ body: true, tags: 1, timeline: 1 });
+      const del = await call('alice', 'delete_page', { slug, expected_revision: await revision(slug) });
+      expect({ op: 'delete_page', isError: del.isError, code: del.json.code }).toEqual({ op: 'delete_page', isError: false, code: undefined });
+      expect((await state(slug)).deleted).toBe(true);
+    }, 240_000);
 
     test('extract_facts treats a restricted source_slug exactly like a missing one', async () => {
       const hidden = await call('bob', 'extract_facts', { turn_text: 'Bob likes tea.', source_slug: ALICE_PAGE, visibility: 'world' });
