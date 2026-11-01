@@ -89,6 +89,24 @@ export function receiptDeliveredHint(receipt: { error_code?: string | null; erro
   error_detail?: Record<string, unknown> | null }):
   { suggestion: string; detail?: string; docs: string } | null {
   const source = receipt.source_id ?? '<source>';
+  // #7777: protocol guards share SQLSTATE 42501 with permission denial, but databaseRefusal has verified their raiser/text.
+  // Rebuild guidance without treating unreadable state as an out-of-source write or requiring a connector intent.
+  if (receipt.error_detail?.origin === 'database_guard' && receipt.error_detail.sqlstate === '42501') {
+    const code = receipt.error_code;
+    const inspect = 'On the brain host run gbrain sources writer status --probe --json. Do not edit SQL or disable the guards. ';
+    const suggestion = code === 'writer_coordinator_required'
+      ? receipt.error_detail.relationship === 'unreadable_state'
+        ? 'Writer state is missing or hidden by row-level security. Have the brain owner verify the database role and writer state; do not retry as an uncoordinated writer.'
+        : 'Shared skill writes need the canonical owner and its coordinated source capability; retry through that owner.'
+      : code === 'writer_upgrade_required'
+        ? 'Check the protocol floor and upgrade or restart older gbrain writers on every host sharing this brain. Never lower the stored protocol floor.'
+        : code === 'writer_not_quiesced'
+          ? 'Stop or exclude older writers, drain pending writes and verify canonical owner capabilities before explicitly activating shared publication.'
+          : code === 'unsupported_mutation_protocol'
+            ? 'Upgrade the submitting and consuming gbrain processes and submit a compatible new request. The accepted target is immutable; do not rewrite the journaled intent.'
+            : null;
+    if (suggestion) return { detail: 'database_guard', docs: docsAnchor('writer_coordinator_required'), suggestion: inspect + suggestion };
+  }
   switch (receipt.error_code) {
     case 'connector_intent_outdated': {
       const preUpgrade = receipt.error_message === CONNECTOR_INTENT_OUTDATED_PRE_UPGRADE;
