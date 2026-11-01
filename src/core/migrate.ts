@@ -1,4 +1,5 @@
 import type { BrainEngine } from './engine.ts';
+import { assertSupportedSchemaVersion } from './schema-version-guard.ts';
 import type { Migration } from './schema-migrations/types.ts';
 import { isLockTimeoutError } from './retry-matcher.ts';
 import { resolveSchemaLockTimeoutMs, schemaLockBlockedError } from './postgres-engine/schema-lock-timeout.ts';
@@ -367,6 +368,7 @@ export function isDeadlockError(err: unknown): boolean {
 export async function runMigrations(engine: BrainEngine): Promise<{ applied: number; current: number }> {
   const currentStr = await engine.getConfig('version');
   const current = parseInt(currentStr || '1', 10);
+  assertSupportedSchemaVersion(current);
 
   // Sort by version ascending so array insertion order doesn't affect
   // correctness. Migrations MUST run in version order; if v16 accidentally

@@ -1,4 +1,5 @@
 import postgres from '#postgres'
+import { assertSchemaReplaySupported } from './schema-version-guard.ts';
 import { claimOwner, isOneShotCommand } from './persistence/claim-phase.ts';
 import { traceSqlOptions } from './sql-trace.ts';
 import { beginReadWrite } from './postgres-engine/read-write-transactions.ts';
@@ -590,21 +591,23 @@ export async function disconnect(): Promise<void> {
 }
 
 export async function initSchema(): Promise<void> {
-  const conn = getConnection();
-  // Advisory lock prevents concurrent initSchema() calls from deadlocking
-  // Lock-census (PR6 D5): INTENTIONALLY brain-global (session lock, fixed key 42) — schema replay mutates the whole database, not one source.
-  await conn`SELECT pg_advisory_lock(42)`;
+  const pool = getConnection();
+  const pinned = pool.options.max > 1;
+  const conn = pinned ? await pool.reserve() : pool;
   try {
-    // #4477: run the same forward-reference bootstrap as
-    // PostgresEngine.initSchema BEFORE replaying the schema blob. Without
-    // it, an older brain whose tables predate the blob's forward-referenced
-    // columns (e.g. pages.deleted_at ← pages_deleted_at_purge_idx) wedges
-    // on the blob's CREATE INDEX. Idempotent single-probe no-op on fresh
-    // installs and modern brains.
-    await applyPostgresForwardReferenceBootstrap(conn);
-    await conn.unsafe(SCHEMA_SQL);
+    // Advisory lock prevents concurrent initSchema() calls from deadlocking.
+    // Lock-census (PR6 D5): INTENTIONALLY brain-global (session lock, fixed key 42) — schema replay mutates the whole database, not one source.
+    await conn`SELECT pg_advisory_lock(42)`;
+    try {
+      await assertSchemaReplaySupported(q => conn.unsafe(q));
+      // #4477: bootstrap older brains before replaying forward-referenced DDL.
+      await applyPostgresForwardReferenceBootstrap(conn);
+      await conn.unsafe(SCHEMA_SQL);
+    } finally {
+      await conn`SELECT pg_advisory_unlock(42)`;
+    }
   } finally {
-    await conn`SELECT pg_advisory_unlock(42)`;
+    if (pinned) (conn as postgres.ReservedSql).release();
   }
 }
 
