@@ -452,13 +452,16 @@ describe.skipIf(!CAN_RUN_KEYLESS)('install real-opencode door — keyless tier (
       const parsed = parseOpencodeJsonl(turn.finalText.split('\n'));
       finalText = parsed.finalText;
       toolCalls = parsed.toolCalls;
-      errors = parsed.errors;
+      errors = [...parsed.errors, ...turn.streamErrors];
       try { writeFileSync(join(home, 'door-turn.jsonl'), turn.finalText); } catch { /* evidence */ }
       if (turn.exitCode === 0 && finalText.includes(nonce)) break;
+      // A quota refusal is not transient: a second turn only spends more of the same quota.
+      if (turn.providerRefusal) break;
       if (attempt === 1) await new Promise((r) => setTimeout(r, 3_000));
     }
 
-    // #6049: a turn the provider refused (e.g. FreeTierError 403) fails with its own message, not `Received: ""`.
+    // #6049: a turn the provider refused (a FreeTierError 403, or the free tier's "Free usage limit
+    // reached" quota that opencode retries silently for hours) fails with its own message, not `Received: ""`.
     if (!finalText.includes(nonce) && errors.length) throw new Error(`opencode turn ended with provider error(s): ${errors.join('; ')}`);
     expect(finalText).toContain(nonce);
     expect(finalText).not.toContain('NO-GBRAIN-TOOL');

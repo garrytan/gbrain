@@ -724,6 +724,8 @@ export interface OneShotSpawnResult {
   exitCode: number | null;
   timedOut: boolean;
   stderrText: string;
+  /** The value abortWhen returned when it ended the run early. */
+  abortReason?: string;
 }
 
 /**
@@ -738,6 +740,9 @@ export async function runOneShotSpawn(opts: {
   cwd: string;
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
+  /** Polled every second; a returned string kills the child like a timeout
+   *  and comes back as abortReason. */
+  abortWhen?: () => string | undefined;
 }): Promise<OneShotSpawnResult> {
   const proc = Bun.spawn(opts.argv, {
     cwd: opts.cwd,
@@ -748,11 +753,21 @@ export async function runOneShotSpawn(opts: {
   });
 
   let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
+  let abortReason: string | undefined;
+  const kill = () => {
     try { proc.kill(); } catch { /* already dead */ }
     setTimeout(() => { try { proc.kill(9); } catch { /* already dead */ } }, 5_000);
+  };
+  const timer = setTimeout(() => {
+    timedOut = true;
+    kill();
   }, opts.timeoutMs);
+  const abortPoll = opts.abortWhen && setInterval(() => {
+    abortReason = opts.abortWhen!();
+    if (abortReason === undefined) return;
+    clearInterval(abortPoll);
+    kill();
+  }, 1_000);
 
   const drainCap = opts.timeoutMs + 30_000;
   // The cap timer is CLEARED when the real promise wins — an uncancelled
@@ -771,12 +786,14 @@ export async function runOneShotSpawn(opts: {
   ]);
   const exitCode = await bounded(proc.exited, 124);
   clearTimeout(timer);
+  clearInterval(abortPoll);
 
   return {
     finalText: stdout.trim(),
     exitCode: timedOut ? 124 : exitCode,
     timedOut,
     stderrText,
+    ...(abortReason !== undefined ? { abortReason } : {}),
   };
 }
 
@@ -1144,17 +1161,58 @@ export interface OpencodeTurnOpts {
   paid?: boolean;
 }
 
+export interface OpencodeTurnResult extends OneShotSpawnResult {
+  /** error.error of each main-turn `stream error` opencode logged during this turn. */
+  streamErrors: string[];
+  /** The quota/rate-limit refusal that ended the turn early, if any. */
+  providerRefusal?: string;
+}
+
+/** #6049: opencode answers a quota refusal (free tier: "Free usage limit
+ *  reached", HTTP 429) by retrying after the server's retry-after, hours
+ *  later, with nothing on stdout. Waiting can never produce an answer. */
+const OPENCODE_QUOTA_REFUSAL = /usage limit|rate limit|quota/i;
+
+/** Main-turn (`small=false`) `stream error` lines appended to opencode's
+ *  file log (<XDG_DATA_HOME>/opencode/log) since `offsets` was taken. */
+function opencodeStreamErrorsSince(logDir: string, offsets: Map<string, number>): string[] {
+  let files: string[];
+  try { files = fs.readdirSync(logDir).sort(); } catch { return []; }
+  const errors: string[] = [];
+  for (const name of files) {
+    let text: string;
+    try { text = fs.readFileSync(path.join(logDir, name)).subarray(offsets.get(name) ?? 0).toString('utf-8'); } catch { continue; }
+    for (const line of text.split('\n')) {
+      if (!line.includes('message="stream error"') || !line.includes(' small=false ')) continue;
+      const m = line.match(/error\.error="((?:[^"\\]|\\.)*)"/);
+      errors.push(m ? m[1].replace(/\\(.)/g, '$1') : line);
+    }
+  }
+  return errors;
+}
+
+function opencodeLogOffsets(logDir: string): Map<string, number> {
+  const offsets = new Map<string, number>();
+  try {
+    for (const name of fs.readdirSync(logDir)) offsets.set(name, fs.statSync(path.join(logDir, name)).size);
+  } catch { /* no log yet */ }
+  return offsets;
+}
+
 /**
  * Drive one `opencode run` turn against a hermetic HOME + XDG dirs. Default
  * format prints the final answer ALONE on stdout (banner/UI on stderr —
  * observed); no permission flag is needed for MCP tool calls (observed:
  * --auto not passed, deliberately). Shared spawn core: kill(9) escalation +
- * bounded drain.
+ * bounded drain. Provider stream errors come from opencode's own file log;
+ * a quota refusal ends the turn at once instead of at the timeout.
  */
-export async function opencodeOneShotTurn(opts: OpencodeTurnOpts): Promise<OneShotSpawnResult> {
+export async function opencodeOneShotTurn(opts: OpencodeTurnOpts): Promise<OpencodeTurnResult> {
   const bin = resolveOpencodeBinary();
   if (!bin) throw new Error('opencodeOneShotTurn: opencode binary not found');
-  return runOneShotSpawn({
+  const logDir = path.join(opts.home, '.local', 'share', 'opencode', 'log');
+  const offsets = opencodeLogOffsets(logDir);
+  const res = await runOneShotSpawn({
     argv: [
       bin, 'run', opts.prompt, '--pure',
       '--format', opts.format ?? 'default',
@@ -1163,7 +1221,14 @@ export async function opencodeOneShotTurn(opts: OpencodeTurnOpts): Promise<OneSh
     cwd: opts.cwd,
     env: opencodeChildEnv(opts.home, { binDir: opts.binDir, paid: opts.paid }),
     timeoutMs: opts.timeoutMs ?? 240_000,
+    abortWhen: () => opencodeStreamErrorsSince(logDir, offsets).find((e) => OPENCODE_QUOTA_REFUSAL.test(e)),
   });
+  const { abortReason, ...rest } = res;
+  return {
+    ...rest,
+    streamErrors: opencodeStreamErrorsSince(logDir, offsets),
+    ...(abortReason !== undefined ? { providerRefusal: abortReason } : {}),
+  };
 }
 
 // ────────────────────────────────────────────────────────────────────────────

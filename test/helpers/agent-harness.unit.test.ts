@@ -13,7 +13,7 @@
  * leaks into sibling tests.
  */
 import { describe, test, expect } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -35,6 +35,7 @@ import {
   seedOpencodeConfig,
   parseOpencodeJsonl,
   runOneShotSpawn,
+  opencodeOneShotTurn,
 } from './agent-harness.ts';
 import { withEnv } from './with-env.ts';
 
@@ -687,4 +688,84 @@ describe('runOneShotSpawn — drain-cap timer hygiene', () => {
       globalThis.clearTimeout = realClear;
     }
   });
+});
+
+describe('opencodeOneShotTurn — provider refusals logged by opencode surface instead of a silent hang (#6049)', () => {
+  // opencode 1.18.18 answers a free-tier quota refusal ("Free usage limit
+  // reached", HTTP 429) by retrying after the server's retry-after (hours),
+  // printing nothing on stdout; the only trace is the "stream error" line in
+  // <XDG_DATA_HOME>/opencode/log/opencode.log. These stubs replay that exact
+  // log shape so the turn's behavior is pinned without a network call.
+  const QUOTA_LINE =
+    'timestamp=2026-11-01T16:05:31.565Z level=ERROR run=a6ecc561 message="stream error" providerID=opencode modelID=big-pickle ' +
+    'session.id=ses_x small=false agent=build mode=primary error.error="AI_APICallError: Free usage limit reached. ' +
+    'Free models work in OpenCode (https://opencode.ai); subscribe to OpenCode Go to keep going: https://opencode.ai/go"';
+  const TITLE_LINE =
+    'timestamp=2026-11-01T16:05:37.341Z level=ERROR run=a6ecc561 message="stream error" providerID=opencode modelID=big-pickle ' +
+    'session.id=ses_x small=true agent=title mode=primary error.error="AI_RetryError: Failed after 3 attempts. Last error: upstream 502"';
+  const TRANSIENT_LINE =
+    'timestamp=2026-11-01T16:05:31.565Z level=ERROR run=b1 message="stream error" providerID=opencode modelID=big-pickle ' +
+    'session.id=ses_y small=false agent=build mode=primary error.error="AI_APICallError: Bad Gateway"';
+
+  function stubOpencode(dir: string, body: string): string {
+    const bin = join(dir, 'opencode');
+    writeFileSync(bin, `#!/bin/sh\nlog="$XDG_DATA_HOME/opencode/log"\nmkdir -p "$log"\n${body}\n`, { mode: 0o755 });
+    return bin;
+  }
+
+  test('a quota refusal ends the turn within seconds with the provider message (was: timeout with empty stdout)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gb-oc-quota-'));
+    try {
+      const home = join(dir, 'home');
+      const bin = stubOpencode(dir, `printf '%s\\n%s\\n' '${TITLE_LINE}' '${QUOTA_LINE}' >> "$log/opencode.log"\nexec sleep 600`);
+      const t0 = Date.now();
+      const turn = await withEnv({ OPENCODE_BIN: bin }, () =>
+        opencodeOneShotTurn({ prompt: 'p', cwd: dir, home, timeoutMs: 30_000, format: 'json' }));
+      expect(Date.now() - t0).toBeLessThan(15_000);
+      expect(turn.timedOut).toBe(false);
+      expect(turn.finalText).toBe('');
+      expect(turn.providerRefusal).toBe(
+        'AI_APICallError: Free usage limit reached. Free models work in OpenCode (https://opencode.ai); subscribe to OpenCode Go to keep going: https://opencode.ai/go',
+      );
+      expect(turn.streamErrors).toEqual([turn.providerRefusal!]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test('a transient main-stream error is reported but never cuts short a turn opencode recovers from', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gb-oc-transient-'));
+    try {
+      const home = join(dir, 'home');
+      const text = JSON.stringify({ type: 'text', part: { text: 'recovered' } });
+      const bin = stubOpencode(dir, `printf '%s\\n' '${TRANSIENT_LINE}' >> "$log/opencode.log"\nsleep 3\nprintf '%s\\n' '${text}'`);
+      const turn = await withEnv({ OPENCODE_BIN: bin }, () =>
+        opencodeOneShotTurn({ prompt: 'p', cwd: dir, home, timeoutMs: 30_000, format: 'json' }));
+      expect(turn.exitCode).toBe(0);
+      expect(turn.providerRefusal).toBeUndefined();
+      expect(parseOpencodeJsonl(turn.finalText.split('\n')).finalText).toBe('recovered');
+      expect(turn.streamErrors).toEqual(['AI_APICallError: Bad Gateway']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test('stream errors already in the log from an earlier turn in the same home are not attributed to this turn', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gb-oc-offset-'));
+    try {
+      const home = join(dir, 'home');
+      const logDir = join(home, '.local', 'share', 'opencode', 'log');
+      mkdirSync(logDir, { recursive: true });
+      writeFileSync(join(logDir, 'opencode.log'), `${QUOTA_LINE}\n`);
+      const text = JSON.stringify({ type: 'text', part: { text: 'ok' } });
+      const bin = stubOpencode(dir, `printf '%s\\n' '${text}'`);
+      const turn = await withEnv({ OPENCODE_BIN: bin }, () =>
+        opencodeOneShotTurn({ prompt: 'p', cwd: dir, home, timeoutMs: 30_000, format: 'json' }));
+      expect(turn.exitCode).toBe(0);
+      expect(turn.providerRefusal).toBeUndefined();
+      expect(turn.streamErrors).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
