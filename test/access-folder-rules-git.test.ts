@@ -24,7 +24,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { performSync } from '../src/commands/sync.ts';
 import { runAccessRules } from '../src/commands/access-rules.ts';
-import { policyStatus } from '../src/core/access/policy.ts';
+import { policySeams, policyStatus } from '../src/core/access/policy.ts';
 import { readCommittedPolicy, syncAccessPolicyAt, commitPolicyFile, POLICY_FILE } from '../src/core/access/policy-git.ts';
 import { acquireCommitLock } from '../src/core/git/commit-push.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -355,6 +355,115 @@ describe('a rebuild keeps a held removal held (GBRA-218 Step 11)', () => {
     await sync(fresh, root, true);
     expect(await view(fresh)).toEqual({ rules: ['alice', 'team'], held: ['alice:removed'] });
     expect((await stamps(fresh))['partners/alice-example/plan']).toEqual([`${SRC}:alice`, `${SRC}:team`]);
+  }, 120_000);
+});
+
+
+
+describe('a rebuild keeps a deletion or a pre-approval narrowing held (GBRA-218 fix-check)', () => {
+  const engines: PGLiteEngine[] = [];
+  const roots: string[] = [];
+  const view = async (e: PGLiteEngine) => {
+    const s = await policyStatus(e, SRC);
+    return { rules: s.rules.map(r => r.id), held: s.held.map(h => `${h.rule}:${h.kind}`).sort() };
+  };
+  const repo = () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-frgit-replay-'));
+    roots.push(root);
+    git(root, 'init', '-q', '-b', 'main');
+    git(root, 'config', 'user.email', 't@t.co');
+    git(root, 'config', 'user.name', 't');
+    for (const s of ['notes/open', 'partners/alice-example/plan']) writePage(root, s);
+    return root;
+  };
+
+  beforeAll(async () => {
+    for (let i = 0; i < 8; i++) {
+      const e = new PGLiteEngine();
+      await e.connect({ engine: 'pglite' } as never);
+      await e.initSchema();
+      engines.push(e);
+    }
+  }, 180_000);
+
+  afterAll(async () => {
+    for (const e of engines) await e.disconnect();
+    for (const r of roots) rmSync(r, { recursive: true, force: true });
+  });
+
+  const narrowThenRemove = async (engine: PGLiteEngine) => {
+    const root = repo();
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example']]));
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'pages and policy');
+    const live = await seedBrain(engine, root);
+    await sync(live, root, true);
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example'], ['alice', 'partners/alice-example/', 'alice-example']]));
+    git(root, 'commit', '-q', '-am', 'narrow');
+    await sync(live, root);
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example']]));
+    git(root, 'commit', '-q', '-am', 'drop alice rule');
+    await sync(live, root);
+    expect(await view(live)).toEqual({ rules: ['alice', 'team'], held: ['alice:removed'] });
+    return root;
+  };
+
+  test('an interrupted rebuild reads as nobody and the next sync finishes the replay', async () => {
+    const root = await narrowThenRemove(engines[4]!);
+    const fresh = await seedBrain(engines[5]!, root);
+    let installs = 0;
+    policySeams.afterInstall = () => { if (++installs === 1) throw new Error('interrupted rebuild'); };
+    try {
+      await expect(sync(fresh, root, true)).rejects.toThrow('interrupted rebuild');
+    } finally { policySeams.afterInstall = undefined; }
+    expect((await policyStatus(fresh, SRC)).invalid.map(c => c.prefix)).toEqual(['']);
+    await sync(fresh, root, true);
+    const s = await policyStatus(fresh, SRC);
+    expect({ ...(await view(fresh)), invalid: s.invalid }).toEqual({ rules: ['alice', 'team'], held: ['alice:removed'], invalid: [] });
+  }, 120_000);
+
+  test('a shallow checkout cannot be rebuilt: the source reads as nobody until its history is fetched', async () => {
+    const root = await narrowThenRemove(engines[6]!);
+    const shallow = mkdtempSync(join(tmpdir(), 'gbrain-frgit-shallow-'));
+    roots.push(shallow);
+    execFileSync('git', ['clone', '-q', '--depth', '1', `file://${root}`, shallow], { stdio: 'ignore' });
+    const fresh = await seedBrain(engines[7]!, shallow);
+    expect((await syncAccessPolicyAt(fresh, SRC, shallow))?.state).toBe('invalid');
+    expect((await policyStatus(fresh, SRC)).invalid.map(c => c.prefix)).toEqual(['']);
+  }, 120_000);
+
+  test('access.yml deleted by a plain commit keeps its rules held on a rebuilt database', async () => {
+    const root = repo();
+    writePolicy(root, POLICY([['alice', 'partners/alice-example/', 'alice-example']]));
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'pages and policy');
+    const live = await seedBrain(engines[0]!, root);
+    await sync(live, root, true);
+    git(root, 'rm', '-q', POLICY_FILE);
+    git(root, 'commit', '-q', '-m', 'remove the policy file');
+    await sync(live, root);
+    expect(await view(live)).toEqual({ rules: ['alice'], held: ['alice:removed'] });
+    const fresh = await seedBrain(engines[1]!, root);
+    await sync(fresh, root, true);
+    expect(await view(fresh)).toEqual({ rules: ['alice'], held: ['alice:removed'] });
+    expect((await stamps(fresh))['partners/alice-example/plan']).toEqual([`${SRC}:alice`]);
+  }, 120_000);
+
+  test('a narrowing already in access.yml when an older rulebook was approved stays applied on a rebuilt database', async () => {
+    const root = repo();
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example'], ['alice', 'partners/alice-example/', 'alice-example']]));
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example']]), '.gbrain/access.approved');
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'pages, policy and an older approved rulebook');
+    const live = await seedBrain(engines[2]!, root);
+    await sync(live, root, true);
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example']]));
+    git(root, 'commit', '-q', '-am', 'drop alice rule');
+    await sync(live, root);
+    expect(await view(live)).toEqual({ rules: ['alice', 'team'], held: ['alice:removed'] });
+    const fresh = await seedBrain(engines[3]!, root);
+    await sync(fresh, root, true);
+    expect(await view(fresh)).toEqual({ rules: ['alice', 'team'], held: ['alice:removed'] });
   }, 120_000);
 });
 

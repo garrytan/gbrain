@@ -27,11 +27,12 @@ import { gitChildEnv } from '../git-env.ts';
 import { gitAsync } from '../sync-git.ts';
 import { acquireCommitLock, checkoutRoot, commitAndPush, COMMIT_LOCK_ENV, type CommitPushResult } from '../git/commit-push.ts';
 import { parsePolicyYaml, rulebookDigest, serializePolicyYaml, type FolderRule, type PolicyProblem } from './folder-rules.ts';
-import { clearPolicyInvalid, getRevision, listRevisions, markPolicyInvalid, proposeRevision, readAccessStore, writeAccessStore, type ProposalResult, type RestampProgress } from './policy.ts';
+import { clearPolicyInvalid, coverageRows, getRevision, listRevisions, markPolicyInvalid, proposeRevision, readAccessStore, writeAccessStore, type ProposalResult, type RestampProgress } from './policy.ts';
 
 export const POLICY_DIR = '.gbrain';
 export const POLICY_FILE = '.gbrain/access.yml';
 export const APPROVED_FILE = '.gbrain/access.approved';
+const REBUILD_MARK = 'rebuild';
 const POLICY_HEADER = 'Folder read rules for this source (gbrain access rule add|rm). Narrowing changes apply at the next sync;\nwidening changes wait for gbrain access apply --source <id> on the brain host.';
 const APPROVED_HEADER = 'The folder rules an operator approved with gbrain access apply. Written by gbrain; do not edit.';
 
@@ -83,9 +84,14 @@ export async function syncGitPolicy(engine: BrainEngine, sourceId: string, root:
   const store = await readAccessStore(engine, sourceId);
   if (store === 'database') return { source_id: sourceId, state: 'skipped', reason: 'database_store' };
   const files = await readCommittedPolicy(root, opts.rev ?? 'HEAD');
-  if (files.yml === null && files.approved === null && store !== 'git') return { source_id: sourceId, state: 'skipped', reason: 'no_policy' };
   const rev = opts.rev ?? 'HEAD';
-  const rebuild = !(await getRevision(engine, sourceId));
+  if (files.yml === null && files.approved === null && store !== 'git'
+    && !(await gitAsync(root, ['log', '-1', '--first-parent', '--format=%H', rev, '--', POLICY_FILE], { silenceStderr: true }))) {
+    return { source_id: sourceId, state: 'skipped', reason: 'no_policy' };
+  }
+  const rebuild = !(await getRevision(engine, sourceId))
+    || (await coverageRows(engine, sourceId)).some(c => c.reason === 'invalid' && (c.detail as { file?: string } | null)?.file === REBUILD_MARK);
+  if (rebuild) await markPolicyInvalid(engine, sourceId, null, { problems: [{ line: null, message: 'The folder rules are being rebuilt from git history; the source reads as nobody until the rebuild finishes.' }], commit: files.commit, file: REBUILD_MARK });
   let approvedFile: GitPolicySyncResult['approved_file'] = 'absent';
   if (files.approved !== null) {
     const approved = parsePolicyYaml(files.approved);
@@ -98,7 +104,14 @@ export async function syncGitPolicy(engine: BrainEngine, sourceId: string, root:
       approvedFile = lastApproved?.digest === rulebookDigest(approved.rules) ? 'matches' : 'untrusted';
     }
   }
-  if (rebuild) await replayPolicyHistory(engine, sourceId, root, rev, approvedFile === 'loaded', opts.onProgress);
+  if (rebuild) {
+    const problem = await replayPolicyHistory(engine, sourceId, root, rev, approvedFile === 'loaded', opts.onProgress);
+    if (problem) {
+      const problems = [{ line: null, message: problem }];
+      await markPolicyInvalid(engine, sourceId, null, { problems, commit: files.commit, file: REBUILD_MARK });
+      return { source_id: sourceId, state: 'invalid', problems, commit: files.commit, approved_file: approvedFile };
+    }
+  }
   const desired = files.yml === null ? { ok: true as const, rules: [] as FolderRule[] } : parsePolicyYaml(files.yml);
   if (!desired.ok) {
     await markPolicyInvalid(engine, sourceId, desired.prefixes, { problems: desired.problems, commit: files.commit, file: POLICY_FILE });
@@ -111,18 +124,24 @@ export async function syncGitPolicy(engine: BrainEngine, sourceId: string, root:
 }
 
 /**
- * A rebuild replays every committed access.yml since the approved baseline (first-parent order), so a narrowing that a later
- * plain commit removed is applied again and its removal held, as on the database that saw each commit.
+ * A rebuild replays every committed access.yml from the approved baseline's commit on (first-parent order), so a narrowing
+ * that a later plain commit removed or deleted the file over is applied again and its removal held, as on the database that
+ * saw each commit. The whole source reads as nobody from the start of a rebuild until it finishes (an interrupted one is
+ * resumed by the next sync), and a shallow checkout leaves it so.
  */
-async function replayPolicyHistory(engine: BrainEngine, sourceId: string, root: string, rev: string, fromApproved: boolean, onProgress?: (p: RestampProgress) => void): Promise<void> {
-  const log = (args: string[]) => gitAsync(root, ['log', '--first-parent', '--format=%H', ...args], { silenceStderr: true }).catch(() => '');
+async function replayPolicyHistory(engine: BrainEngine, sourceId: string, root: string, rev: string, fromApproved: boolean, onProgress?: (p: RestampProgress) => void): Promise<string | null> {
+  if (await gitAsync(root, ['rev-parse', '--is-shallow-repository'], { silenceStderr: true }) === 'true') {
+    return `The checkout of source ${sourceId} is shallow, so its folder-rule history cannot be replayed; the source reads as nobody. Fetch the full history (git -C ${root} fetch --unshallow) and sync again.`;
+  }
+  const log = (args: string[]) => gitAsync(root, ['log', '--first-parent', '--format=%H', ...args], { silenceStderr: true });
   const anchor = fromApproved ? await log(['-1', rev, '--', APPROVED_FILE]) : '';
-  const commits = (await log(['--reverse', anchor ? `${anchor}..${rev}` : rev, '--', POLICY_FILE])).split('\n').filter(Boolean);
+  const commits = [...(anchor ? [anchor] : []), ...(await log(['--reverse', anchor ? `${anchor}..${rev}` : rev, '--', POLICY_FILE])).split('\n').filter(Boolean)];
   for (const commit of commits.slice(0, -1)) {
     const yml = await gitAsync(root, ['show', `${commit}:./${POLICY_FILE}`], { silenceStderr: true, raw: true }).catch(() => null);
     const parsed = yml === null ? { ok: true as const, rules: [] as FolderRule[] } : parsePolicyYaml(yml);
     if (parsed.ok) await proposeRevision(engine, sourceId, parsed.rules, { origin: 'git', store: 'git', proposedBy: `git:${commit.slice(0, 7)}`, onProgress });
   }
+  return null;
 }
 
 export interface GitPolicyReceipt {
