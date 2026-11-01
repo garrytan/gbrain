@@ -1,0 +1,14 @@
+{
+  "$comment": "Matrix failures already tracked by an issue, so a nightly run stays green while the fix lands. Each entry names one check, explicit release tags and the tracking issue; validateKnownExceptions (scripts/upgrade-matrix/verdict.ts) refuses wildcards and setup errors. Remove an entry when its issue closes. Docs: docs/ci-upgrade-matrix.md#known-exceptions",
+  "exceptions": [
+    {
+      "id": "v0_13_1-grandfather-on-upgrade",
+      "check": "preservation",
+      "from": [
+        "v0.59.2.0"
+      ],
+      "issue": "https://github.com/garrytan/gbrain/issues/7814",
+      "reason": "A brain created by v0.59.2.0 still has the v0.13.0/v0.13.1 orchestrators pending; apply-migrations writes validate: false into every page's frontmatter and content hash."
+    }
+  ]
+}

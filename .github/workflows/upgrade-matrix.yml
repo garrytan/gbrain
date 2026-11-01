@@ -1,0 +1,279 @@
+name: Upgrade matrix
+
+# GBRA-224 W2: install published old releases exactly as a user does, upgrade
+# each through its own updater to one candidate, and check the candidate on the
+# upgraded brain (scripts/upgrade-matrix.ts; docs/ci-upgrade-matrix.md).
+#
+# The gate runs from master: dispatch and schedule runs refuse any other ref,
+# check out master's harness (this workflow and scripts/upgrade-matrix*), and
+# take the candidate as an input that is only ever installed as the subject.
+# The plan job records the harness commit, the candidate tag, commit and tree,
+# and the from-versions in the upgrade-matrix-plan artifact; the summary job
+# writes the upgrade-matrix-receipt artifact. A candidate therefore cannot
+# change the gate that qualifies it. Pull-request runs are developer feedback,
+# not gate evidence: they run the pull request's own harness against its head
+# (their receipt records event pull_request and harness = candidate).
+#
+# Triggers:
+#   workflow_dispatch  full matrix against the candidate input (default: the
+#                      newest release); optional explicit from-versions and a
+#                      proof-only fault injection.
+#   schedule           nightly, full matrix against the newest release; a red
+#                      run opens or updates one upgrade-break issue (the label
+#                      that holds stable promotion) and a green run closes it.
+#   pull_request       reduced subset (N-1 and N-50, PGLite and Postgres,
+#                      keyless, repo-less) against the head, only when schema,
+#                      migration, self-upgrade or harness paths change.
+#
+# This workflow does not gate releases to the latest lane; stable promotion
+# reads its receipt (GBRA-224 W1).
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: Release tag (v0.60.475.0) or commit to qualify; empty means the newest published release
+        required: false
+        type: string
+        default: ''
+      from:
+        description: Comma-separated release tags to upgrade from instead of the resolved N-1/N-10/N-50/30-day/stable set (red proofs, bisecting)
+        required: false
+        type: string
+        default: ''
+      fault:
+        description: Proof only. Corrupt canonical content after the upgrade in every cell; such a run is always red
+        required: false
+        type: choice
+        options: [none, corrupt-after-upgrade]
+        default: none
+  schedule:
+    - cron: '41 6 * * *'
+  pull_request:
+    paths:
+      - 'src/schema.sql'
+      - 'src/core/schema-migrations/**'
+      - 'src/core/schema-embedded.generated.ts'
+      - 'src/core/pglite-schema.generated.ts'
+      - 'src/core/engine-sql/bootstrap.ts'
+      - 'src/core/migrate.ts'
+      - 'src/core/migration-ledger.ts'
+      - 'src/core/migration-orchestration-lock.ts'
+      - 'src/core/self-upgrade.ts'
+      - 'src/core/stable-channel.ts'
+      - 'src/core/bun-floor.ts'
+      - 'src/core/binary-self-update.ts'
+      - 'src/core/upgrade-restart.ts'
+      - 'src/commands/upgrade.ts'
+      - 'src/commands/upgrade-restart.ts'
+      - 'src/commands/self-upgrade.ts'
+      - 'src/commands/check-update.ts'
+      - 'src/commands/apply-migrations.ts'
+      - 'src/commands/apply-migrations-schema.ts'
+      - 'src/commands/migrations/**'
+      - 'scripts/postinstall.ts'
+      - 'scripts/upgrade-matrix.ts'
+      - 'scripts/upgrade-matrix/**'
+      - '.github/workflows/upgrade-matrix.yml'
+
+permissions: {}
+
+concurrency:
+  group: upgrade-matrix-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    name: plan (resolve candidate and from-versions)
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      candidate_sha: ${{ steps.plan.outputs.candidate_sha }}
+      harness_sha: ${{ steps.harness.outputs.sha }}
+    steps:
+      - name: Refuse a gate run from any ref but master
+        if: github.event_name != 'pull_request' && github.ref != 'refs/heads/master'
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::The upgrade matrix gate runs only from master's workflow and harness (this run is on $REF). Dispatch it with --ref master and pass the candidate as the input."
+          exit 1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: harness
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
+      - id: plan
+        name: Resolve the candidate and from-versions (recorded once for every job)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          INPUT_CANDIDATE: ${{ inputs.candidate }}
+          INPUT_FROM: ${{ inputs.from }}
+        run: |
+          set -euo pipefail
+          # Named exception (docs/ci-event-parity.md): pull requests run the reduced
+          # pr profile against their head; the nightly Upgrade matrix schedule runs
+          # the full profile.
+          case "$EVENT" in
+            pull_request) candidate="$PR_HEAD"; profile="pr" ;;
+            workflow_dispatch) candidate="$INPUT_CANDIDATE"; profile="full" ;;
+            *) candidate=""; profile="full" ;;
+          esac
+          args=(plan --candidate "$candidate" --profile "$profile" --out upgrade-matrix-plan.json)
+          if [ -n "${INPUT_FROM:-}" ]; then args+=(--from "$INPUT_FROM"); fi
+          bun scripts/upgrade-matrix.ts "${args[@]}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: upgrade-matrix-plan
+          path: upgrade-matrix-plan.json
+          retention-days: 30
+
+  cell:
+    name: cell (${{ matrix.from }} ${{ matrix.engine }} ${{ matrix.keys }} ${{ matrix.brain }})
+    needs: plan
+    runs-on: ubicloud-standard-4-ubuntu-2404
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    services:
+      postgres:
+        # An empty image skips the container on PGLite cells.
+        image: ${{ matrix.engine == 'postgres' && 'pgvector/pgvector:pg16' || '' }}
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --shm-size=1g
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          ref: ${{ needs.plan.outputs.harness_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          name: upgrade-matrix-plan
+      - name: Restore old-release archives and the Bun package cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4
+        with:
+          path: ~/.cache/upgrade-matrix
+          key: upgrade-matrix-v1-${{ matrix.from }}-${{ needs.plan.outputs.candidate_sha }}
+          restore-keys: |
+            upgrade-matrix-v1-${{ matrix.from }}-
+            upgrade-matrix-v1-
+      - name: Run the cells
+        env:
+          FROM: ${{ matrix.from }}
+          ENGINE: ${{ matrix.engine }}
+          KEYS: ${{ matrix.keys }}
+          BRAIN: ${{ matrix.brain }}
+          FAULT: ${{ inputs.fault }}
+          UPGRADE_MATRIX_POSTGRES_URL: ${{ matrix.engine == 'postgres' && 'postgresql://postgres:postgres@127.0.0.1:5432/postgres' || '' }}
+        run: |
+          set -euo pipefail
+          args=(cell --plan upgrade-matrix-plan.json --from "$FROM" --engine "$ENGINE" --keys "$KEYS" --brain "$BRAIN" --cache-dir "$HOME/.cache/upgrade-matrix" --out-dir "$RUNNER_TEMP/upgrade-matrix")
+          if [ -n "${FAULT:-}" ] && [ "$FAULT" != none ]; then args+=(--fault "$FAULT"); fi
+          bun scripts/upgrade-matrix.ts "${args[@]}"
+      - name: Upload receipts and cell logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: upgrade-matrix-cell-${{ matrix.from }}-${{ matrix.engine }}-${{ matrix.keys }}-${{ matrix.brain }}
+          path: |
+            ${{ runner.temp }}/upgrade-matrix/receipt-*.json
+            ${{ runner.temp }}/upgrade-matrix/cells/*/snapshot-*.json
+            ${{ runner.temp }}/upgrade-matrix/cells/*/service-calls.log
+            ${{ runner.temp }}/upgrade-matrix/cells/*/logs/
+          retention-days: 30
+          if-no-files-found: warn
+
+  summary:
+    name: upgrade-matrix
+    needs: [plan, cell]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          ref: ${{ needs.plan.outputs.harness_sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          name: upgrade-matrix-plan
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          pattern: upgrade-matrix-cell-*
+          path: receipts
+      - name: Summarize (red on any failing, missing or faulted cell)
+        run: bun scripts/upgrade-matrix.ts summarize --plan upgrade-matrix-plan.json --receipts receipts --out upgrade-matrix-receipt.json
+      - name: Upload the run receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: upgrade-matrix-receipt
+          path: upgrade-matrix-receipt.json
+          retention-days: 90
+          if-no-files-found: error
+
+  issue:
+    name: upgrade-break issue (nightly)
+    needs: [plan, summary]
+    # Named exception (docs/ci-event-parity.md): only the nightly Upgrade matrix
+    # schedule writes the upgrade-break issue; dispatch and pull-request runs
+    # report in their summary.
+    if: always() && github.event_name == 'schedule' && needs.plan.result == 'success' && needs.summary.result != 'skipped' && needs.summary.result != 'cancelled'
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          ref: ${{ needs.plan.outputs.harness_sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          name: upgrade-matrix-receipt
+      - name: Open, update or close the upgrade-break issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bun scripts/upgrade-matrix.ts issue --summary upgrade-matrix-receipt.json
