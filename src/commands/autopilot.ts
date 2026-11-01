@@ -55,6 +55,7 @@ import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
 import { inspectLock } from '../core/db-lock.ts';
 import { relativeSourceLocalPathSkipWarning } from '../core/sources-load.ts';
 import { installRepoFallback } from './autopilot/install-repo.ts';
+import { generateLaunchdPlist } from './autopilot/launchd.ts';
 // Path helpers live in a LEAF core module so other commands (gbrain migrate)
 // can read the daemon's state files without importing this one — a dynamic
 // import of a command module drags its whole flag surface into the importer's
@@ -66,6 +67,7 @@ import {
   autopilotPauseReason,
   autopilotDisableStrikesPath,
   autopilotLaunchdLabel,
+  autopilotLaunchdLogPaths,
   autopilotWrapperOwner,
   resolveAutopilotJob,
   DEFAULT_AUTOPILOT_SYSTEMD_UNIT,
@@ -92,6 +94,7 @@ import {
 } from './autopilot/jobs.ts';
 import { autopilotInstallConsent, renderInstallDryRun } from './autopilot/install-consent.ts';
 export { cronLineBelongsToBrain, crontabIndicatesAutopilotInstall, plistWrapperPath, scriptWrapperPath, unitWrapperPath };
+export { generateLaunchdPlist };
 export { autopilotLockPath, autopilotDisabledMarkerPath, autopilotPausedMarkerPath, autopilotLaunchdLabel };
 export { relativeSourceLocalPathSkipWarning as relativeLocalPathSkipWarning };
 
@@ -997,54 +1000,14 @@ export function pgliteDaemonGuardMessage(engineKind: string, force: boolean): st
   );
 }
 
-// v0.37.7.0 #1162 — pure function for plist generation so tests can
-// assert ThrottleInterval/KeepAlive shape without an installed daemon.
-// #3696: WorkingDirectory pins the daemon's cwd away from launchd's `/`
-// default — but it MUST be a spawn-safe path, NEVER the repo. launchd
-// chdir()s before exec, so a WorkingDirectory that stops existing makes
-// every (re)spawn fail: after a repo deletion the wrapper — and its
-// self-disable guard — would never run again, leaving a zombie KeepAlive
-// job that can never take itself out of rotation. $HOME exists for the
-// job's whole lifetime; the WRAPPER cd's into the repo AFTER the guard has
-// proven it exists (writeWrapperScript). Sync refuses a legacy RELATIVE
-// sources.local_path / sync.repo_path row and the guarded readers skip it
-// (#7630); the few readers #7646 tracks still resolve one against that cwd.
-export function generateLaunchdPlist(wrapperPath: string, home: string, job?: AutopilotJob): string {
-  const logPath = job?.logPath ?? `${home}/.gbrain/autopilot.log`;
-  const errPath = job?.errPath ?? `${home}/.gbrain/autopilot.err`;
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>${escapeXml(job?.launchdLabel ?? autopilotLaunchdLabel())}</string>
-  <key>ProgramArguments</key><array>
-    <string>${escapeXml(wrapperPath)}</string>
-  </array>
-  <key>WorkingDirectory</key><string>${escapeXml(home)}</string>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <!--
-    v0.37.7.0 #1162: ThrottleInterval=60 forces launchd to wait at
-    least 60s between relaunches. Combined with the in-process
-    classifier (recoverable vs unrecoverable in the supervisor loop),
-    this prevents the spinning respawn pattern where an unrecoverable
-    error (missing database_url, malformed config) immediately
-    relaunched and re-hit the same error. ThrottleInterval is a hard
-    floor; launchd would have applied a default of 10s if unset.
-  -->
-  <key>ThrottleInterval</key><integer>60</integer>
-  <key>StandardOutPath</key><string>${escapeXml(logPath)}</string>
-  <key>StandardErrorPath</key><string>${escapeXml(errPath)}</string>
-</dict>
-</plist>`;
-}
-
 function installLaunchd(wrapperPath: string, home: string, repoPath: string, job: AutopilotJob) {
   const plist = generateLaunchdPlist(wrapperPath, home, job);
+  const { logPath } = autopilotLaunchdLogPaths(home, job.launchdLabel);
 
   try {
     const agentsDir = join(home, 'Library', 'LaunchAgents');
     mkdirSync(agentsDir, { recursive: true });
+    mkdirSync(dirname(logPath), { recursive: true });
     replaceLegacySharedJob(job, 'macos');
     writeFileSync(plistPath(job.launchdLabel), plist, { mode: 0o644 });
     // launchd rejects group/world-writable agent plists: bootstrap/load fails
@@ -1065,7 +1028,7 @@ function installLaunchd(wrapperPath: string, home: string, repoPath: string, job
     execSync(`launchctl load "${plistPath(job.launchdLabel)}"`, { stdio: 'pipe' });
     console.log(`Installed launchd service: ${job.launchdLabel}`);
     console.log(`  Repo: ${repoPath}`);
-    console.log(`  Log: ${job.logPath}`);
+    console.log(`  Log: ${logPath}`);
     console.log('  Uninstall: gbrain autopilot --uninstall');
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -1571,12 +1534,13 @@ function showStatus(json: boolean, intervalSeconds: number) {
   // gbrainHomePath, not raw HOME: the daemon writes its lock through
   // gbrainHomePath() (#1226), so a GBRAIN_HOME install had status reading one
   // directory while the daemon wrote another — a permanent false "stale".
-  // #5195: every log sink writes under the brain's own home, so the log is
-  // read only there (a raw-$HOME fallback would show another brain's log).
+  // Brain state follows GBRAIN_HOME; launchd's own log sinks stay under the
+  // host home so an external brain volume is not needed to open file handles.
   const job = resolveAutopilotJob();
+  const jobStatus = autopilotJobStatus(job);
   let lastLine = '';
   try {
-    const content = readFileSync(job.logPath, 'utf-8');
+    const content = readFileSync(jobStatus.logPath, 'utf-8');
     const lines = content.trim().split('\n');
     lastLine = lines[lines.length - 1] || '';
   } catch { /* no log yet */ }
@@ -1594,7 +1558,6 @@ function showStatus(json: boolean, intervalSeconds: number) {
     heartbeatAgeSeconds = Math.max(0, Math.floor((Date.now() - mtimeMs) / 1000));
   } catch { /* never ran, or already cleaned up */ }
 
-  const jobStatus = autopilotJobStatus(job);
   const installTarget = jobStatus.installTarget;
   const report = classifyAutopilotStatus({
     installed: installTarget !== null,
@@ -1655,8 +1618,4 @@ function showStatus(json: boolean, intervalSeconds: number) {
   }
 
   setCliExitVerdict(autopilotStatusExitCode(report.state, stalled));
-}
-
-function escapeXml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
