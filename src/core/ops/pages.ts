@@ -30,6 +30,7 @@ import { getContentFlag } from '../quarantine.ts';
 import { fileHeldField, readHeldPages } from '../persistence/held-reads.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs, isPrivatePageForCaller } from '../search/private-visibility.ts';
+import { unquoteAnyTranscriptText } from '../search/transcript-quote.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
 import { listPagesPagination, listingTruncatedNotice } from './list-pages-pagination.ts';
 import { OperationError, opError, type Operation, type OperationContext } from './contract.ts';
@@ -612,7 +613,7 @@ const list_pages: Operation = {
     // the pages such consumers exist to find.
     const rows = scope.sourceIds?.length === 0 ? [] : await ctx.engine.listPages({
       type: p.type as any,
-      tag: p.tag as string,
+      tag: typeof p.tag === 'string' && ctx.remote !== false ? unquoteAnyTranscriptText(p.tag) : p.tag as string,
       limit: limit + 1,
       offset,
       includeDeleted: (p.include_deleted as boolean) === true,

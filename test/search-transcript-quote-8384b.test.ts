@@ -103,6 +103,13 @@ for (const backend of testBackends()) {
     }, 120_000);
 
     test('a quoted page\'s title on search and query rows is quoted with its text, the owner\'s kept', async () => {
+      for (let i = 0; i < 3; i++) {
+        await ok('put_page', { slug: `notes/omit-${i}-8384b`, content: `---\ntype: note\ntitle: "Omitted ${CODE.title} ${i}"\n---\n\n${'gst8384bomit filler words about the probe. '.repeat(120)}` });
+      }
+      const omitted = (await ok('search', { query: 'gst8384bomit', match: 'keyword', return_unit: 'page', token_budget: 128 })) as Array<{ slug: string; title: string; chunk_text: string }>;
+      const bare = omitted.filter(r => r.slug.startsWith('notes/omit-') && !r.chunk_text);
+      expect(bare.length).toBeGreaterThan(0);
+      for (const r of omitted.filter(r => r.slug.startsWith('notes/omit-'))) expect([r.slug, fenced(r.title, CODE.title)]).toEqual([r.slug, true]);
       for (const op of ['search', 'query'] as const) {
         const extra = op === 'query' ? { expand: false } : {};
         const row = (rows: Array<{ slug: string; title: string }>, slug: string) => rows.find(r => r.slug === slug)!;
@@ -144,6 +151,8 @@ for (const backend of testBackends()) {
       await ok('put_page', { slug: AGENT_SLUG, content: formatGetPage(page), expected_revision: page.revision });
       expect([await stored(AGENT_SLUG), await engine.getTags(AGENT_SLUG)]).toEqual([before, [CODE.tag]]);
       const [copied] = await ok('get_tags', { slug: AGENT_SLUG });
+      const listed = await ok('list_pages', { tag: copied });
+      expect((Array.isArray(listed) ? listed : listed.pages ?? listed.results).map((pg: { slug: string }) => pg.slug)).toEqual([AGENT_SLUG]);
       await ok('remove_tag', { slug: AGENT_SLUG, tag: copied });
       expect(await engine.getTags(AGENT_SLUG)).toEqual([]);
       await ok('add_tag', { slug: AGENT_SLUG, tag: copied });
@@ -168,6 +177,15 @@ for (const backend of testBackends()) {
         await ok('put_page', { slug: 'notes/flow-fenced', expected_revision: flow,
           content: `---\n{type: note, title: ${JSON.stringify(fenceTranscriptText('Pasted', 'notes/flow-fenced'))}}\n---\n\nPasted body.\n` });
         expect([(await stored('notes/flow-fenced'))!.title, (await stored('notes/flow-fenced'))!.frontmatter]).toEqual([(await stored('notes/flow-plain'))!.title, (await stored('notes/flow-plain'))!.frontmatter]);
+        const nested = JSON.stringify(fenceTranscriptText('Pasted', 'notes/nested-fenced'));
+        for (const [slug, head] of [['notes/nested-fenced', `metadata: {title: ${nested},\nstable: original}`], ['notes/anchor-fenced', `metadata: {title: ${nested.replace('nested', 'anchor')}, stable: &stable original}\ncopy: *stable`]] as const) {
+          const plainHead = head.replace(/title: "(?:[^"\\]|\\.)*"/, 'title: Pasted');
+          await ok('put_page', { slug: `${slug}-plain`, content: `---\ntype: note\ntitle: Pasted\n${plainHead}\n---\n\nPasted body.\n` });
+          await ok('put_page', { slug, content: '---\ntype: note\ntitle: Old\n---\n\nOld body.\n' });
+          const rev = (await ok('get_page', { slug })).revision;
+          await ok('put_page', { slug, expected_revision: rev, content: `---\ntype: note\ntitle: Pasted\n${head}\n---\n\nPasted body.\n` });
+          expect([slug, (await stored(slug))!.frontmatter]).toEqual([slug, (await stored(`${slug}-plain`))!.frontmatter]);
+        }
       } finally {
         await engine.setConfig('brain.timezone', '');
       }

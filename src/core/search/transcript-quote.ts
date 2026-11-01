@@ -627,9 +627,12 @@ export function deliveredQuoteText(row: Row, text: string, header = false, untru
   return label === null ? text : fenceTranscriptText(text, label, rowHeader(row, header));
 }
 
-/** #8384: a row's title as step 2 delivers it to an untrusted reader: fenced with its quoted text (what capEvidenceToBudget counts). */
+/**
+ * #8384: a row's title as step 2 delivers it to an untrusted reader: fenced with its quoted text (what capEvidenceToBudget
+ * counts), and fenced alone when the row carries no text (an evidence-omitted keyword row) but would be quoted with some.
+ */
 export function deliveredQuoteTitle(row: Row, title: string, untrusted: boolean): string {
-  const label = untrusted && title ? quoteLabel(row, true) : null;
+  const label = untrusted && title ? quoteLabel({ ...row, chunk_text: row.chunk_text || title }, true) : null;
   return label === null ? title : fenceTranscriptText(title, label);
 }
 
@@ -645,11 +648,11 @@ export function fenceTranscriptRows<T extends Row>(rows: T[], recount?: { count:
   const header = recount?.delivery.date_header === true;
   return rows.map(r => {
     const label = quoteLabel(r, untrusted);
-    if (label === null) return r;
-    const head = rowHeader(r, header);
-    const chunk_text = fenceTranscriptText(r.chunk_text, label, head);
     const title = untrusted && r.title ? { title: deliveredQuoteTitle(r, r.title, true) } : {};
     if (recount && title.title) recount.delivery.budget_used += recount.count(title.title) - recount.count(r.title!);
+    if (label === null) return title.title !== undefined && title.title !== r.title ? { ...r, ...title, quoted: 'transcript' } as T : r;
+    const head = rowHeader(r, header);
+    const chunk_text = fenceTranscriptText(r.chunk_text, label, head);
     const d = (r as { delivered?: Delivered }).delivered;
     if (!d) return { ...r, chunk_text, ...title, quoted: 'transcript' } as T;
     const headLen = headerLine(r.chunk_text, head).length;

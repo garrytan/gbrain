@@ -274,7 +274,9 @@ function unquotedStrings(value: unknown, slug: string): unknown {
  * #8377: a quoted read's reading shape fences the title and each frontmatter string as `slug`'s (a whole-markdown read is
  * fenced once instead, and its metadata is the page's own). YAML indents those fences, so the body's unquote misses them.
  * #8384: only the top-level keys that held a fence are rewritten; every other line keeps the bytes the caller sent, so a
- * naive datetime keeps its brain-timezone reading. A fenced key not found on its own line rewrites the whole block.
+ * naive datetime keeps its brain-timezone reading. A fenced key not found on its own line, or a line rewrite that does not
+ * parse back to the unquoted values (a flow mapping continued on an unindented line, an anchor another key aliases),
+ * rewrites the whole block.
  */
 function unquotedFrontmatter(sent: string, content: string, slug: string): string {
   const offset = frontmatterBodyOffset(content);
@@ -298,7 +300,14 @@ function unquotedFrontmatter(sent: string, content: string, slug: string): strin
     } else out.push(...lines.slice(i, end));
     i = end;
   }
-  return fenced.size ? dataFrontmatter.stringify('', data) + content.slice(offset) : [...out, ...lines.slice(close)].join('\n') + content.slice(offset);
+  const whole = dataFrontmatter.stringify('', data) + content.slice(offset);
+  if (fenced.size) return whole;
+  const partial = [...out, ...lines.slice(close)].join('\n') + content.slice(offset);
+  try {
+    return JSON.stringify(parseMarkdownHead(partial).frontmatter) === JSON.stringify(data) ? partial : whole;
+  } catch {
+    return whole;
+  }
 }
 
 async function unquotedPutContent(engine: BrainEngine, sourceId: string, slug: string, content: string): Promise<string> {
