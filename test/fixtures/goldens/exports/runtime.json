@@ -532,7 +532,8 @@
         "toolLoop",
         "transcribe",
         "validateModelId",
-        "withBudgetTracker"
+        "withBudgetTracker",
+        "withoutBudgetTracker"
       ],
       "./ai/invocation-guard": [
         "aiInvocationObserverFailures",

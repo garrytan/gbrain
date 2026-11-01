@@ -13,6 +13,8 @@ import { describeJudges } from '../../src/core/skillopt/reflect.ts';
 import { READ_ONLY_BRAIN_TOOLS, rolloutToolsForSkill } from '../../src/core/skillopt/rollout.ts';
 import type { BenchmarkTask, RolloutBatchHook, RolloutBatchRequest, ScoredRollout } from '../../src/core/skillopt/types.ts';
 import * as skillopt from '../../src/core/skillopt/index.ts';
+import { getCurrentBudgetTracker, withBudgetTracker } from '../../src/core/ai/gateway.ts';
+import { BudgetTracker } from '../../src/core/budget/budget-tracker.ts';
 
 const engine = {} as BrainEngine;
 const task = (id: string, arg = 'x'): BenchmarkTask => ({ task_id: id, task: `do ${id}`, judge: { kind: 'rule', checks: [{ op: 'contains', arg }] } } as BenchmarkTask);
@@ -52,6 +54,19 @@ describe('rollout hook (B1.3)', () => {
       .then(() => null, (e) => e);
     expect(String(err?.message)).toContain(SKILLOPT_HOOK_INFRA_ERROR);
     expect(isSkilloptMustAbort(err)).toBe(true);
+  });
+
+  test('the hook runs outside the run budget, so in-process rollouts are never billed to the optimizer cap', async () => {
+    const seen: Array<BudgetTracker | null> = [];
+    const hook: RolloutBatchHook = async (req) => {
+      seen.push(getCurrentBudgetTracker());
+      await Promise.resolve();
+      seen.push(getCurrentBudgetTracker());
+      return req.tasks.map(() => [row(1), row(1), row(1)]);
+    };
+    const tracker = new BudgetTracker({ maxCostUsd: 1, label: 'skillopt:test' });
+    await withBudgetTracker(tracker, () => scoreSkillPerTask({ engine, skillText: 'S', tasks: tasks('s', 2), targetModel: 'm', rolloutHook: hook }));
+    expect(seen).toEqual([null, null]);
   });
 
   test('a train_forward row without a trajectory is an infra error', async () => {

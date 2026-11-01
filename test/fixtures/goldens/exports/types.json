@@ -2496,6 +2496,13 @@
         "signature": [
           "<T>(tracker: BudgetTracker, fn: () => Promise<T>) => Promise<T>"
         ]
+      },
+      {
+        "kind": "function",
+        "name": "withoutBudgetTracker",
+        "signature": [
+          "<T>(fn: () => Promise<T>) => Promise<T>"
+        ]
       }
     ],
     "./ai/invocation-guard": [

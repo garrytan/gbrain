@@ -2777,6 +2777,11 @@ export function withBudgetTracker<T>(tracker: BudgetTracker, fn: () => Promise<T
   return __budgetStore.run(tracker, fn);
 }
 
+/** Run fn outside any budget scope: calls it makes are not billed to the caller's tracker. */
+export function withoutBudgetTracker<T>(fn: () => Promise<T>): Promise<T> {
+  return __budgetStore.exit(fn);
+}
+
 export function getCurrentBudgetTracker(): BudgetTracker | null {
   return __budgetStore.getStore() ?? null;
 }

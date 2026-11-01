@@ -22,6 +22,7 @@
 
 import { runWithLimit, type SettledItem } from '../worker-pool.ts';
 import { createHash } from 'node:crypto';
+import { withoutBudgetTracker } from '../ai/gateway.ts';
 import { isSkilloptMustAbort, SKILLOPT_HOOK_INFRA_ERROR, SKILLOPT_RUNTIME_EXCEEDED } from './must-abort.ts';
 import { runRollout, type RolloutOpts } from './rollout.ts';
 import { scoreTrajectory } from './score.ts';
@@ -78,7 +79,7 @@ interface PerTask {
 /** One hook call for the whole batch; a malformed reply is an infra error, never a score. */
 async function hookBatch(opts: ValidateGateOpts, hook: RolloutBatchHook, runsPerTask: number): Promise<PerTask[]> {
   if (opts.deadlineMs !== undefined && Date.now() > opts.deadlineMs) throw new Error(SKILLOPT_RUNTIME_EXCEEDED);
-  const rows = await hook({
+  const rows = await withoutBudgetTracker(() => hook({
     phase: opts.phase ?? 'sel_gate',
     skillText: opts.candidateSkillText,
     skillSha256: createHash('sha256').update(opts.candidateSkillText).digest('hex'),
@@ -86,7 +87,7 @@ async function hookBatch(opts: ValidateGateOpts, hook: RolloutBatchHook, runsPer
     runsPerTask,
     epoch: opts.epoch ?? 0,
     step: opts.step ?? 0,
-  }, opts.abortSignal);
+  }, opts.abortSignal));
   const needsTrajectory = opts.phase === 'train_forward';
   const badRun = (r: ScoredRollout | undefined) => typeof r?.score !== 'number' || !(r.score >= 0 && r.score <= 1)
     || (needsTrajectory && (typeof r.trajectory !== 'object' || r.trajectory === null));
