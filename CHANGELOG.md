@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.540.0] - 2026-11-01
+
+**A write to a page with a facts or takes fence no longer re-embeds the whole page: `remember`, timeline and fence writes now embed only the chunks whose text changed (#6961).**
+
+Vector reuse was turned off for every page with a protected fence, so each write to an entity page deleted and re-embedded all of its chunks. One reporter measured 13 to 15 million embedding tokens a day from that alone. Entity pages carry the fences and take the most writes.
+
+### Itemized changes
+
+- **Fenced page reuse (#6961).** A fenced page now reuses a stored vector when its recorded embedding input equals the one the import would embed, the same check every other page gets. The stored index must still be sealed by the fence-safe chunker, so a reused vector's text holds no private fence row. A chunk whose text changed, such as the fence chunk a new fact lands in, is embedded again. On a fenced page the importer reuses only vectors with a recorded embedding input, so a legacy vector with none is embedded again. A one-row fact append on a five-chunk entity page now makes one embedding call instead of five. Contributed by @javieraldape (#7055, rewritten on master).
+
 ## [0.60.539.0] - 2026-11-01
 
 **A remote `put_page` of a page an agent read whole now keeps its frontmatter and the code blocks it added, and timeline sources and ontology values are quoted below "your notes" like the rest of their rows.**
