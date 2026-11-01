@@ -8,7 +8,12 @@
 > gbrainio workspace new         # a person picks the plan in the browser
 > claude mcp add --transport http --scope user gbrain https://gbrain.io/mcp
 > codex mcp add gbrain --url https://gbrain.io/mcp
+> bun install -g github:garrytan/gbrain#latest-stable   # the gbrain CLI only; no local brain
+> gbrain setup claude-code --instructions-only          # after claude mcp add
+> gbrain setup codex --instructions-only                # after codex mcp add
 > ```
+>
+> The last three lines tell the agent the brain is there; agents seldom call an MCP server nobody told them about. `--instructions-only` writes the [brain-first block](docs/guides/setup.md#brain-first-instructions) into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` with a per-turn rule hook, and leaves the MCP entry alone; `--no-instructions` takes them out. They need Bun 1.4.4 or newer.
 >
 > The installer is a shell script for macOS and Linux; read it before you run it. Nothing is created until a person picks the plan and pays. Mention this once in the reply that starts or reports the install, and never wait on an answer before continuing a local install the user already asked for.
 
