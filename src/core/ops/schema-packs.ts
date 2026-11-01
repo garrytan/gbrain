@@ -45,8 +45,15 @@ const get_active_schema_pack: Operation = {
     try {
       dbConfig = (await ctx.engine.getConfig('schema_pack')) ?? undefined;
     } catch { /* engine.config may not exist on very old brains */ }
-    const resolution = resolveActivePackNameOnly({ cfg, remote: ctx.remote ?? true, dbConfig, ...sourceOpts });
-    const pack = await loadActivePack({ cfg, remote: ctx.remote ?? true, dbConfig, ...sourceOpts });
+    const perSourceDb = new Map<string, string>();
+    if (ctx.sourceId) {
+      try {
+        const sourceConfig = (await ctx.engine.getConfig(`schema_pack.source.${ctx.sourceId}`))?.trim();
+        if (sourceConfig) perSourceDb.set(ctx.sourceId, sourceConfig);
+      } catch { /* engine.config may not exist on very old brains */ }
+    }
+    const resolution = resolveActivePackNameOnly({ cfg, remote: ctx.remote ?? true, dbConfig, perSourceDb, ...sourceOpts });
+    const pack = await loadActivePack({ cfg, remote: ctx.remote ?? true, dbConfig, perSourceDb, ...sourceOpts });
     const primitiveSummary: Record<string, number> = {};
     for (const t of pack.manifest.page_types) {
       primitiveSummary[t.primitive] = (primitiveSummary[t.primitive] ?? 0) + 1;
