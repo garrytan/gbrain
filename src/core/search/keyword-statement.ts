@@ -35,7 +35,7 @@ export interface KeywordPageAfter { score: number; page_id: number }
 export interface KeywordPageWindow { limit: number; offset?: number; after?: KeywordPageAfter }
 
 /** `params[0..whereParamCount)` are the ones `where` reads; the rank params follow, read only by `score`. */
-interface KeywordMatch { where: string; score: string; params: unknown[]; whereParamCount: number }
+interface KeywordMatch { from: string; where: string; score: string; params: unknown[]; whereParamCount: number }
 
 const FROM = `content_chunks cc JOIN pages p ON p.id = cc.page_id JOIN sources s ON s.id = p.source_id`;
 
@@ -81,7 +81,14 @@ export function buildKeywordMatch(query: string, opts: SearchOpts | undefined): 
   const factor = buildSourceFactorCase('p.slug', opts?.source_boosts ?? resolveBoostMap(), opts?.detail);
   const where = `${predicate}${filters} ${hardExclude} ${buildVisibilityClause('p', 's', { ...opts, chunkAlias: 'cc' })} AND cc.modality = 'text'`;
   const whereParamCount = params.length;
-  return { where, score: `((${rank()}) * ${factor})::float8`, params, whereParamCount };
+  // Remote visibility subplans make the ordered page-id path look cheaper.
+  // Fence the indexed match before DISTINCT/ORDER BY can select that path:
+  // otherwise a common word detoasts every chunk while walking idx_chunks_page.
+  // The outer predicate stays intact, including every visibility/source filter.
+  const from = opts?.excludePrivate && !hasCJK(query)
+    ? `(SELECT * FROM content_chunks WHERE ${predicate.replaceAll('cc.', '')} AND modality = 'text' OFFSET 0) cc JOIN pages p ON p.id = cc.page_id JOIN sources s ON s.id = p.source_id`
+    : FROM;
+  return { from, where, score: `((${rank()}) * ${factor})::float8`, params, whereParamCount };
 }
 
 /** Distinct matching pages, capped at KEYWORD_COUNT_CAP + 1. */
@@ -89,7 +96,7 @@ export function buildKeywordCountStatement(query: string, opts: SearchOpts | und
   const m = buildKeywordMatch(query, opts);
   if (!m) return null;
   return {
-    sql: `SELECT count(*)::int AS n FROM (SELECT DISTINCT cc.page_id FROM ${FROM} WHERE ${m.where} LIMIT ${KEYWORD_COUNT_CAP + 1}) matched`,
+    sql: `SELECT count(*)::int AS n FROM (SELECT DISTINCT cc.page_id FROM ${m.from} WHERE ${m.where} LIMIT ${KEYWORD_COUNT_CAP + 1}) matched`,
     params: m.params.slice(0, m.whereParamCount),
   };
 }
@@ -109,7 +116,7 @@ export function buildKeywordPagesStatement(query: string, opts: SearchOpts | und
   const messageId = `NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL`;
   return {
     sql: `WITH matched AS (
-        SELECT cc.page_id, cc.id AS chunk_id, ${m.score} AS score FROM ${FROM} WHERE ${m.where}
+        SELECT cc.page_id, cc.id AS chunk_id, ${m.score} AS score FROM ${m.from} WHERE ${m.where}
       ), best AS (
         SELECT DISTINCT ON (page_id) page_id, chunk_id, score FROM matched ORDER BY page_id, score DESC, chunk_id ASC
       )
