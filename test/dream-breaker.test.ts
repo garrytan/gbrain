@@ -158,6 +158,17 @@ describe('gbrain dream reset-key', () => {
     expect(await captured(() => runDreamResetKey(engine, ['--list']))).toContain('No tripped dream keys');
   });
 
+  test('a contained phase key printed by --list can be reset with its own command (#7505)', async () => {
+    const { runDreamResetKey } = await import('../src/commands/dream-reset-key.ts');
+    const { recordContainedPaidFailure } = await import('../src/core/cycle/dream-breaker.ts');
+    for (let i = 0; i < 3; i++) await recordContainedPaidFailure(engine, 'synthesize_concepts', 'default');
+    const listed = JSON.parse(await captured(() => runDreamResetKey(engine, ['--list', '--json'])));
+    const phaseKey = 'dream:phase:synthesize_concepts:default';
+    expect(listed.tripped).toEqual([expect.objectContaining({ base_key: phaseKey, dead_submissions: 3, reset_command: `gbrain dream reset-key '${phaseKey}'` })]);
+    expect(await captured(() => runDreamResetKey(engine, [phaseKey]))).toContain(`Reset ${phaseKey}`);
+    expect(await captured(() => runDreamResetKey(engine, ['--list']))).toContain('No tripped dream keys');
+  });
+
   test('the dead-submission index exists after schema init', async () => {
     const rows = await engine.executeRaw(`SELECT indexname FROM pg_indexes WHERE indexname = 'idx_minion_jobs_dead_subagent_finished'`);
     expect(rows).toHaveLength(1);
