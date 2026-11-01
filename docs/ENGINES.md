@@ -467,7 +467,7 @@ under a pending prefix, so nothing is shown. The owner (without `FORCE ROW LEVEL
 bypasses RLS are not affected, and `gbrain access` rule commands refuse such a role with `permission_denied`. A scoped
 role that writes or serves pages needs these policies; they let it read the rules and lock a source's policy row while
 stamping, but not change either. Row-level security does not cover TRUNCATE or triggers, so the recipe also revokes
-those. A policy that filters these rows hides rules from the role and so reveals the pages under them: keep `USING (true)`. The folder-rule lineage test also reads `slug_rename_history` (every slug a renamed page has had), which renames write; a role that cannot read it reads every page as covered, so a scoped role needs a `USING (true)` policy there like the other tables it writes:
+those. A policy that filters these rows hides rules from the role and so reveals the pages under them: keep `USING (true)`. The folder-rule lineage test also reads `slug_rename_history` (every slug a renamed page has had), which renames write; a role that cannot read it reads every page as covered, so a scoped role needs a `USING (true)` policy there like the other tables it writes. The recipe for the three access tables:
 
 <!-- gbrain:access-rls-recipe:begin (applied verbatim by test/access-folder-scoped-role.test.ts) -->
 ```sql
