@@ -297,14 +297,21 @@ interface JsonReport {
  * D2: a healthy/fixed report is the --json document; an unfixed one (exit 1)
  * is the error envelope leading with the report's keys (code
  * database_error, reason = the diagnosis reason, the tier's next step as
- * the fix).
+ * the fix). A tier this run (`ran`) already went through is never the fix
+ * again: re-running it repeats the same failed steps, so the remediation goes
+ * to the user instead (#7137).
  */
-function emit(json: boolean, report: JsonReport, humanLines: string[]): void {
+function emit(json: boolean, report: JsonReport, humanLines: string[], ran?: DbRepairOpts): void {
   if (!json) { console.log(humanLines.join('\n')); return; }
   if (report.fixed) { void writeJsonDocument(JSON.stringify(report, null, 2)); return; }
   const d = report.remaining ?? report.diagnosis;
   const applied = report.applied.length > 0;
+  const tierRan = report.tier === 'auto' ? ran?.yes : report.tier === 'rewrite' ? ran?.applyRewrites : false;
   const fix: Action | undefined = applied || report.tier === 'manual' || report.tier === undefined ? undefined
+    : tierRan
+      ? { consent: [], actor: 'user', requires_exclusive: false,
+        why: `This run already went through the ${report.tier} tier and it did not fix the database; running it again repeats the same steps.`,
+        ...(d?.remediation ? { user_message: d.remediation } : {}) }
     : report.tier === 'auto'
       ? { argv: ['gbrain', 'db-repair', '--yes'], consent: [], actor: 'agent', requires_exclusive: false,
         why: 'Applies the auto tier the plan names (bounded retries, pending migrations, CREATE EXTENSION vector, starting gbrain\'s own docker container).' }
@@ -312,7 +319,7 @@ function emit(json: boolean, report: JsonReport, humanLines: string[]): void {
         why: 'Rewrites database_url in ~/.gbrain/config.json as the plan says (undo: gbrain db-repair --yes --undo-last-rewrite).',
         user_message: 'gbrain wants to rewrite the database connection URL in its config to reach your database. Allow it? (It can be undone.)' };
   const e = opError('database_error', d?.message ?? 'The database is still not reachable.',
-    fix ? `Apply the plan: ${fix.argv!.join(' ')}` : (d?.remediation ?? 'Follow the remediation in the report.'),
+    fix?.argv ? `Apply the plan: ${fix.argv.join(' ')}` : (d?.remediation ?? 'Follow the remediation in the report.'),
     { ...(report.reason ? { reason: report.reason } : {}), ...(fix ? { fix } : {}), ...(d?.remediation ? { why: d.remediation } : {}) });
   writeCliError(e, 'db-repair', { json: true, stderr: false, legacy: { ...report } });
 }
@@ -542,7 +549,7 @@ async function repairHost(opts: DbRepairOpts, cfg: GBrainConfig, brainId: string
   }
 
   const outcome = await applyLadder(diagnosis, tier, opts, cfg, engineConfig, url, source, brainId, deps, report);
-  emit(opts.json, report, outcome.humanLines);
+  emit(opts.json, report, outcome.humanLines, opts);
   return outcome.code;
 }
 
