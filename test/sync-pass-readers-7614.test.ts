@@ -239,6 +239,49 @@ for (const backend of testBackends()) {
     expect(await blocked()).toEqual([]);
   });
 
+  synced('#8365: productive transient passes reset abandonment in status, doctor and the next pin', async ({ engine, root, sync, status, blocked }) => {
+    const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text AS incarnation FROM sources WHERE id='default'");
+    // Working-tree passes cannot fold their stamp into the last import: stop the next round after real publication.
+    await engine.setConfig('sync.include_working_tree', 'true');
+    const stopped = () => readPassRow(engine, 'default', incarnation!);
+    const interrupt = async (productive: boolean) => {
+      let reached = false;
+      installFaultHook(async (point, meta) => {
+        if (point === 'sync:round_start' && meta.round === (productive ? 2 : 1)) {
+          reached = true;
+          throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+        }
+      });
+      try { await expect(sync()).rejects.toThrow('statement timeout'); } finally { installFaultHook(undefined); }
+      expect(reached).toBe(true);
+      return (await stopped())!;
+    };
+    // A previously failed pass must not poison later productive passes, even with the same transient diagnostic.
+    commitFile(root, 'progress-0.md');
+    expect(abandonedPasses(await interrupt(false))).toBe(1);
+    for (const i of [0, 1]) {
+      if (i) commitFile(root, 'progress-1.md');
+      const pass = await interrupt(true);
+      expect(pass.value.telemetry.settled).toBeGreaterThan(0);
+      expect(await engine.getPage(`progress-${i}`, { sourceId: 'default' })).not.toBeNull();
+      expect(abandonedPasses(pass)).toBe(0);
+      expect([(await status()).state, (await status()).reason]).toEqual(['resumable', 'pass_unfinished']);
+      expect((await status()).next?.argv).toContain('sync');
+      expect(await blocked()).toEqual([]);
+    }
+    // A productive ending resets the persisted history at pin, not just the presentation of its own row.
+    for (const count of [1, 2]) {
+      const pass = await interrupt(false);
+      expect(pass.value.telemetry.settled).toBe(0);
+      expect(abandonedPasses(pass)).toBe(count);
+      expect(pass.value.obligations.abandoned_streak ?? 0).toBe(count - 1);
+    }
+    expect((await status()).reason).toBe('pass_abandoned');
+    expect((await blocked()).map(entry => entry.code)).toEqual(['pass_abandoned']);
+    expect((await sync()).status).toMatch(/^(up_to_date|synced)$/);
+    expect(await blocked()).toEqual([]);
+  });
+
   synced('#7982: a stop after the pass row is gone writes no row back, fenced or not', async ({ engine, root, sync }) => {
     const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text AS incarnation FROM sources WHERE id='default'");
     const lostConnection = () => Object.assign(new Error('Connection terminated unexpectedly'), { code: '08006' });

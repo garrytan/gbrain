@@ -78,8 +78,8 @@ export type PassStatusReason = 'pass_unfinished' | 'pass_interrupted' | 'pass_ab
  * holds the lease (its process was killed or crashed) and never while one does, since a pass writes its row only per batch.
  * #7611: nor does the streak an earlier pass stored while a live holder renews the lease: the open pass is running, and the
  * streak counts again once that holder stops renewing.
- * #7982: a pass that ended on a transient stop counts itself, so passes that hit the same statement timeout every time build the
- * streak too. `now` is the database clock at the row's read (`passReadClock`), never only this process's.
+ * #7982 / #8365: a pass that ended on a transient stop without settling work counts itself; a productive transient pass
+ * resets the streak, so bounded catch-up remains resumable. `now` is the database clock at the row's read (`passReadClock`).
  */
 export function abandonedPasses(row: PassRow, now = passReadClock(row), interrupted?: boolean): number {
   const t = row.value.telemetry, streak = row.value.obligations.abandoned_streak ?? 0;

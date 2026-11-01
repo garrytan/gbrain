@@ -76,7 +76,8 @@ export interface ManagedSyncPassValue {
     not_converged_streak: number;
     /**
      * #7355: at this pass's pin, how many passes in a row before it never ended (their row was left `open`: a pass the drain's governor abandoned, or a
-     * killed process) or (#7982) ended on a transient stop (`transientEnding`). Status counts it only while this pass's row is open or ended transient.
+     * killed process) or (#7982) ended on a transient stop without settling work (`transientEnding`). A productive transient
+     * ending resets this history at the next pin; status ignores it immediately for that ending (#8365).
      */
     abandoned_streak?: number;
     /** When the current run of unhealthy endings (`blocked`, `not_converged`) began; kept across them, cleared at `synced`/`up_to_date`. The §3.7 readers age a stuck source from it. */
@@ -141,7 +142,7 @@ export const SETTLE_MISMATCH_STREAK = 3;
 export const NOT_CONVERGED_REPORT_STREAK = 3;
 /**
  * #7355: passes in a row that never ended (the newest counted once its row has been quiet for ABANDONED_QUIET_MS) or (#7982) ended on a transient stop
- * before status stops sending the plain sync.
+ * without settling work before status stops sending the plain sync.
  */
 export const ABANDONED_REPORT_STREAK = 2;
 /** The drain's in-pass no-progress window: an open row quiet this long belongs to no live pass. */
@@ -157,10 +158,11 @@ export const passReadClock = (row: PassRow): number => row.read_at ? Date.parse(
 
 /**
  * #7982: a pass that ended on a transient stop (`unrecordedStop`: a statement timeout, a lost connection, write back-pressure, a refresh fence).
- * One that recurs every pass stops every pass, so these endings build the abandoned streak as a pass left open does.
+ * Only an ending without settled work builds the abandoned streak as a pass left open does. A productive pass must keep
+ * catch-up resumable even if the same transient diagnostic recurs (#8365). Older rows without a settled count remain conservative.
  */
-export const transientEnding = (telemetry: Pick<ManagedSyncPassValue['telemetry'], 'outcome' | 'stop_reason'>): boolean =>
-  telemetry.outcome === 'resumable' && telemetry.stop_reason === 'transient';
+export const transientEnding = (telemetry: Pick<ManagedSyncPassValue['telemetry'], 'outcome' | 'stop_reason' | 'settled'>): boolean =>
+  telemetry.outcome === 'resumable' && telemetry.stop_reason === 'transient' && !(telemetry.settled > 0);
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 const iso = (value: Date | string) => new Date(value).toISOString();
