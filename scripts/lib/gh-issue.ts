@@ -260,7 +260,7 @@ export function readZipEntry(zip: Uint8Array, name: string): Uint8Array | undefi
   return undefined;
 }
 
-/** One JSON file from a run's named artifact; `reason` says why it could not be read (missing, expired, unreadable), and `transient` marks a failed request that a later read may get past. */
+/** One JSON file from a run's named artifact; `reason` says why it could not be read (missing, expired, unreadable), and `transient` marks a failed request that a later read may get past: no response, a 5xx, a 429 or a rate-limit 403, never another 4xx such as a 403 or an expired artifact's 410. */
 export async function fetchArtifactJson(client: GitHubClient, runId: number, artifact: string, file: string): Promise<{ value?: unknown; reason?: string; transient?: boolean }> {
   if (!client.download) return { reason: 'this client cannot download artifacts' };
   const failed = (e: unknown) => `reading run ${runId}'s '${artifact}' artifact failed: ${e instanceof Error ? e.message : String(e)}`;
@@ -272,7 +272,9 @@ export async function fetchArtifactJson(client: GitHubClient, runId: number, art
     if (found.expired) return { reason: `run ${runId}'s '${artifact}' artifact has expired` };
     zip = await client.download(`repos/{repo}/actions/artifacts/${found.id}/zip`);
   } catch (e) {
-    return { reason: failed(e), transient: true };
+    const status = (e as { status?: number }).status ?? 0;
+    const permanent = status >= 400 && status < 500 && status !== 429 && !(status === 403 && /rate limit/i.test(e instanceof Error ? e.message : ''));
+    return permanent ? { reason: failed(e) } : { reason: failed(e), transient: true };
   }
   try {
     const bytes = readZipEntry(zip, file);
