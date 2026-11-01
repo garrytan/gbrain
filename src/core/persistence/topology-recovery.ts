@@ -192,7 +192,7 @@ export async function finishTopologyClone(engine:BrainEngine,id:string,hooks:Clo
         row=await readChange(engine,id);
         if(row.state!=='committed'){
           const code=(error as {code?:string}).code;
-          if(['permission_denied','source_changed','recovery_required'].includes(code??''))return abortClone(engine,row,record,code!);
+          if(['permission_denied','source_changed','recovery_required','owner_marker_missing'].includes(code??''))return abortClone(engine,row,record,code!);
           throw error;
         }
       }
@@ -232,7 +232,7 @@ export async function recoverSourceTopologies(engine:BrainEngine,opts:{hostId?:s
   for(const row of rows){
     let finished=false;
     try{await withTopologyLocks(engine,row.source_id,async()=>{const done=await finishTopologyClone(engine,row.id);if(!done.recovery){recovered++;finished=true;}},undefined,0);}
-    catch(error){if(!(error instanceof OperationError&&['write_pending','recovery_required'].includes(error.code)))throw error;}
+    catch(error){if(!(error instanceof OperationError&&['write_pending','recovery_required','owner_marker_missing'].includes(error.code)))throw error;}
     finally{opts.onAttempt?.(row.id,finished);}
   }
   return recovered;

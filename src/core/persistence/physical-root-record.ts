@@ -8,6 +8,7 @@ import { flushDirectory } from '../fs-durable.ts';
 import { digest, sha256 } from './digest.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
 import { OWNERSHIP_MARKER_GLOBS, PHYSICAL_ROOT_MARKER } from './root-metadata.ts';
+import { ownerMarkerMissingError } from './owner-marker.ts';
 
 export { OWNERSHIP_MARKER_GLOBS, PHYSICAL_ROOT_MARKER, isPhysicalRootMetadata } from './root-metadata.ts';
 const RESERVATION_PREFIX = '.gbrain-owner-';
@@ -51,6 +52,27 @@ const uuid = (value: unknown): value is string => typeof value === 'string' && /
 export function physicalRootError(message = 'The physical checkout identity changed or belongs to another owner.'): OperationError {
   return new OperationError('recovery_required', message, 'Use verified writer transfer or source recovery; do not remove ownership markers to claim this path.');
 }
+/** GST-465: an ownership record whose mode lets other users read it (a recursive chmod of a copied brain) proves nothing about its owner. */
+export function ownershipRecordNotPrivateError(): OperationError {
+  const error = physicalRootError('A private ownership record of this checkout is readable by other users, so the checkout identity cannot be verified.');
+  error.detail = 'ownership_record_not_private';
+  error.suggestion = 'On the brain host, gbrain doctor --only foreign_ownership_marker names the record and the chmod 600 that makes it private again. Never remove an ownership record to get past this.';
+  return error;
+}
+/**
+ * Doctor only: an ownership record other users can read, with the mode and the brain and worktree it records, or null when
+ * it is private, absent, not a regular file or not well formed (Windows: always null). Never authority for a write.
+ */
+export function openOwnershipRecord(path: string): { mode: number; brainId: string; worktreeId: string } | null {
+  if (process.platform === 'win32') return null;
+  try {
+    const info = lstatSync(path);
+    if (!info.isFile() || (info.mode & 0o077) === 0 || info.size > 16_384) return null;
+    const value = JSON.parse(readFileSync(path, 'utf8')) as { version?: unknown; brainId?: unknown; worktreeId?: unknown } | null;
+    if (!value || value.version !== 1 || !uuid(value.brainId) || !uuid(value.worktreeId)) return null;
+    return { mode: info.mode & 0o777, brainId: value.brainId, worktreeId: value.worktreeId };
+  } catch { return null; }
+}
 export function physicalRootReservationPath(root: string): string {
   return join(dirname(root), `${RESERVATION_PREFIX}${sha256(root)}.json`);
 }
@@ -60,12 +82,14 @@ function readPrivate(path: string): unknown | null {
     if (lstatSync(path).isSymbolicLink()) throw physicalRootError();
     fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const info = fstatSync(fd);
-    if (!info.isFile() || info.size > 16_384 || process.platform !== 'win32' && (info.mode & 0o077) !== 0) throw physicalRootError();
+    if (!info.isFile() || info.size > 16_384) throw physicalRootError();
+    if (process.platform !== 'win32' && (info.mode & 0o077) !== 0) throw ownershipRecordNotPrivateError();
     const value = JSON.parse(readFileSync(fd, 'utf8'));
     if (!value || typeof value !== 'object') throw physicalRootError();
     return value;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    if (error instanceof OperationError && error.detail === 'ownership_record_not_private') throw error;
     throw physicalRootError('The private physical-checkout identity cannot be verified.');
   } finally { if (fd !== undefined) closeSync(fd); }
 }
@@ -229,6 +253,11 @@ export function physicalRootDirectoryChangedError(): OperationError {
 export function assertPhysicalRootStamp(directory: string, reservation: PhysicalRootReservation): void {
   const value = readPrivate(join(directory, PHYSICAL_ROOT_MARKER)) as PhysicalRootStamp | null;
   const info = statSync(directory, { bigint: true });
+  // #8368: no stamp in a directory the reservation still identifies exactly (device, inode, birth) lost only its marker, and
+  // the plain self-transfer re-creates it. A recreated or staged directory, one whose birth only drifted within tolerance
+  // (the self-transfer compares it exactly), or one the reservation cannot identify keeps the generic refusal.
+  if (value === null && reservation.initialDevice === info.dev.toString() && reservation.initialInode === info.ino.toString()
+    && reservation.initialBirth === info.birthtimeNs.toString()) throw ownerMarkerMissingError();
   if (!value || value.version !== 1 || value.token !== reservation.token || value.brainId !== reservation.brainId || value.worktreeId !== reservation.worktreeId
     || value.root !== reservation.root) throw physicalRootError();
   if (value.inode !== info.ino.toString() || !samePhysicalBirth(value.birth, info.birthtimeNs)) {

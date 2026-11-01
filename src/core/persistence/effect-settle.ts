@@ -14,6 +14,11 @@
  *   current worktree committed and pushed the bytes the canonical file holds now, and the already-fetched remote-tracking
  *   ref of the checkout's branch holds exactly those bytes at that path. Nothing is fetched: a missing ref, or a ref
  *   that lacks bytes a push reported, refuses.
+ * - `former_binding_retired` (#7985, only with `--retire`): the binding guard refuses the effect as `source_changed`
+ *   and nothing current owes its bytes: the source was archived, removed or re-created after it (`source_replaced`; the
+ *   original writer is not re-checked, its source is gone), or each target's page is gone, deleted, replaced by another
+ *   page or at a later revision than the one the effect owed (`page_moved`; a revision changes only when a write commits). A page still at that revision refuses `page_not_moved`
+ *   (write it through gbrain, then preview again); an effect of the current binding refuses `not_former_binding`.
  * Unknown targets, a withdrawal or other non-Git effect, a claimed effect, an open recovery record, a revoked original
  * writer, a replaced source and a binding this host does not own are refused. An effect of the current binding that is
  * not db_only is refused as `retry_instead`: `retry-effects` can still run it.
@@ -38,10 +43,10 @@ import { persistenceFileHash } from './coordinator.ts';
 import { sourceDbOnlyDir } from './source-storage.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 import { GIT_PUSH_CODES } from './git-push-holds.ts';
-import type { EffectSettlement, ParkedTarget, PersistenceEffect, SettlementProof, SettledTarget } from './effect-model.ts';
+import type { EffectSettlement, ParkedTarget, PersistenceEffect, RetiredTarget, SettlementProof, SettledTarget } from './effect-model.ts';
 import type { WriteRequest } from './model.ts';
 
-export interface SettleEffectsInput { sourceId: string; requestId?: string; parkedCode?: string; unsettle?: boolean; apply?: boolean; expect?: string }
+export interface SettleEffectsInput { sourceId: string; requestId?: string; parkedCode?: string; unsettle?: boolean; retire?: boolean; apply?: boolean; expect?: string }
 type Refusal = { code: string; message: string };
 type Row = PersistenceEffect & { request: WriteRequest };
 interface Entry {
@@ -88,8 +93,19 @@ async function remoteProof(tx: BrainEngine, effect: PersistenceEffect, binding: 
   return { slug, path, remote_ref: ref, remote_commit: commit, blob: fileBlob, receipt_request_id: receipt.request_id };
 }
 
+/** #7985: why nothing current owes this former-binding effect's target any more, or the refusal when its page still sits at the owed revision. */
+async function retiredTarget(tx: BrainEngine, effect: PersistenceEffect, slug: string): Promise<RetiredTarget | Refusal> {
+  const owed = effect.data.slug === slug ? effect.revision : null;
+  const snapshot = await tx.readPageSnapshot(slug, { sourceId: effect.source_id, includeDeleted: true });
+  if (!snapshot || snapshot.sourceIncarnation !== effect.source_incarnation) return { slug, page: 'absent', owed_revision: owed };
+  if (snapshot.page.deleted_at) return { slug, page: 'deleted', owed_revision: owed, current_revision: snapshot.revision };
+  if (owed !== null && effect.data.page_id !== undefined && String(snapshot.page.id) !== String(effect.data.page_id)) return { slug, page: 'replaced', owed_revision: owed, current_revision: snapshot.revision };
+  if (owed !== null && snapshot.revision !== owed) return { slug, page: 'moved', owed_revision: owed, current_revision: snapshot.revision };
+  return { code: 'page_not_moved', message: `Page ${slug} is still at the revision this effect owes (or the effect records no revision for it), so its bytes are still owed to Git and it is not retired. Write the page through gbrain (its Git effect commits and pushes it), then preview again.` };
+}
+
 /** The exact-target proof for one effect, or why it cannot settle. */
-async function settleProof(tx: BrainEngine, row: Row, hostId: string, binding: WorktreeBinding | null): Promise<SettlementProof | Refusal> {
+async function settleProof(tx: BrainEngine, row: Row, hostId: string, binding: WorktreeBinding | null, retire = false): Promise<SettlementProof | Refusal> {
   const { request, ...effect } = row;
   if (effect.kind === 'withdrawal-mirror') return { code: 'withdrawal_effect', message: 'A withdrawal effect is never settled: its file may still hold the withdrawn text.' };
   if (effect.kind !== 'git') return { code: 'not_git_effect', message: `Only Git effects settle; this ${effect.kind} effect keeps its own retry.` };
@@ -103,13 +119,29 @@ async function settleProof(tx: BrainEngine, row: Row, hostId: string, binding: W
     if (!(error instanceof OperationError)) throw error;
     if (error.code !== 'source_changed') return { code: error.code, message: error.message };
     const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation,archived FROM sources WHERE id=$1', [effect.source_id]);
-    if (!source || source.archived || source.incarnation !== effect.source_incarnation || binding.source_incarnation !== effect.source_incarnation || binding.worktree_id === effect.worktree_id) {
-      return { code: 'source_replaced', message: `Source ${effect.source_id} was archived, removed or re-created after this effect was recorded, so it owes nothing to the current source.` };
+    const replaced = !source || source.archived || source.incarnation !== effect.source_incarnation;
+    if (retire && replaced) return { kind: 'former_binding_retired', reason: 'source_replaced', former_worktree_id: effect.worktree_id, former_incarnation: effect.source_incarnation,
+      worktree_id: binding.worktree_id, source_incarnation: source?.incarnation ?? null,
+      targets: effectTargets(effect).map(target => ({ slug: target.slug ?? '(whole effect)', page: 'source_replaced', owed_revision: effect.data.slug === target.slug ? effect.revision : null })) };
+    if (replaced || binding.source_incarnation !== effect.source_incarnation || binding.worktree_id === effect.worktree_id) {
+      return { code: 'source_replaced', message: `Source ${effect.source_id} was archived, removed or re-created after this effect was recorded, so it owes nothing to the current source.${replaced ? ' Preview recording that with --retire.' : ''}` };
     }
     former = true;
   }
+  if (retire && !former) return { code: 'not_former_binding', message: `This effect belongs to source ${effect.source_id}'s current binding, so it is never retired: retry-effects runs it, or settle-effects without --retire settles a target declared db_only.` };
   const denied = await storedAuthorityRefusal(tx, request, effect.source_id);
   if (denied) return { code: 'authority_changed', message: `The original writer is no longer authorized (${denied.message}).` };
+  if (retire) {
+    const retired: RetiredTarget[] = [];
+    for (const target of effectTargets(effect)) {
+      if (!target.slug) return { code: 'unknown_target', message: 'A parked entry names no page, so its exact target is unknown.' };
+      const evidence = await retiredTarget(tx, effect, target.slug);
+      if ('code' in evidence) return evidence;
+      retired.push(evidence);
+    }
+    return { kind: 'former_binding_retired', reason: 'page_moved', former_worktree_id: effect.worktree_id, former_incarnation: effect.source_incarnation,
+      worktree_id: binding.worktree_id, source_incarnation: binding.source_incarnation, targets: retired };
+  }
   const sourceRoot = join(binding.local_path, binding.relative_path);
   const targets: SettledTarget[] = [];
   for (const target of effectTargets(effect)) {
@@ -129,16 +161,19 @@ async function settleProof(tx: BrainEngine, row: Row, hostId: string, binding: W
 }
 
 export async function settleEffects(engine: BrainEngine, input: SettleEffectsInput): Promise<Record<string, unknown> & { plan_hash: string; effects: Entry[] }> {
-  const { sourceId, requestId, parkedCode, unsettle = false, apply = false } = input;
+  const { sourceId, requestId, parkedCode, unsettle = false, retire = false, apply = false } = input;
   if ((requestId === undefined) === (parkedCode === undefined)) throw opError('invalid_params', 'settle-effects selects with exactly one of --request-id or --parked-code.',
     `Preview with gbrain sources writer settle-effects ${sourceId} and one parked code doctor parked_effects names (--parked-code), or name one request with --request-id.`, { fix: statusFix(sourceId) });
+  if (retire && unsettle) throw opError('invalid_params', 'settle-effects takes --retire or --unsettle, not both.',
+    'A retired effect is un-settled like any other: preview --unsettle with the same selector, without --retire.', { fix: statusFix(sourceId) });
   if (apply && !input.expect) throw opError('invalid_params', 'settle-effects --apply needs --expect <plan_hash> from its preview.',
     'Run the preview (--dry-run), show the user the plan, and run the apply_command it prints after they agree.', { fix: statusFix(sourceId) });
   const hostId = existingLocalHostId();
   if (!hostId) throw opError('permission_denied', 'Settling effects requires the registered local CLI host.',
     `This machine has no registered gbrain host identity, so it cannot settle effects of source ${sourceId}; nothing changed. Run it on the brain host that owns ${sourceId}.`, { fix: statusFix(sourceId) });
   const selector = requestId !== undefined ? ['--request-id', requestId] : ['--parked-code', parkedCode!];
-  const mode = unsettle ? 'unsettle' : 'settle';
+  const mode = unsettle ? 'unsettle' : retire ? 'retire' : 'settle';
+  const modeFlags = unsettle ? ['--unsettle'] : retire ? ['--retire'] : [];
   return engine.transaction(async tx => {
     await declarePersistenceProtocol(tx);
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','2s',true),set_config('statement_timeout','10s',true)");
@@ -154,7 +189,7 @@ export async function settleEffects(engine: BrainEngine, input: SettleEffectsInp
       const entry = { effect_id: String(row.id), request_id: (row as Row & { public_request_id: string }).public_request_id, kind: row.kind, error_code: row.error_code,
         worktree_id: row.worktree_id, targets: effectTargets(row) };
       if (unsettle) { effects.push({ ...entry, action: 'would_unsettle', settled: row.data.settled }); continue; }
-      const proof = await settleProof(tx, row, hostId, binding);
+      const proof = await settleProof(tx, row, hostId, binding, retire);
       effects.push('code' in proof ? { ...entry, action: 'refused', refusal: proof } : { ...entry, action: 'would_settle', proof });
     }
     const actionable = effects.filter(effect => effect.action !== 'refused');
@@ -165,7 +200,7 @@ export async function settleEffects(engine: BrainEngine, input: SettleEffectsInp
     if (apply) {
       if (input.expect !== planHash) throw opError('preview_changed', `The settle plan changed since its preview (--expect ${input.expect}, current plan ${planHash}); nothing was changed.`,
         'Preview again, show the user the new plan, and run its apply_command only if they approve it.',
-        { fix: readFix('Shows the current settle plan and its plan_hash, read-only.', { argv: ['gbrain', 'sources', 'writer', 'settle-effects', sourceId, ...selector, ...(unsettle ? ['--unsettle'] : []), '--dry-run', '--json'] }) });
+        { fix: readFix('Shows the current settle plan and its plan_hash, read-only.', { argv: ['gbrain', 'sources', 'writer', 'settle-effects', sourceId, ...selector, ...modeFlags, '--dry-run', '--json'] }) });
       const at = new Date().toISOString();
       for (const effect of actionable) {
         if (unsettle) {
@@ -181,18 +216,20 @@ export async function settleEffects(engine: BrainEngine, input: SettleEffectsInp
         effect.action = 'settled';
       }
     }
-    const applyCommand = ['gbrain', 'sources', 'writer', 'settle-effects', sourceId, ...selector, ...(unsettle ? ['--unsettle'] : []), '--apply', '--expect', planHash];
+    const applyCommand = ['gbrain', 'sources', 'writer', 'settle-effects', sourceId, ...selector, ...modeFlags, '--apply', '--expect', planHash];
     const preview = !apply && actionable.length > 0;
     return { action: 'writer_settle_effects', source_id: sourceId, mode, dry_run: !apply, plan_hash: planHash, settleable: actionable.length,
       refused: effects.length - actionable.length, effects,
-      ...(preview ? { apply_command: applyCommand, fix: { ask_user: true, argv: applyCommand, consent: [], actor: 'agent', requires_exclusive: false,
+      ...(preview ? { apply_command: applyCommand, fix: { ask_user: true, argv: applyCommand, consent: [], actor: retire ? 'user' : 'agent', requires_exclusive: false,
         why: unsettle ? 'Removes the settled disposition so the effects are held and reported again; the settlement stays in their history.'
-          : 'Records a settled disposition on each listed effect (its failure, request and target bytes are kept), so doctor and retries stop reporting it.',
+          : retire ? 'Records that nothing current owes these former-binding effects a Git backup (their source was replaced, or their page moved on or was deleted); failure, request and bytes are kept and nothing is retried.'
+            : 'Records a settled disposition on each listed effect (its failure, request and target bytes are kept), so doctor and retries stop reporting it.',
         user_message: unsettle ? `Un-settle ${actionable.length} effect(s) of source ${sourceId}, so doctor reports them again?`
-          : `Settle ${actionable.length} Git effect(s) of source ${sourceId} whose retry can never succeed? Each has the proof shown; their failures stay in history and --unsettle reverses it.`,
+          : retire ? `Retire ${actionable.length} Git effect(s) of source ${sourceId} recorded under a former binding? The evidence shown says nothing current owes their Git backup: the old write stays committed in the database and in history, no Git backup of those old bytes will be made, and --unsettle reverses it.`
+            : `Settle ${actionable.length} Git effect(s) of source ${sourceId} whose retry can never succeed? Each has the proof shown; their failures stay in history and --unsettle reverses it.`,
         verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] } } satisfies Action } : {}),
       next: preview ? 'Show the user each proof; run apply_command (bound to this plan_hash) only after they agree.'
-        : apply ? `${actionable.length} effect(s) ${unsettle ? 'un-settled' : 'settled'}; doctor parked_effects and writer status reflect it now.`
+        : apply ? `${actionable.length} effect(s) ${unsettle ? 'un-settled' : retire ? 'retired' : 'settled'}; doctor parked_effects and writer status reflect it now.`
           : effects.length ? 'No listed effect can settle; each refusal names its cause.' : `No ${unsettle ? 'settled' : 'unsettled parked or failed'} effect matches this selector.` };
   });
 }

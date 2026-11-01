@@ -100,7 +100,11 @@ export interface CommitPushOptions {
   lockWaitMs?: number;
   /** `--resolve`: blob choice per conflicted path for the in-memory merge. */
   resolutions?: Map<string, Resolution>;
-  /** `--expect-remote`: the remote commit the resolutions were chosen against (required with resolutions). */
+  /**
+   * `--expect-remote`: the remote commit the resolutions were chosen against (required with resolutions). Without
+   * resolutions it binds the publish (#7686): HEAD is merged with that commit, pushed with a lease on it, and a remote that
+   * moved anywhere else refuses, so a rewrite made after the caller checked the remote is never merged back.
+   */
   expectRemote?: string;
   /** How long a foreground publish waits for another publish to finish. */
   publishWaitMs?: number;
@@ -891,6 +895,7 @@ export function readQuarantine(repo: string): QuarantineEntry[] {
  * a merge built over it earlier) is returned so a lagging checkout catches up.
  */
 function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> | undefined, expectRemote: string | undefined, cwd: string): Published {
+  const bound = expectRemote && !resolutions?.size ? gitOk(ctx.root, ['rev-parse', '--verify', `${expectRemote}^{commit}`], 'rev-parse --expect-remote') : undefined;
   let candidate = start;
   let integrated = 0;
   let lastError = '';
@@ -904,15 +909,22 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
   };
   for (let attempt = 0; attempt < MAX_PUSH_ATTEMPTS; attempt++) {
     if (attempt) Atomics.wait(sleeper, 0, 0, Math.min(2000, 50 * 2 ** attempt) + Math.floor(Math.random() * 100));
-    const push = remoteGit(ctx.root, 'push', [...(ctx.keepCheckout ? ['--no-verify'] : []), '--', ctx.remote, `${candidate}:${ctx.mergeRef}`]);
-    if (push.code === 0) return { sha: candidate, integrated, confirmed: 'push', ...notes() };
-    lastError = push.stderr.trim();
-    if (remoteContains(ctx, candidate)) return onRemote();
-    const remoteTip = fetchTracking(ctx);
-    if (!remoteTip) break;
-    if (isAncestor(ctx.root, remoteTip, candidate)) {
-      if (++stalled > 1) break;
-      continue;
+    let remoteTip = bound && !isAncestor(ctx.root, bound, candidate) ? bound : null;
+    if (!remoteTip) {
+      const push = remoteGit(ctx.root, 'push', [...(ctx.keepCheckout ? ['--no-verify'] : []), ...(bound ? [`--force-with-lease=${ctx.mergeRef}:${bound}`] : []), '--', ctx.remote, `${candidate}:${ctx.mergeRef}`]);
+      if (push.code === 0) return { sha: candidate, integrated, confirmed: 'push', ...notes() };
+      lastError = push.stderr.trim();
+      if (remoteContains(ctx, candidate)) return onRemote();
+      remoteTip = fetchTracking(ctx);
+      if (!remoteTip) break;
+      if (bound && remoteTip !== bound) {
+        throw opError('push_unconfirmed', `The remote moved to ${remoteTip.slice(0, 12)} after --expect-remote ${bound.slice(0, 12)} was checked, so nothing was pushed: publishing now could merge back commits a rewrite removed.`,
+          'Check the remote history first (gbrain sources refresh checks it for a force-push), then rerun.', { detail: candidate, retryable: true });
+      }
+      if (isAncestor(ctx.root, remoteTip, candidate)) {
+        if (++stalled > 1) break;
+        continue;
+      }
     }
     const raw = integrate(ctx.root, candidate, remoteTip);
     const kept = supersededPaths(ctx.root, candidate, remoteTip, raw, resolutions);
@@ -1148,14 +1160,14 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
       { detail: committed ?? '', retryable: true });
   }
 
-  const cycle = (onlyWhenClean: boolean, start: string | null, resolutions?: Map<string, Resolution>) => {
+  const cycle = (onlyWhenClean: boolean, start: string | null, resolutions?: Map<string, Resolution>, expectRemote?: string) => {
     const requested = existsSync(requestPath);
     rmSync(requestPath, { force: true });
     try {
       const head = gitOk(root, ['rev-parse', 'HEAD'], 'rev-parse HEAD');
       const target = start && !isAncestor(root, start, head) ? start : head;
       if (!opts.allowOutsideSourceRoot) assertLocalCommitsInsideRoots(ctx, target, roots);
-      const published = publish(ctx, target, resolutions, opts.expectRemote, cwd);
+      const published = publish(ctx, target, resolutions, expectRemote, cwd);
       if (!elsewhere) rmSync(absGitPath(root, CONFLICT_STATE_NAME), { force: true });
       const moved = published.sha === head || elsewhere || opts.keepCheckout ? { checkout: 'unchanged' as const } : advanceWithLock(root, published.sha, head, onlyWhenClean, opts.lockWaitMs);
       return { published, moved };
@@ -1168,7 +1180,7 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
 
   let first: ReturnType<typeof cycle>;
   try {
-    first = cycle(unattended, committed, opts.resolutions);
+    first = cycle(unattended, committed, opts.resolutions, opts.expectRemote);
   } finally {
     pub.release();
   }

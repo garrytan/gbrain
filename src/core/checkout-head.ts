@@ -14,8 +14,10 @@ import { enclosingGitMetadata } from './persistence/root-registry.ts';
 export async function readCheckoutHead(root: string): Promise<{ head: string; operation: string | null } | null> {
   const gitDir = enclosingGitMetadata(root);
   if (!gitDir) return null;
-  const r = await execFileBounded('git', ['-C', root, 'rev-parse', 'HEAD'], { timeout: 5_000, env: gitChildEnv({ GIT_OPTIONAL_LOCKS: '0' }) });
-  const head = r.error ? '' : r.stdout.trim();
+  // #7988: `HEAD:./` resolves only when the checkout tracks the root, so a root a checkout merely encloses (a connector
+  // clone under a dotfiles home) has no HEAD instead of the enclosing repository's.
+  const r = await execFileBounded('git', ['-C', root, 'rev-parse', 'HEAD', 'HEAD:./'], { timeout: 5_000, env: gitChildEnv({ GIT_OPTIONAL_LOCKS: '0' }) });
+  const head = r.error ? '' : r.stdout.split('\n')[0]!.trim();
   if (!/^[0-9a-f]{40,64}$/.test(head)) return null;
   return { head, operation: GIT_OPERATION_MARKERS.find(marker => existsSync(join(gitDir, marker))) ?? null };
 }

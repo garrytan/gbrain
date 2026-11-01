@@ -3,6 +3,8 @@ import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, open
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { configDir } from '../config.ts';
 import { flushDirectory } from '../fs-durable.ts';
+import { gitChildEnv } from '../git-env.ts';
+import { execFileSync } from '../spawn.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 
 export interface ManagedRootRecord {
@@ -32,6 +34,20 @@ export function enclosingGitMetadata(root: string): string | null {
     if (parent === current) return null;
     current = parent;
   }
+}
+/**
+ * #7988: the git metadata directory of the checkout `root` belongs to: its own `.git`, or an enclosing checkout whose HEAD
+ * tracks `root` (a committed subdirectory). A directory a checkout only encloses (a connector clone or a plain directory
+ * under a dotfiles home) belongs to none. A Git read that fails for another reason keeps the enclosing checkout.
+ */
+export function checkoutGitMetadata(root: string): string | null {
+  const own = gitMetadataDirectory(root);
+  if (own) return own;
+  const enclosing = enclosingGitMetadata(root);
+  if (!enclosing) return null;
+  try { execFileSync('git', ['-C', root, 'rev-parse', '--verify', '--quiet', 'HEAD:./'], { stdio: 'ignore', timeout: 10_000, env: gitChildEnv() }); }
+  catch (error) { if ((error as { status?: unknown }).status === 1) return null; }
+  return enclosing;
 }
 /** An idle refresh must not touch inode metadata, so chmod only when the mode differs (#5297). */
 function ensureMode(path: string, mode: number): void {
@@ -145,8 +161,9 @@ export function recordManagedRoots(brainId: string, records: ManagedRootRecord[]
       ...(modeEpoch !== undefined ? { mode_epoch: modeEpoch } : {}) });
     changed = writePrivateRecord(file, value) || changed;
     if (existsSync(root) && statSync(root).isDirectory()) {
-      // #7338: a datastore is marked in its own directory, never in the metadata of a repository that happens to enclose it.
-      const metadata = record.datastore ? null : enclosingGitMetadata(root);
+      // #7338/#7988: a datastore, or a root no checkout tracks, is marked in its own directory, never in the metadata of a
+      // repository that only encloses it.
+      const metadata = record.datastore ? null : checkoutGitMetadata(root);
       const marker = metadata ? join(metadata, 'gbrain-managed.json') : join(root, '.gbrain-managed');
       if (!existsSync(marker)) writePrivateRecord(marker, JSON.stringify({ version: 1, managed: true, brain_id: brainId, ...(modeEpoch !== undefined ? { mode_epoch: modeEpoch } : {}) }));
     }

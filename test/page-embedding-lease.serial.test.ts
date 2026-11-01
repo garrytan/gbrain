@@ -140,6 +140,19 @@ for (const kind of testBackends()) {
       expect(await vectorless(sourceId)).toEqual(CHUNKS);
     }, 30_000);
 
+    test('#7998: an earlier effect due first does not run in place of the effect under test', async () => {
+      // An earlier test's lock_busy retry is due again after its 0.7-1.3 s backoff, and the drain claims the oldest due effect first.
+      const earlier = await pending();
+      await brain.engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now()-interval '1 minute' WHERE id=$1", [earlier.effectId]);
+      const { sourceId, effectId, pageId } = await pending();
+      transport(async () => { await steal(pageId); });
+      const effect = await withEnv({ GBRAIN_HOME: home }, () => runEffect(effectId));
+      expect(sent.length).toBe(CHUNKS.length);
+      expect(effect).toMatchObject({ state: 'queued', error_code: 'lock_busy' });
+      expect(await vectorless(sourceId)).toEqual(CHUNKS);
+      expect(await vectorless(earlier.sourceId)).toEqual(CHUNKS);
+    }, 30_000);
+
     test('embedStalePages reads the page under its lease: a rewrite while it waits is what it sends', async () => {
       const { sourceId, pageId } = await pending();
       const REWRITTEN = CHUNKS.map(text => text.replace('example chunk', 'rewritten chunk'));

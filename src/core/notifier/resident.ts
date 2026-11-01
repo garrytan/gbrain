@@ -150,9 +150,9 @@ export function runnerStart(engine: BrainEngine): Pick<CommitNotifierOptions, 's
     syncRunning: async () => (await load()).isDelegatedSyncRunning(),
     drainHeld: async (sourceId) => {
       // #7614: a killed holder's lock row defers nothing; the sync this starts takes its expired lease over.
-      const { holderStalled, readLiveDrainHolder } = await import('../persistence/sync-lease.ts');
-      const holder = await readLiveDrainHolder(engine, sourceId);
-      return holder === null ? false : holderStalled(holder) ? 'stalled' : true;
+      const { holderStalled, readLiveDrainLease } = await import('../persistence/sync-lease.ts');
+      const lease = await readLiveDrainLease(engine, sourceId);
+      return lease === null ? false : holderStalled(lease.holder, lease.db_now) ? 'stalled' : true;
     },
   };
 }

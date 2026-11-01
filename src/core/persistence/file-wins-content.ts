@@ -5,6 +5,9 @@
  * the file; a timeline the file keeps under a bare `## Timeline` heading gets the `<!-- timeline -->` sentinel above it, so the
  * appended rows stay in it). Anything else the result changes (a key's value, a tag, the title, the body, a timeline that is not
  * an extension of the file's) would need a re-render that reorders keys, re-emits lists and rewrites the body, so it refuses.
+ * #7974: a database-only timeline row dated before the file's own rows sorts into the result's timeline ahead of them, so
+ * that timeline is no extension of the file's and the page refuses too; `--prefer database`, or a commit that adds the row to
+ * the file, resolves it.
  */
 import type { ParsedPage } from '../import-file.ts';
 import { opError } from '../ops/contract.ts';

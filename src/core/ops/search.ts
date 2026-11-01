@@ -126,6 +126,8 @@ function searchOutput(ctx: OperationContext, p: Record<string, unknown>, results
   if (p.explain === true) for (const r of results) r.score_details = buildScoreDetails(r);
   // #7156: the returned score follows the returned order.
   results = neutralizeTranscriptRows(scoresFollowRank(results), evidence?.delivery.date_header === true);
+  // GST-687: a remote reader also gets rows below the owner's tier quoted (rows carry their stamped trust_tier here).
+  const untrusted = ctx.remote !== false;
   // The shape is reported where it can vary: remote callers, or an explicit `fields`.
   const shown = ctx.remote !== false || p.fields !== undefined ? { rows } : {};
   // Stage timings are read last, after the returned rows are assembled (meta only, never content).
@@ -137,7 +139,7 @@ function searchOutput(ctx: OperationContext, p: Record<string, unknown>, results
   };
   if (!evidence) {
     const output = redactRetrievalOutput(results, { ...meta, ...shown });
-    return emit(output, projectRows(fenceTranscriptRows(applySnippetCap(output.results, resultChunkCap(p.snippet_chars, snippetCap))).map(factRowOutput), rows, lean));
+    return emit(output, projectRows(fenceTranscriptRows(applySnippetCap(output.results, resultChunkCap(p.snippet_chars, snippetCap)), undefined, untrusted).map(factRowOutput), rows, lean));
   }
   // Evidence delivery: explicit snippet_chars wins over the delivered blocks;
   // otherwise the blocks are returned whole (their budget already bounds
@@ -145,9 +147,9 @@ function searchOutput(ctx: OperationContext, p: Record<string, unknown>, results
   const output = redactRetrievalOutput(results, { ...meta, delivery: evidence.delivery, ...shown });
   // An explicit budget's cap holds at this final boundary too (snippet
   // markers and redaction recounted); without one both are no-ops.
-  const capped = capEvidenceToBudget(evidence.explicitSnippet ? capDeliveredSnippets(output.results, snippetCap, output.meta.delivery) : output.results, output.meta.delivery, true);
+  const capped = capEvidenceToBudget(evidence.explicitSnippet ? capDeliveredSnippets(output.results, snippetCap, output.meta.delivery) : output.results, output.meta.delivery, true, untrusted);
   const delivery = output.meta.delivery;
-  return emit(output, projectRows(fenceTranscriptRows(capped, { count: text => countEvidenceTokens(text, delivery.tokenizer), delivery }).map(factRowOutput), rows, lean));
+  return emit(output, projectRows(fenceTranscriptRows(capped, { count: text => countEvidenceTokens(text, delivery.tokenizer), delivery }, untrusted).map(factRowOutput), rows, lean));
 }
 
 /** C1: the per-call row-shape escape hatch shared by `search` and `query` (`detail` is query's low/medium/high). */
@@ -442,7 +444,7 @@ async function buildRetrievalResponseMeta(
   const shownAs = new Map([...factRowIds].map(id => [id, id]));
   for (const f of merged) for (const id of f.collapsed_ids ?? [f.id]) shownAs.set(id, f.id);
   // #8042: a lookup failure withholds saved_facts (degraded stage below) rather than return third-party text unquoted.
-  const quotedFacts = await quoteFacts(ctx.engine, merged).catch(() => null);
+  const quotedFacts = await quoteFacts(ctx.engine, merged, ctx.remote !== false).catch(() => null);
   const savedFacts = (quotedFacts ?? []).map(({ corrected_by, ...f }) => {
     const by = corrected_by === undefined ? undefined : shownAs.get(corrected_by);
     return stripCollapseColumns(by === undefined || by === f.id ? f : { ...f, corrected_by: by });
@@ -1266,7 +1268,7 @@ const assemble_evidence: Operation = {
       detail: p.detail as 'low' | 'medium' | 'high' | undefined,
       caller: { remote: ctx.remote !== false, ...scope, excludePrivate },
     });
-    return { ...out, results: await stampPageTrust(ctx.engine, out.results, scope.minTrust) };
+    return ctx.remote !== false ? out : { ...out, results: await stampPageTrust(ctx.engine, out.results, scope.minTrust) };
   },
 };
 

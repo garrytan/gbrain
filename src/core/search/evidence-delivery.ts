@@ -29,6 +29,7 @@ import { estimateTokens as heuristicTokens } from './token-budget.ts';
 import { redactRetrievalOutput } from './output-redaction.ts';
 import { buildSnippetMarker } from './snippet-cap.ts';
 import { deliveredQuoteText, fenceTranscriptRows, neutralizeTranscriptRows } from './transcript-quote.ts';
+import { stampPageTrust } from '../eligibility/stamp.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
 import { chunkGenerationFilter, chunkManifestReads, currentTextProjectionFilter, safeChunksFilter, requiresSafeChunks } from './safe-chunks.ts';
 import { resolveExcludePrivatePages } from './private-visibility.ts';
@@ -1464,9 +1465,10 @@ function redactDelivered(results: DeliveredSearchResult[], tokenizer: 'cl100k' |
  * and `dropped` are rewritten from the recount. Runs only when the delivery
  * carries `auto_packing`; everything else is returned as is. With `quote`
  * (search/query and assemble_evidence) a conversation row counts inside its
- * quote fence (#7600); deliverEvidence's own cap (recall) counts the text as returned.
+ * quote fence (#7600), and with `untrusted` (a remote reader) so does a row below the owner's tier (GST-687);
+ * deliverEvidence's own cap (recall) counts the text as returned.
  */
-export function capEvidenceToBudget<T extends SearchResult & { delivered?: DeliveredEvidence }>(results: T[], delivery: DeliveryMeta, quote = false): T[] {
+export function capEvidenceToBudget<T extends SearchResult & { delivered?: DeliveredEvidence }>(results: T[], delivery: DeliveryMeta, quote = false, untrusted = false): T[] {
   if (!delivery.auto_packing) return results;
   const tokenizer = delivery.tokenizer;
   const count = (text: string | undefined) => countEvidenceTokens(text ?? '', tokenizer);
@@ -1475,7 +1477,7 @@ export function capEvidenceToBudget<T extends SearchResult & { delivered?: Deliv
   let lost = 0;
   const out: T[] = [];
   for (const r of results) {
-    const asDelivered = (text: string) => (quote ? deliveredQuoteText(r, text, delivery.date_header === true) : text);
+    const asDelivered = (text: string) => (quote ? deliveredQuoteText(r, text, delivery.date_header === true, untrusted) : text);
     const titleTok = count(r.title);
     const textTok = count(asDelivered(r.chunk_text));
     if (titleTok + textTok <= remaining) {
@@ -1718,13 +1720,15 @@ export async function assembleEvidenceForHits(engine: BrainEngine, input: Assemb
     autoPacking: input.auto_packing,
   });
   const { rows, unresolved } = await resolveFrozenHits(engine, input.hits, scope);
+  // GST-687: a remote reader's rows carry their page trust before the fence and the budget read it (quoteLabel's tier arm).
+  const trusted = <R extends SearchResult>(results: R[]) => (remote ? stampPageTrust(engine, results, input.caller?.minTrust) : Promise.resolve(results));
   if (!plan) {
-    const out = redactRetrievalOutput(neutralizeTranscriptRows(rows), {});
-    return { results: fenceTranscriptRows(out.results), delivery: null, unresolved };
+    const out = redactRetrievalOutput(neutralizeTranscriptRows(await trusted(rows)), {});
+    return { results: fenceTranscriptRows(out.results, undefined, remote), delivery: null, unresolved };
   }
   const d = await deliverEvidence(engine, rows, plan, scope, { liveHits: true, ...(input.query ? { query: input.query } : {}) });
-  const out = redactRetrievalOutput(neutralizeTranscriptRows(d.results, d.delivery.date_header === true), d.delivery);
-  return { results: fenceTranscriptRows(capEvidenceToBudget(out.results, out.meta, true), { count: text => countEvidenceTokens(text, out.meta.tokenizer), delivery: out.meta }), delivery: out.meta, unresolved };
+  const out = redactRetrievalOutput(neutralizeTranscriptRows(await trusted(d.results), d.delivery.date_header === true), d.delivery);
+  return { results: fenceTranscriptRows(capEvidenceToBudget(out.results, out.meta, true, remote), { count: text => countEvidenceTokens(text, out.meta.tokenizer), delivery: out.meta }, remote), delivery: out.meta, unresolved };
 }
 
 /** SHA-256 over the delivered evidence (see docs/evidence-delivery.md). */

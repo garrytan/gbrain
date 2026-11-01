@@ -28,6 +28,7 @@ import { runTranscriptsIngest } from '../src/core/transcripts/ingest.ts';
 import { prepareMarkdownChunks } from '../src/core/markdown-chunks.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 
 const TOOL_CALL = JSON.stringify({
@@ -103,7 +104,7 @@ for (const backend of testBackends()) {
       writeFileSync(file, JSON.stringify(chatgptExport()));
       const ingest = await runTranscriptsIngest(engine, { paths: [file], sourceId: 'default', userPatternsPath: '/nonexistent-patterns.txt' });
       expect(ingest.pages.imported).toBe(1);
-      await engine.putPage(NOTE_SLUG, { type: 'note', title: 'API shapes', compiled_truth: NOTE_BODY, timeline: '', frontmatter: {} });
+      await asOwner(engine, tx => tx.putPage(NOTE_SLUG, { type: 'note', title: 'API shapes', compiled_truth: NOTE_BODY, timeline: '', frontmatter: {} }));
       await installFixtureChunks(engine, NOTE_SLUG, await prepareMarkdownChunks({ compiled_truth: NOTE_BODY, timeline: '' }));
       [{ chunk_text: storedNoteChunk, id: noteChunkId }] = await engine.getChunks(NOTE_SLUG) as Array<{ chunk_text: string; id: number }>;
       expect(storedNoteChunk).toContain(TOOL_CALL);

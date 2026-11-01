@@ -573,6 +573,7 @@
               "window_days": 1
             },
             "inspected": 2,
+            "outstanding": [],
             "paused_producers": [],
             "resources": [],
             "truncated": false,
@@ -3120,6 +3121,7 @@
                 "table": "timeline_entries"
               }
             ],
+            "unknown_pages": 0,
             "unknown_pct": 0
           },
           "elapsed_ms": "<volatile>",
