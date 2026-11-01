@@ -13,7 +13,7 @@ import { assertNoUnreviewedJobs, authorizeJobExecution, withSubmissionAuthority 
  */
 
 import { existsSync } from 'fs';
-import { autopilotOperatorPauseMarkerPath, autopilotPausedMarkerPath } from '../autopilot-paths.ts';
+import { autopilotOperatorPauseMarkerPath, autopilotPaused, autopilotPausedMarkerPath } from '../autopilot-paths.ts';
 import type { BrainEngine } from '../engine.ts';
 import type {
   MinionJob, MinionJobContext, MinionHandler, MinionWorkerOpts,
@@ -709,66 +709,68 @@ export class MinionWorker extends EventEmitter {
           // detector too would double-act (and both emitting 'unhealthy' +
           // supervisor SIGTERM race). Bare `gbrain jobs work` keeps it.
           if (!isSupervisedChild) {
-          if (this.jobsCompleted > lastKnownCompleted) {
-            lastKnownCompleted = this.jobsCompleted;
-            lastCompletionTime = Date.now();
-            stallWarningSince = null;
-          }
+            if (autopilotPaused()) { lastCompletionTime = Date.now(); stallWarningSince = null; } else {
+              if (this.jobsCompleted > lastKnownCompleted) {
+                lastKnownCompleted = this.jobsCompleted;
+                lastCompletionTime = Date.now();
+                stallWarningSince = null;
+              }
 
-          const idleMs = Date.now() - lastCompletionTime;
+              const idleMs = Date.now() - lastCompletionTime;
 
-          // Only check for stalls when no jobs are in-flight and it's been a while
-          if (idleMs > this.opts.stallWarnAfterMs && this.inFlight.size === 0) {
-            try {
-              // Filter by registered handler names so a worker that doesn't
-              // claim a particular job-name doesn't false-positive when those
-              // jobs accumulate in `waiting`. Only counts work THIS worker would
-              // actually have claimed.
-              const handlerNames = this.registeredNames;
-              const rows = handlerNames.length === 0
-                ? [] as { cnt: string }[]
-                : await this.engine.executeRaw<{ cnt: string }>(
-                    `SELECT count(*)::text AS cnt FROM minion_jobs
-                     WHERE status = 'waiting'
-                       AND queue = $1
-                       AND name = ANY($2::text[])`,
-                    [this.opts.queue, handlerNames],
-                  );
-              const waiting = parseInt(rows[0]?.cnt ?? '0', 10);
-              const idleMinutes = Math.round(idleMs / 60_000);
-              if (waiting > 0) {
-                // Two thresholds, both measured from `lastCompletionTime` (NOT
-                // from when the warning fired). With defaults (warn=5min,
-                // exit=10min), the first warning fires at idle=5min and the
-                // unhealthy emit fires at idle=10min — matching the contract
-                // documented in MinionWorkerOpts.
-                if (!stallWarningSince) {
-                  stallWarningSince = Date.now();
-                  console.warn(
-                    `[health] Possible stall: ${waiting} waiting job(s) for ` +
-                    `registered handlers, 0 in-flight, ${idleMinutes}m since last completion`,
-                  );
-                } else if (idleMs > this.opts.stallExitAfterMs) {
-                  console.error(
-                    `[health] Worker stalled for ${Math.round(this.opts.stallExitAfterMs / 60_000)}+ ` +
-                    `minutes with ${waiting} waiting job(s). Emitting 'unhealthy' for process-manager restart.`,
-                  );
-                  healthExited = true;
-                  this.emitUnhealthy({
-                    reason: 'stalled',
-                    waitingCount: waiting,
-                    idleMinutes,
-                  });
+              // Only check for stalls when no jobs are in-flight and it's been a while
+              if (idleMs > this.opts.stallWarnAfterMs && this.inFlight.size === 0) {
+                try {
+                  // Filter by registered handler names so a worker that doesn't
+                  // claim a particular job-name doesn't false-positive when those
+                  // jobs accumulate in `waiting`. Only counts work THIS worker would
+                  // actually have claimed.
+                  const handlerNames = this.registeredNames;
+                  const rows = handlerNames.length === 0
+                    ? [] as { cnt: string }[]
+                    : await this.engine.executeRaw<{ cnt: string }>(
+                        `SELECT count(*)::text AS cnt FROM minion_jobs
+                         WHERE status = 'waiting'
+                           AND queue = $1
+                           AND name = ANY($2::text[])`,
+                        [this.opts.queue, handlerNames],
+                      );
+                  const waiting = parseInt(rows[0]?.cnt ?? '0', 10);
+                  const idleMinutes = Math.round(idleMs / 60_000);
+                  if (waiting > 0) {
+                    // Two thresholds, both measured from `lastCompletionTime` (NOT
+                    // from when the warning fired). With defaults (warn=5min,
+                    // exit=10min), the first warning fires at idle=5min and the
+                    // unhealthy emit fires at idle=10min — matching the contract
+                    // documented in MinionWorkerOpts.
+                    if (!stallWarningSince) {
+                      stallWarningSince = Date.now();
+                      console.warn(
+                        `[health] Possible stall: ${waiting} waiting job(s) for ` +
+                        `registered handlers, 0 in-flight, ${idleMinutes}m since last completion`,
+                      );
+                    } else if (idleMs > this.opts.stallExitAfterMs) {
+                      console.error(
+                        `[health] Worker stalled for ${Math.round(this.opts.stallExitAfterMs / 60_000)}+ ` +
+                        `minutes with ${waiting} waiting job(s). Emitting 'unhealthy' for process-manager restart.`,
+                      );
+                      healthExited = true;
+                      this.emitUnhealthy({
+                        reason: 'stalled',
+                        waitingCount: waiting,
+                        idleMinutes,
+                      });
+                    }
+                  } else {
+                    stallWarningSince = null; // Queue empty (for our handlers) — not stalled, just idle
+                  }
+                } catch {
+                  // DB query failed — the liveness probe above will catch persistent failures
                 }
               } else {
-                stallWarningSince = null; // Queue empty (for our handlers) — not stalled, just idle
+                stallWarningSince = null;
               }
-            } catch {
-              // DB query failed — the liveness probe above will catch persistent failures
             }
-          } else {
-            stallWarningSince = null;
-          }
           } // end stall detection (NON-supervised only)
         } finally {
           healthRunning = false;
