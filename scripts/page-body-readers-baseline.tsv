@@ -652,3 +652,6 @@ src/eval/brainbench/metrics/trust-reads.ts	canaryPersisted	sql	STREAM
 src/eval/chronicle/harness.ts	seedChronicleEvalCorpus	call:putPage	SEGW	
 src/eval/longmemeval/call-plan.ts	planPages	call:prepareMarkdownChunks	INLINE	
 src/eval/longmemeval/call-plan.ts	planPages	field	INLINE	
+src/commands/doctor/checks/atom-body-recheck.ts	unchangedBodyAtoms	call:contentHash	INLINE	doctor atom_provenance_drift re-check (#6825): the group query joins only inline pages, and a page read back segmented is skipped (isSegmentedPage), keeping its drift verdict; compares a page_versions edition with the live body
+src/commands/doctor/checks/atom-body-recheck.ts	unchangedBodyAtoms	field	INLINE	doctor atom_provenance_drift re-check (#6825): the group query joins only inline pages, and a page read back segmented is skipped (isSegmentedPage), keeping its drift verdict; compares a page_versions edition with the live body
+src/commands/doctor/checks/atom-body-recheck.ts	unchangedBodyAtoms	sql	INLINE	doctor atom_provenance_drift re-check (#6825): the group query joins only inline pages, and a page read back segmented is skipped (isSegmentedPage), keeping its drift verdict; compares a page_versions edition with the live body

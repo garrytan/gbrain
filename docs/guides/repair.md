@@ -1735,7 +1735,9 @@ with the preview and apply commands; a stale hash refuses with
 [`preview_changed`](#preview-changed). An apply under a different `--source`
 than the preview also refuses with `preview_changed`. Doctor
 `atom_provenance_drift` names this command when drift crosses its warn
-threshold.
+threshold. An atom whose page changed only in its frontmatter or in gbrain's
+facts and takes sections is not drift when one of the page's recent versions
+still holds the edition it was extracted from (#6825).
 
 ### Atoms restore
 
