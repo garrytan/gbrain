@@ -140,8 +140,16 @@ for (const kind of testBackends()) {
       const [full] = await operationsByName.get_versions!.handler(ctx, { slug: SLUG, include_body: true }) as Array<Record<string, unknown>>;
       expect(full).not.toHaveProperty('compiled_truth');
       expect(full).not.toHaveProperty('timeline');
-      expect(full!.body_ref).toEqual({ version_id: full!.id, total_bytes: 2 * KB,
-        read: { tool: 'get_page', arguments: { slug: SLUG, version_id: full!.id, body: 'window' } } });
+      expect(full!.body_ref).toEqual({ version_id: full!.id, total_bytes: 2 * KB });
+    });
+
+    test('#7800: a segmented version body_ref never names a read get_page does not serve', async () => {
+      await engine.createVersion(SLUG);
+      const ctx = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
+      const [full] = await operationsByName.get_versions!.handler(ctx, { slug: SLUG, include_body: true }) as Array<{ body_ref: { read?: { tool: string; arguments: Record<string, unknown> } } }>;
+      const read = full!.body_ref.read;
+      const params = operationsByName[read?.tool ?? 'get_page']!.params;
+      expect(Object.keys(read?.arguments ?? {}).filter(k => !(k in params))).toEqual([]);
     });
 
     test('revertToVersion refuses a segmented version with page_body_segmented and writes nothing', async () => {

@@ -35,7 +35,7 @@ import { ownedEntryFingerprint } from '../bootstrap/adopted-connections.ts';
 import { codexHookCensus, codexHookGroupRuns, codexHookTrustHash, codexSetupHookGroup, codexSetupTrustEntry, writeCodexSetupHooks, type CodexHookGroup } from '../bootstrap/codex-hooks.ts';
 import { appendCodexTomlTable, readCodexTomlTable, removeCodexTomlTable } from '../bootstrap/codex-toml.ts';
 import { buildClaudeHookCommand, classifyHarnessHook, hookEntryHash, removeClaudeHooksAt, writeClaudeHooksAt } from '../bootstrap/hooks.ts';
-import { CLAUDE_HOOK_DEFAULT_TIMEOUT_SECS, GBRAIN_HOOK_MARKER_KEY, claudeUserSettingsPath, codexConfigPath, codexHooksPath } from '../bootstrap/host-specs.ts';
+import { CLAUDE_HOOK_DEFAULT_TIMEOUT_SECS, GBRAIN_HOOK_MARKER_KEY, claudeManagedSettingsPaths, claudeUserSettingsPath, codexConfigPath, codexHooksPath } from '../bootstrap/host-specs.ts';
 
 export const TURN_RULE_LANE = 'turn-rule';
 export const TURN_RULE_MARKER = 'turn-rule-v1';
@@ -110,14 +110,15 @@ export function isOtherGbrainEntry(e: Record<string, unknown>, committed = false
  * UserPromptSubmit for this harness, and that hook adds the same rule.
  * Fail-open (an unreadable file counts as not wired).
  */
-export function turnRuleHookYields(harness: string, cwd: string): boolean {
+export function turnRuleHookYields(harness: string, cwd: string, managedDir?: string): boolean {
   if (harness === 'codex') {
     // Only a group Codex actually runs (trusted, enabled) carries the rule.
     try { return codexHookCensus(codexHooksPath()).some((g) => g.event === EVENT && (g.lane === 'setup' || g.lane === 'bootstrap') && codexHookGroupRuns(codexHooksPath(), codexConfigPath(), g)); } catch { return false; }
   }
   return claudePromptEntries(claudeUserSettingsPath()).some((e) => isOtherGbrainEntry(e))
     || claudePromptEntries(join(cwd, '.claude', 'settings.local.json')).some((e) => isOtherGbrainEntry(e))
-    || claudePromptEntries(join(cwd, '.claude', 'settings.json')).some((e) => isOtherGbrainEntry(e, true));
+    || claudePromptEntries(join(cwd, '.claude', 'settings.json')).some((e) => isOtherGbrainEntry(e, true))
+    || claudeManagedSettingsPaths(managedDir).some((path) => claudePromptEntries(path).some((e) => isOtherGbrainEntry(e)));
 }
 
 /** Install or refresh the turn-rule hook. Never throws; anything it cannot write safely comes back as `print` with the command that wires it. */

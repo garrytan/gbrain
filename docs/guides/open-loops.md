@@ -372,6 +372,11 @@ an empty inbox. Any Google access path works to fix it: `gbrain google setup`
 (BYO OAuth) or `--access command|env` on `sources add` (an existing Google
 CLI or token-minting gateway; see
 [google-connect.md](google-connect.md#other-ways-to-reach-google-no-gbrain-oauth)).
+A remote caller (MCP) gets no digest, so it gets a `loops_no_google_in_scope`
+notice instead: the answer covered only the sources its connection is granted
+(named), pass `source_id` for a granted google source, and the fix lists them.
+The notice never names a source outside the grant, so it reads the same
+whether or not one exists.
 
 Memory verbs: entity cards' `open_threads[]` entries backed by loop rows
 carry additive optional fields (`direction`, `due`, `counterparty`,

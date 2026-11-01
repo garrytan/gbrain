@@ -19,7 +19,7 @@
  * gbrain code.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
@@ -282,6 +282,24 @@ function claudeConfigBase(): string {
 
 export function claudeUserSettingsPath(): string {
   return join(claudeConfigBase(), 'settings.json');
+}
+
+function claudeManagedSettingsDir(): string {
+  if (process.platform === 'darwin') return '/Library/Application Support/ClaudeCode';
+  if (process.platform === 'win32') return 'C:\\Program Files\\ClaudeCode';
+  return '/etc/claude-code';
+}
+
+/**
+ * #8057: Claude Code's managed settings, which apply to every session on the
+ * machine: managed-settings.json, then its managed-settings.d/*.json drop-ins
+ * in name order. `dir` defaults to the platform's system directory.
+ */
+export function claudeManagedSettingsPaths(dir = claudeManagedSettingsDir()): string[] {
+  const dropIns = join(dir, 'managed-settings.d');
+  let names: string[] = [];
+  try { names = readdirSync(dropIns).filter((n) => n.endsWith('.json')).sort(); } catch { /* no drop-in directory */ }
+  return [join(dir, 'managed-settings.json'), ...names.map((n) => join(dropIns, n))];
 }
 
 /**

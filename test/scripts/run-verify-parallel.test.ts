@@ -72,8 +72,6 @@ describe("guard registration ⇒ execution coverage", () => {
   const EXECUTION_EXEMPT: Record<string, string> = {
     "check-bun-test-timeout.sh":
       "runs directly as a test.yml verify-job step (not via CHECKS — avoids a package.json edit)",
-    "check-admin-embedded.sh":
-      "duplicates check:admin-build's vite+tsc build; embed freshness covered there",
     "check-bash32.sh":
       "needs Docker or a native bash 3.2: runs as a test.yml verify-job step (bash:3.2 image) and in macos-validation.yml (/bin/bash), never in verify",
     "check-test-discriminates.sh":
