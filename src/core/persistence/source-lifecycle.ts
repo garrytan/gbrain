@@ -279,7 +279,11 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
           {fix:readFix('Lists OAuth clients with the source each is bound to.',{argv:['gbrain','auth','clients','--json']})});
         const [impact]=await tx.executeRaw<{count:string}>('SELECT count(*)::text AS count FROM pages WHERE source_id=$1',[input.sourceId]);
         pagesDeleted=Number(impact.count);
+        // Cascading page deletion scales with source size, not writer contention.
+        // Keep lock waits bounded, but let this atomic bulk statement finish.
+        await tx.executeRaw("SELECT set_config('statement_timeout','0',true)");
         await tx.executeRaw('DELETE FROM sources WHERE id=$1 AND incarnation=$2::uuid',[input.sourceId,incarnation]);
+        await tx.executeRaw("SELECT set_config('statement_timeout','5s',true)");
         await tx.executeRaw('DELETE FROM persistence_source_bindings WHERE source_id=$1 AND source_incarnation=$2::uuid',[input.sourceId,incarnation]);
       }
       const contentReceipts=input.operation==='rebind'?await rebindContentReceipts(tx,worktrees,localHostId(),relocated?undefined:[input.sourceId]):[];
