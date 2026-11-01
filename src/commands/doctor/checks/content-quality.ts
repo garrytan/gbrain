@@ -420,6 +420,10 @@ async function runFrontmatter(ctx: DoctorContext): Promise<Check[]> {
       // skipped so the user can tell which sources weren't checked.
       const sourceMessages: string[] = [];
       for (const src of report.per_source) {
+        if (src.status === 'missing') {
+          sourceMessages.push(`${src.source_id}: NOT SCANNED (registered directory is missing; restore it or correct the source path ${src.source_path})`);
+          continue;
+        }
         if (src.status === 'skipped') {
           // Codex adversarial #1: `gbrain frontmatter validate` takes a
           // filesystem PATH, not a source id. Pre-fix the hint pointed users
@@ -450,18 +454,24 @@ async function runFrontmatter(ctx: DoctorContext): Promise<Check[]> {
       const repairHint = 'Fix: gbrain repair frontmatter --source <id> previews the line fix for every file it can repair (and names the manual fix for the rest, '
         + 'such as a missing opening ---); on an unmanaged checkout gbrain frontmatter validate <source-path> --fix applies the same safe fixes';
       const sourcesWithIssues = report.per_source.filter(src => src.total > 0).map(src => src.source_id);
-      const fixHint = report.partial
-        ? `Raise GBRAIN_DOCTOR_FM_TIMEOUT_MS or run \`gbrain frontmatter validate <source-path>\` directly. ${repairHint}`
-        : repairHint;
+      const hasMissing = report.per_source.some(src => src.status === 'missing');
+      const hasDeadline = report.per_source.some(src => src.status === 'partial' || src.status === 'skipped');
+      const fixHint = [
+        ...(hasMissing ? ['Restore each missing registered directory or correct its source path.'] : []),
+        ...(hasDeadline ? ['Raise GBRAIN_DOCTOR_FM_TIMEOUT_MS or run `gbrain frontmatter validate <source-path>` directly.'] : []),
+        repairHint,
+      ].join(' ');
       checks.push({
         name: 'frontmatter_integrity',
         status: 'warn',
         // #7145: a partial walk is a floor with health unknown past it, readable without parsing the message.
-        details: { count: report.total, partial: report.partial, exact: !report.partial,
-          ...(report.partial ? { ...boundUnknownDetails('time'), limit: fmTimeoutMs } : {}) },
+        // #7889: only a deadline makes the scan partial; a missing registered root is listed under `missing`.
+        details: { count: report.total, partial: hasDeadline, exact: !report.partial,
+          ...(hasMissing ? { missing: report.per_source.filter(src => src.status === 'missing').map(src => src.source_id) } : {}),
+          ...(hasDeadline ? { ...boundUnknownDetails('time'), limit: fmTimeoutMs } : {}) },
         message:
           `${report.total} frontmatter issue(s)` +
-          (report.partial ? ` (PARTIAL SCAN — timeout after ${fmTimeoutMs / 1000}s)` : '') +
+          (hasDeadline ? ` (PARTIAL SCAN — timeout after ${fmTimeoutMs / 1000}s)` : '') +
           `. ${sourceMessages.join('; ')}. ${fixHint}`,
         ...(sourcesWithIssues.length === 1 ? { fix: agentFix(['gbrain', 'repair', 'frontmatter', '--source', sourcesWithIssues[0]!],
           'Previews the line fix for each file the repair can fix and names the manual fix for the rest; it writes nothing.', 'frontmatter_integrity',

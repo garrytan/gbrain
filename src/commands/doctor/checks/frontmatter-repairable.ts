@@ -25,18 +25,29 @@ export function frontmatterRepairableFromReport(report: AuditReport, timeoutMs: 
   }));
   const files = sources.reduce((sum, src) => sum + src.files, 0);
   const unscanned = report.per_source.filter(src => src.status !== 'scanned').map(src => src.source_id);
-  const details = { repairable: files, source_ids: sources.map(src => src.source_id), sources, partial: report.partial, unscanned,
-    docs: 'docs/guides/repair.md#frontmatter' };
+  const missing = report.per_source.filter(src => src.status === 'missing');
+  const deadlineSources = report.per_source.filter(src => src.status === 'partial' || src.status === 'skipped');
+  // #7889: only a deadline makes the scan partial; a missing registered root is reported separately.
+  const details: Record<string, unknown> = { repairable: files, source_ids: sources.map(src => src.source_id), sources, partial: deadlineSources.length > 0, unscanned,
+    ...(missing.length ? { missing: missing.map(src => src.source_id) } : {}), docs: 'docs/guides/repair.md#frontmatter' };
   const single = sources.length === 1 ? sources[0]!.source_id : undefined;
   const fix = agentFix(['gbrain', 'repair', 'frontmatter', ...(single ? ['--source', single] : [])],
     'Previews the minimal line fix per file (safe quoting first; interpretations only with --include-ambiguous) and prints the hash-bound apply command; it writes nothing.',
     'frontmatter_repairable', { docs: 'docs/guides/repair.md#frontmatter' });
-  const partial = report.partial
-    ? ` PARTIAL SCAN: the walk stopped after ${timeoutMs / 1000}s, so ${unscanned.join(', ')} ${unscanned.length === 1 ? 'was' : 'were'} not fully checked; raise GBRAIN_DOCTOR_FM_TIMEOUT_MS and run gbrain doctor --only frontmatter_repairable again.`
-    : '';
+  const partial = [
+    ...(missing.length ? [` The registered directory is missing for ${missing.map(src => `${src.source_id} (${src.source_path})`).join(', ')}; restore it or correct the source path before scanning.`] : []),
+    ...(deadlineSources.length ? [` PARTIAL SCAN: the walk stopped after ${timeoutMs / 1000}s, so ${deadlineSources.map(src => src.source_id).join(', ')} ${deadlineSources.length === 1 ? 'was' : 'were'} not fully checked; raise GBRAIN_DOCTOR_FM_TIMEOUT_MS and run gbrain doctor --only frontmatter_repairable again.`] : []),
+  ].join('');
   if (!files && !report.partial) {
     return { name: 'frontmatter_repairable', status: 'ok', details,
       message: report.per_source.length ? 'No file has frontmatter gbrain repair frontmatter would fix.' : 'No registered sources to scan.' };
+  }
+  if (!files && !deadlineSources.length) {
+    // Only missing roots: the repair skips them, so the next step is the operator's, not `gbrain repair frontmatter`.
+    details.operator_instruction = `Restore the registered directory or correct the source path (gbrain sources set-path <id> <directory>) for ${missing.map(src => src.source_id).join(', ')}, then rerun gbrain doctor --only frontmatter_repairable.`;
+    return { name: 'frontmatter_repairable', status: 'warn', details, message: `No repairable frontmatter found so far.${partial}`,
+      fix: agentFix(['gbrain', 'sources', 'list'], 'Lists each registered source path so the missing directory can be restored or its path corrected; it changes nothing.',
+        'frontmatter_repairable') };
   }
   if (!files) return { name: 'frontmatter_repairable', status: 'warn', details, fix_unavailable_reason: 'check_errored', message: `No repairable frontmatter found so far.${partial}` };
   return {
