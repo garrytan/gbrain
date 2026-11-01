@@ -841,7 +841,8 @@ jobs:
       fail-fast: false
       matrix:
         # #5903: GBRAIN_PAID_LANES='0' switches the credentialed lane off even when it is requested.
-        lane: ${{ fromJSON((inputs.run_opencode_paid || vars.GBRAIN_OPENCODE_PAID_E2E == '1') && format('{0}', vars.GBRAIN_PAID_LANES) != '0' && '["keyless","credentialed"]' || '["keyless"]') }}
+        # #6049: the nightly schedule always requests it, because its paid T5 turn is the gating nonce SMOKE.
+        lane: ${{ fromJSON((github.event_name == 'schedule' || inputs.run_opencode_paid || vars.GBRAIN_OPENCODE_PAID_E2E == '1') && format('{0}', vars.GBRAIN_PAID_LANES) != '0' && '["keyless","credentialed"]' || '["keyless"]') }}
     # Measured local door wall-time: full 6-test run 35.8s + one-time
     # compiled gbrain build (~2-4 min) + npm install (~15s); free-tier +
     # paid turn budgets 2 x 240s each. 20 min = measured + >50% headroom.
@@ -932,10 +933,12 @@ jobs:
             exit 1
           fi
 
-      # KEYLESS TIER FIRST — and on opencode that includes the nonce SMOKE
-      # (free tier). ANTHROPIC_API_KEY is absent from this step by
-      # construction, so the paid describe self-skips.
-      - name: Run opencode door tests (keyless tier — SMOKE included)
+      # KEYLESS TIER FIRST. ANTHROPIC_API_KEY is absent from this step by
+      # construction, so the paid describe self-skips. The free-tier nonce
+      # SMOKE (T4) is not requested here: the free tier caps usage per IP and
+      # runner IPs hit the cap (#6049); the canary runs it, and the nightly
+      # credentialed lane's paid T5 is the gating SMOKE.
+      - name: Run opencode door tests (keyless tier)
         if: matrix.lane == 'keyless'
         run: |
           EXIT=0
@@ -945,12 +948,12 @@ jobs:
           if [ "$EXIT" -ne 0 ]; then
             exit "$EXIT"
           fi
-          # Exact expected shape for this tier: 5 keyless tests pass (T1, T2,
-          # T2b, T3, T4-SMOKE), the 1 paid test skips. Zero/partial-pass
+          # Exact expected shape for this tier: 4 keyless tests pass (T1, T2,
+          # T2b, T3); the free-tier T4 and the paid T5 skip. Zero/partial-pass
           # refuses green.
           pass_count=$(grep -Eo '[0-9]+ pass' door-keyless.txt | tail -1 | grep -Eo '^[0-9]+' || true)
-          if [ "$pass_count" != "5" ]; then
-            echo "::error::opencode door keyless tier expected 5 passing tests, summary shows '${pass_count:-none}' — refusing to go green (see docs/mcp/OPENCODE-CLI-PIN.md triage table)" >&2
+          if [ "$pass_count" != "4" ]; then
+            echo "::error::opencode door keyless tier expected 4 passing tests, summary shows '${pass_count:-none}' — refusing to go green (see docs/mcp/OPENCODE-CLI-PIN.md triage table)" >&2
             exit 1
           fi
 
@@ -958,7 +961,7 @@ jobs:
         if: matrix.lane == 'keyless'
         run: |
           echo "## OpenCode: keyless coverage only" >> "$GITHUB_STEP_SUMMARY"
-          echo "No paid turn ran in this lane. Request run_opencode_paid on dispatch or set GBRAIN_OPENCODE_PAID_E2E=1 to enable the separate credentialed lane (GBRAIN_PAID_LANES=0 keeps it off either way)." >> "$GITHUB_STEP_SUMMARY"
+          echo "No paid turn ran in this lane. The nightly schedule runs the separate credentialed lane, whose paid nonce SMOKE gates; on a dispatch, request run_opencode_paid or set GBRAIN_OPENCODE_PAID_E2E=1 (GBRAIN_PAID_LANES=0 keeps it off either way)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preconditions (credentialed lane requires secret)
         if: matrix.lane == 'credentialed'
@@ -981,6 +984,9 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GBRAIN_REAL_OPENCODE_PAID_E2E: '1'
+          # The test preload strips provider keys unless this is set; without it
+          # the suite refuses the requested paid tier as keyless.
+          GBRAIN_TEST_KEEP_PROVIDER_KEYS: '1'
         run: |
           EXIT=0
           bun test --timeout=600000 --test-name-pattern 'paid tier' test/e2e/install-real-opencode.serial.test.ts > door.txt 2>&1 || EXIT=$?
@@ -1070,6 +1076,9 @@ jobs:
     continue-on-error: true
     env:
       GBRAIN_REAL_OPENCODE_E2E: '1'
+      # The free-tier nonce SMOKE (T4) runs here, not in the gate: the free
+      # tier caps usage per IP and runner IPs hit the cap (#6049).
+      GBRAIN_REAL_OPENCODE_FREE_TIER_E2E: '1'
       # Deliberately NO OPENCODE_VERSION pin: T1 asserts the bare-semver
       # SHAPE only, and the suite runs against whatever `latest` is today.
     steps:

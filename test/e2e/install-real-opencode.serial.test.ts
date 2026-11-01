@@ -10,17 +10,19 @@
  * against v1.18.18 — see docs/mcp/OPENCODE-CLI-PIN.md; update that file, the
  * heavy-tests opencode-door pins, and these assertions together.
  *
- * SPLIT GATING (a step beyond the grok door, deliberate): opencode's
- * anonymous FREE TIER answers headless runs AND drives MCP tool calls with
- * zero credentials (observed — load-bearing), so even the nonce SMOKE runs
- * keyless. Two describes:
+ * SPLIT GATING: opencode's anonymous FREE TIER answers headless runs AND
+ * drives MCP tool calls with zero credentials, but since 2026-11 it caps
+ * free usage per IP, and datacenter runners hit the cap (#6049). So the
+ * nonce SMOKE that gates is the paid T5; the free-tier T4 runs only where
+ * it is requested (the non-gating canary). Two describes:
  *   - keyless tier (T1 version pin, T2 INSTALL + list handshake, T2b
- *     spawn-gate canary, T3 writer parity + preservation, T4 free-tier
- *     SMOKE): GBRAIN_REAL_OPENCODE_E2E=1 + resolvable binary.
+ *     spawn-gate canary, T3 writer parity + preservation):
+ *     GBRAIN_REAL_OPENCODE_E2E=1 + resolvable binary. T4 free-tier SMOKE
+ *     additionally needs GBRAIN_REAL_OPENCODE_FREE_TIER_E2E=1.
  *   - paid tier (T5 anthropic leg): additionally GBRAIN_REAL_OPENCODE_PAID_E2E=1
  *     and hasOpencodeAuth(). Unrequested coverage skips; requested coverage
- *     without credentials fails. The authed `opencode models` list must
- *     carry the pinned model id BEFORE any spend.
+ *     without credentials fails. The authed `opencode models --refresh` list
+ *     must carry the pinned model id BEFORE any spend.
  *
  * Isolation: every child gets HOME=<tmp> + XDG_CONFIG_HOME + XDG_DATA_HOME
  * under the tmp home (full XDG honoring verified on macOS) and an explicit
@@ -74,6 +76,7 @@ const CLI = join(REPO_ROOT, 'src', 'cli.ts');
 const OPENCODE_BIN = resolveOpencodeBinary();
 const CAN_RUN_KEYLESS = process.env.GBRAIN_REAL_OPENCODE_E2E === '1' && !!OPENCODE_BIN;
 const PAID_REQUESTED = process.env.GBRAIN_REAL_OPENCODE_PAID_E2E === '1';
+const FREE_TIER_REQUESTED = process.env.GBRAIN_REAL_OPENCODE_FREE_TIER_E2E === '1';
 const CAN_RUN_PAID = CAN_RUN_KEYLESS && PAID_REQUESTED && hasOpencodeAuth();
 
 if (CAN_RUN_KEYLESS && PAID_REQUESTED && !hasOpencodeAuth()) {
@@ -81,9 +84,9 @@ if (CAN_RUN_KEYLESS && PAID_REQUESTED && !hasOpencodeAuth()) {
 }
 
 /** Pinned anthropic model for the paid leg (provider/model, models.dev
- *  convention). PROVISIONAL until the authed models list confirms it — the
- *  T5 models-gate asserts presence BEFORE any spend and names the fix. */
-const PAID_MODEL = 'anthropic/claude-haiku-4-5';
+ *  convention): the current Haiku generation. The T5 models-gate asserts
+ *  presence in the refreshed authed list BEFORE any spend and names the fix. */
+const PAID_MODEL = 'anthropic/claude-haiku-5-5';
 
 if (!CAN_RUN_KEYLESS) {
   const why = process.env.GBRAIN_REAL_OPENCODE_E2E !== '1'
@@ -403,7 +406,7 @@ describe.skipIf(!CAN_RUN_KEYLESS)('install real-opencode door — keyless tier (
     expect((cfg2.mcp as Record<string, unknown>)['door-second']).toBeDefined();
   }, 300_000);
 
-  test('T4 SMOKE (keyless free tier): per-run nonce recalled via a STRUCTURAL gbrain tool_use event', async () => {
+  test.skipIf(!FREE_TIER_REQUESTED)('T4 SMOKE (keyless free tier): per-run nonce recalled via a STRUCTURAL gbrain tool_use event', async () => {
     const home = trackHome('smoke');
     seedOpencodeConfig(home);
     const ws = join(home, 'ws');
@@ -480,7 +483,9 @@ describe.skipIf(!CAN_RUN_PAID)('install real-opencode door — paid tier (anthro
 
     // Self-validating gate: never spend against a guessed model id. When
     // this fails, update PAID_MODEL from this authed list + the PIN doc.
-    const models = runOpencode(home, ws, ['models'], undefined, true);
+    // --refresh reads models.dev now: the binary's bundled catalog predates
+    // the current Haiku generation.
+    const models = runOpencode(home, ws, ['models', '--refresh'], undefined, true);
     expect(models.code).toBe(0);
     if (!models.stdout.includes(PAID_MODEL)) {
       throw new Error(

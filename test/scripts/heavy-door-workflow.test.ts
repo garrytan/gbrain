@@ -47,17 +47,26 @@ describe('heavy door supply chain and coverage gates', () => {
 
   test('OpenCode defaults to keyless and explicitly requests a separate credentialed lane', () => {
     expect(workflow.on.workflow_dispatch.inputs.run_opencode_paid.default).toBe(false);
-    // The credentialed lane is requested per dispatch or by GBRAIN_OPENCODE_PAID_E2E, and the repository-wide switch GBRAIN_PAID_LANES=0 keeps it off either way (#5903).
-    expect(opencode.strategy?.matrix.lane).toBe('${{ fromJSON((inputs.run_opencode_paid || vars.GBRAIN_OPENCODE_PAID_E2E == \'1\') && format(\'{0}\', vars.GBRAIN_PAID_LANES) != \'0\' && \'["keyless","credentialed"]\' || \'["keyless"]\') }}');
+    // The credentialed lane is requested by the nightly schedule (#6049), per dispatch or by GBRAIN_OPENCODE_PAID_E2E, and the repository-wide switch GBRAIN_PAID_LANES=0 keeps it off either way (#5903).
+    expect(opencode.strategy?.matrix.lane).toBe('${{ fromJSON((github.event_name == \'schedule\' || inputs.run_opencode_paid || vars.GBRAIN_OPENCODE_PAID_E2E == \'1\') && format(\'{0}\', vars.GBRAIN_PAID_LANES) != \'0\' && \'["keyless","credentialed"]\' || \'["keyless"]\') }}');
     expect(opencode.strategy?.['fail-fast']).toBe(false);
     expect(opencode.env.ANTHROPIC_API_KEY).toBeUndefined();
     const keyless = opencode.steps.find(step => step.name?.startsWith('Run opencode door tests (keyless'))!;
     expect(keyless.if).toBe("matrix.lane == 'keyless'");
     expect(keyless.env?.ANTHROPIC_API_KEY).toBeUndefined();
-    expect(keyless.run).toContain('[ "$pass_count" != "5" ]');
+    expect(keyless.run).toContain('[ "$pass_count" != "4" ]');
+    // #6049: the free-tier SMOKE never gates; only the non-gating canary requests it.
+    expect(opencode.env.GBRAIN_REAL_OPENCODE_FREE_TIER_E2E).toBeUndefined();
+    expect(keyless.env?.GBRAIN_REAL_OPENCODE_FREE_TIER_E2E).toBeUndefined();
+    const canary = workflow.jobs['opencode-door-canary'] as Job & { 'continue-on-error'?: boolean };
+    expect(canary['continue-on-error']).toBe(true);
+    expect(canary.env.GBRAIN_REAL_OPENCODE_FREE_TIER_E2E).toBe('1');
     const paid = opencode.steps.find(step => step.name === 'Run opencode door tests (credentialed tier only)')!;
     expect(paid.if).toBe("steps.paidgate.outputs.paid == 'true'");
     expect(paid.env?.GBRAIN_REAL_OPENCODE_PAID_E2E).toBe('1');
+    // test/helpers/provider-keys-preload.ts strips ANTHROPIC_API_KEY otherwise, and the paid tier then refuses to run.
+    expect(paid.env?.GBRAIN_TEST_KEEP_PROVIDER_KEYS).toBe('1');
+    expect(keyless.env?.GBRAIN_TEST_KEEP_PROVIDER_KEYS).toBeUndefined();
     expect(paid.run).toContain("--test-name-pattern 'paid tier'");
     expect(paid.run).toContain('[ "$pass_count" != "1" ]');
     expect(opencode.steps.find(step => step.name === 'Upload opencode door evidence')?.with?.name).toContain('${{ matrix.lane }}');

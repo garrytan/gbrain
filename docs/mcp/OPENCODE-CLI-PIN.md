@@ -177,6 +177,15 @@ bin-dir prepend).
   `opencode/big-pickle`; `opencode models` lists 8 keyless `opencode/*` models,
   most `-free` suffixed; `opencode stats` reports $0.00). There is no
   `Not signed in` wall in headless run mode.
+- **The free tier is capped per IP (observed 2026-11-01, #6049).** Past the
+  cap the provider refuses with `Free usage limit reached … subscribe to
+  OpenCode Go` (HTTP 429), and datacenter egress (CI runners, cloud dev
+  machines) hits it. `run` then waits out the server's retry-after (hours)
+  and prints NOTHING on stdout, in either format; the only trace is a
+  `message="stream error" … small=false … error.error="…"` line in
+  `<XDG_DATA_HOME>/opencode/log/opencode.log`. `opencodeOneShotTurn` reads that
+  log, ends the turn on a quota refusal, and reports every main-turn stream
+  error.
 - **MCP tools fire in keyless run mode WITHOUT `--auto`** (verified: the free
   model called `gbrain_recall` and returned a seeded per-run nonce with
   `--auto` absent). `--auto` exists (`auto-approve permissions that are not
@@ -212,15 +221,19 @@ bin-dir prepend).
 - Anonymous free tier needs nothing on disk; `auth.json` is only created by
   `opencode auth login` at `<XDG_DATA_HOME>/opencode/auth.json`
   (`opencode providers`, alias `auth`, prints the path).
-- The default door lane is keyless, including the nonce SMOKE. Its child
-  environment strips provider credentials even if the caller has them.
-  The summary explicitly reports that no paid turn ran.
-- The separate credentialed lane is opt-in: set `run_opencode_paid` on a
-  manual dispatch, or the repository variable `GBRAIN_OPENCODE_PAID_E2E=1`
-  for recurring coverage. This authorizes paid provider usage. It requires
+- The default door lane is keyless (T1-T3). Its child environment strips
+  provider credentials even if the caller has them. The summary explicitly
+  reports that no paid turn ran. The free-tier nonce SMOKE (T4) runs only
+  with `GBRAIN_REAL_OPENCODE_FREE_TIER_E2E=1`, which the non-gating canary sets.
+- The separate credentialed lane carries the gating nonce SMOKE (T5, one
+  `anthropic/claude-haiku-5-5` turn). The nightly schedule always runs it; on
+  a dispatch, set `run_opencode_paid` or the repository variable
+  `GBRAIN_OPENCODE_PAID_E2E=1`. This authorizes paid provider usage, and
+  `GBRAIN_PAID_LANES=0` keeps it off everywhere. It requires
   `ANTHROPIC_API_KEY` (env-only), and fails before a turn if the secret is
   absent or blank. It self-validates the model id against the authed
-  `opencode models` output before spending and requires one passing paid test.
+  `opencode models --refresh` output (1.18.18's bundled catalog predates the
+  current Haiku generation) before spending and requires one passing paid test.
   Local runs require both `GBRAIN_REAL_OPENCODE_PAID_E2E=1` and the key;
   the key alone never opts a test run into spending.
 
@@ -231,9 +244,10 @@ bin-dir prepend).
 | canary leg red, pinned leg green | latest-version leg fails install/asserts | Upstream changed shape — schedule a pin refresh; pinned lane still gates |
 | version drift mid-run | `opencode --version` re-check ≠ pinned | Auto-update engaged — verify BOTH kills (env + config seed); re-pin if deliberate |
 | `✗ gbrain failed` in `mcp list` | `Executable not found in $PATH` / spawn error | Staged bin dir missing from PATH, or abs path wrong — registration bug, not opencode drift |
-| free-tier drift | keyless SMOKE stops answering / new auth wall | Re-observe keyless posture; if the free tier is gated, flip the SMOKE to the ANTHROPIC leg and re-pin this section |
+| free-tier drift | canary T4 stops answering / new auth wall | Re-observe keyless posture; the gating SMOKE already rides the ANTHROPIC leg (#6049) |
+| free-tier quota | T4 fails within seconds: `provider error(s): AI_APICallError: Free usage limit reached` | The per-IP free cap, not a gbrain regression; canary-only since #6049 |
 | paid leg: model id unknown | models-gate assert fails before any spend | Update the pinned anthropic model id from the authed `opencode models` output |
-| credentialed lane not requested | Keyless-only job summary; no paid coverage claimed | Expected default, including nightly runs; opt in separately when paid coverage is authorized |
+| credentialed lane not requested | Keyless-only job summary; no paid coverage claimed | Expected on a dispatch without the opt-in; the nightly always requests it unless `GBRAIN_PAID_LANES=0` |
 | requested credentialed lane lacks a secret | Explicit prerequisite failure; no paid turn ran | Configure `ANTHROPIC_API_KEY` for an authorized run, or disable the paid opt-in; keyless coverage remains independent |
 | tripwire fired | manifest mismatch on `opencode.json(c)`/`auth.json` only | True isolation breach — stop and inspect; volatile-path drift alone must NOT fire |
 | real door regression | handshake or nonce assert fails, pins intact | Bisect against the pinned version; file upstream if opencode-side |
@@ -257,6 +271,5 @@ spending, so these pins harden the door but do not block it.
 ## Supported-version policy
 gbrain's opencode integration is verified against **opencode v1.18.18** (this
 pin). The canary CI leg tracks latest (continue-on-error); the pinned lane is
-the deterministic gate. Keyless free-tier behavior is a LOAD-BEARING
-observation (the SMOKE rides it) — treat free-tier changes as pin-refresh
-triggers, not flakes.
+the deterministic gate. Keyless free-tier behavior is observed in the canary
+only (the free tier is capped per IP, #6049); the gating SMOKE is the paid T5.
