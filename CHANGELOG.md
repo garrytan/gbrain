@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.541.0] - 2026-11-01
 
 **A saved fact from a quarantined page, or one waiting to be re-derived after a purge, no longer reaches agents through search, query, trajectories, entity cards, standing questions, local `gbrain recall` or consolidation.**
 
