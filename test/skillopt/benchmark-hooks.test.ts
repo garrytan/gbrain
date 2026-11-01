@@ -12,12 +12,20 @@ import { loadRunTasks } from '../../src/core/skillopt/benchmark.ts';
 import { describeJudges } from '../../src/core/skillopt/reflect.ts';
 import { READ_ONLY_BRAIN_TOOLS, rolloutToolsForSkill } from '../../src/core/skillopt/rollout.ts';
 import type { BenchmarkTask, RolloutBatchHook, RolloutBatchRequest, ScoredRollout } from '../../src/core/skillopt/types.ts';
+import * as skillopt from '../../src/core/skillopt/index.ts';
 
 const engine = {} as BrainEngine;
 const task = (id: string, arg = 'x'): BenchmarkTask => ({ task_id: id, task: `do ${id}`, judge: { kind: 'rule', checks: [{ op: 'contains', arg }] } } as BenchmarkTask);
 const tasks = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => task(`${prefix}-${i + 1}`));
 const row = (score: number): ScoredRollout => ({ score, trajectory: { task_id: '', task: '', final_text: '', tool_calls: [], turns: 1, stop_reason: 'end', duration_ms: 0,
   usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 } } } as ScoredRollout);
+
+test('B1.1: the harness surface is exported from the skillopt index', () => {
+  for (const name of ['runSkillOpt', 'runRollout', 'scoreTrajectory', 'scoreSkillPerTask', 'scoreSkillOnTasks', 'rolloutToolsForSkill', 'describeJudges']) {
+    expect(typeof (skillopt as Record<string, unknown>)[name]).toBe('function');
+  }
+  expect(skillopt.READ_ONLY_BRAIN_TOOLS).toBe(READ_ONLY_BRAIN_TOOLS);
+});
 
 describe('rollout hook (B1.3)', () => {
   test('one call for the whole batch, per-task medians and the request labels', async () => {
