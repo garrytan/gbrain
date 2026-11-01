@@ -1078,12 +1078,12 @@ export async function requireWritablePage(
   }
 
   const visibleScope = federatedSearchScope(ctx);
-  const spansAnotherSource =
-    (visibleScope.sourceIds?.some((sourceId) => sourceId !== writeSource) ?? false) ||
-    (visibleScope.sourceId !== undefined && visibleScope.sourceId !== writeSource);
-  if (spansAnotherSource) {
-    const visible = await ctx.engine.getPage(slug, visibleScope);
-    if (visible && visible.source_id !== writeSource && !await remoteTargetHidden(ctx.engine, ctx.remote, visible.source_id, slug)) {
+  // GBRA-218: the diagnostic reads only the other sources, under the caller's read policy, so a page the caller cannot
+  // read there (or a hidden row in the write source) answers exactly as a missing slug.
+  const otherSources = (visibleScope.sourceIds ?? (visibleScope.sourceId !== undefined ? [visibleScope.sourceId] : [])).filter(id => id !== writeSource);
+  if (otherSources.length) {
+    const visible = await ctx.engine.getPage(slug, await readPolicyOpts(ctx, { sourceIds: otherSources }));
+    if (visible && !await remoteTargetHidden(ctx.engine, ctx.remote, visible.source_id, slug)) {
       throw opError(
         'permission_denied',
         `${operation}${endpoint === 'page' ? '' : ` ${endpoint}`} page "${slug}" is readable from source "${visible.source_id}" but this client writes to source "${writeSource}".`,

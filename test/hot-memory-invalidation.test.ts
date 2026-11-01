@@ -20,7 +20,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { recordFactWithdrawal } from '../src/core/facts/withdrawal.ts';
 import { importFromContent } from '../src/core/import-file.ts';
-import { proposeRevision } from '../src/core/access/policy.ts';
+import { clearPolicyInvalid, markPolicyInvalid, proposeRevision } from '../src/core/access/policy.ts';
 import {
   getBrainHotMemoryMeta, invalidateHotMemoryForEngine, __hotMemoryCacheForTests, __resetHotMemoryCacheForTests,
 } from '../src/core/facts/meta-hook.ts';
@@ -132,3 +132,17 @@ test('GBRA-218: a folder narrowing installed outside this dispatcher is not serv
   }
 });
 
+
+test('GBRA-218: coverage replaced by the same number of rows is not served from the cache', async () => {
+  for (const engine of engines) {
+    const { id, marker } = await seed(engine);
+    const slug = `team/cover-${marker}`;
+    await importFromContent(engine, slug, '---\ntype: note\ntitle: Team cover\n---\n# Team cover\n\nCover.', { sourceId: 'default', noEmbed: true });
+    await engine.executeRaw('UPDATE facts SET source_markdown_slug = $2 WHERE id = $1', [id, slug]);
+    await markPolicyInvalid(engine, 'default', ['elsewhere/'], { test: 'GBRA-218' });
+    expect(await metaCarries(engine, marker, true)).toBe(true);
+    await markPolicyInvalid(engine, 'default', ['team/'], { test: 'GBRA-218' });
+    expect(await metaCarries(engine, marker, true)).toBe(false);
+    await clearPolicyInvalid(engine, 'default');
+  }
+});
