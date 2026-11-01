@@ -67,6 +67,7 @@
   "test/facts-subject-infer-7405.test.ts": 4890,
   "test/fence-fact-append.test.ts": 32856,
   "test/fence-repair-receipts.test.ts": 8636,
+  "test/fenced-embed-reuse-6961.test.ts": 4602,
   "test/file-drift-soft-delete-hold-release-gbra133.test.ts": 12766,
   "test/forecast-journal.test.ts": 22619,
   "test/frontmatter-reserved-keys-6454.test.ts": 4771,
