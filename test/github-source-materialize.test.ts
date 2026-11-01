@@ -585,6 +585,49 @@ describe('github-source materialize', () => {
     }
   });
 
+  test('a full issues page without a Link header fails the repo: no deletes, cursor held', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-nolink-'));
+    const fx = makeFixture();
+    const base = buildFetch(fx);
+    // The issues list now has two pages, but page 1 (a full 100 rows) lost
+    // its Link header in transit; the real items sit on page 2.
+    let truncate = false;
+    const fetchImpl = async (url: string, init?: RequestInit): Promise<Response> => {
+      const u = new URL(url);
+      if (truncate && u.pathname === `/repos/${REPO}/issues`) {
+        if (u.searchParams.get('page') === '1') {
+          const filler = Array.from({ length: 100 }, (_, i) => ({ number: 1000 + i, title: `Old ${i}`, state: 'closed', updated_at: '2026-06-01T00:00:00Z' }));
+          return new Response(JSON.stringify(filler), { status: 200 });
+        }
+        u.searchParams.delete('page');
+      }
+      return base(u.toString(), init);
+    };
+    try {
+      await insertSource(engine, dir);
+      await withEnv({ GH_TOKEN: 'test-token' }, async () => {
+        await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true }, fetchImpl);
+        const before = await pageSlugs(engine);
+        const cursor = () => (JSON.parse(readFileSync(join(dir, '.github-source.json'), 'utf-8')) as { last_sweep_at?: string }).last_sweep_at;
+        const cursorBefore = cursor();
+        truncate = true;
+        const errors = spyOn(console, 'error').mockImplementation(() => {});
+        try {
+          const res = await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true }, fetchImpl);
+          expect(res.status).toBe('partial');
+          expect(res.deleted).toBe(0);
+          expect(errors).toHaveBeenCalledWith(expect.stringContaining(`[github] repo ${REPO} failed: full page 1 of /repos/${REPO}/issues`));
+        } finally {
+          errors.mockRestore();
+        }
+        expect(await pageSlugs(engine)).toEqual(before);
+        expect(cursor()).toBe(cursorBefore);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('a failed item does not advance the sweep cursor and is retried next run', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ghsrc-cursor-'));
     const fx = makeFixture();
