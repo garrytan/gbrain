@@ -22,6 +22,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
+import { fenceTranscriptText } from '../src/core/search/transcript-quote.ts';
 import {
   REMOTE_PRIVATE_PAGES_KEY,
   __resetPrivateVisibilityCacheForTests,
@@ -100,7 +101,12 @@ beforeEach(async () => {
   });
 }, 60_000);
 
-type Val = { dimension: string; value: string; source: string };
+type Val = { dimension: string; value: string; source: string; fact_id: number };
+// #8384: a value derived from a meeting page reaches a remote reader quoted as that fact, as recall quotes it.
+const quoted = (v: Val | undefined, value: string) => {
+  expect(v).toBeDefined();
+  return [v!.value, fenceTranscriptText(value, `fact ${v!.fact_id}`)];
+};
 type Conflict = { entity_slug: string; values: { value: string; source: string }[] };
 
 describe('ontology provenance rows follow the page-visibility policy', () => {
@@ -111,7 +117,8 @@ describe('ontology provenance rows follow the page-visibility policy', () => {
     for (const c of [remote(), remoteUndef()]) {
       const rows = await operationsByName.ontology_get.handler(c, { entity: 'people/open-person' }) as Val[];
       expect(privateToken(rows)).toBeNull();
-      expect(rows.find((v) => v.dimension === 'role')?.value).toBe('openvalue');
+      const [got, want] = quoted(rows.find((v) => v.dimension === 'role'), 'openvalue');
+      expect(got).toBe(want!);
     }
   });
 
@@ -126,7 +133,7 @@ describe('ontology provenance rows follow the page-visibility policy', () => {
   });
 
   test('volunteer_chronicle: ontologies carry no private value or provenance slug', async () => {
-    type Vol = { ontologies: Record<string, { value: string }[]> };
+    type Vol = { ontologies: Record<string, Val[]> };
     const args = { days: 3650, limit: 50, entities: 'people/open-person' };
     const seen = await operationsByName.volunteer_chronicle.handler(local(), args) as Vol;
     expect(seen.ontologies['people/open-person'].map((v) => v.value)).toContain('secretvalue');
@@ -134,7 +141,7 @@ describe('ontology provenance rows follow the page-visibility policy', () => {
     for (const c of [remote(), remoteUndef()]) {
       const vol = await operationsByName.volunteer_chronicle.handler(c, args) as Vol;
       expect(privateToken(vol)).toBeNull();
-      expect(vol.ontologies['people/open-person'].map((v) => v.value)).toEqual(['openvalue']);
+      expect(vol.ontologies['people/open-person'].map((v) => v.value)).toEqual([fenceTranscriptText('openvalue', `fact ${vol.ontologies['people/open-person'][0]!.fact_id}`)]);
     }
   });
 });
@@ -145,7 +152,8 @@ describe('operator opt-out matches the sibling reads', () => {
     __resetPrivateVisibilityCacheForTests();
     try {
       const rows = await operationsByName.ontology_get.handler(remote(), { entity: 'people/open-person' }) as Val[];
-      expect(rows.find((v) => v.dimension === 'role')?.value).toBe('secretvalue');
+      const [got, want] = quoted(rows.find((v) => v.dimension === 'role'), 'secretvalue');
+      expect(got).toBe(want!);
     } finally {
       await engine.setConfig(REMOTE_PRIVATE_PAGES_KEY, '');
       __resetPrivateVisibilityCacheForTests();

@@ -20,6 +20,20 @@ Vector reuse was turned off for every page with a protected fence, so each write
 
 - **Fenced page reuse (#6961).** A fenced page now reuses a stored vector when its recorded embedding input equals the one the import would embed, the same check every other page gets. The stored index must still be sealed by the fence-safe chunker, so a reused vector's text holds no private fence row. A chunk whose text changed, such as the fence chunk a new fact lands in, is embedded again. A legacy vector with no recorded input is never reused on a fenced page, because nothing proves what text it was computed from. A one-row fact append on a five-chunk entity page now makes one embedding call instead of five. Contributed by @javieraldape (#7055, rewritten on master).
 
+## [0.60.539.0] - 2026-11-01
+
+**A remote `put_page` of a page an agent read whole now keeps its frontmatter and the code blocks it added, and timeline sources and ontology values are quoted below "your notes" like the rest of their rows.**
+
+Before, an agent that read a page with `include_content`, added a fenced code block, or had a newline prepended and the closing fence replaced, could store the page with the read's fence still in the body (its frontmatter inside it) or with its own code block's opener stripped. A timeline entry's free-text `source` and the ontology values `volunteer_chronicle`, `ontology_get` and `ontology_conflicts` return reached remote readers raw. Now the write keeps the page as the agent meant it, those fields are quoted by tier, and text copied back from them is stored without the fence. A remote read quoted only because the page's origin is unverified names the command that clears it.
+
+### Itemized changes
+
+- Remote `put_page` finds a whole-markdown read's closing fence as the first line that is exactly that fence outside a code block the content opens itself, so a backtick code block added inside, in place of or after the read is stored whole; a read with blank lines before its marker and its closing line replaced keeps its frontmatter. A fence naming another page, or one after other text, is stored as written. Content holding many markers that never close is kept as written in linear time (the unquote shares one scan budget per text).
+- `get_timeline`, the chronicle reads and `volunteer_chronicle` quote a timeline row's `source` with its summary and detail; remote `add_timeline_entry` stores a copied source without the fence.
+- `volunteer_chronicle`'s `ontologies`, `ontology_get` and `ontology_conflicts` quote a value by its fact's stored tier for remote readers (`quoted: "transcript"`); remote `ontology_propose` stores a copied value without the fence.
+- A remote `get_page` or `fetch` of a page quoted because its trust tier is `unknown` carries a `quoted_unverified_origin` info notice, once per session, naming `gbrain trust claim-sources` (preview with `--dry-run --json`) and `gbrain trust backfill`. Quoting is unchanged.
+- Tests: `test/search-transcript-quote-8384.test.ts` (PGLite and Postgres), red on master for each change.
+
 ## [0.60.538.0] - 2026-11-01
 
 **Agents connected over MCP now see the chronicle reads, takes reads and a quoted page's title and frontmatter quoted as source material, and the context gbrain's hooks inject quotes facts below "your notes" too.**

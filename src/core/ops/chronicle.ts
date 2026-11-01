@@ -8,10 +8,11 @@
  */
 
 import type { Operation, OperationContext } from './contract.ts';
-import type { ChronicleTimelineRow } from '../types.ts';
+import type { ChronicleTimelineRow, OntologyValue } from '../types.ts';
 import { readPolicyOpts, sourceScopeOpts } from './context.ts';
 import { invalidParam } from './op-fix.ts';
 import { quoteTimelineRows } from './timeline-quote.ts';
+import { quoteFacts, unquoteFactText } from '../search/transcript-quote.ts';
 
 // ── Remote diary redaction (fail-closed) ─────────────────────────────────
 // The exact mechanism the ontology siblings use (`ctx.remote !== false` →
@@ -32,6 +33,12 @@ function redactDiaryTimeline<
 /** The rows a remote reader gets: diary rows redacted, then each entry below the owner's tier quoted as its own page's (GST-687). */
 function remoteTimeline(ctx: OperationContext, rows: ChronicleTimelineRow[]) {
   return quoteTimelineRows(ctx, r => r.page_slug, redactDiaryTimeline(ctx, rows));
+}
+/** #8384: ontology values a remote reader gets, each quoted by its fact's stored tier as recall quotes the fact (quoteFacts). */
+async function remoteOntology<V extends Pick<OntologyValue, 'value' | 'source' | 'fact_id'>>(ctx: OperationContext, values: V[]): Promise<Array<V & { quoted?: 'transcript' }>> {
+  if (ctx.remote === false || values.length === 0) return values;
+  const facts = await quoteFacts(ctx.engine, values.map(v => ({ id: v.fact_id, fact: v.value, source: v.source })), true);
+  return values.map((v, i) => facts[i]!.quoted ? { ...v, value: facts[i]!.fact, quoted: 'transcript' as const } : v);
 }
 
 // ── v0.42.x — Life Chronicle (#2390) timeline read ops ───────────────────
@@ -169,7 +176,7 @@ const ontology_get: Operation = {
     });
     // Remote redaction: world-visibility rows only (as recall), resolved before
     // DISTINCT ON; never surface diary-sourced ontology to untrusted callers.
-    return ctx.remote !== false ? rows.filter((r) => !(r.source ?? '').startsWith('life/diary/')) : rows;
+    return ctx.remote !== false ? remoteOntology(ctx, rows.filter((r) => !(r.source ?? '').startsWith('life/diary/'))) : rows;
   },
   cliHints: { name: 'ontology', positional: ['entity'] },
 };
@@ -204,7 +211,8 @@ const ontology_propose: Operation = {
     const merge = (engine: typeof ctx.engine, sourceId: string | undefined) => engine.mergeOntologyFact({
       entitySlug,
       dimension: String(p.dimension),
-      value: String(p.value),
+      // #8384: a value copied out of a quoted ontology read is stored without the fence.
+      value: ctx.remote === false ? String(p.value) : unquoteFactText(String(p.value)),
       confidence: typeof p.confidence === 'number' ? p.confidence : undefined,
       source: typeof p.source === 'string' && p.source ? p.source : 'manual',
       validFrom: typeof p.valid_from === 'string' ? p.valid_from : undefined,
@@ -271,9 +279,12 @@ const ontology_conflicts: Operation = {
     if (ctx.remote === false) return conflicts;
     // Remote: redact diary-sourced values; drop conflicts that no longer have
     // ≥2 distinct values once diary provenance is removed (no leak via conflicts).
-    return conflicts
+    const kept = conflicts
       .map((c) => ({ ...c, values: c.values.filter((v) => !(v.source ?? '').startsWith('life/diary/')) }))
       .filter((c) => new Set(c.values.map((v) => v.value)).size >= 2);
+    const quoted = await remoteOntology(ctx, kept.flatMap((c) => c.values));
+    let at = 0;
+    return kept.map((c) => ({ ...c, values: c.values.map(() => quoted[at++]!) }));
   },
   cliHints: { name: 'ontology-contradictions' },
 };
@@ -308,7 +319,8 @@ const volunteer_chronicle: Operation = {
     });
     // Same fail-closed diary redaction as the timeline reads: the loader
     // redacts diary-sourced ONTOLOGY; the recent timeline is redacted here.
-    return { ...result, recent_timeline: await remoteTimeline(ctx, result.recent_timeline) };
+    const ontologies = Object.fromEntries(await Promise.all(Object.entries(result.ontologies).map(async ([slug, values]) => [slug, await remoteOntology(ctx, values)] as const)));
+    return { ...result, recent_timeline: await remoteTimeline(ctx, result.recent_timeline), ontologies };
   },
   cliHints: { name: 'orient' },
 };

@@ -115,7 +115,9 @@ and `view: markdown` keep the stored text byte-exact inside the fence, so
 `edit_page` `old_text` copied from inside a fence still matches, and
 `put_page` given that `content` back removes exactly the fences get_page
 added around this page before writing (a fence-like text in an owner-tier
-note's stored body is kept; a whole-markdown read whose closing fence the edit replaced or appended past is unfenced too). A remote `put_page` whose content holds a
+note's stored body is kept; a whole-markdown read whose closing fence the edit replaced or appended past is unfenced too,
+as is one with blank lines added before its marker, and a backtick code block the edit added inside, in place of or after the read
+is kept whole). A remote `put_page` whose content holds a
 tool-call summary that a whole read of the stored page never produces, or
 that keeps fewer of a summarized call than the stored page holds, is
 refused with `invalid_params` and stores nothing; a summary inside a kept call's
@@ -134,17 +136,19 @@ notes" (written by an agent, tool data, external, or unverified origin) comes
 back quoted on search, `query`, `recall`, `assemble_evidence`, `get_page`
 (title and frontmatter included; `include_content` fences the whole markdown),
 `fetch`, `get_timeline`, `chronicle_day`, `chronicle_since`,
-`chronicle_on_this_day`, `volunteer_chronicle`, `takes_list`, `takes_search` (claim and source),
+`chronicle_on_this_day`, `volunteer_chronicle` (its ontology values too), `ontology_get`, `ontology_conflicts`, `takes_list`, `takes_search` (claim and source),
+where a timeline row's free-text `source` is quoted with its summary and detail,
 `get_chunks`, `search_exact`, `get_versions`, `known_as_of`, `think`'s extractive
 answer, `context_pack`, hot memory and write receipts. The context gbrain's
 hooks inject (the per-turn hook and the pushed context pack) quotes facts below
 the owner's tier the same way, so hook output can hold quote fences. A fact or
 timeline entry an agent copies back from a quoted read into `remember` or
-`add_timeline_entry`, or a claim or source copied into `takes_add`, `takes_update` or
-`takes_supersede`, is stored without the fence. A note saved before gbrain
+`add_timeline_entry` (its `source` too), an ontology value copied into `ontology_propose`, or a claim or source copied
+into `takes_add`, `takes_update` or `takes_supersede`, is stored without the fence. A note saved before gbrain
 tracked trust reads as unverified, so it is quoted until the owner runs
 `gbrain trust claim-sources` or `gbrain trust backfill` (`gbrain doctor` names how
-many pages that is). Page titles are quoted on `get_page` and `fetch` only:
+many pages that is); a remote `get_page` or `fetch` of such a page carries a
+`quoted_unverified_origin` notice naming those commands, once per session. Page titles are quoted on `get_page` and `fetch` only:
 search rows and context cards return them as stored, and so is a chronicle
 entry's `kind`. Local reads are unchanged.
 
