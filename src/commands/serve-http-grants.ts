@@ -15,7 +15,7 @@ export const GRANT_TOKEN_IMPLICATIONS = 'Client credentials stay unchanged. Sour
 export function parseAdminGrantRequest(body: Record<string, unknown>, existing?: ClientGrant) {
   const patch: GrantPatch = {};
   const invalid = (field: string, expected: string): never => { throw new GrantError('invalid_grant', `${field} must be ${expected}`); };
-  const arrays = ['federatedRead', 'boundSlugPrefixes', 'allowedOperations', 'boundTools', 'delegatedSlugPrefixes'] as const;
+  const arrays = ['federatedRead', 'takesHolders', 'boundSlugPrefixes', 'allowedOperations', 'boundTools', 'delegatedSlugPrefixes'] as const;
   for (const field of arrays) {
     const value = body[field];
     if (value === undefined) continue;

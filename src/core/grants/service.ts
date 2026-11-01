@@ -81,7 +81,7 @@ export async function insertClientGrant(sql: SqlQuery, grant: ClientGrant, metad
     WITH created AS (
       INSERT INTO oauth_clients (client_id, client_name, client_secret_hash, redirect_uris, grant_types,
         token_endpoint_auth_method, client_id_issued_at, scope, source_id, federated_read,
-        bound_slug_prefixes, allowed_operations, bound_tools, bound_source_id, bound_brain_id,
+        takes_holders, bound_slug_prefixes, allowed_operations, bound_tools, bound_source_id, bound_brain_id,
         delegated_slug_prefixes, delegated_namespace, bound_max_concurrent, budget_usd_per_day,
         surface, surface_set_by, token_ttl, grant_profile, grant_revision, grant_repair_reasons)
       VALUES (${grant.clientId}, ${grant.clientName}, ${metadata.secretHash},
@@ -89,6 +89,7 @@ export async function insertClientGrant(sql: SqlQuery, grant: ClientGrant, metad
         ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(metadata.grantTypes)}::text::jsonb)),
         ${metadata.authMethod}, ${metadata.issuedAt}, ${grant.scopes.join(' ')}, ${grant.sourceId},
         ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(grant.federatedRead)}::text::jsonb)),
+        CASE WHEN ${grant.takesHolders === null} THEN NULL ELSE ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(grant.takesHolders ?? [])}::text::jsonb)) END,
         CASE WHEN ${grant.boundSlugPrefixes === null} THEN NULL ELSE ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(grant.boundSlugPrefixes ?? [])}::text::jsonb)) END,
         CASE WHEN ${grant.allowedOperations === null} THEN NULL ELSE ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(grant.allowedOperations ?? [])}::text::jsonb)) END,
         CASE WHEN ${grant.boundTools === null} THEN NULL ELSE ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(grant.boundTools ?? [])}::text::jsonb)) END,
