@@ -55,7 +55,8 @@ export async function recordSlugLineAlias(tx: Pick<BrainEngine, 'transaction'>, 
  * Move the slug-keyed rows that belong to a renamed page (#5431): facts about
  * it (`entity_slug`), facts read from its `## Facts` fence
  * (`source_markdown_slug`), its free-text search aliases (`page_aliases`), and
- * its fact withdrawals (a forgotten claim stays forgotten). Runs inside the
+ * its fact withdrawals (a forgotten claim stays forgotten), and the origin
+ * slug on its atoms. Runs inside the
  * caller's rename transaction. The new slug is free (the page UPDATE
  * succeeded), so fence rows or aliases still keyed to it belong to a purged
  * page and yield to the moved ones. An ontology observation the new slug
@@ -70,6 +71,10 @@ export async function moveSlugBindings(
   newSlug: string,
 ): Promise<void> {
   if (oldSlug === newSlug) return;
+  // Atom lineage is slug-keyed too: carry it with the origin so readers and
+  // repair planners keep finding the same page without another extraction.
+  await tx.executeRaw(`UPDATE pages SET frontmatter = jsonb_set(frontmatter, '{source_slug}', to_jsonb($3::text))
+    WHERE source_id = $1 AND type = 'atom' AND frontmatter->>'source_slug' = $2`, [sourceId, oldSlug, newSlug]);
   await tx.executeRaw(MOVE_WITHDRAWAL_SUBJECT_SQL, [sourceId, oldSlug, newSlug]);
   type Savepoint = Pick<BrainEngine, 'executeRaw'>;
   const sql = (text: string) => (savepoint: Savepoint) => savepoint.executeRaw(text, [sourceId, oldSlug, newSlug]);
