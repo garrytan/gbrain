@@ -4,6 +4,7 @@
   "test/access-folder-lock-order.test.ts": 1420,
   "test/access-folder-multiconn.test.ts": 4110,
   "test/access-folder-rules.test.ts": 18830,
+  "test/access-folder-scoped-role.test.ts": 1280,
   "test/access-members.test.ts": 3930,
   "test/access-on-behalf-of.test.ts": 13100,
   "test/access-page-indexes-online.test.ts": 1940,

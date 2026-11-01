@@ -5,7 +5,7 @@
  * stayed visible. Contract: an access table that row-level security hides from the role is never read as "no rule".
  * The stamp refuses the write (writer_coordinator_required, unreadable_state) and every pending-coverage read covers
  * everything. A role holding the docs/ENGINES.md access recipe (applied verbatim) gets the correct stamp and the
- * normal read. Postgres only (PGLite has no roles): test/e2e/access-folder-scoped-role-postgres.test.ts.
+ * normal read. Postgres only (PGLite has no roles): it runs in the unit-lane PostgreSQL arms (test/postgres-unit-arms.txt).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
