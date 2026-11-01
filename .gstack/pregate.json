@@ -77,7 +77,10 @@
     ],
     "scripts/bench/stall-repro-vm-setup.sh": [
       "test/scripts/vm-setup-usage.test.ts"
-    ]
+    ],
+    "scripts/bench/**": [],
+    "docs/eval/system-one/runners/**": [],
+    "docs/eval/system-one/generators/**": []
   },
   "guards": [
     {
