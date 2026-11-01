@@ -34,7 +34,10 @@ Before, a remote reader got a page's title raw on `search` and `query` rows, its
 - `context_pack` and the pushed pack render a card below the owner's tier with its title under the card's trust label.
 - Remote `get_page` (every shape), `fetch` and `get_tags` quote a quoted page's tags; remote `add_tag` and `remove_tag` take a tag copied out of those reads without the fence.
 - The chronicle reads and `volunteer_chronicle` quote an event row's `kind` by its event page's type and tier; `--narrative` keeps that fence on its own lines.
-- Remote `put_page` rewrites only the frontmatter keys that held a fence, so every other line (a naive datetime included) keeps the bytes sent.
+- Remote `put_page` rewrites only the frontmatter keys that held a fence, so every other line (a naive datetime included) keeps the bytes sent; a rewrite that would not parse back to the same values (a flow mapping continued on the next line, an anchor another key aliases) rewrites the whole block instead.
+- A keyword row returned without its text (evidence omitted under a token budget) gets its title quoted for a remote reader like the text would be, and counted in the budget.
+- A remote reader's `other_names` on `search` and `query` leaves out names a quoted row declares.
+- `chronicle_since` (`kind`) and `list_pages` (`tag`) take a value copied out of a quoted read without its fence.
 - Tests: `test/search-transcript-quote-8384b.test.ts` (PGLite and Postgres), red on master for each change.
 
 Contributed by @tarush1989 (#7115, rebuilt on current master).
