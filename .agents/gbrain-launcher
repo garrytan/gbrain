@@ -1,0 +1,141 @@
+#!/bin/sh
+# .agents/gbrain-launcher — MCP-server launcher for the gbrain Codex and
+# Claude Code plugins. Unix-only (macOS/Linux): needs /bin/sh, executable
+# bits, and `command -v`. Windows support is a filed follow-up.
+#
+# Resolves the gbrain binary (the plugin snapshot cannot ship it — the CLI
+# installs separately), then execs it with the argv the plugin manifest
+# pinned. Resolution order:
+#   1. $GBRAIN_BIN         explicit override (must be executable)
+#   2. `gbrain` on PATH
+#   3. ~/.bun/bin/gbrain   the sanctioned global-install location
+#
+# GBRAIN_SURFACE: when set and argv[0] is `serve`, replaces the value of an
+# existing `--surface <x>` pair, or appends `--surface $GBRAIN_SURFACE` if
+# the pair is absent — so a user can widen (full) or narrow (verbs) this
+# machine's plugin surface without editing the plugin snapshot.
+#
+# No auto-install by design: an MCP server start must never run a network
+# install. On a miss this exits 127 with the recovery path on stderr; the
+# bundled `setup` skill walks the install interactively.
+#
+# `hook …` (the plugin's per-turn hook) is the exception: on a miss it exits 0
+# with no output, so a plugin-first install without the CLI shows no hook
+# error on every turn. With GBRAIN_HOOK_LANE=plugin it also exits 0 silently
+# when the binary predates the plugin lane (PLUGIN_LANE_MIN): such a CLI
+# ignores the lane and would fire the rule a second time next to setup's own
+# hook. The version probe runs once per binary: its verdict is cached under
+# <GBRAIN_HOME or HOME>/.gbrain/cache/plugin-hook-cli, keyed by the resolved
+# path and valid while the cache is newer than the binary (`test -nt`, a
+# shell builtin), so a cached turn starts no extra process.
+
+set -eu
+
+PLUGIN_LANE_MIN=0.60.498.0
+HOOK=0
+[ "${1:-}" = "hook" ] && HOOK=1
+
+resolve_bin() {
+  if [ -n "${GBRAIN_BIN:-}" ]; then
+    if [ ! -x "$GBRAIN_BIN" ]; then
+      [ "$HOOK" = 1 ] && exit 0
+      echo "gbrain-launcher: GBRAIN_BIN='$GBRAIN_BIN' is not an executable file" >&2
+      exit 127
+    fi
+    printf '%s' "$GBRAIN_BIN"
+    return
+  fi
+  # ~/.bun/bin (the sanctioned global-install location) is preferred OVER a
+  # bare PATH lookup: a hostile repo that prepends node_modules/.bin with a
+  # fake `gbrain` must not win over the real install. GBRAIN_BIN (above) is
+  # the explicit escape hatch for a gbrain living elsewhere.
+  if [ -x "${HOME:-}/.bun/bin/gbrain" ]; then
+    printf '%s' "$HOME/.bun/bin/gbrain"
+    return
+  fi
+  if command -v gbrain >/dev/null 2>&1; then
+    command -v gbrain
+    return
+  fi
+  [ "$HOOK" = 1 ] && exit 0
+  echo "gbrain-launcher: gbrain binary not found." >&2
+  echo "  install: bun install -g github:garrytan/gbrain#latest-stable" >&2
+  echo "  (the npm package named 'gbrain' is unrelated - do not npm install it)" >&2
+  echo "  then run the bundled 'setup' skill to initialize your brain," >&2
+  echo "  or set GBRAIN_BIN to an absolute gbrain binary path." >&2
+  exit 127
+}
+
+# 0 when dotted-numeric version $1 >= $2.
+version_ge() {
+  _a="$1"; _b="$2"
+  while [ -n "$_a$_b" ]; do
+    _x="${_a%%.*}"; _y="${_b%%.*}"
+    case "$_a" in *.*) _a="${_a#*.}" ;; *) _a="" ;; esac
+    case "$_b" in *.*) _b="${_b#*.}" ;; *) _b="" ;; esac
+    if [ "${_x:-0}" -gt "${_y:-0}" ]; then return 0; fi
+    if [ "${_x:-0}" -lt "${_y:-0}" ]; then return 1; fi
+  done
+  return 0
+}
+
+# 0 when $BIN understands GBRAIN_HOOK_LANE=plugin (see the header).
+plugin_lane_ok() {
+  _cache=""
+  case "${GBRAIN_HOME:-${HOME:-}}" in /*) _cache="${GBRAIN_HOME:-$HOME}/.gbrain/cache/plugin-hook-cli" ;; esac
+  if [ -n "$_cache" ] && [ "$_cache" -nt "$BIN" ]; then
+    if { IFS= read -r _cbin && IFS= read -r _cmin && IFS= read -r _cok; } 2>/dev/null < "$_cache"; then
+      if [ "$_cbin" = "$BIN" ] && [ "$_cmin" = "$PLUGIN_LANE_MIN" ]; then
+        [ "$_cok" = ok ]
+        return
+      fi
+    fi
+  fi
+  _v="$("$BIN" --version 2>/dev/null)" || return 1
+  _v="${_v##* }"
+  case "$_v" in ''|*[!0-9.]*|.*|*..*) return 1 ;; esac
+  _ok=old
+  if version_ge "$_v" "$PLUGIN_LANE_MIN"; then _ok=ok; fi
+  if [ -n "$_cache" ]; then
+    { (umask 077 && mkdir -p "${_cache%/*}") && printf '%s\n%s\n%s\n' "$BIN" "$PLUGIN_LANE_MIN" "$_ok" > "$_cache.$" && mv -f "$_cache.$" "$_cache"; } 2>/dev/null || rm -f "$_cache.$" 2>/dev/null || :
+  fi
+  [ "$_ok" = ok ]
+}
+
+BIN="$(resolve_bin)"
+if [ "$HOOK" = 1 ]; then
+  [ -n "$BIN" ] || exit 0
+  if [ "${GBRAIN_HOOK_LANE:-}" = "plugin" ] && ! plugin_lane_ok; then exit 0; fi
+else
+  echo "gbrain-launcher: using $BIN" >&2
+fi
+
+# Surface override — only for `serve` invocations. Rebuilds the positional
+# params in place (rotate-through-sentinel idiom; no eval, no word-splitting
+# hazards): replace the value of an existing `--surface <x>` pair, or append
+# the pair when absent.
+if [ -n "${GBRAIN_SURFACE:-}" ] && [ "${1:-}" = "serve" ]; then
+  replaced=0
+  expect_value=0
+  set -- "$@" "__gbrain_end__"
+  while [ "$1" != "__gbrain_end__" ]; do
+    a="$1"
+    shift
+    if [ "$expect_value" = 1 ]; then
+      expect_value=0
+      replaced=1
+      set -- "$@" "$GBRAIN_SURFACE"
+      continue
+    fi
+    if [ "$a" = "--surface" ]; then
+      expect_value=1
+    fi
+    set -- "$@" "$a"
+  done
+  shift
+  if [ "$replaced" = 0 ]; then
+    set -- "$@" "--surface" "$GBRAIN_SURFACE"
+  fi
+fi
+
+exec "$BIN" "$@"

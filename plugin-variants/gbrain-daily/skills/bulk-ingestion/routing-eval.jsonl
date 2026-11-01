@@ -1,0 +1,17 @@
+// Routing eval fixtures for skills/bulk-ingestion. Each positive intent
+// includes at least one trigger string as substring (structural matcher
+// requirement) while paraphrasing real user phrasing.
+{"intent":"I want to ingest all my podcast transcripts into the brain","expected_skill":"bulk-ingestion"}
+{"intent":"Build an ingestion pipeline for my newsletter archive","expected_skill":"bulk-ingestion"}
+{"intent":"Set up a bulk import of this email takeout — hundreds of thousands of messages","expected_skill":"bulk-ingestion"}
+{"intent":"Make a manifest so we can resume this large ingest across sessions and workers","expected_skill":"bulk-ingestion"}
+{"intent":"We need to bulk backfill three years of standup summaries into brain pages","expected_skill":"bulk-ingestion"}
+// Negative: a single item routes to the ingest router (idea-ingest legitimately
+// co-fires per the URL content-type disambiguation rule), not the bulk lifecycle.
+{"intent":"save this to brain — just the one article I linked","expected_skill":"ingest","ambiguous_with":["idea-ingest"]}
+// Ambiguous vs the nearest neighbor: discovery/triage over a messy archive
+// is archive-crawler's job; turning the keep-list into pages at scale is
+// bulk-ingestion's. This phrasing legitimately trips both.
+{"intent":"Crawl my archive and bulk ingest everything worth keeping","expected_skill":"bulk-ingestion","ambiguous_with":["archive-crawler"]}
+// Negative: adjacent (bulk file operation) but out of scope — a filesystem chore, nothing enters the brain.
+{"intent":"Bulk-rename the screenshots in this folder to kebab-case filenames","expected_skill":null}
