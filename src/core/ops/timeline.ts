@@ -1,5 +1,5 @@
 import { submitPageMutation } from '../persistence/page-mutations.ts';
-import { MERGE_PRECONDITION_PARAMS, WRITE_REQUEST_PARAM } from '../persistence/params.ts';
+import { MERGE_PRECONDITION_PARAMS, PAGE_MUTATION_PARAMS, WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 /**
  * Timeline operation cluster — pure move from operations.ts (v0.46.x
  * tranche 1). Op consts stay module-private; `timelineOperations` below
@@ -28,6 +28,7 @@ const add_timeline_entry: Operation = {
   params: {
     request_id: WRITE_REQUEST_PARAM,
     ...MERGE_PRECONDITION_PARAMS,
+    source_id: PAGE_MUTATION_PARAMS.source_id,
     slug: { type: 'string', description: 'Page slug.', required: true },
     date: { type: 'string', required: true, description: 'YYYY-MM-DD.' },
     summary: { type: 'string', required: true, description: 'One line.' },

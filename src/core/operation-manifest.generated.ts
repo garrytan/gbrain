@@ -2375,6 +2375,10 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "description": "Ignore the revision.",
         "fullSurfaceOnly": true
       },
+      "source_id": {
+        "type": "string",
+        "description": "Write source."
+      },
       "slug": {
         "type": "string",
         "description": "Page slug.",
