@@ -8,9 +8,10 @@
  * the pooler pins the transaction to one server connection, `SET LOCAL` ends
  * with it, and a statement past the bound ends server-side with 57014 (a lock
  * wait counts toward it). `COMMIT` after a failed statement is a rollback,
- * never an error of its own. `signal` covers only the wait for a free
- * connection (a saturated pool must not hold the bound off); the statement
- * itself ends at the bound, never by a cancel request. With `deadlineAt` the
+ * never an error of its own. `signal` also bounds the client-side envelope:
+ * abort cancels pending queries and discards their exclusive connection,
+ * without waiting for an unresponsive pooler to confirm cancellation. This
+ * is not proof of server-side rollback. With `deadlineAt` the
  * bound is the time left after the connection was reserved (#6696 B1).
  *
  * `jitOff` adds `SET LOCAL jit = off` to the same envelope (see
@@ -20,7 +21,7 @@
  * `COMMIT` follows the statement instead of riding in the same round trip.
  */
 import type postgres from '#postgres';
-import { reserveWithCancellation } from './cancellation.ts';
+import { hasPostgresCancellationCapability, postgresCancellationUnavailable, reserveWithCancellation } from './cancellation.ts';
 import { READ_WRITE_BEGIN } from './read-write-transactions.ts';
 
 type Sql = ReturnType<typeof postgres>;
@@ -30,7 +31,27 @@ export type RunStatement = <T>(conn: Sql, sql: string, params: unknown[] | undef
 export async function runBoundedStatement<T>(conn: Sql, sql: string, params: unknown[] | undefined,
   opts: { timeoutMs?: number; deadlineAt?: number; signal?: AbortSignal; jitOff?: boolean; prepare?: boolean }, onReserved: () => void, run?: RunStatement): Promise<T[]> {
   const reserved = opts.signal ? await reserveWithCancellation(reserve => conn.reserve(reserve), opts.signal) : await conn.reserve();
-  onReserved();
+  let discarded = false;
+  const pending = new Set<Promise<unknown> & { cancel?: () => Promise<unknown> }>();
+  const signal = opts.timeoutMs !== undefined ? opts.signal : undefined;
+  let rejectAbort: (reason: unknown) => void = () => {};
+  const aborted = new Promise<never>((_, reject) => { rejectAbort = reject; });
+  const onAbort = () => {
+    rejectAbort(signal?.reason ?? new DOMException('aborted', 'AbortError'));
+    if (!pending.size || discarded) return;
+    // Do not await cancellation: a swallowed CancelRequest is the failure
+    // being bounded. Never put this socket back into the reusable pool.
+    discarded = true;
+    for (const query of pending) {
+      try { query.cancel?.().catch(() => {}); } catch { /* discard still owns cleanup */ }
+    }
+    reserved.discard();
+  };
+  const track = <P extends Promise<unknown>>(query: P): P => {
+    pending.add(query);
+    query.then(() => pending.delete(query), () => pending.delete(query));
+    return query;
+  };
   const settings = opts.jitOff ? ['SET LOCAL jit = off'] : [];
   if (opts.timeoutMs !== undefined) {
     // #6696 B1: an absolute deadline is re-read after the pool wait, so time spent waiting for a connection is not granted again.
@@ -38,19 +59,25 @@ export async function runBoundedStatement<T>(conn: Sql, sql: string, params: unk
     settings.push(`SET LOCAL statement_timeout = ${ms}`);
   }
   try {
-    const open = reserved.unsafe([READ_WRITE_BEGIN, ...settings].join('; ')).simple().execute();
+    onReserved();
+    if (signal?.aborted) throw signal.reason ?? new DOMException('aborted', 'AbortError');
+    if (signal && !hasPostgresCancellationCapability(reserved)) throw postgresCancellationUnavailable();
+    signal?.addEventListener('abort', onAbort, { once: true });
+    const open = track(reserved.unsafe([READ_WRITE_BEGIN, ...settings].join('; ')).simple().execute());
     // A cancellable statement is issued through `run`, which awaits the query and so enqueues it a microtask
     // later than `execute()` would: COMMIT then waits for it to settle instead of being pipelined ahead of it.
     const cancellable = opts.timeoutMs === undefined && opts.signal && run;
-    const read = cancellable
+    const read = track(cancellable
       ? (async () => run<T>(reserved as unknown as Sql, sql, params, { signal: opts.signal, prepare: opts.prepare }))()
-      : reserved.unsafe(sql, params as Parameters<typeof reserved.unsafe>[1], { prepare: opts.prepare ?? true }).execute();
-    const commit = () => reserved.unsafe('COMMIT').execute();
+      : reserved.unsafe(sql, params as Parameters<typeof reserved.unsafe>[1], { prepare: opts.prepare ?? true }).execute());
+    const commit = () => track(reserved.unsafe('COMMIT').execute());
     const close = cancellable ? read.then(commit, commit) : commit();
-    const settled = await Promise.allSettled([open, read, close]);
+    const envelope = Promise.allSettled([open, read, close]);
+    const settled = await (signal ? Promise.race([envelope, aborted]) : envelope);
     for (const outcome of settled) if (outcome.status === 'rejected') throw outcome.reason;
     return (settled[1] as PromiseFulfilledResult<unknown>).value as T[];
   } finally {
-    reserved.release();
+    signal?.removeEventListener('abort', onAbort);
+    if (!discarded) reserved.release();
   }
 }

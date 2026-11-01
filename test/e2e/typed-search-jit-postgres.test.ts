@@ -133,6 +133,20 @@ async function captureTypeCheck(engine: PostgresEngine, types: string[]): Promis
 
       expect(await reader.executeRaw(`SELECT current_setting('jit') AS jit`)).toEqual([{ jit: 'on' }]);
       expect(await reader.executeRaw(`SELECT current_setting('jit') AS jit`, [], { jitOff: true, signal: new AbortController().signal })).toEqual([{ jit: 'off' }]);
+
+      // #8155: timeoutMs must not disable in-flight abort. Repeated aborts
+      // on this one-slot pool must retire the socket, not exhaust the pool.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const signal = new AbortController();
+        const reason = new Error('bounded caller deadline');
+        const timer = setTimeout(() => signal.abort(reason), 100);
+        try {
+          await expect(reader.executeRaw('SELECT pg_sleep(10)', [], {
+            jitOff: true, timeoutMs: 60_000, signal: signal.signal,
+          })).rejects.toBe(reason);
+        } finally { clearTimeout(timer); }
+        expect(await reader.executeRaw('SELECT 1 AS ok', [], { timeoutMs: 1000 })).toEqual([{ ok: 1 }]);
+      }
     } finally { await reader.disconnect(); }
   }, 60_000);
 });
