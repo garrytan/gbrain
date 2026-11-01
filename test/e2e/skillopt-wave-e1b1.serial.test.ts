@@ -19,6 +19,8 @@ import { runSkillOpt } from '../../src/core/skillopt/orchestrator.ts';
 import { loadHistory } from '../../src/core/skillopt/version-store.ts';
 import { loadRejectedBuffer, rejectedFilePath } from '../../src/core/skillopt/rejected-buffer.ts';
 import { runSkillOptJob } from '../../src/core/skillopt/job.ts';
+import { BudgetExhausted } from '../../src/core/budget/budget-tracker.ts';
+import { loadCheckpoint } from '../../src/core/skillopt/checkpoint.ts';
 import type { BenchmarkTask, EditOp, RolloutBatchRequest, ScoredRollout, SkillOptOpts } from '../../src/core/skillopt/types.ts';
 
 const SKILL = 'wave-skill';
@@ -48,6 +50,7 @@ let dir: string;
 let skillsDir: string;
 let optimizerPrompts: string[];
 let targetTasks: string[];
+let heldOutThrows: boolean;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
@@ -63,6 +66,7 @@ beforeEach(async () => {
   fs.writeFileSync(skillFile(), BASE);
   optimizerPrompts = [];
   targetTasks = [];
+  heldOutThrows = false;
 });
 afterEach(() => {
   __setChatTransportForTests(null);
@@ -106,6 +110,9 @@ function installStub(optimizer: Array<EditOp[] | string>): void {
       optimizerPrompts.push(`${sys}\n${user}`);
       const next = optimizer[n++] ?? [];
       return reply(typeof next === 'string' ? next : JSON.stringify({ edits: next }), o.model ?? OPTIMIZER);
+    }
+    if (heldOutThrows && user.startsWith('HELDOUT')) {
+      throw new BudgetExhausted('skillopt:x: projected cost $2 exceeds --max-cost $1.00', { reason: 'cost', spent: 0.5, cap: 1 });
     }
     targetTasks.push(user);
     const out = SECTIONS.filter((s) => sys.includes(`## ${s}`)).map((s) => `## ${s}\nok`).join('\n\n');
@@ -218,6 +225,29 @@ describe('defect 2: held-out stays out of the proposer and runs once', () => {
     expect(loadRejectedBuffer(skillsDir, SKILL)).toHaveLength(0);
     const buf = rejectedFilePath(skillsDir, SKILL);
     if (fs.existsSync(buf)) expect(fs.readFileSync(buf, 'utf8')).not.toContain('held_out');
+  });
+
+  test('a resumed run never returns the pending champion it did not write, on abort or on held-out refusal', async () => {
+    const benchmarkPath = writeBench(() => [{ op: 'contains', arg: 'Citations' }]);
+    const heldOutPath = writeHeldOut();
+    installStub([[{ op: 'replace', target: '## People\nList people.', replacement: '## Citations\nCite.', reason: 'r' }]]);
+    heldOutThrows = true;
+    const first = await run(opts({ benchmarkPath, heldOutPath }));
+    expect(first.outcome).toBe('aborted');
+    const runId = first.receipt.run_id;
+    expect(loadCheckpoint(skillsDir, SKILL, runId)!.champion).toBeDefined();
+    expect(first.finalText).toBe(BASE);
+
+    const again = await run(opts({ benchmarkPath, heldOutPath, resumeRunId: runId }));
+    expect(again.outcome).toBe('aborted');
+    expect(fs.readFileSync(skillFile(), 'utf8')).toBe(BASE);
+    expect(again.finalText).toBe(BASE);
+
+    heldOutThrows = false;
+    const last = await run(opts({ benchmarkPath, heldOutPath, resumeRunId: runId }));
+    expect(last.receipt.held_out?.passed).toBe(false);
+    expect(fs.readFileSync(skillFile(), 'utf8')).toBe(BASE);
+    expect(last.finalText).toBe(BASE);
   });
 });
 

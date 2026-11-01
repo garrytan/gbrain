@@ -551,7 +551,7 @@ async function runOptimizationLoop(
   const totalSteps = opts.epochs * Math.max(1, Math.floor(split.train.length / opts.batchSize));
 
   // Run the loop inside withBudgetTracker so every nested gateway call composes.
-  let finalText = checkpoint.best_skill_text;
+  let finalText = checkpoint.champion ? baselineText : checkpoint.best_skill_text;
   let totalStepsRun = 0;
   // A legacy checkpoint (no tally) that already moved past the baseline text
   // accepted a candidate in an earlier segment.
