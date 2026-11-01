@@ -438,6 +438,27 @@ describe('ci-reuse remote-gate decision', () => {
       .toEqual({ reason: expect.stringMatching(/^reading run 600's 'executed-identities' artifact failed: /) });
   });
 
+  test('#8370: a permanent 4xx reading the artifact is a refusal; only no response, a 5xx, a 429 or a rate-limit 403 is transient', async () => {
+    const r600 = run('test.yml');
+    const status = (code: number, message = `HTTP ${code}`) => Object.assign(new Error(message), { status: code });
+    const download = (e: Error): GitHubClient => ({ ...identitiesClient(null), download: async () => { throw e; } });
+    const listing = (e: Error): GitHubClient => ({ ...identitiesClient(null), request: async () => { throw e; } });
+    for (const code of [403, 404, 410]) {
+      const got = await gateDeps(download(status(code))).executed(r600);
+      expect(got).toEqual({ reason: `reading run 600's 'executed-identities' artifact failed: HTTP ${code}` });
+      expect(await gateDeps(listing(status(code))).executed(r600)).not.toHaveProperty('transient');
+    }
+    for (const e of [status(429), status(403, 'API rate limit exceeded for installation'), status(502), Object.assign(new Error('no response'), { network: true })]) {
+      expect(await gateDeps(listing(e)).executed(r600)).toMatchObject({ transient: true });
+    }
+    const live = run('e2e.yml', { status: 'in_progress', conclusion: null });
+    const deps = gate({ runs: [run('test.yml'), live], executed: { 600: await gateDeps(download(status(410))).executed(r600) as { reason: string } } });
+    expect(await decideGate(deps, PROFILES.test, A, T, REPO)).toMatchObject({ state: 'rejected' });
+    const g = await go(deps, A, T, 90 * 60_000);
+    expect(g.code).toBe(4);
+    expect(g.lines.some(l => l.includes('waiting for'))).toBe(false);
+  });
+
   /** A run's receipts as scripts/lib/test-env.sh writes them: one artifact directory per job, one test file each. */
   function writeReceipts(dir: string, artifact: string, lane: string, attempt: number, tests: string[]) {
     const at = join(dir, artifact); mkdirSync(at, { recursive: true });
