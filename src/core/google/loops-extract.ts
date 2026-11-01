@@ -312,6 +312,41 @@ export class LoopsExtractRetryableError extends Error {
   }
 }
 
+/** #7289: a verbatim quote compared case- and whitespace-insensitively; '' when the item has none. */
+const quoteKey = (quote: string): string => quote.toLowerCase().replace(/\s+/g, ' ').trim();
+
+/** #7289: items of one response that quote the same sentence in the same direction are one loop; the first wins. */
+function uniqueByQuote<T extends { quote: string }>(items: T[], direction: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const quote = quoteKey(item.quote);
+    if (!quote) return true;
+    const key = JSON.stringify([direction(item), quote]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
+ * #7289: a loop is its thread, direction and verbatim quote, so every pass over
+ * a growing thread updates the loop its quote opened instead of opening one per
+ * paraphrase. A row already recorded for that quote keeps its key (rows written
+ * before this keyed on the model's text), open rows first. An item without a
+ * verified quote keys on its text.
+ */
+async function loopDedupKey(engine: BrainEngine, sourceId: string, threadId: string, loopType: LoopType,
+  direction: string, text: string, quote: string): Promise<string> {
+  const q = quoteKey(quote);
+  if (!q) return `commit:${sha8(JSON.stringify({ t: threadId, d: direction, x: text.toLowerCase() }))}`;
+  const rows = await engine.executeRaw<{ dedup_key: string; quote: string }>(
+    `SELECT dedup_key, evidence->0->>'quote' AS quote FROM open_loops
+      WHERE source_id = $1 AND thread_id = $2 AND loop_type = $3 AND detector = 'llm_extract'
+        AND COALESCE(evidence->0->>'quote', '') <> ''
+      ORDER BY (status = 'open') DESC, id`, [sourceId, threadId, loopType]);
+  return rows.find((row) => quoteKey(row.quote) === q)?.dedup_key ?? `commit:${sha8(JSON.stringify({ t: threadId, d: direction, q }))}`;
+}
+
 export async function runLoopsExtract(
   engine: BrainEngine,
   payload: LoopsExtractPayload,
@@ -453,6 +488,8 @@ export async function runLoopsExtract(
   };
   for (const c of extraction.commitments) { c.text = restore(c.text); c.quote = verbatim(c.quote); }
   for (const d of extraction.decisions_pending) { d.text = restore(d.text); d.quote = verbatim(d.quote); }
+  extraction.commitments = uniqueByQuote(extraction.commitments, (c) => c.direction);
+  extraction.decisions_pending = uniqueByQuote(extraction.decisions_pending, () => 'decision');
 
   const loopIds: number[] = [];
   const messageDate = typeof fm.date === 'string' ? fm.date : new Date().toISOString();
@@ -514,7 +551,7 @@ export async function runLoopsExtract(
     }
 
     // Projection 2 — the loop row itself.
-    const dedupKey = `commit:${sha8(JSON.stringify({ t: threadId, d: c.direction, x: c.text.toLowerCase() }))}`;
+    const dedupKey = await loopDedupKey(engine, payload.sourceId, threadId, loopType, c.direction, c.text, c.quote);
     const { id } = await upsertOpenLoop(engine, {
       sourceId: payload.sourceId,
       dedupKey,
@@ -557,7 +594,7 @@ export async function runLoopsExtract(
   }
 
   for (const d of extraction.decisions_pending) {
-    const dedupKey = `commit:${sha8(JSON.stringify({ t: threadId, d: 'decision', x: d.text.toLowerCase() }))}`;
+    const dedupKey = await loopDedupKey(engine, payload.sourceId, threadId, 'decision_pending', 'decision', d.text, d.quote);
     const { id } = await upsertOpenLoop(engine, {
       sourceId: payload.sourceId,
       dedupKey,

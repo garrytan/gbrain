@@ -32,6 +32,13 @@ const NOISE_SENDER_SUBSTRINGS = [
 ];
 
 /**
+ * #7856: separator and localized no-reply spellings, matched against the
+ * local part only (from its start or after a separator), so a person whose
+ * name or domain merely contains a fragment stays a person.
+ */
+const NOISE_LOCAL_PART = /(?:^|[-._+])(?:no[._]reply|do[-._]not[-._]reply|no[-._]?responder|ne[-._]?pas[-._]?repondre|keine[-._]?antwort)|notifica(?:ciones|coes)$/;
+
+/**
  * Fixed Google system addresses that carry no human obligation (#5103: the
  * Meet notes digest). Matched by EQUALITY, never as a substring, so a
  * lookalike address on another domain is still treated as a person.
@@ -40,7 +47,8 @@ const GOOGLE_SYSTEM_SENDERS: ReadonlySet<string> = new Set(['gemini-notes@google
 
 export function isNoiseSender(fromAddress: string): boolean {
   const f = fromAddress.toLowerCase();
-  return GOOGLE_SYSTEM_SENDERS.has(f) || NOISE_SENDER_SUBSTRINGS.some((p) => f.includes(p));
+  return GOOGLE_SYSTEM_SENDERS.has(f) || NOISE_SENDER_SUBSTRINGS.some((p) => f.includes(p))
+    || NOISE_LOCAL_PART.test(f.replace(/@[^@]*$/, ''));
 }
 
 const BULK_PRECEDENCE = new Set(['bulk', 'list', 'junk']);
