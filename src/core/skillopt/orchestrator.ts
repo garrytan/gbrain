@@ -97,7 +97,7 @@
  */
 
 import { assertLegacySkillWriter } from '../skillpack/writer-guard.ts';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import { BudgetExhausted, BudgetTracker, loadPricingOverrides, type NoPricingGuidance } from '../budget/budget-tracker.ts';
 import type { PricingOverrides } from '../budget/reservation-cost.ts';
@@ -106,7 +106,7 @@ import { withBudgetTracker } from '../ai/gateway.ts';
 import { errorFor } from '../errors.ts';
 import { applyEditBatch, getWorkingTreeStatusForFile, splitFrontmatter } from './apply-edits.ts';
 import { logEvent, sha8 } from './audit.ts';
-import { loadBenchmark, splitBench, parseSplit } from './benchmark.ts';
+import { loadRunTasks, parseSplit } from './benchmark.ts';
 import { getBundledSkillContext, shouldMutateSkillFile, assertBundledMutationHeldOut } from './bundled-skill-gate.ts';
 import {
   advanceCursor,
@@ -126,7 +126,7 @@ import {
 import { loadHeldOut, runHeldOutGate } from './held-out.ts';
 import { withSkilloptLock } from './lock.ts';
 import { resolveLrSchedule } from './lr-schedule.ts';
-import { SKILLOPT_RUNTIME_EXCEEDED } from './must-abort.ts';
+import { SKILLOPT_HOOK_BUDGET_EXHAUSTED, SKILLOPT_HOOK_INFRA_ERROR, SKILLOPT_RUNTIME_EXCEEDED } from './must-abort.ts';
 import {
   buildModelsPlan,
   formatModelsBanner,
@@ -157,9 +157,9 @@ import {
   skillPath,
   writeProposed,
 } from './version-store.ts';
-import { runValidationGate, scoreSkillOnTasks } from './validate-gate.ts';
-import { ROLLOUT_SUCCESS_THRESHOLD } from './types.ts';
-import type { SkillOptOpts, EditOp, RunReceipt, BenchmarkTask } from './types.ts';
+import { runValidationGate } from './validate-gate.ts';
+import { ROLLOUT_SUCCESS_THRESHOLD, VALIDATION_RUNS_PER_TASK } from './types.ts';
+import type { SkillOptOpts, EditOp, RunReceipt, BenchmarkTask, RolloutPhase } from './types.ts';
 
 export interface RunSkillOptResult {
   outcome: 'accepted' | 'no_improvement' | 'aborted' | 'errored';
@@ -227,9 +227,8 @@ export async function runSkillOpt(opts: SkillOptOpts): Promise<RunSkillOptResult
     skillName,
   });
 
-  // Load + validate benchmark (D17 floor enforcement, D15 sentinel check).
-  const bench = loadBenchmark(opts.benchmarkPath, { bootstrapReviewed: opts.bootstrapReviewed });
-  const split = splitBench(bench, opts.split);
+  // Load + validate the tasks (D17 floor enforcement, D15 sentinel check, B1.2 explicit lists).
+  const { bench, split } = loadRunTasks(opts);
 
   // Held-out must be INDEPENDENT of the benchmark. If a held-out file shares
   // task_ids with the benchmark, an overfit candidate passes the held-out gate
@@ -277,6 +276,8 @@ export async function runSkillOpt(opts: SkillOptOpts): Promise<RunSkillOptResult
     interactive: process.stderr.isTTY === true,
     reflectMaxTokens: reflectCap.maxTokens,
     judgeModels: modelsPlan.filter((e) => e.touchpoint === 'judge' && e.active).map((e) => e.model),
+    optimizerMode: opts.optimizerMode,
+    rolloutsExternal: opts.rolloutHook !== undefined,
     ...(pricingOverrides ? { pricingOverrides } : {}),
   });
   if (opts.json !== true) {
@@ -286,6 +287,7 @@ export async function runSkillOpt(opts: SkillOptOpts): Promise<RunSkillOptResult
       optimizerModel: opts.optimizerModel, targetModel: opts.targetModel, judgeModel: opts.judgeModel,
       maxCostUsd: opts.maxCostUsd,
       maxCostSource: opts.maxCostSource ?? 'user',
+      optimizerMode: opts.optimizerMode,
     }) + '\n');
   }
   if (preflightResult.abort_code === 'no_pricing') {
@@ -327,6 +329,8 @@ export async function runSkillOpt(opts: SkillOptOpts): Promise<RunSkillOptResult
       reflect_max_tokens_source: reflectCap.source,
       models_plan: modelsPlan,
       models_strict: strict,
+      optimizer_mode: opts.optimizerMode,
+      cost_scope: opts.rolloutHook ? 'optimizer_only' : 'all',
     };
     return { outcome: 'aborted', receipt, finalText: fs.readFileSync(skillFile, 'utf8'), mutatedSkillFile: false };
   }
@@ -392,6 +396,10 @@ export function classifyAbortError(
       abortDetail: msg,
       ...(err.pricing ? { pricing: err.pricing } : {}),
     };
+  } else if (msg.includes(SKILLOPT_HOOK_BUDGET_EXHAUSTED)) {
+    return { outcome: 'aborted', abortReason: 'budget_exhausted', abortDetail: msg };
+  } else if (msg.includes(SKILLOPT_HOOK_INFRA_ERROR)) {
+    return { outcome: 'aborted', abortReason: 'error', abortDetail: msg };
   } else if (msg.includes(SKILLOPT_RUNTIME_EXCEEDED)) {
     return {
       outcome: 'aborted',
@@ -413,8 +421,8 @@ const BUDGET_ADMISSION_HINT = ' (raise --max-cost-usd; each optimizer call reser
 
 async function runOptimizationLoop(
   opts: SkillOptOpts,
-  bench: ReturnType<typeof loadBenchmark>,
-  split: ReturnType<typeof splitBench>,
+  bench: ReturnType<typeof loadRunTasks>['bench'],
+  split: ReturnType<typeof loadRunTasks>['split'],
   bundledCtx: ReturnType<typeof getBundledSkillContext>,
   mutateDecision: ReturnType<typeof shouldMutateSkillFile>,
   heldOutTasks: BenchmarkTask[],
@@ -429,14 +437,13 @@ async function runOptimizationLoop(
   const { reflectCap, modelsPlan } = resolved;
   const skillFile = skillPath(skillsDir, skillName);
 
-  // Plain-English success criteria from the benchmark judges, fed to the
-  // optimizer's reflect step so it targets WHAT the scorer rewards instead of
-  // guessing from a bare pass/fail score. Without this, rule-judged benchmarks
-  // (e.g. "must include a Confidence: line") are near-unoptimizable: the
-  // optimizer proposes plausible-but-off edits, the candidate scores 0, the gate
-  // rejects it, and the skill never changes. The held-out gate defends against
-  // the optimizer gaming these criteria at the expense of real quality.
-  const benchmarkCriteria = describeJudges([...split.train, ...split.sel, ...split.test]);
+  // Plain-English success criteria fed to the optimizer so it targets WHAT the
+  // scorer rewards instead of guessing from a bare pass/fail score. Without
+  // this, rule-judged benchmarks (e.g. "must include a Confidence: line") are
+  // near-unoptimizable. Built from the train split only, with per-task
+  // arguments (answer keys) redacted (B1.4, defect 3): selection and test
+  // judges never reach the proposer. A caller's criteriaText replaces it.
+  const benchmarkCriteria = opts.criteriaText ?? describeJudges(split.train);
 
   // Crash-recovery sweep (D8): revert any pending rows from a prior crashed run.
   revertAllPending(skillsDir, skillName);
@@ -447,11 +454,11 @@ async function runOptimizationLoop(
 
   const runSpec: RunSpec = {
     skills_dir: skillsDir,
-    benchmark_path: opts.benchmarkPath,
+    benchmark_path: opts.benchmarkPath ?? bench.source_path,
     benchmark_sha8: bench.benchmark_sha8,
     held_out_path: opts.heldOutPath ?? null,
     held_out_sha8: opts.heldOutPath ? sha8(fs.readFileSync(opts.heldOutPath, 'utf8')) : null,
-    split: opts.split,
+    split: opts.tasks ? [split.train.length, split.sel.length, split.test.length] : opts.split ?? [4, 1, 5],
     mutate: mutateDecision.mutate,
     no_mutate: opts.noMutate,
     allow_mutate_bundled: opts.allowMutateBundled,
@@ -464,6 +471,7 @@ async function runOptimizationLoop(
     lr: opts.lr,
     lr_schedule: opts.lrSchedule,
     reflect_max_tokens: reflectCap.maxTokens,
+    optimizer_mode: opts.optimizerMode,
   };
 
   // Resume or init checkpoint. A resume must match what the checkpoint measured.
@@ -521,7 +529,7 @@ async function runOptimizationLoop(
     max_cost_usd: opts.maxCostUsd,
     reflect_mode: opts.reflectMode ?? 'both',
     validation_gate_disabled: opts.disableValidationGate === true,
-    optimizer_mode: opts.optimizerMode ?? 'reflect',
+    optimizer_mode: opts.optimizerMode,
     held_out_size: heldOutTasks.length,
     models_plan: modelsPlan,
   } as never);
@@ -583,20 +591,62 @@ async function runOptimizationLoop(
   // (no partial commit beyond whatever already passed every gate).
   const deadline = Date.now() + opts.maxRuntimeMin * 60_000;
 
+  // Scoring sites (B1.3 / B1.6): every rollout goes through runValidationGate
+  // (with the caller's hook when set) and is counted by phase.
+  const hook = opts.rolloutHook;
+  const rollouts: Record<RolloutPhase, number> = { baseline_sel: 0, train_forward: 0, sel_gate: 0, held_out: 0, test: 0 };
+  const selCandidates = new Set<string>();
+  const score = async (phase: RolloutPhase, skillText: string, tasks: BenchmarkTask[], o: { bestScore?: number; runsPerTask?: number; epoch?: number; step?: number } = {}) => {
+    const runsPerTask = o.runsPerTask ?? VALIDATION_RUNS_PER_TASK;
+    const result = await runValidationGate({
+      engine: opts.engine,
+      operationContext: opts.operationContext,
+      candidateSkillText: skillText,
+      selSet: tasks,
+      bestScore: o.bestScore ?? -1,
+      targetModel: opts.targetModel,
+      judgeModel: opts.judgeModel,
+      runsPerTask,
+      deadlineMs: deadline,
+      phase,
+      epoch: o.epoch ?? 0,
+      step: o.step ?? 0,
+      ...(hook ? { rolloutHook: hook } : {}),
+    });
+    rollouts[phase] += tasks.length * runsPerTask;
+    if (phase === 'sel_gate') selCandidates.add(createHash('sha256').update(skillText).digest('hex'));
+    return result;
+  };
+  // D2: with a held-out set, nothing is written until the single held-out
+  // check on the final champion passes; without one, each accepted step is
+  // written as before (so an abort keeps the best skill so far on disk).
+  const deferWrites = heldOutTasks.length > 0;
+  const writeCandidate = (text: string, selScore: number, epoch: number, step: number, edits: EditOp[]) => {
+    if (mutateDecision.mutate) {
+      acceptCandidate({ skillsDir, skillName, runId, epoch, step, edits, candidateText: text, selScore, delta: selScore - baselineSelScore });
+    } else {
+      writeProposed(skillsDir, skillName, text);
+    }
+    finalText = text;
+  };
+  const promote = (text: string, selScore: number, epoch: number, step: number, edits: EditOp[]) => {
+    if (deferWrites) {
+      const prev = checkpoint!.champion;
+      checkpoint!.champion = { epoch, step, steps: (prev?.steps ?? 0) + 1, edits: [...(prev?.edits ?? []), ...edits] };
+    } else {
+      writeCandidate(text, selScore, epoch, step, edits);
+      tally.accepted_steps += 1;
+    }
+    checkpoint!.best_sel_score = selScore;
+    checkpoint!.best_skill_text = text;
+  };
+  let heldOut: RunReceipt['held_out'];
+
   try {
     await withBudgetTracker(tracker, async () => {
       // Baseline eval: score the baseline skill on D_sel to set best_sel_score.
       // We use the FULL validation gate with median-of-3 for a stable baseline.
-      const baselineGate = await runValidationGate({
-        engine: opts.engine,
-        operationContext: opts.operationContext,
-        candidateSkillText: baselineText,
-        selSet: split.sel,
-        bestScore: -1, // any score > -1 + 0.05 accepts; we just want the score.
-        targetModel: opts.targetModel,
-        judgeModel: opts.judgeModel,
-        deadlineMs: deadline,
-      });
+      const baselineGate = await score('baseline_sel', baselineText, split.sel);
       if (checkpoint!.best_sel_score === 0) {
         // Fresh run; set baseline.
         checkpoint!.best_sel_score = baselineGate.selScore;
@@ -605,28 +655,19 @@ async function runOptimizationLoop(
       }
       baselineSelScore = baselineGate.selScore;
 
-      // ── Ablation (cat31 config C): one-shot rewrite ─────────────────────
-      // ONE rewrite call, no optimization loop, no D12 gate. Forward-pass on
-      // D_sel for signal, rewrite the body once, score the result, promote it.
-      // Sets last_completed_epoch = epochs so the epoch loop below no-ops, then
-      // falls through to the shared final-test + receipt path.
-      if (opts.optimizerMode === 'one-shot-rewrite') {
+      // ── E1 one-shot rewrite (the default) ─────────────────────────────────
+      // The loop's first step with a whole-body rewrite instead of edits:
+      // forward pass on one train batch, one rewrite call, then the same D12
+      // selection gate a loop step faces. A rejected rewrite leaves the skill
+      // unchanged. Sets the cursor past the last epoch so the loop below no-ops.
+      if (opts.optimizerMode === 'one-shot-rewrite' && resumeCursor(checkpoint!, stepsPerEpoch).epoch <= opts.epochs) {
         stepStartTally = structuredClone(tally);
-        const { body: baselineBody, bodyStart } = splitFrontmatter(baselineText);
-        const fmBlock = baselineText.slice(0, bodyStart);
-        const fwd = await runValidationGate({
-          engine: opts.engine,
-          operationContext: opts.operationContext,
-          candidateSkillText: baselineText,
-          selSet: split.sel,
-          bestScore: -1,
-          targetModel: opts.targetModel,
-          judgeModel: opts.judgeModel,
-          runsPerTask: 1,
-          deadlineMs: deadline,
-        });
+        totalStepsRun = 1;
+        const incumbent = checkpoint!.best_skill_text;
+        const { body: incumbentBody, bodyStart } = splitFrontmatter(incumbent);
+        const fwd = await score('train_forward', incumbent, split.train.slice(0, opts.batchSize), { runsPerTask: 1, epoch: 1, step: 1 });
         const rewrite = await runOneShotRewrite({
-          skillBodyText: baselineBody,
+          skillBodyText: incumbentBody,
           successes: fwd.scoredRollouts.filter((r) => r.score >= ROLLOUT_SUCCESS_THRESHOLD),
           failures: fwd.scoredRollouts.filter((r) => r.score < ROLLOUT_SUCCESS_THRESHOLD),
           rejected: [],
@@ -642,49 +683,28 @@ async function runOptimizationLoop(
         });
         if (rewrite.error) process.stderr.write(`[skillopt] one-shot rewrite produced no candidate (${rewrite.error})\n`);
         if (rewrite.newBody) {
-          const candidate = fmBlock + rewrite.newBody;
-          // Held-out gate still applies (independent signal); skipped when unset.
-          let promote = true;
-          if (heldOutTasks.length > 0) {
-            const ho = await runHeldOutGate({
-              engine: opts.engine,
-              operationContext: opts.operationContext,
-              candidateSkillText: candidate,
-              baselineSkillText: baselineText,
-              heldOutTasks,
-              deadlineMs: deadline,
-              targetModel: opts.targetModel,
-              judgeModel: opts.judgeModel,
-            });
-            promote = ho.passed;
-          }
-          if (promote) {
-            const score = await scoreSkillOnTasks({
-              engine: opts.engine,
-              operationContext: opts.operationContext,
-              skillText: candidate,
-              tasks: split.sel,
-              targetModel: opts.targetModel,
-              judgeModel: opts.judgeModel,
-              deadlineMs: deadline,
-            });
-            checkpoint!.best_sel_score = score;
-            checkpoint!.best_skill_text = candidate;
-            totalStepsRun = 1;
-            if (mutateDecision.mutate) {
-              acceptCandidate({
-                skillsDir, skillName, runId, epoch: 1, step: 1,
-                edits: [], // whole-body rewrite — no granular edits to record
-                candidateText: candidate, selScore: score, delta: score - baselineSelScore,
-              });
-            } else {
-              writeProposed(skillsDir, skillName, candidate);
-            }
-            tally.accepted_steps += 1;
-            finalText = candidate;
-          }
+          const candidate = incumbent.slice(0, bodyStart) + rewrite.newBody;
+          const gate = await score('sel_gate', candidate, split.sel, { bestScore: checkpoint!.best_sel_score, epoch: 1, step: 1 });
+          // Ablation (cat31 config D): disableValidationGate promotes regardless.
+          const accepted = opts.disableValidationGate === true || gate.accepted;
+          logEvent({
+            kind: 'step',
+            run_id: runId,
+            skill: skillName,
+            epoch: 1,
+            step: 1,
+            sel_score_median: gate.selScore,
+            sel_score_runs: gate.perTaskMedians.map((t) => t.median),
+            accepted,
+            edits_attempted: 1,
+            edits_applied: 1,
+            delta: gate.selScore - checkpoint!.best_sel_score,
+            ...(accepted ? {} : { reason: gate.reason ?? 'rejected' }),
+            cumulative_cost_usd: tracker.snapshot().cumulativeCostUsd,
+          } as never);
+          if (accepted) promote(candidate, gate.selScore, 1, 1, []);
         }
-        advanceCursor(checkpoint!, opts.epochs, 1, 1); // no-op the epoch loop below
+        advanceCursor(checkpoint!, opts.epochs, stepsPerEpoch, stepsPerEpoch); // no-op the epoch loop below
         bankAccounting(checkpoint!, prior, tracker.snapshot());
         saveCheckpoint(skillsDir, skillName, checkpoint!);
         stepStartTally = undefined;
@@ -711,17 +731,7 @@ async function runOptimizationLoop(
           // runsPerTask=1 — for the train batch we only need a rough partition
           // into successes/failures, not the median-of-3 noise rejection the
           // sel-side gate uses. ScoredRollouts come back via GateResult.
-          const forwardGate = await runValidationGate({
-            engine: opts.engine,
-            operationContext: opts.operationContext,
-            candidateSkillText: checkpoint!.best_skill_text,
-            selSet: batch,
-            bestScore: -1,
-            targetModel: opts.targetModel,
-            judgeModel: opts.judgeModel,
-            runsPerTask: 1,
-            deadlineMs: deadline,
-          });
+          const forwardGate = await score('train_forward', checkpoint!.best_skill_text, batch, { runsPerTask: 1, epoch, step });
           // Partition into successes vs failures (>= 0.5 threshold). Reflect
           // gets the actual scored trajectories so failure-mode + success-mode
           // analysis can ground in real agent behavior (D7).
@@ -752,6 +762,15 @@ async function runOptimizationLoop(
             const fresh = allEdits.filter((e) => !isRejected(rejected, checkpoint!.best_skill_text, [e]));
             // Apply under LR budget.
             const applied = applyEditBatch(checkpoint!.best_skill_text, fresh, lrBudget);
+            // Defect 4: only edits that were actually applied are attributed to
+            // the gate's verdict. Edits that failed to apply are filed as
+            // apply_failed; edits the LR budget clipped were never tried and
+            // stay free to be proposed again.
+            const appliedEdits = applied.results.flatMap((r) => (r.outcome === 'applied' ? [r.edit] : []));
+            const applyFailed = applied.results.flatMap((r) =>
+              r.outcome === 'rejected' && r.detail !== 'lr_budget_exhausted'
+                ? [makeRejectedEntry(checkpoint!.best_skill_text, [r.edit], 'apply_failed')]
+                : []);
 
             if (fresh.length === 0) {
               // #4741: the optimizer proposed NOTHING (reflect returned/parsed no
@@ -784,12 +803,9 @@ async function runOptimizationLoop(
               break stepBody;
             }
 
-            if (applied.results.every((r) => r.outcome === 'rejected')) {
-              // Nothing applied; record rejected entries + skip gate.
-              const newRejections = fresh.map((e) =>
-                makeRejectedEntry(checkpoint!.best_skill_text, [e], 'apply_failed'),
-              );
-              saveRejectedBuffer(skillsDir, skillName, newRejections);
+            if (appliedEdits.length === 0) {
+              // Nothing applied; record the apply failures + skip gate.
+              saveRejectedBuffer(skillsDir, skillName, applyFailed);
               logEvent({
                 kind: 'step',
                 run_id: runId,
@@ -810,128 +826,42 @@ async function runOptimizationLoop(
             }
 
             // VALIDATION GATE (D12 median-of-3 + epsilon=0.05, D4 parallel).
-            const gate = await runValidationGate({
-              engine: opts.engine,
-              operationContext: opts.operationContext,
-              candidateSkillText: applied.newText,
-              selSet: split.sel,
-              bestScore: checkpoint!.best_sel_score,
-              targetModel: opts.targetModel,
-              judgeModel: opts.judgeModel,
-              deadlineMs: deadline,
-            });
+            const gate = await score('sel_gate', applied.newText, split.sel, { bestScore: checkpoint!.best_sel_score, epoch, step });
 
             // Ablation (cat31 config D): disableValidationGate greedy-accepts any
             // applied edit, bypassing the D12 median+epsilon check. We still ran
             // the gate above to GET the score (so sel_score tracking is honest),
-            // but ignore its accept verdict. We only reach here when at least one
-            // edit applied (the all-rejected case exits via `break stepBody` earlier,
-            // which still advances the cursor).
+            // but ignore its accept verdict.
             const stepAccepted = opts.disableValidationGate === true ? true : gate.accepted;
+            const delta = gate.selScore - checkpoint!.best_sel_score;
             if (stepAccepted) {
-              // F11 HELD-OUT GATE — guards CHECKPOINT ACCEPTANCE (not just file
-              // mutation), so the no-mutate / proposed.md paths can't promote a
-              // held-out-failing candidate either. Independent signal: a candidate
-              // that improved D_sel but regresses on the held-out set is refused
-              // (benchmark-gaming defense). Skipped when no held-out is configured.
-              if (heldOutTasks.length > 0) {
-                const ho = await runHeldOutGate({
-                  engine: opts.engine,
-                  operationContext: opts.operationContext,
-                  candidateSkillText: applied.newText,
-                  baselineSkillText: baselineText,
-                  heldOutTasks,
-                  deadlineMs: deadline,
-                  targetModel: opts.targetModel,
-                  judgeModel: opts.judgeModel,
-                });
-                if (!ho.passed) {
-                  const newRejections = fresh.map((e) =>
-                    makeRejectedEntry(checkpoint!.best_skill_text, [e], 'held_out_regression'),
-                  );
-                  saveRejectedBuffer(skillsDir, skillName, newRejections);
-                  logEvent({
-                    kind: 'step',
-                    run_id: runId,
-                    skill: skillName,
-                    epoch,
-                    step,
-                    sel_score_median: gate.selScore,
-                    sel_score_runs: gate.perTaskMedians.map((t) => t.median),
-                    accepted: false,
-                    edits_attempted: fresh.length,
-                    edits_applied: applied.results.filter((r) => r.outcome === 'applied').length,
-                    delta: gate.selScore - checkpoint!.best_sel_score,
-                    reason: 'held_out_regression',
-                    held_out_baseline: ho.baselineScore,
-                    held_out_candidate: ho.candidateScore,
-                    cumulative_cost_usd: tracker.snapshot().cumulativeCostUsd,
-                  } as never);
-                  break stepBody; // do NOT promote
-                }
-              }
-
-              const delta = gate.selScore - checkpoint!.best_sel_score;
               // ACCEPT: D8 commit via version-store (mutate) OR write proposed.md
-              // for the --no-mutate / bundled-without-allow paths.
-              if (mutateDecision.mutate) {
-                acceptCandidate({
-                  skillsDir,
-                  skillName,
-                  runId,
-                  epoch,
-                  step,
-                  edits: fresh,
-                  candidateText: applied.newText,
-                  selScore: gate.selScore,
-                  delta,
-                });
-              } else {
-                writeProposed(skillsDir, skillName, applied.newText);
-              }
-              checkpoint!.best_sel_score = gate.selScore;
-              checkpoint!.best_skill_text = applied.newText;
-              tally.accepted_steps += 1;
-
-              logEvent({
-                kind: 'step',
-                run_id: runId,
-                skill: skillName,
-                epoch,
-                step,
-                sel_score_median: gate.selScore,
-                sel_score_runs: gate.perTaskMedians.map((t) => t.median),
-                accepted: true,
-                edits_attempted: fresh.length,
-                edits_applied: applied.results.filter((r) => r.outcome === 'applied').length,
-                delta,
-                cumulative_cost_usd: tracker.snapshot().cumulativeCostUsd,
-                ...(reflectResult.invalidEditsDropped > 0 ? { invalid_edits_dropped: reflectResult.invalidEditsDropped } : {}),
-              } as never);
-              finalText = applied.newText;
+              // for the --no-mutate / bundled-without-allow paths; with a
+              // held-out set the write waits for the final held-out check (D2).
+              promote(applied.newText, gate.selScore, epoch, step, appliedEdits);
             } else {
-              // REJECT: push to rejected-buffer.
-              const newRejections = fresh.map((e) =>
-                makeRejectedEntry(checkpoint!.best_skill_text, [e], `validation_gate_${gate.reason ?? 'rejected'}`),
-              );
-              saveRejectedBuffer(skillsDir, skillName, newRejections);
-              logEvent({
-                kind: 'step',
-                run_id: runId,
-                skill: skillName,
-                epoch,
-                step,
-                sel_score_median: gate.selScore,
-                sel_score_runs: gate.perTaskMedians.map((t) => t.median),
-                accepted: false,
-                edits_attempted: fresh.length,
-                edits_applied: applied.results.filter((r) => r.outcome === 'applied').length,
-                delta: gate.selScore - checkpoint!.best_sel_score,
-                reason: gate.reason ?? 'rejected',
-                cumulative_cost_usd: tracker.snapshot().cumulativeCostUsd,
-                ...(reflectResult.invalidEditsDropped > 0 ? { invalid_edits_dropped: reflectResult.invalidEditsDropped } : {}),
-              } as never);
+              // REJECT: file the applied edits (and apply failures) in the rejected buffer.
+              saveRejectedBuffer(skillsDir, skillName, [
+                ...appliedEdits.map((e) => makeRejectedEntry(checkpoint!.best_skill_text, [e], `validation_gate_${gate.reason ?? 'rejected'}`)),
+                ...applyFailed,
+              ]);
             }
+            logEvent({
+              kind: 'step',
+              run_id: runId,
+              skill: skillName,
+              epoch,
+              step,
+              sel_score_median: gate.selScore,
+              sel_score_runs: gate.perTaskMedians.map((t) => t.median),
+              accepted: stepAccepted,
+              edits_attempted: fresh.length,
+              edits_applied: appliedEdits.length,
+              delta,
+              ...(stepAccepted ? {} : { reason: gate.reason ?? 'rejected' }),
+              cumulative_cost_usd: tracker.snapshot().cumulativeCostUsd,
+              ...(reflectResult.invalidEditsDropped > 0 ? { invalid_edits_dropped: reflectResult.invalidEditsDropped } : {}),
+            } as never);
           }
 
           // Step completed (accepted, rejected or no candidate): advance the
@@ -963,30 +893,45 @@ async function runOptimizationLoop(
 
       }
 
+      // D2 HELD-OUT: one independent check of the final champion against the
+      // baseline, before anything is written. The proposer never sees its
+      // verdict, so the held-out set never becomes a second selection set.
+      // A refused champion is dropped: the skill stays at the baseline.
+      const champion = checkpoint!.champion;
+      if (champion) {
+        const ho = await runHeldOutGate({
+          engine: opts.engine,
+          operationContext: opts.operationContext,
+          candidateSkillText: checkpoint!.best_skill_text,
+          baselineSkillText: baselineText,
+          heldOutTasks,
+          deadlineMs: deadline,
+          targetModel: opts.targetModel,
+          judgeModel: opts.judgeModel,
+          ...(hook ? { rolloutHook: hook } : {}),
+        });
+        rollouts.held_out += heldOutTasks.length * VALIDATION_RUNS_PER_TASK * 2;
+        heldOut = { baseline_score: ho.baselineScore, candidate_score: ho.candidateScore, passed: ho.passed };
+        logEvent({ kind: 'held_out', run_id: runId, skill: skillName, ...heldOut } as never);
+        if (ho.passed) {
+          writeCandidate(checkpoint!.best_skill_text, checkpoint!.best_sel_score, champion.epoch, champion.step, champion.edits);
+          tally.accepted_steps += champion.steps;
+        } else {
+          process.stderr.write(`[skillopt] held-out check refused the champion (${ho.candidateScore.toFixed(3)} < baseline ${ho.baselineScore.toFixed(3)}); skill unchanged\n`);
+          checkpoint!.best_skill_text = baselineText;
+          checkpoint!.best_sel_score = baselineSelScore;
+        }
+        delete checkpoint!.champion;
+        saveCheckpoint(skillsDir, skillName, checkpoint!);
+      }
+
       // FINAL TEST: score the best skill AND the baseline on D_test so the
-      // receipt carries an honest held-out generalization signal (the eval
-      // harnesses also compute this themselves, but a truthful receipt removes
-      // the prior hardcoded-0 lie). Skipped when D_test is empty, and after an
-      // early stop with nothing accepted (best === baseline; budget not spent).
+      // receipt carries an honest generalization signal. Skipped when D_test
+      // is empty, and after an early stop with nothing accepted (best ===
+      // baseline; budget not spent).
       if (split.test.length > 0 && !(earlyStopped && tally.accepted_steps === 0)) {
-        testScore = await scoreSkillOnTasks({
-          engine: opts.engine,
-          operationContext: opts.operationContext,
-          skillText: checkpoint!.best_skill_text,
-          tasks: split.test,
-          targetModel: opts.targetModel,
-          judgeModel: opts.judgeModel,
-          deadlineMs: deadline,
-        });
-        baselineTestScore = await scoreSkillOnTasks({
-          engine: opts.engine,
-          operationContext: opts.operationContext,
-          skillText: baselineText,
-          tasks: split.test,
-          targetModel: opts.targetModel,
-          judgeModel: opts.judgeModel,
-          deadlineMs: deadline,
-        });
+        testScore = (await score('test', checkpoint!.best_skill_text, split.test)).selScore;
+        baselineTestScore = (await score('test', baselineText, split.test)).selScore;
       }
     });
   } catch (err) {
@@ -1084,7 +1029,12 @@ async function runOptimizationLoop(
     // Ablation provenance (cat31 replayability) — only when a non-default knob set.
     ...(opts.reflectMode ? { reflect_mode: opts.reflectMode } : {}),
     ...(opts.disableValidationGate ? { validation_gate_disabled: true } : {}),
-    ...(opts.optimizerMode ? { optimizer_mode: opts.optimizerMode } : {}),
+    optimizer_mode: opts.optimizerMode,
+    rollouts,
+    candidates_scored_on_sel: selCandidates.size,
+    optimizer_calls: tally.reflect_calls,
+    cost_scope: hook ? 'optimizer_only' : 'all',
+    ...(heldOut ? { held_out: heldOut } : {}),
   };
 
   logEvent({

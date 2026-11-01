@@ -41,6 +41,7 @@ import { errorFor } from '../errors.ts';
 import { atomicWrite } from './apply-edits.ts';
 import type { BudgetSnapshot } from '../budget/budget-tracker.ts';
 import { buildModelsUsed, type ModelUsageRow } from '../budget/models-used.ts';
+import type { EditOp, OptimizerMode } from './types.ts';
 
 const CHECKPOINT_SCHEMA = 1;
 
@@ -65,6 +66,13 @@ export interface RunSpec {
   lr: number;
   lr_schedule: 'cosine' | 'linear' | 'constant';
   reflect_max_tokens: number;
+  /** E1. Absent on checkpoints written before one-shot became the default: those ran the loop. */
+  optimizer_mode?: OptimizerMode;
+}
+
+/** The mode a checkpoint's run used; a legacy checkpoint ran the loop. */
+export function checkpointOptimizerMode(cp: RunCheckpoint): OptimizerMode {
+  return cp.run_spec?.optimizer_mode ?? 'reflect';
 }
 
 /** Whole-run optimizer-reply accounting (survives resume). */
@@ -110,6 +118,12 @@ export interface RunCheckpoint {
   next_step?: number;
   run_spec?: RunSpec;
   tally?: ReflectTally;
+  /**
+   * D2: with a held-out set, accepted steps only move best_skill_text; this
+   * carries the champion's last accepted step, its applied edits and how many
+   * steps it took until the single held-out check writes it.
+   */
+  champion?: { epoch: number; step: number; steps: number; edits: EditOp[] };
   cumulative_cost_usd: number;
   /** Ledger rows banked across segments. Absent on legacy checkpoints. */
   models_used?: ModelUsageRow[];
@@ -205,6 +219,8 @@ export function assertResumeCompatible(cp: RunCheckpoint, current: RunSpec): voi
     if (JSON.stringify(stored[field]) !== JSON.stringify(current[field])) refuse(field, stored[field], current[field]);
   }
   if (!stored.mutate && current.mutate) refuse('mutate policy', 'no-mutate', 'mutate');
+  const storedMode = checkpointOptimizerMode(cp);
+  if (current.optimizer_mode !== undefined && current.optimizer_mode !== storedMode) refuse('optimizer_mode', storedMode, current.optimizer_mode);
 }
 
 export function checkpointPath(skillsDir: string, skillName: string, runId: string): string {

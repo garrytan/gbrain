@@ -6719,6 +6719,14 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "boolean",
         "description": "Preview: models plan, strict verdict and cost estimate, no LLM calls"
       },
+      "optimizer_mode": {
+        "type": "string",
+        "enum": [
+          "one-shot-rewrite",
+          "reflect"
+        ],
+        "description": "Default one-shot-rewrite: one gated rewrite. reflect opts into the iterative edit loop, which has not yet beaten one-shot on gbrain benchmarks."
+      },
       "shared_skill": {
         "type": "boolean",
         "description": "Optimize an exact shared catalog revision in a private proposal workspace and publish the accepted body through put_skill."

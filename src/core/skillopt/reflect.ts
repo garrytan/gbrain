@@ -64,19 +64,40 @@ export function describeJudge(judge: Judge): string {
   }
 }
 
+const TASK_SPECIFIC_CHECK: Record<RuleCheck['op'], string> = {
+  contains: 'the output must contain a task-specific required text',
+  regex: 'the output must match a task-specific pattern',
+  section_present: 'the output must include a task-specific markdown heading',
+  max_chars: 'the output must stay under a task-specific length limit',
+  min_citations: 'the output must include a task-specific number of citations',
+  tool_called: 'the agent must call a task-specific tool',
+  tool_not_called: 'the agent must avoid a task-specific tool',
+};
+
 /**
- * Describe the DISTINCT success criteria across a set of benchmark tasks. Most
- * benchmarks use one judge shape for every task, so this collapses to a single
- * block; heterogeneous benchmarks list each distinct shape once.
+ * Describe the success criteria the optimizer may see for a set of tasks (the
+ * train split). A rule check or LLM rubric is written out verbatim only when
+ * every task (at least two) carries it, so it is a format rule; one that varies
+ * by task is an answer key and is described without its argument.
  */
 export function describeJudges(tasks: ReadonlyArray<{ judge: Judge }>): string {
-  const seen = new Set<string>();
-  const blocks: string[] = [];
-  for (const t of tasks) {
-    const desc = describeJudge(t.judge);
-    if (!seen.has(desc)) { seen.add(desc); blocks.push(desc); }
+  const lines: string[] = [];
+  const add = (line: string) => { if (!lines.includes(line)) lines.push(line); };
+  const everyTask = (has: (j: Judge) => boolean) => tasks.length >= 2 && tasks.every((t) => has(t.judge));
+  for (const { judge } of tasks) {
+    if (judge.kind === 'rule') {
+      for (const c of judge.checks) {
+        const shared = everyTask((j) => j.kind === 'rule' && j.checks.some((x) => x.op === c.op && x.arg === c.arg));
+        add(`- ${shared ? describeCheck(c) : TASK_SPECIFIC_CHECK[c.op]}`);
+      }
+    } else if (judge.kind === 'llm') {
+      const shared = everyTask((j) => j.kind === 'llm' && j.rubric === judge.rubric);
+      add(shared ? describeJudge(judge) : '- the output is graded 0..1 by an LLM judge against a task-specific rubric');
+    } else {
+      add(describeJudge(judge));
+    }
   }
-  return blocks.join('\n');
+  return lines.join('\n');
 }
 
 /** The output format both reflect modes send (#7257): parseEdits accepts exactly these op and field names. */

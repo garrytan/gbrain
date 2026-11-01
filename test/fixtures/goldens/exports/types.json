@@ -3130,6 +3130,131 @@
         "name": "BenchmarkTask"
       },
       {
+        "kind": "type",
+        "name": "Judge",
+        "signature": [
+          "{ kind: \"rule\"; checks: RuleCheck[]; } | { kind: \"llm\"; rubric: string; model?: string; } | { kind: \"qrels\"; expected_slugs: string[]; k: number; }"
+        ]
+      },
+      {
+        "kind": "type",
+        "name": "OptimizerMode",
+        "signature": [
+          "\"reflect\" | \"one-shot-rewrite\""
+        ]
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "perTask: { task_id: string; median: number; runs: number[]; error?: string; }[]",
+          "score: number"
+        ],
+        "name": "PerTaskScore"
+      },
+      {
+        "kind": "variable",
+        "name": "READ_ONLY_BRAIN_TOOLS",
+        "signature": [
+          "ReadonlySet<string>"
+        ]
+      },
+      {
+        "kind": "type",
+        "name": "RolloutBatchHook",
+        "signature": [
+          "(req: RolloutBatchRequest, signal?: AbortSignal) => Promise<ScoredRollout[][]>"
+        ]
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "epoch: number",
+          "phase: RolloutPhase",
+          "runsPerTask: number",
+          "skillSha256: string",
+          "skillText: string",
+          "step: number",
+          "tasks: BenchmarkTask[]"
+        ],
+        "name": "RolloutBatchRequest"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "abortSignal?: AbortSignal | undefined",
+          "allowedTools?: ReadonlySet<string> | undefined",
+          "chatFn?: ((opts: ChatOpts) => Promise<ChatResult>) | undefined",
+          "engine: BrainEngine",
+          "maxTurns?: number | undefined",
+          "operationContext?: OperationContext | undefined",
+          "skillText: string",
+          "targetModel: string",
+          "task: BenchmarkTask",
+          "toolLoopFn?: ((opts: ToolLoopOpts) => Promise<ToolLoopResult>) | undefined",
+          "writeCapture?: boolean | undefined"
+        ],
+        "name": "RolloutOpts"
+      },
+      {
+        "kind": "type",
+        "name": "RolloutPhase",
+        "signature": [
+          "\"baseline_sel\" | \"train_forward\" | \"sel_gate\" | \"held_out\" | \"test\""
+        ]
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "abort_detail?: string | undefined",
+          "abort_reason?: \"budget_exhausted\" | \"error\" | \"runtime_exceeded\" | \"sigint\" | undefined",
+          "baseline_sel_score?: number | undefined",
+          "baseline_test_score?: number | undefined",
+          "batch_size: number",
+          "benchmark_sha8: string",
+          "best_sel_score?: number | undefined",
+          "candidates_scored_on_sel?: number | undefined",
+          "cost_scope?: \"all\" | \"optimizer_only\" | undefined",
+          "ended_at?: string | undefined",
+          "epochs: number",
+          "epochs_completed?: number | undefined",
+          "final_cost_usd?: number | undefined",
+          "held_out?: { baseline_score: number; candidate_score: number; passed: boolean; } | undefined",
+          "judge_model: string",
+          "lr: number",
+          "lr_schedule: \"cosine\" | \"linear\" | \"constant\"",
+          "max_cost_usd: number",
+          "models_plan?: ModelsPlanEntry[] | undefined",
+          "models_strict?: StrictVerdict | undefined",
+          "models_used?: ModelUsageRow[] | undefined",
+          "models_used_scope?: \"full_run\" | \"since_resume\" | undefined",
+          "no_pricing?: NoPricingGuidance | undefined",
+          "optimizer_calls?: number | undefined",
+          "optimizer_mode?: OptimizerMode | undefined",
+          "optimizer_model: string",
+          "outcome?: \"aborted\" | \"accepted\" | \"no_improvement\" | \"errored\" | undefined",
+          "prior_segments_cost_usd?: number | undefined",
+          "reflect_errors?: string[] | undefined",
+          "reflect_invalid_edits_dropped?: number | undefined",
+          "reflect_max_tokens?: number | undefined",
+          "reflect_max_tokens_source?: \"default\" | \"config\" | \"flag\" | undefined",
+          "reflect_mode?: \"both\" | \"failure-only\" | undefined",
+          "remediation?: { code: string; fix: string; docs: string; }[] | undefined",
+          "resume_command?: string | undefined",
+          "rollouts?: Record<RolloutPhase, number> | undefined",
+          "run_id: string",
+          "skill: string",
+          "skill_body_truncated?: { sent_chars: number; total_chars: number; } | undefined",
+          "skill_sha8: string",
+          "started_at: string",
+          "stop_reason?: \"aborted\" | \"completed\" | \"early_stop_unusable_output\" | undefined",
+          "target_model: string",
+          "test_score?: number | undefined",
+          "total_steps?: number | undefined",
+          "validation_gate_disabled?: boolean | undefined"
+        ],
+        "name": "RunReceipt"
+      },
+      {
         "kind": "interface",
         "members": [
           "finalText: string",
@@ -3142,6 +3267,20 @@
         "name": "RunSkillOptResult"
       },
       {
+        "kind": "variable",
+        "name": "SKILLOPT_HOOK_BUDGET_EXHAUSTED",
+        "signature": [
+          "\"skillopt_hook_budget_exhausted\""
+        ]
+      },
+      {
+        "kind": "variable",
+        "name": "SKILLOPT_HOOK_INFRA_ERROR",
+        "signature": [
+          "\"skillopt_hook_infra_error\""
+        ]
+      },
+      {
         "kind": "interface",
         "members": [
           "abortSignal?: AbortSignal | undefined",
@@ -3149,7 +3288,9 @@
           "engine: BrainEngine",
           "judgeModel?: string | undefined",
           "operationContext?: OperationContext | undefined",
+          "phase?: RolloutPhase | undefined",
           "rolloutFn?: ((opts: RolloutOpts) => Promise<Trajectory>) | undefined",
+          "rolloutHook?: RolloutBatchHook | undefined",
           "runsPerTask?: number | undefined",
           "scoreFn?: ((trajectory: Trajectory, judge: Judge, opts?: { judgeModel?: string; chatFn?: typeof chat; now?: () => Date; }) => Promise<ScoredRollout>) | undefined",
           "skillText: string",
@@ -3161,10 +3302,21 @@
       {
         "kind": "interface",
         "members": [
+          "judge_error?: string | undefined",
+          "rationale?: string | undefined",
+          "score: number",
+          "trajectory: Trajectory"
+        ],
+        "name": "ScoredRollout"
+      },
+      {
+        "kind": "interface",
+        "members": [
           "allowMutateBundled: boolean",
           "batchSize: number",
-          "benchmarkPath: string",
+          "benchmarkPath?: string | undefined",
           "bootstrapReviewed: boolean",
+          "criteriaText?: string | undefined",
           "disableValidationGate?: boolean | undefined",
           "dryRun: boolean",
           "engine: BrainEngine",
@@ -3184,25 +3336,69 @@
           "modelsStrict?: boolean | undefined",
           "noMutate: boolean",
           "operationContext?: OperationContext | undefined",
-          "optimizerMode?: \"reflect\" | \"one-shot-rewrite\" | undefined",
+          "optimizerMode: OptimizerMode",
           "optimizerModel: string",
           "reflectMaxTokens?: number | undefined",
           "reflectMode?: \"both\" | \"failure-only\" | undefined",
           "resumeRunId?: string | undefined",
+          "rolloutHook?: RolloutBatchHook | undefined",
           "sharedSkill?: { source_id: string; source_incarnation: string; pack_id: string; expected_revision: string; request_id: string; } | undefined",
           "skillName: string",
           "skillsDir: string",
-          "split: [number, number, number]",
+          "split?: [number, number, number] | undefined",
           "targetModel: string",
+          "tasks?: { train: BenchmarkTask[]; sel: BenchmarkTask[]; test?: BenchmarkTask[]; } | undefined",
           "writeCapture?: boolean | undefined"
         ],
         "name": "SkillOptOpts"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "duration_ms: number",
+          "final_text: string",
+          "stop_reason: ToolLoopStopReason",
+          "task: string",
+          "task_id: string",
+          "tool_calls: { name: string; input: unknown; output?: unknown; failed?: boolean; }[]",
+          "turns: number",
+          "usage: { input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; }"
+        ],
+        "name": "Trajectory"
+      },
+      {
+        "kind": "function",
+        "name": "describeJudge",
+        "signature": [
+          "(judge: Judge) => string"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "describeJudges",
+        "signature": [
+          "(tasks: ReadonlyArray<{ judge: Judge; }>) => string"
+        ]
       },
       {
         "kind": "function",
         "name": "loadHeldOut",
         "signature": [
           "(heldOutPath: string) => BenchmarkTask[]"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "rolloutToolsForSkill",
+        "signature": [
+          "(skillText: string) => ReadonlySet<string>"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "runRollout",
+        "signature": [
+          "(opts: RolloutOpts) => Promise<Trajectory>"
         ]
       },
       {
@@ -3217,6 +3413,20 @@
         "name": "scoreSkillOnTasks",
         "signature": [
           "(opts: ScoreOnTasksOpts) => Promise<number>"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "scoreSkillPerTask",
+        "signature": [
+          "(opts: ScoreOnTasksOpts) => Promise<PerTaskScore>"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "scoreTrajectory",
+        "signature": [
+          "(trajectory: Trajectory, judge: Judge, opts?: { judgeModel?: string; chatFn?: typeof chat; now?: () => Date; }) => Promise<ScoredRollout>"
         ]
       }
     ],

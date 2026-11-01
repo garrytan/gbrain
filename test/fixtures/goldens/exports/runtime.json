@@ -599,9 +599,18 @@
         "priceAtPromptSize"
       ],
       "./core/skillopt": [
+        "READ_ONLY_BRAIN_TOOLS",
+        "SKILLOPT_HOOK_BUDGET_EXHAUSTED",
+        "SKILLOPT_HOOK_INFRA_ERROR",
+        "describeJudge",
+        "describeJudges",
         "loadHeldOut",
+        "rolloutToolsForSkill",
+        "runRollout",
         "runSkillOpt",
-        "scoreSkillOnTasks"
+        "scoreSkillOnTasks",
+        "scoreSkillPerTask",
+        "scoreTrajectory"
       ],
       "./embedding": [
         "EMBEDDING_COST_PER_1K_TOKENS",
