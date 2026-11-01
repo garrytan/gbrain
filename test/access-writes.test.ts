@@ -124,11 +124,20 @@ for (const kind of testBackends()) {
 
     test('an unlisted member and an unbound token get the canonical page_not_found on every mutating op, and the page is unchanged', async () => {
       const before = await state();
+      // GBRA-218: the graph and raw-data ops on an existing target answer a hidden page exactly as a missing slug (no existence oracle).
+      const asMissing = new Set(['add_link from', 'add_link to', 'add_timeline_entry', 'put_raw_data']);
+      const swap = <T,>(v: T): T => JSON.parse(JSON.stringify(v).replaceAll(ALICE_PAGE, 'notes/never-written'));
       for (const who of ['bob', 'unbound']) {
         for (const [label, op, params] of await mutations(who)) {
           const out = await call(who, op, params);
-          expect({ who, label, code: out.json.code, suggestion: out.json.suggestion }).toEqual({ who, label, code: 'page_not_found',
-            suggestion: expect.stringContaining('Do not retry this slug as a create; ask the user') });
+          if (asMissing.has(label)) {
+            const missing = await call(who, op, swap(params));
+            expect({ who, label, isError: out.isError, json: swap(out.json) }).toEqual({ who, label, isError: true, json: missing.json });
+            expect({ who, label, code: out.json.code }).toEqual({ who, label, code: 'page_not_found' });
+          } else {
+            expect({ who, label, code: out.json.code, suggestion: out.json.suggestion }).toEqual({ who, label, code: 'page_not_found',
+              suggestion: expect.stringContaining('Do not retry this slug as a create; ask the user') });
+          }
           expect(out.text).not.toContain(CANARY);
         }
       }

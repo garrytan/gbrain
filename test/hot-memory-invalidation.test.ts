@@ -19,6 +19,8 @@ import type { OperationContext } from '../src/core/operations.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { recordFactWithdrawal } from '../src/core/facts/withdrawal.ts';
+import { importFromContent } from '../src/core/import-file.ts';
+import { proposeRevision } from '../src/core/access/policy.ts';
 import {
   getBrainHotMemoryMeta, invalidateHotMemoryForEngine, __hotMemoryCacheForTests, __resetHotMemoryCacheForTests,
 } from '../src/core/facts/meta-hook.ts';
@@ -115,3 +117,18 @@ test('a build that raced an invalidation is not cached', async () => {
     expect(__hotMemoryCacheForTests().size).toBe(0);
   }
 });
+
+test('GBRA-218: a folder narrowing installed outside this dispatcher is not served from the cache', async () => {
+  for (const engine of engines) {
+    const { id, marker } = await seed(engine);
+    const slug = `team/plan-${marker}`;
+    await importFromContent(engine, slug, '---\ntype: note\ntitle: Team plan\n---\n# Team plan\n\nPlan.', { sourceId: 'default', noEmbed: true });
+    await engine.executeRaw('UPDATE facts SET source_markdown_slug = $2 WHERE id = $1', [id, slug]);
+    await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1) ON CONFLICT DO NOTHING', ['alice-example']);
+    expect(await metaCarries(engine, marker, true)).toBe(true);
+    await proposeRevision(engine, 'default', [{ id: `team-${marker}`, prefix: 'team/', readable_by: ['member:alice-example'] }], { origin: 'cli', store: 'database' });
+    expect(await metaCarries(engine, marker, true)).toBe(false);
+    await proposeRevision(engine, 'default', [], { origin: 'cli', store: 'database', approved: true });
+  }
+});
+

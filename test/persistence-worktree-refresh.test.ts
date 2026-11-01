@@ -24,6 +24,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operations } from '../src/core/operations.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { parseRefreshArgs, runSourcesRefresh } from '../src/commands/sources-refresh.ts';
 import { claimCoalescedGitEffects, claimPersistenceEffect } from '../src/core/persistence/effect-journal.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
@@ -751,3 +752,18 @@ test('#6712 wave: a refresh completes once every member synced to a descendant o
   expect(await refreshWorktree(f.engine, f.alpha, { resume: true })).toMatchObject({ status: 'completed', refresh_id: row.id });
   expect((await f.refreshRows()).map(r => r.state)).toEqual(['completed']);
 }), 180_000);
+
+test('GBRA-218: a committed folder narrowing pulled by sources refresh is installed before the refresh reports, so the page is hidden remotely', () => each(async f => {
+  await f.engine.executeRaw('INSERT INTO access_members (id) VALUES ($1) ON CONFLICT DO NOTHING', ['alice-example']);
+  f.push('alpha/team/plan.md', page('Team plan', 'Plan canaryrefreshplan.'));
+  expect((await refreshWorktree(f.engine, f.alpha)).status).toBe('completed');
+  const [row] = await f.engine.executeRaw<{ slug: string }>("SELECT slug FROM pages WHERE source_id=$1 AND slug LIKE '%team/plan' AND deleted_at IS NULL", [f.alpha]);
+  expect(row?.slug).toBeDefined();
+  const remoteRead = async () => (await dispatchToolCall(f.engine, 'get_page', { slug: row!.slug }, { remote: true, transport: 'stdio', sourceId: f.alpha }))
+    .content.map(c => c.text).join('\n');
+  expect(await remoteRead()).toContain('canaryrefreshplan');
+  f.push('alpha/.gbrain/access.yml', 'version: 1\nrules:\n  - id: team\n    prefix: team/\n    readable_by: [alice-example]\n');
+  expect((await refreshWorktree(f.engine, f.alpha)).status).toBe('completed');
+  const [stamped] = await f.engine.executeRaw<{ folder_rule_ids: string[] | null }>('SELECT folder_rule_ids FROM pages WHERE source_id=$1 AND slug=$2', [f.alpha, row!.slug]);
+  expect({ stamped: stamped?.folder_rule_ids !== null, visible: (await remoteRead()).includes('canaryrefreshplan') }).toEqual({ stamped: true, visible: false });
+}), 120_000);

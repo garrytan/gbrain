@@ -91,14 +91,17 @@ export function invalidateHotMemoryForEngine(engine: object): void {
 }
 
 /**
- * Changes whenever a withdrawal is recorded for the source, by any process.
+ * Changes whenever a withdrawal is recorded for the source or (GBRA-218) a folder rulebook is installed, by any process.
  * Read-only embedder engines without raw SQL fall back to the TTL alone.
  */
 async function withdrawalWatermark(engine: OperationContext['engine'], sourceId: string): Promise<string> {
   if (typeof engine.executeRaw !== 'function') return '';
-  const [row] = await engine.executeRaw<{ n: number; at: string | null }>(
-    'SELECT count(*)::int AS n, max(withdrawn_at)::text AS at FROM fact_withdrawals WHERE source_id = $1', [sourceId]);
-  return `${row?.n ?? 0}:${row?.at ?? ''}`;
+  const [row] = await engine.executeRaw<{ n: number; at: string | null; rules: string | null }>(
+    `SELECT count(*)::int AS n, max(withdrawn_at)::text AS at,
+       (SELECT count(*)::text || ':' || coalesce(max(revision), 0)::text FROM access_rules)
+         || ':' || (SELECT count(*)::text FROM access_pending_coverage) AS rules
+     FROM fact_withdrawals WHERE source_id = $1`, [sourceId]);
+  return `${row?.n ?? 0}:${row?.at ?? ''}:${row?.rules ?? ''}`;
 }
 
 /** Bounded set: evict the oldest-expiry entry when inserting at capacity. */

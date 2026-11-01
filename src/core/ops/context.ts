@@ -25,7 +25,7 @@ import { stampEvidence } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
 import type { SearchResult, HybridSearchMeta, PageReadScope, PageReadPolicy } from '../types.ts';
 import { resolveExcludePrivatePages, isPrivatePage } from '../search/private-visibility.ts';
-import { assertRemoteTargetReadable, remoteTargetHidden } from '../persistence/page-visibility.ts';
+import { pageNotVisibleError, remoteTargetHidden } from '../persistence/page-visibility.ts';
 
 // --- Agent-contract fixes shared by the op error sites ---
 
@@ -1062,16 +1062,20 @@ export async function requireWritablePage(
     sourceId: writeSource,
     includeDeleted: true,
   });
-  if (writable) {
+  // GBRA-218: a page the remote caller cannot read under the member-access part answers exactly as a missing slug.
+  const hidden = !!writable && await remoteTargetHidden(ctx.engine, ctx.remote, writeSource, slug);
+  if (writable && !hidden) {
     if (ctx.viaSubagent === true && ctx.auth && isPrivatePage(writable)
       && await resolveExcludePrivatePages(ctx.engine, ctx.remote)) {
       throw opError('permission_denied', `${operation}: this page is outside your write visibility.`,
         'The page is private and this delegated write cannot see it; choose a different slug, or report the refusal to the user.');
     }
-    await assertRemoteTargetReadable(ctx.engine, ctx.remote, writeSource, slug);
     return;
   }
-  if (allowCreate) return;
+  if (allowCreate) {
+    if (hidden) throw pageNotVisibleError();
+    return;
+  }
 
   const visibleScope = federatedSearchScope(ctx);
   const spansAnotherSource =

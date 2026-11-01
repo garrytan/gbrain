@@ -76,14 +76,6 @@ async function writerIdentities(engine: SqlEngine, authority: WriteAuthority): P
   }
 }
 
-/**
- * GBRA-218: a remote write that touches an existing page outside the durable write path (graph edges, raw data)
- * must be able to read it under the member-access part; privacy keeps the rule each operation already had.
- */
-export async function assertRemoteTargetReadable(engine: SqlEngine, remote: boolean | undefined, sourceId: string, slug: string): Promise<void> {
-  if (await remoteTargetHidden(engine, remote, sourceId, slug)) throw pageNotVisibleError();
-}
-
 /** Whether an existing page is hidden from the current remote caller by the member-access part (never for a trusted local caller). */
 export async function remoteTargetHidden(engine: SqlEngine, remote: boolean | undefined, sourceId: string, slug: string): Promise<boolean> {
   if (remote === false) return false;

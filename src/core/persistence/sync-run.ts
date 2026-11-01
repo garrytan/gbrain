@@ -1259,7 +1259,12 @@ export interface RetryWait { request_id: string; kind: string | null; slug: stri
  * returns `sync_drain_lease_held` (resumable). A dry run takes no lease.
  */
 export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, slice?: { maxPages: number; maxMs: number }): Promise<SyncResult> {
-  if (opts.dryRun || currentDrainLease(opts.sourceId ?? 'default')) return performManagedPass(engine, opts, slice);
+  if (opts.dryRun) return performManagedPass(engine, opts, slice);
+  // GBRA-218: every managed pass (sync, drain, sources refresh, git conversion, owner slice) applies the committed folder rules.
+  return (await import('../access/policy-git.ts')).withCommittedPolicy(engine, opts.sourceId ?? 'default', opts.repoPath, () => performLeasedPass(engine, opts, slice));
+}
+async function performLeasedPass(engine: BrainEngine, opts: SyncOpts, slice?: { maxPages: number; maxMs: number }): Promise<SyncResult> {
+  if (currentDrainLease(opts.sourceId ?? 'default')) return performManagedPass(engine, opts, slice);
   const sourceId = opts.sourceId ?? 'default';
   const remote = currentSubmissionAuthority()?.kind === 'remote_generic';
   let tailClear = false;

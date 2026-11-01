@@ -19,6 +19,7 @@ import { spawnSync } from '../spawn.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import { serr } from '../console-prefix.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readSyncAnchor } from '../sync-anchor.ts';
 import { gitChildEnv } from '../git-env.ts';
@@ -175,6 +176,18 @@ export async function writeGitRules(engine: BrainEngine, sourceId: string, root:
 /** Commits access.approved (the rulebook an operator approved) through the door. */
 export async function writeApprovedFile(root: string, rules: FolderRule[], message: string): Promise<GitPolicyReceipt> {
   return commitPolicyFile(root, APPROVED_FILE, () => serializePolicyYaml(rules, APPROVED_HEADER), message);
+}
+
+/**
+ * GBRA-218: applies the committed folder rules before and after `run` moves pages, so a committed narrowing is installed by
+ * the same managed pass that pulled it (sync, drain, sources refresh, git conversion), never left for a later plain sync.
+ */
+export async function withCommittedPolicy<T>(engine: BrainEngine, sourceId: string, repoPath: string | undefined, run: () => Promise<T>): Promise<T> {
+  const root = repoPath ?? await sourcePolicyRoot(engine, sourceId);
+  await syncAccessPolicyAt(engine, sourceId, root, 'HEAD');
+  const result = await run();
+  await syncAccessPolicyAt(engine, sourceId, root, 'HEAD', serr);
+  return result;
 }
 
 /** Sync's hook: apply the committed policy of a source when its store is git (or unset and the commit holds a policy file). */
