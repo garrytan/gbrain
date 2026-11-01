@@ -95,6 +95,14 @@ describe('rollout hook (B1.3)', () => {
     }
   });
 
+  test('a runtime cap beyond the timer range (or Infinity) does not abort the batch', async () => {
+    const hook: RolloutBatchHook = async (req) => { await new Promise((r) => setTimeout(r, 20)); return req.tasks.map(() => [row(1), row(1), row(1)]); };
+    for (const deadlineMs of [Date.now() + 30 * 24 * 3600 * 1000, Number.POSITIVE_INFINITY]) {
+      const res = await runValidationGate({ engine, candidateSkillText: 'S', selSet: tasks('s', 5), bestScore: 0, targetModel: 'm', rolloutHook: hook, deadlineMs });
+      expect(res.selScore).toBe(1);
+    }
+  });
+
   test('a batch answered after the runtime deadline is not a score', async () => {
     const hook: RolloutBatchHook = async (req) => { await new Promise((r) => setTimeout(r, 30)); return req.tasks.map(() => [row(1), row(1), row(1)]); };
     const deadlineMs = Date.now() + 10;

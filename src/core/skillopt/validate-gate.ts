@@ -76,6 +76,9 @@ interface PerTask {
   rollouts: ScoredRollout[];
 }
 
+/** setTimeout clamps longer delays to 1 ms; a cap beyond it relies on the post-call deadline check. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
 /** One hook call for the whole batch; a malformed reply is an infra error, never a score. */
 async function hookBatch(opts: ValidateGateOpts, hook: RolloutBatchHook, runsPerTask: number): Promise<PerTask[]> {
   const deadline = opts.deadlineMs;
@@ -87,7 +90,7 @@ async function hookBatch(opts: ValidateGateOpts, hook: RolloutBatchHook, runsPer
   if (opts.abortSignal?.aborted) onAbort();
   else opts.abortSignal?.addEventListener('abort', onAbort, { once: true });
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const expired = deadline === undefined ? null : new Promise<never>((_, reject) => {
+  const expired = deadline === undefined || deadline - Date.now() > MAX_TIMER_MS ? null : new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       controller.abort(new Error(SKILLOPT_RUNTIME_EXCEEDED));
       reject(new Error(SKILLOPT_RUNTIME_EXCEEDED));
