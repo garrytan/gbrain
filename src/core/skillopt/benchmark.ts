@@ -349,13 +349,13 @@ export function loadRunTasks(opts: {
 }): { bench: Benchmark; split: BenchmarkSplit } {
   if (!opts.tasks) {
     if (!opts.benchmarkPath) {
-      throw errorFor({ class: 'BenchmarkNotFound', code: 'benchmark_not_found', message: 'No benchmark: pass benchmarkPath or explicit tasks.', hint: 'Pass --benchmark <path>.' });
+      throw errorFor({ class: 'BenchmarkNotFound', code: 'benchmark_not_found', message: 'No benchmark: pass benchmarkPath or explicit tasks.' });
     }
     const bench = loadBenchmark(opts.benchmarkPath, { bootstrapReviewed: opts.bootstrapReviewed });
     return { bench, split: splitBench(bench, opts.split ?? [4, 1, 5]) };
   }
   if (opts.benchmarkPath) {
-    throw errorFor({ class: 'BadSplit', code: 'explicit_tasks_conflict', message: 'Explicit tasks and a benchmark file were both given.', hint: 'Pass either tasks or benchmarkPath, not both.' });
+    throw errorFor({ class: 'BadSplit', code: 'explicit_tasks_conflict', message: 'Explicit tasks and a benchmark file were both given; pass one of them.' });
   }
   const label = '(explicit tasks)';
   const check = (list: BenchmarkTask[], name: string) => list.map((t, i) => validateRow(t, i + 1, `${label} ${name}`));
@@ -364,15 +364,15 @@ export function loadRunTasks(opts: {
   const seen = new Set<string>();
   for (const t of all) {
     if (seen.has(t.task_id)) {
-      throw errorFor({ class: 'BenchmarkDuplicateId', code: 'benchmark_duplicate_task_id', message: `task_id '${t.task_id}' appears more than once across train, sel and test.`, hint: 'Each task belongs to exactly one list.' });
+      throw errorFor({ class: 'BenchmarkDuplicateId', code: 'benchmark_duplicate_task_id', message: `task_id '${t.task_id}' appears more than once across train, sel and test; each task belongs to exactly one list.` });
     }
     seen.add(t.task_id);
   }
   if (split.train.length === 0) {
-    throw errorFor({ class: 'BenchmarkEmpty', code: 'benchmark_empty', message: 'Explicit train list is empty.', hint: 'Pass at least one train task.' });
+    throw errorFor({ class: 'BenchmarkEmpty', code: 'benchmark_empty', message: 'Explicit train list is empty; pass at least one train task.' });
   }
   if (split.sel.length < D_SEL_MIN_SIZE) {
-    throw errorFor({ class: 'DSelTooSmall', code: 'd_sel_too_small', message: `Explicit sel list has ${split.sel.length} task(s) (need >=${D_SEL_MIN_SIZE} for meaningful validation).`, hint: `Pass at least ${D_SEL_MIN_SIZE} selection tasks.` });
+    throw errorFor({ class: 'DSelTooSmall', code: 'd_sel_too_small', message: `Explicit sel list has ${split.sel.length} task(s); pass at least ${D_SEL_MIN_SIZE} for meaningful validation.` });
   }
   const canonical = JSON.stringify({ train: split.train, sel: split.sel, test: split.test });
   return { bench: { source_path: label, tasks: all, benchmark_sha8: createHash('sha256').update(canonical).digest('hex').slice(0, 8) }, split };

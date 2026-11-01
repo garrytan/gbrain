@@ -614,7 +614,7 @@ async function runOptimizationLoop(
       ...(hook ? { rolloutHook: hook } : {}),
     });
     rollouts[phase] += tasks.length * runsPerTask;
-    if (phase === 'sel_gate') selCandidates.add(createHash('sha256').update(skillText).digest('hex'));
+    if (phase === 'sel_gate' && skillText !== baselineText) selCandidates.add(createHash('sha256').update(skillText).digest('hex'));
     return result;
   };
   // D2: with a held-out set, nothing is written until the single held-out
@@ -1009,7 +1009,7 @@ async function runOptimizationLoop(
     ...(remediation.length > 0 ? { remediation } : {}),
     reflect_max_tokens: reflectCap.maxTokens,
     reflect_max_tokens_source: reflectCap.source,
-    ...(checkpointRetained ? { resume_command: buildResumeCommand(skillName, runId, runSpec, failureCode, {
+    ...(checkpointRetained && !opts.tasks ? { resume_command: buildResumeCommand(skillName, runId, runSpec, failureCode, {
       mode: opts.mode, maxCostUsd: opts.maxCostUsd, maxRuntimeMin: opts.maxRuntimeMin,
       force: opts.force,
       modelsStrict: opts.modelsStrict === true,

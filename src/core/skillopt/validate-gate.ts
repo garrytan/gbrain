@@ -87,8 +87,11 @@ async function hookBatch(opts: ValidateGateOpts, hook: RolloutBatchHook, runsPer
     epoch: opts.epoch ?? 0,
     step: opts.step ?? 0,
   }, opts.abortSignal);
-  if (!Array.isArray(rows) || rows.length !== opts.selSet.length || rows.some((r) => !Array.isArray(r) || r.length !== runsPerTask)) {
-    throw new Error(`${SKILLOPT_HOOK_INFRA_ERROR}: rollout hook returned a malformed batch for ${opts.phase ?? 'sel_gate'} (want ${opts.selSet.length} rows of ${runsPerTask})`);
+  const needsTrajectory = opts.phase === 'train_forward';
+  const badRun = (r: ScoredRollout | undefined) => typeof r?.score !== 'number' || !(r.score >= 0 && r.score <= 1)
+    || (needsTrajectory && (typeof r.trajectory !== 'object' || r.trajectory === null));
+  if (!Array.isArray(rows) || rows.length !== opts.selSet.length || rows.some((r) => !Array.isArray(r) || r.length !== runsPerTask || r.some(badRun))) {
+    throw new Error(`${SKILLOPT_HOOK_INFRA_ERROR}: rollout hook returned a malformed batch for ${opts.phase ?? 'sel_gate'} (want ${opts.selSet.length} rows of ${runsPerTask} runs, each a score in [0,1]${needsTrajectory ? ' with a trajectory' : ''})`);
   }
   return opts.selSet.map((task, i) => {
     const runs = rows[i]!.map((r) => r.score);

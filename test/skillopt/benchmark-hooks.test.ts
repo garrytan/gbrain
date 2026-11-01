@@ -35,12 +35,22 @@ describe('rollout hook (B1.3)', () => {
     ['too few rows', (req: RolloutBatchRequest) => req.tasks.slice(1).map(() => [row(1), row(1), row(1)])],
     ['too few runs', (req: RolloutBatchRequest) => req.tasks.map(() => [row(1)])],
     ['not an array', () => ({}) as unknown as ScoredRollout[][]],
+    ['a string score', (req: RolloutBatchRequest) => req.tasks.map(() => [row(1), row(1), { ...row(1), score: '0.9' } as unknown as ScoredRollout])],
+    ['a NaN score', (req: RolloutBatchRequest) => req.tasks.map(() => [row(1), row(1), row(Number.NaN)])],
+    ['a score above 1', (req: RolloutBatchRequest) => req.tasks.map(() => [row(7), row(7), row(7)])],
   ])('a malformed batch (%s) is an infra error that aborts, never a score', async (_name, reply) => {
     const hook: RolloutBatchHook = async (req) => reply(req);
     const err = await runValidationGate({ engine, candidateSkillText: 'S', selSet: tasks('s', 5), bestScore: 0, targetModel: 'm', rolloutHook: hook })
       .then(() => null, (e) => e);
     expect(String(err?.message)).toContain(SKILLOPT_HOOK_INFRA_ERROR);
     expect(isSkilloptMustAbort(err)).toBe(true);
+  });
+
+  test('a train_forward row without a trajectory is an infra error', async () => {
+    const hook: RolloutBatchHook = async (req) => req.tasks.map(() => [{ score: 1 } as ScoredRollout]);
+    const err = await scoreSkillPerTask({ engine, skillText: 'S', tasks: tasks('t', 2), targetModel: 'm', runsPerTask: 1, phase: 'train_forward', rolloutHook: hook })
+      .then(() => null, (e) => e);
+    expect(String(err?.message)).toContain(SKILLOPT_HOOK_INFRA_ERROR);
   });
 });
 
