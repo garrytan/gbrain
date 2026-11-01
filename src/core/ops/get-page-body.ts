@@ -468,7 +468,7 @@ export async function readPartialBody(ctx: OperationContext, input: PartialReadI
   const neutralize = input.neutralize === true && req.view !== 'markdown';
   const wrap = (text: string) => envelopeText(neutralize && text ? neutralizeToolCalls(text) : text, quarantined, trust, input.quote ? page.slug : null);
   const base: Record<string, unknown> = {
-    slug: page.slug, source_id: page.source_id, type: page.type, revision, tags, ...quotedPageMeta({ slug: page.slug, title: page.title, frontmatter: page.frontmatter ?? {} }, input.quote === true),
+    slug: page.slug, source_id: page.source_id, type: page.type, revision, ...quotedPageMeta({ slug: page.slug, title: page.title, frontmatter: page.frontmatter ?? {} }, input.quote === true, tags),
     ...(page.deleted_at ? { deleted_at: page.deleted_at } : {}),
     ...(trust ?? {}), ...extras, ...(input.quote ? { quoted: 'transcript' } : {}),
   };
@@ -607,13 +607,14 @@ export async function fetchWindowResult(ctx: OperationContext, input: PartialRea
   const { page, revision, tags, quarantined, trust } = input;
   const { partial, anchorStatus } = await readFetchWindow(ctx, input, anchor);
   const w = partial.window ?? { text: '' };
+  const meta = quotedPageMeta(page, input.quote === true, tags);
   return {
     id,
-    title: quotedPageMeta(page, input.quote === true).title,
+    title: meta.title,
     text: w.text,
     url: deepResearchPageUrl(page.source_id, page.slug),
     metadata: {
-      revision, type: page.type, source_id: page.source_id, updated_at: page.updated_at, tags, ...(quarantined ? { quarantined } : {}), ...(trust ?? {}),
+      revision, type: page.type, source_id: page.source_id, updated_at: page.updated_at, tags: meta.tags, ...(quarantined ? { quarantined } : {}), ...(trust ?? {}),
       ...(input.quote ? { quoted: 'transcript' } : {}), truncated: true, total_bytes: partial.size?.total_bytes, anchor: anchorStatus,
       ...(typeof w.byte_start === 'number' ? { window: { byte_start: w.byte_start, byte_end: w.byte_end, line_start: w.line_start, line_end: w.line_end } } : {}),
       ...(partial.next_cursor ? { next_id: encodeDeepResearchId(page.source_id, page.slug, { cursor: partial.next_cursor }) } : {}),

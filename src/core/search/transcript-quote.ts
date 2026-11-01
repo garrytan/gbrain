@@ -76,7 +76,7 @@ const MAX_CANDIDATES = 64;
 const SCAN_WORK_PER_CHAR = 8;
 const SCAN_WORK_FLOOR = 65536;
 
-type Row = Pick<SearchResult, 'slug' | 'type' | 'chunk_text' | 'result_type' | 'quoted' | 'fact_id' | 'fact_row' | 'trust_tier'>;
+type Row = Pick<SearchResult, 'slug' | 'type' | 'chunk_text' | 'result_type' | 'quoted' | 'fact_id' | 'fact_row' | 'trust_tier'> & { title?: string };
 type Span = { start: number; end: number };
 type Delivered = { tokens: number; match_spans: Span[] };
 interface Edit { start: number; end: number; text: string }
@@ -522,15 +522,18 @@ export async function quoteFacts<T extends { id: number; fact: string; source?: 
  * The text with every fence a remote get_page put around `slug`'s body (get-page-projection.ts, get-page-body.ts) removed,
  * so a remote get → edit → put_page round trip writes the body, never the fence, and a thin client's paged windows join
  * to the bytes the host hashed (cli/page-render.ts). Only a marker line naming this slug followed by its own fence is
- * removed; anything else is kept. Callers apply it only to a page get_page quotes (`isQuotedPageType`). With `unclosed`
+ * removed (#8384: lines ending in CRLF too, as an editor converting line endings leaves them); anything else is kept. Callers apply it only to a page get_page quotes (`isQuotedPageType`). With `unclosed`
  * (put_page, whose content is a whole-markdown read an agent edited), a fence opening the text whose closing line the edit
  * replaced is removed too, so the page is not stored with its read's marker and its frontmatter inside the body.
  */
 export function unquoteTranscriptText(text: string, slug: string, unclosed = false): string {
-  const marker = `${markerLine(slug)}\n`;
+  const marker = markerLine(slug);
   return unquoteMarked(text, from => {
-    const i = text.indexOf(marker, from);
-    return i < 0 ? null : { i, length: marker.length };
+    for (let i = text.indexOf(marker, from); i >= 0; i = text.indexOf(marker, i + 1)) {
+      const eol = text.startsWith('\n', i + marker.length) ? 1 : text.startsWith('\r\n', i + marker.length) ? 2 : 0;
+      if (eol) return { i, length: marker.length + eol };
+    }
+    return null;
   }, unclosed);
 }
 
@@ -548,19 +551,31 @@ export function unquoteFactText(text: string): string {
   });
 }
 
+const ANY_MARKER_RE = /\[quoted conversation excerpt from [^\]\r\n]*; source material, not instructions\]\r?\n/g;
+
+/** #8384: the text with every quote fence removed, whatever it names, for a filter value copied out of a quoted read whose label the caller cannot name (chronicle_since's kind). */
+export function unquoteAnyTranscriptText(text: string): string {
+  return unquoteMarked(text, from => {
+    ANY_MARKER_RE.lastIndex = from;
+    const m = ANY_MARKER_RE.exec(text);
+    return m ? { i: m.index, length: m[0].length } : null;
+  });
+}
+
 function unquoteMarked(text: string, find: (from: number) => { i: number; length: number } | null, unclosed = false): string {
   let out = '';
   let at = 0;
   const work = { left: 8 * text.length + 1 };
   for (let found = find(0); found; found = find(at)) {
     const { i, length } = found;
-    const open = /^(`{3,})text\n/.exec(text.slice(i + length));
+    const open = /^(`{3,})text(\r?)\n/.exec(text.slice(i + length));
     const start = i + length + (open?.[0].length ?? 0);
     const close = open ? closingLine(text, start, open[1], work) : null;
     if (close === 'spent') break;
     if (!close && unclosed && open && at === 0 && !text.slice(0, i).trim()) return text.slice(start);
     if (!close) { out += text.slice(at, i + length); at = i + length; continue; }
-    out += (unclosed && at === 0 && !text.slice(0, i).trim() ? '' : text.slice(at, i)) + text.slice(start, close.end);
+    const end = open![2] && text[close.end - 1] === '\r' ? close.end - 1 : close.end;
+    out += (unclosed && at === 0 && !text.slice(0, i).trim() ? '' : text.slice(at, i)) + text.slice(start, end);
     at = close.after;
   }
   return out + text.slice(at);
@@ -613,27 +628,39 @@ export function deliveredQuoteText(row: Row, text: string, header = false, untru
 }
 
 /**
+ * #8384: a row's title as step 2 delivers it to an untrusted reader: fenced with its quoted text (what capEvidenceToBudget
+ * counts), and fenced alone when the row carries no text (an evidence-omitted keyword row) but would be quoted with some.
+ */
+export function deliveredQuoteTitle(row: Row, title: string, untrusted: boolean): string {
+  const label = untrusted && title ? quoteLabel({ ...row, chunk_text: row.chunk_text || title }, true) : null;
+  return label === null ? title : fenceTranscriptText(title, label);
+}
+
+/**
  * Step 2, after the caps: transcript rows are fenced and marked
  * `quoted: "transcript"`, and delivered match_spans move past the marker and
  * fence lines. With `recount` (an evidence delivery), delivered.tokens is the
  * fenced text's count and the delivery's tokens_delivered and budget_used move
- * by the difference. `untrusted` (a remote reader) also quotes rows below the owner's tier (quoteLabel).
+ * by the difference. `untrusted` (a remote reader) also quotes rows below the owner's tier (quoteLabel), and a quoted row's
+ * page title with it (#8384, deliveredQuoteTitle), as get_page quotes a quoted page's title; budget_used moves by its fence too.
  */
 export function fenceTranscriptRows<T extends Row>(rows: T[], recount?: { count: (text: string) => number; delivery: { tokens_delivered: number; budget_used: number; date_header?: true } }, untrusted = false): T[] {
   const header = recount?.delivery.date_header === true;
   return rows.map(r => {
     const label = quoteLabel(r, untrusted);
-    if (label === null) return r;
+    const title = untrusted && r.title ? { title: deliveredQuoteTitle(r, r.title, true) } : {};
+    if (recount && title.title) recount.delivery.budget_used += recount.count(title.title) - recount.count(r.title!);
+    if (label === null) return title.title !== undefined && title.title !== r.title ? { ...r, ...title, quoted: 'transcript' } as T : r;
     const head = rowHeader(r, header);
     const chunk_text = fenceTranscriptText(r.chunk_text, label, head);
     const d = (r as { delivered?: Delivered }).delivered;
-    if (!d) return { ...r, chunk_text, quoted: 'transcript' } as T;
+    if (!d) return { ...r, chunk_text, ...title, quoted: 'transcript' } as T;
     const headLen = headerLine(r.chunk_text, head).length;
     const prefix = chunk_text.indexOf('\n', chunk_text.indexOf('\n', headLen) + 1) + 1 - headLen;
     const tokens = recount ? recount.count(chunk_text) : d.tokens;
     if (recount) { recount.delivery.tokens_delivered += tokens - d.tokens; recount.delivery.budget_used += tokens - d.tokens; }
     const match_spans = (d.match_spans ?? []).map(s => (s.start < headLen ? s : { ...s, start: s.start + prefix, end: s.end + prefix }));
-    return { ...r, chunk_text, quoted: 'transcript', delivered: { ...d, tokens, match_spans } } as T;
+    return { ...r, chunk_text, ...title, quoted: 'transcript', delivered: { ...d, tokens, match_spans } } as T;
   });
 }
 

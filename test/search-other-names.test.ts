@@ -9,6 +9,7 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { serializeMarkdown } from '../src/core/markdown.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { aliasDeclarations } from '../src/core/ops/search.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 
 describe('aliasDeclarations', () => {
   const rows = [{ slug: 'crm/murari-logistics', title: 'CRM record: Murari Logistics', chunk_text: 'Account record. Account code: MULI. Owner: someone.' }];
@@ -32,7 +33,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  await importFromContent(engine, 'crm/numbat-labs', serializeMarkdown({}, 'Account record. Account code: NULA. Billing contact: Old Person.', '', { type: 'crm', title: 'CRM record: Numbat Labs', tags: [] }), { noEmbed: true, forceRechunk: true });
+  await asOwner(engine, tx => importFromContent(tx, 'crm/numbat-labs', serializeMarkdown({}, 'Account record. Account code: NULA. Billing contact: Old Person.', '', { type: 'crm', title: 'CRM record: Numbat Labs', tags: [] }), { noEmbed: true, forceRechunk: true }));
   await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source) VALUES
     ('default', 'numbat-labs', 'The billing contact for Numbat Labs is New Person.', 'fact', 'world', 'user update')`);
 }, 120_000);

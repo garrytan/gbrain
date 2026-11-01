@@ -80,15 +80,15 @@ function enveloped(text: string, fields: TrustFields | undefined): string {
 }
 
 /**
- * #8377: a quoted page's title and frontmatter as an untrusted reader gets them, each string fenced as `slug`'s
- * (frontmatter keys stay); with `quote` false, as stored. The round-trip `content` is fenced whole instead.
+ * #8377: a quoted page's title and frontmatter (#8384: and its tags) as an untrusted reader gets them, each string fenced
+ * as `slug`'s (frontmatter keys stay); with `quote` false, as stored. The round-trip `content` is fenced whole instead.
  */
-export function quotedPageMeta(page: Pick<Page, 'slug' | 'title' | 'frontmatter'>, quote: boolean): Pick<Page, 'title' | 'frontmatter'> {
-  if (!quote) return { title: page.title, frontmatter: page.frontmatter };
+export function quotedPageMeta(page: Pick<Page, 'slug' | 'title' | 'frontmatter'>, quote: boolean, tags: string[] = []): Pick<Page, 'title' | 'frontmatter'> & { tags: string[] } {
+  if (!quote) return { title: page.title, frontmatter: page.frontmatter, tags };
   const fence = (value: unknown): unknown => typeof value === 'string' ? (value ? fenceTranscriptText(value, page.slug) : value)
     : Array.isArray(value) ? value.map(fence)
     : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fence(v)])) : value;
-  return { title: fence(page.title) as string, frontmatter: fence(page.frontmatter ?? {}) as Page['frontmatter'] };
+  return { title: fence(page.title) as string, frontmatter: fence(page.frontmatter ?? {}) as Page['frontmatter'], tags: fence(tags) as string[] };
 }
 
 export interface GetPageProjectionOpts {
@@ -141,7 +141,8 @@ export function projectGetPage(stored: Page, o: GetPageProjectionOpts) {
   const fence = (text: string) => (text ? fenceTranscriptText(text, stored.slug) : text);
   const summarize = o.neutralize === true && (!o.includeContent || o.readingContent === true);
   const plain = summarize ? { ...stored, compiled_truth: stored.compiled_truth && neutralizeToolCalls(stored.compiled_truth), timeline: stored.timeline && neutralizeToolCalls(stored.timeline) } : stored;
-  const page = o.quote ? { ...plain, ...quotedPageMeta(stored, true), compiled_truth: fence(plain.compiled_truth), timeline: fence(plain.timeline) } : stored;
+  const { tags: shownTags, ...meta } = quotedPageMeta(stored, o.quote === true, tags);
+  const page = o.quote ? { ...plain, ...meta, compiled_truth: fence(plain.compiled_truth), timeline: fence(plain.timeline) } : stored;
   const omitted = quarantined?.body_omitted === true;
   const wrap = quarantined?.body_enveloped === true;
   const visibleBody = omitted ? { ...page, compiled_truth: '', timeline: '' }
@@ -164,7 +165,7 @@ export function projectGetPage(stored: Page, o: GetPageProjectionOpts) {
       type: visibleBody.type,
       title: visibleBody.title,
       revision,
-      tags,
+      tags: shownTags,
       ...(text === undefined ? {} : { content: text }),
       chars: text?.length ?? 0,
       ...(deletedAt ? { deleted_at: deletedAt } : {}),
@@ -175,7 +176,7 @@ export function projectGetPage(stored: Page, o: GetPageProjectionOpts) {
   return {
     ...visibleBody,
     revision,
-    tags,
+    tags: shownTags,
     ...(text === undefined ? {} : { content: text }),
     chars: (visibleBody.compiled_truth ?? '').length + (visibleBody.timeline ?? '').length + (text?.length ?? 0),
     // #5575 A6: the reading shape carries the page's trust; the content_only round-trip shape stays minimal.

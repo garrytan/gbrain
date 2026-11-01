@@ -12,7 +12,7 @@ import type { ChronicleTimelineRow, OntologyValue } from '../types.ts';
 import { readPolicyOpts, sourceScopeOpts } from './context.ts';
 import { invalidParam } from './op-fix.ts';
 import { quoteTimelineRows } from './timeline-quote.ts';
-import { quoteFacts, unquoteFactText } from '../search/transcript-quote.ts';
+import { quoteFacts, quotePageText, quotesStored, unquoteAnyTranscriptText, unquoteFactText } from '../search/transcript-quote.ts';
 
 // ── Remote diary redaction (fail-closed) ─────────────────────────────────
 // The exact mechanism the ontology siblings use (`ctx.remote !== false` →
@@ -30,9 +30,21 @@ function redactDiaryTimeline<
     !(r.event_slug ?? '').startsWith(DIARY_PREFIX) &&
     !(r.source ?? '').includes(DIARY_PREFIX));
 }
-/** The rows a remote reader gets: diary rows redacted, then each entry below the owner's tier quoted as its own page's (GST-687). */
-function remoteTimeline(ctx: OperationContext, rows: ChronicleTimelineRow[]) {
-  return quoteTimelineRows(ctx, r => r.page_slug, redactDiaryTimeline(ctx, rows));
+/**
+ * The rows a remote reader gets: diary rows redacted, then each entry below the owner's tier quoted as its own page's (GST-687),
+ * and an event projection's `kind` (its event page's frontmatter) quoted by that event page's type and tier (#8384).
+ */
+async function remoteTimeline(ctx: OperationContext, rows: ChronicleTimelineRow[]) {
+  const quoted = await quoteTimelineRows(ctx, r => r.page_slug, redactDiaryTimeline(ctx, rows));
+  const events = quoted.flatMap(r => (r.kind ? [Number(r.event_page_id)] : []));
+  if (ctx.remote === false || events.length === 0) return quoted;
+  const pages = new Map((await ctx.engine.executeRaw<{ id: number | string; type: string | null; trust_tier: string | null }>(
+    'SELECT id, type, trust_tier FROM pages WHERE id = ANY($1::bigint[])', [[...new Set(events)]])).map(p => [Number(p.id), p]));
+  return quoted.map(r => {
+    const page = pages.get(Number(r.event_page_id));
+    return r.kind && quotesStored(page?.type, page?.trust_tier)
+      ? { ...r, kind: quotePageText(r.kind, r.event_slug ?? r.page_slug, page?.type), quoted: 'transcript' as const } : r;
+  });
 }
 /** #8384: ontology values a remote reader gets, each quoted by its fact's stored tier as recall quotes the fact (quoteFacts). */
 async function remoteOntology<V extends Pick<OntologyValue, 'value' | 'source' | 'fact_id'>>(ctx: OperationContext, values: V[]): Promise<Array<V & { quoted?: 'transcript' }>> {
@@ -113,7 +125,7 @@ const chronicle_since: Operation = {
   },
   handler: async (ctx, p) => {
     return remoteTimeline(ctx, await ctx.engine.getSince(String(p.date), {
-      kind: typeof p.kind === 'string' ? p.kind : undefined,
+      kind: typeof p.kind !== 'string' ? undefined : ctx.remote === false ? p.kind : unquoteAnyTranscriptText(p.kind),
       limit: typeof p.limit === 'number' ? p.limit : undefined,
       ...await readPolicyOpts(ctx),
     }));
