@@ -295,6 +295,26 @@ for (const kind of testBackends()) {
       expect(bob.text).not.toContain('canaryfr');
     }, 120_000);
 
+    test('a page renamed into a ruled folder takes its atoms, chronicle events and derived_from summaries with it', async () => {
+      const derived = (slug: string, canary: string, lines: string[]) => importFromContent(engine, slug,
+        ['---', ...lines, `title: ${slug}`, '---', `# ${slug}`, '', `Folder ledger notes ${canary} for the roadmap.`].join('\n'), { sourceId: SRC });
+      await importFromContent(engine, 'notes/roadmap', pageText('roadmap', 'canaryfrroadmap'), { sourceId: SRC });
+      await derived('atoms/roadmap-claim', 'canaryfrroadatom', ['type: atom', 'visibility: world', 'source_slug: notes/roadmap']);
+      await derived('events/roadmap-day', 'canaryfrroadevent', ['type: event', 'captured_via: life-chronicle:test', 'event:', '  depth: notes/roadmap']);
+      await derived('notes/roadmap-summary', 'canaryfrroadsum', ['type: note', 'derived_from: [notes/roadmap.md]']);
+      const seen = async (who: string) => {
+        const out: string[] = [];
+        for (const c of ['canaryfrroadmap', 'canaryfrroadatom', 'canaryfrroadevent', 'canaryfrroadsum']) {
+          if ((await call(who, 'search', { query: c, match: 'keyword', fields: 'full' })).text.includes(c)) out.push(c);
+        }
+        return out;
+      };
+      expect(await seen('bob')).toEqual(['canaryfrroadmap', 'canaryfrroadatom', 'canaryfrroadevent', 'canaryfrroadsum']);
+      await engine.updateSlug('notes/roadmap', 'partners/alice-example/roadmap', { sourceId: SRC } as never);
+      expect(await seen('bob')).toEqual([]);
+      expect((await call('alice', 'get_page', { slug: 'partners/alice-example/roadmap', source_id: SRC })).text).toContain('canaryfrroadmap');
+    }, 120_000);
+
     test('an interrupted narrowing reads as nobody under its prefix (derivatives too) until resume finishes it', async () => {
       await importFromContent(engine, 'clients/acme-example/brief', pageText('brief', 'canaryfrbrief'), { sourceId: SRC });
       await importFromContent(engine, 'notes/brief-summary', pageText('brief summary', 'canaryfrbriefsum', 'derived_from: clients/acme-example/brief'), { sourceId: SRC });

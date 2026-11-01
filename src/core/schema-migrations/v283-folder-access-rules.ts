@@ -24,7 +24,8 @@ import { requireMaintainerPoliciesSql } from '../derived-state-maintainers.ts';
 // read as nobody: a narrowing still being stamped ('pending') or a policy file
 // that does not validate ('invalid'; prefix '' covers the whole source). The
 // read-time lineage test treats an origin under a folder rule or a covered
-// prefix as restricted. Nothing is rewritten on upgrade: with no rule, every
+// prefix as restricted, and follows an origin renamed since the derivative
+// was written through slug_aliases. Nothing is rewritten on upgrade: with no rule, every
 // page keeps folder_rule_ids NULL.
 // A role that neither owns these tables nor bypasses RLS reads them empty, so
 // nothing here may read empty as "no rule": the stamp refuses the write
@@ -127,7 +128,7 @@ CREATE OR REPLACE FUNCTION gbrain_access_origin_restricted(p_id INTEGER, p_sourc
   LANGUAGE plpgsql STABLE PARALLEL SAFE SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN
   IF p_type = 'atom' THEN
-    IF EXISTS (SELECT 1 FROM pages o WHERE o.source_id = p_source_id AND o.slug = fm->>'source_slug'
+    IF EXISTS (SELECT 1 FROM pages o WHERE o.source_id = p_source_id AND o.slug IN (fm->>'source_slug', (SELECT a.canonical_slug FROM slug_aliases a WHERE a.source_id = p_source_id AND a.alias_slug = fm->>'source_slug'))
         AND (o.frontmatter ? 'readable_by' OR o.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(o.source_id, o.slug))) THEN
       RETURN true;
     END IF;
@@ -135,12 +136,13 @@ BEGIN
     IF EXISTS (SELECT 1 FROM links l JOIN pages i ON i.id = l.to_page_id
         WHERE l.from_page_id = p_id AND l.link_source = 'concept-provenance' AND l.link_type = 'synthesized_from'
           AND (i.frontmatter ? 'readable_by' OR i.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(i.source_id, i.slug)
-            OR EXISTS (SELECT 1 FROM pages io WHERE io.source_id = i.source_id AND io.slug = i.frontmatter->>'source_slug'
+            OR EXISTS (SELECT 1 FROM pages io WHERE io.source_id = i.source_id
+              AND io.slug IN (i.frontmatter->>'source_slug', (SELECT a.canonical_slug FROM slug_aliases a WHERE a.source_id = i.source_id AND a.alias_slug = i.frontmatter->>'source_slug'))
               AND (io.frontmatter ? 'readable_by' OR io.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(io.source_id, io.slug))))) THEN
       RETURN true;
     END IF;
   ELSIF p_type = 'event' AND fm->>'captured_via' LIKE 'life-chronicle:%' THEN
-    IF EXISTS (SELECT 1 FROM pages c WHERE c.source_id = p_source_id AND c.slug = fm->'event'->>'depth'
+    IF EXISTS (SELECT 1 FROM pages c WHERE c.source_id = p_source_id AND c.slug IN (fm->'event'->>'depth', (SELECT a.canonical_slug FROM slug_aliases a WHERE a.source_id = p_source_id AND a.alias_slug = fm->'event'->>'depth'))
         AND (c.frontmatter ? 'readable_by' OR c.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(c.source_id, c.slug))) THEN
       RETURN true;
     END IF;
@@ -148,8 +150,9 @@ BEGIN
   IF jsonb_typeof(fm->'derived_from') IN ('array', 'string') THEN
     RETURN EXISTS (SELECT 1 FROM pages d WHERE d.source_id = p_source_id
       AND (d.frontmatter ? 'readable_by' OR d.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(d.source_id, d.slug))
-      AND d.slug = ANY(ARRAY(SELECT regexp_replace(declared.slug, '\\.md$', '') FROM jsonb_array_elements_text(
-        CASE WHEN jsonb_typeof(fm->'derived_from') = 'array' THEN fm->'derived_from' ELSE jsonb_build_array(fm->'derived_from') END) AS declared(slug))));
+      AND d.slug = ANY(ARRAY(WITH declared(slug) AS (SELECT regexp_replace(x, '\\.md$', '') FROM jsonb_array_elements_text(
+        CASE WHEN jsonb_typeof(fm->'derived_from') = 'array' THEN fm->'derived_from' ELSE jsonb_build_array(fm->'derived_from') END) AS x)
+        SELECT slug FROM declared UNION SELECT a.canonical_slug FROM slug_aliases a JOIN declared ON a.alias_slug = declared.slug WHERE a.source_id = p_source_id)));
   END IF;
   RETURN false;
 END

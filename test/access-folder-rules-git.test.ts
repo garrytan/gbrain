@@ -196,11 +196,14 @@ describe('folder access rules, git store', () => {
     expect(git(root, 'status', '--porcelain')).toBe('');
   }, 60_000);
 
-  test('a rebuilt database reaches the same applied rules from git alone', async () => {
+  test('a rebuilt database reaches the same applied rules from git alone, and holds the removal of a rule the live database never installed', async () => {
     const before = (await policyStatus(engine, SRC)).rules;
     const fresh = await seedBrain(spares[1]!, root);
     await sync(fresh, root, true);
-    expect((await policyStatus(fresh, SRC)).rules).toEqual(before);
+    const rebuilt = await policyStatus(fresh, SRC);
+    expect(rebuilt.rules.filter(r => r.id !== 'hr')).toEqual(before);
+    expect({ hr: rebuilt.rules.find(r => r.id === 'hr'), held: rebuilt.held.map(h => `${h.rule}:${h.kind}`) })
+      .toEqual({ hr: { id: 'hr', prefix: 'hr/', readable_by: ['member:alice-example'] }, held: ['hr:removed'] });
     expect(await stamps(fresh)).toEqual(await stamps(engine));
   }, 120_000);
 
@@ -306,3 +309,52 @@ describe('a moved prefix on a git source (L4)', () => {
     expect((await policyStatus(engine, SRC)).rules.map(r => `${r.id}:${r.prefix}`)).toEqual(['mv:projects/new-example/']);
   }, 120_000);
 });
+
+
+describe('a rebuild keeps a held removal held (GBRA-218 Step 11)', () => {
+  let root: string;
+  const engines: PGLiteEngine[] = [];
+
+  beforeAll(async () => {
+    for (let i = 0; i < 2; i++) {
+      const e = new PGLiteEngine();
+      await e.connect({ engine: 'pglite' } as never);
+      await e.initSchema();
+      engines.push(e);
+    }
+    root = mkdtempSync(join(tmpdir(), 'gbrain-frgit-rebuild-'));
+    git(root, 'init', '-q', '-b', 'main');
+    git(root, 'config', 'user.email', 't@t.co');
+    git(root, 'config', 'user.name', 't');
+    for (const s of ['notes/open', 'partners/alice-example/plan']) writePage(root, s);
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example']]));
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'pages and policy');
+  }, 120_000);
+
+  afterAll(async () => {
+    for (const e of engines) await e.disconnect();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test('a rule committed and then removed by a plain commit stays applied on a rebuilt database', async () => {
+    const live = await seedBrain(engines[0]!, root);
+    await sync(live, root, true);
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example'], ['alice', 'partners/alice-example/', 'alice-example']]));
+    git(root, 'commit', '-q', '-am', 'narrow');
+    await sync(live, root);
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example']]));
+    git(root, 'commit', '-q', '-am', 'drop alice rule');
+    await sync(live, root);
+    const view = async (e: PGLiteEngine) => {
+      const s = await policyStatus(e, SRC);
+      return { rules: s.rules.map(r => r.id), held: s.held.map(h => `${h.rule}:${h.kind}`) };
+    };
+    expect(await view(live)).toEqual({ rules: ['alice', 'team'], held: ['alice:removed'] });
+    const fresh = await seedBrain(engines[1]!, root);
+    await sync(fresh, root, true);
+    expect(await view(fresh)).toEqual({ rules: ['alice', 'team'], held: ['alice:removed'] });
+    expect((await stamps(fresh))['partners/alice-example/plan']).toEqual([`${SRC}:alice`, `${SRC}:team`]);
+  }, 120_000);
+});
+

@@ -13,7 +13,8 @@
  * revision for the source yet (a rebuild or a second database, which then
  * reaches the same applied rules from git alone) or when it matches the
  * database's approved revision. An access.approved changed by a plain commit
- * is reported and ignored, so git write access alone never widens.
+ * is reported and ignored, so git write access alone never widens. A rebuild replays each committed access.yml since that
+ * baseline, so a narrowing a later plain commit removed is applied again with its removal held.
  */
 import { spawnSync } from '../spawn.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -83,11 +84,13 @@ export async function syncGitPolicy(engine: BrainEngine, sourceId: string, root:
   if (store === 'database') return { source_id: sourceId, state: 'skipped', reason: 'database_store' };
   const files = await readCommittedPolicy(root, opts.rev ?? 'HEAD');
   if (files.yml === null && files.approved === null && store !== 'git') return { source_id: sourceId, state: 'skipped', reason: 'no_policy' };
+  const rev = opts.rev ?? 'HEAD';
+  const rebuild = !(await getRevision(engine, sourceId));
   let approvedFile: GitPolicySyncResult['approved_file'] = 'absent';
   if (files.approved !== null) {
     const approved = parsePolicyYaml(files.approved);
     if (!approved.ok) approvedFile = 'invalid';
-    else if (!(await getRevision(engine, sourceId))) {
+    else if (rebuild) {
       await proposeRevision(engine, sourceId, approved.rules, { origin: 'git-approved', approved: true, store: 'git', proposedBy: 'git:access.approved', onProgress: opts.onProgress });
       approvedFile = 'loaded';
     } else {
@@ -95,6 +98,7 @@ export async function syncGitPolicy(engine: BrainEngine, sourceId: string, root:
       approvedFile = lastApproved?.digest === rulebookDigest(approved.rules) ? 'matches' : 'untrusted';
     }
   }
+  if (rebuild) await replayPolicyHistory(engine, sourceId, root, rev, approvedFile === 'loaded', opts.onProgress);
   const desired = files.yml === null ? { ok: true as const, rules: [] as FolderRule[] } : parsePolicyYaml(files.yml);
   if (!desired.ok) {
     await markPolicyInvalid(engine, sourceId, desired.prefixes, { problems: desired.problems, commit: files.commit, file: POLICY_FILE });
@@ -104,6 +108,21 @@ export async function syncGitPolicy(engine: BrainEngine, sourceId: string, root:
   const proposal = await proposeRevision(engine, sourceId, desired.rules, { origin: 'git', store: 'git', proposedBy: files.commit ? `git:${files.commit}` : 'git', onProgress: opts.onProgress });
   await clearPolicyInvalid(engine, sourceId);
   return { source_id: sourceId, state: proposal.state, proposal, commit: files.commit, approved_file: approvedFile };
+}
+
+/**
+ * A rebuild replays every committed access.yml since the approved baseline (first-parent order), so a narrowing that a later
+ * plain commit removed is applied again and its removal held, as on the database that saw each commit.
+ */
+async function replayPolicyHistory(engine: BrainEngine, sourceId: string, root: string, rev: string, fromApproved: boolean, onProgress?: (p: RestampProgress) => void): Promise<void> {
+  const log = (args: string[]) => gitAsync(root, ['log', '--first-parent', '--format=%H', ...args], { silenceStderr: true }).catch(() => '');
+  const anchor = fromApproved ? await log(['-1', rev, '--', APPROVED_FILE]) : '';
+  const commits = (await log(['--reverse', anchor ? `${anchor}..${rev}` : rev, '--', POLICY_FILE])).split('\n').filter(Boolean);
+  for (const commit of commits.slice(0, -1)) {
+    const yml = await gitAsync(root, ['show', `${commit}:./${POLICY_FILE}`], { silenceStderr: true, raw: true }).catch(() => null);
+    const parsed = yml === null ? { ok: true as const, rules: [] as FolderRule[] } : parsePolicyYaml(yml);
+    if (parsed.ok) await proposeRevision(engine, sourceId, parsed.rules, { origin: 'git', store: 'git', proposedBy: `git:${commit.slice(0, 7)}`, onProgress });
+  }
 }
 
 export interface GitPolicyReceipt {
