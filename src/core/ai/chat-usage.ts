@@ -135,7 +135,10 @@ export function estimateChatCostUsd(
     cache_write_tokens?: number;
   },
 ): number | null {
-  const row = canonicalLookup(model);
+  // A subscription-billed label (`claude-cli:<model>`) has no canonical row;
+  // priceFor resolves it to its Anthropic sibling, the same rate the budget
+  // meter already applies to these calls.
+  const row = canonicalLookup(model) ?? (model.startsWith('claude-cli:') ? priceFor(model, 'chat')?.pricing : undefined);
   if (!row) return null;
   const cacheRead = usage.cache_read_tokens ?? 0;
   const cacheWrite = usage.cache_write_tokens ?? 0;
