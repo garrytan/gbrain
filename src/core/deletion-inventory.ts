@@ -173,6 +173,7 @@ const ROWS: readonly Row[] = [
   ['shared_skill_revisions', 'out_of_scope', 'probed_reported', 'source_id pack_id name metadata files policy_epoch', 'files metadata'],
   ['shared_skill_state', 'out_of_scope', 'secret_material', 'token_secret'],
   ['slug_aliases', 'out_of_scope', 'no_memory_text', 'source_id alias_slug canonical_slug notes'],
+  ['slug_rename_history', 'out_of_scope', 'no_memory_text', 'source_id old_slug new_slug'],
   ['source_ingestion_receipts', 'out_of_scope', 'probed_reported', 'source_id approved_revision profile schema_fingerprint extractor_version phase outcome counts checkpoint_refs diagnostic policy_fingerprint', 'diagnostic'],
   ['sources', 'out_of_scope', 'no_memory_text', 'id name local_path last_commit config contextual_retrieval_mode chunker_version upstream_commit'],
   ['subagent_messages', 'out_of_scope', 'probed_reported', 'role content_blocks provider_id model', 'content_blocks'],

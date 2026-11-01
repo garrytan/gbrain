@@ -185,6 +185,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('shared_skill_revisions', 'user_data', 'Shared-skill revisions; stored_bytes is generated and never inserted.'),
     carry('shared_skill_state', 'security', 'Shared-skill serving epoch and delivery token secret.'),
     carry('slug_aliases', 'user_data', 'Slug aliases.'),
+    carry('slug_rename_history', 'security', 'Every slug a page has had, which the folder-rule lineage test follows; dropping it would judge derivatives by whatever page took an old slug.'),
     carry('source_ingestion_receipts', 'user_data', 'Source ingestion receipts.'),
     carry('sources', 'user_data', 'Sources with incarnations and archive state.'),
     carry('subagent_messages', 'operational', 'Subagent job transcripts.'),

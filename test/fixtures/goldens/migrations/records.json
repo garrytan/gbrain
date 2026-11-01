@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 279,
+    "count": 280,
     "gaps": [
       17,
       18,
@@ -94,7 +94,7 @@
       "verifyProjectionStatistics": "0d231b04ecfbc5a4109d6fca9567bf4e8c9e9db6c3fbbb35212e026579ed6f67",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 284,
+    "latest": 285,
     "records": [
       {
         "handler": {
@@ -4585,8 +4585,8 @@
         "idempotent": true,
         "name": "folder_access_rules",
         "sql": {
-          "length": 9484,
-          "sha256": "1e9abf6a1dda9d7307d8df35d20c704500db45bcc62734ef1ef0f37f4fa3b97e"
+          "length": 10034,
+          "sha256": "8994df295d61b39e1de8954100e42b85347c25abf9ed1152b6ad005e0596718c"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -4622,6 +4622,19 @@
         "transaction": false,
         "verify": "absent",
         "version": 284
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "slug_rename_history",
+        "sql": {
+          "length": 3888,
+          "sha256": "ec30275c848d20d293708f077f624e591de819e1deb0c58bb708b6e9de6c16fb"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 285
       }
     ],
     "versions": [
@@ -4903,7 +4916,8 @@
       281,
       282,
       283,
-      284
+      284,
+      285
     ]
   },
   "normalizer": "migrations-record-v1"

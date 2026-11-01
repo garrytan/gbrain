@@ -315,6 +315,32 @@ for (const kind of testBackends()) {
       expect((await call('alice', 'get_page', { slug: 'partners/alice-example/roadmap', source_id: SRC })).text).toContain('canaryfrroadmap');
     }, 120_000);
 
+    test('a page renamed onto a moved page\'s old slug leaves the moved page\'s derivatives hidden', async () => {
+      const derived = (slug: string, canary: string, lines: string[]) => importFromContent(engine, slug,
+        ['---', ...lines, `title: ${slug}`, '---', `# ${slug}`, '', `Folder ledger notes ${canary} for the ledger.`].join('\n'), { sourceId: SRC });
+      await importFromContent(engine, 'notes/ledger', pageText('ledger', 'canaryfrledger'), { sourceId: SRC });
+      await importFromContent(engine, 'notes/unrelated', pageText('unrelated', 'canaryfrunrelated'), { sourceId: SRC });
+      await derived('atoms/ledger-claim', 'canaryfrledgeratom', ['type: atom', 'visibility: world', 'source_slug: notes/ledger']);
+      await derived('events/ledger-day', 'canaryfrledgerevent', ['type: event', 'captured_via: life-chronicle:test', 'event:', '  depth: notes/ledger']);
+      await derived('notes/ledger-summary', 'canaryfrledgersum', ['type: note', 'derived_from: [notes/ledger.md]']);
+      const derivatives = ['canaryfrledgeratom', 'canaryfrledgerevent', 'canaryfrledgersum'];
+      const seen = async (who: string, canaries: string[]) => {
+        const out: string[] = [];
+        for (const c of canaries) if ((await call(who, 'search', { query: c, match: 'keyword', fields: 'full' })).text.includes(c)) out.push(c);
+        return out;
+      };
+      expect(await seen('bob', derivatives)).toEqual(derivatives);
+      await engine.updateSlug('notes/ledger', 'partners/alice-example/ledger', { sourceId: SRC } as never);
+      expect(await seen('bob', derivatives)).toEqual([]);
+      expect(await seen('bob', ['canaryfrunrelated'])).toEqual(['canaryfrunrelated']);
+      await engine.updateSlug('notes/unrelated', 'notes/ledger', { sourceId: SRC } as never);
+      expect((await call('bob', 'get_page', { slug: 'notes/ledger', source_id: SRC })).text).toContain('canaryfrunrelated');
+      expect(await seen('bob', derivatives)).toEqual([]);
+      await engine.updateSlug('partners/alice-example/ledger', 'partners/alice-example/ledger-v2', { sourceId: SRC } as never);
+      expect(await seen('bob', derivatives)).toEqual([]);
+      expect((await call('alice', 'get_page', { slug: 'partners/alice-example/ledger-v2', source_id: SRC })).text).toContain('canaryfrledger');
+    }, 120_000);
+
     test('an interrupted narrowing reads as nobody under its prefix (derivatives too) until resume finishes it', async () => {
       await importFromContent(engine, 'clients/acme-example/brief', pageText('brief', 'canaryfrbrief'), { sourceId: SRC });
       await importFromContent(engine, 'notes/brief-summary', pageText('brief summary', 'canaryfrbriefsum', 'derived_from: clients/acme-example/brief'), { sourceId: SRC });

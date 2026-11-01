@@ -449,6 +449,8 @@
       "slug_aliases.slug_aliases_pkey": "p PRIMARY KEY (id)",
       "slug_aliases.slug_aliases_source_fk": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "slug_aliases.slug_aliases_uniq": "u UNIQUE (source_id, alias_slug)",
+      "slug_rename_history.slug_rename_history_pkey": "p PRIMARY KEY (source_id, old_slug, new_slug)",
+      "slug_rename_history.slug_rename_history_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "source_ingestion_receipts.source_ingestion_receipts_approved_revision_check": "c CHECK ((approved_revision ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'::text))",
       "source_ingestion_receipts.source_ingestion_receipts_check": "c CHECK (((phase = 'COMPLETE'::text) = (outcome = 'complete'::text)))",
       "source_ingestion_receipts.source_ingestion_receipts_check1": "c CHECK (((completed_at IS NOT NULL) = (outcome = 'complete'::text)))",
@@ -570,7 +572,7 @@
       "gbrain_access_folder_rules(p_source text, p_slug text)": "RETURNS text[] kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=2fcbf1744ede8ffc2ac16972f3d793109543710ecfe13ae9849eced94f347305",
       "gbrain_access_mark_restricted()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=e45dc26421664fa3d409fba6c612af88905d2df35923f9592bcb759fc1ea618f",
       "gbrain_access_norm_readers(vals text[])": "RETURNS text[] kind=f lang=sql volatility=i secdef=false config=[search_path=pg_catalog, pg_temp] body_sha256=b536c2604461abac62c90c090d127b71bdda8ed23d43ae25790606a8ee64f769",
-      "gbrain_access_origin_restricted(p_id integer, p_source_id text, p_type text, fm jsonb)": "RETURNS boolean kind=f lang=plpgsql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=691cabb9e3951b1ac732fceaf826aaaa2e69cab650caaac6df2cbbaf47764ad4",
+      "gbrain_access_origin_restricted(p_id integer, p_source_id text, p_type text, fm jsonb)": "RETURNS boolean kind=f lang=plpgsql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=d33ef57dcf408ee17d85ce50e05d881c1cd2f4df2ae1424612ad38092d154948",
       "gbrain_access_pending_covers(p_source text, p_slug text)": "RETURNS boolean kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=3a5530179ad6f056532e398fb4de58610125625e09140340ff138a2e268772a8",
       "gbrain_access_readers(fm jsonb)": "RETURNS text[] kind=f lang=sql volatility=i secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=18348cb56089106aaec6470076ee652d7ed3bfbcb20e950a24abd52a21e7a380",
       "gbrain_access_stamp_folder_rules()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=7fb49ce62f4f6153ef0c844a1816f5f5bb7d765b8610ff66fec137283469fc09",
@@ -1048,6 +1050,9 @@
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "slug_aliases": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "slug_rename_history": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "source_ingestion_receipts": [
@@ -1556,6 +1561,8 @@
       "slug_aliases_canonical_idx": "CREATE INDEX slug_aliases_canonical_idx ON public.slug_aliases USING btree (source_id, canonical_slug)",
       "slug_aliases_pkey": "CREATE UNIQUE INDEX slug_aliases_pkey ON public.slug_aliases USING btree (id)",
       "slug_aliases_uniq": "CREATE UNIQUE INDEX slug_aliases_uniq ON public.slug_aliases USING btree (source_id, alias_slug)",
+      "slug_rename_history_new_idx": "CREATE INDEX slug_rename_history_new_idx ON public.slug_rename_history USING btree (source_id, new_slug)",
+      "slug_rename_history_pkey": "CREATE UNIQUE INDEX slug_rename_history_pkey ON public.slug_rename_history USING btree (source_id, old_slug, new_slug)",
       "source_ingestion_receipts_active": "CREATE INDEX source_ingestion_receipts_active ON public.source_ingestion_receipts USING btree (id) WHERE (outcome = 'incomplete'::text)",
       "source_ingestion_receipts_pkey": "CREATE UNIQUE INDEX source_ingestion_receipts_pkey ON public.source_ingestion_receipts USING btree (id)",
       "source_ingestion_receipts_retention": "CREATE INDEX source_ingestion_receipts_retention ON public.source_ingestion_receipts USING btree (source_id, source_incarnation, completed_at DESC, id DESC) WHERE (outcome = 'complete'::text)",
@@ -4023,6 +4030,15 @@
           "6 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=false force_rls=false"
+      },
+      "slug_rename_history": {
+        "columns": [
+          "1 source_id text/text NOT NULL",
+          "2 old_slug text/text NOT NULL",
+          "3 new_slug text/text NOT NULL",
+          "4 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "source_ingestion_receipts": {
         "columns": [
