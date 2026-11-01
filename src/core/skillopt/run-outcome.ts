@@ -133,6 +133,7 @@ export function buildResumeCommand(
   if (spec.no_mutate) args.push('--no-mutate');
   if (spec.allow_mutate_bundled) args.push('--allow-mutate-bundled');
   if (spec.bootstrap_reviewed) args.push('--bootstrap-reviewed');
+  if ((spec.optimizer_mode ?? 'reflect') === 'reflect') args.push('--loop');
   if (run) {
     if (run.mode === 'rewrite') args.push('--rewrite');
     if (run.maxCostUsd > 0) args.push('--max-cost-usd', run.maxCostUsd);

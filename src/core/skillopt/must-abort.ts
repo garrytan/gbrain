@@ -14,8 +14,13 @@ import { isMustAbortError } from '../worker-pool.ts';
 /** #4119 — the runtime-deadline breach error, shared with validate-gate + orchestrator. */
 export const SKILLOPT_RUNTIME_EXCEEDED = 'skillopt_runtime_exceeded';
 
+/** B1.3 — a harness rollout hook refused a batch over its shared budget. */
+export const SKILLOPT_HOOK_BUDGET_EXHAUSTED = 'skillopt_hook_budget_exhausted';
+/** B1.3 — a harness rollout hook failed (already retried by the caller), or returned a malformed batch. */
+export const SKILLOPT_HOOK_INFRA_ERROR = 'skillopt_hook_infra_error';
+
 export function isSkilloptMustAbort(err: unknown): boolean {
   if (isMustAbortError(err) || isAIInvocationPolicyError(err)) return true;
   const msg = err instanceof Error ? err.message : String(err);
-  return msg.includes(SKILLOPT_RUNTIME_EXCEEDED) || msg.includes('SIGINT');
+  return [SKILLOPT_RUNTIME_EXCEEDED, SKILLOPT_HOOK_BUDGET_EXHAUSTED, SKILLOPT_HOOK_INFRA_ERROR, 'SIGINT'].some((tag) => msg.includes(tag));
 }

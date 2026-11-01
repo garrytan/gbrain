@@ -97,10 +97,11 @@ export async function optimizeSharedSkill(opts: SkillOptOpts, run: (opts: SkillO
   }
   skillName(opts.skillName); skillName(target.pack_id, 'pack_id');
   requireUuid(target.source_incarnation); requireUuid(target.expected_revision); requireUuid(target.request_id);
-  if (opts.resumeRunId || opts.writeCapture || opts.disableValidationGate || opts.optimizerMode || opts.reflectMode) {
-    throw opError('invalid_params', 'Shared optimization does not permit legacy resume, write capture, or evaluation ablations.',
-      'Drop the resume run id, write capture, validation-gate and optimizer/reflect mode overrides, then start the optimization again; shared skills always run the full gated evaluation.');
+  if (opts.resumeRunId || opts.writeCapture || opts.disableValidationGate || opts.reflectMode || opts.tasks || opts.rolloutHook || opts.criteriaText !== undefined || !opts.benchmarkPath) {
+    throw opError('invalid_params', 'Shared optimization does not permit legacy resume, write capture, evaluation ablations or harness inputs.',
+      'Drop the resume run id, write capture, validation-gate and reflect mode overrides, explicit tasks, criteria and rollout hook, and pass a benchmark file; then start the optimization again. Shared skills always run the full gated evaluation.');
   }
+  const benchmarkInput = opts.benchmarkPath;
   await authorize(ctx, opts);
   if (await getWriteRequest(ctx.engine, await requestPrincipalForContext(ctx), target.request_id)) {
     throw new OperationError('request_already_submitted', 'This optimizer publication request has already been submitted.',
@@ -132,7 +133,7 @@ export async function optimizeSharedSkill(opts: SkillOptOpts, run: (opts: SkillO
   }
   const files = normalizeSkillFiles(opts.skillName, stored.files.map(file => ({ ...file, encoding: 'base64' })));
   const evaluationInputs: Buffer[] = [];
-  for (const input of [opts.benchmarkPath, ...(opts.heldOutPath ? [opts.heldOutPath] : [])]) {
+  for (const input of [benchmarkInput, ...(opts.heldOutPath ? [opts.heldOutPath] : [])]) {
     let bytes: Buffer;
     if (ctx.remote !== false) {
       const path = skillPath(relative(dirname(skillsDir), resolve(input)).split(sep).join('/'));

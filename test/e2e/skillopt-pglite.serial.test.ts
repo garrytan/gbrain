@@ -103,7 +103,7 @@ describe('skillopt E2E (PGLite + DI LLM)', () => {
           optimizerModel: 'anthropic:claude-opus-4-7',
           targetModel: 'anthropic:claude-sonnet-4-6',
           judgeModel: 'anthropic:claude-sonnet-4-6',
-          mode: 'patch',
+          mode: 'patch', optimizerMode: 'reflect',
           dryRun: true, // SHORT-CIRCUITS
           noMutate: false,
           allowMutateBundled: true,
@@ -165,7 +165,7 @@ describe('skillopt E2E (PGLite + DI LLM)', () => {
             optimizerModel: 'anthropic:claude-opus-4-7',
             targetModel: 'anthropic:claude-sonnet-4-6',
             judgeModel: 'anthropic:claude-sonnet-4-6',
-            mode: 'patch',
+            mode: 'patch', optimizerMode: 'reflect',
             dryRun: false,
             noMutate: false,
             allowMutateBundled: true,

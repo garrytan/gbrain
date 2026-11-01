@@ -25,17 +25,33 @@ import type { BrainEngine } from '../engine.ts';
 import { SKILLOPT_PURPOSE, type BenchmarkTask, type Trajectory } from './types.ts';
 import { sharedSkillToolAccess } from '../shared-skills/tool-access.ts';
 import { authorizeSkillRead } from '../shared-skills/policy.ts';
+import { parseSkillFrontmatter } from '../skill-frontmatter.ts';
+
+/** An op a rollout may call: it exists, is not mutating and is not local-only. */
+function isRolloutReadOp(name: string): boolean {
+  const op = operations.find((o) => o.name === name);
+  return op !== undefined && !op.mutating && !op.localOnly;
+}
 
 /**
- * D13: which tools SkillOpt rollouts are allowed to call.
- *
- * Derived from BRAIN_TOOL_ALLOWLIST minus `put_page` (only mutating op in
- * the base set). New mutating ops MUST be added here AND BRAIN_TOOL_ALLOWLIST
- * mustn't be silently widened; the rollout test pins zero-write invariant.
+ * D13: which tools SkillOpt rollouts are allowed to call: BRAIN_TOOL_ALLOWLIST
+ * minus every mutating or local-only op (put_page, add_timeline_entry). The
+ * rollout test pins the zero-write invariant.
  */
-export const READ_ONLY_BRAIN_TOOLS: ReadonlySet<string> = new Set(
-  [...BRAIN_TOOL_ALLOWLIST].filter((name) => name !== 'put_page'),
-);
+export const READ_ONLY_BRAIN_TOOLS: ReadonlySet<string> = new Set([...BRAIN_TOOL_ALLOWLIST].filter(isRolloutReadOp));
+
+/**
+ * B1.5: read ops a skill may add to its rollouts by naming them in its
+ * frontmatter `tools:`. Each was reviewed for side effects under remote=true;
+ * add one only after the same review.
+ */
+const SKILL_DECLARABLE_TOOLS: ReadonlySet<string> = new Set(['recall', 'get_timeline']);
+
+/** The tools a rollout of this skill offers: the read-only base plus the reviewed read ops its frontmatter declares. */
+export function rolloutToolsForSkill(skillText: string): ReadonlySet<string> {
+  const declared = (parseSkillFrontmatter(skillText)?.tools ?? []).filter((n) => SKILL_DECLARABLE_TOOLS.has(n) && isRolloutReadOp(n));
+  return new Set([...READ_ONLY_BRAIN_TOOLS, ...declared]);
+}
 
 export interface RolloutOpts {
   operationContext?: OperationContext;
@@ -50,6 +66,8 @@ export interface RolloutOpts {
   abortSignal?: AbortSignal;
   /** F10: when true, enable write-capture (virtual put_page/submit_job/file_upload). */
   writeCapture?: boolean;
+  /** B1.5: tool names to offer instead of rolloutToolsForSkill(skillText); mutating and local-only ops are still dropped. */
+  allowedTools?: ReadonlySet<string>;
   /** Test seam — substitute the toolLoop call. */
   toolLoopFn?: typeof toolLoop;
   /** Test seam — substitute chat (currently unused; toolLoop wraps chat). */
@@ -81,7 +99,7 @@ export async function runRollout(opts: RolloutOpts): Promise<Trajectory> {
     defs = registry.defs;
     handlers = registry.handlers;
   } else {
-    const r = buildReadOnlyToolRegistry(ctx, original ? new Set(await sharedSkillToolAccess(original)) : undefined, original);
+    const r = buildReadOnlyToolRegistry(ctx, opts.allowedTools ?? rolloutToolsForSkill(skillText), original ? new Set(await sharedSkillToolAccess(original)) : undefined, original);
     defs = r.defs;
     handlers = r.handlers;
   }
@@ -190,11 +208,11 @@ interface ToolRegistry {
  * Tool names are prefixed `brain_` for Anthropic-name compliance (same
  * convention as the subagent handler's buildBrainTools).
  */
-function buildReadOnlyToolRegistry(ctx: OperationContext, allowed?: ReadonlySet<string>, original?: OperationContext): ToolRegistry {
+function buildReadOnlyToolRegistry(ctx: OperationContext, offered: ReadonlySet<string>, allowed?: ReadonlySet<string>, original?: OperationContext): ToolRegistry {
   const defs: ChatToolDef[] = [];
   const handlers = new Map<string, ToolHandler>();
   for (const op of operations) {
-    if (!READ_ONLY_BRAIN_TOOLS.has(op.name)) continue;
+    if (!offered.has(op.name)) continue;
     if (op.mutating || op.localOnly) continue;
     if (allowed && !allowed.has(op.name)) continue;
     const toolName = `brain_${op.name}`;

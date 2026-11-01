@@ -10,6 +10,23 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.542.0] - 2026-11-01
+
+**`gbrain skillopt` now makes one gated rewrite by default; the iterative edit loop is opt-in with `--loop`, and benchmark harnesses can drive every SkillOpt rollout.**
+
+In gbrain-evals' Cat 31 re-run the full loop and a one-shot rewrite both scored 0.54 on held-out tasks (paired bootstrap p = 1.00), and the loop cost about 1.8x as much. Until a benchmark shows the loop wins, the cheaper method is the default. The default is reversible: `--loop` on the CLI, or `optimizer_mode: "reflect"` on the `run_skillopt` MCP operation and queued jobs, runs the loop as before. The one-shot rewrite now reflects on training tasks only and must beat the baseline on the selection gate before anything is written, so a worse rewrite leaves the skill unchanged. Four bugs that made the loop look worse than it is are fixed too.
+
+### Itemized changes
+
+- One-shot rewrite is the default for the CLI, `run_skillopt`, `--all`, queued jobs and the dream-cycle phase. A job queued before this release without `optimizer_mode` keeps the loop it was queued for, and `--resume` continues in the mode its checkpoint ran (a changed mode is refused); resuming a one-shot run whose rewrite gave no usable reply retries the rewrite. Receipts carry `optimizer_mode`.
+- The optimizer's success criteria come from training tasks only, and a rule argument or LLM rubric is quoted only when every training task shares it; a per-task answer is described ("a task-specific required text"), never quoted. Before, every selection and test answer was shown to the optimizer. `criteriaText` replaces the generated criteria.
+- Held-out results never reach the optimizer. The held-out check runs once, on the final champion, before anything is written, and a refused champion is not filed in the rejected-edit buffer. Legacy `held_out_regression` rows on disk are skipped when the buffer loads.
+- Only edits that were applied are filed as rejected or recorded as accepted; edits the learning-rate budget clipped stay free to propose again.
+- The success-reflect prompt states the edit schema, so its edits are no longer all dropped (#7257; carried from #8324).
+- Library surface for benchmark harnesses (`src/core/skillopt/index.ts`): explicit `tasks: {train, sel, test?}` lists instead of a benchmark file; a `rolloutHook` that receives each scoring site's whole batch (baseline, training forward pass, selection gate, held-out, test) and whose budget refusal or malformed reply aborts the run without writing (the hook runs outside the run's budget, gets an abort signal at the runtime deadline, and a batch still running or answered after it aborts the run); `scoreSkillPerTask`; and receipt counts (`rollouts` by phase, `candidates_scored_on_sel`, `optimizer_calls`, `cost_scope`).
+- A skill can add the reviewed read tools `recall` and `get_timeline` to its rollouts by naming them in its frontmatter `tools:`; rollouts never offer `add_timeline_entry` or any other write.
+- Tests: `test/e2e/skillopt-wave-e1b1.serial.test.ts` (17 cases, each red before its fix), `test/skillopt/benchmark-hooks.test.ts`, and a mode case in `test/skillopt/models-four-paths.serial.test.ts`.
+
 ## [0.60.541.0] - 2026-11-01
 
 **A saved fact from a quarantined page, or one waiting to be re-derived after a purge, no longer reaches agents through search, query, trajectories, entity cards, standing questions, local `gbrain recall` or consolidation.**

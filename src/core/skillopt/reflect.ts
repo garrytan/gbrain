@@ -64,30 +64,54 @@ export function describeJudge(judge: Judge): string {
   }
 }
 
+const TASK_SPECIFIC_CHECK: Record<RuleCheck['op'], string> = {
+  contains: 'the output must contain a task-specific required text',
+  regex: 'the output must match a task-specific pattern',
+  section_present: 'the output must include a task-specific markdown heading',
+  max_chars: 'the output must stay under a task-specific length limit',
+  min_citations: 'the output must include a task-specific number of citations',
+  tool_called: 'the agent must call a task-specific tool',
+  tool_not_called: 'the agent must avoid a task-specific tool',
+};
+
 /**
- * Describe the DISTINCT success criteria across a set of benchmark tasks. Most
- * benchmarks use one judge shape for every task, so this collapses to a single
- * block; heterogeneous benchmarks list each distinct shape once.
+ * Describe the success criteria the optimizer may see for a set of tasks (the
+ * train split). A rule check or LLM rubric is written out verbatim only when
+ * every task (at least two) carries it, so it is a format rule; one that varies
+ * by task is an answer key and is described without its argument.
  */
 export function describeJudges(tasks: ReadonlyArray<{ judge: Judge }>): string {
-  const seen = new Set<string>();
-  const blocks: string[] = [];
-  for (const t of tasks) {
-    const desc = describeJudge(t.judge);
-    if (!seen.has(desc)) { seen.add(desc); blocks.push(desc); }
+  const lines: string[] = [];
+  const add = (line: string) => { if (!lines.includes(line)) lines.push(line); };
+  const everyTask = (has: (j: Judge) => boolean) => tasks.length >= 2 && tasks.every((t) => has(t.judge));
+  for (const { judge } of tasks) {
+    if (judge.kind === 'rule') {
+      for (const c of judge.checks) {
+        const shared = everyTask((j) => j.kind === 'rule' && j.checks.some((x) => x.op === c.op && x.arg === c.arg));
+        add(`- ${shared ? describeCheck(c) : TASK_SPECIFIC_CHECK[c.op]}`);
+      }
+    } else if (judge.kind === 'llm') {
+      const shared = everyTask((j) => j.kind === 'llm' && j.rubric === judge.rubric);
+      add(shared ? describeJudge(judge) : '- the output is graded 0..1 by an LLM judge against a task-specific rubric');
+    } else {
+      add(describeJudge(judge));
+    }
   }
-  return blocks.join('\n');
+  return lines.join('\n');
 }
 
-const FAILURE_REFLECT_SYSTEM = `You are SkillOpt's optimizer. You analyze AGENT FAILURE TRAJECTORIES and propose specific edits to a SKILL document so the agent does better next time.
-
-Output ONLY a single JSON object on one or more lines:
+/** The output format both reflect modes send (#7257): parseEdits accepts exactly these op and field names. */
+const EDIT_SCHEMA = `Output ONLY a single JSON object on one or more lines:
 {"edits": [{"op": "add|replace|delete", ...}, ...]}
 
 Edit ops:
   add:      {"op": "add", "anchor": "<exact heading text>", "content": "<new markdown>", "reason": "<one sentence>"}
   replace:  {"op": "replace", "target": "<exact text to find>", "replacement": "<new text>", "reason": "<one sentence>"}
-  delete:   {"op": "delete", "target": "<exact text to remove>", "reason": "<one sentence>"}
+  delete:   {"op": "delete", "target": "<exact text to remove>", "reason": "<one sentence>"}`;
+
+const FAILURE_REFLECT_SYSTEM = `You are SkillOpt's optimizer. You analyze AGENT FAILURE TRAJECTORIES and propose specific edits to a SKILL document so the agent does better next time.
+
+${EDIT_SCHEMA}
 
 Rules:
 - Each edit MUST address a SPECIFIC failure pattern you observed.
@@ -100,7 +124,9 @@ Rules:
 
 const SUCCESS_REFLECT_SYSTEM = `You are SkillOpt's optimizer. You analyze AGENT SUCCESS TRAJECTORIES and propose specific edits to a SKILL document so the agent CONSISTENTLY does what worked here.
 
-Output format and rules are identical to the failure-reflect mode — same {edits: [...]} shape.
+${EDIT_SCHEMA}
+
+anchor / target MUST be uniquely identifiable in the skill body (exact match). Output at MOST 8 edits.
 
 When successes are present, look for: which rules were FOLLOWED to produce success, which rules could be MADE EXPLICIT (not yet stated, but exemplified), which anti-patterns the agent successfully AVOIDED that should be stated.
 
