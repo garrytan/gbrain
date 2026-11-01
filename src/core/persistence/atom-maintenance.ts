@@ -348,7 +348,7 @@ export async function publishManagedAtomGeneration(engine: BrainEngine, session:
   for (const member of plan.members) {
     await authorizeWrite(engine, session.authority, member.action === 'retire' ? 'delete_page' : 'put_page', member.slug);
     const snapshot = await engine.readPageSnapshot(member.slug, { sourceId: session.sourceId, includeDeleted: true });
-    const requestId = memberRequestId(activationId, member.slug, member.action);
+    const requestId = memberRequestId(activationId, member.slug, member.action, member.identity);
     const shared = { runKey, origin, activationId, generationKey: generation.key, ...advance };
     if (member.action === 'retire') {
       if (!snapshot || snapshot.page.deleted_at) throw opError('page_identity_changed', 'An atom the generation retires changed before admission.',
@@ -422,7 +422,10 @@ export async function resumeManagedGenerationMembers(engine: BrainEngine, sessio
   const pending = await listPendingMembers(engine, [session.sourceId], atomGenerationAdapter.kind);
   const resumed: ResumedMember[] = [];
   for (const member of pending) {
-    let row = await getWriteRequest(engine, session.authority.principal, memberRequestId(member.activation_id, member.slug, member.action));
+    let row = await getWriteRequest(engine, session.authority.principal,
+      memberRequestId(member.activation_id, member.slug, member.action, member.identity));
+    // Activations admitted before identity-bound member IDs used the legacy ID.
+    if (!row) row = await getWriteRequest(engine, session.authority.principal, memberRequestId(member.activation_id, member.slug, member.action));
     if (row && ['queued', 'running', 'recovering'].includes(row.state)) {
       row = session.wait.observe(await waitForWrite(engine, row, session.config, session.wait.ms()));
       if (row.state === 'committed') { resumed.push({ slug: member.slug, activation_id: member.activation_id, action: member.action, outcome: 'waited' }); continue; }
