@@ -31,6 +31,7 @@ import { classifyLlmCallFailure } from '../think/index.ts';
 import { PINNED_QUESTION_MARKER, normalizeQuestion, sentenceId } from './identity.ts';
 import { entityAnchoredPages, prefixAnchoredPages } from '../search/entity-anchor.ts';
 import { quarantinedProvenanceFilterFragment, quarantineFilterFragment } from '../quarantine.ts';
+import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { FACT_HASH_SQL, OWNER_BODY_HASH_SQL, TAKE_HASH_SQL, TIMELINE_HASH_SQL, evaluateAnswer, type EvidenceKind } from './freshness.ts';
 import { ownerClaims, readQuestionPage } from './pages.ts';
 import { neutralizeForPrompt } from '../think/sanitize.ts';
@@ -225,6 +226,7 @@ export async function retrieveEvidence(engine: BrainEngine, pin: PinRow): Promis
       `SELECT f.id, f.fact, f.entity_slug, f.valid_from, ${FACT_HASH_SQL('f')} AS hash FROM facts f
        WHERE f.source_id = $1 AND f.entity_slug = ANY($2::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
          AND (f.valid_until IS NULL OR f.valid_until > now()) AND ${quarantinedProvenanceFilterFragment('f')}
+         AND ${projectionEligibleSql('facts', 'f', undefined)}
          AND NOT EXISTS (SELECT 1 FROM pages fp WHERE fp.source_id = f.source_id AND fp.slug = f.source_markdown_slug
            AND (fp.type IN ('question', 'synthesis') OR fp.frontmatter ? '${PINNED_QUESTION_MARKER}'))
        ORDER BY f.valid_from DESC, f.id DESC LIMIT ${MAX_FACTS}`, [pin.source_id, entitySlugs]);
@@ -236,7 +238,7 @@ export async function retrieveEvidence(engine: BrainEngine, pin: PinRow): Promis
   if (pageIds.length > 0) {
     const timeline = await engine.executeRaw<{ id: number; date: unknown; summary: string; detail: string; page_id: number; slug: string; generation: string | number; revision: string | null; hash: string }>(
       `SELECT t.id, t.date, t.summary, t.detail, p.id AS page_id, p.slug, p.generation, p.knowledge_revision::text AS revision, ${TIMELINE_HASH_SQL('t')} AS hash
-       FROM timeline_entries t JOIN pages p ON p.id = t.page_id WHERE p.id = ANY($1::integer[]) ORDER BY t.date DESC, t.id DESC LIMIT ${MAX_TIMELINE}`, [pageIds]);
+       FROM timeline_entries t JOIN pages p ON p.id = t.page_id WHERE p.id = ANY($1::integer[]) AND ${projectionEligibleSql('timeline_entries', 't', undefined)} ORDER BY t.date DESC, t.id DESC LIMIT ${MAX_TIMELINE}`, [pageIds]);
     for (const t of timeline) {
       push({ kind: 'timeline', source_id: pin.source_id, page_id: t.page_id, page_slug: t.slug, page_generation: Number(t.generation),
         page_revision: t.revision, item_id: t.id, content_hash: t.hash, text: `[timeline ${t.slug} ${String(t.date).slice(0, 10)}] ${t.summary}${t.detail ? ` — ${t.detail.slice(0, 300)}` : ''}` });
@@ -244,6 +246,7 @@ export async function retrieveEvidence(engine: BrainEngine, pin: PinRow): Promis
     const takes = await engine.executeRaw<{ id: string | number; claim: string; holder: string; weight: number | null; page_id: number; slug: string; generation: string | number; revision: string | null; hash: string }>(
       `SELECT k.id, k.claim, k.holder, k.weight, p.id AS page_id, p.slug, p.generation, p.knowledge_revision::text AS revision, ${TAKE_HASH_SQL('k')} AS hash
        FROM takes k JOIN pages p ON p.id = k.page_id WHERE p.id = ANY($1::integer[]) AND k.active AND k.superseded_by IS NULL
+         AND ${projectionEligibleSql('takes', 'k', undefined)}
        ORDER BY k.id DESC LIMIT ${MAX_TAKES}`, [pageIds]);
     for (const k of takes) {
       push({ kind: 'take', source_id: pin.source_id, page_id: k.page_id, page_slug: k.slug, page_generation: Number(k.generation),

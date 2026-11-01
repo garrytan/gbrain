@@ -30,6 +30,7 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { serializeMarkdown } from '../src/core/markdown.ts';
 import { surfaceFileSource } from './helpers/source-surface.ts';
 import { asOwner } from './helpers/owner-tier.ts';
+import { fenceTranscriptText } from '../src/core/search/transcript-quote.ts';
 
 let engine: PGLiteEngine;
 const get_page = operations.find(o => o.name === 'get_page')!;
@@ -340,7 +341,8 @@ describe('#2200 get_tags honors the federated grant', () => {
 
   test('D3A same-slug-across-sources → union of tags', async () => {
     const tags = await get_tags.handler(remoteCtx(['alpha', 'beta']), { slug: 'shared/dup' });
-    expect((tags as string[]).sort()).toEqual(['alpha-only', 'beta-only']);
+    // #8384: the pages carry no trust declaration (`unknown`), so a remote reader gets their tags quoted.
+    expect((tags as string[]).sort()).toEqual(['alpha-only', 'beta-only'].map(t => fenceTranscriptText(t, 'shared/dup')));
   });
 });
 
