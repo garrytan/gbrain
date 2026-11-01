@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.543.0] - 2026-11-01
 
 **A shared brain can now keep a page to the members it names, inside one source. Put `readable_by: [alice-example, group:team-a]` in a page's frontmatter, bind each member's token, OAuth client or stdio server to a member, and remote reads of that page answer only for them. Nothing changes until a page names readers or a member is created.**
 
