@@ -369,6 +369,10 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   // rate_answer with no answer_id is a validation error; a real answer id only
   // ever names pages that answer returned to the same client.
   rate_answer: 'error',
+  // file_register and file_verify need a storage backend; the sweep configures none, so both refuse before reading
+  // a files row. Their read policy (no file on a page the caller cannot read) is pinned in test/file-register.test.ts.
+  file_register: 'error',
+  file_verify: 'error',
   put_page: 'ok',
   put_pages: 'ok',
   delete_page: 'ok',

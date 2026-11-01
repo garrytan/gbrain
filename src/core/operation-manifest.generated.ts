@@ -3684,6 +3684,64 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "area": "files"
   },
   {
+    "name": "file_register",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Record a file whose bytes are already in the brain's file storage at storage_path, and attach it to a page. Use when a host has stored the object itself and needs the brain to know about it. Needs admin scope; refused, with nothing recorded, when storage holds no object at storage_path.",
+    "params": {
+      "storage_path": {
+        "type": "string",
+        "required": true,
+        "description": "Where the object is in the brain's storage"
+      },
+      "filename": {
+        "type": "string",
+        "required": true,
+        "description": "The file's name"
+      },
+      "size_bytes": {
+        "type": "number",
+        "required": true,
+        "description": "The object's size in bytes"
+      },
+      "content_hash": {
+        "type": "string",
+        "required": true,
+        "description": "SHA-256 of the object's bytes, 64 lowercase hex characters"
+      },
+      "mime_type": {
+        "type": "string",
+        "description": "The file's media type"
+      },
+      "page_slug": {
+        "type": "string",
+        "description": "Associate with page"
+      }
+    },
+    "scope": "admin",
+    "area": "files"
+  },
+  {
+    "name": "file_verify",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Check stored files against the brain's file storage. Without storage_path, lists the files (optionally one page's) and whether each object is present; with storage_path, reads that file's bytes back and says whether they match its recorded size and hash. Needs admin scope.",
+    "params": {
+      "storage_path": {
+        "type": "string",
+        "description": "Read back this file and compare it with its row"
+      },
+      "slug": {
+        "type": "string",
+        "description": "Only this page's files"
+      }
+    },
+    "scope": "admin",
+    "area": "files"
+  },
+  {
     "name": "submit_job",
     "idempotent": false,
     "outputRedaction": {

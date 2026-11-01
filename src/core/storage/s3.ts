@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { open } from 'fs/promises';
 import {
   S3Client,
@@ -129,6 +130,18 @@ export class S3Storage implements StorageBackend {
     }));
     if (!res.Body) throw new Error(`S3 download returned empty body: ${path}`);
     return Buffer.from(await res.Body.transformToByteArray());
+  }
+
+  async hashObject(path: string): Promise<{ sha256: string; size: number }> {
+    const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: path }));
+    if (!res.Body) throw new Error(`S3 download returned empty body: ${path}`);
+    const hash = createHash('sha256');
+    let size = 0;
+    for await (const chunk of res.Body as AsyncIterable<Uint8Array>) {
+      hash.update(chunk);
+      size += chunk.length;
+    }
+    return { sha256: hash.digest('hex'), size };
   }
 
   async delete(path: string): Promise<void> {

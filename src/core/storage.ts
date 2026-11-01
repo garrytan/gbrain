@@ -21,6 +21,8 @@ export interface StorageBackend {
   exists(path: string): Promise<boolean>;
   list(prefix: string): Promise<string[]>;
   getUrl(path: string): Promise<string>;
+  /** SHA-256 and size of a stored object, read as it streams so a large one is never held in memory whole. */
+  hashObject?(path: string): Promise<{ sha256: string; size: number }>;
 }
 
 export interface StorageConfig {
@@ -74,6 +76,13 @@ export function hashStorageFile(filePath: string): string {
   } finally {
     closeSync(fd);
   }
+}
+
+/** SHA-256 and size of a stored object: streamed where the backend can, otherwise from one download. */
+export async function hashStoredObject(storage: StorageBackend, path: string): Promise<{ sha256: string; size: number }> {
+  if (storage.hashObject) return storage.hashObject(path);
+  const bytes = await storage.download(path);
+  return { sha256: createHash('sha256').update(bytes).digest('hex'), size: bytes.length };
 }
 
 /** Upload a file under the hash the caller recorded; a file that changed since then is refused before it is published. */

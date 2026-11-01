@@ -53,6 +53,18 @@ export class LocalStorage implements StorageBackend {
     return readFileSync(full);
   }
 
+  async hashObject(path: string): Promise<{ sha256: string; size: number }> {
+    const full = this.contained(path);
+    if (!existsSync(full)) throw new Error(`File not found in storage: ${path}`);
+    const hash = createHash('sha256');
+    let size = 0;
+    for await (const chunk of createReadStream(full)) {
+      hash.update(chunk as Buffer);
+      size += (chunk as Buffer).length;
+    }
+    return { sha256: hash.digest('hex'), size };
+  }
+
   async delete(path: string): Promise<void> {
     const full = this.contained(path);
     if (existsSync(full)) unlinkSync(full);

@@ -11,6 +11,7 @@ import { hostFix, readFix } from './op-fix.ts';
 import { validateFilename, validatePageSlug, validateUploadPath } from './context.ts';
 import { privatePagesFilterForCaller, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { hookSessionCwd } from '../session-cwd.ts';
+import { pageNotVisibleError } from '../persistence/page-visibility.ts';
 
 // --- File Operations ---
 
@@ -215,5 +216,171 @@ const file_url: Operation = {
 };
 
 
+/**
+ * A storage path as a host hands it: relative, forward-slash separated, with no empty, `.` or `..` segment, no
+ * backslash and no control character. The backend resolves it under its own bucket, so this is the whole check.
+ */
+function validateStoragePath(path: unknown): string {
+  if (typeof path !== 'string' || path.length === 0 || path.length > 1024) {
+    throw opError('invalid_params', 'storage_path must be a non-empty string of at most 1024 characters', 'Pass the object\'s path in the brain\'s storage, such as people/alice-example/photo.jpg.');
+  }
+  // eslint-disable-next-line no-control-regex
+  if (path.startsWith('/') || /[\\\u0000-\u001f\u007f]/.test(path) || path.split('/').some(segment => segment === '' || segment === '.' || segment === '..')) {
+    throw opError('invalid_params', `Invalid storage_path: ${JSON.stringify(path)}`, 'Pass a relative path of forward-slash separated segments, with no empty, "." or ".." segment, no backslash and no control character.');
+  }
+  return path;
+}
+
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/**
+ * Registers a file whose bytes a host has already put in the brain's storage backend: it checks the backend holds
+ * an object at `storage_path` and records the files row, the same row `file_upload` records, and nothing else. It
+ * reads no local file, so it is not localOnly; the bytes never pass through the process that runs it.
+ */
+const file_register: Operation = {
+  name: 'file_register',
+  mutating: true,
+  idempotent: true,
+  outputRedaction: 'no_stored_text',
+  description: 'Record a file whose bytes are already in the brain\'s file storage at storage_path, and attach it to a page. Use when a host has stored the object itself and needs the brain to know about it. Needs admin scope; refused, with nothing recorded, when storage holds no object at storage_path.',
+  params: {
+    storage_path: { type: 'string', required: true, description: 'Where the object is in the brain\'s storage' },
+    filename: { type: 'string', required: true, description: 'The file\'s name' },
+    size_bytes: { type: 'number', required: true, description: 'The object\'s size in bytes' },
+    content_hash: { type: 'string', required: true, description: 'SHA-256 of the object\'s bytes, 64 lowercase hex characters' },
+    mime_type: { type: 'string', description: 'The file\'s media type' },
+    page_slug: { type: 'string', description: 'Associate with page' },
+  },
+  scope: 'admin',
+  handler: async (ctx, p) => {
+    const storagePath = validateStoragePath(p.storage_path);
+    const filename = p.filename as string;
+    validateFilename(filename);
+    const pageSlug = (p.page_slug as string | undefined) || null;
+    if (pageSlug) validatePageSlug(pageSlug);
+    const size = p.size_bytes;
+    if (typeof size !== 'number' || !Number.isSafeInteger(size) || size < 0) {
+      throw opError('invalid_params', 'size_bytes must be a whole number of bytes, zero or more', 'Pass the object\'s size as an integer.');
+    }
+    const hash = p.content_hash;
+    if (typeof hash !== 'string' || !SHA256_HEX.test(hash)) {
+      throw opError('invalid_params', 'content_hash must be the SHA-256 of the bytes as 64 lowercase hex characters', 'Pass the hex SHA-256 of the object\'s bytes.');
+    }
+    const mimeType = typeof p.mime_type === 'string' && p.mime_type.length > 0 ? p.mime_type : null;
+    if (ctx.dryRun) return { dry_run: true, action: 'file_register', storage_path: storagePath };
+
+    // The read policy file_list and file_url apply: a caller cannot attach a file to a page it cannot read, nor
+    // replace the row of a file attached to one.
+    const readable = await fileReadableSql(ctx);
+    if (readable !== 'TRUE') {
+      const hidden = await ctx.engine.executeRaw(`SELECT 1 FROM (SELECT $1::text AS page_slug, NULL::integer AS page_id
+        UNION ALL SELECT page_slug, page_id FROM files WHERE storage_path = $2) f WHERE NOT ${readable} LIMIT 1`, [pageSlug, storagePath]);
+      if (hidden.length > 0) throw pageNotVisibleError();
+    }
+
+    // #4302 (fail-closed honesty): a files row never claims bytes that are stored nowhere.
+    if (!ctx.config.storage) {
+      throw opError('storage_error', 'No storage backend configured — file_register would record a files row for bytes stored nowhere.',
+        'Configure `storage` in the gbrain config the host hands this brain, then register again.');
+    }
+    const { createStorage } = await import('../storage.ts');
+    const storage = await createStorage(ctx.config.storage as any);
+    let present: boolean;
+    try {
+      present = await storage.exists(storagePath);
+    } catch (error) {
+      throw opError('storage_error', `Could not reach the storage backend: ${error instanceof Error ? error.message : String(error)}`,
+        'Nothing was recorded. Check the storage backend, then register again; registering is idempotent.');
+    }
+    if (!present) {
+      throw opError('storage_error', `The storage backend holds no object at ${storagePath}; nothing was recorded.`,
+        'Store the object at storage_path first, then register it.');
+    }
+
+    const { executeRawJsonb, FILES_METADATA_MERGE_SQL } = await import('../sql-query.ts');
+    await executeRawJsonb(
+      ctx.engine,
+      `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+       ON CONFLICT (storage_path) DO UPDATE SET
+         page_slug = EXCLUDED.page_slug,
+         filename = EXCLUDED.filename,
+         content_hash = EXCLUDED.content_hash,
+         size_bytes = EXCLUDED.size_bytes,
+         mime_type = EXCLUDED.mime_type,
+         ${FILES_METADATA_MERGE_SQL}`,
+      [pageSlug, filename, storagePath, mimeType, size, hash],
+      [{ storage: (ctx.config.storage as { backend: string }).backend }],
+    );
+    return { status: 'registered', storage_path: storagePath, size_bytes: size };
+  },
+};
+
+// The same bound file_list keeps, for the same reason.
+const FILE_VERIFY_LIMIT = 100;
+
+/**
+ * The files rows, each checked against the storage backend (`gbrain files verify`, as an operation): without
+ * storage_path, every row (optionally one page's) and whether its object is present; with storage_path, that row's
+ * bytes read back through the backend, hashed as they stream, and compared with the row. Reads no local file and
+ * returns no file content, so it is not localOnly.
+ */
+const file_verify: Operation = {
+  name: 'file_verify',
+  mutating: false,
+  idempotent: true,
+  outputRedaction: 'no_stored_text',
+  description: 'Check stored files against the brain\'s file storage. Without storage_path, lists the files (optionally one page\'s) and whether each object is present; with storage_path, reads that file\'s bytes back and says whether they match its recorded size and hash. Needs admin scope.',
+  params: {
+    storage_path: { type: 'string', description: 'Read back this file and compare it with its row' },
+    slug: { type: 'string', description: 'Only this page\'s files' },
+  },
+  scope: 'admin',
+  handler: async (ctx, p) => {
+    if (!ctx.config.storage) {
+      throw opError('storage_error', 'No storage backend configured — stored files cannot be checked.',
+        'Configure `storage` in the gbrain config the host hands this brain.');
+    }
+    const { createStorage } = await import('../storage.ts');
+    const storage = await createStorage(ctx.config.storage as any);
+    const row = (r: Record<string, unknown>): Record<string, unknown> => ({ ...r, size_bytes: r.size_bytes == null ? null : Number(r.size_bytes) });
+    // The same read policy as file_list and file_url: a caller sees no file attached to a page it cannot read.
+    const readable = await fileReadableSql(ctx);
+
+    if (p.storage_path !== undefined) {
+      const storagePath = validateStoragePath(p.storage_path);
+      const rows = await ctx.engine.executeRaw<Record<string, unknown>>(`SELECT page_slug, filename, storage_path, mime_type, size_bytes, content_hash
+        FROM files f WHERE storage_path = $1 AND ${readable}`, [storagePath]);
+      if (rows.length === 0) {
+        throw opError('storage_error', `File not found: ${storagePath}`, 'No file row has that storage_path. List the stored files with file_verify and no storage_path.');
+      }
+      const recorded = row(rows[0] as Record<string, unknown>);
+      if (!(await storage.exists(storagePath))) return { ...recorded, present: false, matches: false };
+      const { hashStoredObject } = await import('../storage.ts');
+      const read = await hashStoredObject(storage, storagePath);
+      return {
+        ...recorded,
+        present: true,
+        read_bytes: read.size,
+        read_sha256: read.sha256,
+        matches: read.size === recorded.size_bytes && read.sha256 === String(recorded.content_hash).replace(/^sha256:/, ''),
+      };
+    }
+
+    const slug = p.slug as string | undefined;
+    const rows = await ctx.engine.executeRaw<Record<string, unknown>>(`SELECT page_slug, filename, storage_path, mime_type, size_bytes, content_hash
+      FROM files f WHERE (${slug === undefined ? 'TRUE' : 'f.page_slug = $2'}) AND ${readable}
+      ORDER BY ${slug === undefined ? 'page_slug, filename' : 'filename'} LIMIT $1`, slug === undefined ? [FILE_VERIFY_LIMIT] : [FILE_VERIFY_LIMIT, slug]);
+    const out = [];
+    for (const r of rows) {
+      const present = await storage.exists(String((r as Record<string, unknown>).storage_path)).catch(() => false);
+      out.push({ ...row(r as Record<string, unknown>), present });
+    }
+    return out;
+  },
+};
+
+
 // Ops in EXACTLY the canonical `operations` array order.
-export const filesOperations: Operation[] = [file_list, file_upload, file_url];
+export const filesOperations: Operation[] = [file_list, file_upload, file_url, file_register, file_verify];
