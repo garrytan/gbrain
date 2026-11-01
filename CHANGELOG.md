@@ -12,13 +12,26 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
-**The remote gate stops waiting on an artifact GitHub has refused for good, and bench and eval scripts no longer fail pregate for having no test lane (#8370, #7690).** When reading a full run's `executed-identities` artifact failed, `fetchArtifactJson` marked every failure transient, so a 403 or an expired artifact's 410 kept the gate polling for up to 90 minutes before it fell back to VMs. Only no response, a 5xx, a 429 or a rate-limit 403 is transient now. Any other 4xx refuses reuse at once and the gate goes straight to VMs. This never made a gate pass, because a transient read was always `none` and never `reuse`. Separately, `scripts/bench/**` and the system-one eval runners and generators now declare that they need no test lane, so a PR that touches them no longer fails pregate with `PREGATE_NO_LANE`.
+**The remote gate stops waiting on an artifact GitHub has refused for good, and bench and eval scripts no longer fail pregate for having no test lane (#8370, #7690).** When reading a full run's `executed-identities` artifact failed, `fetchArtifactJson` marked every failure transient, so a 403 or an expired artifact's 410 kept the gate polling for up to 90 minutes before it fell back to VMs. Only no response, a 5xx, a 429 or a rate-limit 403 is transient now. Any other 4xx refuses reuse at once and the gate goes straight to VMs. This never made a gate pass, because a transient read was always `none` and never `reuse`. Separately, `scripts/bench/**` and the system-one eval runners and generators now declare that they need no test lane, so a PR that touches them no longer fails pregate with `PREGATE_NO_LANE`. The unit-lane PostgreSQL arms job also gets real headroom back: its committed weights had drifted about 32% below what the files now take, and the busiest shard sat 0.2 s inside its budget.
+
+### What changed
+
+| `unit-postgres-arms` (both arms, the CI cell) | Before | Now |
+|---|---|---|
+| Weights | mined from older runs, scaled by 0.763, 11 listed files unweighted (charged the 29 s p75) | median of the `ARM_FILE` times in three full-ci runs from 2026-11-01 (41296667994, 41307060384, 41310113203), every listed file weighted |
+| Shards | 12 | 18 |
+| Two-worker makespan, largest shard, against the unchanged 570 s budget | 569.8 s (0.2 s headroom) by the committed weights; 746.7 s by the fresh ones | 494.2 s (13% headroom) |
+| Measured step wall time in those runs | 467-1022 s per shard, against the 20-minute step timeout | about 490 s per shard, by the same measurements |
+| PostgreSQL-only cell, largest shard | 513.6 s | 335.8 s |
 
 ### Itemized changes
 
 - `scripts/lib/gh-issue.ts`: `fetchArtifactJson` marks a failed artifact read transient only for no response, a 5xx, a 429 or a 403 whose message names a rate limit (#8370).
 - `test/scripts/ci-reuse.test.ts`: a probe checks that 403, 404 and 410 are refusals and that 429, a rate-limit 403, a 502 and no response stay transient, and that a refused receipt ends the gate's wait at once. It fails without the fix.
 - `.gstack/pregate.json`: `scripts/bench/**`, `docs/eval/system-one/runners/**` and `docs/eval/system-one/generators/**` declare no lane (`[]`), which applies only where no test maps the file, so the VM-setup scripts keep `test/scripts/vm-setup-usage.test.ts` (#7690).
+- `scripts/postgres-arm-weights.json`: re-mined with `bun scripts/postgres-unit-arms.ts mine` from those three runs' 36 job logs, unscaled.
+- `scripts/postgres-unit-arms.ts`: `ARM_SHARDS` 18; `.github/workflows/persistence-validation.yml`: the matrix, job name and `run` argument follow it (pinned by `test/scripts/postgres-unit-arms.test.ts`, whose budget and assertion are unchanged). Check names become `Unit-lane PostgreSQL arms N/18 / Bun …`; none is a required check.
+- `docs/architecture/key-files/ci-health-and-test-guards.md`, `scripts/ubicloud/README.md`: shard count.
 
 ## [0.60.533.0] - 2026-11-01
 
