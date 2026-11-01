@@ -131,7 +131,7 @@ describe('entity facts hide quarantined-page and needs_rederive facts', () => {
         const points = await engine.findTrajectory({ entitySlug: ENTITY, sourceId: 'default', remote, kind: 'all', limit: 100 });
         seen.push({ engine: engine.kind, remote, read: 'trajectory', ...shape(s, points.map(p => p.fact_id)) });
         const card = await buildEntityCard(engine, 'default', ENTITY, { remote });
-        seen.push({ engine: engine.kind, remote, read: 'card', count: card.found ? card.card.active_fact_count : null });
+        seen.push({ engine: engine.kind, remote, read: 'card', count: card.card?.active_fact_count ?? null });
       }
       let out = '';
       const write = process.stdout.write.bind(process.stdout);
@@ -166,30 +166,30 @@ describe('entity facts hide quarantined-page and needs_rederive facts', () => {
 });
 
 describe('consolidate never promotes a hidden fact into a take', () => {
-  test('quarantined-page and needs_rederive facts stay unconsolidated (PGLite)', async () => withEnv(env, async () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => {
     configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: { ...process.env } });
-    const engine = new PGLiteEngine();
-    try {
-      await engine.connect({}); await engine.initSchema();
-      await engine.executeRaw(`INSERT INTO pages (slug, type, title) VALUES ($1, 'person', 'Alice Example'), ('notes/held-note', 'note', 'Held')`, [ENTITY]);
-      await engine.executeRaw(`UPDATE pages SET frontmatter = jsonb_build_object($1::text, '{"reason":"junk_pattern","detail":"test","assessed_at":"2026-10-07T00:00:00Z"}'::jsonb) WHERE slug = 'notes/held-note'`, [QUARANTINE_KEY]);
-      const vec = '[' + Array.from({ length: 1536 }, (_, i) => (i === 0 ? 1 : 0)).join(',') + ']';
-      const ids: number[] = [];
-      for (const [word, sourcePage] of [['alpha', null], ['beta', null], ['gamma', null], ['delta', 'notes/held-note'], ['epsilon', null]] as const) {
-        const [row] = await engine.executeRaw<{ id: number }>(
-          `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, confidence, embedding, embedded_at, embedding_model, embedded_text_hash, source_markdown_slug)
-           VALUES ('default', $1, $2, 'fact', 'test', now() - interval '30 hours', 0.9, $3::vector, now() - interval '30 hours', 'openai:text-embedding-3-large', md5($2), $4) RETURNING id`,
-          [ENTITY, `alice fact ${word}`, vec, sourcePage]);
-        ids.push(Number(row!.id));
-      }
-      await markRederive(engine, 'facts', ids[4]!);
-      await runPhaseConsolidate(engine, {});
-      const rows = await engine.executeRaw<{ id: number; consolidated_at: Date | null }>('SELECT id, consolidated_at FROM facts ORDER BY id');
-      expect(rows.map(r => ({ id: Number(r.id), consolidated: r.consolidated_at !== null })))
-        .toEqual(ids.map((id, i) => ({ id, consolidated: i < 3 })));
-    } finally {
-      await engine.disconnect();
-      resetGateway();
+    engine = new PGLiteEngine();
+    await engine.connect({}); await engine.initSchema();
+  }, 120_000);
+  afterAll(async () => { await engine.disconnect(); resetGateway(); });
+
+  test('quarantined-page and needs_rederive facts stay unconsolidated (PGLite)', async () => withEnv(env, async () => {
+    await engine.executeRaw(`INSERT INTO pages (slug, type, title) VALUES ($1, 'person', 'Alice Example'), ('notes/held-note', 'note', 'Held')`, [ENTITY]);
+    await engine.executeRaw(`UPDATE pages SET frontmatter = jsonb_build_object($1::text, '{"reason":"junk_pattern","detail":"test","assessed_at":"2026-10-07T00:00:00Z"}'::jsonb) WHERE slug = 'notes/held-note'`, [QUARANTINE_KEY]);
+    const vec = '[' + Array.from({ length: 1536 }, (_, i) => (i === 0 ? 1 : 0)).join(',') + ']';
+    const ids: number[] = [];
+    for (const [word, sourcePage] of [['alpha', null], ['beta', null], ['gamma', null], ['delta', 'notes/held-note'], ['epsilon', null]] as const) {
+      const [row] = await engine.executeRaw<{ id: number }>(
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, confidence, embedding, embedded_at, embedding_model, embedded_text_hash, source_markdown_slug)
+         VALUES ('default', $1, $2, 'fact', 'test', now() - interval '30 hours', 0.9, $3::vector, now() - interval '30 hours', 'openai:text-embedding-3-large', md5($2), $4) RETURNING id`,
+        [ENTITY, `alice fact ${word}`, vec, sourcePage]);
+      ids.push(Number(row!.id));
     }
+    await markRederive(engine, 'facts', ids[4]!);
+    await runPhaseConsolidate(engine, {});
+    const rows = await engine.executeRaw<{ id: number; consolidated_at: Date | null }>('SELECT id, consolidated_at FROM facts ORDER BY id');
+    expect(rows.map(r => ({ id: Number(r.id), consolidated: r.consolidated_at !== null })))
+      .toEqual(ids.map((id, i) => ({ id, consolidated: i < 3 })));
   }), 120_000);
 });
