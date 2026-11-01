@@ -265,7 +265,7 @@ const PER_ITEM_HTTP_STATUSES = new Set([400, 408, 413, 422]);
 // halts an entire cycle phase, so a stray word inside a raw-output slice
 // must not trip it. Only specific provider phrasings qualify.
 export const BILLING_MESSAGE_RE =
-  /insufficient_quota|quota exceeded|exceeded your (?:current )?quota|credit balance is too low|spend limit|billing_not_active|billing hard limit|payment required/i;
+  /insufficient_quota|quota exceeded|exceeded your (?:current )?quota|credit balance is too low|no credits remaining|spend limit|billing_not_active|billing hard limit|payment required/i;
 const AUTH_MESSAGE_RE =
   /authentication_error|permission_error|invalid (?:x-)?api[-_ ]?key|api key (?:is )?(?:invalid|expired|missing)|unauthorized|failed to authenticate|oauth session expired/i;
 export const RATE_MESSAGE_RE = /rate[-_ ]?limit(?:ed|_error)?\b|too many requests/i;
@@ -370,6 +370,21 @@ function statusToClass(status: number): GlobalLlmErrorClass | null {
   return null;
 }
 
+function errorBodyIndicatesBilling(err: unknown): boolean {
+  try {
+    const responseBody = (err as { responseBody?: unknown }).responseBody;
+    if (typeof responseBody !== 'string') return false;
+    const parsed = JSON.parse(responseBody) as { error?: unknown };
+    if (parsed.error === null || typeof parsed.error !== 'object') return false;
+    const error = parsed.error as Record<string, unknown>;
+    return [error.type, error.code].some(
+      signal => signal === 'insufficient_quota' || signal === 'credit_balance_exhausted',
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Detect whole-run LLM failure conditions — auth, billing, rate limit, an
  * unknown or inaccessible model (a 404, `model_not_found`, B-N7: labelled
@@ -391,10 +406,12 @@ function statusToClass(status: number): GlobalLlmErrorClass | null {
  */
 export function classifyGlobalLlmError(err: unknown): GlobalLlmErrorClass | null {
   const messages: string[] = [];
+  let providerBillingSignal = false;
   let status: number | undefined;
   let cur: unknown = err;
   for (let depth = 0; depth < 3 && cur != null; depth++) {
     if (status === undefined) status = numericStatusOf(cur);
+    providerBillingSignal ||= errorBodyIndicatesBilling(cur);
     if (typeof cur === 'string') messages.push(cur);
     else if (typeof (cur as { message?: unknown }).message === 'string') {
       messages.push((cur as { message: string }).message);
@@ -414,7 +431,7 @@ export function classifyGlobalLlmError(err: unknown): GlobalLlmErrorClass | null
   const rawIdx = message.indexOf('--- raw ---');
   const phraseText = rawIdx === -1 ? message : message.slice(0, rawIdx);
 
-  if (BILLING_MESSAGE_RE.test(phraseText)) return 'billing';
+  if (BILLING_MESSAGE_RE.test(phraseText) || providerBillingSignal) return 'billing';
   if (MODEL_NOT_FOUND_MESSAGE_RE.test(phraseText)) return 'model_not_found';
   if (status !== undefined) {
     const byStatus = statusToClass(status);
