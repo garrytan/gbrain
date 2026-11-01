@@ -173,19 +173,7 @@ function takesFenceRead(page: { body_storage?: BodyStorage | null; compiled_trut
 }
 
 function parsedTakeToBatchInput(pageId: number, t: ParsedTake): TakeBatchInput {
-  return {
-    page_id: pageId,
-    row_num: t.rowNum,
-    claim: t.claim,
-    kind: t.kind,
-    holder: t.holder,
-    weight: t.weight,
-    since_date: t.sinceDate,
-    until_date: t.untilDate,
-    source: t.source,
-    active: t.active,
-    superseded_by: null,
-  };
+  return takesPreparation.toCanonicalBatchInput(pageId, t);
 }
 
 const BATCH_SIZE = 100;
