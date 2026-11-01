@@ -5857,6 +5857,28 @@ CREATE POLICY trust_policy_state_writer ON trust_policy_state FOR ALL TO <writer
 ```
 <!-- gbrain:maintainer-rls-recipe:end -->
 
+<a id="folder-access-tables"></a>**Folder access tables.** A page write stamps the folder rules covering its slug
+from `access_policy_state` and `access_rules`, and remote reads hide the prefixes listed in
+`access_pending_coverage`, all as the database role doing the write or read. A role that row-level security keeps
+from reading those tables never reads them as "no rule": the stamp refuses the write with
+`writer_coordinator_required` (relationship `unreadable_state`, naming the table), and reads treat every page as
+under a pending prefix, so nothing is shown. The owner (without `FORCE ROW LEVEL SECURITY`) and a role that
+bypasses RLS are not affected, and `gbrain access` rule commands refuse such a role with `permission_denied`. A scoped
+role that writes or serves pages needs these policies; they let it read the rules and lock a source's policy row while
+stamping, but not change either. Row-level security does not cover TRUNCATE or triggers, so the recipe also revokes
+those. A policy that filters these rows hides rules from the role and so reveals the pages under them: keep `USING (true)`:
+
+<!-- gbrain:access-rls-recipe:begin (applied verbatim by test/access-folder-scoped-role.test.ts) -->
+```sql
+CREATE POLICY access_policy_state_reader ON access_policy_state FOR SELECT TO <writer-role> USING (true);
+CREATE POLICY access_policy_state_stamp_lock ON access_policy_state FOR UPDATE TO <writer-role>
+  USING (true) WITH CHECK (false);
+CREATE POLICY access_rules_reader ON access_rules FOR SELECT TO <writer-role> USING (true);
+CREATE POLICY access_pending_coverage_reader ON access_pending_coverage FOR SELECT TO <writer-role> USING (true);
+REVOKE TRUNCATE, TRIGGER, REFERENCES ON access_policy_state, access_rules, access_pending_coverage FROM <writer-role>;
+```
+<!-- gbrain:access-rls-recipe:end -->
+
 **In engine-sql.** A read in a migrated domain takes a `ScopedRead` when it
 runs through this helper and a `LegacyUnscopedRead` when it runs on the pool
 (`src/core/engine-sql/brands.ts`); the engine obtains the branded executor, so
