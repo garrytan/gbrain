@@ -12,12 +12,17 @@
  * against a Supabase brain spent over 3 seconds on config reads that
  * pg_stat_statements showed the server answering in under 3ms total.
  *
- * The config table is a handful of rows, so read it once and answer every key
+ * Read configuration once, excluding large runtime inventories, and answer each key
  * from memory. The snapshot lives for one resolution pass, not for the life of
  * the process, so a `gbrain config set` from another process is picked up by
  * the next command exactly as before.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
+
+/** Runtime data stored beside settings, loaded only by its consumer (#7838). */
+export function isLazyConfigKey(key: string): boolean {
+  return key.startsWith('brainstorm.domain_bank.prefixes:');
+}
 
 /** The only thing config resolution needs from an engine. */
 export interface ConfigReader {
@@ -60,7 +65,7 @@ export async function snapshotConfigReader(
   if (!rows) return engine;
   return {
     async getConfig(key: string): Promise<string | null> {
-      return rows[key] ?? null;
+      return isLazyConfigKey(key) ? await engine.getConfig(key) ?? null : rows[key] ?? null;
     },
   };
 }
@@ -159,6 +164,7 @@ function snapshotRows(engine: BulkConfigReader, held: RequestSnapshot): Promise<
  * the key itself.
  */
 export async function requestConfigValue(engine: BulkConfigReader, key: string): Promise<string | null | undefined> {
+  if (isLazyConfigKey(key)) return undefined;
   const held = activeSnapshot(engine);
   if (!held) return undefined;
   const rows = await snapshotRows(engine, held);
@@ -191,6 +197,7 @@ export function commandStartupConfig(engine: object, now: number = Date.now()): 
 
 /** Keep an open snapshot of `engine` equal to a write the engine just made (value null = key removed). */
 export function noteRequestConfigWrite(engine: object, key: string, value: string | null): void {
+  if (isLazyConfigKey(key)) return;
   const held = activeSnapshot(engine);
   if (!held?.rows) return;
   held.rows = held.rows.then(rows => {

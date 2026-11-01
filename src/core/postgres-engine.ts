@@ -2773,7 +2773,7 @@ export class PostgresEngine implements BrainEngine {
     if (held) return held;
     return this.connRetry(async () => {
       const rows = await this.sql<{ key: string; value: string }[]>`
-        SELECT key, value FROM config
+        SELECT key, value FROM config WHERE NOT starts_with(key, 'brainstorm.domain_bank.prefixes:')
       `;
       const out: Record<string, string> = {};
       for (const row of rows) out[row.key] = row.value;

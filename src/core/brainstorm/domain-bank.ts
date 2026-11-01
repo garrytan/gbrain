@@ -135,10 +135,13 @@ interface PrefixCacheEntry {
   cached_at: number;
 }
 
-function prefixCacheKey(sourceId: string | undefined): string {
-  // Source-scoped per codex round 2 #7. Federated/mounted brains MUST use
-  // the per-source key to avoid serving prefixes from a foreign source.
-  return `brainstorm.domain_bank.prefixes:${sourceId ?? 'default'}`;
+function prefixCacheKey(opts: Pick<FetchFarOpts, 'sourceId' | 'sourceIds'>): string {
+  // Match enumeration's array > scalar > unscoped precedence. Version the key
+  // so a legacy :default entry cannot stand for three different inventories.
+  const scope = opts.sourceIds !== undefined
+    ? ['sources', [...new Set(opts.sourceIds)].sort()]
+    : opts.sourceId !== undefined ? ['source', opts.sourceId] : ['all'];
+  return `brainstorm.domain_bank.prefixes:v2:${JSON.stringify(scope)}`;
 }
 
 /**
@@ -147,12 +150,12 @@ function prefixCacheKey(sourceId: string | undefined): string {
  */
 async function readPrefixCache(
   engine: BrainEngine,
-  sourceId: string | undefined,
+  key: string,
   ttlMs: number
 ): Promise<string[] | null> {
   let raw: string | null;
   try {
-    raw = await engine.getConfig(prefixCacheKey(sourceId));
+    raw = await engine.getConfig(key);
   } catch {
     return null;
   }
@@ -182,12 +185,12 @@ async function readPrefixCache(
 
 async function writePrefixCache(
   engine: BrainEngine,
-  sourceId: string | undefined,
+  key: string,
   prefixes: string[]
 ): Promise<void> {
   const entry: PrefixCacheEntry = { prefixes, cached_at: Date.now() };
   try {
-    await engine.setConfig(prefixCacheKey(sourceId), JSON.stringify(entry));
+    await engine.setConfig(key, JSON.stringify(entry));
   } catch (err) {
     // Cache-write failures are non-fatal — next call re-enumerates.
     const msg = err instanceof Error ? err.message : String(err);
@@ -344,7 +347,8 @@ export async function fetchFar(
   if (opts.prefixListOverride) {
     allPrefixes = opts.prefixListOverride;
   } else {
-    const cached = await readPrefixCache(engine, opts.sourceId, ttlMs);
+    const key = prefixCacheKey(opts);
+    const cached = await readPrefixCache(engine, key, ttlMs);
     if (cached) {
       allPrefixes = cached;
     } else {
@@ -352,7 +356,7 @@ export async function fetchFar(
         sourceId: opts.sourceId,
         sourceIds: opts.sourceIds,
       });
-      void writePrefixCache(engine, opts.sourceId, allPrefixes);
+      await writePrefixCache(engine, key, allPrefixes);
     }
   }
   const totalPrefixes = allPrefixes.length;

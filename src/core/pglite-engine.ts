@@ -2882,7 +2882,7 @@ export class PGLiteEngine implements BrainEngine {
   async getAllConfig(): Promise<Record<string, string>> {
     const held = await requestConfigRows(this);
     if (held) return held;
-    const { rows } = await this.db.query('SELECT key, value FROM config');
+    const { rows } = await this.db.query("SELECT key, value FROM config WHERE NOT starts_with(key, 'brainstorm.domain_bank.prefixes:')");
     const out: Record<string, string> = {};
     for (const row of rows as { key: string; value: string }[]) out[row.key] = row.value;
     return out;
