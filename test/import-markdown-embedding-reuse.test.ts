@@ -1,8 +1,9 @@
 /**
  * A13: a markdown edit re-embeds only the chunks whose embedding input
  * changed. Unchanged chunks keep their stored vectors when the chunk text,
- * chunk source, contextual wrapper and embedding signature all match and
- * neither the old nor the new body holds protected (facts/takes) fences.
+ * chunk source, contextual wrapper and embedding signature all match. On a page
+ * with protected (facts/takes) fences only a vector with a recorded embedding
+ * input is reused (#6961).
  *
  * PGLite in-memory; the embedding transport is stubbed ($0).
  */
@@ -95,14 +96,17 @@ describe('markdown import reuses unchanged chunk vectors (A13)', () => {
     expect(embedded.length).toBe((await vectors(slug)).size);
   });
 
-  test('a page with protected fences never reuses vectors', async () => {
+  test('a page with protected fences reuses only vectors with a recorded input, and the fence text reaches no chunk (#6961)', async () => {
     const slug = 'notes/reuse-protected';
     const fence = '\n<!--- gbrain:takes:begin -->\nPRIVATE_CANARY\n<!--- gbrain:takes:end -->\n';
     await importFromContent(engine, slug, page('Protected', ['alpha', 'bravo', 'charlie'], fence));
     embedded = [];
     await importFromContent(engine, slug, page('Protected', ['alpha', 'bravo', 'delta'], fence));
-    const count = (await vectors(slug)).size;
-    expect(embedded.length).toBe(count);
+    const after = await vectors(slug);
+    expect(embedded.length).toBeGreaterThan(0);
+    expect(embedded.length).toBeLessThan(after.size);
+    for (const text of embedded) expect(text).toContain('delta');
+    for (const text of [...embedded, ...after.keys()]) expect(text).not.toContain('PRIVATE_CANARY');
   });
 
   test('--force-rechunk re-embeds every chunk', async () => {
