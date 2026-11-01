@@ -68,7 +68,7 @@
   "correction-pipeline/routing-eval.jsonl": "7f8d96606a8d7bed3d79fdcee6904764c8abb9fa0b506adb414b5c4805b69d0b",
   "cron-scheduler/SKILL.md": "a35d24206d7a309b3630f0492048676c75c6f3d6f8b58518cc9afe8dbcae533b",
   "cross-modal-review/SKILL.md": "fc00a04e2ff9f498bee9b0b636bceba9dcfdc869c35d9a983109f408170f0807",
-  "daily-task-manager/SKILL.md": "e93264a83b5fd0a19b2f06a322b3a4ad92d418f6a968c1cd51f4bea79cbca4d9",
+  "daily-task-manager/SKILL.md": "5f6fc1cff9e32be4b1c427941ddc3f657d7857d5750857b2f29055b59eebca5a",
   "daily-task-manager/routing-eval.jsonl": "e98b2592e65c26952242436a960d8b2061e375b269004a18c230cbcf1d692ff9",
   "daily-task-prep/SKILL.md": "5ea839012b48761ed8d7a9bab056a2566587d6f7fe044e3907d77b20f8eec5ac",
   "data-loss-gate/SKILL.md": "c1736e0985121e60ffeba993b68b5c722c9285220057b5ef72059f111aabcb18",
