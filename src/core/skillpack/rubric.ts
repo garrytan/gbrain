@@ -221,9 +221,16 @@ const DIMENSIONS: Array<
         };
       }
       const content = readFileSync(path, 'utf-8');
-      const escapedVersion = input.manifest.version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const versionEntryRe = new RegExp(`^##[ \\t]+\\[?${escapedVersion}(?:\\]|\\s|$)`, 'm');
-      if (!versionEntryRe.test(content)) {
+      const hasCurrentVersionHeading = content.split(/\r?\n/).some((line) => {
+        const heading = /^##[ \t]+(.*)$/.exec(line)?.[1];
+        if (heading === undefined) return false;
+        const entry = heading.startsWith('[') ? heading.slice(1) : heading;
+        const version = input.manifest.version;
+        if (!entry.startsWith(version)) return false;
+        const boundary = entry[version.length];
+        return boundary === ']' || boundary === undefined || /\s/.test(boundary);
+      });
+      if (!hasCurrentVersionHeading) {
         return {
           passed: false,
           detail: `CHANGELOG.md has no entry matching ## [${input.manifest.version}]`,
