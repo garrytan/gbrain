@@ -75,7 +75,8 @@ counts, …) to that one source, and nothing warns on reads.
 ## Brain-first instructions
 
 Registering the server only makes the tools available. Agents seldom call a
-brain nobody told them about, so finish either option with:
+brain nobody told them about, so finish either option with the primary route,
+the per-turn rule:
 
 ```bash
 gbrain setup openclaw   # --dry-run previews; --workspace <dir> picks the agent
@@ -116,6 +117,20 @@ With `openclaw` on PATH, setup runs
 `openclaw plugins inspect gbrain-turn-rule --runtime --json` and exits non-zero
 with `turn_hook_not_loaded` unless the plugin shows as loaded with
 `before_prompt_build` ([repair](../guides/repair.md#turn-hook-not-loaded)).
+
+## Skills (fallback)
+
+`gbrain skillpack scaffold --harness openclaw` adds gbrain's skills to the
+workspace. OpenClaw lists them in its prompt, but in harness-evals a listed
+skill was followed on 1-3% of turns against 97-100% for the per-turn rule, so
+install skills beside the rule, never instead of it. OpenClaw serves a skill
+only whole: a SKILL.md larger than one read (64,000 characters on a model with
+200k+ context, 32,000 at 100k-200k, 16,000 below, a 32,768-byte page when the
+context window is unknown) gets "cannot be partially served" and nothing else.
+Every SKILL.md gbrain installs for OpenClaw is at most 32,000 bytes
+(`test/openclaw-route.test.ts`), so it loads on any model with 100k+ context
+and when the window is unknown; on smaller models the 16,000-character cap
+applies and the larger skills do not load.
 
 ## Scheduled jobs and workspace scripts
 

@@ -441,6 +441,7 @@ export async function cmdScaffoldHarness(args: string[]): Promise<void> {
             `skipped (plugin-lane additions, not in the openclaw bundle): ${laneOnly.join(', ')}`,
           );
         }
+        console.log('These skills are a fallback: OpenClaw agents seldom open a listed skill on their own. The primary route is the per-turn rule from `gbrain setup openclaw`.');
       }
       process.exit(0);
     }

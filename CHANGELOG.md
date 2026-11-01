@@ -10,6 +10,12 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**On OpenClaw, every skill gbrain installs now loads in one read, and setup and the install docs name the per-turn rule as the primary route, with skills as the fallback.**
+
+OpenClaw serves a skill only whole. A SKILL.md larger than one read (64,000 characters on a model with 200k+ context, 32,000 at 100k to 200k, 16,000 below that, and a 32,768-byte page when the context window is unknown) gets "cannot be partially served" and nothing else. `company-brainify` (37 KB) is trimmed to 30 KB with the same steps, gates and checks. A unit test now fails when any SKILL.md that `gbrain skillpack scaffold --harness openclaw --all` installs passes 32,000 bytes, or when anything gbrain writes for OpenClaw names `skills_read`, OpenClaw's deferred skill tool, which fails when called directly. In harness-evals, a listed skill was followed on 1-3% of turns and a per-turn rule on 97-100%. `gbrain setup openclaw` already installs that rule; it now says the rule is the primary route, `skillpack scaffold --harness openclaw` says its skills are the fallback, and INSTALL_FOR_AGENTS.md and docs/mcp/OPENCLAW.md lead with the rule.
+
 ## [0.60.531.0] - 2026-10-31
 
 **Five severe fixes: the secret scan now redacts keys that follow a JSON or percent escape, a connector page that turns private leaves Git HEAD, deleted pages no longer stay searchable under a scoped writer role, a stale freshness marker can no longer starve the job queue, and a slow embedder no longer loses `remember` writes (#7978, #7971, #7637, #7941, #8135).**
