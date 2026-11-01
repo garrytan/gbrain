@@ -42,12 +42,23 @@ export async function authorizePageVisibility(engine: SqlEngine, authority: Writ
   const policy = await readRemotePolicyNow(engine);
   const hidePrivate = (authority.excludePrivate ?? true) || !policy.privacyRelaxed;
   if (!hidePrivate && !policy.restricted) return;
-  const identities = policy.restricted ? await writerIdentities(engine, authority) : [[]];
-  const folder = policy.restricted ? await folderAccessForAll(engine, identities) : { satisfiedRuleIds: [], folderCoverage: [] };
-  const fragment = withCallerAccess({ folderCoverage: folder.folderCoverage }, () => readPolicyFragment('pages', { all: identities }, hidePrivate, folder.satisfiedRuleIds));
+  const fragment = await writerReadPolicySql(engine, authority, 'pages', hidePrivate, policy.restricted);
   const rows = await engine.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2
     AND NOT (${fragment}) LIMIT 1`, [authority.sourceId, slug]);
   if (rows.length) throw pageNotVisibleError();
+}
+
+/**
+ * The read policy a stored remote write's writer is held to, re-resolved live: the member-access part always (an
+ * empty identity, the strictest reading, when the brain has no restrictions), then the privacy part when
+ * `hidePrivate`. No operator hatch relaxes the member-access part.
+ */
+export async function writerReadPolicySql(engine: SqlEngine, authority: WriteAuthority, pageAlias: string, hidePrivate: boolean,
+  restricted?: boolean): Promise<string> {
+  restricted ??= (await readRemotePolicyNow(engine)).restricted;
+  const identities = restricted ? await writerIdentities(engine, authority) : [[]];
+  const folder = restricted ? await folderAccessForAll(engine, identities) : { satisfiedRuleIds: [], folderCoverage: [] };
+  return withCallerAccess({ folderCoverage: folder.folderCoverage }, () => readPolicyFragment(pageAlias, { all: identities }, hidePrivate, folder.satisfiedRuleIds));
 }
 
 /**

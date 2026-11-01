@@ -11,7 +11,8 @@
  *    a member disabled after submission (a queued job, a replay) loses the page
  *    before commit; no operator hatch relaxes that.
  *    remove_link on an edge of an unreadable page answers as for a missing
- *    page and removes nothing.
+ *    page and removes nothing. The remote links effect skips an unreadable
+ *    mention target as missing (no edge, no wanted row), hatch or not.
  * 2. Fails when: add_link, remove_link, put_raw_data or any persistence write lands on an
  *    unreadable page, a listed member is refused its own page, a malformed or
  *    lock-out readable_by is written, or a stored write still publishes after
@@ -36,6 +37,8 @@ import { remoteCallerAccess } from '../src/core/access/caller.ts';
 import { submissionAuthority, authorizeStoredRequest } from '../src/core/persistence/authority.ts';
 import { admitWrite } from '../src/core/persistence/journal.ts';
 import { proposeRevision } from '../src/core/access/policy.ts';
+import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
+import { localHostId } from '../src/core/persistence/identity.ts';
 import type { AuthInfo, OperationContext } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -252,6 +255,38 @@ for (const kind of testBackends()) {
       const own = await call('alice', 'remove_link', { from: ALICE_PAGE, to: OPEN_PAGE, link_type: 'mentions' });
       expect({ isError: own.isError, removed: own.json.removed }).toEqual({ isError: false, removed: 1 });
     }, 120_000);
+
+    test('the remote links effect skips a page the writer cannot read exactly as a missing one, under a privacy hatch too', async () => {
+      const folderSlug = 'partners/alice-example/brief';
+      await importFromContent(engine, folderSlug, '---\ntype: note\ntitle: Alice brief\n---\n# Alice brief\n\nBrief canaryawbrief.', { sourceId: SRC, noEmbed: true });
+      await proposeRevision(engine, SRC, [{ id: 'alice', prefix: 'partners/alice-example/', readable_by: ['member:alice-example'] }], { origin: 'cli', store: 'database' });
+      const targets = [ALICE_PAGE, folderSlug, OPEN_PAGE, 'notes/never-written'];
+      for (const hatch of [undefined, '1']) {
+        await withEnv({ GBRAIN_REMOTE_PRIVATE_PAGES: hatch }, async () => {
+          for (const who of ['bob', 'unbound', 'alice']) {
+            const slug = 'notes/mentions-' + who + (hatch ? '-hatch' : '');
+            const put = await call(who, 'put_page', { slug, content: '---\ntype: note\ntitle: Mentions\n---\n# Mentions by ' + who + (hatch ? ' with the hatch' : '') + '\n\nSee ' + targets.map(t => '[[' + t + ']]').join(', ') + '.' });
+            expect({ who, hatch, isError: put.isError }).toEqual({ who, hatch, isError: false });
+            const settled = async () => (await engine.executeRaw<{ outcome: { added: number; skipped_targets: { slug: string; reason: string }[] } | null }>(
+              "SELECT outcome FROM persistence_effects WHERE kind='links' AND source_id=$1 AND data->>'slug'=$2 ORDER BY id DESC LIMIT 1", [SRC, slug]))[0];
+            for (let i = 0; i < 20 && !(await settled())?.outcome; i++) {
+              await runPersistenceEffects(engine, { engine: 'pglite', embedding_disabled: true } as never, { hostId: localHostId() });
+              await new Promise(resolve => setTimeout(resolve, 50));
+            }
+            const effect = await settled();
+            const edges = await engine.executeRaw<{ slug: string }>('SELECT t.slug FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id'
+              + ' WHERE f.source_id=$1 AND f.slug=$2 ORDER BY t.slug', [SRC, slug]);
+            const wanted = await engine.executeRaw<{ target_ref: string }>('SELECT w.target_ref FROM wanted_links w JOIN pages p ON p.id=w.origin_page_id'
+              + ' WHERE p.source_id=$1 AND p.slug=$2 ORDER BY w.target_ref', [SRC, slug]);
+            const reader = who === 'alice';
+            expect({ who, hatch, added: effect?.outcome?.added, edges: edges.map(e => e.slug), wanted: wanted.map(w => w.target_ref),
+              skipped: Object.fromEntries(effect?.outcome?.skipped_targets.map(t => [t.slug, t.reason]) ?? []) }).toEqual({ who, hatch,
+              added: reader ? 3 : 1, edges: reader ? [ALICE_PAGE, OPEN_PAGE, folderSlug].sort() : [OPEN_PAGE], wanted: ['notes/never-written'],
+              skipped: reader ? { 'notes/never-written': 'missing' } : { [ALICE_PAGE]: 'missing', [folderSlug]: 'missing', 'notes/never-written': 'missing' } });
+          }
+        });
+      }
+    }, 240_000);
 
     test('extract_facts treats a restricted source_slug exactly like a missing one', async () => {
       const hidden = await call('bob', 'extract_facts', { turn_text: 'Bob likes tea.', source_slug: ALICE_PAGE, visibility: 'world' });
