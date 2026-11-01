@@ -10,6 +10,14 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.535.0] - 2026-11-01
+
+**Master's fence-census suite passes again after the 2026 DST fallback.** The test 'the incremental pass in batches of one reads every page across a DST fallback in the session time zone' wrote fixed `updated_at` values in the 2026-11-01 New York fallback hour. The census only reads pages updated at or after its watermark (the database clock minus two minutes), so once the clock passed about 05:22Z on 2026-11-01 those pages began falling behind the watermark, and the test has failed on every run since. It now uses the next fallback that is still ahead of the database clock and asserts that the four instants read 01:20-04, 01:40-04, 01:10-05 and 01:30-05 in the session time zone, so the DST coverage can't quietly disappear. It also runs with the clock pinned inside the 2026 and 2027 fallback hours.
+
+### Itemized changes
+
+- `test/fence-census.test.ts`: the DST-fallback census test derives its instants from the next New York fallback after `now()`, checks their local text offsets, and runs at the real clock plus two pinned clocks (2026-11-01T05:30Z and 2027-11-07T05:30Z). With the old fixed instants, all three fail.
+
 ## [0.60.534.0] - 2026-11-01
 
 **Merge train S: five sync, refresh and maintenance fixes land in one release.** Page writes create a missing source folder and name a missing checkout (#8106). A diverged managed checkout can publish itself on opt-in, and every refresh fetch is logged (#8102). Sync-lane wave 2 repairs quoted fence markers, releases agreeing file-drift holds, syncs plain directories and retires former-binding effects (#8077). The `synthesize` phase survives a local writer replace (#8111). A door commit during a refresh is waited out instead of failing the refresh as `refresh_dirty` (#8117).
