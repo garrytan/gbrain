@@ -232,7 +232,7 @@ async function legacyUnknownBySource(engine: Pick<BrainEngine, 'executeRaw'>, so
   return new Map(rows.map(r => [r.source_id, Number(r.n)]));
 }
 
-export const CLAIM_USER_MESSAGE = 'Your older notes were saved before gbrain tracked where memory comes from, so they read as "unverified origin". '
+export const CLAIM_USER_MESSAGE = 'Your older notes were saved before gbrain tracked where memory comes from, so they read as "unverified origin" and agents connected over MCP see them quoted as source material. '
   + 'Claiming a source tells gbrain those files are your own notes: they become "your notes", except pages that say they were captured, '
   + 'clipped, imported or written by an agent, which keep their lower trust. Connector sources (Gmail, Calendar, GitHub) cannot be claimed. '
   + 'To claim, run `gbrain trust claim-sources` in a terminal on the brain host; it shows each source and asks you to type its id.';

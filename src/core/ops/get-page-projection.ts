@@ -10,7 +10,7 @@ import { loadPageTrust } from '../eligibility/stamp.ts';
 import { resolveReadEligibility, type ReadEligibility } from '../eligibility/policy.ts';
 import { admitsTrust } from '../trust/tier.ts';
 import { rederiveHiddenSql } from '../eligibility/sql.ts';
-import { fenceTranscriptText, isQuotedPageType } from '../search/transcript-quote.ts';
+import { fenceTranscriptText, isQuotedPageType, neutralizeToolCalls, quotesTier } from '../search/transcript-quote.ts';
 
 /**
  * #6259: how a get_page reader sees a page the content-quality gate hid as junk.
@@ -47,9 +47,21 @@ export function readQuarantined(ctx: Pick<OperationContext, 'remote' | 'auth' | 
   return view;
 }
 
-/** #8042: an untrusted reader gets a third-party page's body quoted (get_page, fetch); trusted local reads stay raw. */
-export function quotesBody(ctx: Pick<OperationContext, 'remote'>, page: Pick<Page, 'type'>): boolean {
-  return ctx.remote !== false && isQuotedPageType(page.type);
+/**
+ * #8042: an untrusted reader gets a third-party page's body quoted (get_page, fetch); trusted local reads stay raw.
+ * GST-687: so is a page whose trust tier is below the owner's (an agent-written note; `trust` from pageTrustForRead).
+ */
+export function quotesBody(ctx: Pick<OperationContext, 'remote'>, page: Pick<Page, 'type'>, trust: Pick<TrustFields, 'trust_tier'> | undefined): boolean {
+  return ctx.remote !== false && (isQuotedPageType(page.type) || quotesTier(trust?.trust_tier));
+}
+
+/**
+ * GST-687: an untrusted reader's reading shapes of a third-party page (get_page compiled_truth, timeline and view 'read'
+ * windows; fetch text) carry its tool-call blocks summarized, as search does. The round-trip shapes (include_content,
+ * view 'markdown') and gbrain's own thin client keep the stored bytes inside the fence.
+ */
+export function neutralizesBody(ctx: Pick<OperationContext, 'remote' | 'thinClient'>, page: Pick<Page, 'type'>): boolean {
+  return ctx.remote !== false && ctx.thinClient !== true && isQuotedPageType(page.type);
 }
 
 /** Wraps quarantined text for an untrusted reader as external data (eligibility/labels.ts). */
@@ -81,6 +93,12 @@ export interface GetPageProjectionOpts {
    * as quoted source material (text inside byte-exact; put_page removes the fences) and the response carries `quoted`.
    */
   quote?: boolean;
+  /**
+   * GST-687 (with `quote`): the reading shape carries tool-call blocks summarized. `includeContent` asks for the
+   * round-trip shape, which stays byte-exact inside the fence, unless `readingContent` (fetch's text is a reading shape).
+   */
+  neutralize?: boolean;
+  readingContent?: boolean;
 }
 
 /**
@@ -99,7 +117,9 @@ export interface GetPageProjectionOpts {
 export function projectGetPage(stored: Page, o: GetPageProjectionOpts) {
   const { revision, tags, resolved_slug, content_flag, quarantined } = o;
   const fence = (text: string) => (text ? fenceTranscriptText(text, stored.slug) : text);
-  const page = o.quote ? { ...stored, compiled_truth: fence(stored.compiled_truth), timeline: fence(stored.timeline) } : stored;
+  const summarize = o.neutralize === true && (!o.includeContent || o.readingContent === true);
+  const read = (text: string) => fence(summarize && text ? neutralizeToolCalls(text) : text);
+  const page = o.quote ? { ...stored, compiled_truth: read(stored.compiled_truth), timeline: read(stored.timeline) } : stored;
   const omitted = quarantined?.body_omitted === true;
   const wrap = quarantined?.body_enveloped === true;
   const visibleBody = omitted ? { ...page, compiled_truth: '', timeline: '' }
@@ -160,7 +180,10 @@ export async function pageTrustForRead(ctx: Pick<OperationContext, 'engine' | 'a
   return { trust, eligibility };
 }
 
-/** fetch's `text`: get_page's round-trip `content`, so withheld for an unauthorized untrusted reader, enveloped for an authorized one (#6259, ENG-15) and quoted with `quote` (#8042). */
-export function projectFetchText(visibleBody: Page, tags: string[], quarantined: QuarantinedView | null, trust?: TrustFields, quote = false): string {
-  return projectGetPage(visibleBody, { revision: '', tags, includeContent: true, contentOnly: true, quarantined, trust, quote }).content ?? '';
+/**
+ * fetch's `text`: get_page's round-trip `content`, so withheld for an unauthorized untrusted reader, enveloped for an authorized one (#6259, ENG-15),
+ * quoted with `quote` (#8042) and with tool-call blocks summarized with `neutralize` (GST-687: fetch is a reading shape).
+ */
+export function projectFetchText(visibleBody: Page, tags: string[], quarantined: QuarantinedView | null, trust?: TrustFields, quote = false, neutralize = false): string {
+  return projectGetPage(visibleBody, { revision: '', tags, includeContent: true, contentOnly: true, quarantined, trust, quote, neutralize, readingContent: true }).content ?? '';
 }

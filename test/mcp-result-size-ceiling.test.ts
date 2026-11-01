@@ -23,6 +23,7 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { serializeMarkdown } from '../src/core/markdown.ts';
 import { dispatchToolCall, type ToolResult } from '../src/mcp/dispatch.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 
 /**
  * ceil(measured x 1.05) on the fixture below. search 2540 -> 2754 (2622
@@ -67,12 +68,14 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  for (const [slug, title, body] of PAGES) {
-    await importFromContent(engine, slug, serializeMarkdown({}, body, '', { type: 'note', title, tags: [] }), { noEmbed: true, forceRechunk: true });
-  }
-  await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, valid_from) VALUES
-    ('default', 'numbat-labs', 'The billing contact for Numbat Labs is New Person.', 'fact', 'world', 'user update', '2026-09-01'),
-    ('default', 'numbat-labs', 'Numbat Labs renewal quote goes to the billing contact.', 'fact', 'world', 'user update', '2026-09-02')`);
+  await asOwner(engine, async tx => {
+    for (const [slug, title, body] of PAGES) {
+      await importFromContent(tx, slug, serializeMarkdown({}, body, '', { type: 'note', title, tags: [] }), { noEmbed: true, forceRechunk: true });
+    }
+    await tx.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, valid_from) VALUES
+      ('default', 'numbat-labs', 'The billing contact for Numbat Labs is New Person.', 'fact', 'world', 'user update', '2026-09-01'),
+      ('default', 'numbat-labs', 'Numbat Labs renewal quote goes to the billing contact.', 'fact', 'world', 'user update', '2026-09-02')`);
+  });
 }, 120_000);
 
 afterAll(async () => { await engine?.disconnect(); });

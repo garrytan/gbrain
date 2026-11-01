@@ -14,6 +14,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 
 let engine: PGLiteEngine;
 const ctxOf = (remote: boolean) => ({
@@ -27,9 +28,11 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  await importFromContent(engine, 'notes/example', '---\ntype: note\ntitle: Example\n---\n\nAn example note.\n', { noEmbed: true });
-  await engine.addTimelineEntry('notes/example', { date: '2026-09-01', source: 'meeting', summary: 'Kickoff held' });
-  await engine.addTimelineEntry('notes/example', { date: '2026-09-15', source: 'email', summary: 'Plan approved' });
+  await asOwner(engine, async tx => {
+    await importFromContent(tx, 'notes/example', '---\ntype: note\ntitle: Example\n---\n\nAn example note.\n', { noEmbed: true });
+    await tx.addTimelineEntry('notes/example', { date: '2026-09-01', source: 'meeting', summary: 'Kickoff held' });
+    await tx.addTimelineEntry('notes/example', { date: '2026-09-15', source: 'email', summary: 'Plan approved' });
+  });
 }, 60_000);
 
 afterAll(async () => {

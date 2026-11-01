@@ -22,6 +22,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 import { operations, operationsByName, type Operation, type OperationContext } from '../src/core/operations.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { estimateTokens } from '../src/core/search/token-budget.ts';
@@ -280,7 +281,7 @@ describe('memory verbs redact query-arm text for everyone and facts for remote c
     }, { sourceId: SRC });
     const p = await engine.getPage('notes/verb-page', { sourceId: SRC });
     await installFixtureChunks(engine, 'notes/verb-page', [{ chunk_index: 0, chunk_text: p!.compiled_truth, chunk_source: 'compiled_truth', token_count: 12 }], { sourceId: SRC });
-    await engine.insertFact({ fact: `verbfact key ${factKey}`, entity_slug: 'companies/acme-example', source: `test:${factKey}`, visibility: 'world', embedding: null } as never, { source_id: SRC });
+    await asOwner(engine, tx => tx.insertFact({ fact: `verbfact key ${factKey}`, entity_slug: 'companies/acme-example', source: `test:${factKey}`, visibility: 'world', embedding: null } as never, { source_id: SRC }));
   });
 
   test('recall over MCP: no page token, assignment value or fact key; identities byte-identical', async () => {

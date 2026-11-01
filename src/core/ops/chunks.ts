@@ -8,6 +8,7 @@
 
 import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
 import { stampPageTrust } from '../eligibility/stamp.ts';
+import { pageTypesById, quotePageText, quotesStored } from '../search/transcript-quote.ts';
 import type { Operation } from './contract.ts';
 import { readPolicyOpts } from './context.ts';
 import { federatedSearchScope, parseSourceIdParam } from './context.ts';
@@ -70,8 +71,14 @@ const get_chunks: Operation = {
     const page = await ctx.engine.getChunkPage(p.slug as string, { ...scope, fromIndex, limit });
     // #5575: a chunk's tier is its page's (lowered by a fence trust marker); rows below the floor read as missing.
     const { floor } = await resolveReadEligibility(ctx, { minTrust: p.min_trust });
-    const chunks = (await stampPageTrust(ctx.engine, page.chunks.map(c => ({ ...c, slug: p.slug as string })), floor))
+    const stamped = (await stampPageTrust(ctx.engine, page.chunks.map(c => ({ ...c, slug: p.slug as string })), floor))
       .map(({ slug: _slug, ...chunk }) => chunk);
+    // GST-687: an untrusted reader gets a chat page's chunks, or chunks below the owner's tier, quoted (tool calls summarized on a chat page).
+    const types = ctx.remote === false ? null : await pageTypesById(ctx.engine, stamped.map(c => c.page_id));
+    const chunks = types === null ? stamped : stamped.map(c => {
+      const type = types.get(c.page_id);
+      return quotesStored(type, (c as { trust_tier?: unknown }).trust_tier) ? { ...c, chunk_text: quotePageText(c.chunk_text, p.slug as string, type), quoted: 'transcript' as const } : c;
+    });
     const next = reportChunkPage(ctx, p, { fromIndex, limit, clampedFrom, returned: chunks.length, totalChunks: page.total_chunks, maxChunkIndex: page.max_chunk_index });
     if (next === undefined || chunks.length === 0) return chunks;
     return [...chunks.slice(0, -1), { ...chunks[chunks.length - 1], truncated: true, next_from_index: next }];

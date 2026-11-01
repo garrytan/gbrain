@@ -19,6 +19,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import type { Notice } from '../src/core/agent-output.ts';
 import { formatResult } from '../src/cli/main.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 
 const SLUG = 'people/alice-example';
 const SHORT = 'notes/short-history';
@@ -30,15 +31,17 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  const page = await engine.putPage(SLUG, { type: 'person', title: 'Alice', compiled_truth: 'current body' });
-  await engine.executeRaw(
-    `INSERT INTO page_versions (page_id, compiled_truth, timeline, frontmatter, snapshot_at, title)
-     SELECT $1, 'body v' || g || E'\\n\\n' || $2, 'timeline v' || g, '{}'::jsonb, '2026-01-01'::timestamptz + g * interval '1 hour', 'title v' || g
-     FROM generate_series(1, ${VERSIONS}) g`,
-    [page.id, TAKES]);
-  const short = await engine.putPage(SHORT, { type: 'note', title: 'Short', compiled_truth: 'short body' });
-  await engine.executeRaw(
-    `INSERT INTO page_versions (page_id, compiled_truth, frontmatter, title) VALUES ($1, 'only version', '{}'::jsonb, 'only')`, [short.id]);
+  await asOwner(engine, async tx => {
+    const page = await tx.putPage(SLUG, { type: 'person', title: 'Alice', compiled_truth: 'current body' });
+    await tx.executeRaw(
+      `INSERT INTO page_versions (page_id, compiled_truth, timeline, frontmatter, snapshot_at, title)
+       SELECT $1, 'body v' || g || E'\\n\\n' || $2, 'timeline v' || g, '{}'::jsonb, '2026-01-01'::timestamptz + g * interval '1 hour', 'title v' || g
+       FROM generate_series(1, ${VERSIONS}) g`,
+      [page.id, TAKES]);
+    const short = await tx.putPage(SHORT, { type: 'note', title: 'Short', compiled_truth: 'short body' });
+    await tx.executeRaw(
+      `INSERT INTO page_versions (page_id, compiled_truth, frontmatter, title) VALUES ($1, 'only version', '{}'::jsonb, 'only')`, [short.id]);
+  });
 }, 120_000);
 afterAll(async () => { await engine.disconnect(); });
 

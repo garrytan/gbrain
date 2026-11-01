@@ -2967,6 +2967,7 @@
                 "table": "timeline_entries"
               }
             ],
+            "unknown_pages": 0,
             "unknown_pct": 0
           },
           "elapsed_ms": "<volatile>",

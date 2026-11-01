@@ -5,6 +5,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { setupDB, teardownDB, hasDatabase, getEngine } from './helpers.ts';
+import { asOwner } from '../helpers/owner-tier.ts';
 import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import {
   getBrainHotMemoryMeta,
@@ -17,14 +18,16 @@ const d = RUN ? describe : describe.skip;
 beforeAll(async () => {
   if (!RUN) return;
   const engine = await setupDB();
-  await engine.insertFact(
-    { fact: 'world fact', kind: 'fact', entity_slug: 'meta-pg', visibility: 'world', source: 'test' },
-    { source_id: 'default' },
-  );
-  await engine.insertFact(
-    { fact: 'private fact', kind: 'fact', entity_slug: 'meta-pg', visibility: 'private', source: 'test' },
-    { source_id: 'default' },
-  );
+  await asOwner(engine, async tx => {
+    await tx.insertFact(
+      { fact: 'world fact', kind: 'fact', entity_slug: 'meta-pg', visibility: 'world', source: 'test' },
+      { source_id: 'default' },
+    );
+    await tx.insertFact(
+      { fact: 'private fact', kind: 'fact', entity_slug: 'meta-pg', visibility: 'private', source: 'test' },
+      { source_id: 'default' },
+    );
+  });
 });
 
 afterAll(async () => { if (RUN) await teardownDB(); });

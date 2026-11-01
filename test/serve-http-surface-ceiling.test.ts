@@ -40,6 +40,7 @@ import { cliDiagnostic, fixtureDiagnostic, toolDiagnostic } from './helpers/fixt
 import { join } from 'path';
 import { VERB_NAMES } from '../src/core/verbs.ts';
 import { operations } from '../src/core/operations.ts';
+import { fenceTranscriptText } from '../src/core/search/transcript-quote.ts';
 
 const PORT_A = 19833; // plain --surface verbs (unique across the e2e suite)
 const PORT_B = 19834; // --surface verbs + GBRAIN_MCP_FORCE_SURFACE=full
@@ -279,6 +280,6 @@ describe('serve --http --surface verbs ceiling E2E (hermetic PGLite)', () => {
     expect(recalled.protocol_version).toBe(1);
     expect(Array.isArray(recalled.facts)).toBe(true);
     expect(recalled.total).toBeGreaterThanOrEqual(1);
-    expect(recalled.facts.some((f: { fact: string }) => f.fact === factText)).toBe(true);
+    expect(recalled.facts.some((f: { fact: string }) => f.fact === fenceTranscriptText(factText, `fact ${remembered.id}`))).toBe(true);
   }, 30_000);
 });

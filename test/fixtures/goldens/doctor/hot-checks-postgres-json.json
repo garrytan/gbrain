@@ -3407,10 +3407,11 @@
                   "table": "timeline_entries"
                 }
               ],
+              "unknown_pages": 1,
               "unknown_pct": 10
             },
             "elapsed_ms": "<volatile>",
-            "message": "10% of 30 row(s) have an unverified origin (unknown tier); the backfill has classified every row it has a signal for.",
+            "message": "10% of 30 row(s) have an unverified origin (unknown tier); the backfill has classified every row it has a signal for. Remote MCP readers see the 1 unverified-origin page(s) quoted as source material until the backfill classifies them or the owner claims their source (gbrain trust claim-sources); local reads are unchanged.",
             "name": "trust_tiers",
             "status": "ok"
           },
@@ -8370,10 +8371,11 @@
                   "table": "timeline_entries"
                 }
               ],
+              "unknown_pages": 1,
               "unknown_pct": 12.9
             },
             "elapsed_ms": "<volatile>",
-            "message": "12.9% of 31 row(s) have an unverified origin (unknown tier); the backfill has classified every row it has a signal for.",
+            "message": "12.9% of 31 row(s) have an unverified origin (unknown tier); the backfill has classified every row it has a signal for. Remote MCP readers see the 1 unverified-origin page(s) quoted as source material until the backfill classifies them or the owner claims their source (gbrain trust claim-sources); local reads are unchanged.",
             "name": "trust_tiers",
             "status": "ok"
           },

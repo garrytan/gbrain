@@ -225,8 +225,8 @@ async function quoteRecall<F extends { id: number; fact: string; source?: string
   redacted: ReadonlyArray<Partial<F>>, results: SearchResult[], delivery: DeliveryMeta | undefined) {
   if (ctx.remote === false) return { facts, withheld: false, results };
   const recount = delivery ? { count: (text: string) => countEvidenceTokens(text, delivery.tokenizer), delivery } : undefined;
-  const quoted = await quoteFacts(ctx.engine, facts.map((f, i) => ({ ...f, ...redacted[i] }))).catch(() => null);
-  return { facts: quoted ?? [], withheld: quoted === null && facts.length > 0, results: fenceTranscriptRows(neutralizeTranscriptRows(results, delivery?.date_header === true), recount) };
+  const quoted = await quoteFacts(ctx.engine, facts.map((f, i) => ({ ...f, ...redacted[i] })), true).catch(() => null);
+  return { facts: quoted ?? [], withheld: quoted === null && facts.length > 0, results: fenceTranscriptRows(neutralizeTranscriptRows(results, delivery?.date_header === true), recount, true) };
 }
 
 /**
@@ -795,6 +795,7 @@ const context_pack: Operation = {
         eligibility,
         // #5575 ENG-15: same rule as get_page: quarantined cards only on an authorized explicit ask.
         includeQuarantined,
+        untrusted: ctx.remote !== false,
       });
     // Always-loaded core tier (core-memory.ts): owner-designated pages of
     // `default` plus this source, inside the caller's grant; it packs first.
@@ -932,11 +933,13 @@ const context_pack: Operation = {
         fact_id: String(f.id),
         provenance: f.provenance,
         ...(f.trust_tier ? { trust_tier: f.trust_tier, origin: f.origin } : {}),
+        ...(f.quoted ? { quoted: f.quoted } : {}),
       })),
       entity_facts: entityFacts.map((f) => ({
         source_id: f.source_id, slug: f.slug, fact_id: String(f.id), fact: f.fact, kind: f.kind, entity_slug: f.entity_slug, valid_from: f.valid_from,
         context: f.context ?? null, confidence: f.confidence, attributed_to: f.attributed_to ?? null, provenance: f.provenance,
         ...(f.trust_tier ? { trust_tier: f.trust_tier, origin: f.origin } : {}),
+        ...(f.quoted ? { quoted: f.quoted } : {}),
       })),
       text,
       ...(pullBrief ? { brief: pullBrief.view } : {}),
@@ -1104,6 +1107,7 @@ const delta: Operation = {
       includePrivate,
       maxEntities: PACK_DEFAULT_MAX_ENTITIES,
       eligibility: await resolveReadEligibility(ctx, { minTrust: p.min_trust }),
+      untrusted: ctx.remote !== false,
     });
 
     // Pages arrive OLDEST first by (updated_at, slug), facts OLDEST first by

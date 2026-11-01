@@ -24,6 +24,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { serializeMarkdown } from '../src/core/markdown.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 import {
   federatedSearchScope,
   sourceScopeOpts,
@@ -155,7 +156,7 @@ describe("recall's fact arms honor the federated set too", () => {
   const factTexts = (res: any): string[] => (res?.facts ?? []).map((f: any) => f.fact);
   beforeAll(async () => {
     for (const [fact, source_id] of [['zebra fact in default', 'default'], ['zebra fact in wiki', 'wiki'], ['zebra fact in privsrc', 'privsrc']]) {
-      await engine.insertFact({ fact, kind: 'fact', entity_slug: `zebra-${source_id}`, source: 'test', visibility: 'world' }, { source_id });
+      await asOwner(engine, tx => tx.insertFact({ fact, kind: 'fact', entity_slug: `zebra-${source_id}`, source: 'test', visibility: 'world' }, { source_id }));
     }
   });
 

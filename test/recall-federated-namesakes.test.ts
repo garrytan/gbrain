@@ -13,6 +13,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { operations } from '../src/core/operations.ts';
 import { linkEntityIdentity } from '../src/core/entity-identity.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 
 let engine: PGLiteEngine;
 const recall = operations.find(o => o.name === 'recall')!;
@@ -26,13 +27,13 @@ beforeAll(async () => {
     // Two different people who share a name and slug, one per source.
     await importFromContent(engine, 'people/sam-example',
       `---\ntitle: Sam Example\ntype: person\n---\n\n# Sam Example\n\nThe ${source} Sam.\n`, { noEmbed: true, sourceId: source });
-    await engine.insertFact({ fact: `fact about the ${source} Sam`, entity_slug: 'people/sam-example', source: 'note', visibility: 'world', embedding: null }, { source_id: source });
+    await asOwner(engine, tx => tx.insertFact({ fact: `fact about the ${source} Sam`, entity_slug: 'people/sam-example', source: 'note', visibility: 'world', embedding: null }, { source_id: source }));
     // One person with a page in each source, linked by an identity group.
     await importFromContent(engine, 'people/theo-example',
       `---\ntitle: Theo Example\ntype: person\n---\n\n# Theo Example\n`, { noEmbed: true, sourceId: source });
-    await engine.insertFact({ fact: `theo fact from ${source}`, entity_slug: 'people/theo-example', source: 'note', visibility: 'world', embedding: null }, { source_id: source });
+    await asOwner(engine, tx => tx.insertFact({ fact: `theo fact from ${source}`, entity_slug: 'people/theo-example', source: 'note', visibility: 'world', embedding: null }, { source_id: source }));
   }
-  await engine.insertFact({ fact: 'only-default fact', entity_slug: 'people/uma-example', source: 'note', visibility: 'world', embedding: null }, { source_id: 'default' });
+  await asOwner(engine, tx => tx.insertFact({ fact: 'only-default fact', entity_slug: 'people/uma-example', source: 'note', visibility: 'world', embedding: null }, { source_id: 'default' }));
   await linkEntityIdentity(engine, { entityId: 'theo', slug: 'people/theo-example', sourceId: 'default' });
   await linkEntityIdentity(engine, { entityId: 'theo', slug: 'people/theo-example', sourceId: 'team' });
 });

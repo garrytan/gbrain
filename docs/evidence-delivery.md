@@ -429,7 +429,10 @@ or a fact row taken from one (marker `fact <id>`): `facts.source`
 Tool-call blocks become a one-line summary, then a marker line and a code
 fence wrap the text. `assemble_evidence`, `search` and `query` quote these
 rows for every caller; `recall` quotes its `results` and `facts` for remote
-callers, and think's prompt quotes them on every run. Its
+callers, and think's prompt quotes them on every run. A remote (MCP)
+reader also gets a row below the owner's trust tier (agent-written, tool
+data, external or unverified origin; GST-687) quoted the same way, by its
+stored tier; only third-party types get tool calls summarized. Its
 `match_spans` index that returned text (a span inside a summarized block
 covers the summary), and its `tokens`, the meta `tokens_delivered` and
 `budget_used` and `evidenceFingerprint` count or hash the fenced text. An

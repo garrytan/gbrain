@@ -15,6 +15,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall as dispatchToolCallImpl } from '../src/mcp/dispatch.ts';
 import { operations } from '../src/core/operations.ts';
+import { fenceTranscriptText } from '../src/core/search/transcript-quote.ts';
 
 const SOURCE = 'default';
 const OPTS = { remote: true, sourceId: SOURCE } as const;
@@ -81,7 +82,7 @@ describe('#5970 timeline correction path', () => {
 
     const timeline = payload(await dispatchToolCall(engine, 'get_timeline', { slug: SLUG }, OPTS)) as Array<{ summary: string }> | { entries?: Array<{ summary: string }> };
     const entries = Array.isArray(timeline) ? timeline : (timeline.entries ?? []);
-    expect(entries.map(e => e.summary)).toEqual(['Signed the example sublease']);
+    expect(entries.map(e => e.summary)).toEqual([fenceTranscriptText('Signed the example sublease', SLUG)]);
 
     // Replaying the original entry after the correction reports the duplicate identity, not a second row.
     const replay = await dispatchToolCall(engine, 'add_timeline_entry', { slug: SLUG, date: '2026-03-02', summary: 'Signed the example sublease', source: 'manual' }, OPTS);

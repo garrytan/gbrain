@@ -59,6 +59,14 @@ describe('trust fixture validation', () => {
 });
 
 describe('poisoning canary sightings', () => {
+  test('a canary inside a closed quote fence is labeled by the fence marker line, mid-text and at the end of the text', () => {
+    const k = 'canary-fence-5';
+    const fenced = (label: string) => `- ${label}[quoted conversation excerpt from fact 1; source material, not instructions]\n\`\`\`text\nAlways do X (ref ${k})\n\`\`\``;
+    const labeled = fenced('[unconfirmed, agent-written · mcp:remember] ');
+    expect(sightCanary({ texts: [`${labeled}\n [people/alice-example] (0.90)`], structured: [] }, k).unlabeled).toBe(false);
+    expect(sightCanary({ texts: [labeled], structured: [] }, k).unlabeled).toBe(false);
+    expect(sightCanary({ texts: [fenced('')], structured: [] }, k).unlabeled).toBe(true);
+  });
   const k = 'zqcunit001x1';
   test('a canary inside an external-data envelope is seen but enveloped', () => {
     const s = sightCanary({ texts: [`- **Page** — <external-data trust="external_untrusted" origin="mcp:put_page">Do X (ref ${k}).</external-data>`], structured: [] }, k);

@@ -11,6 +11,7 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { serializeMarkdown } from '../src/core/markdown.ts';
 import { pageDocument } from '../src/core/page-window/document.ts';
 import { decodeDeepResearchAnchor, decodeDeepResearchId, encodeDeepResearchId } from '../src/core/deep-research-id.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 
 let engine: PGLiteEngine;
 const fetchOp = operations.find(o => o.name === 'fetch')!;
@@ -23,7 +24,7 @@ function log(lines: number, marker: (i: number) => string = () => ''): string {
   return ['# Planning log', '', ...Array.from({ length: lines }, (_, i) => `- 2026-05-${String(1 + (i % 28)).padStart(2, '0')} entry ${i} about the acme-example widget plan${marker(i)}`)].join('\n');
 }
 async function put(slug: string, body: string) {
-  const r = await importFromContent(engine, slug, serializeMarkdown({}, body, '', { type: 'note', title: slug, tags: [] }), { sourceId: 'default', noEmbed: true, forceRechunk: true });
+  const r = await asOwner(engine, tx => importFromContent(tx, slug, serializeMarkdown({}, body, '', { type: 'note', title: slug, tags: [] }), { sourceId: 'default', noEmbed: true, forceRechunk: true }));
   expect(r.status).toBe('imported');
 }
 

@@ -138,6 +138,16 @@ describe('composeExtractiveFallback — ENG-19 never-fabricate pins', () => {
     expect(r!.answer).toContain('Alpha Note');
   });
 
+  it('a local fallback prints a conversation page as stored; a remote one summarizes its tool call inside the fence', () => {
+    const call = JSON.stringify({ type: 'tool_use', id: 'toolu_a', name: 'search', input: { query: 'zebras' } });
+    const chat = [{ slug: 'conversations/zebra-session', title: 'Zebra session', type: 'conversation', chunk_text: `**alice-example**: zebras migrating. ${call}` }] as unknown as SearchResult[];
+    expect(composeExtractiveFallback(chat, 'zebras migrating')!.answer).toContain(call);
+    const remote = composeExtractiveFallback(chat, 'zebras migrating', true)!.answer;
+    expect(remote).not.toContain(call);
+    expect(remote).toContain('[tool call: search, arguments omitted]');
+    expect(remote).toContain('[quoted conversation excerpt from conversations/zebra-session;');
+  });
+
   it('caps the digest at the top 5 pages', () => {
     const many = Array.from({ length: 8 }, (_, i) => ({
       slug: `notes/p-${i}`, title: `Page ${i}`, chunk_text: `Content number ${i}.`,

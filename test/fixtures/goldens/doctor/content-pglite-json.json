@@ -3201,6 +3201,7 @@
                 "table": "timeline_entries"
               }
             ],
+            "unknown_pages": 0,
             "unknown_pct": 0
           },
           "elapsed_ms": "<volatile>",
@@ -3952,7 +3953,7 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
-          "message": "No retrieval-affecting files changed in working tree.",
+          "message": "2 retrieval-affecting file(s) changed since HEAD: src/core/search/evidence-delivery.ts, src/core/search/transcript-quote.ts. Re-run `gbrain eval run-all` after committing these changes.",
           "name": "eval_drift",
           "status": "ok"
         },

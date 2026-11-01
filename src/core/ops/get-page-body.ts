@@ -49,7 +49,7 @@ import { confirmBodyPin, hiddenBefore, openSegmentedBody, type BodyPin } from '.
 import { inlineRegions, inlineTailDigest } from '../page-body/tail-digest.ts';
 import { TIMELINE_SEPARATOR } from '../page-window/document.ts';
 import { renderTrustedText, type TrustFields } from '../eligibility/labels.ts';
-import { fenceTranscriptText } from '../search/transcript-quote.ts';
+import { fenceTranscriptText, neutralizeToolCalls } from '../search/transcript-quote.ts';
 import { pageTrustForRead, type QuarantinedView } from './get-page-projection.ts';
 import { chunkGenerationProbe, chunkManifestReads } from '../search/safe-chunks.ts';
 import { GET_PAGE_SLICE_PARAMS, parseSliceRequest, readGrep, readSection, sliceCharBudget, type SliceRequest } from './get-page-slice.ts';
@@ -284,6 +284,8 @@ export interface PartialReadInput {
   pin?: Omit<BodyPin, 'revision'>;
   /** #8042: the page's text is third-party and the reader untrusted: every returned window is fenced as quoted source material (`quoted: "transcript"`). */
   quote?: boolean;
+  /** GST-687 (get-page-projection.ts neutralizesBody): view 'read' windows carry tool-call blocks summarized; view 'markdown' stays byte-exact. */
+  neutralize?: boolean;
 }
 
 /** The pin of a segmented read after get_page's or fetch's authorization: the snapshot's generation, with the trust floor re-checked when the read confirms. */
@@ -463,7 +465,8 @@ async function noneResult(ctx: OperationContext, page: Page, out: Record<string,
  */
 export async function readPartialBody(ctx: OperationContext, input: PartialReadInput, req: BodyRequest): Promise<Record<string, unknown>> {
   const { page, revision, tags, quarantined, trust, extras } = input;
-  const wrap = (text: string) => envelopeText(text, quarantined, trust, input.quote ? page.slug : null);
+  const neutralize = input.neutralize === true && req.view !== 'markdown';
+  const wrap = (text: string) => envelopeText(neutralize && text ? neutralizeToolCalls(text) : text, quarantined, trust, input.quote ? page.slug : null);
   const base: Record<string, unknown> = {
     slug: page.slug, source_id: page.source_id, type: page.type, title: page.title, revision, tags,
     frontmatter: page.frontmatter ?? {}, ...(page.deleted_at ? { deleted_at: page.deleted_at } : {}),

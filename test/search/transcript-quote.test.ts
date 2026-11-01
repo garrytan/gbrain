@@ -6,7 +6,7 @@
  * put_page inverse.
  */
 import { describe, expect, test } from 'bun:test';
-import { fenceTranscriptRows, fenceTranscriptText, isQuotedFactSource, isQuotedPageType, neutralizeToolCalls, neutralizeTranscriptRows, quoteFacts, rowPreview, unquoteTranscriptText } from '../../src/core/search/transcript-quote.ts';
+import { fenceTranscriptRows, fenceTranscriptText, holdsSummarizedToolCalls, isQuotedFactSource, isQuotedPageType, neutralizeToolCalls, neutralizeTranscriptRows, quoteFacts, rowPreview, unquoteTranscriptText } from '../../src/core/search/transcript-quote.ts';
 import { capEvidenceToBudget, countEvidenceTokens, EVIDENCE_CUT_MARKER, EVIDENCE_OMISSION, type DeliveryMeta } from '../../src/core/search/evidence-delivery.ts';
 import type { SearchResult } from '../../src/core/types.ts';
 
@@ -497,4 +497,36 @@ describe('#8042: what is quoted, and the page body fence round trip', () => {
     expect(unquoteTranscriptText(open, 'slack/a')).toBe(open);
     expect(unquoteTranscriptText('plain body', 'slack/a')).toBe('plain body');
   });
+});
+
+describe('holdsSummarizedToolCalls (GST-687 put_page guard)', () => {
+  const call = JSON.stringify({ type: 'tool_use', id: 'toolu_a', name: 'search', input: { query: 'ledger' } });
+  const summary = neutralizeToolCalls(call);
+  const stored = `**alice-example**: earlier result ${summary}\n\n**bob-example**: ${call}`;
+
+  test('content that keeps a summary of a stored call but fewer of the calls is refused; the stored text, or text with no summary, is not', () => {
+    expect(holdsSummarizedToolCalls(stored, neutralizeToolCalls(stored))).toBe(true);
+    expect(holdsSummarizedToolCalls(stored, `**bob-example**: ${summary}`)).toBe(true);
+    expect(holdsSummarizedToolCalls(stored, `${stored}\n\nnoted.`)).toBe(false);
+    expect(holdsSummarizedToolCalls(stored, `**alice-example**: earlier result ${summary}`)).toBe(true);
+    expect(holdsSummarizedToolCalls(stored, '**alice-example**: noted.')).toBe(false);
+  });
+
+  test('a summary a whole read of the stored page never produces, as a cut window or chunk gives, is refused', () => {
+    expect(holdsSummarizedToolCalls(stored, `${stored}\n\n**bob-example**: [tool call, arguments omitted]`)).toBe(true);
+    const long = JSON.stringify({ type: 'tool_use', id: 'toolu_b', input: { query: 'ledger '.repeat(20) }, name: 'search' });
+    const page = `**alice-example**: looking it up ${long}\n\n**bob-example**: thanks.`;
+    const cut = page.indexOf('ledger') + 30;
+    expect(holdsSummarizedToolCalls(page, neutralizeToolCalls(page.slice(0, cut)) + neutralizeToolCalls(page.slice(cut)))).toBe(true);
+    const xml = '<function_calls>\n<invoke name="search">\n<parameter name="query">ledger</parameter>\n</invoke>\n<invoke name="fetch">\n<parameter name="url">x</parameter>\n</invoke>\n</function_calls>';
+    const xmlPage = `**alice-example**: checking\n${xml}\n\n**bob-example**: thanks.`;
+    const at = xmlPage.indexOf('<invoke name="fetch"');
+    expect(holdsSummarizedToolCalls(xmlPage, neutralizeToolCalls(xmlPage.slice(0, at)) + neutralizeToolCalls(xmlPage.slice(at)))).toBe(true);
+    expect(holdsSummarizedToolCalls(xmlPage, neutralizeToolCalls(xmlPage))).toBe(true);
+  });
+
+  test('thousands of distinct summaries are counted in one scan', () => {
+    const many = Array.from({ length: 20_000 }, (_, i) => `[tool call: tool_${i}, arguments omitted]`).join('\n');
+    expect(holdsSummarizedToolCalls(many, many)).toBe(false);
+  }, 5_000);
 });

@@ -13,7 +13,7 @@ import { parseKnownAsOf, readPageAtTime, remoteMayRead, type PageAtTime, type Pa
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import { unifiedDiff } from '../skillpack/diff-text.ts';
-import { fenceTranscriptText, isQuotedPageType } from '../search/transcript-quote.ts';
+import { fenceTranscriptText, quotesStored } from '../search/transcript-quote.ts';
 
 export const KNOWN_AS_OF_PARAM: ParamDef = { type: 'string', fullSurfaceOnly: true,
   description: 'Recorded time: the page as this brain had recorded it at this ISO 8601 instant (2026-10-01T12:00:00Z), from the belief ledger. Not as_of, which is valid time (a date).' };
@@ -88,7 +88,8 @@ function intervalView(ctx: OperationContext, i: PageInterval, opts: { body: bool
   return { ...meta, compiled_truth: fence(clean(i.page.compiled_truth)), timeline: fence(clean(i.page.timeline)), ...(quote ? { quoted: 'transcript' } : {}) };
 }
 
-const quotesInterval = (ctx: OperationContext, i: PageInterval) => ctx.remote !== false && isQuotedPageType(i.page?.type);
+/** GST-687: an interval below the owner's tier (the live page's, or the version's snapshot; none reads as unknown) reaches an untrusted reader quoted too. */
+const quotesInterval = (ctx: OperationContext, i: PageInterval) => ctx.remote !== false && quotesStored(i.page?.type, i.page?.trust_tier);
 
 function ledgerView(read: PageAtTime) {
   return { known_as_of: read.known_as_of, source_id: read.source_id, certified: read.certified, uncertified_reason: read.uncertified_reason, coverage_from: read.coverage_cut };

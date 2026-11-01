@@ -7744,7 +7744,7 @@
         "kind": "function",
         "name": "capEvidenceToBudget",
         "signature": [
-          "<T extends SearchResult & { delivered?: DeliveredEvidence; }>(results: T[], delivery: DeliveryMeta, quote?: boolean) => T[]"
+          "<T extends SearchResult & { delivered?: DeliveredEvidence; }>(results: T[], delivery: DeliveryMeta, quote?: boolean, untrusted?: boolean) => T[]"
         ]
       },
       {
@@ -8466,7 +8466,7 @@
         "kind": "function",
         "name": "composeExtractiveFallback",
         "signature": [
-          "(pages: SearchResult[], question: string) => ExtractiveFallback | null"
+          "(pages: SearchResult[], question: string, untrusted?: boolean) => ExtractiveFallback | null"
         ]
       },
       {

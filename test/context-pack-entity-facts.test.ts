@@ -17,6 +17,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { estimateTokens } from '../src/core/search/token-budget.ts';
 import { __resetHotMemoryCacheForTests } from '../src/core/facts/meta-hook.ts';
+import { fenceTranscriptText } from '../src/core/search/transcript-quote.ts';
 
 let engine: PGLiteEngine;
 const noop = { info() {}, warn() {}, error() {} };
@@ -62,7 +63,8 @@ describe('#6724 context_pack entity_facts', () => {
     const legacy = await pack(ctx(true), { entities: 'Bob Example' });
     expect(res.facts.map((f: any) => f.fact_id)).toEqual(legacy.facts.map((f: any) => f.fact_id));
     expect(res.text).toContain('## Entity facts');
-    expect(res.text).toMatch(/\(assistant said\) .*Alice Example chairs the ALICE-OLD-SENTINEL/);
+    const quotedOld = fenceTranscriptText('Alice Example chairs the ALICE-OLD-SENTINEL review board.', `fact ${aliceOld}`);
+    expect(res.text).toMatch(new RegExp(`\\(assistant said\\) .*${RegExp.escape(quotedOld)}\\n \\[people/alice-example\\]`));
     expect(res.text.indexOf('ALICE-OLD-SENTINEL')).toBeLessThan(res.text.indexOf('## Hot memory'));
   });
 

@@ -7,6 +7,8 @@
  * and the check is ok with the percentage. A brain before the trust
  * migration is ok (tiers arrive with it). Read-only.
  *
+ * GST-687: both messages name the unknown pages, which remote MCP readers see quoted until the backfill classifies them.
+ *
  * CEO-24 diagnostic (never changes the status): the share of derived rows
  * (`write_origin` carries `taint_inputs`) stamped external_untrusted.
  */
@@ -31,18 +33,21 @@ async function runTrustTiers(ctx: DoctorContext): Promise<Check[]> {
     const derived = await readDerivedTaintShare(engine);
     const details = { rows, by_tier: totals, unknown_pct: unknownPct, tables: tables.map(t => ({ table: t.table, rows: t.rows, by_tier: t.counts })),
       backfill: { interrupted: state.interrupted, completed_at: state.completedAt }, derived };
+    const unknownPages = tables.find(t => t.table === 'pages')?.counts.unknown ?? 0;
+    // GST-687: remote (MCP) readers get text below the owner's tier quoted, so an unknown page reads as quoted source material there.
+    const quotedNote = unknownPages ? ` Remote MCP readers see the ${unknownPages} unverified-origin page(s) quoted as source material until the backfill classifies them or the owner claims their source (gbrain trust claim-sources); local reads are unchanged.` : '';
     const derivedNote = derived.rows ? ` Derived rows: ${derived.external_pct}% of ${derived.rows} carry an external, untrusted tier (diagnostic).` : '';
     const needsBackfill = totals.unknown > 0 && (state.interrupted || !state.completedAt);
     if (!needsBackfill) {
-      checks.push({ name: 'trust_tiers', status: 'ok', details,
+      checks.push({ name: 'trust_tiers', status: 'ok', details: { ...details, unknown_pages: unknownPages },
         message: rows === 0 ? 'No facts, takes, timeline entries or pages yet.'
-          : `${unknownPct}% of ${rows} row(s) have an unverified origin (unknown tier)${state.completedAt ? '; the backfill has classified every row it has a signal for' : ''}.${derivedNote}` });
+          : `${unknownPct}% of ${rows} row(s) have an unverified origin (unknown tier)${state.completedAt ? '; the backfill has classified every row it has a signal for' : ''}.${quotedNote}${derivedNote}` });
       return checks;
     }
     const argv = state.interrupted ? ['gbrain', 'trust', 'backfill', '--resume'] : ['gbrain', 'trust', 'backfill'];
-    checks.push({ name: 'trust_tiers', status: 'warn', details,
+    checks.push({ name: 'trust_tiers', status: 'warn', details: { ...details, unknown_pages: unknownPages },
       message: `${totals.unknown} of ${rows} row(s) (${unknownPct}%) have an unverified origin and the trust backfill has ${state.interrupted ? 'not finished' : 'not run'}. `
-        + `Run ${argv.join(' ')} on the brain host (gbrain trust backfill --dry-run previews it); it classifies rows from deterministic signals only and never marks anything confirmed.${derivedNote}`,
+        + `Run ${argv.join(' ')} on the brain host (gbrain trust backfill --dry-run previews it); it classifies rows from deterministic signals only and never marks anything confirmed.${quotedNote}${derivedNote}`,
       fix: agentFix(argv, 'Classifies legacy rows from deterministic signals in resumable batches; it never raises a row to confirmed and changes no content.', 'trust_tiers',
         { preview_argv: ['gbrain', 'trust', 'backfill', '--dry-run', '--json'] }) });
   } catch (err) {

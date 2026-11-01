@@ -20,6 +20,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { toAgentError } from '../src/core/agent-output.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 
 const SOURCE = 'acme-example';
 const OTHER = 'widget-co';
@@ -37,7 +38,7 @@ beforeAll(async () => {
   }
   for (const { engine: e } of databases) {
     await e.executeRaw('INSERT INTO sources(id, name) VALUES ($1, $1), ($2, $2)', [SOURCE, OTHER]);
-    await seed(e);
+    await asOwner(e, tx => seed(tx));
   }
 }, 120_000);
 

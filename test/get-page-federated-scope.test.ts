@@ -29,6 +29,7 @@ import { operations, OperationError, type OperationContext } from '../src/core/o
 import { importFromContent } from '../src/core/import-file.ts';
 import { serializeMarkdown } from '../src/core/markdown.ts';
 import { surfaceFileSource } from './helpers/source-surface.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 
 let engine: PGLiteEngine;
 const get_page = operations.find(o => o.name === 'get_page')!;
@@ -53,9 +54,9 @@ function ctxOf(overrides: Partial<OperationContext> = {}): OperationContext {
 }
 
 async function importPage(slug: string, sourceId: string, title: string, body: string, timeline = '') {
-  const result = await importFromContent(engine, slug,
+  const result = await asOwner(engine, tx => importFromContent(tx, slug,
     serializeMarkdown({}, body, timeline, { type: 'note', title, tags: [] }),
-    { sourceId, noEmbed: true, forceRechunk: true });
+    { sourceId, noEmbed: true, forceRechunk: true }));
   expect(result.status).toBe('imported');
 }
 
@@ -122,9 +123,9 @@ beforeEach(async () => {
   // (origin) page is out-of-grant ('default'). origin_slug must NOT leak that slug.
   await engine.addLink('secret/beta-doc', 'secret/beta-target', 'origin-leak ctx', 'mentions', 'frontmatter', 'default/only-doc', 'related', { fromSourceId: 'beta', toSourceId: 'beta', originSourceId: 'default' });
   // Timeline entry on the beta page.
-  await engine.addTimelineEntry('secret/beta-doc', {
+  await asOwner(engine, tx => tx.addTimelineEntry('secret/beta-doc', {
     date: '2026-01-01', source: 'test', summary: 'beta event', detail: 'beta detail',
-  }, { sourceId: 'beta' });
+  }, { sourceId: 'beta' }));
   // D3A union: same slug in BOTH alpha and beta with distinct tags.
   await engine.putPage('shared/dup', {
     type: 'note', title: 'Dup alpha', compiled_truth: 'a', frontmatter: {},

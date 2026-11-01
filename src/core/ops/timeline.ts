@@ -13,12 +13,14 @@ import { opTransport } from './op-fix.ts';
 import { readPolicyOpts } from './context.ts';
 import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
 import { stampRowTrust } from '../eligibility/stamp.ts';
+import { quoteTimelineRows } from './timeline-quote.ts';
 import {
   enforceSubagentSlugFence,
   enforceClientSlugFence,
 } from './context.ts';
 
 // --- Timeline ---
+
 
 const add_timeline_entry: Operation = {
   name: 'add_timeline_entry',
@@ -100,7 +102,7 @@ const get_timeline: Operation = {
       ...(limit !== undefined ? { limit } : {}),
       eligibility,
     });
-    return stampRowTrust(ctx.engine, 'timeline_entries', entries, e => (e as { id: number }).id);
+    return quoteTimelineRows(ctx, p.slug as string, await stampRowTrust(ctx.engine, 'timeline_entries', entries, e => (e as { id: number }).id));
   },
   scope: 'read',
   cliHints: { name: 'timeline', positional: ['slug'] },

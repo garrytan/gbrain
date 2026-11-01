@@ -15,6 +15,7 @@ import { operationsByName, type OperationContext } from '../src/core/operations.
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { __resetHotMemoryCacheForTests } from '../src/core/facts/meta-hook.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 
 const ALNUM = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 const rand = (n: number) => [...randomBytes(n)].map(b => ALNUM[b % ALNUM.length]).join('');
@@ -32,8 +33,10 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  await engine.insertFact({ fact: 'Project Boreal uses the colour green.', entity_slug: 'projects/boreal-example', source: 'POC-CORRECTION-2026-10-06', visibility: 'world', embedding: null } as never, { source_id: 'default' });
-  await engine.insertFact({ fact: 'Project Atlas uses the colour blue.', entity_slug: null, source: `test:${KEY}`, visibility: 'world', embedding: null } as never, { source_id: 'default' });
+  await asOwner(engine, async tx => {
+    await tx.insertFact({ fact: 'Project Boreal uses the colour green.', entity_slug: 'projects/boreal-example', source: 'POC-CORRECTION-2026-10-06', visibility: 'world', embedding: null } as never, { source_id: 'default' });
+    await tx.insertFact({ fact: 'Project Atlas uses the colour blue.', entity_slug: null, source: `test:${KEY}`, visibility: 'world', embedding: null } as never, { source_id: 'default' });
+  });
 }, 120_000);
 
 afterAll(async () => {

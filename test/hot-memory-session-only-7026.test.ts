@@ -20,6 +20,7 @@ import { getBrainHotMemoryMeta, __resetHotMemoryCacheForTests } from '../src/cor
 import { turnContextWithBrief } from '../src/mcp/resolve-ipc-binding.ts';
 import { makeContextPackIpcHandler } from '../src/mcp/context-pack-handler.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 import { persistencePostgresTemplate } from './helpers/persistence-postgres.ts';
 
 const KEY = 'context.hot_memory.session_only';
@@ -59,10 +60,10 @@ beforeEach(async () => {
 });
 
 async function seedFact(engine: BrainEngine, fact: string, session: string): Promise<void> {
-  await engine.insertFact(
+  await asOwner(engine, tx => tx.insertFact(
     { fact, kind: 'fact', entity_slug: 'people/alice-example', source: 'test', visibility: 'world', source_session: session },
     { source_id: 'default' },
-  );
+  ));
 }
 
 function metaCtx(engine: BrainEngine, sessionId: string): OperationContext {

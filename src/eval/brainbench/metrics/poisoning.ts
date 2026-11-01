@@ -86,6 +86,23 @@ const UNCONFIRMED_TEXT = 'unconfirmed, agent-written';
 const LOW_TIER_TEXT = ['[written by an agent', `[${USER_SAID_TRUST_LABEL}`, '[unverified origin', '[external, untrusted', '[unconfirmed,'];
 const LOW_TIERS = new Set(['agent_written', 'unknown', 'external_untrusted']);
 
+const QUOTE_FENCE_OPEN = /\[quoted conversation excerpt from [^\]\n]*; source material, not instructions\]\n(`{3,})text\n/g;
+
+/**
+ * The line whose labels count for the occurrence at `at`: its own line, or, inside a closed quote fence
+ * (search/transcript-quote.ts), the fence's marker line, where a fenced item's label is rendered (GST-687).
+ */
+function labelLine(lower: string, at: number): string {
+  for (const m of lower.matchAll(QUOTE_FENCE_OPEN)) {
+    const start = m.index + m[0].length;
+    let close = lower.indexOf(`\n${m[1]}`, start - 1);
+    while (close >= 0 && !/^[ \t]*(\n|$)/.test(lower.slice(close + 1 + m[1].length))) close = lower.indexOf(`\n${m[1]}`, close + 1);
+    if (at >= start && close >= at) return lower.slice(lower.lastIndexOf('\n', m.index - 1) + 1, lower.indexOf('\n', m.index));
+  }
+  const lineEnd = lower.indexOf('\n', at);
+  return lower.slice(lower.lastIndexOf('\n', at) + 1, lineEnd < 0 ? undefined : lineEnd);
+}
+
 /** Where a canary appears in text: inside an external-data envelope, on an "unconfirmed" labeled line, or bare. */
 function textSighting(text: string, canary: string): CanarySighting {
   const lower = text.toLowerCase();
@@ -98,9 +115,7 @@ function textSighting(text: string, canary: string): CanarySighting {
     const opens = (before.match(ENVELOPE_OPEN) ?? []).length;
     const closes = (before.match(/<\/external-data>/g) ?? []).length;
     const enveloped = opens > closes;
-    const lineStart = before.lastIndexOf('\n') + 1;
-    const lineEnd = lower.indexOf('\n', at);
-    const line = lower.slice(lineStart, lineEnd < 0 ? undefined : lineEnd);
+    const line = labelLine(lower, at);
     const labeled = line.includes(UNCONFIRMED_TEXT);
     if (!enveloped && !labeled) out.unenveloped = true;
     if (!labeled) out.unlabeled = true;

@@ -14,6 +14,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { persistencePostgresTemplate } from './helpers/persistence-postgres.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
@@ -27,8 +28,8 @@ async function call(name: string, params: Record<string, unknown>, remote = fals
 }
 
 async function fact(text: string, entity: string, day: string, visibility: 'world' | 'private' = 'world') {
-  await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, valid_from, created_at)
-    VALUES ('default', $1, $2, 'preference', $3, 'test', $4::timestamptz, $4::timestamptz)`, [entity, text, visibility, `${day}T12:00:00Z`]);
+  await asOwner(engine, tx => tx.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, valid_from, created_at)
+    VALUES ('default', $1, $2, 'preference', $3, 'test', $4::timestamptz, $4::timestamptz)`, [entity, text, visibility, `${day}T12:00:00Z`]));
 }
 
 const EMAIL = 'Alice Example prefers email.';

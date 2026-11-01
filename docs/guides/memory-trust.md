@@ -91,7 +91,10 @@ stay.
 Content saved before this release is flagged only after you claim your
 sources and run the scan. Older rows have no provenance, so they read as
 "unverified origin". On a long-lived brain that is most rows, including your
-own notes and synced code repositories. gbrain never scans them on its own.
+own notes and synced code repositories. Agents connected over MCP see text
+below "your notes" (including unverified origin) quoted as source material,
+so your own older notes read as quoted until you claim their source. gbrain
+never scans them on its own.
 Doctor, `gbrain post-upgrade` and the behavior-change notice tell you the
 commands to run.
 
@@ -112,7 +115,7 @@ Typing a source's id claims it as your own notes:
 - The source syncs as "your notes" from now on. This is the
   `gbrain sources set-trust` default, set to `operator_curated`.
 - Its rows from before trust tiers move from "unverified origin" to "your
-  notes". A row with a lowering signal keeps the lower tier: MCP and capture
+  notes", so agents connected over MCP no longer see them quoted. A row with a lowering signal keeps the lower tier: MCP and capture
   stamps, imported transcripts, clipped pages, connector stamps, extraction
   and dream provenance, journaled agent writes, and a `trust_tier` marker in
   the frontmatter. Nothing goes above "your notes".
@@ -212,7 +215,8 @@ Claim your own sources first, so your notes are not treated as unverified.
 - `trust_scan` warns while older rows at "written by an agent" or below have
   not been scanned. Its fix is yours to run (`tell_user_to_run`).
 - `trust_tiers` reports the tier mix and recommends `gbrain trust backfill`.
-  The backfill classifies older rows from deterministic signals only.
+  It also names how many unverified-origin pages remote MCP readers see
+  quoted. The backfill classifies older rows from deterministic signals only.
 - `trust_release_unpreviewed_fields` warns about facts released from a held
   `## Facts` row before the preview showed that row's fields. Those releases
   confirmed the row's confidence, notability, validity and other cells

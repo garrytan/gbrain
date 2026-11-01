@@ -15,6 +15,7 @@ import { parseRescopeTokenArgs, rescopeLegacyToken } from '../src/core/grants/le
 import { generateToken, hashToken } from '../src/core/utils.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { fenceTranscriptText } from '../src/core/search/transcript-quote.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 
 let engine: PGLiteEngine;
@@ -60,8 +61,9 @@ describe('remember under a granted member token', () => {
     const [row] = await engine.executeRaw<{ source_id: string; expired_at: unknown }>('SELECT source_id, expired_at FROM facts WHERE id = $1', [Number(out.id)]);
     expect(row).toMatchObject({ source_id: 'private-alice', expired_at: null });
 
+    const quoted = fenceTranscriptText('Acme Example asked about ticket 4092', `fact ${out.id}`);
     const recalled = await call(alice, 'recall', { query: 'ticket 4092' });
-    expect(JSON.parse(recalled.content[0].text).facts.map((f: { fact: string }) => f.fact)).toContain('Acme Example asked about ticket 4092');
+    expect(JSON.parse(recalled.content[0].text).facts.map((f: { fact: string }) => f.fact)).toContain(quoted);
 
     const searched = await call(alice, 'search', { query: 'ticket 4092' });
     expect(JSON.parse(searched.content[0].text)).toEqual([]);
@@ -69,7 +71,7 @@ describe('remember under a granted member token', () => {
 
     const bob = await grantedToken('private-bob,public');
     const bobRecall = await call(bob, 'recall', { query: 'ticket 4092' });
-    expect(JSON.parse(bobRecall.content[0].text).facts.map((f: { fact: string }) => f.fact)).not.toContain('Acme Example asked about ticket 4092');
+    expect(JSON.parse(bobRecall.content[0].text).facts.map((f: { fact: string }) => f.fact)).not.toContain(quoted);
     const bobSearch = await call(bob, 'search', { query: 'ticket 4092' });
     expect(bobSearch.content.some(c => c.text.includes('ticket 4092'))).toBe(false);
   }, 120_000);

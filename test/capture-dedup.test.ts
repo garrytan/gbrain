@@ -29,6 +29,7 @@ import { acquireWorktree, claimWorktree, getWorktreeBinding, MANAGED_WRITER_PROB
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 import { configureGateway, resetGateway, __setChatTransportForTests, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { runFactsPipeline, type FactsBackstopCtx } from '../src/core/facts/backstop.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
@@ -304,7 +305,7 @@ for (const mode of ['unmanaged', 'managed'] as const) {
 }
 
 describe('hot memory collapse (V2)', () => {
-  const insert = (fact: string, entity_slug: string) => engine.insertFact({ fact, entity_slug, source: 'fixture', visibility: 'world' }, { source_id: sourceId });
+  const insert = (fact: string, entity_slug: string) => asOwner(engine, tx => tx.insertFact({ fact, entity_slug, source: 'fixture', visibility: 'world' }, { source_id: sourceId }));
 
   test('an identical claim on two entities that names one of them injects once with both labels; distinct facts still fill topK', () => withEnv({ GBRAIN_HOME: home }, async () => {
     await freshSource('unmanaged');
