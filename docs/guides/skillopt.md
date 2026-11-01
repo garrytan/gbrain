@@ -49,7 +49,28 @@ skills/my-skill/
 The audit trail lives at `~/.gbrain/audit/skillopt-YYYY-Www.jsonl`
 (ISO-week rotated; honors `GBRAIN_AUDIT_DIR`).
 
-## How the loop works
+## One-shot rewrite (the default)
+
+`gbrain skillopt <skill>` runs one gated rewrite:
+
+1. **Forward pass.** Run the current skill on one batch (`--batch-size`) of
+   `D_train` tasks.
+2. **Rewrite.** One optimizer call rewrites the whole skill body from those
+   rollouts (frontmatter untouched).
+3. **Validation gate.** The same D12 gate a loop step faces: median-of-3 per
+   `D_sel` task, accepted only above the baseline by more than 0.05. A
+   rejected rewrite leaves the skill unchanged (`no_improvement`).
+4. **Held-out check** (with `--held-out`), then the D8 commit.
+
+**Why one-shot is the default.** In gbrain-evals' Cat 31 re-baseline
+(2026-11-01), the iterative loop and a one-shot rewrite both scored 0.54 on
+held-out tasks (paired bootstrap p = 1.00) and the loop cost about 1.8x as
+much. Every edit the loop kept came at its first step. `--loop` (MCP and job
+`optimizer_mode: "reflect"`) still runs the iterative loop. This default is
+reversible: it flips back if gbrain-evals' SkillOpt method benchmark shows the
+loop winning. A resume continues in the mode its run started in.
+
+## How the loop works (`--loop`)
 
 For each step:
 
@@ -77,17 +98,17 @@ the audit event only; the full meta-edit proposal is a tracked follow-up.
 | `--bootstrap-tasks N` | 15 | How many starter tasks `--bootstrap-from-skill` generates (max 50) |
 | `--bootstrap-from-routing` | off | Auto-build benchmark from routing-eval.jsonl |
 | `--bootstrap-reviewed` | off | Required after human-reviewing bootstrap output |
-| `--epochs N` | 4 | Outer-loop iterations |
-| `--batch-size N` | 8 | Tasks per inner step |
-| `--lr N` | 4 | Max edits per step |
-| `--lr-schedule cosine\|linear\|constant` | cosine | Edit-budget decay |
+| `--epochs N` | 4 | Outer-loop iterations (`--loop` only) |
+| `--batch-size N` | 8 | Tasks per inner step (the one-shot forward-pass size) |
+| `--lr N` | 4 | Max edits per step (`--loop` only) |
+| `--lr-schedule cosine\|linear\|constant` | cosine | Edit-budget decay (`--loop` only) |
 | `--split TRAIN:SEL:TEST` | 4:1:5 | Ratio; refuses if D_sel < 5 |
 | `--optimizer-model MODEL` | tier.deep | Reflects + proposes |
 | `--target-model MODEL` | tier.subagent | Executes the skill |
 | `--judge-model MODEL` | tier.reasoning | Scores rollouts |
 | `--reflect-max-tokens N` | `skillopt.reflect_max_tokens`, else 32000 (thinking optimizer) / 4096 | Output cap for every optimizer call. See [Optimizer output cap](#optimizer-output-cap) |
 | `--models-strict` | `skillopt.models_strict`, else off | Abort before any spend unless every active model was explicitly configured. See [Strict mode](#strict-mode) |
-| `--patch \| --rewrite` | patch | Edit ops only vs. full rewrites (both go through the validation gate) |
+| `--loop` | off | Run the iterative reflect loop instead of the default one gated rewrite. See [One-shot rewrite](#one-shot-rewrite-the-default) |
 | `--dry-run` | off | Models banner, strict verdict and cost preview; zero model calls |
 | `--no-mutate` | off | Write proposed.md, don't replace SKILL.md (no held-out needed) |
 | `--allow-mutate-bundled` | off | Required to mutate gbrain-bundled skills in place — ALSO requires `--held-out` (>=5 rows) or the run hard-refuses |
@@ -144,10 +165,10 @@ early. `stop_reason` records why the loop ended: `completed`,
 
 ### Optimizer output cap
 
-Every optimizer call has one output cap: both reflect calls in patch mode and
-in `--rewrite` mode, plus the eval-internal one-shot rewrite ablation.
-`--rewrite` itself works the same as before. Its edits still go through the
-validation gate. The CLI does not expose the ungated one-shot path.
+Every optimizer call has one output cap: the one-shot rewrite and both
+`--loop` reflect calls. A one-shot rewrite needs room for the whole body, so a
+cap smaller than the body refuses before the call
+(`one_shot_rewrite_output_cap_too_small`).
 
 Where the cap comes from, highest precedence first:
 
@@ -182,6 +203,13 @@ truncated: sent X of Y chars)` and the receipt records
 `skill_body_truncated: {sent_chars, total_chars}`. The one-shot rewrite
 refuses to run on a truncated body.
 
+The success criteria in the prompt are built from the **train** tasks' judges
+only. A rule check or LLM rubric is written out only when every train task
+carries it (a format rule such as "include a Confidence: line"); one that
+varies by task is an answer key and is described without its argument.
+Selection, test and held-out judges never reach the optimizer, and neither do
+held-out verdicts.
+
 ### Unusable replies fail loud
 
 Each optimizer call records at most one error. When the reply hit the cap, its
@@ -213,8 +241,8 @@ The reflect codes are emitted with a mode, as `reflect_failure_<class>` or
 | <a id="reflect_context_overflow"></a>`reflect_context_overflow` | Provider rejected the prompt as too long | Same as above, detected by the provider | Lower the cap, or use a larger-window `--optimizer-model` |
 | <a id="reflect_failed"></a>`reflect_failed` | Reflect provider call failed | Provider/network/auth error | Check `gbrain models doctor`, then resume |
 | <a id="one_shot_rewrite_truncated"></a>`one_shot_rewrite_truncated` | One-shot rewrite hit the output cap; nothing promoted | Cap too small for a full rewrite | Raise `--reflect-max-tokens` / `skillopt.reflect_max_tokens` |
-| <a id="one_shot_rewrite_output_cap_too_small"></a>`one_shot_rewrite_output_cap_too_small` | One-shot refused before calling: the body cannot fit the cap | `ceil(body chars / 3) + 1024` exceeds the cap | Raise the cap, or use the default reflect mode |
-| <a id="one_shot_rewrite_body_truncated"></a>`one_shot_rewrite_body_truncated` | One-shot refused: the body had to be truncated | Skill body larger than the optimizer's context | Lower the reflect cap (it shares the window), use a larger-window `--optimizer-model`, or use reflect mode |
+| <a id="one_shot_rewrite_output_cap_too_small"></a>`one_shot_rewrite_output_cap_too_small` | One-shot refused before calling: the body cannot fit the cap | `ceil(body chars / 3) + 1024` exceeds the cap | Raise the cap, or use `--loop` |
+| <a id="one_shot_rewrite_body_truncated"></a>`one_shot_rewrite_body_truncated` | One-shot refused: the body had to be truncated | Skill body larger than the optimizer's context | Lower the reflect cap (it shares the window), use a larger-window `--optimizer-model`, or use `--loop` |
 | <a id="one_shot_rewrite_empty_reply"></a>`one_shot_rewrite_empty_reply` | One-shot reply was empty | Optimizer is not following the rewrite contract | Try a different `--optimizer-model` |
 | <a id="one_shot_rewrite_failed"></a>`one_shot_rewrite_failed` | One-shot provider call failed | Provider/network/auth error | Check `gbrain models doctor`, then resume |
 | <a id="budget_exhausted"></a>`budget_exhausted` | Run aborted at the cost cap | Spend (including each call's full-cap reservation) reached `--max-cost-usd`; or, when the detail says `no_pricing`, gbrain has no price for a model, so the cap cannot be enforced | Raise `--max-cost-usd` (cycle: `cycle.skillopt.per_skill_cap_usd`), or lower the reflect cap. For `no_pricing`: look up the model's price and run the `gbrain pricing set` command the receipt's `no_pricing.register_command` names, then resume ([registering a model price](../operations/spend-controls.md#registering-a-model-price)) |
@@ -241,7 +269,7 @@ Example `errored` summary (stderr):
 [skillopt] Fix (reflect_truncated): The optimizer ran out of output tokens. Raise the cap: --reflect-max-tokens <n> or gbrain config set skillopt.reflect_max_tokens <n>. See docs/guides/skillopt.md#reflect_truncated
 [skillopt] Run id: so-20260928-1a2b3c
 [skillopt] Checkpoint: skills/meeting-prep/skillopt/checkpoint-so-20260928-1a2b3c.json
-[skillopt] Resume: gbrain skillopt meeting-prep --resume so-20260928-1a2b3c --skills-dir skills --benchmark skills/meeting-prep/skillopt-benchmark.jsonl --split 4:1:5 --epochs 4 --batch-size 8 --lr 4 --lr-schedule cosine --optimizer-model openai:gpt-5.2 --target-model anthropic:claude-sonnet-5 --judge-model anthropic:claude-sonnet-5 --reflect-max-tokens 8192 --max-cost-usd 5 --max-runtime-min 30
+[skillopt] Resume: gbrain skillopt meeting-prep --resume so-20260928-1a2b3c --skills-dir skills --benchmark skills/meeting-prep/skillopt-benchmark.jsonl --split 4:1:5 --epochs 4 --batch-size 8 --lr 4 --lr-schedule cosine --optimizer-model openai:gpt-5.2 --target-model anthropic:claude-sonnet-5 --judge-model anthropic:claude-sonnet-5 --reflect-max-tokens 8192 --loop --max-cost-usd 5 --max-runtime-min 30
 ```
 
 ## Model provenance
@@ -419,7 +447,7 @@ refuses to start when the estimate exceeds `--max-cost-usd`.
 | Frontmatter mutation forbidden | D5 | Routing surface drift (`check-resolvable` regression) |
 | Per-skill DB lock | D14 | Two concurrent runs corrupting history/versions |
 | Bundled-skill gate | D16 | Auto-mutating skills shipped with gbrain (in-place mutation requires `--allow-mutate-bundled` + a `--held-out` set of >=5 benchmark-disjoint tasks; else hard-refuse + proposed.md) |
-| Held-out gate | F11 | Accepting a candidate that overfits its own benchmark — `--held-out` refuses a candidate whose held-out score regresses below baseline |
+| Held-out gate | F11 | Accepting a candidate that overfits its own benchmark — with `--held-out`, nothing is written until the final champion is checked once against the baseline; a regression leaves the skill unchanged and the optimizer never sees the verdict |
 | Bootstrap review sentinel | D15 | Self-referential benchmark gaming |
 | Read-only tool sandbox in rollouts | D13 | Optimization runs writing junk pages to your brain |
 | History-intent-first atomic commit | D8 | Half-written SKILL.md on crash |
@@ -464,7 +492,9 @@ around it; fix the code and re-benchmark instead.
 ### Sizing `--max-cost-usd`
 
 The preflight estimate is a floor, not a ceiling — reflect retries, judge
-re-runs, and the held-out gate add real spend. Rough per-run scaling:
+re-runs, and the held-out gate add real spend. Rough per-run scaling for
+`--loop` (the default one-shot rewrite makes one forward pass of `--batch-size`
+tasks, one gated rewrite and one gate pass):
 
     rollouts ≈ (epochs × steps_per_epoch × batch_size × 1)   # forward passes
              + (accept-gate candidates × |D_sel| × 3)         # median-of-3

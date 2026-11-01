@@ -1387,6 +1387,14 @@ More: [docs/guides/move-to-postgres.md#graduated-datastore](../../docs/guides/mo
 |---|---|---|---|---|---|---|
 | `gbrain eval run-all` was asked for a suite it does not run in-process (longmemeval or replay); nothing ran. | run-all runs only wired suites (brainbench). Recording a skipped run and exiting 0 would read as a completed sweep with no numbers behind it. | Run each requested suite with its own command (`gbrain eval longmemeval <dataset.jsonl> --mode <mode> --record`, `gbrain eval replay --mode <mode>`), once per mode, or drop it from --suites. | agent | `repeat the read that failed` | 1 | no |
 
+### explicit_tasks_conflict
+
+<a id="explicit_tasks_conflict"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| SkillOpt was given explicit task lists and a benchmark file; it takes one or the other. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
 ### export_limit
 
 <a id="export_limit"></a>

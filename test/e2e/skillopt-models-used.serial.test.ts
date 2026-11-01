@@ -99,7 +99,7 @@ async function run(over: Partial<SkillOptOpts> = {}) {
     optimizerModel: SONNET,
     targetModel: HAIKU,
     judgeModel: SONNET,
-    mode: 'patch',
+    mode: 'patch', optimizerMode: 'reflect',
     dryRun: false,
     noMutate: false,
     allowMutateBundled: true,

@@ -7,6 +7,11 @@ export const SKILLOPT_HELP_TEXT = `gbrain skillopt <skill-name> [flags]
 Self-evolving skill optimization. Treats SKILL.md as the trainable parameters
 of a frozen agent. Validation-gated, budget-capped, atomic-versioned.
 
+By default it runs ONE gated rewrite: a forward pass on one train batch, one
+whole-body rewrite, then the selection gate. --loop runs the iterative edit
+loop instead; on gbrain's benchmarks it has not yet beaten the one-shot rewrite
+(same held-out score at ~1.8x the cost), so it is opt-in until it does.
+
 Based on SkillOpt (arXiv 2605.23904, MSR May 2026).
 
 Required (one of):
@@ -22,7 +27,8 @@ Required (one of):
                                 after human review)
   --bootstrap-reviewed          Confirm bootstrap benchmark was hand-reviewed
 
-Training knobs:
+Training knobs (--epochs, --lr, --lr-schedule apply to --loop only;
+--batch-size is also the one-shot forward-pass size):
   --epochs N                    Default 4
   --batch-size N                Default 8
   --lr N                        Max edits per step. Default 4
@@ -49,8 +55,8 @@ Models:
                                 Same as skillopt.models_strict=true.
 
 Modes:
-  --patch                       Edit ops only (default; safer)
-  --rewrite                     Allow full rewrites of sections
+  --loop                        Iterative reflect loop (edit ops, epochs).
+                                Default is one gated one-shot rewrite.
   --dry-run                     Models plan, strict verdict + cost estimate,
                                 no LLM calls (exit 1 only on a strict failure)
   --no-mutate                   Write proposed.md without replacing SKILL.md

@@ -187,7 +187,7 @@ jobs:
   # file; the PGLite arm also runs in the unit lane). The list is test/postgres-unit-arms.txt;
   # scripts/check-postgres-lane-coverage.ts fails a new DATABASE_URL-gated arm
   # until it is listed there or wrapped in a test/e2e registerPostgresTests
-  # file. The twelve shards (ARM_SHARDS in scripts/postgres-unit-arms.ts) are
+  # file. The thirteen shards (ARM_SHARDS in scripts/postgres-unit-arms.ts) are
   # balanced by measured runtime (scripts/postgres-arm-weights.json, mined
   # from this job's ARM_FILE lines). Each job runs two files at a time, each
   # worker against its own PostgreSQL service; a shard's two-worker makespan,
