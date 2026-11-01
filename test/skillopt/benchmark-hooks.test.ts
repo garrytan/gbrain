@@ -79,6 +79,22 @@ describe('rollout hook (B1.3)', () => {
     expect(signal?.aborted).toBe(true);
   });
 
+  test('a hook that throws synchronously fails the gate and leaves no deadline timer behind', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (e: unknown) => { unhandled.push(e); };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const hook: RolloutBatchHook = () => { throw new Error('sync hook failure'); };
+      const err = await runValidationGate({ engine, candidateSkillText: 'S', selSet: tasks('s', 5), bestScore: 0, targetModel: 'm', rolloutHook: hook, deadlineMs: Date.now() + 30 })
+        .then(() => null, (e) => e);
+      expect(String(err?.message)).toContain('sync hook failure');
+      await new Promise((r) => setTimeout(r, 80));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   test('a batch answered after the runtime deadline is not a score', async () => {
     const hook: RolloutBatchHook = async (req) => { await new Promise((r) => setTimeout(r, 30)); return req.tasks.map(() => [row(1), row(1), row(1)]); };
     const deadlineMs = Date.now() + 10;

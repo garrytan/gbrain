@@ -93,7 +93,7 @@ async function hookBatch(opts: ValidateGateOpts, hook: RolloutBatchHook, runsPer
       reject(new Error(SKILLOPT_RUNTIME_EXCEEDED));
     }, Math.max(0, deadline - Date.now()));
   });
-  const call = withoutBudgetTracker(() => hook({
+  const call = Promise.resolve().then(() => withoutBudgetTracker(() => hook({
     phase: opts.phase ?? 'sel_gate',
     skillText: opts.candidateSkillText,
     skillSha256: createHash('sha256').update(opts.candidateSkillText).digest('hex'),
@@ -101,7 +101,7 @@ async function hookBatch(opts: ValidateGateOpts, hook: RolloutBatchHook, runsPer
     runsPerTask,
     epoch: opts.epoch ?? 0,
     step: opts.step ?? 0,
-  }, controller.signal));
+  }, controller.signal)));
   let rows: ScoredRollout[][];
   try {
     rows = await (expired ? Promise.race([call, expired]) : call);
