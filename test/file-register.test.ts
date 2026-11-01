@@ -153,6 +153,17 @@ describe('file_verify', () => {
     expect(changed).toMatchObject({ present: true, matches: false });
   });
 
+  test('a backend that fails is an error, never a list of files reported missing', async () => {
+    // A row the backend cannot be asked about (its path escapes the local root, so the local backend throws, as an
+    // S3 backend throws when the store does not answer).
+    await engine.executeRaw(
+      `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata) VALUES ('notes/broken', 'b.txt', '../escaped/b.txt', 'text/plain', 1, $1, '{}'::jsonb)`,
+      ['b'.repeat(64)],
+    );
+    const error = await refusal(() => operationsByName.file_verify.handler(ctx(), { slug: 'notes/broken' }));
+    expect(error.code).toBe('storage_error');
+  });
+
   test('a storage path with no row is refused', async () => {
     const error = await refusal(() => operationsByName.file_verify.handler(ctx(), { storage_path: 'no/such/row.txt' }));
     expect(error.code).toBe('storage_error');

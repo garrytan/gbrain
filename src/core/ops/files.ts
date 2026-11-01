@@ -317,6 +317,16 @@ const file_register: Operation = {
   },
 };
 
+/** Whether the backend holds an object; a backend that cannot be asked is an error, never an object reported missing. */
+async function present(storage: { exists(path: string): Promise<boolean> }, path: string): Promise<boolean> {
+  try {
+    return await storage.exists(path);
+  } catch (error) {
+    throw opError('storage_error', `Could not reach the storage backend: ${error instanceof Error ? error.message : String(error)}`,
+      'Nothing about the files is known until the storage backend answers. Check it, then ask again.');
+  }
+}
+
 // The same bound file_list keeps, for the same reason.
 const FILE_VERIFY_LIMIT = 100;
 
@@ -356,7 +366,7 @@ const file_verify: Operation = {
         throw opError('storage_error', `File not found: ${storagePath}`, 'No file row has that storage_path. List the stored files with file_verify and no storage_path.');
       }
       const recorded = row(rows[0] as Record<string, unknown>);
-      if (!(await storage.exists(storagePath))) return { ...recorded, present: false, matches: false };
+      if (!(await present(storage, storagePath))) return { ...recorded, present: false, matches: false };
       const { hashStoredObject } = await import('../storage.ts');
       const read = await hashStoredObject(storage, storagePath);
       return {
@@ -374,8 +384,7 @@ const file_verify: Operation = {
       ORDER BY ${slug === undefined ? 'page_slug, filename' : 'filename'} LIMIT $1`, slug === undefined ? [FILE_VERIFY_LIMIT] : [FILE_VERIFY_LIMIT, slug]);
     const out = [];
     for (const r of rows) {
-      const present = await storage.exists(String((r as Record<string, unknown>).storage_path)).catch(() => false);
-      out.push({ ...row(r as Record<string, unknown>), present });
+      out.push({ ...row(r as Record<string, unknown>), present: await present(storage, String((r as Record<string, unknown>).storage_path)) });
     }
     return out;
   },
