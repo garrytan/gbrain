@@ -35,7 +35,7 @@ function fixture() {
   return { call, credentials, setAckCheck: (check: () => void) => { checkAcknowledgment = check; } };
 }
 
-for (const harness of ['claude-code', 'codex', 'opencode']) test(`${harness} connect installs a namespaced owned router in the documented native directory`, async () => {
+for (const harness of ['claude-code', 'codex', 'opencode']) test(`${harness} connect installs a namespaced owned router in the documented native directory`, async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
   const root = temp(), f = fixture();
   await withEnv({ HOME: root, CLAUDE_CONFIG_DIR: undefined, CODEX_HOME: join(root, '.codex'), XDG_CONFIG_HOME: join(root, '.config') }, async () => {
     const expected = harness === 'claude-code' ? join(root, '.claude', 'skills') : harness === 'codex' ? join(root, '.agents', 'skills') : join(root, '.config', 'opencode', 'skills');
@@ -62,9 +62,9 @@ for (const harness of ['claude-code', 'codex', 'opencode']) test(`${harness} con
     expect(removed.shared_skills?.status).toBe('left'); expect(existsSync(path)).toBe(false);
     expect(readFileSync(join(expected, 'unrelated', 'SKILL.md'), 'utf8')).toBe('User-owned skill');
   });
-});
+}));
 
-test('native edits block reinstall before active-reference changes and survive leave', async () => {
+test('native edits block reinstall before active-reference changes and survive leave', async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
   const root = temp(), f = fixture();
   const opts = { harness: 'codex', configPath: join(root, 'config.toml'), nativeSkillsDir: join(root, 'skills'), toolCaller: f.call };
   const first = await installHarnessConnection(f.credentials, opts);
@@ -78,9 +78,9 @@ test('native edits block reinstall before active-reference changes and survive l
   const left = await installHarnessConnection(f.credentials, { ...opts, remove: true });
   expect(left.shared_skills?.status).toBe('left_with_retained_files');
   expect(readFileSync(shared.native_router_path, 'utf8')).toBe('# User edited native router');
-});
+}));
 
-test('unowned and symlinked native destinations are never adopted', async () => {
+test('unowned and symlinked native destinations are never adopted', async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
   const root = temp();
   const identity = { brain_id: randomUUID(), installation_id: randomUUID(), adapter: 'claude-code' };
   const input = { ...identity, state_root: join(root, 'state'), skills_dir: join(root, 'skills'), connection_name: 'fixture', content: body };
@@ -91,9 +91,9 @@ test('unowned and symlinked native destinations are never adopted', async () => 
   const foreign = join(root, 'foreign'); mkdirSync(foreign); symlinkSync(foreign, join(input.skills_dir, plan.name));
   expect(() => prepareNativeRouter(input)).toThrow('symlink');
   expect(readdirSync(foreign)).toEqual([]);
-});
+}));
 
-test('native write-ahead receipt resumes an interrupted installation and different connections do not collide', async () => {
+test('native write-ahead receipt resumes an interrupted installation and different connections do not collide', async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
   const root = temp();
   const identity = { brain_id: randomUUID(), installation_id: randomUUID(), adapter: 'opencode' };
   const input = { ...identity, state_root: join(root, 'state'), skills_dir: join(root, 'skills'), connection_name: 'first', content: body };
@@ -112,14 +112,14 @@ test('native write-ahead receipt resumes an interrupted installation and differe
   await installNativeRouter(other);
   expect((await removeNativeRouter(input.state_root, identity)).retained).toBe(false);
   expect(existsSync(other.path)).toBe(true);
-});
+}));
 
-test('manual harnesses have no invented native discovery directory', () => {
+test('manual harnesses have no invented native discovery directory', async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
   for (const harness of ['muse', 'grok-bot', 'generic', 'openclaw']) expect(nativeSharedSkillsDirectory(harness)).toBeNull();
   expect(nativeSharedSkillsDirectory('claude')).toBe(nativeSharedSkillsDirectory('claude-code'));
-});
+}));
 
-for (const edited of [false, true]) test(`expired credentials do not prevent local native cleanup (edited=${edited})`, async () => {
+for (const edited of [false, true]) test(`expired credentials do not prevent local native cleanup (edited=${edited})`, async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
   const root = temp(), f = fixture();
   const opts = { harness: 'codex', configPath: join(root, 'config.toml'), nativeSkillsDir: join(root, 'skills') };
   const installed = await installHarnessConnection(f.credentials, { ...opts, toolCaller: f.call });
@@ -131,9 +131,9 @@ for (const edited of [false, true]) test(`expired credentials do not prevent loc
   expect(existsSync(path)).toBe(edited);
   if (edited) expect(readFileSync(path, 'utf8')).toBe('User edited native router');
   expect(readHarnessConnectionStatus(opts).current_authority).toBe('unprobed');
-});
+}));
 
-test('connect status reads only the local receipt without credentials, network or writes', async () => {
+test('connect status reads only the local receipt without credentials, network or writes', async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
   const root = temp(), f = fixture();
   await withEnv({ HOME: root, CLAUDE_CONFIG_DIR: join(root, '.claude') }, async () => {
     const installed = await installHarnessConnection(f.credentials, { harness: 'claude-code', toolCaller: f.call });
@@ -153,4 +153,4 @@ test('connect status reads only the local receipt without credentials, network o
     expect(status.stdout).not.toContain(f.credentials.access_token!);
     expect(readFileSync(receipt.native_router_path, 'utf8')).toBe(before);
   });
-});
+}));
