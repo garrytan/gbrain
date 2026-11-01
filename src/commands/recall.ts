@@ -850,6 +850,7 @@ async function fetchCursorPage(engine: BrainEngine, flags: ParsedFlags, sourceId
     activeOnly: !flags.includeExpired,
     limit: flags.limit,
     excludeAuditRows: true,
+    eligibility: {},
     grep: flags.grep ?? undefined,
     sessionId: flags.sessionId || undefined,
     ...narrow,
@@ -889,6 +890,7 @@ async function fetchRowsLocal(
     return engine.listSupersessions(sourceId, {
       since: resolvedSince ?? undefined,
       limit: flags.limit,
+      eligibility: {},
     });
   }
   // An explicit `--since DURATION` / `--today` cutoff is a "what happened in
@@ -910,6 +912,7 @@ async function fetchRowsLocal(
           limit: flags.limit,
           grep: flags.grep ?? undefined,
           excludeAuditRows: true,
+          eligibility: {},
         })
       : engine.listFactsByEntity(sourceId, entitySlug, {
           sessionId: flags.sessionId || undefined,
@@ -917,6 +920,7 @@ async function fetchRowsLocal(
           limit: flags.limit,
           grep: flags.grep ?? undefined,
           excludeAuditRows: true,
+          eligibility: {},
         })));
     const rows = mergeNewestFirst(lists, flags.limit, resolvedSince && !windowEventTime ? r => r.created_at : r => r.valid_from ?? r.created_at);
     // #4720: the bare positional is entity-first, but keyless/casual usage
@@ -936,6 +940,7 @@ async function fetchRowsLocal(
         limit: flags.limit,
         grep: flags.entity.toLowerCase(),
         excludeAuditRows: true,
+        eligibility: {},
       });
       if (textRows.length > 0) {
         noteEntityTextFallback(flags.entity, textRows.length);
@@ -953,6 +958,7 @@ async function fetchRowsLocal(
         limit: flags.limit,
         grep: flags.grep ?? undefined,
         excludeAuditRows: true,
+        eligibility: {},
       });
     }
     return engine.listFactsBySession(sourceId, flags.sessionId, {
@@ -960,6 +966,7 @@ async function fetchRowsLocal(
       limit: flags.limit,
       grep: flags.grep ?? undefined,
       excludeAuditRows: true,
+      eligibility: {},
     });
   }
   if (resolvedSince) {
@@ -978,6 +985,7 @@ async function fetchRowsLocal(
       limit: flags.limit,
       grep: flags.grep ?? undefined,
       excludeAuditRows: true,
+      eligibility: {},
     });
   }
   return engine.listFactsSince(sourceId, new Date(0), {
@@ -986,6 +994,7 @@ async function fetchRowsLocal(
     limit: flags.limit,
     grep: flags.grep ?? undefined,
     excludeAuditRows: true,
+    eligibility: {},
   });
 }
 
