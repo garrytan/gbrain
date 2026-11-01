@@ -56,6 +56,16 @@ export function quotesBody(ctx: Pick<OperationContext, 'remote'>, page: Pick<Pag
 }
 
 /**
+ * #8384 (AN5): a remote read quoted only because the page's origin is unverified (`unknown`: saved before gbrain tracked
+ * trust, its source unclaimed) says, once per session, which owner command clears it. The quoting itself is unchanged.
+ */
+export function unverifiedOriginNotice(ctx: Pick<OperationContext, 'remote' | 'emitNotice'>, page: Pick<Page, 'type' | 'slug'>, trust: Pick<TrustFields, 'trust_tier'> | undefined): void {
+  if (ctx.remote === false || isQuotedPageType(page.type) || (trust?.trust_tier ?? 'unknown') !== 'unknown') return;
+  ctx.emitNotice?.({ code: 'quoted_unverified_origin', kind: 'info', dedupe_key: 'quoted_unverified_origin',
+    why: `${page.slug} is quoted as source material because its origin is unverified: it was saved before gbrain tracked trust and its source is not claimed. If these are the owner's own notes, the brain host's operator runs gbrain trust claim-sources (preview with gbrain trust claim-sources --dry-run --json); gbrain trust backfill classifies the rest. Until then such pages stay quoted.` });
+}
+
+/**
  * GST-687: an untrusted reader's reading shapes of a third-party page (get_page compiled_truth, timeline and view 'read'
  * windows; fetch text) carry its tool-call blocks summarized, as search does. The round-trip shapes (include_content,
  * view 'markdown') and gbrain's own thin client keep the stored bytes inside the fence.

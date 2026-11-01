@@ -42,6 +42,20 @@ identifiers and attribution are available in the pre-removal Git revision
 - On Postgres, a database role that neither owns the folder access tables nor bypasses row-level security now needs read policies on them, and an unfiltered policy on `slug_rename_history` (docs/ENGINES.md, "Folder access tables"). Without them its page writes are refused with `writer_coordinator_required` (`unreadable_state`) and its reads show nothing, instead of reading the tables as empty and treating every page as unruled. The owner, BYPASSRLS roles and PGLite are unaffected.
 - A harness that sends an audience its credential's `may_act_for` does not list gets `on_behalf_of_not_permitted` with the operator's command; an audience inside tool arguments is always refused (`on_behalf_of_in_arguments`). `may_act_for: *` is accepted and doctor warns (`access_may_act_for_wildcard`).
 
+## [0.60.539.0] - 2026-11-01
+
+**A remote `put_page` of a page an agent read whole now keeps its frontmatter and the code blocks it added, and timeline sources and ontology values are quoted below "your notes" like the rest of their rows.**
+
+Before, an agent that read a page with `include_content`, added a fenced code block, or had a newline prepended and the closing fence replaced, could store the page with the read's fence still in the body (its frontmatter inside it) or with its own code block's opener stripped. A timeline entry's free-text `source` and the ontology values `volunteer_chronicle`, `ontology_get` and `ontology_conflicts` return reached remote readers raw. Now the write keeps the page as the agent meant it, those fields are quoted by tier, and text copied back from them is stored without the fence. A remote read quoted only because the page's origin is unverified names the command that clears it.
+
+### Itemized changes
+
+- Remote `put_page` finds a whole-markdown read's closing fence as the first line that is exactly that fence outside a code block the content opens itself, so a backtick code block added inside, in place of or after the read is stored whole; a read with blank lines before its marker and its closing line replaced keeps its frontmatter. A fence naming another page, or one after other text, is stored as written. Content holding many markers that never close is kept as written in linear time (the unquote shares one scan budget per text).
+- `get_timeline`, the chronicle reads and `volunteer_chronicle` quote a timeline row's `source` with its summary and detail; remote `add_timeline_entry` stores a copied source without the fence.
+- `volunteer_chronicle`'s `ontologies`, `ontology_get` and `ontology_conflicts` quote a value by its fact's stored tier for remote readers (`quoted: "transcript"`); remote `ontology_propose` stores a copied value without the fence.
+- A remote `get_page` or `fetch` of a page quoted because its trust tier is `unknown` carries a `quoted_unverified_origin` info notice, once per session, naming `gbrain trust claim-sources` (preview with `--dry-run --json`) and `gbrain trust backfill`. Quoting is unchanged.
+- Tests: `test/search-transcript-quote-8384.test.ts` (PGLite and Postgres), red on master for each change.
+
 ## [0.60.538.0] - 2026-11-01
 
 **Agents connected over MCP now see the chronicle reads, takes reads and a quoted page's title and frontmatter quoted as source material, and the context gbrain's hooks inject quotes facts below "your notes" too.**

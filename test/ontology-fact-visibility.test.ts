@@ -14,6 +14,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { fenceTranscriptText, unquoteFactText } from '../src/core/search/transcript-quote.ts';
 
 let engine: PGLiteEngine;
 const ALICE = 'people/alice-example';
@@ -28,6 +29,12 @@ function ctxOf(remote: boolean | undefined): OperationContext {
 const run = (name: string, remote: boolean | undefined, p: Record<string, unknown>) =>
   operationsByName[name].handler(ctxOf(remote), p) as Promise<unknown>;
 const values = (rows: unknown) => (rows as Array<{ dimension: string; value: string }>).map(r => `${r.dimension}=${r.value}`).sort();
+// #8384: an untrusted reader gets each value quoted by its fact's tier (these local proposals are below the owner's), exactly as recall quotes the fact.
+const remoteValues = (rows: unknown) => (rows as Array<{ dimension: string; value: string; fact_id: number }>).map(r => {
+  const raw = unquoteFactText(r.value);
+  expect(r.value).toBe(fenceTranscriptText(raw, `fact ${r.fact_id}`));
+  return `${r.dimension}=${raw}`;
+}).sort();
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
@@ -48,13 +55,13 @@ beforeEach(async () => {
 describe('ontology reads hide private observations from untrusted callers', () => {
   test('ontology_get: remote gets world rows only; local keeps every tier', async () => {
     for (const remote of [true, undefined]) {
-      expect(values(await run('ontology_get', remote, { entity: ALICE }))).toEqual(['decision_style=deliberate']);
+      expect(remoteValues(await run('ontology_get', remote, { entity: ALICE }))).toEqual(['decision_style=deliberate']);
     }
     expect(values(await run('ontology_get', false, { entity: ALICE }))).toEqual(['decision_style=deliberate', 'risk_tolerance=high privmarker']);
   });
 
   test('ontology_get: remote resolves the newest world value, not the newer private one', async () => {
-    expect(values(await run('ontology_get', true, { entity: BOB }))).toEqual(['role=advisor']);
+    expect(remoteValues(await run('ontology_get', true, { entity: BOB }))).toEqual(['role=advisor']);
     expect(values(await run('ontology_get', false, { entity: BOB }))).toEqual(['role=founder privmarker']);
   });
 
@@ -70,8 +77,8 @@ describe('ontology reads hide private observations from untrusted callers', () =
   test('volunteer_chronicle: remote ontologies carry no private observation', async () => {
     const remote = await run('volunteer_chronicle', true, { entities: `${ALICE},${BOB}` }) as { ontologies: Record<string, unknown> };
     expect(JSON.stringify(remote.ontologies)).not.toContain('privmarker');
-    expect(values(remote.ontologies[ALICE])).toEqual(['decision_style=deliberate']);
-    expect(values(remote.ontologies[BOB])).toEqual(['role=advisor']);
+    expect(remoteValues(remote.ontologies[ALICE])).toEqual(['decision_style=deliberate']);
+    expect(remoteValues(remote.ontologies[BOB])).toEqual(['role=advisor']);
     const local = await run('volunteer_chronicle', false, { entities: ALICE }) as { ontologies: Record<string, unknown> };
     expect(JSON.stringify(local.ontologies)).toContain('privmarker');
   });
@@ -80,7 +87,7 @@ describe('ontology reads hide private observations from untrusted callers', () =
     const viaDispatch = async (remote: boolean) => {
       const r = await dispatchToolCall(engine, 'ontology_get', { entity: ALICE }, { remote, sourceId: 'default', transport: remote ? 'stdio' : undefined });
       expect(r.isError).toBeFalsy();
-      return values(JSON.parse(r.content[0].text));
+      return (remote ? remoteValues : values)(JSON.parse(r.content[0].text));
     };
     expect(await viaDispatch(true)).toEqual(['decision_style=deliberate']);
     expect(await viaDispatch(false)).toEqual(['decision_style=deliberate', 'risk_tolerance=high privmarker']);
