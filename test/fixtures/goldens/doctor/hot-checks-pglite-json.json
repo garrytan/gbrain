@@ -574,6 +574,7 @@
                 "window_days": 1
               },
               "inspected": 2,
+              "outstanding": [],
               "paused_producers": [],
               "resources": [],
               "truncated": false,
@@ -4355,7 +4356,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "2 retrieval-affecting file(s) changed since HEAD: src/core/search/evidence-delivery.ts, src/core/search/transcript-quote.ts. Re-run `gbrain eval run-all` after committing these changes.",
+            "message": "No retrieval-affecting files changed in working tree.",
             "name": "eval_drift",
             "status": "ok"
           },
@@ -5537,6 +5538,7 @@
                 "window_days": 1
               },
               "inspected": 2,
+              "outstanding": [],
               "paused_producers": [],
               "resources": [],
               "truncated": false,
@@ -9318,7 +9320,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "2 retrieval-affecting file(s) changed since HEAD: src/core/search/evidence-delivery.ts, src/core/search/transcript-quote.ts. Re-run `gbrain eval run-all` after committing these changes.",
+            "message": "No retrieval-affecting files changed in working tree.",
             "name": "eval_drift",
             "status": "ok"
           },

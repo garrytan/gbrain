@@ -1,5 +1,10 @@
 # TODOS
 
+## Write-cap wedge follow-ups (filed 2026-11-01, GBRA-271, #8368)
+
+- [ ] **P3 — `owner_marker_missing` can name the plain self-transfer when another process sees a drifted APFS birth time (#8381).** **What:** the refusal compares the reservation's birth time exactly in the refusing process, and the self-transfer compares it exactly in the CLI process; on APFS the two can read tens of ns apart (#6501), so a long-lived process that created the checkout and recorded its reservation can recommend a self-transfer the CLI then refuses `recovery_required`. Nothing is written either way. **Fix:** one identity rule for both sides. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — Report a connection loss inside `failRefusedClaims`, and name page batches in the fair-share wording (#8383).** **What:** the group-refusal path releases the unfinished members on a transient database failure and returns without rethrowing, so the consumer's error report misses it; and the principal fair share also admits a `put_pages` or import batch whole, which the comment and `write-refusals.md` do not say. **Fix:** rethrow after the release; reword. **Effort:** S. **Priority:** P3.
+
 ## RLS backfill follow-ups (filed 2026-10-26, GBRA-95, #7625)
 
 - [ ] **P1 — Guard triggers fail open under a scoped write role without lookup-table policies (#7632).**

@@ -78,7 +78,7 @@ export const RUN_SCOPED_CODES: ReadonlySet<string> = new Set([
   'writer_not_quiesced', 'writer_admin_locked', 'unsupported_mutation_protocol', 'write_claim_lost', 'connection_lost',
   'permission_denied', 'schema_owner_required', 'scope_denied', 'config', 'auth', 'connector_holds_exhausted', 'transfer_in_progress', 'disk_full',
   'invalid_token', 'insufficient_scope', 'trusted_local_only', 'requires_local_engine', 'not_owner_host', 'host_identity_mismatch',
-  'recovery_required', 'cancelled', 'persistence_restart_required', 'writer_regrant_required', 'writer_manifest_rescope_required',
+  'recovery_required', 'owner_marker_missing', 'cancelled', 'persistence_restart_required', 'writer_regrant_required', 'writer_manifest_rescope_required',
   'connection_inherited_read_only',
 ]);
 

@@ -438,6 +438,7 @@ test/v0_37_gap_fill.serial.test.ts	reinit-pglite — backup + reinit	8	source-su
 test/w13-small-hardening.test.ts	P1.14 paid-consent lint wording	1	exec-scan
 test/worker-supervised-db-probe.test.ts	issue #1801 fix #2 — supervised DB self-defense	5	readFileSync
 test/write-attribution-legacy.test.ts	write attribution inventory	1	readFileSync
+test/write-cap-wedge-8368.test.ts	#8368 write-cap wedge (${kind})	4	readFileSync
 test/yaml-load-bounded-only.test.ts	js-yaml load is imported only by data-frontmatter.ts	2	readFileSync
 # unknown (detectors present, no attributable suite):
 # unknown	test/e2e/postgres-driver-install.test.ts

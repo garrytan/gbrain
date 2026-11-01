@@ -20,6 +20,7 @@ import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import { installPageProjection, readProjectionSnapshot } from '../src/core/page-state/projections.ts';
 import { durableGitRepo } from './helpers/git-publication.ts';
 import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
+import { PHYSICAL_ROOT_MARKER } from '../src/core/persistence/physical-root-record.ts';
 
 let engine: PGLiteEngine;
 const roots: string[] = [];
@@ -318,6 +319,32 @@ test('#6305: a Git effect this process cannot lock never parks and commits once 
   }
   expect(await effect()).toMatchObject({ state: 'queued', error_code: 'writer_lock_unavailable' });
   rmSync(f.binding.coordination_path!, { recursive: true, force: true });
+  await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now() WHERE request_id=$1::uuid AND kind='git'", [row.id]);
+  await runPersistenceEffects(engine, config, { hostId, limit: 1 });
+  expect((await effect())!.state).toBe('committed');
+});
+
+test('#8368: a Git effect whose checkout lost its ownership marker never parks and commits once the marker is back', async () => {
+  const f = await fixture();
+  durableGitRepo(f.root, ['page.md']);
+  const admitted = await admit(f);
+  const row = (await claimNextWrite(engine, hostId))!;
+  expect(row.id).toBe(admitted.id);
+  const published = await publishMutation(engine, row, { observedRevision: f.snapshot.revision, file: { path: f.file, root: f.root, content: 'After' },
+    apply: async tx => { await tx.putPage('page', page('After'), { sourceId: f.sourceId }); return {}; } }, hostId);
+  expect(published.state).toBe('committed');
+  await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now()+interval '1 hour' WHERE request_id=$1::uuid AND kind<>'git'", [row.id]);
+  const marker = join(f.root, PHYSICAL_ROOT_MARKER);
+  const bytes = readFileSync(marker);
+  rmSync(marker);
+  const effect = async () => (await engine.executeRaw<{ state: string; error_code: string | null }>(
+    "SELECT state,error_code FROM persistence_effects WHERE request_id=$1::uuid AND kind='git'", [row.id]))[0];
+  for (let attempt = 0; attempt < 7; attempt++) {
+    await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now() WHERE request_id=$1::uuid AND kind='git'", [row.id]);
+    await runPersistenceEffects(engine, config, { hostId, limit: 1 });
+  }
+  expect(await effect()).toMatchObject({ state: 'queued', error_code: 'owner_marker_missing' });
+  writeFileSync(marker, bytes, { mode: 0o600 });
   await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now() WHERE request_id=$1::uuid AND kind='git'", [row.id]);
   await runPersistenceEffects(engine, config, { hostId, limit: 1 });
   expect((await effect())!.state).toBe('committed');

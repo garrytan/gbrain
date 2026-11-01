@@ -51,8 +51,10 @@ for (const kind of backends) describe(`writer recovery (${kind})`, () => {
     if (damage === 'device') drift(f.root);
     if (damage === 'reservation' || damage === 'both') rmSync(physicalRootReservationPath(f.root));
     if (damage === 'stamp' || damage === 'both') rmSync(join(f.root, PHYSICAL_ROOT_MARKER));
-    await expect(acquireWorktree(f.binding)).rejects.toMatchObject({ code: 'recovery_required' });
-    await expect(administer('writer_transfer_prepare', { source_id: f.source })).rejects.toMatchObject({ code: 'recovery_required' });
+    // #8368: a marker missing from a directory its reservation still identifies has its own code; every other damage keeps recovery_required.
+    const refused = damage === 'stamp' ? 'owner_marker_missing' : 'recovery_required';
+    await expect(acquireWorktree(f.binding)).rejects.toMatchObject({ code: refused });
+    await expect(administer('writer_transfer_prepare', { source_id: f.source })).rejects.toMatchObject({ code: refused });
     const prepared = await administer('writer_transfer_prepare', { source_id: f.source, self_transfer: true }) as any;
     await administer('writer_transfer_accept', { source_id: f.source, path: f.root, expected_epoch: prepared.owner_epoch, manifest: prepared.manifest.digest, self_transfer: true });
     const binding = (await getWorktreeBinding(engine, f.source))!;

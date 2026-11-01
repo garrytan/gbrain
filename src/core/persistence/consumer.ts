@@ -1219,8 +1219,38 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       } finally { for (const member of rows) this.executing.delete(member.id); }
     } catch (error) {
       if (transientDatabaseFailure(error)) await this.releaseAfterConnectionLoss(claimed);
+      else if (error instanceof OperationError && (error.code === 'recovery_required' || error.code === 'owner_marker_missing')) return this.failRefusedClaims(claimed, error);
       throw error;
     }
+  }
+  /**
+   * #8368: a claimed group refused before it published by a deterministic ownership refusal (the checkout identity check
+   * of the group's worktree lock) is finished the way the single path finishes one request: each member still running
+   * under this claim, unpublished and without a recovery record, ends failed with the refusal's code, which releases its
+   * outstanding-request slot. Left running, every lease lapse re-claimed it into the same refusal, forever. One member
+   * that cannot be finished (its claim moved to another claimant, for one) is logged and left to its claim, and the rest
+   * still end; a connection loss gives the unfinished members back at once and is reported like the group path's.
+   */
+  private async failRefusedClaims(rows: WriteRequest[], error: OperationError): Promise<boolean> {
+    let progressed = false;
+    for (const [index, row] of rows.entries()) {
+      let done: WriteRequest;
+      try {
+        const current = await getWriteRequestById(this.engine, row.id);
+        if (!current || current.state !== 'running' || current.execution_token !== row.execution_token || current.recovery || current.publication_started) continue;
+        done = await finishUnpublishedFailure(this.engine, current, error, 'publication');
+      } catch (failure) {
+        if (transientDatabaseFailure(failure)) {
+          await this.releaseAfterConnectionLoss(rows.slice(index));
+          throw failure;
+        }
+        this.log('publication', failure instanceof OperationError ? failure.code : 'internal', failure instanceof Error ? failure.message : String(failure), '', row);
+        continue;
+      }
+      if (done.state === 'failed') this.log('publication', done.error_code ?? error.code, failureLogText(done), '', row);
+      if (this.settled(done)) progressed = true;
+    }
+    return progressed;
   }
   /**
    * #6712 (convergence mode f): a pass whose database connection died (a pooler restart, a dropped connection) gives

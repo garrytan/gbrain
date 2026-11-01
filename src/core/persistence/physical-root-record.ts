@@ -8,6 +8,7 @@ import { flushDirectory } from '../fs-durable.ts';
 import { digest, sha256 } from './digest.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
 import { OWNERSHIP_MARKER_GLOBS, PHYSICAL_ROOT_MARKER } from './root-metadata.ts';
+import { ownerMarkerMissingError } from './owner-marker.ts';
 
 export { OWNERSHIP_MARKER_GLOBS, PHYSICAL_ROOT_MARKER, isPhysicalRootMetadata } from './root-metadata.ts';
 const RESERVATION_PREFIX = '.gbrain-owner-';
@@ -252,6 +253,11 @@ export function physicalRootDirectoryChangedError(): OperationError {
 export function assertPhysicalRootStamp(directory: string, reservation: PhysicalRootReservation): void {
   const value = readPrivate(join(directory, PHYSICAL_ROOT_MARKER)) as PhysicalRootStamp | null;
   const info = statSync(directory, { bigint: true });
+  // #8368: no stamp in a directory the reservation still identifies exactly (device, inode, birth) lost only its marker, and
+  // the plain self-transfer re-creates it. A recreated or staged directory, one whose birth only drifted within tolerance
+  // (the self-transfer compares it exactly), or one the reservation cannot identify keeps the generic refusal.
+  if (value === null && reservation.initialDevice === info.dev.toString() && reservation.initialInode === info.ino.toString()
+    && reservation.initialBirth === info.birthtimeNs.toString()) throw ownerMarkerMissingError();
   if (!value || value.version !== 1 || value.token !== reservation.token || value.brainId !== reservation.brainId || value.worktreeId !== reservation.worktreeId
     || value.root !== reservation.root) throw physicalRootError();
   if (value.inode !== info.ino.toString() || !samePhysicalBirth(value.birth, info.birthtimeNs)) {

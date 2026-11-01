@@ -2985,6 +2985,16 @@ More: [docs/guides/repair.md#origin-twins](../../docs/guides/repair.md#origin-tw
 |---|---|---|---|---|---|---|
 | Sources cannot claim overlapping canonical directories. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### owner_marker_missing
+
+<a id="owner_marker_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The ownership marker (`.gbrain-owner.json`) is missing from a managed source's checkout root while the reservation beside the checkout still names this owner, so no write publishes there. | The marker binds the checkout directory to its owner. A cleanup or a restore that drops dotfiles removes it; a retry never brings it back, so a write refused with this code ends terminally and releases its outstanding-request slot. The verified self-transfer re-creates it for the same root on the owner host; creating or copying it by hand is refused. | On the brain host: gbrain sources writer status --source <id> --json (note admin_state), then gbrain sources writer transfer prepare <id> --self-transfer and transfer accept with the manifest it prints; then run the same gbrain sync again (a sync stops blocked_by_failures on the refused file, with no hold). Run: gbrain sources writer status --source '{source_id}' --json | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/write-refusals.md#owner_marker_missing](../../docs/guides/write-refusals.md#owner_marker_missing)
+
 ### owner_unavailable
 
 <a id="owner_unavailable"></a>

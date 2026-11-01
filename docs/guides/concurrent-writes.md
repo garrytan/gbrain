@@ -993,7 +993,11 @@ When `persistence_capacity` warns or fails, or a write is refused with
 
 1. Read the finding: `gbrain doctor --only persistence_capacity --json`.
    `details.resources[]` names the scope, resource, days left and `basis`;
-   `fix` is the reversible unblock.
+   `fix` is the reversible unblock. `details.outstanding[]` lists an
+   outstanding-request cap at 90% or more whose oldest request is over ten
+   minutes old (a healthy drain near the line stays ok), with the sources holding its slots;
+   requests that stopped settling (or wait behind a slow publication) hold them, so when it is the only finding, `fix`
+   is that source's read-only `gbrain sources writer status`, not a raise.
 2. Run the `gbrain config set <key> <value>` it prints on the brain host
    (undo with `gbrain config unset <key>`). Writes resume at once; retry the
    refused write with the same `request_id`.

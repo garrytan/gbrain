@@ -114,9 +114,10 @@ test('missing or torn ownership metadata fails closed even for an existing owner
   const f = await fixture();
   const binding = await withEnv({ GBRAIN_HOME: f.homes[0] }, () => claimWorktree(engine, f.sources[0], f.root, f.hosts[0]));
   rmSync(join(f.root, PHYSICAL_ROOT_MARKER));
-  await expect(acquireWorktree(binding)).rejects.toMatchObject({ code: 'recovery_required' });
+  // #8368: a marker missing from the directory its reservation still identifies has its own code, and still fails closed.
+  await expect(acquireWorktree(binding)).rejects.toMatchObject({ code: 'owner_marker_missing' });
   await withEnv({ GBRAIN_HOME: f.homes[0] }, async () => {
-    await expect(claimWorktree(engine, f.sources[0], f.root, f.hosts[0])).rejects.toMatchObject({ code: 'recovery_required' });
+    await expect(claimWorktree(engine, f.sources[0], f.root, f.hosts[0])).rejects.toMatchObject({ code: 'owner_marker_missing' });
   });
   writeFileSync(physicalRootReservationPath(f.root), '{torn');
   await expect(acquireWorktree(binding)).rejects.toMatchObject({ code: 'recovery_required' });

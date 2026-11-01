@@ -189,6 +189,7 @@ Every hold and error has three fields, from one table
 | `preparation_systemic` | systemic | upgrade, retry | yes | always |
 | `drain_stalled` | systemic | none | yes | always |
 | `recovery_required` | systemic | none | yes | always |
+| `owner_marker_missing` | systemic | none | yes | always |
 | `owner_unavailable` | systemic | none | yes | always |
 | `writer_coordinator_required` | systemic | none | yes | always |
 | `permission_denied` | systemic | none | yes | always |
