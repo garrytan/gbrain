@@ -271,7 +271,7 @@ describe('--rewrite mode', () => {
     expect(optimizerCalls.length).toBeGreaterThan(0);
     expect(optimizerCalls.some((c) => c.mode === 'one-shot')).toBe(false);
     expect(res.outcome).toBe('accepted');
-    expect(res.receipt.optimizer_mode).toBeUndefined();
+    expect(res.receipt.optimizer_mode).toBe('reflect');
   });
 });
 

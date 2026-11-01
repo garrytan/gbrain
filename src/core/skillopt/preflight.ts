@@ -84,6 +84,8 @@ export interface PreflightOpts {
   judgeModels?: string[];
   /** Operator `pricing.overrides`, the same map the run's BudgetTracker uses. */
   pricingOverrides?: PricingOverrides;
+  /** B1.3: a rollout hook runs (and pays for) every rollout, so only optimizer calls are priced here. */
+  rolloutsExternal?: boolean;
 }
 
 export type ReservationRole = 'optimizer' | 'target' | 'judge';
@@ -106,8 +108,10 @@ const RESERVATION_CONTROL: Record<ReservationRole, string> = {
 export function singleCallReservations(opts: PreflightOpts): CallReservation[] {
   const reserve = (role: ReservationRole, model: string, maxOut: number): CallReservation =>
     ({ role, model, max_output_tokens: maxOut, reservation_usd: reservationCostUsd(model, 'chat', 0, maxOut, opts.pricingOverrides) });
+  const optimizer = reserve('optimizer', opts.optimizerModel, opts.reflectMaxTokens ?? defaultMaxOutputTokens(opts.optimizerModel));
+  if (opts.rolloutsExternal) return [optimizer];
   return [
-    reserve('optimizer', opts.optimizerModel, opts.reflectMaxTokens ?? defaultMaxOutputTokens(opts.optimizerModel)),
+    optimizer,
     reserve('target', opts.targetModel, defaultMaxOutputTokens(opts.targetModel)),
     ...(opts.judgeModels ?? [opts.judgeModel]).map((m) => reserve('judge', m, skilloptOutputCap(m, JUDGE_SITE_MAX_TOKENS))),
   ];
@@ -182,11 +186,11 @@ export function estimateCost(opts: PreflightOpts): PreflightEstimate {
     + opts.selSize * VALIDATION_RUNS_PER_TASK * totalSteps // per-step validation
     + opts.testSize * 2 // final test judges (best + baseline)
     + heldOutRollouts; // F11 held-out judges (1 per held-out rollout)
-  const judge_calls = judgeModels.length > 0 ? judgeCallsRaw : 0;
+  const judge_calls = judgeModels.length > 0 && !opts.rolloutsExternal ? judgeCallsRaw : 0;
 
   // Cost per call type. Judge calls price at the priciest judge the run can reach.
   const lookup = (model: string) => priceFor(model, 'chat', opts.pricingOverrides)?.pricing ?? null;
-  const unpriced = [...new Set([opts.targetModel, opts.optimizerModel, ...(judge_calls > 0 ? judgeModels : [])])]
+  const unpriced = [...new Set([...(opts.rolloutsExternal ? [] : [opts.targetModel]), opts.optimizerModel, ...(judge_calls > 0 ? judgeModels : [])])]
     .filter((m) => lookup(m) === null);
   const zero = { input: 0, output: 0 };
   const targetPrice = lookup(opts.targetModel) ?? zero;
@@ -197,7 +201,7 @@ export function estimateCost(opts: PreflightOpts): PreflightEstimate {
   );
   const unpricedJudge = judge_calls > 0 && judgeModels.some((m) => unpriced.includes(m));
 
-  const rolloutCost = rollout_calls * (
+  const rolloutCost = opts.rolloutsExternal ? 0 : rollout_calls * (
     (ROLLOUT_INPUT_TOKENS * targetPrice.input) / 1_000_000
     + (ROLLOUT_OUTPUT_TOKENS * targetPrice.output) / 1_000_000
   );

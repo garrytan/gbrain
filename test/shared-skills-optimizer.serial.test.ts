@@ -270,7 +270,7 @@ test('remote evaluation inputs fail closed on current policy changes and stale r
 test('remote evaluation inputs reject preexisting unpublished mutations to both approved assets', () => fixture(async f => {
   await publishHeldOut(f);
   let invoked = 0;
-  for (const [path, originalBytes] of [[f.opts.benchmarkPath, benchmark], [f.opts.heldOutPath!, heldOut]]) {
+  for (const [path, originalBytes] of [[f.opts.benchmarkPath!, benchmark], [f.opts.heldOutPath!, heldOut]]) {
     writeFileSync(path, 'SYNTHETIC_UNPUBLISHED_INPUT');
     const before = await snapshot(f);
     await expect(optimizeSharedSkill(f.opts, async () => { invoked++; throw new Error('Unpublished asset reached evaluation'); }))
@@ -288,9 +288,9 @@ test('remote evaluation inputs stage exact authorized sealed bytes across a live
   let replaced = false, invoked = 0;
   const reads = spyOn(fs, 'readFileSync').mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
     const bytes = Reflect.apply(read, fs, args);
-    if (String(args[0]) === f.opts.benchmarkPath && !replaced) {
+    if (String(args[0]) === f.opts.benchmarkPath! && !replaced) {
       replaced = true;
-      writeFileSync(f.opts.benchmarkPath, 'SYNTHETIC_RACE_BENCHMARK');
+      writeFileSync(f.opts.benchmarkPath!, 'SYNTHETIC_RACE_BENCHMARK');
       writeFileSync(f.opts.heldOutPath!, 'SYNTHETIC_RACE_HELD_OUT');
     }
     return bytes;
@@ -299,7 +299,7 @@ test('remote evaluation inputs stage exact authorized sealed bytes across a live
     const result = await optimizeSharedSkill({ ...f.opts, noMutate: true, dryRun: true }, async staged => {
       invoked++;
       expect(replaced).toBe(true);
-      expect(readFileSync(staged.benchmarkPath, 'utf8')).toBe(benchmark);
+      expect(readFileSync(staged.benchmarkPath!, 'utf8')).toBe(benchmark);
       expect(readFileSync(staged.heldOutPath!, 'utf8')).toBe(heldOut);
       expect(readFileSync(join(staged.skillsDir, 'alpha/skillopt-benchmark.jsonl'), 'utf8')).toBe(benchmark);
       expect(readFileSync(join(staged.skillsDir, 'alpha/held-out.jsonl'), 'utf8')).toBe(heldOut);
@@ -308,7 +308,7 @@ test('remote evaluation inputs stage exact authorized sealed bytes across a live
     expect(result.outcome).toBe('aborted'); expect(result.mutatedSkillFile).toBe(false);
   } finally { reads.mockRestore(); }
   expect(invoked).toBe(1); expect(f.calls()).toBe(0);
-  expect(readFileSync(f.opts.benchmarkPath, 'utf8')).toBe('SYNTHETIC_RACE_BENCHMARK');
+  expect(readFileSync(f.opts.benchmarkPath!, 'utf8')).toBe('SYNTHETIC_RACE_BENCHMARK');
   expect(readFileSync(f.opts.heldOutPath!, 'utf8')).toBe('SYNTHETIC_RACE_HELD_OUT');
 }), 120_000);
 
@@ -319,7 +319,7 @@ test('trusted local evaluation inputs may use bounded explicit files outside the
   let invoked = 0;
   const result = await optimizeSharedSkill({ ...f.opts, operationContext: f.local, benchmarkPath, heldOutPath, noMutate: true, dryRun: true }, async staged => {
     invoked++;
-    expect(readFileSync(staged.benchmarkPath, 'utf8')).toBe(benchmark);
+    expect(readFileSync(staged.benchmarkPath!, 'utf8')).toBe(benchmark);
     expect(readFileSync(staged.heldOutPath!, 'utf8')).toBe(heldOut);
     return runSkillOpt(staged);
   });
