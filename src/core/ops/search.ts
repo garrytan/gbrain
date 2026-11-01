@@ -32,7 +32,7 @@ import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '
 import type { HybridSearchMeta, SearchResult } from '../types.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { applySnippetCap, DEFAULT_AGENT_SNIPPET_CHARS, resultChunkCap } from '../search/snippet-cap.ts';
-import { fenceTranscriptRows, neutralizeTranscriptRows, quoteFacts } from '../search/transcript-quote.ts';
+import { fenceTranscriptRows, neutralizeTranscriptRows, quoteFacts, quoteLabel } from '../search/transcript-quote.ts';
 import { scoresFollowRank } from '../search/score-contract.ts';
 import { redactRetrievalOutput } from '../search/output-redaction.ts';
 import { leanRowsKeepId, projectRows, resultRowsFor } from '../search/lean-rows.ts';
@@ -410,7 +410,10 @@ async function buildRetrievalResponseMeta(
     : undefined;
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
   const excludeSlugPrefixes = resolveHardExcludes();
-  const aliases = (opts.declarations ?? new DeclarationMemo()).scan(results as DeclarationRow[], queryText);
+  const declared = (opts.declarations ?? new DeclarationMemo()).scan(results as DeclarationRow[], queryText);
+  // #8384: a remote reader gets no name a quoted row declares; other_names renders it outside that row's fence.
+  const aliases = ctx.remote === false ? declared
+    : declared.filter(a => !(results as SearchResult[]).some(r => r.slug === a.slug && quoteLabel(r, true) !== null));
   const relevance = coverageRelevance(results as SearchResult[], queryText, opts.types, FACT_MATCH_STOPWORDS);
   const readinessScope = { ...scope, excludePrivate, types: opts.types, excludeSlugPrefixes };
   // #6721: these reads depend on nothing but the inputs above, so they run at once: on a pooled Postgres

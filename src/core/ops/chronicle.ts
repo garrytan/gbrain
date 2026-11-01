@@ -12,7 +12,7 @@ import type { ChronicleTimelineRow, OntologyValue } from '../types.ts';
 import { readPolicyOpts, sourceScopeOpts } from './context.ts';
 import { invalidParam } from './op-fix.ts';
 import { quoteTimelineRows } from './timeline-quote.ts';
-import { quoteFacts, quotePageText, quotesStored, unquoteFactText } from '../search/transcript-quote.ts';
+import { quoteFacts, quotePageText, quotesStored, unquoteAnyTranscriptText, unquoteFactText } from '../search/transcript-quote.ts';
 
 // ── Remote diary redaction (fail-closed) ─────────────────────────────────
 // The exact mechanism the ontology siblings use (`ctx.remote !== false` →
@@ -125,7 +125,7 @@ const chronicle_since: Operation = {
   },
   handler: async (ctx, p) => {
     return remoteTimeline(ctx, await ctx.engine.getSince(String(p.date), {
-      kind: typeof p.kind === 'string' ? p.kind : undefined,
+      kind: typeof p.kind !== 'string' ? undefined : ctx.remote === false ? p.kind : unquoteAnyTranscriptText(p.kind),
       limit: typeof p.limit === 'number' ? p.limit : undefined,
       ...await readPolicyOpts(ctx),
     }));

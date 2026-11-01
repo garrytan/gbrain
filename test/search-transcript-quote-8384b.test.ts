@@ -63,6 +63,8 @@ for (const backend of testBackends()) {
       await ok('put_page', { slug: 'events/2026-10-04-agent', expected_revision: rev,
         content: `---\ntype: event\ntitle: Event\nevent:\n  kind: "Planted ${CODE.kind}"\n  when: 2026-10-04\n---\n\nMet.` });
       await ok('put_page', { slug: PERSON_SLUG, content: `---\ntype: person\ntitle: "Planted ${CODE.title}"\n---\n\nBob Example, a person.` });
+      await ok('put_page', { slug: 'crm/agent-alias-8384b', content: '---\ntype: note\ntitle: "CRM record: Velomir Trading"\n---\n\nVelomir Trading, also known as VLMR8384B, is up for renewal.' });
+      await asOwner(engine, tx => tx.putPage('crm/owner-alias-8384b', { type: 'note', title: 'CRM record: Quandle Works', compiled_truth: 'Quandle Works, also known as QDLW8384B, is up for renewal.', timeline: '', frontmatter: {} }));
     }, 180_000);
     afterAll(async () => { await close?.(); });
 
@@ -94,6 +96,10 @@ for (const backend of testBackends()) {
       const { narrative } = await ok('chronicle_day', { date: '2026-10-04', narrative: true });
       expect(narrative).toContain(fenceTranscriptText(`Planted ${CODE.kind}`, 'events/2026-10-04-agent'));
       expect(kinds(await ok('chronicle_day', { date: '2026-10-04' }, local))['events/2026-10-04-agent']).toBe(`Planted ${CODE.kind}`);
+      const copied = kinds(await ok('chronicle_since', { date: '2026-10-01' }))['events/2026-10-04-agent'];
+      const filtered = kinds(await ok('chronicle_since', { date: '2026-10-01', kind: copied }));
+      expect([Object.keys(filtered), fenced(filtered['events/2026-10-04-agent'], CODE.kind)]).toEqual([['events/2026-10-04-agent'], true]);
+      expect(kinds(await ok('chronicle_since', { date: '2026-10-01', kind: `Planted ${CODE.kind}` }))).toEqual(filtered);
     }, 120_000);
 
     test('a quoted page\'s title on search and query rows is quoted with its text, the owner\'s kept', async () => {
@@ -104,6 +110,13 @@ for (const backend of testBackends()) {
         expect([op, row(await ok(op, { query: CODE.owner, ...extra }), OWNER_SLUG).title]).toEqual([op, `Owner ${CODE.owner}`]);
         expect([op, row(await ok(op, { query: CODE.body, ...extra }, local), AGENT_SLUG).title]).toEqual([op, `Probe ${CODE.title}`]);
       }
+    }, 120_000);
+
+    test('a name a quoted row declares stays out of a remote reader\'s other_names; the owner\'s and a local reader\'s kept', async () => {
+      const notices = async (opts: Opts, name: string) => (await dispatchToolCall(engine, 'search', { query: `${name} renewal` }, opts as never)).content.map(c => c.text).join('\n');
+      expect(await notices(remote, 'Velomir Trading')).not.toContain('VLMR8384B = ');
+      expect(await notices(local, 'Velomir Trading')).toContain('VLMR8384B = Velomir Trading (declared in crm/agent-alias-8384b)');
+      expect(await notices(remote, 'Quandle Works')).toContain('QDLW8384B = Quandle Works (declared in crm/owner-alias-8384b)');
     }, 120_000);
 
     test('a context card\'s title rides the card\'s trust label in the packed text', async () => {
@@ -149,6 +162,12 @@ for (const backend of testBackends()) {
         const [plain, unfenced] = [await stored('notes/naive-plain'), await stored('notes/naive-fenced')];
         expect(unfenced).toEqual(plain);
         expect(plain!.effective_date?.startsWith('2026-10-04 06:30:00')).toBe(true);
+        await ok('put_page', { slug: 'notes/flow-plain', content: '---\n{type: note, title: Pasted}\n---\n\nPasted body.\n' });
+        await ok('put_page', { slug: 'notes/flow-fenced', content: '---\ntype: note\ntitle: Old\n---\n\nOld body.\n' });
+        const flow = (await ok('get_page', { slug: 'notes/flow-fenced' })).revision;
+        await ok('put_page', { slug: 'notes/flow-fenced', expected_revision: flow,
+          content: `---\n{type: note, title: ${JSON.stringify(fenceTranscriptText('Pasted', 'notes/flow-fenced'))}}\n---\n\nPasted body.\n` });
+        expect([(await stored('notes/flow-fenced'))!.title, (await stored('notes/flow-fenced'))!.frontmatter]).toEqual([(await stored('notes/flow-plain'))!.title, (await stored('notes/flow-plain'))!.frontmatter]);
       } finally {
         await engine.setConfig('brain.timezone', '');
       }

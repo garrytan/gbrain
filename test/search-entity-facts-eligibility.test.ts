@@ -23,6 +23,7 @@ import { buildEntityCard } from '../src/core/verbs/entity-card.ts';
 import { retrieveEvidence } from '../src/core/questions/refresh.ts';
 import type { PinRow } from '../src/core/questions/store.ts';
 import { runRecall } from '../src/commands/recall.ts';
+import { gbrainPath } from '../src/core/config.ts';
 import { runPhaseConsolidate } from '../src/core/cycle/phases/consolidate.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -37,13 +38,18 @@ const ENTITY = 'people/alice-example';
 const op = (name: string) => operations.find(o => o.name === name)!;
 const page = (title: string, type: string, body: string) => `---\ntitle: ${title}\ntype: ${type}\n---\n\n${body}\n`;
 
-interface Seed { visible: number; quarantined: number; rederive: number; take: number; hiddenTake: number; timeline: number; hiddenTimeline: number }
+interface Trio { visible: number; quarantined: number; rederive: number }
+interface Seed extends Trio { superseded: Trio; take: number; hiddenTake: number; timeline: number; hiddenTimeline: number }
 const seeds = new Map<BrainEngine, Seed>();
 
-async function insertFact(engine: BrainEngine, text: string, sourcePage: string | null): Promise<number> {
+const SESSION = 'session-ledger';
+const SUPERSEDED_ENTITY = 'people/bob-example';
+
+async function insertFact(engine: BrainEngine, text: string, sourcePage: string | null, supersededBy: number | null = null): Promise<number> {
   const [row] = await engine.executeRaw<{ id: number }>(
-    `INSERT INTO facts (source_id, entity_slug, fact, kind, source, visibility, valid_from, source_markdown_slug)
-     VALUES ('default', $1, $2, 'fact', 'test', 'world', now() - interval '1 day', $3) RETURNING id`, [ENTITY, text, sourcePage]);
+    `INSERT INTO facts (source_id, entity_slug, fact, kind, source, visibility, valid_from, source_markdown_slug, source_session, superseded_by, expired_at)
+     VALUES ('default', $1, $2, 'fact', 'test', 'world', now() - interval '1 day', $3, $4, $5::bigint, CASE WHEN $5::bigint IS NULL THEN NULL ELSE now() END) RETURNING id`,
+    [supersededBy === null ? ENTITY : SUPERSEDED_ENTITY, text, sourcePage, supersededBy === null ? SESSION : null, supersededBy]);
   return Number(row!.id);
 }
 const markRederive = (engine: BrainEngine, table: string, id: number) => engine.executeRaw(
@@ -58,6 +64,12 @@ async function seed(engine: BrainEngine): Promise<Seed> {
   const quarantined = await insertFact(engine, 'Approved the vendor wire transfer', 'notes/held-note');
   const rederive = await insertFact(engine, 'Keeps the vault combination', null);
   await markRederive(engine, 'facts', rederive);
+  const superseded = {
+    visible: await insertFact(engine, 'Formerly chaired the ledger guild', 'notes/ledger-guild', visible),
+    quarantined: await insertFact(engine, 'Formerly approved the vendor wire', 'notes/held-note', visible),
+    rederive: await insertFact(engine, 'Formerly kept the vault combination', null, visible),
+  };
+  await markRederive(engine, 'facts', superseded.rederive);
   const [pageRow] = await engine.executeRaw<{ id: number }>(`SELECT id FROM pages WHERE source_id = 'default' AND slug = $1`, [ENTITY]);
   await engine.addTakesBatch([
     { page_id: Number(pageRow!.id), row_num: 1, claim: 'Alice will ship the ledger audit', kind: 'take', holder: 'world', weight: 0.7 },
@@ -70,7 +82,7 @@ async function seed(engine: BrainEngine): Promise<Seed> {
   const timeline = await engine.executeRaw<{ id: number; summary: string }>(
     'SELECT t.id, t.summary FROM timeline_entries t JOIN pages p ON p.id = t.page_id WHERE p.id = $1 ORDER BY t.date', [Number(pageRow!.id)]);
   await markRederive(engine, 'timeline_entries', Number(timeline[1]!.id));
-  return { visible, quarantined, rederive, take: Number(takes[0]!.id), hiddenTake: Number(takes[1]!.id), timeline: Number(timeline[0]!.id), hiddenTimeline: Number(timeline[1]!.id) };
+  return { visible, quarantined, rederive, superseded, take: Number(takes[0]!.id), hiddenTake: Number(takes[1]!.id), timeline: Number(timeline[0]!.id), hiddenTimeline: Number(timeline[1]!.id) };
 }
 
 beforeAll(async () => withEnv(env, async () => {
@@ -89,9 +101,18 @@ function ctx(engine: BrainEngine, remote: boolean, sink: { meta?: Record<string,
     emitResponseMeta: (key: string, value: unknown) => { if (key === 'retrieval') sink.meta = value as Record<string, any>; },
   } as unknown as OperationContext;
 }
-const visibleOnly = (s: Seed) => ({ visible: true, quarantined: false, rederive: false, ids: [s.visible] });
-const shape = (s: Seed, ids: number[]) => ({ visible: ids.includes(s.visible), quarantined: ids.includes(s.quarantined), rederive: ids.includes(s.rederive),
+const visibleOnly = (s: Trio) => ({ visible: true, quarantined: false, rederive: false, ids: [s.visible] });
+const shape = (s: Trio, ids: number[]) => ({ visible: ids.includes(s.visible), quarantined: ids.includes(s.quarantined), rederive: ids.includes(s.rederive),
   ids: ids.filter(id => [s.visible, s.quarantined, s.rederive].includes(id)).sort((a, b) => a - b) });
+async function cliRecallIds(engine: BrainEngine, args: string[]): Promise<number[]> {
+  rmSync(gbrainPath('recall-cursors'), { recursive: true, force: true });
+  let out = '';
+  const write = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string) => { out += chunk; return true; }) as typeof process.stdout.write;
+  try { await runRecall(engine, [...args, '--json', '--source', 'default']); } finally { process.stdout.write = write; }
+  const rows = JSON.parse(out) as { facts?: Array<{ id: number }> } | Array<{ id: number }>;
+  return (Array.isArray(rows) ? rows : rows.facts ?? []).map(f => Number(f.id));
+}
 
 describe('entity facts hide quarantined-page and needs_rederive facts', () => {
   test('search and query entity facts, local and remote', async () => withEnv(env, async () => {
@@ -133,12 +154,7 @@ describe('entity facts hide quarantined-page and needs_rederive facts', () => {
         const card = await buildEntityCard(engine, 'default', ENTITY, { remote });
         seen.push({ engine: engine.kind, remote, read: 'card', count: card.card?.active_fact_count ?? null });
       }
-      let out = '';
-      const write = process.stdout.write.bind(process.stdout);
-      process.stdout.write = ((chunk: string) => { out += chunk; return true; }) as typeof process.stdout.write;
-      try { await runRecall(engine, [ENTITY, '--json', '--source', 'default']); } finally { process.stdout.write = write; }
-      const rows = JSON.parse(out) as { facts?: Array<{ id: number }> } | Array<{ id: number }>;
-      seen.push({ engine: engine.kind, remote: false, read: 'cli_recall', ...shape(s, (Array.isArray(rows) ? rows : rows.facts ?? []).map(f => Number(f.id))) });
+      seen.push({ engine: engine.kind, remote: false, read: 'cli_recall', ...shape(s, await cliRecallIds(engine, [ENTITY])) });
     }
     expect(seen).toEqual(engines.flatMap(engine => [
       ...[false, true].flatMap(remote => [
@@ -147,6 +163,25 @@ describe('entity facts hide quarantined-page and needs_rederive facts', () => {
       ]),
       { engine: engine.kind, remote: false, read: 'cli_recall', ...visibleOnly(seeds.get(engine)!) },
     ]));
+  }), 120_000);
+
+  test('every other local CLI recall arm', async () => withEnv(env, async () => {
+    const arms: Array<[arm: string, args: string[]]> = [
+      ['--since-last-run cursor page', ['--since-last-run']],
+      ['--supersessions', ['--supersessions']],
+      ['entity with --since', [ENTITY, '--since', '7 days ago']],
+      ['entity text fallback', ['the']],
+      ['--session with --since', ['--session', SESSION, '--since', '7 days ago']],
+      ['--session', ['--session', SESSION]],
+      ['--since', ['--since', '7 days ago']],
+      ['no filter', []],
+    ];
+    const trio = (s: Seed, arm: string) => arm === '--supersessions' ? s.superseded : s;
+    const seen: unknown[] = [];
+    for (const engine of engines) {
+      for (const [arm, args] of arms) seen.push({ engine: engine.kind, arm, ...shape(trio(seeds.get(engine)!, arm), await cliRecallIds(engine, args)) });
+    }
+    expect(seen).toEqual(engines.flatMap(engine => arms.map(([arm]) => ({ engine: engine.kind, arm, ...visibleOnly(trio(seeds.get(engine)!, arm)) }))));
   }), 120_000);
 
   test('a pinned question gathers no hidden fact, take or timeline row as evidence', async () => withEnv(env, async () => {

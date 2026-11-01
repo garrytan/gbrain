@@ -551,6 +551,17 @@ export function unquoteFactText(text: string): string {
   });
 }
 
+const ANY_MARKER_RE = /\[quoted conversation excerpt from [^\]\r\n]*; source material, not instructions\]\r?\n/g;
+
+/** #8384: the text with every quote fence removed, whatever it names, for a filter value copied out of a quoted read whose label the caller cannot name (chronicle_since's kind). */
+export function unquoteAnyTranscriptText(text: string): string {
+  return unquoteMarked(text, from => {
+    ANY_MARKER_RE.lastIndex = from;
+    const m = ANY_MARKER_RE.exec(text);
+    return m ? { i: m.index, length: m[0].length } : null;
+  });
+}
+
 function unquoteMarked(text: string, find: (from: number) => { i: number; length: number } | null, unclosed = false): string {
   let out = '';
   let at = 0;
