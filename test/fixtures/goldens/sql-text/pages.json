@@ -1621,6 +1621,54 @@
               "string",
               "string"
             ],
+            "sql": "INSERT INTO slug_rename_history (source_id, old_slug, new_slug) SELECT source_id, alias_slug, canonical_slug FROM slug_aliases WHERE source_id = $1 AND alias_slug = $2 ON CONFLICT DO NOTHING",
+            "textSha256": "1b6d164b2a4ccc0c6791b6a84cd01e5e37f81b7930ebdbe5ffce656efa7d4ebf"
+          },
+          {
+            "lane": "tx>sp",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "DELETE FROM slug_rename_history h WHERE h.source_id = $1 AND h.new_slug = $2 AND EXISTS (SELECT 1 FROM slug_rename_history o WHERE o.source_id = $3 AND o.old_slug = h.old_slug AND o.new_slug = $4)",
+            "textSha256": "5e8931b59a4ff174ae7fc2cd166fe13dea4bb24ffb984a0d0e5b637e66f99603"
+          },
+          {
+            "lane": "tx>sp",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE slug_rename_history SET new_slug = $1 WHERE source_id = $2 AND new_slug = $3",
+            "textSha256": "2df96db5bfee494a31111c3865dddb8c15c66a897bc64f256967a59a5ab40ff5"
+          },
+          {
+            "lane": "tx>sp",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO slug_rename_history (source_id, old_slug, new_slug) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+            "textSha256": "5b86c737c773f60e39372e8e7f63408075629e68d715846f30592a383ac8b81a"
+          },
+          {
+            "event": "savepoint-release",
+            "lane": "tx>sp"
+          },
+          {
+            "event": "savepoint",
+            "lane": "tx>sp"
+          },
+          {
+            "lane": "tx>sp",
+            "params": [
+              "string",
+              "string"
+            ],
             "sql": "DELETE FROM slug_aliases WHERE source_id = $1 AND alias_slug = $2",
             "textSha256": "87f2f6a11bc9031277734e41983fe2d8c61de1fadd882d2614fd07b722bc8bb4"
           },

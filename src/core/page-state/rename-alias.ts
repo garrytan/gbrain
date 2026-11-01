@@ -36,7 +36,7 @@ export async function recordRenameAlias(
         ON CONFLICT DO NOTHING`, [sourceId, oldSlug, newSlug]);
     });
   } catch (error) {
-    if (!isMissingSchemaObject(error, 'table', 'slug_rename_history')) throw error;
+    if (!isMissingSchemaObject(error, 'table', 'slug_rename_history') && !isMissingSchemaObject(error, 'table', 'slug_aliases')) throw error;
   }
   try {
     await tx.transaction(async savepoint => {

@@ -5,6 +5,8 @@
   "test/access-folder-multiconn.test.ts": 4110,
   "test/access-folder-rules.test.ts": 18830,
   "test/access-members.test.ts": 3930,
+  "test/access-on-behalf-of.test.ts": 13100,
+  "test/access-page-indexes-online.test.ts": 1940,
   "test/access-writes.test.ts": 4950,
   "test/activation-unbound-rooted-6449.test.ts": 4525,
   "test/alias-source-cascade-5094.test.ts": 10600,
