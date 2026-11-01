@@ -51,8 +51,8 @@ export async function memberIdentityFor(engine: Pick<BrainEngine, 'executeRaw'>,
   const principal = auth?.principal;
   if (!principal || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return [];
   return liveIdentity(engine, principal.kind === 'legacy_token'
-    ? 'SELECT member_id FROM access_tokens WHERE id::text = $1'
-    : 'SELECT member_id FROM oauth_clients WHERE client_id = $1', principal.id);
+    ? 'SELECT member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL'
+    : 'SELECT member_id FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL', principal.id);
 }
 
 /** The member a local stdio server is bound to (config mcp.stdio_member), or null when unset or ill-formed. */
@@ -248,7 +248,8 @@ export async function appliedAccessSummary(engine: Pick<BrainEngine, 'executeRaw
   if (access.restricted) {
     try {
       const rows = await engine.executeRaw<{ source_id: string; rev: number | string | null }>(
-        'SELECT source_id, max(revision) FILTER (WHERE applied_at IS NOT NULL) AS rev FROM access_policy_revisions GROUP BY source_id ORDER BY source_id');
+        `SELECT s.source_id, (SELECT r.revision FROM access_policy_revisions r WHERE r.source_id = s.source_id AND r.applied_at IS NOT NULL
+          ORDER BY r.revision DESC LIMIT 1) AS rev FROM access_policy_state s ORDER BY s.source_id`);
       const visible = auth ? new Set([auth.sourceId, ...(auth.allowedSources ?? []), ...sourceIds].filter(Boolean)) : null;
       policyRev = Object.fromEntries(rows.filter(r => r.rev !== null && (!visible || visible.has(r.source_id))).map(r => [r.source_id, Number(r.rev)]));
     } catch { policyRev = null; }

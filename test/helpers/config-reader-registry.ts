@@ -25,6 +25,7 @@ export interface InternalConfigState {
 
 export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
   { key: 'version', reason: 'schema version stamp written by migrate.ts' },
+  { key: 'access.restrictions_present', reason: 'sticky member-access marker a v282 trigger sets once a page names readers or a member exists (search/private-visibility.ts); clearing it would send remote reads down the unrestricted fast path' },
   { key: '_internal.link_extraction_generation', reason: 'link-extraction watermark generation (link-extraction-watermark.ts)' },
   { key: 'code.cluster_generation', reason: 'code-intel traversal cache generation counter' },
   { key: 'embedding_migration.state', reason: 'gbrain migrate-embeddings resume state' },
