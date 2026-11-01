@@ -80,6 +80,32 @@ function stripQuotedAndToolOutput(text: string): string {
   return kept.join('\n');
 }
 
+/** Remove Markdown blockquotes from banked text while preserving fenced code. */
+function stripBlockquoteLines(text: string): string {
+  let fenceChar = '';
+  let fenceLength = 0;
+  return text.split('\n').filter((line) => {
+    const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence) {
+      const marker = fence[1];
+      const markerChar = marker[0];
+      const runLength = marker.length;
+      if (fenceLength > 0) {
+        if (markerChar === fenceChar && runLength >= fenceLength && /^[ \t]*$/.test(fence[2])) {
+          fenceChar = '';
+          fenceLength = 0;
+        }
+      } else if (markerChar === '~' || !fence[2].includes('`')) {
+        fenceChar = markerChar;
+        fenceLength = runLength;
+      }
+      return true;
+    }
+    if (fenceLength === 0 && /^ {0,3}>/.test(line)) return false;
+    return true;
+  }).join('\n');
+}
+
 /** NFC + trim + collapse whitespace runs — the canonical form the hash and
  * downstream extraction both see. */
 export function normalizeTurnText(text: string): string {
@@ -142,6 +168,8 @@ export function gateWritebackTurn(text: unknown): WritebackGateResult {
     return { ok: false, reason: 'quoted_or_tool_output' };
   }
 
-  const normalized = normalizeTurnText(own);
+  // Keep quoted claims out of extraction, but retain other user-authored text
+  // (including fenced code and indentation) in the banked turn.
+  const normalized = normalizeTurnText(stripBlockquoteLines(own));
   return { ok: true, normalized, hash24: turnHash24(normalized) };
 }
