@@ -18,14 +18,14 @@ In gbrain-evals' Cat 31 re-run the full loop and a one-shot rewrite both scored 
 
 ### Itemized changes
 
-- One-shot rewrite is the default for the CLI, `run_skillopt`, `--all`, queued jobs and the dream-cycle phase. A job queued before this release without `optimizer_mode` keeps the loop it was queued for, and `--resume` continues in the mode its checkpoint ran (a changed mode is refused). Receipts carry `optimizer_mode`.
+- One-shot rewrite is the default for the CLI, `run_skillopt`, `--all`, queued jobs and the dream-cycle phase. A job queued before this release without `optimizer_mode` keeps the loop it was queued for, and `--resume` continues in the mode its checkpoint ran (a changed mode is refused); resuming a one-shot run whose rewrite gave no usable reply retries the rewrite. Receipts carry `optimizer_mode`.
 - The optimizer's success criteria come from training tasks only, and a rule argument or LLM rubric is quoted only when every training task shares it; a per-task answer is described ("a task-specific required text"), never quoted. Before, every selection and test answer was shown to the optimizer. `criteriaText` replaces the generated criteria.
-- Held-out results never reach the optimizer: the held-out check runs once, on the final champion, before anything is written, and a refused champion is not filed in the rejected-edit buffer. Legacy `held_out_regression` rows on disk are skipped when the buffer loads.
+- Held-out results never reach the optimizer. The held-out check runs once, on the final champion, before anything is written, and a refused champion is not filed in the rejected-edit buffer. Legacy `held_out_regression` rows on disk are skipped when the buffer loads.
 - Only edits that were applied are filed as rejected or recorded as accepted; edits the learning-rate budget clipped stay free to propose again.
 - The success-reflect prompt states the edit schema, so its edits are no longer all dropped (#7257; carried from #8324).
-- Library surface for benchmark harnesses (`src/core/skillopt/index.ts`): explicit `tasks: {train, sel, test?}` lists instead of a benchmark file; a `rolloutHook` that receives each scoring site's whole batch (baseline, training forward pass, selection gate, held-out, test) and whose budget refusal or malformed reply aborts the run without writing; `scoreSkillPerTask`; and receipt counts (`rollouts` by phase, `candidates_scored_on_sel`, `optimizer_calls`, `cost_scope`).
+- Library surface for benchmark harnesses (`src/core/skillopt/index.ts`): explicit `tasks: {train, sel, test?}` lists instead of a benchmark file; a `rolloutHook` that receives each scoring site's whole batch (baseline, training forward pass, selection gate, held-out, test) and whose budget refusal or malformed reply aborts the run without writing (the hook runs outside the run's budget, gets an abort signal at the runtime deadline, and a batch still running or answered after it aborts the run); `scoreSkillPerTask`; and receipt counts (`rollouts` by phase, `candidates_scored_on_sel`, `optimizer_calls`, `cost_scope`).
 - A skill can add the reviewed read tools `recall` and `get_timeline` to its rollouts by naming them in its frontmatter `tools:`; rollouts never offer `add_timeline_entry` or any other write.
-- Tests: `test/e2e/skillopt-wave-e1b1.serial.test.ts` (15 cases, each red on master), `test/skillopt/benchmark-hooks.test.ts`, and a mode case in `test/skillopt/models-four-paths.serial.test.ts`.
+- Tests: `test/e2e/skillopt-wave-e1b1.serial.test.ts` (17 cases, each red before its fix), `test/skillopt/benchmark-hooks.test.ts`, and a mode case in `test/skillopt/models-four-paths.serial.test.ts`.
 
 ## [0.60.541.0] - 2026-11-01
 
