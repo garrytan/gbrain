@@ -172,7 +172,7 @@ Options:
                          (get_page body:'none' returns tail_sha256)
   --region R             auto (default: the last non-empty region), truth, timeline
   --separator S          auto (default: one newline when the tail lacks one), none
-  --source ID            Multi-source brains: append to a page in this source
+  --source-id ID         Multi-source brains: append to a page in this source (--source is an alias)
   --json                 Print the receipt as JSON
   --help, -h             Show this help
 
@@ -193,7 +193,7 @@ interface AppendArgs {
 
 const APPEND_FLAGS: Record<string, keyof AppendArgs> = {
   '--file': 'file', '--request-id': 'request_id', '--expected-revision': 'expected_revision', '--expect-tail': 'expected_tail_sha256',
-  '--region': 'region', '--separator': 'separator', '--source': 'source',
+  '--region': 'region', '--separator': 'separator', '--source': 'source', '--source-id': 'source',
 };
 const CHOICES: Partial<Record<keyof AppendArgs, readonly string[]>> = { region: ['auto', 'truth', 'timeline'], separator: ['auto', 'none'] };
 
