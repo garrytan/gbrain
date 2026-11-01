@@ -60,7 +60,7 @@ async function withCli<T>(
 ): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), 'claude-output-cap-'));
   const capsPath = join(dir, 'caps');
-  const lines = ['#!/bin/sh', 'cat > /dev/null', `printf '%s\\n' "$CLAUDE_CODE_MAX_OUTPUT_TOKENS" >> "${capsPath}"`];
+  const lines = ['#!/bin/sh', 'if [ "$1" = "--version" ]; then exit 0; fi', 'cat > /dev/null', `printf '%s\\n' "$CLAUDE_CODE_MAX_OUTPUT_TOKENS" >> "${capsPath}"`];
   for (const [cap, { body, exit }] of Object.entries(responses)) {
     const file = join(dir, `response-${cap === '*' ? 'default' : cap}.txt`);
     writeFileSync(file, typeof body === 'string' ? body : JSON.stringify(body));
