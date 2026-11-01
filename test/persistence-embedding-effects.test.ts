@@ -262,6 +262,32 @@ for (const kind of testBackends()) {
       expect(await state(f.effectId)).toMatchObject({ state: 'failed', attempts: 1, error_code: 'embedding_budget_refused' });
     });
 
+    check('a stop signal that fires inside the invocation preflight retries the effect as aborted, not budget-refused', async () => {
+      const f = await fixture();
+      const controller = new AbortController();
+      let calls = 0;
+      // The preflight's own `signal.throwIfAborted()` throws; the guard marks every preflight error as a policy refusal.
+      await run(async () => {
+        controller.abort(new Error('consumer stopped'));
+        return invokeAI({ operation: 'embed', kind: 'embedding', model }, async () => { calls++; return vectors(); }, () => null);
+      }, controller.signal);
+      expect(calls).toBe(0);
+      expect(await state(f.effectId)).toMatchObject({ state: 'queued', attempts: 1, error_code: 'embedding_aborted' });
+      await due(f.effectId); await run(async () => vectors());
+      expect((await state(f.effectId)).state).toBe('committed');
+    });
+
+    check('a genuine admission refusal still fails as budget-refused while the stop signal is live', async () => {
+      const f = await fixture();
+      const controller = new AbortController();
+      let calls = 0;
+      await withAIInvocationGuard(async () => { throw new Error('budget refused'); }, () => run(async () =>
+        invokeAI({ operation: 'embed', kind: 'embedding', model }, async () => { calls++; return vectors(); }, () => null), controller.signal));
+      expect(controller.signal.aborted).toBe(false);
+      expect(calls).toBe(0);
+      expect(await state(f.effectId)).toMatchObject({ state: 'failed', attempts: 1, error_code: 'embedding_budget_refused' });
+    });
+
     check('rate-limit failures retain the existing provider-hint backoff', async () => {
       const f = await fixture();
       await run(async () => { throw Object.assign(new Error('Please try again in 120s'), { status: 429 }); });
