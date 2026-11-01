@@ -40,6 +40,8 @@ for (const backend of testBackends()) describe(`#6961 fenced page vector reuse (
   let engine: BrainEngine;
   let close: () => Promise<void>;
   const chunkCount = async (slug: string) => (await engine.getChunks(slug, { includeUnsealed: true })).length;
+  const unrecorded = async (slug: string) => Number((await engine.executeRaw<{ n: number }>(
+    `SELECT count(*)::int AS n FROM content_chunks WHERE embedding_input_hash IS NULL AND page_id = (SELECT id FROM pages WHERE slug = $1)`, [slug]))[0].n);
 
   beforeAll(async () => { resetGateway(); gateway(); ({ engine, close } = await isolatedSharedSkillsEngine(backend === 'postgres' ? process.env.DATABASE_URL : undefined)); }, 120_000);
   afterAll(async () => { __setEmbedTransportForTests(null); resetGateway(); await close(); }, 60_000);
@@ -76,6 +78,26 @@ for (const backend of testBackends()) describe(`#6961 fenced page vector reuse (
       embedded = [];
       await importFromContent(engine, slug, PERSON([...FACTS, APPENDED]));
       expect(embedded.length).toBe(total);
+      expect(await unrecorded(slug)).toBe(0);
+    } finally {
+      await engine.executeRaw(`DELETE FROM config WHERE key = 'search.contextual_retrieval'`);
+    }
+  }, 120_000);
+
+  // Value: protects=a page that gains its first fence does not keep its legacy unrecorded vectors; fails_when=the
+  //   recorded-input rule reads only the stored body; why_new=the rule ORs the old and new bodies and only fenced-to-fenced
+  //   writes were tested; seam=embedding_input_hash and the page mode cleared in SQL (a pre-provenance page)
+  test('a legacy page that gains a fence re-embeds every chunk', async () => {
+    const slug = 'people/alice-example-gains-fence';
+    await engine.setConfig('search.contextual_retrieval', 'none');
+    try {
+      await importFromContent(engine, slug, PERSON(FACTS).split('## Facts')[0]);
+      await engine.executeRaw(`UPDATE content_chunks SET embedding_input_hash = NULL WHERE page_id = (SELECT id FROM pages WHERE slug = $1)`, [slug]);
+      await engine.executeRaw(`UPDATE pages SET contextual_retrieval_mode = NULL WHERE slug = $1`, [slug]);
+      embedded = [];
+      await importFromContent(engine, slug, PERSON(FACTS));
+      expect(embedded.length).toBe(await chunkCount(slug));
+      expect(await unrecorded(slug)).toBe(0);
     } finally {
       await engine.executeRaw(`DELETE FROM config WHERE key = 'search.contextual_retrieval'`);
     }
