@@ -137,6 +137,24 @@
     "visibility": "public"
   },
   "remote_gate": "bash scripts/pregate-remote-gate.sh",
+  "run_profiles": {
+    "test": {
+      "workflow": "test.yml",
+      "events": ["workflow_dispatch", "push"],
+      "jobs": ["full-suite"],
+      "artifact": "full-suite-tree"
+    },
+    "e2e": {
+      "workflow": "e2e.yml",
+      "events": ["workflow_dispatch", "push"],
+      "jobs": ["e2e-full-suite"],
+      "artifact": "e2e-full-suite-tree"
+    }
+  },
+  "remote_gate_runs": {
+    "profiles": ["test", "e2e"],
+    "inventory": "bash scripts/pregate-remote-gate.sh --list"
+  },
   "allowlist": [
     {
       "finding": "pii.phone.e164",

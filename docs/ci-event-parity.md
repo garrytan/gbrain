@@ -157,7 +157,11 @@ inventory:
   command with `--list` (`scripts/ci-ubicloud.ts --list`), the same lanes and
   discovery the gate runs, one file per line. It exits non-zero when the
   inventory fails or is empty (a doc-only tree under `:diff` runs no test file,
-  so it clears through the gate as before). The gate leaves out the keyed-only
+  so it clears through the gate as before). It also prints no inventory for a
+  tree that changes one of the six files above relative to `origin/master`
+  (or when there is no `origin/master`, or `GBRAIN_PREGATE_REUSE=0`), so
+  gstack refuses that tree's own runs (`inventory_failed`) and the gate runs,
+  as remote-gate reuse already does. The gate leaves out the keyed-only
   Tier 2 file (`test/e2e/skills.test.ts`): a VM has neither the keys nor
   openclaw, so every test in it would skip.
 - gstack accepts only `push` and `workflow_dispatch` runs whose newest attempt
@@ -166,10 +170,13 @@ inventory:
   included, over from the older attempt, so the new attempt has no manifest of
   its own and its `tree.json` has no `files` (`inventory_uncovered`); a
   `tree.json` left from an older attempt is refused too (`artifact_mismatch`).
-- The profiles live in the base branch's `.gstack/pregate.json` (`run_profiles`
-  for `test.yml` / `full-suite` and `e2e.yml` / `e2e-full-suite`, and
-  `remote_gate_runs` with this inventory command). gstack reads them only from
-  `origin/<base>`, so they apply to a branch once they are on master.
+- The profiles live in `.gstack/pregate.json`: `run_profiles` `test`
+  (`test.yml`, job `full-suite`, artifact `full-suite-tree`) and `e2e`
+  (`e2e.yml`, job `e2e-full-suite`, artifact `e2e-full-suite-tree`), each
+  accepting `workflow_dispatch` and `push` runs from the last 24 hours, and
+  `remote_gate_runs` naming both with this inventory command. gstack reads them
+  only from `origin/<base>`, so a branch cannot loosen them. gstack accepts
+  these keys from 1.91.377.0 on.
 
 ## Dependency-audit rule
 

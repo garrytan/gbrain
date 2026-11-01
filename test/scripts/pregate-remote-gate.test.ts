@@ -268,6 +268,7 @@ describe('pregate-remote-gate.sh', () => {
 });
 
 describe('pregate-remote-gate.sh --list', () => {
+  beforeEach(() => git('update-ref', 'refs/remotes/origin/master', 'HEAD'));
   /** Runs --list with `gate` as the gate command and no UBI_OWNER. */
   const list = (gate: string | undefined, args: string[] = [], env: Record<string, string> = {}) => {
     const r = spawnSync('bash', [SCRIPT, '--list', ...args], {
@@ -313,5 +314,25 @@ describe('pregate-remote-gate.sh --list', () => {
     expect(failing.out).toBe('');
     expect(failing.err).toContain("the gate's inventory failed (exit 3)");
     for (const r of [empty, failing]) expect(r.out + r.err).not.toContain('PREGATE_REMOTE');
+  });
+
+  it('a tree whose full-ci runs would attest to themselves gets no inventory, so gstack clear --run refuses it and the gate runs', () => {
+    const gate = 'touch .git/list-ran; echo test/a.test.ts';
+    const refused = (r: { code: number | null; out: string }) => { expect(r.code).toBe(1); expect(r.out).toBe(''); };
+    for (const path of ['.github/workflows/test.yml', '.github/workflows/e2e.yml', 'scripts/ci-reuse.ts', 'scripts/ci-full-suite-tree.sh', 'scripts/ci-executed-counts.ts', 'scripts/lib/gh-issue.ts']) {
+      mkdirSync(join(repo, path, '..'), { recursive: true });
+      writeFileSync(join(repo, path), `changed ${path}\n`);
+      git('add', '.');
+      git('commit', '-q', '-m', `change ${path}`);
+      const r = list(gate);
+      refused(r);
+      expect(r.err).toContain(`pregate-remote-gate: the tree changes ${path} relative to origin/master`);
+      expect(r.err).toContain('no inventory');
+      git('update-ref', 'refs/remotes/origin/master', 'HEAD');
+    }
+    refused(list(gate, [], { GBRAIN_PREGATE_REUSE: '0' }));
+    git('update-ref', '-d', 'refs/remotes/origin/master');
+    refused(list(gate));
+    expect(spawnSync('test', ['-e', join(repo, '.git', 'list-ran')]).status).not.toBe(0);
   });
 });

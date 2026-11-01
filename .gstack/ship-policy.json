@@ -1,5 +1,6 @@
 {
   "bump": "patch",
+  "min_gstack_version": "1.91.377.0",
   "queue_mode": "stamp-at-merge",
   "changelog": "CHANGELOG.md",
   "stamp_files": [

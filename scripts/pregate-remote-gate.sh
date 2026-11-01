@@ -60,16 +60,34 @@ set -uo pipefail
 
 fail() { echo "pregate-remote-gate: $1" >&2; exit "${2:-1}"; }
 
+# Whether the checked-out commit's own full-ci runs may vouch for it: never when
+# it changes the full-ci workflows or the scripts that attest their runs relative
+# to origin/master (or there is no origin/master to compare against). Prints the
+# reason on stderr and returns 1 when they may not.
+runs_may_attest() {
+  git rev-parse -q --verify 'origin/master^{commit}' >/dev/null || { echo "pregate-remote-gate: no origin/master to compare the full-ci workflows against" >&2; return 1; }
+  local path
+  for path in .github/workflows/test.yml .github/workflows/e2e.yml scripts/ci-reuse.ts scripts/ci-full-suite-tree.sh scripts/ci-executed-counts.ts scripts/lib/gh-issue.ts; do
+    git diff --quiet origin/master HEAD -- "$path" && continue
+    echo "pregate-remote-gate: the tree changes $path relative to origin/master, so its own runs cannot attest to it" >&2
+    return 1
+  done
+}
+
 # --list prints the test files the gate would run on the checked-out tree, one
 # per line: the gate command with --list (ci-ubicloud.ts --list, the same
 # selection and inventory), so gstack-pregate clear --run can check that the
 # full-ci runs it is given executed every one (remote_gate_runs.inventory,
 # docs/ci-event-parity.md#remote-gate-reuse). A failing or empty inventory exits
-# non-zero. It starts no VM and needs no UBI_OWNER.
+# non-zero, and so does a tree whose runs may not attest to it (runs_may_attest)
+# or GBRAIN_PREGATE_REUSE=0, so gstack refuses the runs and the gate runs. It
+# starts no VM and needs no UBI_OWNER.
 if [ "${1:-}" = "--list" ]; then
   shift
   TOP=$(git rev-parse --show-toplevel 2>/dev/null) || fail "not inside a git checkout" 2
   cd "$TOP" || exit 2
+  [ "${GBRAIN_PREGATE_REUSE:-1}" != 0 ] || fail "GBRAIN_PREGATE_REUSE=0: no inventory, so no full-ci run clears the gate; run the gate" 1
+  runs_may_attest || fail "no inventory, so no full-ci run clears the gate; run the gate (bash scripts/pregate-remote-gate.sh)" 1
   listed=$(bash -c "${GBRAIN_PREGATE_GATE_CMD:-bun run ci:ubicloud:diff} --list \"\$@\"" pregate-remote-gate "$@") || fail "the gate's inventory failed (exit $?); no list" 1
   [ -n "$listed" ] || fail "the gate's inventory is empty; no list" 1
   printf '%s\n' "$listed"
@@ -107,16 +125,7 @@ reused=""
 repo=${GBRAIN_PREGATE_REPO:-$(git remote get-url origin 2>/dev/null | sed -E 's#\.git$##' | sed -nE 's#^.*[/:]([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)$#\1#p')}
 reuse_ok=1
 if [ "${GBRAIN_PREGATE_REUSE:-1}" != 0 ] && [ -n "$repo" ] && [ "$before" = "$(git rev-parse 'HEAD^{tree}' 2>/dev/null)" ]; then
-  if ! git rev-parse -q --verify 'origin/master^{commit}' >/dev/null; then
-    echo "pregate-remote-gate: no origin/master to compare the full-ci workflows against, so it runs the gate instead of reusing" >&2
-    reuse_ok=0
-  fi
-  for path in .github/workflows/test.yml .github/workflows/e2e.yml scripts/ci-reuse.ts scripts/ci-full-suite-tree.sh scripts/ci-executed-counts.ts scripts/lib/gh-issue.ts; do
-    [ "$reuse_ok" = 1 ] || break
-    git diff --quiet origin/master HEAD -- "$path" && continue
-    echo "pregate-remote-gate: the tree changes $path relative to origin/master, so it runs the gate instead of reusing its own runs" >&2
-    reuse_ok=0
-  done
+  runs_may_attest || { echo "pregate-remote-gate: so it runs the gate instead of reusing" >&2; reuse_ok=0; }
 else
   reuse_ok=0
 fi
