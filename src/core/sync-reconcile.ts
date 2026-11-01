@@ -262,13 +262,15 @@ export function resolveSyncHardDeadline(
     return mk(sec ?? 0, 'flag:--hard-deadline');
   }
 
-  // --timeout auto-arms a hard backstop at timeout(+grace), but ONLY single-source.
+  // --timeout auto-arms a hard backstop at timeout+grace, but ONLY single-source.
+  // The grace lets the in-band --timeout stop land first (partial, exit 0); the
+  // watchdog's SIGTERM (exit 143) is only for a run that ignores it.
   // For --all, per-source budgets don't collapse to one wall-clock; fall through.
   const isAll = args.includes('--all');
   const timeoutStr = args.find((a, i) => args[i - 1] === '--timeout');
   if (timeoutStr !== undefined && !isAll) {
     const sec = parseDurationSeconds(timeoutStr, '--timeout');
-    if (sec && sec > 0) return mk(sec, 'flag:--timeout');
+    if (sec && sec > 0) return mk(sec + HARD_DEADLINE_GRACE_SEC, 'flag:--timeout');
   }
 
   // A large first sync legitimately outlives the default hour, so these two

@@ -54,9 +54,11 @@ describe('resolveSyncHardDeadline', () => {
     expect(() => resolveSyncHardDeadline(['--hard-deadline', '0'], { isTty: true })).toThrow();
   });
 
-  test('--timeout (single-source) auto-arms the hard backstop', () => {
+  test('--timeout (single-source) auto-arms the hard backstop one grace window after the timeout', () => {
+    // The in-band --timeout stop (partial, exit 0) must land before the
+    // watchdog's SIGTERM (exit 143), so the backstop sits past the timeout.
     const r = resolveSyncHardDeadline(['--source', 'briefings', '--timeout', '480'], { isTty: false });
-    expect(r).toEqual({ deadlineMs: 480_000, graceMs: GRACE_MS, reason: 'flag:--timeout' });
+    expect(r).toEqual({ deadlineMs: 480_000 + GRACE_MS, graceMs: GRACE_MS, reason: 'flag:--timeout' });
   });
 
   test('--timeout + --all does NOT auto-arm (per-source budgets); falls through', () => {
