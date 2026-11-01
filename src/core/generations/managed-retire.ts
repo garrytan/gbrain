@@ -20,6 +20,7 @@ import { waitForWrite, writeResponse } from '../persistence/service.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import type { DerivedRetiredBy } from '../persistence/derived-retirement-hold.ts';
 import { generationAdapter } from './adapters/index.ts';
+import { latestMemberRequest } from './member-retry.ts';
 import type { GenerationKey } from './contract.ts';
 import { assertMemberPending, GENERATION_ACTIVATE_SLUG, listPendingMembers, memberRequestId, recordActivation, settleMember,
   type ActivationIntent, type ManagedPlan } from './managed.ts';
@@ -102,9 +103,10 @@ export async function resumeRetireMembers(engine: BrainEngine, maintenance: Main
   const pending = (await listPendingMembers(engine, [writer.sourceId], kind)).filter(member => member.action === 'retire');
   const adapter = generationAdapter(kind)!;
   for (const member of pending) {
-    let row = await getWriteRequest(engine, writer.principal, memberRequestId(member.activation_id, member.slug, 'retire'));
+    let row = await latestMemberRequest(engine, writer.principal, member);
     if (row && ['queued', 'running', 'recovering'].includes(row.state)) { await waitAll(engine, maintenance, [row]); row = await getWriteRequest(engine, writer.principal, row.request_id); }
     if (row?.state === 'committed') continue;
+    if (row && ['queued', 'running', 'recovering'].includes(row.state)) continue;
     const key: GenerationKey = { kind, sourceId: member.source_id, ownerKey: member.owner_key };
     const snapshot = await engine.readPageSnapshot(member.slug, { sourceId: member.source_id });
     const current = snapshot ? (await adapter.readItems(engine, key, [member.slug])).get(member.slug) : undefined;

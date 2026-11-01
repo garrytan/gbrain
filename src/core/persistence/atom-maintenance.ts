@@ -26,6 +26,7 @@ import type { DerivedRetiredBy } from './derived-retirement-hold.ts';
 import type { GenerationKey, HeldReason } from '../generations/contract.ts';
 import { atomGenerationAdapter, atomPagePin, type AtomGenerationContext } from '../generations/adapters/atoms.ts';
 import { markdownItem } from '../generations/adapters/page.ts';
+import { latestMemberRequest } from '../generations/member-retry.ts';
 import { assertMemberPending, GENERATION_ACTIVATE_SLUG, listPendingMembers, memberRequestId, planManagedGeneration,
   recordActivation, settleMember, type ActivationIntent } from '../generations/managed.ts';
 
@@ -422,10 +423,11 @@ export async function resumeManagedGenerationMembers(engine: BrainEngine, sessio
   const pending = await listPendingMembers(engine, [session.sourceId], atomGenerationAdapter.kind);
   const resumed: ResumedMember[] = [];
   for (const member of pending) {
-    let row = await getWriteRequest(engine, session.authority.principal, memberRequestId(member.activation_id, member.slug, member.action));
+    let row = await latestMemberRequest(engine, session.authority.principal, member);
     if (row && ['queued', 'running', 'recovering'].includes(row.state)) {
       row = session.wait.observe(await waitForWrite(engine, row, session.config, session.wait.ms()));
       if (row.state === 'committed') { resumed.push({ slug: member.slug, activation_id: member.activation_id, action: member.action, outcome: 'waited' }); continue; }
+      if (['queued', 'running', 'recovering'].includes(row.state)) continue;
     }
     if (row?.state === 'committed') continue;
     const origin = (row?.intent as AtomIntent | null | undefined)?.origin;

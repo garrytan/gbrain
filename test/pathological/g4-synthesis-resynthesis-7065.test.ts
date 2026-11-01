@@ -17,6 +17,11 @@ import { runPhaseSynthesize } from '../../src/core/cycle/synthesize.ts';
 import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { __setMaintenanceWriteWaitForTests } from '../../src/core/persistence/maintenance-wait.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
+import { installFaultHook } from '../../src/core/persistence/fault-points.ts';
+import { OperationError } from '../../src/core/ops/contract.ts';
+import { maintenancePreflight } from '../../src/core/persistence/prepared-maintenance.ts';
+import { resumeRetireMembers } from '../../src/core/generations/managed-retire.ts';
+import { listPendingMembers } from '../../src/core/generations/managed.ts';
 import { configureGateway, resetGateway, __setChatTransportForTests } from '../../src/core/ai/gateway.ts';
 import { resolveRepairScope } from '../../src/core/repair/core.ts';
 import { repairRunner } from '../../src/core/repair/registry.ts';
@@ -141,6 +146,37 @@ async function repair(f: Fixture, mode: 'restore' | 'cleanup', apply?: string) {
 
 const PLAN = 'The storage plan moved to object storage.\n\n> we charge for durability\n\nDecided with [[people/alice-example]].';
 const PLAN_COVERED = PLAN + '\n\nThe team also set a weekly review of the storage costs.';
+
+test('#8132: synthesis retirement resumes after a failed resubmission, without replaying its failed receipt', async () => {
+  await fixture(true, async f => {
+    await synthesize(f, () => [{ stem: 'storage-plan', title: 'Storage plan', body: PLAN }]);
+    const [first] = await byStem(f, 'storage-plan');
+    grow(f, 'We also agreed on a weekly review of the storage costs.');
+    let faults = 0;
+    installFaultHook(async (point, detail) => {
+      if (point !== 'consumer:preparing' || !detail.writeId) return;
+      const [row] = await f.engine.executeRaw<{ kind: string }>("SELECT intent->>'kind' AS kind FROM persistence_requests WHERE id=$1::uuid", [detail.writeId]);
+      if (row?.kind === 'managed_generation_retire') {
+        faults++;
+        throw new OperationError('revision_conflict', 'Synthetic retirement failure.', 'Retry the generation.');
+      }
+    });
+    const maintenance = (await maintenancePreflight(f.engine, f.sourceId, f.root))!;
+    try {
+      await synthesize(f, () => [{ stem: 'storage-plan', title: 'Storage plan', body: PLAN_COVERED }]);
+      expect(faults).toBe(1);
+      await expect(resumeRetireMembers(f.engine, maintenance, 'synthesis')).rejects.toMatchObject({ code: 'revision_conflict' });
+      expect(faults).toBe(2);
+    } finally { installFaultHook(undefined); }
+    expect((await pages(f)).find(p => p.slug === first!.slug)?.deleted).toBe(false);
+    await resumeRetireMembers(f.engine, maintenance, 'synthesis');
+    expect((await pages(f)).find(p => p.slug === first!.slug)).toMatchObject({ deleted: true, retired_by: 'synthesis-resynthesis' });
+    expect(await listPendingMembers(f.engine, [f.sourceId], 'synthesis')).toEqual([]);
+    await resumeRetireMembers(f.engine, maintenance, 'synthesis');
+    const committed = await f.engine.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND slug=$2 AND intent->>'kind'='managed_generation_retire' AND state='committed'", [f.sourceId, first!.slug]);
+    expect(committed).toHaveLength(1);
+  });
+}, 240_000);
 
 for (const managed of [false, true]) describe(`${managed ? 'managed' : 'unmanaged'} re-synthesis (#7065)`, () => {
   test('a complete re-synthesis retires the earlier output it covers: versioned, stamped synthesis-resynthesis, file removed', async () => {
