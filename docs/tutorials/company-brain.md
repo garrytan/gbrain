@@ -107,7 +107,7 @@ You can also keep the existing personal-brain repo as one of the sources. Just p
 
 ### Two scoping models (pick the one that matches your shape)
 
-There are two ways to scope teammates' access. They suit different deployment shapes.
+There are three ways to scope teammates' access. They suit different deployment shapes.
 
 **Model A: separate sources with OAuth scoping (recommended for true multi-user with different AI clients).** What this tutorial walks you through. Each teammate gets their own OAuth client, which carries `--source` + `--federated-read` flags. The brain refuses cross-source reads at the SQL layer; isolation is database-enforced. Each teammate can run their own MCP-aware client (Claude Code, Cursor, their own OpenClaw, etc.) and the scoping holds.
 
