@@ -1030,8 +1030,8 @@ export function serializeMarkdown(
   const yamlContent = matter.stringify('', fullFrontmatter).trim();
 
   let body = compiled_truth;
-  if (timeline) {
-    body += '\n\n<!-- timeline -->\n\n' + timeline;
+  if (timeline || splitBody(compiled_truth).timeline) { // a body's own dated `## Timeline` section must not parse back as the timeline
+    body += '\n\n<!-- timeline -->' + (timeline ? '\n\n' + timeline : '');
   }
 
   return yamlContent + '\n\n' + body + '\n';
