@@ -19,6 +19,7 @@
  *    its member was disabled.
  *    A member who satisfies a folder rule writes the pages under it (the
  *    publication fast path must not read folder-ruled pages as unopenable).
+ *    A stdio server bound through mcp.stdio_member writes as that member.
  * 3. Existing coverage (member-read-access) pins reads only.
  * 4. Real seams: tokens minted by the token service and bound with SQL, verified
  *    by the serve --http verifier, dispatched through MCP dispatch; the durable
@@ -33,7 +34,7 @@ import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { __resetPrivateVisibilityCacheForTests, withCallerAccess } from '../src/core/search/private-visibility.ts';
-import { remoteCallerAccess } from '../src/core/access/caller.ts';
+import { remoteCallerAccess, STDIO_MEMBER_KEY } from '../src/core/access/caller.ts';
 import { submissionAuthority, authorizeStoredRequest } from '../src/core/persistence/authority.ts';
 import { admitWrite } from '../src/core/persistence/journal.ts';
 import { proposeRevision } from '../src/core/access/policy.ts';
@@ -287,6 +288,58 @@ for (const kind of testBackends()) {
         });
       }
     }, 240_000);
+
+    test('a stdio server bound to a member through mcp.stdio_member writes that member\'s pages; unbound it is refused', async () => {
+      async function stdio(op: string, params: Record<string, unknown>) {
+        const out = await dispatchToolCall(engine, op, { ...params }, { remote: true, transport: 'stdio', sourceId: SRC, takesHoldersAllowList: ['world'] });
+        const text = out.content.map(c => c.text).join('\n');
+        let json: Record<string, unknown> = {};
+        try { json = JSON.parse(text); } catch { /* prose */ }
+        return { isError: out.isError === true, text, json };
+      }
+      const before = await state();
+      const unbound = await stdio('add_tag', { slug: ALICE_PAGE, tag: 'stdio-tag' });
+      expect({ code: unbound.json.code }).toEqual({ code: 'page_not_found' });
+      expect(await state()).toEqual(before);
+      await engine.setConfig(STDIO_MEMBER_KEY, 'alice-example');
+      try {
+        const appended = await stdio('append_page', { slug: ALICE_PAGE, text: 'Stdio wrote this.', request_id: randomUUID() });
+        expect({ op: 'append_page', isError: appended.isError, code: appended.json.code }).toEqual({ op: 'append_page', isError: false, code: undefined });
+        const tag = await stdio('add_tag', { slug: ALICE_PAGE, tag: 'stdio-tag' });
+        expect({ op: 'add_tag', isError: tag.isError, code: tag.json.code }).toEqual({ op: 'add_tag', isError: false, code: undefined });
+        const created = await stdio('put_page', { slug: 'notes/alice-stdio', content: alicePage('Stdio page.', '[alice-example]') });
+        expect({ op: 'put_page new', isError: created.isError, code: created.json.code }).toEqual({ op: 'put_page new', isError: false, code: undefined });
+        expect((await state()).tags).toBe(before.tags + 1);
+        expect((await state('notes/alice-stdio')).frontmatter.readable_by).toEqual(['alice-example']);
+      } finally {
+        await engine.setConfig(STDIO_MEMBER_KEY, '');
+      }
+      const after = await stdio('remove_tag', { slug: ALICE_PAGE, tag: 'stdio-tag' });
+      expect({ code: after.json.code }).toEqual({ code: 'page_not_found' });
+    }, 240_000);
+
+    test('under a privacy hatch the links effect resolves a stdio writer bound to a reader as that member: its mention edge is kept', async () => {
+      await engine.setConfig(STDIO_MEMBER_KEY, 'alice-example');
+      try {
+        await withEnv({ GBRAIN_REMOTE_PRIVATE_PAGES: '1' }, async () => {
+          const slug = 'notes/mentions-stdio';
+          const out = await dispatchToolCall(engine, 'put_page', { slug, content: '---\ntype: note\ntitle: Stdio mentions\n---\n# Stdio mentions\n\nSee [[' + ALICE_PAGE + ']].' },
+            { remote: true, transport: 'stdio', sourceId: SRC, takesHoldersAllowList: ['world'] });
+          expect(out.isError === true).toBe(false);
+          const settled = async () => (await engine.executeRaw<{ outcome: { added: number } | null }>(
+            "SELECT outcome FROM persistence_effects WHERE kind='links' AND source_id=$1 AND data->>'slug'=$2 ORDER BY id DESC LIMIT 1", [SRC, slug]))[0];
+          for (let i = 0; i < 20 && !(await settled())?.outcome; i++) {
+            await runPersistenceEffects(engine, { engine: 'pglite', embedding_disabled: true } as never, { hostId: localHostId() });
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+          const edges = await engine.executeRaw<{ slug: string }>('SELECT t.slug FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id'
+            + ' WHERE f.source_id=$1 AND f.slug=$2', [SRC, slug]);
+          expect({ added: (await settled())?.outcome?.added, edges: edges.map(e => e.slug) }).toEqual({ added: 1, edges: [ALICE_PAGE] });
+        });
+      } finally {
+        await engine.setConfig(STDIO_MEMBER_KEY, '');
+      }
+    }, 120_000);
 
     test('extract_facts treats a restricted source_slug exactly like a missing one', async () => {
       const hidden = await call('bob', 'extract_facts', { turn_text: 'Bob likes tea.', source_slug: ALICE_PAGE, visibility: 'world' });

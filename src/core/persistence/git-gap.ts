@@ -14,7 +14,7 @@ import type { BrainEngine } from '../engine.ts';
 import { hardenedGitStream, hardenedGitSync, NulRecordSplitter } from '../hardened-git.ts';
 import { exportBodyLedger, segmentedExportHead, segmentedExportMarkdown, type ExportSnapshot, type ExportWithdrawal } from '../export-snapshot.ts';
 import { parseMarkdown } from '../markdown.ts';
-import { isDerivationPrivate, isPrivatePage } from '../search/private-visibility.ts';
+import { isPrivacyDerivationPrivate, isPrivacyPrivatePage } from '../search/private-visibility.ts';
 import { alignWithStored } from './align-stored.ts';
 import { digest } from './digest.ts';
 import { isDeclaredReason, isNeverFiledDerivedPage } from './git-declared.ts';
@@ -46,8 +46,8 @@ export function declaredDatabaseOnly(page: { slug: string; type?: string | null;
   lineage_private?: boolean; source_path?: string | null; source_uri?: string | null; withheld_source_path?: string | null }, relativePath: string | null, policy: GitHomePolicy): DeclaredClass | null {
   if (policy.mirror) return 'mirror_source';
   if (policy.databaseOnlySource) return 'database_only_source';
-  if (isPrivatePage(page)) return 'private';
-  if (isDerivationPrivate(page)) return 'alias_private';
+  if (isPrivacyPrivatePage(page)) return 'private';
+  if (isPrivacyDerivationPrivate(page)) return 'alias_private';
   if (page.lineage_private) return 'lineage_private';
   // G7a (git-declared.ts): a strict publication stamps the class it declared; one whose cause is gone (an origin turned
   // public, `visibility.honor_aliases` off, the ignore rule removed) keeps it until the page is written again.

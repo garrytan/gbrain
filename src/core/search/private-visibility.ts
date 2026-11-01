@@ -510,7 +510,12 @@ export async function readHonorAliases(engine: BrainEngine): Promise<boolean> {
  * folder rule or a pending folder prefix (`folder_restricted`, selected with folderRestrictedSql or looked up with folderRestricted).
  */
 export function isDerivationPrivate(page: { type?: string | null; frontmatter?: unknown; folder_restricted?: boolean | null }): boolean {
-  if (page.folder_restricted === true || isPrivatePage(page)) return true;
+  return page.folder_restricted === true || hasReaders(page.frontmatter) || isPrivacyDerivationPrivate(page);
+}
+
+/** isDerivationPrivate by privacy alone (visibility, aliases, pinned questions): what decides where a page lives in Git. */
+export function isPrivacyDerivationPrivate(page: { type?: string | null; frontmatter?: unknown }): boolean {
+  if (isPrivacyPrivatePage(page)) return true;
   return typeof page.frontmatter === 'object' && page.frontmatter !== null && hasPrivacyAlias(page.frontmatter as Record<string, unknown>);
 }
 

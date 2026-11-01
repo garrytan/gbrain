@@ -42,13 +42,15 @@ async function liveIdentity(engine: Pick<BrainEngine, 'executeRaw'>, memberSql: 
 }
 
 /**
- * The member identity bound to `auth`: the verifier's join when present, else a lookup from its principal; empty
- * when unbound, unknown or unreadable. A write's publication passes only its stored principal, so a member disabled
- * or a binding removed after submission takes effect.
+ * The member identity bound to `auth`: the verifier's join when present, else a lookup from its principal (a local
+ * stdio principal reads config mcp.stdio_member, as stdio reads do); empty when unbound, unknown or unreadable. A
+ * write's publication passes only its stored principal, so a member disabled or a binding removed after submission
+ * takes effect.
  */
 export async function memberIdentityFor(engine: Pick<BrainEngine, 'executeRaw'>, auth: Pick<AuthInfo, 'member'> & { principal?: { kind: string; id: string } } | undefined): Promise<string[]> {
   if (auth?.member !== undefined) return auth.member ? identityFor(auth.member.id, auth.member.groups) : [];
   const principal = auth?.principal;
+  if (principal?.kind === 'local_stdio') return liveIdentity(engine, 'SELECT btrim(value) FROM config WHERE key = $1', STDIO_MEMBER_KEY);
   if (!principal || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return [];
   return liveIdentity(engine, principal.kind === 'legacy_token'
     ? 'SELECT member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL'

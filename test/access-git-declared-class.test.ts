@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { privacyClass } from '../src/core/persistence/git-declared.ts';
+import { declaredDatabaseOnly } from '../src/core/persistence/git-gap.ts';
 
 const SRC = 'git-class';
 let engine: PGLiteEngine;
@@ -28,5 +29,14 @@ describe('privacyClass ignores member access (pglite, repo-less)', () => {
     expect(await privacyClass(engine, SRC, { slug: 'concepts/roadmap', type: 'concept', frontmatter: {} })).toBeNull();
     expect(await privacyClass(engine, SRC, { slug: 'notes/summary', type: 'note', frontmatter: { derived_from: ['notes/secret-origin'] } })).toBe('lineage_private');
     expect(await privacyClass(engine, SRC, { slug: 'notes/summary-2', type: 'note', frontmatter: { derived_from: ['notes/readers-origin'] } })).toBeNull();
+  }, 60_000);
+
+  test('a page that names readers is not private for placement: privacyClass and declaredDatabaseOnly ignore readers', async () => {
+    const readers = { slug: 'notes/team', type: 'note', frontmatter: { readable_by: ['alice-example'] } };
+    expect(await privacyClass(engine, SRC, readers)).toBeNull();
+    expect(await privacyClass(engine, SRC, { ...readers, frontmatter: { readable_by: ['alice-example'], visibility: 'private' } })).toBe('private');
+    const policy = { mirror: false, databaseOnlySource: false, dbOnly: () => false, ignored: new Set<string>() } as never;
+    expect(declaredDatabaseOnly(readers, 'notes/team.md', policy)).toBeNull();
+    expect(declaredDatabaseOnly({ ...readers, frontmatter: { visibility: 'private' } }, 'notes/team.md', policy)).toBe('private');
   }, 60_000);
 });
