@@ -206,6 +206,11 @@ export function normalizeForGrounding(s: string, opts: { tolerant?: boolean } = 
   return foldForGrounding(s, true, opts.tolerant === true) as { norm: string; map: number[] };
 }
 
+/** Atom source quotes may omit Markdown line markers and separator punctuation. */
+export function normalizeAtomSourceQuote(s: string): { norm: string; map: number[] } {
+  return foldForGrounding(s, true, false, true) as { norm: string; map: number[] };
+}
+
 /**
  * The ONE folding core. `withMap=false` skips the offset-map allocation (an
  * 8-byte-per-char array the presence-check callers throw away) but runs the
@@ -216,10 +221,10 @@ export function normalizeForGrounding(s: string, opts: { tolerant?: boolean } = 
  * Parity matters: the rescue gate and the repair ladder must mean the same
  * thing by "normalized substring of the transcript".
  */
-function foldForGrounding(s: string, withMap: boolean, tolerant = false): { norm: string; map: number[] } | string {
+function foldForGrounding(s: string, withMap: boolean, tolerant = false, atomQuote = false): { norm: string; map: number[] } | string {
   const out: string[] = [];
   const map: number[] = [];
-  const skip = foldSkipSet(s, tolerant);
+  const skip = atomQuote ? atomQuoteSkipSet(s, tolerant) : foldSkipSet(s, tolerant);
   let pendingSpace = false;
   // Iterate by CODE POINT (for..of), not code unit: a surrogate pair
   // lowercases as a pair (Deseret 𐐀 → 𐐨) but never half by half, so a
@@ -292,6 +297,22 @@ function foldSkipSet(s: string, tolerant: boolean): Set<number> | null {
     if (ch === '*' || ch === '`' || (ch === '~' && (s[i - 1] === '~' || s[i + 1] === '~'))) skip.add(i);
   }
   return skip;
+}
+
+function atomQuoteSkipSet(s: string, tolerant: boolean): Set<number> | null {
+  const skip = foldSkipSet(s, tolerant) ?? new Set<number>();
+  let linePrefix = true;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]!;
+    const prev = s[i - 1] ?? '';
+    const next = s[i + 1] ?? '';
+    const marker = linePrefix && ((ch === '#' && (next === '#' || /\s/.test(next))) || (ch === '>' && /\s/.test(next)));
+    const quoteMark = /["“”„‟«»‹›]/u.test(ch) || (/['‘’]/u.test(ch) && !(/[\p{L}\p{N}]/u.test(prev) && /[\p{L}\p{N}]/u.test(next)));
+    if (marker || quoteMark || ('-–—−'.includes(ch) && /\s/.test(prev) && /\s/.test(next))) skip.add(i);
+    if (ch === '\n' || ch === '\r') linePrefix = true;
+    else if (linePrefix && !/\s/.test(ch) && !marker) linePrefix = false;
+  }
+  return skip.size ? skip : null;
 }
 
 /**
