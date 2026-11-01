@@ -117,9 +117,8 @@ import {
   loadCheckpoint,
   priorSegments,
   resumeCursor,
-  rewindCursor,
+  rewindUnusableSteps,
   saveCheckpoint,
-  setCursor,
   type ReflectTally,
   type RunSpec,
 } from './checkpoint.ts';
@@ -563,9 +562,7 @@ async function runOptimizationLoop(
   // The rewound cursor is written to the checkpoint together with the reset
   // streak, so a resume that aborts before its first step still retries them.
   const stepsPerEpoch = Math.max(1, Math.floor(split.train.length / opts.batchSize));
-  if (opts.resumeRunId && opts.optimizerMode !== 'one-shot-rewrite' && tally.unusable_streak > 0) {
-    setCursor(checkpoint, rewindCursor(resumeCursor(checkpoint, stepsPerEpoch), tally.unusable_streak, stepsPerEpoch));
-  }
+  if (opts.resumeRunId) rewindUnusableSteps(checkpoint, tally.unusable_streak, stepsPerEpoch, opts.optimizerMode === 'one-shot-rewrite');
   tally.unusable_streak = 0;
   checkpoint.tally = tally;
   // Tally as of the start of the in-flight step. A handled abort re-runs that

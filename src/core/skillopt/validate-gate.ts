@@ -78,8 +78,22 @@ interface PerTask {
 
 /** One hook call for the whole batch; a malformed reply is an infra error, never a score. */
 async function hookBatch(opts: ValidateGateOpts, hook: RolloutBatchHook, runsPerTask: number): Promise<PerTask[]> {
-  if (opts.deadlineMs !== undefined && Date.now() > opts.deadlineMs) throw new Error(SKILLOPT_RUNTIME_EXCEEDED);
-  const rows = await withoutBudgetTracker(() => hook({
+  const deadline = opts.deadlineMs;
+  if (deadline !== undefined && Date.now() > deadline) throw new Error(SKILLOPT_RUNTIME_EXCEEDED);
+  // The runtime cap bounds the batch: the hook gets a signal that fires at the
+  // deadline, and a batch still running then (or answered late) aborts the run.
+  const controller = new AbortController();
+  const onAbort = () => controller.abort(opts.abortSignal?.reason);
+  if (opts.abortSignal?.aborted) onAbort();
+  else opts.abortSignal?.addEventListener('abort', onAbort, { once: true });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = deadline === undefined ? null : new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort(new Error(SKILLOPT_RUNTIME_EXCEEDED));
+      reject(new Error(SKILLOPT_RUNTIME_EXCEEDED));
+    }, Math.max(0, deadline - Date.now()));
+  });
+  const call = withoutBudgetTracker(() => hook({
     phase: opts.phase ?? 'sel_gate',
     skillText: opts.candidateSkillText,
     skillSha256: createHash('sha256').update(opts.candidateSkillText).digest('hex'),
@@ -87,7 +101,15 @@ async function hookBatch(opts: ValidateGateOpts, hook: RolloutBatchHook, runsPer
     runsPerTask,
     epoch: opts.epoch ?? 0,
     step: opts.step ?? 0,
-  }, opts.abortSignal));
+  }, controller.signal));
+  let rows: ScoredRollout[][];
+  try {
+    rows = await (expired ? Promise.race([call, expired]) : call);
+  } finally {
+    clearTimeout(timer);
+    opts.abortSignal?.removeEventListener('abort', onAbort);
+  }
+  if (deadline !== undefined && Date.now() > deadline) throw new Error(SKILLOPT_RUNTIME_EXCEEDED);
   const needsTrajectory = opts.phase === 'train_forward';
   const badRun = (r: ScoredRollout | undefined) => typeof r?.score !== 'number' || !(r.score >= 0 && r.score <= 1)
     || (needsTrajectory && (typeof r.trajectory !== 'object' || r.trajectory === null));

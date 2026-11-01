@@ -7,7 +7,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { runValidationGate, scoreSkillPerTask } from '../../src/core/skillopt/validate-gate.ts';
-import { isSkilloptMustAbort, SKILLOPT_HOOK_INFRA_ERROR } from '../../src/core/skillopt/must-abort.ts';
+import { isSkilloptMustAbort, SKILLOPT_HOOK_INFRA_ERROR, SKILLOPT_RUNTIME_EXCEEDED } from '../../src/core/skillopt/must-abort.ts';
 import { loadRunTasks } from '../../src/core/skillopt/benchmark.ts';
 import { describeJudges } from '../../src/core/skillopt/reflect.ts';
 import { READ_ONLY_BRAIN_TOOLS, rolloutToolsForSkill } from '../../src/core/skillopt/rollout.ts';
@@ -67,6 +67,24 @@ describe('rollout hook (B1.3)', () => {
     const tracker = new BudgetTracker({ maxCostUsd: 1, label: 'skillopt:test' });
     await withBudgetTracker(tracker, () => scoreSkillPerTask({ engine, skillText: 'S', tasks: tasks('s', 2), targetModel: 'm', rolloutHook: hook }));
     expect(seen).toEqual([null, null]);
+  });
+
+  test('a batch still running at the runtime deadline aborts the run, and the hook is signalled', async () => {
+    let signal: AbortSignal | undefined;
+    const hook: RolloutBatchHook = (req, s) => { signal = s; return new Promise(() => {}); };
+    const err = await runValidationGate({ engine, candidateSkillText: 'S', selSet: tasks('s', 5), bestScore: 0, targetModel: 'm', rolloutHook: hook, deadlineMs: Date.now() + 50 })
+      .then(() => null, (e) => e);
+    expect(String(err?.message)).toContain(SKILLOPT_RUNTIME_EXCEEDED);
+    expect(isSkilloptMustAbort(err)).toBe(true);
+    expect(signal?.aborted).toBe(true);
+  });
+
+  test('a batch answered after the runtime deadline is not a score', async () => {
+    const hook: RolloutBatchHook = async (req) => { await new Promise((r) => setTimeout(r, 30)); return req.tasks.map(() => [row(1), row(1), row(1)]); };
+    const deadlineMs = Date.now() + 10;
+    const err = await runValidationGate({ engine, candidateSkillText: 'S', selSet: tasks('s', 5), bestScore: 0, targetModel: 'm', rolloutHook: hook, deadlineMs })
+      .then(() => null, (e) => e);
+    expect(String(err?.message)).toContain(SKILLOPT_RUNTIME_EXCEEDED);
   });
 
   test('a train_forward row without a trajectory is an infra error', async () => {

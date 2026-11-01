@@ -264,6 +264,20 @@ describe('E1: one-shot rewrite is a gated step on train data', () => {
     expect(fs.readFileSync(skillFile(), 'utf8')).toContain('## Citations');
   });
 
+  test('a rewrite with no usable reply is retried by --resume, not skipped', async () => {
+    const benchmarkPath = writeBench(() => [{ op: 'contains', arg: 'Citations' }]);
+    installStub(['']);
+    const first = await run(opts({ benchmarkPath, optimizerMode: 'one-shot-rewrite' }));
+    expect(first.outcome).toBe('errored');
+    expect(first.receipt.resume_command).toContain(`--resume ${first.receipt.run_id}`);
+    optimizerPrompts = [];
+    installStub(['# Wave\n\n## People\nList people.\n\n## Citations\nCite.\n']);
+    const second = await run(opts({ benchmarkPath, optimizerMode: 'one-shot-rewrite', resumeRunId: first.receipt.run_id }));
+    expect(optimizerPrompts).toHaveLength(1);
+    expect(second.outcome).toBe('accepted');
+    expect(fs.readFileSync(skillFile(), 'utf8')).toContain('## Citations');
+  });
+
   test('a rewrite that scores below baseline on selection is not promoted', async () => {
     fs.writeFileSync(skillFile(), BASE + '\n## Citations\nCite.\n');
     const before = fs.readFileSync(skillFile(), 'utf8');

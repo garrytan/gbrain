@@ -187,6 +187,12 @@ export function setCursor(cp: RunCheckpoint, cursor: { epoch: number; step: numb
   cp.last_completed_step = cursor.step === 1 ? 0 : cursor.step - 1;
 }
 
+/** On resume, re-run the trailing fully unusable steps; a one-shot run retries its rewrite. */
+export function rewindUnusableSteps(cp: RunCheckpoint, streak: number, stepsPerEpoch: number, oneShot: boolean): void {
+  if (streak <= 0) return;
+  setCursor(cp, oneShot ? { epoch: 1, step: 1 } : rewindCursor(resumeCursor(cp, stepsPerEpoch), streak, stepsPerEpoch));
+}
+
 /** Move a cursor back `steps` steps, never before epoch 1 step 1. */
 export function rewindCursor(
   cursor: { epoch: number; step: number },
