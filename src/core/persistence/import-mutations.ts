@@ -27,6 +27,7 @@ import { pageSnapshotKey } from '../page-snapshot-batch.ts';
 import type { WorktreeBinding } from './ownership.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
+import { writeThroughConfigured } from './switches.ts';
 
 /** One file of a managed import batch: its path and the source-relative path its slug is derived from. */
 export interface ManagedImportFile { filePath: string; sourcePath: string }
@@ -74,6 +75,18 @@ type PendingImport = ManagedImportIntent & { request_id: string; source_id: stri
  * binaries wrote still carry the content; their row is matched as stored.
  */
 type StoredImport = Omit<PendingImport, 'content'> & { content?: string };
+
+/**
+ * #7085: with `sync.write_through` off a page write records no worktree, and a managed import publishes only through
+ * the source's canonical owner, so every file would be admitted and then refused. The import refuses once, before any admission.
+ */
+export async function managedImportWriteThroughRefusal(engine: BrainEngine, sourceId: string): Promise<OperationError | null> {
+  if (writeThroughConfigured(await engine.getConfig('sync.write_through'))) return null;
+  return opError('owner_unavailable', 'Managed import publishes through the canonical owner, and sync.write_through is off on this brain.',
+    `Nothing was imported and no write was admitted. Copy the files into source ${sourceId}'s checkout, commit them, then run gbrain sync --source ${sourceId}.`,
+    { detail: 'disabled_by_config', retryable: false, fix: { argv: ['gbrain', 'sync', '--source', sourceId], consent: [], actor: 'agent',
+      why: `Imports the files committed in source ${sourceId}'s checkout; run it after committing them.`, requires_exclusive: false } });
+}
 
 export async function importManagedFile(engine: BrainEngine, filePath: string, sourcePath: string,
   opts: { sourceId?: string; noEmbed?: boolean; activePack?: ImportPack; signal?: AbortSignal; slugRoot?: string } = {}): Promise<ImportResult> {
