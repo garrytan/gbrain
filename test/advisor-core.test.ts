@@ -1,8 +1,9 @@
 /**
  * Tests for the advisor core: ranking, collector resilience, individual
- * collectors with a stub engine, and finding-history deltas.
+ * collectors with a stub engine (the stale-sync query on in-memory PGLite),
+ * and finding-history deltas.
  */
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -14,6 +15,7 @@ import { collectSetupSmells } from '../src/core/advisor/collect-setup-smells.ts'
 import { appendAdvisorRun, summarizeDeltas } from '../src/core/advisor/history.ts';
 import { renderAdvisorReport } from '../src/core/advisor/render.ts';
 import type { AdvisorCollector, AdvisorContext, AdvisorFinding, AdvisorReport } from '../src/core/advisor/types.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
 function finding(over: Partial<AdvisorFinding>): AdvisorFinding {
   return {
@@ -244,6 +246,32 @@ describe('collect-stalled-jobs', () => {
     const out = await collectStalledJobs.collect(ctx(engine as never));
     expect(out.find((f) => f.id === 'stalled_job:embed-backfill')).toBeDefined();
     expect(out.find((f) => f.id === 'stale_sync:wiki')).toBeDefined();
+  });
+});
+
+describe('collect-stalled-jobs stale sync (PGLite)', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  test('archived source gets no stale_sync finding; active stale source still does (#7281)', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, archived, archived_at, last_sync_at) VALUES
+         ('wiki', 'wiki', false, NULL, now() - interval '30 days'),
+         ('retired', 'retired', true, now(), now() - interval '30 days')`,
+    );
+
+    const out = await collectStalledJobs.collect(ctx(engine));
+    const staleSyncIds = out.map((f) => f.id).filter((id) => id.startsWith('stale_sync:')).sort();
+    expect(staleSyncIds).toEqual(['stale_sync:wiki']);
   });
 });
 
