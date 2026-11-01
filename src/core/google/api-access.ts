@@ -2,8 +2,8 @@
  * #7004/#7073: which account a Google credential belongs to, and which of the
  * Gmail, Calendar and People APIs it can reach.
  *
- * `probeGoogleAccount` asks each enabled service to name the account (Gmail
- * profile, Calendar primary calendar, People `me`) and, when none can, the
+ * `probeGoogleAccount` checks each enabled service (Gmail profile, Calendar
+ * primary calendar, People connections) and, when none names the account, the
  * OAuth userinfo endpoint (the `email` scope is always requested). Every
  * per-service failure stays in the result: the managed sync uses the first
  * address it finds, while `gbrain google setup` and `gbrain google status`
@@ -54,9 +54,10 @@ export async function probeGoogleAccount(clients: GoogleIdentityClients, service
     ['gmail', async () => (await clients.gmail.getProfile(request)).emailAddress],
     ['calendar', async () => (await clients.calendar.fetchJSON<{ id?: string }>('https://www.googleapis.com/calendar/v3/calendars/primary', 'calendar-json', request)).id],
     ['contacts', async () => {
-      const me = await clients.people.fetchJSON<{ emailAddresses?: Array<{ value?: string; metadata?: { primary?: boolean } }> }>(
-        'https://people.googleapis.com/v1/people/me?personFields=emailAddresses', 'people', request);
-      return (me.emailAddresses?.find(address => address.metadata?.primary) ?? me.emailAddresses?.[0])?.value;
+      // Connections needs only contacts.readonly; contact addresses are not account identity.
+      await clients.people.fetchJSON<unknown>(
+        'https://people.googleapis.com/v1/people/me/connections?pageSize=1&personFields=emailAddresses', 'people', request);
+      return undefined;
     }],
     ['userinfo', clients.userinfo],
   ];
