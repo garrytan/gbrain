@@ -20,8 +20,8 @@
  * so status can say who holds it, and a row whose lock is free is orphaned: the
  * next plain refresh finishes it through the `--resume` path before refreshing.
  */
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { hostname } from 'node:os';
+import { closeSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, rmSync } from 'node:fs';
+import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { SyncResult } from '../../commands/sync.ts';
@@ -42,6 +42,11 @@ import { startPersistenceConsumer } from './service.ts';
 import { lockTopologyPrincipal, lockTopologyRows, topologyPrincipal, withTopologyLocks } from './topology-locks.ts';
 import { ACTIVE_REFRESH_STATES_SQL, CHECKOUT_EFFECT_KINDS_SQL, type WorktreeRefreshState } from './worktree-refresh-schema.ts';
 import { gitChildEnv } from '../git-env.ts';
+import type { QuarantineEntry } from '../git/commit-push.ts';
+import { isTruthy } from '../connectors/config-keys.ts';
+import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
+import { redactUrlsInText } from '../url-redact.ts';
+import { classifyPgAccessError } from '../pg-access-classify.ts';
 import { classifyOriginUniqueViolation } from './origin-guard.ts';
 
 export interface WorktreeRefreshRow {
@@ -70,6 +75,8 @@ export interface WorktreeRefreshResult {
   synced: RefreshMemberSync[]; sync_blocked?: RefreshSyncBlocked[]; next?: string;
   /** #7679: an orphaned refresh this run finished (or rolled back) through the `--resume` path before its own refresh. */
   recovered?: { refresh_id: string; state: WorktreeRefreshState; status: WorktreeRefreshResult['status']; previous_holder: RefreshHolder | null };
+  /** #7686: the diverged checkout's local commits this run published, merged with the upstream, before fast-forwarding (`sources.refresh_publish_diverged`). */
+  published?: { sha: string; local_commits: number; integrated: number; quarantined?: QuarantineEntry; superseded_remote_paths?: string[] };
 }
 /** #7679: the process that holds a refresh's lock, recorded on the row so status can name it. */
 export interface RefreshHolder { host_id: string | null; hostname: string; pid: number; started_at: string }
@@ -83,6 +90,9 @@ const describeHolder = (holder: RefreshHolder | null) => holder ? `pid ${holder.
 const DRAIN_POLL_MS = 250;
 const SYNC_BUDGET_MS = 300_000;
 const MAX_MEMBER_SYNC_PASSES = 20;
+const INDEX_LOCKED = /index\.lock': File exists|Unable to create '.*index\.lock'/;
+const INDEX_LOCK_ATTEMPTS = 4;
+const INDEX_LOCK_RETRY_MS = 250;
 const GIT_ENV = { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never', LC_ALL: 'C', GIT_OPTIONAL_LOCKS: '0' };
 
 function refusal(name: CatalogueName, cause: string, fix: string, refreshId?: string): OperationError {
@@ -219,11 +229,14 @@ async function markRecoveryRequired(engine: BrainEngine, row: WorktreeRefreshRow
 
 interface Plan {
   binding: WorktreeBinding; root: string; members: string[]; upstreamRef: string; oldHead: string; targetHead: string;
-  overlap: string[]; preserved: string[]; incoming: number;
+  overlap: string[]; preserved: string[]; incoming: number; published?: WorktreeRefreshResult['published'];
 }
 
+/** #7686: standing consent, default off, to publish a diverged checkout's local commits before the fast-forward. */
+export const REFRESH_PUBLISH_DIVERGED_KEY = 'sources.refresh_publish_diverged';
+
 /** Steps 1.3/1: refusals before any database state; fetch moves only remote-tracking refs. */
-async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTimeoutMs: number): Promise<Plan> {
+async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTimeoutMs: number, publishDiverged = false): Promise<Plan> {
   if (!await managedPersistenceEnabled(engine)) throw refusal('refresh_not_managed',
     'This brain is not managed, so gbrain sync pulls the checkout itself; there is no worktree fence to coordinate.', `gbrain sync --source ${sourceId}`);
   const binding = await getWorktreeBinding(engine, sourceId, existingLocalHostId());
@@ -266,8 +279,34 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
   const upstreamRef = upstream.stdout.trim();
   const remote = (await read(['config', '--get', `branch.${branch}.remote`], 1)).stdout.trim();
   const merge = (await read(['config', '--get', `branch.${branch}.merge`], 1)).stdout.trim();
+  const heldUpstream = new Set<string>();
+  let upstreamRecorded = false;
+  if (publishDiverged) {
+    const isSha = (sha: string) => /^[0-9a-f]{40,64}$/.test(sha) && !/^0+$/.test(sha);
+    const upstreamFull = (await read(['rev-parse', '--symbolic-full-name', '@{upstream}'])).stdout.trim();
+    const logged = (await read(['log', '-g', '-n', '1000', '--format=%H', upstreamFull, '--'], 128)).stdout.split('\n').map(sha => sha.trim());
+    let reflog = '';
+    try {
+      const fd = openSync((await read(['rev-parse', '--path-format=absolute', '--git-path', `logs/${upstreamFull}`])).stdout.trim(), 'r');
+      try {
+        const size = fstatSync(fd).size;
+        const first = Buffer.alloc(Math.min(size, 512));
+        const tail = Buffer.alloc(Math.min(size, 262_144));
+        readSync(fd, first, 0, first.length, 0);
+        readSync(fd, tail, 0, tail.length, size - tail.length);
+        reflog = `${first.toString('utf8').split('\n')[0]}\n${tail.toString('utf8')}`;
+      } finally { closeSync(fd); }
+    } catch { /* no reflog file: a reftable repository, or no reflog */ }
+    const columns = reflog.split('\n').flatMap(line => line.split(' ').slice(0, 2));
+    const rows = await engine.executeRaw<{ target_head: string }>(`SELECT target_head FROM persistence_worktree_refreshes WHERE worktree_id=$1::uuid AND upstream_ref=$2 AND state='completed' ORDER BY created_at DESC LIMIT 100`, [binding.worktree_id, upstreamRef]);
+    const recorded = [...logged, ...columns, ...rows.map(r => r.target_head)].filter(isSha);
+    const preFetch = (await read(['rev-parse', '--verify', '-q', '@{upstream}^{commit}'], 1)).stdout.trim();
+    const unlogged = ['false', 'no', 'off', '0'].includes((await read(['config', '--get', 'core.logAllRefUpdates'], 1)).stdout.trim().toLowerCase());
+    upstreamRecorded = recorded.length > 0 || (isSha(preFetch) && !unlogged);
+    for (const sha of [preFetch, ...recorded]) if (isSha(sha)) heldUpstream.add(sha);
+  }
   if (remote && remote !== '.') {
-    const fetched = await git(['-C', root, 'fetch', '--no-tags', '--quiet', remote, merge || branch], fetchTimeoutMs);
+    const fetched = await git(['-C', root, '-c', 'core.logAllRefUpdates=true', 'fetch', '--no-tags', '--quiet', remote, merge || branch], fetchTimeoutMs);
     if (fetched.code !== 0) throw refusal('fetch_failed',
       fetched.timedOut ? `git fetch ${remote} did not finish within ${fetchTimeoutMs} ms; nothing changed.`
         : `git fetch ${remote} failed (${fetched.stderr.trim().split('\n')[0] || `exit ${fetched.code}`}); nothing changed.`,
@@ -277,27 +316,78 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
   const targetHead = await revParse(git, root, '@{upstream}');
   if (!oldHead || !targetHead) throw refusal('refresh_no_upstream', `The checkout HEAD or its upstream ${upstreamRef} does not resolve to a commit.`,
     `git -C ${q(root)} fetch ${remote || 'origin'}, then gbrain sources refresh ${sourceId}`);
-  if (oldHead !== targetHead && !await isAncestor(git, root, oldHead, targetHead)) throw await divergedRefusal(git, root, sourceId, upstreamRef, oldHead, targetHead);
+  if (oldHead !== targetHead && !await isAncestor(git, root, oldHead, targetHead)) {
+    if (!publishDiverged) throw await divergedRefusal(git, root, sourceId, upstreamRef, oldHead, targetHead);
+    const tips = [...heldUpstream].filter(sha => sha !== targetHead);
+    const held = new Set(tips.length ? (await read(['rev-list', '--ignore-missing', `^${targetHead}`, ...tips])).stdout.split('\n').map(sha => sha.trim()) : []);
+    const removed = (await read(['rev-list', `${targetHead}..${oldHead}`])).stdout.split('\n').map(sha => sha.trim()).find(sha => sha && held.has(sha));
+    if (!upstreamRecorded || removed) throw await divergedRefusal(git, root, sourceId, upstreamRef, oldHead, targetHead, removed
+      ? `${upstreamRef} no longer contains ${removed}, which it held before: its history was rewritten (a force-push), and publishing would merge back the commits the rewrite removed.`
+      : `gbrain has no record of what ${upstreamRef} held before this fetch (no reflog entry and no completed refresh), so it cannot tell a force-push from local commits.`);
+    const base = (await read(['merge-base', oldHead, targetHead], 1)).stdout.trim() || oldHead;
+    const incoming = await dirtyOverlap(git, root, base, targetHead);
+    if (incoming.overlap.length) throw dirtyRefusal(sourceId, incoming.overlap);
+    const localCommits = Number((await read(['rev-list', '--count', `${targetHead}..${oldHead}`])).stdout.trim()) || 0;
+    const pushed = await publishInChild(root, sourceId, targetHead);
+    const published = { sha: pushed.sha ?? targetHead, local_commits: localCommits, integrated: pushed.integrated,
+      ...(pushed.quarantined ? { quarantined: pushed.quarantined } : {}), ...(pushed.superseded_remote_paths ? { superseded_remote_paths: pushed.superseded_remote_paths } : {}) };
+    const plan = await precheck(engine, git, sourceId, fetchTimeoutMs).catch(error => { throw notePublished(error, published); });
+    return { ...plan, published: { ...published, sha: pushed.sha ?? plan.targetHead } };
+  }
   const dirt = await dirtyOverlap(git, root, oldHead, targetHead);
   if (dirt.overlap.length) throw dirtyRefusal(sourceId, dirt.overlap);
   return { binding, root, members, upstreamRef, oldHead, targetHead, ...dirt };
+}
+/** #7686: the bound on the keep-checkout publish child (a fetch, an in-memory merge and a push, repeated while the remote keeps moving). */
+const PUBLISH_TIMEOUT_MS = 600_000;
+
+/**
+ * #7686 (#7010's rule): run the keep-checkout publish in a bounded child `gbrain git commit-push --push-only --keep-checkout`,
+ * bound with `--expect-remote` to the upstream this refresh checked for a rewrite, so a force-push after the check refuses.
+ * The shared publish is synchronous (fetches, pushes and lock waits block for minutes), and a refresh delegated to a
+ * PGLite owner runs inside the owner, where blocking would stall lease renewals; a busy publish lock fails at once.
+ */
+async function publishInChild(root: string, sourceId: string, checkedUpstream: string): Promise<{ sha: string | null; integrated: number; quarantined?: QuarantineEntry; superseded_remote_paths?: string[] }> {
+  const { CHILD_ENV, resolveChildCliInvocation } = await import('../minions/job-isolation.ts');
+  const cli = resolveChildCliInvocation(process.env, process.execPath, process.argv[1], () => null);
+  if (!cli) throw opError('git_push_unavailable', `This process could not locate its own CLI executable to publish the diverged checkout ${root}; nothing was pushed.`,
+    `Set ${CHILD_ENV.childCliOverride} to the path of the CLI executable and retry gbrain sources refresh ${sourceId}, or publish by hand: gbrain git commit-push --push-only --keep-checkout --path ${q(root)}.`);
+  const child = await execFileBounded(cli.cmd, [...cli.argsPrefix, 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', root, '--expect-remote', checkedUpstream, '--json'], {
+    timeout: PUBLISH_TIMEOUT_MS, termGraceMs: 10_000, maxBuffer: 1024 * 1024,
+    env: { ...process.env, GBRAIN_PUBLISH_LOCK_WAIT_SECONDS: '0', GBRAIN_PUSH_LOCK_WAIT_SECONDS: '0' },
+  });
+  let doc: Record<string, unknown> | null = null;
+  try { doc = JSON.parse(child.stdout.trim()); } catch { /* reported below */ }
+  if (!child.error && doc?.outcome === 'pushed') return doc as { sha: string | null; integrated: number; quarantined?: QuarantineEntry; superseded_remote_paths?: string[] };
+  if (doc && typeof doc.code === 'string' && typeof doc.message === 'string') {
+    throw opError(doc.code as Parameters<typeof opError>[0], doc.message, typeof doc.suggestion === 'string' ? doc.suggestion : '',
+      { ...(typeof doc.detail === 'string' ? { detail: doc.detail } : {}), ...(doc.fix ? { fix: doc.fix as Action } : {}), retryable: doc.retryable === true });
+  }
+  throw opError('push_unconfirmed', `The publish of the diverged checkout ${root} did not report a push (${child.error ? `exit ${String(child.error.code ?? child.error.signal ?? 'unknown')}` : `outcome ${String(doc?.outcome ?? 'unreadable')}`}: ${child.stderr.trim().slice(0, 300) || 'no detail'}); the refresh stopped before fencing anything, and the remote may already hold the merge.`,
+    `Check gbrain sources writer status --source ${sourceId} --json, then retry gbrain sources refresh ${sourceId}.`, { retryable: true });
 }
 /**
  * Q1: a diverged checkout is reconciled without moving it: `gbrain git commit-push --push-only --keep-checkout` merges the
  * upstream into HEAD in memory and pushes the merge (refusing on a conflict, never touching the checkout), after which HEAD
  * is an ancestor of the upstream and the refresh fast-forwards. It publishes the local commits, so the user decides.
  */
-async function divergedRefusal(git: Git, root: string, sourceId: string, upstreamRef: string, oldHead: string, targetHead: string): Promise<OperationError> {
+async function divergedRefusal(git: Git, root: string, sourceId: string, upstreamRef: string, oldHead: string, targetHead: string, rewrite?: string): Promise<OperationError> {
   const count = Number((await git(['-C', root, 'rev-list', '--count', `${targetHead}..${oldHead}`])).stdout.trim()) || 0;
   const local = count ? `${count} local commit(s)` : 'the local commits';
   const argv = ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', root, '--json'];
   const error = refusal('refresh_diverged',
-    `The checkout HEAD ${oldHead} is not an ancestor of ${upstreamRef} (${targetHead}); a fast-forward is impossible and nothing changed.`,
-    `Publish ${local} merged with ${upstreamRef}: ${argv.map(q).join(' ')} (it merges in memory, refuses on a conflict and never moves the checkout), then retry gbrain sources refresh ${sourceId}. Ask the user first, because it pushes those commits (git -C ${q(root)} log --stat ${upstreamRef}..HEAD lists them). gbrain sources reclone ${sourceId} replaces the checkout instead and drops them.`);
+    `The checkout HEAD ${oldHead} is not an ancestor of ${upstreamRef} (${targetHead}); a fast-forward is impossible and nothing changed.${rewrite ? ` ${rewrite} ${REFRESH_PUBLISH_DIVERGED_KEY} does not publish it on its own.` : ''}`,
+    `Publish ${local} merged with ${upstreamRef}: ${argv.map(q).join(' ')} (it merges in memory, refuses on a conflict and never moves the checkout), then retry gbrain sources refresh ${sourceId}. Ask the user first, because it pushes those commits (git -C ${q(root)} log --stat ${upstreamRef}..HEAD lists them). gbrain sources reclone ${sourceId} replaces the checkout instead and drops them.${rewrite ? '' : ` To let every refresh publish a diverged checkout this way on its own, the user can run gbrain config set ${REFRESH_PUBLISH_DIVERGED_KEY} true.`}`);
   error.fix = { argv, consent: [], actor: 'user', ask_user: true, requires_exclusive: false,
     why: `HEAD has ${local} that ${upstreamRef} lacks while ${upstreamRef} moved on; pushing HEAD merged with it makes HEAD an ancestor of the upstream, so the refresh can fast-forward.`,
-    user_message: `The checkout of source ${sourceId} has ${local} that were never pushed while its remote moved on. Push them, merged with the remote, so gbrain can bring the checkout up to date? Conflicting files stop the push and change nothing.`,
+    user_message: rewrite ? `The checkout of source ${sourceId} cannot be published on its own: ${rewrite} Push this checkout's history merged with the remote anyway, or replace the checkout with gbrain sources reclone ${sourceId}?`
+      : `The checkout of source ${sourceId} has ${local} that were never pushed while its remote moved on. Push them, merged with the remote, so gbrain can bring the checkout up to date? Conflicting files stop the push and change nothing.`,
     docs: 'docs/guides/write-refusals.md#refresh_diverged' };
+  return error;
+}
+/** #7686: a refusal after this run's publish says the remote already holds the local commits, so "nothing changed" is not misread. */
+function notePublished(error: unknown, published: WorktreeRefreshResult['published']): unknown {
+  if (published && error instanceof Error) error.message += ` This run had already published the checkout's ${published.local_commits} local commit(s) merged with the upstream as ${published.sha} (${REFRESH_PUBLISH_DIVERGED_KEY}), so the remote holds them.`;
   return error;
 }
 function dirtyRefusal(sourceId: string, overlap: string[], refreshId?: string): OperationError {
@@ -482,6 +572,65 @@ function finished(row: WorktreeRefreshRow, sync: { synced: RefreshMemberSync[]; 
  * host only; refusals throw catalogue errors (`code`, cause, literal fix, docs).
  */
 export async function refreshWorktree(engine: BrainEngine, sourceId: string, opts: RefreshOptions = {}): Promise<WorktreeRefreshResult> {
+  try { return await runRefresh(engine, sourceId, opts); }
+  catch (error) {
+    if (error instanceof OperationError || classifyPgAccessError(error).reason !== 'unknown') throw error;
+    throw await unexpectedRefreshFailure(engine, sourceId, opts, error);
+  }
+}
+
+const redact = (text: string) => {
+  const home = homedir();
+  const escaped = home.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const ownHome = new RegExp(`${escaped}(?![\\w.-])`, 'g');
+  return redactConnectionInfo(redactUrlsInText(home.length > 1 ? text.replace(ownHome, '~') : text));
+};
+const LOOKUP_MS = 3_000;
+/**
+ * A best-effort diagnostic read on a refusal path, bounded at LOOKUP_MS: each raw statement runs under a transaction-local
+ * statement_timeout and a signal that cancels it at the bound, so neither the refusal nor a pooled connection waits on it.
+ * A read still pending at the bound resolves null.
+ */
+async function boundedLookup<T>(engine: BrainEngine, read: (engine: BrainEngine) => Promise<T>): Promise<T | null> {
+  const controller = new AbortController();
+  const deadlineAt = Date.now() + LOOKUP_MS;
+  const bounded = new Proxy(engine, { get(target, key) {
+    if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: object) =>
+      target.executeRaw(sql, params, { ...opts, signal: controller.signal, timeoutMs: LOOKUP_MS, deadlineAt });
+    const value = Reflect.get(target, key, target);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<null>(resolve => { timer = setTimeout(() => { controller.abort(); resolve(null); }, LOOKUP_MS); });
+  return Promise.race([Promise.resolve().then(() => read(bounded)), timedOut]).catch(() => null).finally(() => clearTimeout(timer));
+}
+const TRANSIENT_SQLSTATES = new Set(['40P01', '40001', '57014', '55P03']);
+
+/**
+ * GBRA-250: an untyped throw (a statement error, a TypeError) leaves the refresh where it stood, so a fenced or syncing row
+ * resumes on the next run. The refusal names that row and carries the stack in `why`, so a failure seen once leaves a trace.
+ * A database access error the classifier recognizes (connection refused, a missing table) is rethrown unchanged, so the CLI
+ * keeps its own repair fix for it.
+ */
+async function unexpectedRefreshFailure(engine: BrainEngine, sourceId: string, opts: RefreshOptions, error: unknown): Promise<OperationError> {
+  const thrown = error instanceof Error ? error : new Error(String(error));
+  const code = typeof (error as { code?: unknown } | null)?.code === 'string' ? (error as { code: string }).code : null;
+  const lookup = await boundedLookup(engine, async reads => {
+    const binding = await getWorktreeBinding(reads, sourceId, existingLocalHostId());
+    return { active: binding ? await readActiveRefresh(reads, binding.worktree_id) : null };
+  });
+  const command = `gbrain sources refresh ${sourceId}${opts.dryRun ? ' --dry-run' : ''}${opts.abandon ? ' --abandon' : opts.resume ? ' --resume' : ''}`
+    + `${opts.waitDrainMs !== undefined ? ` --wait-drain ${opts.waitDrainMs / 1000}` : ''}${opts.fetchTimeoutMs !== undefined ? ` --fetch-timeout-ms ${opts.fetchTimeoutMs}` : ''}`;
+  const left = !lookup ? 'The refresh row could not be read, so a fenced or syncing refresh may still be active.'
+    : lookup.active ? `Refresh ${lookup.active.id} stays ${lookup.active.state}${opts.abandon ? '.' : `, and the next gbrain sources refresh ${sourceId} resumes it.`}` : 'No refresh row was left active.';
+  const failure = opError('internal_error', redact(`The refresh of source ${sourceId} failed unexpectedly: ${thrown.name}${code ? ` (${code})` : ''}: ${thrown.message}`),
+    `${left} Run ${command} again; if it fails the same way, report this output (why holds the stack) with gbrain doctor --json.`,
+    { why: redact(thrown.stack ?? `${thrown.name}: ${thrown.message}`) });
+  if (code && TRANSIENT_SQLSTATES.has(code)) failure.retryable = true;
+  return failure;
+}
+
+async function runRefresh(engine: BrainEngine, sourceId: string, opts: RefreshOptions): Promise<WorktreeRefreshResult> {
   const syncBudgetMs = await configuredMs(engine, opts.syncBudgetMs, 'GBRAIN_REFRESH_SYNC_BUDGET_MS', 'sources.refresh_sync_budget_ms', SYNC_BUDGET_MS);
   if (opts.resume || opts.abandon) return resumeOrAbandon(engine, sourceId, opts, syncBudgetMs);
   const fetchTimeoutMs = await configuredMs(engine, opts.fetchTimeoutMs, 'GBRAIN_REFRESH_FETCH_TIMEOUT_MS', 'sources.refresh_fetch_timeout_ms', 120_000, 2 ** 31 - 1);
@@ -493,10 +642,14 @@ export async function refreshWorktree(engine: BrainEngine, sourceId: string, opt
 }
 
 async function refreshOnce(engine: BrainEngine, sourceId: string, opts: RefreshOptions, fetchTimeoutMs: number, waitDrainMs: number, syncBudgetMs: number): Promise<WorktreeRefreshResult> {
-  return withGit(async git => {
-    const plan = await precheck(engine, git, sourceId, fetchTimeoutMs);
+  let published: WorktreeRefreshResult['published'];
+  return withGit<WorktreeRefreshResult>(async git => {
+    const publishDiverged = !opts.dryRun && isTruthy(await engine.getConfig(REFRESH_PUBLISH_DIVERGED_KEY));
+    const plan = await precheck(engine, git, sourceId, fetchTimeoutMs, publishDiverged);
+    published = plan.published;
     const base = { refresh_id: null, worktree_id: plan.binding.worktree_id, source_ids: plan.members, old_head: plan.oldHead,
-      target_head: plan.targetHead, upstream_ref: plan.upstreamRef, preserved_uncommitted: plan.preserved, incoming_files: plan.incoming };
+      target_head: plan.targetHead, upstream_ref: plan.upstreamRef, preserved_uncommitted: plan.preserved, incoming_files: plan.incoming,
+      ...(plan.published ? { published: plan.published } : {}) };
     if (opts.dryRun) return { ...base, status: 'dry_run', synced: [],
       next: plan.oldHead === plan.targetHead ? `Already at ${plan.upstreamRef}; nothing to fast-forward.` : `gbrain sources refresh ${sourceId}` };
     if (plan.oldHead === plan.targetHead) {
@@ -512,7 +665,8 @@ async function refreshOnce(engine: BrainEngine, sourceId: string, opts: RefreshO
           if (result.blocked) blocked.push(result.blocked);
           synced.push({ source_id: member, status: result.status, last_commit: await lastCommit(engine, member) });
         } catch (error) {
-          blocked.push({ source_id: member, code: (error as OperationError).code ?? 'storage_error', message: (error as Error).message, resume: `gbrain sync --source ${member} --no-pull` });
+          blocked.push({ source_id: member, code: error instanceof OperationError ? error.code : 'storage_error', message: error instanceof Error ? error.message : String(error),
+            resume: `gbrain sync --source ${member} --no-pull` });
         }
       }
       const deferred = synced.some(member => member.status === 'deferred');
@@ -542,9 +696,10 @@ async function refreshOnce(engine: BrainEngine, sourceId: string, opts: RefreshO
       const merged = await fenceAndMerge(engine, git, sourceId, plan, row, opts.hooks);
       await opts.hooks?.boundary?.('syncing', merged);
       const sync = await syncMembers(engine, git, merged, plan.root, syncBudgetMs);
-      return finished(await readRefresh(engine, row.id), sync, plan.preserved);
+      const result = finished(await readRefresh(engine, row.id), sync, plan.preserved);
+      return plan.published ? { ...result, published: plan.published } : result;
     } finally { await refreshLock.release(); }
-  });
+  }).catch(error => { throw notePublished(error, published); });
 }
 
 /** Step 2: native topology + worktree locks, then one transaction inserting the `draining` row. */
@@ -564,11 +719,38 @@ async function fenceDraining(engine: BrainEngine, sourceId: string, plan: Plan, 
     [plan.binding.worktree_id, plan.members, principal, String(current.owner_epoch), String(current.topology_generation),
       plan.oldHead, plan.targetHead, plan.upstreamRef, plan.preserved, JSON.stringify({ holder: refreshHolder() })]);
     return row;
-  })).catch(error => {
+  })).catch(async error => {
     if ((error as { code?: string }).code === '23505' && !classifyOriginUniqueViolation(error)) throw inProgress('Another refresh of this worktree started first.', sourceId);
+    if ((error as { code?: string }).code === LOCK_NOT_AVAILABLE) throw await lockTimeoutRefusal(engine, sourceId);
     throw error;
   });
 }
+
+const LOCK_NOT_AVAILABLE = '55P03';
+/**
+ * GBRA-250: a fence transaction that waited past its lock_timeout for a row another transaction holds (Postgres 55P03) is a
+ * typed refusal naming the oldest open transactions that hold locks on the fenced tables (candidates: pg_locks cannot show
+ * which row each one holds), instead of an untyped internal_error.
+ */
+async function lockTimeoutRefusal(engine: BrainEngine, sourceId: string, refreshId?: string): Promise<OperationError> {
+  const holders = engine.kind !== 'postgres' ? [] : await boundedLookup(engine, reads => reads.executeRaw<{ pid: number; application_name: string; state: string | null; open_seconds: number }>(
+    `SELECT a.pid, a.application_name, a.state, extract(epoch FROM now() - a.xact_start)::int AS open_seconds
+       FROM pg_stat_activity a
+      WHERE a.pid <> pg_backend_pid() AND a.xact_start IS NOT NULL AND a.datname = current_database()
+        AND EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND l.granted AND l.mode <> 'AccessShareLock'
+          AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+          AND l.relation IN ('persistence_brain'::regclass, 'persistence_worktrees'::regclass, 'sources'::regclass, 'persistence_worktree_refreshes'::regclass))
+      ORDER BY a.xact_start LIMIT 5`));
+  const error = refusal('refresh_lock_timeout', `The refresh fence of source ${sourceId} waited past its 5 s lock timeout for a brain, worktree, source or refresh row another database transaction holds; nothing moved.`,
+    `Retry gbrain sources refresh ${sourceId}. If it repeats, a transaction holding one of those rows is stuck: why lists the oldest candidates, which may not include it, so confirm the blocker on the brain host before ending any transaction.`, refreshId);
+  error.why = holders === null ? 'The lookup of open transactions holding those rows failed or took longer than 3 s.'
+    : holders.length ? redact(`The oldest open transactions holding locks on those tables, at most five; the one blocking the fence may not be listed: ${holders.map(h => `pid ${h.pid} (${h.application_name || 'no application name'}, ${h.state ?? 'unknown state'}, open ${h.open_seconds} s)`).join('; ')}`)
+    : 'No open transaction holding a lock on those tables was visible to this database role.';
+  return error;
+}
+
+/** A fence transaction past its lock timeout; fenceAndMerge builds the refusal after the native locks are released. */
+class FenceLockTimeout extends Error {}
 
 /** Steps 3-5 under the worktree native lock: recheck drained, fence, verify HEAD, ff-only merge, bookkeeping. */
 async function fenceAndMerge(engine: BrainEngine, git: Git, sourceId: string, plan: Plan, row: WorktreeRefreshRow, hooks?: RefreshHooks): Promise<WorktreeRefreshRow> {
@@ -588,33 +770,56 @@ async function fenceAndMerge(engine: BrainEngine, git: Git, sourceId: string, pl
           `Work reached the worktree after the drain check (${counts.requests} request(s), ${counts.effects} checkout effect(s), ${counts.recovery} recovery record(s)); nothing moved.`,
           `Retry gbrain sources refresh ${sourceId}`, row.id);
         if (!await transition(tx, row, ['draining'], 'fenced')) throw refusal('refresh_source_changed', 'The refresh record was moved by recovery while draining.', `gbrain sources refresh ${sourceId} --resume`, row.id);
-      });
+      }).catch(error => { throw (error as { code?: string }).code === LOCK_NOT_AVAILABLE ? new FenceLockTimeout() : error; });
       const current = await readRefresh(engine, row.id);
       await hooks?.boundary?.('fenced', current);
-      const head = await headOf(git, plan.root);
-      if (head !== row.old_head) {
-        if (head === null) throw await markRecoveryRequired(engine, current, head, plan.root);
-        await abort(engine, current, ['fenced'], refusal('refresh_source_changed',
-          `The checkout HEAD moved from ${row.old_head} to ${head} after the precheck (an external commit or checkout); nothing was merged.`, `Retry gbrain sources refresh ${sourceId}`));
-      }
-      const dirt = await dirtyOverlap(git, plan.root, row.old_head, row.target_head);
-      if (dirt.overlap.length) await abort(engine, current, ['fenced'], dirtyRefusal(sourceId, dirt.overlap));
-      const merge = await git(['-C', plan.root, 'merge', '--ff-only', '--no-edit', '--quiet', row.target_head], 120_000);
-      const after = await headOf(git, plan.root);
-      if (merge.code !== 0 || after !== row.target_head) {
-        if (after === row.old_head) await abort(engine, current, ['fenced'], refusal('refresh_dirty',
-          `git merge --ff-only refused (${merge.stderr.trim().split('\n')[0] || `exit ${merge.code}`}); HEAD is unchanged at ${row.old_head}.`,
-          `Commit or discard the paths git names (check gbrain sources writer status ${sourceId} --json for pending git effects), then retry gbrain sources refresh ${sourceId}.`));
-        throw await markRecoveryRequired(engine, current, after, plan.root);
-      }
+      // #8117: `gbrain git commit-push` serializes on the checkout's commit lock, not on the refresh fence, so the HEAD check
+      // through the merge runs under that lock too: a door commit can neither move HEAD nor hold .git/index.lock in between.
+      const { acquireCommitLockAsync } = await import('../git/commit-push.ts');
+      const commitLock = await acquireCommitLockAsync(plan.root).catch(error => abort(engine, current, ['fenced'], error instanceof OperationError ? error
+        : opError('commit_lock_busy', `The checkout's commit lock could not be taken (${error instanceof Error ? error.message : String(error)}); nothing moved.`, `Retry gbrain sources refresh ${sourceId}.`, { retryable: true })));
+      try {
+        const head = await headOf(git, plan.root);
+        if (head !== row.old_head) {
+          if (head === null) throw await markRecoveryRequired(engine, current, head, plan.root);
+          await abort(engine, current, ['fenced'], refusal('refresh_source_changed',
+            `The checkout HEAD moved from ${row.old_head} to ${head} after the precheck (an external commit or checkout); nothing was merged.`, `Retry gbrain sources refresh ${sourceId}`));
+        }
+        const dirt = await dirtyOverlap(git, plan.root, row.old_head, row.target_head);
+        if (dirt.overlap.length) await abort(engine, current, ['fenced'], dirtyRefusal(sourceId, dirt.overlap));
+        let merge = await git(['-C', plan.root, 'merge', '--ff-only', '--no-edit', '--quiet', row.target_head], 120_000);
+        let after = await headOf(git, plan.root);
+        for (let attempt = 1; attempt < INDEX_LOCK_ATTEMPTS && merge.code !== 0 && after === row.old_head && INDEX_LOCKED.test(merge.stderr); attempt++) {
+          await new Promise(resolve => setTimeout(resolve, INDEX_LOCK_RETRY_MS * attempt));
+          merge = await git(['-C', plan.root, 'merge', '--ff-only', '--no-edit', '--quiet', row.target_head], 120_000);
+          after = await headOf(git, plan.root);
+        }
+        if (merge.code !== 0 || after !== row.target_head) {
+          const refused = merge.stderr.trim().split('\n')[0] || `exit ${merge.code}`;
+          if (after === row.old_head && INDEX_LOCKED.test(merge.stderr)) await abort(engine, current, ['fenced'], opError('git_index_locked',
+            `git merge --ff-only could not take the checkout's index lock (${refused}); HEAD is unchanged at ${row.old_head}.`,
+            `A git process outside gbrain's commit lock holds .git/index.lock. Retry gbrain sources refresh ${sourceId} once it exits; nothing moved.`, { retryable: true }));
+          if (after === row.old_head) await abort(engine, current, ['fenced'], refusal('refresh_dirty',
+            `git merge --ff-only refused (${refused}); HEAD is unchanged at ${row.old_head}.`,
+            `Commit or discard the paths git names (check gbrain sources writer status ${sourceId} --json for pending git effects), then retry gbrain sources refresh ${sourceId}.`));
+          throw await markRecoveryRequired(engine, current, after, plan.root);
+        }
+      } finally { await commitLock.release(); }
       await hooks?.boundary?.('merged', current);
       await bookkeeping(engine, current);
       return readRefresh(engine, row.id);
     }, undefined, 30_000);
-  } catch (error) {
+  } catch (thrown) {
+    const error = thrown instanceof FenceLockTimeout ? await lockTimeoutRefusal(engine, sourceId, row.id) : thrown;
     const stored = await readRefresh(engine, row.id);
     if (stored.state === 'draining' && error instanceof OperationError) {
-      await engine.transaction(tx => transition(tx, stored, ['draining'], 'aborted', refusalOutcome(error)));
+      await engine.transaction(async tx => {
+        await tx.executeRaw("SELECT set_config('lock_timeout','5s',true)");
+        await transition(tx, stored, ['draining'], 'aborted', refusalOutcome(error));
+      }).catch(abortError => {
+        if ((abortError as { code?: string }).code !== LOCK_NOT_AVAILABLE) throw abortError;
+        error.message = `${error.message} Refresh ${row.id} stays draining, and the next gbrain sources refresh ${sourceId} resumes it.`;
+      });
       error.detail ??= `refresh_id=${row.id}`;
     }
     throw error;

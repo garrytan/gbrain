@@ -8,7 +8,7 @@
 # scripts/lib/test-env.sh (receipts_init) and scripts/ci-executed-counts.ts.
 #
 # Usage:
-#   bash scripts/run-with-receipt.sh <lane> <tag> -- bun test --timeout=N [args] <files...>
+#   bash scripts/run-with-receipt.sh <lane> <tag> -- bun [--no-env-file] test --timeout=N [args] <files...>
 #
 # <lane> names the identity lane (unit, slow, tier1, ...); <tag> must be unique
 # per invocation inside that lane. Test files are the *.test.ts arguments.
@@ -17,8 +17,13 @@
 
 set -euo pipefail
 
+bun_flag=""
+if [ "${5:-}" = "--no-env-file" ]; then
+  bun_flag=--no-env-file
+  set -- "$1" "$2" "$3" "$4" "${@:6}"
+fi
 if [ "$#" -lt 5 ] || [ "$3" != "--" ] || [ "$4" != "bun" ] || [ "$5" != "test" ]; then
-  echo "usage: bash scripts/run-with-receipt.sh <lane> <tag> -- bun test --timeout=N [args] <files...>" >&2
+  echo "usage: bash scripts/run-with-receipt.sh <lane> <tag> -- bun [--no-env-file] test --timeout=N [args] <files...>" >&2
   exit 2
 fi
 lane="$1"
@@ -50,6 +55,6 @@ fi
 
 receipt_begin primary "$tag" "" "" "" "${files[@]}"
 rc=0
-bun test ${RECEIPT_ARGS[@]+"${RECEIPT_ARGS[@]}"} "$@" || rc=$?  # "$@" carries --timeout (refused above otherwise)
+bun $bun_flag test ${RECEIPT_ARGS[@]+"${RECEIPT_ARGS[@]}"} "$@" || rc=$?  # "$@" carries --timeout (refused above otherwise)
 receipt_end "$rc"
 exit "$rc"

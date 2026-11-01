@@ -113,7 +113,8 @@ describe('#6712 PR 4b lane B: holds with side and state (rows 6, 9, 19)', () => 
     const head = git(root, 'rev-parse', 'HEAD');
 
     const result = await performManagedSync(engine, OPTS);
-    expect({ status: result.status, reason: result.reason ?? null }).toEqual({ status: 'synced', reason: null });
+    // #7199: the source synced, and the four holds wait on a person, so the pass says so instead of plain synced.
+    expect({ status: result.status, reason: result.reason ?? null, held_needs_human: result.held_needs_human ?? null }).toEqual({ status: 'synced', reason: 'held_needs_human', held_needs_human: 4 });
     expect((await source(engine)).last_commit).toBe(head);
     const held = await holds(engine);
     expect(held['notes/a.md']).toMatchObject({ code: 'file_drift', slug: 'notes/a', meta: { side: 'deleted', state: 'file_gone', deleted: true } });

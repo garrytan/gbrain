@@ -7,7 +7,7 @@
 # of that commit beside the checkout (../gbrain-release) with its own
 # dependencies, so the same fixture runs on a release and on this branch.
 #
-#   scripts/ubicloud/ubi-runner.sh run --setup scripts/bench/stall-repro-vm-setup.sh \
+#   scripts/ubicloud/ubi-runner.sh run --ttl-hours 4 --setup scripts/bench/stall-repro-vm-setup.sh \
 #     --env RELEASE_COMMIT=8e11aa1f -- 'bun scripts/bench/managed-sync-stall-repro.ts --cli-repo ../gbrain-release ...'
 set -euo pipefail
 

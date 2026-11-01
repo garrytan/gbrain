@@ -25,10 +25,10 @@ import type { Migration } from './types.ts';
 // read-time lineage test treats an origin under a folder rule or a covered
 // prefix as restricted. Nothing is rewritten on upgrade: with no rule, every
 // page keeps folder_rule_ids NULL.
-// No schema.sql mirror: like v281, these exist only through migrations.
+// No schema.sql mirror: like v282, these exist only through migrations.
 // Provisional number: renumbered at the merge slot.
-export const v282: Migration = {
-  version: 282,
+export const v283: Migration = {
+  version: 283,
   name: 'folder_access_rules',
   idempotent: true,
   sql: `

@@ -62,6 +62,21 @@
     ],
     "test/grandfather-capacity.test.ts": [
       "test/grandfather-managed.test.ts"
+    ],
+    "scripts/ubicloud/*.sh": [
+      "test/scripts/awk-portability.test.ts"
+    ],
+    "scripts/*-weights.metadata.json": [
+      "test/scripts/mine-shard-weights.test.ts"
+    ],
+    "docs/eval/system-one/runners/ubicloud-setup.sh": [
+      "test/scripts/vm-setup-usage.test.ts"
+    ],
+    "scripts/bench/production-soak/vm-setup.sh": [
+      "test/scripts/vm-setup-usage.test.ts"
+    ],
+    "scripts/bench/stall-repro-vm-setup.sh": [
+      "test/scripts/vm-setup-usage.test.ts"
     ]
   },
   "guards": [

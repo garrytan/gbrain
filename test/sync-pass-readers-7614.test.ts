@@ -208,11 +208,73 @@ for (const backend of testBackends()) {
         else expect(await sync()).toMatchObject({ status: 'partial', reason: 'drain_lease_held' });
       } finally { installFaultHook(undefined); }
       const stopped = (await readPassRow(engine, 'default', incarnation!))!;
-      expect([stopped.value.telemetry.outcome, stopped.value.telemetry.stop_reason, abandonedPasses(stopped)]).toEqual(['resumable', reason, 0]);
+      // #7982: a transient ending counts itself; the lost lease between the two resets the streak, so neither reaches the report streak.
+      expect([stopped.value.telemetry.outcome, stopped.value.telemetry.stop_reason, abandonedPasses(stopped)]).toEqual(['resumable', reason, reason === 'transient' ? 1 : 0]);
       expect((await status()).reason).toBe('pass_unfinished');
       expect(await blocked()).toEqual([]);
     }
     expect((await sync()).status).toMatch(/^(up_to_date|synced)$/);
+  });
+
+  synced('#7982: passes that keep ending on a transient stop build a streak; at the report streak status and doctor read pass_abandoned', async ({ engine, root, sync, status, blocked }) => {
+    const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text AS incarnation FROM sources WHERE id='default'");
+    const statementTimeout = () => Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+    for (const i of [0, 1]) {
+      commitFile(root, `timeout-${i}.md`);
+      installFaultHook(async point => { if (point === 'sync:round_start') throw statementTimeout(); });
+      try { await expect(sync()).rejects.toThrow('statement timeout'); } finally { installFaultHook(undefined); }
+      const stopped = (await readPassRow(engine, 'default', incarnation!))!;
+      expect([stopped.value.telemetry.outcome, stopped.value.telemetry.stop_reason, abandonedPasses(stopped)]).toEqual(['resumable', 'transient', i + 1]);
+      if (i === 0) {
+        expect((await status()).reason).toBe('pass_unfinished');
+        expect(await blocked()).toEqual([]);
+      }
+    }
+    expect([(await status()).state, (await status()).reason]).toEqual(['blocked', 'pass_abandoned']);
+    expect((await status()).next?.argv).toEqual(['gbrain', 'doctor', '--json']);
+    expect((await blocked()).map(entry => entry.code)).toEqual(['pass_abandoned']);
+    // A pass that ends any other way clears the streak.
+    expect((await sync()).status).toMatch(/^(up_to_date|synced)$/);
+    expect((await status()).reason).not.toBe('pass_abandoned');
+    expect(await blocked()).toEqual([]);
+  });
+
+  synced('#7982: a stop after the pass row is gone writes no row back, fenced or not', async ({ engine, root, sync }) => {
+    const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text AS incarnation FROM sources WHERE id='default'");
+    const lostConnection = () => Object.assign(new Error('Connection terminated unexpectedly'), { code: '08006' });
+    for (const [i, thrown] of ([() => new LockStolenError(LOCK, 'the drain lease of source default lapsed in this pass'), lostConnection] as const).entries()) {
+      commitFile(root, `gone-${i}.md`);
+      installFaultHook(async point => {
+        if (point !== 'sync:round_start') return;
+        await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1', [MANAGED_SYNC_PASS_OP]);
+        throw thrown();
+      });
+      try { await sync().catch(() => undefined); } finally { installFaultHook(undefined); }
+      expect(await readPassRow(engine, 'default', incarnation!)).toBeNull();
+    }
+  });
+
+  synced('#7982: the quiet-window fallback and the holder stall read the database clock, not the reader\'s', async ({ engine, status, blocked }) => {
+    // A reader whose clock runs ten minutes ahead of the database (PGLite's clock is the process's own, so only a server can).
+    const realNow = Date.now.bind(Date);
+    const skew = backend === 'postgres' ? 10 * 60_000 : 0;
+    await setPass(engine, 'open', 1); await dead(engine);
+    const failed = (['inspectLock', 'inspectLocks'] as const).filter(name => typeof (dbLock as Record<string, unknown>)[name] === 'function')
+      .map(name => spyOn(dbLock, name).mockRejectedValue(new Error('lock read failed')));
+    const ahead = spyOn(Date, 'now').mockImplementation(() => realNow() + skew);
+    try {
+      // The lock read failed, so the quiet window decides: the row was written just now on the database clock.
+      expect((await status()).reason).toBe('pass_unfinished');
+      expect(await blocked()).toEqual([]);
+    } finally { ahead.mockRestore(); for (const spy of failed) spy.mockRestore(); }
+    // A renewing holder whose newest progress is the pass row's write just now has not stalled.
+    await setPass(engine, 'open', 0); await live(engine);
+    const ahead2 = spyOn(Date, 'now').mockImplementation(() => realNow() + skew);
+    try {
+      expect((await status()).live).toMatchObject({ pid: 4242, stalled: false });
+      expect(await runnerStart(engine).drainHeld!('default')).toBe(true);
+      expect((await readNotifierBlock(engine, 'default'))?.fix ?? null).toBeNull();
+    } finally { ahead2.mockRestore(); }
   });
 
   synced('#7614 review: a permission refusal is not a passing stop; the pass row stays open and reads interrupted, then abandoned', async ({ engine, root, sync, status, blocked }) => {

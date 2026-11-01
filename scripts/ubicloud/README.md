@@ -45,7 +45,8 @@ two-hour TTL (`--ttl-hours N` changes it, up to 999). `ubi-runner.sh up` and
 `ubi-runner.sh reap` destroys every VM whose TTL ended over ten minutes ago,
 any owner's, plus the caller's own TTL-less `ubirun-<owner>-*` VMs once they are
 `UBI_LEGACY_HOURS` (4) old. gstack's `up` runs that reap first; gbrain's copy
-does only with `UBI_REAP=1`, and logs one `reap skipped` line otherwise, until
+does only with `UBI_REAP=1` (or `true`, `yes`, `on`; `0`, `false`, `no` and `off`
+turn it off, and any other value is refused), and logs one `reap skipped` line otherwise, until
 gbrain's TTL-less VMs older than four hours are gone. `run`, `verify` and
 `ci:ubicloud` end with gstack's leftover line, `UBICLOUD: left=<n> owner=<owner> ...`
 (also appended to `UBI_LEFT_FILE`), counting their own VMs still in the
@@ -72,8 +73,11 @@ operation), an `up` still talking to the API finishes the request and destroys
 its own VM; further signals are ignored until teardown ends. Then every recorded name gets `down`, which destroys the VM and polls
 until it is confirmed gone. A create whose answer never arrived is waited out
 for `UBI_CREATE_GRACE` seconds (default 180) before the VM counts as never
-created. `down` gives up after `UBI_DOWN_TIMEOUT` seconds (default 900) and
-prints the command to rerun.
+created. A destroy request that times out or gets a 5xx (or 408, 429, 404) is
+retried on the next poll; another 4xx fails at once. `down` gives up after
+`UBI_DOWN_TIMEOUT` seconds (default 900), naming the last destroy status, and
+prints the command to rerun. `reap` waits at most `UBI_REAP_DOWN_TIMEOUT`
+seconds (default 180) for each VM.
 
 Nothing sweeps stale VMs unless you ask. With `UBI_GC_HOURS` set to a positive
 number, each `up` first destroys the caller's own VMs older than that many

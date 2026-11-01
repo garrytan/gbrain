@@ -3,7 +3,7 @@ import type { BrainEngine } from '../engine.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import type { Action } from '../agent-output.ts';
-import { opError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
 import { ItemRun } from '../item-failure.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { publicationHold } from '../persistence/accepted-pending.ts';
@@ -238,6 +238,13 @@ export async function postprocessManagedSynthesis(
       return undefined;
     }
   };
+  /**
+   * #8110: a postprocess receipt found on the page that an earlier local CLI writer registration of this brain made
+   * (`gbrain auth local-writer register cli --replace` revoked it). It settles under this local writer's live grant,
+   * checked as a stored request; a remote principal's row never qualifies.
+   */
+  const localLineage = (row: WriteRequest) => localMaintenance(row) && row.principal_kind === 'local_cli'
+    && authority.writer.principal.kind === 'local_cli' && !authority.writer.remote && row.principal_id !== authority.writer.principal.id;
   let grounded: GroundedSource | undefined;
   const run = new ItemRun('synthesize.postprocess');
   let itemError: unknown;
@@ -275,8 +282,7 @@ export async function postprocessManagedSynthesis(
         if (ours) {
           base = ours.intent!.expected_revision as string;
           requestId = ours.request_id;
-          prior = await readPrior(index, requestId);
-          if (prior === undefined) return 'stop';
+          prior = ours;
         } else if (snapshot && later.filter(r => r.state === 'committed').every(localMaintenance) && sameBody(output.request.intent?.content, snapshot.page, ref.slug)) {
           base = snapshot.revision;
           requestId = postprocessId(base);
@@ -290,7 +296,7 @@ export async function postprocessManagedSynthesis(
       }
     }
     if (prior) {
-      await authorizeStoredRequest(engine, prior);
+      await authorizeStoredRequest(engine, localLineage(prior) ? { ...prior, authority: authority.writer } : prior);
       if (prior.state === 'committed') { settled.push(outputRequestId); finalizedRefs.push(finalizedRef); return; }
       if (['conflict', 'failed', 'cancelled'].includes(prior.state)) {
         settled.push(outputRequestId);
@@ -301,7 +307,16 @@ export async function postprocessManagedSynthesis(
         return;
       }
     }
-    await authorizeStoredRequest(engine, output.request);
+    try { await authorizeStoredRequest(engine, output.request); } catch (error) {
+      // #8110: the child's writer registration was revoked (a host move replaces it) or no longer grants the page; that
+      // stays true on every pass, so the output is left alone and reported once instead of failing the phase each pass.
+      if (!(error instanceof OperationError && error.code === 'permission_denied')) throw error;
+      settled.push(outputRequestId);
+      if (!reported.has(outputRequestId)) conflicts.push({ slug: ref.slug, source_id: ref.source_id, request_id: outputRequestId, code: 'permission_denied',
+        message: `Synthesis child request ${outputRequestId} that wrote page ${ref.slug} in source ${ref.source_id} is no longer authorized (${error.message}), so postprocessing left the page alone and did not verify or stamp it. Review the page; this output is not retried.`,
+        fix: readFix('Lists this brain\'s local writer registrations, their trust lanes and grants, read-only.', { argv: ['gbrain', 'auth', 'local-writer', 'list', '--json'] }) });
+      return;
+    }
     let content: string, unchanged = false;
     if (prior) {
       if (prior.intent?.kind !== 'managed_maintenance_page' || prior.intent.expected_revision !== base || typeof prior.intent.content !== 'string') {

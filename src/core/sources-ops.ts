@@ -688,7 +688,7 @@ export async function addSource(
           `is not enough (the walker reads through git objects, so untracked files ` +
           `stay invisible). Fix: \`git -C ${q} init && git -C ${q} add -A && ` +
           `git -C ${q} commit -m "initial import"\`, then re-run this command. To ` +
-          `register anyway and git-init later, pass --force.`,
+          `register it as a plain directory, pass --force: sync then imports its files without Git, and a file removed from it keeps its page.`,
       );
     }
     if (attachPath) {

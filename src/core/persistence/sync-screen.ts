@@ -24,6 +24,7 @@ import type { FenceFix } from '../fence-repair/types.ts';
 import { parseMarkdown, RECOVERY_VERSION, type IntendedRefusal } from '../markdown.ts';
 import { fenceMessage, type FenceMessageLocation } from '../fence-repair/reasons.ts';
 import { completeFenceLocation, FENCE_VERSION, type ReceiptFenceLocation } from '../fence-repair/refusal.ts';
+import { QUOTE_SCREEN_VERSION } from '../fence-repair/quote-markers.ts';
 import { fenceFileLine } from '../fence-repair/hold-fix.ts';
 import { slugConflictHoldMessage } from '../import-file.ts';
 import { isImageFilePath, isMultimodalEnabled, resolveSlugForPath } from '../sync.ts';
@@ -92,6 +93,14 @@ export function driftBaselineContent(gitRoot: string, entry: Pick<SyncEntry, 'dr
   try { return readBlobContents(gitRoot, [{ oid: entry.driftBaseline, size: SYNC_READ_BOUND }]).get(entry.driftBaseline) ?? null; } catch { return null; }
 }
 
+/** #7199: whether the page still holds what the entry's baseline or one of its earlier committed versions (`driftHistory`) imports, tried in order. */
+export async function pageHoldsDriftBaseline(gitRoot: string, entry: Pick<SyncEntry, 'drift' | 'driftBaseline' | 'driftHistory'>, same: (content: string | null) => Promise<boolean>): Promise<boolean> {
+  if (await same(driftBaselineContent(gitRoot, entry))) return true;
+  if (entry.drift !== 'unknown') return false;
+  for (const oid of entry.driftHistory ?? []) if (await same(driftBaselineContent(gitRoot, { drift: 'unknown', driftBaseline: oid }))) return true;
+  return false;
+}
+
 /** The frozen import content of one entry (`readSyncContent`); a committed entry's pinned blob is read with the entries after it. */
 export function pinnedContent(cursor: SyncDiscovery & { index: number }, entry: SyncEntry): string {
   const content = entry.working ? null : readPinnedContent(cursor.gitRoot, cursor.target, syncGitPath(cursor, entry.path), upcomingGitPaths(cursor));
@@ -147,7 +156,7 @@ function heldEntry(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'r
   return { path: entry.path, source_path: entry.sourcePath, slug, page_id: pageId, code: refusal.code, message: refusal.message,
     upstream_version: content === null ? null : sha256(content),
     meta: { ...(refusal.reason ? { reason: refusal.reason } : {}), ...(refusal.key ? { key: refusal.key } : {}), ...(line !== undefined ? { line } : {}),
-      recovery_version: RECOVERY_VERSION, ...(refusal.fence ? { fence: refusal.fence, fence_version: FENCE_VERSION } : {}),
+      recovery_version: RECOVERY_VERSION, ...(refusal.fence ? { fence: refusal.fence, fence_version: FENCE_VERSION, quote_version: QUOTE_SCREEN_VERSION } : {}),
       ...(blob ? { blob_oid: blob.oid } : {}), ...(entry.working ? { working: true } : {}),
       ...(entry.renameFrom ?? entry.renameHeld ? { rename_from: entry.renameFrom ?? entry.renameHeld } : {}) } };
 }

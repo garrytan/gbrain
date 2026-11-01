@@ -9,7 +9,8 @@
  *   `restore_provenance` (trust/page-handlers.ts `restorePageProvenance`).
  * - `restamp` (#7918): the stored tier stamped as the marker; the row keeps its tier (mode `repair_marker`).
  * - Listed, never written: `needs_review` (a later local write also changed the stamp), `local` (the owner's own
- *   edit), `ambiguous` without the flag.
+ *   edit), `ambiguous` without the flag, and `held` (#8009): a page whose file sync holds, which an owner page write
+ *   refuses (`pageHolds`, read by the preview and again by the apply, so the apply writes what the preview counted).
  *
  * Explicit-only and preview-bound: the preview lists each page with its revision and planned change under a hash and
  * writes nothing but the approval checkpoint; `--apply --expect <hash> --yes` writes exactly that set, one owner page
@@ -21,6 +22,7 @@ import type { BrainEngine } from '../engine.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { GIT_HOLD_OP, gitHoldFix, type GitHoldRecord } from '../persistence/sync-holds.ts';
 import { ownerRepairFile, repairPageMarker, restorePageProvenance } from '../trust/page-handlers.ts';
 import { plannedDigest, readPageDrift, scanProvenanceDrift, type DriftItem } from '../trust/provenance-drift.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
@@ -60,6 +62,21 @@ function writerDetail(item: DriftItem): string {
   return change ? `written by a ${change.writer} write${change.request_id ? ` (request ${change.request_id})` : ''}` : '';
 }
 
+/** #8009: the sync holds of the source's live incarnation on these pages (by page id or slug), keyed by page id. */
+async function pageHolds(engine: BrainEngine, sourceId: string, pages: ReadonlyArray<{ id: number; slug: string }>): Promise<Map<number, GitHoldRecord>> {
+  if (!pages.length) return new Map();
+  const holds = (await engine.executeRaw<{ record: GitHoldRecord }>(`SELECT h.completed_keys->0 AS record FROM op_checkpoints h
+    JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
+    WHERE h.op=$1 AND s.id=$2 AND (h.completed_keys->0->>'slug'=ANY($3::text[]) OR h.completed_keys->0->>'page_id'=ANY($4::text[]))`,
+  [GIT_HOLD_OP, sourceId, pages.map(page => page.slug), pages.map(page => String(page.id))])).map(row => row.record);
+  return new Map(pages.flatMap(page => {
+    const hold = holds.find(record => Number(record.page_id) === page.id || record.slug === page.slug);
+    return hold ? [[page.id, hold] as const] : [];
+  }));
+}
+
+const heldDetail = (hold: GitHoldRecord) => `sync holds the page file (${hold.code}), so a page write refuses it; resolve the hold (${(gitHoldFix(hold).argv ?? []).join(' ')}), then preview again`;
+
 const segmented = async (engine: BrainEngine, pageId: number) =>
   (await engine.executeRaw<{ body_storage: string | null }>('SELECT body_storage FROM pages WHERE id = $1', [pageId]))[0]?.body_storage === 'segmented';
 
@@ -67,10 +84,11 @@ const segmented = async (engine: BrainEngine, pageId: number) =>
 async function scan(engine: BrainEngine, scope: RepairScope, selection: Selection) {
   const planned: PlannedPage[] = [];
   const listing: RepairListing[] = [];
-  const residuals: Record<string, number> = { restore: 0, restamp: 0, ambiguous: 0, needs_review: 0, local: 0 };
+  const residuals: Record<string, number> = { restore: 0, restamp: 0, ambiguous: 0, needs_review: 0, local: 0, held: 0 };
   const managedBrain = await managedPersistenceEnabled(engine);
   for (const sourceId of scope.source_ids) {
     const drift = await scanProvenanceDrift(engine, sourceId, { limit: Number.MAX_SAFE_INTEGER, includeAmbiguous: selection.include_ambiguous, slugs: selection.slugs });
+    const holds = await pageHolds(engine, sourceId, drift.items.map(item => ({ id: item.page_id, slug: item.slug })));
     for (const item of drift.items) {
       const label = `${item.source_id}:${item.slug} (revision ${item.revision})`;
       const { verdict } = item;
@@ -81,6 +99,8 @@ async function scan(engine: BrainEngine, scope: RepairScope, selection: Selectio
         listing.push({ item: label, class: 'ambiguous', detail: `no recorded writer; previewed with --include-ambiguous only; ${writerDetail(item)}` });
         continue;
       }
+      const hold = holds.get(item.page_id);
+      if (hold) { residuals.held!++; listing.push({ item: label, class: 'held', detail: heldDetail(hold) }); continue; }
       if (await segmented(engine, item.page_id)) {
         residuals.needs_review!++;
         listing.push({ item: label, class: 'needs_review', detail: 'the page stores its body in segments, which this repair does not rewrite; edit its frontmatter by hand' });
@@ -155,6 +175,8 @@ export const provenanceRepair: RepairHandler = {
     const { page, hash, includeAmbiguous, last } = entry as ProvenanceItem;
     try {
       if (await stillPlanned(ctx.engine, page, includeAmbiguous) !== 'planned') return { applied: false, outcome: 'changed_since_preview', reason: 'the page changed since the preview' };
+      const hold = (await pageHolds(ctx.engine, page.source_id, [page])).get(page.id);
+      if (hold) return { applied: false, outcome: 'held', reason: heldDetail(hold) };
       const input = { sourceId: page.source_id, slug: page.slug, expectedRevision: page.revision, confirmation: { via: 'preview_hash' as const }, config: ctx.config };
       const result = page.action === 'restamp' ? await repairPageMarker(ctx.engine, input)
         : await restorePageProvenance(ctx.engine, { ...input, planned: page.planned, includeAmbiguous });

@@ -19,6 +19,7 @@ import { hasFenceText, safeNormalizeFences } from './normalize.ts';
 import { scanCanonicalFences, FENCE_ROWS_MAX } from './refusal.ts';
 import { issueLocation, type FenceMessageLocation } from './reasons.ts';
 import { validateFenceRepair } from './validate.ts';
+import { quoteMarkerStep } from './quote-markers.ts';
 import type { FenceCtx, FenceFix, FenceIssue, FenceKind, FencePage, FenceReason, FenceSection, FixClass } from './types.ts';
 
 export type FenceStep<T extends FencePage> =
@@ -49,6 +50,17 @@ export function pageHasFenceText(page: FencePage): boolean {
 }
 
 export function fenceStep<T extends FencePage>(page: T, ctx: FenceCtx, opts: { normalize: boolean }): FenceStep<T> {
+  const step = plainStep(page, ctx, opts);
+  if (step.status !== 'residual') return step;
+  // #8059: classification only, never an edit on a write path: when wrapping the page's prose-quoted markers in backticks
+  // (the fences repair kind's `quote_marker`) leaves nothing residual, the residual says so and names the first mention.
+  const quoted = quoteMarkerStep(page);
+  if (!quoted.fixes.length || plainStep(quoted.page, ctx, opts).status === 'residual') return step;
+  const first = quoted.fixes[0]!;
+  return residual([{ fence: first.fence, section: first.section, row: null, column: null, line: first.line, reason: 'quoted_marker' }]);
+}
+
+function plainStep<T extends FencePage>(page: T, ctx: FenceCtx, opts: { normalize: boolean }): FenceStep<T> {
   if (!pageHasFenceText(page)) return { status: 'clean' };
   const defects = scanCanonicalFences(page).defects;
   if (!defects.length) return { status: 'clean' };

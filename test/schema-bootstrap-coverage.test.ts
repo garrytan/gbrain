@@ -263,8 +263,8 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       -- The v230 trust generation trigger's WHEN reads pages.source_id, slug and
       -- deleted_at; a pre-v0.18 brain predates it (v230 recreates it).
       DROP TRIGGER IF EXISTS trust_generation_update ON pages;
-      -- The v282 folder-rule stamp trigger fires on UPDATE OF slug, source_id;
-      -- a pre-v0.18 brain predates it (v282 recreates it).
+      -- The v283 folder-rule stamp trigger fires on UPDATE OF slug, source_id;
+      -- a pre-v0.18 brain predates it (v283 recreates it).
       DROP TRIGGER IF EXISTS pages_access_stamp_folder_rules ON pages;
       ALTER TABLE pages DROP COLUMN IF EXISTS source_id;
       DROP TABLE IF EXISTS sources CASCADE;
@@ -435,8 +435,8 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       -- The v230 trust generation trigger's WHEN reads pages.source_id, slug and
       -- deleted_at; a pre-v0.18 brain predates it (v230 recreates it).
       DROP TRIGGER IF EXISTS trust_generation_update ON pages;
-      -- The v282 folder-rule stamp trigger fires on UPDATE OF slug, source_id;
-      -- a pre-v0.18 brain predates it (v282 recreates it).
+      -- The v283 folder-rule stamp trigger fires on UPDATE OF slug, source_id;
+      -- a pre-v0.18 brain predates it (v283 recreates it).
       DROP TRIGGER IF EXISTS pages_access_stamp_folder_rules ON pages;
       ALTER TABLE pages DROP COLUMN IF EXISTS source_id;
       DROP TABLE IF EXISTS sources CASCADE;
@@ -1200,7 +1200,7 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // v258: absent from both schema blobs, so fresh and upgraded brains share its ordinal; column-only and nullable, no
   // index or function in either blob references it, and only strict-source publications (v272+) write it.
   'pages.withheld_source_path',
-  // GBRA-218 A1 (migration v281) - per-member read access. Same posture as v274: absent from both schema blobs, so fresh
+  // GBRA-218 A1 (migration v282) - per-member read access. Same posture as v274: absent from both schema blobs, so fresh
   // and upgraded brains share their ordinals; the migration creates the page_readers index, trigger and functions itself,
   // and no index or function in either blob references these columns.
   'pages.page_readers',
@@ -1208,7 +1208,7 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'access_tokens.may_act_for',
   'oauth_clients.member_id',
   'oauth_clients.may_act_for',
-  // GBRA-218 A2 (migration v282) - folder rules. Same posture as v281: absent from both schema blobs; the migration
+  // GBRA-218 A2 (migration v283) - folder rules. Same posture as v282: absent from both schema blobs; the migration
   // creates the folder_rule_ids trigger and functions itself, and no index or function in either blob references it.
   'pages.folder_rule_ids',
   // Wave B segmented page storage (migration v248). Deliberately absent from

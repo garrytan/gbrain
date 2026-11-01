@@ -9,15 +9,19 @@
  *    reported removed.
  * 2. Fails when: each call rebuilds the view and each view reads the body twice (six reads per write), or the view
  *    keeps every entry of the prior body (key, summary, detail and slug copies: 12.8x the body for a 6 MiB page).
- * Seams: segmentedPassWork.bytes (segment-blocks.ts) counts bytes read; the heap is sampled after a full collection
- * when classification first reads the new body, with the prior view built and alive, against a baseline taken after a
- * warm-up call on another snapshot and one small statement on every pooled connection. The pool hands statements out in
- * turn, so the warm-up and the measured call end on different connections: a connection that kept its last segment
- * read (its receive buffer, or the statement and its rows) held up to 3 MiB of the prior body that the baseline did not,
- * so the driver keeps neither (vendor/postgres connection.js). The warm-up's new body is small: an in-flight concurrent
- * JIT compilation keeps the values its profiles saw alive as a GC root outside the heap graph, so a sliced line of the
- * warm-up's text could pin that whole text at the sample and not at the baseline (with the 6 MiB new body, its
- * sanitized copy: 8.4 MiB held in about one run in ten).
+ * Seams: segmentedPassWork.bytes (segment-blocks.ts) counts bytes read; the heap is sampled once it has settled (full
+ * collections until two readings agree) when classification first reads the new body, with the prior view built and
+ * alive, against a baseline taken the same way after a warm-up call on another snapshot and one small statement on
+ * every pooled connection. The pool hands statements out in turn, so the warm-up and the measured call end on different
+ * connections: a connection that kept its last segment read (its receive buffer, or the statement and its rows) held up
+ * to 3 MiB of the prior body that the baseline did not, so the driver keeps neither (vendor/postgres connection.js).
+ * The warm-up's new body is small: an in-flight concurrent JIT compilation keeps the values its profiles saw alive as a
+ * GC root outside the heap graph, so a sliced line of the warm-up's text could pin that whole text at the sample and
+ * not at the baseline (with the 6 MiB new body, its sanitized copy: 8.4 MiB held in about one run in ten). One full
+ * collection does not settle the reading: JSC releases and recounts large string buffers by the next collection, so a
+ * reading taken after a single collection moved by up to 7.3 MiB across a no-op, and the baseline here came out 2.7 MiB
+ * (half the new body) or 5.5 MiB low after an earlier write over a 6 MiB body, which read as held (PGLite arm, 5.6 MiB
+ * against the 5.5 MiB cap).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -44,6 +48,18 @@ function page(from: number, count: number): string {
 }
 
 const BULLETS = Math.ceil(6 * MB / 80);
+
+function settledHeapUsed(): number {
+  Bun.gc(true);
+  let previous = process.memoryUsage().heapUsed;
+  for (let i = 0; i < 10; i++) {
+    Bun.gc(true);
+    const now = process.memoryUsage().heapUsed;
+    if (Math.abs(now - previous) < 64 * 1024) return now;
+    previous = now;
+  }
+  return previous;
+}
 
 for (const kind of testBackends()) {
   describe('prior view of a segmented page (' + kind + ')', () => {
@@ -96,13 +112,11 @@ for (const kind of testBackends()) {
       const snapshot = (await engine.readPageSnapshot(SLUG, { sourceId: 'default' }))!;
       let peak = 0;
       const body = { compiled_truth: parsed.compiled_truth, get timeline() {
-        Bun.gc(true);
-        peak = Math.max(peak, process.memoryUsage().heapUsed);
+        peak = Math.max(peak, settledHeapUsed());
         return parsed.timeline;
       } };
       await Promise.all(Array.from({ length: 8 }, () => engine.executeRaw('SELECT 1')));
-      Bun.gc(true);
-      const base = process.memoryUsage().heapUsed;
+      const base = settledHeapUsed();
       expect((await timelineRowsToRemove(engine, body, snapshot, SLUG, 'editing'))?.count).toBe(DROPPED);
       const held = peak - base;
       console.log('[segmented-prior-view] ' + kind + ': heap held with the prior view alive ' + (held / MB).toFixed(1) + ' MiB for a ' + (bodyBytes / MB).toFixed(1) + ' MiB prior');

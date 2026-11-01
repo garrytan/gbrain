@@ -12,6 +12,8 @@ import { OperationError } from '../src/core/ops/contract.ts';
 import { acquireWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { __setMaintenanceWriteWaitForTests } from '../src/core/persistence/maintenance-wait.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { registerLocalWriter } from '../src/core/persistence/identity.ts';
+import { operationsByName } from '../src/core/operations.ts';
 import { clientRequestUuid } from '../src/core/persistence/preconditions.ts';
 import { COMMITTED_OUTPUT_REQUESTS_SQL, journaledPageSlug } from '../src/core/cycle/synthesize-postprocess.ts';
 import { POSTPROCESS_PENDING_KEY } from '../src/core/cycle/synthesize-postprocess-deferral.ts';
@@ -958,3 +960,68 @@ test('synthesis preserves non-outstanding publication refusals', async () => {
     expect(caught, item.id).toBe(error);
   }
 });
+
+/**
+ * #8110: a postprocess that committed under an earlier local CLI writer registration settles after
+ * `gbrain auth local-writer register cli --replace` revokes that registration, instead of re-deriving the page and
+ * failing revision_conflict on every pass; another (remote) principal still cannot read that receipt.
+ */
+test('#8110: a committed postprocess settles after the local CLI writer is replaced; a remote principal still cannot read its receipt', async () => {
+  await fixture(async ({ engine, sourceId, opts, calls }) => {
+    await interruptAfterChild(engine, sourceId, opts);
+    const slug = await outputSlug(engine, sourceId);
+    const read = engine.readPageSnapshot;
+    const spy = spyOn(engine, 'readPageSnapshot').mockImplementation(async function (this: BrainEngine, target, options) {
+      if (this === engine && target.includes('dream-cycle-summaries/') && options?.sourceId === sourceId) throw new Error('simulated phase interruption after postprocessing commit');
+      return read.call(this, target, options);
+    });
+    try { expect((await runPhaseSynthesize(engine, opts)).status).toBe('fail'); } finally { spy.mockRestore(); }
+    const [postprocess] = await engine.executeRaw<{ request_id: string; principal_id: string; state: string }>(
+      "SELECT request_id,principal_id,state FROM persistence_requests WHERE source_id=$1 AND slug=$2 AND intent->>'kind'='managed_maintenance_page'", [sourceId, slug]);
+    expect(postprocess.state).toBe('committed');
+    const processed = (await engine.readPageSnapshot(slug, { sourceId }))!;
+    await disposePersistenceConsumer(engine);
+    const replacement = await registerLocalWriter(engine, 'cli', undefined, true);
+    expect(replacement.id).not.toBe(postprocess.principal_id);
+    const spent = calls();
+    const replay = await runPhaseSynthesize(engine, opts);
+    expect({ status: replay.status, error: replay.error }).toEqual({ status: 'ok', error: undefined });
+    expect(replay.details.pages_written).toBe(0);
+    expect(calls()).toBe(spent);
+    expect((await engine.readPageSnapshot(slug, { sourceId }))!.revision).toBe(processed.revision);
+    expect(await engine.executeRaw("SELECT 1 FROM persistence_requests WHERE source_id=$1 AND slug=$2 AND intent->>'kind'='managed_maintenance_page' AND principal_id<>$3",
+      [sourceId, slug, postprocess.principal_id])).toEqual([]);
+    const clientId = `remote-${randomUUID().slice(0, 8)}`;
+    await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_name, scope, source_id, federated_read)
+      VALUES ($1, $1, 'read write', $2, ARRAY[$2])`, [clientId, sourceId]);
+    const remote = { engine, sourceId, remote: true as const, config: { engine: engine.kind, embedding_disabled: true }, dryRun: false,
+      logger: { info() {}, warn() {}, error() {} }, auth: { token: 'remote-token', clientId, principal: { kind: 'oauth_client' as const, id: clientId }, scopes: ['read', 'write'], sourceId } };
+    const error = await operationsByName.get_write_request!.handler(remote as never, { request_id: postprocess.request_id }).then(() => null, e => e);
+    expect(error).toBeInstanceOf(OperationError);
+    expect(error.code).toBe('not_found');
+    expect(await journal.getWriteRequest(engine, { kind: 'oauth_client', id: clientId }, postprocess.request_id)).toBeNull();
+  });
+}, 120_000);
+
+
+test('#8110: a child output whose stdio writer was replaced warns once and is left alone, instead of failing every pass', async () => {
+  await fixture(async ({ engine, sourceId, opts, calls }) => {
+    await interruptAfterChild(engine, sourceId, opts);
+    const slug = await outputSlug(engine, sourceId);
+    const [child] = await engine.executeRaw<{ principal_kind: string; principal_id: string }>(
+      "SELECT principal_kind,principal_id FROM persistence_requests WHERE source_id=$1 AND slug=$2 AND operation='put_page' AND state='committed'", [sourceId, slug]);
+    const replacement = await registerLocalWriter(engine, 'stdio', undefined, true);
+    expect({ kind: child.principal_kind, replaced: replacement.id !== child.principal_id }).toEqual({ kind: 'local_stdio', replaced: true });
+    const before = (await engine.readPageSnapshot(slug, { sourceId }))!;
+    const spent = calls();
+    const recovered = await runPhaseSynthesize(engine, opts);
+    expect({ status: recovered.status, error: recovered.error }).toEqual({ status: 'warn', error: undefined });
+    expect(recovered.details.postprocess_conflicts).toEqual([expect.objectContaining({ slug, code: 'permission_denied' })]);
+    expect(calls()).toBe(spent);
+    expect((await engine.readPageSnapshot(slug, { sourceId }))!.revision).toBe(before.revision);
+    await disposePersistenceConsumer(engine);
+    const again = await runPhaseSynthesize(engine, opts);
+    expect({ status: again.status, conflicts: again.details.postprocess_conflicts }).toEqual({ status: 'ok', conflicts: undefined });
+  });
+}, 120_000);
+

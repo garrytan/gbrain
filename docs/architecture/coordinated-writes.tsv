@@ -7,6 +7,7 @@
 #        removal (deletes rows only, moving the database toward git), generated (producer output its producer regenerates),
 #        facts_lane (facts, withdrawals and ontology rows; G4 gives them a file form).
 src/commands/reindex-aliases.ts	derivedWrite	1	projection	Rebuilds page_aliases from each page's frontmatter aliases and mention policy; the committed page text is the input, so the indexer reproduces every row.
+src/commands/sync/plain-directory.ts	performPlainDirectorySync	1	operational	A plain-directory sync (#7973) stamps last_sync_at on its own sources row after a clean import; sync bookkeeping, not memory content.
 src/core/bootstrap/verify.ts	removeProbes	1	removal	Deletes the verify probe's fence facts after the probe page and its file were purged through the door; it only removes rows whose file is already gone.
 src/core/cycle/concept-publication.ts	replaceConceptProvenanceLinks	1	generated	Concept-provenance edges are the synthesis output bound to the concept page revision; the next synthesis regenerates them. G6 moves concept publication through the door.
 src/core/enrichment-service.ts	writeManagedEntities	2	metadata	Only trust metadata runs here: the derived-tier lowering of an extract_entities page and of an unknown-tier timeline row. The stub, the timeline bullet and its backlink (the bullet's derived markdown edge) are door mutations of the entity page.

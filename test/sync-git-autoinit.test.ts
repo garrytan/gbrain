@@ -144,7 +144,7 @@ describe('#2964: sync auto-inits a never-git-initialized default brain dir', () 
     expect(existsSync(join(dir, '.git'))).toBe(true);
   });
 
-  test('a registered non-default local source (sourceId != default, no remote_url) on a non-git dir still throws — not auto-inited', async () => {
+  test('a registered non-default local source (sourceId != default, no remote_url) on a non-git dir is imported without Git (#7973) — not auto-inited', async () => {
     await engine.executeRaw(
       `INSERT INTO sources (id, name, local_path, config) VALUES ('mysource', 'mysource', $1, '{}'::jsonb)`,
       [dir],
@@ -158,7 +158,7 @@ describe('#2964: sync auto-inits a never-git-initialized default brain dir', () 
         noEmbed: true,
         full: true,
       }),
-    ).rejects.toThrow(/git repository/i);
+    ).resolves.toMatchObject({ status: 'synced' });
     expect(existsSync(join(dir, '.git'))).toBe(false);
   });
 

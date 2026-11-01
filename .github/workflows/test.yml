@@ -1299,7 +1299,7 @@ jobs:
   # a pull request gets it from the full-ci dispatch on its head.
   full-suite:
     name: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.native_only == true || inputs.race_hunt == true || inputs.stress_files != '' || inputs.stress_base != ''))) && 'full-suite-not-run' || 'full-suite' }}
-    needs: [changes, test-status]
+    needs: [changes, test-status, executed-receipts]
     if: ${{ needs.changes.outputs.reuse != 'true' && always() && github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base)) }}
     runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 5
@@ -1317,9 +1317,18 @@ jobs:
           persist-credentials: false
           sparse-checkout: scripts/ci-full-suite-tree.sh
           sparse-checkout-cone-mode: false
+      # The executed-file list in tree.json (run evidence, docs/ci-event-parity.md#remote-gate-reuse)
+      # comes from this run's manifest; without it the record carries no files.
+      - name: Download the execution manifest
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: ci-manifest
+          path: ${{ runner.temp }}/ci-manifest
       - name: Record the tested tree
         env:
           ARTIFACT_DIR: ${{ runner.temp }}/full-suite
+          MANIFEST: ${{ runner.temp }}/ci-manifest/ci-manifest.json
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           WORKFLOW: ${{ github.workflow }}

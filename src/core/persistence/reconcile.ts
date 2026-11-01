@@ -145,10 +145,16 @@ export async function runReconcilePreview(engine: BrainEngine, params: Record<st
       sha256(serializePageToMarkdown(state.snapshot.page, state.snapshot.tags)) !== state.pins.raw_file_hash,
     result_digest: preview.result_digest, preview };
 }
+/**
+ * Applies one reconcile preview under its request id. `keep_file_bytes` (`repair file-drift --prefer file`) keeps the canonical
+ * file's bytes plus the protected parts the result keeps from the database (`fileWinsContent`), and refuses `file_wins_rewrite`
+ * at prepare when the result needs any other change. #7974: a pending request accepted before that rule prepares under it, so
+ * it refuses `file_wins_rewrite` instead of rendering the result, writes nothing, and the page is previewed again.
+ */
 export async function runReconcileApply(engine: BrainEngine, params: Record<string, unknown>): Promise<Record<string, unknown>> {
   strictReconcileKeys(params, ['source_id', 'slug', 'preview', 'request_id', 'keep_file_bytes'], ['source_id', 'slug', 'preview', 'request_id']);
   if (params.keep_file_bytes !== undefined && params.keep_file_bytes !== true) throw opError('invalid_params', 'keep_file_bytes is true or absent.',
-    'Pass keep_file_bytes: true to leave a canonical file that already holds the resolved result byte for byte, or omit it.');
+    'Pass keep_file_bytes: true to keep the canonical file\'s bytes and add only the protected parts the result keeps from the database (any other change refuses file_wins_rewrite), or omit it.');
   const { sourceId, slug, authority } = await authorizeReconcile(engine, params.source_id, params.slug);
   const artifact = validateReconcileArtifact(params.preview);
   artifact.decisions = reconcileDecisions(artifact.decisions);

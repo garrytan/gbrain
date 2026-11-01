@@ -110,6 +110,7 @@ test/cycle-phase-deadline-drift.test.ts	propose_takes deadline < job timeout (#4
 test/cycle/nightly-probe-routes.test.ts	resolveNightlyProbeModelRoutes	6	source-surface-helper
 test/cycle/nightly-probe-routes.test.ts	resolveNightlyProbeModelRoutesForDaemon (autopilot step dep)	3	source-surface-helper
 test/deletion-inventory.test.ts	deletion inventory	3	readFileSync
+test/derived-state-maintainers-7637.test.ts	owner behaviour is unchanged	6	readFileSync
 test/destructive-guard.test.ts	FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)	9	readFileSync
 test/destructive-guard.test.ts	assessDestructiveImpact	5	readFileSync
 test/destructive-guard.test.ts	formatters (display helpers)	4	readFileSync
@@ -310,6 +311,7 @@ test/scripts/ci-local-rendering.test.ts	required PgBouncer execution through run
 test/scripts/ci-manifest-diff.test.ts	test.yml dependency-audit scope	2	readFileSync
 test/scripts/ci-pr-scope.test.ts	pull-request CI scope	14	readFileSync
 test/scripts/ci-runner-routing.test.ts	CI runner routing	7	readFileSync
+test/scripts/ci-ubicloud-list.test.ts	ci-ubicloud.ts --list	4	readFileSync
 test/scripts/classify-tests.test.ts	classify-tests detectors	23	bun-file,doctor-source-helper,exec-scan,readFileSync,source-surface-helper
 test/scripts/classify-tests.test.ts	structural-suites manifest	1	readFileSync
 test/scripts/coverage-diff-gate.test.ts	exemptions	3	readFileSync
@@ -323,7 +325,7 @@ test/scripts/e2e-runner.test.ts	sequential E2E runner (GITHUB_ACTIONS=${githubAc
 test/scripts/e2e-shard-budget.test.ts	E2E shard-time budget	3	readFileSync
 test/scripts/e2e-wiring.test.ts	(file-level)	14	readFileSync
 test/scripts/fix-wave-gate.test.ts	fix-wave gate workflow	3	readFileSync
-test/scripts/full-ci-workflow.test.ts	full CI on pull requests	4	readFileSync
+test/scripts/full-ci-workflow.test.ts	full CI on pull requests	5	readFileSync
 test/scripts/full-ci-workflow.test.ts	master-push reuse of a passed full-suite run	2	readFileSync
 test/scripts/heavy-door-workflow.test.ts	heavy door supply chain and coverage gates	8	readFileSync
 test/scripts/native-lock-prebuilds.test.ts	native lock distribution integrity	2	readFileSync

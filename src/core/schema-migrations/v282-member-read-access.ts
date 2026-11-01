@@ -17,8 +17,8 @@ import type { Migration } from './types.ts';
 // page whose origin names readers); reads call it behind a cheap guard.
 // No schema.sql mirror: like v273, these exist only
 // through migrations. Provisional number: renumbered at the merge slot.
-export const v281: Migration = {
-  version: 281,
+export const v282: Migration = {
+  version: 282,
   name: 'member_read_access',
   idempotent: true,
   sql: `

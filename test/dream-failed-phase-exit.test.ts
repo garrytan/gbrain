@@ -5,7 +5,7 @@
  * contained throw. Any failed phase now exits 1.
  */
 import { afterAll, beforeAll, expect, spyOn, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -22,6 +22,8 @@ beforeAll(async () => {
   await engine.initSchema();
   home = mkdtempSync(join(tmpdir(), 'gbrain-dream-fail-home-'));
   notGit = mkdtempSync(join(tmpdir(), 'gbrain-dream-fail-src-'));
+  // A broken `.git` entry: sync takes its Git path and fails (a plain directory with no `.git` now imports, #7973).
+  writeFileSync(join(notGit, '.git'), '');
   await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', ['user-notes-example', notGit]);
 }, 120_000);
 afterAll(async () => {

@@ -260,18 +260,25 @@ export function readZipEntry(zip: Uint8Array, name: string): Uint8Array | undefi
   return undefined;
 }
 
-/** One JSON file from a run's named artifact; `reason` says why it could not be read (missing, expired, unreadable). */
-export async function fetchArtifactJson(client: GitHubClient, runId: number, artifact: string, file: string): Promise<{ value?: unknown; reason?: string }> {
+/** One JSON file from a run's named artifact; `reason` says why it could not be read (missing, expired, unreadable), and `transient` marks a failed request that a later read may get past. */
+export async function fetchArtifactJson(client: GitHubClient, runId: number, artifact: string, file: string): Promise<{ value?: unknown; reason?: string; transient?: boolean }> {
   if (!client.download) return { reason: 'this client cannot download artifacts' };
+  const failed = (e: unknown) => `reading run ${runId}'s '${artifact}' artifact failed: ${e instanceof Error ? e.message : String(e)}`;
+  let zip: Uint8Array;
   try {
     const list = await client.request<{ artifacts: Array<{ id: number; name: string; expired: boolean }> }>('GET', `repos/{repo}/actions/runs/${runId}/artifacts?name=${encodeURIComponent(artifact)}&per_page=10`);
     const found = list.artifacts.find(a => a.name === artifact);
     if (!found) return { reason: `run ${runId} has no '${artifact}' artifact` };
     if (found.expired) return { reason: `run ${runId}'s '${artifact}' artifact has expired` };
-    const bytes = readZipEntry(await client.download(`repos/{repo}/actions/artifacts/${found.id}/zip`), file);
+    zip = await client.download(`repos/{repo}/actions/artifacts/${found.id}/zip`);
+  } catch (e) {
+    return { reason: failed(e), transient: true };
+  }
+  try {
+    const bytes = readZipEntry(zip, file);
     if (!bytes) return { reason: `run ${runId}'s '${artifact}' artifact has no readable ${file}` };
     return { value: JSON.parse(new TextDecoder().decode(bytes)) };
   } catch (e) {
-    return { reason: `reading run ${runId}'s '${artifact}' artifact failed: ${e instanceof Error ? e.message : String(e)}` };
+    return { reason: failed(e) };
   }
 }

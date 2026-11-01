@@ -221,8 +221,8 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     return (await import('./effect-retry.ts')).retryRequestEffects(engine, source(params.source_id), params.request_id, params.dry_run === true, config, embeddingRetryPolicy, ownerHost);
   }
   if (operation === 'writer_settle_effects') {
-    keys(params, ['source_id', 'request_id', 'parked_code', 'unsettle', 'apply', 'expect', 'dry_run']);
-    bool(params, 'unsettle'); bool(params, 'apply');
+    keys(params, ['source_id', 'request_id', 'parked_code', 'unsettle', 'retire', 'apply', 'expect', 'dry_run']);
+    bool(params, 'unsettle'); bool(params, 'retire'); bool(params, 'apply');
     if (params.apply === true && params.dry_run === true) throw invalid('settle-effects takes --dry-run or --apply, not both.',
       'Preview with --dry-run, then run the apply_command it prints (--apply --expect <plan_hash>) after the user agrees.');
     if (params.parked_code !== undefined && (typeof params.parked_code !== 'string' || !/^[a-z][a-z0-9_]*$/.test(params.parked_code))) throw invalid('Invalid --parked-code value.',
@@ -233,7 +233,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     const requestId = params.request_id === undefined ? undefined : uuid(params.request_id, 'A valid original write request UUID is required.',
       'Pass --request-id with the request id doctor parked_effects or gbrain sources writer status lists for the effect.');
     return (await import('./effect-settle.ts')).settleEffects(engine, { sourceId, requestId, parkedCode: params.parked_code as string | undefined,
-      unsettle: params.unsettle === true, apply: params.apply === true, expect: params.expect as string | undefined });
+      unsettle: params.unsettle === true, retire: params.retire === true, apply: params.apply === true, expect: params.expect as string | undefined });
   }
   if (operation === 'source_add' || operation === 'source_lifecycle') {
     const { managedPersistenceEnabled } = await import('./ownership.ts');

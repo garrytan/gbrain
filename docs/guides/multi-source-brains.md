@@ -350,7 +350,8 @@ gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated] [--
                                Register a source. id: [a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?
                                --path must be a git repo (or a subdirectory of one) — see
                                "The git requirement for --path sources" below. --force
-                               skips that check to register before git-init exists.
+                               registers a plain directory: sync imports its files without
+                               Git, and a file removed from it keeps its page.
 gbrain sources add <id> --url <git-url> [--pat-file <p>] [--clone-dir <path>] [--no-harden]
                                Clone + register a remote repo in one step; auto-hardens
                                for durability when a PAT is provided (see "Durability" below).

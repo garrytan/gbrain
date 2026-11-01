@@ -49,7 +49,8 @@ export function sqlNotifierStore(engine: BrainEngine): NotifierStore {
     liveJobs: async (ids) => new Set((await engine.executeRaw<{ id: unknown }>(
       "SELECT id FROM minion_jobs WHERE id = ANY($1::bigint[]) AND status IN ('waiting','active','delayed','waiting-children','paused')", [ids])).map(r => Number(r.id))),
     forward: async (sourceId, head) => { await upsertMarker(engine, { sourceId, intent: 'freshness', wantedHead: head, requestedBy: 'notifier' }); },
-    settleMarkers: (sourceId, read, run) => settleMarkers(engine, sourceId, read, run),
+    settleMarkers: async (sourceId, read, run) => settleMarkers(engine, sourceId, read,
+      { ...run, checkoutHead: await (await import('./nudge.ts')).checkoutHead(engine, sourceId).catch(() => null) }),
     readStates: (ids) => readNotifierSources(engine, ids),
     writeState: (sourceId, patch) => writeState(engine, sourceId, patch),
     writeCoverage: (sourceId, c) => writeCoverage(engine, sourceId, c),
@@ -149,9 +150,9 @@ export function runnerStart(engine: BrainEngine): Pick<CommitNotifierOptions, 's
     syncRunning: async () => (await load()).isDelegatedSyncRunning(),
     drainHeld: async (sourceId) => {
       // #7614: a killed holder's lock row defers nothing; the sync this starts takes its expired lease over.
-      const { holderStalled, readLiveDrainHolder } = await import('../persistence/sync-lease.ts');
-      const holder = await readLiveDrainHolder(engine, sourceId);
-      return holder === null ? false : holderStalled(holder) ? 'stalled' : true;
+      const { holderStalled, readLiveDrainLease } = await import('../persistence/sync-lease.ts');
+      const lease = await readLiveDrainLease(engine, sourceId);
+      return lease === null ? false : holderStalled(lease.holder, lease.db_now) ? 'stalled' : true;
     },
   };
 }

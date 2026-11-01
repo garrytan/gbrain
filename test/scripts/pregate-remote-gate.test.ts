@@ -18,6 +18,9 @@
  * Seams: GBRAIN_PREGATE_GATE_CMD replaces `bun run ci:ubicloud:diff`,
  * GBRAIN_PREGATE_REUSE_CMD replaces `bun scripts/ci-reuse.ts --gate`,
  * GBRAIN_PREGATE_REPO names the repository.
+ * --list: prints the gate command's --list output (the inventory gstack's
+ * clear --run checks runs against) without UBI_OWNER or a gate; a failing or
+ * empty inventory exits non-zero.
  * VM cleanup: the gate's UBICLOUD: left= line (UBI_LEFT_FILE) must say 0, or
  * the run is PREGATE_REMOTE_INFRA (exit 4, no receipt), never a test result;
  * a missing line counts as not confirmed.
@@ -261,5 +264,54 @@ describe('pregate-remote-gate.sh', () => {
       run(gateMarking, { GBRAIN_PREGATE_REUSE_CMD: reuser('exit 4') });
       expect(spawnSync('cat', [join(repo, '.git', 'reuse-args')], { encoding: 'utf8' }).stdout).toContain('--repo owner-example/repo-example');
     });
+  });
+});
+
+describe('pregate-remote-gate.sh --list', () => {
+  /** Runs --list with `gate` as the gate command and no UBI_OWNER. */
+  const list = (gate: string | undefined, args: string[] = [], env: Record<string, string> = {}) => {
+    const r = spawnSync('bash', [SCRIPT, '--list', ...args], {
+      cwd: repo, encoding: 'utf8',
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', UBI_OWNER: undefined, UBI_LEFT_FILE: undefined, GBRAIN_PREGATE_GATE_CMD: gate, ...env },
+    });
+    return { code: r.status, out: r.stdout, err: r.stderr };
+  };
+
+  it("prints the gate command's --list output at the checkout top, with the extra arguments, needing no UBI_OWNER", () => {
+    mkdirSync(join(repo, 'sub'));
+    const gate = join(repo, '.git', 'gate.sh');
+    writeFileSync(gate, 'echo "args: $*" >&2; echo "cwd: $PWD" >&2; printf "%s\\n" test/a.test.ts test/e2e/b.test.ts\n');
+    const r = spawnSync('bash', [SCRIPT, '--list', '--lanes', 'unit'], {
+      cwd: join(repo, 'sub'), encoding: 'utf8',
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', UBI_OWNER: undefined, GBRAIN_PREGATE_GATE_CMD: `bash ${gate}` },
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toBe('test/a.test.ts\ntest/e2e/b.test.ts\n');
+    expect(r.stderr).toContain('args: --list --lanes unit');
+    expect(r.stderr).toContain(`cwd: ${repo}`);
+    expect(r.stderr).not.toContain('UBI_OWNER');
+  });
+
+  it('lists through the development gate, bun run ci:ubicloud:diff --list, by default', () => {
+    const bin = join(repo, '.git', 'fake-bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'bun'), '#!/usr/bin/env bash\necho "fake-bun: $*" >&2\necho test/a.test.ts\n');
+    chmodSync(join(bin, 'bun'), 0o755);
+    const r = list(undefined, [], { PATH: `${bin}:${process.env.PATH}` });
+    expect(r.code, r.err).toBe(0);
+    expect(r.err).toContain('fake-bun: run ci:ubicloud:diff --list');
+    expect(r.out).toBe('test/a.test.ts\n');
+  });
+
+  it('an empty or failing inventory exits non-zero with no list, and never starts the gate', () => {
+    const empty = list('true');
+    expect(empty.code).toBe(1);
+    expect(empty.out).toBe('');
+    expect(empty.err).toContain("the gate's inventory is empty");
+    const failing = list('echo test/a.test.ts; exit 3; echo');
+    expect(failing.code).toBe(1);
+    expect(failing.out).toBe('');
+    expect(failing.err).toContain("the gate's inventory failed (exit 3)");
+    for (const r of [empty, failing]) expect(r.out + r.err).not.toContain('PREGATE_REMOTE');
   });
 });

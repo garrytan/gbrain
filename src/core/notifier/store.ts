@@ -158,10 +158,12 @@ export async function clearMarker(engine: Exec, sourceId: string, intent: Marker
 /**
  * After a completed run: clears every marker of the source the run satisfied, generation-checked against `read` (the
  * rows the drainer read before it started), and returns the markers that are still due afterwards.
- *  - freshness clears when last_commit equals its wanted_head (or the marker named no head);
+ *  - freshness clears when last_commit equals its wanted_head (or the marker named no head), or when the drainer saw
+ *    the checkout's HEAD equal last_commit after the run (`checkoutHead`): nothing is left to import, whatever head
+ *    the marker named (#7941: a head the source had passed kept every later run queuing a follow-up);
  *  - pull clears when the run pulled (`pulled`), full when the run was a full walk (`full`).
  */
-export async function settleMarkers(engine: Exec, sourceId: string, read: WantedMarker[], run: { pulled: boolean; full: boolean }): Promise<WantedMarker[]> {
+export async function settleMarkers(engine: Exec, sourceId: string, read: WantedMarker[], run: { pulled: boolean; full: boolean; checkoutHead?: string | null }): Promise<WantedMarker[]> {
   for (const m of read) {
     if (m.source_id !== sourceId) continue;
     if (m.intent === 'pull' && !run.pulled) continue;
@@ -169,7 +171,8 @@ export async function settleMarkers(engine: Exec, sourceId: string, read: Wanted
     if (m.intent === 'freshness') {
       await engine.executeRaw(
         `DELETE FROM sync_wanted_markers m USING sources s WHERE m.source_id = s.id AND m.source_id = $1 AND m.intent = 'freshness'
-           AND m.generation = $2 AND (m.wanted_head IS NULL OR m.wanted_head IS NOT DISTINCT FROM s.last_commit)`, [sourceId, m.generation]);
+           AND m.generation = $2 AND (m.wanted_head IS NULL OR m.wanted_head IS NOT DISTINCT FROM s.last_commit
+             OR ($3::text IS NOT NULL AND s.last_commit = $3::text))`, [sourceId, m.generation, run.checkoutHead ?? null]);
       continue;
     }
     await clearMarker(engine, sourceId, m.intent, m.generation);

@@ -111,11 +111,17 @@ both did, the receipt comes from them: the same `PREGATE_REMOTE: tree= tests=
 failed=` line, with the runs' executed test identities as the counts, and no VM
 starts. The counts take each job at its newest attempt, so a run whose failed
 jobs were re-run counts its whole suite; a ledger that cannot show that is
-labelled `attempt N, partial count` on the `[ci-reuse] gate:` line. A full run
+labelled `attempt N, partial count` on the `[ci-reuse] gate:` line. A ledger an
+earlier attempt wrote counts only while its `executed-receipts` job was not re-run
+since. A full run
 on the tree still in progress is waited for (90 minutes at most, a progress
-line every minute), but while the other workflow has no full run on the tree
-the wait lasts five minutes, long enough for full-ci's second dispatch to
-appear. The newest full run on the tree decides,
+line every minute), also while the other workflow has no full run on the tree:
+full-ci's second dispatch can still appear, and a failure of the run in
+progress refuses instead of starting VMs. A passed run on the head whose
+executed-test receipt is refused (an unreadable, stale or empty ledger) ends the
+wait at once, since no later dispatch of the head is coming; the same refusal on
+another head with the same tree keeps waiting for the head's own dispatch, and a
+receipt download that failed (a 5xx or timeout) is read again on the next poll. The newest full run on the tree decides,
 across the head and every recent head with the same tree, so neither an empty
 commit nor an older pass elsewhere skips a newer failure; a failed one refuses
 with no receipt. A run that did not run the full job (a diagnostic dispatch, a
@@ -130,6 +136,40 @@ new tree, so it needs its own passed full run or gate. A stamp-only difference
 reaches the head through gstack's stamp rule (`gstack-pregate clear --receipt`
 with the stamp files in `.gstack/ship-policy.json`), never through this check.
 Merge still requires `full-suite` and `e2e-full-suite` on the exact head.
+
+### Run evidence for gstack (`gstack-pregate clear --run`)
+
+gstack can take the same GitHub runs as evidence itself, so a slot runs one full
+suite per tree instead of a full-ci pass and a gate
+([gstack docs/pregate.md#run-evidence](https://github.com/garrytan/gstack/blob/main/docs/pregate.md#run-evidence)).
+`gstack-pregate clear --remote pregate.json/remote_gate --run <Test run> --run <E2E run> --allow-repo-commands`
+reads each run's `full-suite-tree` / `e2e-full-suite-tree` artifact and accepts the pair
+when both passed on pregate.json's tree and their executed files cover the gate's
+inventory:
+
+- `tree.json` carries `files` (every test file the run executed, repo-relative)
+  and `tests` (its executed tests). `scripts/ci-full-suite-tree.sh` takes them from
+  the run's `ci-manifest.json`, and only when that manifest is complete and names
+  the same run, attempt and commit. Otherwise both are left out with a warning:
+  the run still counts for merge, but gstack refuses it (`inventory_uncovered`).
+  A push that reused a run has no `full-suite` job, so it is never evidence.
+- `bash scripts/pregate-remote-gate.sh --list` prints the inventory: the gate
+  command with `--list` (`scripts/ci-ubicloud.ts --list`), the same lanes and
+  discovery the gate runs, one file per line. It exits non-zero when the
+  inventory fails or is empty (a doc-only tree under `:diff` runs no test file,
+  so it clears through the gate as before). The gate leaves out the keyed-only
+  Tier 2 file (`test/e2e/skills.test.ts`): a VM has neither the keys nor
+  openclaw, so every test in it would skip.
+- gstack accepts only `push` and `workflow_dispatch` runs whose newest attempt
+  succeeded. **A flaky job means re-running the whole workflow.** "Re-run failed
+  jobs" carries every job that passed, the ledger job that writes the manifest
+  included, over from the older attempt, so the new attempt has no manifest of
+  its own and its `tree.json` has no `files` (`inventory_uncovered`); a
+  `tree.json` left from an older attempt is refused too (`artifact_mismatch`).
+- The profiles live in the base branch's `.gstack/pregate.json` (`run_profiles`
+  for `test.yml` / `full-suite` and `e2e.yml` / `e2e-full-suite`, and
+  `remote_gate_runs` with this inventory command). gstack reads them only from
+  `origin/<base>`, so they apply to a branch once they are on master.
 
 ## Dependency-audit rule
 

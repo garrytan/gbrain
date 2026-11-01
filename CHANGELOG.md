@@ -39,6 +39,160 @@ identifiers and attribution are available in the pre-removal Git revision
 - Remote callers can no longer write pages under `.gbrain/`.
 - A harness that sends an audience its credential's `may_act_for` does not list gets `on_behalf_of_not_permitted` with the operator's command; an audience inside tool arguments is always refused (`on_behalf_of_in_arguments`). `may_act_for: *` is accepted and doctor warns (`access_may_act_for_wildcard`).
 
+## [0.60.534.0] - 2026-11-01
+
+**Merge train S: five sync, refresh and maintenance fixes land in one release.** Page writes create a missing source folder and name a missing checkout (#8106). A diverged managed checkout can publish itself on opt-in, and every refresh fetch is logged (#8102). Sync-lane wave 2 repairs quoted fence markers, releases agreeing file-drift holds, syncs plain directories and retires former-binding effects (#8077). The `synthesize` phase survives a local writer replace (#8111). A door commit during a refresh is waited out instead of failing the refresh as `refresh_dirty` (#8117).
+
+### Missing source folders and checkouts (#8106)
+
+**Page writes to a source whose directory is missing on the brain host no longer fail with a misleading `storage_error`. A source that is a folder inside a checkout now gets its folder created on the first write, and a source whose whole checkout is gone gets a refusal that says so. A checkout restored or copied into place, or one whose private ownership records lost their mode, now refuses with the exact owner step that fixes it.**
+
+#### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| The source is a folder inside a checkout and the folder is missing (Git keeps no empty folder, so a fresh clone of a repository whose member folder has no files yet lacks it) | every `put_page`, `capture` and `add_timeline_entry` to it failed with `storage_error` ("The canonical file target cannot be accessed as a regular file"), so a token granted only that member's source could save nothing | the write creates the folder and the page, and the same token reads it back |
+| The source's whole checkout is missing (a brain copied to another machine or into a container without its source directories) | the same `storage_error`, whose fix told the agent to repair file permissions | `recovery_required` with `detail: source_checkout_missing`, naming the source; the fix is the read-only `gbrain sources writer status --source <id> --json`, which shows the registered path. Remote callers are not shown the path. Nothing is written, as before |
+| The checkout was restored, copied or recreated at its recorded path (new inode or birth time) | `recovery_required` whose `fix` only said to read the receipt | `detail: physical_root_directory_changed`, and the `fix` is the owner-run relocated-root self-transfer (`gbrain sources writer transfer prepare` then `accept`, both with `--self-transfer --confirm-relocated-root`) with `next: tell_user_to_run`. The re-stamp stays a deliberate step on the brain host |
+| An ownership record of the checkout became readable by other users (a recursive `chmod` of a copied brain) | `recovery_required` ("The private physical-checkout identity cannot be verified"), and doctor's `foreign_ownership_marker` called the file foreign and told the operator to remove it | `detail: ownership_record_not_private` with `gbrain doctor --only foreign_ownership_marker` as the fix; doctor now reports this brain's own record with its mode and the exact `chmod 600 '<path>'`, never removal, and lists each record once |
+
+A token's source grant decides where it writes exactly as before; this changes only how the file path inside the granted source is resolved and how these refusals name their exit.
+
+### Publishing a diverged checkout (#8102)
+
+**A managed checkout that gets local commits while a sibling checkout pushes the same branch can now stay current without a person in the loop. Turn on `sources.refresh_publish_diverged` and a diverged `gbrain sources refresh` publishes the local commits merged with the upstream, then fast-forwards.**
+
+Before, such a refresh always refused `refresh_diverged`, and the database lagged the upstream until someone ran the keep-checkout publish by hand or a scheduled publish caught up. That repeated every interval. The setting is the user's standing consent to push those local commits. It defaults to off, so nothing changes for existing brains.
+
+#### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| Diverged checkout, setting on | refused `refresh_diverged` | pushes HEAD merged with the upstream in memory (the `gbrain git commit-push --push-only --keep-checkout` publish), fast-forwards to the merge and reports `published` (sha, local commits, upstream commits merged) |
+| Diverged checkout, setting off (the default) | refused `refresh_diverged` | unchanged; the refusal now also names the setting |
+| A file both sides changed, setting on | n/a | refuses `integrate_conflict` naming the file; nothing is pushed, fenced or moved. With `gbrain.quarantine` on, the remote's version is published instead and the refresh names the ref that keeps this machine's version |
+| An uncommitted edit to a file the upstream changed, setting on | n/a | refuses `refresh_dirty` before anything is pushed |
+| An upstream rewritten by a force-push (it no longer holds a commit it held before), or no record of the upstream before the fetch, setting on | n/a | refuses `refresh_diverged` and pushes nothing, so the commits the rewrite removed never come back without the user |
+| A force-push that lands after the refresh checked the upstream but before the publish pushes, setting on | n/a | refuses `push_unconfirmed` and pushes nothing. The publish is bound to the upstream the refresh checked (`--expect-remote`), so the removed commits never come back. Run the refresh again; it checks the new history first |
+| A refusal after the publish landed | n/a | the refusal says the remote already holds the local commits |
+| `--dry-run` | refused `refresh_diverged` | unchanged: a dry run never publishes |
+| `gbrain config set sources.refresh_fetch_timeout_ms` / `sources.refresh_drain_wait_ms` | refused as an unknown key, although the refresh reads both | accepted |
+
+#### Things to watch after you upgrade
+
+- The publish needs a Git identity in the checkout for the merge commit, the same as the manual keep-checkout publish.
+- It never uses a `--pull` that moves the checkout. The merge is built in memory and pushed, and the checkout moves only through the refresh's usual fast-forward.
+- The push skips the checkout's pre-push hook, as the manual keep-checkout publish does. If you rely on a pre-push secret scanner, leave the setting off.
+- The setting covers every managed checkout in the brain.
+- If another publish of the same checkout is running, the refresh refuses at once instead of waiting; run it again.
+
+#### Itemized changes
+
+- `src/core/persistence/worktree-refresh.ts`: when `sources.refresh_publish_diverged` is on and the run is not a dry run, the precheck runs the keep-checkout publish (`gbrain git commit-push --push-only --keep-checkout` in a bounded child, never on the PGLite owner's event loop) for a diverged checkout (after refusing `refresh_dirty` first when an uncommitted edit touches a file the upstream changed), re-fetches and continues; it refuses `refresh_diverged` instead when the checkout holds a commit the upstream held before (reachable from the remote-tracking ref before this fetch, from its reflog, or from a completed refresh's target for the same upstream) but no longer contains, or when no record exists (no reflog entry, no completed refresh, and `core.logAllRefUpdates` off, so the ref before the fetch may already be past a force-push); every refresh fetch, with the setting on or off and in a dry run, records the move in the reflog, so a refusal's own fetch can never erase what the upstream held; the result carries `published` (with any quarantined or superseded paths, which the text output names), and a refusal after the publish says the remote already holds the local commits. The `refresh_diverged` suggestion names the setting.
+- `src/commands/sources-refresh.ts`: a text line for the publish.
+- `src/core/config-runtime-keys.ts`: registers `sources.refresh_publish_diverged`, `sources.refresh_fetch_timeout_ms` and `sources.refresh_drain_wait_ms`.
+- Docs: `docs/guides/live-sync.md`, `docs/guides/write-refusals.md`, `docs/guides/troubleshooting.md`, `docs/guides/shared-checkout-git.md`, `docs/architecture/canonical-writers.md` and its census.
+- Tests: `test/refresh-publish-diverged-7686.test.ts` (setting on and off, a conflict, quarantine, a dirty overlap, a refusal after the publish, a publish child that fails, and a dry run, on PGLite and on Postgres through `test/e2e/worktree-refresh-postgres.test.ts`). Tests 7c and 7d in `test/persistence-worktree-refresh.test.ts` share one fixture across their cells and run in about half the time, with every assertion kept (#7782).
+
+#### How to get it
+
+```bash
+gbrain config set sources.refresh_publish_diverged true
+```
+
+### Sync-lane wave 2 (#8077)
+
+**Sync-lane wave 2: a transcript that quotes a fence marker is repaired instead of held for a person, held files that already agree with their pages can be released, a plain directory added with `--force` syncs, and a parked effect left behind by a replaced binding has a guarded way out.**
+
+A page that quotes a facts or takes marker in prose was held `invalid_fence` as `repeated_marker` for a person to fix. It is now held as `quoted_marker`, and `gbrain repair fences`, `gbrain repair content`, `gbrain sync unblock --apply` and the maintenance run fix it by wrapping each mention in backticks, with a receipt per file. No reader counts fence lines any differently (#8059). Older `file_drift` holds on pages with no import record are checked once more against the file's earlier versions (#7199, re-port of #7228). A held file that agrees with its page apart from formatting is released (#7931, #7950). A refused `repair file-drift --apply` no longer reserves its request id (#7931).
+
+#### Itemized changes
+
+- **#8059 quoted fence markers.** The new `src/core/fence-repair/quote-markers.ts` wraps prose mentions: an exact marker outside code and table lines, with text after it on its line or on a blockquote line, that doesn't close a fence holding rows and isn't directly above a table. The edit is kept only when every row of every fence keeps its line and kind, and when nothing `protectedRegions` hid becomes visible. Only the repair makes the edit; write paths just name the reason `quoted_marker`. Existing `invalid_fence` holds get one more screen through a hold-only `quote_version`, and the parser version stays the same. `forget` now finds the facts fence with the parser's code-aware locator.
+- **Quoted-marker screen stays linear.** The write-path screen for prose-quoted markers found each mention's line by re-reading the page up to it, so a page with 40,000 mentions took 12 to 18 seconds and a 24 MiB page minutes. It now reads each page once, and the same 40,000 mentions take about 100 ms.
+- **markerCarry.** A segmented read carries only a marker that a cut splits, not a whole one.
+- **#7199 (re-port of #7228).** A record-less page that equals the file at the last synced commit, or one of its three earlier committed versions, imports without a hold. Side-unknown hold text now says what was compared. A pass that holds files for a person reports `held_needs_human`. Git tree listings are memoized by object id (GBRA-135).
+- **#7931 parts 2 and 3.** A held file whose page agrees apart from formatting is released. The request id of a `repair file-drift` apply now includes the approved artifact digest, so an apply refused before publishing doesn't block the next preview.
+- **#7950.** An agreeing held page found through `--slug` is listed `release_hold`, bound to the hold's `observed_at`. An empty preview applies nothing. Contributed by @Masashi-Ono0611 (supersedes #7953).
+- **#7974.** The stale-mirror drift read no longer throws on an ambiguous slug path, and it compares contents. `slugPathFile` uses the source's slug-root mode and doesn't follow symlinks. `release_hold` needs the held path and a file hash. The `keep_file_bytes` and file-wins docs are corrected.
+- **#7973.** `gbrain sync` on a plain directory added with `sources add --force` runs the import path instead of failing on `git rev-parse`. The managed Git path refuses with a typed `sync_not_applicable`.
+- **#7988.** Activation marks a non-git root in its own directory, never in the metadata of the repository that contains it, such as a dotfiles `$HOME`.
+- **#7985.** Parked effects of a former binding get their own group, with `settle-effects` as the next step. The exact retry names both bindings. `settle-effects --retire` (proof `former_binding_retired`) settles one only when its source was replaced or its page moved past the owed revision. The settlement is preview-first, bound to a hash, reversible with `--unsettle`, and never replays anything.
+- **#7982.** Repeated transient pass stops build the abandoned-pass streak. An unfenced `lease_lost` stop never inserts a row. The pass-row and drain-holder readers compare against the database clock.
+- **#8009.** The `repair provenance-stamps` preview and apply share one held-page filter, so the preview's count equals what the apply writes.
+- **#7998 flake.** The page-embedding-lease harness pushes other queued effects out of the way before it drains the one under test.
+
+### Synthesize postprocess after a writer replace (#8111)
+
+**A dream cycle's `synthesize` phase no longer fails on every pass after `gbrain auth local-writer register cli --replace` (#8110).** Postprocess settles on the earlier request it already found, checked under the current local CLI writer's grant, instead of looking it up again under the new principal and publishing against a stale revision (`revision_conflict` forever). A synthesis child output whose own stdio writer was revoked warns once as a `permission_denied` conflict and leaves the page alone. Receipt lookups stay principal-scoped.
+
+#### Itemized changes
+
+- `src/core/cycle/synthesize-postprocess.ts`: settle on the found row; a revoked child writer is a one-time `permission_denied` conflict.
+- Test: `test/managed-synthesis-postprocess.test.ts` (PGLite, and Postgres through its E2E wrapper).
+
+### Door commits during a refresh (#8117)
+
+**A `gbrain git commit-push` landing during a `gbrain sources refresh` no longer makes the refresh fail as `refresh_dirty` (#8117).** The refresh now runs its HEAD check and fast-forward merge under the checkout's commit lock, the same lock the door uses, so it waits for a door commit to finish instead of colliding with it on `.git/index.lock`.
+
+#### Itemized changes
+
+- `src/core/persistence/worktree-refresh.ts`: `fenceAndMerge` takes the checkout's commit lock (`brain-commit.lock` plus the legacy push lock, waiting `GBRAIN_COMMIT_LOCK_WAIT_SECONDS`, default 60) from the HEAD check through the merge. A lock still held past that wait aborts the fenced refresh as retryable `commit_lock_busy`. A git process outside the lock that holds `.git/index.lock` gets three short retries, then a retryable `git_index_locked` refusal instead of the caller-class `refresh_dirty`. Either way HEAD is unchanged and the next run starts fresh.
+- Test: `test/worktree-refresh-index-lock-8117.test.ts`.
+
+## [0.60.533.0] - 2026-11-01
+
+**A delegated sync no longer reports `done` while it is still finishing.** The serve's sync runner published `done` before it re-checked the wanted markers and scheduled the deferred embeds. A client polling in that window saw a finished job with no embed backlog queued yet, and a second `sync_start` could begin while the first run was still settling its markers. Since #7941 the marker re-check also reads the checkout HEAD through git, which widened the window enough to fail `test/serve-sync-runner.serial.test.ts` intermittently on master (#8354). Both lanes (the shared-secret lane and the verified lane) now set `done` only after those steps, and a deadline or client abort that arrives after the run has finished no longer marks it `aborting`.
+
+### Itemized changes
+
+- `src/core/serve-sync-runner.ts`: `job.state = 'done'` moves after `settleRunMarkers` and `scheduleDeferredSyncEmbeds` in both lanes (#8354); the deadline and `sync_abort` skip a job whose run already returned its result.
+- `test/serve-sync-runner.serial.test.ts`: a probe slows the post-run marker read and checks that `done` is only visible once the markers have settled and the deferred embeds are pending; a second probe aborts during that settle and checks the job still ends `done`. Both fail without the fix.
+
+## [0.60.532.0] - 2026-11-01
+
+**CI wave 3: a passed full-ci pair can now clear the remote gate without a second full suite on VMs, the import-rate scale gate no longer fails on one stall, an effect pass that loses its database connection gives its claims back at once, and the Ubicloud runner's teardown retries instead of leaking VMs (#7939, #8103, #8096, #7607, #8119).**
+
+The `full-suite-tree` and `e2e-full-suite-tree` artifacts now record every test file the run executed and the executed test count, taken from the run's complete `ci-manifest.json`, so gstack's `pregate clear --run` can accept a passed full-ci pair on the same tree as run evidence. `bash scripts/pregate-remote-gate.sh --list` prints the gate's own inventory, and the seven files that never left a receipt on GitHub now do, or leave the gate. The import-rate gate sets aside at most one stall per import (a paused database container, a WAL checkpoint) and never work that recurs; a cost that lands only once in a 10k import is a known gap the 20k nightly still sees. An effect pass whose database connection drops while claiming or flushing git effects gives back every claim it had not finished as soon as the database answers, within 30 s and stopping on shutdown, instead of leaving them to a 2-minute lease. The remote gate's CI-reuse wait keeps waiting for the head's own dispatch, refuses when the run in progress fails, and treats a failed artifact download as retryable. The Ubicloud runner's `down` retries a timed-out or 5xx destroy with backoff until `UBI_DOWN_TIMEOUT`, `reap` bounds each VM's wait, and `UBI_REAP` refuses spellings it cannot read.
+
+### Itemized changes
+
+- `scripts/ci-full-suite-tree.sh`, `.github/workflows/test.yml`, `e2e.yml`: `files` and `tests` in tree.json from a complete, matching manifest; the full jobs need `executed-receipts`. The reconciliation crash suites run through `run-with-receipt.sh` (now accepting `bun --no-env-file test`); the keyed-only `test/e2e/skills.test.ts` leaves the keyless gate.
+- `scripts/pregate-remote-gate.sh`, `scripts/ci-ubicloud.ts`: `--list` prints the gate inventory and fails on an empty one.
+- `scripts/scale/gates.ts`: one-stall rule for `import_rate`; `import.<basis>.excused` names the time set aside (#7939).
+- `src/core/persistence/effects.ts`: connection-loss give-back for claimed, set-aside and unflushed git effects, fenced on each claim's token (ported from #7607).
+- `scripts/ci-reuse.ts`, `scripts/lib/gh-issue.ts`: the gate waits for a run in progress beside a missing one, refuses a refused receipt only on the head itself, and retries a failed download; an earlier attempt's ledger counts only when its job was carried over (#8096).
+- `scripts/ubicloud/ubi-runner.sh`: `down` destroy retries with 1 to 60 s backoff, `reap` per-VM bound `UBI_REAP_DOWN_TIMEOUT`, strict `UBI_REAP` (#8103, #8096).
+- `scripts/mine-shard-weights.ts`: prunes against tracked files in every mode; shard weights refreshed (#8119).
+- Test fixes ported from #7607: page-embedding lease ordering, git-commit-push-6530 cases, timeline-chunk-reuse handback, segmented-prior-view heap sample, awk portability lint.
+
+## [0.60.531.0] - 2026-10-31
+
+**Five severe fixes: the secret scan now redacts keys that follow a JSON or percent escape, a connector page that turns private leaves Git HEAD, deleted pages no longer stay searchable under a scoped writer role, a stale freshness marker can no longer starve the job queue, and a slow embedder no longer loses `remember` writes (#7978, #7971, #7637, #7941, #8135).**
+
+The secret scan's rules required a non-word character before a key, but a JSON escape (`\n`, `\t`, `\u0022`) and a percent-escape (`%22`) end on a word character, so a key at the start of an escaped tool-output string or inside a URL-encoded value was never redacted. Every rule now also matches right after such an escape (an escaped quote between a keyword like `password` and its value is still a gap, tracked in #8265), and a vendor key that recurs glued to a word (`token_<key>`) is scrubbed wherever the same key is claimed elsewhere in the document. On a managed connector source bound to a Git checkout, a page that turned private kept its public file at HEAD; it is now removed in the same publication. A page that already turned private before this release keeps its old public file until it is removed by hand (#8269). Under a database role with row-level security that lacks policies on the derived-state tables, deleting a page left its retrieval rows searchable and page versions lost their trust and attribution stamps without an error; those writes now refuse with `writer_coordinator_required`, and `docs/ENGINES.md` lists the policies such a role needs. A freshness marker naming a commit the source had already passed kept every sync queuing another top-priority follow-up; a completed run now settles it once the checkout has nothing left to import. A `remember` whose embed took longer than its 30 s preparation budget ended `preparation_stalled` with nothing saved; the fact is now saved without a vector and embedded later.
+
+### Itemized changes
+
+- `src/core/secret-scan.ts`: escape-boundary twin for every rule, run only on lines holding an escape; vendor and JWT values (20 to 512 characters) join the echo dictionary under their own 32-value cap, so planted vendor strings cannot crowd out a bearer token's echo (#7978). The `high_entropy_assignment` shapes moved to `src/core/secret-scan-assignment.ts` (module size cap).
+- `src/core/persistence/connector-sync.ts`: a strict private import of a public page publishes the file removal from `preparePrivateTransition` (#7971 item 1).
+- `src/core/derived-state-maintainers.ts`, migration v281: the eight derived-state maintainer triggers stay `SECURITY INVOKER` and fail closed when the caller's row-level security hides a table they need; `docs/ENGINES.md` "Derived-state maintainers" recipe (#7637).
+- `src/core/notifier/store.ts`, `handoff.ts`, `resident.ts`: settlement takes the checkout HEAD after the run (#7941).
+- `src/core/facts/single-prepare.ts`, `src/core/persistence/memory-prepare.ts`, `service.ts`: the fact embed is bounded inside the preparation deadline (#8135).
+
+## [0.60.530.0] - 2026-10-31
+
+**`gbrain sources refresh` no longer exits with a bare `internal_error` when another database transaction holds a row its fence needs. A fence that waits past its 5 s lock timeout now refuses as `refresh_lock_timeout`, and `why` names the open transactions holding those tables. Nothing moves, and a later run completes once the holder is gone. Any other unexpected error now prints a typed `internal_error` refusal with its stack in `why` and the refresh row it left, which the next run resumes.**
+
+Before, a stuck transaction holding a source, worktree or brain row (a long-running job, for example) made an upstream-moved refresh fail after about 5 s with `canceling statement due to lock timeout`. That surfaced as a top-level `internal_error` with no `status`, no stack and no holder. If it happened after the drain, it also left a `draining` row for the next run to clean up.
+
+### Itemized changes
+
+- `src/core/persistence/worktree-refresh.ts`: Postgres `55P03` in either fence transaction (`fenceDraining`, `fenceAndMerge`) is the new `refresh_lock_timeout` refusal (registry, catalogue, `docs/guides/write-refusals.md`, `docs/guides/error-codes.md`). Its `why` lists the five oldest open transactions in the current database holding locks on `persistence_brain`, `persistence_worktrees`, `sources` or `persistence_worktree_refreshes` (pid, application, state, seconds open). These are candidates, and the blocker may not be among them, because `pg_locks` does not show which row each one holds; the fix says to confirm the blocker before ending any transaction. Plain readers, which cannot block the fence, are left out, the holders' SQL text is never copied into `why`, and a lookup that fails or takes longer than 3 s says so (the statement is cancelled at that bound, and after the drain the lookup runs only once the topology and worktree locks are released). A refusal after the drain aborts the draining row as other fence refusals do. That abort has its own 5 s lock timeout. When the same holder blocks it, the row stays `draining` for the next run instead of the refresh hanging, and the refusal says so.
+- `src/core/persistence/worktree-refresh.ts`: `refreshWorktree` turns any other non-`OperationError` throw into `internal_error` with the error name, error code (a SQLSTATE or a Node code) and message (credentials, connection details and the home directory redacted), the stack in `why`, and a fix naming the active refresh row and its state, or saying the row could not be read (also when that lookup takes more than 3 s; its statements are cancelled at that bound). A deadlock (`40P01`), serialization failure (`40001`), cancelled statement (`57014`) or lock timeout outside the fence (`55P03`) is marked retryable. The fix repeats `--dry-run`, `--abandon`, `--resume`, `--wait-drain` and `--fetch-timeout-ms` when given. Home-directory redaction replaces only the home path itself, not a sibling path that shares its prefix. The row is not changed, and a host identity file that cannot be read still yields that refusal. A database access error the classifier recognizes (connection refused, a missing table) is rethrown unchanged, so it keeps its `gbrain db-repair` or `gbrain apply-migrations` fix. The already-current path no longer throws a `TypeError` of its own when a member sync rejects with a non-object.
+- `src/commands/sources-refresh.ts`: refusals print `why` (a `why` key under `--json`, a `Why:` line otherwise).
+- Test: `test/worktree-refresh-unexpected-throw.test.ts` (PGLite, and Postgres under `DATABASE_URL`; the lock-timeout cases hold a source row from a second connection, before the fence and after the drain, and check that a plain reader is not named and no SQL text is echoed; an unreadable host identity file still gives a typed refusal, an access error is not wrapped, credentials and the home directory are redacted without touching a sibling path, `--abandon` and `--dry-run` survive into the fix, a lookup that never answers still gives the refusal and is cancelled (row lookup and lock-holder lookup), transient SQLSTATEs are retryable, the holder list is worded as candidates, and an abort blocked by the same holder still returns and says the row stays draining).
+
 ## [0.60.529.0] - 2026-10-31
 
 **A pull request that adds a file to the PGLite snapshot inputs no longer gets stopped at gstack's pregate secrets check by its own workflow cache keys (#8107).**

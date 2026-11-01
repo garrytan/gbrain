@@ -70,7 +70,7 @@ describe('GBRA-133 legacy page with the database-only grandfather stamp', () => 
     const held = await readGitHold(engine, 'default', incarnation, 'notes/edited.md');
     expect(held).toMatchObject({ code: 'file_drift', meta: { side: 'unknown' } });
     // With no import record and no database write on record, the hold does not claim the database changed.
-    expect(held!.message).toBe('notes/edited.md: page notes/edited differs from its file and has no import record to tell whether the file or the database changed, so sync held the import instead of overwriting the database version; the rest of the source synced.');
+    expect(held!.message).toBe('notes/edited.md: page notes/edited differs from its file and has no import record to tell whether the file or the database changed; the page also differs from the file at the last synced commit, so sync held the import instead of overwriting the database version; the rest of the source synced.');
     expect((await page(engine, 'notes/edited')).compiled_truth).toContain('A database edit.');
   }, { setup }), 120_000);
 });

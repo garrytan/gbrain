@@ -56,4 +56,17 @@ describe('run-with-receipt.sh', () => {
       expect(run(root, ['slow', '--', 'bun', 'test']).status).toBe(2);
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
+  test('passes the bun flag --no-env-file through and still records the receipt', () => {
+    const root = sandbox();
+    try {
+      const receipts = join(root, 'receipts');
+      const r = run(root, ['reconciliation', 'pglite', '--', 'bun', '--no-env-file', 'test', '--timeout=60000', 'test/a.test.ts'], { GBRAIN_TEST_RECEIPT_DIR: receipts });
+      expect(r.status, r.stdout + r.stderr).toBe(0);
+      const side = buildSide('local', loadReceiptDir(receipts));
+      expect(side.issues).toEqual([]);
+      expect([...side.identities.values()].map(i => [i.lane, i.file, i.status])).toEqual([['reconciliation', 'test/a.test.ts', 'pass'], ['reconciliation', 'test/a.test.ts', 'skip']]);
+      expect(run(root, ['slow', 'perf-a', '--', 'bun', '--no-env-file', 'test']).status).toBe(2);
+      expect(run(root, ['slow', 'perf-a', '--', 'bun', '--no-env-file', 'x', '--timeout=60000', 'test/a.test.ts']).status).toBe(2);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
 });

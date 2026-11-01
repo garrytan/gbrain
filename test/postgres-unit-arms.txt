@@ -250,6 +250,7 @@ test/managed-facts-withdrawn-skip-6506.test.ts
 test/managed-lint.test.ts
 test/managed-maintenance-links.test.ts
 test/managed-root-aliases-7203.test.ts
+test/managed-root-marker-enclosing-7988.test.ts
 test/managed-sweep-corpus-windows.test.ts
 test/managed-sweep-refused-window-retry.test.ts
 test/managed-sweep-timeline.test.ts
@@ -279,12 +280,14 @@ test/migration-0-53-host-move-7900.test.ts
 test/migration-persistence-foreground-committed-index.test.ts
 test/migration-persistence-request-id-index.test.ts
 test/migration-persistence-request-slug-index.test.ts
+test/notifier-passed-freshness-marker-7941.test.ts
 test/on-commit-embedding.serial.test.ts
 test/oneshot-consumer-direct-route.test.ts
 test/oneshot-housekeeping-cli.test.ts
 test/origin-guard-6948.test.ts
 test/origin-twin-sequence-7150.test.ts
 test/origin-twins-6948.test.ts
+test/orphan-effect-diagnostics-7985.test.ts
 test/overwritten-edits-6712.test.ts
 test/owner-refusal.test.ts
 test/pack-relation-direction-engine.test.ts
@@ -396,6 +399,7 @@ test/persistence-commit-durability.test.ts
 test/persistence-deactivate.test.ts
 test/persistence-diagnostics.test.ts
 test/persistence-edit-embedding-reuse.test.ts
+test/persistence-effect-claim-loss.test.ts
 test/persistence-embedding-noop-settle.test.ts
 test/persistence-file-import.test.ts
 test/persistence-git-subdir-origin.test.ts
@@ -454,6 +458,7 @@ test/repair-file-drift-provenance-gbra133.test.ts
 test/repair-frontmatter-keys-sweep-6454.test.ts
 test/repair-frontmatter.test.ts
 test/repair-ghost-database-ahead-gbra133.test.ts
+test/repair-quoted-markers-8059.test.ts
 test/repair-receipt-compaction.test.ts
 test/repair-rename-identity-6729.test.ts
 test/repair-secret-spans.test.ts
@@ -486,6 +491,7 @@ test/sync-admission-6712.test.ts
 test/sync-apply-held-deletions-gbra133.test.ts
 test/sync-capacity-preflight.test.ts
 test/sync-checkpoint-moved-6834.test.ts
+test/sync-classic-drift-7199.test.ts
 test/sync-discovery-legacy-origin-7130.test.ts
 test/sync-drain-claims.test.ts
 test/sync-drain-effect-recovery-blocked.test.ts
@@ -495,6 +501,7 @@ test/sync-drain-write-capacity.test.ts
 test/sync-dry-run-drain-7167.test.ts
 test/sync-exits-l4-6712.test.ts
 test/sync-fenced-slices-gbra133.test.ts
+test/sync-file-drift-agrees-7931.test.ts
 test/sync-freshness-6858.test.ts
 test/sync-frontmatter-recovery.test.ts
 test/sync-frontmatter-slug-conflict.test.ts
@@ -503,6 +510,7 @@ test/sync-full-cursor-slices-6349.test.ts
 test/sync-full-untracked-import-5459.test.ts
 test/sync-group-member-order.test.ts
 test/sync-handler-drain-6706.test.ts
+test/sync-holds-followups-7974.test.ts
 test/sync-holds-only-converge-7327.test.ts
 test/sync-holds-wave-gbra133.test.ts
 test/sync-import-provenance-disk.test.ts
@@ -525,6 +533,7 @@ test/sync-pass-interrupted-7596.test.ts
 test/sync-pass-phase-lines-7243.serial.test.ts
 test/sync-pass-readers-7614.test.ts
 test/sync-pass-stop-in-level-gbra133.test.ts
+test/sync-plain-directory-7973.test.ts
 test/sync-prescreen-both-delta-6712.test.ts
 test/sync-prescreen-drift-6712.test.ts
 test/sync-slug-root-mode-6694.test.ts
@@ -557,6 +566,7 @@ test/visibility-repair-scale.test.ts
 test/withdrawal-overlay-concurrency.test.ts
 test/withdrawal-publication-file.test.ts
 test/worktree-refresh-recovery-row-gbra130.test.ts
+test/worktree-refresh-unexpected-throw.test.ts
 test/write-roundtrips-gbra156.test.ts
 test/write-through-leak-guard-alias-7203.test.ts
 test/writer-admin-state-embed-lease.test.ts

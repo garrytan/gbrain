@@ -22,7 +22,7 @@ import { openAppendBrain, type AppendBrain } from './helpers/append-brain.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { runEmbedCore } from '../src/commands/embed.ts';
 import { currentEmbeddingSignature } from '../src/core/embedding.ts';
-import { rebuildPendingPageProjections } from '../src/core/page-state/projections.ts';
+import { DEFERRED_CHUNK_CLAIM, rebuildPendingPageProjections } from '../src/core/page-state/projections.ts';
 import { CHUNK_VECTOR_WRITE_BUDGET } from '../src/core/page-state/chunk-moves.ts';
 
 const WORDS = 'alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu'.split(' ');
@@ -148,8 +148,10 @@ for (const kind of testBackends()) {
     test('an interrupted continuation leaves the entry committed and the drain finishes it', async () => {
       const slug = 'notes/example-interrupted';
       await publish(slug, page(12, 380, 'descending'));
-      // Every chunk_index move past the first CHUNK_VECTOR_WRITE_BUDGET fails, as a crash after the first step would.
+      // Every chunk_index move past the first CHUNK_VECTOR_WRITE_BUDGET fails, as a crash after the first step would, and
+      // the reason each continuation leaves when it hands its claim back is recorded.
       await brain.engine.executeRaw(`CREATE TABLE IF NOT EXISTS probe_7172_moves (n int)`);
+      await brain.engine.executeRaw(`CREATE TABLE IF NOT EXISTS probe_7172_handbacks (reason text)`);
       await brain.engine.executeRaw(`CREATE OR REPLACE FUNCTION probe_7172_interrupt() RETURNS trigger LANGUAGE plpgsql AS $$
         BEGIN
           IF NEW.chunk_index IS DISTINCT FROM OLD.chunk_index THEN
@@ -159,19 +161,38 @@ for (const kind of testBackends()) {
           RETURN NEW;
         END $$`);
       await brain.engine.executeRaw('CREATE TRIGGER probe_7172_interrupt BEFORE UPDATE ON content_chunks FOR EACH ROW EXECUTE FUNCTION probe_7172_interrupt()');
+      await brain.engine.executeRaw(`CREATE OR REPLACE FUNCTION probe_7172_handback() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF split_part(OLD.reason, ':', 1) = '${DEFERRED_CHUNK_CLAIM}' AND NEW.reason IS DISTINCT FROM OLD.reason THEN
+            INSERT INTO probe_7172_handbacks VALUES (NEW.reason);
+          END IF;
+          RETURN NEW;
+        END $$`);
+      await brain.engine.executeRaw('CREATE TRIGGER probe_7172_handback AFTER UPDATE ON page_projection_jobs FOR EACH ROW EXECUTE FUNCTION probe_7172_handback()');
       let added;
-      try { added = await addEntry(slug, '2026-10-19', LONG); }
-      finally {
+      let sealed: boolean | undefined;
+      let handbacks: Array<{ reason: string }> = [];
+      try {
+        added = await addEntry(slug, '2026-10-19', LONG);
+        // The resident's drain resumes the job once the interruption is gone, so the page is read while it is in place,
+        // after the publication's continuation has handed its claim back (a reply settled at commit precedes it).
+        for (let i = 0; i < 600 && !(handbacks = await brain.engine.executeRaw<{ reason: string }>('SELECT reason FROM probe_7172_handbacks')).length; i++) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        sealed = (await pageState(slug)).sealed;
+      } finally {
         await brain.engine.executeRaw('DROP TRIGGER IF EXISTS probe_7172_interrupt ON content_chunks');
         await brain.engine.executeRaw('DROP FUNCTION IF EXISTS probe_7172_interrupt()');
         await brain.engine.executeRaw('DROP TABLE IF EXISTS probe_7172_moves');
+        await brain.engine.executeRaw('DROP TRIGGER IF EXISTS probe_7172_handback ON page_projection_jobs');
+        await brain.engine.executeRaw('DROP FUNCTION IF EXISTS probe_7172_handback()');
+        await brain.engine.executeRaw('DROP TABLE IF EXISTS probe_7172_handbacks');
       }
       expect(added!.isError).toBe(false);
       // The entry is committed; the passages are not sealed yet, and the job names the deferred replacement.
       expect((await brain.body(slug)).timeline).toContain('Example long entry');
-      expect((await pageState(slug)).sealed).toBe(false);
-      const [job] = await brain.engine.executeRaw<{ reason: string }>("SELECT reason FROM page_projection_jobs WHERE slug=$1", [slug]);
-      expect(job?.reason).toBe('chunk_replacement_deferred');
+      expect(sealed).toBe(false);
+      expect(handbacks.map(row => row.reason)).toEqual(['chunk_replacement_deferred']);
       // The drain resumes it from the stored rows: this call, or the resident's drain when it got there first (it holds the claim).
       await rebuildPendingPageProjections(brain.engine, 10);
       for (let i = 0; i < 600 && !(await pageState(slug)).sealed; i++) await new Promise(resolve => setTimeout(resolve, 100));

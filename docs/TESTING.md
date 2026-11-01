@@ -697,13 +697,13 @@ The miner accepts `--from-file` or stdin for timestamped GitHub-format logs and
 unit matrix jobs, includes `evals/`, and closes the final file at the Bun summary.
 Serial timing uses runner durations, never timestamps of buffered output. E2E
 uses each file's Bun summary and merges partial selections into known weights.
-File/stdin imports also merge unobserved entries; only a complete GitHub unit,
+File/stdin imports merge likewise; only a complete GitHub unit,
 serial or explicit full-profile E2E run replaces that lane's entire map. Captured artifacts need their final
 successful completion marker, and GitHub imports verify every expected job.
 Incomplete or failed inputs leave the existing map intact. Repeated `--run`
 (5-10 full runs) takes each file's median; one run carries its runner
-speed. Metadata records runs, commits, units and counts. Unit/E2E weights are milliseconds;
-serial weights remain seconds. New files receive the corpus p75 estimate.
+speed. Untracked test files drop out. Metadata records runs, commits, units, counts. Unit/E2E weights are milliseconds,
+serial seconds. New files receive the corpus p75 estimate.
 
 The default E2E miner reads selected jobs and merges partial observations.
 `--e2e-profile full` instead requires a successful GitHub run with a source SHA

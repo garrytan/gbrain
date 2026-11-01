@@ -14,7 +14,7 @@ import { missingTable, type DetectionMode, type NotifierState } from './store.ts
 import { residentNotifier } from './resident.ts';
 import { parseOnCommit } from '../commit-notifier.ts';
 import { SYNC_ON_COMMIT_KEY } from '../sync-config-keys.ts';
-import { HOLDER_STALL_MS, holderStalled, publicDrainHolder, readLiveDrainHolder, type DrainHolder } from '../persistence/sync-lease.ts';
+import { HOLDER_STALL_MS, holderStalled, publicDrainHolder, readLiveDrainLease, type DrainHolder } from '../persistence/sync-lease.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw' | 'kind'>;
 type FreshnessExec = Exec & Pick<BrainEngine, 'getConfig'>;
@@ -151,7 +151,8 @@ export async function readNotifierBlock(engine: BrainEngine, sourceId: string, o
   const stalled = row.reason === 'notifier_stalled' || row.state === 'operator_blocked';
   const resident = live ? { kind: row.owner_kind ?? 'unknown', pid: remote ? null : row.owner_pid === null ? null : Number(row.owner_pid), host_id: remote ? null : row.owner_host_id, live } : null;
   // #7614: a holder that stopped renewing the drain lease (killed) syncs nothing, so it does not stand in for the resident.
-  const holder = live ? null : await readLiveDrainHolder(engine, sourceId).catch(() => null);
+  const lease = live ? null : await readLiveDrainLease(engine, sourceId).catch(() => null);
+  const holder = lease?.holder ?? null;
   // #7243: the resident the row last recorded (the one its trace rows name), whose notifier lease is no longer live.
   const recorded = !live && row.owner_kind ? { kind: row.owner_kind, pid: remote || row.owner_pid == null ? null : Number(row.owner_pid), host_id: remote ? null : row.owner_host_id,
     seen_at: iso(row.owner_seen_at), lease_expired_at: iso(row.lease_expires_at) } : null;
@@ -160,7 +161,7 @@ export async function readNotifierBlock(engine: BrainEngine, sourceId: string, o
       ? `The ${recorded.kind} resident recorded as this source's notifier${recorded.pid ? ` (PID ${recorded.pid})` : ''} holds no live notifier lease${recorded.lease_expired_at ? ` (it lapsed at ${recorded.lease_expired_at})` : ''}, `
         + `so nothing watches this source now; this syncs the checkout HEAD now. If that resident is still running, it is not renewing its lease: restart it, and it catches up on its own.`
       : 'No resident (gbrain serve, gbrain jobs work or the autopilot daemon) watches this source; this syncs the checkout HEAD now. A resident started later catches up on its own.')
-    : !live ? (holderStalled(holder) ? syncNowFix(sourceId, `No notifier watches this source, and the ${holder!.kind} process holding its drain lease has made no commit or cursor save for ${HOLDER_STALL_MS / 60_000} min or more; `
+    : !live ? (holderStalled(holder, lease?.db_now) ? syncNowFix(sourceId, `No notifier watches this source, and the ${holder!.kind} process holding its drain lease has made no commit or cursor save for ${HOLDER_STALL_MS / 60_000} min or more; `
       + 'a foreground sync follows it and takes over when its lease lapses.') : null)
     : stalled ? syncNowFix(sourceId, `The notifier made no progress after ${Number(row.attempts ?? 0)} attempts (${row.last_error_code ?? row.reason ?? 'blocked'}); a foreground sync shows the error`
       + `${!remote && row.trace_path ? `, and the trace is ${row.trace_path}` : ''}.`) : null;

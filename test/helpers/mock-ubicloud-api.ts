@@ -5,7 +5,9 @@
 // VMs never reach `running`, so every `up` stays mid-provision until killed,
 // unless `running` is set: then a created VM shows as running at 192.0.2.1
 // (pair it with a fake `ssh` on PATH). `faults` makes `destroy` or `list`
-// answer HTTP 500 / 503 from the next request on.
+// answer HTTP 500 / 503 from the next request on; `destroyFaults` answers the
+// next destroy requests one by one with a status, or holds one past the
+// client's timeout without acting on it ("hang").
 
 export interface MockVm {
   location: string;
@@ -23,6 +25,8 @@ export interface MockUbicloudOptions {
   rejectCreates?: boolean;
   /** Created VMs show as running at 192.0.2.1. */
   running?: boolean;
+  /** Answers for the next destroy requests, in order: an HTTP status, or "hang" (3 s, then a 504 nobody reads). */
+  destroyFaults?: Array<number | "hang">;
   seed?: Array<{ location?: string; name: string; size?: string }>;
 }
 
@@ -33,6 +37,8 @@ export interface MockUbicloud {
   events: string[];
   /** Flip to make every later `destroy` (500) or `list` (503) fail. */
   faults: { destroy: boolean; list: boolean };
+  /** Every destroy request received, answered or not. */
+  destroyRequests: number;
   stop(): void;
 }
 
@@ -44,6 +50,7 @@ export function startMockUbicloud(opts: MockUbicloudOptions = {}): MockUbicloud 
     vms.set(vm.name, { location: vm.location ?? "eu-central-h1", name: vm.name, size: vm.size ?? "standard-16", state: "creating" });
   }
   const text = (body: string, status = 200) => new Response(body, { status, headers: { "content-type": "text/plain" } });
+  const api = { vms, events, faults, destroyRequests: 0 } as MockUbicloud;
   const server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
@@ -74,6 +81,13 @@ export function startMockUbicloud(opts: MockUbicloudOptions = {}): MockUbicloud 
         return text(`id: vm-${name}\nname: ${name}\nstate: ${vm.state}\nlocation: ${vm.location}\nsize: ${vm.size}\n${vm.state === "running" ? "ip4: 192.0.2.1\n" : ""}`);
       }
       if (verb === "destroy") {
+        api.destroyRequests++;
+        const fault = opts.destroyFaults?.shift();
+        if (fault === "hang") {
+          await Bun.sleep(3000);
+          return text("! Unexpected response status: 504", 504);
+        }
+        if (fault !== undefined) return text(`! Unexpected response status: ${fault}`, fault);
         if (faults.destroy) return text("! Unexpected response status: 500", 500);
         if (vm && vm.state !== "destroying") {
           vm.state = "destroying";
@@ -88,7 +102,8 @@ export function startMockUbicloud(opts: MockUbicloudOptions = {}): MockUbicloud 
       return text(`! unsupported: ${argv.join(" ")}`, 400);
     },
   });
-  return { url: `http://127.0.0.1:${server.port}`, vms, events, faults, stop: () => server.stop(true) };
+  Object.assign(api, { url: `http://127.0.0.1:${server.port}`, stop: () => server.stop(true) });
+  return api;
 }
 
 export async function waitForEvent(mock: MockUbicloud, pattern: RegExp, timeoutMs = 20_000): Promise<string> {

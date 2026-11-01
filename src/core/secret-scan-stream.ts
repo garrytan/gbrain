@@ -16,7 +16,7 @@
  *
  * OWNERSHIP. A claim belongs to the window holding the start of the match that
  * made it, anchor included (`from`: the `Bearer ` or `Authorization: Basic `
- * keyword, an assignment key, or the boundary character before a value), not
+ * keyword, an assignment key, or the boundary character or escape before a value), not
  * to the window holding the value's first character: a mid-line cut between
  * an anchor and its value leaves the next window a value with no anchor, which
  * no pattern claims. A window keeps a claim whose match starts before the next

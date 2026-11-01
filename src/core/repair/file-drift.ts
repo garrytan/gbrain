@@ -74,7 +74,7 @@ import { protectedReconcileKey, reconcileCanonical, RECONCILE_SCAN_KEYS, type Re
 import { fileWinsContent } from '../persistence/file-wins-content.ts';
 import { ABSENT_FILE_HASH, canonicalDeletionState, missingFileRoute, readCanonicalFileText, readDeletedDriftTarget, readReconcileState, type DeletedDriftChange, type DeletedDriftTarget, type ReconcileArtifact } from '../persistence/reconcile-state.ts';
 import { sourceDbOnlyVerdict } from '../persistence/source-storage.ts';
-import { clearGitHold, fileDriftActionVerb, fileDriftSide, FILE_DRIFT_DELETED_STATES, FILE_DRIFT_SIDES, GIT_HOLD_OP, heldDriftPreviewArgv, requestGitHoldRetry, type FileDriftDeletedState, type FileDriftSide, type GitHoldRecord } from '../persistence/sync-holds.ts';
+import { clearGitHold, readGitHold, fileDriftActionVerb, fileDriftSide, FILE_DRIFT_DELETED_STATES, FILE_DRIFT_SIDES, GIT_HOLD_OP, heldDriftPreviewArgv, requestGitHoldRetry, type FileDriftDeletedState, type FileDriftSide, type GitHoldRecord } from '../persistence/sync-holds.ts';
 import { prepareRepairPublication, repairScreenConfig, submitManagedFileRepair } from '../persistence/file-repair.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent, submitMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
@@ -125,8 +125,11 @@ export interface ImportFilePage { slug: string; prefer: 'file'; exceptions: Drif
  */
 export interface DetachPin { path: string; page_id: number; revision: string; observed_at: string }
 export interface DetachPage { slug: string; prefer: 'database'; exceptions: DriftException[]; detach_page: DetachPin }
-/** GBRA-133: a held page whose page and file agree now; the apply asks the next sync to re-screen (and so release) its hold. */
-export interface ReleasePin { path: string; incarnation: string; revision: string; file_hash: string | null }
+/**
+ * GBRA-133: a held page whose page and file agree now; the apply asks the next sync to re-screen (and so release) its hold.
+ * #7950: bound to the hold the preview observed (`observed_at`), whichever selection (`--held` or `--slug`) found it.
+ */
+export interface ReleasePin { path: string; incarnation: string; revision: string; file_hash: string | null; observed_at: string }
 export interface ReleasePage { slug: string; prefer: DriftSide; exceptions: DriftException[]; release_hold: ReleasePin }
 type PlannedPage = ArtifactPage | SoftDeletePage | RemoveFilePage | ImportFilePage | DetachPage | ReleasePage;
 /** #6712 PR 4b: one held `file_drift` page a `--held` selection resolves. */
@@ -219,8 +222,13 @@ async function asLocalCli<T>(engine: BrainEngine, run: () => Promise<T>): Promis
   return withVerifiedLocalRegistration(engine, await readLocalWriter(engine, 'cli'), run);
 }
 
-function requestIdFor(hash: string, page: Pick<ApprovedPage, 'source_id' | 'slug'>): string {
-  const h = digest(['file-drift-request-v1', hash, page.source_id, page.slug]);
+/**
+ * The request id of one approved page's apply. #7931: it names the exact artifact the preview approved (a reconcile
+ * preview carries its own preview id), so a rerun of the same approved set replays its request, while an apply refused
+ * before it published reserves nothing for the next preview's apply under the same --expect.
+ */
+function requestIdFor(hash: string, page: Pick<ApprovedPage, 'source_id' | 'slug' | 'artifact_digest'>): string {
+  const h = digest(['file-drift-request-v2', hash, page.source_id, page.slug, page.artifact_digest]);
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
@@ -678,6 +686,11 @@ async function applyDeletedSide(ctx: OperationContext, page: ApprovedPage, artif
 
 /** GBRA-133: re-checks a held page whose page and file agreed at the preview and schedules its re-screen (`sources retry-held` for one path). */
 async function releaseAgreedHold(engine: BrainEngine, page: ApprovedPage, pin: ReleasePin, requestId: string): Promise<RepairItemOutcome> {
+  const hold = await readGitHold(engine, page.source_id, pin.incarnation, pin.path);
+  if (hold?.observed_at !== pin.observed_at) {
+    return { applied: false, outcome: 'changed_since_preview', reason: 'hold_changed',
+      detail: { request_id: requestId, action: 'release_hold', message: `The hold on ${pin.path} changed since the preview; preview it again.` } };
+  }
   const live = await liveFileDrift(engine, page.source_id, page.slug);
   if (live.reason !== 'agrees' || live.db_revision !== pin.revision || (live.file_hash ?? null) !== pin.file_hash) {
     return { applied: false, outcome: 'changed_since_preview', reason: 'revision_conflict',
@@ -714,7 +727,8 @@ export const fileDriftRepair: RepairHandler = {
     if (opts.apply) {
       if (!opts.expect) throw new OperationError('invalid_params', 'gbrain repair file-drift --apply applies only the set a preview printed.',
         `Preview first: ${command} — then run the apply command it prints with --expect <preview-hash>.`, 'docs/guides/repair.md#explicit-only-repair-kinds');
-      const approved = await loadApprovedSet<ApprovedPage>(engine, { command: 'file-drift', hash: opts.expect, previewCommand: command });
+      const approved = await loadApprovedSet<ApprovedPage>(engine, { command: 'file-drift', hash: opts.expect, previewCommand: command,
+        emptyHash: async () => previewHash({ kind: 'file-drift-v1', brain_id: scope.brain_id, source_id: sourceId, selection, pages: [] }) });
       if (approved.items.some(page => page.selection !== selection || page.source_id !== sourceId)) throw previewChangedError(opts.expect, command);
       // #6712 wave: soft deletes of pages whose file is gone honor the sync mass-delete valve, as `repair ghost-pages` does.
       if (opts.prefer === 'file' && approved.items.length > MASS_RECONCILE_MIN_PAGES * MASS_RECONCILE_RATIO) {
@@ -751,6 +765,7 @@ export const fileDriftRepair: RepairHandler = {
     const targets: Array<{ slug: string | null; held?: HeldTarget }> = held ? held.targets.slice(0, HELD_WINDOW_PAGES).map(target => ({ slug: target.hold.slug, held: target })) : slugs.map(slug => ({ slug }));
     const windowEnd = Math.min(Date.now() + HELD_WINDOW_BUDGET_MS, opts.deadline ?? Infinity);
     let previewed = 0;
+    const [source] = held ? [] : await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
     opts.progress?.start('repair.file_drift.preview', targets.length);
     await asLocalCli(engine, async () => {
       for (const { slug: targetSlug, held: target } of targets) {
@@ -788,8 +803,18 @@ export const fileDriftRepair: RepairHandler = {
             continue;
           }
           if (!opts.allDrifted && !opts.held && !selectedByGlobs(live.path, opts)) { count('not_selected'); continue; }
-          if (target && live.reason === 'agrees' && live.db_revision) {
-            pages.push({ slug, prefer: opts.prefer, exceptions: [], release_hold: { path: target.hold.path, incarnation: target.hold.incarnation, revision: live.db_revision, file_hash: live.file_hash ?? null } });
+          const agreedHold = live.reason !== 'agrees' || !live.db_revision ? null : target?.hold
+            ?? (source && live.path ? await readGitHold(engine, sourceId, source.incarnation, live.path) : null);
+          if (agreedHold?.code === 'file_drift' && live.db_revision && (live.path !== agreedHold.path || !live.file_hash)) {
+            count('unknown_release_unproven');
+            listing.push({ item: `${sourceId}:${slug}`, class: 'unknown', detail: live.file_hash
+              ? `the page agrees with ${live.path}, not with the held file ${agreedHold.path}; the hold stays until that file is resolved`
+              : `no file at ${agreedHold.path} to agree with; the hold stays` });
+            continue;
+          }
+          if (agreedHold?.code === 'file_drift' && live.db_revision) {
+            pages.push({ slug, prefer: opts.prefer, exceptions: [], release_hold: { path: agreedHold.path, incarnation: agreedHold.incarnation, revision: live.db_revision,
+              file_hash: live.file_hash ?? null, observed_at: agreedHold.observed_at } });
             listing.push({ item: `${sourceId}:${slug}`, class: 'release_hold', detail: 'the page and its file agree now; the apply asks the next sync to re-screen the file, which releases the hold' });
             continue;
           }
@@ -816,7 +841,7 @@ export const fileDriftRepair: RepairHandler = {
     const nextCommand = nextCursor ? previewCommand(sourceId, { ...opts, cursor: nextCursor }) : undefined;
     if (remaining > 0) residuals.after_window = remaining;
     const hash = previewHash({ kind: 'file-drift-v1', brain_id: scope.brain_id, source_id: sourceId, selection,
-      pages: pages.map(page => 'release_hold' in page ? [page.slug, page.release_hold.revision, page.release_hold.file_hash, 'release_hold', page.release_hold.path]
+      pages: pages.map(page => 'release_hold' in page ? [page.slug, page.release_hold.revision, page.release_hold.file_hash, 'release_hold', page.release_hold.path, page.release_hold.observed_at]
         : 'soft_delete' in page ? [page.slug, page.soft_delete.ghost.revision, ABSENT_FILE_HASH, 'soft_delete']
         : 'detach_page' in page ? [page.slug, page.detach_page.revision, ABSENT_FILE_HASH, 'detach_page', page.detach_page.page_id, page.detach_page.observed_at]
         : 'remove_file' in page ? [page.slug, page.remove_file.revision, page.remove_file.raw_file_hash, 'remove_file', page.remove_file.state, page.remove_file.marker_digest]

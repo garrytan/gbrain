@@ -25,6 +25,10 @@
  *                      audit Postgres 15 (#7112); the catalog goldens hold
  *                      Postgres 16 output and fail on 15 by design
  *   --diff             doc-only diffs run only the doc checks and gitleaks (ci:local --diff)
+ *   --list             print the test files this selection runs (every selected
+ *                      lane's inventory, keyed-only E2E files left out), one per
+ *                      line, and exit; exit 1 when it is empty. Needs no key or
+ *                      VM (scripts/pregate-remote-gate.sh --list)
  *   --record-weights   write measured durations to scripts/ubicloud/weights.json
  *   --keep             leave the VMs running (destroy with ubi-runner.sh down NAME)
  *   --ttl-hours N      VM TTL written into each name as -t<N> (default 2,
@@ -108,6 +112,11 @@ const BATCH_TIMEOUT_MS = 20 * 60 * 1000;
 const VM_LIST_TIMEOUT_MS = 120_000;
 // Test timeouts and the mined shard weights are calibrated on this location's VMs.
 const GATE_LOCATION = "eu-central-h1";
+// Keyed-only E2E files: e2e.yml's Tier 2 job runs them with the provider keys and
+// openclaw on the nightly schedule. A gate VM has neither (setup-ci-vm.sh drops the
+// keys), so every test in them would skip; the gate leaves them out instead of
+// counting a run that tested nothing (GBRA-237 removed the same keyless run from CI).
+export const KEYED_E2E = ["test/e2e/skills.test.ts"];
 // Items this heavy are the run's long poles: spread them one per VM so two of
 // them never compete for the same VM's CPUs.
 const HEAVY_MS = 60_000;
@@ -139,6 +148,8 @@ interface Opts {
   recordWeights: boolean;
   keep: boolean;
   ttlHours: number;
+  /** Print the gate's test files and exit; starts nothing. */
+  list: boolean;
 }
 
 function parseArgs(argv: string[]): Opts {
@@ -154,6 +165,7 @@ function parseArgs(argv: string[]): Opts {
     recordWeights: false,
     keep: false,
     ttlHours: 2,
+    list: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -173,6 +185,7 @@ function parseArgs(argv: string[]): Opts {
     else if (arg === "--record-weights") opts.recordWeights = true;
     else if (arg === "--keep") opts.keep = true;
     else if (arg === "--ttl-hours") opts.ttlHours = Number(value());
+    else if (arg === "--list") opts.list = true;
     else usage(`unknown argument ${arg}`);
   }
   for (const lane of opts.lanes) if (!(ALL_LANES as readonly string[]).includes(lane)) usage(`unknown lane ${lane}`);
@@ -192,7 +205,7 @@ function parseArgs(argv: string[]): Opts {
 
 function usage(message: string): never {
   console.error(`ci-ubicloud: ${message}`);
-  console.error("usage: bun run scripts/ci-ubicloud.ts [--vms N] [--size SIZE] [--slots N] [--location LOC] [--image IMAGE] [--lanes a,b] [--pg-image IMAGE] [--diff] [--record-weights] [--keep] [--ttl-hours N]");
+  console.error("usage: bun run scripts/ci-ubicloud.ts [--vms N] [--size SIZE] [--slots N] [--location LOC] [--image IMAGE] [--lanes a,b] [--pg-image IMAGE] [--diff] [--record-weights] [--keep] [--ttl-hours N] [--list]");
   process.exit(2);
 }
 
@@ -233,8 +246,54 @@ interface Vm {
   control: boolean;
 }
 
+/**
+ * The gate's test selection, the same discovery the ci:local wrappers use: the
+ * lanes that run, each lane's files, and the serial and slow lanes'
+ * machine-exclusive files. --list prints exactly these files.
+ */
+function gateInventory(opts: Opts, note: (message: string) => void) {
+  if (opts.diff) {
+    const classification = spawnSync("bun", ["run", "scripts/select-e2e.ts", "--classify-only"], { cwd: ROOT, encoding: "utf8" }).stdout?.trim();
+    if (classification === "DOC_ONLY") {
+      note("--diff: doc-only diff — running the doc checks locally, then gitleaks (ci:local doc-only fast-path)");
+      if (!opts.list && spawnSync("bash", ["scripts/ci-doc-checks.sh"], { cwd: ROOT, stdio: "inherit" }).status !== 0) {
+        process.exit(1);
+      }
+      opts.lanes = new Set(["gitleaks"]);
+      opts.vms = 1;
+    } else {
+      note(`--diff: E2E narrowing is retired; running the full E2E corpus (see docs/TESTING.md#e2e-selection). Classification: ${classification || "unknown"}`);
+    }
+  }
+  const exclusive = lines(sh("bash", ["scripts/run-serial-tests.sh", "--dry-run-list-exclusive"]));
+  const slowExclusive = lines(sh("bash", ["scripts/run-slow-tests.sh", "--dry-run-list-exclusive"]));
+  const arms = readArmsList(ROOT);
+  if (arms.errors.length) throw new Error(`test/postgres-unit-arms.txt: ${arms.errors.join("; ")}`);
+  const inventory: Record<Lane, string[]> = {
+    unit: lines(sh("bash", ["scripts/run-unit-shard.sh", "--dry-run-list"])),
+    serial: lines(sh("bash", ["scripts/run-serial-tests.sh", "--dry-run-list"])).filter((f) => !exclusive.includes(f)),
+    slow: lines(sh("bash", ["scripts/run-slow-tests.sh", "--dry-run-list"])).filter((f) => !slowExclusive.includes(f)),
+    "pg-arms": arms.files,
+    e2e: lines(sh("bash", ["scripts/run-e2e.sh", "--dry-run-list"])).filter((f) => !KEYED_E2E.includes(f)),
+  };
+  return { inventory, exclusive, slowExclusive };
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
+  if (opts.list) {
+    const { inventory, exclusive, slowExclusive } = gateInventory(opts, (message) => console.error(`ci-ubicloud --list: ${message}`));
+    const files = new Set<string>();
+    for (const [lane, laneFiles] of Object.entries(inventory)) if (opts.lanes.has(lane)) laneFiles.forEach((f) => files.add(f));
+    if (opts.lanes.has("serial")) exclusive.forEach((f) => files.add(f));
+    if (opts.lanes.has("slow")) slowExclusive.forEach((f) => files.add(f));
+    if (!files.size) {
+      console.error(`ci-ubicloud --list: the gate runs no test file on this tree (lanes: ${[...opts.lanes].join(",")})`);
+      process.exit(1);
+    }
+    console.log([...files].sort().join("\n"));
+    return;
+  }
   if (!process.env.UBICLOUD_API_KEY && !process.env.UBICLOUD_API_TOKEN) {
     console.error("ci-ubicloud: UBICLOUD_API_KEY (or UBICLOUD_API_TOKEN) is not set");
     process.exit(2);
@@ -250,33 +309,7 @@ async function main() {
   mkdirSync(join(runDir, "logs"), { recursive: true });
   mkdirSync(join(runDir, "failures"), { recursive: true });
 
-  // ── Inventory: the same discovery the ci:local wrappers use ───────────────
-  const e2eFiles = lines(sh("bash", ["scripts/run-e2e.sh", "--dry-run-list"]));
-  if (opts.diff) {
-    const classification = spawnSync("bun", ["run", "scripts/select-e2e.ts", "--classify-only"], { cwd: ROOT, encoding: "utf8" }).stdout?.trim();
-    if (classification === "DOC_ONLY") {
-      log("--diff: doc-only diff — running the doc checks locally, then gitleaks (ci:local doc-only fast-path)");
-      if (spawnSync("bash", ["scripts/ci-doc-checks.sh"], { cwd: ROOT, stdio: "inherit" }).status !== 0) {
-        process.exit(1);
-      }
-      opts.lanes = new Set(["gitleaks"]);
-      opts.vms = 1;
-    } else {
-      log(`--diff: E2E narrowing is retired; running the full E2E corpus (see docs/TESTING.md#e2e-selection). Classification: ${classification || "unknown"}`);
-    }
-  }
-  const exclusive = lines(sh("bash", ["scripts/run-serial-tests.sh", "--dry-run-list-exclusive"]));
-  const serialPool = lines(sh("bash", ["scripts/run-serial-tests.sh", "--dry-run-list"])).filter((f) => !exclusive.includes(f));
-  const slowExclusive = lines(sh("bash", ["scripts/run-slow-tests.sh", "--dry-run-list-exclusive"]));
-  const arms = readArmsList(ROOT);
-  if (arms.errors.length) throw new Error(`test/postgres-unit-arms.txt: ${arms.errors.join("; ")}`);
-  const inventory: Record<Lane, string[]> = {
-    unit: lines(sh("bash", ["scripts/run-unit-shard.sh", "--dry-run-list"])),
-    serial: serialPool,
-    slow: lines(sh("bash", ["scripts/run-slow-tests.sh", "--dry-run-list"])).filter((f) => !slowExclusive.includes(f)),
-    "pg-arms": arms.files,
-    e2e: e2eFiles,
-  };
+  const { inventory, exclusive, slowExclusive } = gateInventory(opts, log);
 
   const tables: WeightTable[] = [
     readWeightTable(LOCAL_WEIGHTS),
@@ -600,7 +633,7 @@ async function main() {
   // workflow's own partition, its ARM_WORKERS workers' makespan over this run's
   // measured file durations (both arms, as this lane runs them).
   const armShardReport = opts.lanes.has("pg-arms")
-    ? armShards(ROOT, arms.files, ARM_SHARDS).map((files, i) => ({
+    ? armShards(ROOT, inventory["pg-arms"], ARM_SHARDS).map((files, i) => ({
       shard: i + 1,
       files: files.length,
       ms: armMakespan(files, (file) => results.get(weightKey("pg-arms", file))?.ms ?? 0),
@@ -710,7 +743,7 @@ function sortedObject(obj: Record<string, number>): Record<string, number> {
 
 if (import.meta.main) {
   process.on("exit", () => {
-    if (leftReported || vmRequested) return;
+    if (leftReported || vmRequested || process.argv.includes("--list")) return;
     const line = `UBICLOUD: left=0 owner=${process.env.UBI_OWNER ?? ""} vms=0 others=unknown`;
     console.log(line);
     if (process.env.UBI_LEFT_FILE) appendFileSync(process.env.UBI_LEFT_FILE, line + "\n");

@@ -29,6 +29,7 @@ import { extractRawRows } from './raw-rows.ts';
 import { scanCanonicalFences } from './refusal.ts';
 import { GATE_REASONS, renderFenceFix, type FenceMessageLocation } from './reasons.ts';
 import { residualLocation } from './tier1.ts';
+import { quoteMarkerStep } from './quote-markers.ts';
 import { validateFenceRepair } from './validate.ts';
 import { callTier3, FENCE_REPAIR_PROMPT_VERSION, spliceTier3, tier3Requests, tier3TokenBudget, TIER3_REASONS, type Tier3Request, type Tier3Table } from './llm.ts';
 import { callTailClassifier, TAIL_PROMPT_VERSION, tailRequest, tailTokenBudget, type TailRequest } from './llm-tail.ts';
@@ -92,7 +93,20 @@ export interface AnalyzeOpts {
 }
 
 export async function analyzeFences(engine: BrainEngine, target: FenceTarget, opts: AnalyzeOpts): Promise<FenceAnalysis> {
-  const page = target.page;
+  const plain = await analyzePage(engine, target, target.page, opts);
+  if (plain.status === 'clean' || plain.status === 'proposal') return plain;
+  // #8059: a page held for a marker quoted in prose is analyzed again with the mentions wrapped in backticks. The quote edit
+  // carries its own row and privacy proof (quote-markers.ts), the rest is validated against the quoted page, and only a
+  // free proposal replaces the plain verdict: a page that would still need a person or the model keeps it.
+  const quoted = quoteMarkerStep(target.page);
+  if (!quoted.fixes.length) return plain;
+  const rest = await analyzePage(engine, target, quoted.page, opts);
+  if (rest.status === 'proposal') return { ...rest, fixes: [...quoted.fixes, ...rest.fixes] };
+  const ctx = { ...target.ctx, ...(opts.approveTailExposure ? { approveTailExposure: true } : {}) };
+  return rest.status === 'clean' && settled(quoted.page, ctx) ? { status: 'proposal', tier: 'deterministic', after: quoted.page, fixes: quoted.fixes, ctx } : plain;
+}
+
+async function analyzePage(engine: BrainEngine, target: FenceTarget, page: FencePage, opts: AnalyzeOpts): Promise<FenceAnalysis> {
   if (!scanCanonicalFences(page).defects.length) return { status: 'clean' };
   let ctx: FenceCtx = { ...target.ctx, ...(opts.approveTailExposure ? { approveTailExposure: true } : {}), ...(opts.tailProse ? { tailProse: opts.tailProse } : {}) };
   let base = safeNormalizeFences(page, ctx);

@@ -39,7 +39,7 @@ captain has seen two consecutive clean weekly soaks on that gate.
 # One machine (Docker required), small: about 20 minutes
 bash scripts/bench/production-soak/run.sh --pages 20000 --rtt-ms 65 --hours 0.5 --out /tmp/soak-out
 
-# Ubicloud, 600k pages, both latencies in parallel, VMs expire after 14 h
+# Ubicloud, 600k pages, both latencies in parallel, VMs expire after 15 h (--hours + 12)
 scripts/ubicloud/ubi-runner.sh usage
 UBI_OWNER=<thread> scripts/bench/production-soak/ubicloud.sh start --pages 600000 --hours 3 --rtts 65,2
 scripts/bench/production-soak/ubicloud.sh status    # tail of each cell's log
