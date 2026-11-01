@@ -23,7 +23,7 @@ import { enabledPluginLanes } from '../bootstrap/plugin-lanes.ts';
 import { brainFirstTarget, openclawConfigPath, parseJson5ish } from './brain-first.ts';
 import { inspectHermesTurnHook } from './hermes-turn-hook.ts';
 import { OPENCLAW_TURN_PLUGIN_ID, openclawTurnPluginDir } from './openclaw-turn-plugin.ts';
-import { isOtherGbrainEntry, isTurnRuleEntry, isTurnRuleHarness, removeTurnRuleHook, syncTurnRuleHook, type TurnHookOutcome, type TurnHookPaths } from './turn-hook.ts';
+import { claudeManagedSettingsPaths, isOtherGbrainEntry, isTurnRuleEntry, isTurnRuleHarness, removeTurnRuleHook, syncTurnRuleHook, type TurnHookOutcome, type TurnHookPaths } from './turn-hook.ts';
 
 export const TURN_HOOK_NATIVE_INSPECT: Record<string, string> = {
   'claude-code': '/hooks (inside a Claude Code session)',
@@ -62,11 +62,11 @@ const isGbrainPromptEntry = (e: Record<string, unknown>) =>
   isTurnRuleEntry(e) || typeof e[GBRAIN_HOOK_MARKER_KEY] === 'string' || !!classifyHarnessHook(e, 'UserPromptSubmit', 'any');
 
 /** Files only, no process run. `projectDir`: a project-scope Claude Code install's directory. */
-export function inspectTurnHook(harness: string, opts: { projectDir?: string } = {}): TurnHookState {
+export function inspectTurnHook(harness: string, opts: { projectDir?: string; managedSettingsDir?: string } = {}): TurnHookState {
   const native_inspect = TURN_HOOK_NATIVE_INSPECT[harness];
   const plugin = enabledPluginLanes('gbrain').find((l) => l.harness === harness);
   if (harness === 'claude-code') {
-    const files = [claudeUserSettingsPath(), ...(opts.projectDir ? [join(opts.projectDir, '.claude', 'settings.local.json'), join(opts.projectDir, '.claude', 'settings.json')] : [])];
+    const files = [...claudeManagedSettingsPaths(opts.managedSettingsDir), claudeUserSettingsPath(), ...(opts.projectDir ? [join(opts.projectDir, '.claude', 'settings.local.json'), join(opts.projectDir, '.claude', 'settings.json')] : [])];
     for (const path of files) {
       const committed = !!opts.projectDir && path === join(opts.projectDir, '.claude', 'settings.json');
       const entries = claudeEntries(path).filter((e) => isTurnRuleEntry(e) || isOtherGbrainEntry(e, committed));
