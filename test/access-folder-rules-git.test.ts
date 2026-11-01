@@ -154,6 +154,29 @@ describe('folder access rules, git store', () => {
     expect((await policyStatus(engine, SRC)).invalid).toEqual([]);
   }, 120_000);
 
+  test('correcting an invalid file keeps its coverage until the replacement rules are installed: an interrupted sync reveals nothing', async () => {
+    writePolicy(root, 'version: 1\nrules: [\n');
+    git(root, 'commit', '-q', '-am', 'broken yaml again');
+    await syncAccessPolicyAt(engine, SRC, root);
+    expect((await policyStatus(engine, SRC)).invalid.map(c => c.prefix)).toEqual(['']);
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example'], ['hr', 'hr/', 'alice-example']]));
+    git(root, 'commit', '-q', '-am', 'fixed with a new rule');
+    await engine.executeRaw(`CREATE FUNCTION zz_refuse_revision() RETURNS trigger LANGUAGE plpgsql AS $fn$ BEGIN RAISE EXCEPTION 'interrupted install'; END $fn$`);
+    await engine.executeRaw('CREATE TRIGGER zz_refuse_revision BEFORE INSERT ON access_policy_revisions FOR EACH ROW EXECUTE FUNCTION zz_refuse_revision()');
+    try {
+      await expect(syncAccessPolicyAt(engine, SRC, root)).rejects.toThrow('interrupted install');
+      expect((await policyStatus(engine, SRC)).invalid.map(c => c.prefix)).toEqual(['']);
+    } finally {
+      await engine.executeRaw('DROP TRIGGER zz_refuse_revision ON access_policy_revisions');
+      await engine.executeRaw('DROP FUNCTION zz_refuse_revision()');
+    }
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example']]));
+    git(root, 'commit', '-q', '-am', 'fixed');
+    await syncAccessPolicyAt(engine, SRC, root);
+    const s = await policyStatus(engine, SRC);
+    expect({ rules: s.rules.map(r => r.id), invalid: s.invalid }).toEqual({ rules: ['team'], invalid: [] });
+  }, 120_000);
+
   test('gbrain access rule add on a git source commits access.yml through the door and applies it at once', async () => {
     const r = await cli(engine, ['rule', 'add', '--source', SRC, '--prefix', 'partners/alice-example/', '--readers', 'alice-example', '--id', 'alice', '--yes']);
     expect({ store: r.store, state: r.state, outcome: r.git.outcome, path: r.git.path }).toEqual({ store: 'git', state: 'applied', outcome: 'committed_local', path: POLICY_FILE });

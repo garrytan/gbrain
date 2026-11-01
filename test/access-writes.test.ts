@@ -10,7 +10,9 @@
  *    Publication re-resolves the writer's member from the stored principal, so
  *    a member disabled after submission (a queued job, a replay) loses the page
  *    before commit; no operator hatch relaxes that.
- * 2. Fails when: add_link, put_raw_data or any persistence write lands on an
+ *    remove_link on an edge of an unreadable page answers as for a missing
+ *    page and removes nothing.
+ * 2. Fails when: add_link, remove_link, put_raw_data or any persistence write lands on an
  *    unreadable page, a listed member is refused its own page, a malformed or
  *    lock-out readable_by is written, or a stored write still publishes after
  *    its member was disabled.
@@ -233,6 +235,23 @@ for (const kind of testBackends()) {
       expect({ op: 'delete_page', isError: del.isError, code: del.json.code }).toEqual({ op: 'delete_page', isError: false, code: undefined });
       expect((await state(slug)).deleted).toBe(true);
     }, 240_000);
+
+    test('remove_link on an edge of a page the caller cannot read answers exactly as for a missing page and removes nothing', async () => {
+      await local('add_link', { from: ALICE_PAGE, to: OPEN_PAGE, link_type: 'mentions' });
+      await local('add_link', { from: OPEN_PAGE, to: ALICE_PAGE, link_type: 'mentions' });
+      const before = (await state()).links;
+      expect(before).toBeGreaterThanOrEqual(2);
+      const missing = await call('bob', 'remove_link', { from: 'notes/never-written', to: OPEN_PAGE, link_type: 'mentions' });
+      for (const who of ['bob', 'unbound']) {
+        for (const [from, to] of [[ALICE_PAGE, OPEN_PAGE], [OPEN_PAGE, ALICE_PAGE]]) {
+          const out = await call(who, 'remove_link', { from, to, link_type: 'mentions' });
+          expect({ who, from, isError: out.isError, json: out.json }).toEqual({ who, from, isError: missing.isError, json: missing.json });
+        }
+      }
+      expect((await state()).links).toBe(before);
+      const own = await call('alice', 'remove_link', { from: ALICE_PAGE, to: OPEN_PAGE, link_type: 'mentions' });
+      expect({ isError: own.isError, removed: own.json.removed }).toEqual({ isError: false, removed: 1 });
+    }, 120_000);
 
     test('extract_facts treats a restricted source_slug exactly like a missing one', async () => {
       const hidden = await call('bob', 'extract_facts', { turn_text: 'Bob likes tea.', source_slug: ALICE_PAGE, visibility: 'world' });

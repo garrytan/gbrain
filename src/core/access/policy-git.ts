@@ -100,8 +100,8 @@ export async function syncGitPolicy(engine: BrainEngine, sourceId: string, root:
     if (store !== 'git') await writeAccessStore(engine, sourceId, 'git');
     return { source_id: sourceId, state: 'invalid', problems: desired.problems, commit: files.commit, approved_file: approvedFile };
   }
-  await clearPolicyInvalid(engine, sourceId);
   const proposal = await proposeRevision(engine, sourceId, desired.rules, { origin: 'git', store: 'git', proposedBy: files.commit ? `git:${files.commit}` : 'git', onProgress: opts.onProgress });
+  await clearPolicyInvalid(engine, sourceId);
   return { source_id: sourceId, state: proposal.state, proposal, commit: files.commit, approved_file: approvedFile };
 }
 
