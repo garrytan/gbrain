@@ -24,6 +24,7 @@ import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
+import { assertTimelineDate } from '../timeline-date.ts';
 
 export async function addTimelineEntry(
   exec: SqlExecutor,
@@ -31,6 +32,7 @@ export async function addTimelineEntry(
     entry: TimelineInput,
     opts?: { skipExistenceCheck?: boolean; sourceId?: string },
   ): Promise<boolean> {
+    assertTimelineDate(entry.date);
     const sourceId = opts?.sourceId ?? 'default';
     // #4109: page resolution and insertion share ONE statement snapshot, so a
     // concurrent hard delete linearizes before the lookup (missing) or after
@@ -68,6 +70,9 @@ export async function addTimelineEntry(
 
 
 export async function addTimelineEntriesBatch(exec: SqlExecutor, entries: TimelineBatchInput[]): Promise<number> {
+    // Validate the whole batch before issuing SQL, so one invalid entry cannot
+    // turn a caller's transaction into an aborted PostgreSQL transaction.
+    for (const entry of entries) assertTimelineDate(entry.date);
     // #1861: JSONB jsonb_to_recordset instead of unnest(${arr}::text[]). Meeting
     // summary/detail/source are free text with the same array-literal crash
     // hazard as link context. See links.ts addLinksBatch for the full rationale.
