@@ -25,7 +25,7 @@ import { applyClaudeSetup, claudeSetupPaths, inspectClaudeSetup, readSetupReceip
 import { codexSetupPaths, readCodexSetupReceipt } from './codex.ts';
 import { hookLauncherInCommand, hookLauncherPath, hookLauncherState } from './hook-launcher.ts';
 import { localSetupRecords } from './local-receipts.ts';
-import { launcherLaneFindings } from './launcher-lanes.ts';
+import { launcherLaneFindings, setupRerunArgv } from './launcher-lanes.ts';
 import { hasTurnRuleHook, isTurnRuleEntry, syncTurnRuleHook, TURN_RULE_LANE_TOKEN } from './turn-hook.ts';
 
 /** True when this command starts gbrain somewhere other than a current launcher. */
@@ -63,11 +63,12 @@ function refreshTurnRule(log: (line: string) => void): void {
 async function refreshSetup(log: (line: string) => void): Promise<void> {
   const home = configDir();
   for (const record of localSetupRecords(home).filter((r) => r.status === 'installed')) {
-    const rerun = `gbrain setup ${record.harness}${record.name === 'gbrain' ? '' : ` --name ${record.name}`}`;
+    let rerun = `gbrain setup ${record.harness}${record.name === 'gbrain' ? '' : ` --name ${record.name}`}`;
     try {
       if (record.harness === 'claude-code') {
         const receipt = readSetupReceipt(record.path).setup;
         if (!receipt) continue;
+        rerun = setupRerunArgv('claude-code', receipt).join(' ');
         const paths = claudeSetupPaths({ name: receipt.name, scope: receipt.scope, projectDir: receipt.project_dir });
         const owned = new Set([...Object.values(receipt.hooks.owned), ...Object.values(receipt.hooks.pending)]);
         const ours = claudeHookEntries(paths.settingsPath).filter((e) => e[GBRAIN_HOOK_MARKER_KEY] === GBRAIN_SETUP_MARKER_VALUE || owned.has(hookEntryHash(e) ?? '')).map((e) => e.command as string);
@@ -88,6 +89,7 @@ async function refreshSetup(log: (line: string) => void): Promise<void> {
       } else if (record.harness === 'codex') {
         const receipt = readCodexSetupReceipt(record.path).setup;
         if (!receipt) continue;
+        rerun = setupRerunArgv('codex', receipt).join(' ');
         const paths = codexSetupPaths(receipt.name);
         const hooks = codexHookCensus(paths.hooksPath).some((g) => g.lane === 'setup' && g.commands.some(needsLauncher));
         const mcp = !receipt.mcp_plugin && launcherLaneFindings().some((f) => f.harness === 'codex' && f.lane === 'mcp' && f.owner === 'setup' && f.detail.startsWith(`[mcp_servers.${receipt.name}]`));
@@ -107,7 +109,7 @@ export async function refreshHookLaunchers(log: (line: string) => void = console
   try { await refreshSetup(log); } catch (e) { log(`Hook launcher: setup's hooks were not refreshed (${(e as Error).message}); run gbrain doctor --only harness_wiring.`); }
   // The other lanes are named, never rewritten here: bootstrap's writers run from the workspace, and their Codex entries move trust.
   try {
-    for (const f of launcherLaneFindings().filter((x) => x.owner !== 'setup')) log(`Hook launcher: ${f.detail}; ${f.edited ? 'it was edited after setup wrote it, so it is kept as is; remove or rewrite it, then ' : f.owner === 'none' ? 'gbrain did not write it, so remove it, then ' : ''}${f.rerunFrom ? `from ${f.rerunFrom}, ` : ''}run ${f.rerun.join(' ')} to move it onto gbrain's launcher.`);
+    for (const f of launcherLaneFindings().filter((x) => x.owner !== 'setup')) log(`Hook launcher: ${f.detail}; ${f.edited ? 'it was edited after setup wrote it, so it is kept as is; remove or rewrite it, then ' : f.owner === 'none' ? 'gbrain does not rewrite it, so remove it, then ' : ''}${f.rerunFrom ? `from ${f.rerunFrom}, ` : ''}run ${f.rerun.join(' ')} to move it onto gbrain's launcher.`);
   } catch (e) { log(`Hook launcher: the bootstrap lanes were not checked (${(e as Error).message}); run gbrain doctor --only harness_wiring.`); }
 }
 

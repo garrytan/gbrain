@@ -274,12 +274,17 @@ describe('doctor: the hook_session_cwd fix and how it joins the harness_wiring c
   const problem = (b: Box, over: Partial<HookLauncherProblem> = {}): HookLauncherProblem =>
     ({ harness: 'claude-code', lane: 'setup', source: join(b.home, '.claude', 'settings.json'), reason: 'session_cwd', detail: 'old hook', ...over });
 
-  test('the fix: the agent re-runs setup for user scope; a project, a foreign file or an edited entry goes to the user', async () => {
+  test('the fix: the agent re-runs setup for user scope; a project, a foreign file, an edited entry or any Codex rerun goes to the user', async () => {
     const b = box();
     await withEnv({ HOME: b.home, GBRAIN_HOME: b.home, CLAUDE_CONFIG_DIR: undefined }, async () => {
       expect(hookLauncherFix(problem(b))).toMatchObject({ actor: 'agent', argv: ['gbrain', 'setup', 'claude-code'] });
       expect(hookLauncherFix(problem(b, { lane: 'turn-rule' }))).toMatchObject({ actor: 'agent', argv: ['gbrain', 'setup', 'claude-code', '--instructions-only'] });
-      expect(hookLauncherFix(problem(b, { harness: 'codex', lane: 'turn-rule', source: join(b.home, '.codex', 'hooks.json') }))).toMatchObject({ actor: 'agent', argv: ['gbrain', 'setup', 'codex', '--instructions-only'] });
+      // gbrain setup codex rewrites the shared hooks.json and its trust (it can re-enable or newly trust a group), so the agent never runs it.
+      const codex = hookLauncherFix(problem(b, { harness: 'codex', lane: 'turn-rule', source: join(b.home, '.codex', 'hooks.json') }));
+      expect(codex).toMatchObject({ actor: 'user', consent: [] });
+      expect(codex.argv).toBeUndefined();
+      expect(codex.user_message).toContain('run it yourself: gbrain setup codex --instructions-only');
+      expect(hookLauncherFix(problem(b, { harness: 'codex', lane: 'mcp', source: join(b.home, '.codex', 'config.toml'), rerun: ['gbrain', 'setup', 'codex'], setupOwned: true, owner: 'setup' }))).toMatchObject({ actor: 'user', consent: [] });
       const project = join(b.root, 'proj');
       const p = hookLauncherFix(problem(b, { source: join(project, '.claude', 'settings.local.json') }));
       expect(p.actor).toBe('user');

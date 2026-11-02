@@ -14,7 +14,8 @@ import { codexHookCensus } from '../bootstrap/codex-hooks.ts';
 import { readCodexTomlTable } from '../bootstrap/codex-toml.ts';
 import { readReceipt } from '../bootstrap/format.ts';
 import { CLAUDE_SETTINGS_FILE_RELPATH, GBRAIN_HOOK_MARKER_KEY, GBRAIN_HOOK_MARKER_VALUE, claudeUserMcpConfigPath, claudeUserSettingsPath, codexConfigPath, codexHooksPath, opencodeConfigDir } from '../bootstrap/host-specs.ts';
-import { parseOpencodeConfig } from '../bootstrap/opencode-json.ts';
+import { opencodeEntryKind, parseOpencodeConfig } from '../bootstrap/opencode-json.ts';
+import { readInterviewState } from '../bootstrap/interview.ts';
 import { resolveGbrainHome } from '../gbrain-home.ts';
 import { hookLauncherInCommand, hookLauncherState, isHookLauncherPath, type HookLauncherState } from './hook-launcher.ts';
 import { localSetupRecords } from './local-receipts.ts';
@@ -121,15 +122,24 @@ function mcpFindings(): LauncherLaneFinding[] {
     out.push({ harness: 'codex', lane: 'mcp', source: codexPath, reason: s.reason, ...rerunFor('codex', name, table), detail: `[mcp_servers.${name}] in ${codexPath} ${s.why}` });
   }
   // opencode merges both user-global filenames, and starts a local server in each directory it opens (#8435).
-  for (const file of ['opencode.jsonc', 'opencode.json'].map((f) => join(opencodeConfigDir(), f))) {
-    let entry: Record<string, unknown> | null;
-    try { entry = existsSync(file) ? record(record(parseOpencodeConfig(readFileSync(file, 'utf8'), file).mcp)?.gbrain) : null; } catch { continue; }
-    const argv = entry?.type === 'local' && Array.isArray(entry.command) ? entry.command.filter((a): a is string => typeof a === 'string') : [];
+  // bootstrap rewrites the global file only for an entry its writer calls ours and while the workspace still records user scope.
+  const ocProjectScope = (() => { if (!bootstrap) return false; const read = readInterviewState(bootstrap.workspace_dir); const v = read.ok ? read.state.answers['MCP_SCOPE'] : undefined; return v?.skipped !== true && typeof v?.value === 'string' && v.value.trim().toLowerCase() === 'project'; })();
+  const ocFiles = ['opencode.jsonc', 'opencode.json'].map((f) => join(opencodeConfigDir(), f)).flatMap((file) => {
+    try { return existsSync(file) ? [{ file, parsed: parseOpencodeConfig(readFileSync(file, 'utf8'), file) }] : []; } catch { return []; }
+  });
+  // A remote gbrain entry in either file makes bootstrap skip the stdio registration, so it never rewrites the local one.
+  const ocRemote = ocFiles.some(({ parsed }) => record(record(parsed.mcp)?.gbrain)?.type === 'remote');
+  for (const { file, parsed } of ocFiles) {
+    const entry = record(record(parsed.mcp)?.gbrain);
+    // A disabled entry never starts, and the repair would turn it back on.
+    const argv = entry?.type === 'local' && entry.enabled !== false && Array.isArray(entry.command) ? entry.command.filter((a): a is string => typeof a === 'string') : [];
     const serve = argv.length > 0 ? serveEntryLauncher({ command: argv[0], args: argv.slice(1) }) : null;
     const s = serve && state(serve.launcher);
     if (!s) continue;
-    out.push({ harness: 'opencode', lane: 'mcp', source: file, reason: s.reason, ...(bootstrapRerun('opencode') ?? { rerun: ['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--repair'], setupOwned: false, owner: 'none' }),
-      detail: `the 'gbrain' MCP server in ${file} ${s.why}` });
+    const foreign = opencodeEntryKind(parsed, 'gbrain') === 'foreign';
+    const boot = foreign || ocProjectScope || ocRemote ? null : bootstrapRerun('opencode');
+    out.push({ harness: 'opencode', lane: 'mcp', source: file, reason: s.reason, ...(boot ?? { rerun: ['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--repair'], ...(bootstrap ? { rerunFrom: bootstrap.workspace_dir } : {}), setupOwned: false, owner: 'none' }),
+      detail: `the 'gbrain' MCP server in ${file} ${s.why}${foreign ? ` (gbrain's writer does not recognize it as its own)` : ocRemote ? ' (a remote gbrain entry is also configured, so bootstrap leaves this one alone)' : ocProjectScope ? ' (the workspace now records MCP_SCOPE=project, so bootstrap writes opencode.json in the workspace instead)' : ''}` });
   }
   return out;
 }

@@ -251,6 +251,31 @@ describe('#8426, #8428: gbrain bootstrap hooks registers serve and writes its ho
     expect(await serveFromSession(entry.command[0]!, entry.command.slice(1), { ...entry.environment, GBRAIN_SOURCE: 'source-b' }, 'notes/bootstrap-opencode')).toBe('source-b');
     expect(existsSync(marker)).toBe(false);
     await waitForDetached();
+
+    // bootstrap's rerun cannot clear an entry its writer calls foreign, or one in the global file once the workspace records project scope: both are the user's.
+    const old = { type: 'local', command: [gbrain, 'serve'], environment: { GBRAIN_SOURCE: entry.environment.GBRAIN_SOURCE }, enabled: true };
+    writeFileSync(config, JSON.stringify({ mcp: { gbrain: { ...old, command: ['/opt/team/memory-wrapper', 'serve'] } } }, null, 2));
+    await withEnv(procEnv, async () => {
+      expect(launcherLaneFindings().filter((f) => f.harness === 'opencode')).toMatchObject([{ owner: 'none', detail: expect.stringContaining('does not recognize it as its own') }]);
+    });
+    writeFileSync(config, JSON.stringify({ mcp: { gbrain: old } }, null, 2));
+    expect(setAnswer(ws, 'MCP_SCOPE', 'project').ok).toBe(true);
+    await withEnv(procEnv, async () => {
+      expect(launcherLaneFindings().filter((f) => f.harness === 'opencode')).toMatchObject([{ owner: 'none', detail: expect.stringContaining('MCP_SCOPE=project') }]);
+    });
+    expect(setAnswer(ws, 'MCP_SCOPE', 'user').ok).toBe(true);
+    // opencode.json is scanned too; a disabled entry never starts, and a remote entry beside it makes bootstrap skip the stdio lane.
+    const json = join(home, '.config', 'opencode', 'opencode.json');
+    rmSync(config);
+    writeFileSync(json, JSON.stringify({ mcp: { gbrain: old } }, null, 2));
+    await withEnv(procEnv, async () => { expect(launcherLaneFindings().filter((f) => f.harness === 'opencode')).toMatchObject([{ source: json, owner: 'bootstrap' }]); });
+    writeFileSync(json, JSON.stringify({ mcp: { gbrain: { ...old, enabled: false } } }, null, 2));
+    await withEnv(procEnv, async () => { expect(launcherLaneFindings().filter((f) => f.harness === 'opencode')).toEqual([]); });
+    writeFileSync(json, JSON.stringify({ mcp: { gbrain: old } }, null, 2));
+    writeFileSync(config, JSON.stringify({ mcp: { gbrain: { type: 'remote', url: 'https://brain.example/mcp', enabled: true } } }, null, 2));
+    await withEnv(procEnv, async () => { expect(launcherLaneFindings().filter((f) => f.harness === 'opencode')).toMatchObject([{ source: json, owner: 'none', detail: expect.stringContaining('a remote gbrain entry') }]); });
+    rmSync(json);
+    writeFileSync(config, JSON.stringify({ mcp: { gbrain: { ...old, command: entry.command } } }, null, 2));
   }, 120_000);
 });
 
@@ -275,7 +300,7 @@ describe('#8428: the harness and plugin hook lanes', () => {
     chmodSync(join(pluginRoot, '.agents', 'gbrain-launcher'), 0o755);
     const recorder = join(root, 'recording-gbrain');
     const seen = join(root, 'recorder-saw');
-    writeFileSync(recorder, `#!/bin/sh\nif [ "$1" = --version ]; then echo "gbrain 0.60.549.0"; exit 0; fi\nprintf '%s|%s|%s\\n' "$GBRAIN_HOOK_CWD" "$(pwd)" "$1" > '${seen}'\n`);
+    writeFileSync(recorder, `#!/bin/sh\nif [ "$1" = --version ]; then echo "gbrain 0.61.0.0"; exit 0; fi\nprintf '%s|%s|%s\\n' "$GBRAIN_HOOK_CWD" "$(pwd)" "$1" > '${seen}'\n`);
     chmodSync(recorder, 0o755);
     const manifests: Array<[string, string]> = [['.claude-plugin/plugin.json', '${CLAUDE_PLUGIN_ROOT}'], ['.codex-plugin/plugin.json', '${PLUGIN_ROOT}']];
     for (const [file, token] of manifests) {

@@ -35,7 +35,7 @@ import { hookLauncherProblem, inspectTurnHook } from '../src/core/setup/turn-hoo
 import { refreshHookLaunchers } from '../src/core/setup/hook-launcher-refresh.ts';
 import { syncTurnRuleHook, isTurnRuleEntry } from '../src/core/setup/turn-hook.ts';
 import { hookLauncherFix, hookLauncherProblems } from '../src/commands/doctor/checks/harness-wiring.ts';
-import { launcherLaneFindings } from '../src/core/setup/launcher-lanes.ts';
+import { launcherLaneFindings, setupRerunArgv } from '../src/core/setup/launcher-lanes.ts';
 import { applyClaudeSetup, readSetupReceipt } from '../src/core/setup/claude-code.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
@@ -1127,6 +1127,40 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
       expect(fix.user_message).toContain('Remove or rewrite that entry');
     });
     expect(readFileSync(claudeJson(b), 'utf8')).toBe(before);
+  });
+
+  test('claude-code (#8426): doctor reruns the install that owns the flagged hook, not the first receipt on disk', async () => {
+    const b = box();
+    expect((await setup(b, ['claude-code', '--name', 'alpha', '--no-hooks', '--json'])).exitCode).toBe(0);
+    expect((await setup(b, ['claude-code', '--json'])).exitCode).toBe(0);
+    downgradeClaude(b);
+    await withEnv(env(b), async () => {
+      const problem = hookLauncherProblem('claude-code');
+      expect(problem).toMatchObject({ lane: 'setup', receiptPath: receipt(b) });
+      expect(hookLauncherFix(problem!)).toMatchObject({ actor: 'agent', argv: ['gbrain', 'setup', 'claude-code'] });
+    });
+  });
+
+  test('setupRerunArgv carries the recorded hooks opt-out and source pin, and nothing setup keeps on its own', () => {
+    const consent = (hooks: 'none' | 'read-context') => ({ wiring_scope: { value: { scope: 'user' as const, hooks }, source: 'flag' as const }, capture: { value: 'accepted' as const, source: 'flag' as const }, providers: { value: 'declined' as const, source: 'default' as const } });
+    expect(setupRerunArgv('codex', { name: 'gbrain', consent: consent('none') as any, source_id: 'source-a' })).toEqual(['gbrain', 'setup', 'codex', '--no-hooks', '--source', 'source-a']);
+    expect(setupRerunArgv('claude-code', { name: 'alpha', consent: consent('read-context') as any, source_id: null as any }, '/work/proj')).toEqual(['gbrain', 'setup', 'claude-code', '--name', 'alpha', '--scope', 'project']);
+  });
+
+  test('codex MCP (#8426): post-upgrade\'s printed rerun keeps a recorded --no-hooks', async () => {
+    const b = box();
+    expect((await setup(b, ['codex', '--no-hooks', '--json'])).exitCode).toBe(0);
+    const r = readJson(codexReceipt(b));
+    const old = { command: b.bin, args: ['serve'], env: { GBRAIN_HOME: b.gbrainHome } };
+    expect(removeCodexTomlTable(codexToml(b), ['mcp_servers', 'gbrain'])).toBe('removed');
+    appendCodexTomlTable(codexToml(b), ['mcp_servers', 'gbrain'], old, 'gbrain setup (gbrain): owned by fingerprint');
+    r.entry_hash = ownedEntryFingerprint(old);
+    writeFileSync(codexReceipt(b), JSON.stringify(r, null, 2));
+    await withEnv(env(b), async () => {
+      const lines: string[] = [];
+      await refreshHookLaunchers((l) => lines.push(l));
+      expect(lines.join('\n')).toContain('run gbrain setup codex --no-hooks to rewrite them');
+    });
   });
 
   test('codex MCP (#8426): post-upgrade names the setup rerun for a pre-launcher [mcp_servers] table and writes nothing; setup moves it', async () => {

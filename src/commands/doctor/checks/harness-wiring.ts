@@ -524,23 +524,27 @@ export function hookLauncherProblems(views: InstructionBlockView[]): HookLaunche
 export function hookLauncherFix(p: HookLauncherProblem): Action {
   const project = p.harness === 'claude-code' && p.source !== claudeUserSettingsPath() ? dirname(dirname(p.source)) : null;
   const setupHarness = p.lane === 'setup' && p.harness !== 'opencode' ? p.harness : null;
-  const record = setupHarness ? localSetupRecords().find((r) => r.harness === setupHarness && r.status === 'installed' && (project ? r.projectDir === project : r.scope !== 'project')) : undefined;
+  const record = setupHarness ? localSetupRecords().find((r) => r.harness === setupHarness && r.status === 'installed' && (p.receiptPath ? r.path === p.receiptPath : project ? r.projectDir === project : r.scope !== 'project')) : undefined;
   const receipt = record && (() => { try { return (setupHarness === 'claude-code' ? readSetupReceipt(record.path) : readCodexSetupReceipt(record.path)).setup; } catch { return null; } })();
   const argv = receipt && setupHarness ? setupRerunArgv(setupHarness, receipt, project ?? undefined)
     : ['gbrain', 'setup', p.harness, ...(p.lane === 'turn-rule' ? ['--instructions-only'] : []), ...(record && record.name !== 'gbrain' ? ['--name', record.name] : []), ...(project ? ['--scope', 'project'] : [])];
-  const why = "Rewrites gbrain's hooks to start gbrain from its own launcher directory, so a repository's bunfig.toml or .env never runs when a session opens there. `gbrain post-upgrade` refreshes the user-scope hooks too, except `gbrain setup codex`'s.";
+  const why = "Rewrites gbrain's hooks to start gbrain from its own launcher directory, so a repository's bunfig.toml or .env never runs when a session opens there. `gbrain post-upgrade` refreshes Claude Code's user-scope setup hooks too; it never rewrites a Codex file.";
+  // gbrain setup codex rewrites the shared hooks.json and recomputes its trust, which can re-enable or newly trust a group, so only the user runs it.
+  const codexTrust = '`gbrain setup codex` rewrites the Codex hooks.json and its trust entries, so run it yourself';
   const verify = doctorVerify(NAME);
   if (p.rerun) {
     const run = `${p.rerunFrom ? `from ${p.rerunFrom}, ` : ''}run: ${p.rerun.join(' ')}`;
     const laneWhy = `Rewrites the entry to start gbrain from its own launcher directory, so a repository's bunfig.toml or .env never runs when a session or MCP server starts there.${p.harness === 'codex' && p.rerun[1] === 'setup' ? " gbrain setup codex repeats the install's recorded decisions and re-trusts setup's own hook groups." : ''}`;
     if (p.reason === 'foreign') return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. Remove that file (gbrain did not write it), then ${run}` };
     if (p.edited) return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. Remove or rewrite that entry in ${p.source} (setup never overwrites an edit), then ${run}` };
+    if (p.setupOwned && p.harness === 'codex') return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. ${codexTrust}: ${p.rerun.join(' ')}` };
     if (p.setupOwned) return { argv: p.rerun, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify, why: laneWhy };
-    return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. To move it onto gbrain's launcher, ${p.lane === 'mcp' && p.owner === 'none' ? `remove that entry from ${p.source} (gbrain never overwrites an MCP entry it did not write), then ` : ''}${run}` };
+    return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. To move it onto gbrain's launcher, ${p.lane === 'mcp' && p.owner === 'none' ? `remove that entry from ${p.source} (gbrain does not rewrite it), then ` : ''}${run}` };
   }
   if (p.reason === 'foreign') return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove that file (gbrain did not write it), then run: ${argv.join(' ')}` };
   if (p.edited) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove or rewrite that entry in ${p.source} (setup never overwrites an edit), then ${project ? `from ${project}, ` : ''}run: ${argv.join(' ')}` };
   if (project) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `gbrain's hooks for ${project} start gbrain in the session's directory. From ${project}, run: ${argv.join(' ')}` };
+  if (p.harness === 'codex') return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. ${codexTrust}: ${argv.join(' ')}` };
   return { argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify, why };
 }
 

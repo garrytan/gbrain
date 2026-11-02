@@ -171,7 +171,7 @@ describe('S0: README, docs/mcp, INSTALL, BOOTSTRAP, push-context and the manifes
 
   test('#8436: no install doc teaches a Claude Code or Codex stdio mcp add of serve that skips gbrain\'s launcher', () => {
     const offenders: string[] = [];
-    for (const file of DOCS) {
+    for (const file of [...DOCS, 'docs/protocol/AGENT_OPERATOR_v1.md']) {
       readFileSync(join(ROOT, file), 'utf8').split('\n').forEach((line, i) => {
         for (const m of line.matchAll(/\b(?:claude|codex)\s+mcp add\b[^`\n|]*?\bserve\b/g)) {
           if (!m[0].includes('hook-launcher/gbrain-hook')) offenders.push(`${file}:${i + 1}: ${line.trim()}`);
