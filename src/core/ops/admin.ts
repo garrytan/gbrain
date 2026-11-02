@@ -177,7 +177,7 @@ const run_doctor: Operation = {
   description: 'Run brain health checks and return a structured DoctorReport (thin-client doctor surface). tier "ops": only the operational sections under a 4 s deadline; only: just the named checks.',
   params: {
     tier: { type: 'string', enum: ['ops'], description: 'ops: capacity, write failures, embedding state, sync movement, compaction, serve build and schema pack, under one 4 s deadline. Omit for the focused remote report.' },
-    only: { type: 'array', items: { type: 'string' }, description: 'Run just these checks (doctor check names, for example persistence_capacity).' },
+    only: { type: 'array', minItems: 1, items: { type: 'string' }, description: 'Run just these checks (doctor check names, for example persistence_capacity).' },
   },
   handler: async (ctx, p) => {
     if (p.tier !== undefined || p.only !== undefined) return (await import('../../commands/doctor/remote-tier.ts')).runRemoteDoctorTier(ctx, p);
@@ -206,7 +206,7 @@ const get_versions: Operation = {
   description: `Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest ${GET_VERSIONS_DEFAULT_LIMIT} versions by default. Pass include_body: true for each version's compiled_truth and timeline, and a larger limit (at most ${GET_VERSIONS_REMOTE_MAX_LIMIT} over MCP) for older versions. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). revert_version takes the id field.`,
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose version history to list.' },
-    limit: { type: 'number', description: `Return only the newest N versions (a positive integer). Default ${GET_VERSIONS_DEFAULT_LIMIT}; MCP callers are capped at ${GET_VERSIONS_REMOTE_MAX_LIMIT}.` },
+    limit: { type: 'number', minimum: 1, description: `Return only the newest N versions (a positive integer). Default ${GET_VERSIONS_DEFAULT_LIMIT}; MCP callers are capped at ${GET_VERSIONS_REMOTE_MAX_LIMIT}.` },
     include_body: { type: 'boolean', description: 'true adds compiled_truth and timeline to every version. Default false (metadata only).' },
     known_as_of: { ...KNOWN_AS_OF_PARAM, description: 'Recorded time: the validity intervals this brain had recorded by this ISO 8601 instant, from the belief ledger. Not as_of, which is valid time (a date).' },
     diff: VERSIONS_DIFF_PARAM,

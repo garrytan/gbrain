@@ -31,7 +31,7 @@
 import type { Page } from '../types.ts';
 import type { OperationContext, ParamDef } from './contract.ts';
 import { opError, OperationError } from './contract.ts';
-import { invalidParam, readFix } from './op-fix.ts';
+import { invalidParam, opTransport, readFix } from './op-fix.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { isSegmentedPage, pageBodyBytes } from '../page-body/page-shape.ts';
 import { deepResearchPageUrl, encodeDeepResearchId } from '../deep-research-id.ts';
@@ -69,12 +69,12 @@ export const LARGE_PAGES_CAPABILITY = 'large_pages_v1';
 
 export const GET_PAGE_BODY_PARAMS: Record<string, ParamDef> = {
   body: { type: 'string', enum: [...BODY_MODES], description: 'auto: whole up to 256 KB, else outline + window; a window\'s edit_target is edit_page `within`. none: revision + size + tail_sha256 (append_page expected_tail_sha256).', fullSurfaceOnly: true },
-  lines: { type: 'object', cliRange: ['from', 'count'], description: 'Window: 1-based lines.', properties: { from: { type: 'number', required: true }, count: { type: 'number', required: true } }, fullSurfaceOnly: true },
-  bytes: { type: 'object', cliRange: ['offset', 'length'], description: 'Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start).', properties: { offset: { type: 'number', required: true }, length: { type: 'number', required: true } }, fullSurfaceOnly: true },
-  around_chunk_id: { type: 'number', description: 'Window around a search hit chunk_id.', fullSurfaceOnly: true },
+  lines: { type: 'object', cliRange: ['from', 'count'], description: 'Window: 1-based lines. One window selector only: not with bytes, around_chunk_id or cursor.', properties: { from: { type: 'number', required: true }, count: { type: 'number', required: true } }, fullSurfaceOnly: true },
+  bytes: { type: 'object', cliRange: ['offset', 'length'], description: 'Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start). One window selector only: not with lines, around_chunk_id or cursor.', properties: { offset: { type: 'number', required: true }, length: { type: 'number', required: true } }, fullSurfaceOnly: true },
+  around_chunk_id: { type: 'number', minimum: 1, description: 'Window around a search hit chunk_id. One window selector only: not with lines, bytes or cursor.', fullSurfaceOnly: true },
   context_lines: { type: 'number', description: 'Lines around around_chunk_id (20).', fullSurfaceOnly: true },
-  cursor: { type: 'string', description: 'next_cursor: read on.', fullSurfaceOnly: true },
-  max_bytes: { type: 'number', description: 'Window bytes (40000).', fullSurfaceOnly: true },
+  cursor: { type: 'string', description: 'next_cursor: read on. One window selector only: not with lines, bytes or around_chunk_id.', fullSurfaceOnly: true },
+  max_bytes: { type: 'number', minimum: 1, description: 'Window bytes (40000).', fullSurfaceOnly: true },
   view: { type: 'string', enum: ['read', 'markdown'], description: 'markdown: page the round-trip content.', fullSurfaceOnly: true },
   outline_from: { type: 'number', description: 'Outline next_from_index.', fullSurfaceOnly: true },
   ...GET_PAGE_SLICE_PARAMS,
@@ -98,6 +98,10 @@ export interface BodyRequest {
   /** section or grep (#7180): one part of the read view instead of a window. */
   slice?: SliceRequest;
 }
+
+/** The get_page arguments the two-selector refusal's fix keeps; anything else the caller sent (CLI-only keys, unknown keys) is left out. */
+const WINDOW_FIX_ARGS = ['slug', 'fuzzy', 'include_deleted', 'include_timeline_entries', 'grammar_diagnostics', 'source_id', 'include_quarantined', 'min_trust',
+  ...Object.keys(GET_PAGE_BODY_PARAMS)];
 
 const SELECTOR_EXAMPLE = { slug: 'notes/acme-example-log', body: 'window', lines: { from: 1, count: 200 } };
 
@@ -136,7 +140,19 @@ export function parseBodyRequest(ctx: Pick<OperationContext, 'remote' | 'transpo
     selectors.push({ kind: 'cursor', raw: p.cursor });
   }
   if (selectors.length > 1) {
-    throw bad(selectors[1].kind === 'around' ? 'around_chunk_id' : selectors[1].kind, `get_page: pass one window selector, not ${selectors.length} (got ${selectors.map(s => s.kind === 'around' ? 'around_chunk_id' : s.kind).join(' and ')}).`);
+    const [keep, ...drop]: string[] = selectors.map(s => s.kind === 'around' ? 'around_chunk_id' : s.kind);
+    const conflicts = ['include_content', 'content_only', ...(keep === 'around_chunk_id' && p.view === 'markdown' ? ['view'] : [])];
+    const args: Record<string, unknown> = Object.fromEntries(WINDOW_FIX_ARGS.filter(k => p[k] !== undefined && !drop.includes(k) && !conflicts.includes(k)).map(k => [k, p[k]]));
+    args.body = 'window';
+    const flag = (k: string) => `--${k.replace(/_/g, '-')}`;
+    const name = (k: string) => opTransport(ctx) === 'cli' ? flag(k) : `\`${k}\``;
+    const range = (k: string, v: Record<string, number>) => k === 'lines' ? `${v.from}-${v.from + v.count - 1}` : `${v.offset}-${v.offset + v.length - 1}`;
+    const argv = ['gbrain', 'get', ...Object.entries(args).filter(([k]) => k !== 'slug').flatMap(([k, v]) => v === true ? [flag(k)] : v === false ? []
+      : [flag(k), typeof v === 'object' && v ? range(k, v as Record<string, number>) : String(v)]), '--', String(p.slug)];
+    throw opError('invalid_params', `get_page: pass one window selector, not ${selectors.length} (got ${[keep, ...drop].join(' and ')}).`,
+      `Pass at most one window selector: lines, bytes, around_chunk_id or cursor. Drop ${drop.map(name).join(' and ')} to read the ${keep} window, or pass one of them alone to read there instead.`,
+      { fix: readFix(`The same call with one window selector (${keep}) and body: "window"; ${[...drop, ...conflicts.filter(k => p[k] !== undefined)].join(', ')} dropped.`,
+        { argv, mcp: { tool: 'get_page', arguments: args } }) });
   }
   const includeContent = p.include_content === true;
   const contentOnly = p.content_only === true;

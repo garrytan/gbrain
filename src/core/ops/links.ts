@@ -247,7 +247,7 @@ const LINK_ALL_SOURCES_PARAM = {
   description: 'Same as source_id __all__.',
   fullSurfaceOnly: true,
 } as const;
-const LINK_LIMIT_PARAM = { type: 'number', description: `Rows per call (default ${LINK_READ_DEFAULT_LIMIT}, max ${LINK_READ_MAX_LIMIT}).` } as const;
+const LINK_LIMIT_PARAM = { type: 'number', minimum: 1, description: `Rows per call (default ${LINK_READ_DEFAULT_LIMIT}, max ${LINK_READ_MAX_LIMIT}).` } as const;
 const LINK_CURSOR_PARAM = { type: 'string', description: 'next_cursor from the previous call (same filters).' } as const;
 const LINK_ALL_PARAM = { type: 'boolean', description: 'Local CLI only: every row, paging internally.', fullSurfaceOnly: true } as const;
 
@@ -449,7 +449,7 @@ const get_backlinks: Operation = {
     all_sources: LINK_ALL_SOURCES_PARAM,
     type: { type: 'string', description: 'Referrer type.' },
     group: { type: 'string', enum: ['page'], description: 'Per page.' },
-    limit: { type: 'number', description: `≤${LINK_READ_MAX_LIMIT}` },
+    limit: { type: 'number', minimum: 1, description: `≤${LINK_READ_MAX_LIMIT}` },
     cursor: { type: 'string', description: 'Next.' },
     all: LINK_ALL_PARAM,
   },
@@ -573,6 +573,7 @@ const traverse_graph: Operation = {
     direction: { type: 'string', description: 'Remote default both.', enum: ['in', 'out', 'both'] },
     hops: {
       type: 'array',
+      minItems: 1,
       description: '≤3 typed hops, e.g. [{"link_type":"founded","toward":"subject"}]; toward: object|subject.',
       items: { type: 'object', properties: { link_type: { type: 'string' }, toward: { type: 'string' } } },
       fullSurfaceOnly: true,
@@ -648,7 +649,7 @@ const wanted_pages: Operation = {
   description: 'Link targets that have no page yet, most-referenced first: each was written as a link but its page does not exist, so no edge exists. Use to find entities worth a page (enrichment) or typo links to fix. The edge appears on its own once the page is created.',
   params: {
     source_id: { type: 'string', description: 'Only targets referenced from this source (must be inside your source grant).' },
-    limit: { type: 'number', description: `Rows per page (default ${WANTED_DEFAULT_LIMIT}, max ${WANTED_MAX_LIMIT}).` },
+    limit: { type: 'number', minimum: 1, description: `Rows per page (default ${WANTED_DEFAULT_LIMIT}, max ${WANTED_MAX_LIMIT}).` },
     offset: { type: 'number', description: 'Skip the first N targets.' },
     count_only: { type: 'boolean', description: 'Return the total with no rows.' },
   },

@@ -240,7 +240,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "explicit page read by slug/id; governed by page visibility, not output redaction (CEO-17 raw-read exception)"
     },
-    "description": "Read a page; `section` or `grep` reads one part. Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.",
+    "description": "Read a page; `section`/`grep` reads one part. Pass at most one window selector: lines, bytes, around_chunk_id or cursor (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.",
     "params": {
       "slug": {
         "type": "string",
@@ -279,7 +279,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
           "from",
           "count"
         ],
-        "description": "Window: 1-based lines.",
+        "description": "Window: 1-based lines. One window selector only: not with bytes, around_chunk_id or cursor.",
         "properties": {
           "from": {
             "type": "number",
@@ -298,7 +298,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
           "offset",
           "length"
         ],
-        "description": "Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start).",
+        "description": "Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start). One window selector only: not with lines, around_chunk_id or cursor.",
         "properties": {
           "offset": {
             "type": "number",
@@ -313,7 +313,8 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "around_chunk_id": {
         "type": "number",
-        "description": "Window around a search hit chunk_id.",
+        "minimum": 1,
+        "description": "Window around a search hit chunk_id. One window selector only: not with lines, bytes or cursor.",
         "fullSurfaceOnly": true
       },
       "context_lines": {
@@ -323,11 +324,12 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "cursor": {
         "type": "string",
-        "description": "next_cursor: read on.",
+        "description": "next_cursor: read on. One window selector only: not with lines, bytes or around_chunk_id.",
         "fullSurfaceOnly": true
       },
       "max_bytes": {
         "type": "number",
+        "minimum": 1,
         "description": "Window bytes (40000).",
         "fullSurfaceOnly": true
       },
@@ -357,7 +359,8 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "context": {
         "type": "number",
-        "description": "With grep: paragraphs of context either side (default 1, max 5).",
+        "appliesWith": "grep",
+        "description": "Applies only with grep (ignored without it): paragraphs of context either side (default 1, max 5).",
         "fullSurfaceOnly": true
       },
       "include_deleted": {
@@ -1260,6 +1263,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
+        "minimum": 1,
         "default": 25,
         "description": "1-100 slugs (default 25)."
       },
@@ -1375,6 +1379,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "return_window": {
         "type": "number",
+        "minimum": 1,
         "description": "Window radius 1-3.",
         "fullSurfaceOnly": true
       },
@@ -1496,6 +1501,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "return_window": {
         "type": "number",
+        "minimum": 1,
         "description": "Window radius 1-3.",
         "fullSurfaceOnly": true
       },
@@ -1677,6 +1683,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "return_window": {
         "type": "number",
+        "minimum": 1,
         "description": "Window radius 1-3.",
         "fullSurfaceOnly": true
       },
@@ -1784,6 +1791,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "types": {
         "type": "array",
+        "minItems": 1,
         "items": {
           "type": "string"
         },
@@ -1795,6 +1803,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
+        "minimum": 1,
         "description": "Matching pages to return (default 100, max 1000)."
       },
       "after": {
@@ -1803,6 +1812,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "max_seconds": {
         "type": "number",
+        "exclusiveMinimum": 0,
         "description": "Scan budget in seconds (default 30, max 120)."
       },
       "min_trust": {
@@ -2156,6 +2166,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
+        "minimum": 1,
         "description": "Rows per call (default 500, max 5000)."
       },
       "cursor": {
@@ -2226,6 +2237,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
+        "minimum": 1,
         "description": "≤5000"
       },
       "cursor": {
@@ -2291,6 +2303,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "hops": {
         "type": "array",
+        "minItems": 1,
         "description": "≤3 typed hops, e.g. [{\"link_type\":\"founded\",\"toward\":\"subject\"}]; toward: object|subject.",
         "items": {
           "type": "object",
@@ -2338,6 +2351,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
+        "minimum": 1,
         "description": "Rows per page (default 50, max 100)."
       },
       "offset": {
@@ -2508,6 +2522,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "only": {
         "type": "array",
+        "minItems": 1,
         "items": {
           "type": "string"
         },
@@ -2544,6 +2559,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
+        "minimum": 1,
         "description": "Return only the newest N versions (a positive integer). Default 20; MCP callers are capped at 100."
       },
       "include_body": {
@@ -2557,6 +2573,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "diff": {
         "type": "boolean",
+        "actsWhenTrue": true,
         "fullSurfaceOnly": true,
         "description": "With known_as_of: each version also carries a unified diff from the version before it."
       },
@@ -2669,14 +2686,17 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "fact": {
         "type": "number",
+        "minimum": 1,
         "description": "Attribute this fact id (a fact about or fenced on the page) instead of the page."
       },
       "take": {
         "type": "number",
+        "minimum": 1,
         "description": "Attribute the take at this row number of the page's takes table."
       },
       "timeline": {
         "type": "number",
+        "minimum": 1,
         "description": "Attribute this timeline entry id of the page."
       },
       "versions": {
@@ -2721,6 +2741,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "params": {
       "schema_version": {
         "type": "number",
+        "minimum": 1,
         "description": "2 for the source-qualified catalog.",
         "fullSurfaceOnly": true
       },
@@ -2768,6 +2789,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "params": {
       "schema_version": {
         "type": "number",
+        "minimum": 1,
         "description": "2 for an exact canonical revision.",
         "fullSurfaceOnly": true
       },
@@ -3503,6 +3525,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
+        "minimum": 1,
         "description": "How many chunk_index positions to return (a positive integer). Default 50; MCP callers are capped at 500."
       }
     },
@@ -3524,6 +3547,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "types": {
         "type": "array",
+        "minItems": 1,
         "items": {
           "type": "string"
         },
@@ -4041,6 +4065,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
+        "minimum": 1,
         "description": "Rows per page (default 100, max 1000); total_orphans counts every orphan, complete says whether this page holds the rest, and next_cursor (or next_offset) names the next page."
       },
       "offset": {
@@ -4082,6 +4107,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "types": {
         "type": "array",
+        "minItems": 1,
         "items": {
           "type": "string"
         },
@@ -4101,6 +4127,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
+        "minimum": 1,
         "description": "Rows to return (default 20, max 100)."
       }
     },
@@ -4311,6 +4338,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "min_n": {
         "type": "number",
+        "minimum": 1,
         "description": "Trusted local CLI only: groups with fewer resolved predictions are flagged low_n (default 10)"
       }
     },
@@ -6875,6 +6903,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "id": {
         "type": "number",
+        "minimum": 1,
         "description": "Fetch the single loop with this id (ids come from earlier open_loops results). Matches any status unless `status` is passed; the source scope still applies, and the grouped view omits `text`."
       },
       "loop_type": {

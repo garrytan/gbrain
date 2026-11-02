@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 268402,
-    "stdoutSha256": "164933868b081b3f0b4669d0e2f1da3d355a5b548ba877870e63299786db1e98",
+    "stdoutBytes": 268798,
+    "stdoutSha256": "7e8ad692baa54268f6f79bf3109bfb03bf6c29119f65624e8847aff30963f591",
     "toolNames": [
       "remember",
       "entity",
@@ -422,7 +422,7 @@
         "scope": "write"
       },
       {
-        "description": "Read a page; `section` or `grep` reads one part. Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.",
+        "description": "Read a page; `section`/`grep` reads one part. Pass at most one window selector: lines, bytes, around_chunk_id or cursor (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -456,7 +456,7 @@
         "schema": {
           "properties": {
             "around_chunk_id": {
-              "description": "Window around a search hit chunk_id.",
+              "description": "Window around a search hit chunk_id. One window selector only: not with lines, bytes or cursor.",
               "type": "number"
             },
             "body": {
@@ -472,7 +472,7 @@
             },
             "bytes": {
               "additionalProperties": false,
-              "description": "Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start).",
+              "description": "Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start). One window selector only: not with lines, around_chunk_id or cursor.",
               "properties": {
                 "length": {
                   "type": "number"
@@ -492,7 +492,7 @@
               "type": "boolean"
             },
             "context": {
-              "description": "With grep: paragraphs of context either side (default 1, max 5).",
+              "description": "Applies only with grep (ignored without it): paragraphs of context either side (default 1, max 5).",
               "type": "number"
             },
             "context_lines": {
@@ -500,7 +500,7 @@
               "type": "number"
             },
             "cursor": {
-              "description": "next_cursor: read on.",
+              "description": "next_cursor: read on. One window selector only: not with lines, bytes or around_chunk_id.",
               "type": "string"
             },
             "fuzzy": {
@@ -537,7 +537,7 @@
             },
             "lines": {
               "additionalProperties": false,
-              "description": "Window: 1-based lines.",
+              "description": "Window: 1-based lines. One window selector only: not with bytes, around_chunk_id or cursor.",
               "properties": {
                 "count": {
                   "type": "number"
