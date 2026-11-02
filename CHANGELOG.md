@@ -10,6 +10,55 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.551.0] - 2026-11-02
+
+**The nightly opencode door now gates its nonce check on a paid Haiku turn, and a free-tier refusal fails in seconds with its reason instead of after eight silent minutes (#6049).** OpenCode's anonymous free models now cap usage per IP, and CI runners hit the cap. Past it, `opencode run` waits out the server's retry-after, which is hours, and prints nothing, so the keyless check timed out twice (about 487 s) with an empty reply and Heavy Tests went red on days the runner's IP was capped. The only trace was a `stream error` line in opencode's own log file. The paid check also could not have run in CI, because the test preload strips `ANTHROPIC_API_KEY` unless `GBRAIN_TEST_KEEP_PROVIDER_KEYS=1`, so a requested paid tier refused itself as keyless.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| Free-tier quota refusal during a door turn | two 240 s timeouts, then `Expected to contain: "kestrel-…" Received: ""` | the turn ends on the logged refusal; the test fails in about 11 s with `provider error(s): AI_APICallError: Free usage limit reached…` and makes no second attempt |
+| Nightly Heavy Tests, opencode door | keyless lane gates on 5 tests, including the free-tier nonce check (T4) | keyless lane gates on T1-T3 (4 tests); the credentialed lane runs every night and its paid nonce check (T5) gates; T4 runs only in the non-gating latest-version canary |
+| Paid nonce check model | `anthropic/claude-haiku-4-5` | `anthropic/claude-haiku-5-5`, validated against `opencode models --refresh` before any spend (1.18.18's bundled catalog predates it) |
+| Credentialed lane in CI | `ANTHROPIC_API_KEY` stripped by the test preload, so the paid tier refused to run | the step sets `GBRAIN_TEST_KEEP_PROVIDER_KEYS=1`; one Haiku turn a night |
+
+### Itemized changes
+
+- `test/helpers/agent-harness.ts`: `opencodeOneShotTurn` reads main-turn `stream error` lines from `<XDG_DATA_HOME>/opencode/log` written during the turn, returns them as `streamErrors`, and ends the turn on a quota refusal (`providerRefusal`). A provider rate limit, which opencode retries through, does not end it. `runOneShotSpawn` takes an `abortWhen` poll, and once it kills the child, a descendant that holds the output pipes open gets 8 s instead of the rest of the timeout.
+- `test/helpers/agent-harness.unit.test.ts`: stub-binary probes pin the quota fast-fail (it hangs to the timeout without the fix), the fast-fail with a descendant holding the pipes, a transient error and a rate limit that opencode recovers from, and per-turn log offsets.
+- `test/e2e/install-real-opencode.serial.test.ts`: T4 runs only with `GBRAIN_REAL_OPENCODE_FREE_TIER_E2E=1`, adds logged stream errors to its provider-error message, and skips its second attempt after a quota refusal. T5 pins `anthropic/claude-haiku-5-5`, refreshes the model list before its spend gate, and, like T4, reads the turn's JSON events and requires a `gbrain_*` MCP tool call, since opencode's file tools could find the nonce without one.
+- `.github/workflows/heavy-tests.yml`: the schedule requests the credentialed lane (`GBRAIN_PAID_LANES=0` still turns it off), the keyless lane expects 4 passes and its summary warns that no nonce check gates the run when `GBRAIN_PAID_LANES=0`, the credentialed step keeps provider keys, and the canary sets `GBRAIN_REAL_OPENCODE_FREE_TIER_E2E=1`. `test/scripts/heavy-door-workflow.test.ts` pins all four.
+- `docs/mcp/OPENCODE-CLI-PIN.md`: the per-IP free cap, where its trace is logged, the new gating split and two triage rows.
+
+**A merge slot's full-ci runs can now clear gstack's remote gate on their own, so each tree runs the full suite once.** `gstack-pregate clear --remote pregate.json/remote_gate --run <Test run> --run <E2E run> --allow-repo-commands` verifies both runs on GitHub (same tree, both full jobs green in the newest attempt, no newer red run, under 24 hours old) and checks that the files they executed cover the gate's inventory. Checked against Test run 41342917113 and E2E run 41342918866 on one tree: `REUSE: accepted … tests=68132` and `PREGATE_VERIFY: ok`, with all 5,701 inventory files covered. A tree that changes the full-ci workflows or the scripts that attest their runs still can't vouch for itself. It gets no inventory, so gstack refuses those runs and the gate runs, the same rule remote-gate reuse already follows. That rule now covers seven files: `ci-manifest.ts` joins the list.
+
+### Itemized changes
+
+- `.gstack/pregate.json`: `run_profiles` `test` (`test.yml`, `full-suite`, artifact `full-suite-tree`) and `e2e` (`e2e.yml`, `e2e-full-suite`, artifact `e2e-full-suite-tree`), both accepting `workflow_dispatch` and `push`, plus `remote_gate_runs` with `bash scripts/pregate-remote-gate.sh --list` as the inventory.
+- `.gstack/ship-policy.json`: `min_gstack_version` 1.91.377.0, the first gstack that reads these keys. An older gstack now refuses with an upgrade fix instead of an invalid-config error.
+- `scripts/pregate-remote-gate.sh`: the files whose change stops a tree's own full-ci runs from attesting to it are now seven: `test.yml`, `e2e.yml`, `ci-reuse.ts`, `ci-full-suite-tree.sh`, `ci-executed-counts.ts`, `lib/gh-issue.ts` and, new, `ci-manifest.ts`, which writes the `ci-manifest.json` that `ci-full-suite-tree.sh` trusts for completeness, executed files and counts. A tree that changes `ci-manifest.ts` therefore no longer reuses its full-ci and runs the gate. `--list` refuses (no inventory) for a tree that changes any of the seven, or the inventory's own builders `pregate-remote-gate.sh` and `ci-ubicloud.ts`, relative to `origin/master`, when there is no `origin/master`, and under `GBRAIN_PREGATE_REUSE=0`. Both paths run one check, and `--list` adds the two builders. `test/scripts/pregate-remote-gate.test.ts` pins this.
+- `docs/ci-event-parity.md`: the profiles and the refusal.
+
+**`ubi-runner.sh reap` now destroys only the caller's own VMs, and pack, usage and reap work on macOS and on an empty project (gstack #3756, #3746).** Reap used to destroy any owner's VM whose TTL had ended. That is how one project's `up` destroyed another lane's VMs (GST-573). Now it destroys only VMs whose owner tag equals `UBI_OWNER` and logs `reap: left N expired VMs of other owners` for the rest. The operator reaper, `reap-expired.ts`, still covers every owner. gbrain keeps `UBI_REAP=0` by default, so `up` still reaps nothing unless asked. On macOS, `pack` exited 1 under bsdtar after the VM was already created. On a project with no VMs, Ubicloud's bare-newline list read as a VM named `-`, and reap died on it. A failed size read made `usage` print a short total, which the quota preflight took as room.
+
+### Itemized changes
+
+- `scripts/ubicloud/ubi-runner.sh`, ported from gstack 74836e41 and 693ee713:
+  - `cmd_reap` checks the owner tag first and counts other owners' expired VMs. The quota refusal says reap frees only this owner's VMs and names `usage` and `reap-expired.ts` for the rest.
+  - `vm_rows` skips a blank row.
+  - `cmd_usage` exits 1 with no total when the list or a size read fails, and skips a VM whose `show` answers 404.
+  - `quota_preflight` retries an unreadable usage while `UBI_QUOTA_WAIT` lasts, then logs it and leaves the decision to the API.
+  - `cmd_pack` builds `files.tar`, appends `.git` with `tar -rf` and gzips it, with `COPYFILE_DISABLE=1` on every tar call.
+- `test/scripts/ubi-runner-run.test.ts` and `test/scripts/ubi-runner.test.ts` pin the owner-scoped reap, the empty project, the unreadable usage and `COPYFILE_DISABLE`. The six new cases and the two updated reap cases fail on the old runner. The updated cases expected another owner's VM destroyed and now expect it kept.
+- `test/scripts/ubi-runner-bsd-userland.test.ts` runs `pack` under bsdtar. It fails on the old runner and is skipped where no bsdtar is installed. `test/helpers/mock-ubicloud-api.ts` gains `listBody`, `ghosts` and a `show` fault.
+- `scripts/ubicloud/README.md`: reap's owner scope.
+
+**Two test-isolation flakes are fixed (found when this release's new test file moved files between CI shards).**
+
+- `test/context-pack-pinned-federation.test.ts` set `search.remote_private_pages=visible` and left its engine in the process-wide privacy cache, so a later test file in the same CI shard saw private pages and `test/private-visibility.test.ts` failed. Its `afterAll` now resets that cache.
+- `test/db-lock-fencing.test.ts` waited a fixed 120 ms for the lock refresher's second retry, which a busy runner could miss. It now waits for eight retries, up to 5 s, so its not-aborted check still covers a run of failed refreshes, with the same assertions.
+
 ## [0.60.550.0] - 2026-11-02
 
 **Security: the stdio MCP server and the remaining hook lanes no longer let the session directory's bunfig.toml or .env run, and the hook's git probes no longer run a checkout's core.fsmonitor (#8426, #8428, #8427, #8435, #8436).** Claude Code, Codex and opencode start user-scope stdio MCP servers in the session's directory, just as they run hooks there, so with a script-mode install the `gbrain serve` entry `gbrain setup` and `gbrain bootstrap hooks` registered ran a cloned repository's `bunfig.toml` preload once per session, with nothing to approve. The user-global opencode entry `gbrain bootstrap hooks --harness opencode` writes did the same. Those entries now start serve through the same `<gbrain config dir>/hook-launcher/gbrain-hook` the setup hooks use, and `gbrain serve` reads `.gbrain-source`, a mounted brain's persistence socket, relative `file_upload` paths and the upload root from the session directory the launcher records, without changing its own directory.

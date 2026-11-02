@@ -243,6 +243,43 @@ describe("stale sweep and ownership", () => {
   });
 });
 
+// gstack #3746 (#3678): Ubicloud answers `vm list` with a bare newline for a
+// project with no VMs, which vm_rows read as a VM named "-"; and a usage whose
+// list or size reads failed printed a partial total the quota preflight trusted.
+describe("empty project and unreadable usage", () => {
+  it("an empty project (vm list answers a bare or blank line) has no VMs: reap destroys nothing, usage prints a zero total, list --mine prints nothing", async () => {
+    for (const listBody of ["\n", "  \n"]) {
+      const api = serve({ listBody });
+      const reap = await run(["reap"], { UBI_OWNER: "t1" });
+      expect(reap.stderr).toContain("reap: no expired VMs");
+      expect(reap.stderr).not.toContain("invalid VM name");
+      expect(reap.stderr).not.toContain("expired VMs of other owners");
+      expect(reap.code).toBe(0);
+      const usage = await run(["usage"], { UBI_OWNER: "t1" });
+      expect({ code: usage.code, stdout: usage.stdout }).toEqual({ code: 0, stdout: "OWNER           VMS  VCPUS\ntotal             0      0\n" });
+      expect((await run(["list", "--mine"], { UBI_OWNER: "t1" })).stdout).toBe("");
+      expect(api.destroyRequests).toBe(0);
+      mock?.stop();
+    }
+  });
+
+  it("usage skips a VM destroyed since the list (404), and exits 1 with no total when a size read or the list fails", async () => {
+    const api = serve({ seed: [{ name: `ubirun-peer-${NOW}-cccc-t3` }], ghosts: [`ubirun-gone-${NOW}-dddd-t3`] });
+    const ghost = await run(["usage"], { UBI_OWNER: "t1" });
+    expect({ code: ghost.code, stdout: ghost.stdout }).toEqual({ code: 0, stdout: "OWNER           VMS  VCPUS\npeer              1     16\ntotal             1     16\n" });
+    api.faults.show = true;
+    const noShow = await run(["usage"], { UBI_OWNER: "t1" });
+    expect(noShow.code).toBe(1);
+    expect(noShow.stdout).not.toContain("total");
+    expect(noShow.stderr).toContain("usage: could not read the size of 2 of 2 VMs");
+    api.faults.list = true;
+    const noList = await run(["usage"], { UBI_OWNER: "t1" });
+    expect(noList.code).toBe(1);
+    expect(noList.stdout).not.toContain("total");
+    expect(noList.stderr).toContain("usage: could not list the project's VMs");
+  });
+});
+
 // `pack` from a checkout on a branch named like `git init`'s default branch
 // (master on this repo). slim_git fetches HEAD into that branch inside a fresh
 // repository whose unborn HEAD names the same branch; without --update-head-ok
@@ -275,5 +312,23 @@ describe("pack", () => {
     expect(execFileSync("git", ["-C", out, "symbolic-ref", "HEAD"], { encoding: "utf8" }).trim()).toBe(branch);
     expect(execFileSync("git", ["-C", out, "log", "--format=%s"], { encoding: "utf8" }).trim()).toBe("one");
     expect(() => execFileSync("git", ["-C", out, "cat-file", "-e", dangling], { stdio: "ignore" })).toThrow();
+  });
+
+  // gstack #3746: only Apple's tar reads COPYFILE_DISABLE; without it, files with
+  // extended attributes gain ._* entries the VM sees as untracked files.
+  it("runs every tar with COPYFILE_DISABLE=1, for a checkout and for a plain directory", () => {
+    const realTar = Bun.which("tar");
+    expect(realTar).toBeTruthy();
+    const bin = join(dir, "tar-shim");
+    execFileSync("mkdir", ["-p", bin]);
+    writeFileSync(join(bin, "tar"), `#!/usr/bin/env bash\necho "COPYFILE_DISABLE=${"$"}{COPYFILE_DISABLE:-unset}" >> ${JSON.stringify(join(dir, "tar.log"))}\nexec ${JSON.stringify(realTar)} "$@"\n`, { mode: 0o755 });
+    const repo = join(dir, "repo");
+    execFileSync("git", ["init", "-q", repo]);
+    execFileSync("git", ["-C", repo, "-c", "user.email=t@t.co", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "one"]);
+    writeFileSync(join(repo, "a"), "a\n");
+    execFileSync("mkdir", ["-p", join(dir, "plain")]);
+    writeFileSync(join(dir, "plain/p"), "p\n");
+    for (const src of [repo, join(dir, "plain")]) execFileSync("bash", [RUNNER, "pack", src], { env: env({ PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}` }), stdio: ["ignore", "ignore", "pipe"] });
+    expect(readFileSync(join(dir, "tar.log"), "utf8").trim().split("\n")).toEqual(["COPYFILE_DISABLE=1", "COPYFILE_DISABLE=1", "COPYFILE_DISABLE=1"]);
   });
 });

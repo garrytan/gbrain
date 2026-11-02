@@ -42,9 +42,11 @@ two-hour TTL (`--ttl-hours N` changes it, up to 999). `ubi-runner.sh up` and
 (gstack's default, 3 hours), so give a long dev, benchmark or eval VM
 `--ttl-hours` above its longest run. With `-n NAME`, `--ttl-hours H` appends
 `-t<H>`, and a `ubirun-` name without a TTL is refused (nothing could ever reap it).
-`ubi-runner.sh reap` destroys every VM whose TTL ended over ten minutes ago,
-any owner's, plus the caller's own TTL-less `ubirun-<owner>-*` VMs once they are
-`UBI_LEGACY_HOURS` (4) old. gstack's `up` runs that reap first; gbrain's copy
+`ubi-runner.sh reap` destroys only the caller's own VMs: its `ubirun-<owner>-*`
+VMs whose TTL ended over ten minutes ago, and its TTL-less ones once they are
+`UBI_LEGACY_HOURS` (4) old. Another owner's expired VM, including one this machine
+created under a different tag (which `list --mine` and `gc` do cover), is only counted in reap's
+log; `reap-expired.ts` is the operator reaper that destroys expired VMs of every owner. gstack's `up` runs that reap first; gbrain's copy
 does only with `UBI_REAP=1` (or `true`, `yes`, `on`; `0`, `false`, `no` and `off`
 turn it off, and any other value is refused), and logs one `reap skipped` line otherwise, until
 gbrain's TTL-less VMs older than four hours are gone. `run`, `verify` and
