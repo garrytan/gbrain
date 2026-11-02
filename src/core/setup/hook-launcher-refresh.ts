@@ -25,6 +25,7 @@ import { applyClaudeSetup, claudeSetupPaths, inspectClaudeSetup, readSetupReceip
 import { codexSetupPaths, readCodexSetupReceipt } from './codex.ts';
 import { hookLauncherInCommand, hookLauncherPath, hookLauncherState } from './hook-launcher.ts';
 import { localSetupRecords } from './local-receipts.ts';
+import { ownedEntryFingerprint } from '../bootstrap/adopted-connections.ts';
 import { launcherLaneFindings, setupRerunArgv } from './launcher-lanes.ts';
 import { hasTurnRuleHook, isTurnRuleEntry, syncTurnRuleHook, TURN_RULE_LANE_TOKEN } from './turn-hook.ts';
 
@@ -72,9 +73,9 @@ async function refreshSetup(log: (line: string) => void): Promise<void> {
         const paths = claudeSetupPaths({ name: receipt.name, scope: receipt.scope, projectDir: receipt.project_dir });
         const owned = new Set([...Object.values(receipt.hooks.owned), ...Object.values(receipt.hooks.pending)]);
         const ours = claudeHookEntries(paths.settingsPath).filter((e) => e[GBRAIN_HOOK_MARKER_KEY] === GBRAIN_SETUP_MARKER_VALUE || owned.has(hookEntryHash(e) ?? '')).map((e) => e.command as string);
-        // Another install's setup hooks share this settings file, so the home comes from this install's own MCP entry or owned hooks.
-        const homeEnv = claudeMcpHome(paths.configPath, receipt.name, receipt.project_dir)
-          ?? claudeHookEntries(paths.settingsPath).filter((e) => owned.has(hookEntryHash(e) ?? '')).map((e) => parseClaudeHookCommand(e.command as string)?.env.GBRAIN_HOME).find((h) => h !== undefined);
+        // Another install's hooks or MCP entry can share these files, so the home comes only from entries this receipt owns.
+        const homeEnv = claudeHookEntries(paths.settingsPath).filter((e) => owned.has(hookEntryHash(e) ?? '')).map((e) => parseClaudeHookCommand(e.command as string)?.env.GBRAIN_HOME).find((h) => h !== undefined)
+          ?? (receipt.mcp_plugin ? undefined : claudeMcpHome(paths.configPath, receipt.name, receipt.project_dir, [receipt.entry_hash, receipt.pending_entry_hash]));
         const plan: ClaudeSetupPlan = { name: receipt.name, scope: receipt.scope, ...(receipt.project_dir ? { projectDir: receipt.project_dir } : {}), launcher: receipt.launcher, brainHome: receipt.gbrain_home, ...(homeEnv ? { gbrainHomeEnv: homeEnv } : {}),
           sourceId: receipt.source_id, surface: receipt.surface, advertise: receipt.advertise ?? null, events: Object.keys({ ...receipt.hooks.owned, ...receipt.hooks.pending }) as ClaudeHookEvent[] };
         // An MCP entry still exactly what setup last wrote predates the launcher (#8426): setup's own rewrite moves it.
@@ -116,10 +117,12 @@ export async function refreshHookLaunchers(log: (line: string) => void = console
 }
 
 /** GBRAIN_HOME from setup's own MCP entry, for an install with no hooks to read it from. */
-function claudeMcpHome(configPath: string, name: string, projectDir?: string): string | undefined {
+function claudeMcpHome(configPath: string, name: string, projectDir: string | undefined, ownedHashes: Array<string | null | undefined>): string | undefined {
   try {
     const cfg = JSON.parse(readFileSync(configPath, 'utf8')) as { mcpServers?: Record<string, { env?: Record<string, unknown> }>; projects?: Record<string, { mcpServers?: Record<string, { env?: Record<string, unknown> }> }> };
-    const home = (projectDir ? cfg.projects?.[projectDir]?.mcpServers : cfg.mcpServers)?.[name]?.env?.GBRAIN_HOME;
+    const entry = (projectDir ? cfg.projects?.[projectDir]?.mcpServers : cfg.mcpServers)?.[name];
+    if (!entry || !ownedHashes.includes(ownedEntryFingerprint(entry as Record<string, unknown>))) return undefined;
+    const home = entry.env?.GBRAIN_HOME;
     return typeof home === 'string' ? home : undefined;
   } catch { return undefined; }
 }

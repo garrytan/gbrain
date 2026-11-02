@@ -1136,6 +1136,23 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     });
   });
 
+  test('claude-code (#8426): post-upgrade never takes a plugin-lane install\'s GBRAIN_HOME from an MCP entry setup does not own', async () => {
+    const b = box();
+    const brainA = join(b.root, 'brain-a');
+    const brainC = join(b.root, 'brain-c');
+    mkdirSync(join(b.home, '.claude'), { recursive: true });
+    writeFileSync(settings(b), JSON.stringify({ enabledPlugins: { 'gbrain@gbrain': true } }));
+    writeFileSync(claudeJson(b), JSON.stringify({ mcpServers: { gbrain: { type: 'stdio', command: b.bin, args: ['serve'], env: { GBRAIN_HOME: brainC } } } }));
+    expect((await setup(b, ['claude-code', '--json'], { GBRAIN_HOME: brainA })).exitCode).toBe(0);
+    const a = { ...b, gbrainHome: brainA };
+    downgradeClaude(a);
+    await withEnv({ ...env(b), GBRAIN_HOME: brainA }, async () => { await refreshHookLaunchers(() => {}); });
+    const hooks = JSON.stringify(readJson(settings(b)).hooks);
+    expect(hooks).not.toContain(brainC);
+    expect(hooks).toContain(`GBRAIN_HOME=${brainA}`);
+    expect(hooks).toContain(launcher(a));
+  });
+
   test('claude-code MCP (#8426): doctor\'s rerun keeps a recorded --no-hooks, so moving the entry turns no hooks on', async () => {
     const b = box();
     expect((await setup(b, ['claude-code', '--no-hooks', '--json'])).exitCode).toBe(0);
