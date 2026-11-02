@@ -27,6 +27,8 @@
 # test may move to any arm, including the unit lane's empty one, and a
 # PostgreSQL test to another database arm.
 kind	lane	file	test	arm	new_lane	new_file	new_test	reason	evidence
+move	unit	test/search-8k-conversion.test.ts	search.query_facts_block > on, no temporal cue, with a budget: dated question-ranked facts first, inside the block share				search.query_facts_block > on, no temporal cue, with a budget: dated question-ranked facts after the top page, inside the block share	#8411: preserve rank-one page evidence; assertion now checks the bounded block after that page	test/search-facts-block-visible-8411.test.ts
+move	unit	test/search-8k-conversion.test.ts	facts block precedence > block and temporal reserve both on, temporal cue: facts first, bounded by the block share				facts block precedence > block and temporal reserve both on, temporal cue: facts follow the top page, bounded by the block share	#8411: keep block precedence while preserving the top page	test/search-facts-block-visible-8411.test.ts
 skip	tier2	test/e2e/skills.test.ts	*					D-1: the baseline runs predate the OPENAI_API_KEY and ANTHROPIC_API_KEY repo secrets (set 2026-10-05), so Tier 2 skipped every skill test there; head runs execute them	
 move	serial	test/admin-embed-spawn.serial.test.ts	*		unit	test/admin-embed-spawn.test.ts		D6: lint-clean, no process-wide state, 615/615 in one bun process forward and reverse; rejoins the parallel unit lane	
 move	serial	test/agent-install-shared-skills.serial.test.ts	*		unit	test/agent-install-shared-skills.test.ts		D6: lint-clean, no process-wide state, 615/615 in one bun process forward and reverse; rejoins the parallel unit lane	

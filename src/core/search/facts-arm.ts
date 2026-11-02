@@ -46,7 +46,7 @@ export const MAX_RESERVE_ROWS = 20;
 /** Share of the caller's row count reserved facts may take (at least one row). */
 export const TEMPORAL_RESERVE_ROW_SHARE = 0.3;
 
-/** GBRA-205 facts block (`search.query_facts_block`, default off): every budgeted query, ahead of the pages. */
+/** GBRA-205 facts block (`search.query_facts_block`, default on): every budgeted query. */
 export const QUERY_FACTS_BLOCK_KEY = 'search.query_facts_block';
 /** Share of the caller's token budget the facts block may take (about 1,800 of 8,100, as the measured combined lane). */
 export const QUERY_FACTS_BLOCK_SHARE = 0.22;
@@ -194,14 +194,14 @@ export async function applyFactsArm(engine: BrainEngine, query: string, results:
 interface ReservePolicy {
   share: number;
   maxRows: number;
-  /** Share of the caller's row count the facts may take (they replace the lowest page rows); null: they add rows. */
-  rowShare: number | null;
-  /** Where the facts go: after the pages (temporal reserve) or ahead of them (facts block). */
-  position: 'after' | 'before';
+  /** Share of the caller's row count the facts may take, replacing the lowest page rows. */
+  rowShare: number;
+  /** The block preserves rank one's page evidence; the temporal reserve follows all pages. */
+  position: 'after' | 'after-first';
 }
 
 const TEMPORAL_RESERVE: ReservePolicy = { share: TEMPORAL_RESERVE_SHARE, maxRows: MAX_RESERVE_ROWS, rowShare: TEMPORAL_RESERVE_ROW_SHARE, position: 'after' };
-const FACTS_BLOCK: ReservePolicy = { share: QUERY_FACTS_BLOCK_SHARE, maxRows: MAX_FACTS_BLOCK_ROWS, rowShare: null, position: 'before' };
+const FACTS_BLOCK: ReservePolicy = { share: QUERY_FACTS_BLOCK_SHARE, maxRows: MAX_FACTS_BLOCK_ROWS, rowShare: 0.3, position: 'after-first' };
 
 /**
  * Temporal fact reserve: for a query with a temporal cue and a token budget,
@@ -220,9 +220,10 @@ export function applyTemporalFactReserve(engine: BrainEngine, query: string, res
 /**
  * Facts block (GBRA-205): the same question-ranked, dated facts as the
  * temporal reserve, for every budgeted query, up to QUERY_FACTS_BLOCK_SHARE
- * of the budget and MAX_FACTS_BLOCK_ROWS rows, oldest first ahead of the
- * pages. The facts add rows (every page row stays) and pages fill the rest of
- * the budget. No match or any error: the results unchanged.
+ * of the budget and 30% of the row cap (at least one, at most
+ * MAX_FACTS_BLOCK_ROWS), oldest first after the top page. A one-row call
+ * keeps its page; without page candidates facts may fill the row cap.
+ * Pages fill the rest of the budget. No match or any error: unchanged.
  */
 export function applyFactsBlock(engine: BrainEngine, query: string, results: SearchResult[], opts: FactsArmOpts & { budget: number }): Promise<SearchResult[]> {
   return applyFactReserve(engine, query, results, opts, FACTS_BLOCK);
@@ -234,8 +235,15 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
       { depth: { keyword: 50, cosine: 50, entity: policy.maxRows }, cosineForAll: true });
     const scored = scoreFactCandidates(query, candidates).filter(s => admitted(s, 'reserve')).map(s => ({ c: s.candidate }));
     if (!scored.length) return results;
-    const rowCap = Math.max(results.length, (await opts.rowCap?.().catch(() => 0)) ?? 0);
-    const maxRows = policy.rowShare === null ? policy.maxRows : Math.min(policy.maxRows, Math.max(1, Math.floor(rowCap * policy.rowShare)));
+    const requestedCap = await opts.rowCap?.().catch(() => undefined);
+    const block = policy.position === 'after-first';
+    const rowCap = block
+      ? Math.max(0, requestedCap ?? results.length)
+      : Math.max(results.length, requestedCap ?? 0);
+    const sharedRows = Math.max(1, Math.floor(rowCap * policy.rowShare));
+    const availableRows = block && results.length ? Math.max(0, rowCap - 1) : rowCap;
+    const maxRows = Math.min(policy.maxRows, availableRows, block && !results.length ? rowCap : sharedRows);
+    if (!maxRows) return results.slice(0, rowCap);
     const pageSlugs = await readableEntityPages(engine, scored.map(x => x.c), opts.readScope).catch(() => new Set<string>());
     const fromQuoted = await factsFromQuotedPages(engine, scored.map(x => Number(x.c.id)));
     let left = Math.floor(opts.budget * policy.share);
@@ -252,13 +260,13 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
     if (!chosen.length) return results;
     chosen.sort((a, b) => new Date(a.c.valid_from).getTime() - new Date(b.c.valid_from).getTime() || Number(a.c.id) - Number(b.c.id));
     const pagesFloor = results.reduce((m, r) => (Number.isFinite(r.score) && r.score < m ? r.score : m), results[0]?.score ?? 1);
-    const pagesTop = results.reduce((m, r) => (Number.isFinite(r.score) && r.score > m ? r.score : m), results[0]?.score ?? 1);
     const rows = policy.position === 'after'
       ? chosen.map(({ row }, i) => ({ ...row, score: pagesFloor - (i + 1) * 1e-6 }))
-      : chosen.map(({ row }, i) => ({ ...row, score: pagesTop + (chosen.length - i) * 1e-6 }));
-    let pages = (policy.rowShare === null ? results : results.slice(0, Math.max(0, Math.min(results.length, rowCap - rows.length)))).map(r => ({ ...r }));
+      // Reservation order, not a cross-arm relevance score: never outrank rank one.
+      : chosen.map(({ row }, i) => ({ ...row, score: (results[0]?.score ?? 1) - (i + 1) * 1e-6 }));
+    let pages = results.slice(0, Math.max(0, Math.min(results.length, rowCap - rows.length))).map(r => ({ ...r }));
     if (opts.tokenBudget) pages = enforceTokenBudget(pages, Math.max(1, opts.tokenBudget - rows.reduce((n, r) => n + resultTokens(r), 0))).results;
-    const merged = policy.position === 'after' ? [...pages, ...rows] : [...rows, ...pages];
+    const merged = policy.position === 'after' ? [...pages, ...rows] : [...pages.slice(0, 1), ...rows, ...pages.slice(1)];
     await stampSupersededClaims(engine, merged, chosen.map(x => x.c)).catch(() => undefined);
     return merged;
   } catch {

@@ -43,7 +43,8 @@ export function formatResultExplain(
   rank: number,  // 1-based for human display
 ): string {
   const lines: string[] = [];
-  lines.push(`${rank}. ${result.slug} (score=${fmt(result.score)})`);
+  const label = result.result_type === 'fact' ? `fact ${result.fact_id}${result.page_slug ? ` (${result.page_slug})` : ''}` : result.slug;
+  lines.push(`${rank}. ${label} (score=${fmt(result.score)})`);
 
   // base_score is the pre-boost RRF+cosine result. When undefined
   // (result wasn't routed through runPostFusionStages), fall back to

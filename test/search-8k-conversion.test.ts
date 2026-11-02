@@ -9,7 +9,7 @@
  *   page title, and think's <page> tag a title attribute.
  * - `search.query_facts_block`: every budgeted query (no temporal cue needed)
  *   gives question-ranked dated facts up to QUERY_FACTS_BLOCK_SHARE of the
- *   budget, ahead of the pages.
+ *   budget, after the top page and within a bounded share of the row count.
  * - `search.fact_source_pages`: the conversation a matched fact came from
  *   joins the hits after the top FACT_SOURCE_PAGE_RANK rows; the row count
  *   never grows.
@@ -122,13 +122,14 @@ describe('search.evidence_titles', () => {
 });
 
 describe('search.query_facts_block', () => {
-  test('on, no temporal cue, with a budget: dated question-ranked facts first, inside the block share', async () => {
+  test('on, no temporal cue, with a budget: dated question-ranked facts after the top page, inside the block share', async () => {
     const budget = 4000;
     const rows = await withKeys({ [QUERY_FACTS_BLOCK_KEY]: 'true' }, () => query(PLAIN, { token_budget: budget, limit: 10 }));
     const facts = rows.filter(r => r.result_type === 'fact');
     expect(facts.length).toBeGreaterThanOrEqual(2);
     expect(facts.length).toBeLessThanOrEqual(MAX_FACTS_BLOCK_ROWS);
-    expect(rows.slice(0, facts.length).every(r => r.result_type === 'fact')).toBe(true);
+    expect(rows[0]!.result_type).not.toBe('fact');
+    expect(rows.slice(1, 1 + facts.length).every(r => r.result_type === 'fact')).toBe(true);
     expect(facts[0]!.chunk_text.split('\n')[0]).toBe('[observed unknown; valid 2025-06-02 to unknown]');
     expect(facts.reduce((n, r) => n + resultTokens(r), 0)).toBeLessThanOrEqual(Math.floor(budget * QUERY_FACTS_BLOCK_SHARE));
   });
@@ -151,7 +152,8 @@ describe('search.query_facts_block', () => {
     const unset = await query(PLAIN, { token_budget: 4000, limit: 10 });
     const on = await withKeys({ [QUERY_FACTS_BLOCK_KEY]: 'true' }, () => query(PLAIN, { token_budget: 4000, limit: 10 }));
     expect(unset.filter(r => r.result_type === 'fact').length).toBeGreaterThanOrEqual(2);
-    expect(unset[0]!.result_type).toBe('fact');
+    expect(unset[0]!.result_type).not.toBe('fact');
+    expect(unset[1]!.result_type).toBe('fact');
     expect(stable(unset)).toBe(stable(on));
   });
 
@@ -204,14 +206,15 @@ describe('search.query_budget_unit refusal', () => {
 });
 
 describe('facts block precedence', () => {
-  // Value: protects=an enabled facts block wins over the temporal reserve for a temporal-cue query, so facts stay ahead of pages; fails_when=the block/reserve branch order in applyFactsStage is swapped;
+  // Value: protects=an enabled facts block wins over the temporal reserve for a temporal-cue query, so facts follow the top page rather than all pages; fails_when=the block/reserve branch order in applyFactsStage is swapped;
   // Value (cont): why_new=existing tests cover each flag alone; seam=none; no_claim=answer quality (PGLite keyword-only fixtures)
-  test('block and temporal reserve both on, temporal cue: facts first, bounded by the block share', async () => {
+  test('block and temporal reserve both on, temporal cue: facts follow the top page, bounded by the block share', async () => {
     const budget = 4000;
     const rows = await withKeys({ [QUERY_FACTS_BLOCK_KEY]: 'true', 'search.temporal_fact_reserve': 'true' }, () => query('When was the Forge offsite venue booked?', { token_budget: budget, limit: 10 }));
     const facts = rows.filter(r => r.result_type === 'fact');
     expect(facts.length).toBeGreaterThanOrEqual(2);
-    expect(rows.slice(0, facts.length).every(r => r.result_type === 'fact')).toBe(true);
+    expect(rows[0]!.result_type).not.toBe('fact');
+    expect(rows.slice(1, 1 + facts.length).every(r => r.result_type === 'fact')).toBe(true);
     expect(facts.reduce((n, r) => n + resultTokens(r), 0)).toBeLessThanOrEqual(Math.floor(budget * QUERY_FACTS_BLOCK_SHARE));
   });
 });
