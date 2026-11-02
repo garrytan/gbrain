@@ -1438,15 +1438,12 @@ async function runHooks(
           'workspace-bound registration with `--mcp-even-if-plugin`.',
       );
     }
-    // A user-scope stdio server starts through the launcher, never in the session's directory (#8426).
     const hookLauncher = harness === 'codex' || mcpScope === 'user' ? hookLauncherPath(home) : undefined;
     const buildArgvs = (surface?: McpSurface | null, advertise?: McpSurface | null) => harness === 'claude-code'
       ? registerClaudeMcp({ gbrainBin, scope: mcpScope, sourceId, surface, advertise, ...(gbrainHome ? { gbrainHome } : {}), ...(hookLauncher ? { hookLauncher } : {}) })
       : registerCodexMcp({ gbrainBin, sourceId, surface, advertise, ...(gbrainHome ? { gbrainHome } : {}), ...(hookLauncher ? { hookLauncher } : {}) });
     const argvs = mcpPluginOwned ? [] : buildArgvs(surfaceFlag ?? undefined, registrationAdvertise({ userChoseSurface: surfaceFlag !== null }));
-    if (argvs.length && hookLauncher) {
-      try { ensureHookLauncher(hookLauncher); } catch (e) { console.error(`MCP registration skipped: ${(e as Error).message}`); return 1; }
-    }
+    if (argvs.length && hookLauncher) try { ensureHookLauncher(hookLauncher); } catch (e) { console.error(`MCP registration skipped: ${(e as Error).message}`); return 1; }
     for (const argv of argvs) {
       const mcpName = argv[3] ?? 'gbrain'; // ['<host>','mcp','add',<name>,…]
       const res = await runner(argv);
@@ -1609,12 +1606,7 @@ async function runHooks(
         // command carries NO GBRAIN_SOURCE — hooks.json is machine-global, a
         // baked source would stamp every codex session on this machine with
         // this repo's source; session-end resolves from the payload instead.
-        let r: ReturnType<typeof writeCodexHooks>;
-        try {
-          r = writeCodexHooks({ gbrainBin, hookLauncher: ensureHookLauncher(hookLauncherPath(home)) });
-        } catch (e) {
-          r = { ok: false, hooksPath: '', configPath: '', notes: [(e as Error).message] };
-        }
+        const r = ((): ReturnType<typeof writeCodexHooks> => { try { return writeCodexHooks({ gbrainBin, hookLauncher: ensureHookLauncher(hookLauncherPath(home)) }); } catch (e) { return { ok: false, hooksPath: '', configPath: '', notes: [(e as Error).message] }; } })();
         if (r.ok) {
           hooksWritten = true;
           console.log(

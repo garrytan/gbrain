@@ -6,7 +6,7 @@
 # fewer. Raising a row or adding one needs an issue/TODO id in the justification.
 # docs/TESTING.md#function-size-ratchet
 path	name	lines	justification
-src/commands/bootstrap.ts	runHooks	600	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +3 #4618: --seat/--no-seat parse + refusal/note (logic in core/bootstrap/hooks.ts parseSeatFlags)
+src/commands/bootstrap.ts	runHooks	601	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +3 #4618: --seat/--no-seat parse + refusal/note (logic in core/bootstrap/hooks.ts parseSeatFlags); +1 #8426: the user-scope MCP registration writes the hook launcher before naming it (logic in core/setup/hook-launcher.ts)
 src/commands/bootstrap.ts	runHooks>withLock(#1)	449	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/config.ts	runConfig	782	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +2 #5232: persistence.write_wait_ms dispatch line (logic in setFileWriteWait); wave 10 collector: master and the #4907/#5958 config-set range refusals compose at 775; re-summed at the #6015 merge (767 master baseline + 4 integration lines); re-summed at the wave 10 merge on actual lines; +1 C4: dream.auto_think.* replacement note (logic in questions/auto-think-migration.ts); +5 wave 15 P7.4 #5461: set-time refusal of think.pages_budget_chars / think.excerpt_ceiling_chars (range text from think/pages-budget.ts pagesBudgetConfigError); +1 #6712 PR 2: retired/rollback sync key dispatch line (logic in core/sync-config-keys.ts handleSyncKeyConfig)
 src/commands/doctor/bootstrap-checks.ts	bootstrapDoctorChecks	476	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
