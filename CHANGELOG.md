@@ -22,12 +22,12 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [0.60.556.0] - 2026-11-02
 
-**Mounted brains stop sharing settings and search telemetry.** In a process that serves several brains, search telemetry for every brain was written into the first brain's database, and a handful of per-brain settings were read once from whichever brain asked first and then applied to all of them. Each of those caches now belongs to its engine, and each engine gets its own telemetry writer, which retires when the engine disconnects. A process with one brain behaves exactly as before. Contributed by @bradgessler (#8454).
+**Mounted brains stop sharing settings and search telemetry.** In a process that serves several brains, search telemetry for every brain was written into the first brain's database, and a handful of per-brain settings were read once from whichever brain asked first and then applied to all of them. Each of those caches now belongs to its engine, and each engine gets its own telemetry writer, which stops its timer when the engine disconnects and keeps its buffer for a reconnect. A process with one brain behaves exactly as before. Contributed by @bradgessler (#8454).
 
 ### Itemized changes
 
 - `src/core/engine-key.ts`: `engineKey(engine)` resolves a page-transaction clone, a read-through view and a statement-deadline wrapper to the engine behind them. Every cache below keys on it.
-- `src/core/search/telemetry.ts`: one writer per engine (`getTelemetryWriter(engine)`), held weakly, flushing only into its own engine. The disconnect drain bounds every live writer, and a writer retires on its engine's disconnect or collection. `setEngine` is gone.
+- `src/core/search/telemetry.ts`: one writer per engine (`getTelemetryWriter(engine)`), held weakly, flushing only into its own engine. The disconnect drain bounds every live writer. A disconnect suspends the writer (no timer, buffer kept), so a PGLite reconnect, which is a disconnect and a connect, still flushes what was buffered; a collected engine retires its writer. `setEngine` is gone.
 - Keyed by engine: `search.track_retrieval` (`last-retrieved.ts`), `persistence.publication_ceiling_ms` and the idle bound derived from it (`publication-deadline.ts`), the minion admission policy (`admission.ts`), the `mcp.strict_params` last-known-good fallback (`validate-params.ts`), the `write_capacity_low` throttle (`capacity-snapshot.ts`), and `search.hnsw_iterative_scan` / `search.vector_legacy_guard`, which are still latched once and now latched per engine.
 - `test/engine-keyed-caches.test.ts`: two engines per setting, the second read after the first warmed the cache. All six behavior cases fail on master.
 

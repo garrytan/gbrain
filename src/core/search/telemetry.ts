@@ -301,6 +301,19 @@ class TelemetryWriter {
     return this.flushInFlight;
   }
 
+  /** Stops the timer and keeps the buffer, for an engine that disconnected and may reconnect (PGLite's reconnect). */
+  suspend(): void {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+  }
+
+  /** Restarts the timer of a suspended writer. */
+  resume(): void {
+    this.ensureTimer();
+  }
+
   /**
    * Stop the timer and drop the buffer. Called by `_resetTelemetryWriterForTest`
    * and for a writer whose engine was garbage collected. Nothing in production
@@ -382,9 +395,10 @@ class TelemetryWriter {
 }
 
 /**
- * One writer per engine (a transaction or view shares its engine's); `live` lets the drain reach each one. A writer is
- * retired when its engine disconnects (after its in-flight flush; residual buckets drop there, as the disconnect drain
- * already drops them) or is garbage collected, so an engine opened and closed per request leaves no timer behind.
+ * One writer per engine (a transaction or view shares its engine's); `live` lets the drain reach each one. When its
+ * engine disconnects, a writer is suspended after its in-flight flush: its timer stops and it leaves `live`, but it keeps
+ * its buffer and its place in `writers`, so a reconnect (PGLite's is disconnect then connect) resumes it on the next
+ * search and an engine opened and closed per request leaves no timer behind. A garbage-collected engine retires its writer.
  */
 let writers = new WeakMap<object, TelemetryWriter>();
 const live = new Set<TelemetryWriter>();
@@ -394,16 +408,19 @@ const unregisters = new WeakMap<object, () => void>();
 export function getTelemetryWriter(engine: BrainEngine): TelemetryWriter {
   const key = engineKey(engine) as BrainEngine;
   let writer = writers.get(key);
+  if (writer && !live.has(writer)) {
+    writer.resume();
+    live.add(writer);
+  }
   if (!writer) {
     const created = new TelemetryWriter(key);
     writer = created;
     writers.set(key, created);
     // Never awaits: the bounded disconnect drain (awaitPendingTelemetryFlush) still sees the in-flight flush.
     const unregister = key.registerBeforeDisconnect?.(async () => {
-      if (writers.get(key) === created) writers.delete(key);
       const inFlight = created.pendingFlush();
-      if (inFlight) void inFlight.catch(() => undefined).finally(() => retireWriter(created));
-      else retireWriter(created);
+      if (inFlight) void inFlight.catch(() => undefined).finally(() => suspendWriter(created));
+      else suspendWriter(created);
     });
     if (unregister) unregisters.set(key, unregister);
     live.add(created);
@@ -414,6 +431,11 @@ export function getTelemetryWriter(engine: BrainEngine): TelemetryWriter {
 /** Test-only — how many engines still hold a writer. */
 export function _telemetryWriterCountForTest(): number {
   return live.size;
+}
+
+function suspendWriter(writer: TelemetryWriter): void {
+  writer.suspend();
+  live.delete(writer);
 }
 
 function retireWriter(writer: TelemetryWriter): void {
