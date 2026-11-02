@@ -17,7 +17,8 @@ import type { Action } from '../agent-output.ts';
 import { bunSpawnSync } from '../spawn.ts';
 import { codexHookCensus, codexHookGroupRuns, codexHookTrustHash } from '../bootstrap/codex-hooks.ts';
 import { readCodexTomlTable } from '../bootstrap/codex-toml.ts';
-import { classifyHarnessHook } from '../bootstrap/hooks.ts';
+import { classifyHarnessHook, hookEntryHash } from '../bootstrap/hooks.ts';
+import { localSetupRecords } from './local-receipts.ts';
 import { CLAUDE_SETTINGS_FILE_RELPATH, GBRAIN_HOOK_MARKER_KEY, GBRAIN_SETUP_MARKER_VALUE, claudeUserSettingsPath, codexConfigPath, codexHooksPath } from '../bootstrap/host-specs.ts';
 import { hookLauncherInCommand, hookLauncherState, type HookLauncherState } from './hook-launcher.ts';
 import { enabledPluginLanes } from '../bootstrap/plugin-lanes.ts';
@@ -130,7 +131,17 @@ export interface HookLauncherProblem {
   detail: string;
 }
 
-function claudeLaneCommands(path: string): Array<{ lane: 'setup' | 'turn-rule'; command: string }> {
+/** The hook hashes Claude Code setup receipts own: Claude Code can drop the `_gbrain` marker on a rewrite, and setup owns its entries by hash. */
+function claudeSetupOwnedHashes(): Set<string> {
+  const out = new Set<string>();
+  for (const r of localSetupRecords().filter((x) => x.harness === 'claude-code')) {
+    const hooks = (readJson(r.path) as { hooks?: { owned?: Record<string, unknown>; pending?: Record<string, unknown> } } | null)?.hooks;
+    for (const h of [...Object.values(hooks?.owned ?? {}), ...Object.values(hooks?.pending ?? {})]) if (typeof h === 'string') out.add(h);
+  }
+  return out;
+}
+
+function claudeLaneCommands(path: string, setupOwned: Set<string>): Array<{ lane: 'setup' | 'turn-rule'; command: string }> {
   const hooks = readJson(path)?.hooks;
   if (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)) return [];
   const out: Array<{ lane: 'setup' | 'turn-rule'; command: string }> = [];
@@ -140,7 +151,7 @@ function claudeLaneCommands(path: string): Array<{ lane: 'setup' | 'turn-rule'; 
       if (!e || typeof e !== 'object' || typeof (e as Record<string, unknown>).command !== 'string') continue;
       const entry = e as Record<string, unknown>;
       if (isTurnRuleEntry(entry)) out.push({ lane: 'turn-rule', command: entry.command as string });
-      else if (entry[GBRAIN_HOOK_MARKER_KEY] === GBRAIN_SETUP_MARKER_VALUE) out.push({ lane: 'setup', command: entry.command as string });
+      else if (entry[GBRAIN_HOOK_MARKER_KEY] === GBRAIN_SETUP_MARKER_VALUE || setupOwned.has(hookEntryHash(entry) ?? '')) out.push({ lane: 'setup', command: entry.command as string });
     }
   }
   return out;
@@ -150,8 +161,9 @@ function claudeLaneCommands(path: string): Array<{ lane: 'setup' | 'turn-rule'; 
 export function hookLauncherProblem(harness: 'claude-code' | 'codex', opts: { projectDir?: string } = {}): HookLauncherProblem | null {
   const found: Array<{ lane: 'setup' | 'turn-rule'; command: string; source: string }> = [];
   if (harness === 'claude-code') {
+    const setupOwned = claudeSetupOwnedHashes();
     for (const source of [claudeUserSettingsPath(), ...(opts.projectDir ? [join(opts.projectDir, CLAUDE_SETTINGS_FILE_RELPATH)] : [])]) {
-      found.push(...claudeLaneCommands(source).map((c) => ({ ...c, source })));
+      found.push(...claudeLaneCommands(source, setupOwned).map((c) => ({ ...c, source })));
     }
   } else {
     try {

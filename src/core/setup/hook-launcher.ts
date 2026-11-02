@@ -18,9 +18,9 @@
  * starting Bun next to a file gbrain did not write. `gbrain hook` reads the
  * session directory from GBRAIN_HOOK_CWD where it used process.cwd().
  */
-import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
 import { configDir } from '../config.ts';
 
 export const HOOK_LAUNCHER_NAME = 'gbrain-hook';
@@ -82,16 +82,60 @@ export function ensureHookLauncher(path: string = hookLauncherPath()): string {
   chmodSync(dir, 0o700);
   const other = readdirSync(dir).find((n) => n !== HOOK_LAUNCHER_NAME);
   if (other !== undefined) throw new Error(`${dir} holds ${other}, which gbrain did not write; the hook launcher runs gbrain from that directory, so remove it, then run this again`);
-  if (hookLauncherState(path).state !== 'current') atomicWriteTextFile(path, HOOK_LAUNCHER_SCRIPT, { forceMode: 0o700 });
+  if (hookLauncherState(path).state === 'current') return path;
+  // The temp file sits beside the directory, never in it: a hook running meanwhile would refuse to start next to it.
+  const tmp = join(dirname(dir), `.${HOOK_LAUNCHER_DIR}.tmp-${randomBytes(6).toString('hex')}`);
+  try {
+    writeFileSync(tmp, HOOK_LAUNCHER_SCRIPT, { mode: 0o700 });
+    chmodSync(tmp, 0o700);
+    renameSync(tmp, path);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
   return path;
 }
 
-const LAUNCHER_WORD = new RegExp(`(?:^|\\s)(?:'(/[^']*/${HOOK_LAUNCHER_DIR}/${HOOK_LAUNCHER_NAME})'|(/[^\\s']*/${HOOK_LAUNCHER_DIR}/${HOOK_LAUNCHER_NAME}))(?=\\s)`);
+/**
+ * Split a hook command into shell words the way /bin/sh would at its top
+ * level: single quotes, double quotes and backslash escapes, so a path the
+ * builders quoted (`'/a/o'\''b/x'`) comes back as the path. Null for an
+ * unterminated quote.
+ */
+export function shellWords(command: string): string[] | null {
+  const words: string[] = [];
+  let word: string | null = null;
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i]!;
+    if (c === ' ' || c === '\t' || c === '\n') { if (word !== null) words.push(word); word = null; continue; }
+    word ??= '';
+    if (c === "'") {
+      const close = command.indexOf("'", i + 1);
+      if (close < 0) return null;
+      word += command.slice(i + 1, close);
+      i = close;
+    } else if (c === '"') {
+      let j = i + 1;
+      for (; j < command.length && command[j] !== '"'; j++) {
+        if (command[j] === '\\' && j + 1 < command.length && '$`"\\\n'.includes(command[j + 1]!)) j++;
+        word += command[j];
+      }
+      if (j >= command.length) return null;
+      i = j;
+    } else if (c === '\\' && i + 1 < command.length) {
+      word += command[++i];
+    } else {
+      word += c;
+    }
+  }
+  if (word !== null) words.push(word);
+  return words;
+}
 
 /** The launcher a hook command runs gbrain through, or null for a command that starts gbrain in the session directory. */
 export function hookLauncherInCommand(command: string): string | null {
-  const m = LAUNCHER_WORD.exec(command);
-  return m ? (m[1] ?? m[2])! : null;
+  const suffix = `/${HOOK_LAUNCHER_DIR}/${HOOK_LAUNCHER_NAME}`;
+  return shellWords(command)?.find((w) => w.startsWith('/') && w.endsWith(suffix)) ?? null;
 }
 
 /** The session directory for `gbrain hook`: what the launcher recorded, else this process's directory. */

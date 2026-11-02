@@ -16,7 +16,8 @@ identifiers and attribution are available in the pre-removal Git revision
 
 - `gbrain post-upgrade` moves existing hooks onto the launcher: the turn-rule hook in Claude Code's user settings and Codex's hooks.json, and the hooks of each user-scope `gbrain setup` install whose MCP entry is unchanged. `gbrain setup <harness>` and `gbrain setup <harness> --instructions-only` rewrite them on their next run.
 - `gbrain doctor` (`harness_wiring`) warns with the new code `hook_session_cwd` when a hook still starts gbrain in the session directory, or its launcher is missing, changed or shares its directory with a file gbrain did not write, and names the setup command that fixes it. Project-scope installs get the command to run from their project directory.
-- Not covered yet: the capture hooks from `gbrain bootstrap`'s own lanes and the gbrain plugins' hooks, and script-mode commands you run by hand in an untrusted checkout (SECURITY.md).
+- Not covered yet: the stdio MCP server `gbrain setup` registers, which the harness also starts in the session's directory (#8426); the capture hooks from `gbrain bootstrap`'s own lanes and the gbrain plugins' hooks (#8428); and script-mode commands you run by hand in an untrusted checkout (SECURITY.md).
+- The launcher rewrite never leaves a temp file in its own directory, and doctor finds a setup hook whose `_gbrain` marker Claude Code dropped by its receipt hash.
 
 ## [0.60.545.0] - 2026-11-02
 

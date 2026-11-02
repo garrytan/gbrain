@@ -867,7 +867,7 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
   const viaLauncher = (b: Box, commands: string[]) => commands.length > 0 && commands.every((c) => c.includes(`${launcher(b)} ${b.bin} hook`));
 
   /** Rewrite setup's Claude Code entries and receipt hashes to what setup wrote before the launcher. */
-  function downgradeClaude(b: Box): void {
+  function downgradeClaude(b: Box, stripMarker = false): void {
     const s = readJson(settings(b));
     const r = readJson(receipt(b));
     for (const [event, groups] of Object.entries(s.hooks as Record<string, any[]>)) {
@@ -875,6 +875,7 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
         if (e._gbrain !== 'setup-v1') continue;
         e.command = e.command.replace(` ${launcher(b)} `, ' ');
         r.hooks.owned[event] = hookEntryHash(e);
+        if (stripMarker) delete e._gbrain;
       }
     }
     writeFileSync(settings(b), JSON.stringify(s, null, 2));
@@ -923,6 +924,21 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     });
     expect(viaLauncher(b, claudeCommands())).toBe(true);
     expect((await setup(b, ['claude-code', '--json'])).doc.steps.map((s: any) => s.action)).toEqual(['keep', 'keep', 'keep']);
+  });
+
+  test('claude-code: entries Claude Code rewrote without the _gbrain marker are still found by receipt hash', async () => {
+    const b = box();
+    expect((await setup(b, ['claude-code', '--json'])).exitCode).toBe(0);
+    downgradeClaude(b, true);
+    const commands = () => ['SessionStart', 'UserPromptSubmit'].flatMap((e) => entries(b, e).map((x) => x.command as string));
+    expect(entries(b, 'UserPromptSubmit')[0]._gbrain).toBeUndefined();
+    await withEnv(env(b), async () => {
+      expect(hookLauncherProblem('claude-code')).toMatchObject({ lane: 'setup', reason: 'session_cwd' });
+      await refreshHookLaunchers(() => {});
+      expect(hookLauncherProblem('claude-code')).toBeNull();
+    });
+    expect(viaLauncher(b, commands())).toBe(true);
+    expect(['SessionStart', 'UserPromptSubmit'].map((e) => entries(b, e).length)).toEqual([1, 1]);
   });
 
   test('codex: post-upgrade rewrites them with matching trust, and a later setup keeps everything', async () => {

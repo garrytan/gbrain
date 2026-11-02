@@ -17,13 +17,13 @@
  */
 import { readFileSync } from 'node:fs';
 import { configDir } from '../config.ts';
-import { parseClaudeHookCommand } from '../bootstrap/hooks.ts';
+import { hookEntryHash, parseClaudeHookCommand } from '../bootstrap/hooks.ts';
 import { codexHookCensus } from '../bootstrap/codex-hooks.ts';
 import { GBRAIN_HOOK_MARKER_KEY, GBRAIN_SETUP_MARKER_VALUE, claudeUserSettingsPath, codexHooksPath, type ClaudeHookEvent } from '../bootstrap/host-specs.ts';
 import type { CodexSetupEvent } from '../bootstrap/codex-hooks.ts';
 import { applyClaudeSetup, claudeSetupPaths, inspectClaudeSetup, readSetupReceipt, type ClaudeSetupPlan } from './claude-code.ts';
 import { applyCodexSetup, codexSetupPaths, inspectCodexSetup, readCodexSetupReceipt, type CodexSetupPlan } from './codex.ts';
-import { hookLauncherInCommand, hookLauncherState } from './hook-launcher.ts';
+import { hookLauncherInCommand, hookLauncherState, shellWords } from './hook-launcher.ts';
 import { localSetupRecords } from './local-receipts.ts';
 import { hasTurnRuleHook, isTurnRuleEntry, syncTurnRuleHook, TURN_RULE_LANE_TOKEN } from './turn-hook.ts';
 
@@ -44,7 +44,7 @@ function claudeHookEntries(path: string): Array<Record<string, unknown>> {
 
 /** The words after \`env\` that are not assignments: [<launcher>] <bin> hook …; GBRAIN_HOME from the assignments. */
 function codexCommandParts(command: string): { gbrainBin: string; gbrainHome?: string } | null {
-  const words = command.match(/'(?:[^']|'\\'')*'|\S+/g)?.map((w) => (w.startsWith("'") ? w.slice(1, -1).replace(/'\\''/g, "'") : w)) ?? [];
+  const words = shellWords(command) ?? [];
   if (words[0] !== 'env') return null;
   let i = 1;
   let gbrainHome: string | undefined;
@@ -81,7 +81,8 @@ async function refreshSetup(log: (line: string) => void): Promise<void> {
         const receipt = readSetupReceipt(record.path).setup;
         if (!receipt) continue;
         const paths = claudeSetupPaths({ name: receipt.name, scope: receipt.scope, projectDir: receipt.project_dir });
-        const ours = claudeHookEntries(paths.settingsPath).filter((e) => e[GBRAIN_HOOK_MARKER_KEY] === GBRAIN_SETUP_MARKER_VALUE).map((e) => e.command as string);
+        const owned = new Set([...Object.values(receipt.hooks.owned), ...Object.values(receipt.hooks.pending)]);
+        const ours = claudeHookEntries(paths.settingsPath).filter((e) => e[GBRAIN_HOOK_MARKER_KEY] === GBRAIN_SETUP_MARKER_VALUE || owned.has(hookEntryHash(e) ?? '')).map((e) => e.command as string);
         if (!ours.some(needsLauncher)) continue;
         if (receipt.scope === 'project') { log(`Hook launcher: gbrain's hooks in ${paths.settingsPath} start gbrain in the session's directory; from ${receipt.project_dir}, run ${rerun} --scope project.`); continue; }
         const homeEnv = ours.map((c) => parseClaudeHookCommand(c)?.env.GBRAIN_HOME).find((h) => h !== undefined);

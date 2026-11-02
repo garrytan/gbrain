@@ -303,7 +303,7 @@ export function classifyHarnessHook(
   const sub = (CLAUDE_HOOK_SUBCOMMAND as Record<string, string | undefined>)[event];
   if (!sub || !/(?:^|[\s'])GBRAIN_HOOK_LANE=harness(?=[\s']|$)/.test(e.command) || !/\shook(?:\s|$)/.test(e.command)) return null;
   const parsed = parseClaudeHookCommand(e.command);
-  if (!parsed || parsed.env.GBRAIN_HOOK_LANE !== 'harness' || parsed.subcommand !== sub) {
+  if (!parsed || parsed.launcher !== undefined || parsed.env.GBRAIN_HOOK_LANE !== 'harness' || parsed.subcommand !== sub) {
     return { ownership: 'unowned', why: `not the exact \`hook ${sub}\` command gbrain writes (edited or extended)` };
   }
   if (identity === 'any') return { ownership: 'command', why: 'harness hook command shape' };

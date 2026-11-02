@@ -16,7 +16,7 @@ import { buildClaudeHookCommand } from '../src/core/bootstrap/hooks.ts';
 import { codexSetupHookGroup } from '../src/core/bootstrap/codex-hooks.ts';
 import { syncTurnRuleHook, TURN_RULE_MARKER } from '../src/core/setup/turn-hook.ts';
 import { hookLauncherProblem } from '../src/core/setup/turn-hook-check.ts';
-import { HOOK_LAUNCHER_NAME, ensureHookLauncher, hookLauncherPath, hookLauncherState } from '../src/core/setup/hook-launcher.ts';
+import { HOOK_LAUNCHER_NAME, ensureHookLauncher, hookLauncherInCommand, hookLauncherPath, hookLauncherState } from '../src/core/setup/hook-launcher.ts';
 import { refreshHookLaunchers } from '../src/core/setup/hook-launcher-refresh.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
@@ -133,6 +133,27 @@ describe('the launcher', () => {
     expect(() => ensureHookLauncher(b.launcher)).toThrow(/did not write/);
   });
 
+  test('a launcher path with quotes and spaces is found in every command shape, so doctor does not flag a current hook', async () => {
+    const b = box();
+    const odd = join(b.root, "o'example home");
+    mkdirSync(odd);
+    await withEnv({ HOME: b.home, GBRAIN_HOME: odd, CLAUDE_CONFIG_DIR: undefined }, async () => {
+      const launcher = hookLauncherPath();
+      expect(launcher).toContain("o'example home");
+      for (const command of [
+        buildClaudeHookCommand(b.gbrain, 'Stop', { GBRAIN_HOOK_LANE: 'turn-rule' }, launcher),
+        codexSetupHookGroup(b.gbrain, 'UserPromptSubmit', {}, 'setup', launcher).hooks[0]!.command,
+        codexSetupHookGroup(b.gbrain, 'SessionEnd', {}, 'setup', launcher).hooks[0]!.command,
+      ]) expect(hookLauncherInCommand(command)).toBe(launcher);
+      const settings = join(b.home, '.claude', 'settings.json');
+      expect(syncTurnRuleHook({ harness: 'claude-code', gbrainBin: b.gbrain, paths: { claudeSettings: settings }, rerun: 'x' }).action).toBe('write');
+      expect(hookLauncherProblem('claude-code')).toBeNull();
+      const [entry] = readJson(settings).hooks.UserPromptSubmit.flatMap((g: { hooks: unknown[] }) => g.hooks);
+      expect(runHook(b, entry.command).exitCode).toBe(0);
+      expect(existsSync(b.marker)).toBe(false);
+    });
+  });
+
   test('ensureHookLauncher rewrites a changed launcher and keeps its directory private', () => {
     const b = box();
     ensureHookLauncher(b.launcher);
@@ -141,6 +162,17 @@ describe('the launcher', () => {
     ensureHookLauncher(b.launcher);
     expect(hookLauncherState(b.launcher).state).toBe('current');
     expect(readdirSync(dirname(b.launcher))).toEqual([HOOK_LAUNCHER_NAME]);
+  });
+
+  test('a rewrite never leaves a temp file in the launcher directory, so a hook running meanwhile still starts', () => {
+    const b = box();
+    ensureHookLauncher(b.launcher);
+    for (let i = 0; i < 20; i++) {
+      writeFileSync(b.launcher, '#!/bin/sh\nexec "$@"\n');
+      ensureHookLauncher(b.launcher);
+      expect(readdirSync(dirname(b.launcher))).toEqual([HOOK_LAUNCHER_NAME]);
+    }
+    expect(readdirSync(dirname(dirname(b.launcher))).filter((n) => n.includes('.tmp-'))).toEqual([]);
   });
 });
 

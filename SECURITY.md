@@ -95,8 +95,12 @@ launcher; if anything else appears there, the launcher refuses to start gbrain
 and prints one line to stderr. `gbrain post-upgrade` moves hooks written
 before the launcher onto it, `gbrain setup` rewrites them on its next run, and
 `gbrain doctor` (`harness_wiring`, code `hook_session_cwd`) flags any that are
-left. Hooks from `gbrain bootstrap`'s own capture lanes and from the gbrain
-plugins do not go through the launcher yet.
+left. Not covered yet: the stdio MCP server `gbrain setup` registers, which
+the harness also starts in the session's directory (#8426), and the hooks from
+`gbrain bootstrap`'s own capture lanes and the gbrain plugins (#8428). Until
+those land, a script-mode install still runs a session directory's
+`bunfig.toml` preload once per session through the MCP server; the release
+binary does not.
 
 **The trust boundary.** Security-relevant variables are honored from your
 shell environment, from a service `EnvironmentFile`, and from

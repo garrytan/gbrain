@@ -119,8 +119,8 @@ function shellQuote(arg: string): string {
  */
 export function buildCodexSessionEndCommand(gbrainBin: string, launcher?: string): string {
   const script = launcher
-    ? 't="$(mktemp)"; cat >"$t"; GBRAIN_PAYLOAD="$t" GBRAIN_LAUNCHER="$0" GBRAIN_BIN="$1" nohup sh -c ' +
-      `'"$GBRAIN_LAUNCHER" "$GBRAIN_BIN" ${CODEX_HOOK_OWNERSHIP_TOKEN} <"$GBRAIN_PAYLOAD"; rm -f "$GBRAIN_PAYLOAD"' >/dev/null 2>&1 &`
+    ? 't="$(mktemp)"; cat >"$t"; GBRAIN_PAYLOAD="$t" GBRAIN_HOOK_LAUNCHER="$0" GBRAIN_BIN="$1" nohup sh -c ' +
+      `'"$GBRAIN_HOOK_LAUNCHER" "$GBRAIN_BIN" ${CODEX_HOOK_OWNERSHIP_TOKEN} <"$GBRAIN_PAYLOAD"; rm -f "$GBRAIN_PAYLOAD"' >/dev/null 2>&1 &`
     : 't="$(mktemp)"; cat >"$t"; GBRAIN_PAYLOAD="$t" GBRAIN_BIN="$0" nohup sh -c ' +
       `'"$GBRAIN_BIN" ${CODEX_HOOK_OWNERSHIP_TOKEN} <"$GBRAIN_PAYLOAD"; rm -f "$GBRAIN_PAYLOAD"' >/dev/null 2>&1 &`;
   // Embed the script into an outer single-quoted argument: ' → '\'' works
