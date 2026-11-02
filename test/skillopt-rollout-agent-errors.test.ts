@@ -1,0 +1,79 @@
+/**
+ * GST-1054: a SkillOpt rollout's tool loop hands the model a thrown error's message. That message is the error text
+ * an MCP caller reads for the same call (code, message, suggestion, fix), so rollouts optimize skills against the
+ * error surface real callers get.
+ */
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { runRollout } from '../src/core/skillopt/rollout.ts';
+import { buildWriteCaptureRegistry } from '../src/core/skillopt/write-capture.ts';
+import type { ToolHandler } from '../src/core/ai/gateway.ts';
+import type { BenchmarkTask } from '../src/core/skillopt/types.ts';
+
+const SLUG = 'notes/alpha-example';
+let engine: PGLiteEngine;
+let rollout: Map<string, ToolHandler>;
+let writeCapture: Map<string, ToolHandler>;
+
+async function rolloutHandlers(): Promise<Map<string, ToolHandler>> {
+  let captured: Map<string, ToolHandler> | undefined;
+  const task: BenchmarkTask = { task_id: 'errors', task: 'read a page', judge: { kind: 'rule', checks: [] } };
+  await runRollout({
+    engine, skillText: 'skill', task, targetModel: 'openai:gpt-6.1-sol', allowedTools: new Set(['get_page']),
+    toolLoopFn: (async (o: { toolHandlers: Map<string, ToolHandler> }) => {
+      captured = o.toolHandlers;
+      return { messages: [], totalUsage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 }, totalTurns: 1, stopReason: 'end' };
+    }) as never,
+  });
+  return captured!;
+}
+
+async function mcpText(args: Record<string, unknown>): Promise<string> {
+  const r = await dispatchToolCall(engine, 'get_page', args, { remote: true, transport: 'http', sourceId: 'default' });
+  expect(r.isError).toBe(true);
+  return (r.content as Array<{ text: string }>)[0]!.text;
+}
+
+async function thrownMessage(handlers: Map<string, ToolHandler>, args: Record<string, unknown>): Promise<string> {
+  try {
+    await handlers.get('brain_get_page')!.execute(args, new AbortController().signal);
+  } catch (e) {
+    return (e as Error).message;
+  }
+  throw new Error('expected the tool call to refuse');
+}
+
+beforeAll(async () => {
+  engine = new PGLiteEngine();
+  await engine.connect({});
+  await engine.initSchema();
+  const put = await dispatchToolCall(engine, 'put_page', { slug: SLUG, content: '---\ntitle: Alpha Example\n---\n# Alpha Example\n\nline one\nline two\n' }, { remote: false, sourceId: 'default' });
+  expect(put.isError).toBeFalsy();
+  rollout = await rolloutHandlers();
+  writeCapture = buildWriteCaptureRegistry(engine).handlers;
+}, 120_000);
+
+afterAll(async () => {
+  await engine.disconnect();
+});
+
+describe('GST-1054: SkillOpt rollout tool errors carry the MCP error text', () => {
+  const twoSelectors = { slug: SLUG, lines: { from: 1, count: 1 }, bytes: { offset: 0, length: 8 } };
+  const missing = { slug: 'notes/missing-example' };
+
+  for (const [name, handlers] of [['rollout', () => rollout], ['write-capture', () => writeCapture]] as const) {
+    test(name + ': a refusal reaches the model with its code, suggestion and runnable fix, as MCP returns it', async () => {
+      const message = await thrownMessage(handlers(), twoSelectors);
+      expect(message).toBe(await mcpText(twoSelectors));
+      const body = JSON.parse(message) as { code: string; suggestion?: string; fix?: { argv?: string[] } };
+      expect(body.code).toBe('invalid_params');
+      expect(body.suggestion).toContain('Drop `bytes`');
+      expect(body.fix?.argv).toEqual(['gbrain', 'get', '--lines', '1-1', '--body', 'window', '--source', 'default', '--', SLUG]);
+    });
+
+    test(name + ': a handler error reads the same as the MCP error', async () => {
+      expect(await thrownMessage(handlers(), missing)).toBe(await mcpText(missing));
+    });
+  }
+});

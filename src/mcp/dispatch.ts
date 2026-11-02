@@ -60,6 +60,7 @@ import { isEngineDegraded } from '../core/degraded-marker.ts';
 import { admittedPendingReceipt, type WriteReceipt } from '../core/persistence/types.ts';
 import { currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter, withRequestIdentityMemo, withVerifiedLocalRegistration } from '../core/persistence/identity.ts';
 import { frameOverCap, resultTooLargeError } from '../core/egress-budget.ts';
+import { isAIInvocationPolicyError } from '../core/ai/invocation-guard.ts';
 
 // WP3: normalization + validation moved to validate-params.ts (direct unit
 // surface). Re-exported here so existing imports/tests keep working.
@@ -809,6 +810,17 @@ export function errorResult(e: unknown, opts: DispatchOpts, extra: { op?: string
   const { contract_version, ...rest } = envelope;
   const added = extra.notices.map(n => redactForTransport(renderNotice(n, render), render.transport));
   return toolErrorResult({ ...rest, notices: orderNotices([...(envelope.notices ?? []), ...added]), contract_version });
+}
+
+/**
+ * GST-1054: SkillOpt's tool loops hand the model a thrown error's message, so their read handlers throw this: the
+ * error text an MCP caller reads for the same failed read (code, message, suggestion, fix), with `code` kept for
+ * callers that branch on it. An AI invocation policy stop passes through unchanged, because the loop rethrows it.
+ */
+export function asAgentToolError(e: unknown, op: string, sourceId?: string): unknown {
+  if (isAIInvocationPolicyError(e)) return e;
+  const text = errorResult(e, { remote: true, transport: 'http', sourceId }, { op, mutating: false, idempotent: true }).content[0]!.text;
+  return Object.assign(new Error(text), { code: (JSON.parse(text) as { code?: string }).code });
 }
 
 const stderrLogger: OperationContext['logger'] = {
