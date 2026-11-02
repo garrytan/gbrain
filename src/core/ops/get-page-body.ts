@@ -31,7 +31,7 @@
 import type { Page } from '../types.ts';
 import type { OperationContext, ParamDef } from './contract.ts';
 import { opError, OperationError } from './contract.ts';
-import { invalidParam, readFix } from './op-fix.ts';
+import { invalidParam, opTransport, readFix } from './op-fix.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { isSegmentedPage, pageBodyBytes } from '../page-body/page-shape.ts';
 import { deepResearchPageUrl, encodeDeepResearchId } from '../deep-research-id.ts';
@@ -69,11 +69,11 @@ export const LARGE_PAGES_CAPABILITY = 'large_pages_v1';
 
 export const GET_PAGE_BODY_PARAMS: Record<string, ParamDef> = {
   body: { type: 'string', enum: [...BODY_MODES], description: 'auto: whole up to 256 KB, else outline + window; a window\'s edit_target is edit_page `within`. none: revision + size + tail_sha256 (append_page expected_tail_sha256).', fullSurfaceOnly: true },
-  lines: { type: 'object', cliRange: ['from', 'count'], description: 'Window: 1-based lines.', properties: { from: { type: 'number', required: true }, count: { type: 'number', required: true } }, fullSurfaceOnly: true },
-  bytes: { type: 'object', cliRange: ['offset', 'length'], description: 'Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start).', properties: { offset: { type: 'number', required: true }, length: { type: 'number', required: true } }, fullSurfaceOnly: true },
-  around_chunk_id: { type: 'number', minimum: 1, description: 'Window around a search hit chunk_id.', fullSurfaceOnly: true },
+  lines: { type: 'object', cliRange: ['from', 'count'], description: 'Window: 1-based lines. One window selector only: not with bytes, around_chunk_id or cursor.', properties: { from: { type: 'number', required: true }, count: { type: 'number', required: true } }, fullSurfaceOnly: true },
+  bytes: { type: 'object', cliRange: ['offset', 'length'], description: 'Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start). One window selector only: not with lines, around_chunk_id or cursor.', properties: { offset: { type: 'number', required: true }, length: { type: 'number', required: true } }, fullSurfaceOnly: true },
+  around_chunk_id: { type: 'number', minimum: 1, description: 'Window around a search hit chunk_id. One window selector only: not with lines, bytes or cursor.', fullSurfaceOnly: true },
   context_lines: { type: 'number', description: 'Lines around around_chunk_id (20).', fullSurfaceOnly: true },
-  cursor: { type: 'string', description: 'next_cursor: read on.', fullSurfaceOnly: true },
+  cursor: { type: 'string', description: 'next_cursor: read on. One window selector only: not with lines, bytes or around_chunk_id.', fullSurfaceOnly: true },
   max_bytes: { type: 'number', minimum: 1, description: 'Window bytes (40000).', fullSurfaceOnly: true },
   view: { type: 'string', enum: ['read', 'markdown'], description: 'markdown: page the round-trip content.', fullSurfaceOnly: true },
   outline_from: { type: 'number', description: 'Outline next_from_index.', fullSurfaceOnly: true },
@@ -136,7 +136,14 @@ export function parseBodyRequest(ctx: Pick<OperationContext, 'remote' | 'transpo
     selectors.push({ kind: 'cursor', raw: p.cursor });
   }
   if (selectors.length > 1) {
-    throw bad(selectors[1].kind === 'around' ? 'around_chunk_id' : selectors[1].kind, `get_page: pass one window selector, not ${selectors.length} (got ${selectors.map(s => s.kind === 'around' ? 'around_chunk_id' : s.kind).join(' and ')}).`);
+    const [keep, ...drop] = selectors.map(s => s.kind === 'around' ? 'around_chunk_id' : s.kind);
+    const conflicts = ['include_content', 'content_only', ...(keep === 'around_chunk_id' && p.view === 'markdown' ? ['view'] : [])];
+    const args = Object.fromEntries(Object.entries(p).filter(([k, v]) => v !== undefined && k !== '_meta' && !drop.includes(k) && !conflicts.includes(k)));
+    const name = (k: string) => opTransport(ctx) === 'cli' ? `--${k.replace(/_/g, '-')}` : `\`${k}\``;
+    throw opError('invalid_params', `get_page: pass one window selector, not ${selectors.length} (got ${[keep, ...drop].join(' and ')}).`,
+      `Pass at most one window selector: lines, bytes, around_chunk_id or cursor. Drop ${drop.map(name).join(' and ')} to read the ${keep} window, or pass one of them alone to read there instead.`,
+      { fix: readFix(`The same call with one window selector (${keep}) and body: "window"; ${[...drop, ...conflicts.filter(k => p[k] !== undefined)].join(', ')} dropped.`,
+        { mcp: { tool: 'get_page', arguments: { ...args, body: 'window' } } }) });
   }
   const includeContent = p.include_content === true;
   const contentOnly = p.content_only === true;

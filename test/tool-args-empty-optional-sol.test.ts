@@ -280,9 +280,25 @@ describe("GST-927: GBEV-3's replayed Sol shapes", () => {
   });
 
   test("Sol's recorded window arguments still refuse: two window selectors are real values that change the answer", async () => {
-    const out = await paths['mcp remote (http)']!('get_page', { slug: SLUG, ...SOL_GET_PAGE, lines: { from: 1, count: 200 }, bytes: { offset: 0, length: 40000 } });
+    const args = { slug: SLUG, ...SOL_GET_PAGE, lines: { from: 1, count: 200 }, bytes: { offset: 0, length: 40000 }, around_chunk_id: 7, max_bytes: 40000, view: 'read' };
+    const out = await paths['mcp remote (http)']!('get_page', args);
     expect(out.ok).toBe(false);
-    expect(out.text).toContain('pass one window selector, not 2');
+    expect(out.text).toContain('pass one window selector, not 3 (got lines and bytes and around_chunk_id)');
+    expect(out.text).toContain('Drop `bytes` and `around_chunk_id` to read the lines window');
+    const local = await handleToolCall(engine, 'get_page', args).then(() => null, (e: { fix?: { mcp?: { tool: string; arguments: Record<string, unknown> } } }) => e);
+    const fixed = local?.fix?.mcp?.arguments ?? {};
+    expect(Object.keys(fixed).filter(k => ['lines', 'bytes', 'around_chunk_id', 'cursor'].includes(k))).toEqual(['lines']);
+    expect(fixed).toMatchObject({ slug: SLUG, lines: { from: 1, count: 200 }, body: 'window', max_bytes: 40000, view: 'read', source_id: 'default' });
+    expect(fixed.include_content).toBeUndefined();
+    const retried = await paths['mcp remote (http)']!('get_page', fixed);
+    expect([retried.ok, retried.text.includes(BODY_MARKER)]).toEqual([true, true]);
+  });
+
+  test('get_page tells callers up front: at most one window selector, context only with grep', () => {
+    const op = operationsByName.get_page!;
+    expect(op.description).toContain('Pass at most one window selector: lines, bytes, around_chunk_id or cursor (context only with grep)');
+    for (const k of ['lines', 'bytes', 'around_chunk_id', 'cursor']) expect(op.params[k]!.description).toContain('One window selector only');
+    expect(op.params.context!.description).toContain('Applies only with grep');
   });
 
   test('known_as_of beside read-view arguments refuses, naming each argument to drop, with a fix that keeps only recorded-time arguments', async () => {
