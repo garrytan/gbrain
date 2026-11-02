@@ -23,6 +23,7 @@ import { guardAutopilotEngine } from '../src/commands/autopilot.ts';
 import type { OwnerProcessingState } from '../src/core/minions/processing-state.ts';
 import { batchSharedReads } from '../src/core/persistence/page-mutations.ts';
 import { preparationReads } from '../src/core/persistence/group-publish.ts';
+import { createDegradedEngine, DegradedRecoveredRetryError } from '../src/core/degraded-engine.ts';
 import { bindPublicationTimeouts, publicationIdleTimeoutMs } from '../src/core/persistence/publication-deadline.ts';
 import { capacityNotices, __resetCapacityNoticesForTests, type CapacitySnapshot } from '../src/core/persistence/capacity-snapshot.ts';
 
@@ -101,6 +102,27 @@ describe('engineKey through forwarding proxies', () => {
       }) as BrainEngine;
       await bindPublicationTimeouts(tx);
       expect(bound).toEqual([[`${publicationIdleTimeoutMs(120_000)}ms`]]);
+    } finally {
+      await brainA.unsetConfig('persistence.publication_ceiling_ms');
+    }
+  });
+});
+
+describe('engineKey through a recovered degraded engine', () => {
+  test('a ceiling read through the recovered wrapper bounds the live engine\'s publication transactions', async () => {
+    const degraded = createDegradedEngine({ initialError: new Error('down'), reconnect: async () => brainA, minIntervalMs: 0 });
+    expect(engineKey(degraded)).toBe(degraded);
+    await expect(degraded.getConfig('x')).rejects.toBeInstanceOf(DegradedRecoveredRetryError);
+    expect(engineKey(degraded)).toBe(brainA);
+    await brainA.setConfig('persistence.publication_ceiling_ms', '60000');
+    try {
+      expect(await readPublicationCeilingMs(degraded)).toBe(60_000);
+      const bound: unknown[][] = [];
+      const tx = Object.assign(Object.create(brainA), {
+        _pageTransaction: true, kind: 'postgres', async executeRaw(_sql: string, params?: unknown[]) { bound.push(params ?? []); return []; },
+      }) as BrainEngine;
+      await bindPublicationTimeouts(tx);
+      expect(bound).toEqual([[`${publicationIdleTimeoutMs(60_000)}ms`]]);
     } finally {
       await brainA.unsetConfig('persistence.publication_ceiling_ms');
     }

@@ -41,6 +41,7 @@
 import { PostgresEngine } from './postgres-engine.ts';
 import type { BrainEngine } from './engine.ts';
 import { DEGRADED_LAST_ERROR, DEGRADED_ON_RECOVER, DEGRADED_STATE } from './degraded-marker.ts';
+import { ENGINE_ROOT } from './engine-root.ts';
 
 export interface DegradedEngineOptions {
   /** The startup connect error — rethrown verbatim while dead so dispatch's
@@ -216,6 +217,10 @@ export function createDegradedEngine(opts: DegradedEngineOptions): BrainEngine {
   Object.defineProperty(target, 'kind', {
     get: () => (live ? live.kind : opts.kind ?? 'postgres'),
     enumerable: true,
+  });
+  // Once recovered, per-engine caches read through this wrapper share the live engine's entry (`engineKey`).
+  Object.defineProperty(target, ENGINE_ROOT, {
+    get: () => (live ? (live as unknown as Record<symbol, unknown>)[ENGINE_ROOT] : undefined),
   });
   target[DEGRADED_STATE] = () => live === null;
   target[DEGRADED_ON_RECOVER] = (cb: () => void) => {
