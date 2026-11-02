@@ -208,10 +208,14 @@ pass it to `get_page`.
 {"result_type":"fact","fact_id":"412","page_slug":"companies/acme-example","follow_up":{"op":"recall","args":{"entity":"companies/acme-example"}},"title":"Saved fact about companies/acme-example","chunk_text":"Saved fact (fact; valid from 2026-09-01; provenance: user update): The billing contact for Acme Example is Bob.","score":0.42,"source_id":"default"}
 ```
 
-`search.query_facts_arm=false` turns these rows off. A `query` with a token
-budget instead gets the facts block (on by default): up to 40 dated fact rows,
-oldest first, ahead of the pages and within 22% of the budget, in place of the
-facts arm. `search.query_facts_block=false` restores the arm.
+`search.query_facts_arm=false` turns these rows off. A `query` that passes
+`token_budget` instead gets the facts block (on by default): dated fact rows,
+oldest first, ahead of the pages, within 22% of the budget and at most 40 rows
+and at most `limit` rows, in place of the facts arm. Block rows carry the top
+page's `score`: they are placed first, not ranked above the pages, so read
+`result_type` rather than comparing scores. Without `token_budget`, fact
+rows only fill free slots, so `limit` caps the whole result.
+`search.query_facts_block=false` restores the arm.
 
 ## Recent facts in `_meta.brain_hot_memory`
 

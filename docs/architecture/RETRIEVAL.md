@@ -389,9 +389,12 @@ Two cross-cutting seams sit around the pipeline rather than inside it:
   after the pages, in place of the facts arm. No model call. Gates:
   `docs/eval/decisions/temporal-fact-reserve/`.
 - **Facts block (default on) and fact source pages (default off), GBRA-205.**
-  Every `query` with a token budget gets the reserve's dated facts, up to 22%
-  of the budget and 40 rows, oldest first ahead of the pages, in place of the
-  facts arm and the temporal reserve. On the sealed held-out set it answered
+  Every `query` whose caller passes `token_budget` gets the reserve's dated
+  facts, up to 22% of the budget, 40 rows and the caller's `limit`, oldest
+  first ahead of the pages, in place of the facts arm and the temporal
+  reserve. The no-budget evidence plan's implicit budget does not run it, so an
+  unbudgeted `query` returns at most `limit` rows (#8411). Block rows take the
+  top page's score: they are placed ahead, not ranked above the pages. On the sealed held-out set it answered
   183 of 200 questions against 151 without it (gbrain-evals
   `docs/benchmarks/2026-10-26-gbrain-8k-conversion.md`).
   `search.query_facts_block=false` turns it off; a config read error also
