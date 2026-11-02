@@ -44,6 +44,9 @@ import type { DoctorContext, DoctorEntry } from '../context.ts';
 import { VERSION } from '../../../version.ts';
 import { TURN_HOOK_NATIVE_INSPECT, hookLauncherProblem, inspectTurnHook, turnHookFix, type HookLauncherProblem, type TurnHookState } from '../../../core/setup/turn-hook-check.ts';
 import { localSetupRecords } from '../../../core/setup/local-receipts.ts';
+import { launcherLaneFindings, setupRerunArgv } from '../../../core/setup/launcher-lanes.ts';
+import { readSetupReceipt } from '../../../core/setup/claude-code.ts';
+import { readCodexSetupReceipt } from '../../../core/setup/codex.ts';
 import { brainFirstTarget, inspectBrainFirst, isBrainFirstHarness, readBrainFirstLedger, renderBrainFirstBlock, type BrainFirstAccess } from '../../../core/setup/brain-first.ts';
 
 export const HARNESS_SMOKE_TIMEOUT_MS = 15_000;
@@ -505,26 +508,43 @@ export function withTurnHooks(check: Check, views: InstructionBlockView[], hooks
 /**
  * The first setup or turn-rule hook that would let a session directory's
  * bunfig.toml or .env load (#8424): Claude Code user scope, every project a
- * setup receipt or a CLAUDE.local.md block names, and Codex. Files only.
+ * setup receipt or a CLAUDE.local.md block names, and Codex; then the stdio
+ * MCP entries and the bootstrap and harness lanes (#8426, #8428). Files only.
  */
 export function hookLauncherProblems(views: InstructionBlockView[]): HookLauncherProblem | null {
   const projects = new Set([
     ...localSetupRecords().filter((r) => r.harness === 'claude-code' && r.scope === 'project' && r.projectDir).map((r) => r.projectDir!),
     ...views.filter((v) => v.harness === 'claude-code' && basename(v.path) === 'CLAUDE.local.md').map((v) => dirname(v.path)),
   ]);
-  return hookLauncherProblem('claude-code') ?? [...projects].map((projectDir) => hookLauncherProblem('claude-code', { projectDir })).find((p) => p !== null) ?? hookLauncherProblem('codex');
+  return hookLauncherProblem('claude-code') ?? [...projects].map((projectDir) => hookLauncherProblem('claude-code', { projectDir })).find((p) => p !== null) ?? hookLauncherProblem('codex')
+    ?? launcherLaneFindings()[0] ?? null;
 }
 
 /** The setup command that rewrites the lane's hooks through the launcher; a project install or a foreign file needs the user. */
 export function hookLauncherFix(p: HookLauncherProblem): Action {
   const project = p.harness === 'claude-code' && p.source !== claudeUserSettingsPath() ? dirname(dirname(p.source)) : null;
-  const record = p.lane === 'setup' ? localSetupRecords().find((r) => r.harness === p.harness && r.status === 'installed' && (project ? r.projectDir === project : r.scope !== 'project')) : undefined;
-  const argv = ['gbrain', 'setup', p.harness, ...(p.lane === 'turn-rule' ? ['--instructions-only'] : []), ...(record && record.name !== 'gbrain' ? ['--name', record.name] : []), ...(project ? ['--scope', 'project'] : [])];
-  const why = "Rewrites gbrain's hooks to start gbrain from its own launcher directory, so a repository's bunfig.toml or .env never runs when a session opens there. `gbrain post-upgrade` refreshes the user-scope hooks too, except `gbrain setup codex`'s.";
+  const setupHarness = p.lane === 'setup' && p.harness !== 'opencode' ? p.harness : null;
+  const record = setupHarness ? localSetupRecords().find((r) => r.harness === setupHarness && r.status === 'installed' && (p.receiptPath ? r.path === p.receiptPath : project ? r.projectDir === project : r.scope !== 'project')) : undefined;
+  const receipt = record && (() => { try { return (setupHarness === 'claude-code' ? readSetupReceipt(record.path) : readCodexSetupReceipt(record.path)).setup; } catch { return null; } })();
+  const argv = receipt && setupHarness ? setupRerunArgv(setupHarness, receipt, project ?? undefined)
+    : ['gbrain', 'setup', p.harness, ...(p.lane === 'turn-rule' ? ['--instructions-only'] : []), ...(record && record.name !== 'gbrain' ? ['--name', record.name] : []), ...(project ? ['--scope', 'project'] : [])];
+  const why = "Rewrites gbrain's hooks to start gbrain from its own launcher directory, so a repository's bunfig.toml or .env never runs when a session opens there. `gbrain post-upgrade` refreshes Claude Code's user-scope setup hooks too; it never rewrites a Codex file.";
+  // gbrain setup codex rewrites the shared hooks.json and recomputes its trust, which can re-enable or newly trust a group, so only the user runs it.
+  const codexTrust = '`gbrain setup codex` rewrites the Codex hooks.json and its trust entries, so run it yourself';
   const verify = doctorVerify(NAME);
+  if (p.rerun) {
+    const run = `${p.rerunFrom ? `from ${p.rerunFrom}, ` : ''}run: ${p.rerun.join(' ')}`;
+    const laneWhy = `Rewrites the entry to start gbrain from its own launcher directory, so a repository's bunfig.toml or .env never runs when a session or MCP server starts there.${p.harness === 'codex' && p.rerun[1] === 'setup' ? " gbrain setup codex repeats the install's recorded decisions and re-trusts setup's own hook groups." : ''}`;
+    if (p.reason === 'foreign') return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. Remove that file (gbrain did not write it), then ${run}` };
+    if (p.edited) return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. Remove or rewrite that entry in ${p.source} (setup never overwrites an edit), then ${run}` };
+    if (p.setupOwned && p.harness === 'codex') return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. ${codexTrust}: ${p.rerun.join(' ')}` };
+    if (p.setupOwned) return { argv: p.rerun, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify, why: laneWhy };
+    return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. To move it onto gbrain's launcher, ${p.lane === 'mcp' && p.owner === 'none' ? `remove that entry from ${p.source} (gbrain does not rewrite it), then ` : ''}${run}` };
+  }
   if (p.reason === 'foreign') return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove that file (gbrain did not write it), then run: ${argv.join(' ')}` };
   if (p.edited) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove or rewrite that entry in ${p.source} (setup never overwrites an edit), then ${project ? `from ${project}, ` : ''}run: ${argv.join(' ')}` };
   if (project) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `gbrain's hooks for ${project} start gbrain in the session's directory. From ${project}, run: ${argv.join(' ')}` };
+  if (p.harness === 'codex') return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. ${codexTrust}: ${argv.join(' ')}` };
   return { argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify, why };
 }
 

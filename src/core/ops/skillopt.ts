@@ -11,6 +11,7 @@
 import type { Operation } from './contract.ts';
 import { opError } from './contract.ts';
 import { hostFix, invalidParam, paramUse } from './op-fix.ts';
+import { hookSessionCwd } from '../session-cwd.ts';
 
 // v0.41.18.0 (A7 + T16, codex finding #5): MCP op for federated / thin-client
 // brain installs to drive `gbrain onboard --auto` over MCP. Admin scope
@@ -218,7 +219,7 @@ const run_skillopt: Operation = {
     }
     const skillsDir = sharedSkill
       ? await (await import('../shared-skills/optimizer.ts')).sharedOptimizerSkillsDir(ctx, sharedSkill.source_id, sharedSkill.source_incarnation)
-      : autoDetectSkillsDirReadOnly(process.cwd()).dir;
+      : autoDetectSkillsDirReadOnly(hookSessionCwd()).dir;
     if (!skillsDir) {
       throw opError('config_error', 'run_skillopt: skills directory not found',
         'The brain host has no skills directory to optimize. Run `gbrain doctor --json` on the host; it reports where gbrain looks for skills.');

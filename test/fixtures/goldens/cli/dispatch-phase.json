@@ -2075,6 +2075,20 @@
     "mainRules": [
       {
         "commands": [
+          "serve"
+        ],
+        "condition": "command === 'serve'",
+        "connectsEngine": false,
+        "refusesThinClient": false,
+        "routesThinClient": false,
+        "terminates": false,
+        "thinClientCheck": false,
+        "unconditionalFor": [
+          "serve"
+        ]
+      },
+      {
+        "commands": [
           "--help",
           "-h"
         ],

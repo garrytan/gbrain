@@ -29,6 +29,7 @@ import {
   shouldEmitDbAccessMarker,
 } from '../core/pg-access-classify.ts';
 import { resolveBrainId as resolveBrainIdForDbMarker } from '../core/brain-resolver.ts';
+import { captureHookSessionCwd } from '../core/session-cwd.ts';
 import type { GBrainConfig } from '../core/config.ts';
 import type { AIGatewayConfig } from '../core/ai/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
@@ -317,6 +318,8 @@ async function main() {
 
   let command = args[0];
   installCliRoutingFor(() => command, args);
+  // #8426: a serve the hook launcher started reads the session directory from GBRAIN_HOOK_CWD, before any brain or source resolution.
+  if (command === 'serve') captureHookSessionCwd();
 
   if (!command || command === '--help' || command === '-h') {
     printHelp();

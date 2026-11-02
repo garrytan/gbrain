@@ -93,6 +93,7 @@ import {
 } from './format.ts';
 import { atomicWriteTextFile } from './atomic-write.ts';
 import { removeCodexHooks, writeCodexHooks } from './codex-hooks.ts';
+import { ensureHookLauncher, hookLauncherPath } from '../setup/hook-launcher.ts';
 import {
   removeCodexHttpServerBlock,
   writeCodexHttpServerBlock,
@@ -1456,6 +1457,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         }
         const r = writeClaudeHooksAt(settingsPath, {
           gbrainBin: bin,
+          hookLauncher: ensureHookLauncher(hookLauncherPath(d.gbrainHome)),
           env,
           events: hookEvents,
           marker: GBRAIN_HARNESS_MARKER_VALUE,
@@ -1581,7 +1583,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         } else {
           // Paths derive from THIS TARGET's config.toml (CODEX_HOME-resolved
           // upstream, test-injectable) — never the ambient global default.
-          const hr = writeCodexHooks({ gbrainBin: hooksBin, configPath: t.path!, hooksPath: join(dirname(t.path!), 'hooks.json') });
+          const hr = writeCodexHooks({ gbrainBin: hooksBin, hookLauncher: ensureHookLauncher(hookLauncherPath(d.gbrainHome)), configPath: t.path!, hooksPath: join(dirname(t.path!), 'hooks.json') });
           if (hr.ok) d.log(`Codex SessionEnd hook wired: ${hr.hooksPath} + trust entry in ${hr.configPath}.`);
           else for (const note of hr.notes) d.logError(note);
         }

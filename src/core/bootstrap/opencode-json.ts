@@ -45,6 +45,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
+import { isHookLauncherPath } from '../setup/hook-launcher.ts';
 import { chmodSync, copyFileSync, existsSync, readFileSync } from 'node:fs';
 import { applyEdits, modify, parse as parseJsonc, printParseErrorCode, type ParseError } from 'jsonc-parser';
 import { atomicWriteTextFile } from './atomic-write.ts';
@@ -164,6 +165,7 @@ function isGbrainShapedCommand(command: unknown): boolean {
   if (!Array.isArray(command) || command.length === 0) return false;
   const head = command[0];
   if (typeof head !== 'string') return false;
+  if (isHookLauncherPath(head)) return isGbrainShapedCommand(command.slice(1)); // user scope through the hook launcher (#8435)
   if (head === 'gbrain') return true; // PATH-resolved (project scope)
   if (/[\\/]gbrain$/.test(head)) return true; // absolute binary path
   // bun-run wrapper shim lane: `bun run <...>/gbrain/src/cli.ts` etc. The

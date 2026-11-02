@@ -19,13 +19,12 @@
  * session directory from GBRAIN_HOOK_CWD where it used process.cwd().
  */
 import { randomBytes } from 'node:crypto';
-import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { configDir } from '../config.ts';
 
 export const HOOK_LAUNCHER_NAME = 'gbrain-hook';
 export const HOOK_LAUNCHER_DIR = 'hook-launcher';
-export const HOOK_CWD_ENV = 'GBRAIN_HOOK_CWD';
 
 export const HOOK_LAUNCHER_SCRIPT = `#!/bin/sh
 # gbrain hook launcher v1, written by gbrain setup (#8424); gbrain setup rewrites it.
@@ -132,28 +131,14 @@ export function shellWords(command: string): string[] | null {
   return words;
 }
 
+/** An absolute path shaped like a hook launcher (<config dir>/hook-launcher/gbrain-hook). */
+export function isHookLauncherPath(path: string): boolean {
+  return path.startsWith('/') && path.endsWith(`/${HOOK_LAUNCHER_DIR}/${HOOK_LAUNCHER_NAME}`);
+}
+
 /** The launcher a hook command runs gbrain through, or null for a command that starts gbrain in the session directory. */
 export function hookLauncherInCommand(command: string): string | null {
-  const suffix = `/${HOOK_LAUNCHER_DIR}/${HOOK_LAUNCHER_NAME}`;
-  return shellWords(command)?.find((w) => w.startsWith('/') && w.endsWith(suffix)) ?? null;
+  return shellWords(command)?.find(isHookLauncherPath) ?? null;
 }
 
-let capturedSessionCwd: string | null = null;
-
-/**
- * `gbrain hook` start: take the session directory the launcher recorded and
- * drop it from the environment, so no child inherits a stale value. Resolved
- * like process.cwd() (sh keeps a symlinked $PWD), so project matching against
- * setup's realpath'd directories still holds.
- */
-export function captureHookSessionCwd(): void {
-  const recorded = process.env[HOOK_CWD_ENV];
-  delete process.env[HOOK_CWD_ENV];
-  if (!recorded || !recorded.startsWith('/')) { capturedSessionCwd = null; return; }
-  try { capturedSessionCwd = realpathSync(recorded); } catch { capturedSessionCwd = recorded; }
-}
-
-/** The session directory for `gbrain hook`: what the launcher recorded, else this process's directory. */
-export function hookSessionCwd(): string {
-  return capturedSessionCwd ?? process.cwd();
-}
+export { HOOK_CWD_ENV, captureHookSessionCwd, hookSessionCwd } from '../session-cwd.ts';

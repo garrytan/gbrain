@@ -31,6 +31,7 @@ import { atomicWriteTextFile } from './atomic-write.ts';
 import { normalizeSeatLabel } from '../context/seat.ts';
 import { detectExecutionEnvironment } from '../execution-env.ts';
 import { stdioServeArgv } from '../mcp-registration.ts';
+import { isHookLauncherPath } from '../setup/hook-launcher.ts';
 import type { McpSurface } from '../../mcp/surface.ts';
 import type { HarnessReceipt, HarnessTarget } from './format.ts';
 import {
@@ -303,7 +304,7 @@ export function classifyHarnessHook(
   const sub = (CLAUDE_HOOK_SUBCOMMAND as Record<string, string | undefined>)[event];
   if (!sub || !/(?:^|[\s'])GBRAIN_HOOK_LANE=harness(?=[\s']|$)/.test(e.command) || !/\shook(?:\s|$)/.test(e.command)) return null;
   const parsed = parseClaudeHookCommand(e.command);
-  if (!parsed || parsed.launcher !== undefined || parsed.env.GBRAIN_HOOK_LANE !== 'harness' || parsed.subcommand !== sub) {
+  if (!parsed || (parsed.launcher !== undefined && !isHookLauncherPath(parsed.launcher)) || parsed.env.GBRAIN_HOOK_LANE !== 'harness' || parsed.subcommand !== sub) {
     return { ownership: 'unowned', why: `not the exact \`hook ${sub}\` command gbrain writes (edited or extended)` };
   }
   if (identity === 'any') return { ownership: 'command', why: 'harness hook command shape' };
@@ -1129,6 +1130,8 @@ export interface ClaudeMcpRegistration {
   surface?: McpSurface | null;
   /** `serve --advertise`; null lists the whole surface (registrationAdvertise decides). */
   advertise?: McpSurface | null;
+  /** The trusted-directory launcher serve starts through (src/core/setup/hook-launcher.ts): the harness starts stdio servers in the session's directory (#8426). User scope only; a project file travels. */
+  hookLauncher?: string;
 }
 
 export type CodexMcpRegistration = Omit<ClaudeMcpRegistration, 'scope'>;
@@ -1156,7 +1159,7 @@ export function registerClaudeMcp(p: ClaudeMcpRegistration): string[][] {
     '-e', `GBRAIN_SOURCE=${p.sourceId}`,
   ];
   if (p.gbrainHome) argv.push('-e', `GBRAIN_HOME=${p.gbrainHome}`);
-  argv.push('--', ...stdioServeArgv(p.gbrainBin, p.surface, p.advertise ?? null));
+  argv.push('--', ...(p.hookLauncher ? [p.hookLauncher] : []), ...stdioServeArgv(p.gbrainBin, p.surface, p.advertise ?? null));
   return [argv];
 }
 
@@ -1173,6 +1176,6 @@ export function registerCodexMcp(p: CodexMcpRegistration): string[][] {
   const name = p.name ?? 'gbrain';
   const argv = ['codex', 'mcp', 'add', name, '--env', `GBRAIN_SOURCE=${p.sourceId}`];
   if (p.gbrainHome) argv.push('--env', `GBRAIN_HOME=${p.gbrainHome}`);
-  argv.push('--', ...stdioServeArgv(p.gbrainBin, p.surface, p.advertise ?? null));
+  argv.push('--', ...(p.hookLauncher ? [p.hookLauncher] : []), ...stdioServeArgv(p.gbrainBin, p.surface, p.advertise ?? null));
   return [argv];
 }

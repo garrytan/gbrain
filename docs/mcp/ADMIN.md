@@ -602,10 +602,12 @@ that inserted it. Everything else stays `unrecorded`; nothing is inferred.
 ## Read-only stdio serve
 
 **Say to your agent:** *"Connect this agent to my brain read-only."* The agent
-registers `gbrain serve --access read-only` as its stdio MCP command.
+registers `gbrain serve --access read-only` as its stdio MCP command, through
+gbrain's launcher (any `gbrain setup` run writes it), so the session
+directory's `bunfig.toml` and `.env` never load.
 
 ```bash
-claude mcp add gbrain -- "$(command -v gbrain)" serve --access read-only
+claude mcp add gbrain-ro -- "${GBRAIN_HOME:-$HOME}/.gbrain/hook-launcher/gbrain-hook" "$(command -v gbrain)" serve --access read-only
 gbrain serve --access read-only   # bare serve: the full surface, read-only
 ```
 

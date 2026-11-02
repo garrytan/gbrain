@@ -28,6 +28,7 @@ import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback
 import { isEngineDegraded, onEngineRecovered } from '../core/degraded-marker.ts';
 import { assertStdioSourceBindable } from './source-preflight.ts';
 import { readOnlyServeSkipsResidentDuties } from '../core/direct-pool-profile.ts';
+import { hookSessionCwd } from '../core/session-cwd.ts';
 
 /**
  * Largest JSON-RPC message the stdio server reads (the SDK default is 10 MiB,
@@ -106,7 +107,7 @@ function deferredBoot(opts: { degraded: boolean }) {
 
 export async function resolveMcpStdioSourceScope(
   engine: BrainEngine,
-  cwd: string = process.cwd(),
+  cwd: string = hookSessionCwd(),
   opts: { warmConfig?: boolean } = {},
 ): Promise<{
   sourceId: string;
@@ -465,7 +466,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     // as local CLI dispatch: GBRAIN_SOURCE, then .gbrain-source, then the
     // non-explicit fallback tiers. Non-explicit tiers may widen to federated
     // local reads; explicit/env/dotfile scopes stay scalar.
-    const sourceScope = await resolveMcpStdioSourceScope(engine, process.cwd(), { warmConfig: OPERATION_MANIFEST.find(o => o.name === name)?.mutating === false });
+    const sourceScope = await resolveMcpStdioSourceScope(engine, hookSessionCwd(), { warmConfig: OPERATION_MANIFEST.find(o => o.name === name)?.mutating === false });
     // v0.28: stdio MCP has no per-token auth (local pipe). Default the
     // takes-holder allow-list to ['world'] so agent-facing callers don't
     // see private hunches via takes_list / takes_search / query. Operators

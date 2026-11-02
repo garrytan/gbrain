@@ -205,7 +205,7 @@ describe('hooks written before the launcher: doctor flags them, post-upgrade mov
     expect(existsSync(b.marker)).toBe(false);
   });
 
-  test('codex: an old turn-rule group is flagged, then refreshed with a matching trust entry', async () => {
+  test('codex: an old turn-rule group Codex runs is flagged and named, and post-upgrade leaves hooks.json and its trust alone', async () => {
     const b = box();
     const hooks = join(b.home, '.codex', 'hooks.json');
     const config = join(b.home, '.codex', 'config.toml');
@@ -216,13 +216,13 @@ describe('hooks written before the launcher: doctor flags them, post-upgrade mov
       appendCodexTomlTable(config, ['hooks', 'state', `${hooks}:user_prompt_submit:0:0`], { trusted_hash: codexHookTrustHash('user_prompt_submit', old.hooks[0]!.command, old.hooks[0]!.timeout) }, 'test: Codex trusted the old hook');
       expect(codexHookGroupRuns(hooks, config, { event: 'UserPromptSubmit', index: 0 })).toBe(true);
       expect(hookLauncherProblem('codex')).toMatchObject({ lane: 'turn-rule', reason: 'session_cwd' });
-      await refreshHookLaunchers(() => {});
-      expect(hookLauncherProblem('codex')).toBeNull();
+      const before = { hooks: readFileSync(hooks, 'utf8'), config: readFileSync(config, 'utf8') };
+      const lines: string[] = [];
+      await refreshHookLaunchers((l) => lines.push(l));
+      expect(lines.join('\n')).toContain('run `gbrain setup codex --instructions-only` to rewrite it');
+      expect({ hooks: readFileSync(hooks, 'utf8'), config: readFileSync(config, 'utf8') }).toEqual(before);
+      expect(hookLauncherProblem('codex')).toMatchObject({ lane: 'turn-rule', reason: 'session_cwd' });
     });
-    const command = readJson(hooks).hooks.UserPromptSubmit[0].hooks[0].command;
-    expect(readFileSync(config, 'utf8')).toContain('user_prompt_submit');
-    expect(runHook(b, command).exitCode).toBe(0);
-    expect(existsSync(b.marker)).toBe(false);
   });
 
   test('codex: a turn-rule group Codex never trusted is left as is, so post-upgrade grants no trust', async () => {
@@ -237,7 +237,7 @@ describe('hooks written before the launcher: doctor flags them, post-upgrade mov
     await withEnv(env(b), async () => {
       const lines: string[] = [];
       await refreshHookLaunchers((l) => lines.push(l));
-      expect(lines.join('\n')).toContain('Codex does not run the codex turn-rule hook');
+      expect(lines.join('\n')).toContain('the codex turn-rule hook starts gbrain in the session\'s directory, so it is left as is');
     });
     expect(readJson(hooks)).toEqual({ hooks: { UserPromptSubmit: [group] } });
     expect(codexHookGroupRuns(hooks, config, { event: 'UserPromptSubmit', index: 0 })).toBe(false);
@@ -274,12 +274,17 @@ describe('doctor: the hook_session_cwd fix and how it joins the harness_wiring c
   const problem = (b: Box, over: Partial<HookLauncherProblem> = {}): HookLauncherProblem =>
     ({ harness: 'claude-code', lane: 'setup', source: join(b.home, '.claude', 'settings.json'), reason: 'session_cwd', detail: 'old hook', ...over });
 
-  test('the fix: the agent re-runs setup for user scope; a project, a foreign file or an edited entry goes to the user', async () => {
+  test('the fix: the agent re-runs setup for user scope; a project, a foreign file, an edited entry or any Codex rerun goes to the user', async () => {
     const b = box();
     await withEnv({ HOME: b.home, GBRAIN_HOME: b.home, CLAUDE_CONFIG_DIR: undefined }, async () => {
       expect(hookLauncherFix(problem(b))).toMatchObject({ actor: 'agent', argv: ['gbrain', 'setup', 'claude-code'] });
       expect(hookLauncherFix(problem(b, { lane: 'turn-rule' }))).toMatchObject({ actor: 'agent', argv: ['gbrain', 'setup', 'claude-code', '--instructions-only'] });
-      expect(hookLauncherFix(problem(b, { harness: 'codex', lane: 'turn-rule', source: join(b.home, '.codex', 'hooks.json') }))).toMatchObject({ actor: 'agent', argv: ['gbrain', 'setup', 'codex', '--instructions-only'] });
+      // gbrain setup codex rewrites the shared hooks.json and its trust (it can re-enable or newly trust a group), so the agent never runs it.
+      const codex = hookLauncherFix(problem(b, { harness: 'codex', lane: 'turn-rule', source: join(b.home, '.codex', 'hooks.json') }));
+      expect(codex).toMatchObject({ actor: 'user', consent: [] });
+      expect(codex.argv).toBeUndefined();
+      expect(codex.user_message).toContain('run it yourself: gbrain setup codex --instructions-only');
+      expect(hookLauncherFix(problem(b, { harness: 'codex', lane: 'mcp', source: join(b.home, '.codex', 'config.toml'), rerun: ['gbrain', 'setup', 'codex'], setupOwned: true, owner: 'setup' }))).toMatchObject({ actor: 'user', consent: [] });
       const project = join(b.root, 'proj');
       const p = hookLauncherFix(problem(b, { source: join(project, '.claude', 'settings.local.json') }));
       expect(p.actor).toBe('user');
