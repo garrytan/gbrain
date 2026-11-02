@@ -996,6 +996,19 @@ live in the database, so they are the same on a repo-less brain.
 | <a id="on_behalf_of_not_permitted"></a>`on_behalf_of_not_permitted` | The credential's `may_act_for` (for a stdio server, config `mcp.stdio_may_act_for`) does not list every audience entry. The message names the credential and the entries it may not act for. Nothing was read. | The brain operator decides: `fix` carries `gbrain auth rescope --token <name> --may-act-for <list>` (or `--client <id>`, or `gbrain config set mcp.stdio_may_act_for <list>`) with the full list to approve. The agent never runs it; until then, call without the audience. |
 | <a id="on_behalf_of_in_arguments"></a>`on_behalf_of_in_arguments` | A tool call carried `on_behalf_of` in its arguments (top level or an arguments-level `_meta`), where conversation text could set it. Nothing was read. | Remove it from the arguments. Harness code sends the audience as the header or request-level `_meta.on_behalf_of`; a stdio client that cannot set request-level `_meta` uses a credential bound to one member or config `mcp.stdio_member`. |
 
+## Attested-actor refusals
+
+A trusted system (QM) names the person a call serves in the `x-qm-actor` header, as an opaque canonical id that the
+brain operator links to a member (`gbrain access member link <member> --qm <id>`). The credential must hold the attest
+right (`gbrain auth rescope --client <id> --attest-actor qm`). These refusals come before any read or write, none
+reveals page content, and each carries its code in `structuredContent.error.code` as well as the JSON text block.
+Links and the right live in the database, so they are the same on a repo-less brain.
+
+| Code | What happened | What to do |
+|---|---|---|
+| <a id="actor_not_attested"></a>`actor_not_attested` | The call named a person in a way gbrain does not honour. `reason` says which: `no_attest_right` (the credential holds no attest right, or the token of an attest client was issued before the upgrade or by another grant: the message then says to take a new client-credentials token), `op_not_attested` (the operation is not in the credential's attested operations, or is not attestable yet: `list_write_conflicts`, `capture`, `extract_facts` and `takes_add|update|resolve|supersede`; also when a queued write or agent job tool call runs after its operation was removed from the list), `argument_mismatch` (the `acting_user` argument differs from the header), `argument_without_attestation` (`acting_user` came without an attested header), `invalid_actor_id` (the header or argument is not 1-256 visible ASCII characters), `actor_required` (`memory_write` named no attested person) or `audience_not_supported` (the request carries `x-qm-audience`, QM's channel audience, which is refused on every call until wave 2). Nothing was read or written. | `no_attest_right` and `op_not_attested` are the brain operator's call: `fix` carries `gbrain auth rescope --client <id> --attest-actor qm [--attest-ops <list>]`. The other five are fixed in the calling harness: send the canonical id unchanged in the header from the attest credential, the same value or nothing in `acting_user`, and no `x-qm-audience`. |
+| <a id="actor_unlinked"></a>`actor_unlinked` | The id is not linked to an enabled member: never linked, unlinked, or the member is disabled or removed. Ids compare exactly, with no case folding. Nothing was read or written. A queued write or agent job made for the person is refused the same way when its link is gone or now names another member. `memory_recall` answers it as an empty success instead (`structuredContent: {facts: [], truncated: false, code: "actor_unlinked"}`), so a person not yet linked reads nothing. | The brain operator links it: `gbrain access member link <member> --qm <id>` (or `gbrain access member enable <member>`). |
+
 ## Related
 
 - [Concurrent writes and durable receipts](concurrent-writes.md) — receipt states, retries, capacity limits

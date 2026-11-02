@@ -17,6 +17,8 @@ import { withRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core
 import { withCallerAccess } from '../core/search/private-visibility.ts';
 import { appliedAccessSummary, remoteCallerAccess } from '../core/access/caller.ts';
 import { audienceInArguments, audienceInArgumentsError, logAudienceAssertion, parseAudience, type AudienceAuditEvent, type AudienceChannels, type AudiencePrincipal } from '../core/access/audience.ts';
+import { ACTOR_ARGUMENT, actorNotAttested, EXTERNAL_ID_RE, resolveAttestedActor, type ActorChannels } from '../core/access/actor.ts';
+import { qmMemoryToolResult, recallArguments, unlinkedRecallResult } from '../core/ops/qm-memory.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
@@ -166,9 +168,13 @@ export interface ToolResult {
    * tool call still succeeds.
    */
   _meta?: Record<string, unknown>;
+  /** GST-359 C1: set only on refusals of a call that named an attested actor (`{ error: { code, message, reason, fix } }`). */
+  structuredContent?: Record<string, unknown>;
 }
 
 export interface DispatchOpts {
+  /** GST-359 C1: the x-qm-actor header the HTTP transport read (a trusted system names the person); stdio never sets it. */
+  actor?: ActorChannels;
   /**
    * GBRA-231: the shared-agent audience channels the transport read from the request (the X-Gbrain-On-Behalf-Of
    * header, request-level `_meta`), set by harness code. Never populated from tool arguments, which are refused.
@@ -911,32 +917,80 @@ export async function dispatchToolCall(
   // GBRA-218: a remote call also carries its credential's member identity, which every caller-aware read checks page readers against.
   // GBRA-231: or the audience a shared agent's harness asserts, resolved (and refused) on every call before any work.
   const run = async () => {
-    if (opts.remote === false) return withCallerAccess({ privateReadableSources: [] }, () => withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, params, resolved)));
+    if (opts.remote === false) return qmMemoryToolResult(name, await withCallerAccess({ privateReadableSources: [] }, () => withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, params, resolved))));
+    // GST-359 C1: or the person a trusted system attests (x-qm-actor), decided here too, before any work (access/actor.ts).
     let audience: AudiencePrincipal[] | null = null;
+    let attested: Awaited<ReturnType<typeof resolveAttestedActor>> = null;
     let access: Awaited<ReturnType<typeof remoteCallerAccess>>;
-    const assertion = (outcome: AudienceAuditEvent['outcome']) => logAudienceAssertion({ outcome, op: name, audience: audience ?? [], transport: opts.transport ?? 'unknown',
-      principal: opts.auth?.principal ? `${opts.auth.principal.kind}:${opts.auth.principal.id}` : opts.transport === 'stdio' ? 'local_stdio' : 'unknown' });
+    const header = opts.actor?.header ?? undefined;
+    const actorNamed = header !== undefined || opts.actor?.audience != null || (!!params && Object.prototype.hasOwnProperty.call(params, ACTOR_ARGUMENT));
+    const assertion = (outcome: AudienceAuditEvent['outcome'], reason?: string) => logAudienceAssertion({ outcome, op: name,
+      audience: [...(attested?.access.audience ?? audience ?? [])], transport: opts.transport ?? 'unknown',
+      principal: opts.auth?.principal ? `${opts.auth.principal.kind}:${opts.auth.principal.id}` : opts.transport === 'stdio' ? 'local_stdio' : 'unknown',
+      ...(actorNamed ? { actor: { system: 'qm', ...(header && EXTERNAL_ID_RE.test(header) ? { external_id: header } : {}), ...(reason ? { reason } : {}) } } : {}) });
     try {
       if (audienceInArguments(params)) throw audienceInArgumentsError();
       audience = parseAudience(opts.onBehalfOf);
-      access = await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience);
+      attested = await resolveAttestedActor(engine, { channels: opts.actor, params, op: name, opShape: operations.find(o => o.name === name),
+        auth: opts.auth, transport: opts.transport, audienceAsserted: audience !== null });
+      access = attested ? attested.access : await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience);
     } catch (e) {
-      if (!(e instanceof OperationError) || !String(e.code).startsWith('on_behalf_of_')) throw e;
-      assertion(e.code as AudienceAuditEvent['outcome']);
-      return errorResult(e, opts, { op: name });
+      // GST-359: a call that names a person gets every failure here (a lock timeout reading its link included) in the
+      // envelope QM reads, never a thrown call; anything else keeps the caller's own error path.
+      if (!(e instanceof OperationError) || !/^(on_behalf_of_|actor_)/.test(String(e.code))) {
+        if (!actorNamed) throw e;
+        return withStructuredError(errorResult(e, opts, { op: name }));
+      }
+      assertion(e.code as AudienceAuditEvent['outcome'], e.reason);
+      return qmMemoryToolResult(name, actorNamed ? actorRefusal(e, opts, name, header, params) : errorResult(e, opts, { op: name }));
     }
-    if (audience) assertion('accepted');
+    if (audience || attested) assertion('accepted');
+    const callParams = attested ? attested.params : params;
     return withCallerAccess(access, async () => {
-      const out = await withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, params, resolved));
+      const out = await withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, callParams, resolved));
       // _meta.access (MCP_META_CHANNELS.md): the view this call was answered under, for the harness; own producer, isolated.
       try { out._meta = { ...(out._meta ?? {}), access: await appliedAccessSummary(engine, opts.auth, [opts.sourceId, ...(opts.localFederatedSourceIds ?? [])]) }; } catch { /* the key is absent */ }
-      return out;
+      return qmMemoryToolResult(name, out);
     });
   };
   if (name === 'search' || name === 'query') return withSearchConnectionBudget(() => withRequestConfigSnapshot(engine, run));
   return readOnly
     ? withRequestConfigSnapshot(engine, run)
     : withoutRequestConfigSnapshot(run);
+}
+
+/**
+ * GST-359 C1: the refusal of a call that named an attested actor: gbrain's envelope (top-level `code` in the JSON text
+ * block) plus `structuredContent.error`, both of which QM reads. The single seam where memory_recall answers
+ * actor_unlinked as a success instead (GST-359 D): empty content and structuredContent {facts: [], truncated: false,
+ * code: 'actor_unlinked'}, the code also in `_meta.access`, so a person not yet linked reads nothing and QM's turn goes on.
+ */
+function actorRefusal(e: OperationError, opts: DispatchOpts, op: string, header: string | undefined, params: Record<string, unknown> | undefined): ToolResult {
+  if (op === 'memory_recall' && e.code === 'actor_unlinked') {
+    try { recallArguments(params); } catch (invalid) { if (invalid instanceof OperationError) return actorRefusal(invalid, opts, op, header, params); throw invalid; }
+    return { ...unlinkedRecallResult(), _meta: { access: { code: 'actor_unlinked', member: null, groups: [], audience: null, actor: { system: 'qm', external_id: header } } } };
+  }
+  return withStructuredError(errorResult(e, opts, { op }));
+}
+
+/** An error result with its JSON envelope's code, message, reason and fix also in `structuredContent.error`, which QM reads. */
+function withStructuredError(out: ToolResult): ToolResult {
+  try {
+    const env = JSON.parse(out.content[0]!.text) as Record<string, unknown>;
+    out.structuredContent = { error: { code: env.code, message: env.message, ...(env.reason ? { reason: env.reason } : {}), ...(env.fix ? { fix: env.fix } : {}) } };
+  } catch { /* the text block still carries the code */ }
+  return out;
+}
+
+/**
+ * GST-359 D: the refusal both HTTP transports give a request carrying x-qm-audience (a channel audience gbrain does
+ * not serve yet), before any work: the tools/call result (with structuredContent.error) and the JSON-RPC error for
+ * every other method that would read (tools/list, resources).
+ */
+export function audienceRefusal(op: string, opts: Pick<DispatchOpts, 'auth' | 'transport'>): { result: ToolResult; rpc: { code: number; message: string; data: Record<string, unknown> } } {
+  const e = actorNotAttested('audience_not_supported', { auth: opts.auth }, { op, transport: opts.transport });
+  return { result: actorRefusal(e, { remote: true, ...opts }, op, undefined, undefined),
+    rpc: { code: -32600, message: `actor_not_attested: ${e.message}`, data: { code: 'actor_not_attested', reason: 'audience_not_supported', message: e.message } } };
 }
 
 /** The response-meta hook's keys, or its failure message; never rejects (a hook failure degrades to no keys). */

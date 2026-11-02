@@ -11,6 +11,8 @@ import { readLocalWriter, currentVerifiedLocalWriter, takeRegisteredWriterRow, v
 import type { Principal, SqlEngine, WriteAuthority, WriteRequest } from './model.ts';
 import { authorizePageVisibility, excludesPrivateWritesAtAdmission } from './page-visibility.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
+import { parseStoredActor, storedActorIdentity } from '../access/actor.ts';
+import { sameAttestedActor } from '../access/member-facts.ts';
 import { pipelined, transactionMemo } from '../page-state/transactions.ts';
 
 function deny(message: string): never { throw new OperationError('permission_denied', message, 'Inspect the current writer registration and source/operation grants.'); }
@@ -58,13 +60,15 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
     if (!localGrant.sourceIds.includes('*') && !localGrant.sourceIds.includes(sourceId)) deny('The local grant excludes this source.');
   }
   const delegatedJobId = ctx.auth && ctx.viaSubagent ? jobNamespaceKey(ctx.subagentId) : undefined;
-  const audience = ctx.remote !== false ? currentCallerAccess().audience : null;
-  const actingFor = audience?.length ? [...audience] : undefined;
+  const access = ctx.remote !== false ? currentCallerAccess() : null;
+  // GST-359 C1: an attested call stores its actor (never the bare one-member audience), so publication re-resolves the link.
+  const actingFor: WriteAuthority['actingFor'] = access?.actor ? { ...access.actor } : access?.audience?.length ? [...access.audience] : undefined;
   const a: WriteAuthority = {
     version: 1, principal, remote: ctx.remote !== false, sourceId, sourceIncarnation,
     // GBRA-231: a channel audience (anything but one member) never relaxes privacy, so its ceiling hides private pages.
     excludePrivate: (actingFor !== undefined && currentCallerAccess().hidePrivate) || await excludesPrivateWritesAtAdmission(ctx.engine, ctx.remote !== false),
     ...(actingFor ? { actingFor } : {}),
+    ...(access?.actor && ctx.attestedOp ? { attestedOp: ctx.attestedOp } : {}),
     autoLinkTrusted: ctx.remote === false || ctx.viaSubagent === true && !ctx.auth && !!ctx.allowedSlugPrefixes?.length,
     takesHolders: ctx.remote === false ? null : [...(ctx.takesHoldersAllowList ?? ['world'])],
     scopes: [...(ctx.auth?.scopes ?? localGrant?.scopes ?? [])],
@@ -141,8 +145,15 @@ export async function slugDisclosable(engine: SqlEngine, a: WriteAuthority, slug
 export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, operation: string, slug: string, lock = false): Promise<void> {
   if (a.version !== 1 || !a.principal || !a.sourceId || !a.sourceIncarnation) deny('Missing durable write authority.');
   assertSkillWriteScopes(a.scopes, operation, a.remote);
-  if (!hasScope(a.scopes, a.delegated ? 'agent' : 'write') || !operationAllowed(a.operations, operation) || !prefixAllowed(a.slugPrefixes, slug)) deny('The operation exceeds its original accepted grant.');
+  // GST-359: an attested write is granted by the public operation the person's system called (memory_write runs remember).
+  const granted = a.actingFor && !Array.isArray(a.actingFor) && a.attestedOp ? a.attestedOp : operation;
+  if (!hasScope(a.scopes, a.delegated ? 'agent' : 'write') || !operationAllowed(a.operations, granted) || !prefixAllowed(a.slugPrefixes, slug)) deny('The operation exceeds its original accepted grant.');
   if ((a.delegated || a.restrictedNamespace) && (!a.delegatedPrefixes?.length || !matchesSlugAllowList(slug, a.delegatedPrefixes))) deny('The target exceeds the accepted delegated namespace.');
+  if (a.actingFor && !Array.isArray(a.actingFor)) {
+    const actor = parseStoredActor(a.actingFor);
+    if (!actor) deny('The accepted attested actor is malformed.');
+    await storedActorIdentity(engine, a.principal, actor, a.attestedOp ?? operation);
+  }
   const suffix = lock ? ' FOR SHARE' : '';
   if (a.principal.kind === 'oauth_client') {
     const [row] = await engine.executeRaw<Record<string, unknown>>(`SELECT deleted_at,scope,source_id,allowed_operations,
@@ -155,7 +166,7 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
     if (a.delegated) {
       if (!strings(row.bound_tools) || !row.bound_tools.some(t => t.replace(/^(?:brain_|mcp__gbrain__)/, '') === operation)) deny('The delegated tool was removed from the current grant.');
       if (!matchesSlugAllowList(slug, liveDelegation(row, a.delegatedJobId))) deny('The delegated namespace was narrowed.');
-    } else if (!operationAllowed(row.allowed_operations, operation) ||
+    } else if (!operationAllowed(row.allowed_operations, granted) ||
       (row.bound_slug_prefixes != null && (!strings(row.bound_slug_prefixes) || !prefixAllowed(row.bound_slug_prefixes, slug)))) deny('The current operation or slug grant excludes this write.');
     return;
   }
@@ -166,7 +177,7 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
     if (grant.permissionsMalformed) deny('The current legacy grant is malformed.');
     assertSkillWriteScopes(normalizeTokenScopes(row.scopes) ?? [], operation, a.remote);
     const liveOperations = grant.allowedOperations;
-    if (!operationAllowed(liveOperations, operation) || skillWrite(operation) && !liveOperations?.includes(operation)) deny('The current legacy operation grant excludes this write.');
+    if (!operationAllowed(liveOperations, granted) || skillWrite(operation) && !liveOperations?.includes(operation)) deny('The current legacy operation grant excludes this write.');
     if (!hasScope(grant.scopes, 'write') || authSourcesFromGrant(grant).sourceId !== a.sourceId) deny('The current token no longer permits this source write.');
     return;
   }
@@ -262,8 +273,10 @@ function onceReads(engine: BrainEngine): BrainEngine {
 export async function ownRequestAccessible(ctx: OperationContext, row: WriteRequest): Promise<boolean> {
   try {
     const engine = onceReads(ctx.engine);
-    const auth = await submissionAuthority({ ...ctx, engine }, row.operation, row.source_id, row.source_incarnation, row.slug);
+    const auth = await submissionAuthority({ ...ctx, engine, attestedOp: row.authority?.attestedOp }, row.operation, row.source_id, row.source_incarnation, row.slug);
     if (auth.principal.kind !== row.principal_kind || auth.principal.id !== row.principal_id) return false;
+    // GST-359 C2: under one attest credential, a receipt belongs to the person it was written for.
+    if (!sameAttestedActor(row.authority?.actingFor)) return false;
     await authorizeStoredRequest(engine, row);
     return true;
   } catch (error) {

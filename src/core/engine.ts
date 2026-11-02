@@ -708,8 +708,8 @@ export interface FactListOpts {
   excludePrivate?: boolean;
 }
 
-/** FactListOpts plus the entity the recall cursor reads (listFactsSince, listFactsKeyset) narrow to before LIMIT. */
-export type RecallFactReadOpts = FactListOpts & { entitySlug?: string };
+/** FactListOpts plus the entity (and the page the fact sits on) listFactsSince and listFactsKeyset narrow to before LIMIT. */
+export type RecallFactReadOpts = FactListOpts & { entitySlug?: string; sourceMarkdownSlug?: string };
 
 /** Per-source operational health snapshot consumed by `gbrain doctor`. */
 export interface FactsHealth {
@@ -2364,13 +2364,13 @@ export interface BrainEngine {
    * embeddings; recency fallback otherwise. `arm: 'keyword'` ranks the same
    * bucket by full-text rank instead (C2 `facts.candidate_fusion`).
    * `attributedTo` (the new fact's speaker) drops rows a different known
-   * speaker asserted before the k cap, in every arm; NULL rows stay candidates.
+   * speaker asserted before the k cap, in every arm; NULL rows stay candidates; `excludeMemberPages` drops member pages.
    */
   findCandidateDuplicates(
     source_id: string,
     entitySlug: string,
     factText: string,
-    opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; arm?: 'keyword'; attributedTo?: FactAttribution | null },
+    opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; arm?: 'keyword'; attributedTo?: FactAttribution | null; excludeMemberPages?: boolean; onlyPage?: string },
   ): Promise<FactRow[]>;
 
   /**
