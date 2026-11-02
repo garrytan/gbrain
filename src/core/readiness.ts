@@ -415,11 +415,12 @@ const SURFACE_GLOSS: Record<McpSurface, string> = {
 function stdioRegistration(h: ReadinessHarness, bin: string, chosen?: McpSurface): Action {
   const surface = chosen ?? REGISTRATION_SURFACE;
   const advertise = registrationAdvertise({ userChoseSurface: chosen !== undefined });
-  // Claude Code and Codex start stdio servers in the session's directory, so setup registers serve behind its launcher (#8426).
-  const serve = h === 'opencode' ? stdioServeArgv(bin, surface, advertise) : [hookLauncherPath(), ...stdioServeArgv(bin, surface, advertise)];
+  // Each harness starts a user-scope stdio server in the session's directory, so its writer registers serve behind gbrain's launcher (#8426, #8435).
+  const serve = [hookLauncherPath(), ...stdioServeArgv(bin, surface, advertise)];
   const argv = h === 'opencode' ? ['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks', ...(chosen ? ['--surface', chosen] : [])]
-    : ['gbrain', 'setup', h, '--no-hooks', '--no-instructions', '--gbrain-bin', bin, ...(chosen ? ['--surface', chosen] : [])];
-  const hooks = h === 'opencode' ? ' No lifecycle hooks are installed (--no-hooks); it must run inside an initialized agent workspace.' : ' No hooks, instruction blocks, tool pre-approvals or tokens are added.';
+    : ['gbrain', 'setup', h, '--no-hooks', '--gbrain-bin', bin, ...(chosen ? ['--surface', chosen] : [])];
+  const hooks = h === 'opencode' ? ' No lifecycle hooks are installed (--no-hooks); it must run inside an initialized agent workspace.'
+    : ' It also writes gbrain\'s brain-first instruction block, and records hooks as off (--no-hooks), so gbrain\'s per-turn hooks (setup\'s and the plugin\'s) stay off until setup runs again without it. No tool pre-approvals or tokens are added.';
   return {
     argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false,
     why: `Registers gbrain as a stdio MCP server (${serve.join(' ')}, ${advertise ? `listing ${SURFACE_GLOSS[advertise]} and request_tools; ${SURFACE_GLOSS[surface]} stays callable` : SURFACE_GLOSS[surface]}) in ${HARNESS_DESTINATION[h]}, so new ${HARNESS_LABEL[h]} sessions get memory tools.${hooks}`,

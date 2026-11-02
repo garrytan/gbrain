@@ -18,12 +18,12 @@
 import { readFileSync } from 'node:fs';
 import { configDir } from '../config.ts';
 import { hookEntryHash, parseClaudeHookCommand } from '../bootstrap/hooks.ts';
-import { codexHookCensus, codexHookGroupRuns, type CodexHookCensusGroup } from '../bootstrap/codex-hooks.ts';
+import { codexHookCensus } from '../bootstrap/codex-hooks.ts';
 import { join } from 'node:path';
-import { GBRAIN_HOOK_MARKER_KEY, GBRAIN_SETUP_MARKER_VALUE, claudeUserSettingsPath, codexConfigPath, codexHooksPath, type ClaudeHookEvent } from '../bootstrap/host-specs.ts';
+import { GBRAIN_HOOK_MARKER_KEY, GBRAIN_SETUP_MARKER_VALUE, claudeUserSettingsPath, codexHooksPath, type ClaudeHookEvent } from '../bootstrap/host-specs.ts';
 import { applyClaudeSetup, claudeSetupPaths, inspectClaudeSetup, readSetupReceipt, type ClaudeSetupPlan } from './claude-code.ts';
 import { codexSetupPaths, readCodexSetupReceipt } from './codex.ts';
-import { hookLauncherInCommand, hookLauncherPath, hookLauncherState, shellWords } from './hook-launcher.ts';
+import { hookLauncherInCommand, hookLauncherPath, hookLauncherState } from './hook-launcher.ts';
 import { localSetupRecords } from './local-receipts.ts';
 import { launcherLaneFindings } from './launcher-lanes.ts';
 import { hasTurnRuleHook, isTurnRuleEntry, syncTurnRuleHook, TURN_RULE_LANE_TOKEN } from './turn-hook.ts';
@@ -43,19 +43,6 @@ function claudeHookEntries(path: string): Array<Record<string, unknown>> {
     .filter((e): e is Record<string, unknown> => !!e && typeof e === 'object' && typeof (e as Record<string, unknown>).command === 'string');
 }
 
-/** The words after \`env\` that are not assignments: [<launcher>] <bin> hook …; GBRAIN_HOME from the assignments. */
-function codexCommandParts(command: string): { gbrainBin: string; gbrainHome?: string } | null {
-  const words = shellWords(command) ?? [];
-  if (words[0] !== 'env') return null;
-  let i = 1;
-  let gbrainHome: string | undefined;
-  for (; i < words.length && /^[A-Z_]+=/.test(words[i]!); i++) if (words[i]!.startsWith('GBRAIN_HOME=')) gbrainHome = words[i]!.slice('GBRAIN_HOME='.length);
-  const rest = words.slice(i);
-  const at = rest.indexOf('hook');
-  const gbrainBin = at > 0 ? rest[at - 1]! : undefined;
-  return gbrainBin?.startsWith('/') ? { gbrainBin, ...(gbrainHome ? { gbrainHome } : {}) } : null;
-}
-
 /** The launcher of the install the hook's GBRAIN_HOME names, so a hook never depends on another install's directory. */
 const launcherFor = (gbrainHome: string | undefined) => (gbrainHome ? { hookLauncher: hookLauncherPath(join(gbrainHome, '.gbrain')) } : {});
 
@@ -67,15 +54,10 @@ function refreshTurnRule(log: (line: string) => void): void {
     log(`Hook launcher: claude-code turn-rule hook ${o.action === 'write' ? 'now starts gbrain from its own directory' : `left as is (${o.detail}${o.next ? `; run ${o.next}` : ''})`}.`);
   } else if (claude) log('Hook launcher: the claude-code turn-rule hook was edited, so it is left as is; run `gbrain setup claude-code --instructions-only` to rewrite it.');
   if (!hasTurnRuleHook('codex')) return;
-  let group: CodexHookCensusGroup | undefined;
-  try { group = codexHookCensus(codexHooksPath()).find((g) => g.lane === 'turn-rule' && g.commands.some((c) => c.includes(TURN_RULE_LANE_TOKEN) && needsLauncher(c))); } catch { return; }
-  if (!group) return;
-  // Rewriting re-trusts the group, so only a group Codex already runs moves: an untrusted or disabled one keeps Codex's approval gate.
-  if (!codexHookGroupRuns(codexHooksPath(), codexConfigPath(), group)) { log('Hook launcher: Codex does not run the codex turn-rule hook (not trusted, or disabled), so it is left as is; run `gbrain setup codex --instructions-only` to rewrite it.'); return; }
-  const parts = codexCommandParts(group.commands.find((c) => c.includes(TURN_RULE_LANE_TOKEN))!);
-  if (!parts) { log('Hook launcher: the codex turn-rule hook could not be read, so it is left as is; run `gbrain setup codex --instructions-only` to rewrite it.'); return; }
-  const o = syncTurnRuleHook({ harness: 'codex', gbrainBin: parts.gbrainBin, gbrainHome: parts.gbrainHome, paths: launcherFor(parts.gbrainHome), rerun: 'gbrain setup codex --instructions-only' });
-  log(`Hook launcher: codex turn-rule hook ${o.action === 'write' ? 'now starts gbrain from its own directory' : `left as is (${o.detail}${o.next ? `; run ${o.next}` : ''})`}.`);
+  let stale = false;
+  try { stale = codexHookCensus(codexHooksPath()).some((g) => g.lane === 'turn-rule' && g.commands.some((c) => c.includes(TURN_RULE_LANE_TOKEN) && needsLauncher(c))); } catch { return; }
+  // Every install shares one hooks.json and a rewrite recomputes every turn-rule group's trust, so the codex hook is only named here.
+  if (stale) log('Hook launcher: the codex turn-rule hook starts gbrain in the session\'s directory, so it is left as is (a rewrite moves Codex trust); run `gbrain setup codex --instructions-only` to rewrite it.');
 }
 
 async function refreshSetup(log: (line: string) => void): Promise<void> {
@@ -97,7 +79,7 @@ async function refreshSetup(log: (line: string) => void): Promise<void> {
         if (!ours.some(needsLauncher) && mcp !== 'owned') continue;
         if (receipt.scope === 'project') { log(`Hook launcher: gbrain setup's entries for ${receipt.project_dir} start gbrain in the session's directory; from ${receipt.project_dir}, run ${rerun} --scope project.`); continue; }
         if (mcp !== 'plugin' && mcp !== 'current' && mcp !== 'owned') { log(`Hook launcher: gbrain's claude-code hooks start gbrain in the session's directory; run ${rerun} to rewrite them.`); continue; }
-        const applied = await applyClaudeSetup(plan, receipt.consent, { pluginOwner: receipt.mcp_plugin ?? null, brainCreated: false, mcpMustBeSetups: true });
+        const applied = await applyClaudeSetup(plan, receipt.consent, { pluginOwner: receipt.mcp_plugin ?? null, brainCreated: false, refreshOf: receipt });
         const left = new Set(claudeHookEntries(paths.settingsPath).filter((e) => needsLauncher(e.command as string)).map((e) => hookEntryHash(e) ?? ''));
         const kept = Object.entries(applied.edited).filter(([, hash]) => left.has(hash)).map(([event]) => event);
         log(kept.length > 0
@@ -125,7 +107,7 @@ export async function refreshHookLaunchers(log: (line: string) => void = console
   try { await refreshSetup(log); } catch (e) { log(`Hook launcher: setup's hooks were not refreshed (${(e as Error).message}); run gbrain doctor --only harness_wiring.`); }
   // The other lanes are named, never rewritten here: bootstrap's writers run from the workspace, and their Codex entries move trust.
   try {
-    for (const f of launcherLaneFindings().filter((x) => x.owner !== 'setup')) log(`Hook launcher: ${f.detail}; ${f.edited ? 'it was edited after setup wrote it, so it is kept as is; remove or rewrite it, then ' : f.owner === 'none' ? 'gbrain setup did not write it, so remove it, then ' : ''}${f.rerunFrom ? `from ${f.rerunFrom}, ` : ''}run ${f.rerun.join(' ')} to move it onto gbrain's launcher.`);
+    for (const f of launcherLaneFindings().filter((x) => x.owner !== 'setup')) log(`Hook launcher: ${f.detail}; ${f.edited ? 'it was edited after setup wrote it, so it is kept as is; remove or rewrite it, then ' : f.owner === 'none' ? 'gbrain did not write it, so remove it, then ' : ''}${f.rerunFrom ? `from ${f.rerunFrom}, ` : ''}run ${f.rerun.join(' ')} to move it onto gbrain's launcher.`);
   } catch (e) { log(`Hook launcher: the bootstrap lanes were not checked (${(e as Error).message}); run gbrain doctor --only harness_wiring.`); }
 }
 

@@ -1215,8 +1215,10 @@ Relay the bundle's one `user_message` ("Reply 'defaults' to accept …"); apply
 each answer with the decision's `argv`. Then:
 
 1. Register gbrain with the harness using the `harness_wiring` fix. The
-   registration always uses the absolute gbrain path and `--surface starter`
-   (for example `claude mcp add gbrain -- /abs/path/gbrain serve --surface starter`;
+   registration always uses the absolute gbrain path and `--surface starter`,
+   started through gbrain's launcher (for example `gbrain setup claude-code
+   --no-hooks --gbrain-bin /abs/path/gbrain`, which registers
+   `<config dir>/hook-launcher/gbrain-hook /abs/path/gbrain serve --surface starter`;
    `gbrain init --surface <verbs|starter|full>` changes the surface it prints).
 2. Run `gbrain doctor --only harness_wiring --json`, a read-only smoke check:
    it reads the registration, then either finds the registered server already

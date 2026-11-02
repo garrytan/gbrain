@@ -70,10 +70,11 @@ const file_upload: Operation = {
     if (ctx.dryRun) return { dry_run: true, action: 'file_upload', path: p.path };
 
     const { statSync } = await import('fs');
-    const { basename, extname } = await import('path');
+    const { basename, extname, resolve } = await import('path');
     const { hashStorageFile, uploadUnchangedFile } = await import('../storage.ts');
 
-    const filePath = p.path as string;
+    // A relative path means the session directory a launcher-started serve records, the same root it is confined to (#8426).
+    const filePath = resolve(hookSessionCwd(), p.path as string);
     const pageSlug = (p.page_slug as string) || null;
 
     // Fix 1 / B5 / H5 / M4: validate path, slug, filename before any filesystem read.

@@ -23,16 +23,16 @@
 # launcher's directory with the session directory in GBRAIN_HOOK_CWD, and on a miss it exits 0
 # with no output, so a plugin-first install without the CLI shows no hook
 # error on every turn. With GBRAIN_HOOK_LANE=plugin it also exits 0 silently
-# when the binary predates the plugin lane (PLUGIN_LANE_MIN): such a CLI
-# ignores the lane and would fire the rule a second time next to setup's own
-# hook. The version probe runs once per binary: its verdict is cached under
+# when the binary predates the plugin lane or GBRAIN_HOOK_CWD (PLUGIN_LANE_MIN):
+# such a CLI ignores the lane, or reads this directory as the session's, and
+# would fire the rule a second time next to setup's own hook. The version probe runs once per binary: its verdict is cached under
 # <GBRAIN_HOME or HOME>/.gbrain/cache/plugin-hook-cli, keyed by the resolved
 # path and valid while the cache is newer than the binary (`test -nt`, a
 # shell builtin), so a cached turn starts no extra process.
 
 set -eu
 
-PLUGIN_LANE_MIN=0.60.498.0
+PLUGIN_LANE_MIN=0.60.547.0
 HOOK=0
 [ "${1:-}" = "hook" ] && HOOK=1
 

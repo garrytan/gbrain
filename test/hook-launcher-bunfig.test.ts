@@ -205,7 +205,7 @@ describe('hooks written before the launcher: doctor flags them, post-upgrade mov
     expect(existsSync(b.marker)).toBe(false);
   });
 
-  test('codex: an old turn-rule group is flagged, then refreshed with a matching trust entry', async () => {
+  test('codex: an old turn-rule group Codex runs is flagged and named, and post-upgrade leaves hooks.json and its trust alone', async () => {
     const b = box();
     const hooks = join(b.home, '.codex', 'hooks.json');
     const config = join(b.home, '.codex', 'config.toml');
@@ -216,13 +216,13 @@ describe('hooks written before the launcher: doctor flags them, post-upgrade mov
       appendCodexTomlTable(config, ['hooks', 'state', `${hooks}:user_prompt_submit:0:0`], { trusted_hash: codexHookTrustHash('user_prompt_submit', old.hooks[0]!.command, old.hooks[0]!.timeout) }, 'test: Codex trusted the old hook');
       expect(codexHookGroupRuns(hooks, config, { event: 'UserPromptSubmit', index: 0 })).toBe(true);
       expect(hookLauncherProblem('codex')).toMatchObject({ lane: 'turn-rule', reason: 'session_cwd' });
-      await refreshHookLaunchers(() => {});
-      expect(hookLauncherProblem('codex')).toBeNull();
+      const before = { hooks: readFileSync(hooks, 'utf8'), config: readFileSync(config, 'utf8') };
+      const lines: string[] = [];
+      await refreshHookLaunchers((l) => lines.push(l));
+      expect(lines.join('\n')).toContain('run `gbrain setup codex --instructions-only` to rewrite it');
+      expect({ hooks: readFileSync(hooks, 'utf8'), config: readFileSync(config, 'utf8') }).toEqual(before);
+      expect(hookLauncherProblem('codex')).toMatchObject({ lane: 'turn-rule', reason: 'session_cwd' });
     });
-    const command = readJson(hooks).hooks.UserPromptSubmit[0].hooks[0].command;
-    expect(readFileSync(config, 'utf8')).toContain('user_prompt_submit');
-    expect(runHook(b, command).exitCode).toBe(0);
-    expect(existsSync(b.marker)).toBe(false);
   });
 
   test('codex: a turn-rule group Codex never trusted is left as is, so post-upgrade grants no trust', async () => {
@@ -237,7 +237,7 @@ describe('hooks written before the launcher: doctor flags them, post-upgrade mov
     await withEnv(env(b), async () => {
       const lines: string[] = [];
       await refreshHookLaunchers((l) => lines.push(l));
-      expect(lines.join('\n')).toContain('Codex does not run the codex turn-rule hook');
+      expect(lines.join('\n')).toContain('the codex turn-rule hook starts gbrain in the session\'s directory, so it is left as is');
     });
     expect(readJson(hooks)).toEqual({ hooks: { UserPromptSubmit: [group] } });
     expect(codexHookGroupRuns(hooks, config, { event: 'UserPromptSubmit', index: 0 })).toBe(false);

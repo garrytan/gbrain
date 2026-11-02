@@ -123,7 +123,7 @@ export function inspectTurnHook(harness: string, opts: { projectDir?: string } =
  * gbrain did not write.
  */
 export interface HookLauncherProblem {
-  harness: 'claude-code' | 'codex';
+  harness: 'claude-code' | 'codex' | 'opencode';
   /** setup and turn-rule: hooks; mcp, harness and bootstrap: the other lanes (launcher-lanes.ts), which carry their own rerun. */
   lane: 'setup' | 'turn-rule' | LauncherLane;
   /** The settings or hooks file holding the entry. */
@@ -137,6 +137,7 @@ export interface HookLauncherProblem {
   rerun?: string[];
   rerunFrom?: string;
   setupOwned?: boolean;
+  owner?: 'setup' | 'bootstrap' | 'none';
 }
 
 /** The hook hashes a harness's setup receipts own and the ones they record as edited by the user: Claude Code can drop the `_gbrain` marker on a rewrite, and setup owns its entries by hash. */

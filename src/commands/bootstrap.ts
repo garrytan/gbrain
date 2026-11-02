@@ -1281,12 +1281,13 @@ async function runHooks(
     if (harness === 'opencode') {
       // Direct-writer lane (no exec): registrations land via the JSONC
       // writer whose 4-state fingerprint is the [FIX7] check. Scope resolves
-      // to a FILE here — user → global config (absolute binary path),
+      // to a FILE here — user → global config (hook launcher + absolute binary, #8435),
       // project → committed-candidate opencode.json (PATH-resolved command;
       // no absolute machine paths in a file that travels, and no fail-open
       // analog exists — the sharing warning below is the mitigation).
       const configPath = mcpScope === 'project' ? opencodeProjectConfigPath(ws) : opencodeGlobalConfigPath();
-      const command = stdioServeArgv(mcpScope === 'project' ? 'gbrain' : gbrainBin, surfaceFlag ?? undefined, registrationAdvertise({ userChoseSurface: surfaceFlag !== null }));
+      const ocLauncher = mcpScope === 'project' ? [] : [hookLauncherPath(home)];
+      const command = [...ocLauncher, ...stdioServeArgv(mcpScope === 'project' ? 'gbrain' : gbrainBin, surfaceFlag ?? undefined, registrationAdvertise({ userChoseSurface: surfaceFlag !== null }))];
       const entry = {
         kind: 'local' as const,
         name: 'gbrain',
@@ -1317,7 +1318,8 @@ async function runHooks(
           const existingKind = opencodeEntryKind(existing, 'gbrain', { sourceId });
           const priorCommand = ((existing.mcp as Record<string, { command?: unknown }> | undefined)?.gbrain)?.command;
           const prior = existingKind !== 'absent' && !surfaceFlag && Array.isArray(priorCommand) ? registeredSurface(priorCommand.join(' ')) : undefined;
-          if (prior !== undefined) entry.command = stdioServeArgv(command[0], prior, registeredAdvertise((priorCommand as unknown[]).join(' ')));
+          if (prior !== undefined) entry.command = [...ocLauncher, ...stdioServeArgv(command[ocLauncher.length]!, prior, registeredAdvertise((priorCommand as unknown[]).join(' ')))];
+          if (ocLauncher.length) ensureHookLauncher(ocLauncher[0]!);
           if (existingKind === 'ours-other-source') {
             console.error(`existing 'gbrain' opencode entry targets a DIFFERENT workspace — replacing it.`);
           }

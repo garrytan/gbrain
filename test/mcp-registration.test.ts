@@ -67,14 +67,14 @@ describe('REGISTRATION_SURFACE and stdioServeArgv', () => {
 describe('every stdio registration path builds from REGISTRATION_SURFACE', () => {
   test('readiness harness_wiring: Claude Code and Codex pin the surface; opencode runs bootstrap hooks', () => {
     // #8426: Claude Code and Codex register through gbrain setup, which puts serve behind the hook launcher.
-    expect(wiring('claude-code')?.argv).toEqual(['gbrain', 'setup', 'claude-code', '--no-hooks', '--no-instructions', '--gbrain-bin', BIN]);
-    expect(wiring('codex')?.argv).toEqual(['gbrain', 'setup', 'codex', '--no-hooks', '--no-instructions', '--gbrain-bin', BIN]);
+    expect(wiring('claude-code')?.argv).toEqual(['gbrain', 'setup', 'claude-code', '--no-hooks', '--gbrain-bin', BIN]);
+    expect(wiring('codex')?.argv).toEqual(['gbrain', 'setup', 'codex', '--no-hooks', '--gbrain-bin', BIN]);
     expect(wiring('opencode')?.argv).toEqual(['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks']);
     expect(wiring('claude-code')?.why).toContain(`${hookLauncherPath()} ${stdioServeArgv(BIN, REGISTRATION_SURFACE, REGISTRATION_ADVERTISE).join(' ')}`);
   });
 
   test('init --surface reaches the readiness fix (the quickstart line and the first-run harness decision read it)', () => {
-    expect(wiring('claude-code', 'starter')?.argv).toEqual(['gbrain', 'setup', 'claude-code', '--no-hooks', '--no-instructions', '--gbrain-bin', BIN, '--surface', 'starter']);
+    expect(wiring('claude-code', 'starter')?.argv).toEqual(['gbrain', 'setup', 'claude-code', '--no-hooks', '--gbrain-bin', BIN, '--surface', 'starter']);
     expect(wiring('claude-code', 'starter')?.why).toContain(`${BIN} serve --surface starter`);
     expect(wiring('opencode', 'verbs')?.argv).toEqual(['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks', '--surface', 'verbs']);
     const missing = harnessWiringEntry({ transport: 'cli', harnesses: [], lockOwner: null, gbrainBin: BIN }).fix;
@@ -165,7 +165,19 @@ describe('S0: README, docs/mcp, INSTALL, BOOTSTRAP, push-context and the manifes
         }
       });
     }
-    expect(commands).toBeGreaterThan(10);
+    expect(commands).toBeGreaterThanOrEqual(10);
+    expect(offenders).toEqual([]);
+  });
+
+  test('#8436: no install doc teaches a Claude Code or Codex stdio mcp add of serve that skips gbrain\'s launcher', () => {
+    const offenders: string[] = [];
+    for (const file of DOCS) {
+      readFileSync(join(ROOT, file), 'utf8').split('\n').forEach((line, i) => {
+        for (const m of line.matchAll(/\b(?:claude|codex)\s+mcp add\b[^`\n|]*?\bserve\b/g)) {
+          if (!m[0].includes('hook-launcher/gbrain-hook')) offenders.push(`${file}:${i + 1}: ${line.trim()}`);
+        }
+      });
+    }
     expect(offenders).toEqual([]);
   });
 

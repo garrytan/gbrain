@@ -982,9 +982,25 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     const before = { settings: readFileSync(settings(b), 'utf8'), config: readFileSync(claudeJson(b), 'utf8') };
     await withEnv(env(b), async () => {
       const plan = { name: r.name, scope: r.scope, launcher: r.launcher, brainHome: r.gbrain_home, sourceId: r.source_id, surface: r.surface, advertise: r.advertise ?? null, events: Object.keys(r.hooks.owned) as any };
-      await expect(applyClaudeSetup(plan, r.consent, { pluginOwner: null, brainCreated: false, mcpMustBeSetups: true })).rejects.toThrow('MCP entry changed');
+      await expect(applyClaudeSetup(plan, r.consent, { pluginOwner: null, brainCreated: false, refreshOf: r })).rejects.toThrow('MCP entry changed');
     });
     expect({ settings: readFileSync(settings(b), 'utf8'), config: readFileSync(claudeJson(b), 'utf8') }).toEqual(before);
+  });
+
+  test('claude-code: the hook rewrite refuses under the lock when another install replaced the receipt it planned from, and writes nothing', async () => {
+    const b = box();
+    expect((await setup(b, ['claude-code', '--json'])).exitCode).toBe(0);
+    downgradeClaude(b);
+    // post-upgrade read this receipt; before it took the lock, the name was removed and installed again, so the entry is the new install's and still setup's.
+    const planned = readSetupReceipt(receipt(b)).setup!;
+    const replaced = { ...planned, consent: { ...planned.consent, recorded_at: '2026-01-01T00:00:00.000Z' } };
+    writeFileSync(receipt(b), JSON.stringify(replaced, null, 2));
+    const before = { settings: readFileSync(settings(b), 'utf8'), config: readFileSync(claudeJson(b), 'utf8'), receipt: readFileSync(receipt(b), 'utf8') };
+    await withEnv(env(b), async () => {
+      const plan = { name: planned.name, scope: planned.scope, launcher: planned.launcher, brainHome: planned.gbrain_home, sourceId: planned.source_id, surface: planned.surface, advertise: planned.advertise ?? null, events: Object.keys(planned.hooks.owned) as any };
+      await expect(applyClaudeSetup(plan, planned.consent, { pluginOwner: null, brainCreated: false, refreshOf: planned })).rejects.toThrow('setup receipt changed');
+    });
+    expect({ settings: readFileSync(settings(b), 'utf8'), config: readFileSync(claudeJson(b), 'utf8'), receipt: readFileSync(receipt(b), 'utf8') }).toEqual(before);
   });
 
   test('claude-code: --instructions-only moves a pre-launcher turn-rule entry that sits beside setup hooks', async () => {
@@ -1077,6 +1093,21 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     const moved = readJson(claudeJson(b)).mcpServers.gbrain;
     expect([moved.command, ...moved.args.slice(0, 2)]).toEqual([launcher(b), b.bin, 'serve']);
     expect((await setup(b, ['claude-code', '--json'])).doc.steps.map((s: any) => s.action)).toEqual(['keep', 'keep', 'keep']);
+  });
+
+  test('claude-code MCP (#8426): doctor\'s rerun keeps a recorded --no-hooks, so moving the entry turns no hooks on', async () => {
+    const b = box();
+    expect((await setup(b, ['claude-code', '--no-hooks', '--json'])).exitCode).toBe(0);
+    downgradeClaudeMcp(b);
+    let argv: string[] = [];
+    await withEnv(env(b), async () => {
+      argv = hookLauncherFix(hookLauncherProblems([])!).argv!;
+      expect(argv).toEqual(['gbrain', 'setup', 'claude-code', '--no-hooks']);
+    });
+    expect((await setup(b, [...argv.slice(2), '--json'])).exitCode).toBe(0);
+    expect(readSetupReceipt(receipt(b)).setup!.consent.wiring_scope.value.hooks).toBe('none');
+    const moved = readJson(claudeJson(b)).mcpServers.gbrain;
+    expect(moved.command).toBe(launcher(b));
   });
 
   test('claude-code MCP (#8426): a pre-launcher MCP entry the user edited is kept; post-upgrade and doctor hand it to the user', async () => {

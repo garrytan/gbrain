@@ -13,18 +13,19 @@ import { classifyHarnessHook } from '../bootstrap/hooks.ts';
 import { codexHookCensus } from '../bootstrap/codex-hooks.ts';
 import { readCodexTomlTable } from '../bootstrap/codex-toml.ts';
 import { readReceipt } from '../bootstrap/format.ts';
-import { CLAUDE_SETTINGS_FILE_RELPATH, GBRAIN_HOOK_MARKER_KEY, GBRAIN_HOOK_MARKER_VALUE, claudeUserMcpConfigPath, claudeUserSettingsPath, codexConfigPath, codexHooksPath } from '../bootstrap/host-specs.ts';
+import { CLAUDE_SETTINGS_FILE_RELPATH, GBRAIN_HOOK_MARKER_KEY, GBRAIN_HOOK_MARKER_VALUE, claudeUserMcpConfigPath, claudeUserSettingsPath, codexConfigPath, codexHooksPath, opencodeConfigDir } from '../bootstrap/host-specs.ts';
+import { parseOpencodeConfig } from '../bootstrap/opencode-json.ts';
 import { resolveGbrainHome } from '../gbrain-home.ts';
 import { hookLauncherInCommand, hookLauncherState, isHookLauncherPath, type HookLauncherState } from './hook-launcher.ts';
 import { localSetupRecords } from './local-receipts.ts';
 import { ownedEntryFingerprint } from '../bootstrap/adopted-connections.ts';
-import { readSetupReceipt } from './claude-code.ts';
+import { readSetupReceipt, type ClaudeSetupReceipt } from './claude-code.ts';
 import { readCodexSetupReceipt } from './codex.ts';
 
 export type LauncherLane = 'mcp' | 'harness' | 'bootstrap';
 
 export interface LauncherLaneFinding {
-  harness: 'claude-code' | 'codex';
+  harness: 'claude-code' | 'codex' | 'opencode';
   lane: LauncherLane;
   /** The config, settings or hooks file holding the entry. */
   source: string;
@@ -68,17 +69,32 @@ function state(launcher: string | null): { reason: LauncherLaneFinding['reason']
   return s.state === 'current' ? null : { reason: s.state, why: `runs through ${launcher}, but ${s.detail}` };
 }
 
+/**
+ * The `gbrain setup` command that rewrites an install's entries with what its receipt records. Setup keeps the recorded
+ * capture and providers decisions on its own; a hooks opt-out and a source pin only come from flags, so the rerun carries them.
+ */
+export function setupRerunArgv(harness: 'claude-code' | 'codex', receipt: Pick<ClaudeSetupReceipt, 'name' | 'consent' | 'source_id'>, projectDir?: string): string[] {
+  return ['gbrain', 'setup', harness, ...(receipt.name === 'gbrain' ? [] : ['--name', receipt.name]), ...(projectDir ? ['--scope', 'project'] : []),
+    ...(receipt.consent.wiring_scope.value.hooks === 'none' ? ['--no-hooks'] : []), ...(receipt.source_id ? ['--source', receipt.source_id] : [])];
+}
+
 function mcpFindings(): LauncherLaneFinding[] {
   const out: LauncherLaneFinding[] = [];
   const setup = localSetupRecords().filter((r) => r.status === 'installed');
   const bootstrap = (() => { try { return readReceipt(resolveGbrainHome()); } catch { return null; } })();
+  // bootstrap writes a user-scope entry only for a 'user' registration (Claude Code's default writes .mcp.json instead); its rerun keeps a --no-hooks install hook-free.
+  const bootstrapRerun = (harness: 'claude-code' | 'codex' | 'opencode'): Pick<LauncherLaneFinding, 'rerun' | 'rerunFrom' | 'setupOwned' | 'owner'> | null => {
+    const reg = bootstrap?.registrations.find((r) => r.host === harness && r.scope === 'user' && (r.detail?.split('+') ?? []).includes('mcp'));
+    return reg ? { rerun: ['gbrain', 'bootstrap', 'hooks', '--harness', harness, ...(reg.detail!.split('+').includes('hooks') ? [] : ['--no-hooks']), '--repair'], rerunFrom: bootstrap!.workspace_dir, setupOwned: false, owner: 'bootstrap' } : null;
+  };
   const rerunFor = (harness: 'claude-code' | 'codex', name: string, entry: unknown, projectDir?: string): Pick<LauncherLaneFinding, 'rerun' | 'rerunFrom' | 'setupOwned' | 'owner' | 'edited'> => {
     const record = setup.find((r) => r.harness === harness && r.name === name && (projectDir ? r.projectDir === projectDir : r.scope !== 'project'));
     // Setup owns the entry only while it is still what setup wrote; an edited one stays the user's, and setup refuses to overwrite it.
     const receipt = record && (() => { try { return (harness === 'claude-code' ? readSetupReceipt(record.path) : readCodexSetupReceipt(record.path)).setup; } catch { return null; } })();
     const owner = receipt && [receipt.entry_hash, receipt.pending_entry_hash].includes(ownedEntryFingerprint(entry as Record<string, unknown>)) ? record : undefined;
-    if (owner) return { rerun: ['gbrain', 'setup', harness, ...(name === 'gbrain' ? [] : ['--name', name]), ...(projectDir ? ['--scope', 'project'] : [])], ...(projectDir ? { rerunFrom: projectDir } : {}), setupOwned: !projectDir, owner: 'setup' };
-    if (bootstrap?.registrations.some((r) => r.host === harness && (r.detail?.split('+') ?? []).includes('mcp'))) return { rerun: ['gbrain', 'bootstrap', 'hooks', '--harness', harness, '--repair'], rerunFrom: bootstrap.workspace_dir, setupOwned: false, owner: 'bootstrap' };
+    if (owner && receipt) return { rerun: setupRerunArgv(harness, receipt, projectDir), ...(projectDir ? { rerunFrom: projectDir } : {}), setupOwned: !projectDir, owner: 'setup' };
+    const boot = projectDir || name !== 'gbrain' ? null : bootstrapRerun(harness);
+    if (boot) return boot;
     return { rerun: ['gbrain', 'setup', harness, ...(name === 'gbrain' ? [] : ['--name', name]), ...(projectDir ? ['--scope', 'project'] : [])], ...(projectDir ? { rerunFrom: projectDir } : {}), setupOwned: false, owner: 'none', ...(record ? { edited: true } : {}) };
   };
   const names = [...new Set(['gbrain', ...setup.map((r) => r.name)])];
@@ -103,6 +119,17 @@ function mcpFindings(): LauncherLaneFinding[] {
     const s = serve && state(serve.launcher);
     if (!s) continue;
     out.push({ harness: 'codex', lane: 'mcp', source: codexPath, reason: s.reason, ...rerunFor('codex', name, table), detail: `[mcp_servers.${name}] in ${codexPath} ${s.why}` });
+  }
+  // opencode merges both user-global filenames, and starts a local server in each directory it opens (#8435).
+  for (const file of ['opencode.jsonc', 'opencode.json'].map((f) => join(opencodeConfigDir(), f))) {
+    let entry: Record<string, unknown> | null;
+    try { entry = existsSync(file) ? record(record(parseOpencodeConfig(readFileSync(file, 'utf8'), file).mcp)?.gbrain) : null; } catch { continue; }
+    const argv = entry?.type === 'local' && Array.isArray(entry.command) ? entry.command.filter((a): a is string => typeof a === 'string') : [];
+    const serve = argv.length > 0 ? serveEntryLauncher({ command: argv[0], args: argv.slice(1) }) : null;
+    const s = serve && state(serve.launcher);
+    if (!s) continue;
+    out.push({ harness: 'opencode', lane: 'mcp', source: file, reason: s.reason, ...(bootstrapRerun('opencode') ?? { rerun: ['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--repair'], setupOwned: false, owner: 'none' }),
+      detail: `the 'gbrain' MCP server in ${file} ${s.why}` });
   }
   return out;
 }

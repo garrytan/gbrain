@@ -79,6 +79,21 @@ async function serveFromSession(command: string, args: string[], entryEnv: Recor
     const parsed = JSON.parse(text) as { source_id?: string };
     if (!parsed.source_id) throw new Error(`put_page answered without a source: ${text}\n${stderr}`);
     return parsed.source_id;
+  } catch (e) {
+    throw new Error(`${(e as Error).message}\nserve stderr: ${stderr}`);
+  } finally {
+    await client.close().catch(() => {});
+  }
+}
+
+/** Call one tool on a stdio MCP entry started from the session directory. */
+async function callFromSession(command: string, args: string[], entryEnv: Record<string, string>, tool: string, toolArgs: Record<string, unknown>): Promise<{ isError: boolean; text: string }> {
+  const transport = new StdioClientTransport({ command, args, env: { ...env, ...entryEnv }, cwd: hostile, stderr: 'pipe' });
+  const client = new Client({ name: 'launcher-lanes', version: '1' }, { capabilities: {} });
+  try {
+    await client.connect(transport);
+    const r = await client.callTool({ name: tool, arguments: toolArgs });
+    return { isError: r.isError === true, text: (r.content as Array<{ text: string }>)[0]!.text };
   } finally {
     await client.close().catch(() => {});
   }
@@ -149,6 +164,17 @@ async function quiet<T>(fn: () => Promise<T>): Promise<{ result: T; err: string 
   try { return { result: await fn(), err }; } finally { console.log = log; console.error = error; }
 }
 
+describe('#8426: serve reads relative paths from the session directory', () => {
+  test('file_upload of a relative path finds the file in the session directory, not the launcher directory', async () => {
+    writeFileSync(join(hostile, 'report.pdf'), '%PDF-1.4 example\n');
+    const entry = desiredMcpEntry({ name: 'gbrain', scope: 'user', launcher: gbrain, brainHome: join(home, '.gbrain'), gbrainHomeEnv: home, sourceId: null, surface: 'full', advertise: null, events: [] }) as { command: string; args: string[]; env: Record<string, string> };
+    const r = await callFromSession(entry.command, entry.args, entry.env, 'file_upload', { path: 'report.pdf' });
+    // The keyless test brain has no storage backend, so the upload stops after the path checks, naming the session file.
+    expect(JSON.parse(r.text)).toMatchObject({ code: 'storage_error' });
+    expect(r.text).toContain(join(hostile, 'report.pdf'));
+  }, 90_000);
+});
+
 describe('#8426, #8428: gbrain bootstrap hooks registers serve and writes its hooks through the launcher', () => {
   test('claude-code: the user-scope claude mcp add argv and the workspace hooks', async () => {
     const ws = bootstrapWorkspace();
@@ -205,6 +231,27 @@ describe('#8426, #8428: gbrain bootstrap hooks registers serve and writes its ho
     }
     await withEnv(procEnv, async () => { expect(launcherLaneFindings().filter((f) => f.lane !== 'harness')).toEqual([]); });
   }, 120_000);
+
+  test('opencode (#8435): doctor names a user-global entry that starts serve in the session directory, and bootstrap rewrites it through the launcher', async () => {
+    const ws = bootstrapWorkspace();
+    const config = join(home, '.config', 'opencode', 'opencode.jsonc');
+    mkdirSync(join(home, '.config', 'opencode'), { recursive: true });
+    writeFileSync(config, JSON.stringify({ mcp: { gbrain: { type: 'local', command: [gbrain, 'serve'], environment: { GBRAIN_SOURCE: 'source-b' }, enabled: true } } }, null, 2));
+    await withEnv(procEnv, async () => {
+      expect(launcherLaneFindings().filter((f) => f.harness === 'opencode')).toMatchObject([{ lane: 'mcp', source: config, reason: 'session_cwd', setupOwned: false, rerun: ['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--repair'] }]);
+      expect((await quiet(() => runBootstrap(['render', '--workspace', ws]))).result).toBe(0);
+      const r = await quiet(() => runBootstrap(['hooks', '--workspace', ws, '--harness', 'opencode', '--gbrain-bin', gbrain]));
+      expect(r.result, r.err).toBe(0);
+      expect(launcherLaneFindings().filter((f) => f.harness === 'opencode')).toEqual([]);
+    });
+    const entry = readJson(config).mcp.gbrain as { command: string[]; environment: Record<string, string> };
+    expect(entry.command.slice(0, 3)).toEqual([launcher, gbrain, 'serve']);
+    clearMarker();
+    // The workspace's own source is not registered in this brain, so the probe pins one that is.
+    expect(await serveFromSession(entry.command[0]!, entry.command.slice(1), { ...entry.environment, GBRAIN_SOURCE: 'source-b' }, 'notes/bootstrap-opencode')).toBe('source-b');
+    expect(existsSync(marker)).toBe(false);
+    await waitForDetached();
+  }, 120_000);
 });
 
 describe('#8428: the harness and plugin hook lanes', () => {
@@ -226,6 +273,10 @@ describe('#8428: the harness and plugin hook lanes', () => {
     mkdirSync(join(pluginRoot, '.agents'), { recursive: true });
     copyFileSync(join(ROOT, 'plugin-variants', 'gbrain-coding', '.agents', 'gbrain-launcher'), join(pluginRoot, '.agents', 'gbrain-launcher'));
     chmodSync(join(pluginRoot, '.agents', 'gbrain-launcher'), 0o755);
+    const recorder = join(root, 'recording-gbrain');
+    const seen = join(root, 'recorder-saw');
+    writeFileSync(recorder, `#!/bin/sh\nif [ "$1" = --version ]; then echo "gbrain 0.60.549.0"; exit 0; fi\nprintf '%s|%s|%s\\n' "$GBRAIN_HOOK_CWD" "$(pwd)" "$1" > '${seen}'\n`);
+    chmodSync(recorder, 0o755);
     const manifests: Array<[string, string]> = [['.claude-plugin/plugin.json', '${CLAUDE_PLUGIN_ROOT}'], ['.codex-plugin/plugin.json', '${PLUGIN_ROOT}']];
     for (const [file, token] of manifests) {
       const m = readJson(join(ROOT, 'plugin-variants', 'gbrain-coding', file));
@@ -235,6 +286,10 @@ describe('#8428: the harness and plugin hook lanes', () => {
       const r = runHook(command.replaceAll(token, pluginRoot), { GBRAIN_BIN: gbrain });
       expect(r.exitCode, r.stderr).toBe(0);
       expect(existsSync(marker)).toBe(false);
+      // A launcher that exits 0 without starting gbrain also leaves no marker: a recording binary shows it ran, from where, and with which session directory.
+      rmSync(seen, { force: true });
+      expect(runHook(command.replaceAll(token, pluginRoot), { GBRAIN_BIN: recorder }).exitCode).toBe(0);
+      expect(readFileSync(seen, 'utf8')).toBe(`${hostile}|${join(pluginRoot, '.agents')}|hook\n`);
     }
   }, 120_000);
 });
