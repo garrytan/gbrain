@@ -20,8 +20,9 @@
  */
 import { randomBytes } from 'node:crypto';
 import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, win32 } from 'node:path';
 import { configDir } from '../config.ts';
+import { msysToNativePath } from '../path-confine.ts';
 
 export const HOOK_LAUNCHER_NAME = 'gbrain-hook';
 export const HOOK_LAUNCHER_DIR = 'hook-launcher';
@@ -51,6 +52,17 @@ exec "$@"
 /** The launcher path for an install whose config dir is `home` (default: this process's). */
 export function hookLauncherPath(home: string = configDir()): string {
   return join(home, HOOK_LAUNCHER_DIR, HOOK_LAUNCHER_NAME);
+}
+
+/** Paths embedded in hook commands run under a POSIX shell, including on Windows. */
+export function hookShellPath(path: string): string {
+  const drive = /^([A-Za-z]):[\\/](.*)$/.exec(path);
+  return drive ? `/${drive[1]!.toLowerCase()}/${drive[2]!.replaceAll('\\', '/')}` : path;
+}
+
+/** Drive-letter paths are absolute on Windows even though they do not start with `/`. */
+export function isAbsoluteHookPath(path: string): boolean {
+  return path.startsWith('/') || win32.isAbsolute(path);
 }
 
 export type HookLauncherState = 'current' | 'missing' | 'stale' | 'foreign';
@@ -133,12 +145,13 @@ export function shellWords(command: string): string[] | null {
 
 /** An absolute path shaped like a hook launcher (<config dir>/hook-launcher/gbrain-hook). */
 export function isHookLauncherPath(path: string): boolean {
-  return path.startsWith('/') && path.endsWith(`/${HOOK_LAUNCHER_DIR}/${HOOK_LAUNCHER_NAME}`);
+  return isAbsoluteHookPath(path) && path.replaceAll('\\', '/').endsWith(`/${HOOK_LAUNCHER_DIR}/${HOOK_LAUNCHER_NAME}`);
 }
 
 /** The launcher a hook command runs gbrain through, or null for a command that starts gbrain in the session directory. */
 export function hookLauncherInCommand(command: string): string | null {
-  return shellWords(command)?.find(isHookLauncherPath) ?? null;
+  const launcher = shellWords(command)?.find(isHookLauncherPath) ?? null;
+  return launcher && process.platform === 'win32' ? msysToNativePath(launcher) : launcher;
 }
 
 export { HOOK_CWD_ENV, captureHookSessionCwd, hookSessionCwd } from '../session-cwd.ts';
