@@ -703,6 +703,9 @@ describe('opencodeOneShotTurn — provider refusals logged by opencode surface i
   const TITLE_LINE =
     'timestamp=2026-11-01T16:05:37.341Z level=ERROR run=a6ecc561 message="stream error" providerID=opencode modelID=big-pickle ' +
     'session.id=ses_x small=true agent=title mode=primary error.error="AI_RetryError: Failed after 3 attempts. Last error: upstream 502"';
+  const RATE_LIMIT_LINE =
+    'timestamp=2026-11-01T16:05:31.565Z level=ERROR run=c1 message="stream error" providerID=anthropic modelID=claude-haiku-5-5 ' +
+    'session.id=ses_z small=false agent=build mode=primary error.error="AI_APICallError: Rate limit exceeded; retry after 1 second"';
   const TRANSIENT_LINE =
     'timestamp=2026-11-01T16:05:31.565Z level=ERROR run=b1 message="stream error" providerID=opencode modelID=big-pickle ' +
     'session.id=ses_y small=false agent=build mode=primary error.error="AI_APICallError: Bad Gateway"';
@@ -749,6 +752,39 @@ describe('opencodeOneShotTurn — provider refusals logged by opencode surface i
       rmSync(dir, { recursive: true, force: true });
     }
   }, 60_000);
+
+  test('a provider rate limit is a transient error: the turn runs on and returns what opencode answers after its retry', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gb-oc-ratelimit-'));
+    try {
+      const home = join(dir, 'home');
+      const text = JSON.stringify({ type: 'text', part: { text: 'after-retry' } });
+      const bin = stubOpencode(dir, `printf '%s\\n' '${RATE_LIMIT_LINE}' >> "$log/opencode.log"\nsleep 3\nprintf '%s\\n' '${text}'`);
+      const turn = await withEnv({ OPENCODE_BIN: bin }, () =>
+        opencodeOneShotTurn({ prompt: 'p', cwd: dir, home, timeoutMs: 30_000, format: 'json' }));
+      expect(turn.exitCode).toBe(0);
+      expect(turn.providerRefusal).toBeUndefined();
+      expect(parseOpencodeJsonl(turn.finalText.split('\n')).finalText).toBe('after-retry');
+      expect(turn.streamErrors).toEqual(['AI_APICallError: Rate limit exceeded; retry after 1 second']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test('a quota refusal still ends the turn within seconds when a descendant keeps the output pipes open', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gb-oc-quota-desc-'));
+    try {
+      const home = join(dir, 'home');
+      const bin = stubOpencode(dir, `printf '%s\\n' '${QUOTA_LINE}' >> "$log/opencode.log"\nsleep 25 &\nexec sleep 600`);
+      const t0 = Date.now();
+      const turn = await withEnv({ OPENCODE_BIN: bin }, () =>
+        opencodeOneShotTurn({ prompt: 'p', cwd: dir, home, timeoutMs: 30_000, format: 'json' }));
+      expect(Date.now() - t0).toBeLessThan(15_000);
+      expect(turn.timedOut).toBe(false);
+      expect(turn.providerRefusal).toContain('Free usage limit reached');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 90_000);
 
   test('stream errors already in the log from an earlier turn in the same home are not attributed to this turn', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gb-oc-offset-'));

@@ -579,7 +579,7 @@ quota_preflight() {
     if [ "$remaining" -le 0 ]; then
       log "quota preflight refused $location/$name ($size): it needs $need vCPUs and the project's VMs already use $used of $max (ceiling from $source; other usage such as managed runners counts on top)"
       cmd_usage >&2 || true
-      die "create refused before any request: vCPU quota exhausted (quota full); wait for running VMs to finish (UBI_QUOTA_WAIT=<seconds> waits here), run $0 reap, use a smaller size, or set UBI_QUOTA_VCPUS to the project's real ceiling"
+      die "create refused before any request: vCPU quota exhausted (quota full); wait for running VMs to finish (UBI_QUOTA_WAIT=<seconds> waits here), run $0 reap (it frees only this owner's expired VMs; $0 usage shows who holds the rest, and scripts/ubicloud/reap-expired.ts destroys other owners' expired ones), use a smaller size, or set UBI_QUOTA_VCPUS to the project's real ceiling"
     fi
     log "quota: $used of $max vCPUs in use and $need needed; waiting up to ${remaining}s more for room"
     step=$(( remaining < 30 ? remaining : 30 ))

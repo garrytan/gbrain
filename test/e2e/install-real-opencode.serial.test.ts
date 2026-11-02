@@ -514,11 +514,19 @@ describe.skipIf(!CAN_RUN_PAID)('install real-opencode door — paid tier (anthro
       home,
       timeoutMs: 240_000,
       model: PAID_MODEL,
+      format: 'json',
       binDir,
       paid: true,
     });
+    try { writeFileSync(join(home, 'door-turn.jsonl'), turn.finalText); } catch { /* evidence */ }
+    const parsed = parseOpencodeJsonl(turn.finalText.split('\n'));
+    const errors = [...parsed.errors, ...turn.streamErrors];
+    if (!parsed.finalText.includes(nonce) && errors.length) throw new Error(`opencode turn ended with provider error(s): ${errors.join('; ')}`);
     expect(turn.exitCode).toBe(0);
-    expect(turn.finalText).toContain(nonce);
-    expect(turn.finalText).not.toContain('NO-GBRAIN-TOOL');
+    expect(parsed.finalText).toContain(nonce);
+    expect(parsed.finalText).not.toContain('NO-GBRAIN-TOOL');
+    // opencode also has fs/shell tools, so the nonce alone does not prove the
+    // MCP door: at least one gbrain MCP tool must have fired (as in T4).
+    expect(parsed.toolCalls.some((t) => t.startsWith('gbrain_'))).toBe(true);
   }, 600_000);
 });

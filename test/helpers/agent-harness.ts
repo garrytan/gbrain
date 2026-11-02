@@ -728,12 +728,15 @@ export interface OneShotSpawnResult {
   abortReason?: string;
 }
 
+/** How long a killed one-shot child's output may keep draining. */
+const KILL_DRAIN_GRACE_MS = 8_000;
+
 /**
  * Shared one-shot spawn core: timeout → kill, kill(9) escalation after 5s
  * (agents may leave a daemon/MCP-server child holding the pipes open past
- * the parent's death), and a BOUNDED stream drain (timeout + 30s cap) so a
- * grandchild holding the pipe fds can never hang a retry loop. Exit 124 on
- * timeout.
+ * the parent's death), and a BOUNDED stream drain (timeout + 30s cap, or
+ * KILL_DRAIN_GRACE_MS once the child is killed) so a grandchild holding the
+ * pipe fds can never hang a retry loop. Exit 124 on timeout.
  */
 export async function runOneShotSpawn(opts: {
   argv: string[];
@@ -754,7 +757,10 @@ export async function runOneShotSpawn(opts: {
 
   let timedOut = false;
   let abortReason: string | undefined;
+  let killed: () => void = () => {};
+  const killedAt = new Promise<void>((r) => { killed = r; });
   const kill = () => {
+    killed();
     try { proc.kill(); } catch { /* already dead */ }
     setTimeout(() => { try { proc.kill(9); } catch { /* already dead */ } }, 5_000);
   };
@@ -772,13 +778,24 @@ export async function runOneShotSpawn(opts: {
   const drainCap = opts.timeoutMs + 30_000;
   // The cap timer is CLEARED when the real promise wins — an uncancelled
   // drainCap timer (timeoutMs + 30s) would keep Bun's event loop alive for
-  // minutes after every successful door run.
+  // minutes after every successful door run. Once the child is killed, a
+  // descendant that kept stdout/stderr open (an MCP server, a provider retry
+  // helper) gets KILL_DRAIN_GRACE_MS, not the rest of drainCap.
   const bounded = <T>(p: Promise<T>, fallback: T): Promise<T> => {
     let capTimer: ReturnType<typeof setTimeout> | undefined;
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
     const cap = new Promise<T>((r) => {
       capTimer = setTimeout(() => r(fallback), drainCap);
     });
-    return Promise.race([p, cap]).finally(() => clearTimeout(capTimer)) as Promise<T>;
+    const grace = killedAt.then(() => new Promise<T>((r) => {
+      if (!settled) graceTimer = setTimeout(() => r(fallback), KILL_DRAIN_GRACE_MS);
+    }));
+    return Promise.race([p, cap, grace]).finally(() => {
+      settled = true;
+      clearTimeout(capTimer);
+      clearTimeout(graceTimer);
+    }) as Promise<T>;
   };
   const [stdout, stderrText] = await Promise.all([
     bounded(new Response(proc.stdout).text(), ''),
@@ -1170,8 +1187,10 @@ export interface OpencodeTurnResult extends OneShotSpawnResult {
 
 /** #6049: opencode answers a quota refusal (free tier: "Free usage limit
  *  reached", HTTP 429) by retrying after the server's retry-after, hours
- *  later, with nothing on stdout. Waiting can never produce an answer. */
-const OPENCODE_QUOTA_REFUSAL = /usage limit|rate limit|quota/i;
+ *  later, with nothing on stdout. Waiting can never produce an answer. A
+ *  provider rate limit ("rate limit exceeded", Anthropic's 429) clears in
+ *  seconds and opencode's retry recovers from it, so it never matches. */
+const OPENCODE_QUOTA_REFUSAL = /usage limit|quota/i;
 
 /** Main-turn (`small=false`) `stream error` lines appended to opencode's
  *  file log (<XDG_DATA_HOME>/opencode/log) since `offsets` was taken. */

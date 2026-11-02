@@ -959,9 +959,16 @@ jobs:
 
       - name: Report credentialed coverage not run in keyless lane
         if: matrix.lane == 'keyless'
+        env:
+          GBRAIN_PAID_LANES: ${{ vars.GBRAIN_PAID_LANES }}
         run: |
           echo "## OpenCode: keyless coverage only" >> "$GITHUB_STEP_SUMMARY"
-          echo "No paid turn ran in this lane. The nightly schedule runs the separate credentialed lane, whose paid nonce SMOKE gates; on a dispatch, request run_opencode_paid or set GBRAIN_OPENCODE_PAID_E2E=1 (GBRAIN_PAID_LANES=0 keeps it off either way)." >> "$GITHUB_STEP_SUMMARY"
+          if [ "${GBRAIN_PAID_LANES:-}" = "0" ]; then
+            echo "::warning::opencode door: no nonce SMOKE ran. The repository variable GBRAIN_PAID_LANES='0' switches the credentialed lane off, so this run proves no gbrain MCP tool call." >&2
+            echo "No paid turn ran and no nonce SMOKE gates this run: the repository variable \`GBRAIN_PAID_LANES\` is \`0\`, which switches the credentialed lane off. Unset it (or set it to \`1\`) for the gating paid SMOKE." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No paid turn ran in this lane. The nightly schedule runs the separate credentialed lane, whose paid nonce SMOKE gates; on a dispatch, request run_opencode_paid or set GBRAIN_OPENCODE_PAID_E2E=1." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Preconditions (credentialed lane requires secret)
         if: matrix.lane == 'credentialed'

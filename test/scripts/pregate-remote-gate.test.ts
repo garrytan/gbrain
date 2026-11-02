@@ -323,7 +323,8 @@ describe('pregate-remote-gate.sh --list', () => {
   it('a tree whose full-ci runs would attest to themselves gets no inventory, so gstack clear --run refuses it and the gate runs', () => {
     const gate = 'touch .git/list-ran; echo test/a.test.ts';
     const refused = (r: { code: number | null; out: string }) => { expect(r.code).toBe(1); expect(r.out).toBe(''); };
-    for (const path of ['.github/workflows/test.yml', '.github/workflows/e2e.yml', 'scripts/ci-reuse.ts', 'scripts/ci-full-suite-tree.sh', 'scripts/ci-executed-counts.ts', 'scripts/lib/gh-issue.ts']) {
+    // pregate-remote-gate.sh and ci-ubicloud.ts build the inventory itself, and gstack runs the branch's own copy.
+    for (const path of ['.github/workflows/test.yml', '.github/workflows/e2e.yml', 'scripts/ci-reuse.ts', 'scripts/ci-full-suite-tree.sh', 'scripts/ci-executed-counts.ts', 'scripts/lib/gh-issue.ts', 'scripts/pregate-remote-gate.sh', 'scripts/ci-ubicloud.ts']) {
       mkdirSync(join(repo, path, '..'), { recursive: true });
       writeFileSync(join(repo, path), `changed ${path}\n`);
       git('add', '.');
