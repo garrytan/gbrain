@@ -217,6 +217,18 @@ for (const kind of testBackends()) {
       __resetPrivateVisibilityCacheForTests();
     }, 60_000);
 
+    test('a world fact on another member page stays hidden from a caller its readers name, as on master', async () => {
+      const page = 'memory/members/quinn-example';
+      await importFromContent(engine, page, '---\ntype: note\ntitle: Quinn notes\nreadable_by:\n  - member:bob-example\n---\n# Quinn notes\n', { sourceId: SRC });
+      await engine.insertFact({ fact: 'canaryhandwrittenmember harbor ledger', kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'world' }, { source_id: SRC });
+      await engine.executeRaw('UPDATE facts SET source_markdown_slug = $1 WHERE fact LIKE $2', [page, 'canaryhandwrittenmember%']);
+      __resetPrivateVisibilityCacheForTests();
+      __resetHotMemoryCacheForTests();
+      for (const params of [{ query: 'harbor ledger' }, { entity: ACME }, { since: '2000-01-01' }]) {
+        expect((await call(who.bobToken(), 'recall', params)).all).not.toContain('canaryhandwrittenmember');
+      }
+    }, 60_000);
+
     test('a member stops reading its own facts once its page\'s readers no longer name it', async () => {
       const bobPage = 'memory/members/bob-example';
       await engine.executeRaw(`UPDATE pages SET frontmatter = jsonb_set(frontmatter, '{readable_by}', '["group:team-a"]'::jsonb) WHERE source_id = $1 AND slug = $2`, [SRC, bobPage]);
