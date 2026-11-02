@@ -69,4 +69,17 @@ describe('#7286 open_loops for a remote caller bound to a non-google source', ()
     expect(result.no_google_sources).toBe(false);
     expect(notices.map(n => n.code)).not.toContain('loops_no_google_in_scope');
   });
+
+  test('names the sources it read, not the whole grant, when source_id narrows a federated read', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name, config, last_sync_at) VALUES ('mail-a', 'mail-a', '{"kind":"google"}'::jsonb, now()), ('notes-a', 'notes-a', '{}'::jsonb, NULL) ON CONFLICT (id) DO NOTHING`);
+    const notices: Notice[] = [];
+    const ctx = { engine, config: {}, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: true, sourceId: 'notes-a',
+      auth: { allowedSources: ['mail-a', 'notes-a'] }, emitNotice: (n: Notice) => notices.push(n) } as unknown as OperationContext;
+    const result = await openLoops.handler(ctx, { source_id: 'notes-a' }) as Record<string, unknown>;
+    expect(result.no_google_sources).toBe(true);
+    const notice = notices.find(n => n.code === 'loops_no_google_in_scope');
+    expect(notice).toBeDefined();
+    expect(notice!.why).toContain('notes-a');
+    expect(notice!.why).not.toContain('mail-a');
+  });
 });

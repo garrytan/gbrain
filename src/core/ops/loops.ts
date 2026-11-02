@@ -485,7 +485,7 @@ const open_loops: Operation = {
     });
     const freshness = await googleSourceFreshness(ctx, scope);
     const noGoogleSources = freshness.sources.length === 0;
-    if (!trusted && noGoogleSources) ctx.emitNotice?.(noGoogleInScopeNotice(ctx));
+    if (!trusted && noGoogleSources) ctx.emitNotice?.(noGoogleInScopeNotice(scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : [])));
     const partialStaleSources = freshness.stale ? [] : freshness.staleSources;
     const coverage = await heldCoverage(ctx, freshness.sources, trusted);
     const deepLinks = trusted ? await deepLinksFor(ctx, loops) : new Map<string, string>();
@@ -638,12 +638,12 @@ function sourcesFix(why: string): Action {
   return readFix(why, { argv: ['gbrain', 'sources', 'list', '--json'], mcp: { tool: 'sources_list', arguments: {} } });
 }
 
-/** #7286: names only the caller's own grant, so the text is the same whether or not a google source exists outside it. */
-function noGoogleInScopeNotice(ctx: OperationContext): Notice {
+/** #7286: names only the sources this read covered, all inside the grant, so the text is the same whether or not a google source exists outside it. */
+function noGoogleInScopeNotice(readSources: string[]): Notice {
   return {
     code: 'loops_no_google_in_scope',
     kind: 'info',
-    why: `open_loops read only the sources this connection is granted (${grantedSources(ctx).join(', ') || 'none'}), and none of them is a google source, ` +
+    why: `open_loops read only ${readSources.join(', ') || 'none'}, inside this connection's grant, and none of them is a google source, ` +
       'so it had nothing to read: this is not "inbox clean", and it says nothing about sources outside the grant. ' +
       "Pass source_id naming a google source this connection is granted, or ask the brain's owner to grant one.",
     fix: sourcesFix('Lists the sources this connection can read; pass a google one as source_id.'),
