@@ -43,20 +43,23 @@ const env: Record<string, string> = { HOME: home, GBRAIN_HOME: home, CODEX_HOME:
 const procEnv = { HOME: home, GBRAIN_HOME: home, CODEX_HOME: join(home, '.codex'), CLAUDE_CONFIG_DIR: undefined, XDG_CONFIG_HOME: undefined };
 
 beforeAll(() => {
-  for (const d of [home, bin, join(hostile, 'tooling'), tmp, join(root, 'source-a')]) mkdirSync(d, { recursive: true });
+  for (const d of [home, bin, join(hostile, 'tooling'), tmp, join(root, 'source-a'), join(root, 'source-b')]) mkdirSync(d, { recursive: true });
   symlinkSync(process.execPath, join(bin, 'bun'));
   symlinkSync(CLI, gbrain);
   writeFileSync(join(hostile, 'tooling', 'pre.ts'), `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran');\n`);
   writeFileSync(join(hostile, 'bunfig.toml'), 'preload = ["./tooling/pre.ts"]\n');
   writeFileSync(join(hostile, '.env'), 'GBRAIN_HOOKS=1\n');
   writeFileSync(join(root, 'source-a', 'a.md'), '# a\n');
+  writeFileSync(join(root, 'source-b', 'b.md'), '# b\n');
   const run = (args: string[]) => {
     const r = Bun.spawnSync([gbrain, ...args], { cwd: root, env, stdout: 'pipe', stderr: 'pipe', timeout: 120_000 });
     if (r.exitCode !== 0) throw new Error(`gbrain ${args.join(' ')} failed: ${r.stderr.toString()}`);
   };
   run(['init', '--pglite', '--no-embedding']);
+  // Two sources, so only the session directory's .gbrain-source picks source-b.
   run(['sources', 'add', 'source-a', '--path', join(root, 'source-a'), '--force', '--no-federated']);
-  writeFileSync(join(hostile, '.gbrain-source'), 'source-a\n');
+  run(['sources', 'add', 'source-b', '--path', join(root, 'source-b'), '--force', '--no-federated']);
+  writeFileSync(join(hostile, '.gbrain-source'), 'source-b\n');
   chmodSync(join(hostile, '.gbrain-source'), 0o600);
   ensureHookLauncher(launcher);
 }, 180_000);
@@ -97,7 +100,7 @@ const readJson = (p: string) => JSON.parse(readFileSync(p, 'utf8'));
 describe('#8426: a stdio MCP entry started from a checkout whose bunfig.toml preloads code', () => {
   test('control: gbrain serve started in that checkout runs the preload (the hole the launcher closes)', async () => {
     clearMarker();
-    expect(await serveFromSession(gbrain, ['serve'], {}, 'notes/control')).toBe('source-a');
+    expect(await serveFromSession(gbrain, ['serve'], {}, 'notes/control')).toBe('source-b');
     expect(existsSync(marker)).toBe(true);
   }, 90_000);
 
@@ -105,7 +108,7 @@ describe('#8426: a stdio MCP entry started from a checkout whose bunfig.toml pre
     clearMarker();
     const entry = desiredMcpEntry({ name: 'gbrain', scope: 'user', launcher: gbrain, brainHome: join(home, '.gbrain'), gbrainHomeEnv: home, sourceId: null, surface: 'full', advertise: null, events: [] }) as { command: string; args: string[]; env: Record<string, string> };
     expect(entry.command).toBe(launcher);
-    expect(await serveFromSession(entry.command, entry.args, entry.env, 'notes/setup-claude')).toBe('source-a');
+    expect(await serveFromSession(entry.command, entry.args, entry.env, 'notes/setup-claude')).toBe('source-b');
     expect(existsSync(marker)).toBe(false);
   }, 90_000);
 
@@ -113,7 +116,7 @@ describe('#8426: a stdio MCP entry started from a checkout whose bunfig.toml pre
     clearMarker();
     const entry = desiredCodexMcpEntry({ launcher: gbrain, brainHome: join(home, '.gbrain'), gbrainHomeEnv: home, sourceId: null, surface: 'full', advertise: null }) as { command: string; args: string[]; env: Record<string, string> };
     expect(entry.command).toBe(launcher);
-    expect(await serveFromSession(entry.command, entry.args, entry.env, 'notes/setup-codex')).toBe('source-a');
+    expect(await serveFromSession(entry.command, entry.args, entry.env, 'notes/setup-codex')).toBe('source-b');
     expect(existsSync(marker)).toBe(false);
   }, 90_000);
 });
@@ -160,7 +163,7 @@ describe('#8426, #8428: gbrain bootstrap hooks registers serve and writes its ho
     const serve = add.slice(add.indexOf('--') + 1);
     expect(serve.slice(0, 3)).toEqual([launcher, gbrain, 'serve']);
     clearMarker();
-    expect(await serveFromSession(serve[0]!, serve.slice(1), {}, 'notes/bootstrap-claude')).toBe('source-a');
+    expect(await serveFromSession(serve[0]!, serve.slice(1), {}, 'notes/bootstrap-claude')).toBe('source-b');
     expect(existsSync(marker)).toBe(false);
 
     const settings = readJson(join(ws, '.claude', 'settings.local.json'));
@@ -188,7 +191,7 @@ describe('#8426, #8428: gbrain bootstrap hooks registers serve and writes its ho
     const serve = add.slice(add.indexOf('--') + 1);
     expect(serve.slice(0, 3)).toEqual([launcher, gbrain, 'serve']);
     clearMarker();
-    expect(await serveFromSession(serve[0]!, serve.slice(1), {}, 'notes/bootstrap-codex')).toBe('source-a');
+    expect(await serveFromSession(serve[0]!, serve.slice(1), {}, 'notes/bootstrap-codex')).toBe('source-b');
     expect(existsSync(marker)).toBe(false);
 
     const hooks = readJson(join(home, '.codex', 'hooks.json'));
