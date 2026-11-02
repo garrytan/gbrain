@@ -17,7 +17,6 @@ import type { BrainEngine } from '../engine.ts';
 import { digest } from './digest.ts';
 import { parseSourceConfig } from '../sources-load.ts';
 import { assertNever } from '../types.ts';
-import { isConnectorSourceKind } from './connector-kinds.ts';
 
 export const CONNECTOR_STATE_OP = 'managed-connector-state';
 
@@ -172,7 +171,7 @@ export async function seedConnectorDispatchAttempts(engine: Pick<BrainEngine, 'e
     // parseSourceConfig, as the dispatch loops read it (string-wrapped configs included). The syncEnabled test is
     // isSyncDisabledConfig's (sync-policy.ts), inlined so the schema-migration closure stays small.
     const config = parseSourceConfig(row.config);
-    if (!isConnectorSourceKind(config.kind)) continue;
+    if (config.kind !== 'google' && config.kind !== 'github') continue;
     if (config.syncEnabled === false) continue;
     await recordConnectorSyncAttempt(engine, row.id, at);
     seeded++;

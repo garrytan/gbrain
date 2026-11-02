@@ -19,6 +19,13 @@ const FORBIDDEN: Array<[string, RegExp]> = [
   ['literal kind list', new RegExp(`[\\[(]\\s*${KIND}\\s*,\\s*${KIND}`)],
   ['chained kind test', new RegExp(`kind\\s*[!=]==\\s*${KIND}\\s*(?:&&|\\|\\|)\\s*[\\w.?]*kind\\s*[!=]==\\s*${KIND}`)],
 ];
+/**
+ * Frozen lines: the v181 migration helper seeds the kinds that existed at v181, and the migrations golden pins its
+ * source (test/migrations-golden.test.ts), so it keeps its literal list.
+ */
+const FROZEN = new Set([
+  "src/core/persistence/connector-state.ts: if (config.kind !== 'google' && config.kind !== 'github') continue;",
+]);
 
 describe('connector kind routing', () => {
   test('no source file outside connector-kinds.ts lists connector kinds literally', () => {
@@ -27,6 +34,7 @@ describe('connector kind routing', () => {
       const rel = relative(ROOT, file).split('\\').join('/');
       if (rel === KINDS_FILE) continue;
       readFileSync(file, 'utf8').split('\n').forEach((line, index) => {
+        if (FROZEN.has(`${rel}: ${line.trim()}`)) return;
         for (const [what, pattern] of FORBIDDEN) if (pattern.test(line)) offenders.push(`${rel}:${index + 1} ${what}: ${line.trim()}`);
       });
     }

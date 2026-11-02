@@ -390,11 +390,11 @@ export async function dispatchFreshnessSyncs(
           ? JSON.stringify({ event: 'git_pull_disabled', key: AUTOPILOT_GIT_PULL_KEY })
           : `[autopilot] git_pull: off (${AUTOPILOT_GIT_PULL_KEY}=false); remote sources sync their local checkout without pulling`) + '\n');
       }
-      const activationPending = await loadActivationPendingSourceIds(engine);
       const intervalMs = baseInterval * 1000;
       const now = Date.now();
-      const refusalHolds = await readSyncRefusalHolds(engine, now).catch(() => new Map<string, SyncRefusalHold>());
       const rateLimits = await readConnectorRateLimits(engine, now).catch(() => new Map<string, number>());
+      const activationPending = await loadActivationPendingSourceIds(engine);
+      const refusalHolds = await readSyncRefusalHolds(engine, now).catch(() => new Map<string, SyncRefusalHold>());
       for (const src of sources) {
         if (onlySourceIds && !onlySourceIds.has(src.id)) continue;
         if (skipRefusedSync(refusalHolds, src.id, jsonMode)) { decisions.push({ source_id: src.id, outcome: 'skipped' }); continue; }

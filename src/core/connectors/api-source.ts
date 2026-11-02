@@ -152,7 +152,7 @@ export async function publishConnectorPage(ctx: ConnectorPublishCtx, page: Conne
       }
     }
     const { importFromContent } = await import('../import-file.ts');
-    const result = await importFromContent(engine, slug, markdown, { noEmbed: true, sourceId, sourcePath: relPath, preserveGateMarkers: true });
+    const result = await importFromContent(engine, slug, markdown, { noEmbed: true, sourceId, sourcePath: relPath, preserveGateMarkers: true, holdNoncanonicalPrivate: true });
     if (result.status === 'error' || result.error) throw new Error(result.error ?? `Import failed for ${relPath}`);
     status = result.status === 'imported' ? 'imported' : 'skipped';
     created = !existing;

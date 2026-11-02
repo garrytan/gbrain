@@ -2,6 +2,7 @@
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { spawnSync } from '../spawn.ts';
+import { gitChildEnv } from '../git-env.ts';
 import { OperationError } from '../ops/contract.ts';
 import { SYNC_INTERVAL_MIN_FLOOR, type MeetingProviderName, type MeetingRecordMode, type MeetingTranscriptMode } from './types.ts';
 
@@ -16,7 +17,7 @@ export function enclosingGitCheckout(dir: string): string | null {
     if (parent === probe) return null;
     probe = parent;
   }
-  const out = spawnSync('git', ['-C', probe, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' });
+  const out = spawnSync('git', ['-C', probe, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env: gitChildEnv() });
   return out.status === 0 && out.stdout.trim() ? out.stdout.trim() : null;
 }
 
