@@ -569,6 +569,14 @@ for (const kind of testBackends()) {
         expect({ provenance, code: out.json.code }).toEqual({ provenance, code: 'invalid_params' });
       }
       expect(await factRows('canaryprov')).toHaveLength(0);
+      for (const bad of ['Invalid \u0000 claim canarynulfact', 'Lone \ud800 surrogate canarynulfact']) {
+        const key = randomUUID();
+        const out = await write(alice, [{ fact: 'First fact of a bad batch canarynulfirst', provenance: 'turn 27' }, { fact: bad, provenance: 'turn 27' }], key);
+        expect({ isError: out.isError, code: out.json.code }).toEqual({ isError: true, code: 'invalid_params' });
+        expect(await factRows('canarynulfirst')).toHaveLength(0);
+        const fixed = await write(alice, [{ fact: 'First fact of a fixed batch canarynulfixed ' + key, provenance: 'turn 27' }], key);
+        expect(fixed.structured?.status).toBe('committed');
+      }
       const dup = await write(alice, [{ fact: 'Alice repeats herself canarydup', provenance: 'turn 25' }, { fact: 'Alice repeats herself canarydup', provenance: 'turn 26' }]);
       expect(dup.structured!.status).toBe('committed');
       expect(dup.structured!.fact_ids).toHaveLength(1);

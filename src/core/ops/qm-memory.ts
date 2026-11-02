@@ -43,6 +43,7 @@ export const IDEMPOTENCY_KEY_RE = /^[\x21-\x7e]{1,128}$/;
 export const MEMORY_WRITE_KINDS = ['event', 'preference', 'commitment', 'belief', 'fact'] as const;
 const FACT_KEYS = new Set(['fact', 'provenance', 'kind', 'valid_from']);
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+const UNPAIRED_SURROGATE_RE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
 /** Namespace of the per-member request-id namespaces. Changing it orphans every journaled memory_write receipt. */
 export const QM_MEMORY_REQUEST_NAMESPACE = '6b3e9f2a-41c7-4d58-9a0e-2f7c5d1b8e63';
 
@@ -173,6 +174,9 @@ function parseFacts(raw: unknown, actorId: string): Array<Record<string, unknown
     if (extra.length) throw invalid(`${at} has unknown field(s): ${extra.join(', ')}.`, `Allowed fields: ${[...FACT_KEYS].join(', ')}.`);
     const fact = typeof f.fact === 'string' ? f.fact.trim() : '';
     if (!fact) throw invalid(`${at}.fact must be a non-empty string.`, 'Pass the claim to save as fact.');
+    if (fact.includes('\u0000') || UNPAIRED_SURROGATE_RE.test(fact)) {
+      throw invalid(`${at}.fact holds a NUL character or malformed Unicode.`, 'Pass the claim as valid UTF-8 text without NUL characters; nothing was saved.');
+    }
     const provenance = typeof f.provenance === 'string' ? f.provenance.trim() : '';
     if (!provenance || provenance.length > MEMORY_WRITE_PROVENANCE_MAX) {
       throw invalid(`${at}.provenance must be 1 to ${MEMORY_WRITE_PROVENANCE_MAX} characters.`, 'Pass where the fact came from, for example "slack:C0123/p1700000000".');
