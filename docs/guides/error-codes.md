@@ -2295,7 +2295,7 @@ More: [docs/guides/write-refusals.md#head-blocked](../../docs/guides/write-refus
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A hook gbrain setup or the turn-rule lane wrote starts gbrain in the session's directory, or the hook launcher it names would not run. | Script-mode gbrain is a Bun script, and Bun runs the working directory's bunfig.toml preload and loads its .env before gbrain starts; harnesses run hooks in the session directory, so a cloned repository could run code on every prompt. | Correct the request using the message above, then retry. Run: gbrain doctor --only harness_wiring --json | agent | `repeat the read that failed` | 1 | no |
+| A gbrain hook or stdio MCP entry (setup, the turn-rule lane, gbrain bootstrap's lanes) starts gbrain in the session's directory, or the hook launcher it names would not run. | Script-mode gbrain is a Bun script, and Bun runs the working directory's bunfig.toml preload and loads its .env before gbrain starts; harnesses run hooks and stdio MCP servers in the session directory, so a cloned repository could run code on every prompt or session. | Correct the request using the message above, then retry. Run: gbrain doctor --only harness_wiring --json | agent | `repeat the read that failed` | 1 | no |
 
 Reasons: `session_cwd`, `missing`, `stale`, `foreign`.
 

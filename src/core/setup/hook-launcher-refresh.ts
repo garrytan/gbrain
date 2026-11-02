@@ -18,13 +18,15 @@
 import { readFileSync } from 'node:fs';
 import { configDir } from '../config.ts';
 import { hookEntryHash, parseClaudeHookCommand } from '../bootstrap/hooks.ts';
-import { codexHookCensus, codexHookGroupRuns, type CodexHookCensusGroup } from '../bootstrap/codex-hooks.ts';
+import { codexHookCensus } from '../bootstrap/codex-hooks.ts';
 import { join } from 'node:path';
-import { GBRAIN_HOOK_MARKER_KEY, GBRAIN_SETUP_MARKER_VALUE, claudeUserSettingsPath, codexConfigPath, codexHooksPath, type ClaudeHookEvent } from '../bootstrap/host-specs.ts';
+import { GBRAIN_HOOK_MARKER_KEY, GBRAIN_SETUP_MARKER_VALUE, claudeUserSettingsPath, codexHooksPath, type ClaudeHookEvent } from '../bootstrap/host-specs.ts';
 import { applyClaudeSetup, claudeSetupPaths, inspectClaudeSetup, readSetupReceipt, type ClaudeSetupPlan } from './claude-code.ts';
 import { codexSetupPaths, readCodexSetupReceipt } from './codex.ts';
-import { hookLauncherInCommand, hookLauncherPath, hookLauncherState, shellWords } from './hook-launcher.ts';
+import { hookLauncherInCommand, hookLauncherPath, hookLauncherState } from './hook-launcher.ts';
 import { localSetupRecords } from './local-receipts.ts';
+import { ownedEntryFingerprint } from '../bootstrap/adopted-connections.ts';
+import { launcherLaneFindings, setupRerunArgv } from './launcher-lanes.ts';
 import { hasTurnRuleHook, isTurnRuleEntry, syncTurnRuleHook, TURN_RULE_LANE_TOKEN } from './turn-hook.ts';
 
 /** True when this command starts gbrain somewhere other than a current launcher. */
@@ -42,19 +44,6 @@ function claudeHookEntries(path: string): Array<Record<string, unknown>> {
     .filter((e): e is Record<string, unknown> => !!e && typeof e === 'object' && typeof (e as Record<string, unknown>).command === 'string');
 }
 
-/** The words after \`env\` that are not assignments: [<launcher>] <bin> hook …; GBRAIN_HOME from the assignments. */
-function codexCommandParts(command: string): { gbrainBin: string; gbrainHome?: string } | null {
-  const words = shellWords(command) ?? [];
-  if (words[0] !== 'env') return null;
-  let i = 1;
-  let gbrainHome: string | undefined;
-  for (; i < words.length && /^[A-Z_]+=/.test(words[i]!); i++) if (words[i]!.startsWith('GBRAIN_HOME=')) gbrainHome = words[i]!.slice('GBRAIN_HOME='.length);
-  const rest = words.slice(i);
-  const at = rest.indexOf('hook');
-  const gbrainBin = at > 0 ? rest[at - 1]! : undefined;
-  return gbrainBin?.startsWith('/') ? { gbrainBin, ...(gbrainHome ? { gbrainHome } : {}) } : null;
-}
-
 /** The launcher of the install the hook's GBRAIN_HOME names, so a hook never depends on another install's directory. */
 const launcherFor = (gbrainHome: string | undefined) => (gbrainHome ? { hookLauncher: hookLauncherPath(join(gbrainHome, '.gbrain')) } : {});
 
@@ -66,47 +55,50 @@ function refreshTurnRule(log: (line: string) => void): void {
     log(`Hook launcher: claude-code turn-rule hook ${o.action === 'write' ? 'now starts gbrain from its own directory' : `left as is (${o.detail}${o.next ? `; run ${o.next}` : ''})`}.`);
   } else if (claude) log('Hook launcher: the claude-code turn-rule hook was edited, so it is left as is; run `gbrain setup claude-code --instructions-only` to rewrite it.');
   if (!hasTurnRuleHook('codex')) return;
-  let group: CodexHookCensusGroup | undefined;
-  try { group = codexHookCensus(codexHooksPath()).find((g) => g.lane === 'turn-rule' && g.commands.some((c) => c.includes(TURN_RULE_LANE_TOKEN) && needsLauncher(c))); } catch { return; }
-  if (!group) return;
-  // Rewriting re-trusts the group, so only a group Codex already runs moves: an untrusted or disabled one keeps Codex's approval gate.
-  if (!codexHookGroupRuns(codexHooksPath(), codexConfigPath(), group)) { log('Hook launcher: Codex does not run the codex turn-rule hook (not trusted, or disabled), so it is left as is; run `gbrain setup codex --instructions-only` to rewrite it.'); return; }
-  const parts = codexCommandParts(group.commands.find((c) => c.includes(TURN_RULE_LANE_TOKEN))!);
-  if (!parts) { log('Hook launcher: the codex turn-rule hook could not be read, so it is left as is; run `gbrain setup codex --instructions-only` to rewrite it.'); return; }
-  const o = syncTurnRuleHook({ harness: 'codex', gbrainBin: parts.gbrainBin, gbrainHome: parts.gbrainHome, paths: launcherFor(parts.gbrainHome), rerun: 'gbrain setup codex --instructions-only' });
-  log(`Hook launcher: codex turn-rule hook ${o.action === 'write' ? 'now starts gbrain from its own directory' : `left as is (${o.detail}${o.next ? `; run ${o.next}` : ''})`}.`);
+  let stale = false;
+  try { stale = codexHookCensus(codexHooksPath()).some((g) => g.lane === 'turn-rule' && g.commands.some((c) => c.includes(TURN_RULE_LANE_TOKEN) && needsLauncher(c))); } catch { return; }
+  // Every install shares one hooks.json and a rewrite recomputes every turn-rule group's trust, so the codex hook is only named here.
+  if (stale) log('Hook launcher: the codex turn-rule hook starts gbrain in the session\'s directory, so it is left as is (a rewrite moves Codex trust); run `gbrain setup codex --instructions-only` to rewrite it.');
 }
 
 async function refreshSetup(log: (line: string) => void): Promise<void> {
   const home = configDir();
   for (const record of localSetupRecords(home).filter((r) => r.status === 'installed')) {
-    const rerun = `gbrain setup ${record.harness}${record.name === 'gbrain' ? '' : ` --name ${record.name}`}`;
+    let rerun = `gbrain setup ${record.harness}${record.name === 'gbrain' ? '' : ` --name ${record.name}`}`;
     try {
       if (record.harness === 'claude-code') {
         const receipt = readSetupReceipt(record.path).setup;
         if (!receipt) continue;
+        rerun = setupRerunArgv('claude-code', receipt).join(' ');
         const paths = claudeSetupPaths({ name: receipt.name, scope: receipt.scope, projectDir: receipt.project_dir });
         const owned = new Set([...Object.values(receipt.hooks.owned), ...Object.values(receipt.hooks.pending)]);
         const ours = claudeHookEntries(paths.settingsPath).filter((e) => e[GBRAIN_HOOK_MARKER_KEY] === GBRAIN_SETUP_MARKER_VALUE || owned.has(hookEntryHash(e) ?? '')).map((e) => e.command as string);
-        if (!ours.some(needsLauncher)) continue;
-        if (receipt.scope === 'project') { log(`Hook launcher: gbrain's hooks in ${paths.settingsPath} start gbrain in the session's directory; from ${receipt.project_dir}, run ${rerun} --scope project.`); continue; }
-        const homeEnv = ours.map((c) => parseClaudeHookCommand(c)?.env.GBRAIN_HOME).find((h) => h !== undefined);
-        const plan: ClaudeSetupPlan = { name: receipt.name, scope: receipt.scope, launcher: receipt.launcher, brainHome: receipt.gbrain_home, ...(homeEnv ? { gbrainHomeEnv: homeEnv } : {}),
+        // Another install's hooks or MCP entry can share these files, so the home comes only from entries this receipt owns.
+        const homeEnv = claudeHookEntries(paths.settingsPath).filter((e) => owned.has(hookEntryHash(e) ?? '')).map((e) => parseClaudeHookCommand(e.command as string)?.env.GBRAIN_HOME).find((h) => h !== undefined)
+          ?? (receipt.mcp_plugin ? undefined : claudeMcpHome(paths.configPath, receipt.name, receipt.project_dir, [receipt.entry_hash, receipt.pending_entry_hash]));
+        const plan: ClaudeSetupPlan = { name: receipt.name, scope: receipt.scope, ...(receipt.project_dir ? { projectDir: receipt.project_dir } : {}), launcher: receipt.launcher, brainHome: receipt.gbrain_home, ...(homeEnv ? { gbrainHomeEnv: homeEnv } : {}),
           sourceId: receipt.source_id, surface: receipt.surface, advertise: receipt.advertise ?? null, events: Object.keys({ ...receipt.hooks.owned, ...receipt.hooks.pending }) as ClaudeHookEvent[] };
-        if (!receipt.mcp_plugin && inspectClaudeSetup(plan).mcp.state !== 'current') { log(`Hook launcher: gbrain's claude-code hooks start gbrain in the session's directory; run ${rerun} to rewrite them.`); continue; }
-        const applied = await applyClaudeSetup(plan, receipt.consent, { pluginOwner: receipt.mcp_plugin ?? null, brainCreated: false, mcpMustBeCurrent: true });
+        // An MCP entry still exactly what setup last wrote predates the launcher (#8426): setup's own rewrite moves it.
+        const mcp = receipt.mcp_plugin ? 'plugin' : inspectClaudeSetup(plan).mcp.state;
+        if (!ours.some(needsLauncher) && mcp !== 'owned') continue;
+        if (receipt.scope === 'project') { log(`Hook launcher: gbrain setup's entries for ${receipt.project_dir} start gbrain in the session's directory; from ${receipt.project_dir}, run ${rerun} --scope project.`); continue; }
+        if (mcp !== 'plugin' && mcp !== 'current' && mcp !== 'owned') { log(`Hook launcher: gbrain's claude-code hooks start gbrain in the session's directory; run ${rerun} to rewrite them.`); continue; }
+        const applied = await applyClaudeSetup(plan, receipt.consent, { pluginOwner: receipt.mcp_plugin ?? null, brainCreated: false, refreshOf: receipt });
         const left = new Set(claudeHookEntries(paths.settingsPath).filter((e) => needsLauncher(e.command as string)).map((e) => hookEntryHash(e) ?? ''));
         const kept = Object.entries(applied.edited).filter(([, hash]) => left.has(hash)).map(([event]) => event);
         log(kept.length > 0
           ? `Hook launcher: gbrain setup's claude-code ${kept.join(', ')} hook in ${paths.settingsPath} was edited after setup wrote it, so it is kept as is and still starts gbrain in the session's directory; remove or rewrite it, then run ${rerun}.`
-          : `Hook launcher: gbrain setup's claude-code hooks in ${paths.settingsPath} now start gbrain from its own directory.`);
+          : `Hook launcher: gbrain setup's claude-code ${mcp === 'owned' ? 'MCP server and hooks' : 'hooks'} now start gbrain from its own directory.`);
       } else if (record.harness === 'codex') {
         const receipt = readCodexSetupReceipt(record.path).setup;
         if (!receipt) continue;
+        rerun = setupRerunArgv('codex', receipt).join(' ');
         const paths = codexSetupPaths(receipt.name);
-        if (!codexHookCensus(paths.hooksPath).some((g) => g.lane === 'setup' && g.commands.some(needsLauncher))) continue;
-        // Rewriting re-trusts setup's groups, and a hooks.json every install shares cannot show which install's group Codex runs, so the rewrite stays with setup, where the user approves it.
-        log(`Hook launcher: gbrain setup's codex hooks in ${paths.hooksPath} start gbrain in the session's directory; run ${rerun} to rewrite them.`);
+        const hooks = codexHookCensus(paths.hooksPath).some((g) => g.lane === 'setup' && g.commands.some(needsLauncher));
+        const mcp = !receipt.mcp_plugin && launcherLaneFindings().some((f) => f.harness === 'codex' && f.lane === 'mcp' && f.owner === 'setup' && f.detail.startsWith(`[mcp_servers.${receipt.name}]`));
+        if (!hooks && !mcp) continue;
+        // Rewriting re-trusts setup's groups, and a hooks.json every install shares cannot show which install's group Codex runs, so the rewrite stays with setup, where the user approves it; the MCP table moves in the same run.
+        log(`Hook launcher: gbrain setup's codex ${[...(mcp ? [`MCP server in ${paths.configPath}`] : []), ...(hooks ? [`hooks in ${paths.hooksPath}`] : [])].join(' and ')} start gbrain in the session's directory; run ${rerun} to rewrite them.`);
       }
     } catch (e) {
       log(`Hook launcher: gbrain's ${record.harness} hooks were not refreshed (${(e as Error).message}); run ${rerun}.`);
@@ -118,5 +110,20 @@ async function refreshSetup(log: (line: string) => void): Promise<void> {
 export async function refreshHookLaunchers(log: (line: string) => void = console.log): Promise<void> {
   try { refreshTurnRule(log); } catch (e) { log(`Hook launcher: the turn-rule hooks were not refreshed (${(e as Error).message}); run gbrain doctor --only harness_wiring.`); }
   try { await refreshSetup(log); } catch (e) { log(`Hook launcher: setup's hooks were not refreshed (${(e as Error).message}); run gbrain doctor --only harness_wiring.`); }
+  // The other lanes are named, never rewritten here: bootstrap's writers run from the workspace, and their Codex entries move trust.
+  try {
+    for (const f of launcherLaneFindings().filter((x) => x.owner !== 'setup')) log(`Hook launcher: ${f.detail}; ${f.edited ? 'it was edited after setup wrote it, so it is kept as is; remove or rewrite it, then ' : f.owner === 'none' ? 'gbrain does not rewrite it, so remove it, then ' : ''}${f.rerunFrom ? `from ${f.rerunFrom}, ` : ''}run ${f.rerun.join(' ')} to move it onto gbrain's launcher.`);
+  } catch (e) { log(`Hook launcher: the bootstrap lanes were not checked (${(e as Error).message}); run gbrain doctor --only harness_wiring.`); }
+}
+
+/** GBRAIN_HOME from setup's own MCP entry, for an install with no hooks to read it from. */
+function claudeMcpHome(configPath: string, name: string, projectDir: string | undefined, ownedHashes: Array<string | null | undefined>): string | undefined {
+  try {
+    const cfg = JSON.parse(readFileSync(configPath, 'utf8')) as { mcpServers?: Record<string, { env?: Record<string, unknown> }>; projects?: Record<string, { mcpServers?: Record<string, { env?: Record<string, unknown> }> }> };
+    const entry = (projectDir ? cfg.projects?.[projectDir]?.mcpServers : cfg.mcpServers)?.[name];
+    if (!entry || !ownedHashes.includes(ownedEntryFingerprint(entry as Record<string, unknown>))) return undefined;
+    const home = entry.env?.GBRAIN_HOME;
+    return typeof home === 'string' ? home : undefined;
+  } catch { return undefined; }
 }
 

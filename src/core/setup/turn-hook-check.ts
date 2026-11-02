@@ -21,6 +21,7 @@ import { classifyHarnessHook, hookEntryHash } from '../bootstrap/hooks.ts';
 import { localSetupRecords } from './local-receipts.ts';
 import { CLAUDE_SETTINGS_FILE_RELPATH, GBRAIN_HOOK_MARKER_KEY, GBRAIN_SETUP_MARKER_VALUE, claudeUserSettingsPath, codexConfigPath, codexHooksPath } from '../bootstrap/host-specs.ts';
 import { hookLauncherInCommand, hookLauncherState, type HookLauncherState } from './hook-launcher.ts';
+import type { LauncherLane } from './launcher-lanes.ts';
 import { enabledPluginLanes } from '../bootstrap/plugin-lanes.ts';
 import { brainFirstTarget, openclawConfigPath, parseJson5ish } from './brain-first.ts';
 import { inspectHermesTurnHook } from './hermes-turn-hook.ts';
@@ -122,8 +123,9 @@ export function inspectTurnHook(harness: string, opts: { projectDir?: string } =
  * gbrain did not write.
  */
 export interface HookLauncherProblem {
-  harness: 'claude-code' | 'codex';
-  lane: 'setup' | 'turn-rule';
+  harness: 'claude-code' | 'codex' | 'opencode';
+  /** setup and turn-rule: hooks; mcp, harness and bootstrap: the other lanes (launcher-lanes.ts), which carry their own rerun. */
+  lane: 'setup' | 'turn-rule' | LauncherLane;
   /** The settings or hooks file holding the entry. */
   source: string;
   /** session_cwd: no launcher in the command; otherwise the launcher's state. */
@@ -131,23 +133,30 @@ export interface HookLauncherProblem {
   detail: string;
   /** A setup entry the user edited after setup wrote it: setup keeps it as is, so only the user can move it. */
   edited?: boolean;
+  /** The other lanes: the command that rewrites the entry, where to run it, and whether it is setup's own (an agent may run it). */
+  rerun?: string[];
+  rerunFrom?: string;
+  setupOwned?: boolean;
+  owner?: 'setup' | 'bootstrap' | 'none';
+  /** The setup receipt that owns the hook, when its hash is recorded. */
+  receiptPath?: string;
 }
 
 /** The hook hashes a harness's setup receipts own and the ones they record as edited by the user: Claude Code can drop the `_gbrain` marker on a rewrite, and setup owns its entries by hash. */
-function setupReceiptHashes(harness: 'claude-code' | 'codex'): { owned: Set<string>; edited: Set<string> } {
-  const owned = new Set<string>();
-  const edited = new Set<string>();
+function setupReceiptHashes(harness: 'claude-code' | 'codex'): { owned: Map<string, string>; edited: Map<string, string> } {
+  const owned = new Map<string, string>();
+  const edited = new Map<string, string>();
   for (const r of localSetupRecords().filter((x) => x.harness === harness)) {
     const hooks = (readJson(r.path) as { hooks?: { owned?: Record<string, unknown>; pending?: Record<string, unknown>; edited?: Record<string, unknown> } } | null)?.hooks;
-    for (const h of [...Object.values(hooks?.owned ?? {}), ...Object.values(hooks?.pending ?? {})]) if (typeof h === 'string') owned.add(h);
-    for (const h of Object.values(hooks?.edited ?? {})) if (typeof h === 'string') edited.add(h);
+    for (const h of [...Object.values(hooks?.owned ?? {}), ...Object.values(hooks?.pending ?? {})]) if (typeof h === 'string') owned.set(h, r.path);
+    for (const h of Object.values(hooks?.edited ?? {})) if (typeof h === 'string') edited.set(h, r.path);
   }
   return { owned, edited };
 }
 
-type LaneCommand = { lane: 'setup' | 'turn-rule'; command: string; edited?: boolean };
+type LaneCommand = { lane: 'setup' | 'turn-rule'; command: string; edited?: boolean; receiptPath?: string };
 
-function claudeLaneCommands(path: string, setup: { owned: Set<string>; edited: Set<string> }): LaneCommand[] {
+function claudeLaneCommands(path: string, setup: { owned: Map<string, string>; edited: Map<string, string> }): LaneCommand[] {
   const hooks = readJson(path)?.hooks;
   if (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)) return [];
   const out: LaneCommand[] = [];
@@ -158,8 +167,8 @@ function claudeLaneCommands(path: string, setup: { owned: Set<string>; edited: S
       const entry = e as Record<string, unknown>;
       const hash = hookEntryHash(entry) ?? '';
       if (isTurnRuleEntry(entry)) out.push({ lane: 'turn-rule', command: entry.command as string });
-      else if (setup.edited.has(hash)) out.push({ lane: 'setup', command: entry.command as string, edited: true });
-      else if (entry[GBRAIN_HOOK_MARKER_KEY] === GBRAIN_SETUP_MARKER_VALUE || setup.owned.has(hash)) out.push({ lane: 'setup', command: entry.command as string });
+      else if (setup.edited.has(hash)) out.push({ lane: 'setup', command: entry.command as string, edited: true, receiptPath: setup.edited.get(hash) });
+      else if (entry[GBRAIN_HOOK_MARKER_KEY] === GBRAIN_SETUP_MARKER_VALUE || setup.owned.has(hash)) out.push({ lane: 'setup', command: entry.command as string, receiptPath: setup.owned.get(hash) });
     }
   }
   return out;
@@ -176,18 +185,18 @@ export function hookLauncherProblem(harness: 'claude-code' | 'codex', opts: { pr
   } else {
     try {
       for (const g of codexHookCensus(codexHooksPath())) {
-        if (g.lane === 'setup' || g.lane === 'turn-rule') found.push(...g.commands.map((command) => ({ lane: g.lane as 'setup' | 'turn-rule', command, source: codexHooksPath(), ...(setup.edited.has(g.hash) ? { edited: true } : {}) })));
+        if (g.lane === 'setup' || g.lane === 'turn-rule') found.push(...g.commands.map((command) => ({ lane: g.lane as 'setup' | 'turn-rule', command, source: codexHooksPath(), ...(setup.edited.has(g.hash) ? { edited: true } : {}), receiptPath: setup.owned.get(g.hash) ?? setup.edited.get(g.hash) })));
       }
     } catch { /* unparseable: Codex runs none of it */ }
   }
   for (const f of found) {
     const launcher = hookLauncherInCommand(f.command);
     if (!launcher) {
-      return { harness, lane: f.lane, source: f.source, reason: 'session_cwd', ...(f.edited ? { edited: true } : {}),
+      return { harness, lane: f.lane, source: f.source, reason: 'session_cwd', ...(f.edited ? { edited: true } : {}), ...(f.receiptPath ? { receiptPath: f.receiptPath } : {}),
         detail: `gbrain's ${f.lane} hook in ${f.source} starts gbrain in the session's directory, so Bun loads that directory's bunfig.toml and .env before gbrain runs${f.edited ? '; it was edited after setup wrote it, so setup keeps it as is' : ''}` };
     }
     const s = hookLauncherState(launcher);
-    if (s.state !== 'current') return { harness, lane: f.lane, source: f.source, reason: s.state, detail: `gbrain's ${f.lane} hook in ${f.source} runs through ${launcher}, but ${s.detail}` };
+    if (s.state !== 'current') return { harness, lane: f.lane, source: f.source, reason: s.state, ...(f.receiptPath ? { receiptPath: f.receiptPath } : {}), detail: `gbrain's ${f.lane} hook in ${f.source} runs through ${launcher}, but ${s.detail}` };
   }
   return null;
 }

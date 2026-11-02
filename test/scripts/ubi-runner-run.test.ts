@@ -6,8 +6,8 @@
 //
 // Protects: up, run and verify refuse without UBI_OWNER before any API call;
 // gbrain's up reaps nothing unless UBI_REAP=1 and says so in one line; reap
-// destroys expired TTL VMs of any owner and only the caller's own TTL-less
-// ubirun-<owner>-* VMs past UBI_LEGACY_HOURS; run ends with the UBICLOUD:
+// destroys only the caller's own expired TTL VMs and TTL-less
+// ubirun-<owner>-* VMs past UBI_LEGACY_HOURS, and counts other owners' expired ones; run ends with the UBICLOUD:
 // left= line (also in UBI_LEFT_FILE), and a VM it cannot confirm gone fails a
 // passing command; a silent or overlong remote command is killed with exit
 // 124, its last output and its remote session ended; --pass/--env and a
@@ -132,8 +132,8 @@ describe("owner and reap", () => {
 
   // GBRA-108: gbrain still holds TTL-less VMs older than gstack's 4 h legacy
   // bound, so gbrain's up reaps nothing until UBI_REAP=1, and says so.
-  it("gbrain's up reaps nothing by default and says so in one line; UBI_REAP=1 reaps expired TTL VMs of any owner first", async () => {
-    const seed = [{ name: "ubirun-other-1000000000-bbbb-t1" }, { name: "ubirun-t1-1000000000-aaaa" }, { name: `ubirun-peer-${NOW}-cccc-t3` }];
+  it("gbrain's up reaps nothing by default and says so in one line; UBI_REAP=1 reaps this owner's expired VMs first and leaves other owners'", async () => {
+    const seed = [{ name: "ubirun-other-1000000000-bbbb-t1" }, { name: "ubirun-t1-1000000000-aaaa" }, { name: "ubirun-t1-1000000000-iiii-t1" }, { name: `ubirun-peer-${NOW}-cccc-t3` }];
     serve({ rejectCreates: true, seed });
     const def = await run(["up"]);
     expect(def.code).toBe(1);
@@ -146,27 +146,29 @@ describe("owner and reap", () => {
     expect(creates()).toHaveLength(2);
     const on = await run(["up"], { UBI_REAP: "1" });
     expect(on.code).toBe(1);
-    expect(on.stderr).toMatch(/reaping expired eu-central-h1\/ubirun-other-1000000000-bbbb-t1 \(owner other; its TTL ended \d+ min ago\)/);
+    expect(on.stderr).toMatch(/reaping expired eu-central-h1\/ubirun-t1-1000000000-iiii-t1 \(owner t1; its TTL ended \d+ min ago\)/);
     expect(on.stderr).toMatch(/reaping TTL-less eu-central-h1\/ubirun-t1-1000000000-aaaa \(owner t1; \d+h old, legacy sweep at 4h\)/);
+    expect(on.stderr).toContain("reap: left 1 expired VMs of other owners; only their owners reap them");
     expect(on.stderr).not.toContain("reap skipped");
-    expect(destroyed()).toEqual(["ubirun-other-1000000000-bbbb-t1", "ubirun-t1-1000000000-aaaa"]);
+    expect(destroyed()).toEqual(["ubirun-t1-1000000000-aaaa", "ubirun-t1-1000000000-iiii-t1"]);
   }, 60_000);
 
-  it("reap destroys expired TTLs (and older -x expiries) and this owner's old TTL-less names, never unexpired, recent, another owner's TTL-less, untagged or foreign ones", async () => {
+  it("reap destroys this owner's expired TTLs (and older -x expiries) and old TTL-less names, never unexpired, recent, another owner's, untagged or foreign ones", async () => {
     const seed = [
-      "ubirun-other-1000000000-bbbb-t1",
+      "ubirun-t1-1000000000-bbbb-t1",
       "ubirun-t1-9999999999-dddd-t1",
       "ubirun-t1-1000000000-aaaa",
       "ubirun-1000000000-cccc",
       `ubirun-t1-${NOW - 3 * 3600}-eeee`,
       "ubirun-gbra240-1000000000-gggg",
       "team-db-1000000000-ffff",
-      `ubirun-other-${NOW - 5 * 3600}-x${NOW - 3 * 3600}-hhhh`,
+      `ubirun-t1-${NOW - 5 * 3600}-x${NOW - 3 * 3600}-hhhh`,
+      "ubirun-other-1000000000-jjjj-t1",
     ].map((name) => ({ name }));
     const api = serve({ seed });
     const reap = await run(["reap"]);
     expect(reap.code).toBe(0);
-    expect(destroyed()).toEqual(["ubirun-other-1000000000-bbbb-t1", "ubirun-t1-1000000000-aaaa", seed[7]!.name].sort());
+    expect(destroyed()).toEqual(["ubirun-t1-1000000000-bbbb-t1", "ubirun-t1-1000000000-aaaa", seed[7]!.name].sort());
     expect((await run(["reap"])).stderr).toContain("reap: no expired VMs");
     const lowered = await run(["reap"], { UBI_LEGACY_HOURS: "2" });
     expect(lowered.code).toBe(0);
@@ -174,15 +176,38 @@ describe("owner and reap", () => {
     const ownerless = await run(["reap"], { UBI_OWNER: "", UBI_LEGACY_HOURS: "1" });
     expect(ownerless.code).toBe(0);
     expect(ownerless.stderr).not.toContain("reaping TTL-less");
-    expect([...api.vms.keys()].sort()).toEqual(["team-db-1000000000-ffff", "ubirun-1000000000-cccc", "ubirun-gbra240-1000000000-gggg", "ubirun-t1-9999999999-dddd-t1"]);
+    expect([...api.vms.keys()].sort()).toEqual(["team-db-1000000000-ffff", "ubirun-1000000000-cccc", "ubirun-gbra240-1000000000-gggg", "ubirun-other-1000000000-jjjj-t1", "ubirun-t1-9999999999-dddd-t1"]);
+  }, 60_000);
+
+  // GST-573 (gstack #3756): reap destroyed any owner's expired VM; deletes stay with the owner that created the VM.
+  it("reap destroys only the caller's own expired and old TTL-less VMs, and only counts other owners' expired ones (GST-573)", async () => {
+    const seed = [
+      "ubirun-t1-1000000000-aaaa-t1",
+      "ubirun-t1-1000000000-bbbb",
+      "ubirun-other-1000000000-cccc-t1",
+      `ubirun-other-${NOW - 5 * 3600}-x${NOW - 3 * 3600}-dddd`,
+      "ubirun-1000000000-eeee-t1",
+      `ubirun-peer-${NOW}-ffff-t3`,
+    ].map((name) => ({ name }));
+    const api = serve({ seed });
+    const reap = await run(["reap"]);
+    expect(reap.code).toBe(0);
+    expect(destroyed()).toEqual(["ubirun-t1-1000000000-aaaa-t1", "ubirun-t1-1000000000-bbbb"]);
+    expect(reap.stderr).toContain("reap: left 3 expired VMs of other owners; only their owners reap them");
+    expect(reap.stderr).not.toMatch(/reaping \S+\/ubirun-(other|peer|\d)/);
+    const other = await run(["reap"], { UBI_OWNER: "other" });
+    expect(other.code).toBe(0);
+    expect(destroyed()).toEqual(["ubirun-other-1000000000-cccc-t1", seed[3]!.name, "ubirun-t1-1000000000-aaaa-t1", "ubirun-t1-1000000000-bbbb"].sort());
+    expect(other.stderr).toContain("reap: left 1 expired VMs of other owners; only their owners reap them");
+    expect([...api.vms.keys()].sort()).toEqual(["ubirun-1000000000-eeee-t1", `ubirun-peer-${NOW}-ffff-t3`]);
   }, 60_000);
 
   it("reap reports a failed list and a failed destroy; bad UBI_TTL_HOURS refuses creates and bad UBI_LEGACY_HOURS refuses reap, never read-only commands", async () => {
-    const api = serve({ seed: [{ name: "ubirun-other-1000000000-bbbb-t1" }] });
+    const api = serve({ seed: [{ name: "ubirun-t1-1000000000-bbbb-t1" }] });
     api.faults.destroy = true;
     const destroyFails = await run(["reap"], { UBI_REAP_DOWN_TIMEOUT: "2" });
     expect(destroyFails.code).toBe(1);
-    expect(destroyFails.stderr).toContain("failed to reap eu-central-h1/ubirun-other-1000000000-bbbb-t1");
+    expect(destroyFails.stderr).toContain("failed to reap eu-central-h1/ubirun-t1-1000000000-bbbb-t1");
     expect(destroyFails.stderr).toContain("reap: 1 of 1 expired VMs could not be destroyed");
     api.faults.list = true;
     const listFails = await run(["reap"]);
@@ -204,7 +229,7 @@ describe("owner and reap", () => {
 
   // #8096 item 3: every UBI_REAP value but 0 used to turn the reap on.
   it("UBI_REAP=false, no, off (any case) reaps nothing; true, yes, on reap; an unreadable value refuses before any API call", async () => {
-    serve({ rejectCreates: true, seed: [{ name: "ubirun-other-1000000000-bbbb-t1" }] });
+    serve({ rejectCreates: true, seed: [{ name: "ubirun-t1-1000000000-bbbb-t1" }] });
     for (const value of ["false", "FALSE", "no", "off", "0"]) {
       const r = await run(["up"], { UBI_REAP: value });
       expect(r.code).toBe(1);
@@ -217,10 +242,10 @@ describe("owner and reap", () => {
     expect(maybe.stderr).toContain("UBI_REAP must be 1 or 0 (true/false, yes/no and on/off also work), not 'maybe'");
     expect(creates()).toHaveLength(5);
     for (const value of ["true", "Yes", "on"]) {
-      serve({ rejectCreates: true, seed: [{ name: "ubirun-other-1000000000-bbbb-t1" }] });
+      serve({ rejectCreates: true, seed: [{ name: "ubirun-t1-1000000000-bbbb-t1" }] });
       const r = await run(["up"], { UBI_REAP: value });
-      expect(r.stderr).toMatch(/reaping expired eu-central-h1\/ubirun-other-1000000000-bbbb-t1/);
-      expect(destroyed()).toEqual(["ubirun-other-1000000000-bbbb-t1"]);
+      expect(r.stderr).toMatch(/reaping expired eu-central-h1\/ubirun-t1-1000000000-bbbb-t1/);
+      expect(destroyed()).toEqual(["ubirun-t1-1000000000-bbbb-t1"]);
     }
   }, 90_000);
 });
@@ -285,13 +310,13 @@ describe("down retries a failed destroy request", () => {
   }, 60_000);
 
   it("reap waits at most UBI_REAP_DOWN_TIMEOUT per VM, not UBI_DOWN_TIMEOUT", async () => {
-    const api = serve({ seed: [{ name: "ubirun-other-1000000000-bbbb-t1" }, { name: "ubirun-peer-1000000000-cccc-t1" }] });
+    const api = serve({ seed: [{ name: "ubirun-t1-1000000000-bbbb-t1" }, { name: "ubirun-t1-1000000000-cccc-t1" }] });
     api.faults.destroy = true;
     const started = Date.now();
     const r = await run(["reap"], { UBI_DOWN_TIMEOUT: "600", UBI_REAP_DOWN_TIMEOUT: "2" });
     expect(r.code).toBe(1);
     expect(Date.now() - started).toBeLessThan(30_000);
-    expect(r.stderr).toContain("could not confirm eu-central-h1/ubirun-other-1000000000-bbbb-t1 is gone after 2s (last destroy request: HTTP 500)");
+    expect(r.stderr).toContain("could not confirm eu-central-h1/ubirun-t1-1000000000-bbbb-t1 is gone after 2s (last destroy request: HTTP 500)");
     expect(r.stderr).toContain("reap: 2 of 2 expired VMs could not be destroyed");
     for (const bad of ["0", "x"]) expect((await run(["reap"], { UBI_REAP_DOWN_TIMEOUT: bad })).stderr).toContain("UBI_REAP_DOWN_TIMEOUT must be a whole number of seconds from 1");
   }, 60_000);
@@ -594,4 +619,28 @@ describe("quota preflight", () => {
     expect(name).toMatch(new RegExp(`^${RUN_VM}$`));
     expect((await run(["down", name])).code).toBe(0);
   }, 90_000);
+
+  // gstack #3746: an unreadable usage used to read as room and let the create through without a word.
+  it("an unreadable usage is retried while UBI_QUOTA_WAIT lasts, then logged, and the create is left to the API", async () => {
+    const api = serve({ rejectCreates: true, seed: [{ name: `ubirun-peer-${NOW}-cccc-t3` }] });
+    api.faults.list = true;
+    const up = await run(["up"], { UBI_QUOTA_VCPUS: "16" });
+    expect(up.stderr).toContain("quota preflight: could not read the project's vCPU usage; the API's own answer decides");
+    expect(creates()).toHaveLength(1);
+    const waited = await run(["up"], { UBI_QUOTA_VCPUS: "16", UBI_QUOTA_WAIT: "2" });
+    expect(waited.stderr).toContain("quota: could not read the project's vCPU usage; retrying, up to 2s more");
+    expect(waited.stderr).toContain("quota preflight: could not read the project's vCPU usage; the API's own answer decides");
+    expect(creates()).toHaveLength(2);
+  }, 60_000);
+
+  // gstack #3746 (#3678): the reap before up died on an empty project's bare-newline list.
+  it("up with UBI_REAP=1 on an empty project reaps nothing and reaches its create", async () => {
+    serve({ rejectCreates: true, listBody: "\n" });
+    const up = await run(["up"], { UBI_REAP: "1" });
+    expect(up.stderr).toContain("reap: no expired VMs");
+    expect(up.stderr).not.toContain("invalid VM name");
+    expect(up.stderr).not.toContain("expired VMs of other owners");
+    expect(up.stderr).not.toContain("reap failed");
+    expect(creates()).toHaveLength(1);
+  }, 60_000);
 });

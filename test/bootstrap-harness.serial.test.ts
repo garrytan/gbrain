@@ -59,6 +59,7 @@ import { VERSION } from '../src/version.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { SourceTargetError } from '../src/core/source-resolver.ts';
 import { renderBrainFirstSnippet } from '../src/core/setup/brain-first.ts';
+import { hookLauncherPath } from '../src/core/setup/hook-launcher.ts';
 
 const TOKEN_A = `gbrain_${'a'.repeat(64)}`;
 const TOKEN_B = `gbrain_${'b'.repeat(64)}`;
@@ -333,6 +334,9 @@ describe('full apply', () => {
     const cmd = ((hooks.SessionStart[0] as { hooks: Array<{ command: string }> }).hooks[0]).command;
     expect(cmd).toContain('GBRAIN_HOOK_LANE=harness');
     expect(cmd).toContain('GBRAIN_SOURCE=default');
+    // #8428: the harness lane's hooks start gbrain through the launcher in its own directory, never the session's.
+    expect(cmd).toContain(`${hookLauncherPath(f.home)} /opt/fake/gbrain hook`);
+    expect(hooksJson).toContain(hookLauncherPath(f.home));
 
     const state = readHarnessReceiptState(f.home);
     expect(state.state).toBe('ok');
