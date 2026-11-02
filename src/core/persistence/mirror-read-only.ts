@@ -19,7 +19,9 @@
  * pulls it with `git pull --ff-only` on every sync.
  */
 import type { SqlEngine } from './model.ts';
+import { isAbsolute, relative, sep } from 'node:path';
 import { urlCloneReadOnly } from '../url-clone.ts';
+import { canonicalFilesystemPath } from './root-registry.ts';
 
 /** `lock`: inside a publication, hold the source row so a concurrent mode change waits for this write. */
 export async function sourceMirrorReadOnly(engine: SqlEngine, sourceId: string, lock = false): Promise<boolean> {
@@ -27,6 +29,22 @@ export async function sourceMirrorReadOnly(engine: SqlEngine, sourceId: string, 
     `SELECT COALESCE(config->>'mirror_read_only','false')='true' AS read_only, local_path, config FROM sources WHERE id=$1${lock ? ' FOR SHARE' : ''}`, [sourceId]);
   if (!row) return false;
   return row.read_only === true || await urlCloneReadOnly(engine, sourceId, row);
+}
+
+/** A write through another source is still unsafe when its target is inside a read-only mirror's root. */
+export async function readOnlyMirrorOwnsPath(engine: SqlEngine, sourceId: string, targetPath: string): Promise<boolean> {
+  const mirrors = await engine.executeRaw<{ local_path: string }>(`SELECT local_path FROM sources
+    WHERE id<>$1 AND local_path IS NOT NULL AND local_path<>'' AND config->>'mirror_read_only'='true'`, [sourceId]);
+  let target: string;
+  try { target = canonicalFilesystemPath(targetPath); } catch { return true; }
+  for (const mirror of mirrors) {
+    if (!isAbsolute(mirror.local_path)) return true;
+    try {
+      const pathFromRoot = relative(canonicalFilesystemPath(mirror.local_path), target);
+      if (!isAbsolute(pathFromRoot) && pathFromRoot !== '..' && !pathFromRoot.startsWith(`..${sep}`)) return true;
+    } catch { return true; }
+  }
+  return false;
 }
 
 /** Marks a page this publication stored database-only because its source is a read-only mirror and it has no recorded file. */
