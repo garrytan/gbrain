@@ -101,7 +101,7 @@ More: [docs/guides/write-refusals.md#access_member_id_retired](../../docs/guides
 |---|---|---|---|---|---|---|
 | A member or group id given to an access command, a credential binding or --as is ill-formed or names no usable member, so nothing was read or changed. | Ids are matched exactly against page readers; an unknown or disabled member is refused rather than read as unbound, so a typo never previews or binds the wrong view. | Check the id with gbrain access member list --all, or add the member first. Run: gbrain access member list --all --json | agent | `gbrain access member list --all --json` | 1 | no |
 
-Reasons: `ill_formed`, `unknown`, `disabled`, `removed`, `exists`, `unknown_group`.
+Reasons: `ill_formed`, `unknown`, `disabled`, `removed`, `exists`, `unknown_group`, `invalid_external_id`, `link_exists`, `unknown_link`.
 
 More: [docs/guides/write-refusals.md#access_member_invalid](../../docs/guides/write-refusals.md#access_member_invalid)
 
@@ -158,6 +158,28 @@ More: [docs/guides/write-refusals.md#access_rule_invalid](../../docs/guides/writ
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | This batch is unknown or outside the retained replay window. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
+
+### actor_not_attested
+
+<a id="actor_not_attested"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A call named the person it serves (the x-qm-actor header or the acting_user argument) in a way gbrain does not honour: the credential holds no attest right, the operation is not in its attested operations, the argument differs from the header or comes without an attested header, or the id is not 1-256 visible ASCII characters; or a write that saves only as an attested person (memory_write) named none; or the request carries x-qm-audience, a channel audience gbrain does not serve yet. Nothing was read or written. | Naming a person decides whose notes are read and written as; only a credential the brain operator granted the attest right may do it, only for the operations it lists, and text in a conversation never chooses it. | Read reason: no_attest_right and op_not_attested are the brain operator's call (gbrain auth rescope --client <id> --attest-actor qm [--attest-ops <list>]); argument_mismatch, argument_without_attestation, invalid_actor_id, actor_required and audience_not_supported are fixed in the calling harness. | user | `gbrain doctor --json` | 1 | no |
+
+Reasons: `no_attest_right`, `op_not_attested`, `argument_mismatch`, `argument_without_attestation`, `invalid_actor_id`, `actor_required`, `audience_not_supported`.
+
+More: [docs/guides/write-refusals.md#actor_not_attested](../../docs/guides/write-refusals.md#actor_not_attested)
+
+### actor_unlinked
+
+<a id="actor_unlinked"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An attested call named a person whose canonical id is not linked to an enabled member of this brain (never linked, unlinked, or the member is disabled or removed), so nothing was read or written. | An attested call reads and writes as exactly one member; an unknown person is refused rather than read as a guest, and unlinking or disabling takes effect on the next call. | The brain operator links the id to its member: gbrain access member link <member> --qm <id> (or enables the member). | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/write-refusals.md#actor_unlinked](../../docs/guides/write-refusals.md#actor_unlinked)
 
 ### admin_policy_enforced
 
@@ -849,6 +871,16 @@ More: [docs/guides/write-refusals.md#connection_inherited_read_only](../../docs/
 
 More: [docs/guides/write-refusals.md#drain-connection-lost](../../docs/guides/write-refusals.md#drain-connection-lost)
 
+### connector_access_denied
+
+<a id="connector_access_denied"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The connector key works but may not read what the source asks for; nothing more was imported. | The request itself was wrong or no longer matches the brain; nothing was changed. | Save a key whose account can read it (gbrain connectors auth <provider> --token -), then gbrain sync --source <id>. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/meeting-and-slack-sources.md#connector_access_denied](../../docs/guides/meeting-and-slack-sources.md#connector_access_denied)
+
 ### connector_account_changed
 
 <a id="connector_account_changed"></a>
@@ -858,6 +890,26 @@ More: [docs/guides/write-refusals.md#drain-connection-lost](../../docs/guides/wr
 | The connector credential resolves to a different account than the source is pinned to. | A connector source is pinned to the account it first synced, so a swapped credential can never import another account's mail, calendar or repositories into it. The refused run records the mismatch, and autopilot skips the source (unavailable-path) instead of retrying it every interval (#6803). | Restore the credential for the pinned account and run gbrain sync --source <id> (it clears the skip once the account check passes), or add a new source for the new account and archive this one with gbrain sources archive <id>. gbrain doctor --only connector_account_mismatch lists every affected source. Run: gbrain doctor --only connector_account_mismatch --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#connector-account-changed](../../docs/guides/write-refusals.md#connector-account-changed)
+
+### connector_auth_required
+
+<a id="connector_auth_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The connector source has no working API key; nothing was imported. | The key is read from the source's --token-env variable when it names one, else GBRAIN_CONNECTOR_<PROVIDER>_TOKEN, else the 0600 credential file. None held a key the provider accepted. | Ask the user for the provider API key and save it on stdin: gbrain connectors auth <provider> --token -; then gbrain sync --source <id>. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/meeting-and-slack-sources.md#connector_auth_required](../../docs/guides/meeting-and-slack-sources.md#connector_auth_required)
+
+### connector_binding_missing
+
+<a id="connector_binding_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A connector source records to Git, but its Git checkout is not available; the item was held, not written database-only. | A source whose record mode is git commits each item to its checkout before the database row, so git stays the parent. When the checkout is missing the item waits in the holds and is retried on the next sync; it is never written to the database alone, and the record mode is never re-inferred. | Restore the source checkout (gbrain sources status <id>), then gbrain sources retry-held <id>. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/meeting-and-slack-sources.md#connector_binding_missing](../../docs/guides/meeting-and-slack-sources.md#connector_binding_missing)
 
 ### connector_fence_below_timeline
 
@@ -882,6 +934,36 @@ More: [docs/guides/write-refusals.md#connector-account-changed](../../docs/guide
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The connector request no longer matches the stored connector intent. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### connector_item_too_large
+
+<a id="connector_item_too_large"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A connector item renders larger than the page size limit; it was held, not truncated. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/meeting-and-slack-sources.md#connector_item_too_large](../../docs/guides/meeting-and-slack-sources.md#connector_item_too_large)
+
+### connector_response_too_large
+
+<a id="connector_response_too_large"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A connector API response exceeded the client's size limit and was not read. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/meeting-and-slack-sources.md#connector_response_too_large](../../docs/guides/meeting-and-slack-sources.md#connector_response_too_large)
+
+### connector_shape_drift
+
+<a id="connector_shape_drift"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A connector API response is missing a field it must carry; the item was held, never published partially. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/meeting-and-slack-sources.md#connector_shape_drift](../../docs/guides/meeting-and-slack-sources.md#connector_shape_drift)
 
 ### consent_required
 
@@ -2206,6 +2288,18 @@ More: [docs/guides/write-refusals.md#head-blocked](../../docs/guides/write-refus
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Held out required for bundled. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### hook_session_cwd
+
+<a id="hook_session_cwd"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A hook gbrain setup or the turn-rule lane wrote starts gbrain in the session's directory, or the hook launcher it names would not run. | Script-mode gbrain is a Bun script, and Bun runs the working directory's bunfig.toml preload and loads its .env before gbrain starts; harnesses run hooks in the session directory, so a cloned repository could run code on every prompt. | Correct the request using the message above, then retry. Run: gbrain doctor --only harness_wiring --json | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `session_cwd`, `missing`, `stale`, `foreign`.
+
+More: [docs/guides/repair.md#hook-session-cwd](../../docs/guides/repair.md#hook-session-cwd)
 
 ### host_identity_mismatch
 

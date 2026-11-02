@@ -254,7 +254,7 @@ export function verbError(
 }
 
 export interface ParamDef {
-  type: 'string' | 'number' | 'boolean' | 'object' | 'array';
+  type: 'string' | 'number' | 'integer' | 'boolean' | 'object' | 'array';
   required?: boolean;
   description?: string;
   default?: unknown;
@@ -289,6 +289,12 @@ export interface AuthInfo {
   member?: { id: string; groups: string[] } | null;
   /** GBRA-218: the stored `may_act_for` audience list (shared agents, PR B); stored and reported only. */
   mayActFor?: string[] | null;
+  /**
+   * GST-359 C1: the live right to name the person a call serves (x-qm-actor), joined by the verifier: the system and
+   * the operations an attested call may run. Null when the credential holds none, is bound to a member, or (an OAuth
+   * client) its token did not come from the client-credentials grant. Undefined when no verifier joined it.
+   */
+  attest?: { system: string; ops: string[] } | null;
   /**
    * Human-readable agent name resolved at token-verification time.
    * For OAuth clients this is `oauth_clients.client_name`; for legacy
@@ -574,6 +580,11 @@ export interface OperationContext {
    * allow-list equal to the stored delegated prefixes.
    */
   replayAuthority?: WriteAuthority;
+  /**
+   * GST-359 D: the attested operation a nested write serves (memory_write saves through remember). Set by the handler,
+   * never from arguments; the stored authority keeps it, so publication re-checks that operation's attest right.
+   */
+  attestedOp?: string;
   /**
    * #4216 — defer chunk embeddings on put_page writes: importFromContent runs
    * noEmbed and the standing embed machinery (embed phase / phase-end

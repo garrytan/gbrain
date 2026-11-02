@@ -1,0 +1,374 @@
+{
+  "contract": "gbrain.qm-memory-provider",
+  "version": 1,
+  "transport": {
+    "protocol": "mcp",
+    "session": "stateless",
+    "session_header_issued": false,
+    "success_codes_in": "structuredContent"
+  },
+  "actor": {
+    "header": "x-qm-actor",
+    "argument": "acting_user",
+    "argument_rule": "optional; must equal the header; never chooses the person on its own",
+    "actor_id": {
+      "pattern": "^[\\x21-\\x7e]{1,256}$",
+      "case_folding": false
+    },
+    "system": "qm",
+    "default_attest_ops": [
+      "get_write_request",
+      "memory_recall",
+      "memory_write"
+    ],
+    "deferred_ops": [
+      "capture",
+      "extract_facts",
+      "list_write_conflicts",
+      "takes_add",
+      "takes_resolve",
+      "takes_supersede",
+      "takes_update"
+    ],
+    "audit": "the audit trail and stored writes record the canonical external id as sent, with its linked member"
+  },
+  "tools": [
+    {
+      "name": "memory_recall",
+      "description": "Facts for the person this call serves, one per line: their own recent facts first, then facts matching query. Never page bodies. For QM; agents use recall.",
+      "scope": "read",
+      "mutating": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "What the turn is about; ranks the facts."
+          },
+          "max_chars": {
+            "type": "integer",
+            "description": "Text cap in UTF-16 code units, 200-12000 (default 6000)."
+          },
+          "acting_user": {
+            "type": "string",
+            "description": "Set by the trusted system: equal to the x-qm-actor header, or omit."
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "memory_write",
+      "description": "Save facts for the person this call serves, readable by them alone. Needs an attested person. The same idempotency_key replays the first receipt. For QM; agents use remember.",
+      "scope": "write",
+      "mutating": true,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "facts": {
+            "type": "array",
+            "description": "1-20 facts.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "fact": {
+                  "type": "string",
+                  "description": "One claim."
+                },
+                "provenance": {
+                  "type": "string",
+                  "description": "Where it came from (<=200 chars)."
+                },
+                "kind": {
+                  "type": "string",
+                  "description": "Default fact.",
+                  "enum": [
+                    "event",
+                    "preference",
+                    "commitment",
+                    "belief",
+                    "fact"
+                  ]
+                },
+                "valid_from": {
+                  "type": "string",
+                  "description": "When it became true (ISO 8601)."
+                }
+              },
+              "required": [
+                "fact",
+                "provenance"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "1-128 visible ASCII characters; the same key replays this write."
+          },
+          "acting_user": {
+            "type": "string",
+            "description": "Set by the trusted system: equal to the x-qm-actor header, or omit."
+          }
+        },
+        "required": [
+          "facts",
+          "idempotency_key"
+        ]
+      }
+    }
+  ],
+  "memory_recall": {
+    "limits": {
+      "max_chars": {
+        "min": 200,
+        "max": 12000,
+        "default": 6000,
+        "whole_number": true,
+        "unit": "UTF-16 code units (JavaScript string length)"
+      },
+      "query_chars_ranked": 2000,
+      "own_recent_window_hours": 24
+    },
+    "arguments_checked": "query and max_chars are checked before any read, also for an unlinked person (invalid_params)",
+    "content": {
+      "line": "- <fact> (<YYYY-MM-DD>; <kind>)",
+      "never": [
+        "page bodies",
+        "fence markers",
+        "heading markers",
+        "line breaks or control characters inside a fact"
+      ],
+      "bounded_by": "max_chars: as many whole lines as fit; facts left out set structuredContent.truncated, with no marker line, because every line is one fact"
+    },
+    "order": [
+      "own facts from the last 24 hours, newest first",
+      "facts the person may read, ranked by query"
+    ],
+    "ranking": "keyword-only unless an embedding provider is configured (no embedding call on a keyless brain)",
+    "structured_content": {
+      "facts": [
+        {
+          "id": "string",
+          "text": "string",
+          "date": "YYYY-MM-DD",
+          "kind": "string"
+        }
+      ],
+      "truncated": "boolean",
+      "code": "actor_unlinked (only on unlinked_recall)"
+    }
+  },
+  "unlinked_recall": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": ""
+      }
+    ],
+    "structuredContent": {
+      "facts": [],
+      "truncated": false,
+      "code": "actor_unlinked"
+    }
+  },
+  "memory_write": {
+    "limits": {
+      "facts": {
+        "min": 1,
+        "max": 20
+      },
+      "provenance_chars": 200,
+      "idempotency_key": {
+        "pattern": "^[\\x21-\\x7e]{1,128}$"
+      },
+      "kinds": [
+        "event",
+        "preference",
+        "commitment",
+        "belief",
+        "fact"
+      ],
+      "provenance": "one line: no line breaks or control characters, and not starting with qm: (gbrain adds qm:<actor id> itself)",
+      "valid_from": "YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS[.fraction]][Z|±HH:MM], a real calendar day in years 0001-9999"
+    },
+    "validation": "every fact is checked before any is saved: one bad fact refuses the whole call with invalid_params and the idempotency_key stays unused",
+    "saved_as": {
+      "page": "memory/members/<member>",
+      "readers": [
+        "member:<member>"
+      ],
+      "visibility": "private",
+      "provenance": "qm:<actor id>; <caller provenance>"
+    },
+    "request_id": "uuidv5(uuidv5(namespace, \"member:<member>\"), idempotency_key) for the first fact; later facts derive from it",
+    "replay": "the same idempotency_key from the same person returns the first receipt; from another person it is a separate write",
+    "retries": "never retried server-side; a write still publishing answers pending",
+    "committed": {
+      "content": "Saved <N> fact(s).",
+      "structuredContent": {
+        "status": "committed",
+        "request_id": "uuid",
+        "fact_ids": [
+          "string"
+        ]
+      },
+      "fact_ids": "distinct; facts repeating one claim in a call share one id, and <N> counts distinct facts"
+    },
+    "pending": {
+      "content": "Accepted <N> fact(s); <M> still publishing.",
+      "structuredContent": {
+        "status": "pending",
+        "request_id": "uuid",
+        "fact_ids": [
+          "string"
+        ],
+        "pending_request_ids": [
+          "uuid"
+        ]
+      },
+      "poll": "get_write_request {request_id}"
+    }
+  },
+  "errors": {
+    "shape": {
+      "isError": true,
+      "content": "one JSON text block with top-level code, message, suggestion and optional reason and fix",
+      "structuredContent": {
+        "error": {
+          "code": "string",
+          "message": "string",
+          "reason": "string?",
+          "write_error": "string?",
+          "fix": "object?"
+        }
+      }
+    },
+    "applies_to": "every refusal of memory_recall and memory_write, including the transport's scope and unknown-tool refusals",
+    "codes": [
+      {
+        "code": "actor_not_attested",
+        "class": "host_only",
+        "summary": "A call named the person it serves (the x-qm-actor header or the acting_user argument) in a way gbrain does not honour: the credential holds no attest right, the operation is not in its attested operations, the argument differs from the header or comes without an attested header, or the id is not 1-256 visible ASCII characters; or a write that saves only as an attested person (memory_write) named none; or the request carries x-qm-audience, a channel audience gbrain does not serve yet. Nothing was read or written.",
+        "suggestion": "Read reason: no_attest_right and op_not_attested are the brain operator's call (gbrain auth rescope --client <id> --attest-actor qm [--attest-ops <list>]); argument_mismatch, argument_without_attestation, invalid_actor_id, actor_required and audience_not_supported are fixed in the calling harness.",
+        "docs": "docs/guides/write-refusals.md#actor_not_attested",
+        "reasons": [
+          {
+            "reason": "no_attest_right",
+            "fixed_by": "brain_operator",
+            "fix": "gbrain auth rescope --client <id> --attest-actor qm on the brain host; a client that already holds the right takes a new token with grant_type=client_credentials."
+          },
+          {
+            "reason": "op_not_attested",
+            "fixed_by": "brain_operator",
+            "fix": "gbrain auth rescope --client <id> --attest-actor qm --attest-ops <list>; a deferred operation cannot be attested yet."
+          },
+          {
+            "reason": "argument_mismatch",
+            "fixed_by": "calling_harness",
+            "fix": "Send acting_user equal to the x-qm-actor header, or omit it."
+          },
+          {
+            "reason": "argument_without_attestation",
+            "fixed_by": "calling_harness",
+            "fix": "Remove acting_user, or send the x-qm-actor header from a credential holding the attest right."
+          },
+          {
+            "reason": "invalid_actor_id",
+            "fixed_by": "calling_harness",
+            "fix": "Send the canonical id unchanged: 1-256 visible ASCII characters, no spaces."
+          },
+          {
+            "reason": "actor_required",
+            "fixed_by": "calling_harness",
+            "fix": "memory_write saves only as an attested person: send x-qm-actor from a credential holding the attest right."
+          },
+          {
+            "reason": "audience_not_supported",
+            "fixed_by": "calling_harness",
+            "fix": "Send the call without x-qm-audience; channel turns are refused until wave 2 and nothing is read or written."
+          }
+        ]
+      },
+      {
+        "code": "actor_unlinked",
+        "class": "host_only",
+        "summary": "An attested call named a person whose canonical id is not linked to an enabled member of this brain (never linked, unlinked, or the member is disabled or removed), so nothing was read or written.",
+        "suggestion": "The brain operator links the id to its member: gbrain access member link <member> --qm <id> (or enables the member).",
+        "docs": "docs/guides/write-refusals.md#actor_unlinked",
+        "note": "Refuses memory_write. memory_recall answers it as a success instead (unlinked_recall)."
+      },
+      {
+        "code": "on_behalf_of_invalid_audience",
+        "class": "caller",
+        "summary": "A shared agent's request named its audience (the X-Gbrain-On-Behalf-Of header or request-level _meta.on_behalf_of) in a form gbrain does not accept: empty, more than 50 entries, an entry that is not a member id, group:<id> or guest, or a header and _meta that name different audiences. Nothing was read.",
+        "suggestion": "Fix the harness code that sets the audience: 1-50 entries, each a member id, group:<id> or guest, the same in the header and _meta when both are sent.",
+        "docs": "docs/guides/write-refusals.md#on_behalf_of_invalid_audience",
+        "note": "Sent when x-qm-actor is combined with an on_behalf_of audience (X-Gbrain-On-Behalf-Of or request-level _meta.on_behalf_of). QM classifies it as a failed call."
+      },
+      {
+        "code": "invalid_params",
+        "class": "caller",
+        "summary": "A parameter is missing, has the wrong type, or has an invalid value.",
+        "docs": "docs/guides/error-codes.md#invalid_params",
+        "note": "Bad arguments, refused before anything is saved. A reused idempotency_key with different facts carries write_error idempotency_conflict; a claim the person forgot carries the fact_withdrawn message."
+      },
+      {
+        "code": "scope_denied",
+        "class": "host_only",
+        "summary": "The connection lacks the scope this memory verb requires.",
+        "docs": "docs/guides/error-codes.md#scope_denied",
+        "note": "The write is not authorized, including a member page whose readers name anyone but its member (squatted or widened): nothing is saved."
+      },
+      {
+        "code": "insufficient_scope",
+        "class": "host_only",
+        "summary": "The connection lacks the OAuth scope the operation requires.",
+        "docs": "docs/guides/error-codes.md#insufficient_scope",
+        "note": "The credential lacks the OAuth scope the tool needs (memory_write needs write); refused by the transport before the call runs."
+      },
+      {
+        "code": "unknown_tool",
+        "class": "caller",
+        "summary": "The named tool does not exist or is not callable on this connection.",
+        "docs": "docs/guides/error-codes.md#unknown_tool",
+        "note": "The tool is not callable on this connection (its surface or bound-operation list leaves it out)."
+      },
+      {
+        "code": "not_found",
+        "class": "caller",
+        "summary": "The requested resource does not exist or is not visible to this caller.",
+        "docs": "docs/guides/error-codes.md#not_found",
+        "note": "get_write_request for a receipt that is not this person's, or forget for a fact that is not on this person's own member page."
+      },
+      {
+        "code": "fact_not_found",
+        "class": "caller",
+        "summary": "Fact not found.",
+        "docs": "docs/guides/error-codes.md#fact_not_found",
+        "note": "forget_fact for a fact that is not on this person's own member page."
+      },
+      {
+        "code": "unavailable",
+        "class": "unavailable",
+        "summary": "A required dependency or capability cannot serve this request.",
+        "docs": "docs/guides/error-codes.md#unavailable",
+        "note": "memory_recall could not read the fact candidates (a database failure); retry the same call."
+      }
+    ]
+  },
+  "wave_2": {
+    "audience_header": "x-qm-audience",
+    "encoding": "base64url of a JSON array of canonical ids",
+    "status": "refused until wave 2",
+    "refusal": {
+      "code": "actor_not_attested",
+      "reason": "audience_not_supported",
+      "tools_call": "errors.shape, with or without x-qm-actor",
+      "other_methods": "JSON-RPC error -32600 whose data carries code and reason (tools/list, resources/list, resources/read)"
+    }
+  }
+}

@@ -876,12 +876,8 @@ async function runPipelineBodyInner(
     const exact = await decideSingleFact(ctx.engine, ctx.sourceId, { entity_slug: resolvedSlug, fact: f.fact, kind: f.kind ?? 'fact', visibility, attributed_to: f.attributed_to ?? null }, null);
     let matchedExistingId: number | null = exact?.candidate?.id ?? null;
     if (matchedExistingId === null && resolvedSlug && f.embedding && !f.entity_inferred) {
-      const candidates = await ctx.engine.findCandidateDuplicates(
-        ctx.sourceId,
-        resolvedSlug,
-        f.fact,
-        { embedding: f.embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null },
-      );
+      const candidates = await ctx.engine.findCandidateDuplicates(ctx.sourceId, resolvedSlug, f.fact,
+        { embedding: f.embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null, excludeMemberPages: true });
       let top: { row: typeof candidates[number]; score: number } | null = null;
       for (const c of candidates) {
         if (!c.embedding) continue;

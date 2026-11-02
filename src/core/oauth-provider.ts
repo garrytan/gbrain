@@ -56,6 +56,7 @@ export { assertValidSlugPrefixes } from './grants/encoding.ts';
 import type { SqlQuery, SqlValue } from './sql-query.ts';
 import { storedMinTrust } from './trust/tier.ts';
 import { tokenMemberBinding } from './access/token-binding.ts';
+import { withAttestRight } from './access/actor-model.ts';
 export type { SqlQuery, SqlValue };
 
 export interface AgentClientBindings {
@@ -691,7 +692,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     let oauthRows: Record<string, unknown>[];
     try {
       oauthRows = await this.sql`
-        SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
+        SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes, to_jsonb(t)->>'grant_type' AS token_grant,
                (to_jsonb(c) - 'client_secret_hash') AS current_grant,
                EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
                  AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
@@ -884,7 +885,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         token,
         clientId: row.client_id as string,
         principal: { kind: 'oauth_client', id: row.client_id as string },
-        ...(await tokenMemberBinding(this.sql, currentGrant.member_id, currentGrant.may_act_for)),
+        ...withAttestRight(await tokenMemberBinding(this.sql, currentGrant.member_id, currentGrant.may_act_for), currentGrant, row.token_grant),
         clientName: (row.client_name as string | null) ?? undefined,
         scopes: effectiveScopes,
         issuedScopes,
@@ -956,7 +957,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         token,
         clientId: name,
         principal: { kind: 'legacy_token', id: String(legacyRows[0].id) },
-        ...(await tokenMemberBinding(this.sql, legacyRows[0].member_id, legacyRows[0].may_act_for)),
+        ...withAttestRight(await tokenMemberBinding(this.sql, legacyRows[0].member_id, legacyRows[0].may_act_for), legacyRows[0], 'legacy'),
         clientName: name,
         scopes: grant.scopes,
         ...(grant.allowedOperations === null ? {} : { allowedOperations: grant.allowedOperations }),

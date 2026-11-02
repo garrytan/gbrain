@@ -12,7 +12,12 @@ const PRINTABLE_ASCII = /^[\x21-\x7e]+$/;
 
 /** RFC 4122 UUIDv5 of `name` under CLIENT_REQUEST_ID_NAMESPACE. */
 export function clientRequestUuid(name: string): string {
-  const h = createHash('sha1').update(Buffer.from(CLIENT_REQUEST_ID_NAMESPACE.replace(/-/g, ''), 'hex')).update(name, 'utf8').digest();
+  return uuidV5(CLIENT_REQUEST_ID_NAMESPACE, name);
+}
+
+/** RFC 4122 UUIDv5 of `name` under the UUID `namespace`. */
+export function uuidV5(namespace: string, name: string): string {
+  const h = createHash('sha1').update(Buffer.from(namespace.replace(/-/g, ''), 'hex')).update(name, 'utf8').digest();
   h[6] = (h[6]! & 0x0f) | 0x50;
   h[8] = (h[8]! & 0x3f) | 0x80;
   const hex = h.subarray(0, 16).toString('hex');

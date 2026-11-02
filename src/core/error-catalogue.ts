@@ -41,6 +41,9 @@ export const ERROR_CATALOGUE = {
   on_behalf_of_unknown_member: { code: 'on_behalf_of_unknown_member', docs: 'docs/guides/write-refusals.md#on_behalf_of_unknown_member' },
   on_behalf_of_not_permitted: { code: 'on_behalf_of_not_permitted', docs: 'docs/guides/write-refusals.md#on_behalf_of_not_permitted' },
   on_behalf_of_in_arguments: { code: 'on_behalf_of_in_arguments', docs: 'docs/guides/write-refusals.md#on_behalf_of_in_arguments' },
+  // GST-359 C1 attested actor: the person a trusted system names (x-qm-actor) on a credential holding the attest right.
+  actor_not_attested: { code: 'actor_not_attested', docs: 'docs/guides/write-refusals.md#actor_not_attested' },
+  actor_unlinked: { code: 'actor_unlinked', docs: 'docs/guides/write-refusals.md#actor_unlinked' },
   // GBRA-218 (A2) folder rules: invalid rules and policy files, pending narrowing.
   access_rule_invalid: { code: 'access_rule_invalid', docs: 'docs/guides/write-refusals.md#access_rule_invalid' },
   access_policy_invalid: { code: 'access_policy_invalid', docs: 'docs/guides/write-refusals.md#access_policy_invalid' },
@@ -131,6 +134,7 @@ export const ERROR_CATALOGUE = {
   setup_owner_conflict: { code: 'setup_owner_conflict', docs: 'docs/guides/repair.md#setup-owner-conflict' },
   setup_hosted_connection: { code: 'setup_hosted_connection', docs: 'docs/guides/repair.md#setup-hosted-connection' },
   turn_hook_not_loaded: { code: 'turn_hook_not_loaded', docs: 'docs/guides/repair.md#turn-hook-not-loaded' },
+  hook_session_cwd: { code: 'hook_session_cwd', docs: 'docs/guides/repair.md#hook-session-cwd' },
 } as const satisfies Record<string, CatalogueEntry>;
 
 export type CatalogueName = keyof typeof ERROR_CATALOGUE;
