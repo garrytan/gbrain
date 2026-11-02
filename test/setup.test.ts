@@ -1004,18 +1004,42 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     await withEnv(env(b), async () => { expect(hookLauncherProblem('claude-code')).toBeNull(); });
   });
 
-  test('codex: post-upgrade rewrites them with matching trust, and a later setup keeps everything', async () => {
+  test('codex: post-upgrade names the setup rerun and writes nothing; setup rewrites them with matching trust', async () => {
     const b = box();
     expect((await setup(b, ['codex', '--json'])).exitCode).toBe(0);
     downgradeCodex(b);
     expect(viaLauncher(b, codexSetupCommands(b))).toBe(false);
+    const before = { hooks: readFileSync(hooksJson(b), 'utf8'), config: readFileSync(codexToml(b), 'utf8') };
     await withEnv(env(b), async () => {
       expect(hookLauncherProblem('codex')).toMatchObject({ lane: 'setup', reason: 'session_cwd' });
-      await refreshHookLaunchers(() => {});
+      const lines: string[] = [];
+      await refreshHookLaunchers((l) => lines.push(l));
+      expect(lines.join('\n')).toContain("gbrain setup's codex hooks");
+      expect(lines.join('\n')).toContain('run gbrain setup codex to rewrite them');
+      expect(hookLauncherProblem('codex')).toMatchObject({ lane: 'setup', reason: 'session_cwd' });
+    });
+    expect({ hooks: readFileSync(hooksJson(b), 'utf8'), config: readFileSync(codexToml(b), 'utf8') }).toEqual(before);
+    expect((await setup(b, ['codex', '--json'])).exitCode).toBe(0);
+    expect(viaLauncher(b, codexSetupCommands(b))).toBe(true);
+    await withEnv(env(b), async () => {
       expect(hookLauncherProblem('codex')).toBeNull();
       expect(inspectTurnHook('codex')).toMatchObject({ state: 'wired', via: 'setup' });
     });
-    expect(viaLauncher(b, codexSetupCommands(b))).toBe(true);
     expect((await setup(b, ['codex', '--json'])).doc.steps.map((s: any) => s.action)).toEqual(['keep', 'keep', 'keep', 'keep']);
+  });
+
+  test('codex: post-upgrade grants no trust to setup groups Codex does not run', async () => {
+    const b = box();
+    expect((await setup(b, ['codex', '--json'])).exitCode).toBe(0);
+    downgradeCodex(b);
+    for (const rec of Object.values(readJson(codexReceipt(b)).trust.owned) as Array<{ key: string }>) removeCodexTomlTable(codexToml(b), ['hooks', 'state', rec.key]);
+    const before = { hooks: readFileSync(hooksJson(b), 'utf8'), config: readFileSync(codexToml(b), 'utf8') };
+    await withEnv(env(b), async () => {
+      const lines: string[] = [];
+      await refreshHookLaunchers((l) => lines.push(l));
+      expect(lines.join('\n')).not.toContain('now start gbrain from its own directory');
+      expect(hookLauncherProblem('codex')).toMatchObject({ lane: 'setup', reason: 'session_cwd' });
+    });
+    expect({ hooks: readFileSync(hooksJson(b), 'utf8'), config: readFileSync(codexToml(b), 'utf8') }).toEqual(before);
   });
 });
