@@ -31,6 +31,58 @@ Guide: [docs/guides/meeting-and-slack-sources.md](docs/guides/meeting-and-slack-
 
 **Slack channels can flow into the brain the same way.** A new `slack` source kind reads the channels you name through your own internal Slack app and writes one page per channel per day, in the chat layout the conversation parser reads, with thread replies under their parent. Save the bot token with `gbrain connectors auth slack --token -`, then `gbrain sources add slack --kind slack --channels C0123ABCDEF`; the add checks the token and every channel first and refuses with the fix (a missing scope, or "invite the app to the channel"). It works on a brain with no Git repository, re-reads the last 7 days on every sync so edits and deletions converge (retiring the facts of the old page), keeps private channels private and out of any Git checkout, and moves a channel that becomes private out of the checkout. A channel the app loses is held while the others keep syncing.
 
+## [0.60.546.0] - 2026-11-02
+
+**QM can use gbrain as its memory provider. A trusted system that names the person (`x-qm-actor`) reads and writes as that linked member, each member's saved facts stay on their own page and are recalled by them alone, and `memory_recall` / `memory_write` give QM one plain-text read and one batched write (GST-359).**
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A trusted system that names the person (QM) | | a client-credentials client granted `gbrain auth rescope --client <id> --attest-actor qm [--attest-ops <list>]` sends `x-qm-actor: <canonical id>`; each attested operation runs as the member that id is linked to (`gbrain access member link <member> --qm <id>`, `unlink`, `links`), never reading private pages, and queued writes and jobs re-check the link and the operation list. `capture`, `extract_facts`, take writes and `list_write_conflicts` are not attestable yet. Refusals carry `structuredContent.error` (`actor_not_attested`, `actor_unlinked`). Every MCP server's `serverInfo` now has a one-line `description` |
+| A member saves a fact remotely (`remember` attested as a person, or from a credential bound to one member) | from a member-bound credential, went on the entity page as a fact every reader of the source recalled; an attested call could not run `remember` | goes on the member's own page `memory/members/<member>` (created with `readable_by: [member:<id>]`), private, with the entity kept as metadata; only that member recalls it, and it never dedups against, supersedes or contests another page's fact, never consolidates into a take and keeps its readers through a fence rebuild and relink. Two people's identical words make two facts. The page must name that member alone, or the fact is refused; remote `put_page`, `edit_page`, `delete_page` and every other remote page write under `memory/members/` are refused (`permission_denied`) unless the caller is that member. A member id a repo brain would store under another slug (`a--b`, `zed-`) holds no member facts (`invalid_params`) |
+| One attest client serving several people | hot memory, `delta` cursors, write receipts and agent jobs were keyed by the client | each is keyed by the person too: Alice and Bob on one session id never share a hot-memory payload or a `delta` cursor, Bob and the bare client get `not_found` for Alice's receipt (`get_write_request`, `list_write_requests`, `cancel_write_request`) and agent job (`get_agent_job`, and the client's own `get_job`, `wait_job`, `get_job_progress`, `list_jobs` and `cancel_job`), and Alice's `request_id` never replays for Bob. `remember`, `delta`, the receipt ops, `submit_agent` and `get_agent_job` are now attestable |
+| QM's memory provider | | `memory_recall {query, max_chars?}` answers the attested person's own recent facts first, then the facts they may read ranked by the query, one plain line per fact cut within `max_chars` (200-12000, default 6000), keyword-only on a keyless brain; `memory_write {facts, idempotency_key}` saves 1-20 facts on that person's own page through `remember`'s writer, with request ids derived per person from the key so a replay returns the first receipt. Results ride `structuredContent`, and every refusal carries `structuredContent.error`; an unlinked person gets an empty recall with `code: "actor_unlinked"`. `get_write_request` joins the default attested operations. A request carrying `x-qm-audience` is refused until channel audiences are served (`audience_not_supported`). `forget` from an attested person or a member-bound credential reaches only that member's own page. `remember` and `memory_write` take `valid_from` only as an ISO 8601 date or time in years 0001-9999. Contract: `docs/contracts/qm-memory-provider/v1.json`; guide: `docs/guides/qm.md` |
+| An attested `forget` or `forget_fact` | refused (`op_not_attested`) | withdraws only a fact on the person's own member page, and only there: another member's copy of the same claim stays active and rememberable |
+
+### What to watch for after you upgrade
+
+- A call that sends `x-qm-actor` or an `acting_user` argument from a credential without the attest right is now refused (`actor_not_attested`) instead of reading as the credential; tokens issued before this upgrade never attest, so a QM client takes a fresh client-credentials token after it is granted.
+- Migration v286 adds `access_member_links`, the attest columns on access tokens and OAuth clients, and the grant type on OAuth tokens; it is database-only, so a repo-less brain gets it unchanged.
+- Writers never dedup, supersede or contest across member pages: `extract_facts`, capture and supersession leave member-page facts out of their candidates, so a write never learns that another member saved the same claim.
+- A member's facts go only on `memory/members/<member>`, so a credential whose `bound_slug_prefixes` do not cover that page is refused (`permission_denied`) by `remember` and `memory_write` for that member.
+- `memory_write` binds its idempotency key to the whole batch, so a retry under the same key with more, fewer or different facts refuses (`idempotency_conflict`), and a batch with an invalid fact saves nothing.
+- The QM contract QM vendors is `docs/contracts/qm-memory-provider/v1.json`; the guide is `docs/guides/qm.md`.
+
+## [0.60.545.0] - 2026-11-02
+
+**The hosted gbrain.io install now tells the agent the brain is there.**
+
+Before, the hosted install in README.md, docs/INSTALL.md, INSTALL_FOR_AGENTS.md and AGENTS.md stopped at `claude mcp add` or `codex mcp add`, so nothing in the harness told the model to use the new MCP server, and in harness trials a server nobody mentions is almost never called. Each now installs the gbrain CLI with Bun (`bun install -g github:garrytan/gbrain#latest-stable`) and runs `gbrain setup claude-code --instructions-only` or `gbrain setup codex --instructions-only` after the MCP entry is in place. That writes the brain-first block into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` (or its non-empty `AGENTS.override.md`) and the per-turn rule hook, without creating a local brain. Each harness line checks for an existing `gbrain` entry first and keeps it (`mcp get` output goes to /dev/null, since it can print a stored token), adds the hosted entry otherwise, and skips the setup step when that harness isn't installed. Adding `--no-instructions` to that `gbrain setup` command takes them out, and a bare `mcp add` still works.
+
+## [0.60.544.0] - 2026-11-02
+
+**The remote gate stops waiting on an artifact GitHub has refused for good, and bench and eval scripts no longer fail pregate for having no test lane (#8370, #7690).** When reading a full run's `executed-identities` artifact failed, `fetchArtifactJson` marked every failure transient, so a 403 or an expired artifact's 410 kept the gate polling for up to 90 minutes before it fell back to VMs. Only no response, a 5xx, a 429 or a rate-limit 403 is transient now. Any other 4xx refuses reuse at once and the gate goes straight to VMs. This never made a gate pass, because a transient read was always `none` and never `reuse`. Separately, `scripts/bench/**` and the system-one eval runners and generators now declare that they need no test lane, so a PR that touches them no longer fails pregate with `PREGATE_NO_LANE`. The unit-lane PostgreSQL arms job also gets real headroom back. Its committed weights had drifted about 24% below what the files now take, so by measured times the busiest of master's 13 shards takes 694 s against its 570 s budget.
+
+### What changed
+
+| `unit-postgres-arms` (both arms, the CI cell) | Before | Now |
+|---|---|---|
+| Weights | mined from older runs, scaled by 0.763, 6 listed files unweighted (charged the 29 s p75) | median of the `ARM_FILE` times in eight full-ci runs from 2026-11-01 (41296667994, 41307060384, 41310113203, 41324518709, 41342917113, 41347700875, and train M's 41351675051 and 41365617585, covering every suite #8404, #8405, #8407 and M added), every listed file weighted |
+| Shards | 13 | 19 |
+| Two-worker makespan, largest shard, against the unchanged 570 s budget | 526.4 s (7.7% headroom) by the committed weights; 694.3 s by the fresh ones | 476.3 s (16.4% headroom) |
+| Measured job wall time | 438-923 s per job in train M's run 41365617585, against the 20-minute step timeout | about 475 s per shard, by the same measurements |
+| PostgreSQL-only cell, largest shard | 487.2 s | 333.8 s |
+
+### Itemized changes
+
+- `scripts/lib/gh-issue.ts`: `fetchArtifactJson` marks a failed artifact read transient only for no response, a 5xx, a 429 or a 403 whose message names a rate limit (#8370). Both clients' artifact downloads now carry the HTTP status and the response text, so the `gh` CLI client (used when no `GH_TOKEN` is set) classifies the same way. A rate-limit 403 stays transient whether its headers (`x-ratelimit-remaining: 0`, `retry-after`) or its text (rate limit, abuse detection) say so, and so does a refusal from the artifact storage the download redirects to, since a fresh read mints a new signed URL.
+- `test/scripts/ci-reuse.test.ts`: a probe checks that 403, 404 and 410 are refusals and that 429, a rate-limit 403, a 502 and no response stay transient, and that a refused receipt ends the gate's wait at once. It fails without the fix.
+- `.gstack/pregate.json`: `scripts/bench/**`, `docs/eval/system-one/runners/**` and `docs/eval/system-one/generators/**` declare no lane (`[]`), which applies only where no test maps the file, so the VM-setup scripts keep `test/scripts/vm-setup-usage.test.ts` (#7690).
+- `scripts/postgres-arm-weights.json`: re-mined with `bun scripts/postgres-unit-arms.ts mine` from those eight runs' 98 job logs, unscaled.
+- `scripts/postgres-unit-arms.ts`: `ARM_SHARDS` 19; `.github/workflows/persistence-validation.yml`: the matrix, job name and `run` argument follow it (pinned by `test/scripts/postgres-unit-arms.test.ts`, whose budget and assertion are unchanged). Check names become `Unit-lane PostgreSQL arms N/19 / Bun …`; none is a required check.
+- `docs/architecture/key-files/ci-health-and-test-guards.md`, `scripts/ubicloud/README.md`: shard count.
+
 ## [0.60.543.0] - 2026-11-01
 
 **A shared brain can now keep a page to the members it names, inside one source. Put `readable_by: [alice-example, group:team-a]` in a page's frontmatter, bind each member's token, OAuth client or stdio server to a member, and remote reads of that page answer only for them. Nothing changes until a page names readers or a member is created.**

@@ -40,6 +40,7 @@ import { DEFAULT_WRITE_GATE_CONFIG, type WriteGateConfig } from '../../write-gat
 import { loadImportSanityConfig } from '../../import-screen.ts';
 import { decideTakeWrite, recordFlaggedRow, recordWriteGateHold, type GatedRowDecision } from '../../write-gate-store.ts';
 import type { TaintInput, WriteTrust } from '../../trust/tier.ts';
+import { readersSourcedFactSql } from '../../access/member-facts.ts';
 
 export interface ConsolidatePhaseOpts {
   dryRun?: boolean;
@@ -139,6 +140,13 @@ export function parseClusterThreshold(value: string): number {
   return n;
 }
 
+/** GST-359 C2: `facts` without those on a page that names readers (a member page): they never become a take on the entity page. */
+async function withoutReadersSourced(engine: BrainEngine, facts: FactRow[]): Promise<FactRow[]> {
+  const rows = await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND ${readersSourcedFactSql('facts')}`, [facts.map(f => f.id)]);
+  const restricted = new Set(rows.map(row => Number(row.id)));
+  return facts.filter(f => !restricted.has(f.id));
+}
+
 export async function runPhaseConsolidate(
   engine: BrainEngine,
   opts: ConsolidatePhaseOpts = {},
@@ -182,7 +190,7 @@ export async function runPhaseConsolidate(
         AND entity_slug IS NOT NULL
         AND (attributed_to IS NULL OR attributed_to = 'user')
         AND ($2::boolean=false OR visibility='world')
-        AND ($1::text IS NULL OR source_id=$1)
+        AND ($1::text IS NULL OR source_id=$1) AND NOT ${readersSourcedFactSql('facts')}
       GROUP BY source_id, entity_slug
       HAVING COUNT(*) >= $3
     `, [opts.sourceId ?? null, managed, minPerBucket]);
@@ -228,7 +236,7 @@ export async function runPhaseConsolidate(
       });
       // Takes here are the user's own (holder 'self'): a claim the assistant or
       // a named third party asserted is never promoted into one.
-      const unconsolidated = candidates.filter(f => (!managed || f.visibility === 'world') && (!f.attributed_to || f.attributed_to === 'user'));
+      const unconsolidated = (await withoutReadersSourced(engine, candidates)).filter(f => (!managed || f.visibility === 'world') && (!f.attributed_to || f.attributed_to === 'user'));
       if (unconsolidated.length < minPerBucket) {
         bucketsSkipped += 1;
         continue;
