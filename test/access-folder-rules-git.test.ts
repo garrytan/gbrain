@@ -24,7 +24,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { performSync } from '../src/commands/sync.ts';
 import { runAccessRules } from '../src/commands/access-rules.ts';
-import { policyStatus } from '../src/core/access/policy.ts';
+import { policySeams, policyStatus } from '../src/core/access/policy.ts';
 import { readCommittedPolicy, syncAccessPolicyAt, commitPolicyFile, POLICY_FILE } from '../src/core/access/policy-git.ts';
 import { acquireCommitLock } from '../src/core/git/commit-push.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -116,7 +116,7 @@ describe('folder access rules, git store', () => {
     const applied = await cli(engine, ['apply', '--source', SRC, '--yes', '--expect', preview.plan_hash]);
     expect({ outcome: applied.git.outcome, path: applied.git.path }).toEqual({ outcome: 'committed_local', path: '.gbrain/access.approved' });
     expect(git(root, 'log', '-1', '--format=%s')).toContain('approve folder rules');
-    expect(readCommittedPolicy(root).approved).toContain('id: team');
+    expect((await readCommittedPolicy(root)).approved).toContain('id: team');
     expect((await policyStatus(engine, SRC)).rules.map(r => r.id)).toEqual(['team']);
     expect((await stamps(engine))['partners/alice-example/plan']).toEqual([`${SRC}:team`]);
   }, 120_000);
@@ -154,10 +154,33 @@ describe('folder access rules, git store', () => {
     expect((await policyStatus(engine, SRC)).invalid).toEqual([]);
   }, 120_000);
 
+  test('correcting an invalid file keeps its coverage until the replacement rules are installed: an interrupted sync reveals nothing', async () => {
+    writePolicy(root, 'version: 1\nrules: [\n');
+    git(root, 'commit', '-q', '-am', 'broken yaml again');
+    await syncAccessPolicyAt(engine, SRC, root);
+    expect((await policyStatus(engine, SRC)).invalid.map(c => c.prefix)).toEqual(['']);
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example'], ['hr', 'hr/', 'alice-example']]));
+    git(root, 'commit', '-q', '-am', 'fixed with a new rule');
+    await engine.executeRaw(`CREATE FUNCTION zz_refuse_revision() RETURNS trigger LANGUAGE plpgsql AS $fn$ BEGIN RAISE EXCEPTION 'interrupted install'; END $fn$`);
+    await engine.executeRaw('CREATE TRIGGER zz_refuse_revision BEFORE INSERT ON access_policy_revisions FOR EACH ROW EXECUTE FUNCTION zz_refuse_revision()');
+    try {
+      await expect(syncAccessPolicyAt(engine, SRC, root)).rejects.toThrow('interrupted install');
+      expect((await policyStatus(engine, SRC)).invalid.map(c => c.prefix)).toEqual(['']);
+    } finally {
+      await engine.executeRaw('DROP TRIGGER zz_refuse_revision ON access_policy_revisions');
+      await engine.executeRaw('DROP FUNCTION zz_refuse_revision()');
+    }
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example']]));
+    git(root, 'commit', '-q', '-am', 'fixed');
+    await syncAccessPolicyAt(engine, SRC, root);
+    const s = await policyStatus(engine, SRC);
+    expect({ rules: s.rules.map(r => r.id), invalid: s.invalid }).toEqual({ rules: ['team'], invalid: [] });
+  }, 120_000);
+
   test('gbrain access rule add on a git source commits access.yml through the door and applies it at once', async () => {
     const r = await cli(engine, ['rule', 'add', '--source', SRC, '--prefix', 'partners/alice-example/', '--readers', 'alice-example', '--id', 'alice', '--yes']);
     expect({ store: r.store, state: r.state, outcome: r.git.outcome, path: r.git.path }).toEqual({ store: 'git', state: 'applied', outcome: 'committed_local', path: POLICY_FILE });
-    expect(readCommittedPolicy(root).yml).toContain('id: alice');
+    expect((await readCommittedPolicy(root)).yml).toContain('id: alice');
     expect(git(root, 'status', '--porcelain')).toBe('');
     expect((await stamps(engine))['partners/alice-example/plan']).toEqual([`${SRC}:alice`, `${SRC}:team`]);
   }, 120_000);
@@ -169,15 +192,18 @@ describe('folder access rules, git store', () => {
         expect(() => commitPolicyFile(root, POLICY_FILE, () => 'version: 1\nrules: []\n', 'should not land')).toThrow(expect.objectContaining({ code: 'commit_lock_busy' }));
       });
     } finally { lock.release(); }
-    expect(readCommittedPolicy(root).yml).toContain('id: alice');
+    expect((await readCommittedPolicy(root)).yml).toContain('id: alice');
     expect(git(root, 'status', '--porcelain')).toBe('');
   }, 60_000);
 
-  test('a rebuilt database reaches the same applied rules from git alone', async () => {
+  test('a rebuilt database reaches the same applied rules from git alone, and holds the removal of a rule the live database never installed', async () => {
     const before = (await policyStatus(engine, SRC)).rules;
     const fresh = await seedBrain(spares[1]!, root);
     await sync(fresh, root, true);
-    expect((await policyStatus(fresh, SRC)).rules).toEqual(before);
+    const rebuilt = await policyStatus(fresh, SRC);
+    expect(rebuilt.rules.filter(r => r.id !== 'hr')).toEqual(before);
+    expect({ hr: rebuilt.rules.find(r => r.id === 'hr'), held: rebuilt.held.map(h => `${h.rule}:${h.kind}`) })
+      .toEqual({ hr: { id: 'hr', prefix: 'hr/', readable_by: ['member:alice-example'] }, held: ['hr:removed'] });
     expect(await stamps(fresh)).toEqual(await stamps(engine));
   }, 120_000);
 
@@ -201,7 +227,7 @@ describe('folder access rules, git store', () => {
     expect((await policyStatus(engine, SRC)).rules).toEqual(rules);
     const toGit = await cli(engine, ['rule', 'migrate', '--source', SRC, '--yes']);
     expect({ to: toGit.to, phase: toGit.phase, sync: toGit.receipts.sync }).toEqual({ to: 'git', phase: 'switched', sync: 'unchanged' });
-    expect(readCommittedPolicy(root).yml).toContain('id: alice');
+    expect((await readCommittedPolicy(root)).yml).toContain('id: alice');
     expect((await policyStatus(engine, SRC)).rules).toEqual(rules);
   }, 120_000);
 
@@ -283,3 +309,161 @@ describe('a moved prefix on a git source (L4)', () => {
     expect((await policyStatus(engine, SRC)).rules.map(r => `${r.id}:${r.prefix}`)).toEqual(['mv:projects/new-example/']);
   }, 120_000);
 });
+
+
+describe('a rebuild keeps a held removal held (GBRA-218 Step 11)', () => {
+  let root: string;
+  const engines: PGLiteEngine[] = [];
+
+  beforeAll(async () => {
+    for (let i = 0; i < 2; i++) {
+      const e = new PGLiteEngine();
+      await e.connect({ engine: 'pglite' } as never);
+      await e.initSchema();
+      engines.push(e);
+    }
+    root = mkdtempSync(join(tmpdir(), 'gbrain-frgit-rebuild-'));
+    git(root, 'init', '-q', '-b', 'main');
+    git(root, 'config', 'user.email', 't@t.co');
+    git(root, 'config', 'user.name', 't');
+    for (const s of ['notes/open', 'partners/alice-example/plan']) writePage(root, s);
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example']]));
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'pages and policy');
+  }, 120_000);
+
+  afterAll(async () => {
+    for (const e of engines) await e.disconnect();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test('a rule committed and then removed by a plain commit stays applied on a rebuilt database', async () => {
+    const live = await seedBrain(engines[0]!, root);
+    await sync(live, root, true);
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example'], ['alice', 'partners/alice-example/', 'alice-example']]));
+    git(root, 'commit', '-q', '-am', 'narrow');
+    await sync(live, root);
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example']]));
+    git(root, 'commit', '-q', '-am', 'drop alice rule');
+    await sync(live, root);
+    const view = async (e: PGLiteEngine) => {
+      const s = await policyStatus(e, SRC);
+      return { rules: s.rules.map(r => r.id), held: s.held.map(h => `${h.rule}:${h.kind}`) };
+    };
+    expect(await view(live)).toEqual({ rules: ['alice', 'team'], held: ['alice:removed'] });
+    const fresh = await seedBrain(engines[1]!, root);
+    await sync(fresh, root, true);
+    expect(await view(fresh)).toEqual({ rules: ['alice', 'team'], held: ['alice:removed'] });
+    expect((await stamps(fresh))['partners/alice-example/plan']).toEqual([`${SRC}:alice`, `${SRC}:team`]);
+  }, 120_000);
+});
+
+
+
+describe('a rebuild keeps a deletion or a pre-approval narrowing held (GBRA-218 fix-check)', () => {
+  const engines: PGLiteEngine[] = [];
+  const roots: string[] = [];
+  const view = async (e: PGLiteEngine) => {
+    const s = await policyStatus(e, SRC);
+    return { rules: s.rules.map(r => r.id), held: s.held.map(h => `${h.rule}:${h.kind}`).sort() };
+  };
+  const repo = () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-frgit-replay-'));
+    roots.push(root);
+    git(root, 'init', '-q', '-b', 'main');
+    git(root, 'config', 'user.email', 't@t.co');
+    git(root, 'config', 'user.name', 't');
+    for (const s of ['notes/open', 'partners/alice-example/plan']) writePage(root, s);
+    return root;
+  };
+
+  beforeAll(async () => {
+    for (let i = 0; i < 8; i++) {
+      const e = new PGLiteEngine();
+      await e.connect({ engine: 'pglite' } as never);
+      await e.initSchema();
+      engines.push(e);
+    }
+  }, 180_000);
+
+  afterAll(async () => {
+    for (const e of engines) await e.disconnect();
+    for (const r of roots) rmSync(r, { recursive: true, force: true });
+  });
+
+  const narrowThenRemove = async (engine: PGLiteEngine) => {
+    const root = repo();
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example']]));
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'pages and policy');
+    const live = await seedBrain(engine, root);
+    await sync(live, root, true);
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example'], ['alice', 'partners/alice-example/', 'alice-example']]));
+    git(root, 'commit', '-q', '-am', 'narrow');
+    await sync(live, root);
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example']]));
+    git(root, 'commit', '-q', '-am', 'drop alice rule');
+    await sync(live, root);
+    expect(await view(live)).toEqual({ rules: ['alice', 'team'], held: ['alice:removed'] });
+    return root;
+  };
+
+  test('an interrupted rebuild reads as nobody and the next sync finishes the replay', async () => {
+    const root = await narrowThenRemove(engines[4]!);
+    const fresh = await seedBrain(engines[5]!, root);
+    let installs = 0;
+    policySeams.afterInstall = () => { if (++installs === 1) throw new Error('interrupted rebuild'); };
+    try {
+      await expect(sync(fresh, root, true)).rejects.toThrow('interrupted rebuild');
+    } finally { policySeams.afterInstall = undefined; }
+    expect((await policyStatus(fresh, SRC)).invalid.map(c => c.prefix)).toEqual(['']);
+    await sync(fresh, root, true);
+    const s = await policyStatus(fresh, SRC);
+    expect({ ...(await view(fresh)), invalid: s.invalid }).toEqual({ rules: ['alice', 'team'], held: ['alice:removed'], invalid: [] });
+  }, 120_000);
+
+  test('a shallow checkout cannot be rebuilt: the source reads as nobody until its history is fetched', async () => {
+    const root = await narrowThenRemove(engines[6]!);
+    const shallow = mkdtempSync(join(tmpdir(), 'gbrain-frgit-shallow-'));
+    roots.push(shallow);
+    execFileSync('git', ['clone', '-q', '--depth', '1', `file://${root}`, shallow], { stdio: 'ignore' });
+    const fresh = await seedBrain(engines[7]!, shallow);
+    expect((await syncAccessPolicyAt(fresh, SRC, shallow))?.state).toBe('invalid');
+    expect((await policyStatus(fresh, SRC)).invalid.map(c => c.prefix)).toEqual(['']);
+  }, 120_000);
+
+  test('access.yml deleted by a plain commit keeps its rules held on a rebuilt database', async () => {
+    const root = repo();
+    writePolicy(root, POLICY([['alice', 'partners/alice-example/', 'alice-example']]));
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'pages and policy');
+    const live = await seedBrain(engines[0]!, root);
+    await sync(live, root, true);
+    git(root, 'rm', '-q', POLICY_FILE);
+    git(root, 'commit', '-q', '-m', 'remove the policy file');
+    await sync(live, root);
+    expect(await view(live)).toEqual({ rules: ['alice'], held: ['alice:removed'] });
+    const fresh = await seedBrain(engines[1]!, root);
+    await sync(fresh, root, true);
+    expect(await view(fresh)).toEqual({ rules: ['alice'], held: ['alice:removed'] });
+    expect((await stamps(fresh))['partners/alice-example/plan']).toEqual([`${SRC}:alice`]);
+  }, 120_000);
+
+  test('a narrowing already in access.yml when an older rulebook was approved stays applied on a rebuilt database', async () => {
+    const root = repo();
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example'], ['alice', 'partners/alice-example/', 'alice-example']]));
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example']]), '.gbrain/access.approved');
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'pages, policy and an older approved rulebook');
+    const live = await seedBrain(engines[2]!, root);
+    await sync(live, root, true);
+    writePolicy(root, POLICY([['team', 'partners/', 'alice-example, bob-example']]));
+    git(root, 'commit', '-q', '-am', 'drop alice rule');
+    await sync(live, root);
+    expect(await view(live)).toEqual({ rules: ['alice', 'team'], held: ['alice:removed'] });
+    const fresh = await seedBrain(engines[3]!, root);
+    await sync(fresh, root, true);
+    expect(await view(fresh)).toEqual({ rules: ['alice', 'team'], held: ['alice:removed'] });
+  }, 120_000);
+});
+

@@ -233,6 +233,7 @@ export async function runPhaseConsolidate(
         unconsolidatedOnly: true,
         visibility: managed ? ['world'] : undefined,
         limit: 100,
+        eligibility: {},
       });
       // Takes here are the user's own (holder 'self'): a claim the assistant or
       // a named third party asserted is never promoted into one.

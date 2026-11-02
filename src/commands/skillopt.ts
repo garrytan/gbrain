@@ -20,12 +20,12 @@ import {
 } from '../core/skillopt/models-plan.ts';
 import { SKILLOPT_HELP_TEXT } from '../core/skillopt/help.ts';
 import { runSkillOpt, parseSplit } from '../core/skillopt/orchestrator.ts';
-import { checkpointPath } from '../core/skillopt/checkpoint.ts';
+import { checkpointOptimizerMode, checkpointPath, loadCheckpoint } from '../core/skillopt/checkpoint.ts';
 import { formatModelsUsedTable } from '../core/budget/models-used.ts';
 import { parsePositiveInt } from '../core/skillopt/output-cap.ts';
 import { serializeError, StructuredAgentError } from '../core/errors.ts';
 import type { BrainEngine } from '../core/engine.ts';
-import type { RunReceipt, SkillOptOpts } from '../core/skillopt/types.ts';
+import type { OptimizerMode, RunReceipt, SkillOptOpts } from '../core/skillopt/types.ts';
 import { capNotice, mergeCapFlag, parseCapFlag, type CapFlag } from '../core/budget/cap-flag.ts';
 
 /** Per-run cost cap when no cap flag is passed (a `default` cap: unpriced models warn and run). */
@@ -52,6 +52,8 @@ interface ParsedFlags {
   /** Abort before spend unless every active model was chosen by explicit configuration. */
   modelsStrict: boolean;
   mode: 'patch' | 'rewrite';
+  /** E1: `--loop` opts into the iterative reflect loop; one-shot rewrite is the default. */
+  loop: boolean;
   dryRun: boolean;
   noMutate: boolean;
   allowMutateBundled: boolean;
@@ -151,6 +153,11 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
     }
   }
 
+  // E1: one-shot rewrite unless --loop. A resume continues in the mode its
+  // checkpoint ran (a checkpoint from before this default ran the loop).
+  const resumed = parsed.resumeRunId && parsed.skillName ? loadCheckpoint(skillsDir, parsed.skillName, parsed.resumeRunId) : null;
+  const optimizerMode: OptimizerMode = parsed.loop ? 'reflect' : resumed ? checkpointOptimizerMode(resumed) : 'one-shot-rewrite';
+
   // ── F4: --all batch mode ────────────────────────────────────────────────
   if (parsed.all) {
     try {
@@ -175,6 +182,7 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
         lr: parsed.lr,
         lrSchedule: parsed.lrSchedule,
         split: parsed.split,
+        optimizerMode,
         dryRun: parsed.dryRun,
         noMutate: parsed.noMutate,
         allowMutateBundled: parsed.allowMutateBundled,
@@ -219,6 +227,7 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
         lr: parsed.lr,
         lrSchedule: parsed.lrSchedule,
         split: parsed.split,
+        optimizerMode,
         dryRun: parsed.dryRun,
         noMutate: parsed.noMutate,
         allowMutateBundled: parsed.allowMutateBundled,
@@ -276,6 +285,7 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
           modelsStrict: parsed.modelsStrict,
           ...(parsed.reflectMaxTokens !== undefined ? { reflectMaxTokens: parsed.reflectMaxTokens } : {}),
           mode: parsed.mode,
+          optimizerMode,
           dryRun: parsed.dryRun,
           noMutate: parsed.noMutate,
           allowMutateBundled: parsed.allowMutateBundled,
@@ -321,6 +331,7 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
     modelsStrict: parsed.modelsStrict,
     ...(parsed.reflectMaxTokens !== undefined ? { reflectMaxTokens: parsed.reflectMaxTokens } : {}),
     mode: parsed.mode,
+    optimizerMode,
     dryRun: parsed.dryRun,
     noMutate: parsed.noMutate,
     allowMutateBundled: parsed.allowMutateBundled,
@@ -447,6 +458,7 @@ export function parseFlags(args: string[]): ParsedFlags {
   let judgeModel: string | undefined;
   let reflectMaxTokens: number | undefined;
   let mode: 'patch' | 'rewrite' = 'patch';
+  let loop = false;
   let dryRun = false;
   let noMutate = false;
   let allowMutateBundled = false;
@@ -500,6 +512,7 @@ export function parseFlags(args: string[]): ParsedFlags {
     }
     if (a === '--patch') { mode = 'patch'; i += 1; continue; }
     if (a === '--rewrite') { mode = 'rewrite'; i += 1; continue; }
+    if (a === '--loop') { loop = true; i += 1; continue; }
     if (a === '--dry-run') { dryRun = true; i += 1; continue; }
     if (a === '--no-mutate') { noMutate = true; i += 1; continue; }
     if (a === '--allow-mutate-bundled') { allowMutateBundled = true; i += 1; continue; }
@@ -584,6 +597,7 @@ export function parseFlags(args: string[]): ParsedFlags {
     ...(reflectMaxTokens !== undefined ? { reflectMaxTokens } : {}),
     modelsStrict,
     mode,
+    loop,
     dryRun,
     noMutate,
     allowMutateBundled,

@@ -22,6 +22,7 @@
  */
 
 import { CJK_SLUG_CHARS } from './cjk.ts';
+import { requireMaintainerPoliciesSql } from './derived-state-maintainers.ts';
 
 const VALID_CONFIG_NAME = /^[a-z][a-z0-9_]*$/;
 const DEFAULT_LANGUAGE = 'english';
@@ -194,11 +195,14 @@ export function chunkSearchVectorSql(lang: string, row = ''): string {
  * otherwise reset.
  */
 export function pageSearchVectorTriggerFnSql(lang: string): string {
-  return `CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger SET search_path = pg_catalog, public AS $$
+  return `CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE
   timeline_text TEXT;
   timeline_lead_text TEXT;
 BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    ${requireMaintainerPoliciesSql('timeline_entries', ['SELECT'], '    ')}
+  END IF;
   SELECT coalesce(string_agg(summary || ' ' || detail, ' ' ORDER BY id), '')
   INTO timeline_text
   FROM timeline_entries

@@ -817,7 +817,7 @@ lock".
 | Exit | Meaning |
 | --- | --- |
 | 0 | Committed (or pending with `--accept-pending`). |
-| 10 | Accepted, still pending; the receipt names the request. |
+| 10 | Accepted, still pending; the receipt names the request. Also with `--accept-pending` when the receipt carries `diagnostic.owner` (reason `owner_unavailable`): the owner host runs no consumer and has been quiet past the stale window, so the write will not commit on its own ([stale owner](../guides/troubleshooting.md#owner-host-stale)). |
 | 1 | Not committed: a terminal failure (`conflict`, `failed`, `cancelled`), a refusal before admission (for example "the persistence owner is closing", even with `--accept-pending`), or a lost response whose submission state is unknown (`submission_status: "unknown"`, no receipt). |
 
 The verdict keys on an admitted, non-terminal receipt, never on an error code

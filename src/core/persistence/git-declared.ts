@@ -29,7 +29,7 @@ import { gitChildEnv } from '../git-env.ts';
 import type { Action } from '../agent-output.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { execFile } from '../spawn.ts';
-import { isDerivationPrivate, isPrivatePage, privacyPartSql, readHonorAliases } from '../search/private-visibility.ts';
+import { isPrivacyDerivationPrivate, isPrivacyPrivatePage, privacyPartSql, readHonorAliases } from '../search/private-visibility.ts';
 import { DERIVE_PHASE_DB_ONLY_DEFAULTS } from '../storage-config.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import type { PageMutationFile } from './coordinator.ts';
@@ -85,8 +85,8 @@ export function declaredPathClass(root: string, slug: string, page: RecordedFile
  */
 export async function privacyClass(engine: BrainEngine, sourceId: string, page: { id?: number | null; slug: string; type?: string | null; frontmatter?: unknown }): Promise<PrivacyClass | null> {
   await readHonorAliases(engine);
-  if (isPrivatePage(page)) return 'private';
-  if (isDerivationPrivate(page)) return 'alias_private';
+  if (isPrivacyPrivatePage(page)) return 'private';
+  if (isPrivacyDerivationPrivate(page)) return 'alias_private';
   const frontmatter = typeof page.frontmatter === 'object' && page.frontmatter !== null ? page.frontmatter as Record<string, unknown> : {};
   if (frontmatter.derived_from == null && !['atom', 'concept', 'event'].includes(page.type ?? '')) return null;
   const [row] = await engine.executeRaw<{ lineage: boolean }>(`SELECT NOT ${privacyPartSql('p')} AS lineage

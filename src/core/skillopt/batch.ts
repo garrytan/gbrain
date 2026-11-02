@@ -19,7 +19,7 @@ import * as path from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { sanitizeEcho, type ModelsPlanEntry, type SkillOptModels } from './models-plan.ts';
 import { runSkillOpt } from './orchestrator.ts';
-import type { RunReceipt, SkillOptOpts } from './types.ts';
+import type { OptimizerMode, RunReceipt, SkillOptOpts } from './types.ts';
 
 export interface BatchAllOpts {
   engine: BrainEngine;
@@ -47,6 +47,8 @@ export interface BatchAllOpts {
   lr: number;
   lrSchedule: 'cosine' | 'linear' | 'constant';
   split: [number, number, number];
+  /** E1: 'one-shot-rewrite' (default) or 'reflect' (--loop), applied to every run. */
+  optimizerMode: OptimizerMode;
   dryRun: boolean;
   noMutate: boolean;
   allowMutateBundled: boolean;
@@ -115,6 +117,7 @@ export async function runBatchAll(opts: BatchAllOpts): Promise<BatchAllResult> {
       ...(opts.modelsBannerBaseline ? { modelsBannerBaseline: opts.modelsBannerBaseline } : {}),
       ...(opts.reflectMaxTokens !== undefined ? { reflectMaxTokens: opts.reflectMaxTokens } : {}),
       mode: 'patch',
+      optimizerMode: opts.optimizerMode,
       dryRun: opts.dryRun,
       noMutate: opts.noMutate,
       allowMutateBundled: opts.allowMutateBundled,
@@ -170,6 +173,8 @@ export interface FleetOpts {
   lr: number;
   lrSchedule: 'cosine' | 'linear' | 'constant';
   split: [number, number, number];
+  /** E1: 'one-shot-rewrite' (default) or 'reflect' (--loop), applied to every run. */
+  optimizerMode: OptimizerMode;
   dryRun: boolean;
   noMutate: boolean;
   allowMutateBundled: boolean;
@@ -257,6 +262,7 @@ export async function runFleet(opts: FleetOpts): Promise<FleetResult> {
       ...(opts.modelsStrict ? { modelsStrict: true } : {}),
       ...(opts.reflectMaxTokens !== undefined ? { reflectMaxTokens: opts.reflectMaxTokens } : {}),
       mode: 'patch',
+      optimizerMode: opts.optimizerMode,
       dryRun: opts.dryRun,
       noMutate,
       allowMutateBundled: opts.allowMutateBundled,

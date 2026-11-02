@@ -210,6 +210,7 @@ export async function attestedCallerAccess(engine: Pick<BrainEngine, 'executeRaw
     hidePrivate: true,
     applyRemoteReadPolicy: false,
     restricted: true,
+    remotePolicy: { privacyRelaxed: false, restricted: true },
   };
 }
 

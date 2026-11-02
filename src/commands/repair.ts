@@ -36,6 +36,9 @@ import { createProgress } from '../core/progress.ts';
 import { registerSignalOwner } from '../core/process-cleanup.ts';
 import { cliOptsToProgressOptions, getCliOptions } from '../core/cli-options.ts';
 import { resolveSecretRules } from '../core/secret-spans.ts';
+import { normalizeSeatLabel } from '../core/context/seat.ts';
+import { agentSessionFlagArgs } from '../core/repair/agent-session-facts.ts';
+import { isAbsolute } from 'node:path';
 
 /** The content-repair lane's command word (#6377): parsed like a kind, dispatched to repair-content.ts, never a RepairKind. */
 export const CONTENT_LANE = 'content';
@@ -85,9 +88,12 @@ export const REPAIR_HELP = `Usage: gbrain repair [<kind>] [--apply] [--source <i
        gbrain repair ghost-pages --source <id> [--apply --expect <preview-hash> --yes] [--json]
        gbrain repair legacy-twins --source <id> [--apply --expect <preview-hash> --yes] [--json]
        gbrain repair uncommitted-deletions --source <id> [--after <page-id>] [--include-ambiguous] [--apply --expect <preview-hash> --yes] [--json]
+       gbrain repair rows-behind --source <id> [--include-ambiguous] [--apply --expect <preview-hash>] [--json]
        gbrain repair generations --kind <kind> [--mode restore|release-held] (--run <id> | --since <ISO-8601|7d> | --key <owner> | --generation <id> | --held)
                                  [--source <id>] [--apply --expect <preview-hash> --yes] [--json]
        gbrain repair url-clone-fences [--source <id>] [--apply --expect <preview-hash> --yes] [--json]
+       gbrain repair agent-session-facts [--source <id>] [--cwd <prefix>]... [--session <id>]... [--principal <label>] [--include-ambiguous]
+                                         [--apply --expect <preview-hash> --yes] [--json]
        gbrain repair duplicate-facts [--source <id>] [--include-cross-entity] [--apply --expect <preview-hash> --yes] [--json]
        gbrain repair fact-claim-dates --source <id> [--day YYYY-MM-DD] [--apply --expect <preview-hash> --yes] [--json]
        gbrain repair provenance [--source <id>] [--slug <slug>]... [--include-ambiguous] [--apply --expect <preview-hash> --yes] [--json]
@@ -127,6 +133,9 @@ Options:
   --slug <slug>  fences, file-drift: select a database page by slug (repeatable); the hash covers the selection.
                  rename-identity: the new page of the one open pair to preview (--from <old-slug> when two pairs share it).
   --close        rename-identity: release the pair's purge hold instead of carrying its identity; nothing moves.
+  --cwd <prefix>, --session <id>, --principal <label>
+                 agent-session-facts: sessions whose recorded cwd is under an absolute prefix, or this session id, are agent-launched
+                 (both repeatable); --principal names the agent in the note when no speaker sidecar does. The hash covers them.
   --prefer file|database, --request <id>, --all-drifted, --class <name>
                  file-drift: the side that wins; select conflict receipts by request id (repeatable), or every page
                  still drifted (refused across mixed drift classes unless --class keeps one). --keep is refused here:
@@ -187,11 +196,12 @@ Malformed facts/takes fences (preview, apply, undo): docs/guides/repair.md#fence
 A write recovery blocked on unexpected_file_bytes: docs/guides/repair.md#stuck-recovery.
 Live pages whose canonical file is missing (ghost pages): docs/guides/repair.md#ghost-pages.
 Pages a sync soft-deleted although Git never held their file (restore before the purge; purged pages need a backup): docs/guides/repair.md#uncommitted-deletions.
+Pages a managed sync's checkpoint moved past with an older version of their file: docs/guides/repair.md#rows-behind.
 A sources add --url clone whose pull stops at pull_blocked_local_changes: docs/guides/repair.md#url-clone-fences.
 Renames whose identity sync did not keep (rename-identity): docs/guides/live-sync.md#renaming-a-page.`;
 
 const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--include-ambiguous', '--include-cross-entity', '--diff', '--yes', '--no-llm', '--all-drifted', '--include-failures', '--force', '--close', '--held']);
-const VALUE_FLAGS = new Set(['--rules', '--source', '--limit', '--expect', '--only', '--skip', '--slug', '--max-usd', '--prefer', '--request', '--class', '--since', '--keep', '--request-id', '--older-than', '--from', '--side', '--state', '--after', '--cursor', '--provenance', '--kind', '--mode', '--run', '--key', '--generation', '--day']);
+const VALUE_FLAGS = new Set(['--rules', '--source', '--limit', '--expect', '--only', '--skip', '--slug', '--max-usd', '--prefer', '--request', '--class', '--since', '--keep', '--request-id', '--older-than', '--from', '--side', '--state', '--after', '--cursor', '--provenance', '--kind', '--mode', '--run', '--key', '--generation', '--day', '--cwd', '--session', '--principal']);
 /** Flags only some kinds accept, with the kinds that do. */
 const KIND_FLAGS: Record<string, readonly string[]> = {
   '--only': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--skip': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--diff': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--yes': ['frontmatter', 'conversation-labels', 'stuck-recovery', 'ghost-pages', 'legacy-twins', 'rename-identity', 'url-clone-fences'],
@@ -202,11 +212,13 @@ const KIND_FLAGS: Record<string, readonly string[]> = {
   '--older-than': ['receipt-compaction'], '--include-failures': ['receipt-compaction'], '--force': ['receipt-compaction'],
   '--after': ['uncommitted-deletions'],
   '--kind': ['generations'], '--mode': ['generations'], '--run': ['generations'], '--key': ['generations'], '--generation': ['generations'], '--day': ['fact-claim-dates'], '--rules': ['secret-spans'],
+  '--cwd': ['agent-session-facts'], '--session': ['agent-session-facts'], '--principal': ['agent-session-facts'],
 };
 const VALUE_EXAMPLES: Record<string, string> = { '--source': 'default', '--limit': '50', '--expect': 'PLAN_HASH', '--only': 'notes/a.md', '--skip': 'notes/a.md',
   '--slug': 'notes/a', '--max-usd': '0.50', '--prefer': 'file', '--request': 'REQUEST_UUID', '--class': 'review_required', '--since': '7d', '--side': 'deleted', '--state': 'tombstone_edited', '--keep': 'prior',
   '--request-id': '123e4567-e89b-42d3-a456-426614174000', '--older-than': '30d', '--from': 'notes/old', '--after': '1200', '--cursor': 'NEXT_CURSOR', '--provenance': 'never_committed',
-  '--kind': 'atom', '--mode': 'restore', '--run': 'RUN_ID', '--key': 'page:notes/a', '--generation': '42', '--day': '2026-01-15', '--rules': 'openai,aws_access_key' };
+  '--kind': 'atom', '--mode': 'restore', '--run': 'RUN_ID', '--key': 'page:notes/a', '--generation': '42', '--day': '2026-01-15', '--rules': 'openai,aws_access_key',
+  '--cwd': '/srv/agent-workers', '--session': 'SESSION_ID', '--principal': 'worker-a' };
 /** A usage refusal whose fix is the read-only preview (gbrain repair without --apply writes nothing). */
 const invalid = (message: string, suggestion: string, preview: string[] = ['gbrain', 'repair', '--json']) => opError('invalid_params', message, suggestion,
   { fix: readFix('Previews the repair; without --apply it writes nothing.', { argv: preview }) });
@@ -216,7 +228,8 @@ interface RepairArgs { kind?: string; apply: boolean; all: boolean; json: boolea
   allDrifted: boolean; prefer?: 'file' | 'database'; requests: string[]; driftClass?: string; since?: string;
   held: boolean; side?: string; state?: string; provenance?: string; cursor?: string;
   keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures: boolean; force: boolean; from?: string; close: boolean; afterPage?: number;
-  generationKind?: string; generationMode?: string; run?: string; key?: string; generation?: number; day?: string; rules?: string[] }
+  generationKind?: string; generationMode?: string; run?: string; key?: string; generation?: number; day?: string; rules?: string[];
+  cwdPrefixes: string[]; sessions: string[]; principal?: string }
 
 /** `--max-usd` on a kind that never calls a paid model: the cap belongs to the doctor remediation run. */
 function maxUsdRefusal(flag: string, cap: string | undefined, kind: string | undefined): OperationError {
@@ -249,7 +262,7 @@ function fileDriftKeepRefusal(args: string[], keep: string): OperationError {
 /** Strict parse: every flag is known, value flags carry a value, at most one kind. */
 export function parseRepairArgs(args: string[]): RepairArgs {
   const parsed: RepairArgs = { apply: false, all: false, json: false, noEmbed: false, includeAmbiguous: false, includeCrossEntity: false, diff: false, yes: false, noLlm: false, only: [], skip: [], slugs: [],
-    allDrifted: false, held: false, requests: [], includeFailures: false, force: false, close: false };
+    allDrifted: false, held: false, requests: [], includeFailures: false, force: false, close: false, cwdPrefixes: [], sessions: [] };
   const used = new Set<string>();
   const positional: string[] = [];
   let maxUsdText: string | undefined;
@@ -326,6 +339,22 @@ export function parseRepairArgs(args: string[]): RepairArgs {
         'Pass the UTC day doctor fact_bulk_dates reports, e.g. --day 2026-01-15, or omit --day to repair every detected day.',
         ['gbrain', 'repair', 'fact-claim-dates', ...(parsed.source ? ['--source', parsed.source] : []), '--json']);
       parsed.day = value;
+    }
+    else if (flag === '--cwd') {
+      if (!isAbsolute(value)) throw invalid(`--cwd takes an absolute directory prefix (got "${value}").`, 'Pass the directory the agent sessions ran under, e.g. --cwd /srv/agent-workers.',
+        ['gbrain', 'repair', 'agent-session-facts', '--json']);
+      parsed.cwdPrefixes.push(value);
+    }
+    else if (flag === '--session') {
+      if (!/^[A-Za-z0-9._:-]{1,200}$/.test(value)) throw invalid(`--session takes a harness session id (got "${value}").`, 'Pass the session id the preview lists, e.g. --session SESSION_ID.',
+        ['gbrain', 'repair', 'agent-session-facts', '--json']);
+      parsed.sessions.push(value);
+    }
+    else if (flag === '--principal') {
+      const label = normalizeSeatLabel(value);
+      if (!label) throw invalid(`--principal takes a label of lowercase letters, digits, dot, dash and underscore (got "${value}").`, 'Pass the agent\'s label, e.g. --principal worker-a.',
+        ['gbrain', 'repair', 'agent-session-facts', '--json']);
+      parsed.principal = label;
     }
     else if (flag === '--rules') parsed.rules = resolveSecretRules(value.split(',').map(rule => rule.trim()).filter(Boolean)).rules;
     else if (flag === '--kind') parsed.generationKind = value;
@@ -428,7 +457,7 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
   if (args.includes('--help') || args.includes('-h')) { console.log(REPAIR_HELP); return; }
   const { kind, apply, all, json, noEmbed, includeAmbiguous, includeCrossEntity, source, expect, only, skip, slugs, diff, noLlm, maxUsd, limit: limitText,
     prefer, requests, allDrifted, driftClass, since, held, side, state, provenance, cursor, keep, requestId, olderThan, includeFailures, force, from, close, afterPage,
-    generationKind, generationMode, run, key, generation, day, rules } = parseRepairArgs(args);
+    generationKind, generationMode, run, key, generation, day, rules, cwdPrefixes, sessions, principal } = parseRepairArgs(args);
   const generations: GenerationsSelection | undefined = kind === 'generations' ? { kind: generationKind ?? '', mode: (generationMode ?? 'restore') as GenerationMode,
     ...(run ? { run } : {}), ...(since ? { since } : {}), ...(key ? { key } : {}), ...(generation !== undefined ? { generation } : {}), ...(held ? { held } : {}) } : undefined;
   if (generations) {
@@ -462,7 +491,8 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
       ...(afterPage !== undefined ? ['--after', String(afterPage)] : []), ...(day ? ['--day', day] : []),
       ...(kind === 'rename-identity' ? [...slugs.flatMap(slug => ['--slug', slug]), ...(from ? ['--from', from] : []), ...(close ? ['--close'] : [])] : []),
       ...(kind === 'origin-twins' || kind === 'timeline-order' || kind === 'provenance' ? slugs.flatMap(slug => ['--slug', slug]) : []),
-      ...(generations ? generationsSelectionArgv(generations) : [])];
+      ...(generations ? generationsSelectionArgv(generations) : []),
+      ...(kind === 'agent-session-facts' ? agentSessionFlagArgs({ cwdPrefixes, sessions, principal }) : [])];
     const custom = repairSpec(kind as RepairKind).consentText;
     const text = custom ? { ...custom, why: `Preview ${expect}: ${custom.why}`, user_message: `${custom.user_message} (preview ${expect.slice(0, 12)}${keep ? `, keep ${keep}` : ''})` } : {
       what: `Rewrite the previewed ${kind} changes on disk and import them`,
@@ -491,6 +521,7 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     ...(k === kind && k === 'receipt-compaction' ? { olderThan, includeFailures, force } : {}),
     ...(k === kind && k === 'rename-identity' ? { from, close } : {}), ...(k === kind && afterPage !== undefined ? { afterPage } : {}),
     ...(k === kind && generations ? { generations } : {}), ...(k === kind && day ? { day } : {}), ...(k === kind && rules ? { rules } : {}),
+    ...(k === kind && k === 'agent-session-facts' ? { cwdPrefixes, sessions, principal } : {}),
     ...(apply ? { stop: stop.signal, recordDatabaseStops: true } : {}) })).finally(() => releaseSignals?.());
   if (apply) clearHealthMemo(engine);
   const paidKinds = results.filter(r => r.paid).map(r => r.kind);

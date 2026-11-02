@@ -1975,7 +1975,7 @@ Subcommands:
   demo company-brain [--json]        Run a fictional company through the real import and graph pipeline offline.
   add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force] [--json]
                                     Register a new source. --path must be a git repo
-                                    with committed files; --force skips that check.
+                                    with committed files; --force registers a plain directory (sync imports it without Git).
   list [--json]                     List registered sources with page counts.
   writer status|movement|claim|activate|transfer  Inspect ownership, prove data moves, activate or transfer (see writer --help).
   reconcile <id> <slug> --brain <id> Preview or apply a guarded file/database repair (see reconcile --help).

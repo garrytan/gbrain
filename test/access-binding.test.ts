@@ -150,6 +150,17 @@ for (const kind of testBackends()) {
       expect(await memberIdentityFor(noQueries, joined)).toEqual([]);
     });
 
+    test('a stored principal whose token was revoked resolves to the empty identity, like may_act_for', async () => {
+      const principal = { kind: 'legacy_token' as const, id: tokens.alice!.id };
+      expect(await memberIdentityFor(engine, { principal })).toEqual(['group:team-a', 'member:alice-example']);
+      await engine.executeRaw('UPDATE access_tokens SET revoked_at = now() WHERE id = $1::uuid', [tokens.alice!.id]);
+      try {
+        expect(await memberIdentityFor(engine, { principal })).toEqual([]);
+      } finally {
+        await engine.executeRaw('UPDATE access_tokens SET revoked_at = NULL WHERE id = $1::uuid', [tokens.alice!.id]);
+      }
+    });
+
     test('stdio: unbound sees no restricted page; mcp.stdio_member binds it; a disabled bound member sees none again', async () => {
       expect(await stdioGet(ALICE_SLUG)).not.toContain(CANARY);
       await engine.setConfig(STDIO_MEMBER_KEY, 'bob-example');

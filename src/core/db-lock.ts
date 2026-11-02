@@ -525,6 +525,8 @@ export interface LockSnapshot {
   last_refreshed_at: Date | null;
   /** ms since the most recent refresh, or null when last_refreshed_at is null. */
   ms_since_last_refresh: number | null;
+  /** #7982: the clock the derived fields were computed against: the database's at the read (the reader's only for a row without it). */
+  db_now: Date;
 }
 
 /**
@@ -572,6 +574,7 @@ function rowToLockSnapshot(row: RawLockRow, readerNow: number): LockSnapshot | n
     ttl_expired: ttlExpires.getTime() < now,
     last_refreshed_at: lastRefreshed,
     ms_since_last_refresh: lastRefreshed ? now - lastRefreshed.getTime() : null,
+    db_now: new Date(now),
   };
 }
 

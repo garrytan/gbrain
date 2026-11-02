@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { load } from 'js-yaml';
-import { tapToolCalls } from '../../scripts/mcp-tap-calls.ts';
+import { tapToolCalls, tapToolResults } from '../../scripts/mcp-tap-calls.ts';
 import { STARTER_OPS } from '../../src/mcp/surface.ts';
 
 const REPO = join(import.meta.dir, '../..');
@@ -68,6 +68,7 @@ describe('Tier 2 OpenClaw MCP wiring (#8002)', () => {
         env: { DATABASE_URL: 'postgresql://u@localhost:5432/db' },
       });
       expect(readFileSync(tap, 'utf8')).toBe('');
+      expect(readFileSync(`${tap}.responses`, 'utf8')).toBe('');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
@@ -112,6 +113,49 @@ describe('Tier 2 OpenClaw MCP wiring (#8002)', () => {
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
+  test('the tap logs what the server answered, and a tool call gbrain answered with an error does not count (#8011)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-mcp-tap-'));
+    try {
+      const log = join(dir, 'tap.jsonl');
+      // A stand-in server: tools/list succeeds, search fails with isError, get_page with a JSON-RPC error.
+      const server = join(dir, 'server.sh');
+      writeFileSync(server, `#!/usr/bin/env bash
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -nE 's/.*"id":([0-9]+).*/\\1/p')
+  case "$line" in
+    *'"name":"search"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"database error"}],"isError":true}}\\n' "$id" ;;
+    *'"name":"get_page"'*) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32603,"message":"boom"}}\\n' "$id" ;;
+    *'"method":"tools/'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"ok"}]}}\\n' "$id" ;;
+  esac
+done
+`);
+      chmodSync(server, 0o755);
+      const call = (id: number, name: string) => JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: {} } });
+      const input = [JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }), call(2, 'search'), call(3, 'get_page')].join('\n') + '\n';
+      const failing = spawnSync('bash', ['scripts/ci-mcp-tap.sh', log, '--', server], { cwd: REPO, input, encoding: 'utf8' });
+      expect(failing.status, failing.stderr).toBe(0);
+      expect(readFileSync(`${log}.responses`, 'utf8')).toBe(failing.stdout);
+      expect(tapToolResults(readFileSync(log, 'utf8'), readFileSync(`${log}.responses`, 'utf8'))).toEqual([{ name: 'search', ok: false }, { name: 'get_page', ok: false }]);
+      const passing = spawnSync('bash', ['scripts/ci-mcp-tap.sh', join(dir, 'ok.jsonl'), '--', server], { cwd: REPO, input: call(4, 'whoami') + '\n', encoding: 'utf8' });
+      expect(tapToolResults(readFileSync(join(dir, 'ok.jsonl'), 'utf8'), readFileSync(join(dir, 'ok.jsonl.responses'), 'utf8'))).toEqual([{ name: 'whoami', ok: true }]);
+      expect(passing.stdout).toContain('"id":4,"result"');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test('tapToolResults: an unanswered call fails, and an id that two server processes reused counts only when every answer succeeded', () => {
+    const call = (id: number, name: string) => JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name } });
+    const ok = (id: number) => JSON.stringify({ jsonrpc: '2.0', id, result: { content: [] } });
+    const bad = (id: number) => JSON.stringify({ jsonrpc: '2.0', id, result: { content: [], isError: true } });
+    expect(tapToolResults(call(2, 'search'), '')).toEqual([{ name: 'search', ok: false }]);
+    expect(tapToolResults(call(2, 'search'), ok(2))).toEqual([{ name: 'search', ok: true }]);
+    expect(tapToolResults([call(2, 'search'), call(2, 'query')].join('\n'), [bad(2), ok(2)].join('\n'))).toEqual([{ name: 'search', ok: false }, { name: 'query', ok: false }]);
+    expect(tapToolResults(`[${call(5, 'put_page')}]`, `[${ok(5)}]`)).toEqual([{ name: 'put_page', ok: true }]);
+    const ping = (id: number) => JSON.stringify({ jsonrpc: '2.0', id, method: 'ping' });
+    const pong = (id: number) => JSON.stringify({ jsonrpc: '2.0', id, result: {} });
+    expect(tapToolResults([call(2, 'search'), ping(2)].join('\n'), pong(2))).toEqual([{ name: 'search', ok: false }]);
+    expect(tapToolResults([call(2, 'search'), ping(2)].join('\n'), [ok(2), pong(2)].join('\n'))).toEqual([{ name: 'search', ok: true }]);
+  });
+
   test('tapToolCalls counts only tools/call requests, batches included', () => {
     const handshakeOnly = '{"jsonrpc":"2.0","id":0,"method":"initialize"}\n{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n';
     expect(tapToolCalls(handshakeOnly)).toEqual([]);
@@ -120,12 +164,13 @@ describe('Tier 2 OpenClaw MCP wiring (#8002)', () => {
     expect(tapToolCalls('[{"method":"tools/call","params":{"name":"put_page"}},{"method":"ping"}]\n{"method":"tools/call","params":{"name":"get_health"}}')).toEqual(['put_page', 'get_health']);
   });
 
-  test('every Tier 2 test requires a gbrain tool call, and the file needs the tap log to run', () => {
+  test('every Tier 2 test requires a gbrain tool call that succeeded, and the file needs the tap log to run', () => {
     const src = readFileSync(join(REPO, 'test/e2e/skills.test.ts'), 'utf8');
     const runs = src.match(/runOpenClaw\(\n/g) ?? [];
     expect(runs.length).toBe(3);
     expect(src.match(/gbrainToolCalls\(\(\) => runOpenClaw\(/g)).toHaveLength(3);
-    expect(src.match(/expect\(calls\.length, /g)).toHaveLength(3);
+    expect(src.match(/expect\(succeeded\.length, /g)).toHaveLength(3);
+    expect(src).toContain('tapToolResults(requests!, responses!)');
     expect(src).toContain("if (!process.env.GBRAIN_TEST_TIER2_MCP_TAP_LOG) return { ok: false");
     expect(existsSync(join(REPO, 'scripts/ci-mcp-tap.sh'))).toBe(true);
   });

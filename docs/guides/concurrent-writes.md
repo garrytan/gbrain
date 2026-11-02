@@ -354,8 +354,10 @@ its chunks are built after commit; see
 
 Nonterminal receipts may include a validated `diagnostic` with `age_ms`,
 `assessment` (`pending`, `blocked`, or `stalled`), a closed `reason`, and
-`next_action` (`poll` or `inspect_owner`). An optional `observed_at` is the
-observation time, not the last useful progress time. Older servers may omit
+`next_action` (`poll` or `inspect_owner`). An optional `owner` block (`last_active`)
+appears when the worktree's owner host runs no consumer and has been quiet past
+the stale window ([stale owner](troubleshooting.md#owner-host-stale)). An optional
+`observed_at` is the observation time, not the last useful progress time. Older servers may omit
 diagnostics. A fallback without fresh dependency evidence omits the observation
 timestamp; it does not claim that a cached row is current.
 
@@ -383,7 +385,8 @@ arguments with that UUID. When `next_action` is `inspect_owner`, ask the operato
 to inspect first instead of repeatedly submitting mutations.
 
 `write_pending` means accepted work remains outstanding; the CLI exits 10 for it
-(0 with `--accept-pending`) and waits 30 s by default (`--wait <seconds>`,
+(0 with `--accept-pending`, except for a receipt whose `diagnostic.owner` names a stale
+owner) and waits 30 s by default (`--wait <seconds>`,
 `GBRAIN_WRITE_WAIT_MS`, `persistence.write_wait_ms`); see
 [CLI exit status for writes](../protocol/MEMORY_VERBS_v1.md#cli-exit-status-for-writes).
 The admin health indicators count it as `accepted_pending`, outside the error
@@ -990,7 +993,11 @@ When `persistence_capacity` warns or fails, or a write is refused with
 
 1. Read the finding: `gbrain doctor --only persistence_capacity --json`.
    `details.resources[]` names the scope, resource, days left and `basis`;
-   `fix` is the reversible unblock.
+   `fix` is the reversible unblock. `details.outstanding[]` lists an
+   outstanding-request cap at 90% or more whose oldest request is over ten
+   minutes old (a healthy drain near the line stays ok), with the sources holding its slots;
+   requests that stopped settling (or wait behind a slow publication) hold them, so when it is the only finding, `fix`
+   is that source's read-only `gbrain sources writer status`, not a raise.
 2. Run the `gbrain config set <key> <value>` it prints on the brain host
    (undo with `gbrain config unset <key>`). Writes resume at once; retry the
    refused write with the same `request_id`.

@@ -33,7 +33,7 @@ import type { OperationContext } from '../ops/contract.ts';
 import { loadBenchmark } from './benchmark.ts';
 import { D_SEL_MIN_SIZE } from './types.ts';
 import { gbrainPath } from '../config.ts';
-import type { BenchmarkTask } from './types.ts';
+import type { BenchmarkTask, RolloutBatchHook } from './types.ts';
 import { scoreSkillOnTasks } from './validate-gate.ts';
 
 const CAPTURE_CONFIG_KEY = 'skillopt.capture_enabled';
@@ -117,6 +117,8 @@ export interface HeldOutGateOpts {
   /** #4119 — in-rollout-loop deadline (epoch ms); see ValidateGateOpts. */
   deadlineMs?: number;
   abortSignal?: AbortSignal;
+  /** B1.3: score both skills through the harness hook (phase 'held_out'). */
+  rolloutHook?: RolloutBatchHook;
 }
 
 export interface HeldOutGateResult {
@@ -145,8 +147,10 @@ export async function runHeldOutGate(opts: HeldOutGateOpts): Promise<HeldOutGate
     tasks: opts.heldOutTasks,
     targetModel: opts.targetModel,
     judgeModel: opts.judgeModel,
+    phase: 'held_out' as const,
     ...(opts.deadlineMs !== undefined ? { deadlineMs: opts.deadlineMs } : {}),
     ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
+    ...(opts.rolloutHook ? { rolloutHook: opts.rolloutHook } : {}),
   };
   const baselineScore = await scoreSkillOnTasks({ ...scoreOpts, skillText: opts.baselineSkillText });
   const candidateScore = await scoreSkillOnTasks({ ...scoreOpts, skillText: opts.candidateSkillText });

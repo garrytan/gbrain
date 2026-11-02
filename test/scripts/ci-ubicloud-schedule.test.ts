@@ -228,3 +228,11 @@ describe("gate location", () => {
     }
   });
 });
+
+describe("ci-item.sh exit status", () => {
+  it("exits with the worst item's rc, so a one-item run (.gstack/ubicloud.json's verify) carries its result", () => {
+    const r = spawnSync("bash", [resolve(import.meta.dir, "../../scripts/ubicloud/ci-item.sh"), "no-such-lane"], { env: { ...process.env, SLOT: "1" }, encoding: "utf8" });
+    expect(r.stdout).toContain("__ubi_item__ rc=2 ");
+    expect(r.status).toBe(2);
+  });
+});

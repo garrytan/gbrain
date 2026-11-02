@@ -237,9 +237,9 @@ test('legacy skill writers refuse before partial copies, history, optimizer eval
     expect(existsSync(join(skillsDir, 'alpha/skillopt'))).toBe(false);
     expect(readFileSync(statePath, 'utf8')).toBe(bridgeStateBefore);
   }
-  const optimizer: SkillOptOpts = { engine: f.engine, skillsDir, skillName: 'alpha', benchmarkPath: join(f.scratch, 'absent.jsonl'), epochs: 1, batchSize: 1,
+  const optimizer: SkillOptOpts & { benchmarkPath: string; split: [number, number, number] } = { engine: f.engine, skillsDir, skillName: 'alpha', benchmarkPath: join(f.scratch, 'absent.jsonl'), epochs: 1, batchSize: 1,
     lr: 1, lrSchedule: 'constant', split: [4, 1, 5], optimizerModel: 'unconfigured', targetModel: 'unconfigured', judgeModel: 'unconfigured',
-    mode: 'patch', dryRun: false, noMutate: false, allowMutateBundled: true, bootstrapReviewed: true, json: false, maxCostUsd: 1, maxRuntimeMin: 1, force: true };
+    mode: 'patch', optimizerMode: 'reflect', dryRun: false, noMutate: false, allowMutateBundled: true, bootstrapReviewed: true, json: false, maxCostUsd: 1, maxRuntimeMin: 1, force: true };
   await expect(runSkillOpt(optimizer)).rejects.toMatchObject({ code: 'skill_bundle_required' });
   await expect(runFleet({ ...optimizer, targetModels: ['unconfigured'] })).rejects.toMatchObject({ code: 'skill_bundle_required' });
   await expect(runDoctor({ packRoot: f.root, mode: 'quick', fix: true, yes: true })).rejects.toMatchObject({ code: 'skill_bundle_required' });

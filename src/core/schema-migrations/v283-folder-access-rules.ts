@@ -1,4 +1,5 @@
 import type { Migration } from './types.ts';
+import { requireMaintainerPoliciesSql } from '../derived-state-maintainers.ts';
 
 // Applied by src/core/migrate.ts on the next initSchema(); see docs/ENGINES.md
 // ("Canonical schema sources") for when schema.sql or a TS fragment also changes.
@@ -23,17 +24,23 @@ import type { Migration } from './types.ts';
 // read as nobody: a narrowing still being stamped ('pending') or a policy file
 // that does not validate ('invalid'; prefix '' covers the whole source). The
 // read-time lineage test treats an origin under a folder rule or a covered
-// prefix as restricted. Nothing is rewritten on upgrade: with no rule, every
+// prefix as restricted, and follows an origin renamed since the derivative
+// was written through slug_aliases. Nothing is rewritten on upgrade: with no rule, every
 // page keeps folder_rule_ids NULL.
-// No schema.sql mirror: like v281, these exist only through migrations.
+// A role that neither owns these tables nor bypasses RLS reads them empty, so
+// nothing here may read empty as "no rule": the stamp refuses the write
+// (writer_coordinator_required, unreadable_state, as v281 does), and where
+// gbrain_access_state_unreadable() holds, reads and the derivation-privacy
+// test treat every page as covered and the policy commands refuse.
+// No SECURITY DEFINER (#7659).
+// No schema.sql mirror: like v282, these exist only through migrations.
 // Provisional number: renumbered at the merge slot.
-export const v282: Migration = {
-  version: 282,
+export const v283: Migration = {
+  version: 283,
   name: 'folder_access_rules',
   idempotent: true,
   sql: `
 ALTER TABLE pages ADD COLUMN IF NOT EXISTS folder_rule_ids TEXT[];
-CREATE INDEX IF NOT EXISTS pages_folder_rule_ids_gin ON pages USING gin (folder_rule_ids) WHERE folder_rule_ids IS NOT NULL;
 CREATE TABLE IF NOT EXISTS access_policy_state (
   source_id TEXT PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -83,17 +90,28 @@ CREATE TABLE IF NOT EXISTS access_policy_migrations (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE OR REPLACE FUNCTION gbrain_access_folder_rules(p_source TEXT, p_slug TEXT) RETURNS TEXT[]
-  LANGUAGE sql STABLE PARALLEL SAFE SET search_path = pg_catalog, public AS $fn$
+  LANGUAGE sql STABLE PARALLEL SAFE SET search_path = pg_catalog, public, pg_temp AS $fn$
   SELECT array_agg(p_source || ':' || r.rule_id ORDER BY r.rule_id COLLATE "C")
     FROM access_rules r WHERE r.source_id = p_source AND starts_with(p_slug, r.prefix)
 $fn$;
+CREATE OR REPLACE FUNCTION gbrain_access_state_unreadable() RETURNS boolean
+  LANGUAGE sql STABLE PARALLEL SAFE SET search_path = pg_catalog, public, pg_temp AS $fn$
+  SELECT EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['access_policy_state', 'access_rules', 'access_pending_coverage']::pg_catalog.regclass[]) AS t(rel)
+    WHERE pg_catalog.row_security_active(t.rel) AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid OPERATOR(pg_catalog.=) t.rel::pg_catalog.oid AND p.polpermissive
+        AND p.polcmd::pg_catalog.text OPERATOR(pg_catalog.=) ANY (ARRAY['*', 'r']::pg_catalog.text[])
+        AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id)
+          WHERE CASE WHEN r.id OPERATOR(pg_catalog.=) 0::pg_catalog.oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END)))
+$fn$;
 CREATE OR REPLACE FUNCTION gbrain_access_pending_covers(p_source TEXT, p_slug TEXT) RETURNS boolean
-  LANGUAGE sql STABLE PARALLEL SAFE SET search_path = pg_catalog, public AS $fn$
+  LANGUAGE sql STABLE PARALLEL SAFE SET search_path = pg_catalog, public, pg_temp AS $fn$
   SELECT EXISTS (SELECT 1 FROM access_pending_coverage c WHERE c.source_id = p_source AND starts_with(p_slug, c.prefix))
 $fn$;
 CREATE OR REPLACE FUNCTION gbrain_access_stamp_folder_rules() RETURNS trigger
-  LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+  LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN
+  ${requireMaintainerPoliciesSql('access_policy_state', ['SELECT', 'UPDATE'])}
+  ${requireMaintainerPoliciesSql('access_rules', ['SELECT'])}
   IF EXISTS (SELECT 1 FROM access_policy_state s WHERE s.source_id = NEW.source_id) THEN
     PERFORM 1 FROM access_policy_state s WHERE s.source_id = NEW.source_id FOR SHARE;
     NEW.folder_rule_ids := gbrain_access_folder_rules(NEW.source_id, NEW.slug);
@@ -107,10 +125,10 @@ DROP TRIGGER IF EXISTS pages_access_stamp_folder_rules ON pages;
 CREATE TRIGGER pages_access_stamp_folder_rules BEFORE INSERT OR UPDATE OF slug, source_id, folder_rule_ids ON pages
   FOR EACH ROW EXECUTE FUNCTION gbrain_access_stamp_folder_rules();
 CREATE OR REPLACE FUNCTION gbrain_access_origin_restricted(p_id INTEGER, p_source_id TEXT, p_type TEXT, fm JSONB) RETURNS boolean
-  LANGUAGE plpgsql STABLE PARALLEL SAFE SET search_path = pg_catalog, public AS $fn$
+  LANGUAGE plpgsql STABLE PARALLEL SAFE SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN
   IF p_type = 'atom' THEN
-    IF EXISTS (SELECT 1 FROM pages o WHERE o.source_id = p_source_id AND o.slug = fm->>'source_slug'
+    IF EXISTS (SELECT 1 FROM pages o WHERE o.source_id = p_source_id AND o.slug IN (fm->>'source_slug', (SELECT a.canonical_slug FROM slug_aliases a WHERE a.source_id = p_source_id AND a.alias_slug = fm->>'source_slug'))
         AND (o.frontmatter ? 'readable_by' OR o.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(o.source_id, o.slug))) THEN
       RETURN true;
     END IF;
@@ -118,12 +136,13 @@ BEGIN
     IF EXISTS (SELECT 1 FROM links l JOIN pages i ON i.id = l.to_page_id
         WHERE l.from_page_id = p_id AND l.link_source = 'concept-provenance' AND l.link_type = 'synthesized_from'
           AND (i.frontmatter ? 'readable_by' OR i.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(i.source_id, i.slug)
-            OR EXISTS (SELECT 1 FROM pages io WHERE io.source_id = i.source_id AND io.slug = i.frontmatter->>'source_slug'
+            OR EXISTS (SELECT 1 FROM pages io WHERE io.source_id = i.source_id
+              AND io.slug IN (i.frontmatter->>'source_slug', (SELECT a.canonical_slug FROM slug_aliases a WHERE a.source_id = i.source_id AND a.alias_slug = i.frontmatter->>'source_slug'))
               AND (io.frontmatter ? 'readable_by' OR io.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(io.source_id, io.slug))))) THEN
       RETURN true;
     END IF;
   ELSIF p_type = 'event' AND fm->>'captured_via' LIKE 'life-chronicle:%' THEN
-    IF EXISTS (SELECT 1 FROM pages c WHERE c.source_id = p_source_id AND c.slug = fm->'event'->>'depth'
+    IF EXISTS (SELECT 1 FROM pages c WHERE c.source_id = p_source_id AND c.slug IN (fm->'event'->>'depth', (SELECT a.canonical_slug FROM slug_aliases a WHERE a.source_id = p_source_id AND a.alias_slug = fm->'event'->>'depth'))
         AND (c.frontmatter ? 'readable_by' OR c.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(c.source_id, c.slug))) THEN
       RETURN true;
     END IF;
@@ -131,8 +150,9 @@ BEGIN
   IF jsonb_typeof(fm->'derived_from') IN ('array', 'string') THEN
     RETURN EXISTS (SELECT 1 FROM pages d WHERE d.source_id = p_source_id
       AND (d.frontmatter ? 'readable_by' OR d.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(d.source_id, d.slug))
-      AND d.slug = ANY(ARRAY(SELECT regexp_replace(declared.slug, '\\.md$', '') FROM jsonb_array_elements_text(
-        CASE WHEN jsonb_typeof(fm->'derived_from') = 'array' THEN fm->'derived_from' ELSE jsonb_build_array(fm->'derived_from') END) AS declared(slug))));
+      AND d.slug = ANY(ARRAY(WITH declared(slug) AS (SELECT regexp_replace(x, '\\.md$', '') FROM jsonb_array_elements_text(
+        CASE WHEN jsonb_typeof(fm->'derived_from') = 'array' THEN fm->'derived_from' ELSE jsonb_build_array(fm->'derived_from') END) AS x)
+        SELECT slug FROM declared UNION SELECT a.canonical_slug FROM slug_aliases a JOIN declared ON a.alias_slug = declared.slug WHERE a.source_id = p_source_id)));
   END IF;
   RETURN false;
 END

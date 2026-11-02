@@ -5,6 +5,10 @@
 // returns only after each VM that came to exist is destroyed and gone. Every
 // gate VM name carries its expiry, two hours after creation by default
 // (scripts/ubicloud/reap-expired.ts reaps a VM teardown never reached).
+// After teardown the run prints gstack's UBICLOUD: left= line (also into
+// UBI_LEFT_FILE, which scripts/pregate-remote-gate.sh reads): left=0 once every
+// VM is confirmed gone, left=<n> when a destroy fails. Without UBI_OWNER the
+// run refuses before it provisions anything.
 //
 // The orchestrator packs its whole checkout (.git and untracked files
 // included) before it provisions anything, so it runs from a fixture repo
@@ -32,7 +36,7 @@ afterEach(() => {
 });
 
 describe("ci:ubicloud teardown", () => {
-  for (const signal of ["SIGTERM", "SIGHUP"] as const) it(`${signal} mid-provision destroys every VM it asked for, including creates still in flight`, async () => {
+  for (const [signal, destroyFails] of [["SIGTERM", false], ["SIGHUP", false], ["SIGTERM", true]] as const) it(`${signal} mid-provision destroys every VM it asked for, including creates still in flight${destroyFails ? "; a destroy that fails reads UBICLOUD: left=3" : ""}`, async () => {
     dir = mkdtempSync(join(tmpdir(), "ci-ubicloud-teardown-"));
     const repo = join(dir, "repo");
     mkdirSync(repo);
@@ -50,6 +54,8 @@ describe("ci:ubicloud teardown", () => {
         UBI_RUNNER_STATE: join(dir, "state"),
         UBI_OWNER: "probe",
         UBI_POLL_SECONDS: "0.2",
+        UBI_DOWN_TIMEOUT: "2",
+        UBI_LEFT_FILE: join(dir, "left"),
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -65,6 +71,7 @@ describe("ci:ubicloud teardown", () => {
     for (const vm of [/^create-start \S+-ci02/, /^create-start \S+-ci03/]) await Promise.race([waitForEvent(api, vm, 10_000), exitedEarly]);
     exitedEarly.catch(() => {});
     expect(api.events.some((e) => /^created \S+-ci0[23]/.test(e))).toBe(false);
+    api.faults.destroy = destroyFails;
     child.kill(signal);
     expect(await child.exited).toBe(130);
     const out = await stdout;
@@ -76,12 +83,38 @@ describe("ci:ubicloud teardown", () => {
     for (const name of requested) {
       expect(name).toMatch(/^ubirun-probe-\d{10}-ci0[123][0-9a-f]{4}-t2$/);
       expect(api.events).toContain(`created ${name}`);
-      expect(api.events).toContain(`removed ${name}`);
+      if (!destroyFails) expect(api.events).toContain(`removed ${name}`);
+    }
+    const left = destroyFails ? 3 : 0;
+    expect(out).toContain(`UBICLOUD: left=${left} owner=probe vms=3 others=0\n`);
+    expect(readFileSync(join(dir, "left"), "utf8")).toBe(`UBICLOUD: left=${left} owner=probe vms=3 others=0\n`);
+    if (destroyFails) {
+      expect(api.vms.size).toBe(3);
+      expect(out).toContain("teardown left 3 VM(s) unconfirmed");
+      return;
     }
     expect(api.vms.size).toBe(0);
     expect(out).toContain("teardown confirmed 3 VM(s) gone");
     expect(await stderr).not.toContain("WARNING");
   }, 180_000);
+
+  it("refuses without UBI_OWNER before it provisions anything", async () => {
+    dir = mkdtempSync(join(tmpdir(), "ci-ubicloud-owner-"));
+    const api = (mock = startMockUbicloud());
+    // Async: the mock API is served from this process, so a blocking spawn would starve it.
+    const child = (proc = Bun.spawn(["bun", "run", "scripts/ci-ubicloud.ts", "--vms", "1", "--lanes", "gitleaks"], {
+      cwd: ROOT,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dir, UBICLOUD_API_KEY: "test-token", UBICLOUD_API_URL: api.url, UBI_RUNNER_STATE: join(dir, "state") },
+      stdout: "ignore",
+      stderr: "pipe",
+    }));
+    const stderr = new Response(child.stderr).text();
+    // Unrefused, the run would reach a create within seconds.
+    const settled = await Promise.race([child.exited, waitForEvent(api, /^create-start /, 30_000).then(() => "created")]);
+    expect(settled).toBe(2);
+    expect(await stderr).toContain("ci-ubicloud: UBI_OWNER is not set");
+    expect(api.events).toEqual([]);
+  }, 60_000);
 });
 
 // A SIGTERM while batches run (a cancelled gate) kills those batches. They

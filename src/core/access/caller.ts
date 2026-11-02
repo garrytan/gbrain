@@ -13,7 +13,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { AuthInfo } from '../ops/contract.ts';
-import { accessRestrictionsPresent, remotePrivacyRelaxed, type CallerAccess, type FolderCoverage } from '../search/private-visibility.ts';
+import { remotePrivacyRelaxed, requestRemotePolicy, type CallerAccess, type FolderCoverage } from '../search/private-visibility.ts';
 import { ACCESS_ID_RE, identityFor, normalizePrincipal } from './principals.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
@@ -42,17 +42,19 @@ async function liveIdentity(engine: Pick<BrainEngine, 'executeRaw'>, memberSql: 
 }
 
 /**
- * The member identity bound to `auth`: the verifier's join when present, else a lookup from its principal; empty
- * when unbound, unknown or unreadable. A write's publication passes only its stored principal, so a member disabled
- * or a binding removed after submission takes effect.
+ * The member identity bound to `auth`: the verifier's join when present, else a lookup from its principal (a local
+ * stdio principal reads config mcp.stdio_member, as stdio reads do); empty when unbound, unknown or unreadable. A
+ * write's publication passes only its stored principal, so a member disabled or a binding removed after submission
+ * takes effect.
  */
 export async function memberIdentityFor(engine: Pick<BrainEngine, 'executeRaw'>, auth: Pick<AuthInfo, 'member'> & { principal?: { kind: string; id: string } } | undefined): Promise<string[]> {
   if (auth?.member !== undefined) return auth.member ? identityFor(auth.member.id, auth.member.groups) : [];
   const principal = auth?.principal;
+  if (principal?.kind === 'local_stdio') return liveIdentity(engine, 'SELECT btrim(value) FROM config WHERE key = $1', STDIO_MEMBER_KEY);
   if (!principal || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return [];
   return liveIdentity(engine, principal.kind === 'legacy_token'
-    ? 'SELECT member_id FROM access_tokens WHERE id::text = $1'
-    : 'SELECT member_id FROM oauth_clients WHERE client_id = $1', principal.id);
+    ? 'SELECT member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL'
+    : 'SELECT member_id FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL', principal.id);
 }
 
 /** The member a local stdio server is bound to (config mcp.stdio_member), or null when unset or ill-formed. */
@@ -74,7 +76,8 @@ export async function stdioMemberIdentity(engine: BrainEngine): Promise<string[]
 /**
  * GBRA-218 (A2): the folder-rule part of a caller's record, read live from the applied rulebook: the
  * source-qualified ids of the rules `identity` satisfies, and every prefix that reads as nobody (a narrowing being
- * stamped, an invalid policy file). An unreadable rulebook satisfies nothing and covers everything (fail closed).
+ * stamped, an invalid policy file). An unreadable rulebook satisfies nothing and covers everything (fail closed), and so
+ * does one row-level security hides from this database role.
  */
 export async function folderAccessFor(engine: Pick<BrainEngine, 'executeRaw'>, identity: readonly string[]): Promise<{ satisfiedRuleIds: string[]; folderCoverage: FolderCoverage[] }> {
   return folderAccessForAll(engine, [identity]);
@@ -91,7 +94,8 @@ export async function folderAccessForAll(engine: Pick<BrainEngine, 'executeRaw'>
       ? await engine.executeRaw<{ source_id: string; rule_id: string; readable_by: string[] }>('SELECT source_id, rule_id, readable_by FROM access_rules WHERE readable_by && $1::text[]', [union])
       : [];
     const satisfied = rules.filter(r => identities.every(id => (r.readable_by ?? []).some(reader => id.includes(reader))));
-    const coverage = await engine.executeRaw<{ source_id: string; prefix: string }>('SELECT DISTINCT source_id, prefix FROM access_pending_coverage ORDER BY source_id, prefix');
+    const coverage = await engine.executeRaw<{ source_id: string; prefix: string }>(`SELECT * FROM (SELECT DISTINCT source_id, prefix FROM access_pending_coverage
+      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id, prefix`);
     return { satisfiedRuleIds: satisfied.map(r => `${r.source_id}:${r.rule_id}`).sort(), folderCoverage: coverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })) };
   } catch {
     return { satisfiedRuleIds: [], folderCoverage: [{ source_id: '!unreadable', prefix: '' }] };
@@ -192,7 +196,8 @@ export async function resolveAudienceIdentities(engine: Pick<BrainEngine, 'execu
  * (several entries, a group or a guest) sees no visibility: private page.
  */
 export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | undefined, privateSources: readonly string[] | undefined, transport?: string, audience?: readonly AudiencePrincipal[] | null): Promise<Partial<CallerAccess>> {
-  const [relaxed, restricted] = await Promise.all([remotePrivacyRelaxed(engine), accessRestrictionsPresent(engine)]);
+  const [relaxed, remotePolicy] = await Promise.all([remotePrivacyRelaxed(engine), requestRemotePolicy(engine)]);
+  const restricted = remotePolicy.restricted;
   if (audience?.length) {
     const identities = await resolveAudienceIdentities(engine, { auth, transport }, audience);
     const single = singleMemberAudience(audience);
@@ -205,6 +210,7 @@ export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | u
       hidePrivate: single ? !relaxed : true,
       applyRemoteReadPolicy: false,
       restricted,
+      remotePolicy,
     };
   }
   const identity = !restricted ? []
@@ -219,6 +225,7 @@ export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | u
     hidePrivate: !relaxed,
     applyRemoteReadPolicy: false,
     restricted,
+    remotePolicy,
   };
 }
 
@@ -245,7 +252,8 @@ export async function appliedAccessSummary(engine: Pick<BrainEngine, 'executeRaw
   if (access.restricted) {
     try {
       const rows = await engine.executeRaw<{ source_id: string; rev: number | string | null }>(
-        'SELECT source_id, max(revision) FILTER (WHERE applied_at IS NOT NULL) AS rev FROM access_policy_revisions GROUP BY source_id ORDER BY source_id');
+        `SELECT s.source_id, (SELECT r.revision FROM access_policy_revisions r WHERE r.source_id = s.source_id AND r.applied_at IS NOT NULL
+          ORDER BY r.revision DESC LIMIT 1) AS rev FROM access_policy_state s ORDER BY s.source_id`);
       const visible = auth ? new Set([auth.sourceId, ...(auth.allowedSources ?? []), ...sourceIds].filter(Boolean)) : null;
       policyRev = Object.fromEntries(rows.filter(r => r.rev !== null && (!visible || visible.has(r.source_id))).map(r => [r.source_id, Number(r.rev)]));
     } catch { policyRev = null; }

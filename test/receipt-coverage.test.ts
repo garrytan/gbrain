@@ -54,6 +54,7 @@ const RECEIPT_COVERAGE: Record<string, Coverage> = {
   'src/core/persistence/database-write.ts': { sites: 1, tables: [], other: 'manual links and chronicle ontology observations (unguarded tables)' },
   'src/core/shared-skills/retention.ts': { sites: 1, tables: [], other: 'shared-skill revision retention (unguarded table)' },
   'src/core/persistence/connector-path.ts': { sites: 1, tables: ['sources'], other: 'clears an unbound connector source local_path (source registration, not knowledge)' },
+  'src/commands/sync/plain-directory.ts': { sites: 1, tables: ['sources'], other: 'the plain-directory sync freshness stamp on its own source row (#7973)' },
   'src/core/persistence/connector-sync.ts': { sites: 1, tables: ['sources'], other: 'the connector lease freshness stamp on its own source row' },
   'src/core/persistence/sync-run.ts': { sites: 1, tables: ['sources'], other: 'the managed sync freshness heartbeat on its own source row' },
   'src/core/persistence/sync-pass-run.ts': { sites: 2, tables: ['sources'], other: 'the pass\'s up-to-date and no-checkpoint freshness stamps (#6712 PR 4b) on its own source row, with the pass row' },

@@ -20,6 +20,7 @@ import { withRefreshingLock, LockUnavailableError, LockStolenError, syncLockId }
 import { readSyncAnchor } from '../../core/sync-anchor.ts';
 import { recordUpstreamObservation } from '../../core/sync-upstream.ts';
 import { assertSyncApplicable } from '../../core/sync-applicability.ts';
+import { performPlainDirectorySync, plainDirectorySyncRoot } from './plain-directory.ts';
 import { noteIdentityDowngrades } from '../../core/sync-identity-downgrades.ts';
 import { SyncLockBusyError, formatLockBusyMessage, buildPartialResult } from '../../core/sync-lock.ts';
 import type { SyncOpts, SyncResult } from '../sync.ts';
@@ -64,6 +65,8 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
     if (connector) return connector;
   }
   if (opts.signal?.aborted) return finish(await interruptedBeforeWork());
+  const plainRoot = await plainDirectorySyncRoot(engine, opts, managed);
+  if (plainRoot) return finish(await performPlainDirectorySync(engine, opts, plainRoot, managed), true);
   if (managed) return performManagedBranch(engine, opts);
   const filesystemRoot = opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
   if (filesystemRoot && !hasSourceFilesystemLock(filesystemRoot)) {
@@ -133,10 +136,6 @@ async function performManagedBranch(engine: BrainEngine, outer: SyncOpts): Promi
     const opts: SyncOpts = leaseSignal ? { ...outer, signal: outer.signal ? AbortSignal.any([outer.signal, leaseSignal]) : leaseSignal } : outer;
     // #7167: a dry run reads and previews once; the drain's stall governor (no commit in 5 min) would abandon a long read
     // of a large source as a writer stall, and nothing it does is a write the drain needs to watch.
-    // GBRA-218 (A2): the committed folder rules apply before and after the drain (managed sync moves the checkout).
-    const policy = opts.dryRun ? null : await import('../../core/access/policy-git.ts');
-    const policyRoot = policy ? opts.repoPath ?? await policy.sourcePolicyRoot(engine, sourceId) : null;
-    if (policy) await policy.syncAccessPolicyAt(engine, sourceId, policyRoot, 'HEAD', serr);
     let result = opts.drain && !opts.dryRun
       ? await (await import('../../core/persistence/sync-drain.ts')).drainManagedSync(engine, opts, true)
       : await (await import('../../core/persistence/sync-run.ts')).performManagedSync(engine, opts);
@@ -158,7 +157,6 @@ async function performManagedBranch(engine: BrainEngine, outer: SyncOpts): Promi
         ...(n ? { drain: { ...n, passes: d.passes + n.passes, processed: d.processed + n.processed, written: d.written + n.written, waived: d.waived + n.waived } } : {}) };
       if (!next.staged) serr(`[sync] staged catch-up reached HEAD after ${stages} stages.`);
     }
-    if (policy) await policy.syncAccessPolicyAt(engine, sourceId, policyRoot, 'HEAD', serr);
     printInheritedOptions(result);
     if (opts.dryRun) return result;
     skips = (await import('../../core/persistence/sync-idle-skips.ts')).idleSkips(sourceId);

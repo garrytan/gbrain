@@ -76,7 +76,7 @@ async function invalid(engine: BrainEngine, sources: string[]): Promise<Check> {
   const first = found[0]!;
   return { name, status: 'fail', details: { sources: found },
     message: `The folder-rule file of ${found.map(f => `${f.source} does not validate (reads as nobody: ${f.prefixes.join(', ')})`).join('; ')}. The last applied rules stay in force. Fix .gbrain/access.yml, commit it and sync the source.`,
-    fix: { ...agentFix(['gbrain', 'access', 'rule', 'list', '--source', first.source, '--json'], 'Lists each problem in the file with its line, read-only; fix the file, commit it with gbrain git commit-push and run gbrain sync --source <id> --no-pull.', name,
+    fix: { ...agentFix(['gbrain', 'access', 'rule', 'list', '--source', first.source, '--json'], 'Lists each problem in the file with its line, read-only. Fix the file and commit it with gbrain git commit-push; then run gbrain sync --source <id> --no-pull.', name,
       { docs: 'docs/guides/write-refusals.md#access_policy_invalid' }), verify: doctorVerify(name) } };
 }
 
@@ -108,6 +108,19 @@ async function guarded(name: string, run: (engine: BrainEngine, sources: string[
 
 async function runFolderAccess(ctx: DoctorContext): Promise<Check[]> {
   const engine = connectedEngine(ctx);
+  const [state] = await engine.executeRaw<{ unreadable: boolean }>('SELECT gbrain_access_state_unreadable() AS unreadable').catch(() => []);
+  if (state?.unreadable) {
+    const skipped = 'Skipped: this database role cannot read the folder access tables (see access_policy_pending).';
+    return [
+      { name: 'access_policy_pending', status: 'warn', details: { unreadable: true, docs: 'docs/ENGINES.md#folder-access-tables' },
+        message: 'This database role cannot read the folder access tables (row-level security hides them), so remote reads show no page, '
+          + 'page writes are refused with writer_coordinator_required and folder-rule commands are refused. Run gbrain as their owner, or give the role '
+          + 'the policies in docs/ENGINES.md ("Folder access tables").' },
+      infoCheck('access_policy_widening_held', skipped, 'unknown'),
+      infoCheck('access_policy_invalid', skipped, 'unknown'),
+      infoCheck('access_policy_store_mismatch', skipped, 'unknown'),
+    ];
+  }
   const sources = await policySources(engine).catch(() => null);
   const checks: Check[] = [];
   checks.push({ name: 'access_policy_pending', ...await guarded('access_policy_pending', pending, engine, sources) });

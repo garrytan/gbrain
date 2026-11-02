@@ -710,6 +710,7 @@ export async function findTrajectory(exec: LegacyUnscopedRead, opts: import('../
         AND entity_slug = ${opts.entitySlug}
         AND expired_at IS NULL
         ${remoteFilter ? visibilityClause(['world']) : sqlFragment``}${privacyClause(opts)}
+        AND ${trustedSql(projectionEligibleSql('facts', 'facts', undefined))}
         ${metric !== null ? sqlFragment`AND claim_metric = ${metric}` : sqlFragment``}
         ${kind === 'metric' ? sqlFragment`AND claim_metric IS NOT NULL` : sqlFragment``}
         ${kind === 'event' ? sqlFragment`AND event_type IS NOT NULL` : sqlFragment``}

@@ -93,14 +93,17 @@ export function invalidateHotMemoryForEngine(engine: object): void {
 }
 
 /**
- * Changes whenever a withdrawal is recorded for the source, by any process.
+ * Changes whenever a withdrawal is recorded for the source or (GBRA-218) a folder rulebook is installed, by any process.
  * Read-only embedder engines without raw SQL fall back to the TTL alone.
  */
 async function withdrawalWatermark(engine: OperationContext['engine'], sourceId: string): Promise<string> {
   if (typeof engine.executeRaw !== 'function') return '';
-  const [row] = await engine.executeRaw<{ n: number; at: string | null }>(
-    'SELECT count(*)::int AS n, max(withdrawn_at)::text AS at FROM fact_withdrawals WHERE source_id = $1', [sourceId]);
-  return `${row?.n ?? 0}:${row?.at ?? ''}`;
+  const [row] = await engine.executeRaw<{ n: number; at: string | null; rules: string | null }>(
+    `SELECT count(*)::int AS n, max(withdrawn_at)::text AS at,
+       (SELECT md5(coalesce(string_agg(source_id || '/' || rule_id || '/' || prefix || '/' || array_to_string(readable_by, ',') || '/' || revision::text, '|' ORDER BY source_id, rule_id), '')) FROM access_rules)
+         || ':' || (SELECT md5(coalesce(string_agg(source_id || '/' || prefix || '/' || reason || '/' || coalesce(revision::text, ''), '|' ORDER BY source_id, prefix, reason), '')) FROM access_pending_coverage) AS rules
+     FROM fact_withdrawals WHERE source_id = $1`, [sourceId]);
+  return `${row?.n ?? 0}:${row?.at ?? ''}:${row?.rules ?? ''}`;
 }
 
 /** Bounded set: evict the oldest-expiry entry when inserting at capacity. */
@@ -130,7 +133,7 @@ function cacheSet(key: string, entry: CacheEntry): void {
 export async function getBrainHotMemoryMeta(
   name: string,
   ctx: OperationContext,
-  opts: { topK?: number; ttlMs?: number; sessionOnly?: boolean } = {},
+  opts: { topK?: number; ttlMs?: number; sessionOnly?: boolean; untrusted?: boolean } = {},
 ): Promise<Record<string, unknown> | undefined> {
   // Don't inject on tool calls that themselves manipulate hot memory —
   // the agent doesn't need the brain's hot memory wrapped around its own
@@ -168,6 +171,8 @@ export async function getBrainHotMemoryMeta(
   // fact leak through the cache, not through any query.
   const ttl = Math.max(1000, opts.ttlMs ?? DEFAULT_TTL_MS);
   const sessionOnly = opts.sessionOnly === true;
+  // GST-687: an untrusted (remote MCP) reader gets facts below the owner's tier quoted; it is part of the key.
+  const untrusted = opts.untrusted ?? ctx.remote !== false;
   const topK = Math.max(1, Math.min(opts.topK ?? DEFAULT_TOP_K, 25));
 
   // The watermark and the trust generation are read before the rows, so a
@@ -193,7 +198,7 @@ export async function getBrainHotMemoryMeta(
   // GST-359 C2: and the caller's identity (attested actor, member, audience): a member's own private facts ride the
   // payload, so two people behind one credential and one session id never share an entry. Unbound callers add nothing.
   const identityKey = ctx.remote === false ? '' : callerIdentityKey();
-  const cacheKey = `${engineCacheField(ctx.engine)}::${encodeCacheField(sourceId)}::${tier}::${encodeCacheField(sessionId ?? '_')}::${allowListHash}::${encodeCacheField(eligibilityCacheField(policy))}::${sessionOnly ? 'session-only' : 'fallback'}${identityKey ? `::xid=${identityKey}` : ''}`;
+  const cacheKey = `${engineCacheField(ctx.engine)}::${encodeCacheField(sourceId)}::${tier}::${encodeCacheField(sessionId ?? '_')}::${allowListHash}::${encodeCacheField(eligibilityCacheField(policy))}::${sessionOnly ? 'session-only' : 'fallback'}::${untrusted ? 'quoted' : 'raw'}${identityKey ? `::xid=${identityKey}` : ''}`;
 
   // Cache hit?
   const cached = _cache.get(cacheKey);
@@ -256,8 +261,8 @@ export async function getBrainHotMemoryMeta(
       source_id: sourceId,
       session_id: sessionId,
       ...(suppressed ? { suppressed } : {}),
-      // #8042: a fact saved from a chat page rides the ambient channel quoted.
-      facts: (await quoteFacts(ctx.engine, rows)).map(r => ({
+      // #8042: a fact saved from a chat page rides the ambient channel quoted; GST-687: for an untrusted reader, so does a fact below the owner's tier.
+      facts: (await quoteFacts(ctx.engine, rows, untrusted)).map(r => ({
         id: r.id,
         fact: r.fact,
         kind: r.kind,

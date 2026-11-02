@@ -66,7 +66,7 @@ import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { chat as gatewayChat, withBudgetTracker } from '../ai/gateway.ts';
 import { createGlobalLlmHaltTracker, haltedClassOf, providerContentBlockReason, type GlobalLlmErrorClass } from '../ai/errors.ts';
-import { derivedWriteThrough, reportFileHolds } from './derived-write-through.ts';
+import { derivedWriteThrough, reportDerivedWriteThrough } from './derived-write-through.ts';
 import { emptySessionSourceRouting, keepSessionSourceTranscripts, withSessionSourceRouting } from './synthesize-source-routing.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { DEFAULT_EXTRACT_MAX_INPUT_CHARS, extractAtomsInput, inputTruncatedLine, recordPartialDisposition, releasePartialDispositions, resolveExtractAtomsInputCap, stampTranscriptTombstone, type ExtractAtomsInput, type ExtractAtomsItem } from './extract-atoms-input.ts';
@@ -878,7 +878,7 @@ export async function runPhaseExtractAtoms(
 
   // Phase-level no-op: nothing to extract today.
   if (work.length === 0 && transcripts.length === 0 && pages.length === 0) {
-    return withSessionSourceRouting(reportFileHolds({
+    return withSessionSourceRouting(reportDerivedWriteThrough({
       phase: 'extract_atoms',
       status: 'skipped',
       duration_ms: 0,
@@ -898,7 +898,7 @@ export async function runPhaseExtractAtoms(
         budget_usd: DEFAULT_BUDGET_USD,
         dry_run: opts.dryRun ?? false,
       },
-    }, atomFiles?.held, 'atom'), sourceRouting, sourceId, 'extract_atoms');
+    }, atomFiles, 'atom'), sourceRouting, sourceId, 'extract_atoms');
   }
 
   // 4. Per work-item: extract atoms via the configured extract_atoms model
@@ -1425,7 +1425,7 @@ export async function runPhaseExtractAtoms(
     });
   }
 
-  return withSessionSourceRouting(reportFileHolds({
+  return withSessionSourceRouting(reportDerivedWriteThrough({
     phase: 'extract_atoms',
     // A phase that skipped every work item and produced nothing did not
     // succeed, even though skips are not failures and leave failures[] empty.
@@ -1472,7 +1472,7 @@ export async function runPhaseExtractAtoms(
       source_id: sourceId,
       dry_run: opts.dryRun ?? false,
     },
-  }, atomFiles?.held, 'atom'), sourceRouting, sourceId, 'extract_atoms');
+  }, atomFiles, 'atom'), sourceRouting, sourceId, 'extract_atoms');
 }
 
 /**

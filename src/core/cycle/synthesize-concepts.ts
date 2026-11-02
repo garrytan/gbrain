@@ -37,7 +37,7 @@ import { slugifySegment } from '../sync.ts';
 import { validatePageSlug } from '../ops/context.ts';
 import { privatePagesFilterFragment, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
 import { maintenancePreflight } from '../persistence/prepared-maintenance.ts';
-import { derivedWriteThrough, reportFileHolds } from './derived-write-through.ts';
+import { derivedWriteThrough, reportDerivedWriteThrough } from './derived-write-through.ts';
 import { addSpellingRedirects, canonicalConceptStem, loadConceptRedirects, loadLiveConceptStems } from './concept-redirects.ts';
 import { conceptProvenanceCovers, conceptPublicationHold, stripFenceSections } from './concept-publication.ts';
 import { conceptWriter, type ConceptWrite } from './concept-writes.ts';
@@ -563,7 +563,7 @@ export async function runPhaseSynthesizeConcepts(
     });
   }
 
-  return reportFileHolds({
+  return reportDerivedWriteThrough({
     phase: 'synthesize_concepts',
     status: failures.length > 0 || linkWarnings.length > 0 || publicationDeferred.length > 0 || publicationHeld.length > 0 || skippedFileDrift.length > 0 ? 'warn' : 'ok',
     duration_ms: 0,
@@ -607,7 +607,7 @@ export async function runPhaseSynthesizeConcepts(
       pricing_fallback_models: [...pricingFallbackModels],
       dry_run: opts.dryRun ?? false,
     },
-  }, conceptFiles?.held, 'concept');
+  }, conceptFiles, 'concept');
 }
 
 /**

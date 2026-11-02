@@ -134,6 +134,13 @@ export function seatFileName(sessionId: string): string {
   return `${safeIdComponent(sessionId)}${SEAT_SIDECAR_SUFFIX}`;
 }
 
+/** #8064 per-session speaker sidecar (context/session-speaker.ts owns its content): present only for agent-launched sessions. */
+export const SPEAKER_SIDECAR_SUFFIX = '.speaker.json';
+
+export function speakerFileName(sessionId: string): string {
+  return `${safeIdComponent(sessionId)}${SPEAKER_SIDECAR_SUFFIX}`;
+}
+
 /** #6268: the per-session source record in the spool (context/corpus-source.ts owns its content and lock). */
 export const SESSION_SOURCE_SUFFIX = '.source.json';
 export const SESSION_SOURCE_LOCK_SUFFIX = '.source.lock';
@@ -853,7 +860,7 @@ export function gcCorpusArtifacts(
     for (const name of names) {
       const p = join(dir, name);
       try {
-        const perSession = [SEAT_SIDECAR_SUFFIX, SESSION_SOURCE_SUFFIX].find((suffix) => name.endsWith(suffix));
+        const perSession = [SEAT_SIDECAR_SUFFIX, SPEAKER_SIDECAR_SUFFIX, SESSION_SOURCE_SUFFIX].find((suffix) => name.endsWith(suffix));
         if (perSession) {
           if (!liveSessions.has(name.slice(0, -perSession.length)) && statSync(p).mtimeMs < Date.now() - SEAT_ORPHAN_GRACE_MS) {
             rmSync(p, { force: true });

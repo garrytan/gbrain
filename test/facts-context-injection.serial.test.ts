@@ -18,6 +18,7 @@ import {
   getBrainHotMemoryMeta,
   __resetHotMemoryCacheForTests,
 } from '../src/core/facts/meta-hook.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 
 let engine: PGLiteEngine;
 
@@ -25,14 +26,14 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  await engine.insertFact(
+  await asOwner(engine, tx => tx.insertFact(
     { fact: 'world fact', kind: 'fact', entity_slug: 'meta-test', visibility: 'world', source: 'test' },
     { source_id: 'default' },
-  );
-  await engine.insertFact(
+  ));
+  await asOwner(engine, tx => tx.insertFact(
     { fact: 'private fact', kind: 'fact', entity_slug: 'meta-test', visibility: 'private', source: 'test' },
     { source_id: 'default' },
-  );
+  ));
 });
 
 afterAll(async () => {

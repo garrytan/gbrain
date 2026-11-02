@@ -33,6 +33,7 @@ import { parseOpArgs } from '../src/cli/main.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { PRIVATE, importSegmented, privacyFacts, privacyTakes, privateTokensIn } from './helpers/segmented-privacy-fixture.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 
 const getPage = operations.find(o => o.name === 'get_page')!;
 let engine: BrainEngine;
@@ -48,8 +49,8 @@ async function refusal(p: Promise<unknown>): Promise<OperationError> {
 }
 
 async function put(slug: string, body: string, timeline = '', frontmatter: Record<string, unknown> = {}) {
-  const r = await importFromContent(engine, slug, serializeMarkdown(frontmatter, body, timeline, { type: 'note', title: slug, tags: [] }),
-    { sourceId: 'default', noEmbed: true, forceRechunk: true });
+  const r = await asOwner(engine, tx => importFromContent(tx, slug, serializeMarkdown(frontmatter, body, timeline, { type: 'note', title: slug, tags: [] }),
+    { sourceId: 'default', noEmbed: true, forceRechunk: true }));
   expect(r.status).toBe('imported');
 }
 
@@ -111,7 +112,7 @@ for (const kind of testBackends()) {
       }
       await importSegmented(engine, 'logs/days-segmented', dayLog(240));
       await engine.setConfig('pages.segmented_storage', 'off');
-      await importFromContent(engine, 'logs/days-inline', dayLog(240), { sourceId: 'default', noEmbed: true });
+      await asOwner(engine, tx => importFromContent(tx, 'logs/days-inline', dayLog(240), { sourceId: 'default', noEmbed: true }));
       await put('notes/sections', SECTIONS, '- 2024-01-02: timeline entry about the widget');
       await put('notes/paras', PARAGRAPHS);
       await put('notes/many-headings', Array.from({ length: 30 }, (_, i) => `## H${i + 1}\n\nbody ${i + 1}`).join('\n\n'));

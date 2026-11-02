@@ -15,6 +15,15 @@ export async function excludesPrivateWrites(engine: SqlEngine, remote: boolean):
 }
 
 /**
+ * excludesPrivateWrites for a write's admission: reuses the fresh policy this remote request read when it started
+ * (remoteCallerAccess) instead of reading it again. A false result is rechecked fresh at publication.
+ */
+export async function excludesPrivateWritesAtAdmission(engine: SqlEngine, remote: boolean): Promise<boolean> {
+  if (!remote) return false;
+  return !(currentCallerAccess().remotePolicy ?? await readRemotePolicyNow(engine)).privacyRelaxed;
+}
+
+/**
  * Recheck after page guards at publication; also hide inaccessible receipt targets. GBRA-218: on a brain with
  * member-access restrictions the writer's identity is re-resolved from the stored principal on every check, so a
  * member disabled or unbound after submission (a queued job, a replay) loses the page before commit, and the
@@ -22,15 +31,35 @@ export async function excludesPrivateWrites(engine: SqlEngine, remote: boolean):
  */
 export async function authorizePageVisibility(engine: SqlEngine, authority: WriteAuthority, slug: string): Promise<void> {
   if (!authority.remote) return;
+  if (authority.excludePrivate ?? true) {
+    // Privacy is hidden whatever the policy says, and an empty identity is the strictest reading (an identity only
+    // opens a page that names readers or sits under a folder rule), so a page visible with none needs no policy read
+    // or member lookup.
+    const [hidden] = await engine.executeRaw<{ identity_may_open: boolean }>(`SELECT (page_readers IS NOT NULL OR folder_rule_ids IS NOT NULL) AS identity_may_open
+      FROM pages WHERE source_id=$1 AND slug=$2 AND NOT (${readPolicyFragment('pages', [], true)}) LIMIT 1`, [authority.sourceId, slug]);
+    if (!hidden) return;
+    if (!hidden.identity_may_open) throw pageNotVisibleError();
+  }
   const policy = await readRemotePolicyNow(engine);
   const hidePrivate = (authority.excludePrivate ?? true) || !policy.privacyRelaxed;
   if (!hidePrivate && !policy.restricted) return;
-  const identities = policy.restricted ? await writerIdentities(engine, authority) : [[]];
-  const folder = policy.restricted ? await folderAccessForAll(engine, identities) : { satisfiedRuleIds: [], folderCoverage: [] };
-  const fragment = withCallerAccess({ folderCoverage: folder.folderCoverage }, () => readPolicyFragment('pages', { all: identities }, hidePrivate, folder.satisfiedRuleIds));
+  const fragment = await writerReadPolicySql(engine, authority, 'pages', hidePrivate, policy.restricted);
   const rows = await engine.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2
     AND NOT (${fragment}) LIMIT 1`, [authority.sourceId, slug]);
   if (rows.length) throw pageNotVisibleError();
+}
+
+/**
+ * The read policy a stored remote write's writer is held to, re-resolved live: the member-access part always (an
+ * empty identity, the strictest reading, when the brain has no restrictions), then the privacy part when
+ * `hidePrivate`. No operator hatch relaxes the member-access part.
+ */
+export async function writerReadPolicySql(engine: SqlEngine, authority: WriteAuthority, pageAlias: string, hidePrivate: boolean,
+  restricted?: boolean): Promise<string> {
+  restricted ??= (await readRemotePolicyNow(engine)).restricted;
+  const identities = restricted ? await writerIdentities(engine, authority) : [[]];
+  const folder = restricted ? await folderAccessForAll(engine, identities) : { satisfiedRuleIds: [], folderCoverage: [] };
+  return withCallerAccess({ folderCoverage: folder.folderCoverage }, () => readPolicyFragment(pageAlias, { all: identities }, hidePrivate, folder.satisfiedRuleIds));
 }
 
 /**
@@ -51,14 +80,6 @@ async function writerIdentities(engine: SqlEngine, authority: WriteAuthority): P
   } catch {
     return [[]];
   }
-}
-
-/**
- * GBRA-218: a remote write that touches an existing page outside the durable write path (graph edges, raw data)
- * must be able to read it under the member-access part; privacy keeps the rule each operation already had.
- */
-export async function assertRemoteTargetReadable(engine: SqlEngine, remote: boolean | undefined, sourceId: string, slug: string): Promise<void> {
-  if (await remoteTargetHidden(engine, remote, sourceId, slug)) throw pageNotVisibleError();
 }
 
 /** Whether an existing page is hidden from the current remote caller by the member-access part (never for a trusted local caller). */

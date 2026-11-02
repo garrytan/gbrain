@@ -281,9 +281,12 @@ import { v277 } from './v277-function-search-path-pg-temp.ts';
 import { v278 } from './v278-writer-fence-fail-closed.ts';
 import { v279 } from './v279-outcome-markers-skip-purge-guard.ts';
 import { v280 } from './v280-principal-private-pages.ts';
-import { v281 } from './v281-member-read-access.ts';
-import { v282 } from './v282-folder-access-rules.ts';
-import { v283 } from './v283-qm-actor-links.ts';
+import { v281 } from './v281-derived-state-maintainers-fail-closed.ts';
+import { v282 } from './v282-member-read-access.ts';
+import { v283 } from './v283-folder-access-rules.ts';
+import { v284 } from './v284-access-page-indexes.ts';
+import { v285 } from './v285-slug-rename-history.ts';
+import { v286 } from './v286-qm-actor-links.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -566,4 +569,7 @@ export const MIGRATIONS: Migration[] = [
   v281,
   v282,
   v283,
+  v284,
+  v285,
+  v286,
 ];

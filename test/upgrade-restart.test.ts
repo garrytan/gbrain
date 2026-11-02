@@ -408,6 +408,7 @@ describe('--dry-run belongs to --restart-only (#2185)', () => {
     const write = process.stderr.write;
     process.stderr.write = ((chunk: string) => { writes.push(String(chunk)); return true; }) as typeof process.stderr.write;
     const prevExit = process.exitCode;
+    _resetCliExitVerdictForTests();
     try {
       expect(await handleRestartOnly(['--channel', 'stable'], opts)).toBe(false);
       expect(currentExitCode()).toBe(0);

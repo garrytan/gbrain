@@ -189,11 +189,17 @@ export async function runRobotPhase(o: RobotOptions) {
   const record = (run: RobotRun) => { runs.push(run); say(run); };
   const go = (schedule: Schedule, role: 'count' | 'run', extra: Partial<RobotConfig> = {}) => execute(schedule, role, extra).then(run => { say(run); return run; });
   const width = o.concurrency ?? ROBOT_CONCURRENCY;
-  /** `each` over `items`, `width` at a time, each result at its item's index. */
+  /** `each` over `items`, `width` at a time, each result at its item's index. The first failure stops every lane from taking another item. */
   async function pooled<T, R>(items: readonly T[], each: (item: T) => Promise<R>): Promise<R[]> {
     const results: R[] = [];
     let next = 0;
-    const lane = async () => { while (next < items.length) { const index = next++; results[index] = await each(items[index]!); } };
+    let stopped = false;
+    const lane = async () => {
+      while (!stopped && next < items.length) {
+        const index = next++;
+        try { results[index] = await each(items[index]!); } catch (error) { stopped = true; throw error; }
+      }
+    };
     await Promise.all(Array.from({ length: Math.min(width, items.length) }, lane));
     return results;
   }

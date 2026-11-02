@@ -13,21 +13,26 @@
  * revision for the source yet (a rebuild or a second database, which then
  * reaches the same applied rules from git alone) or when it matches the
  * database's approved revision. An access.approved changed by a plain commit
- * is reported and ignored, so git write access alone never widens.
+ * is reported and ignored, so git write access alone never widens. A rebuild replays each committed access.yml since that
+ * baseline, so a narrowing a later plain commit removed is applied again with its removal held.
  */
 import { spawnSync } from '../spawn.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import { serr } from '../console-prefix.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readSyncAnchor } from '../sync-anchor.ts';
+import { gitChildEnv } from '../git-env.ts';
+import { gitAsync } from '../sync-git.ts';
 import { acquireCommitLock, checkoutRoot, commitAndPush, COMMIT_LOCK_ENV, type CommitPushResult } from '../git/commit-push.ts';
 import { parsePolicyYaml, rulebookDigest, serializePolicyYaml, type FolderRule, type PolicyProblem } from './folder-rules.ts';
-import { clearPolicyInvalid, getRevision, listRevisions, markPolicyInvalid, proposeRevision, readAccessStore, writeAccessStore, type ProposalResult, type RestampProgress } from './policy.ts';
+import { clearPolicyInvalid, coverageRows, getRevision, listRevisions, markPolicyInvalid, proposeRevision, readAccessStore, writeAccessStore, type ProposalResult, type RestampProgress } from './policy.ts';
 
 export const POLICY_DIR = '.gbrain';
 export const POLICY_FILE = '.gbrain/access.yml';
 export const APPROVED_FILE = '.gbrain/access.approved';
+const REBUILD_MARK = 'rebuild';
 const POLICY_HEADER = 'Folder read rules for this source (gbrain access rule add|rm). Narrowing changes apply at the next sync;\nwidening changes wait for gbrain access apply --source <id> on the brain host.';
 const APPROVED_HEADER = 'The folder rules an operator approved with gbrain access apply. Written by gbrain; do not edit.';
 
@@ -39,21 +44,28 @@ export async function sourcePolicyRoot(engine: BrainEngine, sourceId: string): P
 
 /** Whether `root` is inside a git work tree. */
 export function isGitWorkTree(root: string): boolean {
-  const r = spawnSync('git', ['-C', root, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8' });
+  const r = spawnSync('git', ['-C', root, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8', env: gitChildEnv() });
   return r.status === 0 && r.stdout.trim() === 'true';
 }
 
 function gitShow(root: string, rev: string, path: string): string | null {
-  const r = spawnSync('git', ['show', `${rev}:./${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
+  const r = spawnSync('git', ['show', `${rev}:./${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, env: gitChildEnv() });
   return r.status === 0 ? r.stdout : null;
+}
+
+/** isGitWorkTree without blocking the event loop, for sync (a resident runs it in-process on a commit). */
+async function isGitWorkTreeAsync(root: string): Promise<boolean> {
+  return gitAsync(root, ['rev-parse', '--is-inside-work-tree'], { silenceStderr: true }).then(out => out === 'true', () => false);
 }
 
 export interface CommittedPolicy { yml: string | null; approved: string | null; commit: string | null }
 
 /** The policy files as committed at `rev` (never the working tree), and the last commit that touched access.yml. */
-export function readCommittedPolicy(root: string, rev = 'HEAD'): CommittedPolicy {
-  const log = spawnSync('git', ['log', '-1', '--format=%h %an', rev, '--', POLICY_FILE], { cwd: root, encoding: 'utf8' });
-  return { yml: gitShow(root, rev, POLICY_FILE), approved: gitShow(root, rev, APPROVED_FILE), commit: log.status === 0 && log.stdout.trim() ? log.stdout.trim() : null };
+export async function readCommittedPolicy(root: string, rev = 'HEAD'): Promise<CommittedPolicy> {
+  const show = (path: string) => gitAsync(root, ['show', `${rev}:./${path}`], { silenceStderr: true, raw: true }).catch(() => null);
+  const [yml, approved, log] = await Promise.all([show(POLICY_FILE), show(APPROVED_FILE),
+    gitAsync(root, ['log', '-1', '--format=%h %an', rev, '--', POLICY_FILE], { silenceStderr: true }).catch(() => '')]);
+  return { yml, approved, commit: log || null };
 }
 
 export interface GitPolicySyncResult {
@@ -71,18 +83,33 @@ export interface GitPolicySyncResult {
 export async function syncGitPolicy(engine: BrainEngine, sourceId: string, root: string, opts: { rev?: string; onProgress?: (p: RestampProgress) => void } = {}): Promise<GitPolicySyncResult> {
   const store = await readAccessStore(engine, sourceId);
   if (store === 'database') return { source_id: sourceId, state: 'skipped', reason: 'database_store' };
-  const files = readCommittedPolicy(root, opts.rev ?? 'HEAD');
-  if (files.yml === null && files.approved === null && store !== 'git') return { source_id: sourceId, state: 'skipped', reason: 'no_policy' };
+  const files = await readCommittedPolicy(root, opts.rev ?? 'HEAD');
+  const rev = opts.rev ?? 'HEAD';
+  if (files.yml === null && files.approved === null && store !== 'git'
+    && !(await gitAsync(root, ['log', '-1', '--first-parent', '--format=%H', rev, '--', POLICY_FILE], { silenceStderr: true }))) {
+    return { source_id: sourceId, state: 'skipped', reason: 'no_policy' };
+  }
+  const rebuild = !(await getRevision(engine, sourceId))
+    || (await coverageRows(engine, sourceId)).some(c => c.reason === 'invalid' && (c.detail as { file?: string } | null)?.file === REBUILD_MARK);
+  if (rebuild) await markPolicyInvalid(engine, sourceId, null, { problems: [{ line: null, message: 'The folder rules are being rebuilt from git history; the source reads as nobody until the rebuild finishes.' }], commit: files.commit, file: REBUILD_MARK });
   let approvedFile: GitPolicySyncResult['approved_file'] = 'absent';
   if (files.approved !== null) {
     const approved = parsePolicyYaml(files.approved);
     if (!approved.ok) approvedFile = 'invalid';
-    else if (!(await getRevision(engine, sourceId))) {
+    else if (rebuild) {
       await proposeRevision(engine, sourceId, approved.rules, { origin: 'git-approved', approved: true, store: 'git', proposedBy: 'git:access.approved', onProgress: opts.onProgress });
       approvedFile = 'loaded';
     } else {
       const lastApproved = (await listRevisions(engine, sourceId, 500)).find(r => r.approved_at);
       approvedFile = lastApproved?.digest === rulebookDigest(approved.rules) ? 'matches' : 'untrusted';
+    }
+  }
+  if (rebuild) {
+    const problem = await replayPolicyHistory(engine, sourceId, root, rev, approvedFile === 'loaded', opts.onProgress);
+    if (problem) {
+      const problems = [{ line: null, message: problem }];
+      await markPolicyInvalid(engine, sourceId, null, { problems, commit: files.commit, file: REBUILD_MARK });
+      return { source_id: sourceId, state: 'invalid', problems, commit: files.commit, approved_file: approvedFile };
     }
   }
   const desired = files.yml === null ? { ok: true as const, rules: [] as FolderRule[] } : parsePolicyYaml(files.yml);
@@ -91,9 +118,30 @@ export async function syncGitPolicy(engine: BrainEngine, sourceId: string, root:
     if (store !== 'git') await writeAccessStore(engine, sourceId, 'git');
     return { source_id: sourceId, state: 'invalid', problems: desired.problems, commit: files.commit, approved_file: approvedFile };
   }
-  await clearPolicyInvalid(engine, sourceId);
   const proposal = await proposeRevision(engine, sourceId, desired.rules, { origin: 'git', store: 'git', proposedBy: files.commit ? `git:${files.commit}` : 'git', onProgress: opts.onProgress });
+  await clearPolicyInvalid(engine, sourceId);
   return { source_id: sourceId, state: proposal.state, proposal, commit: files.commit, approved_file: approvedFile };
+}
+
+/**
+ * A rebuild replays every committed access.yml from the approved baseline's commit on (first-parent order), so a narrowing
+ * that a later plain commit removed or deleted the file over is applied again and its removal held, as on the database that
+ * saw each commit. The whole source reads as nobody from the start of a rebuild until it finishes (an interrupted one is
+ * resumed by the next sync), and a shallow checkout leaves it so.
+ */
+async function replayPolicyHistory(engine: BrainEngine, sourceId: string, root: string, rev: string, fromApproved: boolean, onProgress?: (p: RestampProgress) => void): Promise<string | null> {
+  if (await gitAsync(root, ['rev-parse', '--is-shallow-repository'], { silenceStderr: true }) === 'true') {
+    return `The checkout of source ${sourceId} is shallow, so its folder-rule history cannot be replayed; the source reads as nobody. Fetch the full history (git -C ${root} fetch --unshallow) and sync again.`;
+  }
+  const log = (args: string[]) => gitAsync(root, ['log', '--first-parent', '--format=%H', ...args], { silenceStderr: true });
+  const anchor = fromApproved ? await log(['-1', rev, '--', APPROVED_FILE]) : '';
+  const commits = [...(anchor ? [anchor] : []), ...(await log(['--reverse', anchor ? `${anchor}..${rev}` : rev, '--', POLICY_FILE])).split('\n').filter(Boolean)];
+  for (const commit of commits.slice(0, -1)) {
+    const yml = await gitAsync(root, ['show', `${commit}:./${POLICY_FILE}`], { silenceStderr: true, raw: true }).catch(() => null);
+    const parsed = yml === null ? { ok: true as const, rules: [] as FolderRule[] } : parsePolicyYaml(yml);
+    if (parsed.ok) await proposeRevision(engine, sourceId, parsed.rules, { origin: 'git', store: 'git', proposedBy: `git:${commit.slice(0, 7)}`, onProgress });
+  }
+  return null;
 }
 
 export interface GitPolicyReceipt {
@@ -168,9 +216,21 @@ export async function writeApprovedFile(root: string, rules: FolderRule[], messa
   return commitPolicyFile(root, APPROVED_FILE, () => serializePolicyYaml(rules, APPROVED_HEADER), message);
 }
 
+/**
+ * GBRA-218: applies the committed folder rules before and after `run` moves pages, so a committed narrowing is installed by
+ * the same managed pass that pulled it (sync, drain, sources refresh, git conversion), never left for a later plain sync.
+ */
+export async function withCommittedPolicy<T>(engine: BrainEngine, sourceId: string, repoPath: string | undefined, run: () => Promise<T>): Promise<T> {
+  const root = repoPath ?? await sourcePolicyRoot(engine, sourceId);
+  await syncAccessPolicyAt(engine, sourceId, root, 'HEAD');
+  const result = await run();
+  await syncAccessPolicyAt(engine, sourceId, root, 'HEAD', serr);
+  return result;
+}
+
 /** Sync's hook: apply the committed policy of a source when its store is git (or unset and the commit holds a policy file). */
 export async function syncAccessPolicyAt(engine: BrainEngine, sourceId: string, root: string | null | undefined, rev = 'HEAD', log?: (line: string) => void): Promise<GitPolicySyncResult | null> {
-  if (!root || !existsSync(root) || !isGitWorkTree(root)) return null;
+  if (!root || !existsSync(root) || !await isGitWorkTreeAsync(root)) return null;
   const result = await syncGitPolicy(engine, sourceId, root, { rev });
   if (result.state === 'skipped') return result;
   if (result.state === 'invalid') {

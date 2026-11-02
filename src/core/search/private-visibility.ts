@@ -22,6 +22,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine } from '../engine.ts';
+import { requestConfigRows } from '../config-snapshot.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
 import { validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
@@ -87,7 +88,7 @@ export function accessAllowedForAllSql(pageAlias: string, identities: readonly (
 /**
  * GBRA-218 (PR A2): the folder layer. `folder_rule_ids` holds the source-qualified ids
  * of every applied folder rule whose prefix the slug starts with (a trigger stamps it from the applied rulebook,
- * migration v282); a page passes only when the caller satisfies all of them (`<@`, set semantics), so nested member
+ * migration v283); a page passes only when the caller satisfies all of them (`<@`, set semantics), so nested member
  * and group rules both have to pass. `satisfied` is the caller's satisfied set (CallerAccess.satisfiedRuleIds); an
  * entry that is not a valid qualified id empties it (fail closed). Prefixes under a narrowing still being stamped,
  * or touched by a policy file that does not validate, read as nobody (CallerAccess.folderCoverage). Column tests
@@ -101,10 +102,11 @@ export function folderRulesAllowedSql(alias: string, satisfied: readonly string[
 
 /**
  * The pending or invalid prefixes of the current record as a conjunct (empty when none); an ill-formed entry hides
- * everything. Outside any caller record the prefixes are read live, so a page under a pending prefix stays hidden.
+ * everything. Outside any caller record the prefixes are read live, so a page under a pending prefix stays hidden;
+ * a database role that row-level security keeps from reading them reads every page as covered.
  */
 function coverageSql(alias: string): string {
-  if (!callerAccessStore.getStore()) return ` AND NOT gbrain_access_pending_covers(${alias}.source_id, ${alias}.slug)`;
+  if (!callerAccessStore.getStore()) return ` AND NOT EXISTS (SELECT 1 FROM access_pending_coverage pc WHERE pc.source_id = ${alias}.source_id AND starts_with(${alias}.slug, pc.prefix)) AND NOT (SELECT gbrain_access_state_unreadable())`;
   const coverage = currentCallerAccess().folderCoverage;
   if (!coverage.length) return '';
   return coverage.map(c => !isValidSourceId(c.source_id) || (c.prefix !== '' && !validPrefix(c.prefix)) ? ' AND FALSE'
@@ -149,7 +151,7 @@ function namesReadersSql(alias: string): string {
  * declared `derived_from` names one. Read-time, so derivatives written before
  * the origin gained readers are covered; new derivations are stamped private
  * by isDerivationPrivate. The lineage test lives in the SQL function
- * gbrain_access_origin_restricted (migration v281) behind a cheap type and
+ * gbrain_access_origin_restricted (migration v282) behind a cheap type and
  * key guard, so a read plans one function call instead of four subplans. Both
  * parts lead with column tests (page_readers IS NULL, type) so the planner's
  * row estimate follows column statistics instead of a default guess.
@@ -188,7 +190,7 @@ export function privatePagesFilterFragmentFast(pageAlias: string): string {
  *    (GBRAIN_REMOTE_PRIVATE_PAGES=1 or search.remote_private_pages=visible);
  *  - restricted: false only inside a remote request on a brain whose config
  *    access.restrictions_present was unset when the request began. Then no
- *    page named readers at that moment and none predates the migration (v281
+ *    page named readers at that moment and none predates the migration (v282
  *    sets the flag when one does), so every readers value is in the derived
  *    column: accessAllowedSql tests only page_readers IS NULL and
  *    folder_rule_ids IS NULL (live, so a page gaining readers or a folder rule
@@ -196,7 +198,7 @@ export function privatePagesFilterFragmentFast(pageAlias: string): string {
  *    write) and skips lineage, member matching and the frontmatter test, whose
  *    per-row JSONB read cost keyword search about 3%. The flag is sticky and set
  *    in the same transaction as the first page that names readers, the first
- *    member and the first folder rule or pending folder prefix (v282).
+ *    member and the first folder rule or pending folder prefix (v283).
  * Outside any record (local CLI, jobs, cycles) the identity is empty, no
  * source is private-readable and hidePrivate follows the process's hatch
  * state, so caller-aware fragments still fail closed on restricted pages.
@@ -224,13 +226,15 @@ export interface CallerAccess {
   hidePrivate: boolean;
   applyRemoteReadPolicy: boolean;
   restricted: boolean;
+  /** The fresh remote policy (readRemotePolicyNow) a remote request read when it started; null outside one. */
+  remotePolicy: RemotePolicy | null;
 }
 export interface FolderCoverage { source_id: string; prefix: string }
 const callerAccessStore = new AsyncLocalStorage<CallerAccess>();
 
 /** The current read's caller-access record (see CallerAccess). */
 export function currentCallerAccess(): CallerAccess {
-  return callerAccessStore.getStore() ?? { identity: [], audience: null, audienceIdentities: [], actor: null, satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), applyRemoteReadPolicy: false, restricted: true };
+  return callerAccessStore.getStore() ?? { identity: [], audience: null, audienceIdentities: [], actor: null, satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), applyRemoteReadPolicy: false, restricted: true, remotePolicy: null };
 }
 
 /** Runs `fn` under `access` merged over the current record; an invalid identity or source id empties that set (fail closed). */
@@ -257,6 +261,7 @@ export function withCallerAccess<T>(access: Partial<CallerAccess>, fn: () => T):
     hidePrivate: access.hidePrivate ?? base.hidePrivate,
     applyRemoteReadPolicy: access.applyRemoteReadPolicy ?? base.applyRemoteReadPolicy,
     restricted: access.restricted ?? base.restricted,
+    remotePolicy: access.remotePolicy ?? base.remotePolicy,
   }), fn);
 }
 
@@ -308,16 +313,18 @@ function callerAccessSql(pageAlias: string): string {
 }
 
 /**
- * `visiblePredicate` (a privacy-only predicate), widened to rows whose source
- * (`sourceIdSql`, a code-provided column reference) is in the current
- * private-readable set. Never pass a predicate that contains accessAllowedSql:
- * the widening would reach it. The ids are embedded as literals: each passed
+ * `visiblePredicate` (a privacy-only predicate), widened to pages
+ * (`pageAlias`, a code-provided alias) whose source is in the current
+ * private-readable set. A page carrying the `pinned_question` marker never
+ * widens: pinned questions stay owner-private (src/core/questions/pages.ts).
+ * Never pass a predicate that contains accessAllowedSql: the widening would
+ * reach it. The ids are embedded as literals: each passed
  * isValidSourceId, whose alphabet has no quote or backslash.
  */
-export function orPrivateReadableSource(sourceIdSql: string, visiblePredicate: string): string {
+export function orPrivateReadableSource(pageAlias: string, visiblePredicate: string): string {
   const ids = privateReadableSources();
   if (ids.length === 0) return visiblePredicate;
-  return `(${sourceIdSql} IN (${ids.map(id => `'${id}'`).join(', ')}) OR ${visiblePredicate})`;
+  return `((${pageAlias}.source_id IN (${ids.map(id => `'${id}'`).join(', ')}) AND NOT COALESCE(${pageAlias}.frontmatter ? 'pinned_question', false)) OR ${visiblePredicate})`;
 }
 
 /**
@@ -325,12 +332,12 @@ export function orPrivateReadableSource(sourceIdSql: string, visiblePredicate: s
  * relaxed privacy, else widened only to private-readable sources. Never pass
  * a predicate that contains accessAllowedSql or readersAllowedSql.
  */
-export function privacyForCaller(sourceIdSql: string, privacyPredicate: string): string {
-  return currentCallerAccess().hidePrivate ? orPrivateReadableSource(sourceIdSql, privacyPredicate) : 'TRUE';
+export function privacyForCaller(pageAlias: string, privacyPredicate: string): string {
+  return currentCallerAccess().hidePrivate ? orPrivateReadableSource(pageAlias, privacyPredicate) : 'TRUE';
 }
 
 function callerPrivacySql(pageAlias: string, privacyPredicate: string): string {
-  return privacyForCaller(`${pageAlias}.source_id`, privacyPredicate);
+  return privacyForCaller(pageAlias, privacyPredicate);
 }
 
 /** privatePagesFilterFragment for a remote read: the caller's member access, then the privacy part with its grant and hatch. Read sites only; derived-visibility decisions keep the plain fragment. */
@@ -377,6 +384,7 @@ export function isPrivatePageForCaller(page: { type?: string | null; frontmatter
   const access = currentCallerAccess();
   if (!callerReadersAllow(page.frontmatter)) return true;
   if (!access.hidePrivate || !isPrivacyPrivatePage(page)) return false;
+  if (typeof page.frontmatter === 'object' && page.frontmatter !== null && (page.frontmatter as Record<string, unknown>).pinned_question != null) return true;
   return !(typeof page.source_id === 'string' && access.privateReadableSources.includes(page.source_id));
 }
 
@@ -509,7 +517,12 @@ export async function readHonorAliases(engine: BrainEngine): Promise<boolean> {
  * folder rule or a pending folder prefix (`folder_restricted`, selected with folderRestrictedSql or looked up with folderRestricted).
  */
 export function isDerivationPrivate(page: { type?: string | null; frontmatter?: unknown; folder_restricted?: boolean | null }): boolean {
-  if (page.folder_restricted === true || isPrivatePage(page)) return true;
+  return page.folder_restricted === true || hasReaders(page.frontmatter) || isPrivacyDerivationPrivate(page);
+}
+
+/** isDerivationPrivate by privacy alone (visibility, aliases, pinned questions): what decides where a page lives in Git. */
+export function isPrivacyDerivationPrivate(page: { type?: string | null; frontmatter?: unknown }): boolean {
+  if (isPrivacyPrivatePage(page)) return true;
   return typeof page.frontmatter === 'object' && page.frontmatter !== null && hasPrivacyAlias(page.frontmatter as Record<string, unknown>);
 }
 
@@ -518,9 +531,12 @@ export function derivationPrivateSql(alias: string): string {
   return `(NOT ${privateSnapshotFilterFragment(alias)} OR ${privacyAliasSql(alias)} OR ${namesReadersSql(alias)} OR ${folderRestrictedSql(alias)})`;
 }
 
-/** GBRA-218 (A2): the page row sits under an applied folder rule (its stamp) or a pending or invalid folder prefix. */
+/**
+ * GBRA-218 (A2): the page row sits under an applied folder rule (its stamp) or a pending or invalid folder prefix, or
+ * this database role cannot read the folder access tables.
+ */
 export function folderRestrictedSql(alias: string): string {
-  return `(${alias}.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(${alias}.source_id, ${alias}.slug))`;
+  return `(${alias}.folder_rule_ids IS NOT NULL OR gbrain_access_pending_covers(${alias}.source_id, ${alias}.slug) OR (SELECT gbrain_access_state_unreadable()))`;
 }
 
 /**
@@ -530,7 +546,7 @@ export function folderRestrictedSql(alias: string): string {
 export async function folderRestricted(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string): Promise<boolean> {
   try {
     const [row] = await engine.executeRaw<{ restricted: boolean }>(
-      'SELECT (gbrain_access_folder_rules($1, $2) IS NOT NULL OR gbrain_access_pending_covers($1, $2)) AS restricted', [sourceId, slug]);
+      'SELECT (gbrain_access_folder_rules($1, $2) IS NOT NULL OR gbrain_access_pending_covers($1, $2) OR gbrain_access_state_unreadable()) AS restricted', [sourceId, slug]);
     return row?.restricted === true;
   } catch {
     return true;
@@ -740,6 +756,8 @@ export async function remotePrivacyRelaxed(engine: BrainEngine): Promise<boolean
   return expose;
 }
 
+export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean }
+
 /**
  * The remote read policy read fresh, for publication: whether an operator
  * relaxed privacy (the env hatch or the config opt-out, uncached) and whether
@@ -747,15 +765,28 @@ export async function remotePrivacyRelaxed(engine: BrainEngine): Promise<boolean
  * transaction included). An unreadable config counts as not opted out and
  * restricted (fail closed); the env hatch needs no read.
  */
-export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<{ privacyRelaxed: boolean; restricted: boolean }> {
-  const hatch = process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1';
+export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<RemotePolicy> {
   try {
     const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY]]);
-    const value = (key: string) => rows.find(r => r.key === key)?.value ?? '';
-    return { privacyRelaxed: hatch || ['visible', 'true', '1'].includes(value(REMOTE_PRIVATE_PAGES_KEY)), restricted: value(ACCESS_RESTRICTIONS_KEY) === '1' };
+    return remotePolicyFrom(Object.fromEntries(rows.map(r => [r.key, r.value])));
   } catch {
-    return { privacyRelaxed: hatch, restricted: true };
+    return { privacyRelaxed: process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1', restricted: true };
   }
+}
+
+/**
+ * The remote read policy a request starts under: answered from the read request's config snapshot when one is open
+ * (taken when the request started, so no staler than readRemotePolicyNow there, and no extra round trip, #6721);
+ * otherwise (a write reads config live, or the snapshot's bulk read failed) readRemotePolicyNow's one statement.
+ */
+export async function requestRemotePolicy(engine: BrainEngine): Promise<RemotePolicy> {
+  const rows = await requestConfigRows(engine).catch(() => undefined);
+  return rows ? remotePolicyFrom(rows) : readRemotePolicyNow(engine);
+}
+
+function remotePolicyFrom(config: Record<string, string>): RemotePolicy {
+  const hatch = process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1';
+  return { privacyRelaxed: hatch || ['visible', 'true', '1'].includes(config[REMOTE_PRIVATE_PAGES_KEY] ?? ''), restricted: config[ACCESS_RESTRICTIONS_KEY] === '1' };
 }
 
 /** GBRA-218: does this brain hold member-access restrictions? Read live (the request snapshot answers it inside a read); unreadable counts as yes. */

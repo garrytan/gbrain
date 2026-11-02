@@ -44,7 +44,7 @@ async function runTrustSourcesUnclaimed(ctx: DoctorContext): Promise<Check[]> {
       checks.push({ name: 'trust_sources_unclaimed', status: 'ok', details, message: 'No unclaimed source holds rows from before trust tiers.' });
     } else {
       checks.push({ name: 'trust_sources_unclaimed', status: 'warn', details,
-        message: `${rows} row(s) from before trust tiers in ${unclaimed.length} unclaimed source(s) (${unclaimed.map(s => s.id).join(', ')}) read as "unverified origin". `
+        message: `${rows} row(s) from before trust tiers in ${unclaimed.length} unclaimed source(s) (${unclaimed.map(s => s.id).join(', ')}) read as "unverified origin", so remote MCP readers see them quoted as source material. `
           + 'Tell the user: if these are their own notes, they run gbrain trust claim-sources in a terminal on the brain host (gbrain trust claim-sources --dry-run --json previews it).',
         fix: claimSourcesFix('trust_sources_unclaimed') });
     }

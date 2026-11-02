@@ -56,6 +56,7 @@ import { atomsRestoreRepair } from './atoms-restore.ts';
 import { extractorFactsRepair } from './extractor-facts.ts';
 import { conversationLabelsRepair } from './conversation-labels.ts';
 import { capturedFactsRepair } from './captured-facts.ts';
+import { agentSessionFactsRepair, agentSessionFlagArgs } from './agent-session-facts.ts';
 import { redactedFactsRepair } from './redacted-facts.ts';
 import { loopFactsRepair } from './loop-facts.ts';
 import { ontologyFactsRepair } from './ontology-facts.ts';
@@ -87,9 +88,11 @@ import { uncommittedDeletionsRepair, UNCOMMITTED_DELETIONS_CONSENT_TEXT } from '
 import { factClaimDatesRepair } from './fact-claim-dates.ts';
 import { provenanceRepair } from './provenance.ts';
 import { secretSpansRepair } from './secret-spans.ts';
+import { rowsBehindRepair } from './rows-behind.ts';
 import { generationsRepair, generationsSelectionArgv, type GenerationsSelection } from '../generations/repair.ts';
 import { restoreDaysHint } from '../generations/config.ts';
 import { ERROR_CATALOGUE, catalogueError } from '../error-catalogue.ts';
+import { shellQuote } from '../shell-quote.ts';
 import type { OperationError } from '../ops/contract.ts';
 import type { ProgressReporter } from '../progress.ts';
 
@@ -246,6 +249,22 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'corpus file and expire only with --include-ambiguous. A claim that also has an active copy from another lane is kept. Preview-bound: --apply '
       + '--expect <hash> expires exactly the previewed set; a fact that changed since reports changed_since_preview. Rows are expired, never withdrawn, '
       + 'so remember can save the same claim again; fenced rows are struck in their page, which is re-embedded by its publication.',
+  },
+  'agent-session-facts': {
+    handler: agentSessionFactsRepair, embeds: 'effect', checks: ['agent_session_facts'], explicit_only: true, preview_bound: true, consent: 'destructive',
+    consentText: {
+      what: 'Re-attribute the previewed agent-session facts to the agent that wrote them and retire the takes built only from them',
+      why: 'The preview listed each fact with its evidence and each take to retire; applying it changes exactly those rows, with no model calls.',
+      risk: 'Nothing is deleted. Each fact gets attributed_to other and a "speaker: agent <label>, not the owner" note (fenced rows are rewritten in their page); '
+        + 'each listed take becomes inactive (struck in its page when the page holds it). A fact or take that changed since the preview is kept.',
+      user_message: 'Re-attribute the previewed facts from agent-launched sessions to their agent and retire the takes built only from them? Nothing is deleted.',
+    },
+    summary: 'Re-attribute capture-lane facts (writeback, compact, corpus sweep) saved as the owner\'s own from sessions an orchestrator launched (#8064): '
+      + 'evidence is a speaker sidecar beside the session corpus, an operator --session <id>, or a session cwd under an operator --cwd <prefix>; a first user '
+      + 'turn shared with three or more other sessions is ambiguous and applies only with --include-ambiguous. A claim the owner also stated is kept. '
+      + 'Preview-bound and destructive: --apply --expect <hash> --yes sets attributed_to other with a speaker note (--principal <label> names the agent when '
+      + 'no sidecar does) and retires the fact/self takes whose every contributing fact is then non-user; nothing is deleted, and a row that changed since '
+      + 'reports changed_since_preview.',
   },
   'redacted-facts': {
     handler: redactedFactsRepair, embeds: 'effect', checks: ['facts_redaction_marker'], explicit_only: true,
@@ -587,6 +606,16 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'page, then re-scans it. Database only: no file write, no Git commit, and a sync hold stays, so held pages are redacted where they are stored. '
       + 'History (page versions, receipts, Git) is kept. Trusted local CLI only; runs only when named; never on upgrade.',
   },
+  'rows-behind': {
+    handler: rowsBehindRepair, embeds: 'effect', checks: ['sync_rows_behind_checkpoint'], explicit_only: true, preview_bound: true,
+    summary: 'Re-import the rows a managed sync\'s checkpoint moved past (#8071): the page holds an older version of its file than the commit '
+      + 'sources.last_commit says was imported, with no hold, so no later sync re-imports it. Needs --source; refused off the canonical owner host '
+      + '(not_owner_host). The preview compares each row with the file read from Git at the checkpoint (confirmed by the importer), lists each row '
+      + 'with its path, blob and action and writes nothing: reimport (the committed bytes through the managed import; no file is written), or '
+      + 'hold:<code> when that import is refused or the file is over the sync read bound (the hold sync would have opened). Rows with no import record '
+      + 'join only with --include-ambiguous; rows with an uncommitted working-tree edit are left out. --apply --expect <hash> applies exactly that set. '
+      + 'Runs only when named; never on upgrade.',
+  },
   'generations': {
     handler: generationsRepair, embeds: 'effect', checks: ['generation_retirements', 'generation_held', 'generation_pending'], explicit_only: true, preview_bound: true, consent: 'destructive',
     consentText: {
@@ -688,16 +717,19 @@ export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; 
     async run(kind: RepairKind, scope: RepairScope, run: { limit?: number; sourceFlag?: string; explicit?: boolean; expect?: string; includeAmbiguous?: boolean; includeCrossEntity?: boolean; only?: string[]; skip?: string[];
       slugs?: string[]; noLlm?: boolean; maxLlmUsd?: number; deadline?: number; stop?: AbortSignal; recordDatabaseStops?: boolean;
       prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string; held?: boolean; side?: string; state?: string; provenance?: string; cursor?: string; progress?: ProgressReporter;
-      keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean; afterPage?: number; generations?: GenerationsSelection; day?: string; rules?: string[] } = {}): Promise<RepairResult> {
+      keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean; afterPage?: number; generations?: GenerationsSelection; day?: string; rules?: string[];
+      cwdPrefixes?: string[]; sessions?: string[]; principal?: string } = {}): Promise<RepairResult> {
       const ctx = { engine, config, logger, dryRun: !opts.apply, remote: false, sourceId: scope.source_ids[0], writeWaitMs } as OperationContext;
       const spec = repairSpec(kind, opts.registry);
       return runRepair(ctx, spec.handler, scope, { apply: opts.apply, limit: run.limit, embeddingModel, sourceFlag: run.sourceFlag, spec,
         embed: !opts.noEmbed && embeddingModel !== undefined, applyArgs: [...(opts.noEmbed && spec.embeds === 'inline' ? ['--no-embed'] : []),
           ...(run.olderThan ? ['--older-than', run.olderThan] : []), ...(run.includeFailures ? ['--include-failures'] : []), ...(run.force ? ['--force'] : []),
-          ...(run.afterPage !== undefined ? ['--after', String(run.afterPage)] : []), ...(run.generations ? generationsSelectionArgv(run.generations) : []), ...(run.day ? ['--day', run.day] : []), ...(run.rules?.length ? ['--rules', run.rules.join(',')] : [])],
+          ...(run.afterPage !== undefined ? ['--after', String(run.afterPage)] : []), ...(run.generations ? generationsSelectionArgv(run.generations) : []), ...(run.day ? ['--day', run.day] : []), ...(run.rules?.length ? ['--rules', run.rules.join(',')] : []),
+          ...(kind === 'agent-session-facts' ? agentSessionFlagArgs(run).map(arg => shellQuote(arg)) : [])],
         explicit: run.explicit, expect: run.expect, includeAmbiguous: run.includeAmbiguous, includeCrossEntity: run.includeCrossEntity, only: run.only, skip: run.skip, slugs: run.slugs, noLlm: run.noLlm,
         maxLlmUsd: run.maxLlmUsd, deadline: run.deadline, ...(run.stop ? { stop: run.stop } : {}), ...(run.recordDatabaseStops ? { recordDatabaseStops: true } : {}), prefer: run.prefer, requests: run.requests, allDrifted: run.allDrifted, driftClass: run.driftClass, since: run.since,
-        held: run.held, side: run.side, state: run.state, provenance: run.provenance, cursor: run.cursor, progress: run.progress, keep: run.keep, requestId: run.requestId, olderThan: run.olderThan, includeFailures: run.includeFailures, force: run.force, from: run.from, close: run.close, afterPage: run.afterPage, generations: run.generations, day: run.day, rules: run.rules });
+        held: run.held, side: run.side, state: run.state, provenance: run.provenance, cursor: run.cursor, progress: run.progress, keep: run.keep, requestId: run.requestId, olderThan: run.olderThan, includeFailures: run.includeFailures, force: run.force, from: run.from, close: run.close, afterPage: run.afterPage, generations: run.generations, day: run.day, rules: run.rules,
+        cwdPrefixes: run.cwdPrefixes, sessions: run.sessions, principal: run.principal });
     },
   };
 }

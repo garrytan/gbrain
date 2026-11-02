@@ -70,7 +70,7 @@ describe('graduation inventory', () => {
     expect(GRADUATION_INVENTORY.entries.filter(e => e.lossKind === 'security').map(e => e.relation).sort()).toEqual([
       'access_group_members', 'access_groups', 'access_member_links', 'access_members', 'access_pending_coverage', 'access_policy_revisions',
       'access_policy_state', 'access_rules', 'access_tokens', 'oauth_clients', 'oauth_codes', 'oauth_grant_audit', 'oauth_tokens',
-      'persistence_local_writers', 'shared_skill_state']);
+      'persistence_local_writers', 'shared_skill_state', 'slug_rename_history']);
   });
 
   test('every relation of a fresh schema has a row on each engine', async () => {

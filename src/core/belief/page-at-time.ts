@@ -58,7 +58,8 @@ export interface PageInterval {
   /** Why no body is returned. */
   body_reason?: BodyReason;
   version_id?: number;
-  page?: { title: string | null; type: string | null; frontmatter: Record<string, unknown>; tags: string[]; compiled_truth: string | null; timeline: string | null; body_bytes: number | null };
+  /** `trust_tier`: the page's stored tier (live) or the version's snapshot (null when none was taken). */
+  page?: { title: string | null; type: string | null; frontmatter: Record<string, unknown>; tags: string[]; compiled_truth: string | null; timeline: string | null; body_bytes: number | null; trust_tier: string | null };
 }
 
 export interface PageAtTime {
@@ -199,7 +200,7 @@ async function withBodies(engine: BrainEngine, lifetimes: Array<{ lifetime: stri
     const liveHead = openHead && openHead.revision === row!.revision ? openHead : null;
     const revisions = [...new Set(content.map(d => d.revision).filter((r): r is string => !!r))];
     const versions = pageId != null && bodies && revisions.length ? await engine.executeRaw<Record<string, unknown>>(`SELECT id, knowledge_revision::text AS revision,
-        compiled_truth, timeline, title, type, frontmatter, tags, body_storage,
+        compiled_truth, timeline, title, type, frontmatter, tags, body_storage, trust_tier,
         COALESCE(body_bytes, octet_length(COALESCE(compiled_truth, '')) + octet_length(COALESCE(timeline, ''))) AS body_bytes
       FROM page_versions WHERE page_id = $1 AND knowledge_revision = ANY($2::uuid[]) ORDER BY id`, [pageId, revisions]) : [];
     const pairing = new Map<number, Record<string, unknown>>();
@@ -228,14 +229,15 @@ async function withBodies(engine: BrainEngine, lifetimes: Array<{ lifetime: stri
       out.push({ ...base, body: segmented ? 'segmented' : 'version', version_id: Number(version.id), page: {
         title: (version.title as string | null) ?? null, type: (version.type as string | null) ?? null, frontmatter: (json(version.frontmatter) as Record<string, unknown>) ?? {},
         tags: (json(version.tags) as string[] | null) ?? [], compiled_truth: segmented ? null : (version.compiled_truth as string | null) ?? null,
-        timeline: segmented ? null : (version.timeline as string | null) ?? null, body_bytes: version.body_bytes == null ? null : Number(version.body_bytes) } });
+        timeline: segmented ? null : (version.timeline as string | null) ?? null, body_bytes: version.body_bytes == null ? null : Number(version.body_bytes),
+        trust_tier: (version.trust_tier as string | null) ?? null } });
     }
   }
   return out;
 }
 
 async function livePage(engine: BrainEngine, pageId: number) {
-  const [row] = await engine.executeRaw<Record<string, unknown>>(`SELECT p.title, p.type, p.frontmatter, p.body_storage, p.compiled_truth, p.timeline,
+  const [row] = await engine.executeRaw<Record<string, unknown>>(`SELECT p.title, p.type, p.frontmatter, p.body_storage, p.compiled_truth, p.timeline, p.trust_tier,
       COALESCE(p.body_bytes, octet_length(COALESCE(p.compiled_truth, '')) + octet_length(COALESCE(p.timeline, ''))) AS body_bytes,
       COALESCE((SELECT json_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id = p.id), '[]'::json) AS tags
     FROM pages p WHERE p.id = $1`, [pageId]);
@@ -243,7 +245,7 @@ async function livePage(engine: BrainEngine, pageId: number) {
   return { segmented, view: { title: (row!.title as string | null) ?? null, type: (row!.type as string | null) ?? null,
     frontmatter: (json(row!.frontmatter) as Record<string, unknown>) ?? {}, tags: (json(row!.tags) as string[]) ?? [],
     compiled_truth: segmented ? null : (row!.compiled_truth as string | null) ?? null, timeline: segmented ? null : (row!.timeline as string | null) ?? null,
-    body_bytes: row!.body_bytes == null ? null : Number(row!.body_bytes) } };
+    body_bytes: row!.body_bytes == null ? null : Number(row!.body_bytes), trust_tier: (row!.trust_tier as string | null) ?? null } };
 }
 
 /** The page's best-effort history summary (the backfill's `backfill` event), named in a `coverage_from` refusal. */

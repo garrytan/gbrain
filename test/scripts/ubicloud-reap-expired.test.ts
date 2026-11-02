@@ -47,9 +47,22 @@ describe("parseVmName", () => {
     expect(parseVmName(`ubirun-gbra135-${NOW}-ci01a1b2-t2`)).toEqual({ kind: "expiring", owner: "gbra135", createdAt: NOW, expiresAt: NOW + 2 * H });
     expect(parseVmName(`ubirun-trut4-${NOW}-e54c3f57-t4`)).toEqual({ kind: "expiring", owner: "trut4", createdAt: NOW, expiresAt: NOW + 4 * H });
     expect(parseVmName(`ubirun-gsta30-${NOW}-a-b-c-t999`)).toEqual({ kind: "expiring", owner: "gsta30", createdAt: NOW, expiresAt: NOW + 999 * H });
-    expect(parseVmName(`ubirun-gbra1-${NOW}-t5`)).toEqual({ kind: "no-expiry", owner: "gbra1", createdAt: NOW });
     expect(parseVmName(`ubirun-gbra1-${NOW}-aaaa-t1000`)).toEqual({ kind: "foreign" });
-    expect(parseVmName(`ubirun-${NOW}-aaaa-t3`)).toEqual({ kind: "foreign" });
+  });
+
+  // #8050 item 4: every name gstack's vm_rows reads as a TTL, this reaper reads the same way.
+  it("matches gstack's reap on hand-built TTL names: -t0, -t000, -t02, no suffix and untagged; a backwards -x expiry still skips", () => {
+    const names = [`ubirun-gbra1-${NOW - 2 * H}-aaaa-t0`, `ubirun-gbra1-${NOW - 2 * H}-bbbb-t000`, `ubirun-gbra1-${NOW - 3 * H}-cccc-t02`, `ubirun-gbra1-${NOW - 6 * H}-t5`, `ubirun-${NOW - 3 * H}-dddd-t2`];
+    expect(names.map(parseVmName)).toEqual([
+      { kind: "expiring", owner: "gbra1", createdAt: NOW - 2 * H, expiresAt: NOW - 2 * H },
+      { kind: "expiring", owner: "gbra1", createdAt: NOW - 2 * H, expiresAt: NOW - 2 * H },
+      { kind: "expiring", owner: "gbra1", createdAt: NOW - 3 * H, expiresAt: NOW - H },
+      { kind: "expiring", owner: "gbra1", createdAt: NOW - 6 * H, expiresAt: NOW - H },
+      { kind: "expiring", owner: "(untagged)", createdAt: NOW - 3 * H, expiresAt: NOW - H },
+    ]);
+    const plan = planReap([...names, backwards].map((name) => ({ location: LOC, name })), { now: NOW, graceSeconds: 15 * 60 });
+    expect(plan.map((row) => row.action)).toEqual(["destroy", "destroy", "destroy", "destroy", "destroy", "skip"]);
+    expect(plan.at(-1)!.reason).toBe("expiry before creation");
   });
 
   it("the gate's name helper writes -t<H> names of at most 63 characters that read back with their expiry", () => {
@@ -112,14 +125,14 @@ describe("planReap over both grammars", () => {
   const ttlZero = `ubirun-gbra1-${NOW - H}-aaaaaaaa-t0`;
   const rows = [ttlExpired, ttlGate, ttlLive, ttlLong, ttlZero, expired, live, noExpiry].map((name) => ({ location: LOC, name }));
 
-  it("destroys expired -t<H> names of every owner and expired -x<expiry> names, and keeps live and TTL-less ones", () => {
+  it("destroys expired -t<H> names of every owner (a -t0 one too, as gstack does) and expired -x<expiry> names, and keeps live and TTL-less ones", () => {
     const action = Object.fromEntries(planReap(rows, { now: NOW, graceSeconds: 15 * 60 }).map((row) => [row.name, row.action]));
     expect(action).toEqual({
       [ttlExpired]: "destroy",
       [ttlGate]: "destroy",
       [ttlLive]: "keep",
       [ttlLong]: "keep",
-      [ttlZero]: "skip",
+      [ttlZero]: "destroy",
       [expired]: "destroy",
       [live]: "keep",
       [noExpiry]: "skip",
@@ -136,8 +149,8 @@ describe("planReap over both grammars", () => {
         stderr: "pipe",
       });
       expect(await proc.exited).toBe(0);
-      expect(mock.events.filter((e) => e.startsWith("destroy ")).sort()).toEqual([ttlExpired, ttlGate, expired].map((n) => `destroy ${n}`).sort());
-      expect([...mock.vms.keys()].sort()).toEqual([ttlLive, ttlLong, ttlZero, live, noExpiry].sort());
+      expect(mock.events.filter((e) => e.startsWith("destroy ")).sort()).toEqual([ttlExpired, ttlGate, ttlZero, expired].map((n) => `destroy ${n}`).sort());
+      expect([...mock.vms.keys()].sort()).toEqual([ttlLive, ttlLong, live, noExpiry].sort());
     } finally {
       mock.stop();
       rmSync(dir, { recursive: true, force: true });

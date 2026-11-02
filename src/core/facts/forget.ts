@@ -19,6 +19,7 @@ import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesy
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
 import { contentHash } from '../utils.ts';
+import { locateOutsideCode } from '../fence-scan.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { rewriteLiveSegmentedFences } from '../page-body/segment-rewrite.ts';
 import type { BodyRegion } from '../page-body/types.ts';
@@ -90,8 +91,8 @@ export function strikeFenceRow(body: string, rowNum: number, strike: (fact: Pars
   const target = parsed.facts.find(f => f.rowNum === rowNum);
   if (!target) return null;
   const updated: ParsedFact[] = parsed.facts.map(f => f.rowNum === rowNum ? strike(f) : f);
-  const begin = body.indexOf(FENCE_BEGIN);
-  const end = body.indexOf(FENCE_END, begin + 1);
+  // The splice uses the parser's own code-aware locator: a marker quoted in code (an inline span) above the fence is not it (#8059).
+  const { beginIdx: begin, endIdx: end } = locateOutsideCode(body, FENCE_BEGIN, FENCE_END);
   if (begin === -1 || end === -1) return null;
   return body.slice(0, begin) + renderFactsTable(updated) + body.slice(end + FENCE_END.length);
 }

@@ -189,6 +189,7 @@ These rules run on every write path for free. They edit or move cell text and ne
 | `holder_alias` | Takes holder `system`, `assistant`, `ai`, `agent`, `gbrain`, `model` (any case) → `brain`. |
 | `confidence_format` | A percent or a number with stray spaces in `confidence` or `weight` becomes a decimal: `85%` → `0.85`, `0. 8` → `0.8`. A number outside 0 to 1 is `confidence_out_of_range`. |
 | `holder_verified` | Tier 2, not Tier 1: a takes holder written as a name becomes the one `people/` or `companies/` page it resolves to exactly. On a world-visible page a private page never matches. Anything less certain stays `holder_unresolved`. |
+| `quote_marker` | Repair only (`gbrain repair fences` and the content-repair lane), never on a write: a facts or takes marker quoted in prose (text follows it on its line, or it sits on a blockquote line, outside code and table lines, and it begins or ends no fence that holds rows) is wrapped in backticks, so readers see an example rather than a fence. The edit is kept only when every row of every fence stays where it was and the privacy boundary hides at least what it hid. A page whose only problem is such a mention reads `quoted_marker`. |
 
 <a id="header-spellings"></a>
 ### Header spellings

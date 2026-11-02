@@ -59,7 +59,7 @@ const isCandidate = (run: FullRun) => (CANDIDATE_EVENTS as readonly string[]).in
 
 export interface Commit { tree: string; parents: string[] }
 export interface FullRun { id: number; run_number: number; run_attempt: number; status: string; conclusion: string | null; head_sha: string; event: string; head_repository?: { full_name: string } | null }
-export interface JobRow { name: string; status?: string; conclusion: string | null }
+export interface JobRow { name: string; status?: string; conclusion: string | null; started_at?: string | null }
 export interface ReuseDeps {
   commit(sha: string): Promise<Commit>;
   runsForHead(file: string, sha: string): Promise<FullRun[]>;
@@ -146,15 +146,24 @@ function accept(run: FullRun, tree: string, rejected: Rejection[], where: string
  * the identical tree reuses; a stamp-only difference goes through gstack-pregate's stamp rule, never through here.
  * The newest full run on the tree decides, across `head` and every other recent head with the same tree: in progress
  * waits, a failure refuses (no receipt, no VMs), cancelled or not a full run (its full job skipped or absent: a
- * diagnostic dispatch, a push that reused) looks further back; anything else is `none` and the caller runs the VM gate.
+ * diagnostic dispatch, a push that reused) looks further back; a passed run on `head` whose executed-test receipt is
+ * refused is `rejected`, since no later dispatch of `head` is coming (on another same-tree head it is `none`: `head`'s
+ * own dispatch can still appear); anything else is `none` and the caller runs the VM gate.
  */
-export type GateState = 'reuse' | 'pending' | 'failed' | 'none';
-export interface GateDecision { state: GateState; detail: string; tests?: number; failed?: number; url?: string }
+export type GateState = 'reuse' | 'pending' | 'failed' | 'rejected' | 'none';
+/**
+ * Executed test counts; `partial` names the attempt when they cover only the jobs that attempt re-ran, and
+ * `ledgerAttempt` the earlier attempt that wrote the ledger when it is older than the run's latest attempt.
+ */
+export interface ExecutedCounts { tests: number; failed: number; partial?: number; ledgerAttempt?: number }
+/** The job that writes the executed-identities ledger, in test.yml and e2e.yml. */
+export const LEDGER_JOB = 'executed-receipts';
+export interface GateDecision { state: GateState; detail: string; tests?: number; failed?: number; partial?: number; url?: string }
 export interface GateDeps extends ReuseDeps {
   /** The newest workflow_dispatch and push runs of `file`, whatever their status (a failed run counts against its tree too). */
   recentRuns(file: string): Promise<FullRun[]>;
-  /** Executed (pass, fail) test identities in the run's executed-identities artifact, or why they cannot be read. */
-  executed(runId: number): Promise<{ tests: number; failed: number } | { reason: string }>;
+  /** Executed (pass, fail) test identities in the run's executed-identities artifact, each job at its newest attempt (`ledgerAttempt` when an earlier attempt wrote it), or why they cannot be read. */
+  executed(run: FullRun): Promise<ExecutedCounts | { reason: string; transient?: boolean }>;
 }
 
 export async function decideGate(deps: GateDeps, p: Profile, head: string, tree: string, repo: string): Promise<GateDecision> {
@@ -178,7 +187,10 @@ export async function decideGate(deps: GateDeps, p: Profile, head: string, tree:
         continue;
       }
       const why = await reject(deps, p, run, repo, tree, tree);
-      if (!why) return gateAccept(deps, p, run, tree, repo);
+      if (!why) {
+        const d = await gateAccept(deps, p, run, tree, repo);
+        return d.state === 'rejected' && run.head_sha !== head ? { ...d, state: 'none' } : d;
+      }
       if (why.reason === 'run_in_progress') return { state: 'pending', detail: `${p.workflow} ${why.detail}` };
       if (why.reason === 'run_failed' || why.reason === 'full_suite_not_success') return { state: 'failed', detail: `${p.workflow} ${why.detail}`, url: runUrl(repo, run) };
       rejected.push({ run_id: run.id, ...why });
@@ -192,14 +204,30 @@ export async function decideGate(deps: GateDeps, p: Profile, head: string, tree:
 const runUrl = (repo: string, run: FullRun) => `https://github.com/${repo}/actions/runs/${run.id}/attempts/${run.run_attempt}`;
 
 async function gateAccept(deps: GateDeps, p: Profile, run: FullRun, tree: string, repo: string): Promise<GateDecision> {
-  const counts = await deps.executed(run.id);
-  if ('reason' in counts) return { state: 'none', detail: `${p.workflow}: ${counts.reason}` };
-  if (counts.tests <= 0) return { state: 'none', detail: `${p.workflow}: run ${run.id}'s executed-identities artifact lists no executed test` };
+  const got = await deps.executed(run);
+  if ('reason' in got) return { state: got.transient ? 'none' : 'rejected', detail: `${p.workflow}: ${got.reason}` };
+  const { ledgerAttempt, ...counts } = got;
+  // A re-run that leaves the ledger job alone carries it into the new attempt with its original start; a ledger job
+  // that ran again but uploaded nothing leaves the older attempt's ledger behind, now stale.
+  if (ledgerAttempt !== undefined) {
+    const started = async (attempt: number) => (await deps.jobs(run.id, attempt)).filter(j => j.name === LEDGER_JOB).map(j => j.started_at);
+    const [wrote, latest] = await Promise.all([started(ledgerAttempt), started(run.run_attempt)]);
+    if (wrote.length !== 1 || latest.length !== 1 || !wrote[0] || wrote[0] !== latest[0]) {
+      return { state: 'rejected', detail: `${p.workflow}: run ${run.id}'s executed-identities.json is from attempt ${ledgerAttempt}, but its ${LEDGER_JOB} job ran again by attempt ${run.run_attempt} without replacing it` };
+    }
+  }
+  if (counts.tests <= 0) return { state: 'rejected', detail: `${p.workflow}: run ${run.id}'s executed-identities artifact lists no executed test` };
   return { state: 'reuse', detail: `${p.workflow} run ${runUrl(repo, run)} passed the complete full suite on tree ${tree}`, url: runUrl(repo, run), ...counts };
 }
 
+export const GATE_WAIT_MINUTES = 90;
+export const GATE_POLL_SECONDS = 60;
+
 /**
- * The gate's decision over Test and E2E, waiting while a full run on the tree is still in progress. Prints progress
+ * The gate's decision over Test and E2E, waiting while a full run on the tree is still in progress, up to the wait
+ * bound. A workflow with no full run on the tree does not end the wait: full-ci dispatches Test and E2E separately, so
+ * its run can still appear, and a failure of the run in progress refuses (exit 3) instead of starting VMs on a tree
+ * GitHub already failed (#8096). A `rejected` workflow ends the wait at once: reuse needs both. Prints progress
  * at least every poll (gstack's stall timeout kills a silent gate) and, on reuse, a last line
  * `GBRAIN_REUSE_RESULT tests=<n> failed=<n>`. Exit codes: 0 reuse, 3 a full run on this tree failed, 4 no reuse.
  */
@@ -214,16 +242,17 @@ export async function runGate(deps: GateDeps, o: { head: string; tree: string; r
       return 3;
     }
     if (ds.every(d => d.state === 'reuse')) {
-      for (const d of ds) o.log(`[ci-reuse] gate: ${d.detail} (${d.tests} tests, ${d.failed} failed)`);
+      for (const d of ds) o.log(`[ci-reuse] gate: ${d.detail} (${d.tests} tests, ${d.failed} failed${d.partial ? `; attempt ${d.partial}, partial count` : ''})`);
       o.log(`GBRAIN_REUSE_RESULT tests=${ds.reduce((n, d) => n + d.tests!, 0)} failed=${ds.reduce((n, d) => n + d.failed!, 0)}`);
       return 0;
     }
     const pending = ds.filter(d => d.state === 'pending');
-    if (!pending.length || now() >= deadline) {
+    if (!pending.length || ds.some(d => d.state === 'rejected') || now() >= deadline) {
       for (const d of ds.filter(x => x.state !== 'reuse')) o.log(`[ci-reuse] gate: no reuse: ${inert(d.detail, 600)}`);
       return 4;
     }
-    o.log(`[ci-reuse] gate: waiting for ${pending.map(d => d.detail).join('; ')} (${Math.ceil((deadline - now()) / 60_000)} min left)`);
+    const none = ds.filter(d => d.state === 'none').map(d => `; no full run to reuse yet (${inert(d.detail, 300)}), so this wait reuses only if one appears and otherwise refuses if the run in progress fails`).join('');
+    o.log(`[ci-reuse] gate: waiting for ${pending.map(d => d.detail).join('; ')}${none} (${Math.ceil((deadline - now()) / 60_000)} min left)`);
     await (o.sleep ?? Bun.sleep)(o.pollMs);
   }
 }
@@ -276,12 +305,21 @@ export function gateDeps(client: GitHubClient): GateDeps {
       const pages = await Promise.all(CANDIDATE_EVENTS.map(event => client.request<{ workflow_runs: FullRun[] }>('GET', `repos/{repo}/actions/workflows/${file}/runs?event=${event}&per_page=100`)));
       return pages.flatMap(p => p.workflow_runs);
     },
-    async executed(runId) {
-      const got = await fetchArtifactJson(client, runId, 'executed-identities', 'executed-identities.json');
-      if (got.reason) return { reason: got.reason };
-      const ids = (got.value as { head?: { identities?: Array<{ status?: string }> } } | null)?.head?.identities;
-      if (!Array.isArray(ids)) return { reason: `run ${runId}'s executed-identities.json has no head.identities list` };
-      return { tests: ids.filter(i => i.status === 'pass' || i.status === 'fail').length, failed: ids.filter(i => i.status === 'fail').length };
+    async executed(run) {
+      const got = await fetchArtifactJson(client, run.id, 'executed-identities', 'executed-identities.json');
+      if (got.reason) return got.transient ? { reason: got.reason, transient: true } : { reason: got.reason };
+      const doc = got.value as { head?: { identities?: Array<{ status?: string }> }; issues?: Array<{ kind?: string }>; run?: { id?: unknown; attempt?: unknown } | null; job_latest?: { executed?: unknown; failed?: unknown } } | null;
+      const ids = doc?.head?.identities;
+      if (!Array.isArray(ids)) return { reason: `run ${run.id}'s executed-identities.json has no head.identities list` };
+      const by = doc!.run;
+      if (by && (by.id !== run.id || typeof by.attempt !== 'number' || by.attempt > run.run_attempt)) {
+        return { reason: `run ${run.id} attempt ${run.run_attempt}'s executed-identities.json was written by run ${String(by.id)} attempt ${String(by.attempt)}` };
+      }
+      const older = by && (by.attempt as number) < run.run_attempt ? { ledgerAttempt: by.attempt as number } : {};
+      const latest = doc!.job_latest;
+      if (latest && Number.isSafeInteger(latest.executed) && Number.isSafeInteger(latest.failed)) return { tests: latest.executed as number, failed: latest.failed as number, ...older };
+      const counts = { tests: ids.filter(i => i.status === 'pass' || i.status === 'fail').length, failed: ids.filter(i => i.status === 'fail').length, ...older };
+      return Array.isArray(doc!.issues) && doc!.issues.some(i => i?.kind === 'prior-attempt') ? { ...counts, partial: run.run_attempt } : counts;
     },
   };
 }
@@ -317,17 +355,16 @@ export function writeDecision(d: Decision, p: Profile, opts: { repo: string; sha
   return line;
 }
 
+const flag = (name: string) => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
 if (import.meta.main && process.argv.includes('--gate')) {
-  const flag = (name: string) => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
   const head = flag('--sha') ?? '', tree = flag('--tree') ?? '', repo = flag('--repo') ?? '';
-  const minutes = Number(flag('--wait-minutes') ?? '90'), poll = Number(flag('--poll-seconds') ?? '60');
+  const minutes = Number(flag('--wait-minutes') ?? GATE_WAIT_MINUTES), poll = Number(flag('--poll-seconds') ?? GATE_POLL_SECONDS);
   if (!SHA.test(head) || !SHA.test(tree) || !/^[\w.-]+\/[\w.-]+$/.test(repo) || !(minutes >= 0) || !(poll > 0)) {
-    console.log('Usage: bun scripts/ci-reuse.ts --gate --sha <40-hex HEAD> --tree <40-hex tree> --repo <owner/name> [--wait-minutes 90] [--poll-seconds 60]');
+    console.log(`Usage: bun scripts/ci-reuse.ts --gate --sha <40-hex HEAD> --tree <40-hex tree> --repo <owner/name> [--wait-minutes ${GATE_WAIT_MINUTES}] [--poll-seconds ${GATE_POLL_SECONDS}]`);
     process.exit(2);
   }
   process.exit(await runGate(gateDeps(restClient(repo)), { head, tree, repo, waitMs: minutes * 60_000, pollMs: poll * 1000, log: line => console.log(line) }));
 } else if (import.meta.main) {
-  const flag = (name: string) => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
   const key = flag('--workflow') ?? '';
   const sha = flag('--sha') ?? '';
   const repo = flag('--repo') ?? '';

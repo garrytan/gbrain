@@ -15,14 +15,14 @@
  *   --now EPOCH          evaluate at this time (default now; for tests and replays)
  *
  * Only names that carry a TTL are ever selected, in gstack's runner grammar
- * (the one gstack's `ubi-runner.sh reap` reads, expiring H hours after the
- * creation epoch):
+ * (exactly what gstack's `ubi-runner.sh reap` reads, expiring H hours after
+ * the creation epoch; an untagged ubirun-<epoch>-...-t<H> or -t0 counts too):
  *
  *   ubirun-<owner>-<created epoch>-<suffix>-t<H>
  *
  * which `ci:ubicloud` writes for its gate VMs (`--ttl-hours`, default 2) and
  * `ubi-runner.sh up|run` writes for every name it generates (`--ttl-hours H`,
- * default 999), whichever tool and owner made the VM; or in the older form
+ * else UBI_TTL_HOURS, default 3), whichever tool and owner made the VM; or in the older form
  * gbrain wrote before it, reaped until none are left:
  *
  *   ubirun-<owner>-<created epoch>-x<expiry epoch>-<suffix>
@@ -52,7 +52,10 @@ import { join } from "node:path";
 const RUNNER = join(import.meta.dir, "ubi-runner.sh");
 const MAX_NAME = 63;
 const OWNER = "[a-z][a-z0-9]{0,11}";
-const TTL = new RegExp(`^ubirun-(${OWNER})-(\\d{10})-([a-z0-9][a-z0-9-]*)-t(\\d{1,3})$`);
+// gstack's vm_rows exactly: an owner-tagged or untagged ubirun- prefix, any
+// middle, and -t<1 to 3 digits> at the end (-t0 expires at creation).
+const TTL = new RegExp(`^ubirun-(${OWNER})-(\\d{10})(?:-[a-z0-9-]*)?-t(\\d{1,3})$`);
+const UNTAGGED_TTL = /^ubirun-(\d{10})(?:-[a-z0-9-]*)?-t(\d{1,3})$/;
 const EXPIRING = new RegExp(`^ubirun-(${OWNER})-(\\d{10})-x(\\d{10})-([a-z0-9]{1,24})$`);
 const NO_EXPIRY = new RegExp(`^ubirun-(${OWNER})-(\\d{10})-([a-z0-9]{1,24})$`);
 const LEGACY = /^ubirun-(\d{10})-[a-z0-9]{1,24}$/;
@@ -65,7 +68,9 @@ export type ParsedName =
 
 export function parseVmName(name: string): ParsedName {
   let m = TTL.exec(name);
-  if (m) return { kind: "expiring", owner: m[1]!, createdAt: Number(m[2]), expiresAt: Number(m[2]) + Number(m[4]) * 3600 };
+  if (m) return { kind: "expiring", owner: m[1]!, createdAt: Number(m[2]), expiresAt: Number(m[2]) + Number(m[3]) * 3600 };
+  m = UNTAGGED_TTL.exec(name);
+  if (m) return { kind: "expiring", owner: "(untagged)", createdAt: Number(m[1]), expiresAt: Number(m[1]) + Number(m[2]) * 3600 };
   m = EXPIRING.exec(name);
   if (m) return { kind: "expiring", owner: m[1]!, createdAt: Number(m[2]), expiresAt: Number(m[3]) };
   m = NO_EXPIRY.exec(name);
@@ -97,7 +102,7 @@ export function planReap(rows: VmRow[], o: { now: number; graceSeconds: number }
     if (parsed.kind === "foreign") return { ...row, parsed, action: "skip", reason: "not named by ubi-runner" };
     if (parsed.kind === "legacy") return { ...row, parsed, action: "skip", reason: "legacy name" };
     if (parsed.kind === "no-expiry") return { ...row, parsed, action: "skip", reason: "no expiry" };
-    if (parsed.expiresAt <= parsed.createdAt) return { ...row, parsed, action: "skip", reason: "expiry before creation" };
+    if (EXPIRING.test(row.name) && parsed.expiresAt <= parsed.createdAt) return { ...row, parsed, action: "skip", reason: "expiry before creation" };
     return { ...row, parsed, action: o.now >= parsed.expiresAt + o.graceSeconds ? "destroy" : "keep" };
   });
 }

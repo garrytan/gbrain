@@ -23,6 +23,9 @@ import * as path from 'node:path';
 import { atomicWrite } from './apply-edits.ts';
 import type { EditOp } from './types.ts';
 
+/** Legacy reason of a held-out refusal (no longer written; filtered on load). */
+const HELD_OUT_REGRESSION = 'held_out_regression';
+
 /** Bounded LRU cap. Older entries garbage-collect when this many accumulate. */
 export const REJECTED_BUFFER_CAP = 100;
 
@@ -87,8 +90,9 @@ export function loadRejectedBuffer(skillsDir: string, skillName: string): Reject
     if (obj.schema !== 1 || !Array.isArray(obj.entries)) return [];
     // Type-narrow without full validation — entries from our own writes
     // are trusted; corrupted entries simply replay as rejection attempts
-    // when their key fails to match.
-    return obj.entries as RejectedEntry[];
+    // when their key fails to match. Held-out refusals written before D2 are
+    // dropped: the proposer must never learn the held-out verdict.
+    return (obj.entries as RejectedEntry[]).filter((e) => e.reason !== HELD_OUT_REGRESSION);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`[skillopt] rejected.json unreadable for ${skillName} (${msg}); starting fresh\n`);

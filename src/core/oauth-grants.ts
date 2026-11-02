@@ -348,7 +348,7 @@ export class OAuthGrants {
 
   /**
    * GST-359 C1: each token records the grant that issued it (oauth_tokens.grant_type); only client_credentials tokens
-   * may attest an actor. grant_type is migration-only (v283, beside oauth_clients.attest_actor), so a schema without it
+   * may attest an actor. grant_type is migration-only (v286, beside oauth_clients.attest_actor), so a schema without it
    * issues unmarked tokens, which never attest. The locked client row tells which: a failed INSERT would abort the
    * surrounding transaction, so the schema is inspected before the statement.
    */

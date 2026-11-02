@@ -10,10 +10,16 @@
  *    Publication re-resolves the writer's member from the stored principal, so
  *    a member disabled after submission (a queued job, a replay) loses the page
  *    before commit; no operator hatch relaxes that.
- * 2. Fails when: add_link, put_raw_data or any persistence write lands on an
+ *    remove_link on an edge of an unreadable page answers as for a missing
+ *    page and removes nothing. The remote links effect skips an unreadable
+ *    mention target as missing (no edge, no wanted row), hatch or not.
+ * 2. Fails when: add_link, remove_link, put_raw_data or any persistence write lands on an
  *    unreadable page, a listed member is refused its own page, a malformed or
  *    lock-out readable_by is written, or a stored write still publishes after
  *    its member was disabled.
+ *    A member who satisfies a folder rule writes the pages under it (the
+ *    publication fast path must not read folder-ruled pages as unopenable).
+ *    A stdio server bound through mcp.stdio_member writes as that member.
  * 3. Existing coverage (member-read-access) pins reads only.
  * 4. Real seams: tokens minted by the token service and bound with SQL, verified
  *    by the serve --http verifier, dispatched through MCP dispatch; the durable
@@ -28,9 +34,12 @@ import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { __resetPrivateVisibilityCacheForTests, withCallerAccess } from '../src/core/search/private-visibility.ts';
-import { remoteCallerAccess } from '../src/core/access/caller.ts';
+import { remoteCallerAccess, STDIO_MEMBER_KEY } from '../src/core/access/caller.ts';
 import { submissionAuthority, authorizeStoredRequest } from '../src/core/persistence/authority.ts';
 import { admitWrite } from '../src/core/persistence/journal.ts';
+import { proposeRevision } from '../src/core/access/policy.ts';
+import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
+import { localHostId } from '../src/core/persistence/identity.ts';
 import type { AuthInfo, OperationContext } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -115,11 +124,20 @@ for (const kind of testBackends()) {
 
     test('an unlisted member and an unbound token get the canonical page_not_found on every mutating op, and the page is unchanged', async () => {
       const before = await state();
+      // GBRA-218: the graph and raw-data ops on an existing target answer a hidden page exactly as a missing slug (no existence oracle).
+      const asMissing = new Set(['add_link from', 'add_link to', 'add_timeline_entry', 'put_raw_data']);
+      const swap = <T,>(v: T): T => JSON.parse(JSON.stringify(v).replaceAll(ALICE_PAGE, 'notes/never-written'));
       for (const who of ['bob', 'unbound']) {
         for (const [label, op, params] of await mutations(who)) {
           const out = await call(who, op, params);
-          expect({ who, label, code: out.json.code, suggestion: out.json.suggestion }).toEqual({ who, label, code: 'page_not_found',
-            suggestion: expect.stringContaining('Do not retry this slug as a create; ask the user') });
+          if (asMissing.has(label)) {
+            const missing = await call(who, op, swap(params));
+            expect({ who, label, isError: out.isError, json: swap(out.json) }).toEqual({ who, label, isError: true, json: missing.json });
+            expect({ who, label, code: out.json.code }).toEqual({ who, label, code: 'page_not_found' });
+          } else {
+            expect({ who, label, code: out.json.code, suggestion: out.json.suggestion }).toEqual({ who, label, code: 'page_not_found',
+              suggestion: expect.stringContaining('Do not retry this slug as a create; ask the user') });
+          }
           expect(out.text).not.toContain(CANARY);
         }
       }
@@ -201,6 +219,134 @@ for (const kind of testBackends()) {
         await expect(authorizeStoredRequest(engine, row)).rejects.toMatchObject({ code: 'page_not_found' });
       } finally {
         await engine.executeRaw("UPDATE access_tokens SET member_id = 'alice-example' WHERE name = 'alice'");
+      }
+    }, 120_000);
+
+    test('a member satisfying a folder rule writes pages under it through the durable write path; an unlisted member is still refused', async () => {
+      const slug = 'partners/alice-example/plan';
+      await importFromContent(engine, slug, '---\ntype: note\ntitle: Alice plan\n---\n# Alice plan\n\nPlan canaryawfolder.', { sourceId: SRC, noEmbed: true });
+      const applied = await proposeRevision(engine, SRC, [{ id: 'alice', prefix: 'partners/alice-example/', readable_by: ['member:alice-example'] }], { origin: 'cli', store: 'database' });
+      expect(applied.state).toBe('applied');
+      expect((await call('alice', 'get_page', { slug })).text).toContain('canaryawfolder');
+      const before = await state(slug);
+      for (const [op, params] of [['put_page', { slug, content: '---\ntype: note\ntitle: Alice plan\n---\n# Alice plan\n\nBob rewrote this.', expected_revision: await revision(slug) }],
+        ['add_tag', { slug, tag: 'bob-tag' }], ['delete_page', { slug }]] as const) {
+        const out = await call('bob', op, params as Record<string, unknown>);
+        expect({ op, code: out.json.code }).toEqual({ op, code: 'page_not_found' });
+        expect(out.text).not.toContain('canaryawfolder');
+      }
+      expect(await state(slug)).toEqual(before);
+      const put = await call('alice', 'put_page', { slug, content: '---\ntype: note\ntitle: Alice plan\n---\n# Alice plan\n\nPlan canaryawfolder. Alice wrote this.', expected_revision: await revision(slug) });
+      expect({ op: 'put_page', isError: put.isError, code: put.json.code }).toEqual({ op: 'put_page', isError: false, code: undefined });
+      for (const [op, params] of [['add_tag', { slug, tag: 'alice-tag' }], ['add_timeline_entry', { slug, date: '2026-01-03', summary: 'Plan call' }]] as const) {
+        const out = await call('alice', op, params as Record<string, unknown>);
+        expect({ op, isError: out.isError, code: out.json.code }).toEqual({ op, isError: false, code: undefined });
+      }
+      const after = await state(slug);
+      expect({ body: after.body.includes('Alice wrote this.'), tags: after.tags, timeline: after.timeline }).toEqual({ body: true, tags: 1, timeline: 1 });
+      const del = await call('alice', 'delete_page', { slug, expected_revision: await revision(slug) });
+      expect({ op: 'delete_page', isError: del.isError, code: del.json.code }).toEqual({ op: 'delete_page', isError: false, code: undefined });
+      expect((await state(slug)).deleted).toBe(true);
+    }, 240_000);
+
+    test('remove_link on an edge of a page the caller cannot read answers exactly as for a missing page and removes nothing', async () => {
+      await local('add_link', { from: ALICE_PAGE, to: OPEN_PAGE, link_type: 'mentions' });
+      await local('add_link', { from: OPEN_PAGE, to: ALICE_PAGE, link_type: 'mentions' });
+      const before = (await state()).links;
+      expect(before).toBeGreaterThanOrEqual(2);
+      const missing = await call('bob', 'remove_link', { from: 'notes/never-written', to: OPEN_PAGE, link_type: 'mentions' });
+      for (const who of ['bob', 'unbound']) {
+        for (const [from, to] of [[ALICE_PAGE, OPEN_PAGE], [OPEN_PAGE, ALICE_PAGE]]) {
+          const out = await call(who, 'remove_link', { from, to, link_type: 'mentions' });
+          expect({ who, from, isError: out.isError, json: out.json }).toEqual({ who, from, isError: missing.isError, json: missing.json });
+        }
+      }
+      expect((await state()).links).toBe(before);
+      const own = await call('alice', 'remove_link', { from: ALICE_PAGE, to: OPEN_PAGE, link_type: 'mentions' });
+      expect({ isError: own.isError, removed: own.json.removed }).toEqual({ isError: false, removed: 1 });
+    }, 120_000);
+
+    test('the remote links effect skips a page the writer cannot read exactly as a missing one, under a privacy hatch too', async () => {
+      const folderSlug = 'partners/alice-example/brief';
+      await importFromContent(engine, folderSlug, '---\ntype: note\ntitle: Alice brief\n---\n# Alice brief\n\nBrief canaryawbrief.', { sourceId: SRC, noEmbed: true });
+      await proposeRevision(engine, SRC, [{ id: 'alice', prefix: 'partners/alice-example/', readable_by: ['member:alice-example'] }], { origin: 'cli', store: 'database' });
+      const targets = [ALICE_PAGE, folderSlug, OPEN_PAGE, 'notes/never-written'];
+      for (const hatch of [undefined, '1']) {
+        await withEnv({ GBRAIN_REMOTE_PRIVATE_PAGES: hatch }, async () => {
+          for (const who of ['bob', 'unbound', 'alice']) {
+            const slug = 'notes/mentions-' + who + (hatch ? '-hatch' : '');
+            const put = await call(who, 'put_page', { slug, content: '---\ntype: note\ntitle: Mentions\n---\n# Mentions by ' + who + (hatch ? ' with the hatch' : '') + '\n\nSee ' + targets.map(t => '[[' + t + ']]').join(', ') + '.' });
+            expect({ who, hatch, isError: put.isError }).toEqual({ who, hatch, isError: false });
+            const settled = async () => (await engine.executeRaw<{ outcome: { added: number; skipped_targets: { slug: string; reason: string }[] } | null }>(
+              "SELECT outcome FROM persistence_effects WHERE kind='links' AND source_id=$1 AND data->>'slug'=$2 ORDER BY id DESC LIMIT 1", [SRC, slug]))[0];
+            for (let i = 0; i < 20 && !(await settled())?.outcome; i++) {
+              await runPersistenceEffects(engine, { engine: 'pglite', embedding_disabled: true } as never, { hostId: localHostId() });
+              await new Promise(resolve => setTimeout(resolve, 50));
+            }
+            const effect = await settled();
+            const edges = await engine.executeRaw<{ slug: string }>('SELECT t.slug FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id'
+              + ' WHERE f.source_id=$1 AND f.slug=$2 ORDER BY t.slug', [SRC, slug]);
+            const wanted = await engine.executeRaw<{ target_ref: string }>('SELECT w.target_ref FROM wanted_links w JOIN pages p ON p.id=w.origin_page_id'
+              + ' WHERE p.source_id=$1 AND p.slug=$2 ORDER BY w.target_ref', [SRC, slug]);
+            const reader = who === 'alice';
+            expect({ who, hatch, added: effect?.outcome?.added, edges: edges.map(e => e.slug), wanted: wanted.map(w => w.target_ref),
+              skipped: Object.fromEntries(effect?.outcome?.skipped_targets.map(t => [t.slug, t.reason]) ?? []) }).toEqual({ who, hatch,
+              added: reader ? 3 : 1, edges: reader ? [ALICE_PAGE, OPEN_PAGE, folderSlug].sort() : [OPEN_PAGE], wanted: ['notes/never-written'],
+              skipped: reader ? { 'notes/never-written': 'missing' } : { [ALICE_PAGE]: 'missing', [folderSlug]: 'missing', 'notes/never-written': 'missing' } });
+          }
+        });
+      }
+    }, 240_000);
+
+    test('a stdio server bound to a member through mcp.stdio_member writes that member\'s pages; unbound it is refused', async () => {
+      async function stdio(op: string, params: Record<string, unknown>) {
+        const out = await dispatchToolCall(engine, op, { ...params }, { remote: true, transport: 'stdio', sourceId: SRC, takesHoldersAllowList: ['world'] });
+        const text = out.content.map(c => c.text).join('\n');
+        let json: Record<string, unknown> = {};
+        try { json = JSON.parse(text); } catch { /* prose */ }
+        return { isError: out.isError === true, text, json };
+      }
+      const before = await state();
+      const unbound = await stdio('add_tag', { slug: ALICE_PAGE, tag: 'stdio-tag' });
+      expect({ code: unbound.json.code }).toEqual({ code: 'page_not_found' });
+      expect(await state()).toEqual(before);
+      await engine.setConfig(STDIO_MEMBER_KEY, 'alice-example');
+      try {
+        const appended = await stdio('append_page', { slug: ALICE_PAGE, text: 'Stdio wrote this.', request_id: randomUUID() });
+        expect({ op: 'append_page', isError: appended.isError, code: appended.json.code }).toEqual({ op: 'append_page', isError: false, code: undefined });
+        const tag = await stdio('add_tag', { slug: ALICE_PAGE, tag: 'stdio-tag' });
+        expect({ op: 'add_tag', isError: tag.isError, code: tag.json.code }).toEqual({ op: 'add_tag', isError: false, code: undefined });
+        const created = await stdio('put_page', { slug: 'notes/alice-stdio', content: alicePage('Stdio page.', '[alice-example]') });
+        expect({ op: 'put_page new', isError: created.isError, code: created.json.code }).toEqual({ op: 'put_page new', isError: false, code: undefined });
+        expect((await state()).tags).toBe(before.tags + 1);
+        expect((await state('notes/alice-stdio')).frontmatter.readable_by).toEqual(['alice-example']);
+      } finally {
+        await engine.setConfig(STDIO_MEMBER_KEY, '');
+      }
+      const after = await stdio('remove_tag', { slug: ALICE_PAGE, tag: 'stdio-tag' });
+      expect({ code: after.json.code }).toEqual({ code: 'page_not_found' });
+    }, 240_000);
+
+    test('under a privacy hatch the links effect resolves a stdio writer bound to a reader as that member: its mention edge is kept', async () => {
+      await engine.setConfig(STDIO_MEMBER_KEY, 'alice-example');
+      try {
+        await withEnv({ GBRAIN_REMOTE_PRIVATE_PAGES: '1' }, async () => {
+          const slug = 'notes/mentions-stdio';
+          const out = await dispatchToolCall(engine, 'put_page', { slug, content: '---\ntype: note\ntitle: Stdio mentions\n---\n# Stdio mentions\n\nSee [[' + ALICE_PAGE + ']].' },
+            { remote: true, transport: 'stdio', sourceId: SRC, takesHoldersAllowList: ['world'] });
+          expect(out.isError === true).toBe(false);
+          const settled = async () => (await engine.executeRaw<{ outcome: { added: number } | null }>(
+            "SELECT outcome FROM persistence_effects WHERE kind='links' AND source_id=$1 AND data->>'slug'=$2 ORDER BY id DESC LIMIT 1", [SRC, slug]))[0];
+          for (let i = 0; i < 20 && !(await settled())?.outcome; i++) {
+            await runPersistenceEffects(engine, { engine: 'pglite', embedding_disabled: true } as never, { hostId: localHostId() });
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+          const edges = await engine.executeRaw<{ slug: string }>('SELECT t.slug FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id'
+            + ' WHERE f.source_id=$1 AND f.slug=$2', [SRC, slug]);
+          expect({ added: (await settled())?.outcome?.added, edges: edges.map(e => e.slug) }).toEqual({ added: 1, edges: [ALICE_PAGE] });
+        });
+      } finally {
+        await engine.setConfig(STDIO_MEMBER_KEY, '');
       }
     }, 120_000);
 

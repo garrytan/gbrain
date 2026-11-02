@@ -27,7 +27,8 @@ import type { Operation, OperationContext } from './contract.ts';
 import type { Notice } from '../agent-output.ts';
 import { OperationError, opError, verbError } from './contract.ts';
 import { invalidParam, paramUse } from './op-fix.ts';
-import { assertExplicitSourceLive, federatedSearchScope, parseSourceIdParam, sourceScopeOpts, stampEvidenceSafe } from './context.ts';
+import { parseSourceIdParam, sourceScopeOpts, stampEvidenceSafe } from './context.ts';
+import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './search-source-scope.ts';
 import { markKeywordHits } from '../search/evidence.ts';
 import { hybridSearchCached, stampContentFlags, type HybridSearchOpts } from '../search/hybrid.ts';
 import { dedupResults } from '../search/dedup.ts';
@@ -225,8 +226,8 @@ async function quoteRecall<F extends { id: number; fact: string; source?: string
   redacted: ReadonlyArray<Partial<F>>, results: SearchResult[], delivery: DeliveryMeta | undefined) {
   if (ctx.remote === false) return { facts, withheld: false, results };
   const recount = delivery ? { count: (text: string) => countEvidenceTokens(text, delivery.tokenizer), delivery } : undefined;
-  const quoted = await quoteFacts(ctx.engine, facts.map((f, i) => ({ ...f, ...redacted[i] }))).catch(() => null);
-  return { facts: quoted ?? [], withheld: quoted === null && facts.length > 0, results: fenceTranscriptRows(neutralizeTranscriptRows(results, delivery?.date_header === true), recount) };
+  const quoted = await quoteFacts(ctx.engine, facts.map((f, i) => ({ ...f, ...redacted[i] })), true).catch(() => null);
+  return { facts: quoted ?? [], withheld: quoted === null && facts.length > 0, results: fenceTranscriptRows(neutralizeTranscriptRows(results, delivery?.date_header === true), recount, true) };
 }
 
 /**
@@ -297,6 +298,7 @@ const recall: Operation = {
     budget_tokens: { type: 'number', description: 'Token budget; facts pack first.' },
     budget_policy: { type: 'string', enum: ['facts_first', 'query_first'], description: 'Default facts_first.', fullSurfaceOnly: true },
     source_id: { type: 'string', description: 'One readable source.' },
+    source_ids: { ...SOURCE_IDS_PARAM, fullSurfaceOnly: true },
     since: { type: 'string', description: 'ISO 8601 or "8 hours ago".' },
     session_id: { type: 'string', description: "This session's facts." },
     include_expired: { type: 'boolean', description: 'Also expired; question ranks them.', fullSurfaceOnly: true },
@@ -330,10 +332,9 @@ const recall: Operation = {
       sourceIdParam = parseSourceIdParam(p.source_id, 'recall');
       // The facts arms widen an unqualified no-grant caller across the transport-computed
       // federated set, exactly like the page-search arm below and every sibling read op.
-      scope = federatedSearchScope(ctx, sourceIdParam);
-      await assertExplicitSourceLive(ctx, sourceIdParam);
+      scope = await requestSourceScope(ctx, sourceIdParam, parseSourceIdsParam(ctx, 'recall', p.source_ids));
     } catch (error) {
-      if (!(error instanceof OperationError) || p.source_id === undefined || p.source_id === null) throw error;
+      if (!(error instanceof OperationError) || ((p.source_id === undefined || p.source_id === null) && (p.source_ids === undefined || p.source_ids === null))) throw error;
       const code = error.code === 'permission_denied' ? 'scope_denied'
         : error.code === 'unknown_source' ? 'not_found'
           : error.code === 'invalid_params' ? 'invalid_params' : null;
@@ -344,7 +345,8 @@ const recall: Operation = {
     }
     // Set-dedupe: a grant carrying a repeated id (or the scalar source again)
     // must not fan out the same source twice into the merge.
-    const factSources: string[] = [...new Set(
+    const readsNoSource = scope.sourceIds?.length === 0;
+    const factSources: string[] = readsNoSource ? [] : [...new Set(
       scope.sourceIds && scope.sourceIds.length > 0 ? scope.sourceIds
         : scope.sourceId ? [scope.sourceId]
           : [sourceId],
@@ -420,7 +422,7 @@ const recall: Operation = {
       excludeAuditRows: true, eligibility,
     };
 
-    if (question !== null) {
+    if (question !== null && !readsNoSource) {
       ranking = await rankFactsByQuestion(ctx, { question, params: p, factSources, limit, entity: entityParam, sessionId: sessionParam, since, grep, includeExpired,
         scope: { sourceIds: factSources, remote: ctx.remote !== false, excludePrivate, minTrust: eligibility.floor, suppressFlagged: eligibility.suppressFlagged } });
       ({ rows, ambiguousEntity } = ranking);
@@ -531,13 +533,13 @@ const recall: Operation = {
     let delivery: DeliveryMeta | undefined;
     const evidencePlan = queryText ? await recallEvidencePlan(ctx, p) : null;
     const rankCutOpts: Pick<HybridSearchOpts, 'pageRankCut'> = evidencePlan?.rankCut ? { pageRankCut: evidencePlan.rankCut } : {};
-    if (queryText) {
+    if (queryText && !readsNoSource) {
       // #3242 parity (#4707): the page-search arm widens an unqualified
       // no-grant caller across the transport-computed federated set, exactly
       // like search/query/get_page/list_pages/resolve_slugs. sourceScopeOpts
       // alone pinned this arm to the scalar source, so a `federated: true`
       // source was invisible to recall while visible to every sibling read op.
-      const searchScope = { ...federatedSearchScope(ctx, sourceIdParam), ...(eligibility.floor ? { minTrust: eligibility.floor } : {}) };
+      const searchScope = { ...scope, ...(eligibility.floor ? { minTrust: eligibility.floor } : {}) };
       // #4352 — recall's page-search arm enforces `visibility: private` for
       // untrusted callers with the excludePrivate resolved above.
       const keywordOnly = await recallKeywordOnlyReason(ctx);
@@ -794,6 +796,7 @@ const context_pack: Operation = {
         eligibility,
         // #5575 ENG-15: same rule as get_page: quarantined cards only on an authorized explicit ask.
         includeQuarantined,
+        untrusted: ctx.remote !== false,
       });
     // Always-loaded core tier (core-memory.ts): owner-designated pages of
     // `default` plus this source, inside the caller's grant; it packs first.
@@ -853,7 +856,7 @@ const context_pack: Operation = {
       // rendered line plus its rendered (since-filtered) thread lines.
       const itemBudget = budgetTokens - packHeaderCost() - coreTokens - (pullBrief?.text ? estimateTokens(pullBrief.text) : 0);
       const cardCost = (c: (typeof cards)[number]) =>
-        lineCost(renderCardLine(c, walk.home)) + threadsOf(c).reduce((n, t) => n + lineCost(renderThreadLine(t)), 0);
+        lineCost(renderCardLine(c, walk.home, ctx.remote !== false)) + threadsOf(c).reduce((n, t) => n + lineCost(renderThreadLine(t)), 0);
       const cardPack = itemBudget > 0 ? packToBudget(cards, cardCost, itemBudget) : dropAll(cards);
       cards = cardPack.items;
       // #6724: a dropped card's facts go with it; entity facts pack before hot memory, and a fact in both is priced once.
@@ -870,7 +873,7 @@ const context_pack: Operation = {
       const mentionBudget = remaining - factPack.meta.used - lineCost('') - lineCost(NEWER_MENTIONS_HEADER);
       const withMentions = cards.filter((c) => c.newer_mentions);
       const mentionPack = mentionBudget > 0
-        ? packToBudget(withMentions, (c) => renderNewerMentionLines(c, walk.home).reduce((n, l) => n + lineCost(l), 0), mentionBudget)
+        ? packToBudget(withMentions, (c) => renderNewerMentionLines(c, walk.home, ctx.remote !== false).reduce((n, l) => n + lineCost(l), 0), mentionBudget)
         : dropAll(withMentions);
       const keptMentions = new Set(mentionPack.items);
       cards = cards.map((c) => (c.newer_mentions && !keptMentions.has(c) ? { ...c, newer_mentions: undefined } : c));
@@ -890,7 +893,7 @@ const context_pack: Operation = {
     // structured arrays report — the assembler's pre-budget rendering would
     // overrun the declared budget_tokens. budget_used reports that text.
     const recordLines = cards.flatMap(renderRecordLines);
-    const basePack = entities.length === 0 ? '' : budgetTokens !== null ? renderPack(cards, open_threads, facts, undefined, walk.home, entityFacts) : res.text;
+    const basePack = entities.length === 0 ? '' : budgetTokens !== null ? renderPack(cards, open_threads, facts, undefined, walk.home, entityFacts, ctx.remote !== false) : res.text;
     const packText = recordLines.length ? [basePack, ['', RECORDS_HEADER, ...recordLines].join('\n')].filter(Boolean).join('\n') : basePack;
     const text = [coreText, pullBrief?.text ?? '', packText].filter(Boolean).join('\n\n');
     const budgetUsed = budgetTokens !== null ? estimateTokens(text) : undefined;
@@ -931,11 +934,13 @@ const context_pack: Operation = {
         fact_id: String(f.id),
         provenance: f.provenance,
         ...(f.trust_tier ? { trust_tier: f.trust_tier, origin: f.origin } : {}),
+        ...(f.quoted ? { quoted: f.quoted } : {}),
       })),
       entity_facts: entityFacts.map((f) => ({
         source_id: f.source_id, slug: f.slug, fact_id: String(f.id), fact: f.fact, kind: f.kind, entity_slug: f.entity_slug, valid_from: f.valid_from,
         context: f.context ?? null, confidence: f.confidence, attributed_to: f.attributed_to ?? null, provenance: f.provenance,
         ...(f.trust_tier ? { trust_tier: f.trust_tier, origin: f.origin } : {}),
+        ...(f.quoted ? { quoted: f.quoted } : {}),
       })),
       text,
       ...(pullBrief ? { brief: pullBrief.view } : {}),
@@ -1104,6 +1109,7 @@ const delta: Operation = {
       includePrivate,
       maxEntities: PACK_DEFAULT_MAX_ENTITIES,
       eligibility: await resolveReadEligibility(ctx, { minTrust: p.min_trust }),
+      untrusted: ctx.remote !== false,
     });
 
     // Pages arrive OLDEST first by (updated_at, slug), facts OLDEST first by

@@ -50,7 +50,9 @@ export async function exportPolicyFiles(engine: BrainEngine, sourceId: string | 
 
 /** The rulebook an import tree carries for its destination, or null when it carries none (or the caller chose none). */
 export function importPolicyChoice(dir: string, choice: string | undefined): { file: string; rules: FolderRule[] } | null {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- dir is the import tree itself, which gbrain import already reads whole; POLICY_FILE is a constant
   const single = join(dir, POLICY_FILE);
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- same: constant suffix under the import tree
   const qualifiedDir = join(dir, SOURCE_POLICY_DIR);
   const qualified = existsSync(qualifiedDir) ? readdirSync(qualifiedDir).filter(f => f.endsWith('.yml')).map(f => f.slice(0, -4)).sort() : [];
   if (choice === 'none') return null;
@@ -60,10 +62,12 @@ export function importPolicyChoice(dir: string, choice: string | undefined): { f
       throw opError('access_policy_invalid', `The import tree has no folder-rule file for source "${choice}" (${qualified.length ? `it has ${qualified.join(', ')}` : 'it has no source-qualified rule file'}); nothing was imported.`,
         `Pass --access-policy with one of the listed sources, or --access-policy none to import without folder rules.`);
     }
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- choice is in qualified, a readdirSync listing of qualifiedDir, so it names a file in that directory and carries no separator
     file = join(qualifiedDir, choice + '.yml');
   } else if (existsSync(single)) {
     file = single;
   } else if (qualified.length === 1) {
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- qualified[0] is a readdirSync entry of qualifiedDir
     file = join(qualifiedDir, qualified[0] + '.yml');
   } else if (qualified.length) {
     throw opError('access_policy_invalid', `The import tree carries folder rules for several sources (${qualified.join(', ')}) and none was chosen for the destination; nothing was imported.`,

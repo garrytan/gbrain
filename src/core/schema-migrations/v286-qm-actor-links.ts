@@ -3,7 +3,7 @@ import type { Migration } from './types.ts';
 // Applied by src/core/migrate.ts on the next initSchema(); see docs/ENGINES.md
 // ("Canonical schema sources") for when schema.sql or a TS fragment also changes.
 //
-// GST-359 C1 (GBRA-218, stacked on v274/v275): an attested actor. A trusted
+// GST-359 C1 (GBRA-218, after train M v282-v285): an attested actor. A trusted
 // system's credential (only 'qm' today) may name the person a call serves in
 // a header; gbrain maps that person's opaque canonical id to a member through
 // access_member_links (system, external_id) and reads as that member.
@@ -15,10 +15,10 @@ import type { Migration } from './types.ts';
 // token, so the right is honoured only for client-credentials tokens (NULL on
 // tokens issued before this migration: never attested). Database only, so a
 // repo-less brain gets it unchanged. Nothing is rewritten on upgrade.
-// No schema.sql mirror: like v274 and v275, these exist only through
+// No schema.sql mirror: like v282 and v283, these exist only through
 // migrations. Provisional number (C1 placeholder): renumbered at the merge slot.
-export const v283: Migration = {
-  version: 283,
+export const v286: Migration = {
+  version: 286,
   name: 'qm_actor_links',
   idempotent: true,
   sql: `

@@ -175,7 +175,7 @@ function keyInput(recipe: Recipe): ActionInput[] {
 }
 
 /** The datastore the enable command must target, resolved before any argv is built. */
-function enableArgv(cfg: GBrainConfig, model: string, width: number): string[] {
+export function enableArgv(cfg: GBrainConfig, model: string, width: number): string[] {
   const brainId = brainIdInMemory();
   if (brainId !== 'host') {
     return ['gbrain', 'embeddings', 'enable', '--brain', brainId, '--embedding-model', model, '--embedding-dimensions', String(width)];
