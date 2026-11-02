@@ -28,7 +28,7 @@ import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { dispatchToolCall, type ToolResult } from '../src/mcp/dispatch.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { __resetHotMemoryCacheForTests, getBrainHotMemoryMeta } from '../src/core/facts/meta-hook.ts';
-import { addMember, bindCredential } from '../src/core/access/members.ts';
+import { addGroup, addMember, bindCredential } from '../src/core/access/members.ts';
 import { linkMember } from '../src/core/access/actor.ts';
 import { memberPageSlug } from '../src/core/access/member-facts.ts';
 import { decideSingleFact, type SingleFactIntent } from '../src/core/facts/single-prepare.ts';
@@ -156,7 +156,7 @@ for (const kind of testBackends()) {
       expect((await call(who.alice(), 'recall', { query: 'harbor' })).all).toContain(CANARY.alice);
       for (const marker of [{ visibility: 'private' }, { derived_from: 'notes/private-origin-example' }]) {
         if ('derived_from' in marker) await importFromContent(engine, 'notes/private-origin-example', '---\ntype: note\nvisibility: private\n---\n# Private origin\n', { sourceId: SRC });
-        await engine.executeRaw('UPDATE pages SET frontmatter = frontmatter || $3::jsonb WHERE source_id = $1 AND slug = $2', [SRC, page, JSON.stringify(marker)]);
+        await engine.executeRaw('UPDATE pages SET frontmatter = frontmatter || jsonb_build_object($3::text, $4::text) WHERE source_id = $1 AND slug = $2', [SRC, page, ...Object.entries(marker)[0]!]);
         try {
           __resetPrivateVisibilityCacheForTests();
           __resetHotMemoryCacheForTests();
@@ -167,17 +167,17 @@ for (const kind of testBackends()) {
           expect((await call(who.alice(), 'context_pack', { query: 'harbor oolong', entities: [ACME] })).all).not.toContain(CANARY.alice);
           const [bobFact] = await engine.executeRaw<{ id: number | string }>('SELECT id FROM facts WHERE fact LIKE $1 AND expired_at IS NULL', ['%' + CANARY.bob + '%']);
           const bobPage = 'memory/members/bob-example';
-          await engine.executeRaw('UPDATE pages SET frontmatter = frontmatter || $3::jsonb WHERE source_id = $1 AND slug = $2', [SRC, bobPage, JSON.stringify(marker)]);
+          await engine.executeRaw('UPDATE pages SET frontmatter = frontmatter || jsonb_build_object($3::text, $4::text) WHERE source_id = $1 AND slug = $2', [SRC, bobPage, ...Object.entries(marker)[0]!]);
           try {
             const forgot = await call(who.bobToken(), 'forget_fact', { id: Number(bobFact!.id) });
             expect({ isError: forgot.isError, code: forgot.json.code }).toEqual({ isError: true, code: 'fact_not_found' });
             const [still] = await engine.executeRaw<{ expired_at: unknown }>('SELECT expired_at FROM facts WHERE id = $1', [bobFact!.id]);
             expect(still!.expired_at).toBeNull();
           } finally {
-            await engine.executeRaw('UPDATE pages SET frontmatter = frontmatter - $3 WHERE source_id = $1 AND slug = $2', [SRC, bobPage, Object.keys(marker)[0]]);
+            await engine.executeRaw('UPDATE pages SET frontmatter = frontmatter - $3::text WHERE source_id = $1 AND slug = $2', [SRC, bobPage, Object.keys(marker)[0]]);
           }
         } finally {
-          await engine.executeRaw('UPDATE pages SET frontmatter = frontmatter - $3 WHERE source_id = $1 AND slug = $2', [SRC, page, Object.keys(marker)[0]]);
+          await engine.executeRaw('UPDATE pages SET frontmatter = frontmatter - $3::text WHERE source_id = $1 AND slug = $2', [SRC, page, Object.keys(marker)[0]]);
           __resetPrivateVisibilityCacheForTests();
           __resetHotMemoryCacheForTests();
         }
@@ -275,6 +275,19 @@ for (const kind of testBackends()) {
         expect(later.isError).toBe(false);
         expect(later.all).not.toContain(CANARY.alice);
       }
+    }, 60_000);
+
+    test('delta: a member\'s cursor survives a change to the member\'s groups, and the bound credential keeps its pre-upgrade key', async () => {
+      const session = 'delta-groups-' + randomUUID().slice(0, 6);
+      expect((await call(who.bobToken(), 'delta', { session_id: session })).all).toContain('started this session');
+      const [row] = await engine.executeRaw<{ client_id: string | null }>('SELECT client_id FROM session_context_state WHERE source_id = $1 AND position($2 in session_id) > 0', [SRC, session]);
+      expect(row?.client_id).toBe((await verify(tokens.bob!)).clientId);
+      await new Promise(r => setTimeout(r, 30));
+      await importFromContent(engine, 'notes/delta-groups-example', '---\ntype: note\n---\n# Delta groups\n\ncanarydeltagroups harbor note.', { sourceId: SRC });
+      await addGroup(engine, 'delta-team-example', ['bob-example']);
+      const later = await call(who.bobToken(), 'delta', { session_id: session });
+      expect(later.isError).toBe(false);
+      expect(later.all).toContain('notes/delta-groups-example');
     }, 60_000);
 
     test('receipts: Alice\'s write receipt is invisible to Bob and the bare client, and her request_id never replays for Bob', async () => {

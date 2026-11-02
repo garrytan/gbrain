@@ -81,6 +81,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   readersAllowedSql: 'src/core/search/private-visibility.ts: GBRA-218 readers predicate over a caller alias; splices only identities that pass validIdentity (member:/group: plus [a-z0-9._-]), else none',
   callerReadersAllowedSql: 'src/core/search/private-visibility.ts: GBRA-231 readersAllowedSql for the current caller, one conjunct per audience identity; each identity passes validIdentity',
   privacyForCaller: 'src/core/search/private-visibility.ts: the caller privacy arm (TRUE, or the given predicate ORed with private-readable source ids checked by isValidSourceId); callers pass a constant alias and a vetted predicate builder',
+  factVisibilitySql: 'src/core/access/member-facts.ts: visibility values filtered to the constant set world/private; widened only by memberFactAdmitSql, whose member id passed ACCESS_ID_RE (no quote) and whose page test is privatePagesFilterForCaller; no values',
   privateProvenanceFilterUnderPolicy: 'src/core/search/private-visibility.ts: constant fact-provenance predicate (readers part with no identity, privacy part dropped only under an operator relaxation); no values',
   stagingNeedsTextSql: 'src/core/page-body/schema.ts: constant live-staging text-reference EXISTS predicate over a caller text alias; no values (Wave B purge)',
   atomRetirementPurgeHold: 'src/core/persistence/atom-retirement-hold.ts: constant #7013 restorable-atom purge-hold predicate over a caller pages alias; no values',

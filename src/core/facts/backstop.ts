@@ -64,6 +64,7 @@ import { readTaintInputs, derivedWriteTrust, recordTaintEdges } from '../trust/t
 import { applyGateDecision, derivedGateConfig, derivedGateInput, emptyGateTally, mergeGateTally, type GateTally } from '../trust/derived-gate.ts';
 import { decideFactWrite } from '../write-gate-store.ts';
 import { commitExtractionPlan, planExtraction, readPageWatermark, type InputTruncated } from '../extraction-watermark.ts';
+import { onMemberPageSql } from '../access/member-facts.ts';
 
 // The notability-filter vocabulary lives in notability-filter.ts; re-exported for existing importers.
 export { NOTABILITY_FILTERS, coerceNotabilityFilter, type FactNotabilityFilter } from './notability-filter.ts';
@@ -746,6 +747,14 @@ async function derivedFactWriter(ctx: FactsBackstopCtx, input: PipelineInput, de
   return { insertDerivedFact, gateGroup, write_gate };
 }
 
+/** GST-359: dedup candidates on a member page. Such a fact is that member's alone, never another write's duplicate. */
+async function memberPageFactIds(engine: BrainEngine, sourceId: string, ids: number[]): Promise<Set<number>> {
+  if (!ids.length) return new Set();
+  const rows = await engine.executeRaw<{ id: number | string }>(
+    `SELECT id FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[]) AND ${onMemberPageSql('facts')}`, [sourceId, ids]);
+  return new Set(rows.map(r => Number(r.id)));
+}
+
 /** The actual pipeline body — always runs inside a BudgetTracker scope (#4210). */
 async function runPipelineBodyInner(
   input: PipelineInput,
@@ -876,15 +885,12 @@ async function runPipelineBodyInner(
     const exact = await decideSingleFact(ctx.engine, ctx.sourceId, { entity_slug: resolvedSlug, fact: f.fact, kind: f.kind ?? 'fact', visibility, attributed_to: f.attributed_to ?? null }, null);
     let matchedExistingId: number | null = exact?.candidate?.id ?? null;
     if (matchedExistingId === null && resolvedSlug && f.embedding && !f.entity_inferred) {
-      const candidates = await ctx.engine.findCandidateDuplicates(
-        ctx.sourceId,
-        resolvedSlug,
-        f.fact,
-        { embedding: f.embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null },
-      );
+      const candidates = await ctx.engine.findCandidateDuplicates(ctx.sourceId, resolvedSlug, f.fact,
+        { embedding: f.embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null });
+      const memberOwned = await memberPageFactIds(ctx.engine, ctx.sourceId, candidates.map(c => c.id));
       let top: { row: typeof candidates[number]; score: number } | null = null;
       for (const c of candidates) {
-        if (!c.embedding) continue;
+        if (!c.embedding || memberOwned.has(Number(c.id))) continue;
         const s = cosineSimilarity(f.embedding, c.embedding);
         if (!top || s > top.score) top = { row: c, score: s };
       }

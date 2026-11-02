@@ -935,7 +935,12 @@ export async function dispatchToolCall(
         auth: opts.auth, transport: opts.transport, audienceAsserted: audience !== null });
       access = attested ? attested.access : await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience);
     } catch (e) {
-      if (!(e instanceof OperationError) || !/^(on_behalf_of_|actor_)/.test(String(e.code))) throw e;
+      // GST-359: a call that names a person gets every failure here (a lock timeout reading its link included) in the
+      // envelope QM reads, never a thrown call; anything else keeps the caller's own error path.
+      if (!(e instanceof OperationError) || !/^(on_behalf_of_|actor_)/.test(String(e.code))) {
+        if (!actorNamed) throw e;
+        return withStructuredError(errorResult(e, opts, { op: name }));
+      }
       assertion(e.code as AudienceAuditEvent['outcome'], e.reason);
       return qmMemoryToolResult(name, actorNamed ? actorRefusal(e, opts, name, header, params) : errorResult(e, opts, { op: name }));
     }
@@ -965,7 +970,11 @@ function actorRefusal(e: OperationError, opts: DispatchOpts, op: string, header:
     try { recallArguments(params); } catch (invalid) { if (invalid instanceof OperationError) return actorRefusal(invalid, opts, op, header, params); throw invalid; }
     return { ...unlinkedRecallResult(), _meta: { access: { code: 'actor_unlinked', member: null, groups: [], audience: null, actor: { system: 'qm', external_id: header } } } };
   }
-  const out = errorResult(e, opts, { op });
+  return withStructuredError(errorResult(e, opts, { op }));
+}
+
+/** An error result with its JSON envelope's code, message, reason and fix also in `structuredContent.error`, which QM reads. */
+function withStructuredError(out: ToolResult): ToolResult {
   try {
     const env = JSON.parse(out.content[0]!.text) as Record<string, unknown>;
     out.structuredContent = { error: { code: env.code, message: env.message, ...(env.reason ? { reason: env.reason } : {}), ...(env.fix ? { fix: env.fix } : {}) } };

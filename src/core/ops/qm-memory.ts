@@ -16,6 +16,7 @@
  * QM reads success codes only from `structuredContent`. An unlinked actor on memory_recall is answered by dispatch
  * (actorRefusal) with empty content and `{facts: [], truncated: false, code: 'actor_unlinked'}` (unlinkedRecallResult).
  */
+import { createHash } from 'node:crypto';
 import type { Operation, OperationContext, ParamDef } from './contract.ts';
 import { opError, OperationError } from './contract.ts';
 import { federatedSearchScope } from './context.ts';
@@ -220,7 +221,11 @@ const memory_write: Operation = {
       throw invalid('idempotency_key must be 1 to 128 visible ASCII characters (no spaces).', 'Send a stable key per write, for example a UUID; the same key replays the same write.');
     }
     const key = p.idempotency_key;
-    const items = await Promise.all(parseFacts(p.facts, actor.external_id).map(async (f, i) => ({ ...f, request_id: await memoryWriteRequestId(actor.member, key, i) })));
+    const parsed = parseFacts(p.facts, actor.external_id);
+    // Every fact's replay intent carries the whole batch, so a key reused with more, fewer or other facts is an
+    // idempotency_conflict at its first fact, before anything new is written.
+    const qm_batch = createHash('sha256').update(JSON.stringify(parsed)).digest('hex');
+    const items = await Promise.all(parsed.map(async (f, i) => ({ ...f, qm_batch, request_id: await memoryWriteRequestId(actor.member, key, i) })));
     const { verbOperations } = await import('../verbs.ts');
     const remember = verbOperations.find(op => op.name === 'remember')!;
     for (const [index, item] of items.entries()) {

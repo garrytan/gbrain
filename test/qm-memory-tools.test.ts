@@ -237,6 +237,12 @@ for (const kind of testBackends()) {
       expect(changed.isError).toBe(true);
       expect({ code: changed.json.code, write_error: changed.json.write_error }).toEqual({ code: 'invalid_params', write_error: 'idempotency_conflict' });
       expect(await factRows('canaryreplay three')).toHaveLength(0);
+      const longer = await write(alice, [...facts, { fact: 'Alice adds a third canaryreplay extra', provenance: 'turn 1' }], key);
+      expect({ isError: longer.isError, write_error: longer.json.write_error }).toEqual({ isError: true, write_error: 'idempotency_conflict' });
+      expect(await factRows('canaryreplay extra')).toHaveLength(0);
+      const shorter = await write(alice, [facts[0]!], key);
+      expect({ isError: shorter.isError, write_error: shorter.json.write_error }).toEqual({ isError: true, write_error: 'idempotency_conflict' });
+      expect(await factRows('canaryreplay')).toHaveLength(2);
     }, 60_000);
 
     test('the same key from two members is two writes, each on its own page', async () => {
@@ -381,6 +387,28 @@ for (const kind of testBackends()) {
       expect({ isError: refusedWrite.isError, code: refusedWrite.json.code }).toEqual({ isError: true, code: 'actor_unlinked' });
       const named = await recall({ token: 'plain', actor: 'U0NOBODY' }, 'budget ledger');
       expect({ isError: named.isError, code: named.json.code, reason: named.json.reason }).toEqual({ isError: true, code: 'actor_not_attested', reason: 'no_attest_right' });
+    }, 60_000);
+
+    test('a database failure while resolving the person comes back as a structured error, never a thrown call', async () => {
+      const target = engine as { executeRaw: typeof engine.executeRaw };
+      const own = Object.prototype.hasOwnProperty.call(target, 'executeRaw');
+      const real = target.executeRaw;
+      target.executeRaw = (async function (this: BrainEngine, ...args: Parameters<typeof engine.executeRaw>) {
+        if (typeof args[0] === 'string' && args[0].includes('access_member_links')) throw Object.assign(new Error('canceling statement due to lock timeout'), { code: '55P03' });
+        return real.apply(this, args);
+      }) as typeof engine.executeRaw;
+      try {
+        for (const [op, args] of [['memory_recall', { query: 'budget ledger' }], ['memory_write', { facts: [{ fact: 'Lock timeout canarylocktimeout', provenance: 'turn 1' }], idempotency_key: randomUUID() }]] as const) {
+          const out = await call(alice, op, args as Record<string, unknown>);
+          expect(out.isError).toBe(true);
+          expect(typeof out.json.code).toBe('string');
+          expect(out.structured?.error?.code).toBe(out.json.code);
+        }
+      } finally {
+        if (own) target.executeRaw = real;
+        else delete (target as Partial<typeof target>).executeRaw;
+      }
+      expect(await factRows('canarylocktimeout')).toHaveLength(0);
     }, 60_000);
 
     test('fact text arrives without fence or heading markers', async () => {

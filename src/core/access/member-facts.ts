@@ -140,10 +140,15 @@ export function callerIdentityKey(): string {
   return createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 16);
 }
 
-/** A per-session state key (the delta cursor, context_pack's session) for the current caller: `base` plus the identity key. */
+/**
+ * A per-session state key (the delta cursor) for the current caller: `base` for a credential reading as itself, so a
+ * change to its member's groups or the upgrade keeps its cursor; otherwise `base` plus the person the call serves (the
+ * attested member, or the asserted audience entries), never the group-derived identity.
+ */
 export function callerSessionKey(base: string | null): string | null {
-  const key = callerIdentityKey();
-  return key ? `${base ?? 'remote'}#id:${key}` : base;
+  const access = currentCallerAccess();
+  const person = access.actor ? { actor: [access.actor.system, access.actor.member] } : access.audience ? { audience: [...access.audience].sort() } : null;
+  return person ? `${base ?? 'remote'}#id:${createHash('sha256').update(JSON.stringify(person)).digest('hex').slice(0, 16)}` : base;
 }
 
 /** Whether a stored write's actor is the current caller's: both unattested, or the same system and member. */

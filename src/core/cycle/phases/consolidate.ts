@@ -190,8 +190,7 @@ export async function runPhaseConsolidate(
         AND entity_slug IS NOT NULL
         AND (attributed_to IS NULL OR attributed_to = 'user')
         AND ($2::boolean=false OR visibility='world')
-        AND ($1::text IS NULL OR source_id=$1)
-        AND NOT ${readersSourcedFactSql('facts')}
+        AND ($1::text IS NULL OR source_id=$1) AND NOT ${readersSourcedFactSql('facts')}
       GROUP BY source_id, entity_slug
       HAVING COUNT(*) >= $3
     `, [opts.sourceId ?? null, managed, minPerBucket]);

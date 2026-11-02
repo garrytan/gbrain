@@ -18,7 +18,7 @@ import { hostOnlyError } from '../ops/op-fix.ts';
 import { catalogueError, ERROR_CATALOGUE } from '../error-catalogue.ts';
 import type { CallerAccess } from '../search/private-visibility.ts';
 import { identityFor } from './principals.ts';
-import { isUndefinedColumnError, isUndefinedTableError } from '../utils.ts';
+import { isMissingSchemaObject } from '../utils.ts';
 import { memberIdentity } from './members.ts';
 import { folderAccessFor } from './caller.ts';
 import { ACTOR_ARGUMENT, ACTOR_DEFERRED_OPS, ACTOR_HEADER, attestRightFrom, DEFAULT_ATTEST_OPS, EXTERNAL_ID_RE, QM_AUDIENCE_HEADER, type AttestedActor, type AttestRight } from './actor-model.ts';
@@ -59,7 +59,7 @@ export async function attestRightOf(engine: Pick<BrainEngine, 'executeRaw'>, cal
   } catch (e) {
     // A schema before the attest columns has no right. Any other failure (a lock timeout, an aborted transaction) is
     // rethrown: read as "no right" it would refuse a stored write for good instead of letting it retry.
-    if (!isUndefinedTableError(e) && !isUndefinedColumnError(e, 'attest_')) throw e;
+    if (!isMissingSchemaObject(e, 'column', ['attest_actor', 'attest_ops', 'member_id'])) throw e;
   }
   return null;
 }
@@ -131,7 +131,7 @@ export function actorNotAttested(reason: ActorReason, caller: ActorCaller, ctx: 
         `Remove ${ACTOR_ARGUMENT} from the arguments. A trusted system names the person in the ${ACTOR_HEADER} header from a credential holding the attest right (gbrain auth rescope ... --attest-actor qm on the brain host).`, { reason, docs });
     case 'actor_required':
       return opError('actor_not_attested', `${ctx.op} writes only as an attested person, and this call names none (no ${ACTOR_HEADER} header on a credential holding the attest right), so nothing was written.`,
-        `Send ${ACTOR_HEADER} with the person's canonical id from a credential the brain operator granted the attest right (gbrain auth rescope --client <id> --attest-actor qm). To save a fact as yourself, call remember.`, { reason, docs });
+        `Send ${ACTOR_HEADER} with the person's canonical id from a credential the brain operator granted the attest right (${rescope(['--attest-actor', 'qm']).join(' ')}). To save a fact as yourself, call remember.`, { reason, docs });
     case 'audience_not_supported':
       return opError('actor_not_attested', `This request carries ${QM_AUDIENCE_HEADER} (a channel audience), which this brain does not serve yet, so nothing was read or written.`,
         `Send the call without ${QM_AUDIENCE_HEADER}. Channel turns are refused until wave 2; a call for one person sends ${ACTOR_HEADER} alone.`, { reason, docs });
@@ -164,7 +164,7 @@ export async function linkedMember(engine: Pick<BrainEngine, 'executeRaw'>, syst
   } catch (e) {
     // GST-359 D: only a schema before the link tables reads as unlinked. A database failure (an aborted transaction under
     // a concurrent publication, a lock timeout) is rethrown, so a stored write retries instead of failing as actor_unlinked.
-    if (!isUndefinedTableError(e)) throw e;
+    if (!isMissingSchemaObject(e, 'table', ['access_member_links', 'access_members', 'access_group_members'])) throw e;
     return null;
   }
 }

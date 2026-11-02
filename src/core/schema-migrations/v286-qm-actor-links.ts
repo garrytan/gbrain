@@ -16,7 +16,7 @@ import type { Migration } from './types.ts';
 // tokens issued before this migration: never attested). Database only, so a
 // repo-less brain gets it unchanged. Nothing is rewritten on upgrade.
 // No schema.sql mirror: like v282 and v283, these exist only through
-// migrations. Provisional number (C1 placeholder): renumbered at the merge slot.
+// migrations. Numbered at the train C merge after train M (v282-v285).
 export const v286: Migration = {
   version: 286,
   name: 'qm_actor_links',
