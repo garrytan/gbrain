@@ -50,6 +50,12 @@ export interface CliOptions {
   writeWaitMs?: number | null;
   /** #5232: `--accept-pending` (true) / `--no-accept-pending` (false); unset = GBRAIN_ACCEPT_PENDING. */
   acceptPending?: boolean | null;
+  /**
+   * GBRA-218: `--as <member>` — preview an operation's reads as that member
+   * (src/cli/main.ts validates the member and sets the caller-access record).
+   * Unset when the flag is absent. `gbrain access` owns its own `--as`.
+   */
+  as?: string;
 }
 
 export const DEFAULT_CLI_OPTIONS: CliOptions = {
@@ -157,7 +163,8 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
     | { timeoutValue: string; equalsForm: boolean }
     | { explainFlag: true }
     | { timingsFlag: true }
-    | { waitValue: string | undefined };
+    | { waitValue: string | undefined }
+    | { asValue: string };
   const slots: Slot[] = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -242,6 +249,13 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
       slots.push({ waitValue: a.slice('--wait='.length) });
       continue;
     }
+    // GBRA-218: --as <member>. Slotted like --wait: `gbrain access check` owns its own --as list.
+    if (a === '--as' || a.startsWith('--as=')) {
+      const value = a === '--as' ? argv[++i] : a.slice('--as='.length);
+      if (value === undefined || value.length === 0 || value.startsWith('-')) throw new Error('--as requires a member id (gbrain access member list).');
+      slots.push({ asValue: value });
+      continue;
+    }
     if (a === '--accept-pending' || a === '--no-accept-pending') {
       cliOpts.acceptPending = a === '--accept-pending';
       continue;
@@ -318,6 +332,11 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
     if ('timingsFlag' in s) {
       if (commandSlot !== undefined && TIMINGS_CLAIMING_COMMANDS.has(commandSlot.plain)) cliOpts.timings = true;
       else rest.push('--timings');
+      continue;
+    }
+    if ('asValue' in s) {
+      if (commandSlot?.plain === 'access') rest.push('--as', s.asValue);
+      else cliOpts.as = s.asValue;
       continue;
     }
     if ('waitValue' in s) {

@@ -12,9 +12,14 @@
  *    parsed entry pins its block until the batch publishes.
  * Seams: the sweep's clock (opts.now) advances only with segmentedPassWork.bytes, the bytes the segmented reads take,
  * so the budget is a byte budget here and no machine load moves it; the heap is sampled after a full collection
- * when the pass opens its publication transactions (engine.transaction), with the batch's timeline rows alive.
+ * when the pass opens its publication transactions (engine.transaction), with the batch's timeline rows alive. PGLite
+ * keeps its datastore on disk here: an in-memory datastore's files are heap buffers, so a WAL segment the pass happens to
+ * open (16 MiB) would read as held heap.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
@@ -60,10 +65,11 @@ for (const kind of testBackends()) {
         engine = pg.engine;
         close = pg.close;
       } else {
+        const dir = mkdtempSync(join(tmpdir(), 'segmented-sweep-'));
         engine = new PGLiteEngine();
-        await engine.connect({});
+        await engine.connect({ database_path: join(dir, 'brain.pglite') });
         await engine.initSchema();
-        close = () => engine.disconnect();
+        close = async () => { await engine.disconnect(); rmSync(dir, { recursive: true, force: true }); };
       }
       await engine.setConfig('pages.segmented_storage', 'on');
       await engine.putPage('people/alice-example', { type: 'person', title: 'Alice Example', compiled_truth: 'Fixture.', timeline: '', frontmatter: {} }, { sourceId: 'default' });

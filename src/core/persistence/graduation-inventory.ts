@@ -29,6 +29,14 @@ const ORPHAN_EFFECT = "state IN ('queued','running','failed')";
 export const GRADUATION_INVENTORY: Inventory = {
   version: 1,
   entries: [
+    carry('access_group_members', 'security', 'Group membership behind readable_by group:<id> grants; without it carried pages would resolve readers differently.'),
+    carry('access_groups', 'security', 'Access groups that readable_by names; carried so grants keep meaning the same people.'),
+    carry('access_members', 'security', 'Brain members that readable_by member:<id> names; carried so per-page readers stay the same people.'),
+    carry('access_pending_coverage', 'security', 'Prefixes that read as nobody while a narrowing stamps or a policy file is invalid; dropping them would reveal pages.'),
+    carry('access_policy_migrations', 'operational', 'In-flight folder-policy store switches (git and database) and their receipts.'),
+    carry('access_policy_revisions', 'security', 'Folder-policy revision history: desired rules, change class, proposer and approver.'),
+    carry('access_policy_state', 'security', 'One row per source with a folder policy; the lock row access_rules and its history hang off.'),
+    carry('access_rules', 'security', 'Applied folder rules that pages.folder_rule_ids names; on a repo-less source they are the record.'),
     carry('access_tokens', 'security', 'Legacy bearer tokens and their unified grant columns; token hashes keep authorizing on the target.'),
     carry('belief_commit_marks', 'user_data', 'Belief ledger post-commit observations; without them carried events would read as unproven (W2 visibility).'),
     carry('belief_events', 'user_data', 'The belief ledger: recorded history Markdown cannot rebuild; event keys carry no ids, and the id order and sequence carry verbatim.'),
@@ -177,6 +185,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('shared_skill_revisions', 'user_data', 'Shared-skill revisions; stored_bytes is generated and never inserted.'),
     carry('shared_skill_state', 'security', 'Shared-skill serving epoch and delivery token secret.'),
     carry('slug_aliases', 'user_data', 'Slug aliases.'),
+    carry('slug_rename_history', 'security', 'Every slug a page has had, which the folder-rule lineage test follows; dropping it would judge derivatives by whatever page took an old slug.'),
     carry('source_ingestion_receipts', 'user_data', 'Source ingestion receipts.'),
     carry('sources', 'user_data', 'Sources with incarnations and archive state.'),
     carry('subagent_messages', 'operational', 'Subagent job transcripts.'),

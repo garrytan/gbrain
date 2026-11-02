@@ -19,7 +19,7 @@ import { OperationError } from '../core/ops/contract.ts';
 import { cliRenderContext, toAgentError } from '../core/agent-output.ts';
 import { readExportPages, readExportWithdrawals, type ExportSnapshot, type ExportWithdrawal } from '../core/export-snapshot.ts';
 import { RestoreTargetError, restoreFilePath } from '../core/restore-target.ts';
-import { privatePagesFilterFragment, readHonorAliases } from '../core/search/private-visibility.ts';
+import { privacyPartSql, readHonorAliases } from '../core/search/private-visibility.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
 import { sourceMirrorReadOnly } from '../core/persistence/mirror-read-only.ts';
 import { isSourceDbOnlySlug } from '../core/persistence/source-storage.ts';
@@ -147,7 +147,7 @@ export async function censusGitGap(engine: BrainEngine, sourceId: string, opts: 
     const done = await engine.transaction(async tx => {
       await tx.executeRaw('SET TRANSACTION READ ONLY');
       const batch = await tx.executeRaw<Key>(`SELECT id::text, slug, source_id, source_path, octet_length(source_path) AS source_path_bytes, source_uri, withheld_source_path, type, frontmatter,
-          database_only_reason, body_storage='segmented' AS segmented, knowledge_revision::text AS revision, NOT ${privatePagesFilterFragment('pages')} AS lineage_private
+          database_only_reason, body_storage='segmented' AS segmented, knowledge_revision::text AS revision, NOT ${privacyPartSql('pages')} AS lineage_private
         FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND pages.id > $2::bigint ORDER BY pages.id LIMIT ${BATCH}`, [sourceId, cursor]);
       if (batch.length) { await censusBatch(tx, batch, census, { checkout, policy, incarnation: source!.incarnation, sample: opts.sample, collect: opts.collect }); cursor = batch[batch.length - 1]!.id; }
       return batch.length < BATCH;

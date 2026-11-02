@@ -84,6 +84,20 @@ for (const backend of testBackends()) describe(`[${backend}] G7a: declared datab
     expect(head(root)).toBe(before);
   }, { databaseUrl, setup }), 120_000);
 
+  test('GBRA-218: a page that names readers (a member or a group) is not private, so it is committed to Git like any page', () => managedBrain(async ({ engine, ctx, root }) => {
+    await strict(engine);
+    const before = head(root);
+    for (const [slug, content] of [['notes/team-plan', page('Team plan', 'Readers only.', 'readable_by: [alice-example]\n')],
+      ['notes/team-groups', page('Team groups', 'A group.', 'readable_by: [group:team-a]\n')]] as const) {
+      const requestId = randomUUID();
+      expect(await put(ctx, slug, content, requestId)).toMatchObject({ state: 'committed' });
+      await settleManagedGitEffects(engine);
+      expect({ slug, file: existsSync(join(root, `${slug}.md`)), atHead: atHead(root, `${slug}.md`) }).toEqual({ slug, file: true, atHead: `${slug}.md` });
+      expect(await row(engine, slug)).toMatchObject({ live: true, reason: null, source_path: `${slug}.md` });
+    }
+    expect(head(root)).not.toBe(before);
+  }, { databaseUrl, setup }), 120_000);
+
 test('Q3: every strict writer is classified when it prepares; a managed import, which builds its own file target, is refused at publication', () => managedBrain(async ({ engine, ctx, root }) => {
     writeFileSync(join(root, 'gbrain.yml'), 'storage:\n  db_only:\n    - cache/\n');
     mkdirSync(join(root, 'cache'));

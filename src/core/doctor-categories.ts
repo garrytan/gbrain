@@ -86,6 +86,17 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'trust_release_unpreviewed_fields',
   'credential_projection_pending',
   'derived_visibility',
+  // GBRA-218: member read access (doctor/checks/member-access.ts).
+  'access_readers_malformed',
+  'access_unknown_readers',
+  'access_recent_narrowings',
+  'access_page_readers_backfill',
+  'access_policy_pending',
+  'access_policy_widening_held',
+  'access_policy_invalid',
+  'access_policy_store_mismatch',
+  // GBRA-231: shared agents (doctor/checks/shared-agent-access.ts).
+  'access_may_act_for_wildcard',
   'extractor_facts_expired',
   'loop_facts_drift',
   'ontology_facts_fenced',

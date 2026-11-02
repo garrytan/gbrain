@@ -41,6 +41,7 @@ import {
   type McpSurface,
 } from '../mcp/surface.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
+import { ON_BEHALF_OF_HEADER } from '../core/access/audience.ts';
 import { serializeError } from '../core/errors.ts';
 import { VERSION } from '../version.ts';
 import { executeRawJsonb } from '../core/sql-query.ts';
@@ -61,6 +62,8 @@ interface McpRequestState {
   resultRows: ResultRowsMode;
   /** Large pages: the same header marks gbrain's thin client, whose default get_page mode stays whole. Never authority. */
   thinClient: boolean;
+  /** GBRA-231: the X-Gbrain-On-Behalf-Of header (a shared agent's audience); bounded by the credential's may_act_for in dispatch. */
+  onBehalfOfHeader: string | undefined;
 }
 
 export function mountMcp(app: Express, ctx: ServeHttpContext): void {
@@ -171,7 +174,8 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
     const surfaceAllowedOps: ReadonlySet<string> | undefined =
       surface === 'full' && authInfo.allowedOperations == null ? undefined : new Set(mcpOperations.map(o => o.name));
     const thinClient = isGbrainThinClient(req.get(GBRAIN_CLIENT_HEADER));
-    const state: McpRequestState = { authInfo, agentName, startTime, mcpOperations, surface, surfaceCeiling, surfaceAllowedOps, resultRows, thinClient };
+    const state: McpRequestState = { authInfo, agentName, startTime, mcpOperations, surface, surfaceCeiling, surfaceAllowedOps, resultRows, thinClient,
+      onBehalfOfHeader: req.get(ON_BEHALF_OF_HEADER) };
     const server = createMcpRequestServer(ctx, state, writeback);
     await serveMcpRequest(server, req, res);
   }
@@ -406,6 +410,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
       inboundFrameBytes: DEFAULT_MAX_REQUEST_BODY_SIZE,
       ...(sessionId ? { sessionId } : {}),
       ...(hotMemoryOffIn(request.params) ? { hotMemoryOff: true } : {}),
+      onBehalfOf: { header: state.onBehalfOfHeader, requestMeta: (request.params as { _meta?: unknown })._meta },
       takesHoldersAllowList: tokenAllowList,
       sourceId: tokenSourceId,
       ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),

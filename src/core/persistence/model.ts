@@ -9,6 +9,11 @@ export interface WriteAuthority {
   remote: boolean;
   /** Original page-visibility ceiling; current policy can only narrow it. */
   excludePrivate?: boolean;
+  /**
+   * GBRA-231: the audience a shared agent asserted for the write (normalized member:<id>, group:<g>, guest). Preparation
+   * and publication re-resolve it against the principal's live may_act_for and members, never the principal's own member.
+   */
+  actingFor?: string[];
   databaseOnlyReason?: 'subagent_sandbox' | 'disabled_by_config' | 'no_repo_configured' | 'connector_database' | 'unbound_source' | 'overwrite_restore' | 'detached';
   autoLinkTrusted?: boolean;
   restrictedNamespace?: boolean;

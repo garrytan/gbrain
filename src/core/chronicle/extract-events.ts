@@ -289,7 +289,7 @@ export async function runChronicleExtract(
   if (!proposals.every(isValidProposal)) {
     return { slug: opts.slug, status: 'skipped', events_written: 0, reason: 'malformed_proposal', malformed: diagnoseMalformedProposals(proposals) };
   }
-  const pin = pinDepth(snapshot);
+  const pin = await pinDepth(engine, snapshot);
   const built = buildChronicleEvents(proposals, ctx, { slug: pin.slug, visibility: pin.visibility, contentHash: pin.contentHash },
     { tz, now: new Date(), maxEvents });
   const bodyTruncated = isSegmentedPage(snapshot.page) || ctx.input.body.length > JUDGE_BODY_CHARS;

@@ -28,7 +28,7 @@ import { requestAttribution } from './attribution.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
 import { prepareMemoryMutation } from './memory-prepare.ts';
 import { retryWriteAdmission } from './admission-retry.ts';
-import { privateProvenanceFilterFragment, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { privateProvenanceFilterFragment, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 
 export { prepareMemoryMutation } from './memory-prepare.ts';
@@ -136,13 +136,13 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
 
 /** The caller's remember parameters and whether it named a visibility (the verb fills the v1 default otherwise). */
 interface RememberCall { p: Record<string, unknown>; visibilityDefaulted: boolean }
-type PageLabel = { type?: string | null; frontmatter?: unknown };
+type PageLabel = { type?: string | null; frontmatter?: unknown; source_id: string; slug: string };
 
 /** The visibility a remember saves into `page`: the caller's own, or the resolved default that never widens a private target. */
 async function rememberVisibility(ctx: OperationContext, call: RememberCall, page: PageLabel | null | undefined): Promise<'world' | 'private'> {
   if (!call.visibilityDefaulted) return call.p.visibility === 'private' ? 'private' : 'world';
   const { resolveRememberVisibility } = await import('../facts/visibility.ts');
-  return resolveRememberVisibility(ctx.engine, page);
+  return resolveRememberVisibility(ctx.engine, page && await withFolderRestricted(ctx.engine, page));
 }
 
 async function rememberCarry(ctx: OperationContext, call: RememberCall, page: PageLabel): Promise<RememberCarry> {

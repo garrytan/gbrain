@@ -20,7 +20,7 @@ import type { PreparedMutation } from './coordinator.ts';
 import type { WriteAuthority, WriteRequest } from './model.ts';
 import type { WriteReceipt } from './types.ts';
 import { MAX_DETERMINISTIC_FAILURES, writeAtomPageState } from '../cycle/extract-atoms-page-state.ts';
-import { effectiveVisibility } from '../search/private-visibility.ts';
+import { effectiveVisibility, withFolderRestricted } from '../search/private-visibility.ts';
 import { declareDerivation, deriveTrust, lowerToDerivedTier, recordTaintEdges } from '../trust/taint.ts';
 import type { DerivedRetiredBy } from './derived-retirement-hold.ts';
 import type { GenerationKey, HeldReason } from '../generations/contract.ts';
@@ -212,7 +212,7 @@ export async function readAtomOrigin(engine: BrainEngine, session: ManagedAtomSe
   }
   const generation = await atomGeneration(engine, snapshot.page.id, item.contentHash);
   return { kind: item.kind, locator: item.slug, contentHash: item.contentHash, textHash: sha256(item.content), pageId: snapshot.page.id,
-    revision: snapshot.revision, visibility: effectiveVisibility({ kind: 'page', page: snapshot.page }), ...(generation > 0 ? { generation } : {}) };
+    revision: snapshot.revision, visibility: effectiveVisibility({ kind: 'page', page: await withFolderRestricted(engine, snapshot.page) }), ...(generation > 0 ? { generation } : {}) };
 }
 
 export const ATOM_GENERATION_OP = 'managed-atoms-generation';

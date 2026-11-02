@@ -11,6 +11,7 @@ import { buildVectorSearchStatement, INDEX_WALK_MIN_SCOPE_SHARE, INDEX_WALK_PAGE
 import { _resetVectorLegacyGuardForTests, readVectorLegacyGuard, resolveVectorLegacyGuard } from '../../src/core/search/vector-legacy-guard.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { TRUST_TIERS } from '../../src/core/trust/tier.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const MD5 = 'md5(cc.chunk_text)';
 const indexedColumn = { name: 'embedding', type: 'vector' as const, dimensions: 1536, embeddingModel: 'openai:text-embedding-3-large' };
@@ -130,8 +131,8 @@ describe('vector index walk statement', () => {
       { exclude_slug_prefixes: ['x/'] }, { include_slug_prefixes: ['y/'] }, { detail: 'low' as const }, { language: 'typescript', symbolKind: 'function' }, { minTrust: TRUST_TIERS[TRUST_TIERS.length - 1] }, { suppressFlagged: true },
       { excludePrivate: true, sourceIds: ['a', 'b'], exclude_slug_prefixes: ['x/'], detail: 'low' as const }];
     const read = new Set<string>();
-    for (const dialect of ['postgres', 'pglite'] as const) for (const v of variants) {
-      const walk = build(v, dialect).indexWalkSql!;
+    for (const dialect of ['postgres', 'pglite'] as const) for (const v of variants) for (const identity of [[], ['member:alice-example', 'group:team-a']]) {
+      const walk = withCallerAccess({ identity, hidePrivate: true, applyRemoteReadPolicy: true }, () => build(v, dialect).indexWalkSql!);
       const candidates = walk.slice(walk.indexOf('hnsw_candidates AS ('), walk.indexOf('ORDER BY ann.distance'));
       for (const m of candidates.matchAll(/\bp\.(\w+)/g)) read.add(m[1]!);
     }
@@ -229,7 +230,10 @@ describe('source scope strategy: walk overfetch, walk skip and scope scan', () =
     const stmt = build({ sourceIds: ['a'], exclude_slugs: ['x'], language: 'typescript', detail: 'low', excludePrivate: true, type: 'note' }, 'postgres', 0.01, 500);
     const scan = stmt.scopeScanSql!;
     const cte = scan.slice(scan.indexOf('WITH scope_scan AS MATERIALIZED ('), scan.indexOf('hnsw_candidates AS ('));
-    const pagesSubquery = cte.slice(cte.indexOf('ANY(ARRAY('), cte.indexOf('))'));
+    const open = cte.indexOf('ANY(ARRAY(');
+    let close = open + 'ANY('.length;
+    for (let depth = 0; close < cte.length; close++) if (cte[close] === '(') depth++; else if (cte[close] === ')' && --depth === 0) break;
+    const pagesSubquery = cte.slice(open, close);
     expect(cte).toContain('SELECT cc.id\n        FROM content_chunks cc\n        WHERE cc.page_id = ANY(ARRAY(');
     for (const filter of ['AND p.type = $2', 'AND p.slug != ALL($3::text[])', 'AND p.source_id = ANY($5::text[])', `COALESCE(p.frontmatter->>'visibility'`, "AND NOT (p.slug LIKE 'test/%'"]) {
       expect(pagesSubquery).toContain(filter);

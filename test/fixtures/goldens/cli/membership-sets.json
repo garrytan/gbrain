@@ -68,6 +68,7 @@
       ],
       "refusedNotInCliOnly": [],
       "refusedWithoutHint": [
+        "access",
         "beliefs",
         "diag",
         "edge-proposals",
@@ -90,6 +91,7 @@
     },
     "sets": {
       "CLI_ONLY": [
+        "access",
         "advisor",
         "agent",
         "anomalies",
@@ -218,6 +220,7 @@
         "whoknows"
       ],
       "CLI_ONLY_SELF_HELP": [
+        "access",
         "advisor",
         "agent",
         "anomalies",
@@ -319,6 +322,7 @@
         "whoknows"
       ],
       "SELF_HELP_WITHOUT_ENGINE": [
+        "access",
         "advisor",
         "agent",
         "anomalies",
@@ -372,6 +376,7 @@
         "upgrade"
       ],
       "THIN_CLIENT_REFUSED_COMMANDS": [
+        "access",
         "advisor",
         "apply-migrations",
         "beliefs",

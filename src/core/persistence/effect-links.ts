@@ -8,13 +8,13 @@ import { extractPageLinks, isAutoLinkEnabled, isGlobalBasenameEnabled, makeResol
 import { protectedRegions } from '../fence-scan.ts';
 import { PROTECTED_PAIRS, sanitizeRemoteBody } from '../remote-body.ts';
 import { confirmBodyPin, openSegmentedBody, readBodyRange, type BodyAudience } from '../page-body/read-range.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { privacyPartSql } from '../search/private-visibility.ts';
 import { authorizeStoredRequest } from './authority.ts';
 import { completeEffect } from './effect-journal.ts';
 import { REMOTE_AUTO_LINKS_KEY, REMOTE_MENTION_LINK_SOURCE, type AppendedRange, type PersistenceEffect } from './effect-model.ts';
 import { guardEffectSource } from './effect-recovery.ts';
 import type { SqlEngine, WriteAuthority, WriteRequest } from './model.ts';
-import { excludesPrivateWrites } from './page-visibility.ts';
+import { excludesPrivateWrites, writerReadPolicySql } from './page-visibility.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { extractSegmentedPageLinks } from '../page-body/segment-links.ts';
 import { inlineRegions } from '../page-body/tail-digest.ts';
@@ -119,7 +119,7 @@ export async function runLinksEffect(engine: BrainEngine, effect: PersistenceEff
     const live = await lockedPage(tx, effect, row, snapshot, targets, hostId);
     if (!live) return;
     if (live.revision !== snapshot.revision) { await skip(tx, 'superseded'); return; }
-    const { wanted, owned } = await writableTargets(tx, row, live, targets, skipped);
+    const { wanted, owned, hidden } = await writableTargets(tx, row, live, targets, skipped);
     const obsolete = owned.filter(link => !wanted.has(link.slug)).map(link => link.id);
     const kept = new Set(owned.map(link => link.slug));
     const additions = mentionEdges(live.page.slug, sourceId, wanted, kept);
@@ -130,7 +130,7 @@ export async function runLinksEffect(engine: BrainEngine, effect: PersistenceEff
     // Wanted pages: a missing mention target is recorded so the edge appears once that page is written (core/wanted-links.ts).
     if (await isRemoteWantedPagesEnabled(tx)) {
       await replaceWantedLinks(tx, { pageId: Number(live.page.id), sourceId }, { producers: ['body'], rows: skipped
-        .filter(target => target.reason === 'missing')
+        .filter(target => target.reason === 'missing' && !hidden.has(target.slug))
         .map(target => ({ producer: 'body', ref_kind: 'slug', target_source_id: sourceId, target_ref: target.slug,
           link_type: 'mentions', context: (targets.get(target.slug) ?? '').slice(0, 240) })) });
     }
@@ -243,25 +243,30 @@ async function lockedPage(tx: BrainEngine, effect: PersistenceEffect, row: Write
 
 /**
  * The targets that get an edge: existing pages of the source, visible to the writer (a remote writer that excludes
- * private pages never links one) and inside its slug grant; the rest are added to `skipped` with the reason. Also
- * the edges this producer already owns from the page.
+ * private pages never links one) and inside its slug grant; the rest are added to `skipped` with the reason. A page
+ * the writer may not read under the member-access part (GBRA-218; no operator hatch relaxes it) is skipped as
+ * `missing`, so the receipt cannot tell it from an absent page, and is returned in `hidden` so it is never recorded
+ * as wanted. Also the edges this producer already owns from the page.
  */
 async function writableTargets(tx: BrainEngine, row: WriteRequest, live: PageSnapshot, targets: Map<string, string>, skipped: SkippedLinkTarget[]) {
   const sourceId = live.page.source_id;
   const hidePrivate = row.authority.remote && ((row.authority.excludePrivate ?? true) || await excludesPrivateWrites(tx, true));
-  const existing = targets.size ? await tx.executeRaw<{ slug: string; visible: boolean }>(`SELECT p.slug,(${privatePagesFilterFragment('p')}) AS visible
+  const readable = row.authority.remote && targets.size ? await writerReadPolicySql(tx, row.authority, 'p', false) : 'TRUE';
+  const existing = targets.size ? await tx.executeRaw<{ slug: string; readable: boolean; visible: boolean }>(`SELECT p.slug,(${readable}) AS readable,
+    (${privacyPartSql('p')}) AS visible
     FROM pages p WHERE p.source_id=$1 AND p.slug=ANY($2::text[]) AND p.deleted_at IS NULL`, [sourceId, [...targets.keys()]]) : [];
-  const visible = new Map(existing.map(page => [page.slug, page.visible]));
+  const found = new Map(existing.filter(page => page.readable).map(page => [page.slug, page.visible]));
+  const hidden = new Set(existing.filter(page => !page.readable).map(page => page.slug));
   const granted = await targetGrant(tx, row.authority);
   const wanted = new Map<string, string>();
   for (const [slug, context] of targets) {
-    const reason = !visible.has(slug) ? 'missing' : hidePrivate && !visible.get(slug) ? 'not_visible' : !granted(slug) ? 'outside_grant' : null;
+    const reason = !found.has(slug) ? 'missing' : hidePrivate && !found.get(slug) ? 'not_visible' : !granted(slug) ? 'outside_grant' : null;
     if (reason) skipped.push({ slug, reason });
     else wanted.set(slug, context);
   }
   const owned = await tx.executeRaw<{ id: number; slug: string }>(`SELECT l.id,t.slug FROM links l JOIN pages t ON t.id=l.to_page_id
     WHERE l.link_source=$1 AND l.origin_page_id=$2`, [REMOTE_MENTION_LINK_SOURCE, live.page.id]);
-  return { wanted, owned };
+  return { wanted, owned, hidden };
 }
 
 /** Plain `mentions` edges from the page to each wanted target it does not already have from this producer. */

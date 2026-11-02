@@ -113,6 +113,7 @@ const extract_facts: Operation = {
     // facts.default_visibility helper (the old ternary coerced unset →
     // 'private' before any config default could run). Garbage stays 'private'.
     const { resolveVisibilityParam, tightenToPage } = await import('../facts/visibility.ts');
+    const { withFolderRestricted } = await import('../search/private-visibility.ts');
     let visibility: 'private' | 'world' = await resolveVisibilityParam(ctx.engine, p.visibility);
 
     // #4206: optional event-time + provenance threading. An unparseable
@@ -136,7 +137,7 @@ const extract_facts: Operation = {
     // facts are also private when it cannot see the source page, so a hidden page and a missing one look the same.
     if (visibility === 'world' && sourceSlug) {
       const origin = await ctx.engine.readPageSnapshot(sourceSlug.replace(/\.md$/, ''), { sourceId });
-      visibility = ctx.remote !== false && !origin ? 'private' : tightenToPage(visibility, origin?.page);
+      visibility = ctx.remote !== false && !origin ? 'private' : tightenToPage(visibility, origin && await withFolderRestricted(ctx.engine, origin.page));
     }
 
     const r = await runFactsPipeline(p.turn_text as string, {

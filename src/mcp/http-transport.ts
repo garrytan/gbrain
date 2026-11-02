@@ -37,6 +37,7 @@ import { httpInstructionTools } from './initialize-context.ts';
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
 import { operations, operationsByName, opAllowedForBoundClient } from '../core/operations.ts';
 import { scopeDeniedError } from '../core/ops/op-fix.ts';
+import { ON_BEHALF_OF_HEADER } from '../core/access/audience.ts';
 import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
 import type { AuthInfo } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
@@ -55,6 +56,7 @@ import { redactUrlsInText } from '../core/url-redact.ts';
 import { authSourcesFromGrant, privatePagesAuth } from '../core/grants/model.ts';
 import { resolveTokenGrant, touchTokenLastUsed } from '../core/grants/legacy-token.ts';
 import { storedMinTrust } from '../core/trust/tier.ts';
+import { tokenMemberBinding } from '../core/access/token-binding.ts';
 export { parseLegacyTokenScope } from '../core/legacy-token-scope.ts';
 
 const DEFAULT_BODY_CAP = 1024 * 1024; // 1 MiB
@@ -100,6 +102,8 @@ interface HttpTransportOptions {
 
 interface AuthResult {
   ok: boolean;
+  /** GBRA-218: why a known token was refused (a member binding that cannot read). */
+  code?: 'access_member_disabled';
   tokenId?: string;
   tokenName?: string;
   /** v0.28: per-token allow-list for takes.holder. Default ['world'] when permissions row absent. */
@@ -177,6 +181,13 @@ function resolveClientIp(req: Request, server: { requestIP: (r: Request) => { ad
   }
   const sock = server.requestIP(req);
   return sock?.address || 'unknown';
+}
+
+/** The 401 body for a refused bearer token; GBRA-218 names a member binding that cannot read. */
+function authFailureBody(code: AuthResult['code']): Record<string, string> {
+  return code === 'access_member_disabled'
+    ? { error: 'invalid_token', code, message: 'This token is bound to a member who is disabled, removed or missing. Ask the brain operator to enable the member or rebind the token (gbrain auth rescope --token <name> --member <id>|none).' }
+    : { error: 'invalid_token', message: 'Bearer token required. Create one: gbrain auth create <name>' };
 }
 
 export async function startHttpTransport(opts: HttpTransportOptions) {
@@ -278,12 +289,15 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       // on the legacy shape is converted on this read. Takes holders fail safe
       // to ['world']; #1336 honors the stored source grant.
       const grant = await resolveTokenGrant(sql, row);
+      const binding = await tokenMemberBinding(sql, row.member_id, row.may_act_for).catch(() => null); // GBRA-218 verify join
+      if (!binding) return { ok: false, code: 'access_member_disabled' };
       const allowList = grant.takesHolders ?? ['world'];
       const { sourceId, allowedSources, hasSourceGrant } = authSourcesFromGrant(grant);
       const auth: AuthInfo = {
         token,
         clientId: rowId,
         principal: { kind: 'legacy_token', id: rowId },
+        ...binding,
         clientName: rowName,
         scopes: grant.scopes,
         sourceId,
@@ -393,10 +407,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       const auth = await validateToken(req.headers.get('Authorization'));
       if (!auth.ok) {
         logRequest(null, 'unknown', 'auth_failed', Date.now() - startedMs);
-        return Response.json(
-          { error: 'invalid_token', message: 'Bearer token required. Create one: gbrain auth create <name>' },
-          { status: 401, headers: corsHeaders(origin) },
-        );
+        return Response.json(authFailureBody(auth.code), { status: 401, headers: corsHeaders(origin) });
       }
 
       // Post-auth token-id rate limit. Limits runaway authed clients.
@@ -542,7 +553,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           transport: 'http', inboundFrameBytes: bodyCap,
           takesHoldersAllowList: auth.takesHoldersAllowList,
           sourceId: auth.sourceId,
-          ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
+          ...(localFederated ? { localFederatedSourceIds: localFederated } : {}), onBehalfOf: { header: req.headers.get(ON_BEHALF_OF_HEADER) ?? undefined, requestMeta: params?._meta },
           // #1336: thread the token's federated_read grant so read ops scope
           // to the operator-granted sources via sourceScopeOpts.
           auth: auth.auth,

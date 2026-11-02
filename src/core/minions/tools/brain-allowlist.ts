@@ -34,6 +34,10 @@ import type { ToolCtx, ToolDef } from '../types.ts';
 import { putPageRejection, rethrowWithCurrentRevision } from './put-page-result.ts';
 import { BRAIN_TOOL_ALLOWLIST } from './brain-tool-allowlist.ts';
 import { stagePutPage } from './staged-put-page.ts';
+import { withCallerAccess } from '../../search/private-visibility.ts';
+import { remoteCallerAccess } from '../../access/caller.ts';
+import type { AudiencePrincipal } from '../../access/audience.ts';
+import { currentSubmissionAuthority } from '../submission-authority.ts';
 
 // The allow-list itself lives in a handler-free module so the MCP surface
 // tiers (src/mcp/surface.ts) can read it without this module's operations import.
@@ -304,9 +308,17 @@ function brainTool(op: Operation, opts: BuildBrainToolsOpts): ToolDef {
       const validationError = validateParams(op, params);
       if (validationError) throw new Error(`${toolName}: ${validationError}`);
       const write = op.name === 'put_page' && opts.stageWrites ? stagePutPage : op.handler;
-      const output = op.name === 'put_page'
-        ? await write(opCtx, params).catch(e => rethrowWithCurrentRevision(ctx.engine, opCtx.sourceId ?? 'default', params.slug, e))
-        : await op.handler(opCtx, params);
+      const run = () => op.name === 'put_page'
+        ? write(opCtx, params).catch(e => rethrowWithCurrentRevision(ctx.engine, opCtx.sourceId ?? 'default', params.slug, e))
+        : op.handler(opCtx, params);
+      // GBRA-218: a remote-owned job reads as its client's member, looked up live on every call (a disabled member or
+      // removed binding takes effect at the next tool call); never a GBRA-156 private-pages grant.
+      // GBRA-231: a job a shared agent submitted for an audience reads as that audience, re-checked the same way.
+      const submitted = currentSubmissionAuthority();
+      const actingFor = submitted?.kind === 'remote_agent' ? submitted.grant.actingFor as AudiencePrincipal[] | undefined : undefined;
+      const output = opCtx.auth
+        ? await withCallerAccess(await remoteCallerAccess(ctx.engine, opCtx.auth, [], undefined, actingFor), run)
+        : await run();
       const rejection = op.name === 'put_page' ? putPageRejection(output) : null;
       if (rejection) throw new Error(rejection);
       if (op.name === 'get_page' && opts.readBudgetBytes) return budgetedPageRead(ctx.engine, ctx.jobId, opts.readBudgetBytes, params.slug, output);
