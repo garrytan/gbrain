@@ -4641,8 +4641,8 @@
         "idempotent": true,
         "name": "qm_actor_links",
         "sql": {
-          "length": 1055,
-          "sha256": "8ddeb36902321ceb67415726660d47ef7b9b18820202b1f33f0f227c3af4c8b6"
+          "length": 1073,
+          "sha256": "ce07be19659fb418a83d6bffe655e9cf112e523daeb40d3eca69781a4321ad81"
         },
         "sqlFor": "absent",
         "transaction": "absent",

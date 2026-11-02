@@ -6,7 +6,7 @@
       "access_group_members.access_group_members_pkey": "p PRIMARY KEY (group_id, member_id)",
       "access_groups.access_groups_id_check": "c CHECK ((id ~ '^[a-z0-9][a-z0-9._-]{0,63}$'::text))",
       "access_groups.access_groups_pkey": "p PRIMARY KEY (id)",
-      "access_member_links.access_member_links_external_id_check": "c CHECK ((((length(external_id) >= 1) AND (length(external_id) <= 256)) AND (external_id ~ '^[!-~]+$'::text)))",
+      "access_member_links.access_member_links_external_id_check": "c CHECK (((length(external_id) >= 1) AND (length(external_id) <= 256) AND (external_id ~ '^[!-~]+$'::text)))",
       "access_member_links.access_member_links_member_id_fkey": "f FOREIGN KEY (member_id) REFERENCES access_members(id) ON DELETE CASCADE",
       "access_member_links.access_member_links_pkey": "p PRIMARY KEY (system, external_id)",
       "access_member_links.access_member_links_system_check": "c CHECK ((system ~ '^[a-z][a-z0-9_-]{0,31}$'::text))",

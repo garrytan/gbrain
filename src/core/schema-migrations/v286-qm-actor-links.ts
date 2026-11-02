@@ -24,7 +24,7 @@ export const v286: Migration = {
   sql: `
 CREATE TABLE IF NOT EXISTS access_member_links (
   system TEXT NOT NULL CHECK (system ~ '^[a-z][a-z0-9_-]{0,31}$'),
-  external_id TEXT NOT NULL CHECK (length(external_id) BETWEEN 1 AND 256 AND external_id ~ '^[!-~]+$'),
+  external_id TEXT NOT NULL CHECK (length(external_id) >= 1 AND length(external_id) <= 256 AND external_id ~ '^[!-~]+$'),
   member_id TEXT NOT NULL REFERENCES access_members(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (system, external_id)

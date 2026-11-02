@@ -27,7 +27,7 @@ describe('operations contract parity', () => {
   test('every required param has a type', () => {
     for (const op of operations) {
       for (const [key, def] of Object.entries(op.params)) {
-        expect(['string', 'number', 'boolean', 'object', 'array']).toContain(def.type);
+        expect(['string', 'number', 'integer', 'boolean', 'object', 'array']).toContain(def.type);
       }
     }
   });
