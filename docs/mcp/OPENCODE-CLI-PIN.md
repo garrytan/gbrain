@@ -184,8 +184,9 @@ bin-dir prepend).
   and prints NOTHING on stdout, in either format; the only trace is a
   `message="stream error" … small=false … error.error="…"` line in
   `<XDG_DATA_HOME>/opencode/log/opencode.log`. `opencodeOneShotTurn` reads that
-  log, ends the turn on a quota refusal, and reports every main-turn stream
-  error.
+  log, ends the turn on a quota refusal (a provider rate limit, which
+  opencode retries through, does not end it), and reports every main-turn
+  stream error.
 - **MCP tools fire in keyless run mode WITHOUT `--auto`** (verified: the free
   model called `gbrain_recall` and returned a seeded per-run nonce with
   `--auto` absent). `--auto` exists (`auto-approve permissions that are not
@@ -226,7 +227,8 @@ bin-dir prepend).
   reports that no paid turn ran. The free-tier nonce SMOKE (T4) runs only
   with `GBRAIN_REAL_OPENCODE_FREE_TIER_E2E=1`, which the non-gating canary sets.
 - The separate credentialed lane carries the gating nonce SMOKE (T5, one
-  `anthropic/claude-haiku-5-5` turn). The nightly schedule always runs it; on
+  `anthropic/claude-haiku-5-5` turn that, like T4, must show a `gbrain_*`
+  `tool_use` event, since opencode's own file tools could find the nonce). The nightly schedule always runs it; on
   a dispatch, set `run_opencode_paid` or the repository variable
   `GBRAIN_OPENCODE_PAID_E2E=1`. This authorizes paid provider usage, and
   `GBRAIN_PAID_LANES=0` keeps it off everywhere. It requires
