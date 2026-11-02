@@ -1,5 +1,6 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
+import * as fs from 'node:fs';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +12,8 @@ import { runPersistenceAdministration } from '../src/core/persistence/administra
 import { acquireWorktree, claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
 import { assertPhysicalRoot } from '../src/core/persistence/physical-root.ts';
+import { maintenancePreflight } from '../src/core/persistence/prepared-maintenance.ts';
+import { tryAcquireNativeLock } from '../src/core/persistence/native-lock.ts';
 import * as rootRecord from '../src/core/persistence/physical-root-record.ts';
 import { PHYSICAL_ROOT_MARKER, physicalRootReservationPath } from '../src/core/persistence/physical-root-record.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -92,6 +95,60 @@ for (const kind of testBackends()) describe(`physical root device change (${kind
   const put = (f: Parameters<Parameters<typeof fixture>[0]>[0], slug: string) => withVerifiedLocalRegistration(engine, f.registration, () =>
     operationsByName.put_page!.handler(f.ctx, { source_id: f.source, slug, request_id: randomUUID(),
       content: '---\ntype: note\ntitle: Example\n---\nA managed observation after a reboot.\n' })) as Promise<Record<string, unknown>>;
+
+  // Maintenance must reach the same locked device recovery as ordinary writes.
+  // A direct stamp assertion in preflight refused before that recovery ran;
+  // existing tests cover put_page and acquireWorktree, not this earlier gate.
+  // Reuses the production preflight and the synthetic reboot fixture.
+  test('maintenance preflight recovers a device-only change and releases the lock', () => fixture(async f => {
+    const binding = await reboot(f.root, f.source, String(BigInt(f.live) + 1n));
+    const authority = await withVerifiedLocalRegistration(engine, f.registration, () =>
+      maintenancePreflight(engine, f.source, f.root));
+    expect(authority?.binding?.worktree_id).toBe(binding.worktree_id);
+    expect(readJson(join(f.root, PHYSICAL_ROOT_MARKER)).device).toBe(f.live);
+    expect(readJson(physicalRootReservationPath(f.root)).initialDevice).toBe(f.live);
+    const [owner] = await engine.executeRaw<{ manifest: { self_transfer: Record<string, any> } }>('SELECT manifest FROM persistence_worktrees WHERE id=$1::uuid', [binding.worktree_id]);
+    const recorded = owner.manifest.self_transfer;
+    expect([recorded.before.reservation.initialDevice, recorded.before.stamp.device, recorded.reservation.initialDevice, recorded.stamp.device]).toEqual([f.live, f.live, f.live, f.live]);
+    const [topology] = await engine.executeRaw<{ recovery: { stageIdentity: { device: string } } }>(
+      "SELECT recovery FROM persistence_topology_changes WHERE state='recovering' AND $1::uuid=ANY(worktree_ids)", [binding.worktree_id]);
+    expect(topology.recovery.stageIdentity.device).toBe(f.live);
+    const lock = await acquireWorktree(binding);
+    expect(lock).not.toBeNull();
+    await lock?.release();
+  }), 60_000);
+
+  test('maintenance preflight rethrows a device-only change with no birth time and rewrites nothing', () => fixture(async f => {
+    await reboot(f.root, f.source, String(BigInt(f.live) + 1n));
+    const marker = join(f.root, PHYSICAL_ROOT_MARKER), reservation = physicalRootReservationPath(f.root);
+    writeJson(marker, { ...readJson(marker), birth: '0' });
+    writeJson(reservation, { ...readJson(reservation), initialBirth: '0' });
+    const before = [readFileSync(marker, 'utf8'), readFileSync(reservation, 'utf8')];
+    const original = fs.statSync;
+    // Match both births: changing only the stamp would refuse before the device arm on birth-aware filesystems.
+    const spy = spyOn(fs, 'statSync').mockImplementation(((path: fs.PathLike, opts?: { bigint?: boolean }) => {
+      const info = original(path, opts as never) as unknown as fs.BigIntStats;
+      return path === f.root && opts?.bigint ? new Proxy(info, { get: (target, key) => key === 'birthtimeNs' ? 0n : Reflect.get(target, key) }) : info;
+    }) as typeof fs.statSync);
+    try {
+      await expect(withVerifiedLocalRegistration(engine, f.registration, () =>
+        maintenancePreflight(engine, f.source, f.root))).rejects.toMatchObject({ code: 'recovery_required', detail: 'physical_root_device_changed',
+          suggestion: expect.stringContaining('this filesystem reports no birth time') });
+      expect([readFileSync(marker, 'utf8'), readFileSync(reservation, 'utf8')]).toEqual(before);
+    } finally { spy.mockRestore(); }
+  }), 60_000);
+
+  test('maintenance preflight fails closed when the device recovery lock stays busy', () => fixture(async f => {
+    const binding = await reboot(f.root, f.source, String(BigInt(f.live) + 1n));
+    const marker = join(f.root, PHYSICAL_ROOT_MARKER), reservation = physicalRootReservationPath(f.root);
+    const before = [readFileSync(marker, 'utf8'), readFileSync(reservation, 'utf8')];
+    const lock = await tryAcquireNativeLock(binding.coordination_path!); expect(lock).not.toBeNull();
+    try {
+      await expect(withVerifiedLocalRegistration(engine, f.registration, () =>
+        maintenancePreflight(engine, f.source, f.root))).rejects.toMatchObject({ code: 'writer_lock_unavailable' });
+      expect([readFileSync(marker, 'utf8'), readFileSync(reservation, 'utf8')]).toEqual(before);
+    } finally { await lock?.release(); }
+  }), 60_000);
 
   test('a device-only change re-stamps every persisted copy under the native lock and managed writes succeed', () => fixture(async f => {
     const previous = String(BigInt(f.live) + 1n);
