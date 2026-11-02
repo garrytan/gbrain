@@ -57,7 +57,7 @@ identifiers and attribution are available in the pre-removal Git revision
 **Two test-isolation flakes are fixed (found when this release's new test file moved files between CI shards).**
 
 - `test/context-pack-pinned-federation.test.ts` set `search.remote_private_pages=visible` and left its engine in the process-wide privacy cache, so a later test file in the same CI shard saw private pages and `test/private-visibility.test.ts` failed. Its `afterAll` now resets that cache.
-- `test/db-lock-fencing.test.ts` waited a fixed 120 ms for the lock refresher's second retry, which a busy runner could miss. It now waits for the second call, up to 5 s, with the same assertions.
+- `test/db-lock-fencing.test.ts` waited a fixed 120 ms for the lock refresher's second retry, which a busy runner could miss. It now waits for eight retries, up to 5 s, so its not-aborted check still covers a run of failed refreshes, with the same assertions.
 
 ## [0.60.549.0] - 2026-11-02
 
