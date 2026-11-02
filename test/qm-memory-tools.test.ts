@@ -277,6 +277,21 @@ for (const kind of testBackends()) {
       expect(named.structured!.status).toBe('committed');
     }, 60_000);
 
+    test('acting_user "" or null, as a model fills an optional argument, reads as omitted on recall and write (GST-923)', async () => {
+      for (const empty of ['', null]) {
+        for (const as of [alice, { token: 'qm' }, { token: 'bob' }]) {
+          const filled = await recall(as, 'budget ledger', { acting_user: empty });
+          const omitted = await recall(as, 'budget ledger');
+          expect({ isError: filled.isError, code: filled.json.code, text: filled.text }).toEqual({ isError: omitted.isError, code: omitted.json.code, text: omitted.text });
+        }
+        const saved = await call(alice, 'memory_write', { facts: [{ fact: 'Empty acting user write canaryemptyactor', provenance: 'x' }], idempotency_key: randomUUID(), acting_user: empty }, { writeWaitMs: 30_000 });
+        expect(saved.structured?.status ?? saved.text).toBe('committed');
+        const unattested = await call({ token: 'qm' }, 'memory_write', { facts: [{ fact: 'Unattested write canaryemptyrefused', provenance: 'x' }], idempotency_key: randomUUID(), acting_user: empty });
+        expect({ code: unattested.json.code, reason: unattested.json.reason }).toEqual({ code: 'actor_not_attested', reason: 'actor_required' });
+      }
+      expect(await factRows('canaryemptyrefused')).toHaveLength(0);
+    }, 120_000);
+
     test('a squatted member page (readers beyond its member) takes no memory_write, and its receipt is not left behind', async () => {
       const dave: Who = { token: 'qm', actor: DAVE_ID };
       const squat = '---\ntype: note\ntitle: Memory of dave-example\nreadable_by:\n  - member:bob-example\n  - member:dave-example\n---\n# Memory of dave-example\n';
