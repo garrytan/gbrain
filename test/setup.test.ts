@@ -1095,6 +1095,32 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     expect((await setup(b, ['claude-code', '--json'])).doc.steps.map((s: any) => s.action)).toEqual(['keep', 'keep', 'keep']);
   });
 
+  test('claude-code MCP (#8426): post-upgrade keeps each install on its own brain when another install\'s setup hooks share the settings file', async () => {
+    const b = box();
+    const brainA = join(b.root, 'brain-a');
+    const brainB = join(b.root, 'brain-b');
+    expect((await setup(b, ['claude-code', '--json'], { GBRAIN_HOME: brainA })).exitCode).toBe(0);
+    expect((await setup(b, ['claude-code', '--name', 'beta', '--no-hooks', '--json'], { GBRAIN_HOME: brainB })).exitCode).toBe(0);
+    const before = readJson(claudeJson(b)).mcpServers;
+    expect(before.gbrain.env.GBRAIN_HOME).toBe(brainA);
+    expect(before.beta.env.GBRAIN_HOME).toBe(brainB);
+    const cfg = readJson(claudeJson(b));
+    const old = { ...cfg.mcpServers.beta, command: cfg.mcpServers.beta.args[0], args: cfg.mcpServers.beta.args.slice(1) };
+    cfg.mcpServers.beta = old;
+    writeFileSync(claudeJson(b), JSON.stringify(cfg, null, 2));
+    const rb = receipt(b, 'beta');
+    const r = readJson(rb);
+    r.entry_hash = ownedEntryFingerprint(old);
+    writeFileSync(rb, JSON.stringify(r, null, 2));
+    const lines: string[] = [];
+    await withEnv({ ...env(b), GBRAIN_HOME: brainB }, async () => { await refreshHookLaunchers((l) => lines.push(l)); });
+    const after = readJson(claudeJson(b)).mcpServers;
+    expect(lines.join('\n')).toContain("gbrain setup's claude-code MCP server and hooks now start gbrain from its own directory");
+    expect(after.beta.command).toBe(launcher({ ...b, gbrainHome: brainB }));
+    expect(after.beta.env.GBRAIN_HOME).toBe(brainB);
+    expect(after.gbrain.env.GBRAIN_HOME).toBe(brainA);
+  });
+
   test('claude-code MCP (#8426): doctor\'s rerun keeps a recorded --no-hooks, so moving the entry turns no hooks on', async () => {
     const b = box();
     expect((await setup(b, ['claude-code', '--no-hooks', '--json'])).exitCode).toBe(0);
