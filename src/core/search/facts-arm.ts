@@ -237,8 +237,9 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
       { depth: { keyword: 50, cosine: 50, entity: policy.maxRows }, cosineForAll: true });
     const scored = scoreFactCandidates(query, candidates).filter(s => admitted(s, 'reserve')).map(s => ({ c: s.candidate }));
     if (!scored.length) return results;
-    const rowCap = Math.max(results.length, (await opts.rowCap?.().catch(() => 0)) ?? 0);
-    const maxRows = policy.rowShare === null ? Math.min(policy.maxRows, rowCap) : Math.min(policy.maxRows, Math.max(1, Math.floor(rowCap * policy.rowShare)));
+    const callerRows = (await opts.rowCap?.().catch(() => 0)) ?? 0;
+    const rowCap = Math.max(results.length, callerRows);
+    const maxRows = policy.rowShare === null ? Math.min(policy.maxRows, callerRows || policy.maxRows) : Math.min(policy.maxRows, Math.max(1, Math.floor(rowCap * policy.rowShare)));
     const pageSlugs = await readableEntityPages(engine, scored.map(x => x.c), opts.readScope).catch(() => new Set<string>());
     const fromQuoted = await factsFromQuotedPages(engine, scored.map(x => Number(x.c.id)));
     let left = Math.floor(opts.budget * policy.share);

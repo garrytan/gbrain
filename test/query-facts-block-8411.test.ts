@@ -10,6 +10,8 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { handleToolCall } from '../src/mcp/server.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { formatResult } from '../src/cli/main.ts';
+import { applyFactsBlock } from '../src/core/search/facts-arm.ts';
+import { formatSearchRow } from '../src/cli/search-row-format.ts';
 import type { SearchResult } from '../src/core/types.ts';
 import { newSource, page, putPage } from './helpers/pinned-questions-fixture.ts';
 
@@ -77,6 +79,14 @@ describe('#8411 budgeted query: the facts block is capped by limit and never out
     });
   }
 
+  test('the block cap is the caller limit even when page rows already run past it (alias fan-out)', async () => {
+    const pages = Array.from({ length: 5 }, (_, i) => ({ page_id: i + 1, slug: `conversations/launch-${i}`, title: 't', type: 'conversation', chunk_text: 'x',
+      chunk_id: i + 1, chunk_index: 0, chunk_source: 'compiled_truth', score: 1 - i / 10, stale: false, source_id: sourceId })) as unknown as SearchResult[];
+    const rows = await applyFactsBlock(engine, Q, pages, { sourceId, remote: false, budget: 4000, tokenBudget: 4000, rowCap: async () => 1 });
+    expect(rows.filter(r => r.result_type === 'fact').length).toBe(1);
+    expect(rows.filter(r => r.result_type !== 'fact').length).toBe(5);
+  });
+
   test('a budget with a large limit still delivers the whole block (the measured arm is unchanged)', async () => {
     const rows = await local({ limit: 25, token_budget: 4000 });
     expect(rows.filter(isFact).length).toBe(FACTS);
@@ -94,6 +104,13 @@ describe('#8411 CLI rendering', () => {
     expect(out.split('\n').filter(l => l.includes(' fact:')).length).toBe(facts.length);
     expect(out.split('\n').filter(l => l.startsWith('The acme-example')).length).toBe(0);
     expect(out.split('\n').filter(l => /^\[\d/.test(l)).length).toBe(rows.length);
+  });
+
+  test('a fact row without a readable entity page falls back to follow_up, and to the bare id', () => {
+    const fact = { result_type: 'fact', fact_id: '7', score: 0.5, chunk_text: '[observed unknown]\nThe acme-example venue moved.' } as unknown as SearchResult;
+    expect(formatSearchRow({ ...fact, follow_up: { op: 'recall', args: { entity: 'companies/acme-example' } } } as never))
+      .toBe('[0.5000] fact:7 companies/acme-example -- [observed unknown] The acme-example venue moved.');
+    expect(formatSearchRow(fact as never)).toBe('[0.5000] fact:7 -- [observed unknown] The acme-example venue moved.');
   });
 
   test('--json: every fact row carries fact_id', async () => {

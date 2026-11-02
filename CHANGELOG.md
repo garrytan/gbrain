@@ -12,7 +12,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [0.60.555.0] - 2026-11-02
 
-**`gbrain query --limit N` returns N rows again, the facts block never outscores the pages, and the CLI names fact rows instead of printing `undefined` (#8411).** Since the facts block went on by default (v0.60.491.0), it also ran on queries that passed no budget, because the shipped no-budget evidence plan carries an implicit 24,000-token budget. Its 22% share let up to 40 fact rows in ahead of the pages, so `--limit 3` could print more than a dozen fact rows before the 3 pages. Each block row was scored a hair above the top page, so they all showed the same score and outranked every hit, and the human CLI printed them as `[0.84xx] undefined -- …` because fact rows have no page slug.
+**`gbrain query --limit N` without a token budget returns N rows again, a budgeted facts block takes at most N rows, the facts block never outscores the pages, and the CLI names fact rows instead of printing `undefined` (#8411).** Since the facts block went on by default (v0.60.491.0), it also ran on queries that passed no budget, because the shipped no-budget evidence plan carries an implicit 24,000-token budget. Its 22% share let up to 40 fact rows in ahead of the pages, so `--limit 3` could print more than a dozen fact rows before the 3 pages. Each block row was scored a hair above the top page, so they all showed the same score and outranked every hit, and the human CLI printed them as `[0.84xx] undefined -- …` because fact rows have no page slug.
 
 ### What changed
 
