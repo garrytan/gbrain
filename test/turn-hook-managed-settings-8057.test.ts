@@ -55,12 +55,12 @@ describe('Claude Code managed-settings hooks (#8057)', () => {
     });
   });
 
-  test('a gbrain turn-rule hook in managed settings makes the user turn-rule lane yield', async () => {
+  test('a turn-rule hook in managed settings never makes the turn-rule lane yield to itself', async () => {
     const s = sandbox();
-    const turnRule = { hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: '/opt/gbrain/bin/gbrain hook user-prompt', _gbrain: 'turn-rule-v1' }] }] } };
+    const turnRule = { hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'env GBRAIN_HOOK_LANE=turn-rule /opt/gbrain/bin/gbrain hook user-prompt', _gbrain: 'turn-rule-v1' }] }] } };
     writeFileSync(join(s.managed, 'managed-settings.json'), JSON.stringify(turnRule));
     await withEnv(s.env, async () => {
-      expect(turnRuleHookYields('claude-code', s.project, s.managed)).toBe(true);
+      expect(turnRuleHookYields('claude-code', s.project, s.managed)).toBe(false);
     });
   });
 

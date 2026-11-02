@@ -70,6 +70,15 @@ describe('#7286 open_loops for a remote caller bound to a non-google source', ()
     expect(notices.map(n => n.code)).not.toContain('loops_no_google_in_scope');
   });
 
+  test('a non-google scope that returns loops carries no such notice', async () => {
+    await upsertOpenLoop(engine, { sourceId: 'source-a', dedupKey: 'thread:2b7c1d0e9f8a6b54:unanswered_inbound', loopType: 'unanswered_inbound',
+      counterpartyEmail: 'alice@example.com', summary: 'Reply owed to alice@example.com', evidence: [{ message_id: '2b7c1d0e9f8a6b54', quote: 'Any update?' }],
+      threadId: '2b7c1d0e9f8a6b54', detector: 'deterministic_thread' } as Parameters<typeof upsertOpenLoop>[1]);
+    const { result, notices } = await call({});
+    expect(result.count).toBeGreaterThan(0);
+    expect(notices.map(n => n.code)).not.toContain('loops_no_google_in_scope');
+  });
+
   test('a failed google-source read carries no such notice (it is not a grant problem)', async () => {
     const notices: Notice[] = [];
     const failing = new Proxy(engine, { get(t, k, r) {
