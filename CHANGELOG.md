@@ -14,7 +14,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 **The hosted gbrain.io install now tells the agent the brain is there.**
 
-Before, the hosted install in README.md, docs/INSTALL.md, INSTALL_FOR_AGENTS.md and AGENTS.md stopped at `claude mcp add` or `codex mcp add`, so nothing in the harness told the model to use the new MCP server, and in harness trials a server nobody mentions is almost never called. Each now follows the `mcp add` with `bun install -g github:garrytan/gbrain#latest-stable` and `gbrain setup claude-code --instructions-only` or `gbrain setup codex --instructions-only`, which write the brain-first block into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` and the per-turn rule hook beside the hosted MCP entry, without creating a local brain. `--no-instructions` takes them out, and a bare `mcp add` still works.
+Before, the hosted install in README.md, docs/INSTALL.md, INSTALL_FOR_AGENTS.md and AGENTS.md stopped at `claude mcp add` or `codex mcp add`, so nothing in the harness told the model to use the new MCP server, and in harness trials a server nobody mentions is almost never called. Each now follows the `mcp add` with `bun install -g github:garrytan/gbrain#latest-stable` and `gbrain setup claude-code --instructions-only` or `gbrain setup codex --instructions-only`, which write the brain-first block into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` and the per-turn rule hook beside the hosted MCP entry, without creating a local brain. Adding `--no-instructions` to the same command takes them out, and a bare `mcp add` still works.
 
 ## [0.60.544.0] - 2026-11-02
 

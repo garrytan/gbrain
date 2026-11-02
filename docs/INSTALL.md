@@ -14,7 +14,7 @@
 > gbrain setup codex --instructions-only                # after codex mcp add
 > ```
 >
-> The last three lines tell the agent the brain is there; agents seldom call an MCP server nobody told them about. `--instructions-only` writes the [brain-first block](guides/setup.md#brain-first-instructions) into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` with a per-turn rule hook, and leaves the MCP entry alone; `--no-instructions` takes them out. They need Bun 1.4.4 or newer.
+> The last three lines tell the agent the brain is there; agents seldom call an MCP server nobody told them about. `--instructions-only` writes the [brain-first block](guides/setup.md#brain-first-instructions) into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` with a per-turn rule hook, and leaves the MCP entry alone; the same command with `--no-instructions` added takes them out. They need Bun 1.4.4 or newer.
 >
 > The installer is a shell script for macOS and Linux; read it before you run it.
 
