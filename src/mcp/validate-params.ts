@@ -108,8 +108,10 @@ function retryWithValidParam(op: Operation, failure: ParamValidationFailure, par
 
 /**
  * Normalize the absent-idioms real MCP clients send for OPTIONAL params
- * before validation and dispatch: `null` (any type) and `''` (string-typed
- * params) become "not provided".
+ * before validation and dispatch: `null` (any type), `''` (string-typed
+ * params) and the schema-ruled-out empty values in `isAbsentValue` (GST-927)
+ * become "not provided"; then a param declared `appliesWith` another one that
+ * is absent is dropped too (get_page `context` without `grep`).
  *
  * Why: non-Claude models routinely fill optional params with `""` or `null`
  * instead of omitting them. `validateParams` already reads null as absent
@@ -127,20 +129,44 @@ function retryWithValidParam(op: Operation, failure: ParamValidationFailure, par
  *     handler exactly as before.
  *   - Type-mismatched junk is untouched — `limit: ""` keeps its loud
  *     "must be a number" error rather than silently succeeding.
+ *   - A value inside the param's valid range is never dropped, and nothing is
+ *     dropped from a param that declares no range: the result is always a call
+ *     the caller could have sent by leaving the argument out.
  *   - Undeclared keys are untouched (they were already ignored).
  * Copy-on-write: callers' param objects are never mutated.
  */
 export function normalizeOptionalParams(op: Operation, params: Record<string, unknown>): Record<string, unknown> {
   let out: Record<string, unknown> | null = null;
-  for (const [key, def] of Object.entries(op.params)) {
-    if (def.required) continue;
-    const val = params[key];
-    const isAbsentIdiom = val === null || (val === '' && def.type === 'string');
-    if (!isAbsentIdiom) continue;
+  const drop = (key: string) => {
     if (out === null) out = { ...params };
     delete out[key];
+  };
+  for (const [key, def] of Object.entries(op.params)) {
+    if (!def.required && isAbsentValue(def, params[key])) drop(key);
+  }
+  for (const [key, def] of Object.entries(op.params)) {
+    const current = out ?? params;
+    if (!def.required && def.appliesWith && current[key] !== undefined && current[def.appliesWith] === undefined) drop(key);
   }
   return out ?? params;
+}
+
+/**
+ * GST-927: a value that can only mean "not provided" for this param's schema. `null` anywhere and `''` on a string
+ * (GST-923), plus the empty values GPT-style callers fill in that the schema rules out: 0 below a numeric range that
+ * excludes it, `[]` where the list must be non-empty, `{}` where the object requires a member, and `false` on a
+ * flag that acts only when true. Every other value, including any value inside the valid range, is kept.
+ */
+function isAbsentValue(def: Operation['params'][string], val: unknown): boolean {
+  if (val === null) return true;
+  if (val === '') return def.type === 'string';
+  if (val === 0) return (def.minimum ?? 0) > 0 || (def.exclusiveMinimum ?? -1) >= 0;
+  if (val === false) return def.actsWhenTrue === true;
+  if (Array.isArray(val)) return val.length === 0 && (def.minItems ?? 0) >= 1;
+  if (typeof val === 'object' && def.type === 'object') {
+    return Object.keys(val as object).length === 0 && Object.values(def.properties ?? {}).some(member => member.required);
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------

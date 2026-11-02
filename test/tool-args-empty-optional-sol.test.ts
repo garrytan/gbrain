@@ -185,3 +185,121 @@ describe('sweep: every read op treats "" and null on optional args as omitted', 
     }, 300_000);
   }
 });
+
+/**
+ * GST-927: the non-string empty values GPT-6.1 Sol fills in, GBRA-278's sweep list (21 zeros, 5 empty arrays,
+ * 2 empty objects, 1 false). Each read as absent only because the param's schema rules it out (minimum,
+ * exclusiveMinimum, minItems, an object with a required member, actsWhenTrue): on master every one refused.
+ */
+const SWEEP: Array<[op: string, param: string, value: unknown]> = [
+  ['get_page', 'around_chunk_id', 0], ['get_page', 'max_bytes', 0], ['get_page', 'context', 0],
+  ['list_write_conflicts', 'limit', 0], ['search_exact', 'limit', 0], ['get_links', 'limit', 0], ['get_backlinks', 'limit', 0],
+  ['wanted_pages', 'limit', 0], ['get_versions', 'limit', 0], ['get_chunks', 'limit', 0], ['find_orphans', 'limit', 0],
+  ['rank_entities', 'limit', 0], ['search', 'return_window', 0], ['search_exact', 'max_seconds', 0],
+  ['get_write_attribution', 'fact', 0], ['get_write_attribution', 'take', 0], ['get_write_attribution', 'timeline', 0],
+  ['list_skills', 'schema_version', 0], ['get_skill', 'schema_version', 0], ['takes_scorecard', 'min_n', 0], ['open_loops', 'id', 0],
+  ['search_exact', 'types', []], ['traverse_graph', 'hops', []], ['run_doctor', 'only', []], ['whois', 'types', []], ['rank_entities', 'types', []],
+  ['get_page', 'lines', {}], ['get_page', 'bytes', {}],
+  ['get_versions', 'diff', false],
+];
+
+describe('GST-927: schema-ruled-out empty values (0, [], {}, false) read as omitted', () => {
+  test('the table is GBRA-278\'s sweep list', () => {
+    const count = (pred: (v: unknown) => boolean) => SWEEP.filter(([, , v]) => pred(v)).length;
+    expect([count(v => v === 0), count(v => Array.isArray(v)), count(v => !!v && typeof v === 'object' && !Array.isArray(v)), count(v => v === false)]).toEqual([21, 5, 2, 1]);
+    for (const [op, param] of SWEEP) expect(operationsByName[op]?.params[param]?.required).not.toBe(true);
+  });
+
+  test('every sweep value matches the call with the argument omitted, on every entry point', async () => {
+    const mismatches: string[] = [];
+    for (const [opName, param, value] of SWEEP) {
+      const op = operationsByName[opName]!;
+      const base = { ...requiredArgs(op), ...(opName === 'get_page' || opName === 'get_versions' || opName === 'get_write_attribution' ? { slug: SLUG } : {}) };
+      for (const [name, call] of Object.entries(paths)) {
+        const omitted = await call(opName, base);
+        const filled = await call(opName, { ...base, [param]: value });
+        if (summary(filled) !== summary(omitted)) mismatches.push(`${name} ${opName} ${param}=${JSON.stringify(value)}: omitted=${summary(omitted)} filled=${summary(filled)} (${filled.text.slice(0, 120)})`);
+      }
+    }
+    expect(mismatches).toEqual([]);
+  }, 300_000);
+
+  test('a value inside the valid range, a negative number and a non-empty list are never dropped', async () => {
+    const outcomes: Record<string, string[]> = {};
+    for (const [name, call] of Object.entries(paths)) {
+      outcomes[name] = [
+        refusal(await call('get_page', { slug: SLUG, around_chunk_id: -1 })),
+        refusal(await call('get_page', { slug: SLUG, max_bytes: -5 })),
+        refusal(await call('list_write_conflicts', { limit: 101 })),
+        refusal(await call('get_page', { slug: SLUG, lines: { from: 1, count: 2 }, bytes: { offset: 0, length: 10 } })),
+        refusal(await call('traverse_graph', { slug: SLUG, depth: 1, hops: [{ link_type: 'founded', toward: 'object' }] })),
+        refusal(await call('get_versions', { slug: SLUG, diff: true })),
+      ];
+    }
+    const refused = Object.fromEntries(Object.entries(outcomes).map(([k, v]) => [k, v.filter(o => o !== 'not_registered')]));
+    expect(refused).toEqual(Object.fromEntries(Object.entries(outcomes).map(([k, v]) => [k, Array(v.filter(o => o !== 'not_registered').length).fill('invalid_params')])));
+    expect(refused['mcp remote (http)']).toHaveLength(6);
+  }, 120_000);
+});
+
+/**
+ * GST-927: the shapes GBEV-3 replayed from 651 recorded Sol calls (gbrain-evals
+ * test/eval/skillopt-rollout-empty-args.test.ts). On master, get_page refused `context` without `grep` and
+ * traverse_graph refused `hops: []` beside depth/link_type/direction.
+ */
+const SOL_GET_PAGE = {
+  fuzzy: false, include_content: true, content_only: false, body: 'full', lines: {}, bytes: {}, around_chunk_id: 0,
+  context_lines: 20, cursor: '', outline_from: 0, section: '', grep: '', context: 1, include_deleted: false,
+  include_timeline_entries: false, grammar_diagnostics: false, include_quarantined: false, known_as_of: '', source_id: 'default',
+};
+
+describe("GST-927: GBEV-3's replayed Sol shapes", () => {
+  test('get_page with context but no grep, and every other optional filled Sol-style, reads the page on every entry point', async () => {
+    const results: Record<string, string> = {};
+    for (const [name, call] of Object.entries(paths)) {
+      const out = await call('get_page', { slug: SLUG, ...SOL_GET_PAGE });
+      results[name] = out.ok && out.text.includes(BODY_MARKER) ? 'read' : `${summary(out)}: ${out.text.slice(0, 160)}`;
+    }
+    expect(results).toEqual(Object.fromEntries(Object.keys(paths).map(k => [k, 'read'])));
+  });
+
+  test('context with grep still applies, and context with a real grep is never dropped', async () => {
+    const out = await paths['mcp remote (http)']!('get_page', { slug: SLUG, grep: 'marker', context: 0 });
+    expect(out.ok).toBe(true);
+    expect(out.text).toContain('"context":0');
+  });
+
+  test('traverse_graph with hops: [] beside depth, link_type and direction walks the graph on every entry point', async () => {
+    const results: Record<string, string> = {};
+    for (const [name, call] of Object.entries(paths)) {
+      const sol = await call('traverse_graph', { slug: SLUG, depth: 1, link_type: 'founded', direction: 'out', hops: [], source_id: 'default', all_sources: false });
+      const plain = await call('traverse_graph', { slug: SLUG, depth: 1, link_type: 'founded', direction: 'out', source_id: 'default', all_sources: false });
+      results[name] = sol.ok && summary(sol) === summary(plain) ? 'walked' : `${summary(sol)}: ${sol.text.slice(0, 160)}`;
+    }
+    expect(results).toEqual(Object.fromEntries(Object.keys(paths).map(k => [k, 'walked'])));
+  });
+
+  test("Sol's recorded window arguments still refuse: two window selectors are real values that change the answer", async () => {
+    const out = await paths['mcp remote (http)']!('get_page', { slug: SLUG, ...SOL_GET_PAGE, lines: { from: 1, count: 200 }, bytes: { offset: 0, length: 40000 } });
+    expect(out.ok).toBe(false);
+    expect(out.text).toContain('pass one window selector, not 2');
+  });
+
+  test('known_as_of beside read-view arguments refuses, naming each argument to drop, with a fix that keeps only recorded-time arguments', async () => {
+    const args = { slug: SLUG, ...SOL_GET_PAGE, known_as_of: '2026-10-01T12:00:00Z', max_bytes: 40000, view: 'read' };
+    for (const [name, call] of Object.entries(paths)) {
+      const out = await call('get_page', args);
+      expect([name, refusal(out)]).toEqual([name, 'invalid_params']);
+      expect(out.text).toContain('get_page: known_as_of does not combine with include_content');
+    }
+    expect((await paths['mcp remote (http)']!('get_page', args)).text).toContain('known_as_of does not combine with include_content, context_lines, max_bytes, view, outline_from.');
+    const remote = JSON.parse((await dispatchToolCall(engine, 'get_page', args, { remote: true, transport: 'http', sourceId: 'default' })).content[0]!.text) as { suggestion?: string };
+    expect(remote.suggestion).toContain('Drop `include_content`, `context_lines`, `max_bytes`, `view`, `outline_from` to read the page as recorded');
+    const local = await handleToolCall(engine, 'get_page', args).then(() => null, (e: { suggestion?: string; fix?: { mcp?: { tool: string; arguments: Record<string, unknown> } } }) => e);
+    expect(local?.suggestion).toContain('Drop --include-content, --context-lines, --max-bytes, --view, --outline-from to read the page as recorded');
+    expect(local?.fix?.mcp).toEqual({ tool: 'get_page', arguments: { slug: SLUG, known_as_of: '2026-10-01T12:00:00Z', source_id: 'default', include_deleted: false, body: 'full' } });
+    const retried = await dispatchToolCall(engine, 'get_page', local!.fix!.mcp!.arguments, { remote: true, transport: 'http', sourceId: 'default' });
+    expect(retried.content[0]!.text).not.toContain('does not combine with');
+  });
+});
+

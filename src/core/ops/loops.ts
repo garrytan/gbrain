@@ -410,7 +410,7 @@ const open_loops: Operation = {
   params: {
     group_by: { type: 'string', enum: ['counterparty', 'none'], description: "Default 'counterparty' (ranked groups)." },
     status: { type: 'string', enum: ['open', 'done', 'dropped', 'stale'], description: "Default 'open', except with `id`, where any status matches." },
-    id: { type: 'number', description: 'Fetch the single loop with this id (ids come from earlier open_loops results). Matches any status unless `status` is passed; the source scope still applies, and the grouped view omits `text`.' },
+    id: { type: 'number', minimum: 1, description: 'Fetch the single loop with this id (ids come from earlier open_loops results). Matches any status unless `status` is passed; the source scope still applies, and the grouped view omits `text`.' },
     loop_type: { type: 'string', enum: ['commitment_owed_by_me', 'commitment_owed_to_me', 'unanswered_inbound', 'unanswered_outbound', 'decision_pending'], description: 'Filter to one loop type.' },
     counterparty: { type: 'string', description: 'Filter to one counterparty (slug or email).' },
     limit: { type: 'number', description: 'Grouped: max groups (default 3). Flat: max loops (default 50). The internal fetch is capped at 500 rows; `truncated: true` marks a hit.' },
