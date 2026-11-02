@@ -10,6 +10,7 @@ import { opError } from './contract.ts';
 import { hostFix, readFix } from './op-fix.ts';
 import { validateFilename, validatePageSlug, validateUploadPath } from './context.ts';
 import { privatePagesFilterForCaller, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { hookSessionCwd } from '../session-cwd.ts';
 
 // --- File Operations ---
 
@@ -80,7 +81,7 @@ const file_upload: Operation = {
     // can upload from anywhere on the filesystem (loose) — the user owns the machine.
     // Default is strict when ctx.remote is undefined (defense-in-depth).
     const strict = ctx.remote !== false;
-    validateUploadPath(filePath, process.cwd(), strict);
+    validateUploadPath(filePath, hookSessionCwd(), strict);
     if (pageSlug) validatePageSlug(pageSlug);
     const filename = basename(filePath);
     validateFilename(filename);

@@ -179,7 +179,8 @@ export function desiredMcpEntry(plan: ClaudeSetupPlan): Record<string, unknown> 
   const env: Record<string, string> = {};
   if (plan.gbrainHomeEnv) env.GBRAIN_HOME = plan.gbrainHomeEnv;
   if (plan.sourceId) env.GBRAIN_SOURCE = plan.sourceId;
-  return { type: 'stdio', command: plan.launcher, args: stdioServeArgv(plan.launcher, plan.surface, plan.advertise).slice(1), env };
+  // The harness starts stdio servers in the session's directory, so serve starts through the launcher too (#8426).
+  return { type: 'stdio', command: hookLauncherPath(plan.brainHome), args: stdioServeArgv(plan.launcher, plan.surface, plan.advertise), env };
 }
 
 export function desiredHookHashes(plan: ClaudeSetupPlan): HookHashes {
@@ -275,8 +276,8 @@ export async function applyClaudeSetup(
   const paths = claudeSetupPaths(plan);
   const lock = await acquireBootstrapLock(dirname(paths.configPath));
   try {
-    // Every hook command starts gbrain through the launcher, so it goes down before anything names it (#8424).
-    if (plan.events.length) ensureHookLauncher(hookLauncherPath(plan.brainHome));
+    // The MCP entry and every hook command start gbrain through the launcher, so it goes down before anything names it (#8424, #8426).
+    ensureHookLauncher(hookLauncherPath(plan.brainHome));
     const found = inspectClaudeSetup(plan);
     if (opts.mcpMustBeCurrent && opts.pluginOwner === null && found.mcp.state !== 'current') throw new Error(`the '${plan.name}' MCP entry changed before the hooks were rewritten`);
     const now = new Date().toISOString();

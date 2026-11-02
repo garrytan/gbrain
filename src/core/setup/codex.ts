@@ -136,11 +136,12 @@ export function readCodexSetupReceipt(receiptPath: string): { setup: CodexSetupR
 
 const writeReceipt = (path: string, receipt: CodexSetupReceipt) => atomicWriteTextFile(path, `${JSON.stringify(receipt, null, 2)}\n`, { forceMode: 0o600 });
 
-export function desiredCodexMcpEntry(plan: Pick<CodexSetupPlan, 'launcher' | 'surface' | 'advertise' | 'gbrainHomeEnv' | 'sourceId'>): Record<string, CodexTomlValue> {
+export function desiredCodexMcpEntry(plan: Pick<CodexSetupPlan, 'launcher' | 'brainHome' | 'surface' | 'advertise' | 'gbrainHomeEnv' | 'sourceId'>): Record<string, CodexTomlValue> {
   const env: Record<string, string> = {};
   if (plan.gbrainHomeEnv) env.GBRAIN_HOME = plan.gbrainHomeEnv;
   if (plan.sourceId) env.GBRAIN_SOURCE = plan.sourceId;
-  return { command: plan.launcher, args: stdioServeArgv(plan.launcher, plan.surface, plan.advertise).slice(1), ...(Object.keys(env).length ? { env } : {}) };
+  // Codex starts stdio servers in the session's directory, so serve starts through the launcher too (#8426).
+  return { command: hookLauncherPath(plan.brainHome), args: stdioServeArgv(plan.launcher, plan.surface, plan.advertise), ...(Object.keys(env).length ? { env } : {}) };
 }
 
 function desiredGroups(plan: CodexSetupPlan): Partial<Record<CodexSetupEvent, CodexHookGroup>> {
@@ -239,8 +240,8 @@ export async function applyCodexSetup(
   mkdirSync(dirname(paths.configPath), { recursive: true, mode: 0o700 });
   const lock = await acquireBootstrapLock(dirname(paths.configPath));
   try {
-    // Every hook command starts gbrain through the launcher, so it goes down before anything names it (#8424).
-    if (plan.events.length) ensureHookLauncher(hookLauncherPath(plan.brainHome));
+    // The MCP table and every hook command start gbrain through the launcher, so it goes down before anything names it (#8424, #8426).
+    ensureHookLauncher(hookLauncherPath(plan.brainHome));
     const found = inspectCodexSetup(plan);
     if (opts.mcpMustBeCurrent && opts.pluginOwner === null && found.mcp.state !== 'current') throw new Error(`the '${plan.name}' MCP entry changed before the hooks were rewritten`);
     const prior = found.prior;

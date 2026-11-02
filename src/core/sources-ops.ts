@@ -62,6 +62,7 @@ import { DEFAULT_CALENDAR_ID } from './google/types.ts';
 import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
 import { deleteSourceRow } from './source-delete.ts';
 import { defaultCloneDir, isOwnedClone } from './url-clone.ts';
+import { hookSessionCwd } from './session-cwd.ts';
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 
@@ -812,7 +813,7 @@ export interface ScopedSourceResolution {
  */
 export async function resolveScopedSourceOrThrow(
   engine: BrainEngine,
-  cwd: string = process.cwd(),
+  cwd: string = hookSessionCwd(),
 ): Promise<ScopedSourceResolution> {
   const resolved = await resolveSourceWithTier(engine, null, cwd);
   if (resolved.tier !== 'seed_default') {

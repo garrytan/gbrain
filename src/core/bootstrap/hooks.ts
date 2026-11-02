@@ -1129,6 +1129,8 @@ export interface ClaudeMcpRegistration {
   surface?: McpSurface | null;
   /** `serve --advertise`; null lists the whole surface (registrationAdvertise decides). */
   advertise?: McpSurface | null;
+  /** The trusted-directory launcher serve starts through (src/core/setup/hook-launcher.ts): the harness starts stdio servers in the session's directory (#8426). User scope only; a project file travels. */
+  hookLauncher?: string;
 }
 
 export type CodexMcpRegistration = Omit<ClaudeMcpRegistration, 'scope'>;
@@ -1156,7 +1158,7 @@ export function registerClaudeMcp(p: ClaudeMcpRegistration): string[][] {
     '-e', `GBRAIN_SOURCE=${p.sourceId}`,
   ];
   if (p.gbrainHome) argv.push('-e', `GBRAIN_HOME=${p.gbrainHome}`);
-  argv.push('--', ...stdioServeArgv(p.gbrainBin, p.surface, p.advertise ?? null));
+  argv.push('--', ...(p.hookLauncher ? [p.hookLauncher] : []), ...stdioServeArgv(p.gbrainBin, p.surface, p.advertise ?? null));
   return [argv];
 }
 
@@ -1173,6 +1175,6 @@ export function registerCodexMcp(p: CodexMcpRegistration): string[][] {
   const name = p.name ?? 'gbrain';
   const argv = ['codex', 'mcp', 'add', name, '--env', `GBRAIN_SOURCE=${p.sourceId}`];
   if (p.gbrainHome) argv.push('--env', `GBRAIN_HOME=${p.gbrainHome}`);
-  argv.push('--', ...stdioServeArgv(p.gbrainBin, p.surface, p.advertise ?? null));
+  argv.push('--', ...(p.hookLauncher ? [p.hookLauncher] : []), ...stdioServeArgv(p.gbrainBin, p.surface, p.advertise ?? null));
   return [argv];
 }
