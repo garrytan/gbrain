@@ -275,7 +275,7 @@ function startDelegatedSyncScoped(
   let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
   if (options.timeoutSeconds > 0) {
     deadlineTimer = setTimeout(() => {
-      if (!isTerminal(job.state)) {
+      if (!isTerminal(job.state) && !job.result) {
         log(`abort job=${job.id} reason=deadline after ${options.timeoutSeconds}s`);
         job.state = 'aborting';
         controller.abort();
@@ -319,7 +319,6 @@ function startDelegatedSyncScoped(
         },
       });
       job.result = toWireSyncResult(r);
-      job.state = 'done';
       log(
         `done job=${job.id} status=${r.status} added=${r.added} modified=${r.modified} ` +
         `deleted=${r.deleted} in=${Math.round((Date.now() - job.startedAt) / 1000)}s`,
@@ -330,6 +329,7 @@ function startDelegatedSyncScoped(
       if (!options.dryRun && !options.noEmbed && r.added + r.modified > 0) {
         scheduleDeferredSyncEmbeds(engine, sourceId);
       }
+      job.state = 'done';
     } catch (e) {
       fail(e);
     } finally {
@@ -431,7 +431,6 @@ async function startVerifiedDelegatedSync(
           const id = sourceId ?? 'default';
           job.next = drainNext(r, syncResumeCommand(managedSyncResumeArgs({ sourceId: id, processingOptions: options })), id);
         }
-        job.state = 'done';
         log(
           `done job=${job.id} status=${r.status} added=${r.added} modified=${r.modified} ` +
           `deleted=${r.deleted}${r.drain ? ` drain=${r.drain.outcome}` : ''}${stopFields} in=${Math.round((Date.now() - job.startedAt) / 1000)}s`,
@@ -442,6 +441,7 @@ async function startVerifiedDelegatedSync(
         if (!managed && !options.dryRun && !options.noEmbed && r.added + r.modified > 0) {
           scheduleDeferredSyncEmbeds(engine, sourceId);
         }
+        job.state = 'done';
       }));
     } catch (e) {
       hooks.fail(e);
@@ -484,7 +484,7 @@ export function abortDelegatedSync(jobId: string): SyncAbortResponse {
   if (!job || job.id !== jobId) {
     return { ok: false, protocol: 2, error: 'unknown_job' };
   }
-  if (!isTerminal(job.state)) {
+  if (!isTerminal(job.state) && !job.result) {
     log(`abort job=${job.id} reason=client`);
     job.state = 'aborting';
     job.controller.abort();

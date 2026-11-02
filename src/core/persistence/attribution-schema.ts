@@ -21,6 +21,7 @@
  * until it is.
  */
 import { TRUST_ROW_COLUMNS } from '../trust/schema.ts';
+import { requireMaintainerPoliciesSql } from '../derived-state-maintainers.ts';
 
 /** created_by and last_mutated_by on facts, takes and timeline_entries. */
 export const ROW_ATTRIBUTION_COLUMNS = [
@@ -151,11 +152,13 @@ END $fn$`;
  * A version row snapshots the page before the archiving write changes it, in
  * the same transaction, so the page row still carries the snapshotted
  * revision and its writer. The archiving actor comes from the settings.
+ * Under RLS the archiving writer needs the page (#7637, derived-state-maintainers.ts).
  */
-const STAMP_VERSION_FUNCTION = `CREATE OR REPLACE FUNCTION gbrain_stamp_version_attribution() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+export const STAMP_VERSION_FUNCTION = `CREATE OR REPLACE FUNCTION gbrain_stamp_version_attribution() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 DECLARE req uuid; principal_kind text; principal_id text;
 BEGIN${SETTINGS}
   IF (NEW.write_request_id, NEW.write_principal_kind, NEW.write_principal_id) IS NOT DISTINCT FROM (NULL::uuid, NULL::text, NULL::text) THEN
+    ${requireMaintainerPoliciesSql('pages', ['SELECT'], '    ')}
     SELECT p.revision_write_request_id, p.revision_principal_kind, p.revision_principal_id
       INTO NEW.write_request_id, NEW.write_principal_kind, NEW.write_principal_id
       FROM pages p WHERE p.id = NEW.page_id AND p.knowledge_revision = NEW.knowledge_revision;

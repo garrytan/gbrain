@@ -20,6 +20,7 @@ import { withConnectorSync } from '../src/core/persistence/connector-sync.ts';
 import { attemptedConnectorSourceIds, recordConnectorSyncAttempt, seedConnectorDispatchAttempts } from '../src/core/persistence/connector-state.ts';
 import { CONNECTOR_SOURCE_PHASES } from '../src/core/cycle/phase-scope.ts';
 import { LATEST_VERSION } from '../src/core/migrate.ts';
+import { recordRateLimit } from '../src/core/connectors/api-source.ts';
 
 let engine: PGLiteEngine;
 let dir: string;
@@ -146,3 +147,16 @@ describe('#5673 connector dispatch gate', () => {
 });
 
 afterAll(() => { rmSync(dir, { recursive: true, force: true }); });
+
+describe('connector provider rate limits', () => {
+  test('a recorded provider reset holds the connector sync until it passes', async () => {
+    await addSource('slack-a', { kind: 'slack', s_channels: 'CGENERAL01' });
+    await recordConnectorSyncAttempt(engine, 'slack-a');
+    await recordRateLimit(engine, 'slack-a', Date.now() + 600_000);
+    await freshness([]);
+    expect(await jobs()).toEqual([]);
+    await recordRateLimit(engine, 'slack-a', Date.now() - 1_000);
+    await freshness([]);
+    expect((await jobs()).map(job => [job.name, job.data.sourceId])).toEqual([['sync', 'slack-a']]);
+  });
+});

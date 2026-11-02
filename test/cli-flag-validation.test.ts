@@ -128,6 +128,12 @@ describe('#2185 acceptance — real usage stays legal', () => {
     expect(validateCommandFlags('sources', ['push', BOGUS])).toBe(BOGUS);
   });
 
+  test('sources add accepts the meetings and slack flags the lifecycle parser reads', () => {
+    expect(validateCommandFlags('sources', ['add', 'm', '--kind', 'meetings', '--provider', 'fireflies', '--transcript', 'full', '--lookback-days', '3',
+      '--sync-interval-min', '60', '--record', 'database', '--visibility', 'private'])).toBeNull();
+    expect(validateCommandFlags('sources', ['add', 's', '--kind', 'slack', '--channels', 'C0123ABCDEF', '--timezone', 'UTC', '--max-requests', '100', '--skip', 'CNOPE00001'])).toBeNull();
+  });
+
   // Pre-landing review regression: the validator rejected the CLI-local
   // flags makeContext consumes OUTSIDE the op contract — `gbrain search
   // "x" --source y` and `--dry-run` invocations exited 1 as unknown flags.

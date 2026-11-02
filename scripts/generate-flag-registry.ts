@@ -55,6 +55,8 @@ const EXTRA_FLAGS: Record<string, string[]> = {
   // Deferred persistence routing reaches runForget in recall.ts two levels deep;
   // `forget --purge` hands off from there to src/commands/forget-purge.ts.
   forget: ['--reason', '--request-id', '--purge', '--dry-run', '--yes', '--match', '--status', '--vacuum', '--all-subjects'],
+  // sources add reads the meetings and slack options as bare names in src/commands/sources-lifecycle-args.ts (its valued set).
+  sources: ['--provider', '--transcript', '--lookback-days', '--sync-interval-min', '--record', '--visibility', '--channels', '--timezone', '--max-requests', '--skip'],
 };
 
 /**

@@ -8,6 +8,7 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 import { ERROR_SCHEMA } from '../src/core/verbs.ts';
 import { validateAgainstSchema } from '../src/core/verbs/conformance.ts';
 
@@ -151,9 +152,11 @@ describe('actual remote source selection', () => {
     for (const source of ['default', 'peer', 'denied']) {
       if (source !== 'default') await remote.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [source]);
       const text = `Telescope evidence from ${source}.`;
-      await remote.putPage('notes/telescope', { type: 'note', title: 'Telescope', compiled_truth: text }, { sourceId: source });
-      await installFixtureChunks(remote, 'notes/telescope', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: text }], { sourceId: source });
-      await remote.insertFact({ fact: text, source: 'synthetic', visibility: 'world' }, { source_id: source });
+      await asOwner(remote, async tx => {
+        await tx.putPage('notes/telescope', { type: 'note', title: 'Telescope', compiled_truth: text }, { sourceId: source });
+        await installFixtureChunks(tx, 'notes/telescope', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: text }], { sourceId: source });
+        await tx.insertFact({ fact: text, source: 'synthetic', visibility: 'world' }, { source_id: source });
+      });
     }
     await remote.executeRaw("INSERT INTO sources(id,name,archived) VALUES('archived-example','archived-example',true)");
     const dispatch = (args: Record<string, unknown>) => dispatchToolCall(remote, 'recall', args, {
@@ -221,8 +224,8 @@ describe('actual remote source selection', () => {
       ['older thin session match', 'wanted-session', '2020-01-01'],
       ['newer thin unrelated fact', 'other-session', '2024-01-01'],
     ]) {
-      await remote.insertFact({ fact, source: 'synthetic', entity_slug: entity,
-        source_session: session, valid_from: new Date(date), visibility: 'world' }, { source_id: 'default' });
+      await asOwner(remote, tx => tx.insertFact({ fact, source: 'synthetic', entity_slug: entity,
+        source_session: session, valid_from: new Date(date), visibility: 'world' }, { source_id: 'default' }));
     }
     const dispatch = (args: Record<string, unknown>) => dispatchToolCall(remote, 'recall', args, {
       remote: true, sourceId: 'default', config: { engine: 'pglite' },

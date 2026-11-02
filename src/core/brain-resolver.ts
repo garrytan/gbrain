@@ -24,6 +24,7 @@ import { join, dirname, resolve } from 'path';
 import { HOST_BRAIN_ID, loadMounts, validateMountId, type MountEntry } from './brain-registry.ts';
 import { isTrustedDotfile, realpathOrResolve } from './path-confine.ts';
 import { getCliOptions } from './cli-options.ts';
+import { hookSessionCwd } from './session-cwd.ts';
 
 const DOTFILE = '.gbrain-mount';
 /** Same regex as brain-registry. Kept in sync. */
@@ -95,7 +96,7 @@ function longestPathPrefixMount(mounts: MountEntry[], cwd: string): MountEntry |
  */
 export function resolveBrainId(
   explicit: string | null | undefined,
-  cwd: string = process.cwd(),
+  cwd: string = hookSessionCwd(),
   mountsLoader: () => MountEntry[] = loadMounts,
 ): string {
   // 1. Explicit flag wins.

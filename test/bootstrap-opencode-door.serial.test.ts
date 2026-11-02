@@ -21,6 +21,7 @@
  *
  * Serial: mutates GBRAIN_HOME and XDG_CONFIG_HOME.
  */
+import { hookLauncherPath } from '../src/core/setup/hook-launcher.ts';
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -187,8 +188,9 @@ describe('opencode workspace lane — default scope is USER-GLOBAL', () => {
       type: string; command: string[]; environment: Record<string, string>; enabled: boolean;
     };
     expect(entry.type).toBe('local');
-    expect(entry.command[0]).toBe(FAKE_BIN); // user scope: absolute path
-    expect(entry.command.slice(1)).toEqual(['serve', '--surface', 'starter', '--advertise', 'verbs']);
+    // user scope: gbrain's launcher, then the absolute path (#8435: opencode starts it in the session's directory)
+    expect(entry.command.slice(0, 2)).toEqual([hookLauncherPath(), FAKE_BIN]);
+    expect(entry.command.slice(2)).toEqual(['serve', '--surface', 'starter', '--advertise', 'verbs']);
     expect(entry.environment.GBRAIN_SOURCE).toBeDefined();
     expect(entry.enabled).toBe(true);
 
@@ -384,11 +386,14 @@ describe('opencode never-narrow: a rewritten entry keeps its surface form', () =
   }
 
   test('a pinned --surface stays pinned, a bare serve stays bare, an explicit --surface wins', async () => {
-    expect(await rerunWith([FAKE_BIN, 'serve', '--surface', 'full'])).toEqual([FAKE_BIN, 'serve', '--surface', 'full']);
+    // A rewrite also moves the entry onto gbrain's launcher (#8435).
+    const L = hookLauncherPath();
+    expect(await rerunWith([FAKE_BIN, 'serve', '--surface', 'full'])).toEqual([L, FAKE_BIN, 'serve', '--surface', 'full']);
     // S0: starter differs from the registration default (full), so keeping it is observable.
-    expect(await rerunWith([FAKE_BIN, 'serve', '--surface', 'starter'])).toEqual([FAKE_BIN, 'serve', '--surface', 'starter']);
-    expect(await rerunWith([FAKE_BIN, 'serve'])).toEqual([FAKE_BIN, 'serve']);
-    expect(await rerunWith([FAKE_BIN, 'serve', '--surface', 'full'], ['--surface', 'verbs'])).toEqual([FAKE_BIN, 'serve', '--surface', 'verbs']);
+    expect(await rerunWith([FAKE_BIN, 'serve', '--surface', 'starter'])).toEqual([L, FAKE_BIN, 'serve', '--surface', 'starter']);
+    expect(await rerunWith([FAKE_BIN, 'serve'])).toEqual([L, FAKE_BIN, 'serve']);
+    expect(await rerunWith([FAKE_BIN, 'serve', '--surface', 'full'], ['--surface', 'verbs'])).toEqual([L, FAKE_BIN, 'serve', '--surface', 'verbs']);
+    expect(await rerunWith([L, FAKE_BIN, 'serve', '--surface', 'full'])).toEqual([L, FAKE_BIN, 'serve', '--surface', 'full']);
   }, 60_000);
 });
 

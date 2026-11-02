@@ -40,7 +40,7 @@ import { refreshFenceClear } from './worktree-refresh-schema.ts';
 export const NOOP_SETTLE_BATCH = 50;
 
 /** Guard failures that leave an effect for the runner, which records them as it does today. */
-const LEFT_FOR_RUNNER = new Set(['owner_unavailable', 'source_changed', 'recovery_required']);
+const LEFT_FOR_RUNNER = new Set(['owner_unavailable', 'source_changed', 'recovery_required', 'owner_marker_missing']);
 
 type Candidate = Pick<PersistenceEffect, 'id' | 'kind' | 'source_id' | 'source_incarnation' | 'worktree_id'>;
 

@@ -24,6 +24,7 @@ import { allowedOpNames, createStdioSurfaceState } from '../src/mcp/surface.ts';
 import { stampEvidence } from '../src/core/search/evidence.ts';
 import { seedOffPath } from './helpers/evidence-delivery-fixture.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 
 // An HTTP client on the full surface with a read grant: `fetch` is callable, so lean rows carry `id`.
 const REMOTE: DispatchOpts = { remote: true, transport: 'http', sourceId: 'default', auth: { token: 't', clientId: 'client-a', clientName: 'a', scopes: ['read'], expiresAt: Date.now() / 1000 + 3600 } };
@@ -37,7 +38,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  await seedOffPath(engine);
+  await asOwner(engine, tx => seedOffPath(tx));
 }, 120_000);
 
 afterAll(async () => { await engine?.disconnect(); });

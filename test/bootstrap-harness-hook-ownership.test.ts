@@ -143,6 +143,12 @@ describe('classifyHarnessHook: grammar is not ownership', () => {
     expect(classifyHarnessHook(entry(buildClaudeHookCommand(BIN, 'Stop', { GBRAIN_SOURCE: 'ws' })), 'Stop', ME)).toBeNull();
     expect(classifyHarnessHook(entry('echo hi'), 'Stop', ME)).toBeNull();
   });
+
+  test('#8424: a wrapper in front of this install\'s binary is the user\'s, never an owned harness command', () => {
+    const wrapped = entry(buildClaudeHookCommand(BIN, 'Stop', HARNESS_ENV, '/opt/example/user-wrapper'));
+    expect(classifyHarnessHook(wrapped, 'Stop', ME)?.ownership).toBe('unowned');
+    expect(classifyHarnessHook(wrapped, 'Stop', 'any')?.ownership).toBe('unowned');
+  });
 });
 
 describe('harnessHookIdentity', () => {

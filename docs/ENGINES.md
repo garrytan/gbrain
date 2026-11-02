@@ -417,6 +417,69 @@ whatever its policies; only the table owner (without `FORCE ROW LEVEL SECURITY`)
 bypasses RLS passes them ([write refusals](guides/write-refusals.md#writer-coordinator-required);
 `test/writer-fence-fail-closed-7636.test.ts`).
 
+<a id="derived-state-maintainers"></a>**Derived-state maintainers.** Eight triggers keep derived state as the writing role:
+deleting a page removes its `page_retrievals` rows, soft-deleting or moving it clears its
+`extract_atoms_page_state` rows, a tag write moves its page's revision, a `page_versions` row copies the page's
+trust tier and writer, a page update re-indexes its `timeline_entries` text, a page write queues or drops its
+`page_projection_jobs` row (reading `sources`), and a trust-relevant change bumps `trust_policy_state`. Since
+migration v281 (#7637) each refuses with `writer_coordinator_required` (relationship `unreadable_state`, the error
+names the table) when row-level security applies to the role on a table it needs and no permissive policy for the role
+covers a command it runs there. Before, such a role kept stale derived state (a deleted page's retrieval rows stayed)
+or failed with a raw RLS error. The owner (without `FORCE ROW LEVEL SECURITY`) and a role that bypasses RLS are not
+affected. A scoped write role that does not own these tables needs these policies; the maintainer tables hold ids,
+timestamps and counters but no page text, so the writer sees every row, and a policy that filters them would leave the
+rows it hides stale:
+
+<!-- gbrain:maintainer-rls-recipe:begin (applied verbatim by test/derived-state-maintainers-7637.test.ts) -->
+```sql
+-- The writer's own pages and sources, with the pages_scope_filter predicate.
+-- Tag writes update the page revision; version rows and the projection queue
+-- read the page and its source.
+CREATE POLICY pages_writer_scope ON pages FOR ALL TO <writer-role>
+  USING (current_setting('app.scopes', true) = '*'
+         OR source_id = ANY(string_to_array(current_setting('app.scopes', true), ',')))
+  WITH CHECK (current_setting('app.scopes', true) = '*'
+         OR source_id = ANY(string_to_array(current_setting('app.scopes', true), ',')));
+CREATE POLICY sources_writer_scope ON sources FOR SELECT TO <writer-role>
+  USING (current_setting('app.scopes', true) = '*'
+         OR id = ANY(string_to_array(current_setting('app.scopes', true), ',')));
+-- The timeline text a page update indexes: the entries of pages the writer sees.
+CREATE POLICY timeline_entries_writer_scope ON timeline_entries FOR SELECT TO <writer-role>
+  USING (EXISTS (SELECT 1 FROM pages p WHERE p.id = page_id));
+-- Derived state with no page text: every row, so a deleted page's rows go too.
+CREATE POLICY page_retrievals_writer ON page_retrievals FOR ALL TO <writer-role>
+  USING (true) WITH CHECK (true);
+CREATE POLICY extract_atoms_page_state_writer ON extract_atoms_page_state FOR ALL TO <writer-role>
+  USING (true) WITH CHECK (true);
+CREATE POLICY page_projection_jobs_writer ON page_projection_jobs FOR ALL TO <writer-role>
+  USING (true) WITH CHECK (true);
+CREATE POLICY trust_policy_state_writer ON trust_policy_state FOR ALL TO <writer-role>
+  USING (true) WITH CHECK (true);
+```
+<!-- gbrain:maintainer-rls-recipe:end -->
+
+<a id="folder-access-tables"></a>**Folder access tables.** A page write stamps the folder rules covering its slug
+from `access_policy_state` and `access_rules`, and remote reads hide the prefixes listed in
+`access_pending_coverage`, all as the database role doing the write or read. A role that row-level security keeps
+from reading those tables never reads them as "no rule": the stamp refuses the write with
+`writer_coordinator_required` (relationship `unreadable_state`, naming the table), and reads treat every page as
+under a pending prefix, so nothing is shown. The owner (without `FORCE ROW LEVEL SECURITY`) and a role that
+bypasses RLS are not affected, and `gbrain access` rule commands refuse such a role with `permission_denied`. A scoped
+role that writes or serves pages needs these policies; they let it read the rules and lock a source's policy row while
+stamping, but not change either. Row-level security does not cover TRUNCATE or triggers, so the recipe also revokes
+those. A policy that filters these rows hides rules from the role and so reveals the pages under them: keep `USING (true)`. The folder-rule lineage test also reads `slug_rename_history` (every slug a renamed page has had), which renames write; a role that cannot read it reads every page as covered, so a scoped role needs a `USING (true)` policy there like the other tables it writes. The recipe for the three access tables:
+
+<!-- gbrain:access-rls-recipe:begin (applied verbatim by test/access-folder-scoped-role.test.ts) -->
+```sql
+CREATE POLICY access_policy_state_reader ON access_policy_state FOR SELECT TO <writer-role> USING (true);
+CREATE POLICY access_policy_state_stamp_lock ON access_policy_state FOR UPDATE TO <writer-role>
+  USING (true) WITH CHECK (false);
+CREATE POLICY access_rules_reader ON access_rules FOR SELECT TO <writer-role> USING (true);
+CREATE POLICY access_pending_coverage_reader ON access_pending_coverage FOR SELECT TO <writer-role> USING (true);
+REVOKE TRUNCATE, TRIGGER, REFERENCES ON access_policy_state, access_rules, access_pending_coverage FROM <writer-role>;
+```
+<!-- gbrain:access-rls-recipe:end -->
+
 **In engine-sql.** A read in a migrated domain takes a `ScopedRead` when it
 runs through this helper and a `LegacyUnscopedRead` when it runs on the pool
 (`src/core/engine-sql/brands.ts`); the engine obtains the branded executor, so

@@ -13,6 +13,7 @@ import { prepareMarkdownChunks } from '../../src/core/markdown-chunks.ts';
 import { installFixtureChunks } from './page-projection.ts';
 import { withEnv } from './with-env.ts';
 import { leanRow } from '../../src/core/search/lean-rows.ts';
+import { fenceTranscriptText } from '../../src/core/search/transcript-quote.ts';
 
 export const OFF_PATH_PAGES: Array<{ slug: string; body: string; timeline?: string; frontmatter?: Record<string, unknown> }> = [
   {
@@ -100,7 +101,8 @@ export function offPathMcpBytes(res: { content: { type: string; text: string }[]
   // Cat 40 Hard F2's keyword count line and fields and F4's row-date line are additive too
   // (pinned in test/search-keyword-paging.test.ts and test/search-date-labels.test.ts).
   const content = res.content.filter(c => !/^\[gbrain (notice |search\] |dates\] )/.test(c.text));
-  const { gbrain_notices: _notices, ...meta } = res._meta ?? {};
+  // GBRA-231's additive `_meta.access` (the caller's applied view) is pinned in test/access-on-behalf-of.test.ts.
+  const { gbrain_notices: _notices, access: _access, ...meta } = res._meta ?? {};
   if (meta.retrieval) meta.retrieval = withoutCounts(withoutTimings(meta.retrieval) as Record<string, unknown>);
   return JSON.stringify({ ...res, content, ...(res._meta ? { _meta: Object.keys(meta).length > 0 ? meta : undefined } : {}) });
 }
@@ -119,13 +121,26 @@ function withFactsOrder(payload: Record<string, unknown>): Record<string, unknow
   return Object.fromEntries(Object.entries(payload).flatMap(([k, v]) => k === 'total' ? [[k, v], ['facts_order', 'newest']] : [[k, v]]));
 }
 
+/** GST-687's remote quote of one row: its text (#8384: and title) fenced as an excerpt of its slug and `quoted` set (recall places it before `trust_tier`). */
+function quotedRow(row: Record<string, unknown>, field: 'chunk_text' | 'chunk'): Record<string, unknown> {
+  const text = row[field];
+  if (row.quoted !== undefined || typeof text !== 'string' || text.length === 0) return row;
+  const title = typeof row.title === 'string' && row.title ? { title: fenceTranscriptText(row.title, row.slug as string) } : {};
+  const fenced = { ...row, ...title, [field]: fenceTranscriptText(text, row.slug as string) };
+  if (field === 'chunk_text') return { ...fenced, quoted: 'transcript' };
+  return Object.fromEntries(Object.entries(fenced).flatMap(([k, v]) => k === 'trust_tier' ? [['quoted', 'transcript'], [k, v]] : [[k, v]]));
+}
+
 /**
  * The cost wave changes remote output on purpose: C1 projects remote
  * search/query rows to lean rows (and reports `rows: "lean"` in the retrieval
  * meta), and C2 serializes MCP content[0] as compact JSON. Recall's question
- * ranking adds `facts_order` to every recall response. The frozen pre-feature
- * bytes stay as captured; this applies exactly those declared transforms to
- * them, so every other byte of the capture is still compared.
+ * ranking adds `facts_order` to every recall response. GST-687 quotes text
+ * below the owner's trust tier for remote readers, and this fixture's pages
+ * carry no trust declaration (`unknown`), so every remote row comes back
+ * fenced and marked `quoted`. The frozen pre-feature bytes stay as captured;
+ * this applies exactly those declared transforms to them, so every other byte
+ * of the capture is still compared.
  */
 export function withCostWave(key: string, frozen: string): string {
   const base = key.replace(/:chunk$/, '');
@@ -136,7 +151,7 @@ export function withCostWave(key: string, frozen: string): string {
   if (base === 'search-remote') {
     const v = JSON.parse(frozen) as { result: Record<string, unknown>[]; meta: Array<{ key: string; value: Record<string, unknown> }> };
     return JSON.stringify({
-      result: v.result.map(r => leanRow(r)),
+      result: v.result.map(r => quotedRow(leanRow(r), 'chunk_text')),
       meta: v.meta.map(m => m.key === 'retrieval' ? { key: m.key, value: leanRetrieval(m.value) } : m),
     });
   }
@@ -144,7 +159,8 @@ export function withCostWave(key: string, frozen: string): string {
   const res = JSON.parse(frozen) as { content: Array<{ type: string; text: string }>; _meta?: Record<string, Record<string, unknown>> };
   const body = JSON.parse(res.content[0].text);
   const lean = base === 'mcp-search' || base === 'mcp-query';
-  res.content[0].text = JSON.stringify(lean ? (body as Record<string, unknown>[]).map(r => leanRow(r)) : base === 'mcp-recall' ? withFactsOrder(body) : body);
+  res.content[0].text = JSON.stringify(lean ? (body as Record<string, unknown>[]).map(r => quotedRow(leanRow(r), 'chunk_text'))
+    : base === 'mcp-recall' ? { ...withFactsOrder(body), results: (body.results as Record<string, unknown>[]).map(r => quotedRow(r, 'chunk')) } : body);
   if (lean && res._meta?.retrieval) res._meta.retrieval = leanRetrieval(res._meta.retrieval);
   return JSON.stringify(res);
 }

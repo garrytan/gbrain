@@ -223,9 +223,13 @@ per-member tokens for that, and `source_ids` to narrow further.
 
 ### Lay out sources by who may read them
 
-gbrain enforces access per source, never per page. Two pages in one source are
-readable by exactly the same tokens. So put content in sources by who may read
-it, before any member's bot connects:
+Source grants are the coarse boundary: without page readers, two pages in one
+source are readable by exactly the same tokens. Inside one source, a page that
+names readers in frontmatter `readable_by` is read only by credentials bound to
+a listed member, and a folder rule (`gbrain access rule add`) does the same for
+a whole prefix ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape));
+both only narrow a grant, never widen it. Either way, put content in sources by
+who may read it, before any member's bot connects:
 
 - **One source per channel, team or member.** Give a channel's pages a source
   of their own (`channel-a`), a team's documents theirs (`team-a`), and each
@@ -346,7 +350,8 @@ gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated] [--
                                Register a source. id: [a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?
                                --path must be a git repo (or a subdirectory of one) — see
                                "The git requirement for --path sources" below. --force
-                               skips that check to register before git-init exists.
+                               registers a plain directory: sync imports its files without
+                               Git, and a file removed from it keeps its page.
 gbrain sources add <id> --url <git-url> [--pat-file <p>] [--clone-dir <path>] [--no-harden]
                                Clone + register a remote repo in one step; auto-hardens
                                for durability when a PAT is provided (see "Durability" below).

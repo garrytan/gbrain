@@ -90,10 +90,14 @@ const search_exact: Operation = {
     });
     const { stampPageTrust } = await import('../eligibility/stamp.ts');
     const matches = await stampPageTrust(ctx.engine, result.matches.map(m => ({ ...m, chunk_text: m.snippets.map(s => s.text).join('\n') })), floor);
+    // GST-687: an untrusted reader gets a chat page's snippets, or snippets below the owner's tier, quoted (tool calls summarized on a chat page).
+    const { quotePageText, quotesStored } = await import('../search/transcript-quote.ts');
+    const quoted = <M extends Omit<(typeof matches)[number], 'chunk_text'>>(m: M) => ctx.remote !== false && quotesStored(m.type, (m as { trust_tier?: unknown }).trust_tier)
+      ? { ...m, snippets: m.snippets.map(s => ({ ...s, text: quotePageText(s.text, m.slug, m.type) })), quoted: 'transcript' as const } : m;
     return {
       phrase: params.phrase,
       case_sensitive: params.caseSensitive,
-      matches: matches.map(({ chunk_text: _text, ...m }) => m),
+      matches: matches.map(({ chunk_text: _text, ...m }) => quoted(m)),
       complete: result.complete,
       incomplete_reasons: result.incomplete_reasons,
       resume_after: result.resume_after,

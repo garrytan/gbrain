@@ -9,6 +9,7 @@ import { factEmbeddingDisabled } from '../embedding-disabled.ts';
 import { engineMutationPrecondition, parseMutationPrecondition } from './preconditions.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
+import type { ClaimPhaseClock } from './claim-phase.ts';
 import { appendContextNote, type InferredVia } from '../facts/subject-infer.ts';
 import { inferenceNote } from '../facts/subject-infer-write.ts';
 import { requestChannelTrust } from '../trust/channel.ts';
@@ -18,10 +19,11 @@ import { writeGateRejectedError } from '../write-gate.ts';
 import { lexicalContestCandidate, recordContestedFact, supersessionGuarded } from '../trust/supersede-handlers.ts';
 import { storedTrustTier } from '../trust/tier.ts';
 import { fenceAppendPendingTier } from '../eligibility/fence-overlay.ts';
-import { prepareFenceFactAppend, requestReceiptFix, type FenceFactAppend } from '../facts/fence-fact-append.ts';
-import { privateProvenanceFilterFragment, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { prepareFenceFactAppend, prepareFenceFactCreate, requestReceiptFix, type FenceFactAppend } from '../facts/fence-fact-append.ts';
+import { privateProvenanceFilterFragment, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
 import { tightenToPage } from '../facts/visibility.ts';
 import { noteBelief } from '../belief/ledger.ts';
+import { MEMBER_PAGE_PREFIX, memberPageFrontmatter, memberPageIsOwn, memberPageNotOwned, onMemberPageSql } from '../access/member-facts.ts';
 
 function conflict(row: WriteRequest): never {
   throw opError('revision_conflict', 'The memory changed during semantic preparation.',
@@ -51,15 +53,17 @@ function outcome(id: number, status: 'inserted' | 'duplicate' | 'superseded', en
 
 /** The newest active fact in this source and visibility that states the same normalized claim without an entity. */
 async function activeUnlinkedCopy(engine: BrainEngine, sourceId: string, input: SingleFactIntent, excludePrivate: boolean): Promise<number | null> {
+  // GST-359 C2: a member's fact links only its own page's unlinked copy; no other write links one on a member page.
   const [row] = await engine.executeRaw<{ id: number }>(`SELECT id FROM facts
     WHERE source_id=$1 AND visibility=$2 AND entity_slug IS NULL AND expired_at IS NULL
-      AND (valid_until IS NULL OR valid_until > now()) AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3)${excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}
-    ORDER BY id DESC LIMIT 1`, [sourceId, input.visibility, input.fact]);
+      AND (valid_until IS NULL OR valid_until > now()) AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3)${excludePrivate && !input.page_slug ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}
+      AND ${input.page_slug ? 'source_markdown_slug=$4' : `($4::text IS NULL AND NOT ${onMemberPageSql('facts')})`}
+    ORDER BY id DESC LIMIT 1`, [sourceId, input.visibility, input.fact, input.page_slug ?? null]);
   return row ? Number(row.id) : null;
 }
 
 /** Every retry renders the semantic append from the latest coherent snapshot. */
-export async function prepareMemoryMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, signal?: AbortSignal): Promise<PreparedMutation> {
+export async function prepareMemoryMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, signal?: AbortSignal, clock?: ClaimPhaseClock): Promise<PreparedMutation> {
   signal?.throwIfAborted();
   if (row.operation !== 'remember' || !row.intent) {
     throw opError('storage_error', 'Unknown memory mutation intent.',
@@ -68,11 +72,15 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   }
   const p = row.intent;
   const input: SingleFactIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as SingleFactIntent['kind'],
-    visibility: (p.visibility ?? 'world') as SingleFactIntent['visibility'], entity_slug: p.entity_slug as string | null };
+    visibility: (p.visibility ?? 'world') as SingleFactIntent['visibility'], entity_slug: p.entity_slug as string | null,
+    ...(p.member_page === true ? { page_slug: row.slug } : {}) };
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
-  if ((snapshot?.page.id ?? null) !== row.page_id) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted entity was deleted or recreated.');
+  // GST-359 C2: a member page another write created after this one was accepted is the same page, not a recreation.
+  const createdSince = p.member_page === true && row.page_id === null && snapshot !== null && !snapshot.page.deleted_at;
+  if ((snapshot?.page.id ?? null) !== row.page_id && !createdSince) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted entity was deleted or recreated.');
+  if (p.member_page === true && snapshot && !memberPageIsOwn(row.slug, snapshot.page.frontmatter)) throw memberPageNotOwned(row.slug);
   // A defaulted visibility never lands broader than the target page as it stands at publication.
-  if (p.visibility_defaulted === true && snapshot) input.visibility = tightenToPage(input.visibility, snapshot.page);
+  if (p.visibility_defaulted === true && snapshot) input.visibility = tightenToPage(input.visibility, await withFolderRestricted(engine, snapshot.page));
   if (p.expected_revision !== undefined) assertPageRevision(snapshot, engineMutationPrecondition(parseMutationPrecondition(p)));
   const observedRevision = snapshot?.revision ?? null;
   const excludePrivate = await resolveExcludePrivatePages(engine, row.authority.remote === true);
@@ -80,7 +88,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   signal?.throwIfAborted();
   const embeddingConfigSql = "SELECT key,value FROM config WHERE key IN ('embedding_model','embedding_dimensions') ORDER BY key";
   const observedEmbeddingConfig = JSON.stringify(await engine.executeRaw(embeddingConfigSql));
-  const { embedding, embedding_model, degraded } = await prepareFactEmbedding(input.fact, signal, await factEmbeddingDisabled(engine, config));
+  const { embedding, embedding_model, degraded } = await prepareFactEmbedding(input.fact, signal, await factEmbeddingDisabled(engine, config), clock?.deadlineAt);
   signal?.throwIfAborted();
   // #5836: an inferred link dedups exact text only, so it never supersedes or drops a similar fact.
   const dedupEmbedding = p.entity_inferred ? null : embedding;
@@ -139,6 +147,9 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     const old = decision.candidate;
     fence = await prepareFenceFactAppend(engine, row, config, snapshot, { fact, pendingTier: fenceAppendPendingTier(writerTier),
       supersede: status === 'superseded' && old?.source_markdown_slug === row.slug && old.row_num != null ? { rowNum: Number(old.row_num), validUntil: retiredUntil } : undefined }, signal);
+  } else if (p.fence === true && p.member_page === true) {
+    fence = await prepareFenceFactCreate(engine, row, config, { fact, pendingTier: fenceAppendPendingTier(writerTier),
+      frontmatter: memberPageFrontmatter(row.slug.slice(MEMBER_PAGE_PREFIX.length)), heading: `# Memory of ${row.slug.slice(MEMBER_PAGE_PREFIX.length)}` }, signal);
   }
   // The belief ledger records the superseded fact in its own stream, so that stream's page key is held too.
   const supersededStream = status === 'superseded' ? decision.candidate!.source_markdown_slug ?? decision.candidate!.entity_slug ?? null : null;

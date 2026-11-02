@@ -38,8 +38,12 @@ export interface ParkedTarget { slug?: string; error_code: string; rule?: string
 /** #7423 / #7378: a settled target: under a declared db_only dir (`declared`), or its current bytes proved on the fetched remote (effect-settle.ts). */
 export type SettledTarget = { slug: string; declared: string }
   | { slug: string; path: string; remote_ref: string; remote_commit: string; blob: string; receipt_request_id: string };
+/** #7985: a target of a retired former-binding effect: its page is gone, deleted, replaced or past the revision the effect owed, or its source was replaced. */
+export type RetiredTarget = { slug: string; page: 'source_replaced' | 'absent' | 'deleted' | 'replaced' | 'moved'; owed_revision: string | null; current_revision?: string };
 export type SettlementProof = { kind: 'db_only'; worktree_id: string; targets: SettledTarget[] }
-  | { kind: 'superseded_remote'; former_worktree_id: string; worktree_id: string; targets: SettledTarget[] };
+  | { kind: 'superseded_remote'; former_worktree_id: string; worktree_id: string; targets: SettledTarget[] }
+  | { kind: 'former_binding_retired'; reason: 'source_replaced' | 'page_moved'; former_worktree_id: string | null; former_incarnation: string;
+    worktree_id: string; source_incarnation: string | null; targets: RetiredTarget[] };
 /** The disposition `gbrain sources writer settle-effects` records on a Git effect whose retry can never succeed. */
 export interface EffectSettlement { reason: SettlementProof['kind']; at: string; host_id: string; plan_hash: string; proof: SettlementProof }
 /** `page_body_segmented`: a segmented page an older binary's mirror or Git scan passed by; this one mirrors and commits it. */

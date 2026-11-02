@@ -51,6 +51,7 @@ import {
 import { stdioServeArgv } from '../mcp-registration.ts';
 import type { McpSurface } from '../../mcp/surface.ts';
 import { SetupAbortInjected, type SetupConsent, type SetupStep } from './claude-code.ts';
+import { ensureHookLauncher, hookLauncherPath } from './hook-launcher.ts';
 
 export const CODEX_SETUP_RECEIPT_VERSION = 2;
 
@@ -135,16 +136,17 @@ export function readCodexSetupReceipt(receiptPath: string): { setup: CodexSetupR
 
 const writeReceipt = (path: string, receipt: CodexSetupReceipt) => atomicWriteTextFile(path, `${JSON.stringify(receipt, null, 2)}\n`, { forceMode: 0o600 });
 
-export function desiredCodexMcpEntry(plan: Pick<CodexSetupPlan, 'launcher' | 'surface' | 'advertise' | 'gbrainHomeEnv' | 'sourceId'>): Record<string, CodexTomlValue> {
+export function desiredCodexMcpEntry(plan: Pick<CodexSetupPlan, 'launcher' | 'brainHome' | 'surface' | 'advertise' | 'gbrainHomeEnv' | 'sourceId'>): Record<string, CodexTomlValue> {
   const env: Record<string, string> = {};
   if (plan.gbrainHomeEnv) env.GBRAIN_HOME = plan.gbrainHomeEnv;
   if (plan.sourceId) env.GBRAIN_SOURCE = plan.sourceId;
-  return { command: plan.launcher, args: stdioServeArgv(plan.launcher, plan.surface, plan.advertise).slice(1), ...(Object.keys(env).length ? { env } : {}) };
+  // Codex starts stdio servers in the session's directory, so serve starts through the launcher too (#8426).
+  return { command: hookLauncherPath(plan.brainHome), args: stdioServeArgv(plan.launcher, plan.surface, plan.advertise), ...(Object.keys(env).length ? { env } : {}) };
 }
 
 function desiredGroups(plan: CodexSetupPlan): Partial<Record<CodexSetupEvent, CodexHookGroup>> {
   const env = { GBRAIN_HOME: plan.gbrainHomeEnv, GBRAIN_SOURCE: plan.sourceId ?? undefined };
-  return Object.fromEntries(plan.events.map((e) => [e, codexSetupHookGroup(plan.launcher, e, env)]));
+  return Object.fromEntries(plan.events.map((e) => [e, codexSetupHookGroup(plan.launcher, e, env, 'setup', hookLauncherPath(plan.brainHome))]));
 }
 
 const hashes = (groups: Partial<Record<CodexSetupEvent, CodexHookGroup>>): Hashes =>
@@ -238,6 +240,8 @@ export async function applyCodexSetup(
   mkdirSync(dirname(paths.configPath), { recursive: true, mode: 0o700 });
   const lock = await acquireBootstrapLock(dirname(paths.configPath));
   try {
+    // The MCP table and every hook command start gbrain through the launcher, so it goes down before anything names it (#8424, #8426).
+    ensureHookLauncher(hookLauncherPath(plan.brainHome));
     const found = inspectCodexSetup(plan);
     const prior = found.prior;
     const now = new Date().toISOString();

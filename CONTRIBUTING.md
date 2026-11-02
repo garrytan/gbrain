@@ -706,7 +706,7 @@ accepted contribution is credited in `CHANGELOG.md`.
 
 ### gstack repo config (`.gstack/`)
 
-Two committed files tell gstack (1.91.98.0 or later) about gbrain's own gates;
+Two committed files tell gstack (1.91.377.0 or later) about gbrain's own gates;
 gstack reads both from master, so a branch's edits take effect after it merges.
 
 - `.gstack/pregate.json`: `gstack-pregate run --allow-repo-commands` runs a
@@ -725,10 +725,15 @@ gstack reads both from master, so a branch's edits take effect after it merges.
   `PREGATE_REMOTE: tree=… tests=… failed=…` line. On a clean tree whose Test and
   E2E full runs already passed on GitHub, the line comes from those runs and no
   VM starts ([remote-gate reuse](docs/ci-event-parity.md#remote-gate-reuse)).
+  `run_profiles` and `remote_gate_runs` let `gstack-pregate clear --run <Test run>
+  --run <E2E run>` clear that obligation from a slot's passed full-ci runs of
+  the same tree, checked against the inventory `bash scripts/pregate-remote-gate.sh
+  --list` prints ([run evidence](docs/ci-event-parity.md#run-evidence-for-gstack-gstack-pregate-clear---run)).
 - `.gstack/ship-policy.json`: the stamp rule (the release stamp files and
   version patterns) and the migration numbering `gstack-pregate regate` and
   `gstack-tree-receipt` use to decide whether a restamped head is the same tree
-  that passed the gate.
+  that passed the gate, plus `min_gstack_version` (1.91.377.0, the first gstack
+  that reads `run_profiles`; an older one refuses with an upgrade fix).
 
 ### How a contributor PR lands
 

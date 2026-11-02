@@ -33,6 +33,7 @@ import { readCardIdentity } from '../../src/core/verbs/entity-card-identity.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { importSegmented } from '../helpers/segmented-privacy-fixture.ts';
+import { asOwner } from '../helpers/owner-tier.ts';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -66,8 +67,8 @@ const content = (body: string, extra = '') => `---\ntitle: Pinned probe\ntype: n
 
 /** The authorized page becomes private with a new body generation whose lead holds SECRET. */
 const privateRewrite = (slug: string) => async () => {
-  await importFromContent(engine, slug, content(`Codename: ${SECRET} Alpha\n\n${SECRET} is the private body now.\n\n${filler(1_300_000, 'private')}`, 'visibility: private\n'),
-    { sourceId: 'default', noEmbed: true });
+  await asOwner(engine, tx => importFromContent(tx, slug, content(`Codename: ${SECRET} Alpha\n\n${SECRET} is the private body now.\n\n${filler(1_300_000, 'private')}`, 'visibility: private\n'),
+    { sourceId: 'default', noEmbed: true }));
 };
 const visibilityOnly = (slug: string) => async () => {
   await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter || '{"visibility":"private"}'::jsonb WHERE source_id='default' AND slug=$1`, [slug]);

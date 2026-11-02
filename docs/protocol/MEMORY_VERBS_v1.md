@@ -49,7 +49,7 @@ the same registry.
 
 ```bash
 gbrain init --pglite                                      # 2-second local brain
-claude mcp add gbrain -- "$(command -v gbrain)" serve --surface starter --advertise verbs   # lists the verbs; the daily-driver tools stay callable
+gbrain setup claude-code                                  # registers serve behind gbrain's launcher; lists the verbs, the daily-driver tools stay callable
 gbrain remember "gbrain install check" --provenance install-check
 gbrain recall --query "gbrain install check"              # …now ask your agent in a NEW session
 ```
@@ -64,7 +64,7 @@ If `claude` is not found: install Claude Code first, or use a block below.
 
 **Codex**
 ```bash
-codex mcp add gbrain -- "$(command -v gbrain)" serve --surface starter --advertise verbs
+gbrain setup codex
 ```
 
 **Grok Build** (verify with `grok mcp doctor gbrain` — the add is lazy)

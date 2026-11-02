@@ -16,19 +16,21 @@ import type { Page } from '../types.ts';
 import { decodeDeepResearchAnchor, decodeDeepResearchId, deepResearchPageUrl } from '../deep-research-id.ts';
 import { PageSnapshotAmbiguousError, type PageSnapshot } from '../page-state/types.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { pageTrustForRead, projectFetchText, projectGetPage, quotesBody, readQuarantined } from './get-page-projection.ts';
+import { neutralizesBody, pageTrustForRead, projectFetchText, projectGetPage, quotedPageMeta, quotesBody, readQuarantined, unverifiedOriginNotice } from './get-page-projection.ts';
 import { assertLargePageAdmission } from '../persistence/large-page-guard.ts';
 import { assertFullReadFits, bodyBytes, fetchWindowResult, GET_PAGE_BODY_PARAMS, inlineBodyBytes, parseBodyRequest, readPartialBody, segmentedFullReadError, authorizedReadPin } from './get-page-body.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { MIN_TRUST_PARAM } from '../eligibility/policy.ts';
 import { getPageKnownAsOf, KNOWN_AS_OF_PARAM } from './known-as-of.ts';
 import { stampRowTrust } from '../eligibility/stamp.ts';
+import { quoteTimelineRows } from './timeline-quote.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { getContentFlag } from '../quarantine.ts';
 import { fileHeldField, readHeldPages } from '../persistence/held-reads.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs, isPrivatePageForCaller } from '../search/private-visibility.ts';
+import { unquoteAnyTranscriptText } from '../search/transcript-quote.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
 import { listPagesPagination, listingTruncatedNotice } from './list-pages-pagination.ts';
 import { OperationError, opError, type Operation, type OperationContext } from './contract.ts';
@@ -223,24 +225,25 @@ const get_page: Operation = {
     // `content` roughly duplicates compiled_truth + timeline — always emitting
     // it would double every reader's payload for the round-trip minority.
     const timelineEntries = includeTimelineEntries
-      ? await stampRowTrust(ctx.engine, 'timeline_entries', await ctx.engine.getTimeline(page.slug, { ...await readPolicyOpts(ctx, { sourceId: page.source_id }), eligibility: readable.eligibility }), e => e.id) : undefined;
+      ? await quoteTimelineRows(ctx, page.slug, await stampRowTrust(ctx.engine, 'timeline_entries', await ctx.engine.getTimeline(page.slug, { ...await readPolicyOpts(ctx, { sourceId: page.source_id }), eligibility: readable.eligibility }), e => e.id)) : undefined;
     // Read-only, over the same visibility-filtered body the reader gets.
     const lineGrammar = p.grammar_diagnostics !== true ? undefined : await (await import('../line-grammar-report.ts')).grammarDiagnosticsForPage(ctx.engine, page, visibleBody);
     const quarantined = readQuarantined(ctx, page, p.include_quarantined === true); // #6259
+    unverifiedOriginNotice(ctx, page, readable.trust);
     const fenceHeld = (await (await import('../generations/fence.ts')).fenceHoldEntries(ctx.engine, [page.source_id], { slug: page.slug }).catch(() => [])).map(({ source_id: _s, slug: _g, ...hold }) => hold); const fileHeld = { ...(held ? { file_held: fileHeldField(held, isUntrustedReader) } : {}), ...(fenceHeld.length ? { fence_held: fenceHeld } : {}) };
     const segmented = isSegmentedPage(page);
     const pin = authorizedReadPin(ctx, page, snapshot!.bodyGeneration, p.min_trust, () => pageNotFoundError(ctx, slug, { includeDeleted, sourceIdParam }));
     const whole = bodyRequest.mode === 'full'
       || (bodyRequest.mode === 'auto' && !segmented && bodyBytes(visibleBody) <= await inlineBodyBytes(ctx));
     if (!whole) {
-      const partial = await readPartialBody(ctx, { page, visibleBody, revision: snapshot!.revision, tags, quarantined, trust: readable.trust, pin, quote: quotesBody(ctx, page),
+      const partial = await readPartialBody(ctx, { page, visibleBody, revision: snapshot!.revision, tags, quarantined, trust: readable.trust, pin, quote: quotesBody(ctx, page, readable.trust), neutralize: neutralizesBody(ctx, page),
         extras: { ...(quarantined ? { quarantined } : {}), ...(timelineEntries ? { timeline_entries: timelineEntries } : {}), ...fileHeld,
           ...(resolved_slug ? { resolved_slug } : {}), ...(content_flag ? { content_flag } : {}) } }, bodyRequest);
       return lineGrammar ? { ...partial, line_grammar: lineGrammar } : partial;
     }
     if (segmented) throw await segmentedFullReadError(ctx, page, bodyRequest, { ...pin, revision: snapshot!.revision });
     const projected = projectGetPage(visibleBody, {
-      revision: snapshot!.revision, tags, includeContent, contentOnly, resolved_slug, content_flag, quarantined, trust: readable.trust, quote: quotesBody(ctx, page),
+      revision: snapshot!.revision, tags, includeContent, contentOnly, resolved_slug, content_flag, quarantined, trust: readable.trust, quote: quotesBody(ctx, page, readable.trust), neutralize: neutralizesBody(ctx, page),
       ...(timelineEntries ? { timeline_entries: timelineEntries } : {}),
       ...fileHeld,
     });
@@ -306,14 +309,14 @@ const fetch_page: Operation = {
     const segmented = isSegmentedPage(page);
     const visibleBody = ctx.remote === false || segmented ? page : stripPrivacyFencesForRemoteReader(page);
     const quarantined = readQuarantined(ctx, page, p.include_quarantined === true);
+    unverifiedOriginNotice(ctx, page, readable.trust);
     if (!quarantined?.body_omitted && (segmented || (ctx.remote !== false && bodyBytes(visibleBody) > await inlineBodyBytes(ctx)))) {
       const pin = authorizedReadPin(ctx, page, snapshot!.bodyGeneration, p.min_trust, missing);
-      return fetchWindowResult(ctx, { page, visibleBody: visibleBody as Page, revision: snapshot!.revision, tags, quarantined, trust: readable.trust, extras: {}, pin, quote: quotesBody(ctx, page) }, id, identity ? decodeDeepResearchAnchor(id) : null);
+      return fetchWindowResult(ctx, { page, visibleBody: visibleBody as Page, revision: snapshot!.revision, tags, quarantined, trust: readable.trust, extras: {}, pin, quote: quotesBody(ctx, page, readable.trust), neutralize: neutralizesBody(ctx, page) }, id, identity ? decodeDeepResearchAnchor(id) : null);
     }
-    return {
-      id: identity ? id : page.slug,
-      title: page.title,
-      text: projectFetchText(visibleBody as Page, tags, quarantined, readable.trust, quotesBody(ctx, page)),
+    const meta = quotedPageMeta(page, quotesBody(ctx, page, readable.trust), tags);
+    return { id: identity ? id : page.slug, title: meta.title,
+      text: projectFetchText(visibleBody as Page, tags, quarantined, readable.trust, quotesBody(ctx, page, readable.trust), neutralizesBody(ctx, page)),
       // Pages have no public http home; a stable brain-local URI satisfies
       // the contract's citation slot without inventing a fake web URL.
       url: deepResearchPageUrl(page.source_id, page.slug),
@@ -322,7 +325,7 @@ const fetch_page: Operation = {
         type: page.type,
         source_id: page.source_id,
         updated_at: page.updated_at,
-        tags, ...(quarantined ? { quarantined } : {}), ...readable.trust, ...(quotesBody(ctx, page) ? { quoted: 'transcript' } : {}),
+        tags: meta.tags, ...(quarantined ? { quarantined } : {}), ...readable.trust, ...(quotesBody(ctx, page, readable.trust) ? { quoted: 'transcript' } : {}),
       },
     };
   },
@@ -368,6 +371,7 @@ const put_page: Operation = {
       return { dry_run: true, action: 'put_page', slug: p.slug };
     }
     if (ctx.remote !== false && typeof p.slug === 'string') await assertLargePageAdmission(ctx.engine, p.slug, sourceId, p);
+    (await import('../persistence/page-visibility.ts')).assertSubmittedReaders(ctx.remote, p.slug, p.content);
     return submitPageMutation(ctx, { operation: 'put_page', params: p }).then(funnelPassThrough('save')).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error));
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
@@ -610,7 +614,7 @@ const list_pages: Operation = {
     // the pages such consumers exist to find.
     const rows = scope.sourceIds?.length === 0 ? [] : await ctx.engine.listPages({
       type: p.type as any,
-      tag: p.tag as string,
+      tag: typeof p.tag === 'string' && ctx.remote !== false ? unquoteAnyTranscriptText(p.tag) : p.tag as string,
       limit: limit + 1,
       offset,
       includeDeleted: (p.include_deleted as boolean) === true,

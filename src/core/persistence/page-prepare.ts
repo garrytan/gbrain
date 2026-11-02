@@ -31,12 +31,13 @@ import { ContentSanityBlockError } from '../content-sanity.ts';
 import { assertPageRevision, type PageSnapshot } from '../page-state/types.ts';
 import { GIT_HOLD_OP, gitHoldFingerprint, gitHoldFix, readGitHold } from './sync-holds.ts';
 import { hostOperatorFix, recordRoute } from './held-reads.ts';
-import { heldFileMessage } from './verb-errors.ts';
+import { heldFileMessage, sourceCheckoutMissingRefusal } from './verb-errors.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { recordedPathFromFileUri, scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
 import { engineMutationPrecondition, parseMutationPrecondition } from './preconditions.ts';
 import { assertPurgeParams } from './purge-params.ts';
 import { authorizeWrite, slugDisclosable } from './authority.ts';
+import { remoteReadersChecked } from './page-visibility.ts';
 import { findLiveFileClaimants, type FileClaimant, type FileClaimTarget } from './file-claims.ts';
 import { digest, sha256 } from './digest.ts';
 import { replaceableFile } from '../facts/file-body-guard.ts';
@@ -313,6 +314,7 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
   if (!binding?.local_path) throw opError('owner_unavailable', 'The canonical worktree is unavailable on this host.',
     `This host does not hold source ${row.source_id}'s canonical worktree (or it has no local path), so the file of ${row.slug} was not written. Inspect the owner before resubmitting; the write publishes on the host that owns the source.`,
     { fix: ownerStatusFix(row.source_id) });
+  if (!existsSync(binding.local_path)) throw sourceCheckoutMissingRefusal(row.source_id, row.slug);
   const root = join(binding.local_path, binding.relative_path);
   // #5622: a new page captured from a file inside the source is published to that file.
   const capturedPath = !snapshot && options.capture ? options.capture.path : recordedPathFromFileUri(snapshot?.page.source_uri, root);
@@ -320,12 +322,12 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
   const recordedPath = snapshot?.page.source_path || snapshot?.page.withheld_source_path || null;
   const mode = recordedPath ? await scannerSlugRootMode(engine, row.source_id, root) : undefined;
   const candidate = resolveSourceLocalFilePath(root, recordedPath, row.slug, mode)
-    ?? (capturedPath ? join(root, capturedPath) : snapshot ? slugPathFile(root, row.slug) : join(root, `${row.slug}.md`));
+    ?? (capturedPath ? join(root, capturedPath) : snapshot ? slugPathFile(root, row.slug, await scannerSlugRootMode(engine, row.source_id, root)) : join(root, `${row.slug}.md`));
   if (isWindowsColonTarget(relative(root, candidate))) {
     if (!options.allowMissing && publishesDatabaseOnly(root, row.slug, snapshot)) return undefined;
     throw colonSlugWindowsRefusal(row.slug, row.source_id);
   }
-  const path = nativeFileTarget(root, candidate);
+  const path = nativeFileTarget(binding.local_path, candidate);
   if (!isWriteTargetContained(path, root)) throw opError('source_changed', 'The canonical file target is outside its registered source.',
     `The file of ${row.slug} resolves outside source ${row.source_id}'s registered root (a symlinked directory or a moved checkout), so nothing was written. Inspect the owner before resubmitting; how to repair the checkout is the user's decision.`,
     { fix: ownerStatusFix(row.source_id) });
@@ -941,7 +943,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     if (refusal) throw frontmatterRefusalError(refusal);
     throw opError('invalid_params', 'The content was rejected before publication.', 'Check the content and frontmatter, then submit the corrected content with a new request_id.');
   }
-  const ready = prepared;
+  const ready = await remoteReadersChecked(engine, row.authority, snapshot?.page.frontmatter, prepared);
   if (ready.observedRevision !== observedRevision) throw pageRefusal('revision_conflict', 'The page changed during import preparation.', row,
     `Page ${row.slug} was written by another request while this one was being prepared, so it published nothing. Read the current page and revision, then submit the intended change against it.`,
     pageFix(row.source_id, row.slug));

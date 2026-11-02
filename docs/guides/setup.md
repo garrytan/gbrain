@@ -115,10 +115,14 @@ runs only when config.toml carries a `[hooks.state."<hooks.json>:<event>:<index>
 table with its `trusted_hash`, otherwise Codex lists it and silently skips it.
 `gbrain setup codex` writes:
 
-- `[mcp_servers.<name>]` with `command`, `args` and `env` (`GBRAIN_HOME`,
-  `GBRAIN_SOURCE` when set);
+- `[mcp_servers.<name>]` with `command` (the hook launcher), `args` (`<launcher> serve …`) and
+  `env` (`GBRAIN_HOME`, `GBRAIN_SOURCE` when set): Codex starts stdio servers in
+  the session's directory, so serve starts through the hook launcher too (#8426);
 - one hooks.json group per event, running
-  `env GBRAIN_HOOK_LANE=setup … <launcher> hook session-start|user-prompt --harness codex`
+  `env GBRAIN_HOOK_LANE=setup … <hook launcher> <launcher> hook session-start|user-prompt --harness codex`
+  (the hook launcher, `<gbrain config dir>/hook-launcher/gbrain-hook`, starts
+  gbrain from its own directory so the session directory's `bunfig.toml` and
+  `.env` never load; SECURITY.md)
   (15 s), plus the detached `hook session-end --harness codex` capture command
   (3 s) only after `--capture`;
 - one trust table per group.

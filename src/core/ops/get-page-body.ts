@@ -49,8 +49,8 @@ import { confirmBodyPin, hiddenBefore, openSegmentedBody, type BodyPin } from '.
 import { inlineRegions, inlineTailDigest } from '../page-body/tail-digest.ts';
 import { TIMELINE_SEPARATOR } from '../page-window/document.ts';
 import { renderTrustedText, type TrustFields } from '../eligibility/labels.ts';
-import { fenceTranscriptText } from '../search/transcript-quote.ts';
-import { pageTrustForRead, type QuarantinedView } from './get-page-projection.ts';
+import { fenceTranscriptText, neutralizeToolCalls } from '../search/transcript-quote.ts';
+import { pageTrustForRead, quotedPageMeta, type QuarantinedView } from './get-page-projection.ts';
 import { chunkGenerationProbe, chunkManifestReads } from '../search/safe-chunks.ts';
 import { GET_PAGE_SLICE_PARAMS, parseSliceRequest, readGrep, readSection, sliceCharBudget, type SliceRequest } from './get-page-slice.ts';
 
@@ -284,6 +284,8 @@ export interface PartialReadInput {
   pin?: Omit<BodyPin, 'revision'>;
   /** #8042: the page's text is third-party and the reader untrusted: every returned window is fenced as quoted source material (`quoted: "transcript"`). */
   quote?: boolean;
+  /** GST-687 (get-page-projection.ts neutralizesBody): view 'read' windows carry tool-call blocks summarized; view 'markdown' stays byte-exact. */
+  neutralize?: boolean;
 }
 
 /** The pin of a segmented read after get_page's or fetch's authorization: the snapshot's generation, with the trust floor re-checked when the read confirms. */
@@ -463,10 +465,11 @@ async function noneResult(ctx: OperationContext, page: Page, out: Record<string,
  */
 export async function readPartialBody(ctx: OperationContext, input: PartialReadInput, req: BodyRequest): Promise<Record<string, unknown>> {
   const { page, revision, tags, quarantined, trust, extras } = input;
-  const wrap = (text: string) => envelopeText(text, quarantined, trust, input.quote ? page.slug : null);
+  const neutralize = input.neutralize === true && req.view !== 'markdown';
+  const wrap = (text: string) => envelopeText(neutralize && text ? neutralizeToolCalls(text) : text, quarantined, trust, input.quote ? page.slug : null);
   const base: Record<string, unknown> = {
-    slug: page.slug, source_id: page.source_id, type: page.type, title: page.title, revision, tags,
-    frontmatter: page.frontmatter ?? {}, ...(page.deleted_at ? { deleted_at: page.deleted_at } : {}),
+    slug: page.slug, source_id: page.source_id, type: page.type, revision, ...quotedPageMeta({ slug: page.slug, title: page.title, frontmatter: page.frontmatter ?? {} }, input.quote === true, tags),
+    ...(page.deleted_at ? { deleted_at: page.deleted_at } : {}),
     ...(trust ?? {}), ...extras, ...(input.quote ? { quoted: 'transcript' } : {}),
   };
   const omitted = quarantined?.body_omitted === true;
@@ -604,13 +607,14 @@ export async function fetchWindowResult(ctx: OperationContext, input: PartialRea
   const { page, revision, tags, quarantined, trust } = input;
   const { partial, anchorStatus } = await readFetchWindow(ctx, input, anchor);
   const w = partial.window ?? { text: '' };
+  const meta = quotedPageMeta(page, input.quote === true, tags);
   return {
     id,
-    title: page.title,
+    title: meta.title,
     text: w.text,
     url: deepResearchPageUrl(page.source_id, page.slug),
     metadata: {
-      revision, type: page.type, source_id: page.source_id, updated_at: page.updated_at, tags, ...(quarantined ? { quarantined } : {}), ...(trust ?? {}),
+      revision, type: page.type, source_id: page.source_id, updated_at: page.updated_at, tags: meta.tags, ...(quarantined ? { quarantined } : {}), ...(trust ?? {}),
       ...(input.quote ? { quoted: 'transcript' } : {}), truncated: true, total_bytes: partial.size?.total_bytes, anchor: anchorStatus,
       ...(typeof w.byte_start === 'number' ? { window: { byte_start: w.byte_start, byte_end: w.byte_end, line_start: w.line_start, line_end: w.line_end } } : {}),
       ...(partial.next_cursor ? { next_id: encodeDeepResearchId(page.source_id, page.slug, { cursor: partial.next_cursor }) } : {}),

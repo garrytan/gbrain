@@ -35,12 +35,16 @@ export type FixClass =
   | 'kind_map'
   | 'holder_alias'
   | 'confidence_format'
-  | 'holder_verified';
+  | 'holder_verified'
+  /** #8059: a facts or takes marker quoted in prose, wrapped in backticks (repair only; never on a write path). */
+  | 'quote_marker';
 
 /** Every fence reason; `FENCE_REASONS` (reasons.ts) holds one entry per code. */
 export type FenceReason =
   // Screen residual, Tier 3 (`unclosed_trailing_content`: the tail classifier, #6377).
   | 'header_unmapped' | 'no_header' | 'row_before_header' | 'short_row' | 'unclosed_trailing_content'
+  // Screen residual, deterministic repair only (#8059: the fences repair kind wraps prose-quoted markers in backticks).
+  | 'quoted_marker'
   // Screen residual, Tier 2 then manual.
   | 'holder_unresolved'
   // Screen residual, manual only.

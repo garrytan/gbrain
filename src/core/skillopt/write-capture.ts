@@ -23,6 +23,7 @@
 import type { ChatToolDef, ToolHandler } from '../ai/gateway.ts';
 import { operations, type OperationContext, type ParamDef } from '../operations.ts';
 import { paramDefToSchema } from '../../mcp/tool-defs.ts';
+import { findInvalidParam, normalizeOptionalParams, schemaInvalidParams } from '../../mcp/validate-params.ts';
 import { loadConfig } from '../config.ts';
 import { BRAIN_TOOL_ALLOWLIST } from '../minions/tools/brain-allowlist.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -85,7 +86,12 @@ export function buildWriteCaptureRegistry(engine: BrainEngine): WriteCaptureRegi
     });
     baseHandlers.set(toolName, {
       idempotent: true,
-      execute: async (input: unknown) => op.handler(ctx, (input as Record<string, unknown>) ?? {}),
+      execute: async (input: unknown) => {
+        const params = normalizeOptionalParams(op, (input as Record<string, unknown>) ?? {});
+        const failure = findInvalidParam(op, params);
+        if (failure) throw schemaInvalidParams(op, failure, { remote: true }, params);
+        return op.handler(ctx, params);
+      },
     });
   }
 

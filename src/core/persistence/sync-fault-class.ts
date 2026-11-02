@@ -115,6 +115,9 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
     human_reason: 'The database refused to compare this renamed file title or frontmatter id; a person removes the NUL byte or broken Unicode character from the file and commits, then syncs.' },
   { code: 'rename_reconcile_failed', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: the old page may be a duplicate',
     human_reason: 'A rename imported but the old page could not be removed; a person runs a full sync of the source (it removes pages whose file is gone) or removes the old page with gbrain delete.' },
+  // #7199: a `file_drift` hold with side `unknown` (no import record): neither side is known to have moved.
+  { code: 'file_drift_unknown', class: 'page', safe_actions: ['reconcile'], needs_human: true, escalate: 'always: the file and the page differ and no import record says which changed',
+    human_reason: 'The file and the database page differ, and sync has no import record to tell which one changed since the last import, so it held the file instead of overwriting the page; a person chooses which version wins (gbrain repair file-drift --source <source> --slug <slug> --prefer database|file previews it and writes nothing until applied).' },
   { code: 'origin_conflict_decision', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: the pages differ, their ids conflict or none is the page the path names',
     human_reason: 'Several live pages record this file as their origin and sync cannot prove they are one document; a person keeps the page that is the file\'s and soft-deletes the others (gbrain repair origin-twins --source <source> lists them with the commands), then syncs.' },
   // GBRA-130 A-17/B-3/B-4: a held `page_identity_changed` path (sync-status.ts holdVerdict): several tombstones, a spelling twin or a takeover whose ids differ.
@@ -171,6 +174,9 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
   { code: 'preparation_systemic', class: 'systemic', safe_actions: ['upgrade', 'retry'], needs_human: true, escalate: 'always', human_reason: 'Several writes could not finish preparing: the write owner is the likely cause. Writer status names it; fix, restart or upgrade it.' },
   { code: 'drain_stalled', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'The write at the head of the source is wedged in its owner; restart the owner process writer status names.' },
   { code: 'recovery_required', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'A write needs recovery on the brain host (gbrain sources writer status --json names it).' },
+  // #8368: the checkout lost its ownership marker; only the verified self-transfer re-creates it.
+  { code: 'owner_marker_missing', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always',
+    human_reason: 'The checkout lost its ownership marker (.gbrain-owner.json). On the brain host, run the verified self-transfer (gbrain sources writer transfer prepare <source> --self-transfer, then transfer accept) to re-create it; never create it by hand. The sync stopped blocked_by_failures on the refused file: run the same sync again.' },
   { code: 'owner_unavailable', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'The write owner is gone; start or restart it on the brain host.' },
   { code: 'writer_coordinator_required', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'Managed persistence is not active for this source; activate it or sync unmanaged.' },
   { code: 'permission_denied', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'This principal may not sync the source; the owner grants it.' },

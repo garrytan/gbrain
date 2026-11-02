@@ -18,7 +18,7 @@
  */
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
-import { derivationPrivateSql, privateSnapshotFilterFragment, readHonorAliases } from '../../../core/search/private-visibility.ts';
+import { derivationPrivateSql, folderRestrictedSql, privateSnapshotFilterFragment, readHonorAliases } from '../../../core/search/private-visibility.ts';
 import { aliasOnlyPagesSql, PLAN_STATEMENT_MS, worldFactsFromPrivateSources } from '../../../core/repair/visibility.ts';
 
 const FACT_SAMPLE = 50;
@@ -46,11 +46,11 @@ export async function derivedVisibilityCheck(engine: BrainEngine, sourceId?: str
          COUNT(*) FILTER (WHERE d.type='concept' AND d.frontmatter->>'visibility' IS NULL)::int AS unstamped_concepts,
          COUNT(*) FILTER (WHERE d.type='atom' AND d.frontmatter->>'visibility'='world' AND NOT EXISTS (SELECT 1 FROM pages o
            WHERE o.source_id=d.source_id AND o.slug=d.frontmatter->>'source_slug' AND o.deleted_at IS NULL
-             AND ${privateSnapshotFilterFragment('o')}))::int AS looser_atoms,
+             AND ${privateSnapshotFilterFragment('o')} AND NOT ${folderRestrictedSql('o')}))::int AS looser_atoms,
          COUNT(*) FILTER (WHERE d.type='concept' AND d.frontmatter->>'visibility'='world' AND EXISTS (SELECT 1 FROM links l
            JOIN pages a ON a.id=l.to_page_id WHERE l.from_page_id=d.id AND l.link_source='concept-provenance' AND l.link_type='synthesized_from'
              AND (COALESCE(a.frontmatter->>'visibility','private')='private' OR EXISTS (SELECT 1 FROM pages ao WHERE ao.source_id=a.source_id
-               AND ao.slug=a.frontmatter->>'source_slug' AND ao.frontmatter->>'visibility'='private'))))::int AS looser_concepts,
+               AND ao.slug=a.frontmatter->>'source_slug' AND (ao.frontmatter->>'visibility'='private' OR ${folderRestrictedSql('ao')})))))::int AS looser_concepts,
          COUNT(*) FILTER (WHERE d.type='event' AND COALESCE(d.frontmatter->>'visibility','world')<>'private' AND EXISTS (SELECT 1 FROM pages o
            WHERE o.source_id=d.source_id AND o.slug=d.frontmatter->'event'->>'depth' AND o.deleted_at IS NULL
              AND ${derivationPrivateSql('o')}))::int AS looser_events,
