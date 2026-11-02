@@ -114,7 +114,9 @@ function tokenClient(resolve: (path: string) => string, token: string): GitHubCl
       const body = location ? await fetch(location) : res;
       if (!body.ok) {
         const text = await body.text().catch(() => '');
-        throw Object.assign(new Error(`GitHub download ${url} -> ${body.status}: ${text.slice(0, 300)}`), { status: body.status });
+        if (location) throw new Error(`GitHub download ${url} -> artifact storage answered ${body.status}: ${text.slice(0, 300)}`);
+        const rateLimited = body.headers.get('x-ratelimit-remaining') === '0' || body.headers.has('retry-after');
+        throw Object.assign(new Error(`GitHub download ${url} -> ${body.status}: ${text.slice(0, 300)}`), { status: body.status, rateLimited });
       }
       return new Uint8Array(await body.arrayBuffer());
     },
@@ -267,7 +269,7 @@ export function readZipEntry(zip: Uint8Array, name: string): Uint8Array | undefi
   return undefined;
 }
 
-/** One JSON file from a run's named artifact; `reason` says why it could not be read (missing, expired, unreadable), and `transient` marks a failed request that a later read may get past: no response, a 5xx, a 429 or a rate-limit 403, never another 4xx such as a 403 or an expired artifact's 410. */
+/** One JSON file from a run's named artifact; `reason` says why it could not be read (missing, expired, unreadable), and `transient` marks a failed request that a later read may get past: no response, a 5xx, a 429, a rate-limit 403 (by its headers, or its text naming a rate limit or abuse detection) or a refusal from the artifact storage the download redirects to (a fresh read mints a new signed URL), never another 4xx such as a 403 or an expired artifact's 410. */
 export async function fetchArtifactJson(client: GitHubClient, runId: number, artifact: string, file: string): Promise<{ value?: unknown; reason?: string; transient?: boolean }> {
   if (!client.download) return { reason: 'this client cannot download artifacts' };
   const failed = (e: unknown) => `reading run ${runId}'s '${artifact}' artifact failed: ${e instanceof Error ? e.message : String(e)}`;
@@ -280,7 +282,8 @@ export async function fetchArtifactJson(client: GitHubClient, runId: number, art
     zip = await client.download(`repos/{repo}/actions/artifacts/${found.id}/zip`);
   } catch (e) {
     const status = (e as { status?: number }).status ?? 0;
-    const permanent = status >= 400 && status < 500 && status !== 429 && !(status === 403 && /rate limit/i.test(e instanceof Error ? e.message : ''));
+    const rateLimited = status === 403 && ((e as { rateLimited?: boolean }).rateLimited || /rate limit|abuse detection/i.test(e instanceof Error ? e.message : ''));
+    const permanent = status >= 400 && status < 500 && status !== 429 && !rateLimited;
     return permanent ? { reason: failed(e) } : { reason: failed(e), transient: true };
   }
   try {

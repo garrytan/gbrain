@@ -483,6 +483,28 @@ describe('ci-reuse remote-gate decision', () => {
     } finally { rmSync(bin, { recursive: true, force: true }); }
   });
 
+  test('#8370: a refused blob-storage redirect, a rate-limit 403 known only by its headers, and the abuse-detection wording all stay transient', async () => {
+    const r600 = run('test.yml');
+    const listing = JSON.stringify({ artifacts: [{ id: 7, name: 'executed-identities', expired: false }] });
+    const token = (zip: (url: string) => Response) => {
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string) => String(url).includes('/actions/runs/') ? new Response(listing, { status: 200 }) : zip(String(url))) as typeof fetch;
+      return gateDeps(restClient(REPO, 'token-example', async () => {})).executed(r600).finally(() => { globalThis.fetch = real; });
+    };
+    const blob = 'https://blob-example.invalid/zip?sig=expired';
+    expect(await token(url => url === blob ? new Response('AuthenticationFailed', { status: 403 }) : new Response(null, { status: 302, headers: { location: blob } }))).toMatchObject({ transient: true });
+    expect(await token(() => new Response('', { status: 403, headers: { 'x-ratelimit-remaining': '0' } }))).toMatchObject({ transient: true });
+    expect(await token(() => new Response('', { status: 403, headers: { 'retry-after': '60' } }))).toMatchObject({ transient: true });
+    expect(await token(() => new Response('You have triggered an abuse detection mechanism.', { status: 403 }))).toMatchObject({ transient: true });
+    expect(await token(() => new Response('Resource not accessible by integration', { status: 403 }))).not.toHaveProperty('transient');
+    expect(await token(() => new Response('Gone', { status: 410 }))).not.toHaveProperty('transient');
+    const bin = mkdtempSync(join(tmpdir(), 'ci-reuse-gh-'));
+    try {
+      writeFileSync(join(bin, 'gh'), `#!/usr/bin/env bash\ncase "$*" in *"/zip"*) echo "gh: You have triggered an abuse detection mechanism. (HTTP 403)" >&2; exit 1;; esac\necho '${listing}'\n`, { mode: 0o755 });
+      expect(await withEnv({ PATH: `${bin}:${process.env.PATH}` }, () => gateDeps(restClient(REPO, '', async () => {})).executed(r600))).toMatchObject({ transient: true });
+    } finally { rmSync(bin, { recursive: true, force: true }); }
+  });
+
   /** A run's receipts as scripts/lib/test-env.sh writes them: one artifact directory per job, one test file each. */
   function writeReceipts(dir: string, artifact: string, lane: string, attempt: number, tests: string[]) {
     const at = join(dir, artifact); mkdirSync(at, { recursive: true });
