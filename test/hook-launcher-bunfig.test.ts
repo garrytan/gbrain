@@ -8,12 +8,14 @@
  * and Codex run it. The marker must never appear.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
 import { buildClaudeHookCommand } from '../src/core/bootstrap/hooks.ts';
-import { codexSetupHookGroup } from '../src/core/bootstrap/codex-hooks.ts';
+import { codexHookGroupRuns, codexHookTrustHash, codexSetupHookGroup } from '../src/core/bootstrap/codex-hooks.ts';
+import { appendCodexTomlTable } from '../src/core/bootstrap/codex-toml.ts';
+import { captureHookSessionCwd, hookSessionCwd } from '../src/core/setup/hook-launcher.ts';
 import { syncTurnRuleHook, TURN_RULE_MARKER } from '../src/core/setup/turn-hook.ts';
 import { hookLauncherProblem } from '../src/core/setup/turn-hook-check.ts';
 import { HOOK_LAUNCHER_NAME, ensureHookLauncher, hookLauncherInCommand, hookLauncherPath, hookLauncherState } from '../src/core/setup/hook-launcher.ts';
@@ -211,6 +213,8 @@ describe('hooks written before the launcher: doctor flags them, post-upgrade mov
       const old = codexSetupHookGroup(b.gbrain, 'UserPromptSubmit', {}, 'turn-rule');
       mkdirSync(dirname(hooks), { recursive: true });
       writeFileSync(hooks, JSON.stringify({ hooks: { UserPromptSubmit: [old] } }));
+      appendCodexTomlTable(config, ['hooks', 'state', `${hooks}:user_prompt_submit:0:0`], { trusted_hash: codexHookTrustHash('user_prompt_submit', old.hooks[0]!.command, old.hooks[0]!.timeout) }, 'test: Codex trusted the old hook');
+      expect(codexHookGroupRuns(hooks, config, { event: 'UserPromptSubmit', index: 0 })).toBe(true);
       expect(hookLauncherProblem('codex')).toMatchObject({ lane: 'turn-rule', reason: 'session_cwd' });
       await refreshHookLaunchers(() => {});
       expect(hookLauncherProblem('codex')).toBeNull();
@@ -219,6 +223,39 @@ describe('hooks written before the launcher: doctor flags them, post-upgrade mov
     expect(readFileSync(config, 'utf8')).toContain('user_prompt_submit');
     expect(runHook(b, command).exitCode).toBe(0);
     expect(existsSync(b.marker)).toBe(false);
+  });
+
+  test('codex: a turn-rule group Codex never trusted is left as is, so post-upgrade grants no trust', async () => {
+    const b = box();
+    const hooks = join(b.home, '.codex', 'hooks.json');
+    const config = join(b.home, '.codex', 'config.toml');
+    const payload = join(b.hostile, 'tooling', 'payload');
+    const group = { hooks: [{ type: 'command', command: `env GBRAIN_HOOK_LANE=turn-rule ${payload} hook user-prompt --harness codex`, timeout: 15 }] };
+    mkdirSync(dirname(hooks), { recursive: true });
+    writeFileSync(hooks, JSON.stringify({ hooks: { UserPromptSubmit: [group] } }));
+    writeFileSync(config, '');
+    await withEnv(env(b), async () => {
+      const lines: string[] = [];
+      await refreshHookLaunchers((l) => lines.push(l));
+      expect(lines.join('\n')).toContain('Codex does not run the codex turn-rule hook');
+    });
+    expect(readJson(hooks)).toEqual({ hooks: { UserPromptSubmit: [group] } });
+    expect(codexHookGroupRuns(hooks, config, { event: 'UserPromptSubmit', index: 0 })).toBe(false);
+  });
+
+  test('the recorded session directory is resolved and dropped from the environment', async () => {
+    const b = box();
+    const link = join(b.root, 'link-to-checkout');
+    symlinkSync(b.hostile, link);
+    await withEnv({ GBRAIN_HOOK_CWD: link }, async () => {
+      captureHookSessionCwd();
+      expect(process.env.GBRAIN_HOOK_CWD).toBeUndefined();
+      expect(hookSessionCwd()).toBe(realpathSync(b.hostile));
+    });
+    await withEnv({ GBRAIN_HOOK_CWD: 'relative/dir' }, async () => {
+      captureHookSessionCwd();
+      expect(hookSessionCwd()).toBe(process.cwd());
+    });
   });
 
   test('a launcher whose directory gained a foreign file is flagged foreign', async () => {

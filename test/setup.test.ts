@@ -35,6 +35,7 @@ import { hookLauncherProblem, inspectTurnHook } from '../src/core/setup/turn-hoo
 import { refreshHookLaunchers } from '../src/core/setup/hook-launcher-refresh.ts';
 import { syncTurnRuleHook, isTurnRuleEntry } from '../src/core/setup/turn-hook.ts';
 import { hookLauncherFix } from '../src/commands/doctor/checks/harness-wiring.ts';
+import { applyClaudeSetup, readSetupReceipt } from '../src/core/setup/claude-code.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
 const roots: string[] = [];
@@ -965,6 +966,22 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     });
     expect(entries(b, 'UserPromptSubmit').find((e) => e._gbrain === 'setup-v1').command).toBe(mine.command);
     expect(entries(b, 'SessionStart').every((e) => e.command.includes(launcher(b)))).toBe(true);
+  });
+
+  test('claude-code: the hook rewrite refuses under the lock when the MCP entry is no longer setup\'s, and writes nothing', async () => {
+    const b = box();
+    expect((await setup(b, ['claude-code', '--json'])).exitCode).toBe(0);
+    downgradeClaude(b);
+    const r = readSetupReceipt(receipt(b)).setup!;
+    const cfg = readJson(claudeJson(b));
+    cfg.mcpServers.gbrain = { type: 'http', url: 'https://new-brain.example/mcp' };
+    writeFileSync(claudeJson(b), JSON.stringify(cfg, null, 2));
+    const before = { settings: readFileSync(settings(b), 'utf8'), config: readFileSync(claudeJson(b), 'utf8') };
+    await withEnv(env(b), async () => {
+      const plan = { name: r.name, scope: r.scope, launcher: r.launcher, brainHome: r.gbrain_home, sourceId: r.source_id, surface: r.surface, advertise: r.advertise ?? null, events: Object.keys(r.hooks.owned) as any };
+      await expect(applyClaudeSetup(plan, r.consent, { pluginOwner: null, brainCreated: false, mcpMustBeCurrent: true })).rejects.toThrow('MCP entry changed');
+    });
+    expect({ settings: readFileSync(settings(b), 'utf8'), config: readFileSync(claudeJson(b), 'utf8') }).toEqual(before);
   });
 
   test('claude-code: --instructions-only moves a pre-launcher turn-rule entry that sits beside setup hooks', async () => {

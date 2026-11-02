@@ -124,7 +124,7 @@ import { HOOK_SUBCOMMANDS as HOOK_EVENTS, ROUTERS, subcommandHelpRequested } fro
 import { isManagedFilesystemPath } from '../core/persistence/filesystem-guard.ts';
 import { brainFirstTurnRule } from '../core/setup/brain-first.ts';
 import { TURN_RULE_LANE, turnRuleHookYields } from '../core/setup/turn-hook.ts';
-import { hookSessionCwd } from '../core/setup/hook-launcher.ts';
+import { captureHookSessionCwd, hookSessionCwd } from '../core/setup/hook-launcher.ts';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
 
@@ -283,6 +283,7 @@ All events fail open: errors exit 0 with empty stdout and a heartbeat entry at
 
 /** Dispatch a hook event. Returns the process exit code (0 for every runtime path). */
 export async function runHook(args: string[], io: HookIo = {}): Promise<number> {
+  captureHookSessionCwd();
   const event = args[0];
   if (subcommandHelpRequested(args, ROUTERS.hook)) {
     write(io, USAGE + '\n');
