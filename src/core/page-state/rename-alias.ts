@@ -10,6 +10,12 @@ import { dropRekeyDuplicates } from '../facts/ontology-rekey.ts';
  * spelled like the new slug is dropped: a live page now owns that slug. A
  * brain whose schema predates slug_aliases (an early migration renaming
  * slugs) skips the alias inside a savepoint.
+ *
+ * GBRA-218: the same move is kept in slug_rename_history (v285), which only the
+ * folder-rule lineage test reads: a derivative written against a slug its origin
+ * once had stays under the origin's rules after another page takes that slug.
+ * The dropped alias is kept there too, and rows that named the old slug follow
+ * the page to the new one.
  */
 export async function recordRenameAlias(
   tx: Pick<BrainEngine, 'transaction'>,
@@ -18,6 +24,20 @@ export async function recordRenameAlias(
   newSlug: string,
 ): Promise<void> {
   if (oldSlug === newSlug) return;
+  try {
+    await tx.transaction(async savepoint => {
+      await savepoint.executeRaw(`INSERT INTO slug_rename_history (source_id, old_slug, new_slug)
+        SELECT source_id, alias_slug, canonical_slug FROM slug_aliases WHERE source_id = $1 AND alias_slug = $2
+        ON CONFLICT DO NOTHING`, [sourceId, newSlug]);
+      await savepoint.executeRaw(`DELETE FROM slug_rename_history h WHERE h.source_id = $1 AND h.new_slug = $2
+        AND EXISTS (SELECT 1 FROM slug_rename_history o WHERE o.source_id = $1 AND o.old_slug = h.old_slug AND o.new_slug = $3)`, [sourceId, oldSlug, newSlug]);
+      await savepoint.executeRaw('UPDATE slug_rename_history SET new_slug = $3 WHERE source_id = $1 AND new_slug = $2', [sourceId, oldSlug, newSlug]);
+      await savepoint.executeRaw(`INSERT INTO slug_rename_history (source_id, old_slug, new_slug) VALUES ($1, $2, $3)
+        ON CONFLICT DO NOTHING`, [sourceId, oldSlug, newSlug]);
+    });
+  } catch (error) {
+    if (!isMissingSchemaObject(error, 'table', 'slug_rename_history') && !isMissingSchemaObject(error, 'table', 'slug_aliases')) throw error;
+  }
   try {
     await tx.transaction(async savepoint => {
       await savepoint.executeRaw('DELETE FROM slug_aliases WHERE source_id = $1 AND alias_slug = $2', [sourceId, newSlug]);

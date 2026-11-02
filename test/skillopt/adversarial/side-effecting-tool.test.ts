@@ -58,7 +58,8 @@ describe('adversarial: D13 read-only tool sandbox', () => {
     }
   });
 
-  test('SkillOpt allowlist size = BRAIN_TOOL_ALLOWLIST size minus 1 (put_page)', () => {
-    expect(READ_ONLY_BRAIN_TOOLS.size).toBe(BRAIN_TOOL_ALLOWLIST.size - 1);
+  test('SkillOpt allowlist size = BRAIN_TOOL_ALLOWLIST size minus its 2 mutating ops (put_page, add_timeline_entry)', () => {
+    expect(READ_ONLY_BRAIN_TOOLS.has('add_timeline_entry')).toBe(false);
+    expect(READ_ONLY_BRAIN_TOOLS.size).toBe(BRAIN_TOOL_ALLOWLIST.size - 2);
   });
 });

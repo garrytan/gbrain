@@ -55,6 +55,7 @@ export { assertValidSlugPrefixes } from './grants/encoding.ts';
 
 import type { SqlQuery, SqlValue } from './sql-query.ts';
 import { storedMinTrust } from './trust/tier.ts';
+import { tokenMemberBinding } from './access/token-binding.ts';
 export type { SqlQuery, SqlValue };
 
 export interface AgentClientBindings {
@@ -883,6 +884,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         token,
         clientId: row.client_id as string,
         principal: { kind: 'oauth_client', id: row.client_id as string },
+        ...(await tokenMemberBinding(this.sql, currentGrant.member_id, currentGrant.may_act_for)),
         clientName: (row.client_name as string | null) ?? undefined,
         scopes: effectiveScopes,
         issuedScopes,
@@ -954,6 +956,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         token,
         clientId: name,
         principal: { kind: 'legacy_token', id: String(legacyRows[0].id) },
+        ...(await tokenMemberBinding(this.sql, legacyRows[0].member_id, legacyRows[0].may_act_for)),
         clientName: name,
         scopes: grant.scopes,
         ...(grant.allowedOperations === null ? {} : { allowedOperations: grant.allowedOperations }),

@@ -43,7 +43,7 @@ import { partitionForActivation, suppressionSummary } from '../eligibility/activ
 import { trustFields } from '../eligibility/labels.ts';
 import { quoteFacts } from '../search/transcript-quote.ts';
 import { eligibilityCacheField, readTrustGeneration } from '../eligibility/generation.ts';
-import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { callerRelaxesPrivacy, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { isConfigTruthy } from '../config.ts';
 
 const DEFAULT_TTL_MS = 30_000;
@@ -91,14 +91,17 @@ export function invalidateHotMemoryForEngine(engine: object): void {
 }
 
 /**
- * Changes whenever a withdrawal is recorded for the source, by any process.
+ * Changes whenever a withdrawal is recorded for the source or (GBRA-218) a folder rulebook is installed, by any process.
  * Read-only embedder engines without raw SQL fall back to the TTL alone.
  */
 async function withdrawalWatermark(engine: OperationContext['engine'], sourceId: string): Promise<string> {
   if (typeof engine.executeRaw !== 'function') return '';
-  const [row] = await engine.executeRaw<{ n: number; at: string | null }>(
-    'SELECT count(*)::int AS n, max(withdrawn_at)::text AS at FROM fact_withdrawals WHERE source_id = $1', [sourceId]);
-  return `${row?.n ?? 0}:${row?.at ?? ''}`;
+  const [row] = await engine.executeRaw<{ n: number; at: string | null; rules: string | null }>(
+    `SELECT count(*)::int AS n, max(withdrawn_at)::text AS at,
+       (SELECT md5(coalesce(string_agg(source_id || '/' || rule_id || '/' || prefix || '/' || array_to_string(readable_by, ',') || '/' || revision::text, '|' ORDER BY source_id, rule_id), '')) FROM access_rules)
+         || ':' || (SELECT md5(coalesce(string_agg(source_id || '/' || prefix || '/' || reason || '/' || coalesce(revision::text, ''), '|' ORDER BY source_id, prefix, reason), '')) FROM access_pending_coverage) AS rules
+     FROM fact_withdrawals WHERE source_id = $1`, [sourceId]);
+  return `${row?.n ?? 0}:${row?.at ?? ''}:${row?.rules ?? ''}`;
 }
 
 /** Bounded set: evict the oldest-expiry entry when inserting at capacity. */
@@ -153,7 +156,8 @@ export async function getBrainHotMemoryMeta(
   // The operator opt-out (search.remote_private_pages) changes what a world
   // read returns, so it is part of the tier too.
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
-  const tier = ctx.remote === false ? 'all' : excludePrivate ? 'world' : 'world+private-pages';
+  // GBRA-218: on a brain with member restrictions a relaxed read still applies the readers part, so it has its own tier.
+  const tier = ctx.remote === false ? 'all' : !excludePrivate ? 'world+private-pages' : callerRelaxesPrivacy() ? 'world+private-pages-readers' : 'world';
   // encodeCacheField (F5): source_id / session_id are caller-controlled and
   // may contain the '::' delimiter; percent-encode ':' so bumpHotMemoryCache's
   // split('::') can never mis-slice a component.
