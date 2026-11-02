@@ -517,6 +517,7 @@ export async function purgeStaleCheckpoints(
          WHERE updated_at < now() - ($1 || ' days')::interval
            AND op NOT IN ('managed-atoms','managed-atoms-generation','managed-connector','managed-connector-retry','managed-connector-state','managed-connector-migration')
            AND op<>'connector-hold-retry'
+           AND op<>'connector-db-cursor'
            AND op<>'stuck-recovery-resolution'
            AND op<>'sync-admission'
            AND NOT (op='${SYNC_DELETE_TOMBSTONE_OP}' AND EXISTS (
