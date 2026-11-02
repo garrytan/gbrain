@@ -44,7 +44,8 @@ two-hour TTL (`--ttl-hours N` changes it, up to 999). `ubi-runner.sh up` and
 `-t<H>`, and a `ubirun-` name without a TTL is refused (nothing could ever reap it).
 `ubi-runner.sh reap` destroys only the caller's own VMs: its `ubirun-<owner>-*`
 VMs whose TTL ended over ten minutes ago, and its TTL-less ones once they are
-`UBI_LEGACY_HOURS` (4) old. Another owner's expired VM is only counted in reap's
+`UBI_LEGACY_HOURS` (4) old. Another owner's expired VM, including one this machine
+created under a different tag (which `list --mine` and `gc` do cover), is only counted in reap's
 log; `reap-expired.ts` is the operator reaper that destroys expired VMs of every owner. gstack's `up` runs that reap first; gbrain's copy
 does only with `UBI_REAP=1` (or `true`, `yes`, `on`; `0`, `false`, `no` and `off`
 turn it off, and any other value is refused), and logs one `reap skipped` line otherwise, until

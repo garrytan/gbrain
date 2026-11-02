@@ -639,6 +639,7 @@ describe("quota preflight", () => {
     const up = await run(["up"], { UBI_REAP: "1" });
     expect(up.stderr).toContain("reap: no expired VMs");
     expect(up.stderr).not.toContain("invalid VM name");
+    expect(up.stderr).not.toContain("expired VMs of other owners");
     expect(up.stderr).not.toContain("reap failed");
     expect(creates()).toHaveLength(1);
   }, 60_000);

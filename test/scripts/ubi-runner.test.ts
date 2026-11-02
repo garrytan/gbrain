@@ -253,6 +253,7 @@ describe("empty project and unreadable usage", () => {
       const reap = await run(["reap"], { UBI_OWNER: "t1" });
       expect(reap.stderr).toContain("reap: no expired VMs");
       expect(reap.stderr).not.toContain("invalid VM name");
+      expect(reap.stderr).not.toContain("expired VMs of other owners");
       expect(reap.code).toBe(0);
       const usage = await run(["usage"], { UBI_OWNER: "t1" });
       expect({ code: usage.code, stdout: usage.stdout }).toEqual({ code: 0, stdout: "OWNER           VMS  VCPUS\ntotal             0      0\n" });
