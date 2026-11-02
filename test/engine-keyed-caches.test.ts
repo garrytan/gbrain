@@ -139,22 +139,30 @@ describe('search telemetry flushes into the searching brain', () => {
     expect(_telemetryWriterCountForTest()).toBe(20);
     for (const close of closers) await close();
     expect(_telemetryWriterCountForTest()).toBe(0);
+  });});
+
+describe('a PGLite reconnect', () => {
+  let dir: string;
+  let fileBrain: PGLiteEngine;
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'gb-telemetry-reconnect-'));
+    fileBrain = new PGLiteEngine();
+    await fileBrain.connect({ database_path: join(dir, 'brain.pglite') });
+    await fileBrain.initSchema();
   });
-  test('a PGLite reconnect keeps the buffered telemetry, which then flushes into the reconnected brain', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'gb-telemetry-reconnect-'));
-    const engine = new PGLiteEngine();
-    try {
-      await engine.connect({ database_path: join(dir, 'brain.pglite') });
-      await engine.initSchema();
-      recordSearchTelemetry(engine, meta, { results_count: 1 });
-      await engine.reconnect();
-      recordSearchTelemetry(engine, meta, { results_count: 1 });
-      await awaitPendingTelemetryFlush(5000, 'exit');
-      expect((await engine.executeRaw<{ n: number }>('SELECT COALESCE(SUM(count),0)::int AS n FROM search_telemetry'))[0]!.n).toBe(2);
-    } finally {
-      await engine.disconnect();
-      rmSync(dir, { recursive: true, force: true });
-    }
+
+  afterAll(async () => {
+    await fileBrain.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('keeps the buffered telemetry, which then flushes into the reconnected brain', async () => {
+    recordSearchTelemetry(fileBrain, meta, { results_count: 1 });
+    await fileBrain.reconnect();
+    recordSearchTelemetry(fileBrain, meta, { results_count: 1 });
+    await awaitPendingTelemetryFlush(5000, 'exit');
+    expect((await fileBrain.executeRaw<{ n: number }>('SELECT COALESCE(SUM(count),0)::int AS n FROM search_telemetry'))[0]!.n).toBe(2);
   });
 });
 
