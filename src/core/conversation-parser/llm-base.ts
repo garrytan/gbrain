@@ -38,6 +38,7 @@ import { AIConfigError } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 import type { BrainEngine } from '../engine.ts';
+import { engineCacheKey } from '../statement-deadline.ts';
 
 /**
  * Test-seam transport. Real callers pass undefined → `gatewayChat`.
@@ -48,29 +49,38 @@ export type ChatTransport = (opts: ChatOpts) => Promise<ChatResult>;
 export type CallShape = 'polish' | 'fallback';
 
 /**
- * Per-process LLM result cache. Key:
+ * Per-process LLM result cache, one per engine (calls without an engine share
+ * one of their own). Key:
  *   `${shape}:${model}:${sha256(content)}`
  *
  * Module-scope: lives across calls within ONE process. Cleared via
  * `_resetLlmCacheForTests` in tests.
  */
-const llmCache: Map<string, unknown> = new Map();
+const NO_ENGINE = {};
+let llmCaches = new WeakMap<object, Map<string, unknown>>();
+function llmCacheFor(engine: BrainEngine | undefined): Map<string, unknown> {
+  const key = engine ? engineCacheKey(engine) : NO_ENGINE;
+  let cache = llmCaches.get(key);
+  if (!cache) llmCaches.set(key, cache = new Map());
+  return cache;
+}
 let cacheHits = 0;
 let cacheMisses = 0;
 
 export interface LlmCacheStats {
   hits: number;
   misses: number;
+  /** Entries cached for `engine` (or for calls without one). */
   size: number;
 }
 
-export function getLlmCacheStats(): LlmCacheStats {
-  return { hits: cacheHits, misses: cacheMisses, size: llmCache.size };
+export function getLlmCacheStats(engine?: BrainEngine): LlmCacheStats {
+  return { hits: cacheHits, misses: cacheMisses, size: llmCacheFor(engine).size };
 }
 
 /** Test seam: clear cache + counters. Real code never calls this. */
 export function _resetLlmCacheForTests(): void {
-  llmCache.clear();
+  llmCaches = new WeakMap();
   cacheHits = 0;
   cacheMisses = 0;
 }
@@ -119,7 +129,7 @@ export function probeLlmAvailability(modelStr: string): string | null {
  * the error — next call retries).
  *
  * Cache semantics:
- *   - In-process Map keyed on (shape, model, content_sha).
+ *   - In-process Map per engine keyed on (shape, model, content_sha).
  *   - DB cache (table conversation_parser_llm_cache) checked when
  *     engine is provided and in-process misses. DB hits warm the
  *     in-process cache.
@@ -173,6 +183,7 @@ export async function runLlmCall<TOutput>(
   }
 
   const key = cacheKey(opts.shape, modelStr, opts.content);
+  const llmCache = llmCacheFor(opts.engine);
 
   // Layer 1: in-process cache.
   if (llmCache.has(key)) {

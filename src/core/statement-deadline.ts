@@ -60,6 +60,16 @@ export function engineCacheKey<T extends object>(engine: T): object {
   return rawEngines.get(engine) ?? engine;
 }
 
+/**
+ * `engineCacheKey` for a cache a transaction handle reads too: a transaction's engine is an `Object.create` clone of
+ * the engine it runs on (nested ones clone the outer handle), so it resolves to that engine and shares its entry.
+ */
+export function rootEngineCacheKey<T extends object>(engine: T): object {
+  let root = engineCacheKey(engine);
+  for (let proto = Object.getPrototypeOf(root); proto && !Object.hasOwn(proto, 'constructor'); proto = Object.getPrototypeOf(proto)) root = proto;
+  return root;
+}
+
 const scopes = new AsyncLocalStorage<StatementDeadline | undefined>();
 
 export function withStatementDeadline<T>(scope: StatementDeadline | null, run: () => Promise<T>): Promise<T> {

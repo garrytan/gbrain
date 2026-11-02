@@ -12,6 +12,7 @@ import type { OperationContext } from '../ops/contract.ts';
 import type { BrainEngine } from '../engine.ts';
 import { hasScope } from '../scope.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
+import { engineCacheKey } from '../statement-deadline.ts';
 import { loadFeedbackSettings } from './settings.ts';
 import {
   applyRatings, insertRetrievalEvents,
@@ -88,15 +89,16 @@ interface QueueState {
   running: Promise<void> | null;
 }
 
+/** An engine's queue, while it has work: runQueue removes it once drained, so the map never keeps an engine alive. */
 const queues = new Map<BrainEngine, QueueState>();
 const pendingEventIds = new Map<string, number>();
 let dropped = 0;
 /**
- * The `how_to_rate` cadence counter, per client and PROCESS-LOCAL: it resets
- * when the process restarts, so a restarted server coaches again on its first
- * answer. The visible MCP rate line (dispatch `rateLine`) does not depend on it.
+ * The `how_to_rate` cadence counter, per brain and client and PROCESS-LOCAL: it
+ * resets when the process restarts, so a restarted server coaches again on its
+ * first answer. The visible MCP rate line (dispatch `rateLine`) does not depend on it.
  */
-let answersSinceHint = new Map<string, number>();
+let answersSinceHint = new WeakMap<object, Map<string, number>>();
 
 function enqueue(engine: BrainEngine, job: Job): void {
   let q = queues.get(engine);
@@ -145,6 +147,8 @@ async function runQueue(q: QueueState): Promise<void> {
     }
   } finally {
     q.running = null;
+    // Nothing was enqueued since the loop ended (no await in between): drop the drained queue.
+    if (q.jobs.length === 0 && queues.get(q.engine) === q) queues.delete(q.engine);
   }
 }
 
@@ -215,11 +219,14 @@ export async function recordAnswer(ctx: OperationContext, input: RecordAnswerInp
     }
     const meta: AnswerFeedbackMeta = { answer_id: id, feedback: { rateable: true } };
     if (settings.ratingPrompt) {
-      const n = answersSinceHint.get(clientId) ?? 0;
+      const key = engineCacheKey(ctx.engine);
+      let counts = answersSinceHint.get(key);
+      if (!counts) answersSinceHint.set(key, counts = new Map());
+      const n = counts.get(clientId) ?? 0;
       if (n % HINT_EVERY === 0) {
         meta.feedback.how_to_rate = `Rate this answer after you use it: rate_answer { answer_id: "${id}", rating: 1-5 } (or pages: [{ ref, rating }] for single pages). Ratings tune this brain's ranking.`;
       }
-      answersSinceHint.set(clientId, n + 1);
+      counts.set(clientId, n + 1);
     }
     return meta;
   } catch {
@@ -231,7 +238,7 @@ export function _resetFeedbackRecordingForTests(): void {
   queues.clear();
   pendingEventIds.clear();
   dropped = 0;
-  answersSinceHint = new Map();
+  answersSinceHint = new WeakMap();
 }
 
 /** Additive response-meta fields: present only on a rateable answer, so readers see no change. */

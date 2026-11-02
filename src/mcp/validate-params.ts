@@ -18,6 +18,7 @@ import type { GBrainConfig } from '../core/config.ts';
 import { suggestNearest } from '../core/levenshtein.ts';
 import type { OperationError } from '../core/ops/contract.ts';
 import { invalidParam } from '../core/ops/op-fix.ts';
+import { engineCacheKey } from '../core/statement-deadline.ts';
 import type { Action } from '../core/agent-output.ts';
 
 /** One validation failure: the message (never echoes the caller's value) and the param it names. */
@@ -228,7 +229,7 @@ export function parseStrictParamsMode(v: unknown): StrictParamsMode | null {
  * Dual-plane resolution for `mcp.strict_params`: DB plane (`engine.getConfig`)
  * wins, file plane (`config.mcp.strict_params`) is the fallback, absent or
  * unparseable on both = 'warn' (the grace-period default). A failed DB read
- * holds the LAST successfully resolved DB mode (per process) before falling
+ * holds the LAST successfully resolved DB mode (per engine) before falling
  * to the file plane — a transient config outage on a reject-mode server must
  * not silently re-open the warn-mode grace period. Validation posture never
  * takes a tool call down. Resolved once per dispatch (amendment 12);
@@ -237,11 +238,11 @@ export function parseStrictParamsMode(v: unknown): StrictParamsMode | null {
  * (stdio + the legacy bearer transport resolve once at startup — restart to
  * flip there, deliberate).
  */
-let lastKnownDbStrictMode: StrictParamsMode | null = null;
+let lastKnownDbStrictMode = new WeakMap<object, StrictParamsMode | null>();
 
 /** Test seam: clear the last-known-good DB mode between cases. */
 export function resetStrictParamsModeCache(): void {
-  lastKnownDbStrictMode = null;
+  lastKnownDbStrictMode = new WeakMap();
 }
 
 export async function resolveStrictParamsMode(
@@ -250,12 +251,14 @@ export async function resolveStrictParamsMode(
 ): Promise<StrictParamsMode> {
   try {
     const dbMode = parseStrictParamsMode(await engine.getConfig('mcp.strict_params'));
-    lastKnownDbStrictMode = dbMode;
+    lastKnownDbStrictMode.set(engineCacheKey(engine), dbMode);
     if (dbMode) return dbMode;
   } catch {
-    // Engine without a config table / transient error: last-known-good DB
-    // mode wins; with no prior successful read, the file plane decides.
-    if (lastKnownDbStrictMode) return lastKnownDbStrictMode;
+    // Engine without a config table / transient error: this engine's
+    // last-known-good DB mode wins; with no prior successful read, the file
+    // plane decides.
+    const lastKnown = lastKnownDbStrictMode.get(engineCacheKey(engine));
+    if (lastKnown) return lastKnown;
   }
   return parseStrictParamsMode(config?.mcp?.strict_params) ?? 'warn';
 }

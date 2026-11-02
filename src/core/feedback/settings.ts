@@ -1,8 +1,9 @@
 /**
- * Resolved `feedback.*` configuration with a short in-process cache, so the
- * search hot path never pays a config read per query.
+ * Resolved `feedback.*` configuration with a short in-process cache per
+ * engine, so the search hot path never pays a config read per query.
  */
 import type { BrainEngine } from '../engine.ts';
+import { engineCacheKey } from '../statement-deadline.ts';
 
 export interface FeedbackSettings {
   /** Master switch: recording, ratings, answer ids and the ranking effect. */
@@ -44,7 +45,7 @@ export const FEEDBACK_CONFIG_KEYS = [
 ] as const;
 
 const CACHE_TTL_MS = 30_000;
-let cache: { ts: number; engine: BrainEngine; value: FeedbackSettings } | null = null;
+let cache = new WeakMap<object, { ts: number; value: FeedbackSettings }>();
 
 function parseBool(raw: string | null | undefined, fallback: boolean): boolean {
   if (raw == null) return fallback;
@@ -63,7 +64,9 @@ function parseNumber(raw: string | null | undefined, fallback: number, min: numb
 
 export async function loadFeedbackSettings(engine: BrainEngine): Promise<FeedbackSettings> {
   const now = Date.now();
-  if (cache && cache.engine === engine && now - cache.ts < CACHE_TTL_MS) return cache.value;
+  const key = engineCacheKey(engine);
+  const cached = cache.get(key);
+  if (cached && now - cached.ts < CACHE_TTL_MS) return cached.value;
   const read = async (key: string): Promise<string | null> => {
     try {
       return await engine.getConfig(key);
@@ -85,7 +88,7 @@ export async function loadFeedbackSettings(engine: BrainEngine): Promise<Feedbac
     eventRetentionDays: Math.round(parseNumber(retention, d.eventRetentionDays, 1, 3650)),
     ratingPrompt: parseBool(ratingPrompt, d.ratingPrompt),
   };
-  cache = { ts: now, engine, value };
+  cache.set(key, { ts: now, value });
   return value;
 }
 
@@ -95,5 +98,5 @@ export function effectiveInfluence(s: FeedbackSettings): number {
 }
 
 export function _resetFeedbackSettingsCacheForTests(): void {
-  cache = null;
+  cache = new WeakMap();
 }

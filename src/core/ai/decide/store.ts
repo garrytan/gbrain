@@ -184,7 +184,7 @@ registerBackgroundWorkDrainer({ name: 'decide-receipts', order: 6, drain: drainD
 export function __resetDecideStoreForTests(): void {
   receipts.reset();
   spend.reset();
-  spendCache.clear();
+  spendCache = new WeakMap();
   saltCache = new WeakMap();
 }
 
@@ -245,7 +245,7 @@ export function pageSubject(sourceId: string | undefined, slug: string): string 
 
 interface SpendCacheEntry { day: string; at: number; total: number; remote: number }
 const SPEND_CACHE_MS = 60_000;
-const spendCache = new Map<BrainEngine, SpendCacheEntry>();
+let spendCache = new WeakMap<BrainEngine, SpendCacheEntry>();
 const utcDay = (t = Date.now()) => new Date(t).toISOString().slice(0, 10);
 
 function bumpSpendCache(engine: BrainEngine, row: SpendRow): void {

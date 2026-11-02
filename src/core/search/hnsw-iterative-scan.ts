@@ -10,9 +10,9 @@
  *
  * Escape hatch, no release needed: `GBRAIN_HNSW_ITERATIVE_SCAN` (wins when
  * set) or the config key `search.hnsw_iterative_scan`, one of
- * `relaxed_order | strict_order | off`. Resolved once per process by the
- * caller that builds search options (like `search.vector_legacy_guard`), so
- * the owning service picks a change up on restart and the hot path never
+ * `relaxed_order | strict_order | off`. Resolved once per config object by
+ * the caller that builds search options (like `search.vector_legacy_guard`),
+ * so each brain a process opens gets its own value and the hot path never
  * re-reads config. An unreadable value falls back to the default.
  */
 import type { GBrainConfig } from '../config.ts';
@@ -40,17 +40,24 @@ export function readHnswIterativeScan(
   return { mode: HNSW_ITERATIVE_SCAN_DEFAULT, via: null };
 }
 
-let resolved: HnswIterativeScanMode | undefined;
+/** The key for calls without a config. */
+const NO_CONFIG = {};
+let resolved = new WeakMap<object, HnswIterativeScanMode>();
+/** Override modes already logged: the notice prints once per process per mode. */
+const logged = new Set<string>();
 
-/** First call decides for the process; logs once to stderr when an override is active. */
+/** First call per config object decides for it; logs once to stderr per override mode. */
 export function resolveHnswIterativeScan(cfg: Pick<GBrainConfig, 'search'> | null | undefined): HnswIterativeScanMode {
-  if (resolved !== undefined) return resolved;
+  const key = cfg ?? NO_CONFIG;
+  const known = resolved.get(key);
+  if (known !== undefined) return known;
   const setting = readHnswIterativeScan(cfg);
-  resolved = setting.mode;
-  if (setting.via && setting.mode !== HNSW_ITERATIVE_SCAN_DEFAULT) {
+  resolved.set(key, setting.mode);
+  if (setting.via && setting.mode !== HNSW_ITERATIVE_SCAN_DEFAULT && !logged.has(setting.mode)) {
+    logged.add(setting.mode);
     console.error(`[gbrain] vector search uses hnsw.iterative_scan=${setting.mode} (${setting.via === 'env' ? HNSW_ITERATIVE_SCAN_ENV : HNSW_ITERATIVE_SCAN_KEY}); the default is ${HNSW_ITERATIVE_SCAN_DEFAULT}.`);
   }
-  return resolved;
+  return setting.mode;
 }
 
 /** `config set search.hnsw_iterative_scan <value>` refusal text, or null when the value is valid. */
@@ -60,5 +67,6 @@ export function hnswIterativeScanValueProblem(value: string): string | null {
 
 /** @internal test seam */
 export function _resetHnswIterativeScanForTests(): void {
-  resolved = undefined;
+  resolved = new WeakMap();
+  logged.clear();
 }

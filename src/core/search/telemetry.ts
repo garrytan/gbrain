@@ -29,17 +29,20 @@
  * automatically.
  *
  * Per-process bucketing means stdio MCP, HTTP MCP, and CLI processes each
- * maintain their own buffers. Stats are directional, not exact — acceptable
- * because the consumer is the operator (or an agent running `gbrain search
- * tune`), not a financial ledger. Loss still happens on hard kills, on drains
- * that exceed their bound, and at engine disconnect (buffered-but-not-flushed
- * rows are dropped there by design). Weigh that when reading counts from a
- * process class that dies unclean often.
+ * maintain their own buffers, and a process with several engines keeps one
+ * buffer per engine, each flushed into its own database. Stats are
+ * directional, not exact — acceptable because the consumer is the operator
+ * (or an agent running `gbrain search tune`), not a financial ledger. Loss
+ * still happens on hard kills, on drains that exceed their bound, and at
+ * engine disconnect (buffered-but-not-flushed rows are dropped there by
+ * design). Weigh that when reading counts from a process class that dies
+ * unclean often.
  */
 
 import type { BrainEngine } from '../engine.ts';
 import type { HybridSearchMeta } from '../types.ts';
 import { registerBackgroundWorkDrainer, type BackgroundWorkDrainMode } from '../background-work.ts';
+import { rootEngineCacheKey } from '../statement-deadline.ts';
 
 interface Bucket {
   date: string;
@@ -119,27 +122,30 @@ const FLUSH_INTERVAL_MS = 60_000;
 export const FLUSH_THRESHOLD_CALLS = 100;
 
 /**
- * Per-process telemetry singleton. Each gbrain process (CLI, stdio MCP,
- * HTTP MCP) gets one instance. The flush timer is installed lazily by the
- * first `setEngine()` call, not by `record()`, so importing this module has
- * no side effects and a caller can wire an engine without recording. No exit
- * hooks are installed — see `ensureExitHook`.
+ * One engine's telemetry writer. Each gbrain process (CLI, stdio MCP, HTTP
+ * MCP) gets one instance per engine it records searches against
+ * (`getTelemetryWriter`). The writer holds its engine weakly; its flush timer
+ * is installed when the writer is created, not by `record()`, so importing
+ * this module has no side effects and a caller can wire an engine without
+ * recording. No exit hooks are installed — see `ensureExitHook`.
  */
 class TelemetryWriter {
   private buckets = new Map<string, Bucket>();
   private pendingCount = 0;
-  private engine: BrainEngine | null = null;
+  private readonly engine: WeakRef<BrainEngine>;
   private timer: NodeJS.Timeout | null = null;
   private exitHookInstalled = false;
   private flushInFlight: Promise<void> | null = null;
 
-  /** Wire the engine. Called once per process at search-time. Subsequent calls are a no-op. */
-  setEngine(engine: BrainEngine): void {
-    if (!this.engine) {
-      this.engine = engine;
-      this.ensureExitHook();
-      this.ensureTimer();
-    }
+  constructor(engine: BrainEngine) {
+    this.engine = new WeakRef(engine);
+    this.ensureExitHook();
+    this.ensureTimer();
+  }
+
+  /** Whether the engine is still reachable (a collected engine's buffer can never be written). */
+  hasEngine(): boolean {
+    return this.engine.deref() !== undefined;
   }
 
   /**
@@ -249,7 +255,8 @@ class TelemetryWriter {
    */
   async flush(): Promise<void> {
     if (this.flushInFlight) return this.flushInFlight;
-    if (!this.engine || this.buckets.size === 0) {
+    const engine = this.engine.deref();
+    if (!engine || this.buckets.size === 0) {
       this.pendingCount = 0;
       return;
     }
@@ -259,7 +266,6 @@ class TelemetryWriter {
     this.buckets = new Map();
     this.pendingCount = 0;
 
-    const engine = this.engine;
     this.flushInFlight = (async () => {
       try {
         for (const b of snapshot.values()) {
@@ -298,9 +304,10 @@ class TelemetryWriter {
   }
 
   /**
-   * Stop the timer and drop the buffer. Test-only in practice: the sole
-   * caller is `_resetTelemetryWriterForTest`. Nothing in production shuts
-   * the writer down — processes exit and the buffer goes with them.
+   * Stop the timer and drop the buffer. Called by `_resetTelemetryWriterForTest`
+   * and, once its engine was garbage collected, by the writer's own timer and
+   * the drain. Nothing in production shuts down a writer whose engine is
+   * reachable — processes exit and the buffer goes with them.
    */
   stop(): void {
     if (this.timer) {
@@ -336,6 +343,7 @@ class TelemetryWriter {
   private ensureTimer(): void {
     if (this.timer) return;
     this.timer = setInterval(() => {
+      if (!this.hasEngine()) { retireWriter(this); return; }
       void this.flush().catch(() => { /* swallow */ });
     }, FLUSH_INTERVAL_MS);
     // Unref so the timer doesn't keep the process alive on its own.
@@ -375,16 +383,32 @@ class TelemetryWriter {
   }
 }
 
-/** Module-level singleton, one per process. */
-let _writer: TelemetryWriter | null = null;
+/** One writer per engine (a deadline wrapper or transaction handle shares its engine's), and every live writer for the drain. */
+let writersByEngine = new WeakMap<object, TelemetryWriter>();
+const writers = new Set<TelemetryWriter>();
 
-export function getTelemetryWriter(): TelemetryWriter {
-  if (!_writer) _writer = new TelemetryWriter();
-  return _writer;
+/** `engine`'s writer, created (with its flush timer) on first use. Writes go to the engine itself, never a transaction handle. */
+export function getTelemetryWriter(engine: BrainEngine): TelemetryWriter {
+  const key = rootEngineCacheKey(engine);
+  let w = writersByEngine.get(key);
+  if (!w) {
+    w = new TelemetryWriter(key as BrainEngine);
+    writersByEngine.set(key, w);
+    writers.add(w);
+  }
+  return w;
+}
+
+/** Drop a writer whose engine was collected: its buffer has nowhere to go. */
+function retireWriter(w: TelemetryWriter): void {
+  w.stop();
+  writers.delete(w);
 }
 
 /**
  * #4143 — background-work drain for the telemetry sink.
+ *
+ * Every live writer is drained, each against its own engine, under one bound.
  *
  * 'disconnect' mode: await ONLY the in-flight flush (its statement settles
  * against the still-open raw handle; any FURTHER statement it issues fails
@@ -394,18 +418,16 @@ export function getTelemetryWriter(): TelemetryWriter {
  * 'exit' mode (CLI teardown, engine still live): after the in-flight flush,
  * also flush residual buckets so a short-lived CLI invocation's calls land.
  *
- * O(1) when nothing is pending. Bounded, non-throwing; `unfinished` counts
- * what the bound abandoned.
+ * O(1) per writer when nothing is pending. Bounded, non-throwing;
+ * `unfinished` counts the writers the bound abandoned.
  */
 export async function awaitPendingTelemetryFlush(
   timeoutMs = 2000,
   mode: BackgroundWorkDrainMode = 'disconnect',
 ): Promise<{ unfinished: number }> {
-  const w = _writer;
-  if (!w) return { unfinished: 0 };
-  const inFlight = w.pendingFlush();
-  const wantsResidual = mode === 'exit' && w.hasBuffered();
-  if (!inFlight && !wantsResidual) return { unfinished: 0 };
+  for (const w of writers) if (!w.hasEngine()) retireWriter(w);
+  const draining = [...writers].filter((w) => w.pendingFlush() || (mode === 'exit' && w.hasBuffered()));
+  if (draining.length === 0) return { unfinished: 0 };
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timedOut = Symbol('telemetry-drain-timeout');
@@ -413,18 +435,18 @@ export async function awaitPendingTelemetryFlush(
     timer = setTimeout(() => resolve(timedOut), timeoutMs);
     timer.unref?.();
   });
+  const unfinished = new Set(draining);
+  const drainOne = async (w: TelemetryWriter): Promise<void> => {
+    const inFlight = w.pendingFlush();
+    if (inFlight) await inFlight.catch(() => undefined);
+    if (mode === 'exit' && w.hasBuffered()) await w.flush().catch(() => undefined);
+    unfinished.delete(w);
+  };
   try {
-    if (inFlight) {
-      const r = await Promise.race([inFlight.catch(() => undefined), bound]);
-      if (r === timedOut) return { unfinished: 1 };
-    }
-    if (mode === 'exit' && w.hasBuffered()) {
-      const r = await Promise.race([w.flush().catch(() => undefined), bound]);
-      if (r === timedOut) return { unfinished: 1 };
-    }
-    return { unfinished: 0 };
+    const r = await Promise.race([Promise.all(draining.map(drainOne)), bound]);
+    return { unfinished: r === timedOut ? unfinished.size : 0 };
   } catch {
-    return { unfinished: 1 };
+    return { unfinished: unfinished.size || 1 };
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -441,8 +463,8 @@ registerBackgroundWorkDrainer({
 });
 
 /**
- * Convenience entry point for hot-path callers. Wires the engine lazily
- * and records the call. Never throws.
+ * Convenience entry point for hot-path callers. Records the call in the
+ * engine's writer (created lazily). Never throws.
  */
 export function recordSearchTelemetry(
   engine: BrainEngine,
@@ -450,9 +472,7 @@ export function recordSearchTelemetry(
   opts: { results_count: number; tokens_estimate?: number; rank1_score?: number } = { results_count: 0 },
 ): void {
   try {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
-    w.record(meta, opts);
+    getTelemetryWriter(engine).record(meta, opts);
   } catch {
     // swallow — telemetry is best-effort.
   }
@@ -712,12 +732,11 @@ function nowDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/** Test-only — reset the module-level singleton between test cases. */
+/** Test-only — stop and drop every writer between test cases. */
 export function _resetTelemetryWriterForTest(): void {
-  if (_writer) {
-    _writer.stop();
-    _writer = null;
-  }
+  for (const w of writers) w.stop();
+  writers.clear();
+  writersByEngine = new WeakMap();
 }
 
 // ---------------------------------------------------------------------------

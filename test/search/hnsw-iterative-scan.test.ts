@@ -4,7 +4,8 @@
  * late); `search.hnsw_iterative_scan` / GBRAIN_HNSW_ITERATIVE_SCAN restore
  * strict_order or off without a release. ef_search sizing is unchanged.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { withEnv } from '../helpers/with-env.ts';
 import { withVectorSettings } from '../../src/core/search/vector-settings.ts';
 import { hnswEfSearchFor } from '../../src/core/vector-index.ts';
 import {
@@ -53,9 +54,19 @@ describe('hnsw.iterative_scan mode', () => {
     expect(readHnswIterativeScan(null, {})).toEqual({ mode: 'relaxed_order', via: null });
   });
 
-  test('resolved once per process', () => {
-    expect(resolveHnswIterativeScan({ search: { hnsw_iterative_scan: 'strict_order' } })).toBe('strict_order');
-    expect(resolveHnswIterativeScan({ search: { hnsw_iterative_scan: 'off' } })).toBe('strict_order');
+  test('resolved once per config object: a second brain\'s config resolves its own mode', async () => {
+    await withEnv({ GBRAIN_HNSW_ITERATIVE_SCAN: undefined }, async () => {
+      const stderr = spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const first = { search: { hnsw_iterative_scan: 'strict_order' } };
+        expect(resolveHnswIterativeScan(first)).toBe('strict_order');
+        first.search.hnsw_iterative_scan = 'off';
+        expect(resolveHnswIterativeScan(first)).toBe('strict_order');
+        expect(resolveHnswIterativeScan({ search: { hnsw_iterative_scan: 'off' } })).toBe('off');
+        expect(resolveHnswIterativeScan({ search: { hnsw_iterative_scan: 'strict_order' } })).toBe('strict_order');
+        expect(stderr.mock.calls.map(c => String(c[0]).match(/iterative_scan=(\w+)/)?.[1])).toEqual(['strict_order', 'off']);
+      } finally { stderr.mockRestore(); }
+    });
   });
 
   test('config set refuses an invalid value with the valid modes and an example', () => {

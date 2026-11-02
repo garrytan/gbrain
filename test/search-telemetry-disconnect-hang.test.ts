@@ -75,6 +75,6 @@ describe('telemetry flush vs disconnect (#4143, serial)', () => {
     if (timer) clearTimeout(timer);
     expect(winner).toBe('disconnected'); // pre-fix: 'hung' (600s CI kill)
     // The writer must not be left holding an in-flight flush.
-    expect(getTelemetryWriter().pendingFlush()).toBeNull();
+    expect(getTelemetryWriter(engine).pendingFlush()).toBeNull();
   }, 60_000);
 });

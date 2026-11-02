@@ -323,18 +323,25 @@ describe('resolveStrictParamsMode (DB > file > warn)', () => {
     getConfig: async () => { throw new Error('no config table'); },
   } as unknown as BrainEngine;
 
-  // The resolver holds the last successfully read DB mode per process
+  // The resolver holds each engine's last successfully read DB mode
   // (adversarial fix: a transient outage must not re-open warn mode) —
   // isolate each case from its neighbors.
   beforeEach(() => resetStrictParamsModeCache());
 
   test('a failed DB read holds the last-known-good DB mode (reject survives an outage)', async () => {
-    expect(await resolveStrictParamsMode(engineWith('reject'), null)).toBe('reject');
+    // One engine whose config table answers, then fails, then answers "unset".
+    let read: () => Promise<unknown> = async () => 'reject';
+    const engine = { getConfig: () => read() } as unknown as BrainEngine;
+    const outage = async () => { throw new Error('no config table'); };
+    expect(await resolveStrictParamsMode(engine, null)).toBe('reject');
     // DB now unreadable + file plane says warn → cached reject still wins.
-    expect(await resolveStrictParamsMode(throwingEngine, { engine: 'pglite', mcp: { strict_params: 'warn' } } as never)).toBe('reject');
+    read = outage;
+    expect(await resolveStrictParamsMode(engine, { engine: 'pglite', mcp: { strict_params: 'warn' } } as never)).toBe('reject');
     // A later successful read of "unset" clears the cache → file plane decides.
-    expect(await resolveStrictParamsMode(engineWith(null), { engine: 'pglite', mcp: { strict_params: 'warn' } } as never)).toBe('warn');
-    expect(await resolveStrictParamsMode(throwingEngine, null)).toBe('warn');
+    read = async () => null;
+    expect(await resolveStrictParamsMode(engine, { engine: 'pglite', mcp: { strict_params: 'warn' } } as never)).toBe('warn');
+    read = outage;
+    expect(await resolveStrictParamsMode(engine, null)).toBe('warn');
   });
 
   test('DB plane wins over the file plane', async () => {

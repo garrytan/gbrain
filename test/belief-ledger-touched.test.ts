@@ -64,7 +64,7 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
         for (const claim of claims) expect(truth.get(claim)!.th).toBe(createHash('sha256').update(claim, 'utf8').digest('hex'));
         const mismatches = (state: RawState) => [...state.facts.map(f => [f.fact, f.fp] as const), ...state.takes.map(k => [k.claim, k.claim_fp] as const)]
           .filter(([text, fp]) => truth.get(text)!.fp !== fp).map(([text]) => text);
-        const cache = __fingerprintCacheForTests();
+        const cache = __fingerprintCacheForTests(b.engine);
         cache.fingerprints.clear(); cache.streams.clear();
         const cold = await readBeliefState(b.engine, b.sourceId, [SLUG]);
         expect(cold.facts).toHaveLength(claims.length);
@@ -81,22 +81,23 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
     }, 120_000);
 
     test('the fingerprint cache stays within its bounds and holds no claim text', async () => {
-      const cache = __fingerprintCacheForTests();
       await beliefBrain(async b => {
         await b.put(SLUG, beliefPage({ facts: ['Acme raised a seed round', 'Acme has ten staff'], takes: ['Acme will win its market'] }));
         await readBeliefState(b.engine, b.sourceId, [SLUG]);
+        const cache = __fingerprintCacheForTests(b.engine);
         const texts = ['Acme raised a seed round', 'Acme has ten staff', 'Acme will win its market'];
         for (const [key, value] of cache.fingerprints) expect([key, value].some(v => texts.some(t => v.includes(t)))).toBe(false);
         for (const [key, hashes] of cache.streams) expect([key, ...hashes].some(v => texts.some(t => v.includes(t.toLowerCase()) || v.includes(t)))).toBe(false);
       }, { managed: false, enable: false, databaseUrl: engineCase.databaseUrl });
-      for (let i = 0; i < FINGERPRINT_CACHE_MAX + 50; i++) cache.fingerprints.set(`h${i}`, 'f');
       await beliefBrain(async b => {
+        const cache = __fingerprintCacheForTests(b.engine);
+        for (let i = 0; i < FINGERPRINT_CACHE_MAX + 50; i++) cache.fingerprints.set(`h${i}`, 'f');
         await b.put(SLUG, beliefPage({ facts: ['Acme raised a seed round'] }));
         await readBeliefState(b.engine, b.sourceId, [SLUG]);
         expect(cache.fingerprints.size).toBe(FINGERPRINT_CACHE_MAX);
         expect(cache.fingerprints.has('h0')).toBe(false);
+        cache.fingerprints.clear(); cache.streams.clear();
       }, { managed: false, enable: false, databaseUrl: engineCase.databaseUrl });
-      cache.fingerprints.clear(); cache.streams.clear();
     }, 120_000);
 
     const brain = (run: (b: BeliefBrain) => Promise<void>, managed = true) => beliefBrain(run, { managed, databaseUrl: engineCase.databaseUrl });

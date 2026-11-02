@@ -388,4 +388,21 @@ describe('vector legacy guard setting', () => {
       stderr.mockRestore();
     }
   });
+
+  test("resolves once per config object: a second brain's config resolves its own value", async () => {
+    const stderr = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await withEnv({ GBRAIN_VECTOR_LEGACY_GUARD: undefined }, async () => {
+        const first = { search: { vector_legacy_guard: true } };
+        expect(resolveVectorLegacyGuard(first)).toBe(true);
+        first.search.vector_legacy_guard = false;
+        expect(resolveVectorLegacyGuard(first)).toBe(true);
+        expect(resolveVectorLegacyGuard({ search: {} })).toBe(false);
+        expect(resolveVectorLegacyGuard({ search: { vector_legacy_guard: true } })).toBe(true);
+      });
+      expect(stderr).toHaveBeenCalledTimes(1);
+    } finally {
+      stderr.mockRestore();
+    }
+  });
 });

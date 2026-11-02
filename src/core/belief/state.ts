@@ -12,6 +12,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import { PAGE_INLINE_MAX_BYTES } from '../page-size-policy.ts';
+import { rootEngineCacheKey } from '../statement-deadline.ts';
 
 export interface RawPage {
   id: number; slug: string; deleted: boolean; revision: string; content_hash: string | null; tier: string;
@@ -65,20 +66,27 @@ const TEXT_HASH = (column: string) => `encode(sha256(convert_to(${column}, 'UTF8
 export const FINGERPRINT_CACHE_MAX = 20_000;
 export const FINGERPRINT_STREAMS_MAX = 2_000;
 /**
- * Process-local fingerprint cache: claim-text SHA-256 to its `gbrain_fact_fingerprint`, the stream reads' costliest
- * column (a regexp normalization per row). It holds hashes only, never claim text, and is bounded: the oldest entries
- * go first. `streamHashes` names the text hashes each stream's last read saw, so a read passes the database the
- * hashes whose fingerprints it already has and the database fingerprints only the rest.
+ * Process-local fingerprint cache, one per engine (a transaction handle shares its engine's): claim-text SHA-256 to its
+ * `gbrain_fact_fingerprint`, the stream reads' costliest column (a regexp normalization per row). It holds hashes only,
+ * never claim text, and is bounded: the oldest entries go first. `streams` names the text hashes each stream's last
+ * read saw, so a read passes the database the hashes whose fingerprints it already has and the database fingerprints
+ * only the rest.
  */
-const fingerprints = new Map<string, string>();
-const streamHashes = new Map<string, string[]>();
+interface FingerprintCache { fingerprints: Map<string, string>; streams: Map<string, string[]> }
+const fingerprintCaches = new WeakMap<object, FingerprintCache>();
+function fingerprintCache(engine: object): FingerprintCache {
+  const key = rootEngineCacheKey(engine);
+  let cache = fingerprintCaches.get(key);
+  if (!cache) fingerprintCaches.set(key, cache = { fingerprints: new Map(), streams: new Map() });
+  return cache;
+}
 const remember = <V>(map: Map<string, V>, key: string, value: V, max: number) => {
   map.delete(key);
   map.set(key, value);
   while (map.size > max) map.delete(map.keys().next().value!);
 };
-/** Test-only: the cache's contents, to poison an entry or clear it. */
-export function __fingerprintCacheForTests(): { fingerprints: Map<string, string>; streams: Map<string, string[]> } { return { fingerprints, streams: streamHashes }; }
+/** Test-only: `engine`'s cache contents, to poison an entry or clear it. */
+export function __fingerprintCacheForTests(engine: object): FingerprintCache { return fingerprintCache(engine); }
 
 let touchedSignalSuppressed = false;
 /** Test-only: report every counted table as unwritten, so a re-read reuses the earlier rows whatever the transaction wrote. */
@@ -102,6 +110,7 @@ export async function readBeliefState(tx: BrainEngine, sourceId: string, slugs: 
   // $9 the plan_cache_mode to restore (the statement is planned before it runs, so it restores the mode itself);
   // `planModePrev`: the caller already switched to generic plans (readLedgerSource's `batch`) and this is the mode it replaced.
   const streamKey = (slug: string) => `${sourceId}\u0000${slug}`;
+  const { fingerprints, streams: streamHashes } = fingerprintCache(tx);
   const knownFp = new Map<string, string>([...(known?.facts ?? []).map(f => [f.th, f.fp] as const), ...(known?.takes ?? []).map(k => [k.th, k.claim_fp] as const)]
     .flatMap(([th, fp]) => th === undefined ? [] : [[th, fp] as [string, string]]));
   for (const slug of new Set([...slugs, ...(known?.pages ?? []).map(p => p.slug)])) {

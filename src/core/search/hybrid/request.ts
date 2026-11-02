@@ -279,7 +279,7 @@ export async function resolveHybridRequest(
     // it never has to read config. Engines normalize string-or-descriptor
     // via normalizeEngineColumn; the descriptor path is the strict one.
     embeddingColumn: resolvedCol,
-    // #5824 rollback switch, latched once per process from env/config.
+    // #5824 rollback switch, latched once per config object from env/config.
     vectorLegacyGuard: resolveVectorLegacyGuard(cfgForColumn),
     hnswIterativeScan: resolveHnswIterativeScan(cfgForColumn),
     // #5989: bound the CJK keyword arm by one deadline; its outcome and wall time ride the meta.

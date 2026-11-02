@@ -5,9 +5,9 @@
  * wave.
  *
  * Read from `GBRAIN_VECTOR_LEGACY_GUARD` (wins when set) or the config key
- * `search.vector_legacy_guard`, resolved once per process by the caller that
- * builds search options, so the owning service (serve, autopilot, worker)
- * picks a change up on restart and the hot path never re-reads config.
+ * `search.vector_legacy_guard`, resolved once per config object by the caller
+ * that builds search options, so each brain a process opens gets its own value
+ * and the hot path never re-reads config.
  */
 import type { GBrainConfig } from '../config.ts';
 
@@ -27,7 +27,7 @@ function parseFlag(value: string | undefined): boolean | undefined {
   return undefined;
 }
 
-/** What the setting says right now (doctor reports it; search uses the per-process latch). */
+/** What the setting says right now (doctor reports it; search uses the per-config latch). */
 export function readVectorLegacyGuard(cfg: Pick<GBrainConfig, 'search'> | null | undefined, env: NodeJS.ProcessEnv = process.env): VectorLegacyGuardSetting {
   const fromEnv = parseFlag(env[VECTOR_LEGACY_GUARD_ENV]);
   if (fromEnv !== undefined) return { enabled: fromEnv, via: 'env' };
@@ -35,21 +35,29 @@ export function readVectorLegacyGuard(cfg: Pick<GBrainConfig, 'search'> | null |
   return { enabled: false, via: null };
 }
 
-let resolved: boolean | undefined;
+/** The key for calls without a config. */
+const NO_CONFIG = {};
+let resolved = new WeakMap<object, boolean>();
+/** Whether the activation notice has printed: once per process. */
+let logged = false;
 
-/** First call decides for the process; logs once to stderr when the guard is active. */
+/** First call per config object decides for it; logs once to stderr when the guard is active. */
 export function resolveVectorLegacyGuard(cfg: Pick<GBrainConfig, 'search'> | null | undefined): boolean {
-  if (resolved !== undefined) return resolved;
+  const key = cfg ?? NO_CONFIG;
+  const known = resolved.get(key);
+  if (known !== undefined) return known;
   const setting = readVectorLegacyGuard(cfg);
-  resolved = setting.enabled;
-  if (resolved) {
+  resolved.set(key, setting.enabled);
+  if (setting.enabled && !logged) {
+    logged = true;
     console.error(`[gbrain] vector legacy guard active (${setting.via === 'env' ? VECTOR_LEGACY_GUARD_ENV : VECTOR_LEGACY_GUARD_KEY}): `
       + 'vector search keeps the pre-#5824 freshness guard inside the HNSW candidate scan; remove it after upgrading.');
   }
-  return resolved;
+  return setting.enabled;
 }
 
 /** @internal test seam */
 export function _resetVectorLegacyGuardForTests(): void {
-  resolved = undefined;
+  resolved = new WeakMap();
+  logged = false;
 }
