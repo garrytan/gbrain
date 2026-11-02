@@ -290,6 +290,7 @@ describe("GST-927: GBEV-3's replayed Sol shapes", () => {
     expect(Object.keys(fixed).filter(k => ['lines', 'bytes', 'around_chunk_id', 'cursor'].includes(k))).toEqual(['lines']);
     expect(fixed).toMatchObject({ slug: SLUG, lines: { from: 1, count: 200 }, body: 'window', max_bytes: 40000, view: 'read', source_id: 'default' });
     expect(fixed.include_content).toBeUndefined();
+    expect((local as { fix?: { argv?: string[] } } | null)?.fix?.argv).toEqual(['gbrain', 'get', '--source-id', 'default', '--body', 'window', '--lines', '1-200', '--context-lines', '20', '--max-bytes', '40000', '--view', 'read', '--outline-from', '0', '--', SLUG]);
     const retried = await paths['mcp remote (http)']!('get_page', fixed);
     expect([retried.ok, retried.text.includes(BODY_MARKER)]).toEqual([true, true]);
   });
@@ -327,4 +328,23 @@ test('GST-927: the absence annotations sit only on optional params of read ops, 
     .filter(([, d]) => keys.some(k => d[k] !== undefined) && (op.mutating !== false || d.required))
     .map(([k]) => `${op.name}.${k}`));
   expect(misplaced).toEqual([]);
+});
+
+describe('GST-927: refusal fixes keep only arguments the target read takes', () => {
+  const fixOf = (args: Record<string, unknown>) => handleToolCall(engine, 'get_page', args).then(() => null,
+    (e: { message?: string; suggestion?: string; fix?: { argv?: string[]; mcp?: { arguments: Record<string, unknown> } } }) => e);
+
+  test('two selectors: the fix drops undeclared keys, and around_chunk_id kept first drops view: markdown', async () => {
+    const e = await fixOf({ slug: SLUG, around_chunk_id: 3, cursor: 'gpw1.x', view: 'markdown', json: true, stray: 'x' });
+    expect(e?.message).toContain('pass one window selector, not 2 (got around_chunk_id and cursor)');
+    expect(e?.fix?.mcp?.arguments).toEqual({ slug: SLUG, around_chunk_id: 3, body: 'window' });
+    expect(e?.fix?.argv).toEqual(['gbrain', 'get', '--around-chunk-id', '3', '--body', 'window', '--', SLUG]);
+  });
+
+  test('known_as_of with body: window names body to drop, and the fix leaves body out', async () => {
+    const e = await fixOf({ slug: SLUG, known_as_of: '2026-10-01T12:00:00Z', body: 'window' });
+    expect(e?.message).toContain('known_as_of does not combine with body: window');
+    expect(e?.suggestion).toContain('Drop --body to read the page as recorded');
+    expect(e?.fix?.mcp?.arguments).toEqual({ slug: SLUG, known_as_of: '2026-10-01T12:00:00Z' });
+  });
 });

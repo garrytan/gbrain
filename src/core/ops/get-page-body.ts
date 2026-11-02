@@ -99,6 +99,10 @@ export interface BodyRequest {
   slice?: SliceRequest;
 }
 
+/** The get_page arguments the two-selector refusal's fix keeps; anything else the caller sent (CLI-only keys, unknown keys) is left out. */
+const WINDOW_FIX_ARGS = ['slug', 'fuzzy', 'include_deleted', 'include_timeline_entries', 'grammar_diagnostics', 'source_id', 'include_quarantined', 'min_trust',
+  ...Object.keys(GET_PAGE_BODY_PARAMS)];
+
 const SELECTOR_EXAMPLE = { slug: 'notes/acme-example-log', body: 'window', lines: { from: 1, count: 200 } };
 
 function int(v: unknown): v is number { return typeof v === 'number' && Number.isSafeInteger(v); }
@@ -138,12 +142,17 @@ export function parseBodyRequest(ctx: Pick<OperationContext, 'remote' | 'transpo
   if (selectors.length > 1) {
     const [keep, ...drop]: string[] = selectors.map(s => s.kind === 'around' ? 'around_chunk_id' : s.kind);
     const conflicts = ['include_content', 'content_only', ...(keep === 'around_chunk_id' && p.view === 'markdown' ? ['view'] : [])];
-    const args = Object.fromEntries(Object.entries(p).filter(([k, v]) => v !== undefined && k !== '_meta' && !drop.includes(k) && !conflicts.includes(k)));
-    const name = (k: string) => opTransport(ctx) === 'cli' ? `--${k.replace(/_/g, '-')}` : `\`${k}\``;
+    const args: Record<string, unknown> = Object.fromEntries(WINDOW_FIX_ARGS.filter(k => p[k] !== undefined && !drop.includes(k) && !conflicts.includes(k)).map(k => [k, p[k]]));
+    args.body = 'window';
+    const flag = (k: string) => `--${k.replace(/_/g, '-')}`;
+    const name = (k: string) => opTransport(ctx) === 'cli' ? flag(k) : `\`${k}\``;
+    const range = (k: string, v: Record<string, number>) => k === 'lines' ? `${v.from}-${v.from + v.count - 1}` : `${v.offset}-${v.offset + v.length - 1}`;
+    const argv = ['gbrain', 'get', ...Object.entries(args).filter(([k]) => k !== 'slug').flatMap(([k, v]) => v === true ? [flag(k)] : v === false ? []
+      : [flag(k), typeof v === 'object' && v ? range(k, v as Record<string, number>) : String(v)]), '--', String(p.slug)];
     throw opError('invalid_params', `get_page: pass one window selector, not ${selectors.length} (got ${[keep, ...drop].join(' and ')}).`,
       `Pass at most one window selector: lines, bytes, around_chunk_id or cursor. Drop ${drop.map(name).join(' and ')} to read the ${keep} window, or pass one of them alone to read there instead.`,
       { fix: readFix(`The same call with one window selector (${keep}) and body: "window"; ${[...drop, ...conflicts.filter(k => p[k] !== undefined)].join(', ')} dropped.`,
-        { mcp: { tool: 'get_page', arguments: { ...args, body: 'window' } } }) });
+        { argv, mcp: { tool: 'get_page', arguments: args } }) });
   }
   const includeContent = p.include_content === true;
   const contentOnly = p.content_only === true;
