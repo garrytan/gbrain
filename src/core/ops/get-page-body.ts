@@ -136,7 +136,7 @@ export function parseBodyRequest(ctx: Pick<OperationContext, 'remote' | 'transpo
     selectors.push({ kind: 'cursor', raw: p.cursor });
   }
   if (selectors.length > 1) {
-    const [keep, ...drop] = selectors.map(s => s.kind === 'around' ? 'around_chunk_id' : s.kind);
+    const [keep, ...drop]: string[] = selectors.map(s => s.kind === 'around' ? 'around_chunk_id' : s.kind);
     const conflicts = ['include_content', 'content_only', ...(keep === 'around_chunk_id' && p.view === 'markdown' ? ['view'] : [])];
     const args = Object.fromEntries(Object.entries(p).filter(([k, v]) => v !== undefined && k !== '_meta' && !drop.includes(k) && !conflicts.includes(k)));
     const name = (k: string) => opTransport(ctx) === 'cli' ? `--${k.replace(/_/g, '-')}` : `\`${k}\``;
