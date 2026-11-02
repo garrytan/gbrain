@@ -99,6 +99,7 @@ This is the difference between a search engine and a brain. Search finds the pag
 > gbrainio workspace new         # pick a plan in the browser
 > curl -fsSL https://bun.sh/install | bash && export PATH="$HOME/.bun/bin:$PATH"   # skip if Bun 1.4.4+ is installed
 > bun install -g github:garrytan/gbrain#latest-stable   # the gbrain CLI only; no local brain
+> # Already added gbrain to Claude Code or Codex? Run only its gbrain setup command below.
 > # Claude Code:
 > claude mcp add --transport http --scope user gbrain https://gbrain.io/mcp && gbrain setup claude-code --instructions-only
 > # Codex:
