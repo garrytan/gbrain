@@ -97,9 +97,16 @@ This is the difference between a search engine and a brain. Search finds the pag
 > curl -sSL https://gbrainio.terminalwire.sh | bash
 > gbrainio terminal connect      # in a new terminal
 > gbrainio workspace new         # pick a plan in the browser
-> claude mcp add --transport http --scope user gbrain https://gbrain.io/mcp
-> codex mcp add gbrain --url https://gbrain.io/mcp
+> curl -fsSL https://bun.sh/install | bash   # skip if Bun 1.4.4+ is installed
+> export PATH="$HOME/.bun/bin:$PATH"
+> bun install -g github:garrytan/gbrain#latest-stable   # the gbrain CLI only; no local brain
+> # Claude Code (an existing gbrain entry is kept):
+> (claude mcp get gbrain >/dev/null 2>&1 || claude mcp add --transport http --scope user gbrain https://gbrain.io/mcp) && gbrain setup claude-code --instructions-only
+> # Codex (an existing gbrain entry is kept):
+> (codex mcp get gbrain >/dev/null 2>&1 || codex mcp add gbrain --url https://gbrain.io/mcp) && gbrain setup codex --instructions-only
 > ```
+>
+> `gbrain setup <harness> --instructions-only` tells the agent the brain is there; agents seldom call an MCP server nobody told them about. It writes the [brain-first block](docs/guides/setup.md#brain-first-instructions) into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` (a non-empty `AGENTS.override.md` instead when Codex has one) with a per-turn rule hook, and leaves the MCP entry alone; the same command with `--no-instructions` added takes them out.
 >
 > The installer is a shell script for macOS and Linux; read it before you run it.
 

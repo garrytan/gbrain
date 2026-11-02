@@ -32,6 +32,35 @@ identifiers and attribution are available in the pre-removal Git revision
 - `memory_write` binds its idempotency key to the whole batch: a retry under the same key with more, fewer or different facts refuses (`idempotency_conflict`), and a batch with an invalid fact saves nothing.
 - The QM contract QM vendors is `docs/contracts/qm-memory-provider/v1.json`; the guide is `docs/guides/qm.md`.
 
+## [0.60.545.0] - 2026-11-02
+
+**The hosted gbrain.io install now tells the agent the brain is there.**
+
+Before, the hosted install in README.md, docs/INSTALL.md, INSTALL_FOR_AGENTS.md and AGENTS.md stopped at `claude mcp add` or `codex mcp add`, so nothing in the harness told the model to use the new MCP server, and in harness trials a server nobody mentions is almost never called. Each now installs the gbrain CLI with Bun (`bun install -g github:garrytan/gbrain#latest-stable`) and runs `gbrain setup claude-code --instructions-only` or `gbrain setup codex --instructions-only` after the MCP entry is in place. That writes the brain-first block into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` (or its non-empty `AGENTS.override.md`) and the per-turn rule hook, without creating a local brain. Each harness line checks for an existing `gbrain` entry first and keeps it (`mcp get` output goes to /dev/null, since it can print a stored token), adds the hosted entry otherwise, and skips the setup step when that harness isn't installed. Adding `--no-instructions` to that `gbrain setup` command takes them out, and a bare `mcp add` still works.
+
+## [0.60.544.0] - 2026-11-02
+
+**The remote gate stops waiting on an artifact GitHub has refused for good, and bench and eval scripts no longer fail pregate for having no test lane (#8370, #7690).** When reading a full run's `executed-identities` artifact failed, `fetchArtifactJson` marked every failure transient, so a 403 or an expired artifact's 410 kept the gate polling for up to 90 minutes before it fell back to VMs. Only no response, a 5xx, a 429 or a rate-limit 403 is transient now. Any other 4xx refuses reuse at once and the gate goes straight to VMs. This never made a gate pass, because a transient read was always `none` and never `reuse`. Separately, `scripts/bench/**` and the system-one eval runners and generators now declare that they need no test lane, so a PR that touches them no longer fails pregate with `PREGATE_NO_LANE`. The unit-lane PostgreSQL arms job also gets real headroom back. Its committed weights had drifted about 24% below what the files now take, so by measured times the busiest of master's 13 shards takes 694 s against its 570 s budget.
+
+### What changed
+
+| `unit-postgres-arms` (both arms, the CI cell) | Before | Now |
+|---|---|---|
+| Weights | mined from older runs, scaled by 0.763, 6 listed files unweighted (charged the 29 s p75) | median of the `ARM_FILE` times in eight full-ci runs from 2026-11-01 (41296667994, 41307060384, 41310113203, 41324518709, 41342917113, 41347700875, and train M's 41351675051 and 41365617585, covering every suite #8404, #8405, #8407 and M added), every listed file weighted |
+| Shards | 13 | 19 |
+| Two-worker makespan, largest shard, against the unchanged 570 s budget | 526.4 s (7.7% headroom) by the committed weights; 694.3 s by the fresh ones | 476.3 s (16.4% headroom) |
+| Measured job wall time | 438-923 s per job in train M's run 41365617585, against the 20-minute step timeout | about 475 s per shard, by the same measurements |
+| PostgreSQL-only cell, largest shard | 487.2 s | 333.8 s |
+
+### Itemized changes
+
+- `scripts/lib/gh-issue.ts`: `fetchArtifactJson` marks a failed artifact read transient only for no response, a 5xx, a 429 or a 403 whose message names a rate limit (#8370). Both clients' artifact downloads now carry the HTTP status and the response text, so the `gh` CLI client (used when no `GH_TOKEN` is set) classifies the same way. A rate-limit 403 stays transient whether its headers (`x-ratelimit-remaining: 0`, `retry-after`) or its text (rate limit, abuse detection) say so, and so does a refusal from the artifact storage the download redirects to, since a fresh read mints a new signed URL.
+- `test/scripts/ci-reuse.test.ts`: a probe checks that 403, 404 and 410 are refusals and that 429, a rate-limit 403, a 502 and no response stay transient, and that a refused receipt ends the gate's wait at once. It fails without the fix.
+- `.gstack/pregate.json`: `scripts/bench/**`, `docs/eval/system-one/runners/**` and `docs/eval/system-one/generators/**` declare no lane (`[]`), which applies only where no test maps the file, so the VM-setup scripts keep `test/scripts/vm-setup-usage.test.ts` (#7690).
+- `scripts/postgres-arm-weights.json`: re-mined with `bun scripts/postgres-unit-arms.ts mine` from those eight runs' 98 job logs, unscaled.
+- `scripts/postgres-unit-arms.ts`: `ARM_SHARDS` 19; `.github/workflows/persistence-validation.yml`: the matrix, job name and `run` argument follow it (pinned by `test/scripts/postgres-unit-arms.test.ts`, whose budget and assertion are unchanged). Check names become `Unit-lane PostgreSQL arms N/19 / Bun …`; none is a required check.
+- `docs/architecture/key-files/ci-health-and-test-guards.md`, `scripts/ubicloud/README.md`: shard count.
+
 ## [0.60.543.0] - 2026-11-01
 
 **A shared brain can now keep a page to the members it names, inside one source. Put `readable_by: [alice-example, group:team-a]` in a page's frontmatter, bind each member's token, OAuth client or stdio server to a member, and remote reads of that page answer only for them. Nothing changes until a page names readers or a member is created.**
