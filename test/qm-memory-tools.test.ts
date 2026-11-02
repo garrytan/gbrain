@@ -392,6 +392,46 @@ for (const kind of testBackends()) {
       }
     }, 120_000);
 
+    test('a recall that names sources reads as the scope, never as the person: none of their own member-page facts (GST-1094)', async () => {
+      const SCOPE = 'qm-scope-room';
+      await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [SCOPE]);
+      const c = await provider().registerClientManual('d-scope-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], SRC);
+      await provider().rescopeClient(c.clientId, { federatedRead: [SRC, SCOPE] });
+      await bindCredential(engine, { kind: 'client', id: c.clientId }, { attestActor: 'qm' });
+      tokens.scoped = (await provider().exchangeClientCredentials(c.clientId, c.clientSecret ?? '')).access_token;
+      const aliceScoped: Who = { token: 'scoped', actor: ALICE_ID };
+      expect((await write(aliceScoped, [{ fact: 'Alice keeps her seat preference canaryscopeown budget ledger', provenance: 'turn 40' }])).structured?.status).toBe('committed');
+      const restricted = 'notes/alice-only-scope';
+      await importFromContent(engine, restricted, '---\ntype: note\ntitle: Alice only\nreadable_by:\n  - member:alice-example\n---\n# Alice only\n', { sourceId: SRC });
+      await engine.insertFact({ fact: 'Alice salary review canaryscoperestricted budget ledger', kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'world' }, { source_id: SRC });
+      await engine.executeRaw('UPDATE facts SET source_markdown_slug = $1 WHERE fact LIKE $2', [restricted, '%canaryscoperestricted%']);
+      await engine.insertFact({ fact: 'The room budget ledger review is Friday canaryscoperoom', kind: 'event', entity_slug: null, source: 'test', visibility: 'world' }, { source_id: SCOPE });
+      await engine.insertFact({ fact: 'Acme budget ledger audit is open canaryscopeworld', kind: 'event', entity_slug: ACME, source: 'test', visibility: 'world' }, { source_id: SRC });
+      __resetPrivateVisibilityCacheForTests();
+      const asPerson = await recall(aliceScoped, 'budget ledger', { max_chars: 12_000 });
+      for (const needle of ['canaryscopeown', 'canaryscopeworld', 'canaryscoperoom']) expect(asPerson.text).toContain(needle);
+      expect(asPerson.all).not.toContain('canaryscoperestricted');
+      for (const args of [{ source_id: SRC }, { source_ids: [SRC] }, { source_ids: [SRC, SCOPE] }]) {
+        const asScope = await recall(aliceScoped, 'budget ledger', { max_chars: 12_000, ...args });
+        expect(asScope.isError).toBe(false);
+        expect(asScope.text).toContain('canaryscopeworld');
+        for (const needle of ['canaryscopeown', 'canaryscoperestricted', 'canarywritealice', 'canaryownrecent']) expect(asScope.all).not.toContain(needle);
+        expect(JSON.stringify(asScope.out._meta?.warnings ?? [])).not.toContain('unknown_param');
+      }
+      const room = await recall(aliceScoped, 'budget ledger', { source_ids: [SCOPE] });
+      expect(room.text).toContain('canaryscoperoom');
+      for (const needle of ['canaryscopeworld', 'canaryscopeown', 'canaryscoperestricted']) expect(room.all).not.toContain(needle);
+      const outside = await recall(alice, 'budget ledger', { source_ids: [SCOPE] });
+      expect({ isError: outside.isError, code: outside.json.code }).toEqual({ isError: true, code: 'permission_denied' });
+      expect(outside.structured?.error?.code).toBe('permission_denied');
+      const all = await recall(aliceScoped, 'budget ledger', { source_id: '__all__' });
+      expect({ isError: all.isError, code: all.json.code }).toEqual({ isError: true, code: 'invalid_params' });
+      const none = await recall(aliceScoped, 'budget ledger', { source_id: SCOPE, source_ids: [SRC] });
+      expect({ isError: none.isError, text: none.text, facts: none.structured?.facts }).toEqual({ isError: false, text: '', facts: [] });
+      const unlinked = await recall({ token: 'scoped', actor: 'U0NOBODY' }, 'budget ledger', { source_ids: [SCOPE] });
+      expect(unlinked.structured).toEqual({ facts: [], truncated: false, code: 'actor_unlinked' });
+    }, 120_000);
+
     test('an unlinked person gets an empty success whose code rides structuredContent only', async () => {
       const out = await recall({ token: 'qm', actor: 'U0NOBODY' }, 'budget ledger');
       expect(out.isError).toBe(false);

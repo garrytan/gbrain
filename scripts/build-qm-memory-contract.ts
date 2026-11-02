@@ -1,10 +1,11 @@
 #!/usr/bin/env bun
 /**
- * GST-359 D: docs/contracts/qm-memory-provider/v1.json, the QM memory-provider contract, generated from the live
- * operation registry, the actor model and the error catalogue. test/qm-memory-contract.test.ts fails on drift.
- *   bun scripts/build-qm-memory-contract.ts          write the fixture
- *   bun scripts/build-qm-memory-contract.ts --check  exit 1 when the committed fixture is stale
- * A change to the shape is a new file (v2.json); v1.json stays until QM moves.
+ * GST-359 D: docs/contracts/qm-memory-provider/v1.json and v2.json, the QM memory-provider contracts, generated from the
+ * live operation registry, the actor model and the error catalogue. test/qm-memory-contract.test.ts fails on drift.
+ *   bun scripts/build-qm-memory-contract.ts          write both fixtures
+ *   bun scripts/build-qm-memory-contract.ts --check  exit 1 when a committed fixture is stale
+ * A change to the shape is a new version; v1.json stays byte-identical until QM moves. GST-1094 v2 adds the scope read
+ * (source_id / source_ids on memory_recall), GST-900's member-bound acting_user rule and _meta-only unknown-param warnings.
  */
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -14,7 +15,14 @@ import { CODES } from '../src/core/error-registry.ts';
 import { ACTOR_ARGUMENT, ACTOR_DEFERRED_OPS, ACTOR_HEADER, DEFAULT_ATTEST_OPS, EXTERNAL_ID_RE, QM_AUDIENCE_HEADER } from '../src/core/access/actor-model.ts';
 import { IDEMPOTENCY_KEY_RE, MEMORY_RECALL_MAX_CHARS, MEMORY_RECALL_QUERY_CHARS, MEMORY_WRITE_KINDS, MEMORY_WRITE_MAX_FACTS, MEMORY_WRITE_PROVENANCE_MAX, OWN_RECENT_WINDOW_HOURS, QM_MEMORY_OPS, unlinkedRecallResult } from '../src/core/ops/qm-memory.ts';
 
-export const QM_CONTRACT_PATH = join(import.meta.dir, '..', 'docs', 'contracts', 'qm-memory-provider', 'v1.json');
+export type QmContractVersion = 1 | 2;
+export const QM_CONTRACT_PATHS: Record<QmContractVersion, string> = {
+  1: join(import.meta.dir, '..', 'docs', 'contracts', 'qm-memory-provider', 'v1.json'),
+  2: join(import.meta.dir, '..', 'docs', 'contracts', 'qm-memory-provider', 'v2.json'),
+};
+export const QM_CONTRACT_PATH = QM_CONTRACT_PATHS[1];
+/** The arguments v1 publishes per tool, frozen: later arguments appear from v2 on. */
+const V1_PARAMS: Record<string, readonly string[]> = { memory_recall: ['query', 'max_chars', 'acting_user'], memory_write: ['facts', 'idempotency_key', 'acting_user'] };
 
 /** Who fixes each actor_not_attested reason, and how. Every reason the catalogue lists needs a row (the drift test checks). */
 export const ACTOR_REASON_FIXES: Record<string, { fixed_by: 'brain_operator' | 'calling_harness'; fix: string }> = {
@@ -41,28 +49,43 @@ const ERROR_NOTES: Partial<Record<typeof ERROR_CODES[number], string>> = {
   unavailable: 'memory_recall could not read the fact candidates (a database failure); retry the same call.',
 };
 
-function toolEntry(name: string) {
+/** v2 changes to v1's fix rows (GST-900: a member-bound credential may name its own member). */
+const V2_REASON_FIXES: Partial<typeof ACTOR_REASON_FIXES> = {
+  argument_mismatch: { fixed_by: 'calling_harness', fix: 'Send acting_user equal to the x-qm-actor header (with no header, on a credential bound to a member: that member id or a canonical id linked to it), or omit it.' },
+  argument_without_attestation: { fixed_by: 'calling_harness', fix: 'Remove acting_user, or send the x-qm-actor header from a credential holding the attest right; a credential bound to no member never sends acting_user alone.' },
+};
+
+function toolEntry(name: string, version: QmContractVersion) {
   const op = operations.find(o => o.name === name);
   if (!op) throw new Error(name + ' is not in the operation registry');
+  const params = Object.entries(op.params).filter(([k]) => version > 1 || V1_PARAMS[name]!.includes(k));
   return {
     name, description: op.description, scope: op.scope ?? 'read', mutating: op.mutating === true,
-    input_schema: { type: 'object', properties: Object.fromEntries(Object.entries(op.params).map(([k, v]) => [k, paramDefToSchema(v)])),
-      required: Object.entries(op.params).filter(([, v]) => v.required).map(([k]) => k) },
+    input_schema: { type: 'object', properties: Object.fromEntries(params.map(([k, v]) => [k, paramDefToSchema(v)])),
+      required: params.filter(([, v]) => v.required).map(([k]) => k) },
   };
 }
 
-export function buildQmMemoryContract(): Record<string, unknown> {
+export function buildQmMemoryContract(version: QmContractVersion): Record<string, unknown> {
   const unlinked = unlinkedRecallResult();
+  const v2 = version > 1;
+  const codes = v2 ? [...ERROR_CODES, 'permission_denied' as const] : ERROR_CODES;
+  const notes: Record<string, string | undefined> = v2 ? { ...ERROR_NOTES,
+    actor_not_attested: 'With no x-qm-actor header, acting_user is accepted only from a credential bound to a member and only naming that member (its member id or a canonical id linked to it); the call then runs exactly as the credential.',
+    permission_denied: 'memory_recall named a source (source_id or source_ids) outside the credential\'s read grant; nothing was read.' } : ERROR_NOTES;
   return {
-    contract: 'gbrain.qm-memory-provider', version: 1,
-    transport: { protocol: 'mcp', session: 'stateless', session_header_issued: false, success_codes_in: 'structuredContent' },
+    contract: 'gbrain.qm-memory-provider', version,
+    transport: { protocol: 'mcp', session: 'stateless', session_header_issued: false, success_codes_in: 'structuredContent',
+      ...(v2 ? { unknown_arguments: 'an argument a read tool does not declare is ignored and reported only in _meta.warnings ([{code: "unknown_param", param, suggestion?}]), never in content; a write tool refuses it with invalid_params' } : {}) },
     actor: {
-      header: ACTOR_HEADER, argument: ACTOR_ARGUMENT, argument_rule: 'optional; must equal the header; never chooses the person on its own',
+      header: ACTOR_HEADER, argument: ACTOR_ARGUMENT, argument_rule: v2
+        ? 'optional; on an attested call it must equal the header; with no header it is accepted only from a credential bound to a member and only naming that member (its member id or a canonical id linked to it), and the call then runs exactly as the credential; never chooses the person on its own'
+        : 'optional; must equal the header; never chooses the person on its own',
       actor_id: { pattern: EXTERNAL_ID_RE.source, case_folding: false },
       system: 'qm', default_attest_ops: [...DEFAULT_ATTEST_OPS], deferred_ops: [...ACTOR_DEFERRED_OPS].sort(),
       audit: 'the audit trail and stored writes record the canonical external id as sent, with its linked member',
     },
-    tools: [...QM_MEMORY_OPS].sort().map(toolEntry),
+    tools: [...QM_MEMORY_OPS].sort().map(name => toolEntry(name, version)),
     memory_recall: {
       limits: { max_chars: { ...MEMORY_RECALL_MAX_CHARS, whole_number: true, unit: 'UTF-16 code units (JavaScript string length)' }, query_chars_ranked: MEMORY_RECALL_QUERY_CHARS, own_recent_window_hours: OWN_RECENT_WINDOW_HOURS },
       arguments_checked: 'query and max_chars are checked before any read, also for an unlinked person (invalid_params)',
@@ -70,6 +93,12 @@ export function buildQmMemoryContract(): Record<string, unknown> {
       order: ['own facts from the last ' + OWN_RECENT_WINDOW_HOURS + ' hours, newest first', 'facts the person may read, ranked by query'],
       ranking: 'keyword-only unless an embedding provider is configured (no embedding call on a keyless brain)',
       structured_content: { facts: [{ id: 'string', text: 'string', date: 'YYYY-MM-DD', kind: 'string' }], truncated: 'boolean', code: 'actor_unlinked (only on unlinked_recall)' },
+      ...(v2 ? { scope_read: {
+        arguments: ['source_id', 'source_ids'],
+        rule: 'a call that names sources is read as their audience, never as the person: no own facts first and no member-page fact; a page restricted to named readers stays hidden; privacy is never relaxed',
+        sources: 'narrowed inside the credential\'s read grant like recall\'s source_ids; a source outside it is permission_denied; source_id and source_ids together read their intersection, and an empty intersection reads nothing',
+        without_sources: 'the person read above (own recent facts, then what the person may read across the read grant): use it only for the person\'s own conversations',
+      } } : {}),
     },
     unlinked_recall: { isError: false, content: unlinked.content, structuredContent: unlinked.structuredContent },
     memory_write: {
@@ -87,11 +116,11 @@ export function buildQmMemoryContract(): Record<string, unknown> {
     errors: {
       shape: { isError: true, content: 'one JSON text block with top-level code, message, suggestion and optional reason and fix', structuredContent: { error: { code: 'string', message: 'string', reason: 'string?', write_error: 'string?', fix: 'object?' } } },
       applies_to: 'every refusal of memory_recall and memory_write, including the transport\'s scope and unknown-tool refusals',
-      codes: ERROR_CODES.map(code => {
+      codes: codes.map(code => {
         const entry: { class: string; summary: string; suggestion?: string; reasons?: readonly string[]; docs?: string } = CODES[code];
         return { code, class: entry.class, summary: entry.summary, ...(entry.suggestion ? { suggestion: entry.suggestion } : {}), docs: entry.docs ?? 'docs/guides/error-codes.md#' + code,
-          ...(code === 'actor_not_attested' ? { reasons: (entry.reasons ?? []).map(reason => ({ reason, ...ACTOR_REASON_FIXES[reason] })) } : {}),
-          ...(ERROR_NOTES[code] ? { note: ERROR_NOTES[code] } : {}) };
+          ...(code === 'actor_not_attested' ? { reasons: (entry.reasons ?? []).map(reason => ({ reason, ...ACTOR_REASON_FIXES[reason], ...(v2 ? V2_REASON_FIXES[reason] : {}) })) } : {}),
+          ...(notes[code] ? { note: notes[code] } : {}) };
       }),
     },
     wave_2: { audience_header: QM_AUDIENCE_HEADER, encoding: 'base64url of a JSON array of canonical ids', status: 'refused until wave 2',
@@ -99,23 +128,27 @@ export function buildQmMemoryContract(): Record<string, unknown> {
   };
 }
 
-export function renderQmMemoryContract(): string {
-  return JSON.stringify(buildQmMemoryContract(), null, 2) + '\n';
+export function renderQmMemoryContract(version: QmContractVersion): string {
+  return JSON.stringify(buildQmMemoryContract(version), null, 2) + '\n';
 }
 
 if (import.meta.main) {
-  const fresh = renderQmMemoryContract();
-  if (process.argv.includes('--check')) {
-    let current = '';
-    try { current = readFileSync(QM_CONTRACT_PATH, 'utf8'); } catch { /* missing */ }
-    if (current !== fresh) {
-      console.error('docs/contracts/qm-memory-provider/v1.json is stale. Run: bun scripts/build-qm-memory-contract.ts');
-      process.exit(1);
+  let stale = false;
+  for (const version of [1, 2] as const) {
+    const path = QM_CONTRACT_PATHS[version];
+    const fresh = renderQmMemoryContract(version);
+    if (process.argv.includes('--check')) {
+      let current = '';
+      try { current = readFileSync(path, 'utf8'); } catch { /* missing */ }
+      if (current !== fresh) {
+        console.error('docs/contracts/qm-memory-provider/v' + version + '.json is stale. Run: bun scripts/build-qm-memory-contract.ts');
+        stale = true;
+      } else console.log('qm-memory-provider v' + version + '.json: up to date');
+    } else {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, fresh);
+      console.log('wrote ' + path);
     }
-    console.log('qm-memory-provider v1.json: up to date');
-  } else {
-    mkdirSync(dirname(QM_CONTRACT_PATH), { recursive: true });
-    writeFileSync(QM_CONTRACT_PATH, fresh);
-    console.log('wrote ' + QM_CONTRACT_PATH);
   }
+  if (stale) process.exit(1);
 }

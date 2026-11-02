@@ -19,10 +19,11 @@
 import { createHash } from 'node:crypto';
 import type { Operation, OperationContext, ParamDef } from './contract.ts';
 import { opError, OperationError } from './contract.ts';
-import { federatedSearchScope } from './context.ts';
+import { federatedSearchScope, parseSourceIdParam } from './context.ts';
+import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './search-source-scope.ts';
 import type { FactRow } from '../engine.ts';
 import { resolveReadEligibility } from '../eligibility/policy.ts';
-import { currentCallerAccess, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { currentCallerAccess, resolveExcludePrivatePages, withCallerAccess, type CallerAccess } from '../search/private-visibility.ts';
 import { callerMember, memberPageSlug } from '../access/member-facts.ts';
 import { ACTOR_ARGUMENT, ACTOR_HEADER } from '../access/actor-model.ts';
 import { uuidV5 } from '../persistence/preconditions.ts';
@@ -117,6 +118,49 @@ async function ownRecentFacts(ctx: OperationContext, sources: string[], read: Re
   return lists.flat().sort((a, b) => b.created_at.getTime() - a.created_at.getTime() || b.id - a.id).slice(0, MEMORY_RECALL_ARM_LIMIT);
 }
 
+/**
+ * GST-1094: the caller record of a recall that names sources. It is read as the scope, never as the person: no member
+ * identity, actor or audience, so no member-page fact is admitted and every restricted page is hidden, and privacy is
+ * never relaxed.
+ */
+const SCOPE_READ_ACCESS: Partial<CallerAccess> = {
+  identity: [], audienceIdentities: [], audience: null, actor: null, satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [],
+  hidePrivate: true, applyRemoteReadPolicy: false, restricted: true, remotePolicy: { privacyRelaxed: false, restricted: true },
+};
+
+/** The sources a recall reads and whether it names them; a named recall whose sources intersect to none reads nothing. */
+async function recallSources(ctx: OperationContext, p: Record<string, unknown>): Promise<{ sources: string[]; named: boolean }> {
+  const sourceIdParam = parseSourceIdParam(p.source_id, 'memory_recall');
+  const sourceIds = parseSourceIdsParam(ctx, 'memory_recall', p.source_ids);
+  if (sourceIdParam === undefined && sourceIds === undefined) {
+    const scope = federatedSearchScope(ctx, undefined);
+    return { sources: [...new Set(scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default'])], named: false };
+  }
+  const scope = await requestSourceScope(ctx, sourceIdParam, sourceIds);
+  return { sources: [...new Set(scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : []))], named: true };
+}
+
+async function recallFacts(ctx: OperationContext, query: string, maxChars: number, sources: string[], asScope: boolean): Promise<{ facts: RecallFact[]; truncated: boolean; text: string }> {
+  const remote = ctx.remote !== false;
+  const read: ReadPolicy = { excludePrivate: asScope && remote ? true : await resolveExcludePrivatePages(ctx.engine, ctx.remote), eligibility: await resolveReadEligibility(ctx, {}) };
+  const own = asScope || !sources.length ? [] : await ownRecentFacts(ctx, sources, read);
+  const { rankFactsByQuestion } = await import('../facts/question-recall.ts');
+  const ranked = query && sources.length ? (await rankFactsByQuestion(ctx, {
+    question: query, params: { question: query }, factSources: sources, limit: MEMORY_RECALL_ARM_LIMIT, entity: null, sessionId: null, since: null, grep: null,
+    scope: { sourceIds: sources, remote, excludePrivate: read.excludePrivate, minTrust: read.eligibility.floor, suppressFlagged: read.eligibility.suppressFlagged },
+  })).rows : [];
+  const seen = new Set<number>();
+  const rows = [...own, ...ranked].filter(r => !seen.has(r.id) && !!seen.add(r.id));
+  // The date as the database writes it: a driver's timestamp parse reads years 1-99 as 19xx.
+  const written = new Map(rows.length ? (await ctx.engine.executeRaw<{ id: number | string; d: string }>(
+    `SELECT id, to_char(COALESCE(valid_from, created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS d FROM facts WHERE id = ANY($1::bigint[])`, [rows.map(r => r.id)])).map(r => [Number(r.id), r.d]) : []);
+  const plain = rows.map(r => ({ id: String(r.id), text: plainFactText(r.fact), date: isoDate(written.get(Number(r.id)) ?? r.valid_from ?? r.created_at), kind: String(r.kind) }));
+  const { redactRetrievalOutput } = await import('../search/output-redaction.ts');
+  const facts: RecallFact[] = (remote ? redactRetrievalOutput(plain, {}, { uncapped: true }).results : plain).filter(f => f.text);
+  const { kept, text } = boundFactLines(facts.map(f => `- ${f.text} (${f.date}; ${f.kind})`), maxChars);
+  return { facts: facts.slice(0, kept), truncated: kept < facts.length, text };
+}
+
 const memory_recall: Operation = {
   name: 'memory_recall',
   mutating: false,
@@ -127,30 +171,16 @@ const memory_recall: Operation = {
     query: { type: 'string', required: true, description: 'What the turn is about; ranks the facts.' },
     max_chars: { type: 'integer', description: `Text cap in UTF-16 code units, ${MEMORY_RECALL_MAX_CHARS.min}-${MEMORY_RECALL_MAX_CHARS.max} (default ${MEMORY_RECALL_MAX_CHARS.default}).` },
     [ACTOR_ARGUMENT]: actorParam,
+    source_id: { type: 'string', description: 'Read this one source as its audience (a shared scope): never the person\'s own facts.' },
+    source_ids: { ...SOURCE_IDS_PARAM, description: 'Read only these sources as their audience (a shared scope): never the person\'s own facts.' },
   },
   scope: 'read',
   annotations: { title: 'memory_recall (QM memory read)', readOnlyHint: true },
   handler: async (ctx, p) => {
     const { query, maxChars } = recallArguments(p);
-    const scope = federatedSearchScope(ctx, undefined);
-    const sources = [...new Set(scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default'])];
-    const read: ReadPolicy = { excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote), eligibility: await resolveReadEligibility(ctx, {}) };
-    const own = await ownRecentFacts(ctx, sources, read);
-    const { rankFactsByQuestion } = await import('../facts/question-recall.ts');
-    const ranked = query ? (await rankFactsByQuestion(ctx, {
-      question: query, params: { question: query }, factSources: sources, limit: MEMORY_RECALL_ARM_LIMIT, entity: null, sessionId: null, since: null, grep: null,
-      scope: { sourceIds: sources, remote: ctx.remote !== false, excludePrivate: read.excludePrivate, minTrust: read.eligibility.floor, suppressFlagged: read.eligibility.suppressFlagged },
-    })).rows : [];
-    const seen = new Set<number>();
-    const rows = [...own, ...ranked].filter(r => !seen.has(r.id) && !!seen.add(r.id));
-    // The date as the database writes it: a driver's timestamp parse reads years 1-99 as 19xx.
-    const written = new Map(rows.length ? (await ctx.engine.executeRaw<{ id: number | string; d: string }>(
-      `SELECT id, to_char(COALESCE(valid_from, created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS d FROM facts WHERE id = ANY($1::bigint[])`, [rows.map(r => r.id)])).map(r => [Number(r.id), r.d]) : []);
-    const plain = rows.map(r => ({ id: String(r.id), text: plainFactText(r.fact), date: isoDate(written.get(Number(r.id)) ?? r.valid_from ?? r.created_at), kind: String(r.kind) }));
-    const { redactRetrievalOutput } = await import('../search/output-redaction.ts');
-    const facts: RecallFact[] = (ctx.remote === false ? plain : redactRetrievalOutput(plain, {}, { uncapped: true }).results).filter(f => f.text);
-    const { kept, text } = boundFactLines(facts.map(f => `- ${f.text} (${f.date}; ${f.kind})`), maxChars);
-    return { facts: facts.slice(0, kept), truncated: kept < facts.length, text };
+    const { sources, named } = await recallSources(ctx, p);
+    if (!named || ctx.remote === false) return recallFacts(ctx, query, maxChars, sources, named);
+    return withCallerAccess(SCOPE_READ_ACCESS, () => recallFacts(ctx, query, maxChars, sources, true));
   },
 };
 
