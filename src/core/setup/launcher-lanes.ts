@@ -17,6 +17,9 @@ import { CLAUDE_SETTINGS_FILE_RELPATH, GBRAIN_HOOK_MARKER_KEY, GBRAIN_HOOK_MARKE
 import { resolveGbrainHome } from '../gbrain-home.ts';
 import { hookLauncherInCommand, hookLauncherState, isHookLauncherPath, type HookLauncherState } from './hook-launcher.ts';
 import { localSetupRecords } from './local-receipts.ts';
+import { ownedEntryFingerprint } from '../bootstrap/adopted-connections.ts';
+import { readSetupReceipt } from './claude-code.ts';
+import { readCodexSetupReceipt } from './codex.ts';
 
 export type LauncherLane = 'mcp' | 'harness' | 'bootstrap';
 
@@ -36,6 +39,8 @@ export interface LauncherLaneFinding {
   setupOwned: boolean;
   /** Which writer owns the entry: setup's are refreshed (or named) by post-upgrade's setup pass, the rest get a line of their own. */
   owner: 'setup' | 'bootstrap' | 'none';
+  /** A setup install's entry changed after setup wrote it: setup keeps it, so the user removes or rewrites it first. */
+  edited?: boolean;
 }
 
 function readJson(path: string): Record<string, unknown> | null {
@@ -67,11 +72,14 @@ function mcpFindings(): LauncherLaneFinding[] {
   const out: LauncherLaneFinding[] = [];
   const setup = localSetupRecords().filter((r) => r.status === 'installed');
   const bootstrap = (() => { try { return readReceipt(resolveGbrainHome()); } catch { return null; } })();
-  const rerunFor = (harness: 'claude-code' | 'codex', name: string, projectDir?: string): Pick<LauncherLaneFinding, 'rerun' | 'rerunFrom' | 'setupOwned' | 'owner'> => {
-    const owner = setup.find((r) => r.harness === harness && r.name === name && (projectDir ? r.projectDir === projectDir : r.scope !== 'project'));
+  const rerunFor = (harness: 'claude-code' | 'codex', name: string, entry: unknown, projectDir?: string): Pick<LauncherLaneFinding, 'rerun' | 'rerunFrom' | 'setupOwned' | 'owner' | 'edited'> => {
+    const record = setup.find((r) => r.harness === harness && r.name === name && (projectDir ? r.projectDir === projectDir : r.scope !== 'project'));
+    // Setup owns the entry only while it is still what setup wrote; an edited one stays the user's, and setup refuses to overwrite it.
+    const receipt = record && (() => { try { return (harness === 'claude-code' ? readSetupReceipt(record.path) : readCodexSetupReceipt(record.path)).setup; } catch { return null; } })();
+    const owner = receipt && [receipt.entry_hash, receipt.pending_entry_hash].includes(ownedEntryFingerprint(entry as Record<string, unknown>)) ? record : undefined;
     if (owner) return { rerun: ['gbrain', 'setup', harness, ...(name === 'gbrain' ? [] : ['--name', name]), ...(projectDir ? ['--scope', 'project'] : [])], ...(projectDir ? { rerunFrom: projectDir } : {}), setupOwned: !projectDir, owner: 'setup' };
     if (bootstrap?.registrations.some((r) => r.host === harness && (r.detail?.split('+') ?? []).includes('mcp'))) return { rerun: ['gbrain', 'bootstrap', 'hooks', '--harness', harness, '--repair'], rerunFrom: bootstrap.workspace_dir, setupOwned: false, owner: 'bootstrap' };
-    return { rerun: ['gbrain', 'setup', harness, ...(name === 'gbrain' ? [] : ['--name', name])], setupOwned: false, owner: 'none' };
+    return { rerun: ['gbrain', 'setup', harness, ...(name === 'gbrain' ? [] : ['--name', name]), ...(projectDir ? ['--scope', 'project'] : [])], ...(projectDir ? { rerunFrom: projectDir } : {}), setupOwned: false, owner: 'none', ...(record ? { edited: true } : {}) };
   };
   const names = [...new Set(['gbrain', ...setup.map((r) => r.name)])];
   const claudePath = claudeUserMcpConfigPath();
@@ -83,7 +91,7 @@ function mcpFindings(): LauncherLaneFinding[] {
       const serve = serveEntryLauncher(servers?.[name]);
       const s = serve && state(serve.launcher);
       if (!s) continue;
-      out.push({ harness: 'claude-code', lane: 'mcp', source: claudePath, reason: s.reason, ...rerunFor('claude-code', name, projectDir),
+      out.push({ harness: 'claude-code', lane: 'mcp', source: claudePath, reason: s.reason, ...rerunFor('claude-code', name, servers?.[name], projectDir),
         detail: `the '${name}' MCP server in ${claudePath}${projectDir ? ` (project ${projectDir})` : ''} ${s.why}` });
     }
   }
@@ -94,7 +102,7 @@ function mcpFindings(): LauncherLaneFinding[] {
     const serve = serveEntryLauncher(table);
     const s = serve && state(serve.launcher);
     if (!s) continue;
-    out.push({ harness: 'codex', lane: 'mcp', source: codexPath, reason: s.reason, ...rerunFor('codex', name), detail: `[mcp_servers.${name}] in ${codexPath} ${s.why}` });
+    out.push({ harness: 'codex', lane: 'mcp', source: codexPath, reason: s.reason, ...rerunFor('codex', name, table), detail: `[mcp_servers.${name}] in ${codexPath} ${s.why}` });
   }
   return out;
 }

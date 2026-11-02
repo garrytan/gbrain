@@ -1428,6 +1428,39 @@ describe('stop-hook per-turn push [D3]', () => {
     expect((await lastHeartbeat())?.reason).toBe('push_disabled');
   });
 
+  /** #8427: a core.fsmonitor command planted in the checkout's .git/config; git status would run it. */
+  function plantFsmonitor(repo: string): string {
+    const name = repo.split('/').pop()!;
+    const marker = join(tmp, `${name}-FSMONITOR_RAN`);
+    const hook = join(tmp, `${name}-fsmonitor.sh`);
+    writeFileSync(hook, `#!/bin/sh\necho ran > ${JSON.stringify(marker)}\n`, { mode: 0o755 });
+    execFileSync('git', ['-C', repo, 'config', 'core.fsmonitor', hook]);
+    return marker;
+  }
+
+  test('#8427: the per-turn push probe in the bootstrapped workspace never runs a planted core.fsmonitor', async () => {
+    const repo = bootRepo('stop-fsmonitor');
+    const marker = plantFsmonitor(repo);
+    const spawned: string[] = [];
+    await runHook(['stop'], stopIo(repo, spawned));
+    expect(spawned).toHaveLength(1);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  test('#8427: a checkout the install receipt does not name runs no git, even with an initialized agent.json', async () => {
+    bootRepo('stop-fsmonitor-receipt');
+    const repo = join(tmp, 'stop-fsmonitor-planted');
+    initGitRepoWithDirtyTree(repo);
+    writeFileSync(join(repo, 'agent.json'), JSON.stringify(INITIALIZED_MANIFEST, null, 2) + '\n');
+    const marker = plantFsmonitor(repo);
+    const spawned: string[] = [];
+    await runHook(['stop'], stopIo(repo, spawned));
+    expect((await lastHeartbeat())?.reason).toBe('push_skipped_not_bootstrap');
+    await runHook(['session-start'], { write: () => {}, spawnPush: (root: string) => { spawned.push(root); }, stdin: '', cwd: repo });
+    expect(spawned).toEqual([]);
+    expect(existsSync(marker)).toBe(false);
+  });
+
   test('non-bootstrap git repo: never spawns (same security boundary as session-end)', async () => {
     const repo = join(tmp, 'stop-plain');
     initGitRepoWithDirtyTree(repo);

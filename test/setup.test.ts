@@ -34,7 +34,8 @@ import { ownedEntryFingerprint } from '../src/core/bootstrap/adopted-connections
 import { hookLauncherProblem, inspectTurnHook } from '../src/core/setup/turn-hook-check.ts';
 import { refreshHookLaunchers } from '../src/core/setup/hook-launcher-refresh.ts';
 import { syncTurnRuleHook, isTurnRuleEntry } from '../src/core/setup/turn-hook.ts';
-import { hookLauncherFix } from '../src/commands/doctor/checks/harness-wiring.ts';
+import { hookLauncherFix, hookLauncherProblems } from '../src/commands/doctor/checks/harness-wiring.ts';
+import { launcherLaneFindings } from '../src/core/setup/launcher-lanes.ts';
 import { applyClaudeSetup, readSetupReceipt } from '../src/core/setup/claude-code.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
@@ -1041,5 +1042,84 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
       expect(hookLauncherProblem('codex')).toMatchObject({ lane: 'setup', reason: 'session_cwd' });
     });
     expect({ hooks: readFileSync(hooksJson(b), 'utf8'), config: readFileSync(codexToml(b), 'utf8') }).toEqual(before);
+  });
+
+  /** Rewrite setup's MCP entry to the pre-launcher shape (bin serve …); with own, the receipt still owns it by hash. */
+  function downgradeClaudeMcp(b: Box, own = true): Record<string, unknown> {
+    const cfg = readJson(claudeJson(b));
+    const entry = cfg.mcpServers.gbrain;
+    expect(entry.command).toBe(launcher(b));
+    const old = { ...entry, command: entry.args[0], args: entry.args.slice(1) };
+    cfg.mcpServers.gbrain = old;
+    writeFileSync(claudeJson(b), JSON.stringify(cfg, null, 2));
+    if (own) {
+      const r = readJson(receipt(b));
+      r.entry_hash = ownedEntryFingerprint(old);
+      writeFileSync(receipt(b), JSON.stringify(r, null, 2));
+    }
+    return old;
+  }
+
+  test('claude-code MCP (#8426): doctor flags a pre-launcher MCP entry setup still owns; post-upgrade moves it under the lock', async () => {
+    const b = box();
+    expect((await setup(b, ['claude-code', '--json'])).exitCode).toBe(0);
+    downgradeClaudeMcp(b);
+    await withEnv(env(b), async () => {
+      expect(hookLauncherProblem('claude-code')).toBeNull();
+      const problem = hookLauncherProblems([]);
+      expect(problem).toMatchObject({ harness: 'claude-code', lane: 'mcp', reason: 'session_cwd', owner: 'setup', setupOwned: true });
+      expect(hookLauncherFix(problem!)).toMatchObject({ actor: 'agent', argv: ['gbrain', 'setup', 'claude-code'] });
+      const lines: string[] = [];
+      await refreshHookLaunchers((l) => lines.push(l));
+      expect(lines.join('\n')).toContain("gbrain setup's claude-code MCP server and hooks now start gbrain from its own directory");
+      expect(launcherLaneFindings()).toEqual([]);
+    });
+    const moved = readJson(claudeJson(b)).mcpServers.gbrain;
+    expect([moved.command, ...moved.args.slice(0, 2)]).toEqual([launcher(b), b.bin, 'serve']);
+    expect((await setup(b, ['claude-code', '--json'])).doc.steps.map((s: any) => s.action)).toEqual(['keep', 'keep', 'keep']);
+  });
+
+  test('claude-code MCP (#8426): a pre-launcher MCP entry the user edited is kept; post-upgrade and doctor hand it to the user', async () => {
+    const b = box();
+    expect((await setup(b, ['claude-code', '--json'])).exitCode).toBe(0);
+    downgradeClaudeMcp(b, false);
+    const before = readFileSync(claudeJson(b), 'utf8');
+    await withEnv(env(b), async () => {
+      const lines: string[] = [];
+      await refreshHookLaunchers((l) => lines.push(l));
+      expect(lines.join('\n')).toContain("the 'gbrain' MCP server in");
+      expect(lines.join('\n')).toContain('it was edited after setup wrote it, so it is kept as is');
+      const problem = hookLauncherProblems([]);
+      expect(problem).toMatchObject({ lane: 'mcp', owner: 'none', edited: true, setupOwned: false });
+      const fix = hookLauncherFix(problem!);
+      expect(fix.actor).toBe('user');
+      expect(fix.user_message).toContain('Remove or rewrite that entry');
+    });
+    expect(readFileSync(claudeJson(b), 'utf8')).toBe(before);
+  });
+
+  test('codex MCP (#8426): post-upgrade names the setup rerun for a pre-launcher [mcp_servers] table and writes nothing; setup moves it', async () => {
+    const b = box();
+    expect((await setup(b, ['codex', '--json'])).exitCode).toBe(0);
+    const r = readJson(codexReceipt(b));
+    const toml = readFileSync(codexToml(b), 'utf8');
+    const old = { command: b.bin, args: ['serve'], env: { GBRAIN_HOME: b.gbrainHome } };
+    expect(removeCodexTomlTable(codexToml(b), ['mcp_servers', 'gbrain'])).toBe('removed');
+    appendCodexTomlTable(codexToml(b), ['mcp_servers', 'gbrain'], old, 'gbrain setup (gbrain): owned by fingerprint');
+    r.entry_hash = ownedEntryFingerprint(old);
+    writeFileSync(codexReceipt(b), JSON.stringify(r, null, 2));
+    expect(toml).toContain(launcher(b));
+    const before = { hooks: readFileSync(hooksJson(b), 'utf8'), config: readFileSync(codexToml(b), 'utf8') };
+    await withEnv(env(b), async () => {
+      expect(hookLauncherProblem('codex')).toBeNull();
+      expect(hookLauncherProblems([])).toMatchObject({ harness: 'codex', lane: 'mcp', reason: 'session_cwd', owner: 'setup' });
+      const lines: string[] = [];
+      await refreshHookLaunchers((l) => lines.push(l));
+      expect(lines.join('\n')).toContain(`gbrain setup's codex MCP server in ${codexToml(b)} start gbrain in the session's directory; run gbrain setup codex to rewrite them`);
+    });
+    expect({ hooks: readFileSync(hooksJson(b), 'utf8'), config: readFileSync(codexToml(b), 'utf8') }).toEqual(before);
+    expect((await setup(b, ['codex', '--json'])).exitCode).toBe(0);
+    expect(readFileSync(codexToml(b), 'utf8')).toContain(launcher(b));
+    await withEnv(env(b), async () => { expect(launcherLaneFindings()).toEqual([]); });
   });
 });
