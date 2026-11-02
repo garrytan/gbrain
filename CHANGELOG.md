@@ -10,6 +10,10 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.552.0] - 2026-11-02
+
+**A master-red flake in the deferred-publish synthesis test is fixed.** `test/managed-synthesis-postprocess.test.ts` "#5854: a postprocess publish still pending after its wait is deferred, then finished by the next ordinary cycle" released the writer lock before disposing the in-process persistence consumer. Whenever the consumer drained the deferred publish in that gap, the "next ordinary cycle" found nothing left to write, and `written_slugs` came back `[]` (master run 41476223139, shard 14). The test now disposes the consumer before it releases the lock, so the next cycle is the only thing that can finish the publish. The assertions are unchanged. Forced probe: a 1.5 s pause after the lock release fails the old order with the exact CI diff and passes the new order (3 of 3).
+
 ## [0.60.551.0] - 2026-11-02
 
 **The nightly opencode door now gates its nonce check on a paid Haiku turn, and a free-tier refusal fails in seconds with its reason instead of after eight silent minutes (#6049).** OpenCode's anonymous free models now cap usage per IP, and CI runners hit the cap. Past it, `opencode run` waits out the server's retry-after, which is hours, and prints nothing, so the keyless check timed out twice (about 487 s) with an empty reply and Heavy Tests went red on days the runner's IP was capped. The only trace was a `stream error` line in opencode's own log file. The paid check also could not have run in CI, because the test preload strips `ANTHROPIC_API_KEY` unless `GBRAIN_TEST_KEEP_PROVIDER_KEYS=1`, so a requested paid tier refused itself as keyless.
