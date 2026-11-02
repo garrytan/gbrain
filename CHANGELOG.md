@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.554.0] - 2026-11-02
 
 **The admin UI loads again on installed builds, and setup, doctor and MCP verify stop failing on a set of install and serve shapes.** `/admin`, including the OAuth consent page, was blank on every installed build because `admin/dist/index.html` loaded a bundle the embedded manifest didn't carry. It is rebuilt from source, and `check:admin-embedded` now runs in verify so the two can't drift again. Migration 0.53.0's packaged-skill install no longer fails `idempotency_conflict` when a later release ships a different payload. `gbrain setup` refuses the bootstrap harness lane only when that lane wired the same configuration it would write, so one `GBRAIN_HOME` can serve several HOMEs. Doctor and the turn-rule lane now count a gbrain hook in Claude Code's managed settings. `gbrain mcp verify` saves its fixture under its own folder, so a nearby page no longer makes remember refuse it. On the MCP side, `get_versions` and `known_as_of` stop pointing at a `get_page` read that doesn't exist, schema inspection uses the caller's own source pack, and `open_loops` explains an empty answer when none of a scoped caller's sources is a Google source, without revealing anything outside its grant.
 
