@@ -5,22 +5,24 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { asAgentToolError, dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { invokeAI, isAIInvocationPolicyError, withAIInvocationGuard } from '../src/core/ai/invocation-guard.ts';
 import { runRollout } from '../src/core/skillopt/rollout.ts';
 import { buildWriteCaptureRegistry } from '../src/core/skillopt/write-capture.ts';
 import type { ToolHandler } from '../src/core/ai/gateway.ts';
 import type { BenchmarkTask } from '../src/core/skillopt/types.ts';
+import type { OperationContext } from '../src/core/operations.ts';
 
 const SLUG = 'notes/alpha-example';
 let engine: PGLiteEngine;
 let rollout: Map<string, ToolHandler>;
 let writeCapture: Map<string, ToolHandler>;
 
-async function rolloutHandlers(): Promise<Map<string, ToolHandler>> {
+async function rolloutHandlers(operationContext?: OperationContext): Promise<Map<string, ToolHandler>> {
   let captured: Map<string, ToolHandler> | undefined;
   const task: BenchmarkTask = { task_id: 'errors', task: 'read a page', judge: { kind: 'rule', checks: [] } };
   await runRollout({
-    engine, skillText: 'skill', task, targetModel: 'openai:gpt-6.1-sol', allowedTools: new Set(['get_page']),
+    engine, operationContext, skillText: 'skill', task, targetModel: 'openai:gpt-6.1-sol', allowedTools: new Set(['get_page']),
     toolLoopFn: (async (o: { toolHandlers: Map<string, ToolHandler> }) => {
       captured = o.toolHandlers;
       return { messages: [], totalUsage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 }, totalTurns: 1, stopReason: 'end' };
@@ -76,4 +78,21 @@ describe('GST-1054: SkillOpt rollout tool errors carry the MCP error text', () =
       expect(await thrownMessage(handlers(), missing)).toBe(await mcpText(missing));
     });
   }
+
+  test('an AI invocation policy stop passes through unchanged, so the tool loop still aborts the run', async () => {
+    const stop = new Error('synthetic spend cap reached');
+    await expect(withAIInvocationGuard(async () => { throw stop; }, () =>
+      invokeAI({ operation: 'synthetic.expand', kind: 'embedding', model: 'synthetic:model', maxInputTokens: 8 }, async () => 'unreached', () => null))).rejects.toBe(stop);
+    expect(isAIInvocationPolicyError(stop)).toBe(true);
+    expect(asAgentToolError(stop, 'get_page', 'default')).toBe(stop);
+  });
+
+  test('a remote rollout whose grant was revoked reads the permission_denied error with its fix', async () => {
+    const remote: OperationContext = { engine, config: { engine: 'pglite' }, remote: true, sourceId: 'default', dryRun: false,
+      logger: { info() {}, warn() {}, error() {} },
+      auth: { token: 'fixture', clientId: 'revoked-example', principal: { kind: 'oauth_client', id: 'revoked-example' }, scopes: ['read'], allowedOperations: ['get_page'] } } as OperationContext;
+    const body = JSON.parse(await thrownMessage(await rolloutHandlers(remote), { slug: SLUG })) as { code: string; fix?: { argv?: string[] } };
+    expect(body.code).toBe('permission_denied');
+    expect(body.fix?.argv?.[0]).toBe('gbrain');
+  });
 });

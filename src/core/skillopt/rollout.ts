@@ -226,14 +226,15 @@ function buildReadOnlyToolRegistry(ctx: OperationContext, offered: ReadonlySet<s
     handlers.set(toolName, {
       idempotent: true, // All read-only ops are idempotent by construction.
       execute: async (input: unknown) => {
+        let active = ctx;
         try {
-          const active = original?.remote !== false && original ? await authorizeSkillRead(original, op.name) : ctx;
+          if (original?.remote !== false && original) active = await authorizeSkillRead(original, op.name);
           const params = normalizeOptionalParams(op, (input as Record<string, unknown>) ?? {});
           const failure = findInvalidParam(op, params);
           if (failure) throw schemaInvalidParams(op, failure, { remote: true }, params);
           return await op.handler({ ...active, remote: true }, params);
         } catch (e) {
-          throw asAgentToolError(e, op.name, ctx.sourceId);
+          throw asAgentToolError(e, op.name, active.sourceId);
         }
       },
     });
