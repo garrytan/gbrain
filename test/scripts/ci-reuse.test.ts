@@ -459,6 +459,31 @@ describe('ci-reuse remote-gate decision', () => {
     expect(g.lines.some(l => l.includes('waiting for'))).toBe(false);
   });
 
+  test('#8370: both real clients classify a failed artifact download the same way: 403/410 refuse, a rate-limit 403 waits', async () => {
+    const r600 = run('test.yml');
+    const listing = JSON.stringify({ artifacts: [{ id: 7, name: 'executed-identities', expired: false }] });
+    const zipFails = (code: number, text: string) => {
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string) => String(url).endsWith('/zip') ? new Response(text, { status: code }) : new Response(listing, { status: 200 })) as typeof fetch;
+      return gateDeps(restClient(REPO, 'token-example', async () => {})).executed(r600).finally(() => { globalThis.fetch = real; });
+    };
+    const bin = mkdtempSync(join(tmpdir(), 'ci-reuse-gh-'));
+    const ghFails = async (code: number, text: string) => {
+      writeFileSync(join(bin, 'gh'), `#!/usr/bin/env bash\ncase "$*" in *"/zip"*) echo "gh: ${text} (HTTP ${code})" >&2; exit 1;; esac\necho '${listing}'\n`, { mode: 0o755 });
+      const path = process.env.PATH;
+      process.env.PATH = `${bin}:${path}`;
+      try { return await gateDeps(restClient(REPO, '', async () => {})).executed(r600); } finally { process.env.PATH = path; }
+    };
+    try {
+      for (const fails of [zipFails, ghFails]) {
+        for (const code of [403, 404, 410]) expect(await fails(code, 'Not Found')).not.toHaveProperty('transient');
+        expect(await fails(403, 'API rate limit exceeded for installation ID 1')).toMatchObject({ transient: true });
+        expect(await fails(429, 'Too Many Requests')).toMatchObject({ transient: true });
+        expect(await fails(502, 'Bad Gateway')).toMatchObject({ transient: true });
+      }
+    } finally { rmSync(bin, { recursive: true, force: true }); }
+  });
+
   /** A run's receipts as scripts/lib/test-env.sh writes them: one artifact directory per job, one test file each. */
   function writeReceipts(dir: string, artifact: string, lane: string, attempt: number, tests: string[]) {
     const at = join(dir, artifact); mkdirSync(at, { recursive: true });

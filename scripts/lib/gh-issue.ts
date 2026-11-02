@@ -112,7 +112,10 @@ function tokenClient(resolve: (path: string) => string, token: string): GitHubCl
       const res = await fetch(url, { headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json' }, redirect: 'manual' });
       const location = res.headers.get('location');
       const body = location ? await fetch(location) : res;
-      if (!body.ok) throw Object.assign(new Error(`GitHub download ${url} -> ${body.status}`), { status: body.status });
+      if (!body.ok) {
+        const text = await body.text().catch(() => '');
+        throw Object.assign(new Error(`GitHub download ${url} -> ${body.status}: ${text.slice(0, 300)}`), { status: body.status });
+      }
       return new Uint8Array(await body.arrayBuffer());
     },
   };
@@ -133,7 +136,11 @@ function ghCliClient(resolve: (path: string) => string): GitHubClient {
     },
     async download(path: string): Promise<Uint8Array> {
       const r = Bun.spawnSync(['gh', 'api', resolve(path)], { stdout: 'pipe', stderr: 'pipe' });
-      if (r.exitCode !== 0) throw new Error(`gh api ${resolve(path)} failed: ${r.stderr.toString().slice(0, 300)}. Fix: gh auth login, or export GH_TOKEN.`);
+      if (r.exitCode !== 0) {
+        const err = r.stderr.toString();
+        const status = Number(/HTTP (\d{3})/.exec(err)?.[1]) || undefined;
+        throw Object.assign(new Error(`gh api ${resolve(path)} failed: ${err.slice(0, 300)}. Fix: gh auth login, or export GH_TOKEN.`), { status });
+      }
       return new Uint8Array(r.stdout);
     },
   };
