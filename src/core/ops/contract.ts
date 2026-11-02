@@ -259,6 +259,18 @@ export interface ParamDef {
   description?: string;
   default?: unknown;
   enum?: string[];
+  /**
+   * GST-927: the valid range's lower bound (inclusive / exclusive). Read by normalizeOptionalParams and carried in the
+   * operation manifest, never in the tools/list schema. Only on read ops (test/tool-args-empty-optional-sol.test.ts): on an optional param whose range excludes 0, a 0 reads as omitted. Declare it only where 0 refuses.
+   */
+  minimum?: number;
+  exclusiveMinimum?: number;
+  /** GST-927: on an optional array param, `[]` reads as omitted when this is at least 1. Not in tools/list. */
+  minItems?: number;
+  /** GST-927: a flag that acts only when true, so an optional `false` reads as omitted. Not in tools/list. */
+  actsWhenTrue?: boolean;
+  /** GST-927: the param has no effect without this one, so any value of it reads as omitted when that param is absent. Not in tools/list. */
+  appliesWith?: string;
   items?: ParamDef;
   /** Object members (O-DX-3); a member with `required: true` lands in the schema's `required`. */
   properties?: Record<string, ParamDef>;

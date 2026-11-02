@@ -37,8 +37,10 @@ contract in `get_brain_identity` as `capabilities: ["large_pages_v1"]`.
 | `max_bytes` | Window size (default 40,000, at most 1 MiB, and always inside the connection's cap). |
 | `view: "markdown"` | Page the round-trip markdown (`include_content`'s `content`) instead of the read text; `size.sha256` verifies the joined pages. |
 
-Passing two selectors, a selector with `body: "outline"`, or `include_content`
-with a partial mode is `invalid_params` with an example. A window response
+Passing a selector with `body: "outline"`, or `include_content` with a partial
+mode, is `invalid_params` with an example. Passing two selectors is
+`invalid_params` whose fix is the same call with the first one alone (lines,
+then bytes, around_chunk_id, cursor) and `body: "window"`. A window response
 carries `window {text, byte_start, byte_end, line_start, line_end}`,
 `size {total_bytes, total_lines}`, `truncated`, and when more follows
 `next_cursor` plus `next`, the exact `get_page` call that reads on. The starter

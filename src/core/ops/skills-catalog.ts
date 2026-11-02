@@ -29,7 +29,7 @@ const list_skills: Operation = {
   description: LIST_SKILLS_DESCRIPTION,
   publishGateKey: 'mcp.publish_skills',
   params: {
-    schema_version: { type: 'number', description: '2 for the source-qualified catalog.', fullSurfaceOnly: true },
+    schema_version: { type: 'number', minimum: 1, description: '2 for the source-qualified catalog.', fullSurfaceOnly: true },
     limit: { type: 'number', description: 'Page size or rank cap (1-100).' },
     cursor: { type: 'string', description: 'Version 2 cursor.', fullSurfaceOnly: true },
     source_id: { type: 'string', description: 'Version 2: one source.', fullSurfaceOnly: true },
@@ -82,7 +82,7 @@ const get_skill: Operation = {
   description: GET_SKILL_DESCRIPTION,
   publishGateKey: 'mcp.publish_skills',
   params: {
-    schema_version: { type: 'number', description: '2 for an exact canonical revision.', fullSurfaceOnly: true },
+    schema_version: { type: 'number', minimum: 1, description: '2 for an exact canonical revision.', fullSurfaceOnly: true },
     qualified_id: { type: 'string', description: 'Version 2 skill id.', fullSurfaceOnly: true },
     expected_brain_id: { type: 'string', description: 'Brain id to assert.', fullSurfaceOnly: true },
     source_incarnation: { type: 'string', description: 'From discovery.', fullSurfaceOnly: true },

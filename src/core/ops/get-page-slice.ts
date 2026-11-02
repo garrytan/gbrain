@@ -33,7 +33,7 @@ import { FENCE, HEADING, HEADING_MAX_CHARS, clip } from '../page-window/window.t
 export const GET_PAGE_SLICE_PARAMS: Record<string, ParamDef> = {
   section: { type: 'string', description: 'Only the section under this heading (case-insensitive, first match), with its heading_path.', fullSurfaceOnly: true },
   grep: { type: 'string', description: 'Only the paragraphs containing this text (case-insensitive substring, not a regex), with line numbers and total_matches.', fullSurfaceOnly: true },
-  context: { type: 'number', description: 'With grep: paragraphs of context either side (default 1, max 5).', fullSurfaceOnly: true },
+  context: { type: 'number', appliesWith: 'grep', description: 'Applies only with grep (ignored without it): paragraphs of context either side (default 1, max 5).', fullSurfaceOnly: true },
 };
 
 export const DEFAULT_GREP_CONTEXT = 1;
