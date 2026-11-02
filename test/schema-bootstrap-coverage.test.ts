@@ -1208,6 +1208,15 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'access_tokens.may_act_for',
   'oauth_clients.member_id',
   'oauth_clients.may_act_for',
+  // GST-359 C1 (migration v286) - the attest right and the issuing grant. Same posture as v282: absent from both schema
+  // blobs, so fresh and upgraded brains share their ordinals; no index or function in either blob references them.
+  // Readers treat a missing column as no right (attestRightOf catches, verifiers read to_jsonb(row)), and token
+  // issuance writes grant_type only when the locked client row shows v286 ran, so such tokens never attest.
+  'access_tokens.attest_actor',
+  'access_tokens.attest_ops',
+  'oauth_clients.attest_actor',
+  'oauth_clients.attest_ops',
+  'oauth_tokens.grant_type',
   // GBRA-218 A2 (migration v283) - folder rules. Same posture as v282: absent from both schema blobs; the migration
   // creates the folder_rule_ids trigger and functions itself, and no index or function in either blob references it.
   'pages.folder_rule_ids',

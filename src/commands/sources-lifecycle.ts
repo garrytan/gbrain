@@ -13,9 +13,10 @@ import { assertTopologyCommitted } from '../core/persistence/managed-sources.ts'
 import { parseSourceLifecycleArgs, type ParsedSourceLifecycle } from './sources-lifecycle-args.ts';
 import { reportPersistenceCliError } from './persistence-delegate.ts';
 import { adminHostConfig } from './persistence-admin.ts';
+import type { AddSourceOpts } from '../core/sources-ops.ts';
 
 export const SOURCE_LIFECYCLE_HELP = `Managed source administration:
-  gbrain sources add <id> [--path <directory> | --url <https-url> | --kind github|google]
+  gbrain sources add <id> [--path <directory> | --url <https-url> | --kind github|google|meetings|slack]
   gbrain sources archive <id>
   gbrain sources restore <id> [--no-federate]
   gbrain sources remove <id> --confirm-destructive
@@ -36,8 +37,15 @@ function checkManagedOptions(parsed: ParsedSourceLifecycle): void {
     'Create the source without --pat-file. Configure supported postpublication Git effects separately.');
 }
 
+/** A slack source is checked against Slack (token, scopes, every channel) before it is registered. */
+async function preflightSlack(parsed: ParsedSourceLifecycle): Promise<void> {
+  const options = parsed.operation === 'source_add' && parsed.params.dry_run !== true ? parsed.params.options as AddSourceOpts | undefined : undefined;
+  if (options?.slack) await (await import('../core/slack/source-add.ts')).preflightSlackAdd(options.id, options.slack);
+}
+
 export async function executeSourceLifecycle(engine: BrainEngine, parsed: ParsedSourceLifecycle): Promise<Record<string, unknown>> {
   checkManagedOptions(parsed);
+  await preflightSlack(parsed);
   return runPersistenceAdministration(engine, parsed.operation, parsed.params);
 }
 
@@ -73,6 +81,7 @@ export async function runSourceLifecycleCli(args: string[], getEngine: () => Pro
     }
     if (parsed) {
       // --pat-file must refuse before the resident owner can create anything.
+      await preflightSlack(parsed);
       const delegated = await maybeDelegateLocalAdministration(parsed.operation,
         { ...parsed.params, ...(parsed.legacyOnly ? { legacy_hardening: true } : {}) }, config,
         { timeoutMs: getCliOptions().timeoutMs ?? undefined });

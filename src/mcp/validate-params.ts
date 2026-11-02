@@ -35,6 +35,7 @@ export function findInvalidParam(op: Operation, params: Record<string, unknown>)
       const expected = def.type;
       if (expected === 'string' && typeof val !== 'string') return fail(`Parameter "${key}" must be a string`);
       if (expected === 'number' && typeof val !== 'number') return fail(`Parameter "${key}" must be a number`);
+      if (expected === 'integer' && !Number.isInteger(val)) return fail(`Parameter "${key}" must be a whole number`);
       if (expected === 'boolean' && typeof val !== 'boolean') return fail(`Parameter "${key}" must be a boolean`);
       if (expected === 'object' && (typeof val !== 'object' || Array.isArray(val))) return fail(`Parameter "${key}" must be an object`);
       if (expected === 'array' && !Array.isArray(val)) return fail(`Parameter "${key}" must be an array`);
@@ -86,7 +87,7 @@ function retryWithValidParam(op: Operation, failure: ParamValidationFailure, par
   const def = op.params[failure.param];
   if (!def || params[failure.param] === undefined || params[failure.param] === null) return undefined;
   const value = def.enum?.length ? (def.default !== undefined && def.enum.includes(String(def.default)) ? def.default : def.enum[0])
-    : def.type === 'number' ? (typeof def.default === 'number' ? def.default : 10)
+    : def.type === 'number' || def.type === 'integer' ? (typeof def.default === 'number' ? def.default : 10)
       : def.type === 'boolean' ? (typeof def.default === 'boolean' ? def.default : true)
         : undefined;
   if (value === undefined) return undefined;

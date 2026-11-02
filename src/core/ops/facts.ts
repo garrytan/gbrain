@@ -54,6 +54,7 @@ import { stampPageTrust, stampRowTrust } from '../eligibility/stamp.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { parseSinceParam } from '../facts/since-parse.ts';
+import { callerSessionKey } from '../access/member-facts.ts';
 import { parseQuestionParam, questionRecallNotices, rankFactsByQuestion, recallHintNotice, unlinkedNamesakes, type EntityCandidate, type QuestionRecall } from '../facts/question-recall.ts';
 
 // ============================================================
@@ -1028,8 +1029,8 @@ const delta: Operation = {
     // for the trusted CLI/hook lane, gated on STRICT ctx.remote === false —
     // anything else (true, undefined via cast bypass) is remote. Remote callers
     // use their auth client id; an auth-LESS or blank-id remote (stdio MCP)
-    // gets the shared 'remote' sentinel — never collapsed into 'local'.
-    const clientId = ctx.remote === false ? null : ctx.auth?.clientId?.trim() || 'remote';
+    // gets the shared 'remote' sentinel — never collapsed into 'local'. GST-359: plus the person an attested or audience call serves.
+    const clientId = ctx.remote === false ? null : callerSessionKey(ctx.auth?.clientId?.trim() || 'remote');
     const includePrivate = p.include_private === true && ctx.remote === false;
     const budgetTokens =
       typeof p.budget_tokens === 'number' && Number.isFinite(p.budget_tokens) && p.budget_tokens > 0

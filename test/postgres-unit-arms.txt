@@ -17,9 +17,12 @@ test/access-folder-lock-order.test.ts
 test/access-folder-multiconn.test.ts
 test/access-folder-rules.test.ts
 test/access-folder-scoped-role.test.ts
+test/access-member-facts.test.ts
+test/access-member-sweep.test.ts
 test/access-members.test.ts
 test/access-on-behalf-of.test.ts
 test/access-page-indexes-online.test.ts
+test/access-qm-actor.test.ts
 test/access-writes.test.ts
 test/activation-unbound-rooted-6449.test.ts
 test/alias-source-cascade-5094.test.ts
@@ -441,6 +444,7 @@ test/purge-global-marker.test.ts
 test/purge-missing-cache-6911.test.ts
 test/purge-read-surfaces.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
+test/qm-memory-tools.test.ts
 test/read-meta-diag.test.ts
 test/recall-page-fill.test.ts
 test/receipt-compaction-newest-sync-gbra130.test.ts
