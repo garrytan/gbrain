@@ -93,7 +93,9 @@ changes into its own directory and starts gbrain there, so Bun never reads the
 session directory's `bunfig.toml` or `.env`. Its directory holds only the
 launcher; if anything else appears there, the launcher refuses to start gbrain
 and prints one line to stderr. `gbrain post-upgrade` moves hooks written
-before the launcher onto it, `gbrain setup` rewrites them on its next run, and
+before the launcher onto it (for `gbrain setup codex`'s hooks it prints the
+setup command instead, since that rewrite re-trusts them), `gbrain setup`
+rewrites them on its next run, and
 `gbrain doctor` (`harness_wiring`, code `hook_session_cwd`) flags any that are
 left. Not covered yet: the stdio MCP server `gbrain setup` registers, which
 the harness also starts in the session's directory (#8426), and the hooks from

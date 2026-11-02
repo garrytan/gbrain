@@ -233,7 +233,7 @@ export interface CodexApplyResult { steps: CodexSetupStep[]; receipt: CodexSetup
 export async function applyCodexSetup(
   plan: CodexSetupPlan,
   consent: SetupConsent,
-  opts: { pluginOwner: string | null; brainCreated: boolean; beforeMcp?: () => Promise<void>; abortAfter?: string; mcpMustBeCurrent?: boolean },
+  opts: { pluginOwner: string | null; brainCreated: boolean; beforeMcp?: () => Promise<void>; abortAfter?: string },
 ): Promise<CodexApplyResult> {
   const paths = codexSetupPaths(plan.name);
   mkdirSync(dirname(paths.configPath), { recursive: true, mode: 0o700 });
@@ -242,7 +242,6 @@ export async function applyCodexSetup(
     // Every hook command starts gbrain through the launcher, so it goes down before anything names it (#8424).
     if (plan.events.length) ensureHookLauncher(hookLauncherPath(plan.brainHome));
     const found = inspectCodexSetup(plan);
-    if (opts.mcpMustBeCurrent && opts.pluginOwner === null && found.mcp.state !== 'current') throw new Error(`the '${plan.name}' MCP entry changed before the hooks were rewritten`);
     const prior = found.prior;
     const now = new Date().toISOString();
     const desired = desiredCodexMcpEntry(plan);

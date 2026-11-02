@@ -4364,7 +4364,9 @@ directory in `GBRAIN_HOOK_CWD` and runs gbrain from its own directory. The
 
 Run `fix.argv` (`gbrain setup <harness>` for setup's hooks,
 `gbrain setup <harness> --instructions-only` for the turn-rule hook);
-`gbrain post-upgrade` moves every user-scope hook it can find. A project-scope
+`gbrain post-upgrade` moves every user-scope hook it can find except
+`gbrain setup codex`'s, which only setup rewrites because the rewrite re-trusts
+them; post-upgrade prints that command instead. A project-scope
 install is refreshed from its project directory. A setup hook you edited after
 setup wrote it (`edited: true`) is never rewritten, so the fix is a
 `user_message`: remove or rewrite that entry, then run setup. When the check

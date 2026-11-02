@@ -520,7 +520,7 @@ export function hookLauncherFix(p: HookLauncherProblem): Action {
   const project = p.harness === 'claude-code' && p.source !== claudeUserSettingsPath() ? dirname(dirname(p.source)) : null;
   const record = p.lane === 'setup' ? localSetupRecords().find((r) => r.harness === p.harness && r.status === 'installed' && (project ? r.projectDir === project : r.scope !== 'project')) : undefined;
   const argv = ['gbrain', 'setup', p.harness, ...(p.lane === 'turn-rule' ? ['--instructions-only'] : []), ...(record && record.name !== 'gbrain' ? ['--name', record.name] : []), ...(project ? ['--scope', 'project'] : [])];
-  const why = "Rewrites gbrain's hooks to start gbrain from its own launcher directory, so a repository's bunfig.toml or .env never runs when a session opens there. `gbrain post-upgrade` refreshes the user-scope hooks too.";
+  const why = "Rewrites gbrain's hooks to start gbrain from its own launcher directory, so a repository's bunfig.toml or .env never runs when a session opens there. `gbrain post-upgrade` refreshes the user-scope hooks too, except `gbrain setup codex`'s.";
   const verify = doctorVerify(NAME);
   if (p.reason === 'foreign') return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove that file (gbrain did not write it), then run: ${argv.join(' ')}` };
   if (p.edited) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove or rewrite that entry in ${p.source} (setup never overwrites an edit), then ${project ? `from ${project}, ` : ''}run: ${argv.join(' ')}` };

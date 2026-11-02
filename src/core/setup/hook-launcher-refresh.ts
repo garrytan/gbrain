@@ -7,23 +7,22 @@
  * Only gbrain's own entries move, through the writers that own them:
  *   - the turn-rule lane (Claude Code user settings, Codex hooks.json):
  *     syncTurnRuleHook with the binary and GBRAIN_HOME its old command names;
- *   - each installed \`gbrain setup\` receipt of this install: the same apply
- *     setup runs, with the plan the receipt records, and only when the MCP
- *     entry is still exactly setup's (so the apply rewrites hooks, trust and
- *     the receipt, nothing else). Anything else gets a line naming the
- *     command that fixes it.
+ *   - each installed Claude Code \`gbrain setup\` receipt of this install: the
+ *     same apply setup runs, with the plan the receipt records, and only when
+ *     the MCP entry is still exactly setup's (so the apply rewrites hooks and
+ *     the receipt, nothing else). Codex setup installs, and anything else, get
+ *     a line naming the command that fixes it.
  * Project-scope setup installs are listed, never rewritten: setup writes those
  * from the project directory. Best-effort; never throws.
  */
 import { readFileSync } from 'node:fs';
 import { configDir } from '../config.ts';
 import { hookEntryHash, parseClaudeHookCommand } from '../bootstrap/hooks.ts';
-import { codexHookCensus, codexHookGroupRuns, codexSetupGroupRuns, type CodexHookCensusGroup } from '../bootstrap/codex-hooks.ts';
+import { codexHookCensus, codexHookGroupRuns, type CodexHookCensusGroup } from '../bootstrap/codex-hooks.ts';
 import { join } from 'node:path';
 import { GBRAIN_HOOK_MARKER_KEY, GBRAIN_SETUP_MARKER_VALUE, claudeUserSettingsPath, codexConfigPath, codexHooksPath, type ClaudeHookEvent } from '../bootstrap/host-specs.ts';
-import type { CodexSetupEvent } from '../bootstrap/codex-hooks.ts';
 import { applyClaudeSetup, claudeSetupPaths, inspectClaudeSetup, readSetupReceipt, type ClaudeSetupPlan } from './claude-code.ts';
-import { applyCodexSetup, codexSetupPaths, inspectCodexSetup, readCodexSetupReceipt, type CodexSetupPlan } from './codex.ts';
+import { codexSetupPaths, readCodexSetupReceipt } from './codex.ts';
 import { hookLauncherInCommand, hookLauncherPath, hookLauncherState, shellWords } from './hook-launcher.ts';
 import { localSetupRecords } from './local-receipts.ts';
 import { hasTurnRuleHook, isTurnRuleEntry, syncTurnRuleHook, TURN_RULE_LANE_TOKEN } from './turn-hook.ts';
@@ -105,21 +104,9 @@ async function refreshSetup(log: (line: string) => void): Promise<void> {
         const receipt = readCodexSetupReceipt(record.path).setup;
         if (!receipt) continue;
         const paths = codexSetupPaths(receipt.name);
-        const groups = codexHookCensus(paths.hooksPath).filter((g) => g.lane === 'setup');
-        if (!groups.flatMap((g) => g.commands).some(needsLauncher)) continue;
-        const plan: CodexSetupPlan = { name: receipt.name, launcher: receipt.launcher, brainHome: receipt.gbrain_home, ...(receipt.gbrain_home_env ? { gbrainHomeEnv: receipt.gbrain_home_env } : {}),
-          sourceId: receipt.source_id, surface: receipt.surface, advertise: receipt.advertise ?? null, events: Object.keys({ ...receipt.hooks.owned, ...receipt.hooks.pending }) as CodexSetupEvent[] };
-        // Rewriting re-trusts every setup group, so it runs only when Codex already runs each one: an untrusted, disabled or missing group keeps Codex's approval gate.
-        const runs = (g: CodexHookCensusGroup) => codexSetupGroupRuns(paths.hooksPath, paths.configPath, g);
-        const idle = [...new Set([...plan.events.filter((e) => !groups.some((g) => g.event === e && runs(g))), ...groups.filter((g) => !runs(g)).map((g) => g.event)])];
-        if (idle.length > 0) { log(`Hook launcher: Codex does not run gbrain setup's codex ${idle.join(', ')} hook in ${paths.hooksPath} (not trusted, disabled or removed), so setup's codex hooks are left as is; run ${rerun} to rewrite them.`); continue; }
-        if (!receipt.mcp_plugin && inspectCodexSetup(plan).mcp.state !== 'current') { log(`Hook launcher: gbrain's codex hooks start gbrain in the session's directory; run ${rerun} to rewrite them.`); continue; }
-        const applied = await applyCodexSetup(plan, receipt.consent, { pluginOwner: receipt.mcp_plugin ?? null, brainCreated: false, mcpMustBeCurrent: true });
-        const left = new Set(codexHookCensus(paths.hooksPath).filter((g) => g.commands.some(needsLauncher)).map((g) => g.hash));
-        const kept = Object.entries(applied.receipt.hooks.edited).filter(([, hash]) => left.has(hash)).map(([event]) => event);
-        log(kept.length > 0
-          ? `Hook launcher: gbrain setup's codex ${kept.join(', ')} hook in ${paths.hooksPath} was edited after setup wrote it, so it is kept as is and still starts gbrain in the session's directory; remove or rewrite it, then run ${rerun}.`
-          : `Hook launcher: gbrain setup's codex hooks in ${paths.hooksPath} now start gbrain from its own directory.`);
+        if (!codexHookCensus(paths.hooksPath).some((g) => g.lane === 'setup' && g.commands.some(needsLauncher))) continue;
+        // Rewriting re-trusts setup's groups, and a hooks.json every install shares cannot show which install's group Codex runs, so the rewrite stays with setup, where the user approves it.
+        log(`Hook launcher: gbrain setup's codex hooks in ${paths.hooksPath} start gbrain in the session's directory; run ${rerun} to rewrite them.`);
       }
     } catch (e) {
       log(`Hook launcher: gbrain's ${record.harness} hooks were not refreshed (${(e as Error).message}); run ${rerun}.`);
