@@ -1197,6 +1197,23 @@ function markRepoPhaseComplete(repo: string): void {
   } as RepoReceipt);
 }
 
+/** #8427: the bootstrap install receipt names this workspace, as bootstrap writes it when it wires the hooks, before any repo phase. */
+function markBootstrapped(repo: string): void {
+  const toplevel = execFileSync('git', ['-C', repo, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+  mkdirSync(join(home(), 'bootstrap'), { recursive: true });
+  writeReceipt(home(), {
+    receipt_version: 1,
+    workspace_dir: toplevel,
+    source_id: 'workspace',
+    agent_name: 'test-agent',
+    created_at: '2026-01-01T00:00:00.000Z',
+    created_by: 'test',
+    brain_created_by_bootstrap: false,
+    created_paths: [],
+    registrations: [],
+  } as RepoReceipt);
+}
+
 describe('bootstrap push gate [G4]', () => {
   test('git repo + dirty tree + NO agent.json: session-start and session-end never spawn a push, repo untouched', async () => {
     const repo = join(tmp, 'plain-repo');
@@ -1291,6 +1308,7 @@ describe('bootstrap push gate [G4]', () => {
     initGitRepoWithDirtyTree(repo);
     writeFileSync(join(repo, 'agent.json'), JSON.stringify(INITIALIZED_MANIFEST, null, 2) + '\n');
     // NB: no markRepoPhaseComplete — the repo phase has not run yet.
+    markBootstrapped(repo);
     const spawned: string[] = [];
     const out = collectStdout();
     await runHook(['session-start'], {
@@ -1307,6 +1325,7 @@ describe('bootstrap push gate [G4]', () => {
     const repo = join(tmp, 'boot-repo-pending-end');
     initGitRepoWithDirtyTree(repo);
     writeFileSync(join(repo, 'agent.json'), JSON.stringify(INITIALIZED_MANIFEST, null, 2) + '\n');
+    markBootstrapped(repo);
     const spawned: string[] = [];
     await runHook(['session-end'], {
       write: () => {},
@@ -1337,6 +1356,7 @@ function bootRepo(name: string, opts: { repoPhase?: boolean; clean?: boolean } =
   initGitRepoWithDirtyTree(repo);
   writeFileSync(join(repo, 'agent.json'), JSON.stringify(INITIALIZED_MANIFEST, null, 2) + '\n');
   if (opts.repoPhase !== false) markRepoPhaseComplete(repo);
+  else markBootstrapped(repo);
   if (opts.clean) {
     execFileSync('git', ['-C', repo, 'add', '-A'], { stdio: 'ignore' });
     execFileSync('git', ['-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'], { stdio: 'ignore' });
@@ -1516,8 +1536,9 @@ describe('stop-hook per-turn push [D3]', () => {
     await runHook(['stop'], stopIo(a, spawned));
     expect(spawned).toHaveLength(1);
     await runHook(['stop'], stopIo(b, spawned));
-    expect(spawned).toHaveLength(1); // b defers (no receipt binding) — and does NOT clobber a's state
-    expect((await lastHeartbeat())?.reason).toBe('push_deferred_repo_pending');
+    expect(spawned).toHaveLength(1); // b is not the receipt's workspace — and does NOT clobber a's state
+    // #8427: a workspace the receipt does not name is not gbrain's, so no git runs there at all.
+    expect((await lastHeartbeat())?.reason).toBe('push_skipped_not_bootstrap');
     await runHook(['stop'], stopIo(a, spawned));
     expect(spawned).toHaveLength(1); // a still debounced — b's activity didn't reset a
     expect((await lastHeartbeat())?.reason).toBe('push_debounced');

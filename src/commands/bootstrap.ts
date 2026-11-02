@@ -1572,7 +1572,7 @@ async function runHooks(
         try {
           r = cloudCarrier
             ? writeCommittedClaudeHooks(ws, { env: hookEnv })
-            : writeClaudeHooks(ws, { gbrainBin, env: hookEnv });
+            : writeClaudeHooks(ws, { gbrainBin, hookLauncher: ensureHookLauncher(hookLauncherPath()), env: hookEnv });
         } catch (e) {
           // Fail-closed on an unparseable settings file (either carrier): MCP
           // (step 1) still landed; record that, surface the fix, and exit
@@ -1609,7 +1609,12 @@ async function runHooks(
         // command carries NO GBRAIN_SOURCE — hooks.json is machine-global, a
         // baked source would stamp every codex session on this machine with
         // this repo's source; session-end resolves from the payload instead.
-        const r = writeCodexHooks({ gbrainBin });
+        let r: ReturnType<typeof writeCodexHooks>;
+        try {
+          r = writeCodexHooks({ gbrainBin, hookLauncher: ensureHookLauncher(hookLauncherPath()) });
+        } catch (e) {
+          r = { ok: false, hooksPath: '', configPath: '', notes: [(e as Error).message] };
+        }
         if (r.ok) {
           hooksWritten = true;
           console.log(

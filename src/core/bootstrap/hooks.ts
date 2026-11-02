@@ -31,6 +31,7 @@ import { atomicWriteTextFile } from './atomic-write.ts';
 import { normalizeSeatLabel } from '../context/seat.ts';
 import { detectExecutionEnvironment } from '../execution-env.ts';
 import { stdioServeArgv } from '../mcp-registration.ts';
+import { isHookLauncherPath } from '../setup/hook-launcher.ts';
 import type { McpSurface } from '../../mcp/surface.ts';
 import type { HarnessReceipt, HarnessTarget } from './format.ts';
 import {
@@ -303,7 +304,7 @@ export function classifyHarnessHook(
   const sub = (CLAUDE_HOOK_SUBCOMMAND as Record<string, string | undefined>)[event];
   if (!sub || !/(?:^|[\s'])GBRAIN_HOOK_LANE=harness(?=[\s']|$)/.test(e.command) || !/\shook(?:\s|$)/.test(e.command)) return null;
   const parsed = parseClaudeHookCommand(e.command);
-  if (!parsed || parsed.launcher !== undefined || parsed.env.GBRAIN_HOOK_LANE !== 'harness' || parsed.subcommand !== sub) {
+  if (!parsed || (parsed.launcher !== undefined && !isHookLauncherPath(parsed.launcher)) || parsed.env.GBRAIN_HOOK_LANE !== 'harness' || parsed.subcommand !== sub) {
     return { ownership: 'unowned', why: `not the exact \`hook ${sub}\` command gbrain writes (edited or extended)` };
   }
   if (identity === 'any') return { ownership: 'command', why: 'harness hook command shape' };

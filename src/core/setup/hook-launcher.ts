@@ -131,10 +131,14 @@ export function shellWords(command: string): string[] | null {
   return words;
 }
 
+/** An absolute path shaped like a hook launcher (<config dir>/hook-launcher/gbrain-hook). */
+export function isHookLauncherPath(path: string): boolean {
+  return path.startsWith('/') && path.endsWith(`/${HOOK_LAUNCHER_DIR}/${HOOK_LAUNCHER_NAME}`);
+}
+
 /** The launcher a hook command runs gbrain through, or null for a command that starts gbrain in the session directory. */
 export function hookLauncherInCommand(command: string): string | null {
-  const suffix = `/${HOOK_LAUNCHER_DIR}/${HOOK_LAUNCHER_NAME}`;
-  return shellWords(command)?.find((w) => w.startsWith('/') && w.endsWith(suffix)) ?? null;
+  return shellWords(command)?.find(isHookLauncherPath) ?? null;
 }
 
 export { HOOK_CWD_ENV, captureHookSessionCwd, hookSessionCwd } from '../session-cwd.ts';
