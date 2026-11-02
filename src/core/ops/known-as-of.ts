@@ -111,7 +111,8 @@ export async function getPageKnownAsOf(ctx: OperationContext, p: Record<string, 
     throw opError('invalid_params', `get_page: known_as_of does not combine with ${extra.length ? extra.join(', ') : `body: ${String(p.body)}`}.`,
       `Drop ${drop.map(name).join(', ')} to read the page as recorded at known_as_of, or drop ${name('known_as_of')} for the current page. A recorded-time read takes only ${GET_PAGE_AS_OF_ARGS.slice(2).map(name).join(', ')} (auto, full or none).`,
       { fix: readFix('The same call without the arguments that select a window or view of the current page, which a recorded-time read does not serve.',
-        { mcp: { tool: 'get_page', arguments: kept } }) });
+        { argv: ['gbrain', 'get', ...Object.entries(kept).filter(([k]) => k !== 'slug').flatMap(([k, v]) => v === true ? [`--${k.replace(/_/g, '-')}`] : v === false ? [] : [`--${k.replace(/_/g, '-')}`, String(v)]), '--', String(p.slug)],
+          mcp: { tool: 'get_page', arguments: kept } }) });
   }
   const slug = String(p.slug);
   const sourceId = await targetSource(ctx, p, 'get_page');

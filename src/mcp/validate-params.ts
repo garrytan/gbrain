@@ -129,9 +129,11 @@ function retryWithValidParam(op: Operation, failure: ParamValidationFailure, par
  *     handler exactly as before.
  *   - Type-mismatched junk is untouched — `limit: ""` keeps its loud
  *     "must be a number" error rather than silently succeeding.
- *   - A value inside the param's valid range is never dropped, and nothing is
- *     dropped from a param that declares no range: the result is always a call
- *     the caller could have sent by leaving the argument out.
+ *   - A value inside the param's valid range is never dropped, except that an
+ *     `appliesWith` param is dropped whatever its value when its partner is
+ *     absent, because it has no effect then. Nothing is dropped from a param
+ *     that declares none of these: the result is always a call the caller
+ *     could have sent by leaving the argument out.
  *   - Undeclared keys are untouched (they were already ignored).
  * Copy-on-write: callers' param objects are never mutated.
  */

@@ -297,9 +297,18 @@ describe("GST-927: GBEV-3's replayed Sol shapes", () => {
     expect(remote.suggestion).toContain('Drop `include_content`, `context_lines`, `max_bytes`, `view`, `outline_from` to read the page as recorded');
     const local = await handleToolCall(engine, 'get_page', args).then(() => null, (e: { suggestion?: string; fix?: { mcp?: { tool: string; arguments: Record<string, unknown> } } }) => e);
     expect(local?.suggestion).toContain('Drop --include-content, --context-lines, --max-bytes, --view, --outline-from to read the page as recorded');
+    expect((local as { fix?: { argv?: string[] } } | null)?.fix?.argv).toEqual(['gbrain', 'get', '--known-as-of', '2026-10-01T12:00:00Z', '--source-id', 'default', '--body', 'full', '--', SLUG]);
     expect(local?.fix?.mcp).toEqual({ tool: 'get_page', arguments: { slug: SLUG, known_as_of: '2026-10-01T12:00:00Z', source_id: 'default', include_deleted: false, body: 'full' } });
     const retried = await dispatchToolCall(engine, 'get_page', local!.fix!.mcp!.arguments, { remote: true, transport: 'http', sourceId: 'default' });
     expect(retried.content[0]!.text).not.toContain('does not combine with');
   });
 });
 
+
+test('GST-927: the absence annotations sit only on optional params of read ops, so normalization never drops a write argument', () => {
+  const keys = ['minimum', 'exclusiveMinimum', 'minItems', 'actsWhenTrue', 'appliesWith'] as const;
+  const misplaced = operations.flatMap(op => Object.entries(op.params)
+    .filter(([, d]) => keys.some(k => d[k] !== undefined) && (op.mutating !== false || d.required))
+    .map(([k]) => `${op.name}.${k}`));
+  expect(misplaced).toEqual([]);
+});

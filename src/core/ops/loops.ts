@@ -614,7 +614,8 @@ const open_loops: Operation = {
 };
 
 /**
- * open_loops `id`: absent or null means a list read. Anything else must be a
+ * open_loops `id`: absent or null means a list read (over the tool paths, 0
+ * reads as absent too: `minimum: 1`, GST-927). Anything else must be a
  * positive safe integer. The refusal never echoes the raw value. The digest
  * stays off for a lookup because it describes the open list ("waiting on
  * you", "You are clean"), which is false for a closed or missing loop.
