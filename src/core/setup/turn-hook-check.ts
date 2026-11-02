@@ -18,7 +18,8 @@ import { bunSpawnSync } from '../spawn.ts';
 import { codexHookCensus, codexHookGroupRuns, codexHookTrustHash } from '../bootstrap/codex-hooks.ts';
 import { readCodexTomlTable } from '../bootstrap/codex-toml.ts';
 import { classifyHarnessHook } from '../bootstrap/hooks.ts';
-import { GBRAIN_HOOK_MARKER_KEY, claudeUserSettingsPath, codexConfigPath, codexHooksPath } from '../bootstrap/host-specs.ts';
+import { CLAUDE_SETTINGS_FILE_RELPATH, GBRAIN_HOOK_MARKER_KEY, GBRAIN_SETUP_MARKER_VALUE, claudeUserSettingsPath, codexConfigPath, codexHooksPath } from '../bootstrap/host-specs.ts';
+import { hookLauncherInCommand, hookLauncherState, type HookLauncherState } from './hook-launcher.ts';
 import { enabledPluginLanes } from '../bootstrap/plugin-lanes.ts';
 import { brainFirstTarget, openclawConfigPath, parseJson5ish } from './brain-first.ts';
 import { inspectHermesTurnHook } from './hermes-turn-hook.ts';
@@ -110,6 +111,65 @@ export function inspectTurnHook(harness: string, opts: { projectDir?: string } =
     return { harness, state: 'wired', via: 'native', detail: `pre_llm_call hook in ${h.path}, approved`, native_inspect };
   }
   return { harness, state: 'not_supported', detail: `${harness} has no per-turn hook gbrain can install; the rule reaches it only through its instruction file` };
+}
+
+/**
+ * A hook the setup or turn-rule lane wrote that would let the session
+ * directory's bunfig.toml or .env load (#8424): its command starts gbrain in
+ * the session's directory (written before the hook launcher existed), or the
+ * launcher it names is missing, changed, or shares its directory with a file
+ * gbrain did not write.
+ */
+export interface HookLauncherProblem {
+  harness: 'claude-code' | 'codex';
+  lane: 'setup' | 'turn-rule';
+  /** The settings or hooks file holding the entry. */
+  source: string;
+  /** session_cwd: no launcher in the command; otherwise the launcher's state. */
+  reason: 'session_cwd' | Exclude<HookLauncherState, 'current'>;
+  detail: string;
+}
+
+function claudeLaneCommands(path: string): Array<{ lane: 'setup' | 'turn-rule'; command: string }> {
+  const hooks = readJson(path)?.hooks;
+  if (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)) return [];
+  const out: Array<{ lane: 'setup' | 'turn-rule'; command: string }> = [];
+  for (const groups of Object.values(hooks as Record<string, unknown>)) {
+    if (!Array.isArray(groups)) continue;
+    for (const e of groups.flatMap((g) => (Array.isArray((g as { hooks?: unknown })?.hooks) ? (g as { hooks: unknown[] }).hooks : []))) {
+      if (!e || typeof e !== 'object' || typeof (e as Record<string, unknown>).command !== 'string') continue;
+      const entry = e as Record<string, unknown>;
+      if (isTurnRuleEntry(entry)) out.push({ lane: 'turn-rule', command: entry.command as string });
+      else if (entry[GBRAIN_HOOK_MARKER_KEY] === GBRAIN_SETUP_MARKER_VALUE) out.push({ lane: 'setup', command: entry.command as string });
+    }
+  }
+  return out;
+}
+
+/** Files only. Every event's setup and turn-rule entries, user scope plus `projectDir`'s settings.local.json (Claude Code). */
+export function hookLauncherProblem(harness: 'claude-code' | 'codex', opts: { projectDir?: string } = {}): HookLauncherProblem | null {
+  const found: Array<{ lane: 'setup' | 'turn-rule'; command: string; source: string }> = [];
+  if (harness === 'claude-code') {
+    for (const source of [claudeUserSettingsPath(), ...(opts.projectDir ? [join(opts.projectDir, CLAUDE_SETTINGS_FILE_RELPATH)] : [])]) {
+      found.push(...claudeLaneCommands(source).map((c) => ({ ...c, source })));
+    }
+  } else {
+    try {
+      for (const g of codexHookCensus(codexHooksPath())) {
+        if (g.lane === 'setup' || g.lane === 'turn-rule') found.push(...g.commands.map((command) => ({ lane: g.lane as 'setup' | 'turn-rule', command, source: codexHooksPath() })));
+      }
+    } catch { /* unparseable: Codex runs none of it */ }
+  }
+  for (const f of found) {
+    const launcher = hookLauncherInCommand(f.command);
+    if (!launcher) {
+      return { harness, lane: f.lane, source: f.source, reason: 'session_cwd',
+        detail: `gbrain's ${f.lane} hook in ${f.source} starts gbrain in the session's directory, so Bun loads that directory's bunfig.toml and .env before gbrain runs` };
+    }
+    const s = hookLauncherState(launcher);
+    if (s.state !== 'current') return { harness, lane: f.lane, source: f.source, reason: s.state, detail: `gbrain's ${f.lane} hook in ${f.source} runs through ${launcher}, but ${s.detail}` };
+  }
+  return null;
 }
 
 type Run = (argv: string[], stdin?: string) => { ok: boolean; output: string };

@@ -38,6 +38,7 @@ import {
 } from '../bootstrap/host-specs.ts';
 import { stdioServeArgv } from '../mcp-registration.ts';
 import { isTurnRuleEntry } from './turn-hook.ts';
+import { ensureHookLauncher, hookLauncherPath } from './hook-launcher.ts';
 import type { McpSurface } from '../../mcp/surface.ts';
 
 export type WiringScope = 'user' | 'project';
@@ -184,7 +185,7 @@ export function desiredMcpEntry(plan: ClaudeSetupPlan): Record<string, unknown> 
 export function desiredHookHashes(plan: ClaudeSetupPlan): HookHashes {
   const out: HookHashes = {};
   for (const event of plan.events) {
-    out[event] = hookEntryHash({ type: 'command', command: buildClaudeHookCommand(plan.launcher, event, hookEnv(plan)), timeout: CLAUDE_HOOK_DEFAULT_TIMEOUT_SECS[event] })!;
+    out[event] = hookEntryHash({ type: 'command', command: buildClaudeHookCommand(plan.launcher, event, hookEnv(plan), hookLauncherPath(plan.brainHome)), timeout: CLAUDE_HOOK_DEFAULT_TIMEOUT_SECS[event] })!;
   }
   return out;
 }
@@ -274,6 +275,8 @@ export async function applyClaudeSetup(
   const paths = claudeSetupPaths(plan);
   const lock = await acquireBootstrapLock(dirname(paths.configPath));
   try {
+    // Every hook command starts gbrain through the launcher, so it goes down before anything names it (#8424).
+    if (plan.events.length) ensureHookLauncher(hookLauncherPath(plan.brainHome));
     const found = inspectClaudeSetup(plan);
     const now = new Date().toISOString();
     const desired = desiredMcpEntry(plan);
@@ -333,7 +336,7 @@ export async function applyClaudeSetup(
     } else {
       const ownedHashes = new Set([...values(prior?.hooks.owned), ...values(prior?.hooks.pending), ...values(receipt.hooks.pending)]);
       writeClaudeHooksAt(paths.settingsPath, {
-        gbrainBin: plan.launcher, env: hookEnv(plan), events: writeEvents, marker: GBRAIN_SETUP_MARKER_VALUE,
+        gbrainBin: plan.launcher, hookLauncher: hookLauncherPath(plan.brainHome), env: hookEnv(plan), events: writeEvents, marker: GBRAIN_SETUP_MARKER_VALUE,
         ownedEntryHashes: ownedHashes, freshMode: 0o600,
       });
       steps.push({ step: 'hooks', action: 'write', detail: writeEvents.length ? `${writeEvents.join(', ')} in ${paths.settingsPath}` : `removed setup's hooks from ${paths.settingsPath}` });

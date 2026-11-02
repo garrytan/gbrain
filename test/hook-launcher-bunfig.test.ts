@@ -1,0 +1,200 @@
+/**
+ * #8424: the hooks gbrain writes never let the session directory's bunfig.toml
+ * or .env run. The script-mode install maps the gbrain bin to src/cli.ts, and
+ * Bun applies a top-level bunfig.toml preload from the working directory
+ * before any gbrain code; harnesses start hooks in the session's directory.
+ * Every hook here is installed by the real writer, then run with sh -c from a
+ * directory whose bunfig.toml preload drops a marker file, the way Claude Code
+ * and Codex run it. The marker must never appear.
+ */
+import { afterAll, describe, expect, test } from 'bun:test';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { withEnv } from './helpers/with-env.ts';
+import { buildClaudeHookCommand } from '../src/core/bootstrap/hooks.ts';
+import { codexSetupHookGroup } from '../src/core/bootstrap/codex-hooks.ts';
+import { syncTurnRuleHook, TURN_RULE_MARKER } from '../src/core/setup/turn-hook.ts';
+import { hookLauncherProblem } from '../src/core/setup/turn-hook-check.ts';
+import { HOOK_LAUNCHER_NAME, ensureHookLauncher, hookLauncherPath, hookLauncherState } from '../src/core/setup/hook-launcher.ts';
+import { refreshHookLaunchers } from '../src/core/setup/hook-launcher-refresh.ts';
+
+const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
+const roots: string[] = [];
+afterAll(() => { for (const r of roots) rmSync(r, { recursive: true, force: true }); });
+
+/** A temp HOME with a script-mode gbrain (a symlink to src/cli.ts, as bun install -g makes it) and a hostile checkout. */
+function box() {
+  const root = mkdtempSync(join(tmpdir(), 'gbrain-hook-launcher-'));
+  roots.push(root);
+  const home = join(root, 'home');
+  const bin = join(root, 'bin');
+  const hostile = join(root, 'hostile-checkout');
+  const tmp = join(root, 'tmp');
+  for (const d of [home, bin, join(hostile, 'tooling'), tmp]) mkdirSync(d, { recursive: true });
+  symlinkSync(process.execPath, join(bin, 'bun'));
+  symlinkSync(CLI, join(bin, 'gbrain'));
+  const marker = join(root, 'PRELOAD_RAN');
+  writeFileSync(join(hostile, 'tooling', 'pre.ts'), `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran');\n`);
+  writeFileSync(join(hostile, 'bunfig.toml'), 'preload = ["./tooling/pre.ts"]\n');
+  writeFileSync(join(hostile, '.env'), 'GBRAIN_HOOKS=1\n');
+  const launcher = hookLauncherPath(join(home, '.gbrain'));
+  const env: Record<string, string> = { HOME: home, GBRAIN_HOME: home, PATH: `${bin}:/usr/bin:/bin`, TMPDIR: tmp, GBRAIN_AGENT_INSTRUCTIONS: '0' };
+  return { root, home, gbrain: join(bin, 'gbrain'), hostile, tmp, marker, launcher, env };
+}
+type Box = ReturnType<typeof box>;
+
+/** Run a hook command the way the harness does: sh -c from the session directory, the event JSON on stdin. */
+function runHook(b: Box, command: string, cwd = b.hostile) {
+  const r = Bun.spawnSync(['sh', '-c', command], { cwd, env: b.env, stdin: Buffer.from(JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'hi', session_id: 'hook-launcher-test', cwd })), stdout: 'pipe', stderr: 'pipe', timeout: 60_000 });
+  return { exitCode: r.exitCode, stdout: r.stdout.toString(), stderr: r.stderr.toString() };
+}
+
+/** SessionEnd detaches a grandchild that removes its payload file when it exits; wait for that. */
+async function waitForDetached(b: Box) {
+  for (let i = 0; i < 300 && readdirSync(b.tmp).length > 0; i++) await Bun.sleep(100);
+  expect(readdirSync(b.tmp)).toEqual([]);
+}
+
+const readJson = (p: string) => JSON.parse(readFileSync(p, 'utf8'));
+
+describe('a hook run from a checkout whose bunfig.toml preloads code never runs that preload', () => {
+  test('control: script-mode gbrain started in that checkout runs the preload (the hole the launcher closes)', () => {
+    const b = box();
+    const r = runHook(b, `${b.gbrain} --version`);
+    expect(r.exitCode).toBe(0);
+    expect(existsSync(b.marker)).toBe(true);
+  });
+
+  test('claude-code turn-rule hook (setup --instructions-only, connect --install, bootstrap harness)', () => {
+    const b = box();
+    const settings = join(b.home, '.claude', 'settings.json');
+    const o = syncTurnRuleHook({ harness: 'claude-code', gbrainBin: b.gbrain, paths: { claudeSettings: settings, hookLauncher: b.launcher }, rerun: 'x' });
+    expect(o.action).toBe('write');
+    const [entry] = readJson(settings).hooks.UserPromptSubmit.flatMap((g: { hooks: unknown[] }) => g.hooks);
+    expect(entry._gbrain).toBe(TURN_RULE_MARKER);
+    const r = runHook(b, entry.command);
+    expect(r.stderr).toBe('');
+    expect(r.exitCode).toBe(0);
+    expect(existsSync(b.marker)).toBe(false);
+  });
+
+  test('codex turn-rule hook', () => {
+    const b = box();
+    const hooks = join(b.home, '.codex', 'hooks.json');
+    const o = syncTurnRuleHook({ harness: 'codex', gbrainBin: b.gbrain, paths: { codexHooks: hooks, codexConfig: join(b.home, '.codex', 'config.toml'), hookLauncher: b.launcher }, rerun: 'x' });
+    expect(o.action).toBe('write');
+    const command = readJson(hooks).hooks.UserPromptSubmit[0].hooks[0].command;
+    const r = runHook(b, command);
+    expect(r.stderr).toBe('');
+    expect(r.exitCode).toBe(0);
+    expect(existsSync(b.marker)).toBe(false);
+  });
+
+  test('gbrain setup claude-code hook shape, every event', () => {
+    const b = box();
+    ensureHookLauncher(b.launcher);
+    for (const event of ['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact'] as const) {
+      const command = buildClaudeHookCommand(b.gbrain, event, { GBRAIN_SOURCE: 'default', GBRAIN_HOME: b.home, GBRAIN_SEAT: '' }, b.launcher);
+      expect(runHook(b, command).exitCode).toBe(0);
+      expect(existsSync(b.marker)).toBe(false);
+    }
+  });
+
+  test('gbrain setup codex hook shape: SessionStart, UserPromptSubmit and the detached SessionEnd', async () => {
+    const b = box();
+    ensureHookLauncher(b.launcher);
+    for (const event of ['SessionStart', 'UserPromptSubmit', 'SessionEnd'] as const) {
+      const command = codexSetupHookGroup(b.gbrain, event, { GBRAIN_HOME: b.home }, 'setup', b.launcher).hooks[0]!.command;
+      expect(runHook(b, command).exitCode).toBe(0);
+      if (event === 'SessionEnd') await waitForDetached(b);
+      expect(existsSync(b.marker)).toBe(false);
+    }
+  });
+});
+
+describe('the launcher', () => {
+  test('passes the session directory on in GBRAIN_HOOK_CWD and runs from its own directory', () => {
+    const b = box();
+    ensureHookLauncher(b.launcher);
+    const r = runHook(b, `${b.launcher} /bin/sh -c 'printf "%s|%s" "$GBRAIN_HOOK_CWD" "$(pwd)"'`);
+    expect(r.stdout).toBe(`${b.hostile}|${dirname(b.launcher)}`);
+  });
+
+  test('refuses to start anything when its directory holds a file gbrain did not write', () => {
+    const b = box();
+    ensureHookLauncher(b.launcher);
+    writeFileSync(join(dirname(b.launcher), 'bunfig.toml'), `preload = [${JSON.stringify(join(b.hostile, 'tooling', 'pre.ts'))}]\n`);
+    const r = runHook(b, `${b.launcher} ${b.gbrain} --version`);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain('refused');
+    expect(existsSync(b.marker)).toBe(false);
+    expect(hookLauncherState(b.launcher).state).toBe('foreign');
+    expect(() => ensureHookLauncher(b.launcher)).toThrow(/did not write/);
+  });
+
+  test('ensureHookLauncher rewrites a changed launcher and keeps its directory private', () => {
+    const b = box();
+    ensureHookLauncher(b.launcher);
+    writeFileSync(b.launcher, '#!/bin/sh\nexec "$@"\n');
+    expect(hookLauncherState(b.launcher).state).toBe('stale');
+    ensureHookLauncher(b.launcher);
+    expect(hookLauncherState(b.launcher).state).toBe('current');
+    expect(readdirSync(dirname(b.launcher))).toEqual([HOOK_LAUNCHER_NAME]);
+  });
+});
+
+describe('hooks written before the launcher: doctor flags them, post-upgrade moves them', () => {
+  const env = (b: Box) => ({ HOME: b.home, GBRAIN_HOME: b.home, CLAUDE_CONFIG_DIR: undefined, CODEX_HOME: join(b.home, '.codex'), XDG_CONFIG_HOME: undefined });
+
+  test('claude-code: an old turn-rule entry is flagged session_cwd, then refreshed onto the launcher', async () => {
+    const b = box();
+    const settings = join(b.home, '.claude', 'settings.json');
+    const old = buildClaudeHookCommand(b.gbrain, 'UserPromptSubmit', { GBRAIN_HOOK_LANE: 'turn-rule' });
+    mkdirSync(dirname(settings), { recursive: true });
+    writeFileSync(settings, JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: old, timeout: 15, _gbrain: TURN_RULE_MARKER }] }] } }));
+    expect(runHook(b, old).exitCode).toBe(0);
+    expect(existsSync(b.marker)).toBe(true);
+    rmSync(b.marker);
+    await withEnv(env(b), async () => {
+      expect(hookLauncherProblem('claude-code')).toMatchObject({ lane: 'turn-rule', reason: 'session_cwd' });
+      const lines: string[] = [];
+      await refreshHookLaunchers((l) => lines.push(l));
+      expect(lines.join('\n')).toContain('claude-code turn-rule hook now starts gbrain from its own directory');
+      expect(hookLauncherProblem('claude-code')).toBeNull();
+    });
+    const entries = readJson(settings).hooks.UserPromptSubmit.flatMap((g: { hooks: unknown[] }) => g.hooks);
+    expect(entries).toHaveLength(1);
+    expect(runHook(b, entries[0].command).exitCode).toBe(0);
+    expect(existsSync(b.marker)).toBe(false);
+  });
+
+  test('codex: an old turn-rule group is flagged, then refreshed with a matching trust entry', async () => {
+    const b = box();
+    const hooks = join(b.home, '.codex', 'hooks.json');
+    const config = join(b.home, '.codex', 'config.toml');
+    await withEnv(env(b), async () => {
+      const old = codexSetupHookGroup(b.gbrain, 'UserPromptSubmit', {}, 'turn-rule');
+      mkdirSync(dirname(hooks), { recursive: true });
+      writeFileSync(hooks, JSON.stringify({ hooks: { UserPromptSubmit: [old] } }));
+      expect(hookLauncherProblem('codex')).toMatchObject({ lane: 'turn-rule', reason: 'session_cwd' });
+      await refreshHookLaunchers(() => {});
+      expect(hookLauncherProblem('codex')).toBeNull();
+    });
+    const command = readJson(hooks).hooks.UserPromptSubmit[0].hooks[0].command;
+    expect(readFileSync(config, 'utf8')).toContain('user_prompt_submit');
+    expect(runHook(b, command).exitCode).toBe(0);
+    expect(existsSync(b.marker)).toBe(false);
+  });
+
+  test('a launcher whose directory gained a foreign file is flagged foreign', async () => {
+    const b = box();
+    await withEnv(env(b), async () => {
+      const settings = join(b.home, '.claude', 'settings.json');
+      syncTurnRuleHook({ harness: 'claude-code', gbrainBin: b.gbrain, paths: { claudeSettings: settings }, rerun: 'x' });
+      expect(hookLauncherProblem('claude-code')).toBeNull();
+      writeFileSync(join(dirname(hookLauncherPath()), '.env'), 'X=1\n');
+      expect(hookLauncherProblem('claude-code')).toMatchObject({ reason: 'foreign' });
+    });
+  });
+});

@@ -131,6 +131,7 @@ export const ERROR_CATALOGUE = {
   setup_owner_conflict: { code: 'setup_owner_conflict', docs: 'docs/guides/repair.md#setup-owner-conflict' },
   setup_hosted_connection: { code: 'setup_hosted_connection', docs: 'docs/guides/repair.md#setup-hosted-connection' },
   turn_hook_not_loaded: { code: 'turn_hook_not_loaded', docs: 'docs/guides/repair.md#turn-hook-not-loaded' },
+  hook_session_cwd: { code: 'hook_session_cwd', docs: 'docs/guides/repair.md#hook-session-cwd' },
 } as const satisfies Record<string, CatalogueEntry>;
 
 export type CatalogueName = keyof typeof ERROR_CATALOGUE;

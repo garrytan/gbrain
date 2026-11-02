@@ -75,6 +75,8 @@ export interface ClaudeHookEnv {
 export interface WriteClaudeHooksOpts {
   /** Absolute path to the gbrain binary (GUI hosts inherit no PATH) [CX-P1.4]. */
   gbrainBin: string;
+  /** Absolute trusted-directory launcher each command starts gbrain through (src/core/setup/hook-launcher.ts). */
+  hookLauncher?: string;
   env: ClaudeHookEnv;
   /** Per-event timeout override (SECONDS — the settings-file unit). */
   timeoutSecs?: Partial<Record<ClaudeHookEvent, number>>;
@@ -218,33 +220,36 @@ function shellQuote(arg: string): string {
   return `'${arg.replace(/'/g, "'\\''")}'`;
 }
 
-/** Render the hook command string: `env K=V… <bin> hook <subcommand>`. The
- * harness lane recognizes its unmarked entries by parsing exactly this shape
- * back (parseClaudeHookCommand), so the two change together. */
+/** Render the hook command string: `env K=V… [<launcher>] <bin> hook <subcommand>`.
+ * `launcher` is the trusted-directory hook launcher (src/core/setup/hook-launcher.ts)
+ * the setup and turn-rule lanes start gbrain through. The harness lane
+ * recognizes its unmarked entries by parsing exactly this shape back
+ * (parseClaudeHookCommand), so the two change together. */
 export function buildClaudeHookCommand(
   gbrainBin: string,
   event: ClaudeHookEvent,
   env: ClaudeHookEnv,
+  launcher?: string,
 ): string {
   const assignments: string[] = [];
   if (env.GBRAIN_SOURCE !== undefined) assignments.push(`GBRAIN_SOURCE=${env.GBRAIN_SOURCE}`);
   if (env.GBRAIN_HOME) assignments.push(`GBRAIN_HOME=${env.GBRAIN_HOME}`);
   if (env.GBRAIN_HOOK_LANE) assignments.push(`GBRAIN_HOOK_LANE=${env.GBRAIN_HOOK_LANE}`);
   if (env.GBRAIN_SEAT) assignments.push(`GBRAIN_SEAT=${env.GBRAIN_SEAT}`);
-  const parts = ['env', ...assignments, gbrainBin, 'hook', CLAUDE_HOOK_SUBCOMMAND[event]];
+  const parts = ['env', ...assignments, ...(launcher ? [launcher] : []), gbrainBin, 'hook', CLAUDE_HOOK_SUBCOMMAND[event]];
   return parts.map(shellQuote).join(' ');
 }
 
 const HOOK_ENV_KEYS: ReadonlySet<string> = new Set(['GBRAIN_SOURCE', 'GBRAIN_HOME', 'GBRAIN_HOOK_LANE', 'GBRAIN_SEAT']);
 
 /**
- * The inverse of buildClaudeHookCommand: `env K=V… <abs bin> hook <sub>` with
+ * The inverse of buildClaudeHookCommand: `env K=V… [<abs launcher>] <abs bin> hook <sub>` with
  * nothing before or after, words split the way shellQuote joins them, env keys
  * limited to the ones the builder writes (each at most once), and a final
  * check that re-rendering the parse yields the exact input. Null for anything
  * else (an appended pipe, an extra flag, hand quoting, a relative launcher).
  */
-export function parseClaudeHookCommand(command: string): { gbrainBin: string; subcommand: string; env: ClaudeHookEnv } | null {
+export function parseClaudeHookCommand(command: string): { gbrainBin: string; subcommand: string; env: ClaudeHookEnv; launcher?: string } | null {
   const words: string[] = [];
   const word = /([A-Za-z0-9_.:/@=-]+|'(?:[^']|'\\'')*')(?: |$)/y;
   while (word.lastIndex < command.length) {
@@ -262,11 +267,13 @@ export function parseClaudeHookCommand(command: string): { gbrainBin: string; su
     if (!HOOK_ENV_KEYS.has(key) || key in env) return null;
     env[key] = words[i]!.slice(eq + 1);
   }
-  const [gbrainBin, verb, subcommand] = words.slice(i) as [string, string, string];
-  if (words.length - i !== 3 || verb !== 'hook' || !isAbsolute(gbrainBin)) return null;
+  const rest = words.slice(i);
+  const launcher = rest.length === 4 ? rest.shift()! : undefined;
+  const [gbrainBin, verb, subcommand] = rest as [string, string, string];
+  if (rest.length !== 3 || verb !== 'hook' || !isAbsolute(gbrainBin) || (launcher !== undefined && !isAbsolute(launcher))) return null;
   const event = CLAUDE_HOOK_EVENTS.find((e) => CLAUDE_HOOK_SUBCOMMAND[e] === subcommand);
-  if (!event || buildClaudeHookCommand(gbrainBin, event, env) !== command) return null;
-  return { gbrainBin, subcommand, env };
+  if (!event || buildClaudeHookCommand(gbrainBin, event, env, launcher) !== command) return null;
+  return { gbrainBin, subcommand, env, ...(launcher ? { launcher } : {}) };
 }
 
 /**
@@ -710,7 +717,7 @@ export function writeClaudeHooksAt(
       continue;
     }
 
-    const command = buildClaudeHookCommand(opts.gbrainBin, event, env);
+    const command = buildClaudeHookCommand(opts.gbrainBin, event, env, opts.hookLauncher);
     const timeout = opts.timeoutSecs?.[event] ?? CLAUDE_HOOK_DEFAULT_TIMEOUT_SECS[event];
     const entry: HookCommandEntry = {
       type: 'command',
