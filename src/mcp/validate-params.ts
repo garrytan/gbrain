@@ -144,7 +144,7 @@ export function normalizeOptionalParams(op: Operation, params: Record<string, un
     delete out[key];
   };
   for (const [key, def] of Object.entries(op.params)) {
-    if (!def.required && isAbsentValue(def, params[key])) drop(key);
+    if (!def.required && isAbsentValue(op, def, params[key])) drop(key);
   }
   for (const [key, def] of Object.entries(op.params)) {
     const current = out ?? params;
@@ -156,16 +156,16 @@ export function normalizeOptionalParams(op: Operation, params: Record<string, un
 /**
  * GST-927: a value that can only mean "not provided" for this param's schema. `null` anywhere and `''` on a string
  * (GST-923), plus the empty values GPT-style callers fill in that the schema rules out: 0 below a numeric range that
- * excludes it, `[]` where the list must be non-empty, `{}` where the object requires a member, and `false` on a
+ * excludes it, `[]` where the list must be non-empty, `{}` where a read op's object requires a member, and `false` on a
  * flag that acts only when true. Every other value, including any value inside the valid range, is kept.
  */
-function isAbsentValue(def: Operation['params'][string], val: unknown): boolean {
+function isAbsentValue(op: Operation, def: Operation['params'][string], val: unknown): boolean {
   if (val === null) return true;
   if (val === '') return def.type === 'string';
   if (val === 0) return (def.minimum ?? 0) > 0 || (def.exclusiveMinimum ?? -1) >= 0;
   if (val === false) return def.actsWhenTrue === true;
   if (Array.isArray(val)) return val.length === 0 && (def.minItems ?? 0) >= 1;
-  if (typeof val === 'object' && def.type === 'object') {
+  if (typeof val === 'object' && def.type === 'object' && op.mutating === false) {
     return Object.keys(val as object).length === 0 && Object.values(def.properties ?? {}).some(member => member.required);
   }
   return false;

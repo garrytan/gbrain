@@ -18,7 +18,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { dispatchToolCall, normalizeOptionalParams } from '../src/mcp/dispatch.ts';
 import { handleToolCall } from '../src/mcp/server.ts';
 import { runRollout } from '../src/core/skillopt/rollout.ts';
 import { buildWriteCaptureRegistry } from '../src/core/skillopt/write-capture.ts';
@@ -348,3 +348,19 @@ describe('GST-927: refusal fixes keep only arguments the target read takes', () 
     expect(e?.fix?.mcp?.arguments).toEqual({ slug: SLUG, known_as_of: '2026-10-01T12:00:00Z' });
   });
 });
+
+test('GST-927: normalization drops no schema-empty value (0, [], {}, false) from a write op', () => {
+  const dropped = operations.filter(op => op.mutating !== false).flatMap(op => Object.entries(op.params)
+    .filter(([, d]) => !d.required)
+    .flatMap(([k]) => [0, [], {}, false].filter(v => !(k in normalizeOptionalParams(op, { [k]: v }))).map(v => `${op.name}.${k}=${JSON.stringify(v)}`)));
+  expect(dropped).toEqual([]);
+});
+
+test('GST-927: edit_page within: {} still refuses instead of editing the whole page', async () => {
+  const opts = { remote: true, transport: 'http', sourceId: 'default' } as const;
+  const page = JSON.parse(fromDispatch(await dispatchToolCall(engine, 'get_page', { slug: SLUG, include_content: true }, opts)).text);
+  const e = fromDispatch(await dispatchToolCall(engine, 'edit_page', { slug: SLUG, expected_revision: page.revision, edits: [{ old_text: BODY_MARKER, new_text: 'replaced' }], within: {} }, opts));
+  expect(e.ok).toBe(false);
+  expect(e.text).toContain('edit_invalid');
+});
+
