@@ -16,6 +16,11 @@ import { bumpLastRetrievedAt, awaitPendingLastRetrievedWrites, _resetTrackRetrie
 import { resolveAdmissionPolicy, _resetAdmissionCacheForTest } from '../src/core/minions/admission.ts';
 import { resolveStrictParamsMode, resetStrictParamsModeCache } from '../src/mcp/validate-params.ts';
 import { readPublicationCeilingMs, _resetPublicationCeilingForTest } from '../src/core/persistence/publication-deadline.ts';
+import { guardAutopilotEngine } from '../src/commands/autopilot.ts';
+import type { OwnerProcessingState } from '../src/core/minions/processing-state.ts';
+import { batchSharedReads } from '../src/core/persistence/page-mutations.ts';
+import { preparationReads } from '../src/core/persistence/group-publish.ts';
+import { bindPublicationTimeouts, publicationIdleTimeoutMs } from '../src/core/persistence/publication-deadline.ts';
 import { capacityNotices, __resetCapacityNoticesForTests, type CapacitySnapshot } from '../src/core/persistence/capacity-snapshot.ts';
 
 let brainA: PGLiteEngine;
@@ -70,6 +75,32 @@ describe('engineKey', () => {
     expect(engineKey(view)).toBe(engine);
     expect(engineKey(deadlineBoundEngine(engine))).toBe(engine);
     expect(engineKey(configEngine({}))).not.toBe(engine);
+  });
+});
+
+describe('engineKey through forwarding proxies', () => {
+  test('the autopilot guard and the shared-read wrappers share their engine\'s key', () => {
+    const state = { blocked: false } as unknown as OwnerProcessingState;
+    expect(engineKey(guardAutopilotEngine(brainA, state))).toBe(brainA);
+    expect(engineKey(batchSharedReads(brainA))).toBe(brainA);
+    expect(engineKey(preparationReads(brainA))).toBe(brainA);
+    expect(engineKey(guardAutopilotEngine(brainB, state))).toBe(brainB);
+  });
+
+  test('a ceiling read through the autopilot guard bounds that engine\'s publication transactions', async () => {
+    await brainA.setConfig('persistence.publication_ceiling_ms', '120000');
+    try {
+      const state = { blocked: false } as unknown as OwnerProcessingState;
+      expect(await readPublicationCeilingMs(guardAutopilotEngine(brainA, state))).toBe(120_000);
+      const bound: unknown[][] = [];
+      const tx = Object.assign(Object.create(brainA), {
+        _pageTransaction: true, kind: 'postgres', async executeRaw(_sql: string, params?: unknown[]) { bound.push(params ?? []); return []; },
+      }) as BrainEngine;
+      await bindPublicationTimeouts(tx);
+      expect(bound).toEqual([[`${publicationIdleTimeoutMs(120_000)}ms`]]);
+    } finally {
+      await brainA.unsetConfig('persistence.publication_ceiling_ms');
+    }
   });
 });
 
@@ -143,8 +174,9 @@ describe('per-brain settings are read per engine', () => {
   });
 
   test('the write_capacity_low throttle is per brain', async () => {
+    const setting = 'persistence.capacity.lifetime_ids';
     const row = { scope: 'brain', resource: 'lifetime_ids' as const, used: 90, limit: 100, pct: 90, days_to_exhaustion: null,
-      config_key: 'persistence.capacity.lifetime_ids', recommended_limit: 200, command: 'gbrain config set persistence.capacity.lifetime_ids 200' };
+      ['config_key']: setting, recommended_limit: 200, command: `gbrain config set ${setting} 200` };
     const snapshot: CapacitySnapshot = { rows: [row], low: [row], paused: [], pause_pct: 95, status: 'ok' };
     const a = configEngine({});
     expect(await capacityNotices(a, { throttle: true, snapshot })).toHaveLength(1);
