@@ -530,15 +530,15 @@ export function hookLauncherFix(p: HookLauncherProblem): Action {
 
 /**
  * A hook that lets the session directory's bunfig.toml or .env load turns an ok
- * check into a warn (code hook_session_cwd). A warn keeps its own code and fix
- * unless the launcher fix is one the agent can run.
+ * check into a warn (code hook_session_cwd). A warn or fail keeps its own code
+ * and fix, with the launcher fix in details.hook_launcher_fix.
  */
 export function withHookLaunchers(check: Check, problem: HookLauncherProblem | null): Check {
   if (!problem) return check;
   const message = `${check.message} Hook launcher: ${problem.detail}.`;
   const details = { ...(check.details ?? {}), hook_launcher: problem };
   const fix = hookLauncherFix(problem);
-  if (check.status === 'fail' || (check.status === 'warn' && check.fix && fix.actor !== 'agent')) return { ...check, message, details: { ...details, hook_launcher_fix: fix } };
+  if (check.status === 'fail' || (check.status === 'warn' && check.fix)) return { ...check, message, details: { ...details, hook_launcher_fix: fix } };
   return { name: NAME, status: 'warn', message, details: { ...details, code: 'hook_session_cwd', hook_launcher_reason: problem.reason }, fix };
 }
 

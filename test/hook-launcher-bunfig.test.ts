@@ -294,7 +294,7 @@ describe('doctor: the hook_session_cwd fix and how it joins the harness_wiring c
     });
   });
 
-  test('withHookLaunchers: ok becomes a warn; a fail stays a fail; a warn keeps its own fix unless the agent can run the launcher fix', async () => {
+  test('withHookLaunchers: ok becomes a warn; a fail or a warn keeps its own code and fix, with the launcher fix in details', async () => {
     const b = box();
     await withEnv({ HOME: b.home, GBRAIN_HOME: b.home, CLAUDE_CONFIG_DIR: undefined }, async () => {
       const ok = { name: 'harness_wiring', status: 'ok', message: 'Registered.' } as any;
@@ -307,7 +307,7 @@ describe('doctor: the hook_session_cwd fix and how it joins the harness_wiring c
       const kept = withHookLaunchers(prior, problem(b, { reason: 'foreign' }));
       expect(kept).toMatchObject({ status: 'warn', details: { code: 'turn_hook_not_loaded', hook_launcher_fix: { actor: 'user' } }, fix: prior.fix });
       expect(kept.message).toContain('Hook launcher: old hook.');
-      expect(withHookLaunchers(prior, problem(b))).toMatchObject({ details: { code: 'hook_session_cwd' }, fix: { actor: 'agent', argv: ['gbrain', 'setup', 'claude-code'] } });
+      expect(withHookLaunchers(prior, problem(b))).toMatchObject({ details: { code: 'turn_hook_not_loaded', hook_launcher_fix: { actor: 'agent', argv: ['gbrain', 'setup', 'claude-code'] } }, fix: prior.fix });
     });
   });
 });
