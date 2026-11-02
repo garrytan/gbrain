@@ -18,6 +18,8 @@ import { syncTurnRuleHook, TURN_RULE_MARKER } from '../src/core/setup/turn-hook.
 import { hookLauncherProblem } from '../src/core/setup/turn-hook-check.ts';
 import { HOOK_LAUNCHER_NAME, ensureHookLauncher, hookLauncherInCommand, hookLauncherPath, hookLauncherState } from '../src/core/setup/hook-launcher.ts';
 import { refreshHookLaunchers } from '../src/core/setup/hook-launcher-refresh.ts';
+import { hookLauncherFix, withHookLaunchers } from '../src/commands/doctor/checks/harness-wiring.ts';
+import type { HookLauncherProblem } from '../src/core/setup/turn-hook-check.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
 const roots: string[] = [];
@@ -227,6 +229,47 @@ describe('hooks written before the launcher: doctor flags them, post-upgrade mov
       expect(hookLauncherProblem('claude-code')).toBeNull();
       writeFileSync(join(dirname(hookLauncherPath()), '.env'), 'X=1\n');
       expect(hookLauncherProblem('claude-code')).toMatchObject({ reason: 'foreign' });
+    });
+  });
+});
+
+describe('doctor: the hook_session_cwd fix and how it joins the harness_wiring check', () => {
+  const problem = (b: Box, over: Partial<HookLauncherProblem> = {}): HookLauncherProblem =>
+    ({ harness: 'claude-code', lane: 'setup', source: join(b.home, '.claude', 'settings.json'), reason: 'session_cwd', detail: 'old hook', ...over });
+
+  test('the fix: the agent re-runs setup for user scope; a project, a foreign file or an edited entry goes to the user', async () => {
+    const b = box();
+    await withEnv({ HOME: b.home, GBRAIN_HOME: b.home, CLAUDE_CONFIG_DIR: undefined }, async () => {
+      expect(hookLauncherFix(problem(b))).toMatchObject({ actor: 'agent', argv: ['gbrain', 'setup', 'claude-code'] });
+      expect(hookLauncherFix(problem(b, { lane: 'turn-rule' }))).toMatchObject({ actor: 'agent', argv: ['gbrain', 'setup', 'claude-code', '--instructions-only'] });
+      expect(hookLauncherFix(problem(b, { harness: 'codex', lane: 'turn-rule', source: join(b.home, '.codex', 'hooks.json') }))).toMatchObject({ actor: 'agent', argv: ['gbrain', 'setup', 'codex', '--instructions-only'] });
+      const project = join(b.root, 'proj');
+      const p = hookLauncherFix(problem(b, { source: join(project, '.claude', 'settings.local.json') }));
+      expect(p.actor).toBe('user');
+      expect(p.user_message).toContain(`From ${project}, run: gbrain setup claude-code --scope project`);
+      const foreign = hookLauncherFix(problem(b, { reason: 'foreign', detail: 'the launcher directory holds .env' }));
+      expect(foreign.actor).toBe('user');
+      expect(foreign.user_message).toContain('Remove that file (gbrain did not write it), then run: gbrain setup claude-code');
+      const edited = hookLauncherFix(problem(b, { edited: true }));
+      expect(edited.actor).toBe('user');
+      expect(edited.user_message).toContain('Remove or rewrite that entry');
+    });
+  });
+
+  test('withHookLaunchers: ok becomes a warn; a fail stays a fail; a warn keeps its own fix unless the agent can run the launcher fix', async () => {
+    const b = box();
+    await withEnv({ HOME: b.home, GBRAIN_HOME: b.home, CLAUDE_CONFIG_DIR: undefined }, async () => {
+      const ok = { name: 'harness_wiring', status: 'ok', message: 'Registered.' } as any;
+      expect(withHookLaunchers(ok, null)).toBe(ok);
+      const warned = withHookLaunchers(ok, problem(b));
+      expect(warned).toMatchObject({ status: 'warn', details: { code: 'hook_session_cwd', hook_launcher_reason: 'session_cwd' }, fix: { actor: 'agent' } });
+      const fail = withHookLaunchers({ ...ok, status: 'fail', details: { code: 'x' } }, problem(b));
+      expect(fail).toMatchObject({ status: 'fail', details: { code: 'x', hook_launcher_fix: { actor: 'agent' } } });
+      const prior = { ...ok, status: 'warn', details: { code: 'turn_hook_not_loaded' }, fix: { actor: 'agent', argv: ['gbrain', 'setup', 'claude-code', '--instructions-only'] } };
+      const kept = withHookLaunchers(prior, problem(b, { reason: 'foreign' }));
+      expect(kept).toMatchObject({ status: 'warn', details: { code: 'turn_hook_not_loaded', hook_launcher_fix: { actor: 'user' } }, fix: prior.fix });
+      expect(kept.message).toContain('Hook launcher: old hook.');
+      expect(withHookLaunchers(prior, problem(b))).toMatchObject({ details: { code: 'hook_session_cwd' }, fix: { actor: 'agent', argv: ['gbrain', 'setup', 'claude-code'] } });
     });
   });
 });

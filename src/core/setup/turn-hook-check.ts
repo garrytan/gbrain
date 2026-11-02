@@ -129,29 +129,37 @@ export interface HookLauncherProblem {
   /** session_cwd: no launcher in the command; otherwise the launcher's state. */
   reason: 'session_cwd' | Exclude<HookLauncherState, 'current'>;
   detail: string;
+  /** A setup entry the user edited after setup wrote it: setup keeps it as is, so only the user can move it. */
+  edited?: boolean;
 }
 
-/** The hook hashes Claude Code setup receipts own: Claude Code can drop the `_gbrain` marker on a rewrite, and setup owns its entries by hash. */
-function claudeSetupOwnedHashes(): Set<string> {
-  const out = new Set<string>();
-  for (const r of localSetupRecords().filter((x) => x.harness === 'claude-code')) {
-    const hooks = (readJson(r.path) as { hooks?: { owned?: Record<string, unknown>; pending?: Record<string, unknown> } } | null)?.hooks;
-    for (const h of [...Object.values(hooks?.owned ?? {}), ...Object.values(hooks?.pending ?? {})]) if (typeof h === 'string') out.add(h);
+/** The hook hashes a harness's setup receipts own and the ones they record as edited by the user: Claude Code can drop the `_gbrain` marker on a rewrite, and setup owns its entries by hash. */
+function setupReceiptHashes(harness: 'claude-code' | 'codex'): { owned: Set<string>; edited: Set<string> } {
+  const owned = new Set<string>();
+  const edited = new Set<string>();
+  for (const r of localSetupRecords().filter((x) => x.harness === harness)) {
+    const hooks = (readJson(r.path) as { hooks?: { owned?: Record<string, unknown>; pending?: Record<string, unknown>; edited?: Record<string, unknown> } } | null)?.hooks;
+    for (const h of [...Object.values(hooks?.owned ?? {}), ...Object.values(hooks?.pending ?? {})]) if (typeof h === 'string') owned.add(h);
+    for (const h of Object.values(hooks?.edited ?? {})) if (typeof h === 'string') edited.add(h);
   }
-  return out;
+  return { owned, edited };
 }
 
-function claudeLaneCommands(path: string, setupOwned: Set<string>): Array<{ lane: 'setup' | 'turn-rule'; command: string }> {
+type LaneCommand = { lane: 'setup' | 'turn-rule'; command: string; edited?: boolean };
+
+function claudeLaneCommands(path: string, setup: { owned: Set<string>; edited: Set<string> }): LaneCommand[] {
   const hooks = readJson(path)?.hooks;
   if (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)) return [];
-  const out: Array<{ lane: 'setup' | 'turn-rule'; command: string }> = [];
+  const out: LaneCommand[] = [];
   for (const groups of Object.values(hooks as Record<string, unknown>)) {
     if (!Array.isArray(groups)) continue;
     for (const e of groups.flatMap((g) => (Array.isArray((g as { hooks?: unknown })?.hooks) ? (g as { hooks: unknown[] }).hooks : []))) {
       if (!e || typeof e !== 'object' || typeof (e as Record<string, unknown>).command !== 'string') continue;
       const entry = e as Record<string, unknown>;
+      const hash = hookEntryHash(entry) ?? '';
       if (isTurnRuleEntry(entry)) out.push({ lane: 'turn-rule', command: entry.command as string });
-      else if (entry[GBRAIN_HOOK_MARKER_KEY] === GBRAIN_SETUP_MARKER_VALUE || setupOwned.has(hookEntryHash(entry) ?? '')) out.push({ lane: 'setup', command: entry.command as string });
+      else if (setup.edited.has(hash)) out.push({ lane: 'setup', command: entry.command as string, edited: true });
+      else if (entry[GBRAIN_HOOK_MARKER_KEY] === GBRAIN_SETUP_MARKER_VALUE || setup.owned.has(hash)) out.push({ lane: 'setup', command: entry.command as string });
     }
   }
   return out;
@@ -159,27 +167,29 @@ function claudeLaneCommands(path: string, setupOwned: Set<string>): Array<{ lane
 
 /** Files only. Every event's setup and turn-rule entries, user scope plus `projectDir`'s settings.local.json (Claude Code). */
 export function hookLauncherProblem(harness: 'claude-code' | 'codex', opts: { projectDir?: string } = {}): HookLauncherProblem | null {
-  const found: Array<{ lane: 'setup' | 'turn-rule'; command: string; source: string }> = [];
+  const found: Array<LaneCommand & { source: string }> = [];
+  const setup = setupReceiptHashes(harness);
   if (harness === 'claude-code') {
-    const setupOwned = claudeSetupOwnedHashes();
     for (const source of [claudeUserSettingsPath(), ...(opts.projectDir ? [join(opts.projectDir, CLAUDE_SETTINGS_FILE_RELPATH)] : [])]) {
-      found.push(...claudeLaneCommands(source, setupOwned).map((c) => ({ ...c, source })));
+      found.push(...claudeLaneCommands(source, setup).map((c) => ({ ...c, source })));
     }
   } else {
     try {
       for (const g of codexHookCensus(codexHooksPath())) {
-        if (g.lane === 'setup' || g.lane === 'turn-rule') found.push(...g.commands.map((command) => ({ lane: g.lane as 'setup' | 'turn-rule', command, source: codexHooksPath() })));
+        if (g.lane === 'setup' || g.lane === 'turn-rule') found.push(...g.commands.map((command) => ({ lane: g.lane as 'setup' | 'turn-rule', command, source: codexHooksPath(), ...(setup.edited.has(g.hash) ? { edited: true } : {}) })));
       }
     } catch { /* unparseable: Codex runs none of it */ }
   }
   for (const f of found) {
     const launcher = hookLauncherInCommand(f.command);
+    const edited = f.edited ? { edited: true } : {};
+    const kept = f.edited ? '; it was edited after setup wrote it, so setup keeps it as is' : '';
     if (!launcher) {
-      return { harness, lane: f.lane, source: f.source, reason: 'session_cwd',
-        detail: `gbrain's ${f.lane} hook in ${f.source} starts gbrain in the session's directory, so Bun loads that directory's bunfig.toml and .env before gbrain runs` };
+      return { harness, lane: f.lane, source: f.source, reason: 'session_cwd', ...edited,
+        detail: `gbrain's ${f.lane} hook in ${f.source} starts gbrain in the session's directory, so Bun loads that directory's bunfig.toml and .env before gbrain runs${kept}` };
     }
     const s = hookLauncherState(launcher);
-    if (s.state !== 'current') return { harness, lane: f.lane, source: f.source, reason: s.state, detail: `gbrain's ${f.lane} hook in ${f.source} runs through ${launcher}, but ${s.detail}` };
+    if (s.state !== 'current') return { harness, lane: f.lane, source: f.source, reason: s.state, ...edited, detail: `gbrain's ${f.lane} hook in ${f.source} runs through ${launcher}, but ${s.detail}${kept}` };
   }
   return null;
 }

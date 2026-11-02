@@ -523,17 +523,23 @@ export function hookLauncherFix(p: HookLauncherProblem): Action {
   const why = "Rewrites gbrain's hooks to start gbrain from its own launcher directory, so a repository's bunfig.toml or .env never runs when a session opens there. `gbrain post-upgrade` refreshes the user-scope hooks too.";
   const verify = doctorVerify(NAME);
   if (p.reason === 'foreign') return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove that file (gbrain did not write it), then run: ${argv.join(' ')}` };
+  if (p.edited) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove or rewrite that entry in ${p.source} (setup never overwrites an edit), then run: ${argv.join(' ')}` };
   if (project) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `gbrain's hooks for ${project} start gbrain in the session's directory. From ${project}, run: ${argv.join(' ')}` };
   return { argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify, why };
 }
 
-/** A hook that lets the session directory's bunfig.toml or .env load turns an ok or warn check into a warn (code hook_session_cwd). */
+/**
+ * A hook that lets the session directory's bunfig.toml or .env load turns an ok
+ * check into a warn (code hook_session_cwd). A warn keeps its own code and fix
+ * unless the launcher fix is one the agent can run.
+ */
 export function withHookLaunchers(check: Check, problem: HookLauncherProblem | null): Check {
   if (!problem) return check;
   const message = `${check.message} Hook launcher: ${problem.detail}.`;
   const details = { ...(check.details ?? {}), hook_launcher: problem };
-  if (check.status === 'fail') return { ...check, message, details };
-  return { name: NAME, status: 'warn', message, details: { ...details, code: 'hook_session_cwd', hook_launcher_reason: problem.reason }, fix: hookLauncherFix(problem) };
+  const fix = hookLauncherFix(problem);
+  if (check.status === 'fail' || (check.status === 'warn' && check.fix && fix.actor !== 'agent')) return { ...check, message, details: { ...details, hook_launcher_fix: fix } };
+  return { name: NAME, status: 'warn', message, details: { ...details, code: 'hook_session_cwd', hook_launcher_reason: problem.reason }, fix };
 }
 
 /** Registration read (full run) or registration read + smoke (`--only harness_wiring`), plus the brain-first block, its per-turn hook and the hook launcher. */

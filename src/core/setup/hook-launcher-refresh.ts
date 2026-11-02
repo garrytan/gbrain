@@ -89,8 +89,12 @@ async function refreshSetup(log: (line: string) => void): Promise<void> {
         const plan: ClaudeSetupPlan = { name: receipt.name, scope: receipt.scope, launcher: receipt.launcher, brainHome: receipt.gbrain_home, ...(homeEnv ? { gbrainHomeEnv: homeEnv } : {}),
           sourceId: receipt.source_id, surface: receipt.surface, advertise: receipt.advertise ?? null, events: Object.keys({ ...receipt.hooks.owned, ...receipt.hooks.pending }) as ClaudeHookEvent[] };
         if (!receipt.mcp_plugin && inspectClaudeSetup(plan).mcp.state !== 'current') { log(`Hook launcher: gbrain's claude-code hooks start gbrain in the session's directory; run ${rerun} to rewrite them.`); continue; }
-        await applyClaudeSetup(plan, receipt.consent, { pluginOwner: receipt.mcp_plugin ?? null, brainCreated: false });
-        log(`Hook launcher: gbrain setup's claude-code hooks in ${paths.settingsPath} now start gbrain from its own directory.`);
+        const applied = await applyClaudeSetup(plan, receipt.consent, { pluginOwner: receipt.mcp_plugin ?? null, brainCreated: false });
+        const edited = new Set(Object.values(applied.edited));
+        const kept = Object.keys(applied.edited);
+        log(claudeHookEntries(paths.settingsPath).some((e) => edited.has(hookEntryHash(e) ?? '') && needsLauncher(e.command as string))
+          ? `Hook launcher: gbrain setup's claude-code ${kept.join(', ')} hook in ${paths.settingsPath} was edited after setup wrote it, so it is kept as is and still starts gbrain in the session's directory; remove or rewrite it, then run ${rerun}.`
+          : `Hook launcher: gbrain setup's claude-code hooks in ${paths.settingsPath} now start gbrain from its own directory.`);
       } else if (record.harness === 'codex') {
         const receipt = readCodexSetupReceipt(record.path).setup;
         if (!receipt) continue;
@@ -100,8 +104,12 @@ async function refreshSetup(log: (line: string) => void): Promise<void> {
         const plan: CodexSetupPlan = { name: receipt.name, launcher: receipt.launcher, brainHome: receipt.gbrain_home, ...(receipt.gbrain_home_env ? { gbrainHomeEnv: receipt.gbrain_home_env } : {}),
           sourceId: receipt.source_id, surface: receipt.surface, advertise: receipt.advertise ?? null, events: Object.keys({ ...receipt.hooks.owned, ...receipt.hooks.pending }) as CodexSetupEvent[] };
         if (!receipt.mcp_plugin && inspectCodexSetup(plan).mcp.state !== 'current') { log(`Hook launcher: gbrain's codex hooks start gbrain in the session's directory; run ${rerun} to rewrite them.`); continue; }
-        await applyCodexSetup(plan, receipt.consent, { pluginOwner: receipt.mcp_plugin ?? null, brainCreated: false });
-        log(`Hook launcher: gbrain setup's codex hooks in ${paths.hooksPath} now start gbrain from its own directory.`);
+        const applied = await applyCodexSetup(plan, receipt.consent, { pluginOwner: receipt.mcp_plugin ?? null, brainCreated: false });
+        const edited = new Set(Object.values(applied.receipt.hooks.edited));
+        const kept = applied.preserved.filter((p) => p.kind === 'hook' && p.reason === 'edited').map((p) => p.event);
+        log(codexHookCensus(paths.hooksPath).some((g) => edited.has(g.hash) && g.commands.some(needsLauncher))
+          ? `Hook launcher: gbrain setup's codex ${kept.join(', ')} hook in ${paths.hooksPath} was edited after setup wrote it, so it is kept as is and still starts gbrain in the session's directory; remove or rewrite it, then run ${rerun}.`
+          : `Hook launcher: gbrain setup's codex hooks in ${paths.hooksPath} now start gbrain from its own directory.`);
       }
     } catch (e) {
       log(`Hook launcher: gbrain's ${record.harness} hooks were not refreshed (${(e as Error).message}); run ${rerun}.`);

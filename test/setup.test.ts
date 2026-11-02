@@ -33,6 +33,8 @@ import { withEnv } from './helpers/with-env.ts';
 import { ownedEntryFingerprint } from '../src/core/bootstrap/adopted-connections.ts';
 import { hookLauncherProblem, inspectTurnHook } from '../src/core/setup/turn-hook-check.ts';
 import { refreshHookLaunchers } from '../src/core/setup/hook-launcher-refresh.ts';
+import { syncTurnRuleHook, isTurnRuleEntry } from '../src/core/setup/turn-hook.ts';
+import { hookLauncherFix } from '../src/commands/doctor/checks/harness-wiring.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
 const roots: string[] = [];
@@ -939,6 +941,48 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     });
     expect(viaLauncher(b, commands())).toBe(true);
     expect(['SessionStart', 'UserPromptSubmit'].map((e) => entries(b, e).length)).toEqual([1, 1]);
+  });
+
+  test('claude-code: a pre-launcher hook the user edited is kept, post-upgrade says so, and doctor hands it to the user', async () => {
+    const b = box();
+    expect((await setup(b, ['claude-code', '--json'])).exitCode).toBe(0);
+    downgradeClaude(b);
+    const s = readJson(settings(b));
+    const mine = (s.hooks.UserPromptSubmit as any[]).flatMap((g) => g.hooks).find((e) => e._gbrain === 'setup-v1');
+    mine.command = `${mine.command} # mine`;
+    writeFileSync(settings(b), JSON.stringify(s, null, 2));
+    await withEnv(env(b), async () => {
+      const lines: string[] = [];
+      await refreshHookLaunchers((l) => lines.push(l));
+      expect(lines.join('\n')).toContain('UserPromptSubmit hook');
+      expect(lines.join('\n')).toContain('was edited after setup wrote it');
+      expect(lines.join('\n')).not.toContain('now start gbrain from its own directory');
+      const problem = hookLauncherProblem('claude-code');
+      expect(problem).toMatchObject({ lane: 'setup', reason: 'session_cwd', edited: true });
+      const fix = hookLauncherFix(problem!);
+      expect(fix.actor).toBe('user');
+      expect(fix.user_message).toContain('Remove or rewrite that entry');
+    });
+    expect(entries(b, 'UserPromptSubmit').find((e) => e._gbrain === 'setup-v1').command).toBe(mine.command);
+    expect(entries(b, 'SessionStart').every((e) => e.command.includes(launcher(b)))).toBe(true);
+  });
+
+  test('claude-code: --instructions-only moves a pre-launcher turn-rule entry that sits beside setup hooks', async () => {
+    const b = box();
+    expect((await setup(b, ['claude-code', '--json'])).exitCode).toBe(0);
+    await withEnv(env(b), async () => {
+      expect(syncTurnRuleHook({ harness: 'claude-code', gbrainBin: b.bin, gbrainHome: b.gbrainHome, rerun: 'gbrain setup claude-code --instructions-only' }).action).toBe('write');
+    });
+    const s = readJson(settings(b));
+    const turnRule = (s.hooks.UserPromptSubmit as any[]).flatMap((g) => g.hooks).find((e) => isTurnRuleEntry(e));
+    turnRule.command = turnRule.command.replace(` ${launcher(b)} `, ' ');
+    writeFileSync(settings(b), JSON.stringify(s, null, 2));
+    await withEnv(env(b), async () => { expect(hookLauncherProblem('claude-code')).toMatchObject({ lane: 'turn-rule', reason: 'session_cwd' }); });
+    expect((await setup(b, ['claude-code', '--instructions-only', '--json'])).exitCode).toBe(0);
+    const after = entries(b, 'UserPromptSubmit').filter((e) => isTurnRuleEntry(e));
+    expect(after).toHaveLength(1);
+    expect(after[0].command).toContain(`${launcher(b)} ${b.bin} hook`);
+    await withEnv(env(b), async () => { expect(hookLauncherProblem('claude-code')).toBeNull(); });
   });
 
   test('codex: post-upgrade rewrites them with matching trust, and a later setup keeps everything', async () => {
