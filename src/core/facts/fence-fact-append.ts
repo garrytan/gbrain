@@ -69,6 +69,51 @@ export function requestReceiptFix(row: WriteRequest): Action {
     : readFix(`Shows source ${row.source_id}'s writer and requests in flight, including ${row.request_id}, read-only.`, { argv: ['gbrain', 'sources', 'writer', 'status', '--source', row.source_id, '--json'] });
 }
 
+/** In the publication transaction, after the page row: the facts row at `rowNum` of the request's page. */
+async function insertFenceFactRow(tx: BrainEngine, row: WriteRequest, rowNum: number, indexed: NewFact): Promise<number> {
+  const inserted = await tx.insertFacts([{ ...indexed, row_num: rowNum, source_markdown_slug: row.slug }], { source_id: row.source_id }); // gbrain-allow-direct-insert: coordinator publication of a fence row this request's page file holds, after the file
+  if (inserted.ids.length === 1) return inserted.ids[0];
+  const [occupant] = await tx.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num=$3', [row.source_id, row.slug, rowNum]);
+  throw opError('storage_error', 'The new canonical fact row was not indexed.',
+    `The fact row for request ${row.request_id} in source ${row.source_id} was not indexed, so its transaction rolled back.`
+    + (occupant ? ` Row ${rowNum} of ${row.slug} is already held by fact ${occupant.id}.` : '')
+    + ' Inspect the request before submitting it again; if it repeats, run gbrain doctor --json and report it to the user.',
+    { fix: requestReceiptFix(row) });
+}
+
+/** One fact as its fence cell at `rowNum` (`fenceRowOf`, the one renderer). */
+function fenceCellFor(fact: FenceFactAppendInput['fact'], rowNum: number): ReturnType<typeof fenceRowOf> {
+  return fenceRowOf({ kind: (fact.kind ?? 'fact') as FenceRowInput['kind'], visibility: fact.visibility ?? 'private', context: fact.context ?? null, valid_from: fact.valid_from,
+    valid_until: fact.valid_until ?? null, source: fact.source, claim_metric: fact.claim_metric ?? null, claim_value: fact.claim_value ?? null,
+    claim_unit: fact.claim_unit ?? null, claim_period: fact.claim_period ?? null, attributed_to: fact.attributed_to ?? null,
+    notability: fact.notability ?? null, confidence: fact.confidence ?? null }, rowNum, fact.fact);
+}
+
+/**
+ * GST-359 C2: create the request's page, absent at preparation, holding one fact in its facts fence: `frontmatter`
+ * (a complete `---` block) and `heading`, then the fence. The put requires the page still absent, so a page another
+ * write created first makes this attempt conflict, and the retry appends to it. File before facts row, as an append.
+ */
+export async function prepareFenceFactCreate(engine: BrainEngine, row: WriteRequest, config: GBrainConfig,
+  input: { fact: NewFact & { valid_from: Date }; pendingTier: TrustTier; frontmatter: string; heading: string }, signal?: AbortSignal): Promise<FenceFactAppend> {
+  const page = { sourceId: row.source_id, slug: row.slug };
+  const [indexedMax] = await engine.executeRaw<{ n: number }>('SELECT COALESCE(MAX(row_num),0)::int AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [row.source_id, row.slug]);
+  const rowNum = (indexedMax?.n ?? 0) + 1;
+  const { expected_revision: _ignored, ...intent } = row.intent ?? {};
+  const content = `${input.frontmatter}\n${upsertFactRow(`${input.heading}\n`, fenceCellFor(input.fact, rowNum)).body}`;
+  const prepared = await withPendingFenceRows({ ...page, rowNums: [rowNum], tier: input.pendingTier },
+    () => preparePageMutation(engine, { ...row, intent: { ...intent, content, force: false } }, config, undefined, signal, { unprojected: true }));
+  if (prepared.observedRevision !== null) {
+    throw opError('revision_conflict', 'The page was created during preparation.',
+      `Another write created ${row.slug} in source ${row.source_id} while request ${row.request_id} was prepared, so it did not save. Check that request's receipt; once it shows conflict, nothing was saved and submitting it again is safe.`,
+      { fix: requestReceiptFix(row) });
+  }
+  return { prepared, rowNum, fencesNormalized: {}, apply: async tx => {
+    const pageReceipt = await withPageTierKept(tx, page, () => prepared.apply(tx));
+    return { id: await insertFenceFactRow(tx, row, rowNum, input.fact), pageReceipt };
+  } };
+}
+
 export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, snapshot: PageSnapshot,
   input: FenceFactAppendInput, signal?: AbortSignal): Promise<FenceFactAppend> {
   const { fact } = input;
@@ -76,16 +121,7 @@ export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequ
   // Wave B: a segmented page is read back whole up to the single-string ceiling.
   if (segmentedOverCeiling(snapshot.page)) throw pageBodyOverCeilingError(snapshot.page, `${row.operation} facts fence write`);
   const base = await materializedPage(engine, snapshot.page);
-  const insert = async (tx: BrainEngine, rowNum: number, indexed: NewFact) => {
-    const inserted = await tx.insertFacts([{ ...indexed, row_num: rowNum, source_markdown_slug: row.slug }], { source_id: row.source_id }); // gbrain-allow-direct-insert: coordinator publication of a fence row this request's page file holds, after the file
-    if (inserted.ids.length === 1) return inserted.ids[0];
-    const [occupant] = await tx.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num=$3', [row.source_id, row.slug, rowNum]);
-    throw opError('storage_error', 'The new canonical fact row was not indexed.',
-      `The fact row for request ${row.request_id} in source ${row.source_id} was not indexed, so its transaction rolled back.`
-      + (occupant ? ` Row ${rowNum} of ${row.slug} is already held by fact ${occupant.id}.` : '')
-      + ' Inspect the request before submitting it again; if it repeats, run gbrain doctor --json and report it to the user.',
-      { fix: requestReceiptFix(row) });
-  };
+  const insert = (tx: BrainEngine, rowNum: number, indexed: NewFact) => insertFenceFactRow(tx, row, rowNum, indexed);
 
   if (input.mode === 'index-existing') {
     const { rowNum } = input;
@@ -114,10 +150,7 @@ export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequ
   const section = factsFenceSection(target.page);
   const fenced = { compiled_truth: target.page.compiled_truth, timeline: target.page.timeline ?? '' };
   const rowNum = Math.max(indexedMax?.n ?? 0, ...[fenced.compiled_truth, fenced.timeline].flatMap(text => parseFactsFence(text).facts.map(f => f.rowNum))) + 1;
-  const cell = fenceRowOf({ kind: (fact.kind ?? 'fact') as FenceRowInput['kind'], visibility: fact.visibility ?? 'private', context: fact.context ?? null, valid_from: fact.valid_from,
-    valid_until: fact.valid_until ?? null, source: fact.source, claim_metric: fact.claim_metric ?? null, claim_value: fact.claim_value ?? null,
-    claim_unit: fact.claim_unit ?? null, claim_period: fact.claim_period ?? null, attributed_to: fact.attributed_to ?? null,
-    notability: fact.notability ?? null, confidence: fact.confidence ?? null }, rowNum, fact.fact);
+  const cell = fenceCellFor(fact, rowNum);
   // #6385 R12: an entity fence that does not parse cleanly refuses typed instead of losing the rows it skipped.
   const appended = refuseUnparsedRewrite(target.page, row.slug, row.source_id, () => upsertFactRow(fenced[section], cell));
   let next = { ...fenced, [section]: appended.body };

@@ -1995,7 +1995,7 @@
       "listFactsByEntity": {
         "allFilters": [
           {
-            "paramCount": 8,
+            "paramCount": 7,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2019,7 +2019,7 @@
       "listFactsBySession": {
         "allFilters": [
           {
-            "paramCount": 8,
+            "paramCount": 7,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2065,7 +2065,7 @@
         ],
         "strictTime": [
           {
-            "paramCount": 4,
+            "paramCount": 3,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2078,7 +2078,7 @@
       "listFactsSince": {
         "allFilters": [
           {
-            "paramCount": 10,
+            "paramCount": 9,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2113,7 +2113,7 @@
         ],
         "since+visibility": [
           {
-            "paramCount": 4,
+            "paramCount": 3,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
