@@ -72,11 +72,13 @@ function state(launcher: string | null): { reason: LauncherLaneFinding['reason']
 
 /**
  * The `gbrain setup` command that rewrites an install's entries with what its receipt records. Setup keeps the recorded
- * capture and providers decisions on its own; a hooks opt-out and a source pin only come from flags, so the rerun carries them.
+ * capture and providers decisions on its own; a hooks opt-out, a source pin and the recorded binary only come from flags, so the
+ * rerun carries them (a recorded binary that no longer exists falls back to setup's PATH lookup).
  */
-export function setupRerunArgv(harness: 'claude-code' | 'codex', receipt: Pick<ClaudeSetupReceipt, 'name' | 'consent' | 'source_id'>, projectDir?: string): string[] {
+export function setupRerunArgv(harness: 'claude-code' | 'codex', receipt: Pick<ClaudeSetupReceipt, 'name' | 'consent' | 'source_id'> & Partial<Pick<ClaudeSetupReceipt, 'launcher'>>, projectDir?: string): string[] {
   return ['gbrain', 'setup', harness, ...(receipt.name === 'gbrain' ? [] : ['--name', receipt.name]), ...(projectDir ? ['--scope', 'project'] : []),
-    ...(receipt.consent.wiring_scope.value.hooks === 'none' ? ['--no-hooks'] : []), ...(receipt.source_id ? ['--source', receipt.source_id] : [])];
+    ...(receipt.consent.wiring_scope.value.hooks === 'none' ? ['--no-hooks'] : []), ...(receipt.source_id ? ['--source', receipt.source_id] : []),
+    ...(receipt.launcher?.startsWith('/') && existsSync(receipt.launcher) ? ['--gbrain-bin', receipt.launcher] : [])];
 }
 
 function mcpFindings(): LauncherLaneFinding[] {

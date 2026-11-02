@@ -1032,7 +1032,7 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
       const lines: string[] = [];
       await refreshHookLaunchers((l) => lines.push(l));
       expect(lines.join('\n')).toContain("gbrain setup's codex hooks");
-      expect(lines.join('\n')).toContain('run gbrain setup codex to rewrite them');
+      expect(lines.join('\n')).toContain(`run gbrain setup codex --gbrain-bin ${b.bin} to rewrite them`);
       expect(hookLauncherProblem('codex')).toMatchObject({ lane: 'setup', reason: 'session_cwd' });
     });
     expect({ hooks: readFileSync(hooksJson(b), 'utf8'), config: readFileSync(codexToml(b), 'utf8') }).toEqual(before);
@@ -1084,7 +1084,7 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
       expect(hookLauncherProblem('claude-code')).toBeNull();
       const problem = hookLauncherProblems([]);
       expect(problem).toMatchObject({ harness: 'claude-code', lane: 'mcp', reason: 'session_cwd', owner: 'setup', setupOwned: true });
-      expect(hookLauncherFix(problem!)).toMatchObject({ actor: 'agent', argv: ['gbrain', 'setup', 'claude-code'] });
+      expect(hookLauncherFix(problem!)).toMatchObject({ actor: 'agent', argv: ['gbrain', 'setup', 'claude-code', '--gbrain-bin', b.bin] });
       const lines: string[] = [];
       await refreshHookLaunchers((l) => lines.push(l));
       expect(lines.join('\n')).toContain("gbrain setup's claude-code MCP server and hooks now start gbrain from its own directory");
@@ -1102,7 +1102,7 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     let argv: string[] = [];
     await withEnv(env(b), async () => {
       argv = hookLauncherFix(hookLauncherProblems([])!).argv!;
-      expect(argv).toEqual(['gbrain', 'setup', 'claude-code', '--no-hooks']);
+      expect(argv).toEqual(['gbrain', 'setup', 'claude-code', '--no-hooks', '--gbrain-bin', b.bin]);
     });
     expect((await setup(b, [...argv.slice(2), '--json'])).exitCode).toBe(0);
     expect(readSetupReceipt(receipt(b)).setup!.consent.wiring_scope.value.hooks).toBe('none');
@@ -1137,7 +1137,7 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     await withEnv(env(b), async () => {
       const problem = hookLauncherProblem('claude-code');
       expect(problem).toMatchObject({ lane: 'setup', receiptPath: receipt(b) });
-      expect(hookLauncherFix(problem!)).toMatchObject({ actor: 'agent', argv: ['gbrain', 'setup', 'claude-code'] });
+      expect(hookLauncherFix(problem!)).toMatchObject({ actor: 'agent', argv: ['gbrain', 'setup', 'claude-code', '--gbrain-bin', b.bin] });
     });
   });
 
@@ -1145,6 +1145,17 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     const consent = (hooks: 'none' | 'read-context') => ({ wiring_scope: { value: { scope: 'user' as const, hooks }, source: 'flag' as const }, capture: { value: 'accepted' as const, source: 'flag' as const }, providers: { value: 'declined' as const, source: 'default' as const } });
     expect(setupRerunArgv('codex', { name: 'gbrain', consent: consent('none') as any, source_id: 'source-a' })).toEqual(['gbrain', 'setup', 'codex', '--no-hooks', '--source', 'source-a']);
     expect(setupRerunArgv('claude-code', { name: 'alpha', consent: consent('read-context') as any, source_id: null as any }, '/work/proj')).toEqual(['gbrain', 'setup', 'claude-code', '--name', 'alpha', '--scope', 'project']);
+  });
+
+  test('setupRerunArgv pins the binary the install recorded, so a PATH lookup in another directory cannot swap it', () => {
+    const consent = { wiring_scope: { value: { scope: 'user' as const, hooks: 'read-context' as const }, source: 'flag' as const }, capture: { value: 'accepted' as const, source: 'flag' as const }, providers: { value: 'declined' as const, source: 'default' as const } };
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-rerun-bin-'));
+    const bin = join(dir, 'gbrain');
+    writeFileSync(bin, '#!/bin/sh\n');
+    try {
+      expect(setupRerunArgv('claude-code', { name: 'gbrain', consent: consent as any, source_id: null as any, launcher: bin })).toEqual(['gbrain', 'setup', 'claude-code', '--gbrain-bin', bin]);
+      expect(setupRerunArgv('codex', { name: 'gbrain', consent: consent as any, source_id: null as any, launcher: join(dir, 'gone') })).toEqual(['gbrain', 'setup', 'codex']);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
   test('codex MCP (#8426): post-upgrade\'s printed rerun keeps a recorded --no-hooks', async () => {
@@ -1159,7 +1170,7 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     await withEnv(env(b), async () => {
       const lines: string[] = [];
       await refreshHookLaunchers((l) => lines.push(l));
-      expect(lines.join('\n')).toContain('run gbrain setup codex --no-hooks to rewrite them');
+      expect(lines.join('\n')).toContain(`run gbrain setup codex --no-hooks --gbrain-bin ${b.bin} to rewrite them`);
     });
   });
 
@@ -1180,7 +1191,7 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
       expect(hookLauncherProblems([])).toMatchObject({ harness: 'codex', lane: 'mcp', reason: 'session_cwd', owner: 'setup' });
       const lines: string[] = [];
       await refreshHookLaunchers((l) => lines.push(l));
-      expect(lines.join('\n')).toContain(`gbrain setup's codex MCP server in ${codexToml(b)} start gbrain in the session's directory; run gbrain setup codex to rewrite them`);
+      expect(lines.join('\n')).toContain(`gbrain setup's codex MCP server in ${codexToml(b)} start gbrain in the session's directory; run gbrain setup codex --gbrain-bin ${b.bin} to rewrite them`);
     });
     expect({ hooks: readFileSync(hooksJson(b), 'utf8'), config: readFileSync(codexToml(b), 'utf8') }).toEqual(before);
     expect((await setup(b, ['codex', '--json'])).exitCode).toBe(0);
