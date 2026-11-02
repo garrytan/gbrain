@@ -10,7 +10,7 @@ import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
 import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import type { ToolResult } from './dispatch.ts';
-import { findInvalidParam, schemaInvalidParams, parseStrictParamsMode } from './validate-params.ts';
+import { findInvalidParam, normalizeOptionalParams, schemaInvalidParams, parseStrictParamsMode } from './validate-params.ts';
 import { clampSurface, createStdioSurfaceState, resolveAdvertisedSurface, stdioToolListing, sessionWidenAllowed, surfaceEnvInvalidNotice, type McpAccess, type McpSurface, type SurfaceSource } from './surface.ts';
 import { noticeBlock, renderNotice, type Notice } from '../core/agent-output.ts';
 import { disabledOpsForPublishGates } from './publish-gates.ts';
@@ -644,10 +644,11 @@ export async function handleToolCall(
   const op = operations.find(o => o.name === tool);
   if (!op) throw opError('unknown_tool', `Unknown tool: ${tool}`, 'Run `gbrain --tools-json` to list the tool names.');
 
-  const validationFailure = findInvalidParam(op, params);
+  const safeParams = normalizeOptionalParams(op, params);
+  const validationFailure = findInvalidParam(op, safeParams);
   if (validationFailure) throw schemaInvalidParams(op, validationFailure, {});
 
-  const ctx = buildOperationContext(engine, params, {
+  const ctx = buildOperationContext(engine, safeParams, {
     remote: false,
     admissionOrigin: 'interactive',
     logger: { info: console.log, warn: console.warn, error: console.error },
@@ -658,5 +659,5 @@ export async function handleToolCall(
       : {}),
   });
 
-  return op.handler(ctx, params);
+  return op.handler(ctx, safeParams);
 }
