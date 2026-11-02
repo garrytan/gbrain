@@ -418,6 +418,19 @@ for (const kind of testBackends()) {
       expect(line).toMatch(/^- Harbor rules keep the ledger canaryfence \(\d{4}-\d{2}-\d{2}; fact\)$/);
     }, 60_000);
 
+    test('a QM client whose operation grant names only the memory tools writes and reads back its receipts', async () => {
+      const c = await provider().registerClientManual('d-pinned-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], SRC);
+      await bindCredential(engine, { kind: 'client', id: c.clientId }, { attestActor: 'qm' });
+      await engine.executeRaw('UPDATE oauth_clients SET allowed_operations = $2::text[] WHERE client_id = $1', [c.clientId, ['get_write_request', 'memory_recall', 'memory_write']]);
+      tokens.pinned = (await provider().exchangeClientCredentials(c.clientId, c.clientSecret ?? '')).access_token;
+      const pinned: Who = { token: 'pinned', actor: ALICE_ID };
+      const out = await write(pinned, [{ fact: 'Alice prefers the north dock canarypinned', provenance: 'turn 30' }]);
+      expect({ isError: out.isError, status: out.structured?.status }).toEqual({ isError: false, status: 'committed' });
+      const receipt = await call(pinned, 'get_write_request', { request_id: out.structured!.request_id });
+      expect(receipt.isError).toBe(false);
+      expect((await recall(pinned, 'north dock')).text).toContain('canarypinned');
+    }, 60_000);
+
     test('forget and forget_fact withdraw the person\'s own member-page fact there alone, never another member\'s or a world fact', async () => {
       const claim = 'Shared standup moved to Thursdays canaryforget';
       const a = await write(alice, [{ fact: claim, provenance: 'turn 11' }]);
@@ -444,6 +457,12 @@ for (const kind of testBackends()) {
       const again = await write(alice, [{ fact: claim, provenance: 'turn 12' }]);
       expect(again.isError).toBe(true);
       expect(again.text).toContain('fact_withdrawn');
+      const batchKey = randomUUID();
+      const mixed = await write(alice, [{ fact: 'Alice books the harbor room canarymixedfirst', provenance: 'turn 12' }, { fact: claim, provenance: 'turn 12' }], batchKey);
+      expect({ isError: mixed.isError, code: mixed.json.code }).toEqual({ isError: true, code: 'invalid_params' });
+      expect(await factRows('canarymixedfirst')).toHaveLength(0);
+      const fixedBatch = await write(alice, [{ fact: 'Alice books the harbor room canarymixedfirst', provenance: 'turn 12' }], batchKey);
+      expect(fixedBatch.structured?.status).toBe('committed');
       const carolCopy = await write(carol, [{ fact: claim, provenance: 'turn 12' }]);
       expect(carolCopy.structured!.status).toBe('committed');
       const second = await write(alice, [{ fact: 'Alice drafts the harbor memo canaryforgetfact', provenance: 'turn 13' }]);

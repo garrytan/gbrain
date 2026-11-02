@@ -238,6 +238,15 @@ const memory_write: Operation = {
         throw e;
       }
     }
+    const { assertFactNotWithdrawn } = await import('../facts/single-prepare.ts');
+    const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
+    for (const [index, item] of parsed.entries()) {
+      const intent = { fact: item.fact as string, kind: (item.kind ?? 'fact') as never, visibility: 'private' as const, entity_slug: null, page_slug: memberPageSlug(actor.member) };
+      try { await assertFactNotWithdrawn(ctx.engine, ctx.sourceId ?? 'default', intent, { excludePrivate }); } catch (e) {
+        if (e instanceof OperationError) e.message = `facts[${index}]: ${e.message} Nothing was saved.`;
+        throw e;
+      }
+    }
     if (ctx.dryRun) return { dry_run: true, action: 'memory_write', facts: items.length };
     const saved: Array<{ request_id: string; fact_id?: string; pending?: true }> = [];
     for (const [index, item] of items.entries()) {
