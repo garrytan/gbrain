@@ -559,7 +559,7 @@ test('#5854: a postprocess publish still pending after its wait is deferred, the
     __setMaintenanceWriteWaitForTests(300);
     let deferred: Awaited<ReturnType<typeof runPhaseSynthesize>>;
     try { deferred = await runPhaseSynthesize(engine, ordinary); }
-    finally { __setMaintenanceWriteWaitForTests(null); await lock.release(); }
+    finally { __setMaintenanceWriteWaitForTests(null); await disposePersistenceConsumer(engine); await lock.release(); }
     expect(deferred.status).toBe('warn');
     expect(deferred.details.publish_pending).toBe(1);
     expect(deferred.details.publish_deferred).toBe('publish deferred (writer busy); finishes next cycle, no action needed');
@@ -568,7 +568,6 @@ test('#5854: a postprocess publish still pending after its wait is deferred, the
     const [pending] = await engine.executeRaw<{ request_id: string }>(
       "SELECT request_id::text FROM persistence_requests WHERE source_id=$1 AND slug=$2 AND intent->>'kind'='managed_maintenance_page'", [sourceId, slug]);
     expect(pending).toBeDefined();
-    await disposePersistenceConsumer(engine);
     const next = await runPhaseSynthesize(engine, ordinary);
     expect(next.status).toBe('ok');
     expect(next.details.publish_pending).toBeUndefined();
