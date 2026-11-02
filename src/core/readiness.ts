@@ -28,6 +28,7 @@ import type { McpSurface } from '../mcp/surface.ts';
 import { REGISTRATION_SURFACE, registrationAdvertise, stdioServeArgv } from './mcp-registration.ts';
 import { gbrainPath } from './config.ts';
 import { hookLauncherPath } from './setup/hook-launcher.ts';
+import { localSetupRecords } from './setup/local-receipts.ts';
 import type { BrainEngine } from './engine.ts';
 import { redactForTransport, type Action, type ActionInput, type Effect, type Transport } from './agent-output.ts';
 import { detectCapabilities } from './capability.ts';
@@ -415,6 +416,12 @@ const SURFACE_GLOSS: Record<McpSurface, string> = {
 function stdioRegistration(h: ReadinessHarness, bin: string, chosen?: McpSurface): Action {
   const surface = chosen ?? REGISTRATION_SURFACE;
   const advertise = registrationAdvertise({ userChoseSurface: chosen !== undefined });
+  // A setup install's hooks decision lives in its receipt; a --no-hooks rerun would turn its hooks off, so doctor names the rerun instead.
+  if (h !== 'opencode' && localSetupRecords().some((r) => r.harness === h && r.status === 'installed' && r.scope !== 'project')) {
+    return { argv: ['gbrain', 'doctor', '--only', 'harness_wiring', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
+      why: `gbrain setup already registered gbrain for ${HARNESS_LABEL[h]}; doctor checks that entry and names the setup rerun that keeps its recorded hooks and source decisions.`,
+      verify: VERIFY('harness_wiring'), docs: MEMORY_VERBS_INSTALL };
+  }
   // Each harness starts a user-scope stdio server in the session's directory, so its writer registers serve behind gbrain's launcher (#8426, #8435).
   const serve = [hookLauncherPath(), ...stdioServeArgv(bin, surface, advertise)];
   const argv = h === 'opencode' ? ['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks', ...(chosen ? ['--surface', chosen] : [])]
