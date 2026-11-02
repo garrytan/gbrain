@@ -29,6 +29,13 @@ import { codexHookTrustHash, codexTrustHash, removeCodexHooks, writeCodexHooks }
 import { appendCodexTomlTable, removeCodexTomlTable } from '../src/core/bootstrap/codex-toml.ts';
 import { defineNormalizer, expectGolden, scrubTimestamps } from './helpers/golden.ts';
 import { VERSION } from '../src/version.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { ownedEntryFingerprint } from '../src/core/bootstrap/adopted-connections.ts';
+import { hookLauncherProblem, inspectTurnHook } from '../src/core/setup/turn-hook-check.ts';
+import { refreshHookLaunchers } from '../src/core/setup/hook-launcher-refresh.ts';
+import { syncTurnRuleHook, isTurnRuleEntry } from '../src/core/setup/turn-hook.ts';
+import { hookLauncherFix } from '../src/commands/doctor/checks/harness-wiring.ts';
+import { applyClaudeSetup, readSetupReceipt } from '../src/core/setup/claude-code.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
 const roots: string[] = [];
@@ -550,7 +557,7 @@ describe('gbrain setup codex: install lifecycle', () => {
     expect(toml(b).mcp_servers.gbrain).toEqual({ command: b.bin, args: ['serve', '--surface', 'starter', '--advertise', 'verbs'], env: { GBRAIN_HOME: b.gbrainHome } });
     expect(Object.keys(readJson(hooksJson(b)).hooks).sort()).toEqual(['SessionStart', 'UserPromptSubmit']);
     expect(groups(b, 'UserPromptSubmit')).toEqual([{ hooks: [{ type: 'command', timeout: 15,
-      command: `env GBRAIN_HOOK_LANE=setup GBRAIN_HOME=${b.gbrainHome} ${b.bin} hook user-prompt --harness codex` }] }]);
+      command: `env GBRAIN_HOOK_LANE=setup GBRAIN_HOME=${b.gbrainHome} ${b.gbrainHome}/.gbrain/hook-launcher/gbrain-hook ${b.bin} hook user-prompt --harness codex` }] }]);
     expect(trustKeys(b)).toEqual([trustKey(b, 'session_start', 0), trustKey(b, 'user_prompt_submit', 0)]);
     const r = readJson(codexReceipt(b));
     expect(r).toMatchObject({ harness: 'codex', connection: 'local-stdio', setup_receipt_version: 2, status: 'installed' });
@@ -854,5 +861,183 @@ describe('codex trust hash and hash-owned TOML tables', () => {
     const split = readFileSync(path, 'utf8');
     expect(removeCodexTomlTable(path, ['mcp_servers', 'gbrain'])).toBe('unlocatable');
     expect(readFileSync(path, 'utf8')).toBe(split);
+  });
+});
+
+describe('hooks written before the hook launcher (#8424): the next setup and post-upgrade move them', () => {
+  const launcher = (b: Box) => join(b.gbrainHome, '.gbrain', 'hook-launcher', 'gbrain-hook');
+  const env = (b: Box) => ({ ...CLEAN, HOME: b.home, GBRAIN_HOME: b.gbrainHome, CODEX_HOME: join(b.home, '.codex'), XDG_CONFIG_HOME: undefined });
+  const viaLauncher = (b: Box, commands: string[]) => commands.length > 0 && commands.every((c) => c.includes(`${launcher(b)} ${b.bin} hook`));
+
+  /** Rewrite setup's Claude Code entries and receipt hashes to what setup wrote before the launcher. */
+  function downgradeClaude(b: Box, stripMarker = false): void {
+    const s = readJson(settings(b));
+    const r = readJson(receipt(b));
+    for (const [event, groups] of Object.entries(s.hooks as Record<string, any[]>)) {
+      for (const e of groups.flatMap((g) => g.hooks)) {
+        if (e._gbrain !== 'setup-v1') continue;
+        e.command = e.command.replace(` ${launcher(b)} `, ' ');
+        r.hooks.owned[event] = hookEntryHash(e);
+        if (stripMarker) delete e._gbrain;
+      }
+    }
+    writeFileSync(settings(b), JSON.stringify(s, null, 2));
+    writeFileSync(receipt(b), JSON.stringify(r, null, 2));
+  }
+
+  /** The same for Codex: hooks.json groups, their trust tables and the receipt's fingerprints. */
+  function downgradeCodex(b: Box): void {
+    const hooks = readJson(hooksJson(b));
+    const r = readJson(codexReceipt(b));
+    const states: Record<string, string> = { SessionStart: 'session_start', UserPromptSubmit: 'user_prompt_submit' };
+    for (const event of Object.keys(states)) {
+      (hooks.hooks[event] as any[]).forEach((group, index) => {
+        const h = group.hooks[0];
+        if (!h.command.includes('GBRAIN_HOOK_LANE=setup')) return;
+        h.command = h.command.replace(` ${launcher(b)} `, ' ');
+        r.hooks.owned[event] = ownedEntryFingerprint(group);
+        const key = `${hooksJson(b)}:${states[event]}:${index}:0`;
+        const table = { trusted_hash: codexHookTrustHash(states[event]!, h.command, h.timeout) };
+        removeCodexTomlTable(codexToml(b), ['hooks', 'state', key]);
+        appendCodexTomlTable(codexToml(b), ['hooks', 'state', key], table, 'gbrain setup: trust');
+        r.trust.owned[event] = { key, hash: ownedEntryFingerprint({ key, table }) };
+      });
+    }
+    writeFileSync(hooksJson(b), JSON.stringify(hooks, null, 2));
+    writeFileSync(codexReceipt(b), JSON.stringify(r, null, 2));
+  }
+  const codexSetupCommands = (b: Box) => ['SessionStart', 'UserPromptSubmit'].flatMap((e) => setupGroups(b, e).map((g: any) => g.hooks[0].command as string));
+
+  test('claude-code: doctor flags them, a setup re-run rewrites them, and so does post-upgrade', async () => {
+    const b = box();
+    expect((await setup(b, ['claude-code', '--json'])).exitCode).toBe(0);
+    const claudeCommands = () => ['SessionStart', 'UserPromptSubmit'].flatMap((e) => entries(b, e).map((x) => x.command as string));
+    expect(viaLauncher(b, claudeCommands())).toBe(true);
+    downgradeClaude(b);
+    await withEnv(env(b), async () => { expect(hookLauncherProblem('claude-code')).toMatchObject({ lane: 'setup', reason: 'session_cwd' }); });
+    expect((await setup(b, ['claude-code', '--json'])).exitCode).toBe(0);
+    expect(viaLauncher(b, claudeCommands())).toBe(true);
+
+    downgradeClaude(b);
+    await withEnv(env(b), async () => {
+      const lines: string[] = [];
+      await refreshHookLaunchers((l) => lines.push(l));
+      expect(lines.join('\n')).toContain("gbrain setup's claude-code hooks");
+      expect(hookLauncherProblem('claude-code')).toBeNull();
+    });
+    expect(viaLauncher(b, claudeCommands())).toBe(true);
+    expect((await setup(b, ['claude-code', '--json'])).doc.steps.map((s: any) => s.action)).toEqual(['keep', 'keep', 'keep']);
+  });
+
+  test('claude-code: entries Claude Code rewrote without the _gbrain marker are still found by receipt hash', async () => {
+    const b = box();
+    expect((await setup(b, ['claude-code', '--json'])).exitCode).toBe(0);
+    downgradeClaude(b, true);
+    const commands = () => ['SessionStart', 'UserPromptSubmit'].flatMap((e) => entries(b, e).map((x) => x.command as string));
+    expect(entries(b, 'UserPromptSubmit')[0]._gbrain).toBeUndefined();
+    await withEnv(env(b), async () => {
+      expect(hookLauncherProblem('claude-code')).toMatchObject({ lane: 'setup', reason: 'session_cwd' });
+      await refreshHookLaunchers(() => {});
+      expect(hookLauncherProblem('claude-code')).toBeNull();
+    });
+    expect(viaLauncher(b, commands())).toBe(true);
+    expect(['SessionStart', 'UserPromptSubmit'].map((e) => entries(b, e).length)).toEqual([1, 1]);
+  });
+
+  test('claude-code: a pre-launcher hook the user edited is kept, post-upgrade says so, and doctor hands it to the user', async () => {
+    const b = box();
+    expect((await setup(b, ['claude-code', '--json'])).exitCode).toBe(0);
+    downgradeClaude(b);
+    const s = readJson(settings(b));
+    const mine = (s.hooks.UserPromptSubmit as any[]).flatMap((g) => g.hooks).find((e) => e._gbrain === 'setup-v1');
+    mine.command = `${mine.command} # mine`;
+    writeFileSync(settings(b), JSON.stringify(s, null, 2));
+    await withEnv(env(b), async () => {
+      const lines: string[] = [];
+      await refreshHookLaunchers((l) => lines.push(l));
+      expect(lines.join('\n')).toContain('UserPromptSubmit hook');
+      expect(lines.join('\n')).toContain('was edited after setup wrote it');
+      expect(lines.join('\n')).not.toContain('now start gbrain from its own directory');
+      const problem = hookLauncherProblem('claude-code');
+      expect(problem).toMatchObject({ lane: 'setup', reason: 'session_cwd', edited: true });
+      const fix = hookLauncherFix(problem!);
+      expect(fix.actor).toBe('user');
+      expect(fix.user_message).toContain('Remove or rewrite that entry');
+    });
+    expect(entries(b, 'UserPromptSubmit').find((e) => e._gbrain === 'setup-v1').command).toBe(mine.command);
+    expect(entries(b, 'SessionStart').every((e) => e.command.includes(launcher(b)))).toBe(true);
+  });
+
+  test('claude-code: the hook rewrite refuses under the lock when the MCP entry is no longer setup\'s, and writes nothing', async () => {
+    const b = box();
+    expect((await setup(b, ['claude-code', '--json'])).exitCode).toBe(0);
+    downgradeClaude(b);
+    const r = readSetupReceipt(receipt(b)).setup!;
+    const cfg = readJson(claudeJson(b));
+    cfg.mcpServers.gbrain = { type: 'http', url: 'https://new-brain.example/mcp' };
+    writeFileSync(claudeJson(b), JSON.stringify(cfg, null, 2));
+    const before = { settings: readFileSync(settings(b), 'utf8'), config: readFileSync(claudeJson(b), 'utf8') };
+    await withEnv(env(b), async () => {
+      const plan = { name: r.name, scope: r.scope, launcher: r.launcher, brainHome: r.gbrain_home, sourceId: r.source_id, surface: r.surface, advertise: r.advertise ?? null, events: Object.keys(r.hooks.owned) as any };
+      await expect(applyClaudeSetup(plan, r.consent, { pluginOwner: null, brainCreated: false, mcpMustBeCurrent: true })).rejects.toThrow('MCP entry changed');
+    });
+    expect({ settings: readFileSync(settings(b), 'utf8'), config: readFileSync(claudeJson(b), 'utf8') }).toEqual(before);
+  });
+
+  test('claude-code: --instructions-only moves a pre-launcher turn-rule entry that sits beside setup hooks', async () => {
+    const b = box();
+    expect((await setup(b, ['claude-code', '--json'])).exitCode).toBe(0);
+    await withEnv(env(b), async () => {
+      expect(syncTurnRuleHook({ harness: 'claude-code', gbrainBin: b.bin, gbrainHome: b.gbrainHome, rerun: 'gbrain setup claude-code --instructions-only' }).action).toBe('write');
+    });
+    const s = readJson(settings(b));
+    const turnRule = (s.hooks.UserPromptSubmit as any[]).flatMap((g) => g.hooks).find((e) => isTurnRuleEntry(e));
+    turnRule.command = turnRule.command.replace(` ${launcher(b)} `, ' ');
+    writeFileSync(settings(b), JSON.stringify(s, null, 2));
+    await withEnv(env(b), async () => { expect(hookLauncherProblem('claude-code')).toMatchObject({ lane: 'turn-rule', reason: 'session_cwd' }); });
+    expect((await setup(b, ['claude-code', '--instructions-only', '--json'])).exitCode).toBe(0);
+    const after = entries(b, 'UserPromptSubmit').filter((e) => isTurnRuleEntry(e));
+    expect(after).toHaveLength(1);
+    expect(after[0].command).toContain(`${launcher(b)} ${b.bin} hook`);
+    await withEnv(env(b), async () => { expect(hookLauncherProblem('claude-code')).toBeNull(); });
+  });
+
+  test('codex: post-upgrade names the setup rerun and writes nothing; setup rewrites them with matching trust', async () => {
+    const b = box();
+    expect((await setup(b, ['codex', '--json'])).exitCode).toBe(0);
+    downgradeCodex(b);
+    expect(viaLauncher(b, codexSetupCommands(b))).toBe(false);
+    const before = { hooks: readFileSync(hooksJson(b), 'utf8'), config: readFileSync(codexToml(b), 'utf8') };
+    await withEnv(env(b), async () => {
+      expect(hookLauncherProblem('codex')).toMatchObject({ lane: 'setup', reason: 'session_cwd' });
+      const lines: string[] = [];
+      await refreshHookLaunchers((l) => lines.push(l));
+      expect(lines.join('\n')).toContain("gbrain setup's codex hooks");
+      expect(lines.join('\n')).toContain('run gbrain setup codex to rewrite them');
+      expect(hookLauncherProblem('codex')).toMatchObject({ lane: 'setup', reason: 'session_cwd' });
+    });
+    expect({ hooks: readFileSync(hooksJson(b), 'utf8'), config: readFileSync(codexToml(b), 'utf8') }).toEqual(before);
+    expect((await setup(b, ['codex', '--json'])).exitCode).toBe(0);
+    expect(viaLauncher(b, codexSetupCommands(b))).toBe(true);
+    await withEnv(env(b), async () => {
+      expect(hookLauncherProblem('codex')).toBeNull();
+      expect(inspectTurnHook('codex')).toMatchObject({ state: 'wired', via: 'setup' });
+    });
+    expect((await setup(b, ['codex', '--json'])).doc.steps.map((s: any) => s.action)).toEqual(['keep', 'keep', 'keep', 'keep']);
+  });
+
+  test('codex: post-upgrade grants no trust to setup groups Codex does not run', async () => {
+    const b = box();
+    expect((await setup(b, ['codex', '--json'])).exitCode).toBe(0);
+    downgradeCodex(b);
+    for (const rec of Object.values(readJson(codexReceipt(b)).trust.owned) as Array<{ key: string }>) removeCodexTomlTable(codexToml(b), ['hooks', 'state', rec.key]);
+    const before = { hooks: readFileSync(hooksJson(b), 'utf8'), config: readFileSync(codexToml(b), 'utf8') };
+    await withEnv(env(b), async () => {
+      const lines: string[] = [];
+      await refreshHookLaunchers((l) => lines.push(l));
+      expect(lines.join('\n')).not.toContain('now start gbrain from its own directory');
+      expect(hookLauncherProblem('codex')).toMatchObject({ lane: 'setup', reason: 'session_cwd' });
+    });
+    expect({ hooks: readFileSync(hooksJson(b), 'utf8'), config: readFileSync(codexToml(b), 'utf8') }).toEqual(before);
   });
 });

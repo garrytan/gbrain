@@ -2229,6 +2229,18 @@ More: [docs/guides/write-refusals.md#head-blocked](../../docs/guides/write-refus
 |---|---|---|---|---|---|---|
 | Held out required for bundled. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### hook_session_cwd
+
+<a id="hook_session_cwd"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A hook gbrain setup or the turn-rule lane wrote starts gbrain in the session's directory, or the hook launcher it names would not run. | Script-mode gbrain is a Bun script, and Bun runs the working directory's bunfig.toml preload and loads its .env before gbrain starts; harnesses run hooks in the session directory, so a cloned repository could run code on every prompt. | Correct the request using the message above, then retry. Run: gbrain doctor --only harness_wiring --json | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `session_cwd`, `missing`, `stale`, `foreign`.
+
+More: [docs/guides/repair.md#hook-session-cwd](../../docs/guides/repair.md#hook-session-cwd)
+
 ### host_identity_mismatch
 
 <a id="host_identity_mismatch"></a>
