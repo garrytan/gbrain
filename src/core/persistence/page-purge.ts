@@ -320,6 +320,7 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
   // #6619: the page's free-text aliases and the redirects that resolve to it; a redirect from this slug to another page stays.
   removed.page_aliases = await count('DELETE FROM page_aliases WHERE source_id=$1 AND slug=$2 RETURNING 1', [sourceId, slug]);
   removed.slug_aliases = await count('DELETE FROM slug_aliases WHERE source_id=$1 AND canonical_slug=$2 RETURNING 1', [sourceId, slug]);
+  removed.slug_rename_history = await count('DELETE FROM slug_rename_history WHERE source_id=$1 AND new_slug=$2 RETURNING 1', [sourceId, slug]);
   // #6511 [R2]: the preparation sweep's targets, plus the tail past its ceiling and the rows pending at scan time, re-tested here.
   const recheck = await lookup('tail_recheck', () => recheckRequestsCarrying(tx, sourceId, needles, prepared.sweep,
     { exclude: row.id, beforePending: () => faultPoint('purge:pending_recheck', { requestId: row.request_id, sourceId, operation: row.operation }) }));

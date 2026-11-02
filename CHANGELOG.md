@@ -10,11 +10,77 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.544.0] - 2026-11-02
 
-**The hosted gbrain.io install now tells the agent the brain is there.**
+**The remote gate stops waiting on an artifact GitHub has refused for good, and bench and eval scripts no longer fail pregate for having no test lane (#8370, #7690).** When reading a full run's `executed-identities` artifact failed, `fetchArtifactJson` marked every failure transient, so a 403 or an expired artifact's 410 kept the gate polling for up to 90 minutes before it fell back to VMs. Only no response, a 5xx, a 429 or a rate-limit 403 is transient now. Any other 4xx refuses reuse at once and the gate goes straight to VMs. This never made a gate pass, because a transient read was always `none` and never `reuse`. Separately, `scripts/bench/**` and the system-one eval runners and generators now declare that they need no test lane, so a PR that touches them no longer fails pregate with `PREGATE_NO_LANE`. The unit-lane PostgreSQL arms job also gets real headroom back. Its committed weights had drifted about 24% below what the files now take, so by measured times the busiest of master's 13 shards takes 694 s against its 570 s budget.
 
-Before, the hosted install in README.md, docs/INSTALL.md, INSTALL_FOR_AGENTS.md and AGENTS.md stopped at `claude mcp add` or `codex mcp add`, so nothing in the harness told the model to use the new MCP server, and in harness trials a server nobody mentions is almost never called. Each now follows the `mcp add` with `bun install -g github:garrytan/gbrain#latest-stable` and `gbrain setup claude-code --instructions-only` or `gbrain setup codex --instructions-only`, which write the brain-first block into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` and the per-turn rule hook beside the hosted MCP entry, without creating a local brain. `--no-instructions` takes them out, and a bare `mcp add` still works.
+### What changed
+
+| `unit-postgres-arms` (both arms, the CI cell) | Before | Now |
+|---|---|---|
+| Weights | mined from older runs, scaled by 0.763, 6 listed files unweighted (charged the 29 s p75) | median of the `ARM_FILE` times in eight full-ci runs from 2026-11-01 (41296667994, 41307060384, 41310113203, 41324518709, 41342917113, 41347700875, and train M's 41351675051 and 41365617585, covering every suite #8404, #8405, #8407 and M added), every listed file weighted |
+| Shards | 13 | 19 |
+| Two-worker makespan, largest shard, against the unchanged 570 s budget | 526.4 s (7.7% headroom) by the committed weights; 694.3 s by the fresh ones | 476.3 s (16.4% headroom) |
+| Measured job wall time | 438-923 s per job in train M's run 41365617585, against the 20-minute step timeout | about 475 s per shard, by the same measurements |
+| PostgreSQL-only cell, largest shard | 487.2 s | 333.8 s |
+
+### Itemized changes
+
+- `scripts/lib/gh-issue.ts`: `fetchArtifactJson` marks a failed artifact read transient only for no response, a 5xx, a 429 or a 403 whose message names a rate limit (#8370). Both clients' artifact downloads now carry the HTTP status and the response text, so the `gh` CLI client (used when no `GH_TOKEN` is set) classifies the same way. A rate-limit 403 stays transient whether its headers (`x-ratelimit-remaining: 0`, `retry-after`) or its text (rate limit, abuse detection) say so, and so does a refusal from the artifact storage the download redirects to, since a fresh read mints a new signed URL.
+- `test/scripts/ci-reuse.test.ts`: a probe checks that 403, 404 and 410 are refusals and that 429, a rate-limit 403, a 502 and no response stay transient, and that a refused receipt ends the gate's wait at once. It fails without the fix.
+- `.gstack/pregate.json`: `scripts/bench/**`, `docs/eval/system-one/runners/**` and `docs/eval/system-one/generators/**` declare no lane (`[]`), which applies only where no test maps the file, so the VM-setup scripts keep `test/scripts/vm-setup-usage.test.ts` (#7690).
+- `scripts/postgres-arm-weights.json`: re-mined with `bun scripts/postgres-unit-arms.ts mine` from those eight runs' 98 job logs, unscaled.
+- `scripts/postgres-unit-arms.ts`: `ARM_SHARDS` 19; `.github/workflows/persistence-validation.yml`: the matrix, job name and `run` argument follow it (pinned by `test/scripts/postgres-unit-arms.test.ts`, whose budget and assertion are unchanged). Check names become `Unit-lane PostgreSQL arms N/19 / Bun …`; none is a required check.
+- `docs/architecture/key-files/ci-health-and-test-guards.md`, `scripts/ubicloud/README.md`: shard count.
+
+## [0.60.543.0] - 2026-11-01
+
+**A shared brain can now keep a page to the members it names, inside one source. Put `readable_by: [alice-example, group:team-a]` in a page's frontmatter, bind each member's token, OAuth client or stdio server to a member, and remote reads of that page answer only for them. Nothing changes until a page names readers or a member is created.**
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A page names `readable_by` | ignored: every remote caller granted the source read it | read remotely only by a credential bound to a listed member (directly or through a group); everyone else gets the canonical `not_found` on every read path, and a remote write to it answers `page_not_found` |
+| Escape hatches and `--private-pages granted-sources` | relaxed `visibility: private` | still relax only `visibility: private`; they never open a page to an unlisted member |
+| A `visibility: private` page that also names readers | hidden remotely | still hidden from a listed member unless that member's credential also has `--private-pages granted-sources` |
+| Atoms, concepts and chronicle events derived from a restricted page | followed the origin's visibility | readable by no remote caller |
+| Members and groups | | `gbrain access member add\|disable\|enable\|rm\|list`, `gbrain access group add\|rm\|list`, `gbrain access who-can-read <slug>`, `gbrain access check --token\|--client <name>`; `--member` and `--may-act-for` on `auth create`, `auth rescope` and `auth register-client`; config `mcp.stdio_member` for a stdio server; `--as <member>` previews one member's view from the local CLI; `whoami` and `grant_diagnosis` show member and groups |
+| Doctor | | `access_readers_malformed`, `access_unknown_readers`, `access_recent_narrowings`, `access_page_readers_backfill`, `access_policy_pending`, `access_policy_widening_held`, `access_policy_invalid`, `access_policy_store_mismatch` |
+| Folder rules | | `gbrain access rule add\|rm\|list\|status\|history\|revert\|export\|import\|migrate`, `gbrain access apply` and `gbrain access resume` keep whole folders of a source to named members; a page under a rule is read remotely only by a member listed on every rule covering it and on its own `readable_by`. Rules live in the database on a repo-less source and in `.gbrain/access.yml` on a git-backed one |
+| Changing folder rules | | narrowing applies at once; widening is held until `gbrain access apply --source <id>` previews it and `--yes --expect <plan_hash>` approves it; an unfinished apply reads as nobody remotely until `gbrain access resume --source <id>` |
+| `gbrain export` and `gbrain import` | pages only | an export carries each source's applied folder rules under `.gbrain/`, and import installs them before publishing any page (`--access-policy <source>` maps a multi-source export) |
+| A shared agent (one bot serving a channel or many DMs) | read as its own credential, so it saw one view for everyone | its harness names each turn's audience (`X-Gbrain-On-Behalf-Of: alice-example, guest` or request-level `_meta.on_behalf_of`); the call reads only what every entry may read, within the agent's source grant, and only a one-member audience keeps the agent's private-page relaxation. The credential lists whom it may act for (`gbrain auth rescope --token <name> --may-act-for <list>`); every response carries `_meta.access`, and `whoami` returns it |
+
+### What to watch for after you upgrade
+
+- A page that already carried `readable_by` before this release reads as nobody remotely until you run `gbrain repair access` (preview) and then `gbrain repair access --apply`. Doctor's `access_page_readers_backfill` lists them.
+- On a brain with any restriction, the escape hatches no longer turn the remote read filter off, and secondary surfaces (proactive brief, retrieval reflex, entity resolution, known-as-of) hide restricted pages from every remote caller, listed members included.
+- A credential bound to a disabled or removed member is refused at verification (`access_member_disabled`).
+- Works the same on a repo-less brain: members, groups, bindings and folder rules live in the database. A source records which store holds its folder rules when its first rule is created, and only `gbrain access rule migrate --source <id>` moves them; doctor `access_policy_store_mismatch` names it when the filesystem changes.
+- The member-access and folder-rule SQL functions end their pinned `search_path` with `pg_temp`, like every other gbrain function (#7632), and frontmatter recovery never guesses a duplicated `readable_by` key: the file is held until a person fixes it.
+- Remote callers can no longer write pages under `.gbrain/`.
+- A database rebuilt from a git-backed source replays its committed `.gbrain/access.yml` history, so a removal that was held stays held. The source reads as nobody remotely until the replay finishes, and a shallow clone stays that way until `git fetch --unshallow`.
+- A page renamed into a ruled folder takes its atoms, concepts, chronicle events and `derived_from` pages with it, through later renames too and after another page takes its old slug (migration v285 keeps rename history for this; slug resolution does not use it).
+- On Postgres, a database role that neither owns the folder access tables nor bypasses row-level security now needs read policies on them, and an unfiltered policy on `slug_rename_history` (docs/ENGINES.md, "Folder access tables"). Without them its page writes are refused with `writer_coordinator_required` (`unreadable_state`) and its reads show nothing, instead of reading the tables as empty and treating every page as unruled. The owner, BYPASSRLS roles and PGLite are unaffected.
+- A harness that sends an audience its credential's `may_act_for` does not list gets `on_behalf_of_not_permitted` with the operator's command; an audience inside tool arguments is always refused (`on_behalf_of_in_arguments`). `may_act_for: *` is accepted and doctor warns (`access_may_act_for_wildcard`).
+
+## [0.60.542.0] - 2026-11-01
+
+**`gbrain skillopt` now makes one gated rewrite by default; the iterative edit loop is opt-in with `--loop`, and benchmark harnesses can drive every SkillOpt rollout.**
+
+In gbrain-evals' Cat 31 re-run the full loop and a one-shot rewrite both scored 0.54 on held-out tasks (paired bootstrap p = 1.00), and the loop cost about 1.8x as much. Until a benchmark shows the loop wins, the cheaper method is the default. The default is reversible: `--loop` on the CLI, or `optimizer_mode: "reflect"` on the `run_skillopt` MCP operation and queued jobs, runs the loop as before. The one-shot rewrite now reflects on training tasks only and must beat the baseline on the selection gate before anything is written, so a worse rewrite leaves the skill unchanged. Four bugs that made the loop look worse than it is are fixed too.
+
+### Itemized changes
+
+- One-shot rewrite is the default for the CLI, `run_skillopt`, `--all`, queued jobs and the dream-cycle phase. A job queued before this release without `optimizer_mode` keeps the loop it was queued for, and `--resume` continues in the mode its checkpoint ran (a changed mode is refused); resuming a one-shot run whose rewrite gave no usable reply retries the rewrite. Receipts carry `optimizer_mode`.
+- The optimizer's success criteria come from training tasks only, and a rule argument or LLM rubric is quoted only when every training task shares it; a per-task answer is described ("a task-specific required text"), never quoted. Before, every selection and test answer was shown to the optimizer. `criteriaText` replaces the generated criteria.
+- Held-out results never reach the optimizer. The held-out check runs once, on the final champion, before anything is written, and a refused champion is not filed in the rejected-edit buffer. Legacy `held_out_regression` rows on disk are skipped when the buffer loads.
+- Only edits that were applied are filed as rejected or recorded as accepted; edits the learning-rate budget clipped stay free to propose again.
+- The success-reflect prompt states the edit schema, so its edits are no longer all dropped (#7257; carried from #8324).
+- Library surface for benchmark harnesses (`src/core/skillopt/index.ts`): explicit `tasks: {train, sel, test?}` lists instead of a benchmark file; a `rolloutHook` that receives each scoring site's whole batch (baseline, training forward pass, selection gate, held-out, test) and whose budget refusal or malformed reply aborts the run without writing (the hook runs outside the run's budget, gets an abort signal at the runtime deadline, and a batch still running or answered after it aborts the run); `scoreSkillPerTask`; and receipt counts (`rollouts` by phase, `candidates_scored_on_sel`, `optimizer_calls`, `cost_scope`).
+- A skill can add the reviewed read tools `recall` and `get_timeline` to its rollouts by naming them in its frontmatter `tools:`; rollouts never offer `add_timeline_entry` or any other write.
+- Tests: `test/e2e/skillopt-wave-e1b1.serial.test.ts` (17 cases, each red before its fix), `test/skillopt/benchmark-hooks.test.ts`, and a mode case in `test/skillopt/models-four-paths.serial.test.ts`.
 
 ## [0.60.541.0] - 2026-11-01
 

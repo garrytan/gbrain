@@ -57,7 +57,9 @@ gbrain skillopt <skill-name> [flags]
   │
   ├── Baseline eval on D_sel (sets best_sel_score)
   │
-  ├── for epoch in 1..N:
+  ├── default: one rewrite of the body from a D_train forward pass,
+  │     accepted only through the same D12 validation gate
+  ├── --loop (opt-in; has not beaten one-shot on benchmarks): for epoch in 1..N:
   │     for step in 1..steps_per_epoch:
   │       ├── forward pass: rollouts on D_train batch
   │       ├── backward pass: reflect × 2 (failures + successes per D7)
@@ -143,7 +145,8 @@ https://github.com/garrytan/gbrain/blob/master/docs/tutorials/improving-skills-w
 | Costly run, want preview | Add `--dry-run` |
 | Bundled skill (skills/ in gbrain repo) | Default writes proposed.md; to commit in place add `--allow-mutate-bundled` AND `--held-out <path>` (>=5 benchmark-disjoint tasks) — else it hard-refuses. Plugin installs cannot mutate bundled skills in place (the snapshot is read-only): copy the SKILL.md into your own skills dir to iterate, or stick with the default proposed.md review flow |
 | Want to review changes before applying | Add `--no-mutate` (writes proposed.md, no held-out needed) |
-| Guard against benchmark overfitting | Add `--held-out <path>` — a candidate that beats the benchmark but regresses on the held-out set is refused |
+| Guard against benchmark overfitting | Add `--held-out <path>` — checked once on the final candidate; one that beats the benchmark but regresses on the held-out set is refused |
+| Want the iterative edit loop | Add `--loop` (about 1.8x the cost; it tied one-shot on gbrain-evals Cat 31) |
 | Mid-run crash | `gbrain skillopt foo --resume <run-id>` |
 
 ## Output Format

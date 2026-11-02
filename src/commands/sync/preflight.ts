@@ -57,6 +57,7 @@ import { sweepOrphanedRenameSentinels } from './rename-reconcile.ts';
 import type { SyncPlan, SyncActivePack } from './sync-run.ts';
 import { holdUnsupportedPaths, NO_BYTE_PATHS, selectBytePaths, type BytePaths } from './unsupported-paths.ts';
 import { formatUrlClonePullBlock, urlClonePullBlock } from '../../core/url-clone.ts';
+import { syncAccessPolicyAt } from '../../core/access/policy-git.ts';
 import { formatUpstreamNotice, recordUpstreamBeforeFetch, settleUpstreamAfterPull } from '../../core/sync-upstream-rewrite.ts';
 
 export type PreflightOutcome = { readonly done: SyncResult } | { readonly plan: SyncPlan };
@@ -70,6 +71,9 @@ export async function preflightIncrementalSync(engine: BrainEngine, opts: SyncOp
   const head = await pullAndResolveHead(engine, opts, company, repoPath, gitContextRoot);
   if ('done' in head) return head;
   const { detachedHead, lastCommit, pullFailed, headCommit } = head;
+  // GBRA-218 (A2): the source's folder rules at the synced commit apply before any page of it is imported, including
+  // when .gbrain/access.yml is the only changed path (the delta below skips dot paths).
+  if (!opts.dryRun) await syncAccessPolicyAt(engine, opts.sourceId ?? DEFAULT_SOURCE_ID, repoPath, headCommit, serr);
 
   opts = await applyPersistedScopeConfig(engine, opts);
 

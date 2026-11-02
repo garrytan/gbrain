@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 265045,
-    "stdoutSha256": "4358e6505ccac2f00bcbe3a01fb54daf3d13c8a7c526315a8c53aaf223a01dc8",
+    "stdoutBytes": 265405,
+    "stdoutSha256": "ce85fa67a616e3c90eda5a73943e277734add153923cd5f19dfef2a8fe026f03",
     "toolNames": [
       "remember",
       "entity",
@@ -7791,6 +7791,7 @@
           "lr": "number?",
           "max_cost_usd": "number?",
           "no_mutate": "boolean?",
+          "optimizer_mode": "string?",
           "pack_id": "string?",
           "reflect_max_tokens": "number?",
           "request_id": "string?",
@@ -7841,6 +7842,14 @@
             "no_mutate": {
               "description": "Write proposed.md without replacing SKILL.md",
               "type": "boolean"
+            },
+            "optimizer_mode": {
+              "description": "Default one-shot-rewrite: one gated rewrite. reflect opts into the iterative edit loop, which has not yet beaten one-shot on gbrain benchmarks.",
+              "enum": [
+                "one-shot-rewrite",
+                "reflect"
+              ],
+              "type": "string"
             },
             "pack_id": {
               "description": "Required with shared_skill: exact catalog pack.",

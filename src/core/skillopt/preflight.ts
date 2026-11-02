@@ -43,7 +43,7 @@ import { peakRateNote, priceFor, reservationCostUsd, type PricingOverrides } fro
 import { noPricingGuidance, noPricingMessage, type NoPricingGuidance } from '../budget/no-pricing.ts';
 import { skilloptOutputCap } from './output-cap.ts';
 import { JUDGE_SITE_MAX_TOKENS } from './score.ts';
-import { VALIDATION_RUNS_PER_TASK } from './types.ts';
+import { VALIDATION_RUNS_PER_TASK, type OptimizerMode } from './types.ts';
 
 /** Conservative per-rollout token estimates (input + output). */
 const ROLLOUT_INPUT_TOKENS = 3000; // skill + task prompt + tool defs
@@ -67,7 +67,7 @@ export interface PreflightOpts {
   maxCostSource?: 'user' | 'default';
   /**
    * Held-out task count (F11). When > 0, the held-out gate scores baseline +
-   * candidate on the held-out set at every accepted step. Conservatively
+   * candidate on the held-out set once, on the final champion (D2). Priced
    * priced as if EVERY step accepts (upper bound) so the cap is honest.
    * 0 / omitted = no held-out gate.
    */
@@ -84,6 +84,10 @@ export interface PreflightOpts {
   judgeModels?: string[];
   /** Operator `pricing.overrides`, the same map the run's BudgetTracker uses. */
   pricingOverrides?: PricingOverrides;
+  /** E1: one-shot is one step with one optimizer call; default (absent) prices the loop. */
+  optimizerMode?: OptimizerMode;
+  /** B1.3: a rollout hook runs (and pays for) every rollout, so only optimizer calls are priced here. */
+  rolloutsExternal?: boolean;
 }
 
 export type ReservationRole = 'optimizer' | 'target' | 'judge';
@@ -106,8 +110,10 @@ const RESERVATION_CONTROL: Record<ReservationRole, string> = {
 export function singleCallReservations(opts: PreflightOpts): CallReservation[] {
   const reserve = (role: ReservationRole, model: string, maxOut: number): CallReservation =>
     ({ role, model, max_output_tokens: maxOut, reservation_usd: reservationCostUsd(model, 'chat', 0, maxOut, opts.pricingOverrides) });
+  const optimizer = reserve('optimizer', opts.optimizerModel, opts.reflectMaxTokens ?? defaultMaxOutputTokens(opts.optimizerModel));
+  if (opts.rolloutsExternal) return [optimizer];
   return [
-    reserve('optimizer', opts.optimizerModel, opts.reflectMaxTokens ?? defaultMaxOutputTokens(opts.optimizerModel)),
+    optimizer,
     reserve('target', opts.targetModel, defaultMaxOutputTokens(opts.targetModel)),
     ...(opts.judgeModels ?? [opts.judgeModel]).map((m) => reserve('judge', m, skilloptOutputCap(m, JUDGE_SITE_MAX_TOKENS))),
   ];
@@ -154,39 +160,37 @@ export interface PreflightResult {
 }
 
 export function estimateCost(opts: PreflightOpts): PreflightEstimate {
-  const stepsPerEpoch = Math.max(1, Math.floor(opts.trainSize / opts.batchSize));
-  const totalSteps = opts.epochs * stepsPerEpoch;
+  const oneShot = opts.optimizerMode === 'one-shot-rewrite';
+  const stepsPerEpoch = oneShot ? 1 : Math.max(1, Math.floor(opts.trainSize / opts.batchSize));
+  const totalSteps = oneShot ? 1 : opts.epochs * stepsPerEpoch;
 
   // Per-step counts.
-  const rolloutsPerStep = opts.batchSize;
-  const reflectsPerStep = 2; // D7: two reflect calls
+  const rolloutsPerStep = oneShot ? Math.min(opts.batchSize, opts.trainSize) : opts.batchSize;
+  const reflectsPerStep = oneShot ? 1 : 2; // D7: two reflect calls; one-shot: one rewrite
   const sel_runs_per_step = opts.selSize * VALIDATION_RUNS_PER_TASK;
 
-  // F11 held-out: baseline + candidate scored on the held-out set at every
-  // accepted step. Upper-bound: assume every step accepts (2 = baseline+candidate).
+  // D2 held-out: baseline + candidate scored once, on the final champion.
   const heldOutSize = opts.heldOutSize ?? 0;
-  const heldOutRollouts = heldOutSize > 0
-    ? totalSteps * heldOutSize * VALIDATION_RUNS_PER_TASK * 2
-    : 0;
+  const heldOutRollouts = heldOutSize > 0 ? heldOutSize * VALIDATION_RUNS_PER_TASK * 2 : 0;
 
   // Cumulative counts across the whole run.
   const rollout_calls = totalSteps * rolloutsPerStep
     + opts.selSize * VALIDATION_RUNS_PER_TASK // baseline sel eval
     + opts.selSize * VALIDATION_RUNS_PER_TASK * totalSteps // per-step sel validation
     + opts.testSize * 2 // final test eval (best + baseline)
-    + heldOutRollouts; // F11 held-out gate (baseline+candidate per accepted step)
+    + heldOutRollouts; // D2 held-out check (baseline+candidate, once)
   const reflect_calls = totalSteps * reflectsPerStep
-    + opts.epochs; // slow-update meta calls
+    + (oneShot ? 0 : opts.epochs); // slow-update meta calls
   const judgeModels = opts.judgeModels ?? [opts.judgeModel];
   const judgeCallsRaw = opts.selSize // baseline (1 per task; median-of-3 is in the rollout count already? — no, judge runs per rollout)
     + opts.selSize * VALIDATION_RUNS_PER_TASK * totalSteps // per-step validation
     + opts.testSize * 2 // final test judges (best + baseline)
     + heldOutRollouts; // F11 held-out judges (1 per held-out rollout)
-  const judge_calls = judgeModels.length > 0 ? judgeCallsRaw : 0;
+  const judge_calls = judgeModels.length > 0 && !opts.rolloutsExternal ? judgeCallsRaw : 0;
 
   // Cost per call type. Judge calls price at the priciest judge the run can reach.
   const lookup = (model: string) => priceFor(model, 'chat', opts.pricingOverrides)?.pricing ?? null;
-  const unpriced = [...new Set([opts.targetModel, opts.optimizerModel, ...(judge_calls > 0 ? judgeModels : [])])]
+  const unpriced = [...new Set([...(opts.rolloutsExternal ? [] : [opts.targetModel]), opts.optimizerModel, ...(judge_calls > 0 ? judgeModels : [])])]
     .filter((m) => lookup(m) === null);
   const zero = { input: 0, output: 0 };
   const targetPrice = lookup(opts.targetModel) ?? zero;
@@ -197,7 +201,7 @@ export function estimateCost(opts: PreflightOpts): PreflightEstimate {
   );
   const unpricedJudge = judge_calls > 0 && judgeModels.some((m) => unpriced.includes(m));
 
-  const rolloutCost = rollout_calls * (
+  const rolloutCost = opts.rolloutsExternal ? 0 : rollout_calls * (
     (ROLLOUT_INPUT_TOKENS * targetPrice.input) / 1_000_000
     + (ROLLOUT_OUTPUT_TOKENS * targetPrice.output) / 1_000_000
   );
@@ -246,7 +250,9 @@ export function estimateCost(opts: PreflightOpts): PreflightEstimate {
  */
 export function formatPreflightReport(est: PreflightEstimate, opts: PreflightOpts): string {
   return [
-    `[skillopt] Cost estimate for ${opts.epochs} epochs × ${est.steps_per_epoch} steps × ${opts.batchSize} rollouts:`,
+    opts.optimizerMode === 'one-shot-rewrite'
+      ? `[skillopt] Cost estimate for one rewrite (one-shot; --loop runs the iterative optimizer):`
+      : `[skillopt] Cost estimate for ${opts.epochs} epochs × ${est.steps_per_epoch} steps × ${opts.batchSize} rollouts:`,
     `  Rollouts:   ${est.rollout_calls.toLocaleString()} calls`,
     `  Reflects:   ${est.reflect_calls.toLocaleString()} calls`,
     `  Judges:     ${est.judge_calls.toLocaleString()} calls`,

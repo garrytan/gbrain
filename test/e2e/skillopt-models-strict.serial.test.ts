@@ -116,7 +116,7 @@ async function baseOpts(over: Partial<SkillOptOpts> = {}): Promise<SkillOptOpts>
     engine, skillName: SKILL, skillsDir, benchmarkPath,
     epochs: 1, batchSize: 2, lr: 4, lrSchedule: 'constant', split: [4, 1, 5],
     ...skillOptModelOpts(await resolveSkillOptModels(engine)),
-    mode: 'patch', dryRun: false, noMutate: false, allowMutateBundled: true, bootstrapReviewed: false,
+    mode: 'patch', optimizerMode: 'reflect', dryRun: false, noMutate: false, allowMutateBundled: true, bootstrapReviewed: false,
     json: true, maxCostUsd: 100, maxRuntimeMin: 2, force: true,
     ...over,
   };
@@ -248,7 +248,7 @@ describe('background job', () => {
       const models = await resolveSkillOptModels(engine);
       const data = buildSkillOptJobData({
         skillsDir, skillName: SKILL, benchmarkPath, epochs: 1, batchSize: 2, lr: 4, lrSchedule: 'constant', split: [4, 1, 5],
-        mode: 'patch', dryRun: true, noMutate: false, allowMutateBundled: true, bootstrapReviewed: false,
+        mode: 'patch', optimizerMode: 'reflect', dryRun: true, noMutate: false, allowMutateBundled: true, bootstrapReviewed: false,
         maxCostUsd: 100, maxRuntimeMin: 2, force: true, models, modelFlags: {}, modelsStrict: false,
       });
       expect(data.model_sources).toEqual({ optimizer: 'tier_config', target: 'tier_default', judge: 'tier_default' });
@@ -283,7 +283,7 @@ describe('strict propagation through batch and fleet', () => {
         engine, skillsDir, perSkillMaxCostUsd: 100, brainWideMaxCostUsd: 100,
         ...skillOptModelOpts(models), modelsStrict: true,
         epochs: 1, batchSize: 2, lr: 4, lrSchedule: 'constant', split: [4, 1, 5],
-        dryRun: false, noMutate: true, allowMutateBundled: true, force: true,
+        dryRun: false, noMutate: true, allowMutateBundled: true, force: true, optimizerMode: 'reflect',
       });
       expect(out.per_skill.map((s) => s.outcome)).toEqual(['errored', 'errored']);
       expect(out.per_skill.every((s) => s.reason?.includes('models strict check'))).toBe(true);
@@ -297,7 +297,7 @@ describe('strict propagation through batch and fleet', () => {
       const out = await runFleet({
         engine, skillName: SKILL, skillsDir, benchmarkPath, targetModels: [HAIKU, SONNET],
         optimizerModel: models.optimizer.model, judgeModel: models.judge.model,
-        models: { optimizer: models.optimizer, judge: models.judge }, modelsStrict: true,
+        models: { optimizer: models.optimizer, judge: models.judge }, modelsStrict: true, optimizerMode: 'reflect',
         epochs: 1, batchSize: 2, lr: 4, lrSchedule: 'constant', split: [4, 1, 5],
         dryRun: false, noMutate: true, allowMutateBundled: true, bootstrapReviewed: false,
         maxCostUsd: 100, maxRuntimeMin: 2, force: true,

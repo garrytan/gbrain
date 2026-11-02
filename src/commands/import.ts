@@ -499,10 +499,10 @@ export async function runImport(
   if (workersIdx !== -1) flagValues.add(workersIdx + 1);
   if (sourceIdIdx !== -1) flagValues.add(sourceIdIdx + 1);
   if (sourceIdx !== -1) flagValues.add(sourceIdx + 1);
-  const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
+  const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i) && args[i - 1] !== '--access-policy');
 
   if (!dirArg) {
-    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source <id> | --source-id <id>] [--include-gitignored] [--allow-noncanonical-root] [--json]');
+    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source <id> | --source-id <id>] [--access-policy <exported-source>|none] [--include-gitignored] [--allow-noncanonical-root] [--json]');
     throw new ImportAbortError('no import directory given');
   }
   // #1728: capture the import target ONCE as an absolute real path. Every
@@ -568,6 +568,7 @@ export async function runImport(
     }
   }
 
+  if (!opts.commit && !singleFile && !currentCompanyBrainSync(sourceId)) await (await import('../core/access/policy-transfer.ts')).importPolicyBarrier(engine, sourceId ?? 'default', dir, args, info).catch(e => { throw new ImportAbortError('folder rules not installed', 1, undefined, e); });
   // v0.31.2: collect under the right strategy. Pre-fix this called
   // collectMarkdownFiles unconditionally — code-strategy first sync
   // silently no-op'd because no code file ever made it through walker

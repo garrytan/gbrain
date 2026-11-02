@@ -1,5 +1,9 @@
 # TODOS
 
+## SkillOpt E1/B1 follow-ups (filed 2026-11-01, GBRA-274, #8408)
+
+- [ ] **P2 — SkillOpt review follow-ups (#8415).** **What:** held-out deferral on abort and the receipt's pending-champion score; final test eval on an unchanged skill; preflight prices the test eval at 2 runs per task instead of 6; resume does not pin the hook, criteria or cost scope; `--resume` with an unloadable checkpoint starts fresh; the one-shot output-cap check runs after baseline spend; one accepted one-shot step can replace the whole body; cat31 config C changed meaning; stale docs and comments. **Fix:** per item in #8415. **Effort:** S-M each. **Priority:** P2.
+
 ## Write-cap wedge follow-ups (filed 2026-11-01, GBRA-271, #8368)
 
 - [ ] **P3 — `owner_marker_missing` can name the plain self-transfer when another process sees a drifted APFS birth time (#8381).** **What:** the refusal compares the reservation's birth time exactly in the refusing process, and the self-transfer compares it exactly in the CLI process; on APFS the two can read tens of ns apart (#6501), so a long-lived process that created the checkout and recorded its reservation can recommend a self-transfer the CLI then refuses `recovery_required`. Nothing is written either way. **Fix:** one identity rule for both sides. **Effort:** S. **Priority:** P3.

@@ -144,6 +144,7 @@ const run_skillopt: Operation = {
     allow_mutate_bundled: { type: 'boolean', description: 'Required to mutate bundled skills' },
     held_out_path: { type: 'string', description: 'Path to a held-out test set (JSONL). REQUIRED (>=5 rows) to mutate a bundled skill in place — otherwise the run hard-refuses. Remote callers: must resolve within the skills directory.' },
     dry_run: { type: 'boolean', description: 'Preview: models plan, strict verdict and cost estimate, no LLM calls' },
+    optimizer_mode: { type: 'string', enum: ['one-shot-rewrite', 'reflect'], description: 'Default one-shot-rewrite: one gated rewrite. reflect opts into the iterative edit loop, which has not yet beaten one-shot on gbrain benchmarks.' },
     shared_skill: { type: 'boolean', description: 'Optimize an exact shared catalog revision in a private proposal workspace and publish the accepted body through put_skill.' },
     source_id: { type: 'string', description: 'Required with shared_skill: canonical source.' },
     source_incarnation: { type: 'string', description: 'Required with shared_skill: exact catalog source incarnation.' },
@@ -186,6 +187,10 @@ const run_skillopt: Operation = {
       throw invalidParam(ctx, 'run_skillopt', 'max_cost_usd',
         'run_skillopt: max_cost_usd must be a positive number of USD for remote callers; 0 (uncapped) is a host-only setting',
         { example: 5 });
+    }
+    const optimizerMode = p.optimizer_mode ?? 'one-shot-rewrite';
+    if (optimizerMode !== 'one-shot-rewrite' && optimizerMode !== 'reflect') {
+      throw invalidParam(ctx, 'run_skillopt', 'optimizer_mode', "run_skillopt: optimizer_mode must be 'one-shot-rewrite' or 'reflect'", { example: 'reflect' });
     }
     const { clampRemoteReflectMaxTokens } = await import('../skillopt/output-cap.ts');
     let reflectMaxTokens: number | undefined;
@@ -269,6 +274,7 @@ const run_skillopt: Operation = {
       ...skillOptModelOpts(models),
       ...(reflectMaxTokens !== undefined ? { reflectMaxTokens } : {}),
       mode: 'patch',
+      optimizerMode,
       dryRun: (p.dry_run as boolean) === true,
       noMutate: (p.no_mutate as boolean) === true,
       allowMutateBundled: (p.allow_mutate_bundled as boolean) === true,
