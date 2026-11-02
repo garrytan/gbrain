@@ -6,7 +6,8 @@
  *    member-page exclusion another caller's world fact is dropped as a "duplicate" of a fact it may not read, and the
  *    reply hands it that fact's id (an existence oracle on a page its read filter hides).
  * 2. Fails when: bob-example's extract_facts reports alice-example's member fact id as its duplicate and inserts nothing,
- *    or findCaptureDuplicate matches the member fact.
+ *    or findCaptureDuplicate matches the member fact, or member facts fill the candidate cap so a visible world
+ *    duplicate is never compared (the reply then flips on how many hidden facts exist).
  * 3. Existing coverage: test/access-member-facts.test.ts pins decideSingleFact (remember) and supersession on member pages.
  * 4. Real seams: member-bound OAuth client-credentials tokens through MCP dispatch on a repo-less PGLite brain; chat and
  *    embeddings stubbed (one constant vector, so every candidate is a cosine match), a calibrated threshold set.
@@ -84,4 +85,50 @@ describe('similarity dedup never matches a member-page fact (pglite, repo-less)'
       expect(match?.id === undefined ? null : String(match.id)).not.toBe(aliceFactId);
     }
   }, 60_000);
+});
+
+const V_WORLD = (() => { const v = new Array<number>(DIMS).fill(0); v[7] = 1; v[8] = 0.2; return v; })();
+const WORLD = 'Acme Example is preparing a quiet sale to a bigger harbor company';
+const CROWD = ['alice-example', 'carol-example', 'dave-example', 'erin-example', 'frank-example'];
+
+describe('member-page facts never crowd the dedup candidate cap (pglite, repo-less)', () => {
+  let engine: BrainEngine;
+  const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+  const tokens: Record<string, string> = {};
+  const call = async (who: string | null, op: string, params: Record<string, unknown>) => {
+    const out = who === null
+      ? await dispatchToolCall(engine, op, params, { remote: false, sourceId: SRC })
+      : await dispatchToolCall(engine, op, params, { remote: true, transport: 'http', auth: await provider().verifyAccessToken(tokens[who]!) as unknown as AuthInfo, sourceId: SRC, takesHoldersAllowList: ['world'] });
+    return { isError: out.isError === true, text: out.content.map(c => c.text).join('\n') };
+  };
+
+  beforeAll(async () => {
+    configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: DIMS, chat_model: 'openai:gpt-4o-mini', env: { OPENAI_API_KEY: 'test' } } as never);
+    __setEmbedTransportForTests((async ({ values }: { values: string[] }) => ({ embeddings: values.map(t => t.includes('bigger harbor company') ? V_WORLD : VEC) })) as never);
+    __setChatTransportForTests(async (): Promise<ChatResult> => ({ text: JSON.stringify({ facts: [{ fact: CLAIM, kind: 'fact', entity: ACME, confidence: 1.0, notability: 'high' }] }),
+      blocks: [], stopReason: 'end', usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: 'test:stub', providerId: 'test' }) as never);
+    engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema();
+    __resetPrivateVisibilityCacheForTests();
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [SRC]);
+    for (const id of [...CROWD, 'bob-example']) await addMember(engine, id);
+    await engine.setConfig('facts.supersession_thresholds', JSON.stringify({ 'openai:text-embedding-3-small@1536': 0.95 }));
+    await importFromContent(engine, ACME, '---\ntype: company\ntitle: Acme Example\n---\n# Acme Example\n\nAcme example builds harbor ledgers.', { sourceId: SRC });
+    for (const who of [...CROWD, 'bob-example']) {
+      const c = await provider().registerClientManual('crowd-' + who + '-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], SRC);
+      await bindCredential(engine, { kind: 'client', id: c.clientId }, { member: who });
+      tokens[who] = (await provider().exchangeClientCredentials(c.clientId, c.clientSecret ?? '')).access_token;
+    }
+    expect((await call(null, 'remember', { fact: WORLD, entity: ACME, visibility: 'world', provenance: 'owner note' })).isError).toBe(false);
+  }, 180_000);
+
+  afterAll(async () => { __setEmbedTransportForTests(null); __setChatTransportForTests(null); resetGateway(); await engine.disconnect(); });
+
+  test('another caller\'s extract_facts still finds the world duplicate however many member facts sit closer to the claim', async () => {
+    const worldRows = async () => (await engine.executeRaw('SELECT id FROM facts WHERE source_id = $1 AND visibility = $2 AND entity_slug = $3 AND expired_at IS NULL', [SRC, 'world', ACME])).length;
+    for (const member of CROWD) {
+      expect((await call(member, 'remember', { fact: CLAIM, entity: ACME, provenance: 'dm' })).isError).toBe(false);
+      const out = await call('bob-example', 'extract_facts', { turn_text: 'In our call today: ' + CLAIM + '. Worth remembering.', visibility: 'world', entity_hints: [ACME] });
+      expect({ member, isError: out.isError, worldRows: await worldRows() }).toEqual({ member, isError: false, worldRows: 1 });
+    }
+  }, 180_000);
 });

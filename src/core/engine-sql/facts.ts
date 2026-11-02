@@ -30,7 +30,7 @@ import { compileRowNormalizer } from './normalize.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { FACT_WITHDRAWAL_STAMP_DEFERRED_SETTING } from '../facts/insert-guard-schema.ts';
 import { privateProvenanceFilterUnderPolicy } from '../search/private-visibility.ts';
-import { factVisibilitySql } from '../access/member-facts.ts';
+import { factVisibilitySql, onMemberPageSql } from '../access/member-facts.ts';
 import { storedTrustTier } from '../trust/tier.ts';
 import { ensureWellFormed } from '../text-safe.ts';
 
@@ -582,12 +582,13 @@ export async function findCandidateDuplicates(
     source_id: string,
     entitySlug: string,
     factText: string,
-    opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; arm?: 'keyword'; attributedTo?: FactAttribution | null },
+    opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; arm?: 'keyword'; attributedTo?: FactAttribution | null; excludeMemberPages?: boolean },
   ): Promise<FactRow[]> {
     const k = Math.min(Math.max(opts?.k ?? 5, 1), 20);
     const speaker = opts?.attributedTo
       ? sqlFragment`AND (attributed_to IS NULL OR attributed_to = ${opts.attributedTo})`
       : sqlFragment``;
+    const members = opts?.excludeMemberPages ? sqlFragment` AND NOT ${trustedSql(onMemberPageSql('facts'))}` : sqlFragment``;
     // Validity-lapsed rows are not dedup candidates: a re-stated fact after
     // its valid_until lapses re-inserts fresh (WP5 read-time TTL honesty).
     if (opts?.arm === 'keyword') return findKeywordCandidates(exec, source_id, entitySlug, factText, k, opts);
@@ -604,7 +605,7 @@ export async function findCandidateDuplicates(
           AND embedding_model=${opts.embeddingModel} AND embedded_text_hash=md5(fact)
           AND vector_dims(embedding)=${opts.embedding.length}
           AND source != ALL(${AUDIT_ROW_SOURCES}::text[])
-          ${speaker}
+          ${speaker}${members}
         ORDER BY embedding <=> ${trustedSql(vectorLiteralSql(lit, '::vector'))}
         LIMIT ${k}
       `)).rows;
@@ -616,7 +617,7 @@ export async function findCandidateDuplicates(
         AND entity_slug = ${entitySlug}
         AND expired_at IS NULL
         AND (valid_until IS NULL OR valid_until > now())
-        ${speaker}
+        ${speaker}${members}
       ORDER BY created_at DESC, id DESC
       LIMIT ${k}
     `)).rows;
@@ -635,7 +636,7 @@ export async function findCandidateDuplicates(
  */
 async function findKeywordCandidates(
   exec: LegacyUnscopedRead, source_id: string, entitySlug: string, factText: string, k: number,
-  opts: { embedding?: Float32Array; embeddingModel?: string | null; attributedTo?: FactAttribution | null },
+  opts: { embedding?: Float32Array; embeddingModel?: string | null; attributedTo?: FactAttribution | null; excludeMemberPages?: boolean },
 ): Promise<FactRow[]> {
   if (opts.embedding && !opts.embeddingModel) return [];
   const speaker = opts.attributedTo
@@ -655,7 +656,7 @@ async function findKeywordCandidates(
         AND (f.valid_until IS NULL OR f.valid_until > now())
         AND f.source != ALL(${AUDIT_ROW_SOURCES}::text[])
         ${comparable}
-        ${speaker}
+        ${speaker}${opts.excludeMemberPages ? sqlFragment` AND NOT ${trustedSql(onMemberPageSql('f'))}` : sqlFragment``}
         AND q.q IS NOT NULL AND to_tsvector(${lang}::regconfig, f.fact) @@ q.q
       ORDER BY ts_rank_cd(to_tsvector(${lang}::regconfig, f.fact), q.q) DESC, f.created_at DESC, f.id DESC
       LIMIT ${k}
