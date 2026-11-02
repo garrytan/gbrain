@@ -23,7 +23,7 @@
  * Engine-free: setup never opens the database itself.
  */
 import { realpathSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { removeHermesTurnHook, syncHermesTurnHook } from '../core/setup/hermes-turn-hook.ts';
 import { removeOpenclawTurnPlugin, syncOpenclawTurnPlugin } from '../core/setup/openclaw-turn-plugin.ts';
 import { hasTurnRuleHook, isTurnRuleHarness, removeTurnRuleHook, syncTurnRuleHook, type TurnHookOutcome, type TurnRuleHarness } from '../core/setup/turn-hook.ts';
@@ -501,9 +501,13 @@ function harnessLaneWires(brainHome: string, host: 'claude-code' | 'codex', conf
   if (state.state !== 'ok') return false;
   const targets = state.receipt.targets.filter((t) => t.host === host);
   if (targets.length === 0) return false;
-  if (!targets.some((t) => t.path)) return true;
-  const dirs = new Set(configDirs.map((d) => resolve(d)));
-  return targets.some((t) => (t.kind === 'hooks' && t.scope !== 'user') || (!!t.path && dirs.has(dirname(resolve(t.path)))));
+  if (!targets.some((t) => typeof t.path === 'string')) return true;
+  const real = (p: string): string => {
+    const abs = resolve(p);
+    try { return realpathSync(abs); } catch { return dirname(abs) === abs ? abs : join(real(dirname(abs)), basename(abs)); }
+  };
+  const dirs = new Set(configDirs.map(real));
+  return targets.some((t) => (t.kind === 'hooks' && t.scope !== 'user') || (typeof t.path === 'string' && dirs.has(real(dirname(resolve(t.path))))));
 }
 
 function liveOwnerOf(cfg: GBrainConfig | null, ours: boolean): { dataDir?: string; liveOwner: Target['live_owner'] } {

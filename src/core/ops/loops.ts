@@ -69,7 +69,7 @@ interface GoogleSourceFreshness {
 async function googleSourceFreshness(
   ctx: OperationContext,
   scope: { sourceId?: string; sourceIds?: string[] },
-): Promise<{ sources: GoogleSourceFreshness[]; stale: boolean; staleSources: string[] }> {
+): Promise<{ sources: GoogleSourceFreshness[]; stale: boolean; staleSources: string[]; failed?: true }> {
   try {
     const rows = await ctx.engine.executeRaw<{ id: string; last_sync_at: string | null; config: unknown }>(
       `SELECT id, last_sync_at, config FROM sources WHERE archived IS NOT TRUE`,
@@ -101,7 +101,7 @@ async function googleSourceFreshness(
     // Fail TOWARD stale: this surface's invariant is "stale-but-confident is
     // worse than nothing" — a DB error must not present confident output
     // with the stale warning suppressed.
-    return { sources: [], stale: true, staleSources: [] };
+    return { sources: [], stale: true, staleSources: [], failed: true };
   }
 }
 
@@ -485,7 +485,7 @@ const open_loops: Operation = {
     });
     const freshness = await googleSourceFreshness(ctx, scope);
     const noGoogleSources = freshness.sources.length === 0;
-    if (!trusted && noGoogleSources) ctx.emitNotice?.(noGoogleInScopeNotice(scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : [])));
+    if (!trusted && noGoogleSources && !freshness.failed && loops.length === 0) ctx.emitNotice?.(noGoogleInScopeNotice(scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : [])));
     const partialStaleSources = freshness.stale ? [] : freshness.staleSources;
     const coverage = await heldCoverage(ctx, freshness.sources, trusted);
     const deepLinks = trusted ? await deepLinksFor(ctx, loops) : new Map<string, string>();

@@ -234,7 +234,7 @@ export function verifyTurnHook(harness: string, opts: { projectDir?: string; run
   if (state.via === 'plugin') return { ok: true, state, reason: 'plugin_lane', message: `${state.detail}; check it with ${state.native_inspect}` };
   if ((harness === 'claude-code' || harness === 'codex') && state.command) {
     // A command from a project's settings file is the repo's, not the user's: never run it.
-    if (harness === 'claude-code' && state.source !== claudeUserSettingsPath()) return { ok: true, state, reason: 'project_unverified', message: `${state.detail}; a project hook is not run here, so check it with ${state.native_inspect}` };
+    if (harness === 'claude-code' && state.source !== claudeUserSettingsPath()) return { ok: true, state, reason: 'project_unverified', message: `${state.detail}; a hook outside the user settings file (project or managed) is not run here, so check it with ${state.native_inspect}` };
     const r = run(['sh', '-c', state.command], JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: '', session_id: 'gbrain-install-check' }));
     if (!r.ok) return fail('hook_failed', `the UserPromptSubmit hook exited non-zero (${r.output.trim().split('\n').at(-1) || 'no output'})`);
     if (!r.output.includes('GBrain: before answering')) return fail('no_rule', 'the UserPromptSubmit hook ran but did not add the brain-first rule (is the brain-first block installed for this harness?)');

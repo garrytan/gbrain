@@ -55,6 +55,15 @@ describe('Claude Code managed-settings hooks (#8057)', () => {
     });
   });
 
+  test('a gbrain turn-rule hook in managed settings makes the user turn-rule lane yield', async () => {
+    const s = sandbox();
+    const turnRule = { hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: '/opt/gbrain/bin/gbrain hook user-prompt', _gbrain: 'turn-rule-v1' }] }] } };
+    writeFileSync(join(s.managed, 'managed-settings.json'), JSON.stringify(turnRule));
+    await withEnv(s.env, async () => {
+      expect(turnRuleHookYields('claude-code', s.project, s.managed)).toBe(true);
+    });
+  });
+
   test('the default managed directory is the platform system path', () => {
     const [file] = claudeManagedSettingsPaths();
     expect(file.endsWith('managed-settings.json')).toBe(true);

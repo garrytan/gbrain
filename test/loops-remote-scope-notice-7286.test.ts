@@ -70,6 +70,18 @@ describe('#7286 open_loops for a remote caller bound to a non-google source', ()
     expect(notices.map(n => n.code)).not.toContain('loops_no_google_in_scope');
   });
 
+  test('a failed google-source read carries no such notice (it is not a grant problem)', async () => {
+    const notices: Notice[] = [];
+    const failing = new Proxy(engine, { get(t, k, r) {
+      if (k === 'executeRaw') return (sql: string, params?: unknown[]) => /FROM sources WHERE archived/.test(sql) ? Promise.reject(new Error('connection reset')) : t.executeRaw(sql, params as never);
+      const v = Reflect.get(t, k, r); return typeof v === 'function' ? v.bind(t) : v;
+    } });
+    const ctx = { engine: failing, config: {}, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: true, sourceId: 'source-a',
+      emitNotice: (n: Notice) => notices.push(n) } as unknown as OperationContext;
+    await openLoops.handler(ctx, {});
+    expect(notices.map(n => n.code)).not.toContain('loops_no_google_in_scope');
+  });
+
   test('names the sources it read, not the whole grant, when source_id narrows a federated read', async () => {
     await engine.executeRaw(`INSERT INTO sources (id, name, config, last_sync_at) VALUES ('mail-a', 'mail-a', '{"kind":"google"}'::jsonb, now()), ('notes-a', 'notes-a', '{}'::jsonb, NULL) ON CONFLICT (id) DO NOTHING`);
     const notices: Notice[] = [];

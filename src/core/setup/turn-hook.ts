@@ -123,7 +123,7 @@ export function turnRuleHookYields(harness: string, cwd: string, managedDir?: st
   return claudePromptEntries(claudeUserSettingsPath()).some((e) => isOtherGbrainEntry(e))
     || claudePromptEntries(join(cwd, '.claude', 'settings.local.json')).some((e) => isOtherGbrainEntry(e))
     || claudePromptEntries(join(cwd, '.claude', 'settings.json')).some((e) => isOtherGbrainEntry(e, true))
-    || claudeManagedSettingsPaths(managedDir).some((path) => claudePromptEntries(path).some((e) => isOtherGbrainEntry(e)));
+    || claudeManagedSettingsPaths(managedDir).some((path) => claudePromptEntries(path).some((e) => isTurnRuleEntry(e) || isOtherGbrainEntry(e)));
 }
 
 /** Install or refresh the turn-rule hook. Never throws; anything it cannot write safely comes back as `print` with the command that wires it. */

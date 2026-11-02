@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
@@ -69,6 +69,16 @@ describe('setup: bootstrap harness lane scoped to the configuration it wired (#7
     const b = box();
     writeHarnessReceipt(b, claudeTargets(b.home));
     const r = await setup(b, ['claude-code']);
+    expect(r.exitCode).toBe(1);
+    expect(r.doc).toMatchObject({ code: 'setup_owner_conflict', reason: 'harness_lane' });
+  });
+
+  test('claude-code: a harness lane wired through another spelling of this HOME (a symlink) still refuses', async () => {
+    const b = box();
+    writeHarnessReceipt(b, claudeTargets(b.home));
+    const link = join(b.root, 'home-link');
+    symlinkSync(b.home, link);
+    const r = await setup({ ...b, home: link }, ['claude-code']);
     expect(r.exitCode).toBe(1);
     expect(r.doc).toMatchObject({ code: 'setup_owner_conflict', reason: 'harness_lane' });
   });
