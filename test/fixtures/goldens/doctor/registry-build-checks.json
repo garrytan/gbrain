@@ -354,6 +354,42 @@
         "name": "derived_visibility"
       },
       {
+        "category": "brain",
+        "name": "access_readers_malformed"
+      },
+      {
+        "category": "brain",
+        "name": "access_unknown_readers"
+      },
+      {
+        "category": "brain",
+        "name": "access_recent_narrowings"
+      },
+      {
+        "category": "brain",
+        "name": "access_page_readers_backfill"
+      },
+      {
+        "category": "brain",
+        "name": "access_policy_pending"
+      },
+      {
+        "category": "brain",
+        "name": "access_policy_widening_held"
+      },
+      {
+        "category": "brain",
+        "name": "access_policy_invalid"
+      },
+      {
+        "category": "brain",
+        "name": "access_policy_store_mismatch"
+      },
+      {
+        "category": "brain",
+        "name": "access_may_act_for_wildcard"
+      },
+      {
         "category": "ops",
         "name": "rls"
       },

@@ -22,4 +22,6 @@ export const RUNTIME_READER_CONFIG_KEYS: readonly string[] = [
   'sources.refresh_fetch_timeout_ms', 'sources.refresh_drain_wait_ms', // persistence/worktree-refresh.ts: refresh fetch bound (default 120 s) and drain wait (default 60 s), in ms
   'sources.refresh_publish_diverged', // persistence/worktree-refresh.ts (#7686): refresh publishes a diverged checkout's local commits merged with the upstream before fast-forwarding, default off
   'serve.vector_prewarm', // config.ts loadConfigWithEngine (snapshot only) → serve.ts: a Postgres serve prewarms the HNSW indexes into shared_buffers at start when they fit, default off
+  'mcp.stdio_member', // access/caller.ts (GBRA-218): binds a local stdio MCP server to one member; unbound, stdio reads no page that names readers
+  'mcp.stdio_may_act_for', // access/audience.ts (GBRA-231): whom a local stdio server may act for (_meta.on_behalf_of); unset, stdio refuses every audience
 ];

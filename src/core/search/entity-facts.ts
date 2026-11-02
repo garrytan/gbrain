@@ -10,7 +10,9 @@
  * returned first. One hop: an entity a returned fact names ("folded into
  * Dovalto Energy", "uses Dovalto Energy's discount code") contributes its own
  * newest facts, tagged `linked_from`, so a redirection reaches the value it
- * points to. Same source scope, active-fact and visibility rules as recall,
+ * points to. Same source scope, active-fact, visibility and read-eligibility
+ * rules as recall (quarantined-page and needs_rederive facts hidden, the
+ * caller's trust floor applied),
  * and recall's collapse (#7043): copies of one claim read as one fact, before
  * the caps, so they never crowd out a distinct one.
  */
@@ -22,6 +24,8 @@ import { factEntitySlugs } from '../mentions/siblings.ts';
 import { resolveQueryEntities, type ResolvedEntity } from './alias-fanout.ts';
 import { collapseFactReads } from '../facts/capture-dedup.ts';
 import type { FactAttribution } from '../engine.ts';
+import { projectionEligibleSql } from '../eligibility/sql.ts';
+import type { TrustTier } from '../trust/tier.ts';
 
 export const ENTITY_FACTS_CAP = 5;
 export const LINKED_FACTS_CAP = 3;
@@ -42,8 +46,8 @@ export function stripCollapseColumns<T extends CollapseColumns & { collapsed_ids
   return rest;
 }
 
-async function newestFacts(engine: BrainEngine, sourceId: string, slugs: string[], remote: boolean, limit: number): Promise<Array<EntityFact & CollapseColumns>> {
-  const visibility = remote ? `AND f.visibility = 'world' AND ${privateProvenanceFilterFragment('f')}` : '';
+async function newestFacts(engine: BrainEngine, sourceId: string, slugs: string[], opts: { remote: boolean; minTrust?: TrustTier }, limit: number): Promise<Array<EntityFact & CollapseColumns>> {
+  const visibility = opts.remote ? `AND f.visibility = 'world' AND ${privateProvenanceFilterFragment('f')}` : '';
   const rows = await engine.executeRaw<EntityFact & CollapseColumns>(
     `SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, ${SAVED_FACT_COLLAPSE_COLUMNS}
        FROM facts f
@@ -51,6 +55,7 @@ async function newestFacts(engine: BrainEngine, sourceId: string, slugs: string[
         AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
         AND f.source != ALL($3::text[])
         ${visibility}
+        AND ${projectionEligibleSql('facts', 'f', { floor: opts.minTrust })}
       ORDER BY f.valid_from DESC, f.id DESC
       LIMIT ${SAVED_FACTS_COLLAPSE_WINDOW}`,
     [sourceId, slugs, [...AUDIT_ROW_SOURCES]]);
@@ -58,12 +63,12 @@ async function newestFacts(engine: BrainEngine, sourceId: string, slugs: string[
 }
 
 /** The named entity's newest facts, then those of entities its facts name, with the collapse columns. Fail-soft: errors return []. */
-export async function entitySavedFacts(engine: BrainEngine, entity: ResolvedEntity, opts: { remote: boolean; excludePrivate: boolean }): Promise<Array<EntityFact & CollapseColumns>> {
+export async function entitySavedFacts(engine: BrainEngine, entity: ResolvedEntity, opts: { remote: boolean; excludePrivate: boolean; minTrust?: TrustTier }): Promise<Array<EntityFact & CollapseColumns>> {
   try {
     const sourceId = entity.pages[0]!.source_id;
     const own = new Set<string>();
     for (const p of entity.pages) for (const s of await factEntitySlugs(engine, sourceId, p.slug, { excludePrivate: opts.excludePrivate })) own.add(s);
-    const facts = await newestFacts(engine, sourceId, [...own], opts.remote, ENTITY_FACTS_CAP);
+    const facts = await newestFacts(engine, sourceId, [...own], opts, ENTITY_FACTS_CAP);
     const out: Array<EntityFact & CollapseColumns> = [...facts];
     const seenEntities = new Set(own);
     let linked = 0;
@@ -76,7 +81,7 @@ export async function entitySavedFacts(engine: BrainEngine, entity: ResolvedEnti
         if ([...slugs].some(s => seenEntities.has(s))) continue;
         for (const s of slugs) seenEntities.add(s);
         linked++;
-        for (const g of await newestFacts(engine, sourceId, [...slugs], opts.remote, LINKED_FACTS_CAP)) {
+        for (const g of await newestFacts(engine, sourceId, [...slugs], opts, LINKED_FACTS_CAP)) {
           if (!out.some(x => x.id === g.id)) out.push({ ...g, linked_from: f.entity_slug ?? entity.pages[0]!.slug });
         }
       }

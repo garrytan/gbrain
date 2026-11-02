@@ -51,7 +51,7 @@ import { pageActivationVerdicts, pageKey, suppressionSummary, type SuppressionSu
 import { renderTrustedInline, trustFields, type TrustFields } from '../eligibility/labels.ts';
 import { TURN_CONTEXT_ENVELOPE } from './turn-context-envelope.ts';
 import { neutralizeForPrompt } from '../think/sanitize.ts';
-import { quoteFacts, unquoteFactText } from '../search/transcript-quote.ts';
+import { quoteFacts, quotesTier, unquoteFactText } from '../search/transcript-quote.ts';
 
 /**
  * v0.45.7 ambient recall (issue #1). The per-turn assembler is extended into the
@@ -667,7 +667,7 @@ async function assemblePack(
         { excludePrivate, keepVisibility: remote ? ['world'] : ['private', 'world'], charBudget: left, eligibility: policy, includeQuarantined: opts.includeQuarantined === true });
       if (!m) continue;
       acc.mentions.set(keyOf(card), m);
-      left -= renderNewerMentionLines({ ...card, newer_mentions: m }, sources[0]).join('\n').length + 1;
+      left -= renderNewerMentionLines({ ...card, newer_mentions: m }, sources[0], opts.untrusted === true).join('\n').length + 1;
     }
   })();
 
@@ -692,7 +692,7 @@ async function assemblePack(
   const openThreads = cards
     .flatMap((c) => c.open_threads ?? [])
     .filter((t) => !since || (t.date !== null && isAfter(t.date, since)));
-  const text = renderPack(cards, openThreads, facts, opts.checkpointLinks, sources[0], entityFacts);
+  const text = renderPack(cards, openThreads, facts, opts.checkpointLinks, sources[0], entityFacts, opts.untrusted === true);
   return {
     text,
     pointers: [],
@@ -930,11 +930,13 @@ const labeled = (item: { trust_tier?: TrustTier; origin?: string }, text: string
   item.trust_tier ? renderTrustedInline(text, labelOf(item)) : text;
 const cardSummary = (c: EntityCard, text: string): string =>
   c.quarantined ? renderTrustedInline(text, { trust_tier: 'external_untrusted', origin: 'quarantined' }) : labeled(c, text);
+/** #8384: for an untrusted reader a card below the owner's tier carries its title under the card's label too; otherwise as stored. */
+const cardTitle = (c: EntityCard, untrusted: boolean): string => (untrusted && c.trust_tier && quotesTier(c.trust_tier) ? cardSummary(c, c.entity.title) : c.entity.title);
 /** #6723: a card from outside the pack's home source names its source, so a follow-up reads the right page. */
 const sourceNote = (c: EntityCard, home?: string): string =>
   home !== undefined && c.entity.source_id !== undefined && c.entity.source_id !== home ? ` (source ${c.entity.source_id})` : '';
-export const renderCardLine = (c: EntityCard, home?: string): string =>
-  `- **${c.entity.title}** → \`${c.entity.slug}\`${sourceNote(c, home)}${c.summary ? ` — ${cardSummary(c, c.summary)}` : c.trust_tier ? ` — ${cardSummary(c, '')}` : ''}${c.relationship_note ? ` [${c.relationship_note}]` : ''} (use get_page/entity before relying on details)`;
+export const renderCardLine = (c: EntityCard, home?: string, untrusted = false): string =>
+  `- **${cardTitle(c, untrusted)}** → \`${c.entity.slug}\`${sourceNote(c, home)}${c.summary ? ` — ${cardSummary(c, c.summary)}` : c.trust_tier ? ` — ${cardSummary(c, '')}` : ''}${c.relationship_note ? ` [${c.relationship_note}]` : ''} (use get_page/entity before relying on details)`;
 export const renderThreadLine = (t: EntityOpenThread): string =>
   `- [${t.kind}] ${labeled(t, t.text)}${t.date ? ` (${t.date})` : ''}`;
 /** A quoted fact's fence closes on its own line (GST-687): its label rides the marker line and the slug and confidence follow the fence. */
@@ -951,11 +953,11 @@ const factDedupeKeys = (f: TurnContextFact): string[] =>
 export const renderPageLine = (p: DeltaPage): string => `- **${labeled(p, p.title)}** → \`${p.slug}\` (${p.updated_at})`;
 
 /** One card's newer-mentions block: a line naming the entity and its page date, then one line per page. [] when there are none. */
-export const renderNewerMentionLines = (c: EntityCard, home?: string): string[] => {
+export const renderNewerMentionLines = (c: EntityCard, home?: string, untrusted = false): string[] => {
   const m = c.newer_mentions;
   if (!m?.rows.length) return [];
   return [
-    `- **${c.entity.title}** (\`${c.entity.slug}\`${sourceNote(c, home)}, page dated ${m.since.slice(0, 10)}):`,
+    `- **${cardTitle(c, untrusted)}** (\`${c.entity.slug}\`${sourceNote(c, home)}, page dated ${m.since.slice(0, 10)}):`,
     ...m.rows.map(renderNewerMentionRow),
     ...(m.more ? [`  - more pages dated after ${m.since.slice(0, 10)} mention it: entity("${c.entity.slug}"${sourceNote(c, home) ? `, source_id "${c.entity.source_id}"` : ''}) lists them all`] : []),
   ];
@@ -984,6 +986,7 @@ export function renderPack(
   checkpointLinks?: TurnContextResult['checkpointLinks'],
   home?: string,
   entityFacts: TurnContextFact[] = [],
+  untrusted = false,
 ): string {
   const links = checkpointLinks ?? [];
   const shown = new Set(entityFacts.map((f) => f.id));
@@ -1000,11 +1003,11 @@ export function renderPack(
       're-pull with get_page. Trust these links over the compaction summary.',
     );
   }
-  if (cards.length) lines.push('', PACK_HEADERS[0], ...cards.map((c) => renderCardLine(c, home)));
+  if (cards.length) lines.push('', PACK_HEADERS[0], ...cards.map((c) => renderCardLine(c, home, untrusted)));
   if (openThreads.length) lines.push('', PACK_HEADERS[1], ...openThreads.map(renderThreadLine));
   if (entityFacts.length) lines.push('', ENTITY_FACTS_HEADER, ...entityFacts.map(renderFactLine));
   if (hot.length) lines.push('', PACK_HEADERS[2], ...hot.map(renderFactLine));
-  const mentionLines = cards.flatMap((c) => renderNewerMentionLines(c, home));
+  const mentionLines = cards.flatMap((c) => renderNewerMentionLines(c, home, untrusted));
   if (mentionLines.length) lines.push('', NEWER_MENTIONS_HEADER, ...mentionLines);
   return lines.join('\n');
 }

@@ -29,7 +29,7 @@ import { sqlFragment, trustedSql } from './fragment.ts';
 import { compileRowNormalizer } from './normalize.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { FACT_WITHDRAWAL_STAMP_DEFERRED_SETTING } from '../facts/insert-guard-schema.ts';
-import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
+import { privateProvenanceFilterUnderPolicy } from '../search/private-visibility.ts';
 import { storedTrustTier } from '../trust/tier.ts';
 import { ensureWellFormed } from '../text-safe.ts';
 
@@ -58,7 +58,7 @@ function eligibilityClause(opts: FactListOpts | undefined) {
 }
 
 function privacyClause(opts: { excludePrivate?: boolean } | undefined) {
-  return opts?.excludePrivate ? sqlFragment` AND ${trustedSql(privateProvenanceFilterFragment('facts'))}` : sqlFragment``;
+  return opts?.excludePrivate ? sqlFragment` AND ${trustedSql(privateProvenanceFilterUnderPolicy('facts'))}` : sqlFragment``;
 }
 
 function grepPattern(opts: FactListOpts | undefined): string | null {
@@ -703,6 +703,7 @@ export async function findTrajectory(exec: LegacyUnscopedRead, opts: import('../
         AND entity_slug = ${opts.entitySlug}
         AND expired_at IS NULL
         ${remoteFilter ? sqlFragment`AND visibility = 'world'` : sqlFragment``}${privacyClause(opts)}
+        AND ${trustedSql(projectionEligibleSql('facts', 'facts', undefined))}
         ${metric !== null ? sqlFragment`AND claim_metric = ${metric}` : sqlFragment``}
         ${kind === 'metric' ? sqlFragment`AND claim_metric IS NOT NULL` : sqlFragment``}
         ${kind === 'event' ? sqlFragment`AND event_type IS NOT NULL` : sqlFragment``}

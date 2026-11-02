@@ -1,5 +1,6 @@
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
+import { remoteTargetHidden } from '../persistence/page-visibility.ts';
 import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 import { MANAGED_LINK_SOURCES } from '../links-fence.ts';
 import { backlinkTypeFilter, readBacklinkPage, withLinkPageStatus } from './backlinks-paged.ts';
@@ -200,6 +201,9 @@ const remove_link: Operation = {
   handler: async (ctx, p) => {
     enforceClientSlugFence(ctx, p.from as string, 'remove_link');
     if (ctx.dryRun) return { dry_run: true, action: 'remove_link', from: p.from, to: p.to };
+    const writeSource = ctx.sourceId || 'default';
+    if (await remoteTargetHidden(ctx.engine, ctx.remote, writeSource, p.from as string)
+      || await remoteTargetHidden(ctx.engine, ctx.remote, writeSource, p.to as string)) return { status: 'ok', removed: 0 };
     await primeRelationSemantics(ctx.engine);
     const linkOpts = ctx.sourceId
       ? { fromSourceId: ctx.sourceId, toSourceId: ctx.sourceId }

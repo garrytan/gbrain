@@ -175,7 +175,7 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
     await finish(engine, row, row.attempts, { state: 'skipped', reason: 'superseded', nextAttemptAt: null });
     return done('skipped', 'superseded');
   }
-  const pin = pinDepth(snapshot);
+  const pin = await pinDepth(engine, snapshot);
 
   // An ineligible revision of a page that once produced events retires them (E8). No model call.
   if (row.state === 'skipped') {

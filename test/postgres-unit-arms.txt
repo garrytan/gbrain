@@ -11,6 +11,16 @@
 # file is a one-line edit: insert its path in sorted order. Shards balance
 # other Postgres lane runs. The unit, serial and slow lanes unset
 # themselves from scripts/postgres-arm-weights.json.
+test/access-as.test.ts
+test/access-binding.test.ts
+test/access-folder-lock-order.test.ts
+test/access-folder-multiconn.test.ts
+test/access-folder-rules.test.ts
+test/access-folder-scoped-role.test.ts
+test/access-members.test.ts
+test/access-on-behalf-of.test.ts
+test/access-page-indexes-online.test.ts
+test/access-writes.test.ts
 test/activation-unbound-rooted-6449.test.ts
 test/alias-source-cascade-5094.test.ts
 test/attribution-backfill-history.test.ts
@@ -81,6 +91,7 @@ test/facts-publication-large-fence-6898.test.ts
 test/facts-subject-infer-7405.test.ts
 test/fence-fact-append.test.ts
 test/fence-repair-receipts.test.ts
+test/fenced-embed-reuse-6961.test.ts
 test/file-drift-soft-delete-hold-release-gbra133.test.ts
 test/forecast-journal.test.ts
 test/frontmatter-reserved-keys-6454.test.ts
@@ -267,6 +278,7 @@ test/managed-sync-preparation-stalled-holds.test.ts
 test/managed-sync-row-parity.test.ts
 test/managed-sync-stale-group-head.test.ts
 test/mcp-sources-not-readable.test.ts
+test/member-read-access.test.ts
 test/migration-0-53-host-move-7900.test.ts
 test/migration-persistence-foreground-committed-index.test.ts
 test/migration-persistence-request-id-index.test.ts
@@ -457,8 +469,11 @@ test/retrieval-coverage-notices.test.ts
 test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts
 test/scripts/test-stress-postgres.test.ts
+test/search-entity-facts-eligibility.test.ts
 test/search-read-keyword-bound.test.ts
 test/search-remote-page-cap.test.ts
+test/search-transcript-quote-8384.test.ts
+test/search-transcript-quote-8384b.test.ts
 test/search-transcript-quote-budget.test.ts
 test/search-transcript-quote-coverage.test.ts
 test/search-transcript-quote-followups.test.ts

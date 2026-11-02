@@ -15,6 +15,7 @@ import { join, resolve } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import { apiDeps, attemptJobs, checkRecord, decide, decideGate, gateDeps, LEDGER_JOB, PROFILES, runGate, writeDecision, type Commit, type ExecutedCounts, type GateDeps, type JobRow, type FullRun, type ReuseDeps } from '../../scripts/ci-reuse.ts';
 import { GET_RETRY_DELAYS_MS, restClient, type GitHubClient } from '../../scripts/lib/gh-issue.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 const REPO = 'owner-example/repo-example';
 const M = '1'.repeat(40);
@@ -436,6 +437,72 @@ describe('ci-reuse remote-gate decision', () => {
       .toEqual({ reason: "reading run 600's 'executed-identities' artifact failed: HTTP 503", transient: true });
     expect(await gateDeps(download(async () => zipOf('executed-identities.json', '{"head":'))).executed(r600))
       .toEqual({ reason: expect.stringMatching(/^reading run 600's 'executed-identities' artifact failed: /) });
+  });
+
+  test('#8370: a permanent 4xx reading the artifact is a refusal; only no response, a 5xx, a 429 or a rate-limit 403 is transient', async () => {
+    const r600 = run('test.yml');
+    const status = (code: number, message = `HTTP ${code}`) => Object.assign(new Error(message), { status: code });
+    const download = (e: Error): GitHubClient => ({ ...identitiesClient(null), download: async () => { throw e; } });
+    const listing = (e: Error): GitHubClient => ({ ...identitiesClient(null), request: async () => { throw e; } });
+    for (const code of [403, 404, 410]) {
+      const got = await gateDeps(download(status(code))).executed(r600);
+      expect(got).toEqual({ reason: `reading run 600's 'executed-identities' artifact failed: HTTP ${code}` });
+      expect(await gateDeps(listing(status(code))).executed(r600)).not.toHaveProperty('transient');
+    }
+    for (const e of [status(429), status(403, 'API rate limit exceeded for installation'), status(502), Object.assign(new Error('no response'), { network: true })]) {
+      expect(await gateDeps(listing(e)).executed(r600)).toMatchObject({ transient: true });
+    }
+    const live = run('e2e.yml', { status: 'in_progress', conclusion: null });
+    const deps = gate({ runs: [run('test.yml'), live], executed: { 600: await gateDeps(download(status(410))).executed(r600) as { reason: string } } });
+    expect(await decideGate(deps, PROFILES.test, A, T, REPO)).toMatchObject({ state: 'rejected' });
+    const g = await go(deps, A, T, 90 * 60_000);
+    expect(g.code).toBe(4);
+    expect(g.lines.some(l => l.includes('waiting for'))).toBe(false);
+  });
+
+  test('#8370: both real clients classify a failed artifact download the same way: 403/410 refuse, a rate-limit 403 waits', async () => {
+    const r600 = run('test.yml');
+    const listing = JSON.stringify({ artifacts: [{ id: 7, name: 'executed-identities', expired: false }] });
+    const zipFails = (code: number, text: string) => {
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string) => String(url).endsWith('/zip') ? new Response(text, { status: code }) : new Response(listing, { status: 200 })) as typeof fetch;
+      return gateDeps(restClient(REPO, 'token-example', async () => {})).executed(r600).finally(() => { globalThis.fetch = real; });
+    };
+    const bin = mkdtempSync(join(tmpdir(), 'ci-reuse-gh-'));
+    const ghFails = async (code: number, text: string) => {
+      writeFileSync(join(bin, 'gh'), `#!/usr/bin/env bash\ncase "$*" in *"/zip"*) echo "gh: ${text} (HTTP ${code})" >&2; exit 1;; esac\necho '${listing}'\n`, { mode: 0o755 });
+      return withEnv({ PATH: `${bin}:${process.env.PATH}` }, () => gateDeps(restClient(REPO, '', async () => {})).executed(r600));
+    };
+    try {
+      for (const fails of [zipFails, ghFails]) {
+        for (const code of [403, 404, 410]) expect(await fails(code, 'Not Found')).not.toHaveProperty('transient');
+        expect(await fails(403, 'API rate limit exceeded for installation ID 1')).toMatchObject({ transient: true });
+        expect(await fails(429, 'Too Many Requests')).toMatchObject({ transient: true });
+        expect(await fails(502, 'Bad Gateway')).toMatchObject({ transient: true });
+      }
+    } finally { rmSync(bin, { recursive: true, force: true }); }
+  });
+
+  test('#8370: a refused blob-storage redirect, a rate-limit 403 known only by its headers, and the abuse-detection wording all stay transient', async () => {
+    const r600 = run('test.yml');
+    const listing = JSON.stringify({ artifacts: [{ id: 7, name: 'executed-identities', expired: false }] });
+    const token = (zip: (url: string) => Response) => {
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string) => String(url).includes('/actions/runs/') ? new Response(listing, { status: 200 }) : zip(String(url))) as typeof fetch;
+      return gateDeps(restClient(REPO, 'token-example', async () => {})).executed(r600).finally(() => { globalThis.fetch = real; });
+    };
+    const blob = 'https://blob-example.invalid/zip?sig=expired';
+    expect(await token(url => url === blob ? new Response('AuthenticationFailed', { status: 403 }) : new Response(null, { status: 302, headers: { location: blob } }))).toMatchObject({ transient: true });
+    expect(await token(() => new Response('', { status: 403, headers: { 'x-ratelimit-remaining': '0' } }))).toMatchObject({ transient: true });
+    expect(await token(() => new Response('', { status: 403, headers: { 'retry-after': '60' } }))).toMatchObject({ transient: true });
+    expect(await token(() => new Response('You have triggered an abuse detection mechanism.', { status: 403 }))).toMatchObject({ transient: true });
+    expect(await token(() => new Response('Resource not accessible by integration', { status: 403 }))).not.toHaveProperty('transient');
+    expect(await token(() => new Response('Gone', { status: 410 }))).not.toHaveProperty('transient');
+    const bin = mkdtempSync(join(tmpdir(), 'ci-reuse-gh-'));
+    try {
+      writeFileSync(join(bin, 'gh'), `#!/usr/bin/env bash\ncase "$*" in *"/zip"*) echo "gh: You have triggered an abuse detection mechanism. (HTTP 403)" >&2; exit 1;; esac\necho '${listing}'\n`, { mode: 0o755 });
+      expect(await withEnv({ PATH: `${bin}:${process.env.PATH}` }, () => gateDeps(restClient(REPO, '', async () => {})).executed(r600))).toMatchObject({ transient: true });
+    } finally { rmSync(bin, { recursive: true, force: true }); }
   });
 
   /** A run's receipts as scripts/lib/test-env.sh writes them: one artifact directory per job, one test file each. */

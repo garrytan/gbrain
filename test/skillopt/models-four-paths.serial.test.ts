@@ -105,7 +105,7 @@ async function viaJob(flags: SkillOptModelFlags = {}): Promise<Record<string, un
   captured = [];
   const data = buildSkillOptJobData({
     skillsDir, skillName: SKILL, benchmarkPath: path.join(skillsDir, SKILL, 'skillopt-benchmark.jsonl'),
-    epochs: 1, batchSize: 2, lr: 4, lrSchedule: 'constant', split: [4, 1, 5], mode: 'patch', dryRun: false,
+    epochs: 1, batchSize: 2, lr: 4, lrSchedule: 'constant', split: [4, 1, 5], mode: 'patch', optimizerMode: 'reflect', dryRun: false,
     noMutate: false, allowMutateBundled: false, bootstrapReviewed: false, maxCostUsd: 5, maxRuntimeMin: 30, force: false,
     models: await resolveSkillOptModels(engine, flags), modelFlags: flags, modelsStrict: false,
   });
@@ -224,7 +224,7 @@ describe('#5563 the cap source reaches runSkillOpt on every path', () => {
       captured = [];
       const data = buildSkillOptJobData({
         skillsDir, skillName: SKILL, benchmarkPath: path.join(skillsDir, SKILL, 'skillopt-benchmark.jsonl'),
-        epochs: 1, batchSize: 2, lr: 4, lrSchedule: 'constant', split: [4, 1, 5], mode: 'patch', dryRun: false,
+        epochs: 1, batchSize: 2, lr: 4, lrSchedule: 'constant', split: [4, 1, 5], mode: 'patch', optimizerMode: 'reflect', dryRun: false,
         noMutate: false, allowMutateBundled: false, bootstrapReviewed: false, maxCostUsd: 5, maxCostSource: 'default', maxRuntimeMin: 30, force: false,
         models: await resolveSkillOptModels(engine, {}), modelFlags: {}, modelsStrict: false,
       });
@@ -234,3 +234,17 @@ describe('#5563 the cap source reaches runSkillOpt on every path', () => {
     });
   });
 });
+
+describe('E1 optimizer mode (GBRA-274)', () => {
+  test('CLI, MCP op and cycle phase run one-shot rewrite by default; --loop opts into the reflect loop', async () => {
+    await withEnv(ENV, async () => {
+      expect((await viaCli()).optimizerMode).toBe('one-shot-rewrite');
+      expect((await viaCli(['--loop'])).optimizerMode).toBe('reflect');
+      expect(parseFlags([SKILL, '--loop']).loop).toBe(true);
+      expect((await viaMcp()).optimizerMode).toBe('one-shot-rewrite');
+      expect((await viaCycle()).optimizerMode).toBe('one-shot-rewrite');
+      expect((await viaJob()).optimizerMode).toBe('reflect');
+    });
+  });
+});
+

@@ -101,7 +101,8 @@ export function offPathMcpBytes(res: { content: { type: string; text: string }[]
   // Cat 40 Hard F2's keyword count line and fields and F4's row-date line are additive too
   // (pinned in test/search-keyword-paging.test.ts and test/search-date-labels.test.ts).
   const content = res.content.filter(c => !/^\[gbrain (notice |search\] |dates\] )/.test(c.text));
-  const { gbrain_notices: _notices, ...meta } = res._meta ?? {};
+  // GBRA-231's additive `_meta.access` (the caller's applied view) is pinned in test/access-on-behalf-of.test.ts.
+  const { gbrain_notices: _notices, access: _access, ...meta } = res._meta ?? {};
   if (meta.retrieval) meta.retrieval = withoutCounts(withoutTimings(meta.retrieval) as Record<string, unknown>);
   return JSON.stringify({ ...res, content, ...(res._meta ? { _meta: Object.keys(meta).length > 0 ? meta : undefined } : {}) });
 }
@@ -120,11 +121,12 @@ function withFactsOrder(payload: Record<string, unknown>): Record<string, unknow
   return Object.fromEntries(Object.entries(payload).flatMap(([k, v]) => k === 'total' ? [[k, v], ['facts_order', 'newest']] : [[k, v]]));
 }
 
-/** GST-687's remote quote of one row: its text fenced as an excerpt of its slug and `quoted` set (recall places it before `trust_tier`). */
+/** GST-687's remote quote of one row: its text (#8384: and title) fenced as an excerpt of its slug and `quoted` set (recall places it before `trust_tier`). */
 function quotedRow(row: Record<string, unknown>, field: 'chunk_text' | 'chunk'): Record<string, unknown> {
   const text = row[field];
   if (row.quoted !== undefined || typeof text !== 'string' || text.length === 0) return row;
-  const fenced = { ...row, [field]: fenceTranscriptText(text, row.slug as string) };
+  const title = typeof row.title === 'string' && row.title ? { title: fenceTranscriptText(row.title, row.slug as string) } : {};
+  const fenced = { ...row, ...title, [field]: fenceTranscriptText(text, row.slug as string) };
   if (field === 'chunk_text') return { ...fenced, quoted: 'transcript' };
   return Object.fromEntries(Object.entries(fenced).flatMap(([k, v]) => k === 'trust_tier' ? [['quoted', 'transcript'], [k, v]] : [[k, v]]));
 }

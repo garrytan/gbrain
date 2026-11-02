@@ -121,7 +121,10 @@ progress refuses instead of starting VMs. A passed run on the head whose
 executed-test receipt is refused (an unreadable, stale or empty ledger) ends the
 wait at once, since no later dispatch of the head is coming; the same refusal on
 another head with the same tree keeps waiting for the head's own dispatch, and a
-receipt download that failed (a 5xx or timeout) is read again on the next poll. The newest full run on the tree decides,
+receipt download that failed transiently (no response, a 5xx, a 429, a rate-limit
+403, or a refusal from the artifact storage the download redirects to) is read
+again on the next poll. Any other 4xx, such as a 403 or an expired artifact's
+410, refuses at once. The newest full run on the tree decides,
 across the head and every recent head with the same tree, so neither an empty
 commit nor an older pass elsewhere skips a newer failure; a failed one refuses
 with no receipt. A run that did not run the full job (a diagnostic dispatch, a

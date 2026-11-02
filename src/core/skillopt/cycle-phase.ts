@@ -210,6 +210,7 @@ export async function runPhaseSkillopt(opts: SkilloptPhaseOpts): Promise<Skillop
         ...skillOptModelOpts(models),
         modelsBannerBaseline: basePlan,
         mode: 'patch',
+        optimizerMode: 'one-shot-rewrite',
         dryRun: opts.dryRun ?? false,
         // Bundled-skill safety: dream-cycle NEVER auto-mutates bundled skills.
         // For bundled skills we set --no-mutate; the user reviews proposed.md

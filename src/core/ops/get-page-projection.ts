@@ -56,6 +56,16 @@ export function quotesBody(ctx: Pick<OperationContext, 'remote'>, page: Pick<Pag
 }
 
 /**
+ * #8384 (AN5): a remote read quoted only because the page's origin is unverified (`unknown`: saved before gbrain tracked
+ * trust, its source unclaimed) says, once per session, which owner command clears it. The quoting itself is unchanged.
+ */
+export function unverifiedOriginNotice(ctx: Pick<OperationContext, 'remote' | 'emitNotice'>, page: Pick<Page, 'type' | 'slug'>, trust: Pick<TrustFields, 'trust_tier'> | undefined): void {
+  if (ctx.remote === false || isQuotedPageType(page.type) || (trust?.trust_tier ?? 'unknown') !== 'unknown') return;
+  ctx.emitNotice?.({ code: 'quoted_unverified_origin', kind: 'info', dedupe_key: 'quoted_unverified_origin',
+    why: `${page.slug} is quoted as source material because its origin is unverified: it was saved before gbrain tracked trust and its source is not claimed. If these are the owner's own notes, the brain host's operator runs gbrain trust claim-sources (preview with gbrain trust claim-sources --dry-run --json); gbrain trust backfill classifies the rest. Until then such pages stay quoted.` });
+}
+
+/**
  * GST-687: an untrusted reader's reading shapes of a third-party page (get_page compiled_truth, timeline and view 'read'
  * windows; fetch text) carry its tool-call blocks summarized, as search does. The round-trip shapes (include_content,
  * view 'markdown') and gbrain's own thin client keep the stored bytes inside the fence.
@@ -70,15 +80,15 @@ function enveloped(text: string, fields: TrustFields | undefined): string {
 }
 
 /**
- * #8377: a quoted page's title and frontmatter as an untrusted reader gets them, each string fenced as `slug`'s
- * (frontmatter keys stay); with `quote` false, as stored. The round-trip `content` is fenced whole instead.
+ * #8377: a quoted page's title and frontmatter (#8384: and its tags) as an untrusted reader gets them, each string fenced
+ * as `slug`'s (frontmatter keys stay); with `quote` false, as stored. The round-trip `content` is fenced whole instead.
  */
-export function quotedPageMeta(page: Pick<Page, 'slug' | 'title' | 'frontmatter'>, quote: boolean): Pick<Page, 'title' | 'frontmatter'> {
-  if (!quote) return { title: page.title, frontmatter: page.frontmatter };
+export function quotedPageMeta(page: Pick<Page, 'slug' | 'title' | 'frontmatter'>, quote: boolean, tags: string[] = []): Pick<Page, 'title' | 'frontmatter'> & { tags: string[] } {
+  if (!quote) return { title: page.title, frontmatter: page.frontmatter, tags };
   const fence = (value: unknown): unknown => typeof value === 'string' ? (value ? fenceTranscriptText(value, page.slug) : value)
     : Array.isArray(value) ? value.map(fence)
     : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fence(v)])) : value;
-  return { title: fence(page.title) as string, frontmatter: fence(page.frontmatter ?? {}) as Page['frontmatter'] };
+  return { title: fence(page.title) as string, frontmatter: fence(page.frontmatter ?? {}) as Page['frontmatter'], tags: fence(tags) as string[] };
 }
 
 export interface GetPageProjectionOpts {
@@ -131,7 +141,8 @@ export function projectGetPage(stored: Page, o: GetPageProjectionOpts) {
   const fence = (text: string) => (text ? fenceTranscriptText(text, stored.slug) : text);
   const summarize = o.neutralize === true && (!o.includeContent || o.readingContent === true);
   const plain = summarize ? { ...stored, compiled_truth: stored.compiled_truth && neutralizeToolCalls(stored.compiled_truth), timeline: stored.timeline && neutralizeToolCalls(stored.timeline) } : stored;
-  const page = o.quote ? { ...plain, ...quotedPageMeta(stored, true), compiled_truth: fence(plain.compiled_truth), timeline: fence(plain.timeline) } : stored;
+  const { tags: shownTags, ...meta } = quotedPageMeta(stored, o.quote === true, tags);
+  const page = o.quote ? { ...plain, ...meta, compiled_truth: fence(plain.compiled_truth), timeline: fence(plain.timeline) } : stored;
   const omitted = quarantined?.body_omitted === true;
   const wrap = quarantined?.body_enveloped === true;
   const visibleBody = omitted ? { ...page, compiled_truth: '', timeline: '' }
@@ -154,7 +165,7 @@ export function projectGetPage(stored: Page, o: GetPageProjectionOpts) {
       type: visibleBody.type,
       title: visibleBody.title,
       revision,
-      tags,
+      tags: shownTags,
       ...(text === undefined ? {} : { content: text }),
       chars: text?.length ?? 0,
       ...(deletedAt ? { deleted_at: deletedAt } : {}),
@@ -165,7 +176,7 @@ export function projectGetPage(stored: Page, o: GetPageProjectionOpts) {
   return {
     ...visibleBody,
     revision,
-    tags,
+    tags: shownTags,
     ...(text === undefined ? {} : { content: text }),
     chars: (visibleBody.compiled_truth ?? '').length + (visibleBody.timeline ?? '').length + (text?.length ?? 0),
     // #5575 A6: the reading shape carries the page's trust; the content_only round-trip shape stays minimal.

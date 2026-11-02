@@ -282,6 +282,14 @@ export interface AuthInfo {
   /** Durable, verifier-derived identity. Never infer this from a display name or request data. */
   principal?: { kind: 'oauth_client' | 'legacy_token'; id: string };
   /**
+   * GBRA-218: the live member this credential is bound to and its groups, joined by the verifier
+   * (null = unbound). Undefined when no verifier joined it; src/core/access/caller.ts then looks the
+   * binding up from `principal` (fail closed). Never set from request data.
+   */
+  member?: { id: string; groups: string[] } | null;
+  /** GBRA-218: the stored `may_act_for` audience list (shared agents, PR B); stored and reported only. */
+  mayActFor?: string[] | null;
+  /**
    * Human-readable agent name resolved at token-verification time.
    * For OAuth clients this is `oauth_clients.client_name`; for legacy
    * bearer tokens it is `access_tokens.name`. Threading this through
@@ -511,6 +519,13 @@ export interface OperationContext {
    * treated as 'full'.
    */
   surfaceCeiling?: 'verbs' | 'starter' | 'full';
+  /**
+   * GBRA-218 local `--as <member>`: the member identity a trusted local read previews. Set only by the
+   * CLI with `applyRemoteReadPolicy`; `remote` stays false, so upload confinement and write trust are unchanged.
+   */
+  accessIdentity?: readonly string[];
+  /** GBRA-218: page reads apply the remote read policy (readers and privacy) although the caller is local (`--as`). */
+  applyRemoteReadPolicy?: boolean;
   /** The stdio session's surface (stdio MCP only): `request_tools` widens it for this session, `whoami` reports it. */
   stdioSurface?: StdioSurfaceState;
   /**
