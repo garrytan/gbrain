@@ -13,6 +13,7 @@
 import { describe, expect, test } from 'bun:test';
 import { randomBytes } from 'crypto';
 import { correctedEntropy, patternSince, redactFindings, scanText, shannonEntropy } from '../src/core/secret-scan.ts';
+import { PROVIDER_KEY_SHAPES, PROVIDER_PREFIX_PROSE } from './helpers/provider-keys.ts';
 
 const ALNUM = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 /** Random alphanumeric string that always carries a digit (entropy rule input). */
@@ -292,6 +293,47 @@ describe('A5 high_entropy_assignment: punctuated values', () => {
       'password=<your-password-here>',
     ]) {
       expect(he(s).text).toBe(s);
+    }
+  });
+});
+
+describe('A6 AI-provider keys (#7959)', () => {
+  test('each key fires under its own rule in prose, KEY=value, JSON and after Bearer, and redacts to its token', () => {
+    for (const shape of PROVIDER_KEY_SHAPES) {
+      const key = shape.make();
+      for (const line of [
+        `router key ${key} end`,
+        `API_KEY=${key}`,
+        JSON.stringify({ api_key: key }),
+        `Authorization: Bearer ${key}`,
+      ]) {
+        for (const opts of [{}, { highEntropy: true, labeledCredentials: true }]) {
+          const findings = scanText(line, opts);
+          expect(findings.map((f) => f.pattern), line).toEqual([shape.pattern]);
+          expect(JSON.stringify(findings).includes(key)).toBe(false);
+          expect(redactFindings(line, opts).text.includes(key)).toBe(false);
+        }
+      }
+      expect(redactFindings(`k ${key} end`).text).toBe(`k ${REDACTED(shape.pattern)} end`);
+    }
+  });
+
+  test('near misses fire no rule at all: wrong length, case or separator, or the prefix inside a longer word', () => {
+    for (const shape of PROVIDER_KEY_SHAPES) {
+      for (const miss of shape.nearMisses()) {
+        expect(scanText(`see ${miss} end`, { highEntropy: true, labeledCredentials: true }), miss).toEqual([]);
+      }
+    }
+    expect(scanText(PROVIDER_PREFIX_PROSE, { highEntropy: true, labeledCredentials: true })).toEqual([]);
+  });
+
+  test('the rules carry one since version, which every finding reports', () => {
+    const since = patternSince('openrouter');
+    expect(since).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
+    expect(since).not.toBe(patternSince('digitalocean'));
+    for (const shape of PROVIDER_KEY_SHAPES) {
+      expect(patternSince(shape.pattern)).toBe(since);
+      expect(scanText(`k ${shape.make()}`)[0]!.since).toBe(since);
     }
   });
 });

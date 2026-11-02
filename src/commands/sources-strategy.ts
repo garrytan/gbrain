@@ -33,7 +33,10 @@ export async function unfinishedManagedSyncRuns(engine: BrainEngine, sourceId: s
      WHERE c.op='managed-sync' AND COALESCE(c.completed_keys->0->>'done','false')<>'true' AND s.id=$1 ORDER BY c.updated_at`, [sourceId]);
 }
 
-/** Why a strategy change would cut under a running or unfinished pass: a live drain lease, or an open episode (read-only). */
+/**
+ * Why a strategy change would cut under a running or unfinished pass: a drain lease's lock row (a live holder's, or, until a
+ * takeover, a killed holder's: refusing on that is the safe side), or an open episode (read-only).
+ */
 export async function unfinishedManagedSyncPass(engine: BrainEngine, sourceId: string): Promise<{ lease: string | null; episode: { opened_at: string; full_id: string | null } | null }> {
   const [{ readDrainHolder }, { readPassRow }] = await Promise.all([import('../core/persistence/sync-lease.ts'), import('../core/persistence/sync-pass-row.ts')]);
   const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);

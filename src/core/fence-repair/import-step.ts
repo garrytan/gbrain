@@ -19,7 +19,7 @@ import { VERSION } from '../../version.ts';
 import { fenceBody } from '../page-body/page-shape.ts';
 import { fencesNormalizeEnabled } from './config.ts';
 import { fenceRefusal, scanCanonicalFences, targetFenceRefusal } from './refusal.ts';
-import { effectiveVisibility } from '../search/private-visibility.ts';
+import { effectiveVisibility, folderRestricted } from '../search/private-visibility.ts';
 import { fenceIssuesWire, fenceStep, residualLocation, type FenceIssueWire, type FenceStep } from './tier1.ts';
 import type { FenceCtx, FenceFix, FenceKind, FencePage, StoredRowMap } from './types.ts';
 
@@ -108,7 +108,7 @@ export async function resolveImportFences(input: {
 }): Promise<ImportFences> {
   const verdict = input.screened !== undefined ? input.screened ?? undefined : input.screen;
   if (!verdict) return { fixes: [], warnings: [] };
-  const ctx = screenFenceCtx(input.parsed, input.activePack);
+  const ctx = screenFenceCtx({ ...input.parsed, folder_restricted: await folderRestricted(input.engine, input.sourceId, input.slug) }, input.activePack);
   const refuse = (step: Extract<FenceStep<FencePage>, { status: 'residual' }>): ImportFences => {
     const issues = fenceIssuesWire([...step.issues, ...step.fixable]);
     if (step.issues.some(issue => issue.reason === 'normalizer_failed')) console.warn(`[gbrain] #6188 fence normalizer failed on ${input.slug} (gbrain ${VERSION}); the fence was not rewritten.`);
@@ -150,7 +150,8 @@ interface StoredPageInput { sourceId: string; slug: string; page: FencePage & { 
 /** Tier 1 over a page body the caller is about to write (switch read only when there is a fix; stored rows only for `renumber`). */
 async function storedPageStep(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig'>, input: StoredPageInput): Promise<{ page: FencePage; step: FenceStep<FencePage> }> {
   const page = { compiled_truth: input.page.compiled_truth ?? '', timeline: input.page.timeline ?? '' };
-  const ctx: FenceCtx = { pageVisibility: effectiveVisibility({ kind: 'page', page: { type: input.page.type ?? null, frontmatter: input.page.frontmatter } }) };
+  const ctx: FenceCtx = { pageVisibility: effectiveVisibility({ kind: 'page', page: { type: input.page.type ?? null, frontmatter: input.page.frontmatter,
+    folder_restricted: await folderRestricted(engine, input.sourceId, input.slug) } }) };
   let step = fenceStep(page, ctx, { normalize: true });
   if (step.status === 'normalized' && !await fencesNormalizeEnabled(engine)) step = fenceStep(page, ctx, { normalize: false });
   if (step.status === 'normalized' && step.fixes.some(f => f.class === 'renumber')) {

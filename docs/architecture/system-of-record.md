@@ -280,7 +280,6 @@ or a physical projection that leaves attribution untouched):
 - `src/core/persistence/derived-retirement-hold.ts` (3): `retireDerivedPages` versions, soft-deletes and stamps retired derived pages (unmanaged extract_atoms stale atoms) in 500-page `maintenanceTransaction` chunks.
 - `src/core/persistence/facts-prepare.ts` (3): managed `extract_facts` request preparer.
 - `src/core/persistence/file-repair.ts` (2): `managed_file_repair` request preparer (#5988).
-- `src/core/persistence/grandfather.ts` (2): request preparer.
 - `src/core/persistence/links-maintenance.ts` (1): coordinated maintenance.
 - `src/core/persistence/loop-fact-retirement.ts` (1): request preparer.
 - `src/core/persistence/memory-mutations.ts` (1): `forget` inside its request's coordinated write.
@@ -293,6 +292,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/persistence/sync-prepare.ts` (4): managed sync request preparer.
 - `src/core/persistence/sync-streamed.ts` (1): the streamed sync of a file over the single-string ceiling moves a renamed page (`updateSlug`) in its request's apply, inside the coordinated publication.
 - `src/core/persistence/takes-prepare.ts` (3): takes request preparer.
+- `src/core/repair/agent-session-facts.ts` (2): a `managed_maintenance_agent_session_facts` request on managed brains (database-only fact re-attribution and take retirement); the unmanaged write runs in `maintenanceTransaction`.
 - `src/core/repair/atoms-restore.ts` (3): the unmanaged `gbrain repair atoms-restore` apply archives the retired atom's version, restores it and drops its `retired_by`/`retired_at` stamp in one `maintenanceTransaction`; managed brains publish a `managed_maintenance_restore_reextract_atom` request instead.
 - `src/core/repair/captured-facts.ts` (1): a request on managed brains; the unmanaged captured-facts expiry runs in `maintenanceTransaction`.
 - `src/core/repair/consolidate-ties.ts` (1): `gbrain repair consolidate-ties` reopens facts inside `coordinatedDatabaseWrite` on managed brains (the `relink_facts` operation) and in one `maintenanceTransaction` per fact on unmanaged brains.
@@ -306,10 +306,11 @@ or a physical projection that leaves attribution untouched):
 - `src/core/repair/ontology-facts.ts` (1): a coordinated database-only write (`coordinatedDatabaseWrite`, the `ontology_propose` path) on managed brains; the unmanaged ontology-facts restore runs in `maintenanceTransaction`.
 - `src/core/repair/redacted-facts.ts` (1): a `managed_maintenance_restore_redacted_facts` request on managed brains; the unmanaged restore of database-only fact text runs in `maintenanceTransaction`.
 - `src/core/repair/rename-identity.ts` (5): `gbrain repair rename-identity` carry, unmanaged brains only (a managed brain refuses `managed_remedy_unavailable` before writing); the fence-row merge, the provisional page's retirement, the slug move and the import run in one `maintenanceTransaction` under both page locks after the plan-hash recheck.
+- `src/core/repair/secret-spans.ts` (1): `gbrain repair secret-spans` (GST-327) rewrites the credential spans of each preview-approved page under the page key: inside `withCoordinatedWrite` with maintenance attribution on managed brains, `withWriteAttribution` with maintenance attribution on unmanaged ones.
 - `src/core/repair/stale-atoms.ts` (1): the retirement stamp. On managed brains it runs in the `managed_maintenance_retire_stale_atoms` request's apply; on unmanaged brains the retirement is an approved atom generation (`publishGeneration`, one `maintenanceTransaction`) and the stamp runs in its `onRetired` callback inside that transaction.
 - `src/core/repair/take-supersession.ts` (1): `gbrain repair take-supersession` reprojection: a receipted `managed_maintenance_take_reproject` request on managed brains, `maintenanceTransaction` on unmanaged ones; fence edits go through a revision-bound `put_page`.
 - `src/core/repair/timeline-comments.ts` (1): `gbrain repair timeline-comments` row cleanup: `withCoordinatedWrite` under the page key on managed brains, `maintenanceTransaction` otherwise.
-- `src/core/repair/url-clone-fences.ts` (2): `gbrain repair url-clone-fences` (#6946), unmanaged brains only (a managed brain previews nothing); keeping the appended fence rows database-only (clearing `row_num`, inserting a row the database lost) runs in one `maintenanceTransaction` under the page lock after the preview recheck; HEAD's bytes then import through `importFromContent`.
+- `src/core/repair/url-clone-fences.ts` (2): `gbrain repair url-clone-fences` (#6946), unmanaged brains only (a managed brain previews nothing); keeping the appended fence rows database-only (clearing `row_num`, inserting a row the database lost) runs in one `maintenanceTransaction` under the page lock after the preview recheck; HEAD's bytes then import through `importFromContent` (a HEAD that asks for private in a spelling page privacy does not read is held: not imported, and the apply reports `held`, #7897).
 - `src/core/repair/visibility.ts` (1): `gbrain repair visibility --apply` tightening of database-only world facts from a private source: a receipted `managed_maintenance_tighten_fact_visibility` request on managed brains, `maintenanceTransaction` on unmanaged ones; fenced rows change through a revision-bound `put_page`.
 - `src/core/schema-pack/page-to-alias.ts` (1): the page-to-alias conversion soft-deletes each converted page in `maintenanceTransaction`.
 - `src/core/schema-pack/page-to-link.ts` (1): the page-to-link conversion soft-deletes each converted page in `maintenanceTransaction`.
@@ -321,7 +322,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/timeline-write-through.ts` (2): the timeline write-through's page row splice and entry insert run in one `maintenanceTransaction`.
 - `src/core/trust/fence-guard.ts` (2): the guarded fence re-projection detaches or moves higher-tier fact rows inside the page's coordinated publication.
 - `src/core/trust/held-removals.ts` (1): an owner accept of a held take or timeline removal re-projects the row as the page says in a coordinated (managed) or attributed (unmanaged) transaction under the page key.
-- `src/core/trust/owner-actions.ts` (1): an owner release inserts the held fact database-only at user_confirmed in an attributed transaction (unmanaged) or, on a managed brain, in a coordinated one only for a hold with no entity slug or whose page is missing; every other managed fact release is a journaled `trust_release` publication (`src/core/trust/release-publish.ts`) that writes the fence row to the file first.
+- `src/core/trust/owner-actions.ts` (1): an owner release inserts the held fact database-only at user_confirmed in an attributed transaction (unmanaged) or, on a managed brain, in a coordinated one only for a hold with no entity slug or whose page is missing; every other managed fact release is a journaled `trust_release` publication (`src/core/trust/release-publish.ts`) that writes the fence row to the file first; an index-existing release binds the cell's previewed fields and refuses `preview_changed` when the cell moved, and the database-only release re-checks the approval on the locked hold.
 - `src/core/trust/supersede-handlers.ts` (3): owner accept/undo of a trust proposal re-tiers the new fact (or take) inside the checked supersede's (or takes publication's) transaction.
 <!-- write-attribution-covered:end -->
 

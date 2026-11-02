@@ -649,6 +649,14 @@ export interface SubagentHandlerData {
    */
   dream_output?: DreamOutputSpec;
   /**
+   * #7850: the session-corpus file a dream synthesis child writes for, the corpus dir and the source incarnation discovery
+   * resolved it to. The child resolves the file again (read-only) before any model call and refuses
+   * (`session_source_changed: <reason>`) when the session no longer resolves to `source_id` or the incarnation changed; a
+   * child without it is re-checked from `dream_output.raw_source` and the configured corpus dir. Trusted field
+   * (PROTECTED_JOB_NAMES); a delegated (remote-owned) job ignores it.
+   */
+  corpus_source?: { raw_source: string; corpus_dir: string; incarnation: string };
+  /**
    * GBRA-60: the agent loop's put_page stages each page instead of writing it (minions/tools/staged-put-page.ts): every
    * check put_page runs before journaling still refuses, but the page lives only in this job's tool-execution ledger
    * until the submitting phase publishes it (a managed patterns run grounds, stamps and publishes the staged pages as

@@ -36,6 +36,7 @@ import {
   loadCorpusBeliefData,
   loadCorpusQueries,
 } from './helpers/bootstrap-corpus.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 
 let engine: PGLiteEngine;
 
@@ -74,7 +75,7 @@ async function seedPage(slug: string, title: string, body: string) {
 }
 
 async function seedFact(fact: string, visibility: 'private' | 'world', opts: { session?: string; entity?: string } = {}) {
-  await engine.insertFact(
+  await asOwner(engine, tx => tx.insertFact(
     {
       fact,
       kind: 'fact',
@@ -84,7 +85,7 @@ async function seedFact(fact: string, visibility: 'private' | 'world', opts: { s
       source_session: opts.session ?? null,
     },
     { source_id: 'default' },
-  );
+  ));
 }
 
 describe('assembleTurnContext', () => {
@@ -278,6 +279,8 @@ describe('assembleDeltaContext read failures', () => {
     const partialEngine = {
       listPages: async () => { throw new Error('private storage detail'); },
       listFactsKeyset: (...args: Parameters<BrainEngine['listFactsKeyset']>) => engine.listFactsKeyset(...args),
+      // The facts arm reads each fact's source page to decide quoting (#8042).
+      executeRaw: (...args: Parameters<BrainEngine['executeRaw']>) => engine.executeRaw(...args),
     } as unknown as BrainEngine;
 
     const result = await assembleDeltaContext(partialEngine, {

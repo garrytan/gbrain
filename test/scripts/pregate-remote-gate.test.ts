@@ -11,7 +11,19 @@
  * PREGATE_TREE mismatch reaches the gate, or the default gate is anything
  * but the development form `bun run ci:ubicloud:diff` (the full gate runs
  * once per PR, at handoff).
- * Seam: GBRAIN_PREGATE_GATE_CMD replaces `bun run ci:ubicloud:diff`.
+ * Remote-gate reuse: a clean tree whose Test and E2E full runs passed on GitHub
+ * takes its receipt from them (same line, byte for byte) and starts no gate; a
+ * failed full run refuses; a dirty tree, no repository, GBRAIN_PREGATE_REUSE=0
+ * or no reuse runs the gate.
+ * Seams: GBRAIN_PREGATE_GATE_CMD replaces `bun run ci:ubicloud:diff`,
+ * GBRAIN_PREGATE_REUSE_CMD replaces `bun scripts/ci-reuse.ts --gate`,
+ * GBRAIN_PREGATE_REPO names the repository.
+ * --list: prints the gate command's --list output (the inventory gstack's
+ * clear --run checks runs against) without UBI_OWNER or a gate; a failing or
+ * empty inventory exits non-zero.
+ * VM cleanup: the gate's UBICLOUD: left= line (UBI_LEFT_FILE) must say 0, or
+ * the run is PREGATE_REMOTE_INFRA (exit 4, no receipt), never a test result;
+ * a missing line counts as not confirmed.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
@@ -20,6 +32,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 const SCRIPT = resolve(import.meta.dir, '..', '..', 'scripts/pregate-remote-gate.sh');
+const LEFT0 = `echo 'UBICLOUD: left=0 owner=gbra0test vms=1 others=0' >> "$UBI_LEFT_FILE"`;
 const SUMMARY = [
   '=== ci-ubicloud summary ===',
   '  gitleaks 1 passed, 0 failed, 8s compute',
@@ -43,10 +56,11 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(repo, { recursive: true, force: true }));
 
-function run(gate: string, env: Record<string, string | undefined> = {}) {
+/** Runs the script with `gate` as the gate command; unless `raw`, the gate first reports a clean VM teardown (left=0). */
+function run(gate: string, env: Record<string, string | undefined> = {}, raw = false) {
   const r = spawnSync('bash', [SCRIPT], {
     cwd: repo, encoding: 'utf8',
-    env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', UBI_OWNER: 'gbra0test', PREGATE_TREE: undefined, GBRAIN_PREGATE_GATE_CMD: gate, ...env },
+    env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', UBI_OWNER: 'gbra0test', UBI_LEFT_FILE: undefined, PREGATE_TREE: undefined, GBRAIN_PREGATE_REPO: undefined, GBRAIN_PREGATE_REUSE: undefined, GBRAIN_PREGATE_REUSE_CMD: undefined, GBRAIN_PREGATE_GATE_CMD: raw ? gate : `${LEFT0}; ${gate}`, ...env },
   });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
@@ -77,7 +91,7 @@ describe('pregate-remote-gate.sh', () => {
 
   it('a green gate exits 0 with failed=0 and receives the extra arguments', () => {
     const gate = join(repo, '.git', 'gate.sh');
-    writeFileSync(gate, `echo "args: $*"; printf '%s\\n' '=== ci-ubicloud summary ===' '  unit     4 passed, 0 failed, 1s compute'\n`);
+    writeFileSync(gate, `echo "args: $*"; ${LEFT0}; printf '%s\\n' '=== ci-ubicloud summary ===' '  unit     4 passed, 0 failed, 1s compute'\n`);
     const r = spawnSync('bash', [SCRIPT, '--vms', '8'], {
       cwd: repo, encoding: 'utf8',
       env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', UBI_OWNER: 'gbra0test', GBRAIN_PREGATE_GATE_CMD: `bash ${gate}` } as Record<string, string>,
@@ -90,7 +104,7 @@ describe('pregate-remote-gate.sh', () => {
   it('runs the development gate, bun run ci:ubicloud:diff, by default and passes the extra arguments on', () => {
     const bin = join(repo, '.git', 'fake-bin');
     mkdirSync(bin);
-    writeFileSync(join(bin, 'bun'), `#!/usr/bin/env bash\necho "fake-bun: $*"\nprintf '%s\\n' '=== ci-ubicloud summary ===' '  gitleaks 1 passed, 0 failed, 2s compute'\n`);
+    writeFileSync(join(bin, 'bun'), `#!/usr/bin/env bash\necho "fake-bun: $*"\n${LEFT0}\nprintf '%s\\n' '=== ci-ubicloud summary ===' '  gitleaks 1 passed, 0 failed, 2s compute'\n`);
     chmodSync(join(bin, 'bun'), 0o755);
     const r = spawnSync('bash', [SCRIPT, '--lanes', 'unit'], {
       cwd: repo, encoding: 'utf8',
@@ -115,6 +129,33 @@ describe('pregate-remote-gate.sh', () => {
     expect(r.code).toBe(1);
   });
 
+  it('a gate whose VM cleanup is not confirmed (left=1, left=unknown or no left line) is PREGATE_REMOTE_INFRA, exit 4, never a test result', () => {
+    const green = `printf '%s\\n' '=== ci-ubicloud summary ===' '  unit     4 passed, 0 failed, 1s compute'`;
+    for (const [report, shown] of [[`echo 'UBICLOUD: left=1 owner=gbra0test vms=2 others=0' >> "$UBI_LEFT_FILE"; `, 'left=1'], [`echo 'UBICLOUD: left=unknown owner=gbra0test vms=2 others=unknown' >> "$UBI_LEFT_FILE"; `, 'left=unknown'], ['', 'left=missing']] as const) {
+      for (const gate of [`${report}${green}`, `${report}${green}; exit 1`]) {
+        const r = run(gate, {}, true);
+        expect(r.code).toBe(4);
+        expect(r.err).toContain(`pregate-remote-gate: PREGATE_REMOTE_INFRA: VM cleanup not confirmed (UBICLOUD: ${shown}, gate exit `);
+        expect(r.err).toContain('an infrastructure failure, not a test result, so no receipt. Check and destroy leftovers: UBI_OWNER=gbra0test scripts/ubicloud/ubi-runner.sh list --mine');
+        expect(r.out).not.toContain('PREGATE_REMOTE:');
+      }
+    }
+    // A clean teardown keeps the gate's own result: a test failure exits 1 with its receipt.
+    const failing = run(`printf '%s\\n' '=== ci-ubicloud summary ===' '  unit     4 passed, 1 failed, 1s compute'; exit 1`);
+    expect(failing.code).toBe(1);
+    expect(failing.out.trim().split('\n').at(-1)).toBe(`PREGATE_REMOTE: tree=${contentTree()} tests=5 failed=1`);
+  });
+
+  it('a ci-ubicloud run that exits before it requests any VM reports left=0 vms=0, so its failure stays a gate result, not PREGATE_REMOTE_INFRA', () => {
+    const ci = resolve(import.meta.dir, '..', '..', 'scripts/ci-ubicloud.ts');
+    const r = run(`bun ${ci}`, { UBICLOUD_API_KEY: undefined, UBICLOUD_API_TOKEN: undefined }, true);
+    expect(r.out).toContain('UBICLOUD_API_KEY (or UBICLOUD_API_TOKEN) is not set');
+    expect(r.out).toContain('UBICLOUD: left=0 owner=gbra0test vms=0 others=unknown');
+    expect(r.err).not.toContain('PREGATE_REMOTE_INFRA');
+    expect(r.err).toContain('no ci-ubicloud summary');
+    expect(r.code).toBe(2);
+  });
+
   it('refuses before the gate without UBI_OWNER or when PREGATE_TREE is another tree', () => {
     const marker = join(repo, '.git', 'ran');
     const noOwner = run(`touch ${marker}`, { UBI_OWNER: '' });
@@ -124,5 +165,153 @@ describe('pregate-remote-gate.sh', () => {
     expect(stale.code).toBe(1);
     expect(stale.err).toContain('not the tree pregate selected');
     expect(spawnSync('test', ['-e', marker]).status).not.toBe(0);
+  });
+
+  describe('reuse of GitHub full runs on the identical tree', () => {
+    const GREEN_GATE = `printf '%s\\n' '=== ci-ubicloud summary ===' '  unit     4 passed, 0 failed, 1s compute'`;
+    const reuser = (body: string) => {
+      const file = join(repo, '.git', 'reuse.sh');
+      writeFileSync(file, `echo "reuse-args: $*" > .git/reuse-args\n${body}\n`);
+      return `bash ${file}`;
+    };
+    const ran = (name: string) => spawnSync('test', ['-e', join(repo, '.git', name)]).status === 0;
+    const gateMarking = `touch .git/gate-ran; ${GREEN_GATE}`;
+    beforeEach(() => git('update-ref', 'refs/remotes/origin/master', 'HEAD'));
+
+    it('runs the reuse check without the model and database keys the gate strips', () => {
+      const keys = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'VOYAGE_API_KEY', 'GEMINI_API_KEY', 'JEV_TYPESAFE_API_KEY', 'DATABASE_URL'];
+      const seen = keys.map(k => `echo "${k}=\${${k}:-unset}" >> .git/reuse-env`).join('; ');
+      run(gateMarking, { GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE_CMD: reuser(`${seen}; exit 4`), ...Object.fromEntries(keys.map(k => [k, 'secret-example'])) });
+      expect(spawnSync('cat', [join(repo, '.git', 'reuse-env')], { encoding: 'utf8' }).stdout.trim().split('\n')).toEqual(keys.map(k => `${k}=unset`));
+    });
+
+    it('a tree that changes the full-ci workflows or the scripts that attest its runs relative to origin/master never reuses its own runs', () => {
+      for (const path of ['.github/workflows/test.yml', '.github/workflows/e2e.yml', 'scripts/ci-reuse.ts', 'scripts/ci-full-suite-tree.sh', 'scripts/ci-executed-counts.ts', 'scripts/lib/gh-issue.ts']) {
+        rmSync(join(repo, '.git', 'reuse-args'), { force: true });
+        rmSync(join(repo, '.git', 'gate-ran'), { force: true });
+        mkdirSync(join(repo, path, '..'), { recursive: true });
+        writeFileSync(join(repo, path), `changed ${path}\n`);
+        git('add', '.');
+        git('commit', '-q', '-m', `change ${path}`);
+        const r = run(gateMarking, { GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE_CMD: reuser("echo 'GBRAIN_REUSE_RESULT tests=9 failed=0'") });
+        expect(ran('reuse-args')).toBe(false);
+        expect(ran('gate-ran')).toBe(true);
+        expect(r.err).toContain(`pregate-remote-gate: the tree changes ${path} relative to origin/master`);
+        expect(r.out.trim().split('\n').at(-1)).toBe(`PREGATE_REMOTE: tree=${contentTree()} tests=4 failed=0`);
+        git('update-ref', 'refs/remotes/origin/master', 'HEAD');
+      }
+      // Without origin/master to compare against, reuse is not trusted either.
+      git('update-ref', '-d', 'refs/remotes/origin/master');
+      rmSync(join(repo, '.git', 'reuse-args'), { force: true });
+      run(gateMarking, { GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE_CMD: reuser("echo 'GBRAIN_REUSE_RESULT tests=9 failed=0'") });
+      expect(ran('reuse-args')).toBe(false);
+    });
+
+    it('takes the receipt from the full runs, with the gate\'s exact line, and starts no gate', () => {
+      const r = run(gateMarking, { GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE_CMD: reuser("echo '[ci-reuse] gate: Test run passed'; echo 'GBRAIN_REUSE_RESULT tests=58853 failed=0'") });
+      const tree = git('rev-parse', 'HEAD^{tree}');
+      expect(r.out.endsWith(`PREGATE_REMOTE: tree=${tree} tests=58853 failed=0\n`)).toBe(true);
+      expect(r.code).toBe(0);
+      expect(ran('gate-ran')).toBe(false);
+      expect(spawnSync('cat', [join(repo, '.git', 'reuse-args')], { encoding: 'utf8' }).stdout.trim())
+        .toBe(`reuse-args: --sha ${git('rev-parse', 'HEAD')} --tree ${tree} --repo owner-example/repo-example`);
+    });
+
+    it('a full run on the tree that failed refuses: exit 1, no receipt, no gate', () => {
+      const r = run(gateMarking, { GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE_CMD: reuser('exit 3') });
+      expect(r.out).not.toContain('PREGATE_REMOTE:');
+      expect(r.err).toContain(`pregate-remote-gate: a full run on tree ${git('rev-parse', 'HEAD^{tree}')} failed`);
+      expect(r.code).toBe(1);
+      expect(ran('gate-ran')).toBe(false);
+    });
+
+    it('a reused run that recorded failed tests prints its receipt with exit 1, and starts no gate', () => {
+      const r = run(gateMarking, { GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE_CMD: reuser("echo 'GBRAIN_REUSE_RESULT tests=10 failed=2'") });
+      expect(r.out.endsWith(`PREGATE_REMOTE: tree=${git('rev-parse', 'HEAD^{tree}')} tests=10 failed=2\n`)).toBe(true);
+      expect(r.code).toBe(1);
+      expect(ran('gate-ran')).toBe(false);
+    });
+
+    it('a reuse step that exits 0 without a result line, or exits with any other code, runs the gate', () => {
+      for (const body of ["echo '[ci-reuse] gate: something'", 'exit 2']) {
+        rmSync(join(repo, '.git', 'gate-ran'), { force: true });
+        const r = run(gateMarking, { GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE_CMD: reuser(body) });
+        expect(ran('gate-ran')).toBe(true);
+        expect(r.out.trim().split('\n').at(-1)).toBe(`PREGATE_REMOTE: tree=${contentTree()} tests=4 failed=0`);
+        expect(r.code).toBe(0);
+      }
+    });
+
+    it('no reuse runs the gate, whose summary is the receipt', () => {
+      const r = run(gateMarking, { GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE_CMD: reuser('exit 4') });
+      expect(ran('gate-ran')).toBe(true);
+      expect(r.out.trim().split('\n').at(-1)).toBe(`PREGATE_REMOTE: tree=${contentTree()} tests=4 failed=0`);
+      expect(r.code).toBe(0);
+    });
+
+    it('a dirty tree, GBRAIN_PREGATE_REUSE=0 or no repository never asks for reuse', () => {
+      const env = { GBRAIN_PREGATE_REUSE_CMD: reuser("echo 'GBRAIN_REUSE_RESULT tests=9 failed=0'") };
+      run(gateMarking, { ...env, GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE: '0' });
+      run(gateMarking, env);
+      writeFileSync(join(repo, 'edited.txt'), 'not committed\n');
+      const dirty = run(gateMarking, { ...env, GBRAIN_PREGATE_REPO: 'owner-example/repo-example' });
+      expect(ran('reuse-args')).toBe(false);
+      expect(dirty.out.trim().split('\n').at(-1)).toBe(`PREGATE_REMOTE: tree=${contentTree()} tests=4 failed=0`);
+    });
+
+    it('reads the repository from the origin remote', () => {
+      git('remote', 'add', 'origin', 'https://git.example.invalid/owner-example/repo-example.git');
+      run(gateMarking, { GBRAIN_PREGATE_REUSE_CMD: reuser('exit 4') });
+      expect(spawnSync('cat', [join(repo, '.git', 'reuse-args')], { encoding: 'utf8' }).stdout).toContain('--repo owner-example/repo-example');
+    });
+  });
+});
+
+describe('pregate-remote-gate.sh --list', () => {
+  /** Runs --list with `gate` as the gate command and no UBI_OWNER. */
+  const list = (gate: string | undefined, args: string[] = [], env: Record<string, string> = {}) => {
+    const r = spawnSync('bash', [SCRIPT, '--list', ...args], {
+      cwd: repo, encoding: 'utf8',
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', UBI_OWNER: undefined, UBI_LEFT_FILE: undefined, GBRAIN_PREGATE_GATE_CMD: gate, ...env },
+    });
+    return { code: r.status, out: r.stdout, err: r.stderr };
+  };
+
+  it("prints the gate command's --list output at the checkout top, with the extra arguments, needing no UBI_OWNER", () => {
+    mkdirSync(join(repo, 'sub'));
+    const gate = join(repo, '.git', 'gate.sh');
+    writeFileSync(gate, 'echo "args: $*" >&2; echo "cwd: $PWD" >&2; printf "%s\\n" test/a.test.ts test/e2e/b.test.ts\n');
+    const r = spawnSync('bash', [SCRIPT, '--list', '--lanes', 'unit'], {
+      cwd: join(repo, 'sub'), encoding: 'utf8',
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', UBI_OWNER: undefined, GBRAIN_PREGATE_GATE_CMD: `bash ${gate}` },
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toBe('test/a.test.ts\ntest/e2e/b.test.ts\n');
+    expect(r.stderr).toContain('args: --list --lanes unit');
+    expect(r.stderr).toContain(`cwd: ${repo}`);
+    expect(r.stderr).not.toContain('UBI_OWNER');
+  });
+
+  it('lists through the development gate, bun run ci:ubicloud:diff --list, by default', () => {
+    const bin = join(repo, '.git', 'fake-bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'bun'), '#!/usr/bin/env bash\necho "fake-bun: $*" >&2\necho test/a.test.ts\n');
+    chmodSync(join(bin, 'bun'), 0o755);
+    const r = list(undefined, [], { PATH: `${bin}:${process.env.PATH}` });
+    expect(r.code, r.err).toBe(0);
+    expect(r.err).toContain('fake-bun: run ci:ubicloud:diff --list');
+    expect(r.out).toBe('test/a.test.ts\n');
+  });
+
+  it('an empty or failing inventory exits non-zero with no list, and never starts the gate', () => {
+    const empty = list('true');
+    expect(empty.code).toBe(1);
+    expect(empty.out).toBe('');
+    expect(empty.err).toContain("the gate's inventory is empty");
+    const failing = list('echo test/a.test.ts; exit 3; echo');
+    expect(failing.code).toBe(1);
+    expect(failing.out).toBe('');
+    expect(failing.err).toContain("the gate's inventory failed (exit 3)");
+    for (const r of [empty, failing]) expect(r.out + r.err).not.toContain('PREGATE_REMOTE');
   });
 });

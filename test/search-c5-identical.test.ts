@@ -8,8 +8,10 @@
  * including one that fans out to the other name, plus the same searches on a
  * brain with neither. Regenerate only on a build whose search output is meant
  * to change, and say why in the commit. The query facts arm
- * (`search.query_facts_arm`, default on) changes query output on purpose, so
- * these brains pin it off; test/search-facts-arm.test.ts covers it.
+ * (`search.query_facts_arm`, default on) and the query facts block
+ * (`search.query_facts_block`, default on) change query output on purpose, so
+ * these brains pin both off; test/search-facts-arm.test.ts and
+ * test/search-8k-conversion.test.ts cover them.
  *
  * Also: a fact saved with `remember` is found by the next search in the same
  * process, and by a search after another process saved it (no per-process
@@ -26,6 +28,7 @@ import { serializeMarkdown } from '../src/core/markdown.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { aliasDeclarations } from '../src/core/ops/search.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 
 const GOLDEN = join(import.meta.dir, 'fixtures/goldens/search-c5/notices.json');
 /** The remote write path the fresh-fact probes save through. */
@@ -58,12 +61,15 @@ let open: (dataDir?: string) => Promise<PGLiteEngine>;
 
 async function brain(withFactsAndNames: boolean): Promise<PGLiteEngine> {
   const engine = await open();
-  for (const [slug, title, body] of PAGES) {
-    const text = withFactsAndNames ? body : body.replace(/\(?account code NULA\)?|Account code: NULA\.|, also known as OCFR/g, '');
-    await importFromContent(engine, slug, serializeMarkdown({}, text, '', { type: 'note', title, tags: [] }), { noEmbed: true, forceRechunk: true });
-  }
-  if (withFactsAndNames) await engine.executeRaw(FACTS);
+  await asOwner(engine, async tx => {
+    for (const [slug, title, body] of PAGES) {
+      const text = withFactsAndNames ? body : body.replace(/\(?account code NULA\)?|Account code: NULA\.|, also known as OCFR/g, '');
+      await importFromContent(tx, slug, serializeMarkdown({}, text, '', { type: 'note', title, tags: [] }), { noEmbed: true, forceRechunk: true });
+    }
+    if (withFactsAndNames) await tx.executeRaw(FACTS);
+  });
   await engine.setConfig('search.query_facts_arm', 'false');
+  await engine.setConfig('search.query_facts_block', 'false');
   return engine;
 }
 

@@ -42,7 +42,8 @@ import { preparePageMutation } from '../persistence/page-prepare.ts';
 import type { Visibility } from '../search/private-visibility.ts';
 import type { ChronicleEventProposal } from './extract-events.ts';
 import { resolveChronicleEventSlugs } from './event-identity.ts';
-import { declareDerivation, declaredWriteTrust, deriveTrust, readDerivationDeclaration } from '../trust/taint.ts';
+import { declareDerivation, deriveTrust } from '../trust/taint.ts';
+import { derivationWriteTrust } from '../trust/page-write.ts';
 import { derivedGateConfig, derivedGateInput, timelineRowAllowed } from '../trust/derived-gate.ts';
 import { assessTimelineForGate, type WriteGateAssessment } from '../write-gate.ts';
 import { recordWriteGateReceipt } from '../write-gate-store.ts';
@@ -281,10 +282,10 @@ export async function prepareChronicleMutation(engine: BrainEngine, row: WriteRe
       if (!projection) return outcome;
       const { projected } = await tx.upsertEventProjection({ depthSlug: projection.depth_slug, eventSlug: row.slug,
         date: projection.date, summary: projection.summary, sourceId: row.source_id });
-      const declaration = readDerivationDeclaration(p.derivation);
-      if (projected && declaration) {
+      const trust = derivationWriteTrust({ derivation: p.derivation } as never);
+      if (projected && trust) {
         const assessment = assessTimelineForGate({ summary: projection.summary, source: `life-chronicle:event:${row.slug}` },
-          derivedGateInput(declaredWriteTrust(declaration), row.id), await derivedGateConfig(tx));
+          derivedGateInput(trust, row.id), await derivedGateConfig(tx));
         const [event] = await tx.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [row.source_id, row.slug]);
         if (event) await recordProjectionFlag(tx, assessment, Number(event.id), projection.date, row.source_id, row.id);
       }

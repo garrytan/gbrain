@@ -39,6 +39,13 @@ function codexPlugin(b: Box): void {
   writeFileSync(join(b.env.CODEX_HOME!, 'config.toml'), '[plugins."gbrain@gbrain"]\nenabled = true\n');
 }
 
+/** The brain-first block is its own verdict (GBRA-188): record an opt-out so these tests read the plugin-lane wiring alone. */
+function blockOptedOut(b: Box, harness: string): void {
+  mkdirSync(join(b.env.GBRAIN_HOME!, '.gbrain'), { recursive: true });
+  writeFileSync(join(b.env.GBRAIN_HOME!, '.gbrain', 'agent-instructions.json'), JSON.stringify({ version: 1, entries: [{ harness, path: join(b.root, 'AGENTS.md'),
+    status: 'declined', block_version: 2, writer: 'test', created_file: false, updated_at: '2026-10-28T00:00:00.000Z' }] }));
+}
+
 function claudePlugin(b: Box): void {
   mkdirSync(b.env.CLAUDE_CONFIG_DIR!, { recursive: true });
   writeFileSync(join(b.env.CLAUDE_CONFIG_DIR!, 'settings.json'), JSON.stringify({ enabledPlugins: { 'gbrain@gbrain': true } }));
@@ -48,6 +55,7 @@ describe('harness_wiring with an enabled plugin lane (#6082)', () => {
   test('Codex plugin only → ok plugin_lane_enabled, and plugin_lane_collision agrees', async () => {
     const b = box();
     codexPlugin(b);
+    blockOptedOut(b, 'codex');
     await withEnv(b.env, async () => {
       const check = await harnessWiringCheck({ smoke: false });
       expect(check.status).toBe('ok');
@@ -62,6 +70,7 @@ describe('harness_wiring with an enabled plugin lane (#6082)', () => {
   test('Claude Code plugin under CLAUDE_CONFIG_DIR only → ok', async () => {
     const b = box();
     claudePlugin(b);
+    blockOptedOut(b, 'claude-code');
     await withEnv(b.env, async () => {
       const check = await harnessWiringCheck({ smoke: false });
       expect(check.status).toBe('ok');

@@ -48,3 +48,19 @@ export async function configPacking(engine: BrainEngine): Promise<AutoPacking> {
   } catch { /* config unreadable: stay on the default */ }
   return DEFAULT_AUTO_PACKING;
 }
+
+/**
+ * GBRA-205: what `query`'s token_budget means when the call names no return_unit.
+ * `chunk` (default): the legacy chunk trim. `auto`: the budget is evidence
+ * delivery's hard cap, as for `search` (whole conversations, packed by search.auto_packing).
+ */
+export const QUERY_BUDGET_UNIT_CONFIG_KEY = 'search.query_budget_unit';
+
+/** `search.query_budget_unit` is `auto`; `chunk`, unset or unreadable keeps query's legacy chunk budget. */
+export async function queryBudgetUsesAuto(engine: Pick<BrainEngine, 'getConfig'>): Promise<boolean> {
+  try {
+    return (await engine.getConfig(QUERY_BUDGET_UNIT_CONFIG_KEY))?.trim().toLowerCase() === 'auto';
+  } catch {
+    return false;
+  }
+}

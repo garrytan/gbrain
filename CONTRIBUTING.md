@@ -722,7 +722,9 @@ gstack reads both from master, so a branch's edits take effect after it merges.
   whole suite). `UBI_OWNER=<thread code> gstack-pregate --stage tests --remote
   --spend-cap <usd> --allow-repo-commands` then runs the full Ubicloud gate on
   the working tree and clears the obligation from its
-  `PREGATE_REMOTE: tree=… tests=… failed=…` line.
+  `PREGATE_REMOTE: tree=… tests=… failed=…` line. On a clean tree whose Test and
+  E2E full runs already passed on GitHub, the line comes from those runs and no
+  VM starts ([remote-gate reuse](docs/ci-event-parity.md#remote-gate-reuse)).
 - `.gstack/ship-policy.json`: the stamp rule (the release stamp files and
   version patterns) and the migration numbering `gstack-pregate regate` and
   `gstack-tree-receipt` use to decide whether a restamped head is the same tree

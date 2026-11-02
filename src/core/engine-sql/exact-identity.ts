@@ -19,7 +19,7 @@
  */
 import { joinFragments, renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { entityTypePredicateSql, type EntityTypeFilter } from '../schema-pack/entity-types.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
 
 export interface ExactIdentityProbes {
@@ -84,7 +84,7 @@ export function exactIdentityStatement(opts: ExactIdentityStatementOpts): { text
        WHERE a.source_id = ANY(${sourceIds}::text[]) AND a.alias_norm = ANY(${probes.aliasKeys}::text[])`);
   }
   arms.push(...emailArms(sourceIds, probes.emails));
-  const privacy = opts.remote?.excludePrivate ? trustedSql(` AND ${privatePagesFilterFragment('p')}`) : sqlFragment``;
+  const privacy = opts.remote?.excludePrivate ? trustedSql(` AND ${privatePagesFilterForCaller('p')}`) : sqlFragment``;
   const remote = opts.remote ? sqlFragment` AND ${trustedSql(quarantineFilterFragment('p'))}${privacy}` : sqlFragment``;
   return renderFragment(sqlFragment`
     WITH cand AS (

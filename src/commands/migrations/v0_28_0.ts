@@ -31,6 +31,7 @@ import type {
   Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult,
 } from './types.ts';
 import type { BrainEngine } from '../../core/engine.ts';
+import { OperationError } from '../../core/ops/contract.ts';
 import { loadConfig, gbrainPath } from '../../core/config.ts';
 import { connectMigrationEngine } from './run-engine.ts';
 
@@ -128,7 +129,8 @@ async function phaseBBackfill(
       : `extract-takes scanned ${result.pagesScanned} pages; ${result.pagesWithTakes} had fenced takes; upserted ${result.takesUpserted} rows`;
     return { name: 'backfill', status: 'complete', detail };
   } catch (e) {
-    return { name: 'backfill', status: 'failed', detail: e instanceof Error ? e.message : String(e) };
+    const detail = e instanceof OperationError ? `${e.code}: ${e.message} ${e.suggestion ?? ''}`.trim() : e instanceof Error ? e.message : String(e);
+    return { name: 'backfill', status: 'failed', detail };
   }
 }
 

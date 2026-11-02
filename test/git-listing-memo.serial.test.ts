@@ -45,7 +45,7 @@ beforeAll(() => {
   const real = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
   const bin = join(root, 'bin');
   mkdirSync(bin);
-  writeFileSync(join(bin, 'git'), `#!/bin/sh\necho "$*" >> '${log}'\nexec '${real}' "$@"\n`);
+  writeFileSync(join(bin, 'git'), `#!/bin/sh\necho "$*" >> '${log}'\nPATH='${process.env.PATH}' exec '${real}' "$@"\n`);
   chmodSync(join(bin, 'git'), 0o755);
   for (const [k, v] of Object.entries({ ...ENV, PATH: `${bin}:${process.env.PATH}` })) {
     saved[k] = process.env[k];

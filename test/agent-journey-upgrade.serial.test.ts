@@ -279,14 +279,23 @@ describe('(3) harness configs registered before the upgrade', () => {
     return check;
   }
 
+  /** The registration still answers; the only warning is the brain-first block an older install never wrote, and its fix clears it. */
+  async function expectWiredThenBlockFixed(harness: 'claude-code' | 'codex') {
+    const before = harnessCheck(await run(h, ['doctor', '--only', 'harness_wiring', '--json']));
+    expect(before, JSON.stringify(before)).toMatchObject({ status: 'warn', details: { harness, reason: 'wired_running', smoke: 'smoke_passed', instructions: expect.arrayContaining([expect.objectContaining({ harness, state: 'missing' })]) }, fix: { argv: ['gbrain', 'setup', harness, '--instructions-only'] } });
+    const fixed = await run(h, ['setup', harness, '--instructions-only', '--json']);
+    expect(fixed.exitCode, fixed.stderr).toBe(0);
+    const after = harnessCheck(await run(h, ['doctor', '--only', 'harness_wiring', '--json']));
+    expect(after, JSON.stringify(after)).toMatchObject({ status: 'ok', details: { harness, reason: 'wired_running', smoke: 'smoke_passed', instructions: expect.arrayContaining([expect.objectContaining({ harness, state: 'current' })]) } });
+  }
+
   test('a pre-surface Claude Code registration (`serve`, no --surface) keeps the full catalog and recalls', async () => {
     clear();
     const regEnv = { GBRAIN_HOME: h.home, GBRAIN_SKIP_STARTUP_HOOKS: '1' };
     writeFileSync(join(h.home, '.claude.json'), JSON.stringify({ mcpServers: { gbrain: { type: 'stdio', command: process.execPath, args: ['--no-env-file', CLI, 'serve'], env: regEnv } } }));
     const tools = await registeredRecall(process.execPath, ['--no-env-file', CLI, 'serve'], regEnv);
     expect(tools).toContain('search');
-    const check = harnessCheck(await run(h, ['doctor', '--only', 'harness_wiring', '--json']));
-    expect(check).toMatchObject({ status: 'ok', details: { harness: 'claude-code', reason: 'wired_running', smoke: 'smoke_passed' } });
+    await expectWiredThenBlockFixed('claude-code');
   }, 120_000);
 
   test('a Codex config.toml registration keeps working and doctor reports it', async () => {
@@ -298,8 +307,7 @@ describe('(3) harness configs registered before the upgrade', () => {
       `env = { GBRAIN_HOME = ${JSON.stringify(h.home)}, GBRAIN_SKIP_STARTUP_HOOKS = "1" }`, '',
     ].join('\n'));
     await registeredRecall(process.execPath, ['--no-env-file', CLI, 'serve', '--surface', 'verbs'], { GBRAIN_HOME: h.home, GBRAIN_SKIP_STARTUP_HOOKS: '1' });
-    const check = harnessCheck(await run(h, ['doctor', '--only', 'harness_wiring', '--json']));
-    expect(check, JSON.stringify(check)).toMatchObject({ status: 'ok', details: { harness: 'codex', reason: 'wired_running', smoke: 'smoke_passed' } });
+    await expectWiredThenBlockFixed('codex');
   }, 120_000);
 
   test('a bare `gbrain serve` registration still answers on a PATH that has gbrain; doctor flags it with the rewire fix', async () => {

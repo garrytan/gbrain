@@ -122,6 +122,10 @@ export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = p
           : '  Fix the cause, then run gbrain sync --no-pull with the same source and options; it retries the recorded failure and admits a fresh run after active work drains.');
         break;
       }
+      if (!result.toCommit) {
+        write(`Sync BLOCKED: ${result.failedFiles ?? 0} file(s) failed to import (named above); fix them, then re-run 'gbrain sync'.`);
+        break;
+      }
       write(`Sync BLOCKED at ${result.toCommit.slice(0, 8)}: ${result.failedFiles ?? 0} file(s) failed.`);
       write(`  See ~/.gbrain/sync-failures.jsonl for details, or run 'gbrain doctor'.`);
       // #3875: code-aware recovery hint — provider-infra failures are not

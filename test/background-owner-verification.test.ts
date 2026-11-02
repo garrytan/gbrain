@@ -99,10 +99,10 @@ describe('#6741 C: the owner marker deleted while the worktree state is still ac
       await put('background', 'notes/first');
       deleteMarker();
       // Same run: the cached verification (taken before the marker went) stands, so this one is admitted; its
-      // publication then meets the owner check itself and ends recovery_required.
+      // publication then meets the owner check itself and ends owner_marker_missing (#8368: the marker alone is gone).
       const idsBefore = await lifetimeIds();
       const second = await put('background', 'notes/second').then(() => null, error => error as { code?: string });
-      expect(second?.code).toBe('recovery_required');
+      expect(second?.code).toBe('owner_marker_missing');
       expect(await lifetimeIds()).toBe(idsBefore + 1);
     }));
     const before = await lifetimeIds();

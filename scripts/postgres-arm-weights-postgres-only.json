@@ -52,6 +52,7 @@
   "test/fact-purge-lookup-timeout-6511.test.ts": 8734,
   "test/facts-publication-large-fence-6898.test.ts": 37407,
   "test/fence-repair-receipts.test.ts": 3695,
+  "test/fenced-embed-reuse-6961.test.ts": 2072,
   "test/forecast-journal.test.ts": 21056,
   "test/frontmatter-reserved-keys-6454.test.ts": 6227,
   "test/get-chunks-paging.test.ts": 8467,

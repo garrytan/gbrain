@@ -233,14 +233,29 @@ For one bot acting for several members of a shared brain, give each member a
 separate client or token restricted to that member's sources. The grant is the
 security boundary; a request's `source_ids` can only narrow inside it. See
 [a bot acting for many members](../guides/multi-source-brains.md#a-bot-acting-for-many-members).
-Access is per source, never per page, so lay sources out by who may read them
+Grants are per source, so lay sources out by who may read them
 ([guide](../guides/multi-source-brains.md#lay-out-sources-by-who-may-read-them)).
+Inside one source, bind each member's credential with `gbrain auth rescope
+--token <name> --member <id>` (or `--client`) and put `readable_by` on the pages
+only some members may read, or keep a whole folder to them with `gbrain access
+rule add --prefix <folder>/ --readers <members> --source <id>`.
+One agent serving several people in a shared channel holds `--may-act-for
+<members>` instead, and its harness names each request's audience
+(`X-Gbrain-On-Behalf-Of` or request-level `_meta.on_behalf_of`); it reads only
+what every named person may read.
+`gbrain access check --token <name>` shows the
+result ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape)).
 
-New `memory-reader`, `memory-writer` and `coding-agent` grants are callable and
-listed on the full surface; their operation snapshot is still the ceiling, so a
-reader still has no write operation. `delegating-agent` grants keep the starter
-surface. Clients granted before this keep their stored surface: no migration or
-repair changes it, and only an explicit `--profile` application regrants it.
+New `memory-reader`, `memory-writer` and `coding-agent` grants are callable on
+the full surface and list the seven memory verbs plus `request_tools`, which
+returns any other tool's schema (`gbrain auth clients` shows the surface as
+`full (set by install)`); `gbrain agent register` daily-driver and coding-agent
+clients without `--surface` do the same. Their operation snapshot is still the
+ceiling, so a reader still has no write operation. To list every tool, pin the
+surface: `gbrain auth rescope-client <client_id> --surface full`.
+`delegating-agent` grants keep the starter surface. Clients granted before this
+keep their stored surface and listing: no migration or repair changes it, and
+re-applying a profile to an operator-pinned client keeps its full listing.
 
 ### Grants that cannot reach new operations
 
@@ -412,6 +427,8 @@ gbrain auth rescope --client CLIENT_ID                       # print the stored 
 gbrain auth rescope --client CLIENT_ID --sources workspace,default --operations get_page,search
 gbrain auth rescope --client CLIENT_ID --takes-holders world,brain
 gbrain auth rescope --client CLIENT_ID --sources none          # deny-all, secret unchanged
+gbrain auth rescope --token agent-example --private-pages granted-sources  # private pages in its granted sources
+gbrain auth rescope --client CLIENT_ID --private-pages none    # hide them again
 ```
 
 | Flag | Value | Effect |
@@ -421,6 +438,7 @@ gbrain auth rescope --client CLIENT_ID --sources none          # deny-all, secre
 | `--takes-holders` | `a,b` or `none` | Takes-holder allow-list for a token or client (default `world`); `none` hides every take. |
 | `--operations` | `op,...`, `none` or `all` | Operation snapshot; `none` refuses every operation. Client only: `all` stores no snapshot and clears the profile, so the scopes and the surface alone decide, including operations later upgrades add (tokens: `--reset-default operations`). |
 | `--scopes` | `read,write,...` | Replaces the scopes. |
+| `--private-pages` | `granted-sources` or `none` | Whether remote reads see `visibility: private` pages. `none` (the default for every token and client) hides them, as before. `granted-sources` shows them only in the sources this grant names: a token's `--sources` list, or a client's write source plus its read sources. The no-grant floor, federated sources the grant does not name, a client's bound source and a request's `source_id` / `source_ids` never add a source. `context_pack`, `delta` and every write keep hiding private pages. In a named source it also opens privacy-alias pages (`access`, `confidentiality`), atoms, concepts and events derived from private or unknown origins, and pages with private declared lineage; pinned questions stay owner-only. Stored in its own column, not in the legacy permissions JSON. |
 | `--reset-default` | `sources,takes-holders,operations` | Token only: restores the `auth create` default for those axes: no source grant (the historical `default` floor), holders `world`, no operation snapshot. |
 | `--refresh-operations` | with optional `--add op,...` or `--all-new` | Token only: previews operations added since the snapshot. Without `--add` or `--all-new` nothing is widened. |
 | `--if-version` | `N` | Refuses unless the stored grant revision is `N`; the refusal names the current revision. |
@@ -571,7 +589,7 @@ registers `gbrain serve --access read-only` as its stdio MCP command.
 
 ```bash
 claude mcp add gbrain -- "$(command -v gbrain)" serve --access read-only
-gbrain serve --surface full --access read-only
+gbrain serve --access read-only   # bare serve: the full surface, read-only
 ```
 
 `--access read-only` intersects the selected `--surface` with operations that

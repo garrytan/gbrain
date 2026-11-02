@@ -1120,6 +1120,8 @@ export interface ClaudeMcpRegistration {
   gbrainHome?: string;
   /** The serve surface; default REGISTRATION_SURFACE, `null` = bare `serve` (never-narrow carry-over). */
   surface?: McpSurface | null;
+  /** `serve --advertise`; null lists the whole surface (registrationAdvertise decides). */
+  advertise?: McpSurface | null;
 }
 
 export type CodexMcpRegistration = Omit<ClaudeMcpRegistration, 'scope'>;
@@ -1131,9 +1133,10 @@ export type CodexMcpRegistration = Omit<ClaudeMcpRegistration, 'scope'>;
  *
  * The serve argv comes from `stdioServeArgv`: `--surface full` by default
  * (REGISTRATION_SURFACE; bootstrap's contract — put_page, get_page,
- * add_timeline_entry, search, query — is in it, and a pre-existing `mcp_surface: verbs` config row cannot
- * narrow a pinned registration); `surface` carries an existing entry's form
- * over on replacement or applies `--surface`.
+ * add_timeline_entry, search, query — stays callable, and a pre-existing `mcp_surface: verbs` config row cannot
+ * narrow a pinned registration), listing the memory verbs and request_tools
+ * when `advertise` is 'verbs'; `surface`/`advertise` carry an existing
+ * entry's form over on replacement or apply `--surface`.
  */
 export function registerClaudeMcp(p: ClaudeMcpRegistration): string[][] {
   if (!isAbsolute(p.gbrainBin)) {
@@ -1146,7 +1149,7 @@ export function registerClaudeMcp(p: ClaudeMcpRegistration): string[][] {
     '-e', `GBRAIN_SOURCE=${p.sourceId}`,
   ];
   if (p.gbrainHome) argv.push('-e', `GBRAIN_HOME=${p.gbrainHome}`);
-  argv.push('--', ...stdioServeArgv(p.gbrainBin, p.surface));
+  argv.push('--', ...stdioServeArgv(p.gbrainBin, p.surface, p.advertise ?? null));
   return [argv];
 }
 
@@ -1163,6 +1166,6 @@ export function registerCodexMcp(p: CodexMcpRegistration): string[][] {
   const name = p.name ?? 'gbrain';
   const argv = ['codex', 'mcp', 'add', name, '--env', `GBRAIN_SOURCE=${p.sourceId}`];
   if (p.gbrainHome) argv.push('--env', `GBRAIN_HOME=${p.gbrainHome}`);
-  argv.push('--', ...stdioServeArgv(p.gbrainBin, p.surface));
+  argv.push('--', ...stdioServeArgv(p.gbrainBin, p.surface, p.advertise ?? null));
   return [argv];
 }

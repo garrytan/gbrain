@@ -188,7 +188,7 @@ describe('opencode workspace lane — default scope is USER-GLOBAL', () => {
     };
     expect(entry.type).toBe('local');
     expect(entry.command[0]).toBe(FAKE_BIN); // user scope: absolute path
-    expect(entry.command.slice(1)).toEqual(['serve', '--surface', 'full']);
+    expect(entry.command.slice(1)).toEqual(['serve', '--surface', 'starter', '--advertise', 'verbs']);
     expect(entry.environment.GBRAIN_SOURCE).toBeDefined();
     expect(entry.enabled).toBe(true);
 
@@ -322,7 +322,7 @@ describe('opencode workspace lane — explicit project opt-in', () => {
     const cfgPath = join(ws, 'opencode.json');
     const parsed = parseOpencodeConfig(readFileSync(cfgPath, 'utf8'), cfgPath);
     const entry = (parsed.mcp as Record<string, unknown>).gbrain as { command: string[] };
-    expect(entry.command).toEqual(['gbrain', 'serve', '--surface', 'full']); // committed-candidate file: PATH-resolved, never absolute
+    expect(entry.command).toEqual(['gbrain', 'serve', '--surface', 'starter', '--advertise', 'verbs']); // committed-candidate file: PATH-resolved, never absolute
     expect(r.out).toContain('project (explicit opt-in)');
     expect(r.err).toContain('SHARING WARNING');
     expect(r.err).toContain('"enabled": false');

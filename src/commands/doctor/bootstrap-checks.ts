@@ -149,7 +149,7 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
 
   const receipt = readReceipt(home);
   // One reader for every push-status surface [D8]; per-root files [D13].
-  const { readPushStatuses, pushStatusFilesExist, pushStatusForWorkspace } = await import('../../core/workspace-push.ts');
+  const { readPushStatuses, pushStatusFilesExist, pushStatusForWorkspace, pushStatusRecordCounts } = await import('../../core/workspace-push.ts');
   const pushStatuses = readPushStatuses();
   const statusFilesOnDisk = pushStatusFilesExist();
   const heartbeatFile = join(home, 'integrations', 'hooks', 'heartbeat.jsonl');
@@ -408,7 +408,11 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
     } else if (statusFilesOnDisk) {
       // Files exist but none parsed — the tolerant reader skips corrupt
       // records; doctor must not let that read as "no news is good news".
-      checks.push({ name: 'bootstrap_push_health', status: 'warn', message: 'push status unreadable' });
+      // #7377: records kept for workspaces that no longer exist are history.
+      const counts = pushStatusRecordCounts();
+      checks.push(counts.unreadable === 0 && counts.gone > 0
+        ? { name: 'bootstrap_push_health', status: 'ok', message: `push status is kept only for ${counts.gone} workspace(s) that no longer exist; no tracked workspace to check` }
+        : { name: 'bootstrap_push_health', status: 'warn', message: 'push status unreadable' });
     }
   } catch {
     checks.push({ name: 'bootstrap_push_health', status: 'warn', message: 'push status unreadable' });

@@ -56,7 +56,7 @@ import { OperationError } from './ops/contract.ts';
 import {
   existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync,
 } from 'fs';
-import { dirname, join, resolve } from 'path';
+import { dirname, isAbsolute, join, resolve } from 'path';
 import { createHash, randomBytes } from 'crypto';
 import { execFileSync, spawn } from './spawn.ts';
 import { GIT_ENV, GIT_ENV_AUTH, GIT_SSRF_SUBCOMMAND_FLAGS, detectDefaultBranch, divergenceSafePull, type PullStrategy } from './git-remote.ts';
@@ -565,20 +565,38 @@ export interface PushStatusEntry {
 
 const PUSH_STATUS_FILE_RE = /^push-status-[0-9a-f]{12}\.json$/;
 
-/** Tolerant reader over every push-status file (banner, SessionStart note,
- * and doctor all consume THIS — one parse, one schema owner). Per-root files
- * win; the legacy global file is consulted only when none exist, so a stale
- * pre-upgrade record can't shadow live per-root state. */
-export function readPushStatuses(): PushStatusEntry[] {
+/** One push-status file as a record, or null when it is missing, torn or not
+ * a JSON object (#7377: a whole-file primitive, array or null is unreadable,
+ * never an empty record that reads as a success). Never throws. */
+function parsePushStatusFile(file: string): PushStatusEntry | null {
+  try {
+    const s: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    return s !== null && typeof s === 'object' && !Array.isArray(s) ? { ...(s as Omit<PushStatusEntry, 'file'>), file } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** #7377: a recorded repoRoot is gone only when stat answers ENOENT or
+ * ENOTDIR. A denied traversal (EACCES, EPERM), an I/O error or a value that
+ * is not an absolute path is unreadable, never proof the workspace is gone. */
+function pushStatusRootState(root: unknown): 'present' | 'gone' | 'unreadable' {
+  if (root === undefined) return 'present';
+  if (typeof root !== 'string' || !isAbsolute(root)) return 'unreadable';
+  try {
+    statSync(root);
+    return 'present';
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' || code === 'ENOTDIR' ? 'gone' : 'unreadable';
+  }
+}
+
+/** Every authoritative push-status file, classified: a live record, the
+ * record of a workspace that no longer exists, or unreadable. Per-root files
+ * win; the legacy global file is consulted only when none exist. */
+function classifyPushStatusFiles(): Array<PushStatusEntry | 'gone' | 'unreadable'> {
   const dir = join(ensureGbrainHome(), 'bootstrap');
-  const parse = (file: string): PushStatusEntry | null => {
-    try {
-      const s = JSON.parse(readFileSync(file, 'utf8')) as Omit<PushStatusEntry, 'file'>;
-      return { ...s, file };
-    } catch {
-      return null; // torn/corrupt/missing → skip, never throw
-    }
-  };
   let names: string[] = [];
   try {
     names = readdirSync(dir).filter((n) => PUSH_STATUS_FILE_RE.test(n));
@@ -586,22 +604,42 @@ export function readPushStatuses(): PushStatusEntry[] {
     return [];
   }
   // The legacy file is consulted only when NO per-root FILES exist on disk —
-  // if per-root files exist but are all corrupt, an empty result is the honest
-  // answer (doctor pairs it with pushStatusFilesExist for the loud warn); a
-  // stale pre-upgrade record must never shadow live-but-unreadable state.
+  // a stale pre-upgrade record must never shadow live-but-unreadable state.
   if (names.length === 0) {
-    const legacy = parse(pushStatusPath());
-    return legacy ? [legacy] : [];
+    const legacy = parsePushStatusFile(pushStatusPath());
+    return legacy ? [legacy] : existsSync(pushStatusPath()) ? ['unreadable'] : [];
   }
-  return names
-    .map((n) => parse(join(dir, n)))
-    .filter((e): e is PushStatusEntry => e !== null)
-    // A record whose workspace no longer exists on disk is a ghost: it can
-    // never be cleared by a re-push (the root is gone), so it must not feed
-    // the failure banner / staleness note forever (deleted Conductor
-    // workspaces are routine). Entries without repoRoot (legacy shape in a
-    // per-root file) are kept — absence of evidence is not a ghost.
-    .filter((e) => e.repoRoot === undefined || existsSync(e.repoRoot));
+  return names.map((n) => {
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- n is a readdirSync(dir) entry that matched PUSH_STATUS_FILE_RE
+    const entry = parsePushStatusFile(join(dir, n));
+    if (!entry) return 'unreadable';
+    // A record whose workspace no longer exists is a ghost: it can never be
+    // cleared by a re-push (the root is gone), so it must not feed the
+    // failure banner / staleness note forever (deleted Conductor workspaces
+    // are routine). Entries without repoRoot (legacy shape in a per-root
+    // file) are kept — absence of evidence is not a ghost.
+    const state = pushStatusRootState(entry.repoRoot);
+    return state === 'present' ? entry : state;
+  });
+}
+
+/** Tolerant reader over every push-status file (banner, SessionStart note,
+ * and doctor all consume THIS — one parse, one schema owner). Per-root files
+ * win; the legacy global file is consulted only when none exist, so a stale
+ * pre-upgrade record can't shadow live per-root state. Unreadable files and
+ * records of gone workspaces are skipped; doctor tells them apart with
+ * pushStatusRecordCounts. */
+export function readPushStatuses(): PushStatusEntry[] {
+  return classifyPushStatusFiles().filter((e): e is PushStatusEntry => typeof e !== 'string');
+}
+
+/** #7377: how many authoritative push-status files hold the record of a
+ * workspace that no longer exists, and how many hold nothing readable. Doctor
+ * reads an empty readPushStatuses() through this, so retained history of
+ * deleted workspaces is not reported as an unreadable status. */
+export function pushStatusRecordCounts(): { gone: number; unreadable: number } {
+  const states = classifyPushStatusFiles();
+  return { gone: states.filter((s) => s === 'gone').length, unreadable: states.filter((s) => s === 'unreadable').length };
 }
 
 /** True when any push-status file exists on disk (parseable or not). The
@@ -620,14 +658,7 @@ export function pushStatusFilesExist(): boolean {
 /** The per-root status for one workspace, or null. Direct keyed read first —
  * the scan is only a fallback for legacy records carrying a repoRoot field. */
 export function readPushStatusForRoot(root: string): PushStatusEntry | null {
-  const keyedPath = pushStatusPathForRoot(root);
-  try {
-    const s = JSON.parse(readFileSync(keyedPath, 'utf8')) as Omit<PushStatusEntry, 'file'>;
-    return { ...s, file: keyedPath };
-  } catch {
-    /* fall through to the scan */
-  }
-  return readPushStatuses().find((e) => e.repoRoot === root) ?? null;
+  return parsePushStatusFile(pushStatusPathForRoot(root)) ?? readPushStatuses().find((e) => e.repoRoot === root) ?? null;
 }
 
 /**

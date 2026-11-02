@@ -199,6 +199,8 @@ CHECKS=(
   # CQ3 / EO17 (refactor wave 1): engine-sql splices only constant text, no
   # composed $n, no expanded IN lists.
   "check:engine-sql-dynamic"
+  # GBRA-218: the remote-privacy relaxations are read only in private-visibility.ts.
+  "check:remote-privacy-reads"
   # EO4 (refactor wave 1): RLS read brands stay unforgeable; brand factories
   # importable only from their allowlists (never src/core/ops/**).
   "check:engine-sql-brands"

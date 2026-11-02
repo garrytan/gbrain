@@ -37,7 +37,7 @@ import {
   dcrScopeViolation,
 } from './scope.ts';
 import type { AuthInfo as CoreAuthInfo } from './operations.ts';
-import { TOKEN_TTL_MAX_SECONDS, authSourcesFromGrant, grantFromRow, normalizeGrantBrain, intersectGrantedScopes, type GrantPatch } from './grants/model.ts';
+import { TOKEN_TTL_MAX_SECONDS, authSourcesFromGrant, grantFromClient, grantFromRow, normalizeGrantBrain, intersectGrantedScopes, privatePagesAuth, type GrantPatch } from './grants/model.ts';
 import { assertValidSlugPrefixes, pgArray } from './grants/encoding.ts';
 import { rescopeOAuthClient, type RescopeClientOptions, type RescopeClientResult } from './grants/rescope.ts';
 import { grantValidationContext, validateClientGrant, insertClientGrant, assertGrantPatch } from './grants/service.ts';
@@ -55,6 +55,7 @@ export { assertValidSlugPrefixes } from './grants/encoding.ts';
 
 import type { SqlQuery, SqlValue } from './sql-query.ts';
 import { storedMinTrust } from './trust/tier.ts';
+import { tokenMemberBinding } from './access/token-binding.ts';
 export type { SqlQuery, SqlValue };
 
 export interface AgentClientBindings {
@@ -883,6 +884,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         token,
         clientId: row.client_id as string,
         principal: { kind: 'oauth_client', id: row.client_id as string },
+        ...(await tokenMemberBinding(this.sql, currentGrant.member_id, currentGrant.may_act_for)),
         clientName: (row.client_name as string | null) ?? undefined,
         scopes: effectiveScopes,
         issuedScopes,
@@ -921,6 +923,8 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         ...(rowSurfaceSetBy !== undefined ? { surfaceSetBy: rowSurfaceSetBy } : {}),
         // #5575 (CEO-18): the client's read floor; current_grant is the whole row, so no projection rung needs it.
         ...(storedMinTrust(currentGrant.min_trust) ? { minTrust: storedMinTrust(currentGrant.min_trust) } : {}),
+        // GBRA-156: private pages in the sources the client's grant names (source_id + federated_read), never its bound source.
+        ...(sourcesNone || rowSourceId === undefined ? {} : privatePagesAuth(grantFromClient(grantFromRow({ ...currentGrant, source_id: rowSourceId, federated_read: allowedSources ?? [] })))),
       } as CoreAuthInfo as SdkAuthInfo;
     }
 
@@ -952,6 +956,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         token,
         clientId: name,
         principal: { kind: 'legacy_token', id: String(legacyRows[0].id) },
+        ...(await tokenMemberBinding(this.sql, legacyRows[0].member_id, legacyRows[0].may_act_for)),
         clientName: name,
         scopes: grant.scopes,
         ...(grant.allowedOperations === null ? {} : { allowedOperations: grant.allowedOperations }),
@@ -961,6 +966,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         ...authSourcesFromGrant(grant),
         takesHoldersAllowList: grant.takesHolders ?? undefined,
         ...(storedMinTrust(legacyRows[0].min_trust) ? { minTrust: storedMinTrust(legacyRows[0].min_trust) } : {}),
+        ...privatePagesAuth(grant),
       } as CoreAuthInfo as SdkAuthInfo;
     }
 

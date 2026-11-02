@@ -110,6 +110,11 @@ Usage counts only successful calls (`success` / `success_with_warnings`) —
 a client flooding denials or errors shows zero usage, so denied traffic can
 never argue its way into a wider surface or the starter derivation.
 
+A memory or coding grant from `gbrain mcp provision` or a `gbrain agent register`
+preset stores `full` with `surface_set_by = install`: it calls the full surface
+but lists only the memory verbs and `request_tools`. An operator rescope (any
+surface) lists that surface in full.
+
 **Expected outcomes:**
 - The client's NEXT request resolves the new surface (per-request
   ceiling-bounded resolution: `min(server --surface ceiling, client row)`)

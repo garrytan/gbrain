@@ -1,5 +1,6 @@
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
+import { remoteTargetHidden } from '../persistence/page-visibility.ts';
 import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 import { MANAGED_LINK_SOURCES } from '../links-fence.ts';
 import { backlinkTypeFilter, readBacklinkPage, withLinkPageStatus } from './backlinks-paged.ts';
@@ -30,7 +31,7 @@ import {
   assertSourceInCallerScope,
 } from './context.ts';
 import { listWantedPages } from '../wanted-links-store.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import type { OperationContext } from './contract.ts';
 import type { Link, PageReadPolicy } from '../types.ts';
 import { ALL_SOURCES } from '../source-id.ts';
@@ -200,6 +201,9 @@ const remove_link: Operation = {
   handler: async (ctx, p) => {
     enforceClientSlugFence(ctx, p.from as string, 'remove_link');
     if (ctx.dryRun) return { dry_run: true, action: 'remove_link', from: p.from, to: p.to };
+    const writeSource = ctx.sourceId || 'default';
+    if (await remoteTargetHidden(ctx.engine, ctx.remote, writeSource, p.from as string)
+      || await remoteTargetHidden(ctx.engine, ctx.remote, writeSource, p.to as string)) return { status: 'ok', removed: 0 };
     await primeRelationSemantics(ctx.engine);
     const linkOpts = ctx.sourceId
       ? { fromSourceId: ctx.sourceId, toSourceId: ctx.sourceId }
@@ -662,7 +666,7 @@ const wanted_pages: Operation = {
         limitOk ? { def: wanted_pages.params.offset, example: 0 } : { def: wanted_pages.params.limit, example: WANTED_DEFAULT_LIMIT });
     }
     const { total, rows } = await listWantedPages(ctx.engine, { sourceId: policy.sourceId, sourceIds: policy.sourceIds,
-      excludePrivate: policy.excludePrivate, privateFilter: privatePagesFilterFragment,
+      excludePrivate: policy.excludePrivate, privateFilter: privatePagesFilterForCaller,
       limit: p.count_only === true ? 1 : limit, offset });
     const next = offset + limit < total ? offset + limit : null;
     return {

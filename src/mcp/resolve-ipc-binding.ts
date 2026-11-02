@@ -143,7 +143,7 @@ export async function bindResolveIpcForServe(
   persistenceProvider?: PersistenceIpcProvider,
   opts: {
     rememberCallable?: boolean | (() => boolean);
-    /** #7599: a lean serve (a read-only stdio serve on Postgres, `readOnlyServeSkipsResidentDuties`) registers no delegated sync, nudge or sweep kind (clients get the polite refusal); PGLite keeps them. */
+    /** #7599: a lean serve (a read-only stdio serve on Postgres, `readOnlyServeSkipsResidentDuties`) registers no delegated sync, nudge or sweep kind (clients get the polite refusal); PGLite keeps them. #7612: it binds only its read socket, never the source or legacy socket a read-write serve answers delegation on. */
     lean?: boolean;
     /** Delay before each re-bind attempt of a socket this serve does not hold; tests inject a short one. */
     rebindDelayMs?: () => number;
@@ -154,8 +154,11 @@ export async function bindResolveIpcForServe(
     const cfg = loadConfig();
     // #5042: this serve's own source-keyed socket, plus the legacy URL-only
     // socket when it is free (older hooks and hooks naming no source).
-    const resolveSocket = resolveSocketPathForConfig(cfg, 'resolve', defaultSource);
-    const legacySocket = resolveSocketPathForConfig(cfg);
+    // #7612: a lean serve on Postgres binds its read socket alone, so it can
+    // never hold either delegation-capable socket ahead of a read-write serve.
+    const readSocket = opts.lean ? resolveSocketPathForConfig(cfg, 'read', defaultSource) : null;
+    const resolveSocket = readSocket ?? resolveSocketPathForConfig(cfg, 'resolve', defaultSource);
+    const legacySocket = readSocket ?? resolveSocketPathForConfig(cfg);
     if (!resolveSocket || !legacySocket) return NULL_BINDING;
 
     // #6573: a socket path the OS cannot bind (even after the per-user

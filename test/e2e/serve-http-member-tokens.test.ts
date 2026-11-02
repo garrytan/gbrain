@@ -7,7 +7,11 @@
  * either token into the other member's source. Two more tokens carry the
  * multi-source grant `gbrain auth rescope --token <name> --sources` writes
  * (the member's own source plus a shared one): each reads its own and the
- * shared source, never the other member's.
+ * shared source, never the other member's. GBRA-156: each member source also
+ * holds a `visibility: private` page; the multi-source tokens carry
+ * `private_pages: granted_sources` and each reads only its own member's
+ * private page, a bot token granted every source without the axis reads
+ * none, and a rescope back to `none` hides the page on the next call.
  *
  * 1. Protects: the multi-member bot pattern (one token per member, each
  *    narrowed to that member's sources) over the real HTTP transport.
@@ -26,6 +30,7 @@ import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { hashToken, generateToken } from '../../src/core/utils.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { mintLegacyToken } from '../../src/core/token-mint.ts';
+import { parseRescopeTokenArgs, rescopeLegacyToken } from '../../src/core/grants/legacy-token.ts';
 
 const skip = !hasDatabase();
 const describeE2E = skip ? describe.skip : describe;
@@ -37,6 +42,8 @@ const MEMBERS = { a: 'mt-source-a', b: 'mt-source-b' } as const;
 const SHARED = 'mt-shared';
 const CANARY = { a: 'canaryalpha', b: 'canarybravo' } as const;
 const SHARED_CANARY = 'canaryshared';
+const PRIVATE_CANARY = { a: 'canaryprivalpha', b: 'canaryprivbravo' } as const;
+const privateSlug = (member: 'a' | 'b') => `notes/private-ledger-${member}`;
 type Tool = 'search' | 'query' | 'recall';
 const READS: Array<[Tool, Record<string, unknown>]> = [
   ['search', { fields: 'full' }],
@@ -50,6 +57,8 @@ describeE2E('/mcp per-member tokens on one shared brain', () => {
   let engine: PostgresEngine;
   const tokens = { a: '', b: '' };
   const multi = { a: '', b: '' };
+  let bot = '';
+  const rescope = (name: string, mode: string) => rescopeLegacyToken(engine, parseRescopeTokenArgs([name, '--private-pages', mode]));
 
   async function insertToken(name: string, sourceId: string): Promise<string> {
     const token = generateToken('gbrain_');
@@ -73,11 +82,20 @@ describeE2E('/mcp per-member tokens on one shared brain', () => {
       const imported = await importFromContent(engine, `notes/ledger-${member}`,
         `# Quarry ledger\nQuarry ledger notes for member ${member}, ${CANARY[member]}.`, { sourceId: MEMBERS[member], noEmbed: true });
       expect(imported.status).toBe('imported');
+      const hidden = await importFromContent(engine, `notes/private-ledger-${member}`,
+        `---
+visibility: private
+---
+# Private quarry ledger
+Quarry ledger private notes for member ${member}, ${PRIVATE_CANARY[member]}.`, { sourceId: MEMBERS[member], noEmbed: true });
+      expect(hidden.status).toBe('imported');
       tokens[member] = await insertToken(`mt-e2e-${member}`, MEMBERS[member]);
     }
     for (const member of ['a', 'b'] as const) {
       multi[member] = (await mintLegacyToken(engine, { name: `mt-e2e-multi-${member}`, takesHolders: ['world'], scopes: ['read'], sourceGrant: [MEMBERS[member], SHARED] })).token;
+      await rescope(`mt-e2e-multi-${member}`, 'granted-sources');
     }
+    bot = (await mintLegacyToken(engine, { name: 'mt-e2e-bot', takesHolders: ['world'], scopes: ['read'], sourceGrant: [MEMBERS.a, MEMBERS.b, SHARED] })).token;
     const { spawn } = await import('child_process');
     serverProcess = spawn('bun', ['run', 'src/cli.ts', 'serve', '--http', '--port', String(PORT), '--public-url', BASE], {
       cwd: process.cwd(), env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'],
@@ -166,5 +184,58 @@ describeE2E('/mcp per-member tokens on one shared brain', () => {
         }
       }
     }
+  }, 60_000);
+  const PRIVATE_READS: Array<[string, Record<string, unknown>]> = [
+    ['search', { query: 'quarry ledger private notes', fields: 'full' }],
+    ['search', { query: 'quarry ledger private notes', match: 'keyword', fields: 'full' }],
+    ['query', { query: 'quarry ledger private notes', expand: false, fields: 'full' }],
+    ['list_pages', { slug_prefix: 'notes/private-ledger' }],
+  ];
+
+  test('GBRA-156: each granted member token reads its own private page and never the other member\'s; a bot token granted every source without the axis reads none', async () => {
+    const calls: Array<Promise<void>> = [];
+    for (let round = 0; round < 4; round++) {
+      for (const member of ['a', 'b'] as const) {
+        const other = member === 'a' ? 'b' : 'a';
+        for (const [tool, args] of [...PRIVATE_READS, ['get_page', { slug: `notes/private-ledger-${member}` }] as [string, Record<string, unknown>]]) {
+          calls.push(call(multi[member], tool as Tool, args).then(out => {
+            expect(out.isError).not.toBe(true);
+            expect(out.text).toContain(tool === 'list_pages' ? privateSlug(member) : PRIVATE_CANARY[member]);
+            expect(out.text).not.toContain(PRIVATE_CANARY[other]);
+            expect(out.text).not.toContain(privateSlug(other));
+          }));
+        }
+        for (const token of [bot, tokens[member]]) {
+          for (const [tool, args] of PRIVATE_READS) {
+            calls.push(call(token, tool as Tool, args).then(out => {
+              for (const m of ['a', 'b'] as const) {
+                expect(out.text).not.toContain(PRIVATE_CANARY[m]);
+                expect(out.text).not.toContain(privateSlug(m));
+              }
+            }));
+          }
+        }
+      }
+    }
+    await Promise.all(calls);
+    const foreign = await call(multi.a, 'get_page' as Tool, { slug: 'notes/private-ledger-b', source_id: MEMBERS.b });
+    expect(foreign.isError).toBe(true);
+    expect(foreign.text).toContain('permission_denied');
+    expect(foreign.text).not.toContain(PRIVATE_CANARY.b);
+  }, 60_000);
+
+  test('GBRA-156: a rescope back to none hides the private page on the next call', async () => {
+    expect((await call(multi.a, 'get_page' as Tool, { slug: 'notes/private-ledger-a' })).text).toContain(PRIVATE_CANARY.a);
+    await rescope('mt-e2e-multi-a', 'none');
+    try {
+      for (const [tool, args] of [...PRIVATE_READS, ['get_page', { slug: 'notes/private-ledger-a' }] as [string, Record<string, unknown>]]) {
+        const out = await call(multi.a, tool as Tool, args);
+        expect(out.text).not.toContain(PRIVATE_CANARY.a);
+        expect(out.text).not.toContain(tool === 'get_page' ? 'Private quarry ledger' : privateSlug('a'));
+      }
+    } finally {
+      await rescope('mt-e2e-multi-a', 'granted-sources');
+    }
+    expect((await call(multi.a, 'get_page' as Tool, { slug: 'notes/private-ledger-a' })).text).toContain(PRIVATE_CANARY.a);
   }, 60_000);
 });

@@ -1447,16 +1447,15 @@ export function sourceGitScope(localPath: string): string[] | null {
   }
 }
 
-export function resolveSourceLocalFilePath(
-  localPath: string,
-  rawSourcePath: string | null | undefined,
-  pageSlug?: string | null,
-  slugRootMode?: 'git-root' | 'source-root',
-  gitScope?: string[] | null,
-): string | null {
+export function resolveSourceLocalFilePath(localPath: string, rawSourcePath: string | null | undefined, pageSlug?: string | null, slugRootMode?: 'git-root' | 'source-root', gitScope?: string[] | null): string | null {
+  return rawSourcePath && /\.mdx?$/i.test(rawSourcePath.trim()) ? resolveRecordedSourceFilePath(localPath, rawSourcePath, pageSlug, slugRootMode, gitScope) : null;
+}
+/** #7736: `resolveSourceLocalFilePath` for a recorded path of any extension (a code or image page records its own file, `decisions.json`):
+ * the same placement, or null when the path cannot name a file inside the source (absolute, `..`, NUL, empty). */
+export function resolveRecordedSourceFilePath(localPath: string, rawSourcePath: string | null | undefined, pageSlug?: string | null, slugRootMode?: 'git-root' | 'source-root', gitScope?: string[] | null): string | null {
   if (!rawSourcePath) return null;
   const value = rawSourcePath.trim();
-  if (!value || value.includes('\0') || !/\.mdx?$/i.test(value)) return null;
+  if (!value || value.includes('\0')) return null;
   if (isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value)) return null;
   const sourceSegments = splitLocalPathSegments(value);
   if (sourceSegments.length === 0 || sourceSegments.some(segment => segment === '..')) return null;

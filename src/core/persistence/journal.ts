@@ -15,6 +15,7 @@ import { pipelined } from '../page-state/transactions.ts';
 import { backgroundPaused, backgroundWorktreeInactive, declaredBackground, readBackgroundPauseShare, resolveAdmissionOrigin, type AdmissionOrigin } from './admission-origin.ts';
 import { EFFECT_BYTES_SQL, RECEIPT_RESERVATION_FLOOR, receiptReservation, retainedReceiptBytes, TRUE_UP_CLAMP_SQL } from './receipt-bytes.ts';
 import { writeHealth, type WriteHealthFacts } from './health.ts';
+import { OWNER_READ_BUDGET_MS, startOwnerRead } from './owner-activity.ts';
 import { assertBackgroundOwner } from './owner-verification.ts';
 import { writerStamp } from './writer-versions.ts';
 import { intentCarriesContent, intentCarriesPurgedContent, PURGE_PRESENCE_COLUMNS } from './purged-intent.ts';
@@ -106,6 +107,27 @@ export function capacityError(resource: string, outstanding?: { used: number; li
     'Inspect writer status and configured persistence limits. Existing requests retain their reserved completion space.');
   if (outstanding) error.detail = outstandingCapacityDetail(outstanding.used, outstanding.limit);
   return error;
+}
+/**
+ * #8368: the outstanding-request refusal for `row`, or null when the write may be admitted. The local CLI principal is
+ * shared by every source's sync and maintenance on the host, so one source's requests that never settle could hold the
+ * whole principal cap and starve every other source. At that cap, a source holding less than its fair share (the cap
+ * divided by the sources holding outstanding requests on the principal, this one included) is still admitted; the brain
+ * cap and every other principal's cap stay hard. The share is checked before the admission, so a sync publication group
+ * larger than the share is admitted whole and a source passes its share by at most one group. A refusal names the source
+ * holding the most slots.
+ */
+async function outstandingRefusal(tx: SqlEngine, row: Counter, principal: Principal, sourceId: string, need: number, limit: number): Promise<OperationError | null> {
+  const used = Number(row.outstanding_count);
+  if (used + need <= limit) return null;
+  if (row.key === 'brain' || principal.kind !== 'local_cli') return capacityError(`${row.key === 'brain' ? 'brain' : 'principal'} outstanding requests`, { used, limit });
+  const holders = await tx.executeRaw<{ source_id: string; n: number | string }>(`SELECT source_id,count(*) AS n FROM persistence_requests
+    WHERE principal_kind=$1 AND principal_id=$2 AND state IN ('queued','running','recovering') GROUP BY source_id ORDER BY count(*) DESC,source_id`, [principal.kind, principal.id]);
+  const own = Number(holders.find(holder => holder.source_id === sourceId)?.n ?? 0);
+  const sources = holders.length + (own > 0 ? 0 : 1);
+  if (sources > 1 && own < Math.floor(limit / sources)) return null;
+  const top = holders[0];
+  return capacityError(`principal outstanding requests${top ? ` (source ${top.source_id} holds ${Number(top.n)})` : ''}`, { used, limit });
 }
 /**
  * #6696 (A6): a cumulative cap refusal is `write_quota_exhausted` (host only;
@@ -305,8 +327,8 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
     if (input.targetKind === 'skill_bundle') await assertSharedSkillPersistence(tx, input.sourceId);
     for (const row of counters) {
       const brain = row.key === 'brain';
-      const outstandingLimit = brain ? limits.brainOutstanding : limits.principalOutstanding;
-      if (Number(row.outstanding_count) + 1 > outstandingLimit) throw capacityError(`${brain ? 'brain' : 'principal'} outstanding requests`, { used: Number(row.outstanding_count), limit: outstandingLimit });
+      const outstanding = await outstandingRefusal(tx, row, input.principal, input.sourceId, 1, brain ? limits.brainOutstanding : limits.principalOutstanding);
+      if (outstanding) throw outstanding;
       if (Number(row.intent_bytes) + bytes > (brain ? limits.brainIntentBytes : limits.principalIntentBytes)) throw capacityError(`${brain ? 'brain' : 'principal'} intent bytes`);
       const scope = brain ? 'brain' : 'principal';
       if (Number(row.lifetime_ids) + 1 > limits[`${scope}LifetimeIds`]) throw await cumulativeCapacityError(tx, `${scope} permanent request IDs`,
@@ -389,8 +411,8 @@ export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: Writ
     const bytes = fresh.reduce((sum, item) => sum + item.bytes, 0), terminalBytes = fresh.reduce((sum, item) => sum + item.terminalBytes, 0);
     for (const row of counters) {
       const brain = row.key === 'brain', scope = brain ? 'brain' : 'principal';
-      const outstandingLimit = brain ? limits.brainOutstanding : limits.principalOutstanding;
-      if (Number(row.outstanding_count) + fresh.length > outstandingLimit) throw capacityError(`${scope} outstanding requests`, { used: Number(row.outstanding_count), limit: outstandingLimit });
+      const outstanding = await outstandingRefusal(tx, row, first.principal, first.sourceId, fresh.length, brain ? limits.brainOutstanding : limits.principalOutstanding);
+      if (outstanding) throw outstanding;
       if (Number(row.intent_bytes) + bytes > (brain ? limits.brainIntentBytes : limits.principalIntentBytes)) throw capacityError(`${scope} intent bytes`);
       if (Number(row.lifetime_ids) + fresh.length > limits[`${scope}LifetimeIds`]) throw await cumulativeCapacityError(tx, `${scope} permanent request IDs`,
         row.key, `${scope}LifetimeIds`, Number(row.lifetime_ids), limits[`${scope}LifetimeIds`]);
@@ -1246,10 +1268,14 @@ export async function writeHealthFacts(engine: BrainEngine, rows: WriteRequest[]
     ) head ON true`, [roots], { signal: engine.kind === 'postgres' ? abort.signal : undefined })
     .catch(() => null).finally(() => { if (healthQueries.get(engine) === query) healthQueries.delete(engine); });
   healthQueries.set(engine, query);
+  // GBRA-248: owner facts read beside the head facts, inside the same 500 ms budget.
+  const ownerReadStarted = performance.now();
+  const settleOwners = startOwnerRead(engine, pending.flatMap(row => row.worktree_id ? [row.worktree_id] : []));
   let timer: ReturnType<typeof setTimeout> | undefined;
   const facts = await Promise.race([query, new Promise<null>(resolve => {
-    timer = setTimeout(() => { abort.abort(); resolve(null); }, 500);
+    timer = setTimeout(() => { abort.abort(); resolve(null); }, OWNER_READ_BUDGET_MS);
   })]).finally(() => { if (timer) clearTimeout(timer); });
+  const owners = await settleOwners(facts ? OWNER_READ_BUDGET_MS - (performance.now() - ownerReadStarted) : 0) ?? new Map();
   if (!facts) return result;
   const byRoot = new Map(facts.map(fact => [fact.root, fact]));
   for (const row of pending) {
@@ -1257,10 +1283,12 @@ export async function writeHealthFacts(engine: BrainEngine, rows: WriteRequest[]
     if (!fact) continue;
     // #5984 Phase 4.5: a foreground write publishing beside running lane groups (claimed sync jobs) is not waiting on them.
     const head = row.state === 'queued' ? fact.sequence : row.worktree_id && row.operation !== 'submit_job' ? fact.started_unlaned : fact.started_sequence;
+    const owner = row.worktree_id ? owners.get(row.worktree_id) : undefined;
     result.set(row.id, { observed_at, recovery_required: fact.recovery_required,
       owner_unavailable: fact.owner_unavailable,
       inspect_owner: fact.inspect_owner,
-      earlier_write: head != null && BigInt(head) < BigInt(row.sequence) });
+      earlier_write: head != null && BigInt(head) < BigInt(row.sequence),
+      ...(owner ? { owner } : {}) });
   }
   return result;
 }

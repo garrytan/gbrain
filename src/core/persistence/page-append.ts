@@ -319,7 +319,7 @@ export async function prepareSegmentedSpliceMutation(engine: BrainEngine, row: W
       `Page ${row.slug} is near the configured page ceiling, so this write refuses on every retry. Start a new page for further text, or ask the owner to raise pages.max_bytes.`,
       { fix: pageFix(row.source_id, row.slug) });
   }
-  stampPageTrustMarker(row, frontmatter, trust, storedTier);
+  stampPageTrustMarker(row, frontmatter, trust, storedTier, stored.page.frontmatter);
   // As put_page's gate (import-screen.ts settleContentDisposition), over the new text only: the stored text was assessed when it was written.
   const gate = gateTrust && writeGateApplies(gateTrust.tier, gateConfig) ? await applyTrustAllowRules(engine, assessWriteGate([['title', stored.page.title],
     ['body', stripManagedFenceRows(built.replacements.map(r => Buffer.from(r.bytes).toString('utf8')).join('\n'))], ['frontmatter', frontmatterText(frontmatter)]],

@@ -146,6 +146,9 @@ export const SECTIONS: DocSection[] = [
         description:
           "5-minute walkthrough: fork the bundled pack, add a custom `researcher` type, backfill existing pages via `gbrain schema sync --apply`, prove the T1.5 wiring via `gbrain whoknows`.",
         path: "docs/schema-author-tutorial.md",
+        // GBRA-199: an optional walkthrough; dropped from the single-fetch
+        // bundle so the memory-verb listing docs fit FULL_SIZE_BUDGET.
+        includeInFull: false,
       },
       {
         title: "docs/guides/system-one.md",

@@ -593,7 +593,8 @@ describe('happy path: linux-systemd', () => {
     // wrapper + unit shape
     const wrapper = readFileSync(wrapperPath(f.serveDir), 'utf-8');
     expect(wrapper).toContain(`GBRAIN_ADMIN_BOOTSTRAP_TOKEN="$(cat '${adminTokenPath(f.serveDir)}')"`);
-    expect(wrapper).toContain(`serve --http --port 3131 --public-url https://${DNS} --surface full`);
+    expect(wrapper).toContain(`serve --http --port 3131 --public-url https://${DNS} --surface full --advertise verbs`);
+    expect(receipt.advertise).toBe('verbs');
     expect(wrapper).not.toContain('export GBRAIN_HOME');
     expect(readFileSync(f.deps.unitPath!, 'utf-8')).toContain(`ExecStart=${wrapperPath(f.serveDir)}`);
     // exec ledger: enable + restart (a reinstall relaunches the regenerated wrapper), never enable --now
@@ -657,6 +658,7 @@ describe('happy path: linux-systemd', () => {
     expect(joinedCalls(f)).toContain(`${TS} funnel --bg 4000`);
     const receipt = readExposeReceipt(receiptPath(f.serveDir))!;
     expect(receipt).toMatchObject({ mode: 'funnel', port: 4000, surface: 'verbs', enable_dcr: true });
+    expect(receipt.advertise).toBeUndefined();
     const wrapper = readFileSync(wrapperPath(f.serveDir), 'utf-8');
     expect(wrapper).toContain(`export GBRAIN_HOME='${join(f.home, 'custom')}'`);
     expect(wrapper).toContain('--port 4000 --public-url https://your-machine.your-tailnet.ts.net --surface verbs --enable-dcr');
@@ -695,6 +697,21 @@ describe('happy path: linux-systemd', () => {
     expect(second.created_at).toBe(first.created_at);
     expect(second.updated_at).toBe('2026-06-02T00:00:00.000Z');
     expect(checkOf(jsonDoc(f), 'admin_token')?.detail).toContain('reused');
+  });
+
+  test('an exposure from before the verbs listing default keeps listing everything when re-run; --surface full lists everything', async () => {
+    const f = fakeTailnet();
+    expect(await runMcpExpose(['--yes'], f.deps)).toBe(0);
+    const { advertise: _dropped, ...older } = readExposeReceipt(receiptPath(f.serveDir))!;
+    writeExposeReceipt(receiptPath(f.serveDir), older);
+    expect(await runMcpExpose(['--yes'], f.deps)).toBe(0);
+    expect(readExposeReceipt(receiptPath(f.serveDir))!.advertise).toBeUndefined();
+    expect(readFileSync(wrapperPath(f.serveDir), 'utf-8')).not.toContain('--advertise');
+
+    const g = fakeTailnet();
+    expect(await runMcpExpose(['--yes', '--surface', 'full'], g.deps)).toBe(0);
+    expect(readExposeReceipt(receiptPath(g.serveDir))!.advertise).toBeUndefined();
+    expect(readFileSync(wrapperPath(g.serveDir), 'utf-8')).toContain(`--public-url https://${DNS} --surface full\n`);
   });
 });
 

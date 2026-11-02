@@ -29,6 +29,12 @@
  * ordinary ghost; the knowledge guard lets its retirement through as a database-only
  * soft delete.
  *
+ * #7736: a code or image page records the path of its own file (`decisions.json`), which the Markdown
+ * resolver behind `prepareFileTarget` rejects, falling back to `<slug>.md`. Such a page is checked at its recorded
+ * file first: present, it is not a ghost; absent, it is a ghost only when `liveFileDrift` also finds no file. A page
+ * whose recorded non-Markdown path cannot be placed inside the source (absolute, `..`, NUL) is never a ghost: it is
+ * reported apart (`unresolvable`, code `recorded_path_unresolvable`) and never removed.
+ *
  * Readers: doctor `ghost_pages`, `gbrain pages ghosts` and `gbrain repair
  * ghost-pages` (`scanGhostSource`, `ghostPageNow`), and the read-scope MCP
  * health op (`readGhostPages`, counts only for remote callers).
@@ -37,7 +43,7 @@ import { statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from './engine.ts';
 import type { PageSnapshot } from './page-state/types.ts';
-import { resolveSourceLocalFilePath, sourceGitScope } from './markdown.ts';
+import { resolveRecordedSourceFilePath, resolveSourceLocalFilePath, sourceGitScope } from './markdown.ts';
 import { recordedPathFromFileUri, scannerSlugRootMode } from './write-through.ts';
 import { isOpPageSlug } from './ops/context.ts';
 import { existingLocalHostId } from './persistence/identity.ts';
@@ -49,19 +55,26 @@ import { isReservedSkillBundlePath } from './skill-reserved-paths.ts';
 import { sharedPackMember } from './shared-skills/knowledge-guard.ts';
 
 export interface GhostPage { source_id: string; slug: string; path: string; revision: string; page_id: number }
+/** #7736: a live page whose recorded non-Markdown path names no file inside its source; never a ghost, never removed. */
+export interface UnresolvablePage { source_id: string; slug: string; source_path: string; page_id: number }
+export const UNRESOLVABLE_PATH_CODE = 'recorded_path_unresolvable';
 export interface GhostPagesSummary {
   status: 'known' | 'unknown';
   /** 'not_owner_host' | 'not_applicable' | 'storage_unavailable' | 'ambiguous_storage' */
   reason?: string;
   /** Ghosts found among inspected pages. */
   count: number;
-  by_source: Array<{ source_id: string; count: number; status: 'known' | 'unknown' | 'not_applicable'; reason?: string; skill_paths?: number }>;
+  by_source: Array<{ source_id: string; count: number; status: 'known' | 'unknown' | 'not_applicable'; reason?: string; skill_paths?: number; unresolvable?: number }>;
   /** Bounded by `sampleLimit`. */
   samples: GhostPage[];
   /** #6910: ghosts whose path is a member of an adopted shared skillpack (the pack's file is missing); not in `count`. */
   skill_paths: number;
   /** Bounded by `sampleLimit`. */
   skill_path_samples: GhostPage[];
+  /** #7736: live pages whose recorded path could not be resolved; not in `count`. */
+  unresolvable: number;
+  /** Bounded by `sampleLimit`. */
+  unresolvable_samples: UnresolvablePage[];
   inspected: number;
   truncated: boolean;
   exact: boolean;
@@ -77,6 +90,10 @@ export interface GhostSourceScan {
   ghosts: GhostPage[];
   /** #6910: confirmed ghosts whose path is a member of the source's adopted shared skillpack; never in `ghosts`. */
   skill_paths: GhostPage[];
+  /** #7736: live pages whose recorded non-Markdown path could not be resolved (bounded by `UNRESOLVABLE_SAMPLE_LIMIT`); never in `ghosts`. */
+  unresolvable: UnresolvablePage[];
+  /** How many pages were unresolvable (`unresolvable` holds at most `UNRESOLVABLE_SAMPLE_LIMIT` of them). */
+  unresolvable_count: number;
   /** The source's canonical root on this host, when the scan ran (the skill-path restore step names it). */
   root?: string;
   /** Live pages the existence pre-filter examined. */
@@ -90,6 +107,7 @@ export interface GhostSourceScan {
 }
 
 export const GHOST_SAMPLE_LIMIT = 5;
+export const UNRESOLVABLE_SAMPLE_LIMIT = 20;
 /** Candidates `readGhostPages` (doctor, health) confirms per source. */
 export const GHOST_CHECK_LIMIT = 200;
 /** Live pages the pre-filter reads per source. */
@@ -123,29 +141,43 @@ export async function sourceContext(engine: BrainEngine, sourceId: string): Prom
     owner: { host_id: hostId, worktree_id: binding.worktree_id, owner_epoch: String(binding.owner_epoch), source_incarnation: binding.source_incarnation } };
 }
 
-/** The path `prepareFileTarget` compares, resolved the same way (recorded source path, captured file URI, then the slug path). */
-export function canonicalPath(context: Extract<SourceContext, { ok: true }>, page: Pick<PageRow, 'slug' | 'source_path' | 'source_uri'>): string {
+/** #7736: the file a non-Markdown page records (a code or image page); undefined for a Markdown or unrecorded path, null when the path names no file inside the source. */
+function recordedFilePath(context: Extract<SourceContext, { ok: true }>, page: Pick<PageRow, 'slug' | 'source_path'>): string | null | undefined {
+  const recorded = page.source_path?.trim();
+  if (!recorded || /\.mdx?$/i.test(recorded)) return undefined;
+  return resolveRecordedSourceFilePath(context.root, recorded, page.slug, context.mode, context.gitScope);
+}
+
+/**
+ * The path `prepareFileTarget` compares, resolved the same way (recorded source path, captured file URI, then the slug path);
+ * #7736: a page recording a non-Markdown file is checked at that file, and null means its recorded path names no file inside the source.
+ */
+export function canonicalPath(context: Extract<SourceContext, { ok: true }>, page: Pick<PageRow, 'slug' | 'source_path' | 'source_uri'>): string | null {
+  const recorded = recordedFilePath(context, page);
+  if (recorded !== undefined) return recorded;
   const captured = recordedPathFromFileUri(page.source_uri, context.root);
   return resolveSourceLocalFilePath(context.root, page.source_path, page.slug, page.source_path ? context.mode : undefined, context.gitScope)
     ?? (captured ? join(context.root, captured) : join(context.root, `${page.slug}.md`));
 }
 
-/** The existence pre-filter: `present`, `database_only`, a `candidate` at its source-relative path, or `ambiguous`. */
-function prefilter(context: Extract<SourceContext, { ok: true }>, page: PageRow): { kind: 'present' | 'database_only' | 'ambiguous' } | { kind: 'candidate'; path: string } {
+/** The existence pre-filter: `present`, `database_only`, a `candidate` at its source-relative path, `unresolvable` (#7736) or `ambiguous`. */
+function prefilter(context: Extract<SourceContext, { ok: true }>, page: PageRow): { kind: 'present' | 'database_only' | 'unresolvable' | 'ambiguous' } | { kind: 'candidate'; path: string } {
   if (!isOpPageSlug(page.slug)) return { kind: 'database_only' };
   const path = canonicalPath(context, page);
-  try {
-    statSync(path);
-    return { kind: 'present' };
-  } catch (error) {
-    if (!missing(error)) return { kind: 'ambiguous' };
+  if (path !== null) {
+    try {
+      statSync(path);
+      return { kind: 'present' };
+    } catch (error) {
+      if (!missing(error)) return { kind: 'ambiguous' };
+    }
   }
   try {
     if (publishesDatabaseOnly(context.root, page.slug, { page: { deleted_at: null, source_path: page.source_path, source_uri: page.source_uri } })) return { kind: 'database_only' };
   } catch {
     return { kind: 'ambiguous' };
   }
-  return { kind: 'candidate', path: relative(context.root, path).split(sep).join('/') };
+  return path === null ? { kind: 'unresolvable' } : { kind: 'candidate', path: relative(context.root, path).split(sep).join('/') };
 }
 
 /** The full check of one candidate: `ghost` with its revision, `not_ghost`, or `unknown` with the classifier's reason. */
@@ -153,10 +185,23 @@ async function confirm(engine: BrainEngine, context: Extract<SourceContext, { ok
   Promise<{ kind: 'ghost'; ghost: GhostPage } | { kind: 'not_ghost'; reason: string } | { kind: 'unknown'; reason: string }> {
   const snapshot: PageSnapshot | null = await engine.readPageSnapshot(slug, { sourceId });
   if (!snapshot || snapshot.page.deleted_at) return { kind: 'not_ghost', reason: 'page_missing' };
+  const page = { slug, source_path: snapshot.page.source_path ?? null, source_uri: snapshot.page.source_uri ?? null };
+  // #7736: `liveFileDrift` resolves Markdown paths only, so a recorded non-Markdown file is checked here on its own; the
+  // page is a ghost only when that file and the write target `liveFileDrift` checks are both missing.
+  const recorded = recordedFilePath(context, page);
+  if (recorded === null) return { kind: 'not_ghost', reason: UNRESOLVABLE_PATH_CODE };
+  if (recorded) {
+    try {
+      statSync(recorded);
+      return { kind: 'not_ghost', reason: 'recorded_file_present' };
+    } catch (error) {
+      if (!missing(error)) return { kind: 'unknown', reason: 'ambiguous_storage' };
+    }
+  }
   const live = await liveFileDrift(engine, sourceId, slug, snapshot);
   if (live.reason === 'canonical_file_missing') {
-    return { kind: 'ghost', ghost: { source_id: sourceId, slug, path: relative(context.root, canonicalPath(context, { slug, source_path: snapshot.page.source_path ?? null,
-      source_uri: snapshot.page.source_uri ?? null })).split(sep).join('/'), revision: snapshot.revision, page_id: Number(snapshot.page.id) } };
+    return { kind: 'ghost', ghost: { source_id: sourceId, slug, path: relative(context.root, recorded ?? canonicalPath(context, page)!).split(sep).join('/'),
+      revision: snapshot.revision, page_id: Number(snapshot.page.id) } };
   }
   if (['agrees', 'file_database_drift', 'database_only', 'page_missing'].includes(live.reason)) return { kind: 'not_ghost', reason: live.reason };
   return { kind: 'unknown', reason: live.reason === 'not_owner_host' ? 'not_owner_host' : 'ambiguous_storage' };
@@ -179,7 +224,7 @@ async function sharedPackMemberGhost(engine: BrainEngine, owner: GhostOwner, gho
 export async function scanGhostSource(engine: BrainEngine, sourceId: string, opts: { candidateLimit?: number; signal?: AbortSignal } = {}): Promise<GhostSourceScan> {
   const limit = opts.candidateLimit ?? GHOST_CHECK_LIMIT;
   const context = await sourceContext(engine, sourceId);
-  const scan: GhostSourceScan = { source_id: sourceId, status: 'known', ghosts: [], skill_paths: [], inspected: 0, file_backed: 0, candidates: 0, truncated: false };
+  const scan: GhostSourceScan = { source_id: sourceId, status: 'known', ghosts: [], skill_paths: [], unresolvable: [], unresolvable_count: 0, inspected: 0, file_backed: 0, candidates: 0, truncated: false };
   if (!context.ok) return { ...scan, status: context.status, reason: context.reason };
   scan.owner = context.owner;
   scan.root = context.root;
@@ -195,6 +240,10 @@ export async function scanGhostSource(engine: BrainEngine, sourceId: string, opt
       const verdict = prefilter(context, row);
       if (verdict.kind === 'present') { scan.file_backed++; continue; }
       if (verdict.kind === 'database_only') continue;
+      if (verdict.kind === 'unresolvable') {
+        if (scan.unresolvable_count++ < UNRESOLVABLE_SAMPLE_LIMIT) scan.unresolvable.push({ source_id: sourceId, slug: row.slug, source_path: row.source_path!, page_id: Number(row.id) });
+        continue;
+      }
       if (verdict.kind === 'ambiguous') return { ...scan, status: 'unknown', reason: 'ambiguous_storage' };
       scan.candidates++;
       if (scan.candidates > limit) { scan.truncated = true; unchecked++; continue; }
@@ -233,14 +282,16 @@ export async function readGhostPages(engine: BrainEngine, opts: { sourceIds?: st
   const offOwner = scans.some(scan => scan.reason === 'not_owner_host');
   const count = scans.reduce((sum, scan) => sum + scan.ghosts.length, 0);
   const skillPaths = scans.reduce((sum, scan) => sum + scan.skill_paths.length, 0);
+  const unresolvable = scans.reduce((sum, scan) => sum + scan.unresolvable_count, 0);
   const truncated = scans.some(scan => scan.truncated);
   const status = unknown || (!known.length && offOwner) ? 'unknown' : 'known';
   const reason = unknown?.reason ?? (!known.length ? (offOwner ? 'not_owner_host' : 'not_applicable') : undefined);
   return { status, ...(reason ? { reason } : {}), count,
     by_source: scans.map(scan => ({ source_id: scan.source_id, count: scan.ghosts.length, status: scan.status, ...(scan.reason ? { reason: scan.reason } : {}),
-      ...(scan.skill_paths.length ? { skill_paths: scan.skill_paths.length } : {}) })),
+      ...(scan.skill_paths.length ? { skill_paths: scan.skill_paths.length } : {}), ...(scan.unresolvable_count ? { unresolvable: scan.unresolvable_count } : {}) })),
     samples: scans.flatMap(scan => scan.ghosts).slice(0, opts.sampleLimit ?? GHOST_SAMPLE_LIMIT),
     skill_paths: skillPaths, skill_path_samples: scans.flatMap(scan => scan.skill_paths).slice(0, opts.sampleLimit ?? GHOST_SAMPLE_LIMIT),
+    unresolvable, unresolvable_samples: scans.flatMap(scan => scan.unresolvable).slice(0, opts.sampleLimit ?? GHOST_SAMPLE_LIMIT),
     inspected: scans.reduce((sum, scan) => sum + scan.inspected, 0), truncated,
     exact: status === 'known' && !truncated && !offOwner && !unknown };
 }

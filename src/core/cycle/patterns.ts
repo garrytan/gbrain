@@ -968,7 +968,11 @@ async function writeGroundedPage(engine: BrainEngine, maintenance: MaintenanceAu
     return result;
   };
   if (!derived) await (removedEntries.length ? engine.transaction(write) : write(engine));
-  else await derivedMaintenanceTransaction(engine, derived, async tx => ({ result: await write(tx), rows: [{ table: 'pages' as const, id: snapshot.page.id, sourceId }] }));
+  else await derivedMaintenanceTransaction(engine, derived, async tx => {
+    const [row] = await tx.executeRaw<{ trust_tier: string | null }>('SELECT trust_tier FROM pages WHERE id = $1', [snapshot.page.id]);
+    const prior = row ? { slug, tier: storedTrustTier(row.trust_tier), revision: snapshot.revision } : undefined;
+    return { result: await write(tx), rows: [{ table: 'pages' as const, id: snapshot.page.id, sourceId, ...(prior ? { prior } : {}) }] };
+  });
 }
 
 /**

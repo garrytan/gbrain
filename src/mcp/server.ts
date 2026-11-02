@@ -327,7 +327,7 @@ function stdioSurfaceSession(
  */
 const READ_ONLY_SERVE_NOTE = '[gbrain-serve] read-only: no persistence consumer, on-commit sync or sweep runs here; a read-write serve, jobs work or autopilot owns them.\n';
 
-export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; surfaceSource?: SurfaceSource; invalidSurfaceEnv?: string; sourceGuard?: boolean; onBootPhase?: (phase: string) => void; access?: McpAccess } = {}) {
+export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; surfaceSource?: SurfaceSource; invalidSurfaceEnv?: string; sourceGuard?: boolean; onBootPhase?: (phase: string) => void; access?: McpAccess; advertise?: McpSurface } = {}) {
   const config = loadConfig();
   const bootPhase = (phase: string) => { try { opts.onBootPhase?.(phase); } catch { /* diagnostic only */ } };
   // Refuse to serve a well-formed GBRAIN_SOURCE that no active source row
@@ -380,16 +380,16 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       instructions: resolveMcpInstructions(config, process.env, { writeback: writebackOpts }),
     },
   );
-  const listing = stdioToolListing(() => resolveAdvertisedSurface(isEngineDegraded(engine) ? null : engine, config), session, server);
+  const listing = stdioToolListing(() => resolveAdvertisedSurface(isEngineDegraded(engine) ? null : engine, config, opts.advertise ?? null), session, server);
   // F1: callable-set contract + readiness tail (or status-only line), resolved at client initialize.
   installInstructionsResolver(server, async () => {
     if (statusMode && isEngineDegraded(engine)) {
       return resolveMcpInstructions(config, process.env, { tools: { callable: n => n === STATUS_TOOL_NAME, statusLine: statusInstructionLine(statusMode) } });
     }
-    const visibleOps = await stdioVisibleTools(engine, session.surfacedOps), visible = new Set(visibleOps.map(op => op.name));
+    const visibleOps = await stdioVisibleTools(engine, session.surfacedOps), listedOps = await listing.listed(visibleOps), listed = new Set(listedOps.map(op => op.name));
     return resolveMcpInstructions(config, process.env, {
       writeback: writebackOpts, ...await readInstructionContent(engine),
-      tools: { callable: n => visible.has(n), readiness: await instructionReadiness(engine, config, 'stdio'), hiddenCallable: visibleOps.length - (await listing.listed(visibleOps)).length },
+      tools: { callable: n => listed.has(n), readiness: await instructionReadiness(engine, config, 'stdio'), hiddenCallable: visibleOps.length - listedOps.length },
     });
   }, gate.initializeAnswered);
 
@@ -453,7 +453,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // shape and cast through `any` (the SDK accepts it via the ServerResult union).
   server.setRequestHandler(CallToolRequestSchema, async (request: any): Promise<any> => trackStdioRpc(() => withRequestConfigSnapshot(engine, async () => {
     const { name, arguments: params } = request.params;
-    const [{ dispatchToolCall, dispatchRenderContext, requestMetaSessionId }, { getBrainHotMemoryMeta }] = await gate.awaitCall();
+    const [{ dispatchToolCall, dispatchRenderContext, requestMetaSessionId, hotMemoryOffIn }, { getBrainHotMemoryMeta }] = await gate.awaitCall();
     // F4: status-only mode answers gbrain_status and refuses the rest until
     // a tool call's re-probe finds the brain openable (then dispatch normally).
     if (statusMode) {
@@ -493,7 +493,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       // stdio stays remote/untrusted.
       transport: 'stdio', inboundFrameBytes: MCP_STDIO_MAX_MESSAGE_BYTES,
       takesHoldersAllowList: ['world'],
-      ...(sessionId ? { sessionId } : {}),
+      ...(sessionId ? { sessionId } : {}), ...(hotMemoryOffIn(request.params) ? { hotMemoryOff: true } : {}), onBehalfOf: { requestMeta: request.params?._meta },
       sourceId: sourceScope.sourceId,
       ...(sourceScope.localFederatedSourceIds
         ? { localFederatedSourceIds: sourceScope.localFederatedSourceIds }

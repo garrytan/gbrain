@@ -14,7 +14,7 @@
 import {
   annotateTemporalRow, temporalLinkJoinSql, TEMPORAL_LINK_SELECT_SQL, type RelationshipStatus,
 } from './link-validity.ts';
-import { privateLinkOriginFilterFragment, privatePagesFilterFragment } from './search/private-visibility.ts';
+import { privatePagesFilterForCaller, privateLinkOriginFilterForCaller } from './search/private-visibility.ts';
 
 const NOTE_ENDED_CAP = 3;
 
@@ -58,13 +58,13 @@ export async function loadRelationshipNotes(
 ): Promise<Map<string, string>> {
   const notes = new Map<string, string>();
   if (subjects.length === 0) return notes;
-  const privacy = opts.excludePrivate ? ` AND ${privatePagesFilterFragment('t')} AND ${privateLinkOriginFilterFragment('l')}` : '';
+  const privacy = opts.excludePrivate ? ` AND ${privatePagesFilterForCaller('t')} AND ${privateLinkOriginFilterForCaller('l')}` : '';
   // The evidence the relationship projection counts for this scope (link-relationships.ts): an origin that is gone or in
   // another source never counts, and a private origin does not count toward the world scope.
   const endBy = (producer: string) => `EXISTS (SELECT 1 FROM link_transitions x LEFT JOIN pages xo ON xo.id = x.origin_page_id
         WHERE x.from_page_id = l.from_page_id AND x.to_page_id = l.to_page_id AND x.link_type = l.link_type AND x.kind = 'end'
         AND x.occurred_on = lr_t.last_end AND x.producer ${producer}
-        AND (x.origin_page_id IS NULL OR xo.deleted_at IS NULL AND xo.source_id = f.source_id${opts.excludePrivate ? ` AND ${privatePagesFilterFragment('xo')}` : ''}))`;
+        AND (x.origin_page_id IS NULL OR xo.deleted_at IS NULL AND xo.source_id = f.source_id${opts.excludePrivate ? ` AND ${privatePagesFilterForCaller('xo')}` : ''}))`;
   const rows = await engine.executeRaw<{ from_slug: string; source_id: string; to_slug: string; to_title: string | null; link_type: string; last_end: string | null; end_upper_bound: boolean | null }>(
     `SELECT f.slug AS from_slug, f.source_id, t.slug AS to_slug, t.title AS to_title, l.link_type, lr_t.last_end::text AS last_end,
         (${endBy("= 'dream'")} AND NOT ${endBy("<> 'dream'")}) AS end_upper_bound${TEMPORAL_LINK_SELECT_SQL}

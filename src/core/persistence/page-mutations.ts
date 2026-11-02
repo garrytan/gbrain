@@ -22,7 +22,8 @@ import { parseWireWriteWaitMs } from './write-wait.ts';
 import { assertTimelineNotOmitted, isTimelineSection, timelineSectionOf, type TimelineSection } from './timeline-omission.ts';
 import { contentOriginTier } from '../trust/tier.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
-import { contentSizeHold } from '../markdown.ts';
+import { contentSizeHold, frontmatterBodyOffset, parseMarkdownHead } from '../markdown.ts';
+import { dataFrontmatter, dumpFrontmatterYaml } from '../data-frontmatter.ts';
 import { throwIfHeld } from '../trust/gate-outcomes.ts';
 import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequest, intentDigest, type WriteAdmission } from './journal.ts';
 import { submissionAuthority, authorizeStoredRequest } from './authority.ts';
@@ -36,12 +37,15 @@ import { normalizeSubagentPageInput, undeclaredPageTypeWarning, type PageTypeWar
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { decideUnboundWrite, isUnboundSourcePage } from './unbound-source.ts';
 import { assertRestoreOrigin } from './detached-pages.ts';
+import { isSourceDbOnlySlug } from './source-storage.ts';
 import { colonSlugWindowsRefusal, isWindowsColonTarget } from './native-file-target.ts';
 import { publishesDatabaseOnly } from './page-prepare.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { liveSearchable } from './searchable.ts';
 import { cachedPreadmitBrain, dropPreadmitCache, preadmitReads, preadmitRecheckFailed } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
+import { holdsSummarizedToolCalls, isQuotedPageType, quotesTier, unquoteTranscriptText } from '../search/transcript-quote.ts';
+import { readStoredBody } from '../facts/file-body-guard.ts';
 import { isMirrorOnlyPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
@@ -251,6 +255,92 @@ export async function submitPageMutation(ctx: OperationContext,
 }
 
 /**
+ * #8042: a remote put_page (put_pages too) of a quoted page's get_page content writes the page body, not the fences
+ * get_page added (search/transcript-quote.ts). A fence naming the page is removed when its stored type or the type the
+ * new content declares is one get_page quotes (either, so a retype keeps the body), or (GST-687) when the stored page is
+ * below the owner's tier, which get_page quotes too; an owner-tier note keeps a fence naming it only when its stored body
+ * already holds one, so a fence read before a claim raised the page's tier is never stored.
+ * GST-687: content carrying a tool-call summary that only the neutralized read of the stored chat page holds (get_page's
+ * reading shape, fetch) is refused, so a read-then-write never replaces a stored tool call with its summary.
+ */
+/** Every string in `value` with the fences naming `slug` removed (get_page's quotedPageMeta, reversed). */
+function unquotedStrings(value: unknown, slug: string): unknown {
+  return typeof value === 'string' ? unquoteTranscriptText(value, slug)
+    : Array.isArray(value) ? value.map(v => unquotedStrings(v, slug))
+    : value && typeof value === 'object' && !(value instanceof Date) ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, unquotedStrings(v, slug)])) : value;
+}
+
+/**
+ * #8377: a quoted read's reading shape fences the title and each frontmatter string as `slug`'s (a whole-markdown read is
+ * fenced once instead, and its metadata is the page's own). YAML indents those fences, so the body's unquote misses them.
+ * #8384: only the top-level keys that held a fence are rewritten; every other line keeps the bytes the caller sent, so a
+ * naive datetime keeps its brain-timezone reading. A fenced key not found on its own line, or a line rewrite that does not
+ * parse back to the unquoted values (a flow mapping continued on an unindented line, an anchor another key aliases),
+ * rewrites the whole block.
+ */
+function unquotedFrontmatter(sent: string, content: string, slug: string): string {
+  const offset = frontmatterBodyOffset(content);
+  if (!offset || !frontmatterBodyOffset(sent) || !content.slice(0, offset).includes('```text')) return content;
+  const { frontmatter } = parseMarkdownHead(content);
+  const data = unquotedStrings(frontmatter, slug) as Record<string, unknown>;
+  const fenced = new Set(Object.keys(data).filter(k => JSON.stringify(data[k]) !== JSON.stringify(frontmatter[k])));
+  if (!fenced.size) return content;
+  const lines = content.slice(0, offset).split('\n');
+  const open = lines.findIndex(l => l.trim() === '---');
+  const close = lines.findIndex((l, i) => i > open && l.trim() === '---');
+  const out = lines.slice(0, open + 1);
+  for (let i = open + 1; i < close;) {
+    let end = i + 1;
+    while (end < close && /^(?:[ \t]|-(?:[ \t]|\r?$)|\r?$)/.test(lines[end]!)) end++;
+    const m = /^(?:"([^"]*)"|'([^']*)'|([^\s#'"-][^:]*?))[ \t]*:(?:[ \t]|\r?$)/.exec(lines[i]!);
+    const key = m?.[1] ?? m?.[2] ?? m?.[3];
+    if (key !== undefined && fenced.delete(key)) {
+      const eol = lines[i]!.endsWith('\r') ? '\r' : '';
+      out.push(...dumpFrontmatterYaml({ [key]: data[key] }).trimEnd().split('\n').map(l => l + eol));
+    } else out.push(...lines.slice(i, end));
+    i = end;
+  }
+  const whole = dataFrontmatter.stringify('', data) + content.slice(offset);
+  if (fenced.size) return whole;
+  const partial = [...out, ...lines.slice(close)].join('\n') + content.slice(offset);
+  try {
+    return JSON.stringify(parseMarkdownHead(partial).frontmatter) === JSON.stringify(data) ? partial : whole;
+  } catch {
+    return whole;
+  }
+}
+
+async function unquotedPutContent(engine: BrainEngine, sourceId: string, slug: string, content: string): Promise<string> {
+  const bodyUnquoted = unquoteTranscriptText(content, slug, true);
+  const unquoted = unquotedFrontmatter(content, bodyUnquoted, slug);
+  const summarized = /, arguments omitted\]/.test(unquoted);
+  const quotedType = isQuotedPageType(String(parseMarkdownHead(unquoted).frontmatter.type ?? ''));
+  if (!summarized && (unquoted === content || quotedType)) return unquoted;
+  const [stored] = await engine.executeRaw<{ type: string | null; trust_tier: string | null; title: string | null; frontmatter: unknown }>(
+    'SELECT type, trust_tier, title, frontmatter FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
+  // Compared with the stored body's tool calls; a segmented page reads NULL inline columns, so its summarized round trip is refused.
+  const losesCalls = async () => {
+    const body = await readStoredBody(engine, sourceId, slug);
+    return body?.compiled_truth == null || holdsSummarizedToolCalls(`${body.compiled_truth}\n${body.timeline ?? ''}`, unquoted);
+  };
+  if (summarized && stored && isQuotedPageType(stored.type) && await losesCalls()) {
+    throw new OperationError('invalid_params', `put_page: this content has tool calls that a read of ${slug} summarized; writing it would replace the stored calls with their summaries.`,
+      'Nothing was written. Change the page with edit_page, or read it with get_page include_content: true (its content keeps the stored text) and write that back.');
+  }
+  if (unquoted === content || quotedType) return unquoted;
+  if (!stored) return content;
+  if (isQuotedPageType(stored.type) || quotesTier(stored.trust_tier)) return unquoted;
+  // An owner-tier page keeps a fence naming it only when its stored body already holds one: a fence read while the page sat
+  // below the owner's tier (before a claim or backfill raised it, or from a quoted version) is a read's, not the page's.
+  // Its title and frontmatter are judged the same way, by the stored title and frontmatter.
+  const body = await readStoredBody(engine, sourceId, slug);
+  const storedText = `${body?.compiled_truth ?? ''}\n${body?.timeline ?? ''}`;
+  const kept = body?.compiled_truth != null && unquoteTranscriptText(storedText, slug) === storedText ? bodyUnquoted : content;
+  const storedMeta = [stored.title, typeof stored.frontmatter === 'string' ? JSON.parse(stored.frontmatter) : stored.frontmatter];
+  return JSON.stringify(unquotedStrings(storedMeta, slug)) === JSON.stringify(storedMeta) ? unquotedFrontmatter(content, kept, slug) : kept;
+}
+
+/**
  * Every check a page mutation passes before it is journaled, without admitting
  * it: either the authorized prior request with this request_id (a replay), or
  * the admission to submit. `put_pages` admits several of these together.
@@ -323,6 +413,10 @@ export async function preparePageAdmission(ctx: OperationContext,
     throw new OperationError('source_changed', 'The write source is not active.',
       `Source ${sourceId} is archived or not registered, so nothing was written. Write to an active source (sources_list shows them).`);
   }
+  // After the replay check: the request digest covers what the caller sent, so a retry matches whatever the page's type is by then.
+  if (input.operation === 'put_page' && ctx.remote !== false && typeof p.content === 'string' && typeof p.slug === 'string') {
+    p.content = await unquotedPutContent(ctx.engine, sourceId, p.slug.toLowerCase(), p.content);
+  }
   let slug = typeof p.slug === 'string' ? p.slug.toLowerCase() : '';
   const intent = ['takes_add','takes_update','takes_supersede','takes_resolve','takes_remove'].includes(input.operation)
     ? await (await import('./takes-prepare.ts')).normalizeTakesIntent(ctx,p) : { ...p };
@@ -370,7 +464,8 @@ export async function preparePageAdmission(ctx: OperationContext,
   if (ctx.remote !== false) Object.assign(intent, { source_kind: `mcp:${input.operation}`, source_uri: null, ingested_via: `mcp:${input.operation}` });
   const [authority, , snapshot, boundAtStart, writeThroughSetting, repoPath] = await pipelined(ctx.engine, [
     () => submissionAuthority(ctx, input.operation, sourceId, source.incarnation, slug),
-    () => assertKnowledgePublicationAllowed(ctx.engine, { source_id: sourceId, source_incarnation: source.incarnation, slug }),
+    () => assertKnowledgePublicationAllowed(ctx.engine, { source_id: sourceId, source_incarnation: source.incarnation, slug, operation: input.operation,
+      intent: { purge: intent.purge, retention: intent.retention } }),
     () => ctx.engine.readPageSnapshot(slug, { sourceId, includeDeleted: true }),
     () => getWorktreeBinding(ctx.engine, sourceId),
     () => ctx.engine.getConfig('sync.write_through'),
@@ -399,18 +494,22 @@ export async function preparePageAdmission(ctx: OperationContext,
   let binding = boundAtStart;
   const sandbox = ctx.viaSubagent === true && !(ctx.allowedSlugPrefixes?.length);
   const configuredWriteThrough = !/^(false|0|off|no)$/i.test(writeThroughSetting ?? 'true');
-  const writeThrough = configuredWriteThrough && !sandbox && !input.databaseOnly;
   const configuredRoot = source.local_path || repoPath;
   const root = configuredRoot && isAbsolute(configuredRoot) ? configuredRoot : null;
+  // Checkout paths belong to a host binding; sources.local_path may name
+  // another host's original checkout after a verified ownership transfer.
+  const localRoot = binding ? binding.owner_host_id === localHostId() && binding.local_path
+    ? join(binding.local_path, binding.relative_path) : null : root;
+  // #7324: a declared db_only page is canonical in the database, so its detach restore publishes database-only even
+  // where write-through would re-create its file (a managed checkout); assertRestoreOrigin still requires the file gone.
+  const databaseOnly = input.databaseOnly ?? (input.operation === 'restore_page' && p.detach === true && localRoot
+    && isSourceDbOnlySlug(localRoot, slug, 'not_db_only') ? 'detached' : undefined);
+  const writeThrough = configuredWriteThrough && !sandbox && !databaseOnly;
   if (sandbox) authority.databaseOnlyReason = 'subagent_sandbox';
-  else if (input.databaseOnly) authority.databaseOnlyReason = input.databaseOnly;
+  else if (databaseOnly) authority.databaseOnlyReason = databaseOnly;
   else if (!configuredWriteThrough) authority.databaseOnlyReason = 'disabled_by_config';
   else if (!root && !binding) authority.databaseOnlyReason = 'no_repo_configured';
   if (p.local_dir !== undefined) {
-    // Checkout paths belong to a host binding; sources.local_path may name
-    // another host's original checkout after a verified ownership transfer.
-    const localRoot = binding ? binding.owner_host_id === localHostId() && binding.local_path
-      ? join(binding.local_path, binding.relative_path) : null : root;
     let matches = false;
     if (ctx.remote === false && typeof p.local_dir === 'string' && localRoot) {
       try { matches = realpathSync(resolve(p.local_dir)) === realpathSync(resolve(localRoot)); } catch { /* missing local binding */ }

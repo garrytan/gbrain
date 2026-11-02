@@ -14,6 +14,8 @@ const drainFix = (sourceId: string): Action => ({
   argv: ['gbrain', 'dream', '--drain', '--source', sourceId, '--json'], consent: ['paid'], actor: 'agent', requires_exclusive: false,
   why: `Re-reads source ${sourceId}'s current content and extracts its atom backlog under a new run; extraction calls the configured LLM.`,
 });
+const assignFix = (sourceId: string): Action => readFix(`Lists the captured sessions held without a source and previews mapping them to ${sourceId}; writes nothing.`,
+  { argv: ['gbrain', 'sweep', '--assign-corpus', sourceId] });
 const pageFix = (sourceId: string, slug: string): Action => readFix(`Shows which page holds ${slug} in source ${sourceId} now, with its revision, read-only.`,
   { argv: ['gbrain', 'get', '--source', sourceId, '--', slug] });
 
@@ -60,6 +62,19 @@ export async function retryManagedAtomBatch(engine: BrainEngine, sourceId: strin
         { fix: drainFix(sourceId) });
       const retry = session.retry;
       const origin = retry.origin;
+      if (origin.kind === 'transcript') {
+        const cfg = await (await import('../config.ts')).loadConfigWithEngine(engine) as unknown as { dream?: { synthesize?: { session_corpus_dir?: string } } } | null;
+        const { transcriptSourceHold } = await import('../cycle/synthesize-source-routing.ts');
+        const hold = await transcriptSourceHold(engine, origin.locator, { corpusDir: cfg?.dream?.synthesize?.session_corpus_dir ?? null, sourceId });
+        check();
+        if (hold) throw opError('transcript_source_mismatch', `The transcript of atom batch ${requestId} does not belong to source ${sourceId}, so nothing was started.`,
+          hold.owner
+            ? `Transcript ${origin.locator} is a captured session of source ${hold.owner}; its atoms are extracted only by a run for that source, never retried into ${sourceId}. Run the atom drain for ${hold.owner} instead (it calls the configured LLM, so confirm the spend).`
+            : hold.reason === 'transcript_outside_corpus'
+              ? `Transcript ${origin.locator} is not in the session corpus, and only source default reads transcripts from outside it, so the batch is not retried into ${sourceId}. Read the batch's receipt and report it to the user.`
+              : `Transcript ${origin.locator} is a captured session with no known source (${hold.reason}), so its atoms are not retried into ${sourceId}. Ask the user which source the session belongs to; gbrain sweep --assign-corpus <source> maps it, then a run for that source extracts it.`,
+          { reason: hold.reason, fix: hold.owner ? drainFix(hold.owner) : hold.reason === 'transcript_outside_corpus' ? receiptFix(requestId) : assignFix(sourceId) });
+      }
       const item = origin.kind === 'page'
         ? { kind: 'page' as const, slug: origin.locator, content: (await engine.readPageSnapshot(origin.locator, { sourceId }))?.page.compiled_truth ?? '', contentHash: origin.contentHash }
         : { kind: 'transcript' as const, filePath: origin.locator, content: readFileSync(origin.locator, 'utf8'), contentHash: origin.contentHash };

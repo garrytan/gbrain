@@ -58,6 +58,7 @@ describe('scripts/e2e-provider-key-notice.sh', () => {
       const passed = tests.run!.includes('scripts/run-e2e.sh') ? '1' : tests.env!.GBRAIN_TEST_KEEP_PROVIDER_KEYS;
       expect(notice.env?.GBRAIN_TEST_KEEP_PROVIDER_KEYS, name).toBe(passed);
     }
-    expect(jobs.tier2.steps.find(step => step.run === 'bash scripts/e2e-provider-key-notice.sh')!.env?.GBRAIN_TEST_KEEP_PROVIDER_KEYS).toBeUndefined();
+    // Tier 2 runs keyed on the nightly (GBRA-135 L6), so its notice is told the keys were passed.
+    expect(jobs.tier2.steps.find(step => step.run === 'bash scripts/e2e-provider-key-notice.sh')!.env?.GBRAIN_TEST_KEEP_PROVIDER_KEYS).toBe('1');
   });
 });

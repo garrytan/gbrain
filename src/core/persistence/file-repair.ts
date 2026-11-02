@@ -216,8 +216,8 @@ export interface RepairPublicationInput {
 
 export type RepairPublication =
   | { status: 'refused'; refusal: ContentRefusal }
-  /** Importing these bytes would store something other than the file says (retained tags, a withdrawal, sanitization). */
-  | { status: 'overlay' }
+  /** Importing these bytes would store something other than the file says (retained tags, a withdrawal, sanitization); `noop`: the page already holds that result. */
+  | { status: 'overlay'; noop: boolean }
   | { status: 'ready'; ready: PreparedContentImport; digest: string; fields: ReturnType<typeof canonicalRepairFields>; renamedType?: string };
 
 /**
@@ -248,7 +248,7 @@ export async function prepareRepairPublication(engine: BrainEngine, input: Repai
   const renamedType = renamed && parsedInput.typeExplicit !== true ? parsedInput.type : undefined;
   const tags = [...new Set([...(input.base?.tags ?? []), ...prepared.parsedPage.tags])].sort();
   const fields = canonicalRepairFields({ ...prepared.parsedPage, type: renamedType ?? prepared.parsedPage.type }, tags);
-  if (digest(canonicalRepairFields(parsed, parsed.tags)) !== digest(fields)) return { status: 'overlay' };
+  if (digest(canonicalRepairFields(parsed, parsed.tags)) !== digest(fields)) return { status: 'overlay', noop: prepared.noop };
   return { status: 'ready', ready: prepared, digest: digest(fields), fields, ...(renamedType ? { renamedType } : {}) };
 }
 

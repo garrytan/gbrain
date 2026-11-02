@@ -132,6 +132,11 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
   receipt.repository_kind = gitProbe?.status === 0 && resolve(gitProbe.stdout.trim()) === root ? 'git' : 'content_directory';
   const existed = existsSync(root);
   if (prior?.root && prior.root !== root) {
+    if (existingRoot) {
+      throw opError('local_conflict', 'The canonical root changed after setup began.',
+        `Content setup for source ${sourceId} began at ${prior.root}, but the source is now registered at ${root} (a host move, transfer or relocation). Preview gbrain repair content-receipt-root --source ${sourceId}: it lists what proves the new root and the step that rebinds the checkpoint; then run the migration again.`,
+        { fix: readFix(`Lists source ${sourceId}'s content checkpoint that names another root, with the step that rebinds it, read-only.`, { argv: ['gbrain', 'repair', 'content-receipt-root', '--source', sourceId] }) });
+    }
     throw opError('local_conflict', 'The canonical root changed after setup began.',
       `Content setup for source ${sourceId} began at ${prior.root}; resume it with --content-root ${prior.root}, or ask the user before abandoning that setup.`);
   }

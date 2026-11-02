@@ -1,7 +1,7 @@
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { OperationError } from '../ops/contract.ts';
-import { hasUnresolvedDbOnlyDeclaration, isDeclaredDbOnlySlug, loadStorageConfig, type StorageConfig } from '../storage-config.ts';
+import { dbOnlyVerdict, hasUnresolvedDbOnlyDeclaration, isDeclaredDbOnlySlug, loadStorageConfig, type StorageConfig } from '../storage-config.ts';
 
 type Loaded = { version: string; config: StorageConfig | null } | { version: string; cause: unknown };
 // One parse per gbrain.yml version per source root: bulk scans and migrations
@@ -37,6 +37,25 @@ function load(root: string): StorageConfig | null {
   if ('cause' in entry) throw Object.assign(new OperationError('storage_error', 'The source storage configuration in gbrain.yml is invalid.',
     'Run `gbrain storage status` for the exact problem, then fix gbrain.yml at the source root before writing to this source.'), { cause: entry.cause });
   return entry.config;
+}
+
+/**
+ * #8007: whether a page slug is database-only at this source root, or `unknown` when gbrain.yml cannot be read, its tiers
+ * overlap, it declares db_only in syntax resolving nothing, or a deprecated `supabase_only` list was ignored next to canonical keys. A caller deciding whether a missing file deletes its page
+ * holds the page on `unknown` instead of guessing.
+ */
+export function sourceDbOnlyVerdict(root: string, slug: string): boolean | 'unknown' {
+  try {
+    return dbOnlyVerdict(slug, load(root));
+  } catch {
+    return 'unknown';
+  }
+}
+
+/** #7423: the declared `storage.db_only` dir this page slug falls under at this source root, or null; an invalid gbrain.yml refuses (`storage_error`). */
+export function sourceDbOnlyDir(root: string, slug: string): string | null {
+  const config = load(root);
+  return config?.db_only.find(dir => isDeclaredDbOnlySlug(slug, { ...config, db_only: [dir] })) ?? null;
 }
 
 /**

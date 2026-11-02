@@ -16,6 +16,7 @@ import { operations, type OperationContext } from '../../src/core/operations.ts'
 import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { prepareMarkdownChunks } from '../../src/core/markdown-chunks.ts';
 import { installFixtureChunks } from './page-projection.ts';
+import { asOwner } from './owner-tier.ts';
 import { offPathMcpBytes } from './evidence-delivery-fixture.ts';
 import { withEnv } from './with-env.ts';
 
@@ -49,7 +50,7 @@ export const CONVERSATION_PAGE = {
 
 export async function seedLongPages(engine: BrainEngine, pages = LONG_PAGE_CORPUS): Promise<void> {
   for (const p of pages) {
-    await engine.putPage(p.slug, { type: p.type as never, title: p.slug, compiled_truth: p.body, timeline: '', frontmatter: {} });
+    await asOwner(engine, tx => tx.putPage(p.slug, { type: p.type as never, title: p.slug, compiled_truth: p.body, timeline: '', frontmatter: {} }));
     await installFixtureChunks(engine, p.slug, await prepareMarkdownChunks({ compiled_truth: p.body, timeline: '' }));
   }
   await engine.setConfig('search.mcp_keyword_only', 'true');

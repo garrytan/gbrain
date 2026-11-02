@@ -11,6 +11,7 @@ import { MERGE_PRECONDITION_PARAMS, WRITE_REQUEST_PARAM } from '../persistence/p
 import { opError, type Operation, type OperationContext } from './contract.ts';
 import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
 import { stampRowTrust } from '../eligibility/stamp.ts';
+import { fenceTranscriptText, quotesTier, unquoteTranscriptText } from '../search/transcript-quote.ts';
 import { opTransport, paramUse } from './op-fix.ts';
 import {
   readPolicyOpts,
@@ -22,7 +23,7 @@ import {
 } from './context.ts';
 import { embedQueryWithPrefix } from '../search/query-prefix.ts';
 import { ALL_SOURCES } from '../source-id.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 
 /** Result pages whose takes D2 checks: the page a get_page read returned, or the first distinct pages of a search/query. */
 const HIDDEN_TAKES_PAGE_CAP = 3;
@@ -57,6 +58,24 @@ export async function takesHiddenFromResult(ctx: OperationContext, op: string, r
   const withTakes = counted.filter(c => c.count > 0);
   if (!withTakes.length) return null;
   return { pages: [...new Set(withTakes.map(c => c.slug))], count: withTakes.reduce((n, c) => n + c.count, 0) };
+}
+
+/** GST-687: a remote reader gets a claim below the owner's tier (an agent's take, an ingested one) quoted as its page's, with its free-text sources. */
+function quoteTakes<T extends { claim: string; page_slug: string; trust_tier: string; source?: string | null; resolved_source?: string | null }>(ctx: OperationContext, rows: T[]): Array<T | (T & { quoted: 'transcript' })> {
+  if (ctx.remote === false) return rows;
+  return rows.map(r => {
+    if (!quotesTier(r.trust_tier)) return r;
+    const fence = (text: string) => fenceTranscriptText(text, r.page_slug);
+    return { ...r, claim: fence(r.claim), ...(r.source ? { source: fence(r.source) } : {}), ...(r.resolved_source ? { resolved_source: fence(r.resolved_source) } : {}), quoted: 'transcript' as const };
+  });
+}
+
+/** #8377: a claim or source an agent copied out of a quoted takes read is written without the fence. */
+function unquotedTakeParams(ctx: OperationContext, p: Record<string, unknown>): Record<string, unknown> {
+  if (ctx.remote === false) return p;
+  const slug = String(p.slug).toLowerCase();
+  const unquote = (key: string) => typeof p[key] === 'string' ? { [key]: unquoteTranscriptText(p[key] as string, slug) } : {};
+  return { ...p, ...unquote('claim'), ...unquote('source') };
 }
 
 // --- v0.28: Takes ---
@@ -97,7 +116,7 @@ const takes_list: Operation = {
       takesHoldersAllowList: readHolders(ctx),
       eligibility,
     });
-    return stampRowTrust(ctx.engine, 'takes', rows, r => r.id);
+    return quoteTakes(ctx, await stampRowTrust(ctx.engine, 'takes', rows, r => r.id));
   },
   cliHints: { name: 'takes-list' },
 };
@@ -122,7 +141,7 @@ const takes_search: Operation = {
       takesHoldersAllowList: readHolders(ctx),
       eligibility,
     });
-    return stampRowTrust(ctx.engine, 'takes', hits, h => h.take_id);
+    return quoteTakes(ctx, await stampRowTrust(ctx.engine, 'takes', hits, h => h.take_id));
   },
   cliHints: { name: 'takes-search', positional: ['query'] },
 };
@@ -238,7 +257,7 @@ const takes_calibration: Operation = {
 async function countMcpResolved(ctx: OperationContext): Promise<number> {
   const scope = await readPolicyOpts(ctx);
   const where: string[] = [`t.resolved_at IS NOT NULL`, `t.resolved_by LIKE 'mcp:%'`];
-  if (scope.excludePrivate) where.push(privatePagesFilterFragment('p'));
+  if (scope.excludePrivate) where.push(privatePagesFilterForCaller('p'));
   const params: unknown[] = [];
   if (scope.sourceIds && scope.sourceIds.length > 0) {
     params.push(scope.sourceIds);
@@ -467,7 +486,7 @@ const takes_add: Operation = {
     enforceClientSlugFence(ctx, slug, 'takes_add');
     validatePageSlug(slug); // defense-in-depth, matching put_page
     if (ctx.dryRun) return { dry_run: true, action: 'takes_add', slug };
-    return submitPageMutation(ctx, { operation: 'takes_add', params: p });
+    return submitPageMutation(ctx, { operation: 'takes_add', params: unquotedTakeParams(ctx, p) });
   },
 };
 
@@ -498,7 +517,7 @@ const takes_update: Operation = {
     enforceClientSlugFence(ctx, slug, 'takes_update');
     validatePageSlug(slug); // defense-in-depth, matching put_page
     if (ctx.dryRun) return { dry_run: true, action: 'takes_update', slug, row_num: p.row_num };
-    return submitPageMutation(ctx, { operation: 'takes_update', params: p });
+    return submitPageMutation(ctx, { operation: 'takes_update', params: unquotedTakeParams(ctx, p) });
   },
 };
 
@@ -532,7 +551,7 @@ const takes_supersede: Operation = {
     enforceClientSlugFence(ctx, slug, 'takes_supersede');
     validatePageSlug(slug); // defense-in-depth, matching put_page
     if (ctx.dryRun) return { dry_run: true, action: 'takes_supersede', slug, row_num: p.row_num };
-    const out = await submitPageMutation(ctx, { operation: 'takes_supersede', params: p });
+    const out = await submitPageMutation(ctx, { operation: 'takes_supersede', params: unquotedTakeParams(ctx, p) });
     recordFunnelEvent('correction');
     return out;
   },

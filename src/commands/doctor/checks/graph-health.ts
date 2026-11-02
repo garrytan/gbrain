@@ -305,19 +305,22 @@ export const staleMentionsEntry: DoctorEntry = {
 };
 
 async function runTimelineHistory(ctx: DoctorContext): Promise<Check[]> {
-  const { orphanRatioSourceId, progress } = ctx;
+  const { orphanRatioSourceId, progress, only } = ctx;
   const engine = connectedEngine(ctx);
   const checks: Check[] = [];
 
   // 9d. Wave 2 residual-state signals (#5567, #5525): database-only timeline
   // rows and derived pages without explicit visibility. Bounded, never throw.
+  // #7343: under --only, run just the named checks of this entry.
   progress.heartbeat('timeline_history');
   {
-    const { timelineHistoryCheck } = await import('./timeline-history.ts');
-    checks.push(await timelineHistoryCheck(engine, orphanRatioSourceId));
+    if (!only || only.has('timeline_history')) {
+      const { timelineHistoryCheck } = await import('./timeline-history.ts');
+      checks.push(await timelineHistoryCheck(engine, orphanRatioSourceId));
+    }
     // Wave checks registered in doctor/wave-checks.ts rather than inline here.
     const { runWaveChecks } = await import('../wave-checks.ts');
-    for (const finding of await runWaveChecks(engine, { only: 'wave', sourceIds: orphanRatioSourceId ? [orphanRatioSourceId] : undefined })) checks.push(finding.check);
+    for (const finding of await runWaveChecks(engine, { only: 'wave', ids: only ?? undefined, sourceIds: orphanRatioSourceId ? [orphanRatioSourceId] : undefined })) checks.push(finding.check);
   }
   return checks;
 }
@@ -373,6 +376,7 @@ export const timelineHistoryEntry: DoctorEntry = {
     'conversation_label_facts',
     'conversation_outcomes_stale',
     'captured_facts_active',
+    'agent_session_facts',
     'facts_redaction_marker',
     'fact_bulk_dates',
     'loop_facts_drift',

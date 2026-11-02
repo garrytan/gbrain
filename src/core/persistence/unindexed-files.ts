@@ -252,7 +252,7 @@ export async function findUnindexedFiles(engine: BrainEngine, sourceId: string, 
       screened += toScreen.length;
       visitBlobSlices(gitRoot, toScreen, (row, content) => {
         if (content === undefined) { codes.set(row.root, 'file_too_large'); return; }
-        const result = screenImportContent({ content, path: row.origin, byteLength: row.size, expectedSlug: resolveSlugForPath(row.origin) || null });
+        const result = screenImportContent({ content, path: row.origin, byteLength: row.size, expectedSlug: resolveSlugForPath(row.origin) || null, holdNoncanonicalPrivate: true });
         codes.set(row.root, result.status === 'refused' ? result.refusal.code : 'clean');
       }, pastDeadline);
       for (const row of fresh) {

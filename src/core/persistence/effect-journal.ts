@@ -47,8 +47,8 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
     if (!opts.pushOnly && outcome.persistence && typeof outcome.persistence === 'object') Object.assign(outcome.persistence, { git_state: 'queued' });
   }
   if (snapshot && !snapshot.page.deleted_at) {
-    if (!prepared?.deferEmbedding) queue('embedding');
-    outcome.embedding_state = await embeddingDisabled(tx) ? 'disabled' : prepared?.deferEmbedding ? 'deferred' : 'queued';
+    if (!prepared?.deferEmbedding && !prepared?.embeddingCurrent) queue('embedding');
+    outcome.embedding_state = await embeddingDisabled(tx) ? 'disabled' : prepared?.deferEmbedding ? 'deferred' : prepared?.embeddingCurrent ? 'current' : 'queued';
     if ((outcome.facts_backstop as { queued?: boolean } | undefined)?.queued) {
       if (!(await isFactsExtractionEnabled(tx))) outcome.facts_backstop = { skipped: 'extraction_disabled' };
       else queue('facts-backstop', { visibility: await resolveDefaultVisibility(tx) });
@@ -213,7 +213,7 @@ export async function mirrorGates(engine: SqlEngine, requestIds: readonly string
  * requests it touched, for a park that settled after a concurrent mirror commit.
  */
 const REARMABLE = `e.request_id=ANY($1::uuid[])
-    AND e.kind IN ('git','embedding') AND e.state IN ('queued','failed') AND e.execution_token IS NULL AND e.recovery IS NULL
+    AND e.kind IN ('git','embedding') AND e.state IN ('queued','failed') AND e.execution_token IS NULL AND e.recovery IS NULL AND NOT (e.data ? 'settled')
     AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(e.data->'parked','[]'::jsonb)) AS p(target) WHERE p.target->>'error_code'=$2)
     AND EXISTS (SELECT 1 FROM persistence_effects m WHERE m.request_id=e.request_id AND m.kind='withdrawal-mirror' AND m.state='committed')`;
 

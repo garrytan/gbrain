@@ -301,7 +301,7 @@ function finalize(config: RobotConfig, model: ReferenceModel, extra: Partial<Rob
   for (const v of locks.violations) model.violate({ class: 'lock_order', detail: `${v.rule}: ${v.detail}` });
   const trace = model.violations.length ? [...model.world.observations.values()].map(o =>
     `${o.id} ${o.kind} ${o.actor}@${o.source} ${o.status}${o.code ? `/${o.code}` : ''}${o.values.revision ? ` rev=${o.values.revision}` : ''}`
-    + `${o.receipt ? ` receipt=${o.receipt.state}` : ''}${o.status === 'refused' ? ` ${JSON.stringify(o.raw).slice(0, 300)}` : ''}`) : undefined;
+    + `${o.receipt ? ` receipt=${o.receipt.state}` : ''}${o.status === 'refused' || o.kind === 'sync' || o.kind === 'connector_publish' ? ` ${JSON.stringify(o.raw).slice(0, 300)}` : ''}`) : undefined;
   const deferredOf = (v: Violation) => KNOWN_DEFERRALS.find(k => k.class === v.class && k.match.test(v.detail));
   const deferred = model.violations.filter(v => deferredOf(v)).map(v => ({ ...v, todo: deferredOf(v)!.todo }));
   const violations = model.violations.filter(v => !deferredOf(v));
@@ -398,7 +398,7 @@ async function processFault(config: RobotConfig, world: World, model: ReferenceM
       const stopped = await Promise.race([disposePersistenceConsumer(engine).then(() => true), Bun.sleep(45_000).then(() => false)]);
       if (!stopped) model.violate({ class: 'wedge', detail: 'hung git child: consumer shutdown did not finish within 45 s' });
       else if (Date.now() - started > 30_000) model.violate({ class: 'wedge', detail: `hung git child: consumer shutdown took ${Date.now() - started} ms` });
-    }
+    } else model.violate({ class: 'wedge', detail: 'hung_git: the hung commit never started' });
     shim.release();
     await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now() WHERE kind='git' AND state='queued'");
   } else if (config.process === 'facts_absorb_kill') {

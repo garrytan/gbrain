@@ -16,7 +16,8 @@
  *   - safety and provenance markers whenever present: injection_suspected,
  *     injection_p, unverified, content_flag, status, superseded, superseded_by,
  *     message_id, thread_id, source_subject, matched_alias (the other name the
- *     alias fan-out searched); trust_tier and origin (#5575); `provenance`
+ *     alias fan-out searched); trust_tier and origin (#5575); quoted (a
+ *     fenced conversation excerpt, search/transcript-quote.ts); `provenance`
  *     only as `generated` (a machine-written page); modality when not text; stale
  *     only when set (true, or the held-file object from #5988);
  *   - `delivered: { truncated: true }` whenever evidence delivery truncated;
@@ -42,6 +43,8 @@ const KEPT_FIELDS: ReadonlySet<string> = new Set([
   'evidence_omitted',
   // #5575 A6: every row says how much it deserves influence.
   'trust_tier', 'origin', 'unconfirmed',
+  // #7600: a conversation page's row is a quoted excerpt.
+  'quoted',
   // Result-time collapse and rank priors: folded pages, an unfollowed redirect, an image page's text row.
   'collapsed', 'redirect_to', 'image_page',
   // Present only when the caller asked for `explain: true`.

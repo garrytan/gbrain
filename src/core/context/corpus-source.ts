@@ -15,9 +15,12 @@
  * CORPUS_UNRESOLVED_STAMP; a lane that holds the brain may freeze it later:
  * the serve's own bound source when the hook reaches it over IPC (what an
  * unpinned hook's IPC requests already resolve to), or, at sweep time, the
- * brain's resolution chain for the recorded cwd (tiers 4-6, the client-side
- * tiers already ran). A frozen source is never changed except by nobody: the
- * operator mapping fills only unresolved records.
+ * registered source whose local_path contains the recorded cwd (tier 4, active
+ * over archived; the client-side tiers already ran). No fallback tier counts:
+ * a session tier 4 does not place stays unresolved until the operator mapping
+ * fills it, except on a brain with exactly one source, which resolves to that
+ * source without freezing. A frozen source is never changed except by nobody:
+ * the operator mapping fills only unresolved records.
  *
  * Extraction side (`resolveCorpusFileSource`, engine-holding callers): a
  * spool file uses its stamp (unresolved ⇒ the frozen record); a top-level
@@ -25,7 +28,8 @@
  * writeback stamp, a frozen spool record for the same session, or a brain with
  * exactly one source). The source must exist and be active, and the first
  * engine resolution binds the source's incarnation to the session: a source
- * deleted and recreated under the same id holds the session's files.
+ * deleted and recreated under the same id holds the session's files. A
+ * read-only resolution (dry runs) freezes no record and binds no incarnation.
  *
  * ENGINE-FREE at module load: the engine-side helper takes the engine as an
  * argument and lazy-imports the resolver.
@@ -233,22 +237,30 @@ export type CorpusSourceHold =
   | 'corpus_stamp_missing'
   | 'corpus_source_missing'
   | 'corpus_source_archived'
-  | 'corpus_source_incarnation_changed';
+  | 'corpus_source_incarnation_changed'
+  | 'corpus_path_unresolvable';
 
 export type CorpusFileSource =
   | { ok: true; sourceId: string; incarnation: string; via: 'stamp' | 'session_record' | 'sole_source' }
   | { ok: false; reason: CorpusSourceHold };
 
+async function soleSourceId(engine: BrainEngine): Promise<string | null> {
+  const ids = await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id LIMIT 2');
+  return ids.length === 1 ? ids[0].id : null;
+}
+
 /**
  * The source a corpus file's facts, links and manifest belong to, or the
  * typed reason it is held (no sidecar: the file waits for evidence or an
- * operator mapping). Never the caller's pass source.
+ * operator mapping). Never the caller's pass source. `readOnly` writes no
+ * session record.
  */
 export async function resolveCorpusFileSource(
   engine: BrainEngine,
   corpusDir: string,
   name: string,
   location: CorpusFileLocation,
+  opts: { readOnly?: boolean } = {},
 ): Promise<CorpusFileSource> {
   const spool = corpusSpoolDir(corpusDir);
   const sessionId = corpusFileSessionId(name);
@@ -262,12 +274,14 @@ export async function resolveCorpusFileSource(
     if (stamp !== CORPUS_UNRESOLVED_STAMP) candidate = stamp;
     else {
       via = 'session_record';
-      if (!record?.source_id && record?.cwd) {
-        const { resolveSourceId } = await import('../source-resolver.ts');
-        const deferred = await resolveSourceId(engine, null, record.cwd, { skipLocalSignals: true }).catch(() => null);
-        if (deferred) record = freezeSessionSource(corpusDir, sessionId, deferred, 'engine');
-      }
       candidate = record?.source_id ?? null;
+      if (!candidate && record?.cwd) {
+        const { resolveRegisteredLocalPathSource } = await import('../source-resolver.ts');
+        const deferred = await resolveRegisteredLocalPathSource(engine, record.cwd).catch(() => null);
+        if (deferred && opts.readOnly) candidate = deferred;
+        else if (deferred) candidate = (record = freezeSessionSource(corpusDir, sessionId, deferred, 'engine'))?.source_id ?? null;
+        else if ((candidate = await soleSourceId(engine))) via = 'sole_source';
+      }
       if (!candidate) return { ok: false, reason: 'corpus_source_unresolved' };
     }
   } else {
@@ -277,9 +291,8 @@ export async function resolveCorpusFileSource(
       candidate = record.source_id;
       via = 'session_record';
     } else {
-      const ids = await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id LIMIT 2');
-      if (ids.length !== 1) return { ok: false, reason: 'corpus_legacy_unstamped' };
-      candidate = ids[0].id;
+      candidate = await soleSourceId(engine);
+      if (!candidate) return { ok: false, reason: 'corpus_legacy_unstamped' };
       via = 'sole_source';
     }
   }
@@ -290,7 +303,7 @@ export async function resolveCorpusFileSource(
   if (rows[0].archived) return { ok: false, reason: 'corpus_source_archived' };
   const incarnation = rows[0].incarnation;
   if (record?.source_id === candidate) {
-    const bound = record.source_incarnation ?? bindIncarnation(spool, sessionId, candidate, incarnation)?.source_incarnation ?? incarnation;
+    const bound = record.source_incarnation ?? (opts.readOnly ? null : bindIncarnation(spool, sessionId, candidate, incarnation)?.source_incarnation) ?? incarnation;
     if (bound !== incarnation) return { ok: false, reason: 'corpus_source_incarnation_changed' };
   }
   return { ok: true, sourceId: candidate, incarnation, via };
@@ -299,7 +312,7 @@ export async function resolveCorpusFileSource(
 export interface CorpusSourceHolds {
   /** Top-level files with no `.ingested` sidecar and no evidence of their source. */
   legacy_unstamped: number;
-  /** Spool files stamped unresolved whose session record still names no source. */
+  /** Spool files stamped unresolved whose session record still names no source (on a sole-source brain, only those with no recorded cwd). */
   unresolved: number;
   /** Session ids among both. */
   sessions: string[];
@@ -309,8 +322,10 @@ export interface CorpusSourceHolds {
  * Doctor/CLI view of the held files that only an operator mapping can
  * release (a multi-source brain's legacy files and unresolved sessions).
  * Engine-free; `soleSource` is the caller's `SELECT id FROM sources` answer.
+ * `includeIngested` (the operator mapping) also lists sessions the sweep already
+ * extracted: dream synthesis holds them too until their source is known (#7805).
  */
-export function listCorpusSourceHolds(corpusDir: string, soleSource: boolean): CorpusSourceHolds {
+export function listCorpusSourceHolds(corpusDir: string, soleSource: boolean, opts: { includeIngested?: boolean } = {}): CorpusSourceHolds {
   const out: CorpusSourceHolds = { legacy_unstamped: 0, unresolved: 0, sessions: [] };
   const spool = corpusSpoolDir(corpusDir);
   const sessions = new Set<string>();
@@ -319,11 +334,12 @@ export function listCorpusSourceHolds(corpusDir: string, soleSource: boolean): C
     try { names = readdirSync(dir); } catch { return; }
     const present = new Set(names);
     for (const name of names) {
-      if (!name.endsWith('.txt') || present.has(name + '.ingested')) continue;
+      if (!name.endsWith('.txt') || (!opts.includeIngested && present.has(name + '.ingested'))) continue;
       const sid = corpusFileSessionId(name);
-      if (readSessionSource(spool, sid)?.source_id) continue;
+      const record = readSessionSource(spool, sid);
+      if (record?.source_id) continue;
       if (location === 'spool') {
-        if (corpusFileStamp(name) !== CORPUS_UNRESOLVED_STAMP) continue;
+        if (corpusFileStamp(name) !== CORPUS_UNRESOLVED_STAMP || (soleSource && record?.cwd)) continue;
         out.unresolved++;
       } else {
         const wb = parseWbFileName(name)?.sourceId;

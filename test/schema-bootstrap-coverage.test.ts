@@ -263,6 +263,9 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       -- The v230 trust generation trigger's WHEN reads pages.source_id, slug and
       -- deleted_at; a pre-v0.18 brain predates it (v230 recreates it).
       DROP TRIGGER IF EXISTS trust_generation_update ON pages;
+      -- The v283 folder-rule stamp trigger fires on UPDATE OF slug, source_id;
+      -- a pre-v0.18 brain predates it (v283 recreates it).
+      DROP TRIGGER IF EXISTS pages_access_stamp_folder_rules ON pages;
       ALTER TABLE pages DROP COLUMN IF EXISTS source_id;
       DROP TABLE IF EXISTS sources CASCADE;
 
@@ -432,6 +435,9 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       -- The v230 trust generation trigger's WHEN reads pages.source_id, slug and
       -- deleted_at; a pre-v0.18 brain predates it (v230 recreates it).
       DROP TRIGGER IF EXISTS trust_generation_update ON pages;
+      -- The v283 folder-rule stamp trigger fires on UPDATE OF slug, source_id;
+      -- a pre-v0.18 brain predates it (v283 recreates it).
+      DROP TRIGGER IF EXISTS pages_access_stamp_folder_rules ON pages;
       ALTER TABLE pages DROP COLUMN IF EXISTS source_id;
       DROP TABLE IF EXISTS sources CASCADE;
       DROP INDEX IF EXISTS idx_links_source;
@@ -970,6 +976,12 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // column order; no blob statement or index reads it, and the DCR insert falls
   // back to the unmarked insert while the column is missing.
   'oauth_clients.registered_via',
+  // GBRA-156 access_tokens/oauth_clients.private_pages (migration
+  // principal_private_pages): migration-only like min_trust, so fresh and
+  // upgraded catalogs keep the same column order; no blob statement or index
+  // reads them, and grant reads treat a missing column as 'none'.
+  'access_tokens.private_pages',
+  'oauth_clients.private_pages',
   // T7 — search_telemetry rank-1 drift columns (migration v111). search_telemetry
   // is created entirely by migration v57 (not in the schema blob), so the v57+v111
   // chain handles fresh + upgrade; no CREATE INDEX references these columns, so
@@ -1188,6 +1200,17 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // v258: absent from both schema blobs, so fresh and upgraded brains share its ordinal; column-only and nullable, no
   // index or function in either blob references it, and only strict-source publications (v272+) write it.
   'pages.withheld_source_path',
+  // GBRA-218 A1 (migration v282) - per-member read access. Same posture as v274: absent from both schema blobs, so fresh
+  // and upgraded brains share their ordinals; the migration creates the page_readers index, trigger and functions itself,
+  // and no index or function in either blob references these columns.
+  'pages.page_readers',
+  'access_tokens.member_id',
+  'access_tokens.may_act_for',
+  'oauth_clients.member_id',
+  'oauth_clients.may_act_for',
+  // GBRA-218 A2 (migration v283) - folder rules. Same posture as v282: absent from both schema blobs; the migration
+  // creates the folder_rule_ids trigger and functions itself, and no index or function in either blob references it.
+  'pages.folder_rule_ids',
   // Wave B segmented page storage (migration v248). Deliberately absent from
   // both schema blobs so fresh and upgraded brains share their ordinals; no
   // index in either blob references them (content_chunks_occurrence_idx is

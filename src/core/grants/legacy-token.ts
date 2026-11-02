@@ -5,6 +5,8 @@
  *   - sources       (`--sources a,b|none`): element 0 = write source
  *   - takes holders (`--takes-holders a,b|none`)
  *   - operations    (`--operations a,b|none`, `--refresh-operations`)
+ *   - private pages (`--private-pages granted-sources|none`): stored in
+ *     `private_pages` only, never in the `permissions` mirror
  *
  * `none` stores the explicit empty list (deny-all). An omitted flag preserves
  * the stored value. `--reset-default <axes>` restores the `auth create`
@@ -32,8 +34,9 @@ import { isUndefinedColumnError } from '../utils.ts';
 import { requiresExplicitApproval } from '../ops/execution-prerequisites.ts';
 import {
   GrantError, LEGACY_GRANT_AXES, grantFromTokenRow, permissionsMirror, tokenGrantColumnValues, tokenGrantFromColumns,
-  tokenGrantFromPermissions, validatePrincipalGrant, TOKEN_GRANT_COLUMNS, type LegacyGrantAxis, type PrincipalGrant,
+  tokenGrantFromPermissions, validatePrincipalGrant, TOKEN_GRANT_COLUMNS, type LegacyGrantAxis, type PrincipalGrant, type PrivatePagesGrant,
 } from './model.ts';
+import { parsePrivatePagesFlag } from './cli.ts';
 
 export type { LegacyGrantAxis } from './model.ts';
 
@@ -45,6 +48,7 @@ export interface RescopeTokenArgs {
   takesHolders?: string[];
   operations?: string[];
   scopes?: string[];
+  privatePages?: PrivatePagesGrant;
   reset: LegacyGrantAxis[];
   refreshOperations: boolean;
   add?: string[];
@@ -59,6 +63,8 @@ export interface LegacyTokenGrantView {
   sources: string[] | 'default';
   takesHolders: string[];
   operations: string[] | 'unrestricted';
+  /** Present only when granted, so a 'none' token's view is unchanged. */
+  privatePages?: 'granted_sources';
 }
 
 export interface RescopeTokenResult {
@@ -120,6 +126,7 @@ export function parseRescopeTokenArgs(args: string[]): RescopeTokenArgs {
         out.operations = csvOrNone(value);
         break;
       case '--add': out.add = csvOrNone(value); break;
+      case '--private-pages': out.privatePages = parsePrivatePagesFlag(value); break;
       case '--scopes':
         out.scopes = csvOrNone(value.replaceAll(' ', ','));
         if (out.scopes.length === 0) throw new GrantError('invalid_grant', '--scopes needs at least one scope (to cut a token off, use --sources none or gbrain auth revoke)');
@@ -151,12 +158,13 @@ export function parseRescopeTokenArgs(args: string[]): RescopeTokenArgs {
   return { target, ...out };
 }
 
-function grantView(g: TokenGrantAxes): LegacyTokenGrantView {
+function grantView(g: TokenGrantAxes & Pick<PrincipalGrant, 'privatePages'>): LegacyTokenGrantView {
   const s = g.sources;
   return {
     sources: s.kind === 'default' ? 'default' : s.kind === 'none' ? [] : s.kind === 'scalar' ? [s.writeSource] : [...s.readSources],
     takesHolders: g.takesHolders ?? ['world'],
     operations: g.allowedOperations ?? 'unrestricted',
+    ...(g.privatePages === 'granted_sources' ? { privatePages: g.privatePages } : {}),
   };
 }
 
@@ -185,7 +193,7 @@ async function assertActiveSources(engine: BrainEngine, ids: string[]): Promise<
 const SCHEMA_HINT = 'this brain predates the unified token grant columns (access_tokens.source_grant); run `gbrain apply-migrations --yes` (no user decision needed), then retry';
 
 function schemaError(error: unknown): unknown {
-  return ['source_grant', 'grant_revision', ...TOKEN_GRANT_COLUMNS].some(c => isUndefinedColumnError(error, c)) ? new GrantError('grant_schema_required', SCHEMA_HINT) : error;
+  return ['source_grant', 'grant_revision', 'private_pages', ...TOKEN_GRANT_COLUMNS].some(c => isUndefinedColumnError(error, c)) ? new GrantError('grant_schema_required', SCHEMA_HINT) : error;
 }
 
 /** Write the unified columns and the `permissions` mirror in one UPDATE; returns the new revision. */
@@ -285,14 +293,19 @@ async function rescopeInTransaction(tx: BrainEngine, args: RescopeTokenArgs): Pr
     allowedOperations: opsEdited ? next.allowedOperations : null,
   }, { operationNames: all });
 
-  const edits = args.sources !== undefined || args.takesHolders !== undefined || opsEdited || args.reset.length > 0 || args.scopes !== undefined;
+  const privatePages = args.privatePages ?? current.privatePages;
+  const edits = args.sources !== undefined || args.takesHolders !== undefined || opsEdited || args.reset.length > 0 || args.scopes !== undefined
+    || args.privatePages !== undefined;
   if (edits && !args.adopt && current.drift.length) throw driftRefusal(name, id, current.drift);
   const before = grantView(current);
-  const after = grantView(next);
+  const after = grantView({ ...next, privatePages });
   const changed = JSON.stringify(before) !== JSON.stringify(after)
     || (args.scopes !== undefined && JSON.stringify(args.scopes) !== JSON.stringify(current.scopes));
   const write = !args.dryRun && (edits || Boolean(args.adopt));
   const revision = write ? await writeTokenGrant(tx, row, next, args.scopes) : current.revision;
+  if (write && privatePages !== current.privatePages) {
+    await tx.executeRaw('UPDATE access_tokens SET private_pages = $2 WHERE id = $1::uuid', [id, privatePages]);
+  }
   return {
     id, name, dryRun: args.dryRun, changed, before, after,
     shape: current.shape, migrated: write && current.shape === 'legacy_permissions', written: write,

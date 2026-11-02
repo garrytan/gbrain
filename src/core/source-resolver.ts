@@ -152,6 +152,16 @@ async function resolveRegisteredPathMatch(
   return null;
 }
 
+/**
+ * Tier 4 alone: the active registered source whose local_path contains `cwd` (deepest wins, an archived registration
+ * never shadows an active parent), or null. The deferred corpus-session resolution accepts only this evidence (#7868).
+ */
+export async function resolveRegisteredLocalPathSource(engine: BrainEngine, cwd: string): Promise<string | null> {
+  const registered = await listRegisteredLocalPathSources(engine);
+  const best = await resolveRegisteredPathMatch(registered, cwd);
+  return best && registered.find(r => r.id === best.id)?.archived !== true ? best.id : null;
+}
+
 export async function resolveSourceId(
   engine: BrainEngine,
   explicit: string | null | undefined,

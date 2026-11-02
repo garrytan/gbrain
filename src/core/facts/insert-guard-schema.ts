@@ -46,7 +46,18 @@ export const FACT_INSERT_GUARD_TRIGGER = 'facts_guard_inserted';
 export const FACT_WITHDRAWAL_STAMP_DEFERRED_SETTING = 'gbrain.fact_withdrawal_stamp_deferred';
 export const FACT_INSERT_GUARD_FUNCTION = 'gbrain_guard_inserted_facts';
 
-export const FACT_INSERT_GUARD_SQL = `
+/**
+ * #7778: `outcomeMarkerSql('i')` from facts/audit-sources.ts, spelled out so this schema fragment imports no module
+ * outside the PGLite snapshot inputs; test/conversation-facts-outcome-marker-purge-7778.test.ts pins the two equal.
+ */
+export const GUARD_OUTCOME_MARKER_SQL = "(i.source IN ('cli:extract-conversation-facts:terminal:v2','cli:extract-conversation-facts:non-extractable:v2','cli:extract-conversation-facts:terminal') AND i.fact IN ('EXTRACTION_COMPLETE','EXTRACTION_NOT_APPLICABLE'))";
+
+/**
+ * The guard function alone (#7778 re-creates it without touching the triggers). The purge refusal skips an extraction
+ * outcome row (facts/audit-sources.ts `isOutcomeMarker`): that bookkeeping marker is not a claim, and a subject-'*'
+ * tombstone on its fingerprint, which a page purge wrote before #7778, kept every page of the source from completing.
+ */
+export const FACT_INSERT_GUARD_FUNCTION_SQL = `
 CREATE OR REPLACE FUNCTION gbrain_guard_inserted_facts() RETURNS trigger
   LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
   DECLARE purged TEXT; stamp_setting TEXT;
@@ -55,7 +66,7 @@ CREATE OR REPLACE FUNCTION gbrain_guard_inserted_facts() RETURNS trigger
     IF EXISTS (SELECT 1 FROM fact_purges p WHERE p.source_id IN (SELECT i.source_id FROM inserted_facts i)) THEN
       WITH n AS MATERIALIZED (
         SELECT row_number() OVER () AS ord, i.source_id, i.visibility, i.entity_slug, gbrain_fact_fingerprint(i.fact) AS fact_hash
-        FROM inserted_facts i)
+        FROM inserted_facts i WHERE NOT ${GUARD_OUTCOME_MARKER_SQL})
       SELECT n.fact_hash INTO purged FROM n
         WHERE EXISTS (SELECT 1 FROM fact_purges p WHERE p.source_id = n.source_id AND p.visibility = n.visibility
           AND p.subject IN ('*', n.entity_slug) AND p.fact_hash = n.fact_hash)
@@ -85,6 +96,9 @@ CREATE OR REPLACE FUNCTION gbrain_guard_inserted_facts() RETURNS trigger
     RETURN NULL;
   END
   $fn$;
+`;
+
+export const FACT_INSERT_GUARD_SQL = `${FACT_INSERT_GUARD_FUNCTION_SQL}
 DROP TRIGGER IF EXISTS facts_guard_inserted ON facts;
 CREATE TRIGGER facts_guard_inserted AFTER INSERT ON facts REFERENCING NEW TABLE AS inserted_facts
   FOR EACH STATEMENT EXECUTE FUNCTION gbrain_guard_inserted_facts();

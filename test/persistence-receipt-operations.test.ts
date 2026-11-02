@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
-import { withVerifiedLocalRegistration, type LocalGrant, type LocalRegistration } from '../src/core/persistence/identity.ts';
+import { localHostId, withVerifiedLocalRegistration, type LocalGrant, type LocalRegistration } from '../src/core/persistence/identity.ts';
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
 import { admitWrite, getWriteRequest } from '../src/core/persistence/journal.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
@@ -97,7 +97,7 @@ describe('own-principal write receipt operations', () => {
     const first = await accept(foreign, 'PRIVATE_OTHER_SOURCE_HEAD', otherSource);
     const own = await accept();
     const worktree = randomUUID();
-    await engine.executeRaw('INSERT INTO persistence_worktrees(id,owner_host_id) VALUES($1,$2)', [worktree, randomUUID()]);
+    await engine.executeRaw('INSERT INTO persistence_worktrees(id,owner_host_id) VALUES($1,$2)', [worktree, localHostId()]);
     await engine.executeRaw('UPDATE persistence_requests SET worktree_id=$2 WHERE id=ANY($1::uuid[])', [[first.id, own.id], worktree]);
     const result = await call('list_write_requests', {});
     expect(result.requests).toHaveLength(1);

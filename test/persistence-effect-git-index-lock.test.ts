@@ -74,7 +74,7 @@ test('an aborted git run that held the lock leaves it in place; the next attempt
 root=""; prev=""
 for a in "$@"; do [ "$prev" = "-C" ] && root="$a"; prev="$a"; done
 for a in "$@"; do if [ "$a" = "add" ]; then : > "$root/.git/index.lock"; : > "$root/.git/shim-add-holds-lock"; exec sleep 30; fi; done
-exec ${realGit} "$@"
+PATH='${process.env.PATH}' exec ${realGit} "$@"
 `, { mode: 0o755 });
     const lock = join(root, '.git', 'index.lock');
     const holding = join(root, '.git', 'shim-add-holds-lock');
@@ -101,7 +101,7 @@ function refusingGit(refusal: string): { bin: string; path: string } {
 root=""; prev=""
 for a in "$@"; do [ "$prev" = "-C" ] && root="$a"; prev="$a"; done
 for a in "$@"; do if [ "$a" = "add" ]; then ${refusal}; exit 128; fi; done
-exec ${realGit} "$@"
+PATH='${process.env.PATH}' exec ${realGit} "$@"
 `, { mode: 0o755 });
   return { bin, path: `${bin}:${process.env.PATH}` };
 }

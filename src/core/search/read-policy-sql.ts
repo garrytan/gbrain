@@ -1,5 +1,5 @@
 import type { PageReadScope, PageReadPolicy } from '../types.ts';
-import { privatePagesFilterFragment } from './private-visibility.ts';
+import { privatePagesFilterForCaller } from './private-visibility.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
 import { pageEligibleSql } from '../eligibility/sql.ts';
 
@@ -24,7 +24,7 @@ export function pageReadFilter(
     params.push(scope.sourceId);
     clauses.push(`${alias}.source_id = $${params.length}`);
   }
-  if (scope?.excludePrivate) clauses.push(privatePagesFilterFragment(alias));
+  if (scope?.excludePrivate) clauses.push(privatePagesFilterForCaller(alias));
   if (scope?.minTrust || scope?.suppressFlagged) clauses.push(pageEligibleSql(alias, { floor: scope.minTrust, suppressFlagged: scope.suppressFlagged }));
   if (live) clauses.push(
     `${alias}.deleted_at IS NULL`,

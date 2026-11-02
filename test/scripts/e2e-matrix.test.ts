@@ -6,8 +6,8 @@ import { spawnSync } from 'node:child_process';
 import { BACKEND_MATRIX_OWNED, E2E_EXCLUSIONS, MAX_E2E_WORKERS, prepareMatrix, validateRow } from '../../scripts/e2e-matrix.ts';
 
 const repo = join(import.meta.dir, '../..');
-const paths = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'].map(n => `test/e2e/${n}.test.ts`);
-const weights = new Map(paths.map((f, i) => [f, 100 - i * 10]));
+const paths = 'abcdefghijklmnop'.split('').map(n => `test/e2e/${n}.test.ts`);
+const weights = new Map(paths.map((f, i) => [f, 200 - i * 10]));
 function fixture(fn: (root: string) => void) {
   const root = mkdtempSync(join(tmpdir(), 'gbrain-e2e-matrix-'));
   try {
@@ -23,10 +23,10 @@ function worker(root: string, row: unknown) {
   });
 }
 describe('frozen E2E matrix', () => {
-  test('partitions the exact selection once, with deterministic weights and at most eight workers', () => {
+  test('partitions the exact selection once, with deterministic weights and at most fourteen workers', () => {
     const matrix = prepareMatrix(paths, weights);
-    expect(MAX_E2E_WORKERS).toBe(8);
-    expect(matrix.include).toHaveLength(8);
+    expect(MAX_E2E_WORKERS).toBe(14);
+    expect(matrix.include).toHaveLength(14);
     expect(matrix.include.flatMap(r => r.files).sort()).toEqual(paths);
     expect(prepareMatrix(paths, weights)).toEqual(matrix);
     expect(prepareMatrix(paths.slice(0, 2), weights).include).toHaveLength(2);

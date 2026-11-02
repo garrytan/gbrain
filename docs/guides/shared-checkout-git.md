@@ -268,7 +268,11 @@ commits come in. Four rules keep that checkout able to move:
    stray commits merged with the upstream
    (`gbrain git commit-push --push-only --keep-checkout --path <checkout>`)
    and retry the refresh, as the [refusal](write-refusals.md#refresh_diverged)
-   says. Never force the checkout.
+   says. Never force the checkout. When local commits there are expected
+   (automations committing alongside a sibling checkout that pushes the same
+   branch), the user can turn on `sources.refresh_publish_diverged` (default
+   off) so each refresh runs that publish itself
+   ([live sync](live-sync.md)); it never publishes over a rewritten upstream.
 3. **Stop syncing a source before rewriting its history.** Before a
    force-push or `git filter-repo`, run `gbrain sources set-sync <id> off`
    (with the user's agreement) so automatic sync skips it, and

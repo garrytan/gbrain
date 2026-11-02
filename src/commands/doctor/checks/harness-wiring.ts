@@ -26,7 +26,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { gbrainPath, loadConfig } from '../../../core/config.ts';
 import { peekLock } from '../../../core/pglite-lock.ts';
 import { harnessWiringEntry, httpStatusServerEntry, type ReadinessHarness } from '../../../core/readiness.ts';
@@ -34,12 +34,16 @@ import { verifiedStatusMarkers } from '../../../core/serve-http-status-marker.ts
 import { agentProcessMarker } from '../../../core/interaction.ts';
 import { resolveGbrainBin } from '../../../core/gbrain-bin.ts';
 import { enabledPluginLanes } from '../../../core/bootstrap/plugin-lanes.ts';
-import { claudeConfigDir } from '../../../core/bootstrap/host-specs.ts';
+import { claudeConfigDir, opencodeProjectConfigPath } from '../../../core/bootstrap/host-specs.ts';
+import { readReceipt } from '../../../core/bootstrap/format.ts';
+import { resolveGbrainHome } from '../../../core/gbrain-home.ts';
 import type { Action } from '../../../core/agent-output.ts';
 import type { Check } from '../../doctor.ts';
 import { checkError, doctorVerify, infoCheck } from '../check-fix.ts';
 import type { DoctorContext, DoctorEntry } from '../context.ts';
 import { VERSION } from '../../../version.ts';
+import { TURN_HOOK_NATIVE_INSPECT, inspectTurnHook, turnHookFix, type TurnHookState } from '../../../core/setup/turn-hook-check.ts';
+import { brainFirstTarget, inspectBrainFirst, isBrainFirstHarness, readBrainFirstLedger, renderBrainFirstBlock, type BrainFirstAccess } from '../../../core/setup/brain-first.ts';
 
 export const HARNESS_SMOKE_TIMEOUT_MS = 15_000;
 export const HARNESS_HTTP_PROBE_TIMEOUT_MS = 3_000;
@@ -84,16 +88,24 @@ function stringRecord(v: unknown): Record<string, string> | undefined {
   return out;
 }
 
+/** #7422: the install receipt `gbrain bootstrap` keeps (its workspace and the registrations it made), or null. */
+function bootstrapReceipt(): ReturnType<typeof readReceipt> {
+  try { return readReceipt(resolveGbrainHome()); } catch { return null; }
+}
+
 function claudeRegistration(name: string): HarnessRegistration | null {
   const path = join(home(), '.claude.json');
   const cfg = readJson(path) as { mcpServers?: Record<string, unknown>; projects?: Record<string, { mcpServers?: Record<string, unknown> }> } | null;
-  if (!cfg) return null;
-  const candidates = [cfg.mcpServers?.[name], ...Object.values(cfg.projects ?? {}).map((p) => p?.mcpServers?.[name])];
-  const entry = candidates.find((c) => c && typeof c === 'object') as Record<string, unknown> | undefined;
-  if (!entry) return null;
-  if (typeof entry.url === 'string') return { harness: 'claude-code', source: path, kind: 'http', url: entry.url };
+  const ws = bootstrapReceipt()?.workspace_dir;
+  const projectPath = ws ? join(ws, '.mcp.json') : null;
+  const project = projectPath ? readJson(projectPath) as { mcpServers?: Record<string, unknown> } | null : null;
+  const candidates: Array<[string, unknown]> = [[path, cfg?.mcpServers?.[name]], ...Object.values(cfg?.projects ?? {}).map((p): [string, unknown] => [path, p?.mcpServers?.[name]])];
+  if (projectPath) candidates.push([projectPath, project?.mcpServers?.[name]]);
+  const [source, entry] = (candidates.find(([, c]) => c && typeof c === 'object') ?? []) as [string?, Record<string, unknown>?];
+  if (!source || !entry) return null;
+  if (typeof entry.url === 'string') return { harness: 'claude-code', source, kind: 'http', url: entry.url };
   if (typeof entry.command !== 'string') return null;
-  return { harness: 'claude-code', source: path, kind: 'stdio', command: entry.command, args: strings(entry.args) ?? [], env: stringRecord(entry.env) };
+  return { harness: 'claude-code', source, kind: 'stdio', command: entry.command, args: strings(entry.args) ?? [], env: stringRecord(entry.env) };
 }
 
 /** `[mcp_servers.<name>]` from Codex's config.toml: the `command`/`args`/`url`/`env` keys only. */
@@ -121,14 +133,17 @@ export function parseCodexRegistration(text: string, name: string, source: strin
   return { harness: 'codex', source, kind: 'stdio', command, args: strings(parse(value('args'))) ?? [], env };
 }
 
+const codexConfigPath = () => join(process.env.CODEX_HOME || join(home(), '.codex'), 'config.toml');
+const opencodeConfigPath = () => join(process.env.XDG_CONFIG_HOME || join(home(), '.config'), 'opencode', 'opencode.json');
+
 function codexRegistration(name: string): HarnessRegistration | null {
-  const path = join(process.env.CODEX_HOME || join(home(), '.codex'), 'config.toml');
+  const path = codexConfigPath();
   if (!existsSync(path)) return null;
   try { return parseCodexRegistration(readFileSync(path, 'utf8'), name, path); } catch { return null; }
 }
 
 function opencodeRegistration(name: string): HarnessRegistration | null {
-  const path = join(process.env.XDG_CONFIG_HOME || join(home(), '.config'), 'opencode', 'opencode.json');
+  const path = opencodeConfigPath();
   const cfg = readJson(path) as { mcp?: Record<string, Record<string, unknown>> } | null;
   const entry = cfg?.mcp?.[name];
   if (!entry) return null;
@@ -141,6 +156,27 @@ function opencodeRegistration(name: string): HarnessRegistration | null {
 /** Every gbrain MCP registration this machine's harness configs carry. */
 export function readHarnessRegistrations(name = 'gbrain'): HarnessRegistration[] {
   return [claudeRegistration(name), codexRegistration(name), opencodeRegistration(name)].filter((r): r is HarnessRegistration => r !== null);
+}
+
+interface RecordedRegistration { harness: ReadinessHarness; scope: string; config: string }
+
+/**
+ * #7422: MCP registrations `gbrain bootstrap` recorded for these harnesses
+ * whose config file this process cannot read (a service running under
+ * another HOME, a permission): unverified here, not missing. A readable
+ * config without the registration is not listed (it was removed).
+ */
+function recordedUnreadableRegistrations(harnesses: readonly ReadinessHarness[]): RecordedRegistration[] {
+  const receipt = bootstrapReceipt();
+  if (!receipt) return [];
+  const configFor = (harness: ReadinessHarness, scope: string): string => harness === 'claude-code'
+    ? (scope === 'project' ? join(receipt.workspace_dir, '.mcp.json') : join(home(), '.claude.json'))
+    : harness === 'codex' ? codexConfigPath() : scope === 'project' ? opencodeProjectConfigPath(receipt.workspace_dir) : opencodeConfigPath();
+  const readable = (path: string) => { try { readFileSync(path); return true; } catch { return false; } };
+  return receipt.registrations
+    .filter((r) => harnesses.includes(r.host) && (r.detail?.split('+') ?? []).includes('mcp'))
+    .map((r) => ({ harness: r.host, scope: r.scope, config: configFor(r.host, r.scope) }))
+    .filter((r) => !readable(r.config));
 }
 
 /** Harnesses installed on this machine: the active agent marker, else their config files. */
@@ -341,8 +377,149 @@ async function smoke(r: HarnessRegistration): Promise<Check> {
     ...(fix ? { fix } : { fix_unavailable_reason: 'no_safe_automatic_fix' as const }) };
 }
 
-/** Registration read (full run) or registration read + smoke (`--only harness_wiring`). */
+export interface InstructionBlockView {
+  harness: string;
+  path: string;
+  state: 'current' | 'stale' | 'missing' | 'damaged' | 'opted_out';
+  /** Where the record came from: the brain-first ledger, or the harness's default file for a registration with no record. */
+  from: 'ledger' | 'default_path';
+  /** The access the recorded block names, so the repair rewrites that block and not a default one. */
+  access?: BrainFirstAccess;
+}
+
+/**
+ * The brain-first instruction block for every surface gbrain wrote or was
+ * told to skip (the ledger), plus each registered or plugin-served harness
+ * with no record, checked at that harness's default instruction file. Read-only.
+ */
+export function instructionBlockViews(regs: HarnessRegistration[], plugins = enabledPluginLanes('gbrain')): InstructionBlockView[] {
+  const state = (s: ReturnType<typeof inspectBrainFirst>['state']): InstructionBlockView['state'] =>
+    s === 'current' ? 'current' : s === 'stale' ? 'stale' : s === 'damaged' ? 'damaged' : 'missing';
+  const views: InstructionBlockView[] = readBrainFirstLedger().map((e) => {
+    // Codex reads one global file: once a non-empty AGENTS.override.md appears, a block in AGENTS.md is no longer loaded.
+    const live = e.harness === 'codex' ? brainFirstTarget('codex') : undefined;
+    const path = live && !('error' in live) && dirname(live.path) === dirname(e.path) ? live.path : e.path;
+    return e.status === 'declined'
+      ? { harness: e.harness, path, state: 'opted_out', from: 'ledger' }
+      : { harness: e.harness, path, state: state(inspectBrainFirst(path, renderBrainFirstBlock(e.harness, e.access)).state), from: 'ledger', access: e.access };
+  });
+  for (const harness of [...regs, ...plugins].map((r) => r.harness)) {
+    if (views.some((v) => v.harness === harness) || !isBrainFirstHarness(harness)) continue;
+    const target = brainFirstTarget(harness);
+    if ('error' in target) continue;
+    views.push({ harness, path: target.path, state: state(inspectBrainFirst(target.path).state), from: 'default_path' });
+  }
+  return views;
+}
+
+const INSTRUCTION_PROBLEM: Record<'stale' | 'missing' | 'damaged', string> = {
+  stale: 'is out of date', missing: 'is missing', damaged: 'has damaged markers',
+};
+
+/**
+ * Fold the brain-first block into the wiring verdict: without it agents rarely
+ * reach for the brain at all, so a missing, stale or damaged block turns an
+ * `ok` wiring into a warn whose fix rewrites only the block. An opt-out is
+ * reported, never warned on. No views: the check is returned unchanged.
+ */
+export function withInstructionBlocks(check: Check, views: InstructionBlockView[]): Check {
+  if (views.length === 0) return check;
+  const details = { ...(check.details ?? {}), instructions: views };
+  const bad = views.filter((v): v is InstructionBlockView & { state: 'stale' | 'missing' | 'damaged' } => v.state === 'stale' || v.state === 'missing' || v.state === 'damaged');
+  if (bad.length === 0) {
+    const current = views.filter((v) => v.state === 'current').map((v) => v.harness);
+    const optedOut = views.filter((v) => v.state === 'opted_out').map((v) => v.harness);
+    const note = [current.length ? `brain-first instructions current for ${current.join(', ')}` : '', optedOut.length ? `opted out for ${optedOut.join(', ')}` : ''].filter(Boolean).join('; ');
+    return { ...check, message: `${check.message} ${note.charAt(0).toUpperCase()}${note.slice(1)}.`, details };
+  }
+  const first = bad[0]!;
+  const problems = bad.map((v) => `the ${v.harness} block in ${v.path} ${INSTRUCTION_PROBLEM[v.state]}`).join('; ');
+  const message = `${check.message} Brain-first instructions: ${problems}, so sessions are not told to check gbrain first.`;
+  if (check.status !== 'ok') return { ...check, message, details };
+  const fix: Action = first.state === 'damaged'
+    ? { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(NAME),
+      why: `The brain-first markers in ${first.path} were hand-edited; gbrain will not guess which lines are its own.`,
+      user_message: `The gbrain instruction block in ${first.path} has damaged markers. Please delete the block (both marker lines included), then I'll write a fresh one.` }
+    : repairArgv(first);
+  return { name: NAME, status: 'warn', message, details, fix };
+}
+
+/** The setup command that rewrites exactly this block: same file, same connection name and surface. A project file needs its own directory, so the user runs it there. */
+function repairArgv(v: InstructionBlockView): Action {
+  const access = v.access;
+  const argv = ['gbrain', 'setup', v.harness, '--instructions-only',
+    ...(access?.kind === 'mcp' && access.server !== 'gbrain' ? ['--name', access.server] : []),
+    ...(access?.kind === 'mcp' && access.surface ? ['--surface', access.surface] : []),
+    ...(v.harness === 'openclaw' ? ['--workspace', dirname(v.path)] : []),
+    ...(v.harness === 'claude-code' && basename(v.path) === 'CLAUDE.local.md' ? ['--scope', 'project'] : [])];
+  const why = `Writes or upgrades only the marked brain-first block in ${v.path}; text outside the markers is left as it is. \`--no-instructions\` opts out instead.`;
+  const project = v.harness === 'cursor' || basename(v.path) === 'CLAUDE.local.md';
+  if (project) {
+    const dir = v.harness === 'cursor' ? dirname(dirname(dirname(v.path))) : dirname(v.path);
+    return { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(NAME), why,
+      user_message: `The gbrain instruction block in ${v.path} needs a refresh. From ${dir}, run: ${argv.join(' ')}` };
+  }
+  return { argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(NAME), why };
+}
+
+/**
+ * post-upgrade: one line per wired harness (registration, plugin or ledger)
+ * whose brain-first block is missing or out of date, with the setup command
+ * that writes only that block. Read-only; an opt-out prints nothing.
+ */
+export function instructionBlockUpgradeHints(): string[] {
+  return instructionBlockViews(readHarnessRegistrations()).filter((v): v is InstructionBlockView & { state: 'missing' | 'stale' } => v.state === 'missing' || v.state === 'stale').map((v) => {
+    const fix = repairArgv(v);
+    return fix.argv ? `Brain-first instructions: the ${v.harness} block in ${v.path} ${INSTRUCTION_PROBLEM[v.state]}. Run \`${fix.argv.join(' ')}\` to write only that block (\`--no-instructions\` opts out).` : fix.user_message!;
+  });
+}
+
+/**
+ * The per-turn hook beside every accepted brain-first block on a harness that
+ * has one (Claude Code, Codex, OpenClaw, Hermes). Files only: doctor never runs
+ * the hook; the fix names the harness's own inspect command.
+ */
+export function turnHookViews(views: InstructionBlockView[]): TurnHookState[] {
+  return views.filter((v) => (v.state === 'current' || v.state === 'stale') && TURN_HOOK_NATIVE_INSPECT[v.harness])
+    .map((v) => inspectTurnHook(v.harness, basename(v.path) === 'CLAUDE.local.md' ? { projectDir: dirname(v.path) } : {}));
+}
+
+/** An untrusted per-turn hook, or one missing beside a recorded block, turns an ok wiring into a warn (code turn_hook_not_loaded) whose fix re-runs the install that writes it. */
+export function withTurnHooks(check: Check, views: InstructionBlockView[], hooks: TurnHookState[]): Check {
+  if (hooks.length === 0) return check;
+  const details = { ...(check.details ?? {}), turn_hooks: hooks };
+  // Missing beside a block gbrain recorded writing (the ledger) is a failed install; beside an unrecorded default-path block it is only reported.
+  const bad = hooks.find((h) => h.state === 'untrusted' || (h.state === 'missing' && views.some((v) => v.harness === h.harness && v.from === 'ledger')));
+  if (!bad) return { ...check, details };
+  const message = `${check.message} Per-turn hook: ${bad.detail}, so the brain-first rule does not reach each turn (check: ${bad.native_inspect}).`;
+  if (check.status !== 'ok') return { ...check, message, details };
+  const view = views.find((v) => v.harness === bad.harness);
+  const rerun = view ? repairArgv(view).argv : undefined;
+  const fix: Action = rerun ? turnHookFix(bad.harness, rerun)
+    : { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(NAME), why: turnHookFix(bad.harness, []).why,
+      user_message: `The gbrain per-turn hook for ${bad.harness} is not active: ${bad.detail}. From that project directory, run: gbrain setup ${bad.harness} --instructions-only` };
+  return { name: NAME, status: 'warn', message, details: { ...details, code: 'turn_hook_not_loaded', turn_hook_reason: bad.state }, fix };
+}
+
+/** Registration read (full run) or registration read + smoke (`--only harness_wiring`), plus the brain-first block and its per-turn hook. */
 export async function harnessWiringCheck(opts: { smoke: boolean }): Promise<Check> {
+  const regs = readHarnessRegistrations();
+  const views = instructionBlockViews(regs);
+  return withSurfaceNote(withTurnHooks(withInstructionBlocks(await registrationCheck(opts, regs), views), views, turnHookViews(views)), regs);
+}
+
+/**
+ * Information only: a stdio registration pinned to `--surface full` keeps
+ * working and is never rewritten; new installs register starter (the smaller
+ * daily-driver tool list). Status and fix are unchanged.
+ */
+export function withSurfaceNote(check: Check, regs: HarnessRegistration[]): Check {
+  const full = regs.filter((r) => r.kind === 'stdio' && !r.env?.GBRAIN_SURFACE && r.args?.[r.args.indexOf('--surface') + 1] === 'full' && r.args.includes('--surface'));
+  if (full.length === 0) return check;
+  return { ...check, details: { ...(check.details ?? {}), surface_note: `${full.map((r) => HARNESS_LABEL[r.harness]).join(', ')} registered with --surface full, which stays supported. New installs register starter listing the memory verbs (request_tools reaches the rest).` } };
+}
+
+async function registrationCheck(opts: { smoke: boolean }, regs: HarnessRegistration[]): Promise<Check> {
   // A shared HTTP server that answers in status-only mode outranks every registration verdict.
   const statusServer = (await verifiedStatusMarkers())[0];
   if (statusServer) {
@@ -350,11 +527,16 @@ export async function harnessWiringCheck(opts: { smoke: boolean }): Promise<Chec
     return { name: NAME, status: 'warn', message: entry.why, ...(entry.fix ? { fix: entry.fix } : { fix_unavailable_reason: 'no_safe_automatic_fix' as const }),
       details: { reason: entry.reason, transport: 'http', port: statusServer.port, pid: statusServer.pid, status_reason: statusServer.reason } };
   }
-  const regs = readHarnessRegistrations();
   if (regs.length === 0) {
     const detected = detectedHarnesses();
     const plugins = enabledPluginLanes('gbrain').filter((lane) => detected.includes(lane.harness));
-    const harnesses = detected.filter((h) => !plugins.some((lane) => lane.harness === h));
+    const recorded = recordedUnreadableRegistrations(detected.filter((h) => !plugins.some((lane) => lane.harness === h)));
+    const harnesses = detected.filter((h) => !plugins.some((lane) => lane.harness === h) && !recorded.some((r) => r.harness === h));
+    if (detected.length > 0 && harnesses.length === 0 && recorded.length > 0) {
+      return infoCheck(NAME, `${recorded.map((r) => `${HARNESS_LABEL[r.harness]}: \`gbrain bootstrap\` recorded a gbrain MCP registration (${r.scope} scope)`).join('; ')}, `
+        + `but this process cannot read its config, so doctor did not verify it here. Verify it with \`gbrain doctor --only harness_wiring\` run as the user who runs the agent app.`,
+        'unknown', undefined, { reason: 'registration_recorded', harnesses: recorded.map((r) => r.harness), registrations: recorded });
+    }
     if (detected.length > 0 && harnesses.length === 0) {
       return { name: NAME, status: 'ok',
         message: `${plugins.map((p) => `${HARNESS_LABEL[p.harness]} gets gbrain from the enabled '${p.plugin}' plugin`).join('; ')}. Enabled is a config signal: doctor does not smoke-test plugin lanes, so verify by starting a new session in that app and checking that gbrain's tools (recall, remember) are listed.`,

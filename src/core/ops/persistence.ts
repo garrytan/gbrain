@@ -101,6 +101,19 @@ async function visible(ctx: OperationContext, row: WriteRequest): Promise<boolea
   }
 }
 
+/**
+ * GST-687: a receipt read later (get_write_request, list_write_requests) echoes the timeline entry it wrote; an untrusted
+ * reader gets that text (`bullet`, `entry.summary`, `entry.detail`) quoted, inner text byte-exact. The write's own response is unchanged.
+ */
+async function quotedOutcome(outcome: Record<string, unknown>, slug: string): Promise<Record<string, unknown>> {
+  const entry = outcome.entry && typeof outcome.entry === 'object' ? outcome.entry as Record<string, unknown> : null;
+  if (typeof outcome.bullet !== 'string' && typeof entry?.summary !== 'string' && typeof entry?.detail !== 'string') return outcome;
+  const { fenceTranscriptText } = await import('../search/transcript-quote.ts');
+  const fenced = (o: Record<string, unknown>, keys: string[]) =>
+    Object.fromEntries(keys.flatMap(k => (typeof o[k] === 'string' && o[k] ? [[k, fenceTranscriptText(o[k] as string, slug)]] : [])));
+  return { ...outcome, ...fenced(outcome, ['bullet']), ...(entry ? { entry: { ...entry, ...fenced(entry, ['summary', 'detail']) } } : {}), quoted: 'transcript' };
+}
+
 async function publicReceipt(ctx: OperationContext, row: WriteRequest, facts?: WriteHealthFacts): Promise<Record<string, unknown>> {
   const { receiptFor } = await import('../persistence/journal.ts');
   const { publicEffectsForRequest } = await import('../persistence/effect-journal.ts');
@@ -123,8 +136,10 @@ async function publicReceipt(ctx: OperationContext, row: WriteRequest, facts?: W
   const { cliRenderContext, renderAction } = await import('../agent-output.ts');
   const render = ctx.remote === false ? cliRenderContext() : { transport: 'stdio' as const, isCallable: () => false, preapproved: () => false };
   const { liveSearchable } = await import('../persistence/searchable.ts');
+  const receipt = publicWriteReceipt(receiptFor(row, facts));
   return {
-    ...publicWriteReceipt(receiptFor(row, facts)),
+    ...receipt,
+    ...(ctx.remote !== false && receipt.outcome ? { outcome: await quotedOutcome(receipt.outcome, String(row.slug ?? '')) } : {}),
     operation: row.operation, source_id: row.source_id, slug: row.slug,
     ...await liveSearchable(ctx, { request_id: row.request_id, state: row.state, source_id: row.source_id, slug: row.slug, searchable: row.outcome?.searchable }),
     ...(mismatch ? { owner_build: mismatch } : {}),

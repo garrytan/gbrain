@@ -133,7 +133,8 @@ export function loadImportRedactionPatterns(userPatternsPath?: string): ImportRe
  *
  * Detector classes (all from `secret-scan.ts`, format-based — not just vendor
  * prefixes): vendor key shapes (anthropic/openai/voyage/github/gitlab/slack/
- * aws/google/stripe/sendgrid/twilio/supabase/npm/huggingface/gbrain), JWTs,
+ * aws/google/stripe/sendgrid/twilio/supabase/npm/huggingface/digitalocean/
+ * openrouter/groq/xai/perplexity/replicate/gbrain), JWTs,
  * whole-block PEM private keys, `Bearer <token>` headers, connection strings
  * carrying inline credentials, and — opted in for THIS lane — the
  * high-entropy `KEY=`/`TOKEN=`/`PASSWORD=` assignment heuristic (value must

@@ -717,21 +717,19 @@ describe('redactFindings — span-splice semantics and preview window', () => {
     expect(redactions.map((r) => r.pattern)).toEqual(['bearer', 'db_url_credentials']);
   });
 
-  test('redacts exactly the claimed spans (every pattern outside the echo pass): the corpus write agrees with what scanText reports', () => {
-    // Documented semantic delta from the replaceAll form: a claimed value's
-    // bytes at a position the scanner did NOT claim (embedded past its left
-    // boundary inside a longer identifier) are left as-is, so
-    // `redactFindings(t).text` never redacts something `scanText(t)` would
-    // not have reported. The exception is the bounded echo pass over the
-    // bearer + high_entropy_assignment values (pinned in the next describe);
-    // vendor shapes lose nothing by staying outside it — a repeat that clears
-    // the boundary IS claimed on its own and both occurrences go.
+  test('redacts the claimed spans plus their echoes: the findings agree with scanText, a vendor value glued past its boundary is an echo (#7978)', () => {
+    // Documented semantic delta from the replaceAll form: the splice redacts
+    // exactly what `scanText(t)` reports, and the bounded echo pass (pinned in
+    // the next describe) adds the bytes of a claimed value at a position the
+    // scanner did NOT claim. Since #7978 vendor values join it, so a copy
+    // embedded past its left boundary inside a longer identifier goes too,
+    // without adding a finding.
     const text = `k=${OPENAI} again ${OPENAI}\nid=prefix${OPENAI}\nsid ${TWILIO_SID} vs x${TWILIO_SID}\n`;
     const findings = scanText(text);
     expect(findings.map((f) => [f.pattern, f.line])).toEqual([['openai', 1], ['openai', 1], ['twilio', 3]]);
     const { text: out, redactions } = redactFindings(text);
     expect(redactions.length).toBe(findings.length);
-    expect(out).toBe(`k=<REDACTED:openai> again <REDACTED:openai>\nid=prefix${OPENAI}\nsid <REDACTED:twilio> vs x${TWILIO_SID}\n`);
+    expect(out).toBe('k=<REDACTED:openai> again <REDACTED:openai>\nid=prefix<REDACTED:openai>\nsid <REDACTED:twilio> vs x<REDACTED:twilio>\n');
   });
 
   test('a per-line span running into a PEM block: both spans redact, nothing claimed survives', () => {
@@ -854,9 +852,12 @@ describe('redactFindings — bounded echo pass', () => {
     expect(out).toBe('Bearer <REDACTED:anthropic>\nbare <REDACTED:anthropic>\n');
   });
 
-  test("other patterns' values are not echoed: a vendor key embedded past its boundary stays (it re-matches on its own wherever it clears the boundary)", () => {
-    const { text: out } = redactFindings(`k=${OPENAI}\nid=prefix${OPENAI}\n`);
-    expect(out).toBe(`k=<REDACTED:openai>\nid=prefix${OPENAI}\n`);
+  test('a vendor key embedded past its boundary is echoed once a clean copy is claimed (#7978); the catch-all basic_auth is not', () => {
+    const { text: out, redactions } = redactFindings(`k=${OPENAI}\nid=prefix${OPENAI}\n`);
+    expect(out).toBe('k=<REDACTED:openai>\nid=prefix<REDACTED:openai>\n');
+    expect(redactions.map((r) => r.pattern)).toEqual(['openai']);
+    const basic = Buffer.from('alice-example:' + 'Zq7'.repeat(8)).toString('base64');
+    expect(redactFindings(`Authorization: Basic ${basic}\nid=x${basic}\n`).text).toBe(`Authorization: Basic <REDACTED:basic_auth>\nid=x${basic}\n`);
   });
 
   test(`the cap is exactly ${ECHO_MAX_UNIQUE} unique values in claim order; the next value's echo is the accepted miss`, () => {

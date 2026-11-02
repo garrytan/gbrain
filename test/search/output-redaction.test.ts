@@ -7,6 +7,7 @@ import {
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { encodeDeepResearchId } from '../../src/core/deep-research-id.ts';
 import { cpuMs } from '../helpers/cpu-time.ts';
+import { PROVIDER_KEY_SHAPES } from '../helpers/provider-keys.ts';
 
 const key = 'sk-proj-' + 'syntheticfixture19'.repeat(3);
 const bearer = 'syntheticbareecho19'.repeat(3);
@@ -297,6 +298,16 @@ describe('retrieval output: shapes that need the S1 scanner patterns', () => {
       const out = redact(`token ${token} end`);
       expect(out).not.toContain(token);
       expect(out).toContain('<REDACTED:digitalocean>');
+    }
+  });
+
+  test('AI-provider keys (#7959) are redacted under their own rule, nested fields included', () => {
+    for (const shape of PROVIDER_KEY_SHAPES) {
+      const key = shape.make();
+      expect(redact(`router key ${key} end`)).toBe(`router key <REDACTED:${shape.pattern}> end`);
+      const out = redactRetrievalOutput([{ title: key, chunk_text: `OPENAI_BASE=x KEY=${key}` }], { nested: [{ detail: key }] });
+      expect(JSON.stringify(out).includes(key)).toBe(false);
+      expect(out.results[0]!.title).toBe(`<REDACTED:${shape.pattern}>`);
     }
   });
 

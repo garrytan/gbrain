@@ -5,10 +5,11 @@
  * ../operations.ts. Never import from '../operations.ts' here (cycle).
  */
 
-import type { Operation } from './contract.ts';
+import type { Operation, OperationContext } from './contract.ts';
 import { opError } from './contract.ts';
 import { hostFix, readFix } from './op-fix.ts';
 import { validateFilename, validatePageSlug, validateUploadPath } from './context.ts';
+import { privatePagesFilterForCaller, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 
 // --- File Operations ---
 
@@ -16,6 +17,15 @@ import { validateFilename, validatePageSlug, validateUploadPath } from './contex
 // every file for that slug — an MCP caller can force unbounded memory consumption
 // by targeting a page with many attachments.
 const FILE_LIST_LIMIT = 100;
+
+/**
+ * GBRA-218: a caller under the read policy (every remote caller, stdio included) sees no file attached to a page it
+ * cannot read, by the page's id or by its slug in any source (a file row names its page loosely, so it fails closed).
+ */
+async function fileReadableSql(ctx: OperationContext): Promise<string> {
+  if (!await resolveExcludePrivatePages(ctx.engine, ctx.remote)) return 'TRUE';
+  return `NOT EXISTS (SELECT 1 FROM pages fp WHERE (fp.id = f.page_id OR fp.slug = f.page_slug) AND NOT ${privatePagesFilterForCaller('fp')})`;
+}
 
 const file_list: Operation = {
   name: 'file_list',
@@ -29,12 +39,10 @@ const file_list: Operation = {
   scope: 'admin',
   localOnly: true,
   handler: async (ctx, p) => {
-    const { sqlQueryForEngine } = await import('../sql-query.ts');
-    const sql = sqlQueryForEngine(ctx.engine);
     const slug = p.slug as string | undefined;
-    const rows = slug
-      ? await sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files WHERE page_slug = ${slug} ORDER BY filename LIMIT ${FILE_LIST_LIMIT}`
-      : await sql`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at FROM files ORDER BY page_slug, filename LIMIT ${FILE_LIST_LIMIT}`;
+    const rows = await ctx.engine.executeRaw<Record<string, unknown>>(`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at
+      FROM files f WHERE (${slug === undefined ? 'TRUE' : 'f.page_slug = $2'}) AND ${await fileReadableSql(ctx)}
+      ORDER BY ${slug === undefined ? 'page_slug, filename' : 'filename'} LIMIT $1`, slug === undefined ? [FILE_LIST_LIMIT] : [FILE_LIST_LIMIT, slug]);
     // Postgres returns size_bytes (BIGINT) as native BigInt — JSON.stringify
     // throws on those, breaking MCP callers. PGLite returns Number already.
     // 9 PB ceiling (2^53 bytes) is far above any plausible file size.
@@ -60,9 +68,9 @@ const file_upload: Operation = {
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'file_upload', path: p.path };
 
-    const { readFileSync, statSync } = await import('fs');
+    const { statSync } = await import('fs');
     const { basename, extname } = await import('path');
-    const { createHash } = await import('crypto');
+    const { hashStorageFile, uploadUnchangedFile } = await import('../storage.ts');
 
     const filePath = p.path as string;
     const pageSlug = (p.page_slug as string) || null;
@@ -78,8 +86,7 @@ const file_upload: Operation = {
     validateFilename(filename);
 
     const stat = statSync(filePath);
-    const content = readFileSync(filePath);
-    const hash = createHash('sha256').update(content).digest('hex');
+    const hash = hashStorageFile(filePath);
     const storagePath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
 
     const MIME_TYPES: Record<string, string> = {
@@ -128,7 +135,7 @@ const file_upload: Operation = {
     }
 
     try {
-      await storage.upload(storagePath, content, mimeType || undefined);
+      await uploadUnchangedFile(storage, storagePath, filePath, hash, mimeType || undefined);
     } catch (uploadErr) {
       throw opError('storage_error', `Upload failed: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`,
         'Nothing was recorded. Check the storage backend (credentials, bucket, disk) with `gbrain doctor --json`, then upload again; the upload is keyed by content hash, so repeating it is safe.');
@@ -175,9 +182,8 @@ const file_url: Operation = {
   scope: 'admin',
   localOnly: true,
   handler: async (ctx, p) => {
-    const { sqlQueryForEngine } = await import('../sql-query.ts');
-    const sql = sqlQueryForEngine(ctx.engine);
-    const rows = await sql`SELECT storage_path, mime_type, size_bytes FROM files WHERE storage_path = ${p.storage_path as string}`;
+    const rows = await ctx.engine.executeRaw<Record<string, unknown>>(`SELECT storage_path, mime_type, size_bytes FROM files f
+      WHERE storage_path = $1 AND ${await fileReadableSql(ctx)}`, [p.storage_path as string]);
     if (rows.length === 0) {
       throw opError('storage_error', `File not found: ${p.storage_path}`, 'No file row has that storage_path. List stored files (fix) and use a storage_path from that list.',
         { fix: readFix('Lists stored files with their storage_path.', { argv: ['gbrain', 'files', 'list'], mcp: { tool: 'file_list', arguments: {} } }) });

@@ -38,6 +38,7 @@ import { assertPersistenceAccepting } from '../persistence/service.ts';
 import { declareDurablePersistence } from '../persistence/protocol.ts';
 import { parseWriteRequestId } from '../persistence/preconditions.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
+import { outcomeMarkerSql } from './audit-sources.ts';
 import { requestAttribution } from '../persistence/attribution.ts';
 import { isTerminal, principalKey, type WriteRequest } from '../persistence/model.ts';
 import { retryWriteAdmission } from '../persistence/admission-retry.ts';
@@ -102,7 +103,7 @@ function notFound(rawId: string): OperationError {
 async function loadTarget(engine: BrainEngine, id: number, sourceId: string): Promise<PurgeTarget | null> {
   const [row] = await engine.executeRaw<PurgeTarget>(`SELECT id,source_id,visibility,fact,entity_slug,source_markdown_slug,
       gbrain_fact_fingerprint(fact) AS fact_hash,embedding::text AS embedding,embedding_model
-    FROM facts WHERE id=$1 AND source_id=$2`, [id, sourceId]);
+    FROM facts WHERE id=$1 AND source_id=$2 AND NOT ${outcomeMarkerSql('facts')}`, [id, sourceId]);
   return row ? { ...row, id: Number(row.id) } : null;
 }
 

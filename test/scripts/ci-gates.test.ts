@@ -46,8 +46,9 @@ describe('CI execution evidence', () => {
       expect(unit.jobs[name].if).toBe("${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}");
     }
     expect(e2e.jobs.tier2.needs).toBe('jsonb-parity');
-    // No event gating: the only condition is the repository-wide paid-lane switch (#5903).
-    expect(e2e.jobs.tier2.if).toBe("format('{0}', vars.GBRAIN_PAID_LANES) != '0'");
+    // Keyed Tier 2 runs on the nightly (and a full_corpus dispatch) only, under the
+    // repository-wide paid-lane switch (#5903; GBRA-135 L6).
+    expect(e2e.jobs.tier2.if).toBe("format('{0}', vars.GBRAIN_PAID_LANES) != '0' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus))");
   });
 
   test('the verify job runs `bun run verify`, which dispatches through run-verify-parallel.sh', () => {
@@ -114,7 +115,7 @@ describe('CI execution evidence', () => {
     expect(e2e.jobs['e2e-status'].if).toBe("${{ needs.prepare-e2e.outputs.reuse != 'true' && always() }}");
     const needs = e2e.jobs['e2e-status'].needs as string[];
     const nightly = ['coverage-full-unit', 'coverage-full-serial', 'coverage-full-slow', 'coverage-full-e2e'];
-    expect(needs).toEqual(['jsonb-parity', 'tier1', 'tier1-backend-matrix', 'postgres15-compat', 'tier2', 'prepare-e2e', 'selected-e2e', ...nightly]);
+    expect(needs).toEqual(['jsonb-parity', 'tier1', 'tier1-graduation', 'tier1-backend-matrix', 'postgres15-compat', 'tier2', 'prepare-e2e', 'selected-e2e', ...nightly]);
     for (const event of ['pull_request', 'push', 'workflow_dispatch']) {
       expect(aggregate(e2e, 'e2e-status', event, Object.fromEntries(nightly.map(job => [job, 'skipped'])))).toBe(0);
     }

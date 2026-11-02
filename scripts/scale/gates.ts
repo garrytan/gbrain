@@ -34,7 +34,10 @@ export const RATE_RATIO_MAX = 1.5;
 export const RATE_MIN_PAGES = 1000;
 export const TOTAL_VS_HALF_MAX = 2.5;
 
-/** One timing basis of the import: per-page cost of the first and last 10%, and total vs the halfway mark. */
+/**
+ * One timing basis of the import: per-page cost of the first and last 10%, and total vs the halfway mark.
+ * The two ratios leave out the one stall `excusedStall` sets aside; `total_ms` and `ms_at_half` are the measured sums.
+ */
 export interface RateMeasure {
   per_page_ms_first10: number;
   per_page_ms_last10: number;
@@ -42,7 +45,11 @@ export interface RateMeasure {
   total_ms: number;
   ms_at_half: number;
   total_vs_half: number;
+  excused?: ExcusedStall;
 }
+
+/** The milliseconds the rate measure set aside, and the 1-based pages of the slice that held them. */
+export interface ExcusedStall { ms: number; first_page: number; last_page: number }
 
 /**
  * Per-file wall and CPU milliseconds from `gbrain import --progress-json --progress-interval 0`
@@ -63,16 +70,72 @@ export function importProgressPerFile(stderr: string): { wallMs: number[]; cpuMs
   return { wallMs: perFile(wall), cpuMs: perFile(cpu) };
 }
 
+/**
+ * #7939: one stall of the import (a paused database container, a WAL checkpoint, a burst from another tenant of a
+ * shared CI host) lands in one page's time and once carried a whole tenth's mean past the gate on its own. Work that
+ * grows with the brain does not look like that: it recurs. So the measure sets aside at most one stall per import,
+ * and only the part of it no other part of the import repeats:
+ *
+ * - Each tenth of the import is cut into ten slices. A slice's excess is its mean per-page cost above the median
+ *   slice of its tenth. When the second-largest excess anywhere in the import is over a quarter of the largest, the
+ *   cost showed up twice (two rebuilds, the second one larger because the brain grew) and nothing is set aside.
+ *   Otherwise the slice with the largest excess is lowered to the second-largest.
+ * - The lowered tenth never drops below the Theil-Sen line through the ten tenth means, so a cost that lands once in
+ *   every tenth and grows with the brain is kept in full: those tenth means rise on that line.
+ *
+ * Nothing else changes: every other slice counts, and with no stall the measure is the plain mean of each tenth.
+ */
+export function excusedStall(perPageMs: number[]): ExcusedStall | undefined {
+  const n = perPageMs.length;
+  if (n < 100) return undefined;
+  const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+  const median = (xs: number[]) => {
+    const s = [...xs].sort((a, b) => a - b);
+    const mid = s.length >> 1;
+    return s.length % 2 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
+  };
+  const tenParts = (from: number, to: number) => Array.from({ length: 10 }, (_, k) => {
+    const lo = from + Math.floor((to - from) * k / 10);
+    const hi = from + Math.floor((to - from) * (k + 1) / 10);
+    return { lo, hi, mean: sum(perPageMs.slice(lo, hi)) / (hi - lo) };
+  });
+  const tenths = tenParts(0, n);
+  const slices = tenths.flatMap((tenth, d) => {
+    const parts = tenParts(tenth.lo, tenth.hi);
+    const typical = median(parts.map(s => s.mean));
+    return parts.map(s => ({ ...s, d, excess: s.mean - typical }));
+  }).sort((a, b) => b.excess - a.excess);
+  const [worst, next] = [slices[0]!, slices[1]!];
+  if (next.excess > worst.excess / 4) return undefined;
+  const means = tenths.map(t => t.mean);
+  const slopes = means.flatMap((a, i) => means.slice(i + 1).map((b, k) => (b - a) / (k + 1)));
+  const slope = median(slopes);
+  const trend = median(means.map((m, d) => m - slope * d)) + slope * worst.d;
+  const tenth = tenths[worst.d]!;
+  const pages = tenth.hi - tenth.lo;
+  const lowered = tenth.mean - (worst.excess - next.excess) * (worst.hi - worst.lo) / pages;
+  const ms = Math.round((tenth.mean - Math.min(tenth.mean, Math.max(lowered, trend))) * pages);
+  return ms > 0 ? { ms, first_page: worst.lo + 1, last_page: worst.hi } : undefined;
+}
+
 export function rateMeasure(perPageMs: number[]): RateMeasure {
   const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
-  const tenth = Math.max(1, Math.floor(perPageMs.length / 10));
-  const first = sum(perPageMs.slice(0, tenth)) / tenth;
-  const last = sum(perPageMs.slice(-tenth)) / tenth;
-  const half = sum(perPageMs.slice(0, Math.floor(perPageMs.length / 2)));
-  const total = sum(perPageMs);
+  const excused = excusedStall(perPageMs);
+  const judged = [...perPageMs];
+  if (excused) {
+    const stalled = judged.slice(excused.first_page - 1, excused.last_page);
+    const keep = 1 - excused.ms / sum(stalled);
+    stalled.forEach((ms, k) => { judged[excused.first_page - 1 + k] = ms * keep; });
+  }
+  const tenth = Math.max(1, Math.floor(judged.length / 10));
+  const first = sum(judged.slice(0, tenth)) / tenth;
+  const last = sum(judged.slice(-tenth)) / tenth;
+  const halfPages = Math.floor(perPageMs.length / 2);
   const round = (n: number, places: number) => Math.round(n * 10 ** places) / 10 ** places;
   return { per_page_ms_first10: round(first, 1), per_page_ms_last10: round(last, 1), rate_ratio: round(last / first, 2),
-    total_ms: Math.round(total), ms_at_half: Math.round(half), total_vs_half: round(total / half, 2) };
+    total_ms: Math.round(sum(perPageMs)), ms_at_half: Math.round(sum(perPageMs.slice(0, halfPages))),
+    total_vs_half: round(sum(judged) / sum(judged.slice(0, halfPages)), 2),
+    ...(excused ? { excused } : {}) };
 }
 
 /**
@@ -174,10 +237,11 @@ export function evaluateScaleGates(report: ScaleReport, policy: GatePolicy): Gat
 
   const basis = importRateBasis(report.engine);
   const other = basis === 'cpu' ? 'wall' : 'cpu';
-  const { rate_ratio, total_vs_half, per_page_ms_first10, per_page_ms_last10 } = report.import[basis];
+  const { rate_ratio, total_vs_half, per_page_ms_first10, per_page_ms_last10, excused } = report.import[basis];
   add('import_rate', rate_ratio <= RATE_RATIO_MAX && total_vs_half <= TOTAL_VS_HALF_MAX, report.pages >= RATE_MIN_PAGES,
     `import rate (${basis} time): last 10% per-page cost ${per_page_ms_last10} ms is ${rate_ratio}x the first 10% (${per_page_ms_first10} ms; gate <= ${RATE_RATIO_MAX}); `
     + `total import time is ${total_vs_half}x the time at the halfway mark (gate <= ${TOTAL_VS_HALF_MAX}). `
+    + (excused ? `Both ratios leave out one ${excused.ms} ms stall in pages ${excused.first_page}-${excused.last_page} that the rest of the import does not repeat (#7939). ` : '')
     + `Not judged on ${report.engine}: ${other} time ratio ${report.import[other].rate_ratio}, total/half ${report.import[other].total_vs_half}. `
     + `A rising per-page cost means import slows as the brain grows, usually stale planner statistics during import. Reproduce: ${repro}`);
 

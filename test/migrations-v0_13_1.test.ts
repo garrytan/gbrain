@@ -1,38 +1,26 @@
 /**
- * v0.13.1 migration tests — grandfather validate:false onto existing pages.
+ * v0.13.1 migration (#7814): the retired `validate: false` grandfather.
  *
- * Verifies:
- *   - Registry contains v0_13_1 in semver order
- *   - Orchestrator is idempotent (running twice is a no-op on the 2nd pass)
- *   - Pages with existing `validate` key are NOT modified
- *   - Rollback log lines are written pre-mutation
- *   - dryRun does not mutate anything
- *
- * Note: tests run the orchestrator via direct engine manipulation rather
- * than through the full migration-runner entry point. The runner is tested
- * in test/apply-migrations.test.ts.
+ * An upgrade runs v0.13.1 on any brain whose ledger never recorded it (a brain
+ * `gbrain init` created before fresh-install stamps, or one opened from a new
+ * GBRAIN_HOME). It used to stamp `validate: false` into every page and move
+ * every content_hash. It must now record completion and change no page.
+ * The whole upgrade runner is covered by test/upgrade-preserves-pages-7814.slow.test.ts.
  */
 
-import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import { tmpdir } from 'os';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 import { migrations, getMigration } from '../src/commands/migrations/index.ts';
 import { v0_13_1 } from '../src/commands/migrations/v0_13_1.ts';
-
-// ---------------------------------------------------------------------------
-// Registry shape
-// ---------------------------------------------------------------------------
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 describe('migrations registry', () => {
-  test('v0.13.1 is registered', () => {
-    const m = getMigration('0.13.1');
-    expect(m).not.toBeNull();
-    expect(m?.version).toBe('0.13.1');
-  });
-
-  test('v0.13.1 is listed in semver order after v0.12.0', () => {
+  test('v0.13.1 is registered in semver order after v0.12.0', () => {
+    expect(getMigration('0.13.1')?.version).toBe('0.13.1');
     const versions = migrations.map(m => m.version);
     expect(versions.indexOf('0.13.1')).toBeGreaterThan(versions.indexOf('0.12.0'));
   });
@@ -43,40 +31,44 @@ describe('migrations registry', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Orchestrator behavior
-// ---------------------------------------------------------------------------
-//
-// The orchestrator reads config via loadConfig() which reads from
-// ~/.gbrain/config.json. We can't easily stand that up in a test, so the
-// test below validates the pieces we CAN test without the config flow:
-// registry integration + shape of the migration module. Full end-to-end
-// with a real engine + config is in test/e2e/migration-flow.test.ts.
-//
-// Idempotency behavior is verified by unit testing the writer path
-// (test/writer.test.ts: "validators skip pages with validate:false
-// frontmatter") and the per-page frontmatter preservation logic in the
-// setFrontmatterField test.
+describe('v0_13_1 orchestrator writes no page (#7814)', () => {
+  test('a brain with pages and no ledger keeps every page, content_hash and frontmatter unchanged', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'v0_13_1-'));
+    try {
+      const databasePath = join(home, '.gbrain', 'brain.pglite');
+      mkdirSync(join(home, '.gbrain'), { recursive: true });
+      writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: databasePath, embedding_disabled: true }) + '\n');
+      const state = async () => {
+        const engine = new PGLiteEngine();
+        await engine.connect({ database_path: databasePath });
+        try {
+          return await engine.executeRaw('SELECT source_id, slug, content_hash, frontmatter::text AS frontmatter, knowledge_revision::text AS revision FROM pages ORDER BY slug');
+        } finally { await engine.disconnect(); }
+      };
+      await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+        const engine = new PGLiteEngine();
+        await engine.connect({ database_path: databasePath });
+        try {
+          await engine.initSchema();
+          await engine.putPage('concepts/alpha-example', { type: 'concept', title: 'Alpha', compiled_truth: 'Alpha body.', frontmatter: { source_kind: 'note' } });
+          await engine.putPage('people/alice-example', { type: 'person', title: 'Alice Example', compiled_truth: 'Alice body.' });
+        } finally { await engine.disconnect(); }
+        const before = await state();
 
-describe('v0_13_1 orchestrator — dry-run path', () => {
-  const ORIG_HOME = process.env.HOME;
-  let tmpHome: string;
+        for (const dryRun of [false, true]) {
+          const result = await v0_13_1.orchestrator({ yes: true, dryRun, noAutopilotInstall: true });
+          expect(result.status).toBe('complete');
+          expect(result.files_rewritten ?? 0).toBe(0);
+          expect(result.phases.map(p => [p.name, p.status])).toEqual([['grandfather', 'skipped']]);
+        }
 
-  beforeEach(() => {
-    tmpHome = mkdtempSync(join(tmpdir(), 'v0_13_1-'));
-    process.env.HOME = tmpHome;
-  });
-
-  afterAll(() => {
-    process.env.HOME = ORIG_HOME;
-  });
-
-  test('dryRun skips the connect phase', async () => {
-    const result = await v0_13_1.orchestrator({ yes: true, dryRun: true, noAutopilotInstall: true });
-    const connectPhase = result.phases.find(p => p.name === 'connect');
-    expect(connectPhase?.status).toBe('skipped');
-    expect(connectPhase?.detail).toBe('dry-run');
-
-    rmSync(tmpHome, { recursive: true, force: true });
-  });
+        const after = await state();
+        expect(after).toEqual(before);
+        expect(after.map(row => String(row.frontmatter))).not.toContainEqual(expect.stringContaining('validate'));
+        expect(existsSync(join(home, '.gbrain', 'migrations', 'v0_13_1-rollback.jsonl'))).toBe(false);
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 120_000);
 });

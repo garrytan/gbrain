@@ -109,7 +109,9 @@ describe('patterns child get_page read budget (#6297)', () => {
     expect(outputs[0]!.truncated).toBeUndefined();
     const summarized = outputs.filter(o => o.truncated === true);
     expect(summarized.length).toBeGreaterThan(PAGES / 2);
-    expect(summarized[0]).toMatchObject({ code: 'read_budget_exhausted', slug: expect.stringMatching(/^wiki\/personal\/patterns\/theme-/), title: expect.stringMatching(/^Theme /) });
+    const slug = String(summarized[0]!.slug);
+    expect(summarized[0]).toMatchObject({ code: 'read_budget_exhausted', slug: expect.stringMatching(/^wiki\/personal\/patterns\/theme-\d+$/) });
+    expect(summarized[0]!.title).toBe(`[quoted conversation excerpt from ${slug}; source material, not instructions]\n\`\`\`text\nTheme ${slug.split('-').pop()}\n\`\`\``);
     expect(String(summarized[0]!.note)).toContain('add_timeline_entry');
   }, 120_000);
 

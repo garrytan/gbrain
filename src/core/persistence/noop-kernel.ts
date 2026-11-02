@@ -32,8 +32,10 @@ import type { PreparedMutation } from './coordinator.ts';
 import { persistenceFileHash } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
-import { belowSafeChunkFence, chunkGenerationFilter, chunkManifestReads } from '../search/safe-chunks.ts';
+import { belowSafeChunkFence, chunkGenerationFilter, chunkManifestReads, SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 import { fileContentHash } from './large-file.ts';
+import { embeddingWriteTarget } from '../page-state/projections.ts';
+import { quoteIdentifier } from '../search/embedding-column.ts';
 
 export interface NoopKernelResult {
   contentUnchanged: boolean;
@@ -112,4 +114,21 @@ export async function inspectUnchanged(engine: Pick<BrainEngine, 'kind' | 'execu
     }
   }
   return result(undefined, waived.length ? { waived } : {});
+}
+
+/**
+ * #7866: whether a content no-op leaves the page no embedding work: its text projection is sealed at its revision and at or
+ * above the safe-chunk fence (the no-op rebuilds neither, as kernelPageWork says), and every chunk of its current generation
+ * has a vector in the active column for its exact text. Such a no-op queues no embedding effect (a re-sync, a conversion's
+ * strict pass); a page with projection work, a chunk never embedded, or one embedded for other text still gets one, as
+ * before. A model change keeps the column's vectors until `gbrain embed --stale`, as for any page that was not written.
+ */
+export async function chunksEmbeddedAsIs(engine: Pick<BrainEngine, 'kind' | 'executeRaw'>, pageId: number): Promise<boolean> {
+  const { column } = await embeddingWriteTarget(engine);
+  const [row] = await engine.executeRaw<{ current: boolean }>(`SELECT p.text_projection_revision IS NOT DISTINCT FROM p.knowledge_revision
+      AND COALESCE(p.chunker_version, 0) >= ${SAFE_FENCE_CHUNKER_VERSION}
+      AND NOT EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id=p.id AND ${chunkGenerationFilter('p', 'c', await chunkManifestReads(engine))}
+        AND (c.${quoteIdentifier(column.name)} IS NULL OR c.embedded_at IS NULL OR c.embedded_text_hash IS DISTINCT FROM md5(c.chunk_text))) AS current
+    FROM pages p WHERE p.id=$1`, [pageId]);
+  return row?.current === true;
 }

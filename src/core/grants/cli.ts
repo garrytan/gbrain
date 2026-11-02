@@ -1,4 +1,4 @@
-import { GRANT_PROFILES, GrantError, validatePrincipalGrant, type GrantPatch, type GrantProfileId } from './model.ts';
+import { GRANT_PROFILES, GrantError, validatePrincipalGrant, type GrantPatch, type GrantProfileId, type PrivatePagesGrant } from './model.ts';
 import { parseScopeString, assertAllowedScopes } from '../scope.ts';
 import { isValidHolder } from '../takes-fence.ts';
 
@@ -66,11 +66,19 @@ function parseRescopeGrantFlags(args: string[]): RescopeGrantArgs {
         if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) throw new GrantError('invalid_grant', '--if-version must be a non-negative integer');
         result.expectedRevision = Number(value);
         break;
+      case '--private-pages': result.patch.privatePages = parsePrivatePagesFlag(value); break;
       default: throw new GrantError('invalid_grant', `Unknown flag: ${flag}`);
     }
   }
   assertProfileKept(result, '--allowed-operations all');
   return result;
+}
+
+/** `--private-pages granted-sources|none` (GBRA-156). */
+export function parsePrivatePagesFlag(value: string): PrivatePagesGrant {
+  if (value === 'granted-sources') return 'granted_sources';
+  if (value === 'none') return 'none';
+  throw new GrantError('invalid_grant', '--private-pages must be granted-sources or none', ['private_pages_invalid']);
 }
 
 /**
@@ -182,7 +190,7 @@ export function parseClientRescopeArgs(clientId: string, args: string[]): Rescop
   const result = parseRescopeGrantFlags(legacy);
   if (sources !== undefined) {
     validatePrincipalGrant({
-      principal: { kind: 'oauth_client', id: clientId }, scopes: [], allowedOperations: null, takesHolders: null, revision: 0,
+      principal: { kind: 'oauth_client', id: clientId }, scopes: [], allowedOperations: null, takesHolders: null, privatePages: 'none', revision: 0,
       shape: 'unified', drift: [], permissionsMalformed: false,
       sources: sources.length === 0 ? { kind: 'none' } : { kind: 'federated', writeSource: sources[0], readSources: sources },
     }, { operationNames: new Set() });

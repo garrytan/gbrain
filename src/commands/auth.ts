@@ -32,9 +32,14 @@ import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { sqlQueryForEngine, type SqlQuery } from '../core/sql-query.ts';
 import { readClientGrant, rescopeClientGrant, resolveGrantProfile, type GrantPatch } from '../core/grants/service.ts';
 import { parseClientRescopeArgs, parseRescopeGrantArgs, splitRescopeTarget, type RescopeGrantArgs } from '../core/grants/cli.ts';
-import { GRANT_PROFILES, GrantError, TOKEN_TTL_MAX_SECONDS, TOKEN_TTL_MIN_SECONDS, grantFromClient, type ClientGrant } from '../core/grants/model.ts';
+import { GRANT_PROFILES, GrantError, TOKEN_TTL_MAX_SECONDS, TOKEN_TTL_MIN_SECONDS, grantFromClient, privatePagesFromColumn, type ClientGrant, type PrivatePagesGrant } from '../core/grants/model.ts';
 import { cliRenderContext, renderAction, type RenderedAction } from '../core/agent-output.ts';
+import type { INSTALL_SURFACE_SET_BY } from '../mcp/surface.ts';
 import { migrateLegacyTokens, parseRescopeTokenArgs, renderLegacyGrantAxis, rescopeLegacyToken, resolveRescopeTarget, type MigrateLegacyResult, type RescopeTokenResult } from '../core/grants/legacy-token.ts';
+import { bindCredential, type BindingPatch, type BindingResult } from '../core/access/members.ts';
+import { bindingLine, checkBindingTarget, takeBindingFlags } from './auth-binding.ts';
+import { exitCliError } from '../cli/cli-error.ts';
+import { OperationError } from '../core/ops/contract.ts';
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -73,7 +78,7 @@ async function withConfiguredSql<T>(
   }
 }
 
-async function create(name: string, opts: { takesHolders?: string[]; scopes?: string[]; minTrust?: TrustTier } = {}) {
+async function create(name: string, opts: { takesHolders?: string[]; scopes?: string[]; minTrust?: TrustTier; binding?: BindingPatch | null } = {}) {
   if (!name) { console.error('Usage: auth create <name> [--takes-holders world,garry] [--scopes read,write] [--min-trust <tier>]'); process.exit(1); }
   // #4043 least-privilege: validate scopes at mint time — the verify path
   // treats a filtered-empty scopes array as DENY, so a typo must fail loudly
@@ -97,6 +102,7 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
       const takesHolders = opts.takesHolders && opts.takesHolders.length > 0
         ? opts.takesHolders
         : ['world'];
+      await checkBindingTarget(engine, opts.binding ?? null);
       // F3: the token is born on the unified grant shape (columns + the
       // permissions JSONB mirror older binaries read). Scopes land in the
       // original-schema scopes TEXT[] column; omitted → NULL → the historical
@@ -107,16 +113,19 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
       });
       // #5575 (CEO-18): the read floor; the CLI is the only writer of it.
       if (opts.minTrust) await setTokenMinTrust(engine, row!.id, opts.minTrust);
+      const bound = opts.binding ? await bindCredential(engine, { kind: 'token', id: String(row!.id) }, opts.binding) : null;
       const scopeLine = opts.scopes !== undefined
         ? `scopes=${JSON.stringify(opts.scopes)}`
         : 'scopes=full access (grandfathered — pass --scopes read,write to narrow)';
       console.log(`Token created for "${name}" (takes_holders=${JSON.stringify(takesHolders)}, ${scopeLine}${opts.minTrust ? `, min_trust=${opts.minTrust}` : ''}):\n`);
+      if (bound) console.log(`${bindingLine(bound)}\n`);
       console.log(`  ${token}\n`);
       console.log('Save this token — it will not be shown again.');
       console.log(`Revoke with: gbrain auth revoke "${name}" (or gbrain auth revoke --id <id> from auth list)`);
       console.log(`Change its grants: gbrain auth rescope --token "${name}" --takes-holders world,garry (or --sources, --operations)`);
     });
   } catch (e: any) {
+    if (e instanceof OperationError) exitCliError(e, 'auth');
     if (e.code === '23505') {
       console.error(`A token named "${name}" already exists. Revoke it first or use a different name.`);
     } else {
@@ -158,6 +167,11 @@ async function permissions(name: string, action: string, value: string | undefin
 /** Render a token row's scope grant honestly (#4043: NULL = grandfathered).
  * Routes through the SAME normalizer the verify path uses — the ops surface
  * must never claim admin on a row the serve actually scopes or denies. */
+/** GBRA-156: the private-pages axis as `auth list`, `auth clients` and `auth rescope` print it. */
+export function renderPrivatePages(mode: PrivatePagesGrant | undefined): string {
+  return mode === 'granted_sources' ? 'granted-sources (private pages in the sources this grant names)' : 'none';
+}
+
 export function renderTokenScopes(scopes: unknown): string {
   const normalized = normalizeTokenScopes(scopes);
   if (normalized === undefined) return 'admin (grandfathered)';
@@ -165,27 +179,34 @@ export function renderTokenScopes(scopes: unknown): string {
   return normalized.join(',');
 }
 
-async function list() {
+async function list(json: boolean) {
   await withConfiguredSql(async (sql) => {
+    // SELECT * reads every schema generation (private_pages arrives with GBRA-156's migration; absent reads as none).
     const rows = await sql`
-      SELECT id, name, scopes, created_at, last_used_at, revoked_at
-      FROM access_tokens
+      SELECT * FROM access_tokens
       ORDER BY created_at DESC
     `;
+    if (json) {
+      console.log(JSON.stringify(rows.map(r => ({
+        id: String(r.id), name: r.name, scopes: renderTokenScopes(r.scopes), created_at: r.created_at, last_used_at: r.last_used_at ?? null,
+        status: r.revoked_at ? 'revoked' : 'active', private_pages: privatePagesFromColumn(r.private_pages),
+      })), null, 2));
+      return;
+    }
     if (rows.length === 0) {
       console.log('No tokens found. Create one: gbrain auth create "my-client"');
       return;
     }
-    console.log('ID                                    Name                  Scopes                 Created              Last Used            Status');
-    console.log('─'.repeat(126));
+    console.log('ID                                    Name                  Scopes                 Created              Last Used            Status   Private pages');
+    console.log('─'.repeat(141));
     for (const r of rows) {
       const id = String(r.id).padEnd(36);
       const name = (r.name as string).padEnd(20);
       const scopes = renderTokenScopes(r.scopes).padEnd(21);
       const created = new Date(r.created_at as string).toISOString().slice(0, 19);
       const lastUsed = r.last_used_at ? new Date(r.last_used_at as string).toISOString().slice(0, 19) : 'never'.padEnd(19);
-      const status = r.revoked_at ? 'REVOKED' : 'active';
-      console.log(`${id}  ${name}  ${scopes}  ${created}  ${lastUsed}  ${status}`);
+      const status = (r.revoked_at ? 'REVOKED' : 'active').padEnd(7);
+      console.log(`${id}  ${name}  ${scopes}  ${created}  ${lastUsed}  ${status}  ${renderPrivatePages(privatePagesFromColumn(r.private_pages))}`);
     }
   });
 }
@@ -586,6 +607,8 @@ export interface RegisterScopedClientOpts {
    * ONLY surface-column writer (sets surface_set_by='operator', the lock
    * request_tools cannot override). Never a raw column UPDATE. */
   surface?: 'verbs' | 'starter' | 'full';
+  /** INSTALL_SURFACE_SET_BY when `surface` is an install default (the client lists the memory verbs). */
+  surfaceSetBy?: 'operator' | typeof INSTALL_SURFACE_SET_BY;
   /** Result of preflightOauthClientColumns — decides which optional-column
    * writes are attempted. Absent → attempt everything (caller owns errors). */
   columns?: Set<string>;
@@ -679,7 +702,7 @@ export async function registerScopedClient(
     if (opts.columns && !opts.columns.has('surface')) {
       surfaceSkipped = true;
     } else {
-      const rescoped = await provider.rescopeClient(clientId, { surface: opts.surface });
+      const rescoped = await provider.rescopeClient(clientId, { surface: opts.surface, surfaceSetBy: opts.surfaceSetBy });
       surfaceApplied = opts.surface;
       surfaceOld = rescoped.surfaceOld ?? null;
     }
@@ -754,8 +777,10 @@ async function registerClient(name: string, args: string[]) {
     process.exit(1);
   }
   let parsed: RegisterClientArgs;
+  let binding: ReturnType<typeof takeBindingFlags>;
+  try { binding = takeBindingFlags(args); } catch (e) { exitCliError(e, 'auth'); }
   try {
-    parsed = parseRegisterClientArgs(args);
+    parsed = parseRegisterClientArgs(binding.args);
   } catch (e: any) {
     console.error(`Error: ${e.message}`);
     console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none] [--bound-tools T1,T2] [--bound-source SOURCE] [--bound-brain BRAIN] [--bound-slug-prefixes P1,P2] [--bound-max-concurrent N] [--budget-usd-per-day USD] [--token-ttl SECONDS]');
@@ -763,19 +788,23 @@ async function registerClient(name: string, args: string[]) {
   }
 
   try {
-    await withConfiguredSql(async (sql) => {
+    await withConfiguredSql(async (sql, engine) => {
+      await checkBindingTarget(engine, binding.patch);
       const columns = parsed.tokenTtlSeconds !== undefined
         ? await preflightOauthClientColumns(sql)
         : undefined;
       const registered = await registerScopedClient(sql, name, parsed, { columns });
+      const bound = binding.patch ? await bindCredential(engine, { kind: 'client', id: registered.clientId }, binding.patch) : null;
       if (registered.skipped?.tokenTtl) {
         console.error('Note: this brain predates the token_ttl column; run `gbrain apply-migrations --yes`, then rescope. The server default TTL applies.');
       }
       for (const line of formatRegisterClientOutput(name, registered, parsed)) {
         console.log(line);
       }
+      if (bound) console.log(bindingLine(bound));
     });
   } catch (e: any) {
+    if (e instanceof OperationError) exitCliError(e, 'auth');
     console.error('Error:', e.message);
     process.exit(1);
   }
@@ -816,22 +845,40 @@ async function rescopeToken(args: string[]) {
  * reason and the next command; with --json they also print a JSON error on
  * stdout so an agent never has to read stderr.
  */
-async function runRescope(args: string[], clientParser?: (args: string[]) => RescopeGrantArgs, tokenArgs = false) {
-  const json = args.includes('--json');
+async function runRescope(rawArgs: string[], clientParser?: (args: string[]) => RescopeGrantArgs, tokenArgs = false) {
+  const json = rawArgs.includes('--json');
+  let binding: ReturnType<typeof takeBindingFlags>;
+  try { binding = takeBindingFlags(rawArgs); } catch (e) { exitCliError(e, 'auth'); }
+  const args = binding.args;
+  const dryRun = args.includes('--dry-run');
   try {
     const command = tokenArgs ? { kind: 'token' as const, args } : splitRescopeTarget(args);
     await withConfiguredSql(async (_sql, engine) => {
       if (command.kind === 'migrate-legacy') return printMigrateLegacy(await migrateLegacyTokens(engine, { dryRun: command.dryRun }), command.json);
       const target = command.kind === 'bare' ? await resolveRescopeTarget(engine, command.name) : command.kind === 'client' ? command : { kind: 'token' as const };
+      if (!binding.patch) {
+        if (target.kind === 'client') {
+          return rescopeClientWith(engine, target.clientId, clientParser ? clientParser(command.args) : parseClientRescopeArgs(target.clientId, command.args));
+        }
+        const parsedToken = parseRescopeTokenArgs(command.kind === 'bare' ? [command.name, ...command.args] : command.args);
+        return printTokenRescope(await rescopeLegacyToken(engine, parsedToken), parsedToken.json);
+      }
+      // GBRA-218: the binding is validated before any grant changes and applied after them; it is not a grant axis.
+      await checkBindingTarget(engine, binding.patch);
       if (target.kind === 'client') {
         const clientId = target.clientId;
-        return rescopeClientWith(engine, clientId, clientParser ? clientParser(command.args) : parseClientRescopeArgs(clientId, command.args));
+        const parsedClient = clientParser ? clientParser(command.args) : parseClientRescopeArgs(clientId, command.args);
+        const bindLater = async () => bindCredential(engine, { kind: 'client', id: clientId }, binding.patch!, { dryRun });
+        return rescopeClientWith(engine, clientId, parsedClient, bindLater);
       }
       const tokenArgv = command.kind === 'bare' ? [command.name, ...command.args] : command.args;
       const parsed = parseRescopeTokenArgs(tokenArgv);
-      printTokenRescope(await rescopeLegacyToken(engine, parsed), parsed.json);
+      const result = await rescopeLegacyToken(engine, parsed);
+      const bound = await bindCredential(engine, { kind: 'token', id: result.id }, binding.patch, { dryRun });
+      printTokenRescope(result, parsed.json, bound);
     });
   } catch (error) {
+    if (error instanceof OperationError) exitCliError(error, 'auth');
     const message = error instanceof Error ? error.message : String(error);
     const grantError = error instanceof GrantError ? error : undefined;
     const fix = grantError?.code === 'client_not_found' ? renderAction(CLIENT_NOT_FOUND_FIX, cliRenderContext()) : undefined;
@@ -850,16 +897,18 @@ const CLIENT_NOT_FOUND_FIX = {
   verify: { argv: ['gbrain', 'auth', 'clients', '--json'] },
 };
 
-async function rescopeClientWith(engine: BrainEngine, clientId: string, parsed: RescopeGrantArgs) {
+async function rescopeClientWith(engine: BrainEngine, clientId: string, parsed: RescopeGrantArgs, bind?: () => Promise<BindingResult>) {
   const existing = await readClientGrant(engine, clientId);
   if (parsed.printOnly) {
+    const bound = bind ? await bind() : undefined;
     if (parsed.json) {
-      console.log(JSON.stringify({ before: existing, after: existing, revision: existing.revision, dryRun: true, changed: false, written: false, principal_grant: grantFromClient(existing) }, null, 2));
+      console.log(JSON.stringify({ before: existing, after: existing, revision: existing.revision, dryRun: true, changed: false, written: false, principal_grant: grantFromClient(existing), ...(bound ? { binding: bound } : {}) }, null, 2));
       return;
     }
     console.log(`OAuth client grants: ${existing.clientName} (${clientId})`);
     console.log(`  Revision: ${existing.revision}`);
     printClientGrantAxes(existing);
+    if (bound) { console.log(bindingLine(bound, parsed.dryRun)); return; }
     console.log(`No change made. To change a grant, pass a grant flag, for example: gbrain auth rescope --client ${clientId} --sources default --dry-run`);
     return;
   }
@@ -875,10 +924,12 @@ async function rescopeClientWith(engine: BrainEngine, clientId: string, parsed: 
     actor: 'operator:cli', expectedRevision: parsed.expectedRevision ?? existing.revision,
     repair: parsed.repair, dryRun: parsed.dryRun,
   });
-  if (parsed.json) { console.log(JSON.stringify({ ...result, principal_grant: grantFromClient(result.after) }, null, 2)); return; }
+  const bound = bind ? await bind() : undefined;
+  if (parsed.json) { console.log(JSON.stringify({ ...result, principal_grant: grantFromClient(result.after), ...(bound ? { binding: bound } : {}) }, null, 2)); return; }
   console.log(`OAuth client ${parsed.dryRun ? 'grant preview' : 'rescoped'}: ${result.after.clientName} (${clientId})`);
   console.log(`  Revision: ${result.before.revision} -> ${result.after.revision}`);
   printClientGrantAxes(result.after);
+  if (bound) console.log(bindingLine(bound, parsed.dryRun));
   console.log('Restrictions apply on the next request. Added scopes require a new access token; the client secret is unchanged.');
 }
 
@@ -887,21 +938,27 @@ function printClientGrantAxes(grant: ClientGrant) {
   console.log(`  Write source: ${grant.sourcesNone ? 'none (every read and write refused)' : grant.sourceId}`);
   console.log(`  Federated reads: ${grant.federatedRead.join(', ') || '<none>'}`);
   console.log(`  Takes holders: ${grant.takesHolders === null ? 'world (default)' : grant.takesHolders.join(', ') || 'none (every take hidden)'}`);
+  console.log(`  Private pages: ${renderPrivatePages(grant.privatePages)}`);
   console.log(`  Tool surface: ${grant.surface ?? '<server default>'}`);
   console.log(`  Delegated spending: ${grant.budgetUsdPerDay === null ? 'unlimited' : '$' + grant.budgetUsdPerDay + '/day'}`);
 }
 
-function printTokenRescope(result: RescopeTokenResult, json: boolean) {
-  if (json) { console.log(JSON.stringify(result, null, 2)); return; }
+function printTokenRescope(result: RescopeTokenResult, json: boolean, bound?: BindingResult) {
+  if (json) { console.log(JSON.stringify(bound ? { ...result, binding: bound } : result, null, 2)); return; }
   const verb = !result.changed ? 'grants' : result.dryRun ? 'grant preview' : 'rescoped';
   console.log(`Legacy token ${verb}: ${result.name} (${result.id})`);
-  const rows: Array<[string, keyof typeof result.before]> = [['Sources', 'sources'], ['Takes holders', 'takesHolders'], ['Operations', 'operations']];
+  const rows: Array<[string, 'sources' | 'takesHolders' | 'operations']> = [['Sources', 'sources'], ['Takes holders', 'takesHolders'], ['Operations', 'operations']];
   for (const [label, key] of rows) {
     const before = renderLegacyGrantAxis(result.before[key]);
     const after = renderLegacyGrantAxis(result.after[key]);
     console.log(`  ${label}: ${before === after ? after : `${before} -> ${after}`}`);
   }
+  if (result.before.privatePages || result.after.privatePages) {
+    const [ppBefore, ppAfter] = [renderPrivatePages(result.before.privatePages), renderPrivatePages(result.after.privatePages)];
+    console.log(`  Private pages: ${ppBefore === ppAfter ? ppAfter : `${ppBefore} -> ${ppAfter}`}`);
+  }
   console.log(`  Grant revision: ${result.revision.before === result.revision.after ? result.revision.after : `${result.revision.before} -> ${result.revision.after}`}`);
+  if (bound) console.log(bindingLine(bound, result.dryRun));
   if (result.drift.length && !result.written) {
     console.log(`  Drift: ${result.drift.join(', ')} deny every request (the permissions JSON disagrees with the grant columns). `
       + `Ask the user which grant is intended, then run gbrain auth rescope --token ${result.name} --adopt-permissions or --adopt-columns.`);
@@ -982,6 +1039,8 @@ export interface ClientRow {
   allowed_operations?: string[] | null;
   /** Soft-revoke stamp (`auth` lifecycle revoke); absent on schemas without it. */
   deleted_at?: string | Date | null;
+  /** GBRA-156 private-pages axis; absent on schemas without it (reads as none). */
+  private_pages?: string | null;
 }
 
 /** The operation-snapshot axis of one client, as `auth clients` reports it. */
@@ -1052,7 +1111,16 @@ export async function listClientRows(engine: BrainEngine): Promise<ClientRow[]> 
   // The columns each degrade tier drops; any other missing object rethrows.
   const isSchemaShapeError = (e: unknown): boolean =>
     isMissingSchemaObject(e, 'table', 'oauth_clients') ||
-    isMissingSchemaObject(e, 'column', ['allowed_operations', 'deleted_at', 'surface', 'surface_set_by', 'source_id', 'federated_read']);
+    isMissingSchemaObject(e, 'column', ['private_pages', 'allowed_operations', 'deleted_at', 'surface', 'surface_set_by', 'source_id', 'federated_read']);
+  try {
+    return await engine.executeRaw<ClientRow>(
+      `SELECT client_id, client_name, scope, surface, surface_set_by, source_id, federated_read, allowed_operations, deleted_at, private_pages
+         FROM oauth_clients ORDER BY client_name, client_id`,
+    );
+  } catch (e) {
+    // Brain predates the private-pages column: it reads as none.
+    if (!isSchemaShapeError(e)) throw e;
+  }
   try {
     return await engine.executeRaw<ClientRow>(
       `SELECT client_id, client_name, scope, surface, surface_set_by, source_id, federated_read, allowed_operations, deleted_at
@@ -1135,6 +1203,7 @@ async function clientsCmd(args: string[]) {
             surface_set_by: c.surface_set_by,
             source_id: c.source_id,
             federated_read: c.federated_read,
+            private_pages: privatePagesFromColumn(c.private_pages),
             ...clientOperationsView(c),
             revoked_at: c.deleted_at ?? null,
             token_lifetime_clamped: lifetimeClamped.has(c.client_id),
@@ -1160,6 +1229,7 @@ async function clientsCmd(args: string[]) {
           : '<server/config resolution>';
         console.log(`  scopes: ${c.scope ?? '<none>'}    surface: ${surfaceStr}`);
         console.log(`  write source: ${c.source_id ?? '<none>'}    federated reads: ${(c.federated_read ?? []).join(', ') || '<none>'}`);
+        console.log(`  private pages: ${renderPrivatePages(privatePagesFromColumn(c.private_pages))}`);
         for (const line of clientOperationsLines(c)) console.log(line);
         if (lifetimeClamped.has(c.client_id)) console.log('  access-token lifetime: clamped to the 90-day maximum by an upgrade (docs/mcp/ADMIN.md#access-token-lifetime)');
         if (parsed.usage) {
@@ -1245,7 +1315,7 @@ Admin dashboard login (running HTTP server):
   This does not create an MCP bearer token. See docs/mcp/DEPLOY.md.
 
 Usage:
-  gbrain auth create <name> [--takes-holders world,garry,brain] [--scopes read,write] [--min-trust <tier>]
+  gbrain auth create <name> [--takes-holders world,garry,brain] [--scopes read,write] [--min-trust <tier>] [--member <id>]
                                                           Create a legacy bearer token. v0.28: --takes-holders
                                                           sets the per-token allow-list for the takes.holder
                                                           field (default: ["world"]). MCP-bound calls to
@@ -1259,7 +1329,7 @@ Usage:
                                                           memory as you (local CLI only; never via admin API)
   gbrain auth set-min-trust <client|token> <tier|none>    Set or clear the read floor of an OAuth client (id)
                                                           or legacy token (id or name). Local CLI only.
-  gbrain auth list                                         List all tokens (id, scopes, usage)
+  gbrain auth list [--json]                                List all tokens (id, scopes, usage, private pages)
   gbrain auth revoke <name>                                Revoke a legacy token (ALL active rows with that name)
   gbrain auth revoke --id <uuid>                           Revoke exactly one token by id (names are not unique)
   gbrain auth rescope --token <name>|--id <uuid>|--client <client_id>|<name> [options]
@@ -1277,6 +1347,16 @@ Usage:
                                                           surface allow, including ones later upgrades add; clears
                                                           the profile (tokens: --reset-default operations)
      --scopes <read,write,...>                            Replace the scopes
+     --member <id|none>                                   Bind the token or client to a member: remote reads of
+                                                          pages naming readers (readable_by) see what that member
+                                                          may read; 'none' unbinds (see gbrain access --help)
+     --may-act-for <list|none>                            Shared agents: member ids, group:<id>, guest or * the
+                                                          harness may name as a request's audience
+                                                          (X-Gbrain-On-Behalf-Of or _meta.on_behalf_of)
+     --private-pages <granted-sources|none>               Remote reads see visibility: private pages in the
+                                                          sources this grant names explicitly (never the
+                                                          no-grant floor, federation, a client's bound source
+                                                          or a request's source_ids); 'none' (default) hides them
      --reset-default <sources,takes-holders,operations>   Token only: restore the auth create default for those axes
      --refresh-operations [--add <op,...>|--all-new]      Token only: preview operations added since the snapshot;
                                                           widen only by the ones --add names (or all with --all-new)
@@ -1302,6 +1382,7 @@ Usage:
      --redirect-uri <https://...>                          (v0.41.3+; repeatable; required for authorization_code)
      --token-endpoint-auth-method <method>                 (v0.41.3+; client_secret_post | client_secret_basic | none;
                                                             'none' = public PKCE-only client, no secret minted)
+     --member <id> / --may-act-for <list>                  Bind the client to a member (see auth rescope)
      --bound-tools <tool1,tool2>                           Bind submit_agent to an allow-list of tools
      --bound-source <id>                                   Bind submit_agent jobs to a source id
      --bound-brain <id>                                    Bind submit_agent jobs to a brain id
@@ -1361,16 +1442,18 @@ export async function runAuth(args: string[]): Promise<void> {
     case 'create': {
       // v0.28: optional --takes-holders world,garry,brain (default: world only)
       // #4043: optional --scopes read,write (default: full access, grandfathered)
-      const parsed = parseAuthCreateArgs(rest);
+      let binding: ReturnType<typeof takeBindingFlags>;
+      try { binding = takeBindingFlags(rest); } catch (e) { exitCliError(e, 'auth'); }
+      const parsed = parseAuthCreateArgs(binding.args);
       if (parsed.error) {
         console.error(`Error: ${parsed.error}`);
         process.exit(1);
       }
-      await create(parsed.name, { takesHolders: parsed.takesHolders, scopes: parsed.scopes, minTrust: parsed.minTrust });
+      await create(parsed.name, { takesHolders: parsed.takesHolders, scopes: parsed.scopes, minTrust: parsed.minTrust, binding: binding.patch });
       return;
     }
     case 'set-min-trust': await setMinTrustCmd(rest); return;
-    case 'list': await list(); return;
+    case 'list': await list(rest.includes('--json')); return;
     case 'revoke': {
       if (rest[0] === '--id') { await revokeById(rest[1] || ''); return; }
       await revoke(rest[0]);

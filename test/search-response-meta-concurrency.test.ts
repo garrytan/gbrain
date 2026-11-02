@@ -52,7 +52,7 @@ describe('search response meta', () => {
     expect(r.isError).toBeFalsy();
     const safeIndexEnd = events.findIndex(e => e.at === 'end' && e.sql.includes('AND p.chunker_version <'));
     // The saved-fact match's first statement (its existence probe, or the match itself once the probe is gone).
-    const factProbeStart = events.findIndex(e => e.at === 'start' && /^SELECT .*\bFROM facts f WHERE f\.source_id = ANY\(\$1::text\[\]\)/.test(e.sql));
+    const factProbeStart = events.findIndex(e => e.at === 'start' && /^(SELECT|WITH) .*\bFROM facts f(, k)? WHERE f\.source_id = ANY\(\$1::text\[\]\)/.test(e.sql));
     expect(safeIndexEnd).toBeGreaterThan(-1);
     expect(factProbeStart).toBeGreaterThan(-1);
     expect(factProbeStart).toBeLessThan(safeIndexEnd);

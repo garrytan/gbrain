@@ -149,7 +149,7 @@ async function readRemoteCoverage(ctx: OperationContext, sourceIds: string[] | u
 async function attachDuplicates(ctx: OperationContext, rows: RankedEntity[], filter: EntityTypeFilter, excludePrivate: boolean): Promise<number> {
   const { nameVariantsEnabled, readPossibleDuplicates } = await import('../verbs/entity-variants.ts');
   if (!(await nameVariantsEnabled(ctx.engine))) return 0;
-  const { privatePagesFilterFragment } = await import('../search/private-visibility.ts');
+  const { privatePagesFilterForCaller } = await import('../search/private-visibility.ts');
   const deadline = Date.now() + DUPLICATE_BUDGET_MS;
   let checked = 0;
   for (const row of rows.slice(0, RANK_ENTITIES_DUPLICATE_ROWS)) {
@@ -159,8 +159,8 @@ async function attachDuplicates(ctx: OperationContext, rows: RankedEntity[], fil
       selectColumns: 'slug, title, type, frontmatter',
       entityTypes: new Set(typesFor(filter, row.source_id)),
       omitQuarantined: ctx.remote !== false,
-      privatePredicate: excludePrivate ? ` AND ${privatePagesFilterFragment('pages')}` : '',
-      retirementPrivacy: excludePrivate ? ` AND ${privatePagesFilterFragment('p')}` : '',
+      privatePredicate: excludePrivate ? ` AND ${privatePagesFilterForCaller('pages')}` : '',
+      retirementPrivacy: excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '',
     });
     if (duplicates.length) row.possible_duplicates = duplicates;
   }

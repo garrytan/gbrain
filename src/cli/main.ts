@@ -55,6 +55,7 @@ import { runCliPreflight } from '../core/cli-preflight.ts';
 import { isBooleanLiteral, isKnownOpFlag } from '../core/op-flag-tokens.ts';
 import { conceptNudge } from '../core/search/query-intent.ts';
 import { redactRetrievalOutput } from '../core/search/output-redaction.ts';
+import { pageCapLine } from '../core/search/remote-page-cap.ts';
 import { formatSearchExact } from './search-exact-format.ts';
 import { routeCommand } from './command-route.ts';
 import type { CliOptions } from '../core/cli-options.ts';
@@ -146,6 +147,7 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   'edge-proposals': async () => (await import('../commands/edge-proposals.ts')).runEdgeProposals as never,
   questions: async () => (await import('../commands/questions.ts')).runQuestions as never, // --help before the engine
   waiting: async () => (await import('../commands/loops.ts')).runWaiting as never,
+  access: async () => (await import('../commands/access.ts')).runAccess as never, // GBRA-218: usage prints before the engine
   // runSources's `--help`/`-h`/undefined-subcommand branch calls printHelp()
   // without ever touching `engine` — safe to dispatch with no brain
   // configured, matching the reader who runs `sources --help` because they
@@ -365,6 +367,7 @@ async function main() {
   command = routed.command;
   let subArgs = routed.subArgs;
   dispatchedCommand = command;
+  if (cliOpts.as !== undefined && !helpRequested) (await import('./as-preview.ts')).refuseAsOutsideOperations(command, subArgs, !CLI_ONLY.has(command) && (cliOps.has(command) || cliAliases.has(command))); // GBRA-218
   {
     const { directPoolProfileForCommand, setDirectPoolProfile } = await import('../core/direct-pool-profile.ts');
     setDirectPoolProfile(directPoolProfileForCommand(command, subArgs));
@@ -517,7 +520,7 @@ async function main() {
     return;
   }
 
-  if (['search', 'query', 'get', 'recall'].includes(command) && await (await import('./cli-socket-client.ts')).maybeServeFromCliSocket(command, subArgs)) return; // warm serve socket (opt-in)
+  if (cliOpts.as === undefined && ['search', 'query', 'get', 'recall'].includes(command) && await (await import('./cli-socket-client.ts')).maybeServeFromCliSocket(command, subArgs)) return; // warm serve socket (opt-in)
   // CLI-only commands
   if (CLI_ONLY.has(command)) {
     const endRead = (await import('./slow-read.ts')).beginCommandRead(command, subArgs); try { await handleCliOnly(command, subArgs); } finally { endRead(); }
@@ -625,7 +628,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
 
   // The live PGLite owner exposes canonical operations over a dedicated
   // local socket. Delegate before opening a competing engine connection.
-  {
+  if (cliOpts.as === undefined) { // GBRA-218: a --as preview runs in this process (the owner socket carries no member identity)
     const { runDelegatedCliOperation } = await import('../commands/persistence-delegate.ts');
     if (await runDelegatedCliOperation(op.name, params, cfgPre, {
       brain: cliOpts.brain, timeoutMs: cliOpts.timeoutMs ?? undefined,
@@ -655,6 +658,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
   // because the import.meta.main seam exits explicitly on every one-shot path.
   const READ_OP_TIMEOUT_MS = 180_000;
   const configSnapshot = op.scope === 'read' ? takeStartupConfigSnapshot(engine) ?? openRequestConfigSnapshot(engine) : null;
+  const asPreview = await (await import('./as-preview.ts')).openAsPreview(engine, cliOpts.as, command); // GBRA-218 local --as <member>
 
   try {
     const { withTimeout, OperationTimeoutError } = await import('../core/timeout.ts');
@@ -677,7 +681,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     let ctx: Awaited<ReturnType<typeof makeContext>>;
     try {
       ctx = await withTimeout(
-        timeCliPhase('context', () => (configSnapshot ? configSnapshot.run(() => makeContext(engine, params, op)) : makeContext(engine, params, op))),
+        timeCliPhase('context', () => (configSnapshot ? configSnapshot.run(() => makeContext(engine, params, op)) : makeContext(engine, params, op)).then(c => asPreview.context(c))),
         wallclockMs,
         `gbrain ${command}: context`,
       );
@@ -693,7 +697,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     if (op.scope === 'read') {
       try {
         rawResult = await withTimeout(
-          configSnapshot!.run(() => withRequestIdentityMemo(() => op.handler(ctx, params))).catch(async (e: unknown) => { // large pages: a segmented page streams to stdout
+          configSnapshot!.run(() => withRequestIdentityMemo(() => asPreview.run(() => op.handler(ctx, params)))).catch(async (e: unknown) => { // large pages: a segmented page streams to stdout
             if (op.name !== 'get_page') throw e;
             const { streamSegmentedGet, SEGMENTED_STREAMED } = await import('./page-render.ts');
             if (await streamSegmentedGet(engine, params, e, writeStdoutFinal)) return SEGMENTED_STREAMED;
@@ -710,7 +714,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
         throw e;
       }
     } else {
-      rawResult = await withRequestIdentityMemo(() => op.handler(ctx, params));
+      rawResult = await withRequestIdentityMemo(() => asPreview.run(() => op.handler(ctx, params)));
       if (op.mutating) await captureCapacityNotices(engine); // #6696 (A4)
     }
     if (op.name === 'get_page' && rawResult === (await import('./page-render.ts')).SEGMENTED_STREAMED) return;
@@ -1664,6 +1668,8 @@ export function formatResult(
       const { results, meta } = redactRetrievalOutput(result as any[], lastRetrievalMeta);
       const answerId = typeof meta?.answer_id === 'string' ? meta.answer_id : undefined;
       if (answerId && results.length > 0) process.stderr.write(`answer: ${answerId} (rate with: gbrain rate ${answerId} 1-5)\n`);
+      const capLine = pageCapLine(meta, '--limit');
+      if (capLine) process.stderr.write(capLine + '\n');
       if (params.json === true) {
         const incompleteNotice = retrievalIncompleteLine(meta);
         if (incompleteNotice) process.stderr.write(incompleteNotice);
@@ -1688,7 +1694,7 @@ export function formatResult(
         return formatResultsExplain(results, meta ?? undefined);
       }
       return retrievalIncompleteLine(meta) + results.map(r =>
-        `[${r.score?.toFixed(4) || '?'}] ${r.slug} -- ${r.chunk_text?.slice(0, 100) || ''}${r.stale ? ' (stale)' : ''}`,
+        `[${r.score?.toFixed(4) || '?'}] ${r.slug} -- ${require('../core/search/transcript-quote.ts').rowPreview(r, 100)}${r.stale ? ' (stale)' : ''}`,
       ).join('\n') + '\n';
     }
     case 'get_tags': {

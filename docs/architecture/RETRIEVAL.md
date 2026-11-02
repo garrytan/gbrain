@@ -24,17 +24,29 @@ Vector search alone underdelivers on real personal-knowledge queries. This doc e
 BrainBench (corpus + harness in the sibling [gbrain-evals](https://github.com/garrytan/gbrain-evals) repo) measures retrieval P@5, R@5, MRR, nDCG@5 on a 240-page Opus-generated rich-prose corpus. (This is the retrieval-ranking benchmark; the in-repo `gbrain eval brainbench` suite — [`docs/eval/BRAINBENCH.md`](../eval/BRAINBENCH.md) — gates the memory behaviors *above* retrieval: unprompted context push, write-back fidelity, cross-session continuity.)
 
 The [September 9, 2026 refresh](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-09-09-retrieval-refresh.md) (gbrain v0.48.4.0, three ingestion
-orders, fixed-denominator P@5) measured the 145 relationship questions:
+orders, fixed-denominator P@5) measured the 145 relationship questions two ways.
+
+**The production pipeline.** One switch, `search.relational_retrieval`, over a
+shared index with everything else held fixed: mean R@5 rose from **0.6626 to
+0.7241**, better on 45 of 435 question runs and worse on none; investor
+questions moved most, attendance not at all
+([production relationship retrieval](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-09-09-retrieval-refresh.md#production-relationship-retrieval-one-switch)).
+On reworded one-hop questions the same switch measured 0.411 to 0.537
+(development data, not a held-out set; [N9](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-10-01-n9-multi-hop.md)).
+
+**Whole-system adapters**, including an oracle upper bound:
 
 | Adapter | Mean P@5 | Mean R@5 |
 |---|---:|---:|
-| Specialized `gbrain` (recognizes four question templates, follows the fixture graph) | **0.3421** | **0.9791** |
+| `graph-oracle-parse` (knows the four question templates in advance, follows the fixture graph; upper bound, not a product score) | 0.3421 | 0.9791 |
 | Reference hybrid | 0.1917 | 0.6874 |
 | Keyword ranker | 0.1710 | 0.6244 |
 | Vector only | 0.1076 | 0.4069 |
 
-The specialized adapter is strong on the templates it understands, but this is a
-comparison between whole systems. The refresh found that the older headline
+`graph-oracle-parse` was called `gbrain` in these tables until September 28,
+2026; the gbrain-evals `gbrain` adapter now runs the product's hybrid search
+with relationship retrieval. The oracle is strong on the templates it parses,
+but this is a comparison between whole systems. The refresh found that the older headline
 (P@5 49.1%, "+31.4 points over graph-disabled") was not a graph-only effect and
 used metric helpers since corrected; do not cite it. On the fuzzy and externally
 authored families the keyword and vector paths win some comparisons. None of
@@ -337,6 +349,37 @@ Two cross-cutting seams sit around the pipeline rather than inside it:
   with correction-dated writes it lifted forget-then-remember from 92% to 100%
   correct. `search.query_facts_arm=false` turns it off. Verdict and gates:
   `docs/eval/decisions/query-facts-arm/`.
+- **Saved facts beside `search` and `query` results.** Both ops return, in
+  `retrieval.saved_facts` and a text block after the rows, up to five active
+  saved facts: first those about the entity page the query names, then facts
+  that share the query's words (`matchingSavedFacts` in
+  `src/core/search/saved-facts-match.ts`). Words match whole after stemming with the brain's
+  full-text language, the facts keyword index's expression, so "renewal" finds
+  "renews" and "count" does not match inside "countersigned"; words of a CJK
+  script match as substrings. A fact needs three quarters of the query's words
+  (both of a two-word query, and never more than four, so a question asked in
+  full finds the short fact that answers it), not counting words that frame a question about a
+  figure (count, number, total, amount); the most matched words come first, then the
+  newest. This is the only place `search` returns saved facts: the
+  facts arm, the facts block and the temporal reserve run in `query` alone.
+  With `search.saved_facts_supersede` (default on; `false` turns it off), a newer fact with a
+  correction cue ("correction", "ignore the ...", "not what I posted"; a reply
+  that says "corrected" or "correcting" reports a correction and makes none) that
+  shares at least two matched words with a returned fact is returned too, even
+  below the threshold, every fact it corrects moves below the facts nothing
+  corrects, and those carry `corrected_by` (the correcting fact's id, the
+  newest when several correct it). Every correction comes back, so an
+  acknowledgement saved after a correction does not crowd it out. An
+  acknowledgement corrects nothing: a cue fact that adds no figure (a number
+  other than a date such as "14 Oct" or a time) to the older fact, when it restates one of its
+  figures or the older fact is itself a correction, or when it states no figure
+  and withdraws nothing ("thanks for the correction"). A cue fact corrects
+  nothing saved under another entity, nothing of higher trust, and nothing whose
+  matched names (the first word of a capitalized name, "Orbix" in "Orbix Home
+  Goods") it shares none of. Corrections rank newest first under the five-fact
+  cap, and a corrected fact whose correction does not fit is left out. The cue
+  is a fixed word list, so an unmarked correction is not caught; nothing stored
+  changes.
 - **Temporal fact reserve (default off).** With `search.temporal_fact_reserve=true`,
   a `query` with a deterministic temporal cue (when, before, after, how long,
   since, until, ordinal-time words, ISO dates, month names) and a token budget
@@ -345,6 +388,16 @@ Two cross-cutting seams sit around the pipeline rather than inside it:
   budget and 30% of the rows. They render with their date header, oldest first
   after the pages, in place of the facts arm. No model call. Gates:
   `docs/eval/decisions/temporal-fact-reserve/`.
+- **Facts block (default on) and fact source pages (default off), GBRA-205.**
+  Every `query` with a token budget gets the reserve's dated facts, up to 22%
+  of the budget and 40 rows, oldest first ahead of the pages, in place of the
+  facts arm and the temporal reserve. On the sealed held-out set it answered
+  183 of 200 questions against 151 without it (gbrain-evals
+  `docs/benchmarks/2026-10-26-gbrain-8k-conversion.md`).
+  `search.query_facts_block=false` turns it off; a config read error also
+  leaves it off. With `search.fact_source_pages=true`, the conversations the
+  best-matching facts came from join the hits after the top three rows; it
+  stays off (inert on development data).
 
 ### Use-attributed feedback
 

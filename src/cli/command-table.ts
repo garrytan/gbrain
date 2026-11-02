@@ -280,6 +280,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // Post-connect: dispatched by dispatchConnectedCommand after connectEngine(), in master switch order.
   { name: 'mcp', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/mcp.ts') },
   { name: 'import', phase: 'post-connect', thinClient: 'none', json: 'document', help: () => import('./help/import.ts'), routes_source: true, load: () => import('./commands/import.ts') },
+  // GBRA-218: per-member read access (members, groups, who-can-read, access check). Local trusted CLI; the database holds it, so thin clients refuse.
+  { name: 'access', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/access.ts') },
   { name: 'export', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/export.ts') },
   { name: 'files', phase: 'post-connect', thinClient: 'refuse', routes_source: true, load: () => import('./commands/files.ts') },
   { name: 'embed', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, json: 'document', routes_source: true, startup: 'observational', load: () => import('./commands/embed.ts') },

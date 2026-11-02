@@ -27,6 +27,7 @@ import { tmpdir } from 'node:os';
 import * as realHybrid from '../src/core/search/hybrid.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { encodeDeepResearchId } from '../src/core/deep-research-id.ts';
+import { fenceTranscriptText } from '../src/core/search/transcript-quote.ts';
 
 let nextResults: unknown[] = [{ id: encodeDeepResearchId('default', 'a'), page_id: 1, source_id: 'default', slug: 'a', chunk_text: 'x' }];
 
@@ -117,9 +118,11 @@ type CallOpts = { remote?: boolean; transport?: 'stdio' | 'http' };
  */
 function leanResults({ fetchCallable = true } = {}): unknown[] {
   // The search op labels every hit with its trust tier and origin (#5575 A6); the stub rows carry neither, so unknown/unrecorded.
+  // An unknown-tier row reaches a remote reader quoted (GST-687).
   return nextResults.map(r => {
     const { page_id: _p, id, ...lean } = r as Record<string, unknown>;
-    return { ...lean, ...(fetchCallable && id !== undefined ? { id } : {}), trust_tier: 'unknown', origin: 'unrecorded' };
+    return { ...lean, chunk_text: fenceTranscriptText(lean.chunk_text as string, lean.slug as string), quoted: 'transcript',
+      ...(fetchCallable && id !== undefined ? { id } : {}), trust_tier: 'unknown', origin: 'unrecorded' };
   });
 }
 

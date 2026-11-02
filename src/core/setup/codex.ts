@@ -69,6 +69,8 @@ export interface CodexSetupReceipt {
   launcher: string;
   source_id: string | null;
   surface: McpSurface;
+  /** The registration's `--advertise` (absent: tools/list shows the whole surface). */
+  advertise?: McpSurface;
   config_path: string;
   hooks_path: string;
   entry_hash: string | null;
@@ -91,6 +93,8 @@ export interface CodexSetupPlan {
   gbrainHomeEnv?: string;
   sourceId: string | null;
   surface: McpSurface;
+  /** `serve --advertise`; null lists the whole surface. */
+  advertise: McpSurface | null;
   events: CodexSetupEvent[];
 }
 
@@ -131,11 +135,11 @@ export function readCodexSetupReceipt(receiptPath: string): { setup: CodexSetupR
 
 const writeReceipt = (path: string, receipt: CodexSetupReceipt) => atomicWriteTextFile(path, `${JSON.stringify(receipt, null, 2)}\n`, { forceMode: 0o600 });
 
-export function desiredCodexMcpEntry(plan: Pick<CodexSetupPlan, 'launcher' | 'surface' | 'gbrainHomeEnv' | 'sourceId'>): Record<string, CodexTomlValue> {
+export function desiredCodexMcpEntry(plan: Pick<CodexSetupPlan, 'launcher' | 'surface' | 'advertise' | 'gbrainHomeEnv' | 'sourceId'>): Record<string, CodexTomlValue> {
   const env: Record<string, string> = {};
   if (plan.gbrainHomeEnv) env.GBRAIN_HOME = plan.gbrainHomeEnv;
   if (plan.sourceId) env.GBRAIN_SOURCE = plan.sourceId;
-  return { command: plan.launcher, args: stdioServeArgv(plan.launcher, plan.surface).slice(1), ...(Object.keys(env).length ? { env } : {}) };
+  return { command: plan.launcher, args: stdioServeArgv(plan.launcher, plan.surface, plan.advertise).slice(1), ...(Object.keys(env).length ? { env } : {}) };
 }
 
 function desiredGroups(plan: CodexSetupPlan): Partial<Record<CodexSetupEvent, CodexHookGroup>> {
@@ -259,7 +263,7 @@ export async function applyCodexSetup(
     const receipt: CodexSetupReceipt = {
       harness: 'codex', connection: 'local-stdio', setup_receipt_version: CODEX_SETUP_RECEIPT_VERSION, status: 'prepared',
       name: plan.name, gbrain_home: plan.brainHome, ...(plan.gbrainHomeEnv ? { gbrain_home_env: plan.gbrainHomeEnv } : {}),
-      launcher: plan.launcher, source_id: plan.sourceId, surface: plan.surface,
+      launcher: plan.launcher, source_id: plan.sourceId, surface: plan.surface, ...(plan.advertise ? { advertise: plan.advertise } : {}),
       config_path: paths.configPath, hooks_path: paths.hooksPath,
       entry_hash: prior?.entry_hash ?? null, pending_entry_hash: opts.pluginOwner ? null : desiredHash,
       ...(prior?.mcp_adopted ? { mcp_adopted: true } : {}),

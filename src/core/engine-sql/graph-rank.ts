@@ -38,7 +38,7 @@
  */
 import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { entityTypePredicateSql, type EntityTypeFilter } from '../schema-pack/entity-types.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
 import { rankingLinkSql } from '../link-ranking-policy.ts';
 import { MAX_RETIREMENT_HOPS, retiredPageSql } from '../entities/resolve.ts';
@@ -87,7 +87,7 @@ const FOLD_REASON_SQL = "CASE WHEN btrim(COALESCE(rp.frontmatter->>'superseded_b
 function readablePageSql(opts: Pick<RankEntitiesStatementOpts, 'sourceIds' | 'remote'>): SqlFragment {
   const scope = opts.sourceIds ? sqlFragment` AND vp.source_id = ANY(${opts.sourceIds}::text[])` : sqlFragment``;
   if (!opts.remote) return sqlFragment`vp.deleted_at IS NULL${scope}`;
-  const privacy = opts.remote.excludePrivate ? trustedSql(` AND ${privatePagesFilterFragment('vp')}`) : sqlFragment``;
+  const privacy = opts.remote.excludePrivate ? trustedSql(` AND ${privatePagesFilterForCaller('vp')}`) : sqlFragment``;
   return sqlFragment`vp.deleted_at IS NULL${scope} AND ${trustedSql(quarantineFilterFragment('vp'))}${privacy}
       AND EXISTS (SELECT 1 FROM sources rank_source WHERE rank_source.id = vp.source_id AND NOT rank_source.archived)`;
 }

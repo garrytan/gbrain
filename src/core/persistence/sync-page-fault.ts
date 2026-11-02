@@ -145,12 +145,13 @@ function base(entry: HoldEntry, slug: string, pageId: number | null, code: 'conc
  * page revision changes.
  */
 export function fileDriftHold(entry: HoldEntry, slug: string, pageId: number | null, intent: Pick<SyncIntent, 'content' | 'blobOid'>,
-  observed: { sides: 'database' | 'both' | 'unknown'; revision: string | null; proof: PageChangeProof | null; sharedOrigin: boolean }): HeldEntry {
+  observed: { sides: 'database' | 'both' | 'unknown'; revision: string | null; proof: PageChangeProof | null; sharedOrigin: boolean; baseline?: string | null }): HeldEntry {
   const by = observed.proof ? `${observed.proof.operation} request ${observed.proof.request_id} wrote page ${slug} straight to the database` : `page ${slug} changed in the database`;
   const file = observed.sides === 'database' ? 'its file did not change in Git' : 'its file changed too';
   // GBRA-133: with no import record and no database write on record, nothing shows the database side changed.
+  // #7199: the hold also names what the page was compared with: the file at the last synced commit, or that commit had no file.
   const held = observed.sides === 'unknown' && !observed.proof
-    ? `page ${slug} differs from its file and has no import record to tell whether the file or the database changed`
+    ? `page ${slug} differs from its file and has no import record to tell whether the file or the database changed; the page also ${observed.baseline ? 'differs from the file at the last synced commit' : 'has no file at the last synced commit to compare with'}`
     : `${by} since the file was last imported and ${observed.sides === 'unknown' ? 'there is no import record to tell whether the file changed too' : file}`;
   return base(entry, slug, pageId, 'file_drift',
     `${entry.path}: ${held}, so sync held the import instead of overwriting the database version; the rest of the source synced.`,

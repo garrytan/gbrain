@@ -9,7 +9,23 @@
 #
 #   PREGATE_REMOTE: tree=<tree> tests=<n> failed=<n>
 #
-# It runs the development form of the Ubicloud gate, `bun run ci:ubicloud:diff`:
+# GitHub's full profile is the source of truth (docs/ci-event-parity.md#remote-gate-reuse):
+# when the working tree is clean and Test and E2E already passed their complete
+# full runs on this exact tree (`bun scripts/ci-reuse.ts --gate`: full-suite and
+# e2e-full-suite green in the latest attempt, tested-tree artifacts naming the
+# tree), the receipt comes from those runs and no VM starts. A full run on the
+# tree still in progress is waited for; one that failed refuses (exit 1, no
+# receipt, no VMs). <tests> and <failed> are then the runs' executed identities.
+# Any other tree, a stamp-only one included, runs the gate below; gstack's
+# stamp rule (`gstack-pregate clear --receipt`) handles a stamp-only head.
+# A tree that changes .github/workflows/test.yml, .github/workflows/e2e.yml,
+# scripts/ci-reuse.ts, scripts/lib/gh-issue.ts, scripts/ci-full-suite-tree.sh or
+# scripts/ci-executed-counts.ts relative to origin/master (or has no
+# origin/master) never reuses: its runs would attest to themselves. The reuse check runs
+# without the model and database keys, like the gate.
+# GBRAIN_PREGATE_REUSE=0 always runs the gate.
+#
+# Otherwise it runs the development form of the Ubicloud gate, `bun run ci:ubicloud:diff`:
 # a doc-only tree runs the doc checks and gitleaks, any other tree every lane,
 # a superset of whatever pregate selected, so PREGATE_FILES_FILE is not read.
 # The full gate (`bun run ci:ubicloud`) runs once per PR, at handoff, outside
@@ -21,19 +37,47 @@
 # from the gate's summary. No line is printed when the gate printed no
 # summary. The exit code is the gate's.
 #
+# VM cleanup is checked before any receipt: the gate runs with UBI_LEFT_FILE
+# set, and ci:ubicloud appends its `UBICLOUD: left=<n> ...` line there after
+# teardown (gstack's runner format). A missing line, or a left= other than 0
+# (VMs it could not confirm gone, or `unknown`), is an infrastructure failure:
+# PREGATE_REMOTE_INFRA, exit 4, no receipt, whatever the tests did, so a leak
+# is never read as a test result.
+#
 # Needs UBI_OWNER (your thread code, lowercase) so the VMs are tagged and torn
 # down as yours, plus what ci:ubicloud needs (UBICLOUD_API_KEY or
 # UBICLOUD_API_TOKEN). Provider API keys are removed from the gate's
 # environment. Extra arguments go to ci:ubicloud (for example --vms 8).
 # Spend is not reported (no spent=), so gstack counts it at the cap.
 #
-# Seam: GBRAIN_PREGATE_GATE_CMD replaces `bun run ci:ubicloud:diff`
+# `--list` (below) prints the gate's test inventory for gstack's run evidence.
+#
+# Seams: GBRAIN_PREGATE_GATE_CMD replaces `bun run ci:ubicloud:diff`,
+# GBRAIN_PREGATE_REUSE_CMD replaces `bun scripts/ci-reuse.ts --gate`, and
+# GBRAIN_PREGATE_REPO names owner/repo instead of the origin remote
 # (test/scripts/pregate-remote-gate.test.ts).
 set -uo pipefail
 
 fail() { echo "pregate-remote-gate: $1" >&2; exit "${2:-1}"; }
 
+# --list prints the test files the gate would run on the checked-out tree, one
+# per line: the gate command with --list (ci-ubicloud.ts --list, the same
+# selection and inventory), so gstack-pregate clear --run can check that the
+# full-ci runs it is given executed every one (remote_gate_runs.inventory,
+# docs/ci-event-parity.md#remote-gate-reuse). A failing or empty inventory exits
+# non-zero. It starts no VM and needs no UBI_OWNER.
+if [ "${1:-}" = "--list" ]; then
+  shift
+  TOP=$(git rev-parse --show-toplevel 2>/dev/null) || fail "not inside a git checkout" 2
+  cd "$TOP" || exit 2
+  listed=$(bash -c "${GBRAIN_PREGATE_GATE_CMD:-bun run ci:ubicloud:diff} --list \"\$@\"" pregate-remote-gate "$@") || fail "the gate's inventory failed (exit $?); no list" 1
+  [ -n "$listed" ] || fail "the gate's inventory is empty; no list" 1
+  printf '%s\n' "$listed"
+  exit 0
+fi
+
 [ -n "${UBI_OWNER:-}" ] || fail "UBI_OWNER is not set; set it to your thread code in lowercase (e.g. UBI_OWNER=gbra106) so the gate's VMs are yours to tear down" 2
+export UBI_OWNER
 
 TOP=$(git rev-parse --show-toplevel 2>/dev/null) || fail "not inside a git checkout" 2
 cd "$TOP" || exit 2
@@ -55,22 +99,60 @@ if [ -n "${PREGATE_TREE:-}" ] && [ "$before" != "$PREGATE_TREE" ]; then
 fi
 
 log=$(mktemp "${TMPDIR:-/tmp}/pregate-remote-gate-log-XXXXXX") || fail "cannot create a log file"
-trap 'rm -f "$log"' EXIT
+trap 'rm -f "$log" "$log.left"' EXIT
 
-gate_cmd=${GBRAIN_PREGATE_GATE_CMD:-bun run ci:ubicloud:diff}
-# shellcheck disable=SC2086
-env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u VOYAGE_API_KEY -u GEMINI_API_KEY -u JEV_TYPESAFE_API_KEY -u DATABASE_URL \
-  bash -c "$gate_cmd \"\$@\"" pregate-remote-gate "$@" 2>&1 | tee "$log"
-rc=${PIPESTATUS[0]}
+strip_keys() { env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u VOYAGE_API_KEY -u GEMINI_API_KEY -u JEV_TYPESAFE_API_KEY -u DATABASE_URL "$@"; }
+
+reused=""
+repo=${GBRAIN_PREGATE_REPO:-$(git remote get-url origin 2>/dev/null | sed -E 's#\.git$##' | sed -nE 's#^.*[/:]([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)$#\1#p')}
+reuse_ok=1
+if [ "${GBRAIN_PREGATE_REUSE:-1}" != 0 ] && [ -n "$repo" ] && [ "$before" = "$(git rev-parse 'HEAD^{tree}' 2>/dev/null)" ]; then
+  if ! git rev-parse -q --verify 'origin/master^{commit}' >/dev/null; then
+    echo "pregate-remote-gate: no origin/master to compare the full-ci workflows against, so it runs the gate instead of reusing" >&2
+    reuse_ok=0
+  fi
+  for path in .github/workflows/test.yml .github/workflows/e2e.yml scripts/ci-reuse.ts scripts/ci-full-suite-tree.sh scripts/ci-executed-counts.ts scripts/lib/gh-issue.ts; do
+    [ "$reuse_ok" = 1 ] || break
+    git diff --quiet origin/master HEAD -- "$path" && continue
+    echo "pregate-remote-gate: the tree changes $path relative to origin/master, so it runs the gate instead of reusing its own runs" >&2
+    reuse_ok=0
+  done
+else
+  reuse_ok=0
+fi
+if [ "$reuse_ok" = 1 ]; then
+  reuse_cmd=${GBRAIN_PREGATE_REUSE_CMD:-bun scripts/ci-reuse.ts --gate}
+  strip_keys bash -c "$reuse_cmd \"\$@\"" pregate-remote-gate --sha "$(git rev-parse HEAD)" --tree "$before" --repo "$repo" 2>&1 | tee "$log"
+  case ${PIPESTATUS[0]} in
+    0) reused=$(sed -nE 's/^GBRAIN_REUSE_RESULT tests=([0-9]+) failed=([0-9]+)$/\1 \2/p' "$log" | tail -1) ;;
+    3) fail "a full run on tree $before failed; fix it or rerun it, no receipt" 1 ;;
+  esac
+fi
+
+if [ -n "$reused" ]; then
+  totals=$reused
+  rc=0
+  [ "${reused#* }" = 0 ] || rc=1
+else
+  gate_cmd=${GBRAIN_PREGATE_GATE_CMD:-bun run ci:ubicloud:diff}
+  : >"$log.left"
+  # shellcheck disable=SC2086
+  UBI_LEFT_FILE="$log.left" strip_keys bash -c "$gate_cmd \"\$@\"" pregate-remote-gate "$@" 2>&1 | tee "$log"
+  rc=${PIPESTATUS[0]}
+  left=$(sed -n 's/^UBICLOUD: left=\([^ ]*\).*/\1/p' "$log.left" | tail -1)
+  if [ "$left" != 0 ]; then
+    fail "PREGATE_REMOTE_INFRA: VM cleanup not confirmed (UBICLOUD: left=${left:-missing}, gate exit $rc); an infrastructure failure, not a test result, so no receipt. Check and destroy leftovers: UBI_OWNER=$UBI_OWNER scripts/ubicloud/ubi-runner.sh list --mine" 4
+  fi
+  totals=$(awk '
+    /^=== ci-ubicloud summary ===$/ { seen = 1; next }
+    seen && /^ +[a-z0-9-]+ +[0-9]+ passed, [0-9]+ failed/ { passed += $2; failed += $4; rows++ }
+    END { if (rows) print passed + failed, failed }
+  ' "$log")
+fi
 
 after=$(content_tree) || fail "cannot fingerprint the working tree after the gate"
 [ "$after" = "$before" ] || fail "the working tree changed during the gate ($before -> $after); no receipt"
 
-totals=$(awk '
-  /^=== ci-ubicloud summary ===$/ { seen = 1; next }
-  seen && /^ +[a-z0-9-]+ +[0-9]+ passed, [0-9]+ failed/ { passed += $2; failed += $4; rows++ }
-  END { if (rows) print passed + failed, failed }
-' "$log")
 [ -n "$totals" ] || fail "the gate printed no ci-ubicloud summary (exit $rc); no receipt" "$([ "$rc" -ne 0 ] && echo "$rc" || echo 1)"
 
 read -r tests failed <<<"$totals"

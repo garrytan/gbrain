@@ -124,7 +124,7 @@ import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns } from './search/sql-ranking.ts';
 import { RARE_TERM_CHUNK_CAP, rankOrFallbackByRarity, rareTermPagesSql, type RareTermPages } from './search/keyword-or-rarity.ts';
-import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
+import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment, privatePagesFilterForCaller } from './search/private-visibility.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
 import {
   vectorCastSuffix,
@@ -2311,7 +2311,7 @@ export class PGLiteEngine implements BrainEngine {
     // v0.31.8 (D21): build WHERE clause dynamically. Without opts.sourceId,
     // no source filter (preserves pre-v0.31.8 cross-source read).
     const where: string[] = ['p.slug = $1'];
-    if (opts?.excludePrivate) where.push(privatePagesFilterFragment('p'));
+    if (opts?.excludePrivate) where.push(privatePagesFilterForCaller('p'));
     if (!opts?.includeDeleted) where.push('p.deleted_at IS NULL'); // raw_data follows the page soft-delete
     const params: unknown[] = [slug];
     if (source) {

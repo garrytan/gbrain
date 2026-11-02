@@ -15,7 +15,7 @@
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "@vitejs/plugin-react": "^4.4.1",
-    "vite": "^6.4.4",
+    "vite": "^6.4.5",
     "typescript": "^5.8.3"
   },
   "overrides": {

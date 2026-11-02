@@ -28,6 +28,8 @@ import { DEFAULT_PAGES_BUDGET, PAGES_BLOCK_EXCERPT_FLOOR_CHARS, type PagesBudget
 import { filterPagesToWindow, type TemporalWindow } from './temporal-window.ts';
 import { pageContentDate } from './temporal-context.ts';
 import { sanitizeQueryForPrompt } from '../search/expansion.ts';
+import { evidenceTitle } from '../search/evidence-date.ts';
+import { fenceTranscriptText, neutralizeToolCalls, quoteLabel } from '../search/transcript-quote.ts';
 import { ensureWellFormed } from '../text-safe.ts';
 import { CJK_SLUG_CHARS } from '../cjk.ts';
 import type { IntentAsk } from '../search/decide-retrieval.ts';
@@ -647,7 +649,7 @@ export function renderPagesBlockDetailed(
   pages: SearchResult[],
   excerptLen = 600,
   query = '',
-  opts: { verbatim?: boolean | ((p: SearchResult) => boolean); verbatimLen?: number; timeZone?: string } = {},
+  opts: { verbatim?: boolean | ((p: SearchResult) => boolean); verbatimLen?: number; timeZone?: string; titles?: boolean } = {},
 ): { text: string; truncated: boolean } {
   let truncated = false;
   const text = pages.map((p, idx) => {
@@ -663,16 +665,22 @@ export function renderPagesBlockDetailed(
     const slug = String(page.slug ?? '');
     const title = String(page.title ?? '');
     const slugIdentity = slug.split('/').pop()?.replace(/[-_]/g, ' ') ?? '';
-    const content = String(page.chunk_text ?? page.compiled_truth ?? page.snippet ?? '');
+    const raw = String(page.chunk_text ?? page.compiled_truth ?? page.snippet ?? '');
+    // #8042: a chat page's text is quoted (tool calls summarized before the excerpt, the rendered text fenced).
+    const quote = quoteLabel({ ...p, chunk_text: raw });
+    const content = quote === null ? raw : neutralizeToolCalls(raw);
+    const quoted = (text: string) => (quote === null ? text : fenceTranscriptText(text, quote));
     const flag = (p.injection_suspected ? `${INJECTION_SUSPECTED_LINE}\n` : '')
       + (p.trust_tier && needsDataEnvelope(p.trust_tier) ? `${EXTERNAL_DATA_RULE}\n` : '') + graphEvidenceLine(p);
     const trustAttr = p.trust_tier ? ` ${trustAttributes({ trust_tier: p.trust_tier, origin: p.origin ?? 'legacy' })}` : '';
+    const cleanTitle = opts.titles ? evidenceTitle(title) : '';
+    const titleAttr = cleanTitle ? ` title="${cleanTitle}"` : '';
     // Evidence delivery: the block was already budgeted and cut around its
     // hits; render it whole (capped only by excerptLen).
     if (typeof opts.verbatim === 'function' ? opts.verbatim(p) : opts.verbatim) {
       const cap = opts.verbatimLen ?? excerptLen;
       if (content.length > cap || (p as { delivered?: { truncated?: boolean } }).delivered?.truncated === true) truncated = true;
-      return `<page slug="${slug}" rank="${idx + 1}"${dateAttr}${trustAttr}>\n${flag}${content.slice(0, cap)}\n</page>`;
+      return `<page slug="${slug}" rank="${idx + 1}"${titleAttr}${dateAttr}${trustAttr}>\n${flag}${quoted(content.slice(0, cap))}\n</page>`;
     }
     const excerpt = selectRelevantExcerptDetailed(
       content,
@@ -685,7 +693,7 @@ export function renderPagesBlockDetailed(
       (excerpt.truncatedStart ? `${EXCERPT_CUT_START_MARKER}\n` : '') +
       excerpt.text +
       (excerpt.truncatedEnd ? `\n${EXCERPT_CUT_END_MARKER}` : '');
-    return `<page slug="${slug}" rank="${idx + 1}"${dateAttr}${trustAttr}>\n${flag}${body}\n</page>`;
+    return `<page slug="${slug}" rank="${idx + 1}"${titleAttr}${dateAttr}${trustAttr}>\n${flag}${quoted(body)}\n</page>`;
   }).join('\n\n');
   return { text, truncated };
 }

@@ -11,12 +11,14 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import {
   TRANSCRIPT_SECRET_AUDIT_KEY,
+  TRANSCRIPT_SECRET_AUDIT_VERSION,
   auditTranscriptSecrets,
   loadTranscriptSecretAudit,
   saveTranscriptSecretAudit,
 } from '../src/core/transcripts/secret-audit.ts';
 import { transcriptSecretExposureCheck } from '../src/commands/doctor/checks/transcript-secrets.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
+import { PROVIDER_KEY_SHAPES } from './helpers/provider-keys.ts';
 
 const PW = ['hunter', '2'].join('');
 let engine: PGLiteEngine;
@@ -60,6 +62,16 @@ describe('transcripts audit-secrets', () => {
     expect(JSON.stringify(result)).not.toContain(PW);
   });
 
+  test('AI-provider keys (#7959) are counted under their own rule, never returned', async () => {
+    const keys = PROVIDER_KEY_SHAPES.map((s) => s.make());
+    await conversation('conversations/sessions/2026-01-04-codex-cccccccccccc', keys.map((k, i) => `line ${i}: key ${k}`).join('\n'));
+    const result = await auditTranscriptSecrets(engine);
+    expect(result.pages_affected).toBe(1);
+    expect(result.by_pattern).toEqual(Object.fromEntries(PROVIDER_KEY_SHAPES.map((s) => [s.pattern, 1])));
+    expect(result.pages[0]!.lines).toEqual(keys.map((_, i) => i + 1));
+    for (const k of keys) expect(JSON.stringify(result)).not.toContain(k);
+  });
+
   test('the cached summary carries no slugs and no values', async () => {
     await conversation('conversations/sessions/2026-01-02-codex-aaaaaaaaaaaa', `password: ${PW}`);
     expect(await saveTranscriptSecretAudit(engine, await auditTranscriptSecrets(engine))).toBe(true);
@@ -99,6 +111,19 @@ describe('transcript_secret_exposure doctor check', () => {
     await saveTranscriptSecretAudit(engine, await auditTranscriptSecrets(engine, { now: () => new Date(now) }));
     const ok = await transcriptSecretExposureCheck(ctx(), now);
     expect(ok?.status).toBe('ok');
+  });
+
+  test('a clean audit cached by older detectors no longer reads ok: the #7959 rules ask for a fresh audit', async () => {
+    await conversation('conversations/sessions/2026-01-02-codex-aaaaaaaaaaaa', `key ${PROVIDER_KEY_SHAPES[0]!.make()}`);
+    const clean = { ...(await auditTranscriptSecrets(engine)), pages_affected: 0, hits_total: 0, by_pattern: {} };
+    await saveTranscriptSecretAudit(engine, { ...clean, detector_version: TRANSCRIPT_SECRET_AUDIT_VERSION - 1 });
+    const stale = await transcriptSecretExposureCheck(ctx());
+    expect(stale?.status).toBe('warn');
+    expect(stale?.message).toContain('the last audit used older detectors');
+    await saveTranscriptSecretAudit(engine, await auditTranscriptSecrets(engine));
+    const fresh = await transcriptSecretExposureCheck(ctx());
+    expect(fresh?.status).toBe('warn');
+    expect(fresh?.message).toContain('found 1 credential hit(s)');
   });
 
   test('a source-scoped audit does not clear the brain-wide warning', async () => {

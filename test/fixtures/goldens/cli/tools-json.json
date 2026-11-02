@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 264473,
-    "stdoutSha256": "f5647f0a0d45a36ed8685afa000792cef233379d012eeceec6fa2f9366d1b0ee",
+    "stdoutBytes": 265405,
+    "stdoutSha256": "ce85fa67a616e3c90eda5a73943e277734add153923cd5f19dfef2a8fe026f03",
     "toolNames": [
       "remember",
       "entity",
@@ -755,6 +755,7 @@
           "slug_prefix": "string?",
           "sort": "string?",
           "source_id": "string?",
+          "source_ids": "array?",
           "tag": "string?",
           "type": "string?",
           "updated_after": "string?",
@@ -793,6 +794,13 @@
             "source_id": {
               "description": "One source, or '__all__'.",
               "type": "string"
+            },
+            "source_ids": {
+              "description": "Narrow to these sources (omit or [] for all you can read).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             },
             "tag": {
               "description": "Tag.",
@@ -838,7 +846,7 @@
         "schema": {
           "properties": {
             "detach": {
-              "description": "Restore a page whose recorded canonical file is gone from the checkout as a database-only page: it forgets the file, so sync never deletes it again. Only accepted when a plain restore refuses with canonical_file_absent; ask the user first.",
+              "description": "Restore a page whose recorded canonical file is gone from the checkout as a database-only page: it forgets the file, so sync never deletes it again. Only accepted when a plain restore refuses with canonical_file_absent, or for a page under a declared storage.db_only dir whose recorded file left the checkout; ask the user first.",
               "type": "boolean"
             },
             "expected_revision": {
@@ -6656,6 +6664,7 @@
           "session_id": "string?",
           "since": "string?",
           "source_id": "string?",
+          "source_ids": "array?",
           "supersessions": "boolean?"
         },
         "required_scopes": [],
@@ -6739,6 +6748,13 @@
             "source_id": {
               "description": "One readable source.",
               "type": "string"
+            },
+            "source_ids": {
+              "description": "Narrow to these sources (omit or [] for all you can read).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             },
             "supersessions": {
               "description": "Supersession log only.",
@@ -7775,6 +7791,7 @@
           "lr": "number?",
           "max_cost_usd": "number?",
           "no_mutate": "boolean?",
+          "optimizer_mode": "string?",
           "pack_id": "string?",
           "reflect_max_tokens": "number?",
           "request_id": "string?",
@@ -7825,6 +7842,14 @@
             "no_mutate": {
               "description": "Write proposed.md without replacing SKILL.md",
               "type": "boolean"
+            },
+            "optimizer_mode": {
+              "description": "Default one-shot-rewrite: one gated rewrite. reflect opts into the iterative edit loop, which has not yet beaten one-shot on gbrain benchmarks.",
+              "enum": [
+                "one-shot-rewrite",
+                "reflect"
+              ],
+              "type": "string"
             },
             "pack_id": {
               "description": "Required with shared_skill: exact catalog pack.",
