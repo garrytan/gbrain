@@ -94,6 +94,8 @@ export interface SlackApi {
   /** The replies in a thread, oldest first, without the parent. */
   replies(channel: string, threadTs: string, signal?: AbortSignal): Promise<SlackMessage[]>;
   usersList(signal?: AbortSignal): Promise<Map<string, SlackUser>>;
+  /** One users.list request: refuses as the full listing would (a missing users:read scope) without walking the workspace. */
+  usersProbe(signal?: AbortSignal): Promise<void>;
 }
 
 export function slackApi(opts: SlackClientOpts): SlackApi {
@@ -154,6 +156,9 @@ export function slackApi(opts: SlackClientOpts): SlackApi {
       const messages = await paged<SlackMessage>('conversations.replies', { channel, ts: threadTs }, 'messages', signal);
       for (const m of messages) if (!str(m?.ts)) throw new SlackShapeDriftError('conversations.replies.messages[].ts');
       return messages.filter(m => m.ts !== threadTs).sort((a, b) => Number(a.ts) - Number(b.ts));
+    },
+    async usersProbe(signal) {
+      await get('users.list', { limit: '1' }, signal);
     },
     async usersList(signal) {
       const members = await paged<Record<string, unknown>>('users.list', {}, 'members', signal);

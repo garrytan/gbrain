@@ -22,6 +22,11 @@ export function connectorDbCursorKey(sourceId: string, incarnation: string, iden
   return connectorCheckpointKey(sourceId, incarnation, identity);
 }
 
+/** The row an unmanaged source's account pin lives in: one per source incarnation, so a content-config change keeps the pin. */
+export function connectorAccountPinKey(sourceId: string, incarnation: string, kind: ConnectorIdentity['kind']): string {
+  return connectorCheckpointKey(sourceId, incarnation, { kind, digest: 'account-pin' });
+}
+
 export async function readConnectorDbCursor(engine: Exec, key: string): Promise<{ state: Record<string, unknown> | null; lastRun: ConnectorRunReceipt | null }> {
   const [row] = await engine.executeRaw<{ completed_keys: CursorRow[] }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [CONNECTOR_DB_CURSOR_OP, key]);
   const value = row?.completed_keys?.[0];

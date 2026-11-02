@@ -297,6 +297,8 @@ async function resolveSyncRepo(engine: BrainEngine, opts: SyncOpts): Promise<{ d
   // Resolve repo path
   const rawRepoPath = opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
   if (!rawRepoPath) {
+    const connector = await runConnectorSync(engine, opts, false);
+    if (connector) return { done: connector };
     const hint = opts.sourceId
       ? `Source "${opts.sourceId}" has no local_path. Run: gbrain sources add ${opts.sourceId} --path <path>`
       : `No repo path specified. Use --repo or run gbrain init with --repo first.`;

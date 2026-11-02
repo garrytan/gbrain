@@ -28,14 +28,14 @@ import { connectorIdentity } from '../persistence/connector-identity.ts';
 import { connectorAccountChanged } from '../persistence/connector-errors.ts';
 import { sameConnectorAccount, type ConnectorAccount } from '../persistence/connector-state.ts';
 import { ConnectorHoldSession, connectorHoldsResult } from '../connectors/connector-hold-session.ts';
-import { connectorDbCursorKey, readConnectorDbCursor, writeConnectorDbCursor } from '../connectors/db-cursor.ts';
+import { connectorAccountPinKey, connectorDbCursorKey, readConnectorDbCursor, writeConnectorDbCursor } from '../connectors/db-cursor.ts';
 import { resolveApiToken } from '../connectors/credentials.ts';
 import { connectorRender } from '../connectors/connector-text.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { assertInlineBody } from '../page-body/page-shape.ts';
 import { ConnectorAccessDeniedError, ConnectorAuthError, ConnectorRateLimitedError, ConnectorRunLimitError } from '../connectors/client.ts';
 import {
-  afterConnectorPublish, closeCoverageWindow, deleteConnectorPage, openCoverageWindow, publishConnectorPage, recordRateLimit, runScoped,
+  afterConnectorPublish, closeCoverageWindow, connectorDryRunResult, deleteConnectorPage, openCoverageWindow, publishConnectorPage, recordRateLimit, runScoped,
   type ConnectorPublishCtx, type CoverageWindow, type PublishSummary,
 } from '../connectors/api-source.ts';
 import { slugifyPath } from '../sync.ts';
@@ -112,7 +112,7 @@ function translate(sourceId: string, cfg: SlackSourceConfig, error: unknown): un
 
 export async function runSlackSync(engine: BrainEngine, sourceId: string, cfg: SlackSourceConfig, opts: SyncOpts, deps: SlackSyncDeps = {}): Promise<SyncResult> {
   return withConnectorSync(engine, sourceId, 'slack', cfg, opts,
-    (managed, options) => runSlackSyncInner(engine, sourceId, cfg, options, managed, deps), pendingConnectorResult);
+    async (managed, options) => options.dryRun ? connectorDryRunResult('slack', sourceId) : runSlackSyncInner(engine, sourceId, cfg, options, managed, deps), pendingConnectorResult);
 }
 
 const MENTION_RE = /<@([UW][A-Z0-9]+)(?:\|[^>]*)?>/g;
@@ -146,7 +146,11 @@ async function runSlackSyncInner(engine: BrainEngine, sourceId: string, cfg: Sla
     state = { ...emptyState(), ...managed.state<SlackState>(emptyState()) };
   } else {
     state = { ...emptyState(), ...(await readConnectorDbCursor(engine, cursorKey)).state as SlackState | null };
-    if (state.account && !sameConnectorAccount(state.account, resolved)) throw connectorAccountChanged(sourceId, 'slack', identity.config, state.account, resolved);
+    const pinKey = connectorAccountPinKey(sourceId, source.incarnation, 'slack');
+    const pin = (await readConnectorDbCursor(engine, pinKey)).state?.account as ConnectorAccount | undefined;
+    const pinned = pin ?? state.account;
+    if (pinned && !sameConnectorAccount(pinned, resolved)) throw connectorAccountChanged(sourceId, 'slack', identity.config, pinned, resolved);
+    if (!pin) await writeConnectorDbCursor(engine, pinKey, { account: resolved });
     state.account = resolved;
   }
 
@@ -263,6 +267,7 @@ async function runSlackSyncInner(engine: BrainEngine, sourceId: string, cfg: Sla
     const ch = state.channels[channelId] ??= { committed_to: null, window: null, name: info.name, private: info.isPrivate, days: {} };
     Object.assign(ch, { name: info.name, private: info.isPrivate });
     if (info.isPrivate || cfg.privateOnly) await makeChannelPrivate(channelId);
+    if (opts.full) Object.assign(ch, { committed_to: null, window: null });
     const window = openCoverageWindow(ch, { runStart, historyDays: cfg.historyDays, lookbackDays: cfg.lookbackDays, alignFrom: ms => slackAlignToDay(ms, cfg.timezone) });
     const from = Date.parse(window.from);
     const to = Date.parse(window.to);

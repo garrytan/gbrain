@@ -18,6 +18,7 @@ import { ConnectorAccessDeniedError, ConnectorAuthError, ConnectorRateLimitedErr
 import { classifyConnectorError } from '../src/core/connectors/item-holds.ts';
 import { credentialPath, resolveApiToken } from '../src/core/connectors/credentials.ts';
 import { verifyAndSaveApiToken } from '../src/commands/connectors/auth-token.ts';
+import { runConnectorStatus } from '../src/commands/connectors/status.ts';
 import { connectorIdentity } from '../src/core/persistence/connector-identity.ts';
 import { parseSourceLifecycleArgs } from '../src/commands/sources-lifecycle-args.ts';
 import { parseConversation } from '../src/core/conversation-parser/parse.ts';
@@ -220,6 +221,17 @@ describe('API-token lane and the add-time check', () => {
     expect(infos.map(i => i.isPrivate)).toEqual([false, true]);
     expect(lines.join('\n')).toContain('#leadership (CPRIVATE01)');
     expect(lines.join('\n')).toMatch(/per-channel membership does not carry over/);
+    await expect(preflightSlackAdd('chat', { channels: ['CGENERAL01'], record: 'auto', private: false, tokenEnv: 'MY_SLACK_VAR' },
+      { fetchImpl: slackFetch({ ...fake(), missingScope: ['users.list'] }), log: () => {} })).rejects.toMatchObject({ code: 'connector_access_denied' });
+  }));
+
+  test('connectors status reports a token provider without printing the token', async () => withEnv({ GBRAIN_HOME: join(home, 'status'), GBRAIN_CONNECTOR_SLACK_TOKEN: slackTestToken() }, async () => {
+    const out: string[] = [];
+    const log = console.log;
+    console.log = (line: string) => { out.push(line); };
+    try { await runConnectorStatus({} as never, ['slack', '--json']); } finally { console.log = log; }
+    expect(JSON.parse(out.join('\n')).providers[0]).toMatchObject({ provider: 'slack', credential_present: true, credential_source: 'env' });
+    expect(out.join('\n')).not.toContain(slackTestToken());
   }));
 });
 

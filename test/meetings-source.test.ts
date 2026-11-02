@@ -26,6 +26,7 @@ import { connectorFactsSession } from '../src/core/facts/retire.ts';
 import { addSource } from '../src/core/sources-ops.ts';
 import { slugifyPath } from '../src/core/sync.ts';
 import { CONNECTOR_DB_CURSOR_OP } from '../src/core/connectors/db-cursor.ts';
+import { performSync } from '../src/commands/sync/perform.ts';
 
 const DAY = 86_400_000;
 const NOW = Date.parse('2026-06-15T12:00:00Z');
@@ -222,5 +223,67 @@ describe('Git-recorded brain (record: git, unmanaged)', () => {
     const [cursor] = await engine.executeRaw<{ keys: Array<{ state: { item_holds: { items: Record<string, { code: string }> } } }> }>(
       'SELECT completed_keys AS keys FROM op_checkpoints WHERE op=$1 AND completed_keys::text LIKE $2', [CONNECTOR_DB_CURSOR_OP, '%mtg-jjj000%']);
     expect(cursor!.keys[0]!.state.item_holds.items['mtg-jjj000']!.code).toBe('connector_binding_missing');
+  });
+});
+
+describe('review fixes (#7970 /ship)', () => {
+  test('an unmanaged dry run calls the provider for nothing and writes nothing', async () => {
+    const fake: Fake = { userId: 'u-dry', email: OWNER, calls: [], meetings: [{ id: 'mtg-dry001', title: 'Dry', date: NOW - DAY }] };
+    const { id, cfg } = await meetingsSource();
+    const result = await runMeetingsSync(engine, id, cfg, { ...options, dryRun: true }, { provider: provider(fake), now: () => NOW });
+    expect(result.status).toBe('dry_run');
+    expect(fake.calls).toEqual([]);
+    expect(await pages(id)).toEqual([]);
+  });
+
+  test('the account pin survives a content-config change', async () => {
+    const fake: Fake = { userId: 'u-pin', email: OWNER, calls: [], meetings: [{ id: 'mtg-pin001', title: 'Pinned', date: NOW - DAY }] };
+    const { id, cfg } = await meetingsSource();
+    await runMeetingsSync(engine, id, cfg, options, { provider: provider(fake), now: () => NOW });
+    const changed = { kind: 'meetings', m_provider: 'fireflies', m_record: 'database', m_transcript: 'full', federated: false };
+    await engine.executeRaw('UPDATE sources SET config=$2::text::jsonb WHERE id=$1', [id, JSON.stringify(changed)]);
+    const other: Fake = { userId: 'u-swap', email: 'other@example.invalid', calls: [], meetings: [{ id: 'mtg-pin002', title: 'Swapped', date: NOW - DAY }] };
+    await expect(runMeetingsSync(engine, id, parseMeetingsSourceConfig(changed, ''), options, { provider: provider(other), now: () => NOW + 60_000 }))
+      .rejects.toMatchObject({ code: 'connector_account_changed' });
+    expect((await pages(id)).map(r => r.title)).toEqual(['Pinned']);
+  });
+
+  test("a fresh source never inherits another source's pending meetings", async () => {
+    const a: Fake = { userId: 'u-pa', email: OWNER, calls: [], meetings: [{ id: 'mtg-pend01', title: 'Processing', date: NOW - 3_600_000, summary: null }] };
+    const first = await meetingsSource();
+    await runMeetingsSync(engine, first.id, first.cfg, options, { provider: provider(a), now: () => NOW });
+    const b: Fake = { userId: 'u-pb', email: OWNER, calls: [], meetings: [] };
+    const second = await meetingsSource();
+    await runMeetingsSync(engine, second.id, second.cfg, options, { provider: provider(b), now: () => NOW });
+    expect(b.calls).not.toContain('get:mtg-pend01');
+  });
+
+  test('--full re-walks the whole history window', async () => {
+    const fake: Fake = { userId: 'u-full', email: OWNER, calls: [], meetings: [{ id: 'mtg-full01', title: 'Recent', date: NOW - 2 * DAY }] };
+    const { id, cfg } = await meetingsSource();
+    await runMeetingsSync(engine, id, cfg, options, { provider: provider(fake), now: () => NOW });
+    fake.meetings.push({ id: 'mtg-full02', title: 'Backfilled', date: NOW - 20 * DAY });
+    expect((await runMeetingsSync(engine, id, cfg, options, { provider: provider(fake), now: () => NOW + 3_600_000 })).added).toBe(0);
+    expect((await runMeetingsSync(engine, id, cfg, { ...options, full: true }, { provider: provider(fake), now: () => NOW + 7_200_000 })).added).toBe(1);
+  });
+
+  test('a listing that never ends stops at the page cap', async () => {
+    const fake: Fake = { userId: 'u-cap', email: OWNER, calls: [], meetings: Array.from({ length: 60 }, (_, i) => ({ id: `mtg-cap${i}`, title: `Cap ${i}`, date: NOW - DAY - i * 60_000 })) };
+    const inner = fireflies(fake);
+    const stuck = firefliesProvider({ token: 'synthetic-fixture-key', userAgent: 'gbrain-test', now: () => NOW, sleep: async () => {},
+      fetchImpl: async (url: string, init: RequestInit) => {
+        const body = JSON.parse(String(init.body)) as { query: string; variables: Record<string, unknown> };
+        if (body.query.includes('GbrainTranscripts')) body.variables.skip = 0;
+        return inner(url, { ...init, body: JSON.stringify(body) });
+      } });
+    const { id, cfg } = await meetingsSource();
+    await expect(runMeetingsSync(engine, id, cfg, options, { provider: stuck, now: () => NOW })).rejects.toThrow(/listing_unbounded/);
+  });
+
+  test('gbrain sync reaches a repo-less meetings source instead of asking for a local_path', async () => {
+    const { id } = await meetingsSource();
+    await withEnv({ GBRAIN_HOME: join(home, 'cli-home'), GBRAIN_CONNECTOR_FIREFLIES_TOKEN: undefined }, async () => {
+      await expect(performSync(engine, { sourceId: id, noPull: true, noEmbed: true, noExtract: true } as never)).rejects.toMatchObject({ code: 'connector_auth_required' });
+    });
   });
 });

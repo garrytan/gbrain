@@ -292,3 +292,36 @@ if (backends.includes('pglite')) describe('Git-recorded brain (record: git, unma
     expect(cursor!.keys[0]!.state.item_holds.items[`CGENERAL01/${dayOf(2)}`]!.code).toBe('connector_binding_missing');
   });
 });
+
+describe('review fixes (#7970 /ship)', () => {
+  test('an unmanaged dry run calls Slack for nothing and writes nothing', async () => {
+    const fake = workspace();
+    const { id, cfg } = await slackSource(fake);
+    const result = await runSlackSync(engine, id, cfg, { ...options, dryRun: true }, { api: api(fake), now: () => NOW });
+    expect(result.status).toBe('dry_run');
+    expect(fake.calls).toEqual([]);
+    expect(await pages(id)).toEqual([]);
+  });
+
+  test('the workspace pin survives a content-config change', async () => {
+    const fake = workspace();
+    fake.channels = fake.channels.slice(0, 1);
+    const { id, cfg } = await slackSource(fake);
+    await runSlackSync(engine, id, cfg, options, { api: api(fake), now: () => NOW });
+    const changed = { kind: 'slack', s_channels: 'CGENERAL01', s_record: 'database', s_history_days: 60, federated: false };
+    await engine.executeRaw('UPDATE sources SET config=$2::text::jsonb WHERE id=$1', [id, JSON.stringify(changed)]);
+    const other = workspace('TOTHER0001');
+    await expect(runSlackSync(engine, id, parseSlackSourceConfig(changed, ''), options, { api: api(other), now: () => NOW + 60_000 }))
+      .rejects.toMatchObject({ code: 'connector_account_changed' });
+  });
+
+  test('--full re-walks the whole history window', async () => {
+    const fake = workspace();
+    fake.channels = fake.channels.slice(0, 1);
+    const { id, cfg } = await slackSource(fake);
+    await runSlackSync(engine, id, cfg, options, { api: api(fake), now: () => NOW });
+    fake.channels[0]!.messages.push({ ts: slackTs(at(10, 11)), user: 'UALICE0001', text: 'Imported late from the archive.' });
+    expect((await runSlackSync(engine, id, cfg, options, { api: api(fake), now: () => NOW + 3_600_000 })).added).toBe(0);
+    expect((await runSlackSync(engine, id, cfg, { ...options, full: true }, { api: api(fake), now: () => NOW + 7_200_000 })).added).toBe(1);
+  });
+});

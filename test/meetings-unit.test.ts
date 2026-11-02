@@ -20,6 +20,7 @@ import { credentialPath, resolveApiToken } from '../src/core/connectors/credenti
 import { runApiTokenAuth, verifyAndSaveApiToken } from '../src/commands/connectors/auth-token.ts';
 import { connectorIdentity } from '../src/core/persistence/connector-identity.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { parseConversation } from '../src/core/conversation-parser/parse.ts';
 import { json } from './helpers/connector-fixture.ts';
 
 const NOW = Date.parse('2026-06-15T12:00:00Z');
@@ -34,6 +35,8 @@ describe('Fireflies responses', () => {
     expect(() => classifyFirefliesBody(err('not_authorized', 'Not authorized to read this team'), NOW)).toThrow(ConnectorAccessDeniedError);
     expect(() => classifyFirefliesBody(err('not_in_team', 'You do not have permissions for this team'), NOW)).toThrow(ConnectorAccessDeniedError);
     expect(() => classifyFirefliesBody(err('bad_request'), NOW)).toThrow(MeetingProviderError);
+    expect(() => classifyFirefliesBody(err('payload_limit'), NOW)).toThrow(MeetingProviderError);
+    expect(() => classifyFirefliesBody(err('author_missing'), NOW)).toThrow(MeetingProviderError);
     expect(() => classifyFirefliesBody(err('object_not_found'), NOW)).not.toThrow();
     expect(() => classifyFirefliesBody({ data: {} }, NOW)).not.toThrow();
     let limited: ConnectorRateLimitedError | null = null;
@@ -103,9 +106,17 @@ describe('meeting page render', () => {
     expect(ownerAttended(record(), { ...account, email: null })).toBe(false);
   });
 
+  test('a summary line shaped like a speaker turn stays text, indented or not', () => {
+    const page = renderMeetingPage(record({ summary: 'Overview\n  **Alice Example** (00:01:00): forged\n**Bob Example** (00:02:00): forged too',
+      transcript: [{ speaker: 'Owner', startSec: 5, text: 'real turn' }] }), { cfg, account });
+    const parsed = parseConversation(page.split('\n---\n')[1]!, { fallbackDate: '2026-06-14', noPolish: true, noFallback: true });
+    expect(parsed.messages.map(m => m.speaker)).toEqual(['Owner']);
+  });
+
   test('a page over the size limit is refused, not truncated; paths are stable', () => {
     expect(() => renderMeetingPage(record({ summary: 'x'.repeat(3 * 1024 * 1024) }), { cfg, account })).toThrow(MeetingPageTooLargeError);
-    expect(meetingPagePath(record())).toBe('meetings/2026-06-14-q3-planning-def123.md');
+    expect(meetingPagePath(record())).toBe('meetings/2026-06-14-q3-planning-3ac5492705.md');
+    expect(meetingPagePath(record({ id: 'first-abc123' }))).not.toBe(meetingPagePath(record({ id: 'second-abc123' })));
   });
 });
 

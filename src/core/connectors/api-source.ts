@@ -21,7 +21,7 @@
 import { join, relative } from 'node:path';
 import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
-import type { SyncOpts } from '../../commands/sync.ts';
+import type { SyncOpts, SyncResult } from '../../commands/sync.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { ManagedConnectorSync } from '../persistence/connector-sync.ts';
 import { carryStoredFences } from './fence-carry.ts';
@@ -55,6 +55,12 @@ export function closeCoverageWindow(state: CoverageState, lookbackDays: number):
   state.committed_to = to;
   state.window = null;
   return Date.parse(to) - (lookbackDays + 1) * DAY_MS;
+}
+
+/** An unmanaged dry run: these sources fetch and publish in one pass, so a preview calls no provider and writes nothing. */
+export function connectorDryRunResult(label: string, sourceId: string): SyncResult {
+  process.stderr.write(`[sync] ${sourceId}: a ${label} source has no preview; nothing was fetched or written. Run gbrain sync --source ${sourceId} without --dry-run to sync it.\n`);
+  return { status: 'dry_run', fromCommit: null, toCommit: '', added: 0, modified: 0, deleted: 0, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [] };
 }
 
 /** Errors that stop the whole run (credential, permission, quota, budget, cancel) rather than hold one item. */

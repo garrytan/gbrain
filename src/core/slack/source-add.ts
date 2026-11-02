@@ -75,6 +75,7 @@ export async function preflightSlackAdd(sourceId: string, opts: AddSourceSlackOp
   const account = await api.authTest().catch(fail);
   const infos: SlackChannelInfo[] = [];
   for (const channel of opts.channels) infos.push(await api.conversationInfo(channel).catch(fail));
+  await api.usersProbe().catch(fail);
   const privateChannels = infos.filter(info => info.isPrivate);
   log(`Slack workspace ${account.team ?? account.teamId}: ${infos.length} channel${infos.length === 1 ? '' : 's'} readable.`);
   if (privateChannels.length) log(`Private channels (their pages are private and stay out of any Git checkout): ${privateChannels.map(info => `#${info.name} (${info.id})`).join(', ')}.`);

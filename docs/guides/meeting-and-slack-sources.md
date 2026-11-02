@@ -65,6 +65,13 @@ a daily quota) is recorded and autopilot waits until then. Without autopilot,
 run `gbrain sync --source meetings` from cron through the wrapper in
 [cron-schedule.md](cron-schedule.md#calling-gbrain-unattended).
 
+`gbrain sync --source meetings --full` re-reads the whole `--history-days`
+window, for items added upstream behind the lookback. `--dry-run` has no
+preview for these sources: it fetches and writes nothing. The first account a
+source syncs is pinned to it, and a key for another account is refused with
+`connector_account_changed` even after a config change. `gbrain connectors
+status fireflies` (or `slack`) reports whether a key is saved, without the key.
+
 ## Record modes
 
 The record mode is chosen once, when the source is added, and stored. It is

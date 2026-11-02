@@ -33,23 +33,24 @@ import { connectorIdentity } from '../persistence/connector-identity.ts';
 import { connectorAccountChanged } from '../persistence/connector-errors.ts';
 import { sameConnectorAccount, type ConnectorAccount } from '../persistence/connector-state.ts';
 import { ConnectorHoldSession, connectorHoldsResult } from '../connectors/connector-hold-session.ts';
-import { connectorDbCursorKey, readConnectorDbCursor, writeConnectorDbCursor } from '../connectors/db-cursor.ts';
+import { connectorAccountPinKey, connectorDbCursorKey, readConnectorDbCursor, writeConnectorDbCursor } from '../connectors/db-cursor.ts';
 import { resolveApiToken } from '../connectors/credentials.ts';
 import { connectorRender } from '../connectors/connector-text.ts';
 import { ConnectorAccessDeniedError, ConnectorAuthError, ConnectorRateLimitedError } from '../connectors/client.ts';
 import {
-  afterConnectorPublish, closeCoverageWindow, deleteConnectorPage, openCoverageWindow, publishConnectorPage, recordRateLimit, runScoped,
+  afterConnectorPublish, closeCoverageWindow, connectorDryRunResult, deleteConnectorPage, openCoverageWindow, publishConnectorPage, recordRateLimit, runScoped,
   type ConnectorPublishCtx, type PublishSummary,
 } from '../connectors/api-source.ts';
 import { VERSION } from '../../version.ts';
 import { meetingProvider } from './providers/index.ts';
 import { FIREFLIES_PAGE_LIMIT } from './providers/fireflies.ts';
 import { meetingPagePath, renderMeetingPage } from './render.ts';
-import type { MeetingAccount, MeetingProvider, MeetingRecord, MeetingStub, MeetingsSourceConfig } from './types.ts';
+import { MeetingProviderError, type MeetingAccount, type MeetingProvider, type MeetingRecord, type MeetingStub, type MeetingsSourceConfig } from './types.ts';
 
 const DAY_MS = 86_400_000;
 /** Listing passes per window before the walk is treated as unstable and the boundary is kept. */
 const MAX_LISTING_PASSES = 3;
+const MAX_LISTING_PAGES = 400;
 /** Progress is persisted every this many meetings, so an interrupted run resumes instead of re-walking. */
 const SAVE_EVERY = 20;
 /** A deferred (still processing) meeting older than this is published as it is. */
@@ -69,7 +70,7 @@ export interface MeetingsState extends Record<string, unknown> {
   item_holds?: unknown;
 }
 
-const EMPTY_STATE: MeetingsState = { committed_to: null, window: null, seen: {}, pending: {} };
+const emptyState = (): MeetingsState => ({ committed_to: null, window: null, seen: {}, pending: {} });
 
 export interface MeetingsSyncDeps {
   /** Test seam: a provider bound to a fake transport. */
@@ -115,7 +116,7 @@ function translate(sourceId: string, cfg: MeetingsSourceConfig, error: unknown):
 
 export async function runMeetingsSync(engine: BrainEngine, sourceId: string, cfg: MeetingsSourceConfig, opts: SyncOpts, deps: MeetingsSyncDeps = {}): Promise<SyncResult> {
   return withConnectorSync(engine, sourceId, 'meetings', cfg, opts,
-    (managed, options) => runMeetingsSyncInner(engine, sourceId, cfg, options, managed, deps), pendingConnectorResult);
+    async (managed, options) => options.dryRun ? connectorDryRunResult('meetings', sourceId) : runMeetingsSyncInner(engine, sourceId, cfg, options, managed, deps), pendingConnectorResult);
 }
 
 async function runMeetingsSyncInner(engine: BrainEngine, sourceId: string, cfg: MeetingsSourceConfig, opts: SyncOpts,
@@ -144,15 +145,19 @@ async function runMeetingsSyncInner(engine: BrainEngine, sourceId: string, cfg: 
   let state: MeetingsState;
   if (managed) {
     await managed.assertAccount(resolved);
-    state = { ...EMPTY_STATE, ...managed.state<MeetingsState>({ ...EMPTY_STATE }) };
+    state = { ...emptyState(), ...managed.state<MeetingsState>(emptyState()) };
   } else {
-    state = { ...EMPTY_STATE, ...(await readConnectorDbCursor(engine, cursorKey)).state as MeetingsState | null };
-    if (state.account && !sameConnectorAccount(state.account, resolved)) throw connectorAccountChanged(sourceId, 'meetings', identity.config, state.account, resolved);
+    state = { ...emptyState(), ...(await readConnectorDbCursor(engine, cursorKey)).state as MeetingsState | null };
+    const pinKey = connectorAccountPinKey(sourceId, source.incarnation, 'meetings');
+    const pin = (await readConnectorDbCursor(engine, pinKey)).state?.account as ConnectorAccount | undefined;
+    const pinned = pin ?? state.account;
+    if (pinned && !sameConnectorAccount(pinned, resolved)) throw connectorAccountChanged(sourceId, 'meetings', identity.config, pinned, resolved);
+    if (!pin) await writeConnectorDbCursor(engine, pinKey, { account: resolved });
     state.account = resolved;
   }
 
   const summary: Summary = { status: 'synced', added: 0, modified: 0, deleted: 0, chunksCreated: 0, embedded: 0, pagesAffected: [], deferred: 0, factsRetired: 0, failedFiles: 0 };
-  const holds = await ConnectorHoldSession.open(engine, sourceId, managed, { ...EMPTY_STATE }, state.item_holds, { full: opts.full });
+  const holds = await ConnectorHoldSession.open(engine, sourceId, managed, emptyState(), state.item_holds, { full: opts.full });
   const save = async (final: boolean) => {
     if (managed) {
       // A save with accepted writes still pending defers itself, so a window never records a meeting whose write could still fail.
@@ -187,6 +192,7 @@ async function runMeetingsSyncInner(engine: BrainEngine, sourceId: string, cfg: 
       }, null);
     }
 
+    if (opts.full) Object.assign(state, { committed_to: null, window: null });
     const window = openCoverageWindow(state, { runStart, historyDays: cfg.historyDays, lookbackDays: cfg.lookbackDays });
     const done = new Set(window.done);
     const listed = await enumerateWindow(provider, window.from, window.to, signal);
@@ -269,6 +275,7 @@ async function enumerateWindow(provider: MeetingProvider, from: string, to: stri
   for (let pass = 0; pass < MAX_LISTING_PASSES; pass++) {
     let added = 0;
     for (let skip = 0; ; skip += FIREFLIES_PAGE_LIMIT) {
+      if (skip >= MAX_LISTING_PAGES * FIREFLIES_PAGE_LIMIT) throw new MeetingProviderError(provider.name, 'listing_unbounded', `the meeting listing for ${from}..${to} did not end after ${MAX_LISTING_PAGES} pages`);
       const page = await provider.listMeetings({ fromDate: from, toDate: to, limit: FIREFLIES_PAGE_LIMIT, skip, signal });
       for (const stub of page) {
         if (stub.startedAt < from || stub.startedAt >= to) continue;

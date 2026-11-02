@@ -16,6 +16,8 @@ export interface FakeSlack {
   rateLimited?: boolean;
   /** Messages per history page, to exercise the cursor. */
   pageSize?: number;
+  /** Web API methods that refuse with missing_scope (a token without that method's scope). */
+  missingScope?: string[];
 }
 
 const wire = (m: FakeSlackMessage) => ({ type: 'message', ts: m.ts, text: m.text,
@@ -31,6 +33,7 @@ export function slackFetch(fake: FakeSlack) {
     fake.calls.push(p.get('channel') ? `${method}:${p.get('channel')}` : method);
     if (u.toString().includes('xox') || String(init.body ?? '').includes('xox')) throw new Error('token outside the authorization header');
     if (fake.rateLimited) return json({ ok: false, error: 'ratelimited' }, 429, { 'retry-after': '600' });
+    if (fake.missingScope?.includes(method)) return json({ ok: false, error: 'missing_scope', needed: 'users:read' });
     if (method === 'auth.test') return json({ ok: true, team_id: fake.teamId, team: 'Acme Example', user_id: 'UBOT00001' });
     if (method === 'users.list') {
       return json({ ok: true, members: Object.entries(fake.users).map(([id, u]) => ({ id, name: u.name.toLowerCase(), deleted: !!u.deleted, is_bot: !!u.bot,

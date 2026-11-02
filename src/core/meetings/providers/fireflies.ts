@@ -44,11 +44,13 @@ export function classifyFirefliesBody(body: unknown, now: number): void {
   const code = lower(first.extensions?.code ?? first.code);
   const message = lower(first.message);
   const text = typeof first.message === 'string' ? first.message.slice(0, 200) : 'unknown error';
-  if (/forbidden|permission|not_authorized|not_in_team|privilege/.test(code)) throw new ConnectorAccessDeniedError(`fireflies: ${text}`);
-  if (/auth|unauthenticated|invalid_api_key|api key/.test(code) || /invalid api key|unauthori[sz]ed|authentication/.test(message)) {
+  const words = new Set(code.split(/[^a-z0-9]+/));
+  const has = (...w: string[]) => w.some(x => words.has(x));
+  if (has('forbidden', 'permission', 'permissions', 'privilege', 'privileges') || /not_authorized|not_in_team/.test(code)) throw new ConnectorAccessDeniedError(`fireflies: ${text}`);
+  if (has('auth', 'unauthenticated', 'unauthorized', 'authentication') || /invalid_api_key|api_key/.test(code) || /invalid api key|unauthori[sz]ed|authentication/.test(message)) {
     throw new ConnectorAuthError(`fireflies: the API key was rejected (${code || 'auth'})`);
   }
-  if (/too_many|rate|quota|limit/.test(code) || /rate limit|too many requests|quota/.test(message)) {
+  if (has('rate', 'ratelimit', 'ratelimited', 'quota', 'throttled') || /too_many/.test(code) || /rate limit|too many requests|quota/.test(message)) {
     const retryAfter = first.extensions?.metadata?.retryAfter;
     const retryAt = typeof retryAfter === 'number' && retryAfter > 0
       ? (retryAfter > 1e12 ? retryAfter : now + retryAfter * 1000)

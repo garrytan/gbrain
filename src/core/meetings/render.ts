@@ -7,7 +7,9 @@
  * composed around the neutralized text. Run ids and fetch times stay out of
  * the page so an unchanged meeting renders byte-identical and publishes nothing.
  */
+import { createHash } from 'node:crypto';
 import { dumpFrontmatterYaml } from '../data-frontmatter.ts';
+import { BUILTIN_PATTERNS } from '../conversation-parser/builtins.ts';
 import { neutralizeOutsideText } from '../outside-content.ts';
 import { slugifySegment } from '../sync.ts';
 import type { MeetingAccount, MeetingRecord, MeetingsSourceConfig } from './types.ts';
@@ -28,16 +30,22 @@ const inline = (text: string) => neutralizeOutsideText(text.replace(/\s+/g, ' ')
 /** A speaker name inside gbrain's own `**Name** (hh:mm:ss):` anchor: no emphasis, colon or bracket can break out of it. */
 const speakerName = (text: string) => inline(text.replace(/[*:()[\]]/g, ' ')) || 'Unknown speaker';
 
+/** Multi-line outside text: neutralized, and a line shaped like any builtin chat anchor (once trimmed, as the parser reads it) escaped, so no line reads as a turn. */
+function summaryBlock(text: string): string {
+  return neutralizeOutsideText(text.trim()).split('\n')
+    .map(line => BUILTIN_PATTERNS.some(p => p.regex.test(line.trimStart())) ? `\\${line.trimStart()}` : line).join('\n');
+}
+
 function clock(seconds: number | null): string {
   if (seconds === null || !Number.isFinite(seconds) || seconds < 0) return '00:00:00';
   const s = Math.floor(seconds);
   return [Math.floor(s / 3600), Math.floor((s % 3600) / 60), s % 60].map(n => String(n).padStart(2, '0')).join(':');
 }
 
-/** The page path for a new meeting: date, title and a short id suffix. An existing page keeps the path it was first written at. */
+/** The page path for a new meeting: date, title and a suffix hashed from the whole id. An existing page keeps the path it was first written at. */
 export function meetingPagePath(record: Pick<MeetingRecord, 'id' | 'title' | 'startedAt'>): string {
   const title = slugifySegment(record.title).slice(0, 60).replace(/-+$/, '') || 'meeting';
-  const id = slugifySegment(record.id).replace(/-/g, '').slice(-6) || 'id';
+  const id = createHash('sha256').update(record.id).digest('hex').slice(0, 10);
   return `meetings/${record.startedAt.slice(0, 10)}-${title}-${id}.md`;
 }
 
@@ -78,7 +86,7 @@ export function renderMeetingPage(record: MeetingRecord, opts: { cfg: Pick<Meeti
   if (record.attendees.length) lines.push(`**Attendees:** ${record.attendees.map(a => inline(attendeeLabel(a))).join(', ')}`);
   if (record.organizerEmail) lines.push(`**Organizer:** ${inline(record.organizerEmail)}`);
   if (record.durationSec !== null) lines.push(`**Duration:** ${Math.round(record.durationSec / 60)} min`);
-  lines.push('', '## Summary', '', record.summary ? neutralizeOutsideText(record.summary.trim()) : '_No summary from the provider._');
+  lines.push('', '## Summary', '', record.summary ? summaryBlock(record.summary) : '_No summary from the provider._');
   if (record.actionItems.length) lines.push('', '## Action items', '', ...record.actionItems.map(item => `- ${inline(item)}`));
   if (record.keywords.length) lines.push('', '## Keywords', '', record.keywords.map(inline).join(', '));
   if (record.transcript?.length) {
