@@ -19,6 +19,7 @@
 import { chat as gatewayChat, toolLoop, type ChatMessage, type ChatToolDef, type ToolHandler } from '../ai/gateway.ts';
 import { BRAIN_TOOL_ALLOWLIST } from '../minions/tools/brain-allowlist.ts';
 import { paramDefToSchema } from '../../mcp/tool-defs.ts';
+import { findInvalidParam, normalizeOptionalParams, schemaInvalidParams } from '../../mcp/validate-params.ts';
 import { operations, type OperationContext } from '../operations.ts';
 import { loadConfig } from '../config.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -225,7 +226,10 @@ function buildReadOnlyToolRegistry(ctx: OperationContext, offered: ReadonlySet<s
       idempotent: true, // All read-only ops are idempotent by construction.
       execute: async (input: unknown) => {
         const active = original?.remote !== false && original ? await authorizeSkillRead(original, op.name) : ctx;
-        return op.handler({ ...active, remote: true }, (input as Record<string, unknown>) ?? {});
+        const params = normalizeOptionalParams(op, (input as Record<string, unknown>) ?? {});
+        const failure = findInvalidParam(op, params);
+        if (failure) throw schemaInvalidParams(op, failure, { remote: true }, params);
+        return op.handler({ ...active, remote: true }, params);
       },
     });
   }

@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**GPT models that fill every optional tool argument with `""` or `null` can read pages again in SkillOpt rollouts and `gbrain call`.** GPT-6.1 Sol sends `known_as_of: ""`, `cursor: ""`, `section: ""` and `grep: ""` instead of leaving those arguments out. MCP dispatch and the subagent tool registry already treated `""` on an optional string argument, and `null` on any optional argument, as not provided. The SkillOpt rollout and write-capture registries and `gbrain call` passed the arguments to the handler unchanged. There `known_as_of: ""` sent `get_page` into its recorded-time branch, which refused with "known_as_of must be an ISO 8601 instant", so a SkillOpt probe on GPT-6.1 Sol saw every `get_page` call fail and the model answered from search snippets. The same empty arguments broke about 30 other read operations on those paths (`search`, `get_links`, `traverse_graph`, `recall`, `whois` and more). All three paths now run the same step as MCP dispatch: empty optional arguments are dropped, then the arguments are checked against the operation's schema. A missing required argument or a non-empty invalid value still refuses with `invalid_params`. The SkillOpt registries now also refuse a wrong-typed or out-of-enum argument before the handler runs, with the same `invalid_params` error MCP returns.
+
+### Itemized changes
+
+- `src/core/skillopt/rollout.ts`, `src/core/skillopt/write-capture.ts`: each read tool drops `""` and `null` optional arguments (`normalizeOptionalParams`), then validates (`findInvalidParam`, refusing through `schemaInvalidParams`), before calling the handler. In a rollout, the shared-skill read authorization still runs first.
+- `src/mcp/server.ts` (`handleToolCall`, behind `gbrain call`): drops empty optional arguments before validation, and the handler receives the cleaned arguments.
+- `test/tool-args-empty-optional-sol.test.ts`: drives `get_page` with every optional string set to `""`, and again with every optional argument set to `null`, through MCP over HTTP (remote) and stdio (local), `gbrain call`, the subagent registry and both SkillOpt registries. It checks that a missing slug and non-empty bad values still refuse, then sweeps every read operation and checks that empty optional arguments give the same outcome as omitting them. Reverting any one of the three fixes fails it.
+
 ## [0.60.545.0] - 2026-11-02
 
 **The hosted gbrain.io install now tells the agent the brain is there.**
