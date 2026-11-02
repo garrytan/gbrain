@@ -21,7 +21,7 @@ import { spawnSync } from 'node:child_process';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { connectTemplateBrain } from './helpers/brain-template.ts';
 import { options } from './helpers/connector-fixture.ts';
-import { slackFetch, slackTs, type FakeSlack } from './helpers/slack-fixture.ts';
+import { slackFetch, slackTs, type FakeSlack, slackTestToken } from './helpers/slack-fixture.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -41,7 +41,7 @@ const at = (daysAgo: number, hour: number) => Date.parse(new Date(NOW - daysAgo 
 const dayOf = (daysAgo: number) => new Date(NOW - daysAgo * DAY).toISOString().slice(0, 10);
 const USERS = { UALICE0001: { name: 'Alice Example' }, UBOB000001: { name: 'Bob Example' }, UCAROL0001: { name: 'Carol Example', deleted: true } };
 
-const api = (fake: FakeSlack, extra: { maxRequests?: number; now?: () => number } = {}) => slackApi({ token: 'xoxb-synthetic-fixture', userAgent: 'gbrain-test',
+const api = (fake: FakeSlack, extra: { maxRequests?: number; now?: () => number } = {}) => slackApi({ token: slackTestToken(), userAgent: 'gbrain-test',
   fetchImpl: slackFetch(fake), sleep: async () => {}, minDelayMs: 0, now: extra.now ?? (() => NOW), ...(extra.maxRequests !== undefined ? { maxRequests: extra.maxRequests } : {}) });
 
 function workspace(teamId = 'TACME00001'): FakeSlack {

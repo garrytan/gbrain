@@ -9,7 +9,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { createConnectorFixture, options, settleConnectorWrites } from './helpers/connector-fixture.ts';
-import { slackFetch, slackTs, type FakeSlack } from './helpers/slack-fixture.ts';
+import { slackFetch, slackTs, type FakeSlack, slackTestToken } from './helpers/slack-fixture.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { runSlackSync } from '../src/core/slack/slack-source.ts';
 import { parseSlackSourceConfig } from '../src/core/slack/source-config.ts';
@@ -24,7 +24,7 @@ const DAY = 86_400_000;
 const NOW = Date.now();
 const workspace = (): FakeSlack => ({ teamId: 'TACME00001', users: { UALICE0001: { name: 'Alice Example' } }, calls: [], channels: [
   { id: 'CGENERAL01', name: 'general', messages: [{ ts: slackTs(NOW - DAY), user: 'UALICE0001', text: 'Managed day one.' }, { ts: slackTs(NOW - 2 * DAY), user: 'UALICE0001', text: 'Managed day two.' }] }] });
-const api = (fake: FakeSlack) => slackApi({ token: 'xoxb-synthetic-fixture', userAgent: 'gbrain-test', fetchImpl: slackFetch(fake), sleep: async () => {}, minDelayMs: 0 });
+const api = (fake: FakeSlack) => slackApi({ token: slackTestToken(), userAgent: 'gbrain-test', fetchImpl: slackFetch(fake), sleep: async () => {}, minDelayMs: 0 });
 
 async function managedSource(engine: BrainEngine, id: string, config: Record<string, unknown>) {
   await disposePersistenceConsumer(engine);

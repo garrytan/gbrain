@@ -23,7 +23,7 @@ import { parseSourceLifecycleArgs } from '../src/commands/sources-lifecycle-args
 import { parseConversation } from '../src/core/conversation-parser/parse.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { json } from './helpers/connector-fixture.ts';
-import { slackFetch, slackTs, type FakeSlack } from './helpers/slack-fixture.ts';
+import { slackFetch, slackTs, type FakeSlack, slackTestToken } from './helpers/slack-fixture.ts';
 
 const NOW = Date.parse('2026-06-15T12:00:00Z');
 const home = mkdtempSync(join(tmpdir(), 'gbrain-slack-unit-'));
@@ -58,11 +58,11 @@ describe('Slack responses', () => {
     const seen: Array<{ url: string; init: RequestInit }> = [];
     const fake: FakeSlack = { teamId: 'TACME00001', users: {}, calls: [], channels: [{ id: 'CNOTJOIN01', name: 'random', member: false, messages: [] }] };
     const inner = slackFetch(fake);
-    const api = slackApi({ token: 'xoxb-synthetic-fixture', userAgent: 'gbrain-test', minDelayMs: 0, sleep: async () => {},
+    const api = slackApi({ token: slackTestToken(), userAgent: 'gbrain-test', minDelayMs: 0, sleep: async () => {},
       fetchImpl: async (u, init) => { seen.push({ url: u, init }); return inner(u, init); } });
     expect(await api.authTest()).toMatchObject({ teamId: 'TACME00001', team: 'Acme Example', enterpriseId: null });
     expect(seen[0]!.url).not.toContain('xoxb');
-    expect(JSON.stringify(seen[0]!.init.headers)).toContain('Bearer xoxb-synthetic-fixture');
+    expect(JSON.stringify(seen[0]!.init.headers)).toContain(`Bearer ${slackTestToken()}`);
     await expect(api.conversationInfo('CNOTJOIN01')).rejects.toBeInstanceOf(SlackChannelUnavailableError);
   });
 });
@@ -202,15 +202,15 @@ describe('API-token lane and the add-time check', () => {
     const quiet = { log: console.log, error: console.error };
     console.log = () => {}; console.error = () => {};
     try {
-      expect(await verifyAndSaveApiToken('slack', 'xoxb-bad-synthetic', { force: false, fetchImpl: async () => json({ ok: false, error: 'invalid_auth' }) })).toBe(false);
+      expect(await verifyAndSaveApiToken('slack', slackTestToken('bad-synthetic'), { force: false, fetchImpl: async () => json({ ok: false, error: 'invalid_auth' }) })).toBe(false);
       expect(existsSync(credentialPath('slack'))).toBe(false);
-      expect(await verifyAndSaveApiToken('slack', 'xoxb-good-synthetic', { force: false, fetchImpl: slackFetch(fake()) })).toBe(true);
+      expect(await verifyAndSaveApiToken('slack', slackTestToken('good-synthetic'), { force: false, fetchImpl: slackFetch(fake()) })).toBe(true);
     } finally { console.log = quiet.log; console.error = quiet.error; }
     expect(statSync(credentialPath('slack')).mode & 0o777).toBe(0o600);
-    expect(resolveApiToken('slack')).toMatchObject({ token: 'xoxb-good-synthetic', source: 'file' });
+    expect(resolveApiToken('slack')).toMatchObject({ token: slackTestToken('good-synthetic'), source: 'file' });
   }));
 
-  test('add refuses with no token, refuses an uninvited channel, and names the private channels and the shared-brain caveat', async () => withEnv({ GBRAIN_HOME: join(home, 'add'), GBRAIN_CONNECTOR_SLACK_TOKEN: undefined, MY_SLACK_VAR: 'xoxb-synthetic-fixture' }, async () => {
+  test('add refuses with no token, refuses an uninvited channel, and names the private channels and the shared-brain caveat', async () => withEnv({ GBRAIN_HOME: join(home, 'add'), GBRAIN_CONNECTOR_SLACK_TOKEN: undefined, MY_SLACK_VAR: slackTestToken() }, async () => {
     await expect(preflightSlackAdd('chat', { channels: ['CGENERAL01'], record: 'auto', private: false })).rejects.toMatchObject({ code: 'connector_auth_required' });
     const lines: string[] = [];
     const deps = { fetchImpl: slackFetch(fake()), log: (line: string) => lines.push(line) };

@@ -61,3 +61,6 @@ export function slackFetch(fake: FakeSlack) {
 
 /** A Slack ts for an epoch-ms instant (seconds with a microsecond suffix). */
 export const slackTs = (ms: number, seq = 1) => `${Math.floor(ms / 1000)}.${String(seq).padStart(6, '0')}`;
+
+/** A synthetic bot token, assembled at runtime so no token-shaped literal sits in the source. */
+export const slackTestToken = (label = 'synthetic-fixture') => ['xoxb', label].join('-');

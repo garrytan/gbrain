@@ -261,8 +261,7 @@ async function runSlackSyncInner(engine: BrainEngine, sourceId: string, cfg: Sla
   const syncChannel = async (channelId: string) => {
     const info = infos.get(channelId) ?? await api!.conversationInfo(channelId, signal);
     const ch = state.channels[channelId] ??= { committed_to: null, window: null, name: info.name, private: info.isPrivate, days: {} };
-    ch.name = info.name;
-    ch.private = info.isPrivate;
+    Object.assign(ch, { name: info.name, private: info.isPrivate });
     if (info.isPrivate || cfg.privateOnly) await makeChannelPrivate(channelId);
     const window = openCoverageWindow(ch, { runStart, historyDays: cfg.historyDays, lookbackDays: cfg.lookbackDays, alignFrom: ms => slackAlignToDay(ms, cfg.timezone) });
     const from = Date.parse(window.from);
