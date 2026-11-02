@@ -44,10 +44,10 @@ export function classifyFirefliesBody(body: unknown, now: number): void {
   const code = lower(first.extensions?.code ?? first.code);
   const message = lower(first.message);
   const text = typeof first.message === 'string' ? first.message.slice(0, 200) : 'unknown error';
+  if (/forbidden|permission|not_authorized|privilege/.test(code)) throw new ConnectorAccessDeniedError(`fireflies: ${text}`);
   if (/auth|unauthenticated|invalid_api_key|api key/.test(code) || /invalid api key|unauthori[sz]ed|authentication/.test(message)) {
     throw new ConnectorAuthError(`fireflies: the API key was rejected (${code || 'auth'})`);
   }
-  if (/forbidden|permission|not_authorized|privilege/.test(code)) throw new ConnectorAccessDeniedError(`fireflies: ${text}`);
   if (/too_many|rate|quota|limit/.test(code) || /rate limit|too many requests|quota/.test(message)) {
     const retryAfter = first.extensions?.metadata?.retryAfter;
     const retryAt = typeof retryAfter === 'number' && retryAfter > 0

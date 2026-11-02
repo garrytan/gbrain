@@ -31,6 +31,7 @@ describe('Fireflies responses', () => {
     const err = (code: string, message = 'x', extra: Record<string, unknown> = {}) => ({ errors: [{ message, extensions: { code, ...extra } }] });
     expect(() => classifyFirefliesBody(err('auth_failed', 'Invalid API key'), NOW)).toThrow(ConnectorAuthError);
     expect(() => classifyFirefliesBody(err('forbidden'), NOW)).toThrow(ConnectorAccessDeniedError);
+    expect(() => classifyFirefliesBody(err('not_authorized', 'Not authorized to read this team'), NOW)).toThrow(ConnectorAccessDeniedError);
     expect(() => classifyFirefliesBody(err('bad_request'), NOW)).toThrow(MeetingProviderError);
     expect(() => classifyFirefliesBody(err('object_not_found'), NOW)).not.toThrow();
     expect(() => classifyFirefliesBody({ data: {} }, NOW)).not.toThrow();
