@@ -32,6 +32,7 @@ describe('Fireflies responses', () => {
     expect(() => classifyFirefliesBody(err('auth_failed', 'Invalid API key'), NOW)).toThrow(ConnectorAuthError);
     expect(() => classifyFirefliesBody(err('forbidden'), NOW)).toThrow(ConnectorAccessDeniedError);
     expect(() => classifyFirefliesBody(err('not_authorized', 'Not authorized to read this team'), NOW)).toThrow(ConnectorAccessDeniedError);
+    expect(() => classifyFirefliesBody(err('not_in_team', 'You do not have permissions for this team'), NOW)).toThrow(ConnectorAccessDeniedError);
     expect(() => classifyFirefliesBody(err('bad_request'), NOW)).toThrow(MeetingProviderError);
     expect(() => classifyFirefliesBody(err('object_not_found'), NOW)).not.toThrow();
     expect(() => classifyFirefliesBody({ data: {} }, NOW)).not.toThrow();
