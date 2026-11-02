@@ -169,7 +169,7 @@ grant.
 
 ### Narrow one request with `source_ids`
 
-`search`, `query`, `recall` and `list_pages` take `source_ids`, a list of
+`search`, `query`, `recall`, `memory_recall` and `list_pages` take `source_ids`, a list of
 source ids (CLI: `--source-ids source-a,source-b`). The request reads only
 those sources:
 

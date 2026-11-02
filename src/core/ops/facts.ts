@@ -29,6 +29,7 @@ import { OperationError, opError, verbError } from './contract.ts';
 import { invalidParam, paramUse } from './op-fix.ts';
 import { parseSourceIdParam, sourceScopeOpts, stampEvidenceSafe } from './context.ts';
 import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './search-source-scope.ts';
+import { boundFactLines, MEMORY_RECALL_MAX_CHARS, parseMaxChars } from './qm-memory.ts';
 import { markKeywordHits } from '../search/evidence.ts';
 import { hybridSearchCached, stampContentFlags, type HybridSearchOpts } from '../search/hybrid.ts';
 import { dedupResults } from '../search/dedup.ts';
@@ -309,11 +310,13 @@ const recall: Operation = {
     return_unit: { type: 'string', enum: ['chunk', 'window', 'section', 'page', 'auto'], description: 'results[] unit (see search).', fullSurfaceOnly: true },
     return_window: { type: 'number', description: 'Window 1-3.', fullSurfaceOnly: true },
     min_trust: MIN_TRUST_PARAM,
+    max_chars: { type: 'integer', description: `Cap on fact (then results) text, ${MEMORY_RECALL_MAX_CHARS.min}-${MEMORY_RECALL_MAX_CHARS.max}; whole items only, truncated says if cut.` },
   },
   scope: 'read',
   verb: true,
   annotations: { title: 'recall (memory read)', readOnlyHint: true },
   handler: async (ctx, p) => {
+    const maxChars = p.max_chars === undefined || p.max_chars === null ? null : parseMaxChars(p.max_chars);
     const sourceId = ctx.sourceId ?? 'default';
     const limit = clampRecallLimit(p.limit);
     const includeExpired = p.include_expired === true;
@@ -668,9 +671,21 @@ const recall: Operation = {
       ...(delivery ? { delivery } : {}),
     };
     recordRecallOutcome(out);
-    return out;
+    return maxChars === null ? out : boundRecallChars(out, maxChars);
   },
 };
+
+/**
+ * GST-900: recall's max_chars, memory_recall's bound on recall's text: the fact texts, then the results' chunk texts,
+ * one per line, keep the whole items that fit; the first item that would cross the cap ends both lists, with no
+ * marker. `truncated` says whether anything was cut and `total` counts the facts kept.
+ */
+function boundRecallChars<T extends { facts: Array<{ fact: string }>; total: number; results?: Array<{ chunk?: unknown }> }>(out: T, maxChars: number): T & { truncated: boolean } {
+  const lines = [...out.facts.map(f => f.fact), ...(out.results ?? []).map(r => String(r.chunk ?? ''))];
+  const { kept } = boundFactLines(lines, maxChars);
+  const facts = out.facts.slice(0, kept);
+  return { ...out, facts, total: facts.length, ...(out.results ? { results: out.results.slice(0, Math.max(0, kept - out.facts.length)) } : {}), truncated: kept < lines.length };
+}
 
 /**
  * One source's facts about an entity, read under every slug they may be saved

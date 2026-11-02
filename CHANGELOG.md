@@ -10,6 +10,22 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A `memory_recall` that names sources reads as that scope, never as the attested person, so a shared turn can no longer recall one member's private facts into a shared channel.** `memory_recall` gains `source_id` and `source_ids`. Named, the read drops the person's own recent facts and every member-page fact, keeps restricted pages hidden and never relaxes `visibility: private`. The contract for it is the new `docs/contracts/qm-memory-provider/v2.json`; `v1.json` stays byte-identical and a test holds it there. Three smaller provider fixes ride along.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| `memory_recall` with `source_id` / `source_ids` | the argument was ignored (`unknown_param`) and the call read as the person, own facts first | reads the named sources as their audience: no own facts, no member-page facts; a source outside the grant is `permission_denied`, `__all__` is `invalid_params` |
+| `memory_recall` without sources | the person's read | unchanged |
+| `acting_user` with no `x-qm-actor`, from a credential bound to a member | `argument_without_attestation` | its own member id (or a linked canonical id) is dropped and the call runs as the credential; any other value is `argument_mismatch` |
+| `recall` with `max_chars` | unknown argument | 200-12000: whole facts, then results, that fit; `truncated` says if some were cut |
+| A read that ignores an undeclared argument | a `[gbrain notice unknown_param]` text block in the result | only `_meta.warnings`, so a harness that stores tool output never stores it; writes still refuse |
+
+QM clients that read v1 keep working unchanged. A shared-scope turn should name its sources and read the v2 contract.
+
 ## [0.60.555.0] - 2026-11-02
 
 **`gbrain query --limit N` without a token budget returns N rows again, a budgeted facts block takes at most N rows, the facts block never outscores the pages, and the CLI names fact rows instead of printing `undefined` (#8411).** Since the facts block went on by default (v0.60.491.0), it also ran on queries that passed no budget, because the shipped no-budget evidence plan carries an implicit 24,000-token budget. Its 22% share let up to 40 fact rows in ahead of the pages, so `--limit 3` could print more than a dozen fact rows before the 3 pages. Each block row was scored a hair above the top page, so they all showed the same score and outranked every hit, and the human CLI printed them as `[0.84xx] undefined -- …` because fact rows have no page slug.

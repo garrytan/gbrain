@@ -25,14 +25,18 @@ a repo exists, saved facts go through the same git-first writer door as `remembe
 
 ## What the tools do
 
-- `memory_recall {query, max_chars?}` answers plain text, one fact per line
+- `memory_recall {query, max_chars?, source_id?, source_ids?}` answers plain text, one fact per line
   (`- <fact> (<date>; <kind>)`): the person's own facts from the last 24 hours
   first, then the facts they may read ranked by `query`. Never page bodies. The text
   holds as many whole lines as fit, with no marker line (every line is one fact;
   `structuredContent.truncated` says some were left out), and never exceeds `max_chars`
   (a whole number of UTF-16 code units, 200-12000, default 6000). Each fact is
   one line: line breaks and control characters in it become spaces. Ranking is
-  keyword-only on a keyless brain.
+  keyword-only on a keyless brain. A call that names sources (`source_id`,
+  `source_ids`, narrowed inside the credential's grant) reads as that scope,
+  never as the person: no own facts first and no fact from any member page.
+  Name the shared scope on a shared turn; leave sources out only for the
+  person's own conversations.
 - `memory_write {facts, idempotency_key}` saves 1-20 facts on
   `memory/members/<member>`, readable by that member alone, with provenance
   `qm:<id>; <provenance>`. `provenance` is one line that does not start with

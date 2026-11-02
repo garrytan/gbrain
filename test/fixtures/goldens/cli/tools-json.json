@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 268798,
-    "stdoutSha256": "7e8ad692baa54268f6f79bf3109bfb03bf6c29119f65624e8847aff30963f591",
+    "stdoutBytes": 269480,
+    "stdoutSha256": "a5efd152d5b57d8cab862c842421d4b321090631a5c72139cc5d1195e2849563",
     "toolNames": [
       "remember",
       "entity",
@@ -6658,6 +6658,7 @@
           "include_expired": "boolean?",
           "include_pending": "boolean?",
           "limit": "number?",
+          "max_chars": "integer?",
           "min_trust": "string?",
           "query": "string?",
           "question": "string?",
@@ -6703,6 +6704,10 @@
             "limit": {
               "description": "Per-arm max (default 50, cap 100).",
               "type": "number"
+            },
+            "max_chars": {
+              "description": "Cap on fact (then results) text, 200-12000; whole items only, truncated says if cut.",
+              "type": "integer"
             },
             "min_trust": {
               "description": "Lowest trust tier to return (the connection floor still applies).",
@@ -7116,7 +7121,9 @@
         "parameters": {
           "acting_user": "string?",
           "max_chars": "integer?",
-          "query": "string"
+          "query": "string",
+          "source_id": "string?",
+          "source_ids": "array?"
         },
         "required_scopes": [],
         "schema": {
@@ -7132,6 +7139,17 @@
             "query": {
               "description": "What the turn is about; ranks the facts.",
               "type": "string"
+            },
+            "source_id": {
+              "description": "Read this one source as its audience (a shared scope): never the person's own facts.",
+              "type": "string"
+            },
+            "source_ids": {
+              "description": "Read only these sources as their audience (a shared scope): never the person's own facts.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             }
           },
           "required": [

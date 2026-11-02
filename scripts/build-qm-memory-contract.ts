@@ -23,6 +23,10 @@ export const QM_CONTRACT_PATHS: Record<QmContractVersion, string> = {
 export const QM_CONTRACT_PATH = QM_CONTRACT_PATHS[1];
 /** The arguments v1 publishes per tool, frozen: later arguments appear from v2 on. */
 const V1_PARAMS: Record<string, readonly string[]> = { memory_recall: ['query', 'max_chars', 'acting_user'], memory_write: ['facts', 'idempotency_key', 'acting_user'] };
+/** Catalogue summaries v1 published before they changed, frozen. */
+const V1_SUMMARIES: Record<string, string> = {
+  actor_not_attested: "A call named the person it serves (the x-qm-actor header or the acting_user argument) in a way gbrain does not honour: the credential holds no attest right, the operation is not in its attested operations, the argument differs from the header or comes without an attested header, or the id is not 1-256 visible ASCII characters; or a write that saves only as an attested person (memory_write) named none; or the request carries x-qm-audience, a channel audience gbrain does not serve yet. Nothing was read or written.",
+};
 
 /** Who fixes each actor_not_attested reason, and how. Every reason the catalogue lists needs a row (the drift test checks). */
 export const ACTOR_REASON_FIXES: Record<string, { fixed_by: 'brain_operator' | 'calling_harness'; fix: string }> = {
@@ -118,7 +122,7 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
       applies_to: 'every refusal of memory_recall and memory_write, including the transport\'s scope and unknown-tool refusals',
       codes: codes.map(code => {
         const entry: { class: string; summary: string; suggestion?: string; reasons?: readonly string[]; docs?: string } = CODES[code];
-        return { code, class: entry.class, summary: entry.summary, ...(entry.suggestion ? { suggestion: entry.suggestion } : {}), docs: entry.docs ?? 'docs/guides/error-codes.md#' + code,
+        return { code, class: entry.class, summary: (v2 ? undefined : V1_SUMMARIES[code]) ?? entry.summary, ...(entry.suggestion ? { suggestion: entry.suggestion } : {}), docs: entry.docs ?? 'docs/guides/error-codes.md#' + code,
           ...(code === 'actor_not_attested' ? { reasons: (entry.reasons ?? []).map(reason => ({ reason, ...ACTOR_REASON_FIXES[reason], ...(v2 ? V2_REASON_FIXES[reason] : {}) })) } : {}),
           ...(notes[code] ? { note: notes[code] } : {}) };
       }),
