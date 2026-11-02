@@ -9,11 +9,10 @@
 > gbrainio workspace new         # pick a plan in the browser
 > curl -fsSL https://bun.sh/install | bash && export PATH="$HOME/.bun/bin:$PATH"   # skip if Bun 1.4.4+ is installed
 > bun install -g github:garrytan/gbrain#latest-stable   # the gbrain CLI only; no local brain
-> # Already added gbrain to Claude Code or Codex? Run only its gbrain setup command below.
-> # Claude Code:
-> claude mcp add --transport http --scope user gbrain https://gbrain.io/mcp && gbrain setup claude-code --instructions-only
+> # Claude Code (an existing gbrain entry is kept):
+> (claude mcp add --transport http --scope user gbrain https://gbrain.io/mcp || claude mcp get gbrain) && gbrain setup claude-code --instructions-only
 > # Codex:
-> codex mcp add gbrain --url https://gbrain.io/mcp && gbrain setup codex --instructions-only
+> (codex mcp add gbrain --url https://gbrain.io/mcp || codex mcp get gbrain) && gbrain setup codex --instructions-only
 > ```
 >
 > `gbrain setup <harness> --instructions-only` tells the agent the brain is there; agents seldom call an MCP server nobody told them about. It writes the [brain-first block](guides/setup.md#brain-first-instructions) into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` (a non-empty `AGENTS.override.md` instead when Codex has one) with a per-turn rule hook, and leaves the MCP entry alone; the same command with `--no-instructions` added takes them out.
