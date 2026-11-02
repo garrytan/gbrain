@@ -4288,7 +4288,9 @@ The message names the guide for the harness you asked for (OpenClaw:
   install with a different `GBRAIN_HOME`. Run setup with `--name <other>` so
   each install owns its own entries.
 - `harness_lane`: `gbrain bootstrap harness` (or a workspace bootstrap
-  install) already wires gbrain hooks or MCP in this configuration. Keep that
+  install) already wires gbrain hooks or MCP in this configuration (a harness
+  target in another HOME's or `CODEX_HOME`'s config directory does not count;
+  project-scoped hooks do). Keep that
   wiring, or remove it with `gbrain bootstrap harness --remove` first. On
   Codex this also fires when the bootstrap Codex lane's `SessionEnd` hook is in
   `hooks.json` and you passed `--capture`: keep that lane and run setup without
