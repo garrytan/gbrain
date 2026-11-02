@@ -271,7 +271,7 @@ export interface ApplyResult { steps: SetupStep[]; receipt: ClaudeSetupReceipt; 
 export async function applyClaudeSetup(
   plan: ClaudeSetupPlan,
   consent: SetupConsent,
-  opts: { pluginOwner: string | null; brainCreated: boolean; beforeMcp?: () => Promise<void>; abortAfter?: string; mcpMustBeCurrent?: boolean },
+  opts: { pluginOwner: string | null; brainCreated: boolean; beforeMcp?: () => Promise<void>; abortAfter?: string; mcpMustBeSetups?: boolean },
 ): Promise<ApplyResult> {
   const paths = claudeSetupPaths(plan);
   const lock = await acquireBootstrapLock(dirname(paths.configPath));
@@ -279,7 +279,8 @@ export async function applyClaudeSetup(
     // The MCP entry and every hook command start gbrain through the launcher, so it goes down before anything names it (#8424, #8426).
     ensureHookLauncher(hookLauncherPath(plan.brainHome));
     const found = inspectClaudeSetup(plan);
-    if (opts.mcpMustBeCurrent && opts.pluginOwner === null && found.mcp.state !== 'current') throw new Error(`the '${plan.name}' MCP entry changed before the hooks were rewritten`);
+    // post-upgrade's refresh: the MCP entry moves only while it is still setup's, read again under the lock (#8426).
+    if (opts.mcpMustBeSetups && opts.pluginOwner === null && found.mcp.state !== 'current' && found.mcp.state !== 'owned') throw new Error(`the '${plan.name}' MCP entry changed before setup's entries were rewritten`);
     const now = new Date().toISOString();
     const desired = desiredMcpEntry(plan);
     const desiredHash = entryHash(desired);

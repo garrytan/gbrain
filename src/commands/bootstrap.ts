@@ -1439,7 +1439,7 @@ async function runHooks(
       );
     }
     // A user-scope stdio server starts through the launcher, never in the session's directory (#8426).
-    const hookLauncher = harness === 'codex' || mcpScope === 'user' ? hookLauncherPath() : undefined;
+    const hookLauncher = harness === 'codex' || mcpScope === 'user' ? hookLauncherPath(home) : undefined;
     const buildArgvs = (surface?: McpSurface | null, advertise?: McpSurface | null) => harness === 'claude-code'
       ? registerClaudeMcp({ gbrainBin, scope: mcpScope, sourceId, surface, advertise, ...(gbrainHome ? { gbrainHome } : {}), ...(hookLauncher ? { hookLauncher } : {}) })
       : registerCodexMcp({ gbrainBin, sourceId, surface, advertise, ...(gbrainHome ? { gbrainHome } : {}), ...(hookLauncher ? { hookLauncher } : {}) });
@@ -1531,7 +1531,7 @@ async function runHooks(
     if (!mcpSkipped && !mcpPluginOwned) try {
       const listBin = harness === 'claude-code' ? 'claude' : 'codex';
       const scopeLabel = harness === 'claude-code' ? mcpScope : 'user-global';
-      const { verdict } = await verifyMcpTargetsWorkspace(runner, harness, 'gbrain', gbrainBin, sourceId, harness === 'codex' || mcpScope === 'user' ? hookLauncherPath() : undefined);
+      const { verdict } = await verifyMcpTargetsWorkspace(runner, harness, 'gbrain', gbrainBin, sourceId, harness === 'codex' || mcpScope === 'user' ? hookLauncherPath(home) : undefined);
       if (verdict === 'match') {
         console.log(`MCP registered with ${harness} (scope: ${scopeLabel}) — verified targeting this workspace.`);
       } else if (verdict === 'mismatch') {
@@ -1572,7 +1572,7 @@ async function runHooks(
         try {
           r = cloudCarrier
             ? writeCommittedClaudeHooks(ws, { env: hookEnv })
-            : writeClaudeHooks(ws, { gbrainBin, hookLauncher: ensureHookLauncher(hookLauncherPath()), env: hookEnv });
+            : writeClaudeHooks(ws, { gbrainBin, hookLauncher: ensureHookLauncher(hookLauncherPath(home)), env: hookEnv });
         } catch (e) {
           // Fail-closed on an unparseable settings file (either carrier): MCP
           // (step 1) still landed; record that, surface the fix, and exit
@@ -1611,7 +1611,7 @@ async function runHooks(
         // this repo's source; session-end resolves from the payload instead.
         let r: ReturnType<typeof writeCodexHooks>;
         try {
-          r = writeCodexHooks({ gbrainBin, hookLauncher: ensureHookLauncher(hookLauncherPath()) });
+          r = writeCodexHooks({ gbrainBin, hookLauncher: ensureHookLauncher(hookLauncherPath(home)) });
         } catch (e) {
           r = { ok: false, hooksPath: '', configPath: '', notes: [(e as Error).message] };
         }

@@ -21,6 +21,7 @@ import { classifyHarnessHook, hookEntryHash } from '../bootstrap/hooks.ts';
 import { localSetupRecords } from './local-receipts.ts';
 import { CLAUDE_SETTINGS_FILE_RELPATH, GBRAIN_HOOK_MARKER_KEY, GBRAIN_SETUP_MARKER_VALUE, claudeUserSettingsPath, codexConfigPath, codexHooksPath } from '../bootstrap/host-specs.ts';
 import { hookLauncherInCommand, hookLauncherState, type HookLauncherState } from './hook-launcher.ts';
+import type { LauncherLane } from './launcher-lanes.ts';
 import { enabledPluginLanes } from '../bootstrap/plugin-lanes.ts';
 import { brainFirstTarget, openclawConfigPath, parseJson5ish } from './brain-first.ts';
 import { inspectHermesTurnHook } from './hermes-turn-hook.ts';
@@ -123,7 +124,8 @@ export function inspectTurnHook(harness: string, opts: { projectDir?: string } =
  */
 export interface HookLauncherProblem {
   harness: 'claude-code' | 'codex';
-  lane: 'setup' | 'turn-rule';
+  /** setup and turn-rule: hooks; mcp, harness and bootstrap: the other lanes (launcher-lanes.ts), which carry their own rerun. */
+  lane: 'setup' | 'turn-rule' | LauncherLane;
   /** The settings or hooks file holding the entry. */
   source: string;
   /** session_cwd: no launcher in the command; otherwise the launcher's state. */
@@ -131,6 +133,10 @@ export interface HookLauncherProblem {
   detail: string;
   /** A setup entry the user edited after setup wrote it: setup keeps it as is, so only the user can move it. */
   edited?: boolean;
+  /** The other lanes: the command that rewrites the entry, where to run it, and whether it is setup's own (an agent may run it). */
+  rerun?: string[];
+  rerunFrom?: string;
+  setupOwned?: boolean;
 }
 
 /** The hook hashes a harness's setup receipts own and the ones they record as edited by the user: Claude Code can drop the `_gbrain` marker on a rewrite, and setup owns its entries by hash. */

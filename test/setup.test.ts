@@ -981,7 +981,7 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     const before = { settings: readFileSync(settings(b), 'utf8'), config: readFileSync(claudeJson(b), 'utf8') };
     await withEnv(env(b), async () => {
       const plan = { name: r.name, scope: r.scope, launcher: r.launcher, brainHome: r.gbrain_home, sourceId: r.source_id, surface: r.surface, advertise: r.advertise ?? null, events: Object.keys(r.hooks.owned) as any };
-      await expect(applyClaudeSetup(plan, r.consent, { pluginOwner: null, brainCreated: false, mcpMustBeCurrent: true })).rejects.toThrow('MCP entry changed');
+      await expect(applyClaudeSetup(plan, r.consent, { pluginOwner: null, brainCreated: false, mcpMustBeSetups: true })).rejects.toThrow('MCP entry changed');
     });
     expect({ settings: readFileSync(settings(b), 'utf8'), config: readFileSync(claudeJson(b), 'utf8') }).toEqual(before);
   });
