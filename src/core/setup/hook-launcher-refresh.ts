@@ -125,7 +125,7 @@ export async function refreshHookLaunchers(log: (line: string) => void = console
   try { await refreshSetup(log); } catch (e) { log(`Hook launcher: setup's hooks were not refreshed (${(e as Error).message}); run gbrain doctor --only harness_wiring.`); }
   // The other lanes are named, never rewritten here: bootstrap's writers run from the workspace, and their Codex entries move trust.
   try {
-    for (const f of launcherLaneFindings().filter((x) => x.owner !== 'setup')) log(`Hook launcher: ${f.detail}; ${f.edited ? 'it was edited after setup wrote it, so it is kept as is; remove or rewrite it, then ' : ''}${f.rerunFrom ? `from ${f.rerunFrom}, ` : ''}run ${f.rerun.join(' ')} to move it onto gbrain's launcher.`);
+    for (const f of launcherLaneFindings().filter((x) => x.owner !== 'setup')) log(`Hook launcher: ${f.detail}; ${f.edited ? 'it was edited after setup wrote it, so it is kept as is; remove or rewrite it, then ' : f.owner === 'none' ? 'gbrain setup did not write it, so remove it, then ' : ''}${f.rerunFrom ? `from ${f.rerunFrom}, ` : ''}run ${f.rerun.join(' ')} to move it onto gbrain's launcher.`);
   } catch (e) { log(`Hook launcher: the bootstrap lanes were not checked (${(e as Error).message}); run gbrain doctor --only harness_wiring.`); }
 }
 
