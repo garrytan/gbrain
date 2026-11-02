@@ -437,6 +437,8 @@ for (const kind of testBackends()) {
       const b = await write(bob, [{ fact: claim, provenance: 'turn 11' }]);
       const [aliceId] = a.structured!.fact_ids;
       const [bobId] = b.structured!.fact_ids;
+      const replayKey = randomUUID();
+      const replayed = await write(alice, [{ fact: 'Alice moved the harbor sync canaryreplayforget', provenance: 'turn 11' }], replayKey);
       const [worldRow] = await factRows('canaryworld');
       const active = async (id: string) => (await engine.executeRaw<{ expired_at: unknown }>('SELECT expired_at FROM facts WHERE id = $1', [Number(id)]))[0]?.expired_at === null;
       for (const [op, id] of [['forget', bobId], ['forget_fact', bobId], ['forget', String(worldRow!.id)], ['forget_fact', String(worldRow!.id)]] as const) {
@@ -448,6 +450,9 @@ for (const kind of testBackends()) {
       expect(await active(String(worldRow!.id))).toBe(true);
       const forgot = await call(alice, 'forget', { id: aliceId, reason: 'moved back' });
       expect(forgot.isError).toBe(false);
+      expect((await call(alice, 'forget', { id: replayed.structured!.fact_ids[0] })).isError).toBe(false);
+      const replay = await write(alice, [{ fact: 'Alice moved the harbor sync canaryreplayforget', provenance: 'turn 11' }], replayKey);
+      expect({ isError: replay.isError, fact_ids: replay.structured?.fact_ids }).toEqual({ isError: false, fact_ids: replayed.structured!.fact_ids });
       expect(await active(aliceId!)).toBe(false);
       expect(await active(bobId!)).toBe(true);
       const [ledger] = await engine.executeRaw<{ subject: string }>('SELECT subject FROM fact_withdrawals WHERE source_id = $1 AND fact_hash = gbrain_fact_fingerprint($2)', [SRC, claim]);

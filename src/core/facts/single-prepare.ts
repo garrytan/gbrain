@@ -190,7 +190,8 @@ export async function decideReplacement(engine: BrainEngine, sourceId: string, i
       EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
         AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
         AND ${withdrawalCoversFactSql('w', 'f')}) AS withdrawn
-    FROM facts f WHERE f.id=$1 AND f.source_id=$2${opts.excludePrivate ? ` AND (f.source_markdown_slug IS NOT DISTINCT FROM $3 OR ${privateProvenanceFilterFragment('f')})` : ''}${opts.lock ? ' FOR UPDATE OF f' : ''}`, [targetId, sourceId, ownPage]);
+    FROM facts f WHERE f.id=$1 AND f.source_id=$2${!opts.excludePrivate ? '' : ownPage ? ` AND (f.source_markdown_slug = $3 OR ${privateProvenanceFilterFragment('f')})` : ` AND ${privateProvenanceFilterFragment('f')}`}${opts.lock ? ' FOR UPDATE OF f' : ''}`,
+    opts.excludePrivate && ownPage ? [targetId, sourceId, ownPage] : [targetId, sourceId]);
   if (!target || (opts.remote && target.visibility !== 'world' && !(ownPage && target.source_markdown_slug === ownPage))) throw notFound();
   // #5913 [R2]: a slug-bound writer learns nothing about a fact outside its prefixes; the answer is the missing-id one.
   if (opts.slugPrefixes && [target.entity_slug, target.source_markdown_slug].some(slug => slug && !slugUnderBoundPrefixes(opts.slugPrefixes!, slug))) throw notFound();

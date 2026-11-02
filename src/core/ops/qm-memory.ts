@@ -239,8 +239,12 @@ const memory_write: Operation = {
       }
     }
     const { assertFactNotWithdrawn } = await import('../facts/single-prepare.ts');
+    const { requestPrincipalForContext } = await import('../persistence/page-mutations.ts');
+    const { getWriteRequest } = await import('../persistence/journal.ts');
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
+    const principal = await requestPrincipalForContext(ctx);
     for (const [index, item] of parsed.entries()) {
+      if (await getWriteRequest(ctx.engine, principal, items[index]!.request_id)) continue;
       const intent = { fact: item.fact as string, kind: (item.kind ?? 'fact') as never, visibility: 'private' as const, entity_slug: null, page_slug: memberPageSlug(actor.member) };
       try { await assertFactNotWithdrawn(ctx.engine, ctx.sourceId ?? 'default', intent, { excludePrivate }); } catch (e) {
         if (e instanceof OperationError) e.message = `facts[${index}]: ${e.message} Nothing was saved.`;
