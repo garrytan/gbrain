@@ -71,6 +71,86 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### access_member_disabled
+
+<a id="access_member_disabled"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The credential (access token, OAuth client or stdio binding) is bound to a member who is disabled, removed or missing, so it was refused at verification and nothing was read. | A credential bound to a member reads as that member. While the member cannot read, the credential is refused rather than silently treated as unbound. | Ask the brain operator to enable the member (gbrain access member enable <id>) or rebind the credential (gbrain auth rescope --token <name>\|--client <id> --member <id>\|none). | user | `gbrain doctor --json` | 1 | no |
+
+Reasons: `disabled`, `removed`, `missing`, `malformed`.
+
+More: [docs/guides/write-refusals.md#access_member_disabled](../../docs/guides/write-refusals.md#access_member_disabled)
+
+### access_member_id_retired
+
+<a id="access_member_id_retired"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The member id was removed earlier and member ids are never reused, so nothing was created or enabled. | Pages and audit history may still name a removed id; reusing it would hand that history to a different person. | Choose a new member id. Run: gbrain access member list --all --json | agent | `gbrain access member list --all --json` | 1 | no |
+
+More: [docs/guides/write-refusals.md#access_member_id_retired](../../docs/guides/write-refusals.md#access_member_id_retired)
+
+### access_member_invalid
+
+<a id="access_member_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A member or group id given to an access command, a credential binding or --as is ill-formed or names no usable member, so nothing was read or changed. | Ids are matched exactly against page readers; an unknown or disabled member is refused rather than read as unbound, so a typo never previews or binds the wrong view. | Check the id with gbrain access member list --all, or add the member first. Run: gbrain access member list --all --json | agent | `gbrain access member list --all --json` | 1 | no |
+
+Reasons: `ill_formed`, `unknown`, `disabled`, `removed`, `exists`, `unknown_group`.
+
+More: [docs/guides/write-refusals.md#access_member_invalid](../../docs/guides/write-refusals.md#access_member_invalid)
+
+### access_policy_invalid
+
+<a id="access_policy_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A source's folder-rule policy (the committed .gbrain/access.yml, or a file given to gbrain access rule import) does not validate, so it was not applied: the last applied rules stay in force and every prefix the bad file names reads as nobody (the whole source when its prefixes cannot be read). | A typo in an access file must never open a folder: an unreadable revision keeps the previous rules and hides what it touches until it is fixed. | Show each problem with its line (gbrain access rule list --source <id>). Fix the file, commit it with gbrain git commit-push and sync the source (gbrain sync --source <id> --no-pull). Run: gbrain access rule list --source '{source_id}' --json | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/write-refusals.md#access_policy_invalid](../../docs/guides/write-refusals.md#access_policy_invalid)
+
+### access_policy_pending
+
+<a id="access_policy_pending"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A narrowing change to a source's folder rules is still being applied to its pages, so the prefixes it touches read as nobody until it finishes; pages under other prefixes keep the last applied rules. | Pages under a newly restricted folder are restamped in batches; until the last batch and its re-check pass land, they read as nobody instead of under the old rules. | Retry shortly. If it stays pending, the apply was interrupted: the brain host finishes it with gbrain access resume --source <id> (database store); a git store finishes with gbrain sync --source <id> --no-pull. Run: gbrain access rule status --source '{source_id}' --json | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/write-refusals.md#access_policy_pending](../../docs/guides/write-refusals.md#access_policy_pending)
+
+### access_policy_store_mismatch
+
+<a id="access_policy_store_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A source's persisted folder-rule store (sources.config.access_store) disagrees with what this host sees (a git store with no visible work tree, or a database store whose root became a repository), so the persisted store and its applied rules stay in force and nothing switches on its own. | Inferring the store per host would let a missing checkout or a stray git init change which rules apply; only gbrain access rule migrate moves them, and neither direction widens. | On the brain host, preview the move with gbrain access rule migrate --source <id>, then apply it by adding --yes. Run: gbrain access rule status --source '{source_id}' --json | user | `gbrain doctor --json` | 1 | no |
+
+### access_policy_widening_held
+
+<a id="access_policy_widening_held"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A change to a source's folder rules widens who may read (a rule removed, readers added, the old folder of a moved prefix), so it is recorded but held: the previous rules stay in force until an operator previews it with gbrain access apply --source <id> and approves the printed plan with --yes --expect <plan_hash> on the brain host. | Write access to the policy (a git commit or a rule edit) must not be enough to open a folder; widening needs a host-side preview and an explicit approval. | Ask the user whether to approve the widening; the brain host previews it with gbrain access apply --source <id>. Run: gbrain access apply --source '{source_id}' --json | user | `repeat the read that failed` | 1 | no |
+
+### access_rule_invalid
+
+<a id="access_rule_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A folder rule given to gbrain access rule add is invalid (its prefix is not a literal lower-case folder ending in /, holds .. or *, its readers are not member ids or group:<id>, or another rule already covers the prefix), so nothing was written. | Prefixes are matched literally against slugs; a pattern or a typo would silently restrict the wrong pages or none. | Write the prefix as a slug folder ending in / (partners/alice-example/) and the readers as member ids or group:<id>. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#access_rule_invalid](../../docs/guides/write-refusals.md#access_rule_invalid)
+
 ### acknowledgment_unavailable
 
 <a id="acknowledgment_unavailable"></a>
@@ -2855,6 +2935,46 @@ More: [docs/guides/repair.md#ghost-pages](../../docs/guides/repair.md#ghost-page
 
 More: [docs/guides/on-commit-sync.md#notifier-stalled](../../docs/guides/on-commit-sync.md#notifier-stalled)
 
+### on_behalf_of_in_arguments
+
+<a id="on_behalf_of_in_arguments"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A tool call carried on_behalf_of inside its arguments, where conversation text could set it, so it was refused and nothing was read. | Only harness code may name whose notes a shared agent reads: the X-Gbrain-On-Behalf-Of header or request-level _meta.on_behalf_of, never tool arguments. | Remove on_behalf_of from the tool arguments. Harness code sends it as the X-Gbrain-On-Behalf-Of header or request-level _meta.on_behalf_of; other stdio clients use a credential bound to one member or config mcp.stdio_member. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#on_behalf_of_in_arguments](../../docs/guides/write-refusals.md#on_behalf_of_in_arguments)
+
+### on_behalf_of_invalid_audience
+
+<a id="on_behalf_of_invalid_audience"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A shared agent's request named its audience (the X-Gbrain-On-Behalf-Of header or request-level _meta.on_behalf_of) in a form gbrain does not accept: empty, more than 50 entries, an entry that is not a member id, group:<id> or guest, or a header and _meta that name different audiences. Nothing was read. | The audience decides whose notes the agent may read, so an audience gbrain cannot read exactly is refused instead of guessed. | Fix the harness code that sets the audience: 1-50 entries, each a member id, group:<id> or guest, the same in the header and _meta when both are sent. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#on_behalf_of_invalid_audience](../../docs/guides/write-refusals.md#on_behalf_of_invalid_audience)
+
+### on_behalf_of_not_permitted
+
+<a id="on_behalf_of_not_permitted"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A shared agent asserted an audience its credential's may_act_for does not list (for a stdio server, config mcp.stdio_may_act_for), so nothing was read. | A shared agent acts only for the people the brain operator approved for its credential; widening that list is the operator's decision, never the agent's. | The brain operator decides whether to approve the audience: gbrain auth rescope --token <name>\|--client <id> --may-act-for <list> on the brain host. Until then, call without the audience. | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/write-refusals.md#on_behalf_of_not_permitted](../../docs/guides/write-refusals.md#on_behalf_of_not_permitted)
+
+### on_behalf_of_unknown_member
+
+<a id="on_behalf_of_unknown_member"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A shared agent's audience names a member who is not enabled on this brain, or a group that does not exist, so nothing was read. | An unknown or disabled entry is refused rather than read as a guest, so a typo or a removed person never quietly changes what the agent reads. | Name enabled members and existing groups only (gbrain access member list --all, gbrain access group list on the brain host); a person who is not a member joins the audience as guest. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#on_behalf_of_unknown_member](../../docs/guides/write-refusals.md#on_behalf_of_unknown_member)
+
 ### origin_twin_mass_merge_refused
 
 <a id="origin_twin_mass_merge_refused"></a>
@@ -3380,6 +3500,16 @@ More: [docs/guides/graph-ranking.md#rank_entities_timeout](../../docs/guides/gra
 | A subagent's get_page result came back as a short summary because the job has used its read budget (for the dream patterns child, dream.patterns.child_read_budget_kb). | A CLI-backed model replays the whole transcript on every turn, so a child that read every page in full filled the model window. The summary keeps the slug, title, type and a short excerpt; writes still work. | Work from the pages already read and append with add_timeline_entry instead of rewriting a summarized page. An operator who needs more reads raises dream.patterns.child_read_budget_kb (0 turns the budget off). | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/dream-patterns.md#child-read-budget](../../docs/guides/dream-patterns.md#child-read-budget)
+
+### readable_by_invalid
+
+<a id="readable_by_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote write's readable_by is malformed, removes the field from a page that names readers, or would leave the page unreadable by the writer; nothing was written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#readable_by_invalid](../../docs/guides/write-refusals.md#readable_by_invalid)
 
 ### receipt_conflict
 

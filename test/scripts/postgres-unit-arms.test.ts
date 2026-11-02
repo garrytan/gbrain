@@ -137,8 +137,8 @@ describe('postgres-unit-arms list', () => {
       `2026-10-05T18:44:00.0000000Z ##[group]test/a.test.ts`,
       `2026-10-05T18:44:${String(seconds).padStart(2, '0')}.0000000Z ##[endgroup]`,
     ].join('\n');
-    expect(mineArmWeights([log(10), log(50), log(12)]).get('test/a.test.ts')).toBe(12000);
-    expect(mineArmWeights([log(10), log(50), log(12), log(14)]).get('test/a.test.ts')).toBe(13000);
+    expect(mineArmWeights([log(10), log(50), log(16)]).get('test/a.test.ts')).toBe(16000);
+    expect(mineArmWeights([log(10), log(50), log(16), log(14)]).get('test/a.test.ts')).toBe(15000);
   });
 });
 

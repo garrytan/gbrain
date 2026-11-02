@@ -29,7 +29,7 @@ import { persistenceFileHash, type PreparedMutation } from './coordinator.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
 import { databaseOnlyPublication, prepareFileTarget, preparePrivateTransition } from './page-prepare.ts';
 import { sourceCanonicalGit } from './git-door.ts';
-import { isPrivatePage } from '../search/private-visibility.ts';
+import { isPrivacyPrivatePage } from '../search/private-visibility.ts';
 import { assertPhysicalRoot } from './physical-root.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { LockStolenError, syncLockId, withRefreshingLock, type DbLockHandle } from '../db-lock.ts';
@@ -249,7 +249,7 @@ async function connectorFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 
 async function strictPrivateImport(engine: BrainEngine, sourceId: string, content: string, sourcePath: string, snapshot: PageSnapshot | null): Promise<boolean> {
   const parsed = parseMarkdown(content, sourcePath);
   const frontmatter = snapshot?.page.frontmatter.visibility === 'private' ? { ...parsed.frontmatter, visibility: 'private' } : parsed.frontmatter;
-  return isPrivatePage({ type: parsed.type, frontmatter }) && await sourceCanonicalGit(engine, sourceId);
+  return isPrivacyPrivatePage({ type: parsed.type, frontmatter }) && await sourceCanonicalGit(engine, sourceId);
 }
 
 /**
@@ -261,7 +261,7 @@ async function strictPrivateImport(engine: BrainEngine, sourceId: string, conten
 async function strictPrivateFile(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'>, content: string, sourcePath: string,
   snapshot: PageSnapshot | null): Promise<{ file: PreparedMutation['file'] } | null> {
   if (!await strictPrivateImport(engine, row.source_id, content, sourcePath, snapshot)) return null;
-  const turning = snapshot && !snapshot.page.deleted_at && !isPrivatePage({ type: snapshot.page.type, frontmatter: snapshot.page.frontmatter });
+  const turning = snapshot && !snapshot.page.deleted_at && !isPrivacyPrivatePage({ type: snapshot.page.type, frontmatter: snapshot.page.frontmatter });
   return { file: turning ? await preparePrivateTransition(engine, row, snapshot) : undefined };
 }
 

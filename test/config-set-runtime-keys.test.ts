@@ -57,4 +57,12 @@ describe('#6780 config set accepts the runtime reader keys', () => {
     expect(get.exitCode).toBe(0);
     expect(get.stdout.trim()).toBe(value);
   }, 240_000);
+
+  test('GBRA-218: the sticky access.restrictions_present marker is not a knob; config set refuses it without --force', async () => {
+    const env = { GBRAIN_BRAIN_ID: '', GBRAIN_SOURCE: '' };
+    const set = await runCli(['config', 'set', 'access.restrictions_present', '0'], { home, env, timeoutMs: 120_000 });
+    expect({ exitCode: set.exitCode, unknown: set.stderr.includes('Unknown config key') }).toEqual({ exitCode: 1, unknown: true });
+    const get = await runCli(['config', 'get', 'access.restrictions_present'], { home, env, timeoutMs: 120_000 });
+    expect(get.stdout.trim()).not.toBe('0');
+  }, 240_000);
 });
