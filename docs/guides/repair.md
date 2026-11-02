@@ -4341,6 +4341,39 @@ with the harness's own command:
 harness. opencode and Cursor have no per-turn hook gbrain can install; the
 rule reaches them through their instruction file only.
 
+### Hook starts gbrain in the session directory
+
+<a id="hook-session-cwd"></a>
+
+`hook_session_cwd`: a hook that `gbrain setup <claude-code|codex>` or the
+turn-rule lane wrote starts gbrain in the session's working directory. With a
+script-mode install (`bun install -g`, `bun link`) Bun reads that directory's
+`bunfig.toml` (a top-level `preload` runs before any gbrain code) and its
+`.env` files first, so opening a session in a cloned repository would run that
+repository's code on every prompt. Current hooks start gbrain through
+`<gbrain config dir>/hook-launcher/gbrain-hook`, which records the session
+directory in `GBRAIN_HOOK_CWD` and runs gbrain from its own directory. The
+`reason` says what doctor found:
+
+- `session_cwd`: the hook was written before the launcher existed.
+- `missing` or `stale`: the hook names the launcher, but it is gone, changed
+  or not executable.
+- `foreign`: the launcher's directory holds a file gbrain did not write. The
+  launcher refuses to start gbrain there (the hook exits 1 with one stderr
+  line) until you remove it.
+
+Run `fix.argv` (`gbrain setup <harness>` for setup's hooks,
+`gbrain setup <harness> --instructions-only` for the turn-rule hook);
+`gbrain post-upgrade` moves every user-scope hook it can find except
+`gbrain setup codex`'s, which only setup rewrites because the rewrite re-trusts
+them; post-upgrade prints that command instead. A project-scope
+install is refreshed from its project directory. A setup hook you edited after
+setup wrote it (`edited: true`) is never rewritten, so the fix is a
+`user_message`: remove or rewrite that entry, then run setup. When the check
+already carried another warning with its own fix, that code and fix stay, and
+the launcher fix is in `details.hook_launcher_fix`; run it after the first fix. Check with
+`gbrain doctor --only harness_wiring`.
+
 ## Connection notices
 
 Two notices tell an agent, on its own MCP connection, why something it
