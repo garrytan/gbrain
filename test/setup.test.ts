@@ -36,6 +36,7 @@ import { refreshHookLaunchers } from '../src/core/setup/hook-launcher-refresh.ts
 import { syncTurnRuleHook, isTurnRuleEntry } from '../src/core/setup/turn-hook.ts';
 import { hookLauncherFix, hookLauncherProblems } from '../src/commands/doctor/checks/harness-wiring.ts';
 import { launcherLaneFindings, setupRerunArgv } from '../src/core/setup/launcher-lanes.ts';
+import { harnessWiringEntry } from '../src/core/readiness.ts';
 import { applyClaudeSetup, readSetupReceipt } from '../src/core/setup/claude-code.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
@@ -1119,6 +1120,20 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     expect(after.beta.command).toBe(launcher({ ...b, gbrainHome: brainB }));
     expect(after.beta.env.GBRAIN_HOME).toBe(brainB);
     expect(after.gbrain.env.GBRAIN_HOME).toBe(brainA);
+  });
+
+  test('readiness reruns an existing setup install with what it recorded: never --no-hooks, never a doctor self-loop, Codex left to the user', async () => {
+    const b = box();
+    expect((await setup(b, ['claude-code', '--json'])).exitCode).toBe(0);
+    expect((await setup(b, ['codex', '--no-hooks', '--json'])).exitCode).toBe(0);
+    await withEnv(env(b), async () => {
+      expect(harnessWiringEntry({ transport: 'cli', harnesses: ['claude-code'], lockOwner: null, gbrainBin: b.bin }).fix)
+        .toMatchObject({ actor: 'agent', consent: ['persistent_install'], argv: ['gbrain', 'setup', 'claude-code', '--gbrain-bin', b.bin] });
+      const codex = harnessWiringEntry({ transport: 'cli', harnesses: ['codex'], lockOwner: null, gbrainBin: b.bin }).fix!;
+      expect(codex).toMatchObject({ actor: 'user' });
+      expect(codex.argv).toBeUndefined();
+      expect(codex.user_message).toContain(`run it yourself: gbrain setup codex --no-hooks --gbrain-bin ${b.bin}`);
+    });
   });
 
   test('claude-code MCP (#8426): doctor\'s rerun keeps a recorded --no-hooks, so moving the entry turns no hooks on', async () => {

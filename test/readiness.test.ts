@@ -19,9 +19,6 @@ import { renderAction, cliRenderContext, type Action } from '../src/core/agent-o
 import { listRecipes } from '../src/core/ai/recipes/index.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 const PROVIDER_ENVS = [...new Set(listRecipes().flatMap(r => r.auth_env?.required ?? []))];
 
@@ -170,19 +167,6 @@ describe('embeddingEnablement', () => {
 describe('harness_wiring by state', () => {
   const BIN = '/opt/gbrain/bin/gbrain';
   const owner = (transport: 'stdio' | 'http', is_self = false): LockOwner => ({ pid: 4242, transport, is_self });
-
-  test('an existing gbrain setup install is never rerun with --no-hooks: readiness points at doctor, which names the rerun that keeps its decisions', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'gbrain-readiness-setup-'));
-    try {
-      await withEnv({ HOME: home, GBRAIN_HOME: home, CLAUDE_CONFIG_DIR: undefined, CODEX_HOME: undefined }, async () => {
-        writeFileSync(join(home, '.gbrain-connection-claude-code-gbrain.json'), JSON.stringify({ connection: 'local-stdio', setup_receipt_version: 1, gbrain_home: join(home, '.gbrain'), harness: 'claude-code', name: 'gbrain', status: 'installed', scope: 'user' }));
-        const claude = harnessWiringEntry({ transport: 'cli', harnesses: ['claude-code'], lockOwner: null, gbrainBin: BIN });
-        expect(claude.fix).toMatchObject({ argv: ['gbrain', 'doctor', '--only', 'harness_wiring', '--json'], consent: [], actor: 'agent' });
-        expect(harnessWiringEntry({ transport: 'cli', harnesses: ['codex'], lockOwner: null, gbrainBin: BIN }).fix?.argv)
-          .toEqual(['gbrain', 'setup', 'codex', '--no-hooks', '--gbrain-bin', BIN]);
-      });
-    } finally { rmSync(home, { recursive: true, force: true }); }
-  });
 
   test('one harness, no serve: gbrain setup registers the absolute binary behind the hook launcher, --surface starter and --advertise verbs', () => {
     const claude = harnessWiringEntry({ transport: 'cli', harnesses: ['claude-code'], lockOwner: null, gbrainBin: BIN });
