@@ -24,10 +24,14 @@
  * VM cleanup: the gate's UBICLOUD: left= line (UBI_LEFT_FILE) must say 0, or
  * the run is PREGATE_REMOTE_INFRA (exit 4, no receipt), never a test result;
  * a missing line counts as not confirmed.
+ * Policy floor: .gstack/pregate.json's run_profiles and remote_gate_runs are read
+ * only by gstack 1.91.377.0 and newer, so .gstack/ship-policy.json must declare
+ * at least that min_gstack_version while they exist; an older gstack would
+ * otherwise refuse the policy as invalid instead of naming the upgrade.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -334,5 +338,18 @@ describe('pregate-remote-gate.sh --list', () => {
     git('update-ref', '-d', 'refs/remotes/origin/master');
     refused(list(gate));
     expect(spawnSync('test', ['-e', join(repo, '.git', 'list-ran')]).status).not.toBe(0);
+  });
+});
+
+describe('.gstack policy floor', () => {
+  it('ship-policy.json declares min_gstack_version 1.91.377.0 or newer while pregate.json declares run_profiles or remote_gate_runs', () => {
+    const root = join(import.meta.dir, '..', '..');
+    const pregate = JSON.parse(readFileSync(join(root, '.gstack/pregate.json'), 'utf8'));
+    const ship = JSON.parse(readFileSync(join(root, '.gstack/ship-policy.json'), 'utf8'));
+    if (!('run_profiles' in pregate) && !('remote_gate_runs' in pregate)) return;
+    const floor = String(ship.min_gstack_version ?? '');
+    expect(floor).toMatch(/^\d+\.\d+\.\d+(\.\d+)?$/);
+    const [a, b, c] = floor.split('.').map(Number);
+    expect(a * 1e8 + b * 1e4 + c).toBeGreaterThanOrEqual(1 * 1e8 + 91 * 1e4 + 377);
   });
 });
