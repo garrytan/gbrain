@@ -21,13 +21,13 @@ describe('ConnectorClient guards', () => {
     await expect(c.fetchJSON('/x')).rejects.toBeInstanceOf(ConnectorResponseTooLargeError);
     expect(pulled).toBeLessThan(5);
     const small = client(async () => new Response('{"ok":true}', { status: 200 }), { maxResponseBytes: 100 });
-    expect(await small.postJSON('/x', { a: 1 })).toEqual({ ok: true });
+    expect(await small.postJSON<{ ok: boolean }>('/x', { a: 1 })).toEqual({ ok: true });
   });
 
   test('a stalled request fails as a network timeout', async () => {
-    const error = await client(stalled, { requestTimeoutMs: 20 }).fetchJSON('/x').catch(e => e);
+    const error = await client(stalled, { requestTimeoutMs: 20 }).fetchJSON('/x').catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ConnectorNetworkError);
-    expect(String(error.message)).toContain('TIMEOUT');
+    expect(String((error as Error).message)).toContain('TIMEOUT');
   });
 
   test("a caller's abort surfaces as its reason, not a network error", async () => {
