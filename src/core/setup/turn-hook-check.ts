@@ -182,14 +182,12 @@ export function hookLauncherProblem(harness: 'claude-code' | 'codex', opts: { pr
   }
   for (const f of found) {
     const launcher = hookLauncherInCommand(f.command);
-    const edited = f.edited ? { edited: true } : {};
-    const kept = f.edited ? '; it was edited after setup wrote it, so setup keeps it as is' : '';
     if (!launcher) {
-      return { harness, lane: f.lane, source: f.source, reason: 'session_cwd', ...edited,
-        detail: `gbrain's ${f.lane} hook in ${f.source} starts gbrain in the session's directory, so Bun loads that directory's bunfig.toml and .env before gbrain runs${kept}` };
+      return { harness, lane: f.lane, source: f.source, reason: 'session_cwd', ...(f.edited ? { edited: true } : {}),
+        detail: `gbrain's ${f.lane} hook in ${f.source} starts gbrain in the session's directory, so Bun loads that directory's bunfig.toml and .env before gbrain runs${f.edited ? '; it was edited after setup wrote it, so setup keeps it as is' : ''}` };
     }
     const s = hookLauncherState(launcher);
-    if (s.state !== 'current') return { harness, lane: f.lane, source: f.source, reason: s.state, ...edited, detail: `gbrain's ${f.lane} hook in ${f.source} runs through ${launcher}, but ${s.detail}${kept}` };
+    if (s.state !== 'current') return { harness, lane: f.lane, source: f.source, reason: s.state, detail: `gbrain's ${f.lane} hook in ${f.source} runs through ${launcher}, but ${s.detail}` };
   }
   return null;
 }

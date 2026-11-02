@@ -4365,7 +4365,11 @@ directory in `GBRAIN_HOOK_CWD` and runs gbrain from its own directory. The
 Run `fix.argv` (`gbrain setup <harness>` for setup's hooks,
 `gbrain setup <harness> --instructions-only` for the turn-rule hook);
 `gbrain post-upgrade` moves every user-scope hook it can find. A project-scope
-install is refreshed from its project directory. Check with
+install is refreshed from its project directory. A setup hook you edited after
+setup wrote it (`edited: true`) is never rewritten, so the fix is a
+`user_message`: remove or rewrite that entry, then run setup. When the check
+already carried another warning with its own fix, that code and fix stay, and
+the launcher fix is in `details.hook_launcher_fix`. Check with
 `gbrain doctor --only harness_wiring`.
 
 ## Connection notices

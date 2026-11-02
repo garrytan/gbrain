@@ -253,6 +253,7 @@ describe('doctor: the hook_session_cwd fix and how it joins the harness_wiring c
       const edited = hookLauncherFix(problem(b, { edited: true }));
       expect(edited.actor).toBe('user');
       expect(edited.user_message).toContain('Remove or rewrite that entry');
+      expect(hookLauncherFix(problem(b, { edited: true, source: join(project, '.claude', 'settings.local.json') })).user_message).toContain(`then from ${project}, run: gbrain setup claude-code --scope project`);
     });
   });
 

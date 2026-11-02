@@ -523,7 +523,7 @@ export function hookLauncherFix(p: HookLauncherProblem): Action {
   const why = "Rewrites gbrain's hooks to start gbrain from its own launcher directory, so a repository's bunfig.toml or .env never runs when a session opens there. `gbrain post-upgrade` refreshes the user-scope hooks too.";
   const verify = doctorVerify(NAME);
   if (p.reason === 'foreign') return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove that file (gbrain did not write it), then run: ${argv.join(' ')}` };
-  if (p.edited) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove or rewrite that entry in ${p.source} (setup never overwrites an edit), then run: ${argv.join(' ')}` };
+  if (p.edited) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove or rewrite that entry in ${p.source} (setup never overwrites an edit), then ${project ? `from ${project}, ` : ''}run: ${argv.join(' ')}` };
   if (project) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `gbrain's hooks for ${project} start gbrain in the session's directory. From ${project}, run: ${argv.join(' ')}` };
   return { argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify, why };
 }
