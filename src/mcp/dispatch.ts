@@ -911,7 +911,9 @@ export async function dispatchToolCall(
   // GBRA-156: a remote read sees private pages only in the sources its grant names under private_pages: granted_sources.
   // Writes, local callers and every path outside this call keep the empty set, so they hide or see exactly what they did.
   // context_pack and delta stay world-only for every caller unless a trusted local one passes include_private, so no grant widens them.
-  const readOnly = operations.find(o => o.name === name)?.mutating === false;
+  const op = operations.find(o => o.name === name);
+  const readOnly = op?.mutating === false;
+  const args = op && params ? normalizeOptionalParams(op, params) : params;
   const privateSources = readOnly && opts.remote !== false && !WORLD_ONLY_PACK_OPS.has(name) ? opts.auth?.privatePages?.sources : undefined;
   const resolved = opts.metaHook && (opts.hotMemoryOff === true || hotMemoryOffIn(params)) ? { ...opts, metaHook: undefined } : opts;
   // GBRA-218: a remote call also carries its credential's member identity, which every caller-aware read checks page readers against.
@@ -923,15 +925,15 @@ export async function dispatchToolCall(
     let attested: Awaited<ReturnType<typeof resolveAttestedActor>> = null;
     let access: Awaited<ReturnType<typeof remoteCallerAccess>>;
     const header = opts.actor?.header ?? undefined;
-    const actorNamed = header !== undefined || opts.actor?.audience != null || (!!params && Object.prototype.hasOwnProperty.call(params, ACTOR_ARGUMENT));
+    const actorNamed = header !== undefined || opts.actor?.audience != null || (!!args && Object.prototype.hasOwnProperty.call(args, ACTOR_ARGUMENT));
     const assertion = (outcome: AudienceAuditEvent['outcome'], reason?: string) => logAudienceAssertion({ outcome, op: name,
       audience: [...(attested?.access.audience ?? audience ?? [])], transport: opts.transport ?? 'unknown',
       principal: opts.auth?.principal ? `${opts.auth.principal.kind}:${opts.auth.principal.id}` : opts.transport === 'stdio' ? 'local_stdio' : 'unknown',
       ...(actorNamed ? { actor: { system: 'qm', ...(header && EXTERNAL_ID_RE.test(header) ? { external_id: header } : {}), ...(reason ? { reason } : {}) } } : {}) });
     try {
-      if (audienceInArguments(params)) throw audienceInArgumentsError();
+      if (audienceInArguments(args)) throw audienceInArgumentsError();
       audience = parseAudience(opts.onBehalfOf);
-      attested = await resolveAttestedActor(engine, { channels: opts.actor, params, op: name, opShape: operations.find(o => o.name === name),
+      attested = await resolveAttestedActor(engine, { channels: opts.actor, params: args, op: name, opShape: op,
         auth: opts.auth, transport: opts.transport, audienceAsserted: audience !== null });
       access = attested ? attested.access : await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience);
     } catch (e) {
@@ -942,10 +944,10 @@ export async function dispatchToolCall(
         return withStructuredError(errorResult(e, opts, { op: name }));
       }
       assertion(e.code as AudienceAuditEvent['outcome'], e.reason);
-      return qmMemoryToolResult(name, actorNamed ? actorRefusal(e, opts, name, header, params) : errorResult(e, opts, { op: name }));
+      return qmMemoryToolResult(name, actorNamed ? actorRefusal(e, opts, name, header, args) : errorResult(e, opts, { op: name }));
     }
     if (audience || attested) assertion('accepted');
-    const callParams = attested ? attested.params : params;
+    const callParams = attested ? attested.params : args;
     return withCallerAccess(access, async () => {
       const out = await withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, callParams, resolved));
       // _meta.access (MCP_META_CHANNELS.md): the view this call was answered under, for the harness; own producer, isolated.
