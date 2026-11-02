@@ -5,6 +5,9 @@
  * after the first one warmed the cache, the order that leaked on master.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { HybridSearchMeta } from '../src/core/types.ts';
@@ -125,17 +128,33 @@ describe('search telemetry flushes into the searching brain', () => {
     expect(_telemetryWriterCountForTest()).toBe(1);
   });
 
-  test('an engine\'s disconnect retires its writer, so engines opened and closed per request leave none behind', async () => {
+  test('an engine\'s disconnect suspends its writer, so engines opened and closed per request leave no timer behind', async () => {
     const closers: Array<() => Promise<void>> = [];
     for (let i = 0; i < 20; i++) {
       const hooks = new Set<() => Promise<void>>();
       const engine = { ...configEngine({}), registerBeforeDisconnect(stop: () => Promise<void>) { hooks.add(stop); return () => { hooks.delete(stop); }; } } as unknown as BrainEngine;
       recordSearchTelemetry(engine, meta, { results_count: 1 });
-      closers.push(async () => { for (const stop of [...hooks]) await stop(); expect(hooks.size).toBe(0); });
+      closers.push(async () => { for (const stop of [...hooks]) await stop(); });
     }
     expect(_telemetryWriterCountForTest()).toBe(20);
     for (const close of closers) await close();
     expect(_telemetryWriterCountForTest()).toBe(0);
+  });
+  test('a PGLite reconnect keeps the buffered telemetry, which then flushes into the reconnected brain', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gb-telemetry-reconnect-'));
+    const engine = new PGLiteEngine();
+    try {
+      await engine.connect({ database_path: join(dir, 'brain.pglite') });
+      await engine.initSchema();
+      recordSearchTelemetry(engine, meta, { results_count: 1 });
+      await engine.reconnect();
+      recordSearchTelemetry(engine, meta, { results_count: 1 });
+      await awaitPendingTelemetryFlush(5000, 'exit');
+      expect((await engine.executeRaw<{ n: number }>('SELECT COALESCE(SUM(count),0)::int AS n FROM search_telemetry'))[0]!.n).toBe(2);
+    } finally {
+      await engine.disconnect();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
