@@ -24,7 +24,7 @@ import type { ChunkInput } from '../types.ts';
 export const CHUNK_VECTOR_WRITE_BUDGET = 5;
 
 /**
- * A stored chunk row that keeps its id and vector and changes index (`to`), with the span its new chunk records.
+ * A stored chunk row that keeps its id and vector, with its target index and span. Equal indexes refresh only spans.
  * `vectorless`: the row has no vector, so moving it makes no vector-index write.
  */
 export interface ChunkMove { id: number; from: number; to: number; projected_byte_start?: number | null; projected_byte_end?: number | null; vectorless?: boolean }
@@ -36,6 +36,7 @@ export interface ChunkMove { id: number; from: number; to: number; projected_byt
  * at the negative index `-1 - to` and lands later, a vectorless one when the cycle has one. `done` says every move
  * fits; `updates` counts the vector-index writes; `pending` and `at` are the moves left and the occupied indexes once
  * the waves ran.
+ * Equal from/to indexes refresh spans in place and cost the same as moves: a non-HOT span update also adds HNSW entries.
  */
 export function planMoveWaves(moves: readonly ChunkMove[], occupied: ReadonlyMap<number, number>, budget: number):
   { waves: ChunkMove[][]; updates: number; done: boolean; pending: ChunkMove[]; at: Map<number, number> } {
@@ -45,7 +46,7 @@ export function planMoveWaves(moves: readonly ChunkMove[], occupied: ReadonlyMap
   let updates = 0;
   const cost = (move: ChunkMove) => move.vectorless ? 0 : 1;
   while (pending.length) {
-    const open = pending.filter(move => !at.has(move.to));
+    const open = pending.filter(move => move.from === move.to || !at.has(move.to));
     const free: ChunkMove[] = [];
     for (const move of open) if (updates + cost(move) <= budget) { free.push(move); updates += cost(move); }
     const parked = open.length ? undefined : pending.find(move => move.vectorless) ?? (updates < budget ? pending[0] : undefined);
@@ -65,10 +66,13 @@ export function planMoveWaves(moves: readonly ChunkMove[], occupied: ReadonlyMap
  * the row has one); a kept row whose chunk sits at another index moves there (`waves`). With `bounded` (a managed
  * publication), `defer` says the vector-index writes (moves of rows with a vector, inserts of chunks carrying one) pass
  * CHUNK_VECTOR_WRITE_BUDGET, so the publication leaves the replacement to `continueDeferredProjection`.
+ * Same-index kept rows participate too: their text may be unchanged while an earlier edit shifted their byte spans.
  */
-export function planImportChunkWrites(fresh: readonly ChunkInput[], kept: ReadonlyMap<number, { id: number; chunk_index: number; vector: boolean }>, bounded: boolean):
+export function planImportChunkWrites(fresh: readonly ChunkInput[], kept: ReadonlyMap<number, { id: number; chunk_index: number; vector: boolean; projected_byte_start?: number | null; projected_byte_end?: number | null }>, bounded: boolean):
   { waves: ChunkMove[][]; defer: boolean } {
-  const moves = [...kept].filter(([i, row]) => row.chunk_index !== fresh[i]!.chunk_index).map(([i, row]) => ({ id: row.id, from: row.chunk_index,
+  const moves = [...kept].filter(([i, row]) => row.chunk_index !== fresh[i]!.chunk_index
+    || (row.projected_byte_start ?? null) !== (fresh[i]!.projected_byte_start ?? null)
+    || (row.projected_byte_end ?? null) !== (fresh[i]!.projected_byte_end ?? null)).map(([i, row]) => ({ id: row.id, from: row.chunk_index,
     to: fresh[i]!.chunk_index, projected_byte_start: fresh[i]!.projected_byte_start ?? null, projected_byte_end: fresh[i]!.projected_byte_end ?? null,
     ...(row.vector ? {} : { vectorless: true }) }));
   const vectorInserts = fresh.filter((chunk, i) => !kept.has(i) && (chunk.embedding || chunk.embedding_image)).length;
