@@ -108,11 +108,11 @@ export async function readCandidateFusion(engine: BrainEngine): Promise<Candidat
  * under `interleave` the cosine and keyword arms merged round-robin by fact id
  * and cut to the same k, so the decision still scores at most k rows.
  */
-export async function listSupersessionCandidates(engine: BrainEngine, sourceId: string, entitySlug: string, fact: string, embedding: Float32Array, embeddingModel?: string | null, fusion?: CandidateFusion, attributedTo?: FactAttribution | null, excludeMemberPages = false): Promise<FactRow[]> {
+export async function listSupersessionCandidates(engine: BrainEngine, sourceId: string, entitySlug: string, fact: string, embedding: Float32Array, embeddingModel?: string | null, fusion?: CandidateFusion, attributedTo?: FactAttribution | null, scope: { excludeMemberPages?: boolean; onlyPage?: string } = {}): Promise<FactRow[]> {
   const k = SUPERSESSION_CANDIDATE_K;
-  const cosine = await engine.findCandidateDuplicates(sourceId, entitySlug, fact, { embedding, embeddingModel, k, attributedTo, excludeMemberPages });
+  const cosine = await engine.findCandidateDuplicates(sourceId, entitySlug, fact, { embedding, embeddingModel, k, attributedTo, ...scope });
   if ((fusion ?? await readCandidateFusion(engine)) !== 'interleave') return cosine;
-  const keyword = await engine.findCandidateDuplicates(sourceId, entitySlug, fact, { embedding, embeddingModel, k, arm: 'keyword', attributedTo, excludeMemberPages });
+  const keyword = await engine.findCandidateDuplicates(sourceId, entitySlug, fact, { embedding, embeddingModel, k, arm: 'keyword', attributedTo, ...scope });
   return interleaveFusion([cosine, keyword], row => row.id, k);
 }
 
@@ -129,7 +129,8 @@ export async function decideSingleFact(engine: BrainEngine, sourceId: string, in
     ORDER BY id LIMIT 1`, [sourceId, input.entity_slug, input.visibility, input.fact, input.attributed_to ?? null, input.page_slug ?? null]);
   if (exact) return { status: 'duplicate', candidate: { ...exact, id: Number(exact.id) } };
   if (embedding && input.entity_slug) {
-    const candidates = await listSupersessionCandidates(engine, sourceId, input.entity_slug, input.fact, embedding, embeddingModel, undefined, input.attributed_to ?? null, !input.page_slug);
+    const candidates = await listSupersessionCandidates(engine, sourceId, input.entity_slug, input.fact, embedding, embeddingModel, undefined, input.attributed_to ?? null,
+      input.page_slug ? { onlyPage: input.page_slug } : { excludeMemberPages: true });
     const metadata = await engine.executeRaw<{ id: number; source_markdown_slug: string | null; row_num: number | null; trust_tier: FactRow['trust_tier'] }>(
       `SELECT id,source_markdown_slug,row_num,trust_tier FROM facts WHERE source_id=$1 AND id=ANY($2::int[])${opts.excludePrivate && !input.page_slug ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`,
       [sourceId, candidates.map(c => c.id)]);
@@ -181,14 +182,16 @@ export async function replacementVisibility(engine: BrainEngine, sourceId: strin
  */
 export async function decideReplacement(engine: BrainEngine, sourceId: string, input: SingleFactIntent, targetId: number,
   opts: { pageSlug: string; remote: boolean; lock?: boolean; excludePrivate?: boolean; slugPrefixes?: string[] | null }): Promise<FactDecision> {
+  // GST-359: a member's write may replace a fact on its own member page (the page this write goes to), private or not.
+  const ownPage = input.page_slug && input.page_slug === opts.pageSlug ? input.page_slug : null;
   const notFound = () => verbError('not_found', `No fact with id "${targetId}" to replace.`,
     'Pass the fact_id of an active fact from recall (facts[].fact_id) about the same entity, or omit replaces to save a new fact.');
   const [target] = await engine.executeRaw<FactCandidate & { withdrawn: boolean }>(`SELECT f.*,
       EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
         AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
         AND ${withdrawalCoversFactSql('w', 'f')}) AS withdrawn
-    FROM facts f WHERE f.id=$1 AND f.source_id=$2${opts.excludePrivate ? ` AND ${privateProvenanceFilterFragment('f')}` : ''}${opts.lock ? ' FOR UPDATE OF f' : ''}`, [targetId, sourceId]);
-  if (!target || (opts.remote && target.visibility !== 'world')) throw notFound();
+    FROM facts f WHERE f.id=$1 AND f.source_id=$2${opts.excludePrivate ? ` AND (f.source_markdown_slug IS NOT DISTINCT FROM $3 OR ${privateProvenanceFilterFragment('f')})` : ''}${opts.lock ? ' FOR UPDATE OF f' : ''}`, [targetId, sourceId, ownPage]);
+  if (!target || (opts.remote && target.visibility !== 'world' && !(ownPage && target.source_markdown_slug === ownPage))) throw notFound();
   // #5913 [R2]: a slug-bound writer learns nothing about a fact outside its prefixes; the answer is the missing-id one.
   if (opts.slugPrefixes && [target.entity_slug, target.source_markdown_slug].some(slug => slug && !slugUnderBoundPrefixes(opts.slugPrefixes!, slug))) throw notFound();
   if (target.visibility !== input.visibility) {

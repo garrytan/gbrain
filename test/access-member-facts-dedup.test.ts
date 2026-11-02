@@ -132,3 +132,56 @@ describe('member-page facts never crowd the dedup candidate cap (pglite, repo-le
     }
   }, 180_000);
 });
+
+const V_OLD = (() => { const v = new Array<number>(DIMS).fill(0); v[7] = 1; v[9] = 0.25; return v; })();
+
+describe('a member updates its own facts whatever other members saved (pglite, repo-less)', () => {
+  let engine: BrainEngine;
+  const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+  const tokens: Record<string, string> = {};
+  const remember = async (who: string, params: Record<string, unknown>) => {
+    const out = await dispatchToolCall(engine, 'remember', { provenance: 'dm', ...params }, { remote: true, transport: 'http', auth: await provider().verifyAccessToken(tokens[who]!) as unknown as AuthInfo, sourceId: SRC, takesHoldersAllowList: ['world'] });
+    const text = out.content.map(c => c.text).join('\n');
+    let json: Record<string, any> = {};
+    try { json = JSON.parse(text); } catch { /* prose */ }
+    return { isError: out.isError === true, text, json };
+  };
+  const active = async (needle: string) => (await engine.executeRaw<{ id: number | string }>('SELECT id FROM facts WHERE source_id = $1 AND fact LIKE $2 AND expired_at IS NULL', [SRC, '%' + needle + '%'])).map(r => String(r.id));
+
+  beforeAll(async () => {
+    configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: DIMS, env: { OPENAI_API_KEY: 'test' } } as never);
+    __setEmbedTransportForTests((async ({ values }: { values: string[] }) => ({ embeddings: values.map(t => t.includes('canaryoldbob') ? V_OLD : VEC) })) as never);
+    engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema();
+    __resetPrivateVisibilityCacheForTests();
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [SRC]);
+    for (const id of [...CROWD, 'bob-example']) await addMember(engine, id);
+    await engine.setConfig('facts.supersession_thresholds', JSON.stringify({ 'openai:text-embedding-3-small@1536': 0.95 }));
+    await importFromContent(engine, ACME, '---\ntype: company\ntitle: Acme Example\n---\n# Acme Example\n\nAcme example builds harbor ledgers.', { sourceId: SRC });
+    for (const who of [...CROWD, 'bob-example']) {
+      const c = await provider().registerClientManual('own-' + who + '-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], SRC);
+      await bindCredential(engine, { kind: 'client', id: c.clientId }, { member: who });
+      tokens[who] = (await provider().exchangeClientCredentials(c.clientId, c.clientSecret ?? '')).access_token;
+    }
+  }, 180_000);
+
+  afterAll(async () => { __setEmbedTransportForTests(null); resetGateway(); await engine.disconnect(); });
+
+  test('five closer facts on other members\' pages never hide the caller\'s own earlier fact from supersession', async () => {
+    expect((await remember('bob-example', { fact: 'Acme Example plans a harbor sale canaryoldbob', entity: ACME })).isError).toBe(false);
+    for (const member of CROWD) expect((await remember(member, { fact: 'Acme Example plans a harbor sale soon ' + member, entity: ACME })).isError).toBe(false);
+    const out = await remember('bob-example', { fact: 'Acme Example plans a harbor sale this quarter canarynewbob', entity: ACME });
+    expect(out.isError).toBe(false);
+    expect(await active('canaryoldbob')).toEqual([]);
+    expect(await active('canarynewbob')).toHaveLength(1);
+  }, 120_000);
+
+  test('a member replaces its own fact by id', async () => {
+    const saved = await remember('bob-example', { fact: 'Acme Example ships ledgers on Fridays canaryreplaceold', entity: ACME });
+    expect(saved.isError).toBe(false);
+    const [old] = await active('canaryreplaceold');
+    const out = await remember('bob-example', { fact: 'Acme Example ships ledgers on Thursdays canaryreplacenew', entity: ACME, replaces: old });
+    expect({ isError: out.isError, text: out.isError ? out.text : '' }).toEqual({ isError: false, text: '' });
+    expect(await active('canaryreplaceold')).toEqual([]);
+    expect(await active('canaryreplacenew')).toHaveLength(1);
+  }, 120_000);
+});
