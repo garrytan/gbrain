@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
 import { buildClaudeHookCommand } from '../src/core/bootstrap/hooks.ts';
-import { codexHookGroupRuns, codexHookTrustHash, codexSetupHookGroup } from '../src/core/bootstrap/codex-hooks.ts';
+import { codexHookGroupRuns, codexHookTrustHash, codexSetupGroupRuns, codexSetupHookGroup, codexSetupTrustEntry } from '../src/core/bootstrap/codex-hooks.ts';
 import { appendCodexTomlTable } from '../src/core/bootstrap/codex-toml.ts';
 import { captureHookSessionCwd, hookSessionCwd } from '../src/core/setup/hook-launcher.ts';
 import { syncTurnRuleHook, TURN_RULE_MARKER } from '../src/core/setup/turn-hook.ts';
@@ -241,6 +241,21 @@ describe('hooks written before the launcher: doctor flags them, post-upgrade mov
     });
     expect(readJson(hooks)).toEqual({ hooks: { UserPromptSubmit: [group] } });
     expect(codexHookGroupRuns(hooks, config, { event: 'UserPromptSubmit', index: 0 })).toBe(false);
+  });
+
+  test("codex: setup's SessionEnd capture group runs only with its own trust entry", () => {
+    const b = box();
+    const hooks = join(b.home, '.codex', 'hooks.json');
+    const config = join(b.home, '.codex', 'config.toml');
+    const group = codexSetupHookGroup(b.gbrain, 'SessionEnd', {}, 'setup');
+    mkdirSync(dirname(hooks), { recursive: true });
+    writeFileSync(hooks, JSON.stringify({ hooks: { SessionEnd: [group] } }));
+    writeFileSync(config, '');
+    expect(codexSetupGroupRuns(hooks, config, { event: 'SessionEnd', index: 0 })).toBe(false);
+    const { key, trusted_hash } = codexSetupTrustEntry(hooks, 'SessionEnd', 0, group);
+    appendCodexTomlTable(config, ['hooks', 'state', key], { trusted_hash }, 'test: Codex trusted the capture hook');
+    expect(codexSetupGroupRuns(hooks, config, { event: 'SessionEnd', index: 0 })).toBe(true);
+    expect(codexHookGroupRuns(hooks, config, { event: 'SessionEnd', index: 0 })).toBe(false);
   });
 
   test('the recorded session directory is resolved and dropped from the environment', async () => {

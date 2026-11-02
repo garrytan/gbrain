@@ -18,7 +18,7 @@
 import { readFileSync } from 'node:fs';
 import { configDir } from '../config.ts';
 import { hookEntryHash, parseClaudeHookCommand } from '../bootstrap/hooks.ts';
-import { codexHookCensus, codexHookGroupRuns, type CodexHookCensusGroup } from '../bootstrap/codex-hooks.ts';
+import { codexHookCensus, codexHookGroupRuns, codexSetupGroupRuns, type CodexHookCensusGroup } from '../bootstrap/codex-hooks.ts';
 import { join } from 'node:path';
 import { GBRAIN_HOOK_MARKER_KEY, GBRAIN_SETUP_MARKER_VALUE, claudeUserSettingsPath, codexConfigPath, codexHooksPath, type ClaudeHookEvent } from '../bootstrap/host-specs.ts';
 import type { CodexSetupEvent } from '../bootstrap/codex-hooks.ts';
@@ -105,10 +105,14 @@ async function refreshSetup(log: (line: string) => void): Promise<void> {
         const receipt = readCodexSetupReceipt(record.path).setup;
         if (!receipt) continue;
         const paths = codexSetupPaths(receipt.name);
-        const ours = codexHookCensus(paths.hooksPath).filter((g) => g.lane === 'setup').flatMap((g) => g.commands);
-        if (!ours.some(needsLauncher)) continue;
+        const groups = codexHookCensus(paths.hooksPath).filter((g) => g.lane === 'setup');
+        if (!groups.flatMap((g) => g.commands).some(needsLauncher)) continue;
         const plan: CodexSetupPlan = { name: receipt.name, launcher: receipt.launcher, brainHome: receipt.gbrain_home, ...(receipt.gbrain_home_env ? { gbrainHomeEnv: receipt.gbrain_home_env } : {}),
           sourceId: receipt.source_id, surface: receipt.surface, advertise: receipt.advertise ?? null, events: Object.keys({ ...receipt.hooks.owned, ...receipt.hooks.pending }) as CodexSetupEvent[] };
+        // Rewriting re-trusts every setup group, so it runs only when Codex already runs each one: an untrusted, disabled or missing group keeps Codex's approval gate.
+        const runs = (g: CodexHookCensusGroup) => codexSetupGroupRuns(paths.hooksPath, paths.configPath, g);
+        const idle = [...new Set([...plan.events.filter((e) => !groups.some((g) => g.event === e && runs(g))), ...groups.filter((g) => !runs(g)).map((g) => g.event)])];
+        if (idle.length > 0) { log(`Hook launcher: Codex does not run gbrain setup's codex ${idle.join(', ')} hook in ${paths.hooksPath} (not trusted, disabled or removed), so setup's codex hooks are left as is; run ${rerun} to rewrite them.`); continue; }
         if (!receipt.mcp_plugin && inspectCodexSetup(plan).mcp.state !== 'current') { log(`Hook launcher: gbrain's codex hooks start gbrain in the session's directory; run ${rerun} to rewrite them.`); continue; }
         const applied = await applyCodexSetup(plan, receipt.consent, { pluginOwner: receipt.mcp_plugin ?? null, brainCreated: false, mcpMustBeCurrent: true });
         const left = new Set(codexHookCensus(paths.hooksPath).filter((g) => g.commands.some(needsLauncher)).map((g) => g.hash));

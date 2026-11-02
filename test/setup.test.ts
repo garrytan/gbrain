@@ -1016,4 +1016,20 @@ describe('hooks written before the hook launcher (#8424): the next setup and pos
     expect(viaLauncher(b, codexSetupCommands(b))).toBe(true);
     expect((await setup(b, ['codex', '--json'])).doc.steps.map((s: any) => s.action)).toEqual(['keep', 'keep', 'keep', 'keep']);
   });
+
+  test('codex: post-upgrade leaves setup groups Codex does not run as is, so it grants no trust', async () => {
+    const b = box();
+    expect((await setup(b, ['codex', '--json'])).exitCode).toBe(0);
+    downgradeCodex(b);
+    for (const rec of Object.values(readJson(codexReceipt(b)).trust.owned) as Array<{ key: string }>) removeCodexTomlTable(codexToml(b), ['hooks', 'state', rec.key]);
+    const before = { hooks: readFileSync(hooksJson(b), 'utf8'), config: readFileSync(codexToml(b), 'utf8') };
+    await withEnv(env(b), async () => {
+      const lines: string[] = [];
+      await refreshHookLaunchers((l) => lines.push(l));
+      expect(lines.join('\n')).toContain("Codex does not run gbrain setup's codex SessionStart, UserPromptSubmit hook");
+      expect(lines.join('\n')).not.toContain('now start gbrain from its own directory');
+      expect(hookLauncherProblem('codex')).toMatchObject({ lane: 'setup', reason: 'session_cwd' });
+    });
+    expect({ hooks: readFileSync(hooksJson(b), 'utf8'), config: readFileSync(codexToml(b), 'utf8') }).toEqual(before);
+  });
 });

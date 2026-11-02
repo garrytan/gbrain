@@ -443,14 +443,24 @@ export function codexHookCensus(hooksPath: string): CodexHookCensusGroup[] {
  */
 export function codexHookGroupRuns(hooksPath: string, configPath: string, group: { event: string; index: number }): boolean {
   if (group.event !== 'SessionStart' && group.event !== 'UserPromptSubmit') return false;
-  const { stateName } = SETUP_EVENT_SPECS[group.event];
-  const handlers = loadHooksJson(hooksPath).hooks[group.event]?.[group.index]?.hooks;
+  return groupHandlerRuns(hooksPath, configPath, group.event, group.index, (c) => c.includes(CODEX_SETUP_LANE_TOKEN) || CONTEXT_LANE_TOKENS.some((t) => c.includes(t)));
+}
+
+/** codexHookGroupRuns for setup's own groups, SessionEnd's capture group included (its handler carries setup's lane token). */
+export function codexSetupGroupRuns(hooksPath: string, configPath: string, group: { event: string; index: number }): boolean {
+  if (group.event !== 'SessionEnd') return codexHookGroupRuns(hooksPath, configPath, group);
+  return groupHandlerRuns(hooksPath, configPath, 'SessionEnd', group.index, (c) => c.includes(CODEX_SETUP_LANE_TOKEN));
+}
+
+function groupHandlerRuns(hooksPath: string, configPath: string, event: CodexSetupEvent, index: number, accepts: (command: string) => boolean): boolean {
+  const { stateName } = SETUP_EVENT_SPECS[event];
+  const handlers = loadHooksJson(hooksPath).hooks[event]?.[index]?.hooks;
   if (!Array.isArray(handlers)) return false;
   const states = readCodexTomlTable(configPath, ['hooks', 'state']) as Record<string, { enabled?: unknown; trusted_hash?: unknown } | undefined> | undefined;
   return handlers.some((h, i) => {
     const command = h?.command;
-    if (typeof command !== 'string' || !(command.includes(CODEX_SETUP_LANE_TOKEN) || CONTEXT_LANE_TOKENS.some((t) => command.includes(t)))) return false;
-    const state = states?.[`${hooksPath}:${stateName}:${group.index}:${i}`];
+    if (typeof command !== 'string' || !accepts(command)) return false;
+    const state = states?.[`${hooksPath}:${stateName}:${index}:${i}`];
     if (!state || state.enabled === false) return false;
     return state.trusted_hash === codexHookTrustHash(stateName, command, typeof h.timeout === 'number' ? Math.max(1, h.timeout) : 600);
   });
