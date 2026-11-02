@@ -130,11 +130,11 @@ gbrain autopilot --install        # background daemon for nightly enrichment
 **Wire this same local brain into your coding agent** — zero server, zero token:
 
 ```bash
-claude mcp add gbrain -- "$(command -v gbrain)" serve --surface starter --advertise verbs  # Claude Code
-codex  mcp add gbrain -- "$(command -v gbrain)" serve --surface starter --advertise verbs  # Codex
+gbrain setup claude-code   # Claude Code
+gbrain setup codex         # Codex
 ```
 
-The agent spawns `gbrain serve` as a stdio subprocess against your local brain. `--surface starter --advertise verbs` is what every registration gbrain writes: the daily-driver set (40 ops) stays callable, and the tool list shows the seven memory verbs ([MEMORY_VERBS v1](protocol/MEMORY_VERBS_v1.md)) plus `request_tools`, which lists the other tools, returns any tool's full schema and reaches a left-out one. Drop `--advertise verbs` to list the whole starter set, or register `--surface full` (every operation) or `--surface verbs` (only the seven verbs, nothing else callable). Full walkthrough (both this local path and connecting to a remote brain), plus the brain-first protocol to paste into `CLAUDE.md` / `AGENTS.md`: **[Give your coding agent a memory](tutorials/connect-coding-agent.md)**.
+The agent spawns `gbrain serve` as a stdio subprocess against your local brain. Setup registers it behind gbrain's launcher (`<gbrain config dir>/hook-launcher/gbrain-hook`), because both harnesses start a stdio server in the session's directory and a script-mode Bun install would otherwise load that directory's `bunfig.toml` and `.env`; `--no-hooks` registers the server without hooks. `--surface starter --advertise verbs` is what every registration gbrain writes: the daily-driver set (40 ops) stays callable, and the tool list shows the seven memory verbs ([MEMORY_VERBS v1](protocol/MEMORY_VERBS_v1.md)) plus `request_tools`, which lists the other tools, returns any tool's full schema and reaches a left-out one. Drop `--advertise verbs` to list the whole starter set, or register `--surface full` (every operation) or `--surface verbs` (only the seven verbs, nothing else callable). Full walkthrough (both this local path and connecting to a remote brain), plus the brain-first protocol to paste into `CLAUDE.md` / `AGENTS.md`: **[Give your coding agent a memory](tutorials/connect-coding-agent.md)**.
 
 ## 3. MCP server (any MCP client)
 

@@ -64,6 +64,7 @@ import {
   removeClaudeHooks,
 } from '../core/bootstrap/hooks.ts';
 import { removeCodexHooks, writeCodexHooks } from '../core/bootstrap/codex-hooks.ts';
+import { ensureHookLauncher, hookLauncherPath } from '../core/setup/hook-launcher.ts';
 import { isRegistrationSurface, registeredAdvertise, registeredSurface, REGISTRATION_ADVERTISE, REGISTRATION_SURFACE, registrationAdvertise, stdioServeArgv } from '../core/mcp-registration.ts';
 import type { McpSurface } from '../mcp/surface.ts';
 import {
@@ -397,6 +398,7 @@ async function verifyMcpTargetsWorkspace(
   name: string,
   gbrainBin: string,
   sourceId: string,
+  hookLauncher?: string,
 ): Promise<{ verdict: 'match' | 'mismatch' | 'unknown'; surface?: McpSurface | null; advertise?: McpSurface | null }> {
   // Exec-lane harnesses only. opencode registrations go through the direct
   // JSONC writer whose 4-state fingerprint IS the [FIX7] check (structural,
@@ -417,7 +419,7 @@ async function verifyMcpTargetsWorkspace(
   if (res.code !== 0) return { verdict: 'unknown' };
   const out = `${res.stdout}\n${res.stderr}`;
   if (out.trim() === '') return { verdict: 'unknown' };
-  const hasBin = out.includes(gbrainBin);
+  const hasBin = out.includes(gbrainBin) && (!hookLauncher || out.includes(hookLauncher));
   const hasSource = out.includes(`GBRAIN_SOURCE=${sourceId}`);
   return { verdict: hasBin && hasSource ? 'match' : 'mismatch', surface: registeredSurface(out), advertise: registeredAdvertise(out) };
 }
@@ -1279,12 +1281,13 @@ async function runHooks(
     if (harness === 'opencode') {
       // Direct-writer lane (no exec): registrations land via the JSONC
       // writer whose 4-state fingerprint is the [FIX7] check. Scope resolves
-      // to a FILE here — user → global config (absolute binary path),
+      // to a FILE here — user → global config (hook launcher + absolute binary, #8435),
       // project → committed-candidate opencode.json (PATH-resolved command;
       // no absolute machine paths in a file that travels, and no fail-open
       // analog exists — the sharing warning below is the mitigation).
       const configPath = mcpScope === 'project' ? opencodeProjectConfigPath(ws) : opencodeGlobalConfigPath();
-      const command = stdioServeArgv(mcpScope === 'project' ? 'gbrain' : gbrainBin, surfaceFlag ?? undefined, registrationAdvertise({ userChoseSurface: surfaceFlag !== null }));
+      const ocLauncher = mcpScope === 'project' ? [] : [hookLauncherPath(home)];
+      const command = [...ocLauncher, ...stdioServeArgv(mcpScope === 'project' ? 'gbrain' : gbrainBin, surfaceFlag ?? undefined, registrationAdvertise({ userChoseSurface: surfaceFlag !== null }))];
       const entry = {
         kind: 'local' as const,
         name: 'gbrain',
@@ -1315,7 +1318,8 @@ async function runHooks(
           const existingKind = opencodeEntryKind(existing, 'gbrain', { sourceId });
           const priorCommand = ((existing.mcp as Record<string, { command?: unknown }> | undefined)?.gbrain)?.command;
           const prior = existingKind !== 'absent' && !surfaceFlag && Array.isArray(priorCommand) ? registeredSurface(priorCommand.join(' ')) : undefined;
-          if (prior !== undefined) entry.command = stdioServeArgv(command[0], prior, registeredAdvertise((priorCommand as unknown[]).join(' ')));
+          if (prior !== undefined) entry.command = [...ocLauncher, ...stdioServeArgv(command[ocLauncher.length]!, prior, registeredAdvertise((priorCommand as unknown[]).join(' ')))];
+          if (ocLauncher.length) ensureHookLauncher(ocLauncher[0]!);
           if (existingKind === 'ours-other-source') {
             console.error(`existing 'gbrain' opencode entry targets a DIFFERENT workspace — replacing it.`);
           }
@@ -1436,10 +1440,12 @@ async function runHooks(
           'workspace-bound registration with `--mcp-even-if-plugin`.',
       );
     }
+    const hookLauncher = harness === 'codex' || mcpScope === 'user' ? hookLauncherPath(home) : undefined;
     const buildArgvs = (surface?: McpSurface | null, advertise?: McpSurface | null) => harness === 'claude-code'
-      ? registerClaudeMcp({ gbrainBin, scope: mcpScope, sourceId, surface, advertise, ...(gbrainHome ? { gbrainHome } : {}) })
-      : registerCodexMcp({ gbrainBin, sourceId, surface, advertise, ...(gbrainHome ? { gbrainHome } : {}) });
+      ? registerClaudeMcp({ gbrainBin, scope: mcpScope, sourceId, surface, advertise, ...(gbrainHome ? { gbrainHome } : {}), ...(hookLauncher ? { hookLauncher } : {}) })
+      : registerCodexMcp({ gbrainBin, sourceId, surface, advertise, ...(gbrainHome ? { gbrainHome } : {}), ...(hookLauncher ? { hookLauncher } : {}) });
     const argvs = mcpPluginOwned ? [] : buildArgvs(surfaceFlag ?? undefined, registrationAdvertise({ userChoseSurface: surfaceFlag !== null }));
+    if (argvs.length && hookLauncher) try { ensureHookLauncher(hookLauncher); } catch (e) { console.error(`MCP registration skipped: ${(e as Error).message}`); return 1; }
     for (const argv of argvs) {
       const mcpName = argv[3] ?? 'gbrain'; // ['<host>','mcp','add',<name>,…]
       const res = await runner(argv);
@@ -1461,7 +1467,7 @@ async function runHooks(
         // [FIX7] "already registered" is NOT proof the registration is OURS.
         // Verify it targets this workspace's serve; if it points elsewhere,
         // remove + re-add rather than blessing a foreign/stale registration.
-        const { verdict, surface: priorSurface, advertise: priorAdvertise } = await verifyMcpTargetsWorkspace(runner, harness, mcpName, gbrainBin, sourceId);
+        const { verdict, surface: priorSurface, advertise: priorAdvertise } = await verifyMcpTargetsWorkspace(runner, harness, mcpName, gbrainBin, sourceId, hookLauncher);
         if (verdict === 'match') {
           console.log('MCP server already registered for this workspace — kept.');
         } else if (verdict === 'mismatch') {
@@ -1497,7 +1503,7 @@ async function runHooks(
           // is NOT ours. Re-verify and abort rather than bless a foreign
           // endpoint that would intercept memory ops. (Only the recorded
           // warn-then-continue step-2 smoke did this before; here it's fatal.)
-          const post = (await verifyMcpTargetsWorkspace(runner, harness, mcpName, gbrainBin, sourceId)).verdict;
+          const post = (await verifyMcpTargetsWorkspace(runner, harness, mcpName, gbrainBin, sourceId, hookLauncher)).verdict;
           if (post === 'mismatch') {
             console.error(
               `after replacing '${mcpName}', it STILL targets a different workspace/binary — ` +
@@ -1524,7 +1530,7 @@ async function runHooks(
     if (!mcpSkipped && !mcpPluginOwned) try {
       const listBin = harness === 'claude-code' ? 'claude' : 'codex';
       const scopeLabel = harness === 'claude-code' ? mcpScope : 'user-global';
-      const { verdict } = await verifyMcpTargetsWorkspace(runner, harness, 'gbrain', gbrainBin, sourceId);
+      const { verdict } = await verifyMcpTargetsWorkspace(runner, harness, 'gbrain', gbrainBin, sourceId, harness === 'codex' || mcpScope === 'user' ? hookLauncherPath(home) : undefined);
       if (verdict === 'match') {
         console.log(`MCP registered with ${harness} (scope: ${scopeLabel}) — verified targeting this workspace.`);
       } else if (verdict === 'mismatch') {
@@ -1565,7 +1571,7 @@ async function runHooks(
         try {
           r = cloudCarrier
             ? writeCommittedClaudeHooks(ws, { env: hookEnv })
-            : writeClaudeHooks(ws, { gbrainBin, env: hookEnv });
+            : writeClaudeHooks(ws, { gbrainBin, hookLauncher: ensureHookLauncher(hookLauncherPath(home)), env: hookEnv });
         } catch (e) {
           // Fail-closed on an unparseable settings file (either carrier): MCP
           // (step 1) still landed; record that, surface the fix, and exit
@@ -1602,7 +1608,7 @@ async function runHooks(
         // command carries NO GBRAIN_SOURCE — hooks.json is machine-global, a
         // baked source would stamp every codex session on this machine with
         // this repo's source; session-end resolves from the payload instead.
-        const r = writeCodexHooks({ gbrainBin });
+        const r = ((): ReturnType<typeof writeCodexHooks> => { try { return writeCodexHooks({ gbrainBin, hookLauncher: ensureHookLauncher(hookLauncherPath(home)) }); } catch (e) { return { ok: false, hooksPath: '', configPath: '', notes: [(e as Error).message] }; } })();
         if (r.ok) {
           hooksWritten = true;
           console.log(

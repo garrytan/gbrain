@@ -738,7 +738,8 @@ function tryExecAsync(bin: string, args: string[], timeoutMs = HOOK_GIT_TIMEOUT_
     try {
       execFile(
         bin,
-        args,
+        // #8427: a checkout's .git/config core.fsmonitor names a command that `git status` runs; a hook probe never runs it.
+        bin === 'git' ? ['-c', 'core.fsmonitor=false', ...args] : args,
         { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, env: gitChildEnv() },
         (err, stdout) => resolve(err ? null : stdout.toString().trim()),
       );
@@ -750,13 +751,19 @@ function tryExecAsync(bin: string, args: string[], timeoutMs = HOOK_GIT_TIMEOUT_
 
 /**
  * Resolve the bootstrap workspace root for a hook event: the git toplevel of
- * `ws`, gated on an `initialized` agent.json manifest at that root. The gate
+ * `ws`, which must be the install receipt's workspace_dir (checked before any
+ * git runs, #8427) and hold an `initialized` agent.json manifest. The gate
  * is the security boundary — `gbrain hook <event>` run in an arbitrary repo
  * must never commit or push it. Shared by session-start and session-end.
  */
 async function resolveBootstrapWorkspaceRoot(ws: string): Promise<string | null> {
+  // #8427: only the receipt's workspace runs git; a checkout can supply its own initialized agent.json and .git/config.
+  const workspace = (() => { try { const w = readReceipt(resolveGbrainHome())?.workspace_dir; return w ? realpathOrResolve(w) : null; } catch { return null; } })();
+  if (!workspace) return null;
+  const at = realpathOrResolve(ws);
+  if (at !== workspace && !at.startsWith(workspace.endsWith('/') ? workspace : `${workspace}/`)) return null;
   const root = await tryExecAsync('git', ['-C', ws, 'rev-parse', '--show-toplevel']);
-  if (!root) return null;
+  if (!root || realpathOrResolve(root) !== workspace) return null;
   const manifest = readManifest(root);
   if (manifest.state !== 'initialized') return null; // not a bootstrap workspace
   return root;

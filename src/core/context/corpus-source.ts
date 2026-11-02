@@ -50,6 +50,7 @@ import {
   parseWbFileName,
   sessionSourceFileName,
 } from './corpus-segments.ts';
+import { hookSessionCwd } from '../session-cwd.ts';
 
 export type SessionSourceTier = 'env' | 'dotfile' | 'serve' | 'engine' | 'operator';
 
@@ -155,7 +156,7 @@ async function engineFreeSessionSource(cwd: string | null): Promise<{ sourceId: 
   const { resolveSourceIdEngineFree } = await import('../source-resolver.ts');
   let id: string | null;
   try {
-    id = resolveSourceIdEngineFree(null, cwd ?? process.cwd());
+    id = resolveSourceIdEngineFree(null, cwd ?? hookSessionCwd());
   } catch {
     return null;
   }

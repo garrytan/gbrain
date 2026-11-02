@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { PLUGIN_SURFACE, REGISTRATION_ADVERTISE, REGISTRATION_SURFACE, registeredAdvertise, registeredSurface, registrationAdvertise, stdioServeArgv } from '../src/core/mcp-registration.ts';
 import { harnessWiringEntry } from '../src/core/readiness.ts';
+import { hookLauncherPath } from '../src/core/setup/hook-launcher.ts';
 import { registerClaudeMcp, registerCodexMcp } from '../src/core/bootstrap/hooks.ts';
 import { resolveSurfaceWithSource } from '../src/mcp/surface.ts';
 
@@ -65,14 +66,16 @@ describe('REGISTRATION_SURFACE and stdioServeArgv', () => {
 
 describe('every stdio registration path builds from REGISTRATION_SURFACE', () => {
   test('readiness harness_wiring: Claude Code and Codex pin the surface; opencode runs bootstrap hooks', () => {
-    expect(wiring('claude-code')?.argv).toEqual(['claude', 'mcp', 'add', 'gbrain', '--', ...stdioServeArgv(BIN, REGISTRATION_SURFACE, REGISTRATION_ADVERTISE)]);
-    expect(wiring('codex')?.argv).toEqual(['codex', 'mcp', 'add', 'gbrain', '--', ...stdioServeArgv(BIN, REGISTRATION_SURFACE, REGISTRATION_ADVERTISE)]);
+    // #8426: Claude Code and Codex register through gbrain setup, which puts serve behind the hook launcher.
+    expect(wiring('claude-code')?.argv).toEqual(['gbrain', 'setup', 'claude-code', '--no-hooks', '--gbrain-bin', BIN]);
+    expect(wiring('codex')?.argv).toEqual(['gbrain', 'setup', 'codex', '--no-hooks', '--gbrain-bin', BIN]);
     expect(wiring('opencode')?.argv).toEqual(['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks']);
-    expect(wiring('claude-code')?.why).toContain(`${BIN} serve --surface starter --advertise verbs`);
+    expect(wiring('claude-code')?.why).toContain(`${hookLauncherPath()} ${stdioServeArgv(BIN, REGISTRATION_SURFACE, REGISTRATION_ADVERTISE).join(' ')}`);
   });
 
   test('init --surface reaches the readiness fix (the quickstart line and the first-run harness decision read it)', () => {
-    expect(wiring('claude-code', 'starter')?.argv).toEqual(['claude', 'mcp', 'add', 'gbrain', '--', BIN, 'serve', '--surface', 'starter']);
+    expect(wiring('claude-code', 'starter')?.argv).toEqual(['gbrain', 'setup', 'claude-code', '--no-hooks', '--gbrain-bin', BIN, '--surface', 'starter']);
+    expect(wiring('claude-code', 'starter')?.why).toContain(`${BIN} serve --surface starter`);
     expect(wiring('opencode', 'verbs')?.argv).toEqual(['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks', '--surface', 'verbs']);
     const missing = harnessWiringEntry({ transport: 'cli', harnesses: [], lockOwner: null, gbrainBin: BIN }).fix;
     expect(missing?.why).toContain('serve --surface starter --advertise verbs');
@@ -162,7 +165,19 @@ describe('S0: README, docs/mcp, INSTALL, BOOTSTRAP, push-context and the manifes
         }
       });
     }
-    expect(commands).toBeGreaterThan(10);
+    expect(commands).toBeGreaterThanOrEqual(10);
+    expect(offenders).toEqual([]);
+  });
+
+  test('#8436: no install doc teaches a Claude Code or Codex stdio mcp add of serve that skips gbrain\'s launcher', () => {
+    const offenders: string[] = [];
+    for (const file of [...DOCS, 'docs/protocol/AGENT_OPERATOR_v1.md']) {
+      readFileSync(join(ROOT, file), 'utf8').split('\n').forEach((line, i) => {
+        for (const m of line.matchAll(/\b(?:claude|codex)\s+mcp add\b[^`\n|]*?\bserve\b/g)) {
+          if (!m[0].includes('hook-launcher/gbrain-hook')) offenders.push(`${file}:${i + 1}: ${line.trim()}`);
+        }
+      });
+    }
     expect(offenders).toEqual([]);
   });
 

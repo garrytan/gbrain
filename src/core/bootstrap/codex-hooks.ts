@@ -188,6 +188,8 @@ export interface WriteCodexHooksResult {
  */
 export function writeCodexHooks(opts: {
   gbrainBin: string;
+  /** The trusted-directory launcher the capture starts gbrain through (src/core/setup/hook-launcher.ts), never the session's directory (#8428). */
+  hookLauncher?: string;
   hooksPath?: string;
   configPath?: string;
 }): WriteCodexHooksResult {
@@ -209,7 +211,7 @@ export function writeCodexHooks(opts: {
   }
   const hooks = (doc.hooks && typeof doc.hooks === 'object' && !Array.isArray(doc.hooks) ? doc.hooks : {}) as NonNullable<HooksJson['hooks']>;
   const sessionEnd = Array.isArray(hooks[SESSION_END_EVENT]) ? hooks[SESSION_END_EVENT]! : [];
-  const command = buildCodexSessionEndCommand(opts.gbrainBin);
+  const command = buildCodexSessionEndCommand(opts.gbrainBin, opts.hookLauncher);
   const ourGroup = { hooks: [{ type: 'command', command, timeout: SESSION_END_TIMEOUT_SEC }] };
   // Fresh install appends LAST; a re-run replaces our group IN PLACE — a
   // strip-then-append would shift every foreign group sitting after ours

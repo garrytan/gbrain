@@ -266,7 +266,7 @@ describe('the plugin launcher on the per-turn hook (#7963)', () => {
 
   test('a CLI older than the plugin lane: the plugin hook exits 0 silently, probing once per binary', () => {
     const b = box();
-    const cli = fakeCli(b, '0.60.497.0');
+    const cli = fakeCli(b, '0.60.546.0');
     const env = { HOME: b.home, GBRAIN_BIN: cli.bin, GBRAIN_HOOK_LANE: 'plugin' };
     expect(launch(env, ['hook', 'user-prompt'])).toEqual({ code: 0, stdout: '', stderr: '' });
     expect(cli.calls()).toEqual(['--version']);
@@ -278,7 +278,7 @@ describe('the plugin launcher on the per-turn hook (#7963)', () => {
     // Upgrading the binary (newer mtime than the cached verdict) re-probes.
     const cache = join(b.home, '.gbrain', 'cache', 'plugin-hook-cli');
     utimesSync(cache, new Date(Date.now() - 120_000), new Date(Date.now() - 120_000));
-    const upgraded = fakeCli(b, '0.60.498.0');
+    const upgraded = fakeCli(b, '0.60.547.0');
     expect(launch(env, ['hook', 'user-prompt']).stdout).toBe('ran hook user-prompt\n');
     expect(upgraded.calls()).toEqual(['--version', 'hook user-prompt']);
     expect(launch(env, ['hook', 'user-prompt']).stdout).toBe('ran hook user-prompt\n');
@@ -291,6 +291,6 @@ describe('the plugin launcher on the per-turn hook (#7963)', () => {
     const gHome = join(b.root, 'ghome');
     expect(launch({ HOME: b.home, GBRAIN_HOME: gHome, GBRAIN_BIN: cli.bin, GBRAIN_HOOK_LANE: 'plugin' }, ['hook', 'user-prompt', '--harness', 'codex']))
       .toEqual({ code: 0, stdout: 'ran hook user-prompt --harness codex\n', stderr: '' });
-    expect(readFileSync(join(gHome, '.gbrain', 'cache', 'plugin-hook-cli'), 'utf8')).toBe(`${cli.bin}\n0.60.498.0\nok\n`);
+    expect(readFileSync(join(gHome, '.gbrain', 'cache', 'plugin-hook-cli'), 'utf8')).toBe(`${cli.bin}\n0.60.547.0\nok\n`);
   });
 });

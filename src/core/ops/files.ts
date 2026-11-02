@@ -10,6 +10,7 @@ import { opError } from './contract.ts';
 import { hostFix, readFix } from './op-fix.ts';
 import { validateFilename, validatePageSlug, validateUploadPath } from './context.ts';
 import { privatePagesFilterForCaller, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { hookSessionCwd } from '../session-cwd.ts';
 
 // --- File Operations ---
 
@@ -69,10 +70,11 @@ const file_upload: Operation = {
     if (ctx.dryRun) return { dry_run: true, action: 'file_upload', path: p.path };
 
     const { statSync } = await import('fs');
-    const { basename, extname } = await import('path');
+    const { basename, extname, resolve } = await import('path');
     const { hashStorageFile, uploadUnchangedFile } = await import('../storage.ts');
 
-    const filePath = p.path as string;
+    // A relative path means the session directory a launcher-started serve records, the same root it is confined to (#8426).
+    const filePath = resolve(hookSessionCwd(), p.path as string);
     const pageSlug = (p.page_slug as string) || null;
 
     // Fix 1 / B5 / H5 / M4: validate path, slug, filename before any filesystem read.
@@ -80,7 +82,7 @@ const file_upload: Operation = {
     // can upload from anywhere on the filesystem (loose) — the user owns the machine.
     // Default is strict when ctx.remote is undefined (defense-in-depth).
     const strict = ctx.remote !== false;
-    validateUploadPath(filePath, process.cwd(), strict);
+    validateUploadPath(filePath, hookSessionCwd(), strict);
     if (pageSlug) validatePageSlug(pageSlug);
     const filename = basename(filePath);
     validateFilename(filename);
