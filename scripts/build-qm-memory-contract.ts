@@ -73,7 +73,7 @@ export function buildQmMemoryContract(): Record<string, unknown> {
     },
     unlinked_recall: { isError: false, content: unlinked.content, structuredContent: unlinked.structuredContent },
     memory_write: {
-      limits: { facts: { min: 1, max: MEMORY_WRITE_MAX_FACTS }, provenance_chars: MEMORY_WRITE_PROVENANCE_MAX, idempotency_key: IDEMPOTENCY_KEY_RE.source, kinds: [...MEMORY_WRITE_KINDS],
+      limits: { facts: { min: 1, max: MEMORY_WRITE_MAX_FACTS }, provenance_chars: MEMORY_WRITE_PROVENANCE_MAX, idempotency_key: { pattern: IDEMPOTENCY_KEY_RE.source }, kinds: [...MEMORY_WRITE_KINDS],
         provenance: 'one line: no line breaks or control characters, and not starting with qm: (gbrain adds qm:<actor id> itself)',
         valid_from: 'YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS[.fraction]][Z|±HH:MM], a real calendar day in years 0001-9999' },
       validation: 'every fact is checked before any is saved: one bad fact refuses the whole call with invalid_params and the idempotency_key stays unused',

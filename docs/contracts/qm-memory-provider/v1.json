@@ -182,7 +182,9 @@
         "max": 20
       },
       "provenance_chars": 200,
-      "idempotency_key": "^[\\x21-\\x7e]{1,128}$",
+      "idempotency_key": {
+        "pattern": "^[\\x21-\\x7e]{1,128}$"
+      },
       "kinds": [
         "event",
         "preference",
