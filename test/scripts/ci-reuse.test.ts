@@ -15,6 +15,7 @@ import { join, resolve } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import { apiDeps, attemptJobs, checkRecord, decide, decideGate, gateDeps, LEDGER_JOB, PROFILES, runGate, writeDecision, type Commit, type ExecutedCounts, type GateDeps, type JobRow, type FullRun, type ReuseDeps } from '../../scripts/ci-reuse.ts';
 import { GET_RETRY_DELAYS_MS, restClient, type GitHubClient } from '../../scripts/lib/gh-issue.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 const REPO = 'owner-example/repo-example';
 const M = '1'.repeat(40);
@@ -470,9 +471,7 @@ describe('ci-reuse remote-gate decision', () => {
     const bin = mkdtempSync(join(tmpdir(), 'ci-reuse-gh-'));
     const ghFails = async (code: number, text: string) => {
       writeFileSync(join(bin, 'gh'), `#!/usr/bin/env bash\ncase "$*" in *"/zip"*) echo "gh: ${text} (HTTP ${code})" >&2; exit 1;; esac\necho '${listing}'\n`, { mode: 0o755 });
-      const path = process.env.PATH;
-      process.env.PATH = `${bin}:${path}`;
-      try { return await gateDeps(restClient(REPO, '', async () => {})).executed(r600); } finally { process.env.PATH = path; }
+      return withEnv({ PATH: `${bin}:${process.env.PATH}` }, () => gateDeps(restClient(REPO, '', async () => {})).executed(r600));
     };
     try {
       for (const fails of [zipFails, ghFails]) {
