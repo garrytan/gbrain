@@ -151,6 +151,40 @@ for (const kind of testBackends()) {
       }
     }, 60_000);
 
+    test('a member fact is read only while its member page itself is readable: a page an operator marked private hides its facts too', async () => {
+      const page = 'memory/members/alice-example';
+      expect((await call(who.alice(), 'recall', { query: 'harbor' })).all).toContain(CANARY.alice);
+      for (const marker of [{ visibility: 'private' }, { derived_from: 'notes/private-origin-example' }]) {
+        if ('derived_from' in marker) await importFromContent(engine, 'notes/private-origin-example', '---\ntype: note\nvisibility: private\n---\n# Private origin\n', { sourceId: SRC });
+        await engine.executeRaw('UPDATE pages SET frontmatter = frontmatter || $3::jsonb WHERE source_id = $1 AND slug = $2', [SRC, page, JSON.stringify(marker)]);
+        try {
+          __resetPrivateVisibilityCacheForTests();
+          __resetHotMemoryCacheForTests();
+          expect((await call(who.alice(), 'get_page', { slug: page })).all).not.toContain(CANARY.alice);
+          for (const params of [{ query: 'harbor' }, { entity: ACME }, { since: '2000-01-01' }]) {
+            expect((await call(who.alice(), 'recall', params)).all).not.toContain(CANARY.alice);
+          }
+          expect((await call(who.alice(), 'context_pack', { query: 'harbor oolong', entities: [ACME] })).all).not.toContain(CANARY.alice);
+          const [bobFact] = await engine.executeRaw<{ id: number | string }>('SELECT id FROM facts WHERE fact LIKE $1 AND expired_at IS NULL', ['%' + CANARY.bob + '%']);
+          const bobPage = 'memory/members/bob-example';
+          await engine.executeRaw('UPDATE pages SET frontmatter = frontmatter || $3::jsonb WHERE source_id = $1 AND slug = $2', [SRC, bobPage, JSON.stringify(marker)]);
+          try {
+            const forgot = await call(who.bobToken(), 'forget_fact', { id: Number(bobFact!.id) });
+            expect({ isError: forgot.isError, code: forgot.json.code }).toEqual({ isError: true, code: 'fact_not_found' });
+            const [still] = await engine.executeRaw<{ expired_at: unknown }>('SELECT expired_at FROM facts WHERE id = $1', [bobFact!.id]);
+            expect(still!.expired_at).toBeNull();
+          } finally {
+            await engine.executeRaw('UPDATE pages SET frontmatter = frontmatter - $3 WHERE source_id = $1 AND slug = $2', [SRC, bobPage, Object.keys(marker)[0]]);
+          }
+        } finally {
+          await engine.executeRaw('UPDATE pages SET frontmatter = frontmatter - $3 WHERE source_id = $1 AND slug = $2', [SRC, page, Object.keys(marker)[0]]);
+          __resetPrivateVisibilityCacheForTests();
+          __resetHotMemoryCacheForTests();
+        }
+      }
+      expect((await call(who.alice(), 'recall', { query: 'harbor' })).all).toContain(CANARY.alice);
+    }, 120_000);
+
     test('another member never reads the fact through the member page, the entity page, search or context_pack', async () => {
       for (const as of [who.bob(), who.bobToken(), who.bare(), who.unbound()]) {
         for (const [op, params] of [['get_page', { slug: 'memory/members/alice-example' }], ['get_page', { slug: ACME }], ['search', { query: CANARY.alice }],

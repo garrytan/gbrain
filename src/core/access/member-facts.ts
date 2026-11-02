@@ -12,7 +12,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { OperationContext } from '../ops/contract.ts';
-import { callerAccessAllowedSql, currentCallerAccess, folderRestrictedSql } from '../search/private-visibility.ts';
+import { currentCallerAccess, folderRestrictedSql, privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import { ACCESS_ID_RE, MEMBER_PAGE_PREFIX, normalizeReaders } from './principals.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { slugifyPath } from '../sync.ts';
@@ -74,8 +74,8 @@ export function memberPageFrontmatter(member: string): string {
 }
 
 /**
- * The private facts the current caller may read: those on its own member page, while that live page's readers (and
- * folder rules) admit the caller. FALSE outside a member caller record. `alias` is a code-provided facts alias; the
+ * The private facts the current caller may read: those on its own member page, while the caller may read that live
+ * page itself (its readers, folder rules and privacy, as get_page judges it). FALSE outside a member caller record. `alias` is a code-provided facts alias; the
  * member id passed ACCESS_ID_RE, whose alphabet has no quote.
  */
 export function memberFactAdmitSql(alias: string): string {
@@ -84,7 +84,7 @@ export function memberFactAdmitSql(alias: string): string {
   return `(${alias}.visibility = 'private' AND ${alias}.source_markdown_slug = '${memberPageSlug(member)}' AND EXISTS (
     SELECT 1 FROM pages member_page WHERE member_page.source_id = ${alias}.source_id AND member_page.slug = ${alias}.source_markdown_slug
       AND member_page.deleted_at IS NULL AND member_page.page_readers && ARRAY['member:${member}']::text[]
-      AND ${callerAccessAllowedSql('member_page')}))`;
+      AND ${privatePagesFilterForCaller('member_page')}))`;
 }
 
 /** A remote fact read's visibility list as SQL: the listed values, widened only by memberFactAdmitSql. */
