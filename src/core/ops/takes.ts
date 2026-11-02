@@ -167,7 +167,7 @@ const takes_scorecard: Operation = {
     since: { type: 'string', description: 'Window start (YYYY-MM-DD)' },
     until: { type: 'string', description: 'Window end (YYYY-MM-DD)' },
     group_by: { type: 'string', enum: ['holder', 'source'], description: 'Trusted local CLI only: per-group journal statistics' },
-    min_n: { type: 'number', description: 'Trusted local CLI only: groups with fewer resolved predictions are flagged low_n (default 10)' },
+    min_n: { type: 'number', minimum: 1, description: 'Trusted local CLI only: groups with fewer resolved predictions are flagged low_n (default 10)' },
   },
   handler: async (ctx, p) => {
     // W7: the grouped journal statistics are private. A remote caller that

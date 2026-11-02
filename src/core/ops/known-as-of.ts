@@ -6,6 +6,7 @@
  */
 import type { OperationContext, ParamDef } from './contract.ts';
 import { opError } from './contract.ts';
+import { opTransport, readFix } from './op-fix.ts';
 import { assertExplicitSourceLive, federatedSearchScope, pageNotFoundError, parseSourceIdParam } from './context.ts';
 import { inlineBodyBytes } from './get-page-body.ts';
 import { pageTrustForRead } from './get-page-projection.ts';
@@ -17,11 +18,14 @@ import { fenceTranscriptText, quotesStored } from '../search/transcript-quote.ts
 
 export const KNOWN_AS_OF_PARAM: ParamDef = { type: 'string', fullSurfaceOnly: true,
   description: 'Recorded time: the page as this brain had recorded it at this ISO 8601 instant (2026-10-01T12:00:00Z), from the belief ledger. Not as_of, which is valid time (a date).' };
-export const VERSIONS_DIFF_PARAM: ParamDef = { type: 'boolean', fullSurfaceOnly: true, description: 'With known_as_of: each version also carries a unified diff from the version before it.' };
+export const VERSIONS_DIFF_PARAM: ParamDef = { type: 'boolean', actsWhenTrue: true, fullSurfaceOnly: true, description: 'With known_as_of: each version also carries a unified diff from the version before it.' };
 
 /** get_page parameters that select a body window, a fuzzy match or an edit view, none of which a historical read serves. */
 const GET_PAGE_UNSUPPORTED = ['fuzzy', 'include_content', 'content_only', 'include_timeline_entries', 'grammar_diagnostics', 'include_quarantined',
   'lines', 'bytes', 'around_chunk_id', 'context_lines', 'cursor', 'max_bytes', 'view', 'outline_from', 'section', 'grep', 'context'] as const;
+
+/** The get_page arguments a recorded-time read serves; the refusal's fix keeps only these. */
+const GET_PAGE_AS_OF_ARGS = ['slug', 'known_as_of', 'source_id', 'include_deleted', 'min_trust', 'body'];
 
 /**
  * The one source a recorded-time read targets: the explicit or ambient source, else the only granted source whose
@@ -79,7 +83,7 @@ function intervalView(ctx: OperationContext, i: PageInterval, opts: { body: bool
   if (!opts.body || !i.page) return meta;
   const bytes = i.page.body_bytes ?? 0;
   if (i.body === 'segmented' || bytes > opts.inlineMax) {
-    return { ...meta, body_ref: { total_bytes: bytes, ...(i.version_id != null ? { read: { tool: 'get_page', arguments: { slug: i.slug, version_id: i.version_id, body: 'window' } } } : {}) } };
+    return { ...meta, body_ref: { total_bytes: bytes } };
   }
   const clean = (s: string | null) => s == null ? null : ctx.remote === false ? s : sanitizeRemoteBody(s, { includeWithdrawn: true, keepMaterializedMarkers: true });
   // #8042: a third-party page as recorded reaches an untrusted reader quoted, as get_page's current body does.
@@ -99,9 +103,16 @@ function ledgerView(read: PageAtTime) {
 export async function getPageKnownAsOf(ctx: OperationContext, p: Record<string, unknown>): Promise<Record<string, unknown>> {
   const at = parseKnownAsOf(p.known_as_of);
   const extra = GET_PAGE_UNSUPPORTED.filter(k => p[k] !== undefined && p[k] !== false);
-  if (extra.length || (p.body !== undefined && p.body !== 'auto' && p.body !== 'full' && p.body !== 'none')) {
+  const badBody = p.body !== undefined && p.body !== 'auto' && p.body !== 'full' && p.body !== 'none';
+  if (extra.length || badBody) {
+    const drop: string[] = badBody ? [...extra, 'body'] : extra;
+    const name = (k: string) => opTransport(ctx) === 'cli' ? `--${k.replace(/_/g, '-')}` : `\`${k}\``;
+    const kept = Object.fromEntries(GET_PAGE_AS_OF_ARGS.filter(k => p[k] !== undefined && !drop.includes(k)).map(k => [k, p[k]]));
     throw opError('invalid_params', `get_page: known_as_of does not combine with ${extra.length ? extra.join(', ') : `body: ${String(p.body)}`}.`,
-      'Read the page as recorded with known_as_of alone (plus source_id, include_deleted or body: "none"), or drop known_as_of for the current page.');
+      `Drop ${drop.map(name).join(', ')} to read the page as recorded at known_as_of, or drop ${name('known_as_of')} for the current page. A recorded-time read takes only ${GET_PAGE_AS_OF_ARGS.slice(2).map(name).join(', ')} (auto, full or none).`,
+      { fix: readFix('The same call without the arguments that select a window or view of the current page, which a recorded-time read does not serve.',
+        { argv: ['gbrain', 'get', ...Object.entries(kept).filter(([k]) => k !== 'slug').flatMap(([k, v]) => v === true ? [`--${k.replace(/_/g, '-')}`] : v === false ? [] : [`--${k.replace(/_/g, '-')}`, String(v)]), '--', String(p.slug)],
+          mcp: { tool: 'get_page', arguments: kept } }) });
   }
   const slug = String(p.slug);
   const sourceId = await targetSource(ctx, p, 'get_page');

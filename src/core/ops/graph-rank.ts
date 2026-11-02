@@ -179,11 +179,11 @@ const rank_entities: Operation = {
     + 'title-prefixed person duplicates are listed under possible_duplicates, never merged. Ties order by slug, then source_id. coverage.state is behind when link extraction lags, so counts cover only extracted pages.',
   params: {
     direction: { type: 'string', enum: [...DIRECTIONS], description: "Rank by 'in' (inbound edges, default), 'out' (outbound edges) or 'both' (inbound + outbound)." },
-    types: { type: 'array', items: { type: 'string' }, description: "Page types to rank, e.g. ['person']. Default: the schema pack's entity types." },
+    types: { type: 'array', minItems: 1, items: { type: 'string' }, description: "Page types to rank, e.g. ['person']. Default: the schema pack's entity types." },
     source_id: { type: 'string', description: "Only this source (it must be inside your source grant); '__all__' spans every source you can read. Both ends of a counted edge stay in scope." },
     link_type: { type: 'string', description: 'Count only edges of this link type, e.g. works_at.' },
     include_mentions: { type: 'boolean', description: 'Also count mention links (link_source mentions); default false.' },
-    limit: { type: 'number', description: `Rows to return (default ${RANK_ENTITIES_DEFAULT_LIMIT}, max ${RANK_ENTITIES_MAX_LIMIT}).` },
+    limit: { type: 'number', minimum: 1, description: `Rows to return (default ${RANK_ENTITIES_DEFAULT_LIMIT}, max ${RANK_ENTITIES_MAX_LIMIT}).` },
   },
   handler: async (ctx, p) => {
     const params = parseParams(ctx, p);

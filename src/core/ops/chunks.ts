@@ -53,7 +53,7 @@ const get_chunks: Operation = {
     slug: { type: 'string', required: true, description: 'Slug of the page whose content chunks to return.' },
     min_trust: MIN_TRUST_PARAM,
     from_index: { type: 'number', description: 'Return chunks from this chunk_index on (a non-negative integer). Default 0.' },
-    limit: { type: 'number', description: `How many chunk_index positions to return (a positive integer). Default ${GET_CHUNKS_DEFAULT_LIMIT}; MCP callers are capped at ${GET_CHUNKS_REMOTE_MAX_LIMIT}.` },
+    limit: { type: 'number', minimum: 1, description: `How many chunk_index positions to return (a positive integer). Default ${GET_CHUNKS_DEFAULT_LIMIT}; MCP callers are capped at ${GET_CHUNKS_REMOTE_MAX_LIMIT}.` },
   },
   handler: async (ctx, p) => {
     const fromIndex = p.from_index === undefined || p.from_index === null ? 0 : p.from_index;

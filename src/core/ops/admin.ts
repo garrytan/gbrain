@@ -177,7 +177,7 @@ const run_doctor: Operation = {
   description: 'Run brain health checks and return a structured DoctorReport (thin-client doctor surface). tier "ops": only the operational sections under a 4 s deadline; only: just the named checks.',
   params: {
     tier: { type: 'string', enum: ['ops'], description: 'ops: capacity, write failures, embedding state, sync movement, compaction, serve build and schema pack, under one 4 s deadline. Omit for the focused remote report.' },
-    only: { type: 'array', items: { type: 'string' }, description: 'Run just these checks (doctor check names, for example persistence_capacity).' },
+    only: { type: 'array', minItems: 1, items: { type: 'string' }, description: 'Run just these checks (doctor check names, for example persistence_capacity).' },
   },
   handler: async (ctx, p) => {
     if (p.tier !== undefined || p.only !== undefined) return (await import('../../commands/doctor/remote-tier.ts')).runRemoteDoctorTier(ctx, p);
@@ -206,7 +206,7 @@ const get_versions: Operation = {
   description: `Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest ${GET_VERSIONS_DEFAULT_LIMIT} versions by default. Pass include_body: true for each version's compiled_truth and timeline, and a larger limit (at most ${GET_VERSIONS_REMOTE_MAX_LIMIT} over MCP) for older versions. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). revert_version takes the id field.`,
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose version history to list.' },
-    limit: { type: 'number', description: `Return only the newest N versions (a positive integer). Default ${GET_VERSIONS_DEFAULT_LIMIT}; MCP callers are capped at ${GET_VERSIONS_REMOTE_MAX_LIMIT}.` },
+    limit: { type: 'number', minimum: 1, description: `Return only the newest N versions (a positive integer). Default ${GET_VERSIONS_DEFAULT_LIMIT}; MCP callers are capped at ${GET_VERSIONS_REMOTE_MAX_LIMIT}.` },
     include_body: { type: 'boolean', description: 'true adds compiled_truth and timeline to every version. Default false (metadata only).' },
     known_as_of: { ...KNOWN_AS_OF_PARAM, description: 'Recorded time: the validity intervals this brain had recorded by this ISO 8601 instant, from the belief ledger. Not as_of, which is valid time (a date).' },
     diff: VERSIONS_DIFF_PARAM,
@@ -236,7 +236,7 @@ const get_versions: Operation = {
     }
     const plain = page(await ctx.engine.getVersions(p.slug as string, opts));
     const versions = canReadWriteAttribution(ctx) ? await attributeVersions(ctx.engine, plain) : plain;
-    // Wave B: a segmented version's body is never returned whole; body_ref names its size and the windowed read.
+    // Wave B: a segmented version's body is never returned whole; body_ref names its size (no read serves an older segmented body yet, #7800).
     const out = [];
     const snapshotTiers = ctx.remote === false || versions.length === 0 ? new Map<number, unknown>() : new Map((await ctx.engine.executeRaw<{ id: number | string; trust_tier: string | null }>(
       'SELECT id, trust_tier FROM page_versions WHERE id = ANY($1::bigint[])', [versions.map(v => Number(v.id))])).map(r => [Number(r.id), r.trust_tier] as const));
@@ -244,8 +244,7 @@ const get_versions: Operation = {
       if (isSegmentedPage(v)) {
         const sized = await remoteVersionSize(ctx, v);
         const { compiled_truth: _b, timeline: _t, ...rest } = sized;
-        out.push({ ...rest, body_ref: { version_id: v.id, total_bytes: 'total_bytes' in sized ? sized.total_bytes : pageBodyBytes(v),
-          read: { tool: 'get_page', arguments: { slug: p.slug, version_id: v.id, body: 'window' } } } });
+        out.push({ ...rest, body_ref: { version_id: v.id, total_bytes: 'total_bytes' in sized ? sized.total_bytes : pageBodyBytes(v) } });
         continue;
       }
       if (ctx.remote === false) { out.push(v); continue; }

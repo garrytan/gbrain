@@ -168,6 +168,7 @@ const RETURN_UNIT_PARAM = {
 };
 const RETURN_WINDOW_PARAM = {
   type: 'number' as const,
+  minimum: 1,
   description: 'Window radius 1-3.',
   fullSurfaceOnly: true,
 };

@@ -36,6 +36,7 @@ const find_orphans: Operation = {
     },
     limit: {
       type: 'number',
+      minimum: 1,
       description: `Rows per page (default ${ORPHANS_DEFAULT_LIMIT}, max ${ORPHANS_MAX_LIMIT}); total_orphans counts every orphan, complete says whether this page holds the rest, and next_cursor (or next_offset) names the next page.`,
     },
     offset: { type: 'number', description: 'Skip the first N orphans (ordered by source_id, then slug).' },

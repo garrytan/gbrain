@@ -3962,7 +3962,8 @@ brain had recorded it at an instant, from the belief ledger
 `as_of` on `get_links`, which is valid time (a date). A read answers with the
 interval the instant falls in, `certified` (false with `uncertified_reason` on
 an unmanaged source, a drifted interval or a truncated walk), and a `body` of
-`live`, `version`, `segmented` (read it through `body_ref`) or `unavailable`
+`live`, `version`, `segmented` (`body_ref` gives its size; no read serves an
+older segmented body yet) or `unavailable`
 with a `body_reason` (`purged`, `expired`, `hard_deleted`, `pruned`,
 `version_missing`). A body no retained version holds is disclosed, never
 borrowed from the version next to it. The refusals below change nothing; run
@@ -4287,7 +4288,9 @@ The message names the guide for the harness you asked for (OpenClaw:
   install with a different `GBRAIN_HOME`. Run setup with `--name <other>` so
   each install owns its own entries.
 - `harness_lane`: `gbrain bootstrap harness` (or a workspace bootstrap
-  install) already wires gbrain hooks or MCP in this configuration. Keep that
+  install) already wires gbrain hooks or MCP in this configuration (a harness
+  target in another HOME's or `CODEX_HOME`'s config directory does not count;
+  project-scoped hooks do). Keep that
   wiring, or remove it with `gbrain bootstrap harness --remove` first. On
   Codex this also fires when the bootstrap Codex lane's `SessionEnd` hook is in
   `hooks.json` and you passed `--capture`: keep that lane and run setup without

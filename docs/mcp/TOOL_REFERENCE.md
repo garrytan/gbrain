@@ -184,7 +184,9 @@ Read a page by slug (supports optional fuzzy matching). Slug aliases left by ren
 | `include_quarantined` | boolean | Admin scope only: return a quarantined page's body to a remote caller (default: false). Ignored without the admin scope; trusted local reads always include it. |
 | `section` | string | Only the section under this heading (case-insensitive, first match), with `heading_path`, `line_start` and `line_end`. Accepted on the starter surface; advertised on full. |
 | `grep` | string | Only the paragraphs containing this text (case-insensitive substring, not a regex), with line numbers and `total_matches`. Accepted on the starter surface; advertised on full. |
-| `context` | number | With grep: paragraphs of context either side (default 1, max 5). |
+| `context` | number | Applies only with grep (ignored without it): paragraphs of context either side (default 1, max 5). |
+
+The window parameters (`lines`, `bytes`, `around_chunk_id`, `cursor`) are advertised on the full surface. Pass at most one of them; a call with two refuses, and its fix is the same call with the first selector alone and `body: "window"`.
 
 ## `get_recent_salience`
 

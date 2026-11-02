@@ -2342,7 +2342,7 @@ deferred M-effort issues above are NOT repeated here.
   `gh attestation verify` step for tag installs) would close it, but a from-source tree has no
   single binary to attest — needs design. **Start:** `scripts/postinstall.ts` +
   SECURITY.md residual note. **Depends on:** the WS2 self-update integrity that just landed.
-- [ ] **P3 — Make `check:admin-embedded` deterministic so it can gate.** **What:**
+- [x] **P3 — Make `check:admin-embedded` deterministic so it can gate.** **Done (#7126, v0.60.554.0):** the generator no longer stamps the date and writes only when its output differs, and `check:admin-embedded` runs in verify. **What:**
   `scripts/build-admin-embedded.ts` stamps today's date into a comment in
   `src/admin-embedded.ts`, so `check-admin-embedded.sh`'s `git diff --exit-code` fails on any
   day after commit — which is why it's `EXECUTION_EXEMPT` and unwired. **Why:** if the date
