@@ -26,8 +26,8 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { hybridSearch } from '../src/core/search/hybrid.ts';
 import {
   FLUSH_THRESHOLD_CALLS,
-  getTelemetryWriter,
   _resetTelemetryWriterForTest,
+  _telemetryWriterCountForTest,
 } from '../src/core/search/telemetry.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
@@ -74,7 +74,7 @@ describe('telemetry flush vs disconnect (#4143, serial)', () => {
     ]);
     if (timer) clearTimeout(timer);
     expect(winner).toBe('disconnected'); // pre-fix: 'hung' (600s CI kill)
-    // The writer must not be left holding an in-flight flush.
-    expect(getTelemetryWriter().pendingFlush()).toBeNull();
+    // The writer must not be left holding an in-flight flush: disconnect retires the engine's writer.
+    expect(_telemetryWriterCountForTest()).toBe(0);
   }, 60_000);
 });

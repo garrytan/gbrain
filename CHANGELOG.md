@@ -20,6 +20,49 @@ identifiers and attribution are available in the pre-removal Git revision
 - `src/core/skillopt/rollout.ts`, `src/core/skillopt/write-capture.ts`: read handlers throw that error.
 - `test/skillopt-rollout-agent-errors.test.ts`: on both registries, a two-selector refusal and a missing-page error read exactly as MCP returns them, including the suggestion and the fix argv. All four cases fail on master.
 
+## [0.60.556.0] - 2026-11-02
+
+**Mounted brains stop sharing settings and search telemetry.** In a process that serves several brains, search telemetry for every brain was written into the first brain's database, and a handful of per-brain settings were read once from whichever brain asked first and then applied to all of them. Each of those caches now belongs to its engine, and each engine gets its own telemetry writer, which retires when the engine disconnects. A process with one brain behaves exactly as before. Contributed by @bradgessler (#8454).
+
+### Itemized changes
+
+- `src/core/engine-key.ts`: `engineKey(engine)` resolves a page-transaction clone, a read-through view and a statement-deadline wrapper to the engine behind them. Every cache below keys on it.
+- `src/core/search/telemetry.ts`: one writer per engine (`getTelemetryWriter(engine)`), held weakly, flushing only into its own engine. The disconnect drain bounds every live writer, and a writer retires on its engine's disconnect or collection. `setEngine` is gone.
+- Keyed by engine: `search.track_retrieval` (`last-retrieved.ts`), `persistence.publication_ceiling_ms` and the idle bound derived from it (`publication-deadline.ts`), the minion admission policy (`admission.ts`), the `mcp.strict_params` last-known-good fallback (`validate-params.ts`), the `write_capacity_low` throttle (`capacity-snapshot.ts`), and `search.hnsw_iterative_scan` / `search.vector_legacy_guard`, which are still latched once and now latched per engine.
+- `test/engine-keyed-caches.test.ts`: two engines per setting, the second read after the first warmed the cache. All six behavior cases fail on master.
+
+## [0.60.555.0] - 2026-11-02
+
+**`gbrain query --limit N` without a token budget returns N rows again, a budgeted facts block takes at most N rows, the facts block never outscores the pages, and the CLI names fact rows instead of printing `undefined` (#8411).** Since the facts block went on by default (v0.60.491.0), it also ran on queries that passed no budget, because the shipped no-budget evidence plan carries an implicit 24,000-token budget. Its 22% share let up to 40 fact rows in ahead of the pages, so `--limit 3` could print more than a dozen fact rows before the 3 pages. Each block row was scored a hair above the top page, so they all showed the same score and outranked every hit, and the human CLI printed them as `[0.84xx] undefined -- …` because fact rows have no page slug.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| `query` without `token_budget` (CLI or MCP) | the facts block ran on the implicit budget: up to 40 fact rows on top of `limit` pages | the block does not run; the facts arm fills only free slots, so `limit` caps the whole result |
+| `query` with `token_budget` | up to 40 block rows (22% of the budget), whatever the `limit` | up to 40 block rows, 22% of the budget and at most `limit` rows, still oldest first ahead of the pages |
+| Block row `score` | top page score + n × 1e-6: above every page | the top page's score: placed first, never ranked above a page |
+| Human CLI line for a fact row | `[0.84xx] undefined -- [observed …]` and the fact text on a second line | `[0.84xx] fact:<fact_id> <entity slug> -- [observed …] <fact text>` on one line |
+
+The contract: `limit` caps the page rows. Without `token_budget`, saved facts only fill free rows, so the result never exceeds `limit`. With `token_budget`, the facts block adds at most `limit` rows (and at most 40, within 22% of the budget) ahead of the pages. `--json` rows already carried `fact_id` and keep it. The held-out arm that earned the default (`token_budget` 5,500, `limit` 25, a mean of 7.5 fact rows) runs the same block. `search.query_facts_block` stays on by default.
+
+## [0.60.554.0] - 2026-11-02
+
+**The admin UI loads again on installed builds, and setup, doctor and MCP verify stop failing on a set of install and serve shapes.** `/admin`, including the OAuth consent page, was blank on every installed build because `admin/dist/index.html` loaded a bundle the embedded manifest didn't carry. It is rebuilt from source, and `check:admin-embedded` now runs in verify so the two can't drift again. Migration 0.53.0's packaged-skill install no longer fails `idempotency_conflict` when a later release ships a different payload. `gbrain setup` refuses the bootstrap harness lane only when that lane wired the same configuration it would write, so one `GBRAIN_HOME` can serve several HOMEs. Doctor and the turn-rule lane now count a gbrain hook in Claude Code's managed settings. `gbrain mcp verify` saves its fixture under its own folder, so a nearby page no longer makes remember refuse it. On the MCP side, `get_versions` and `known_as_of` stop pointing at a `get_page` read that doesn't exist, schema inspection uses the caller's own source pack, and `open_loops` explains an empty answer when none of a scoped caller's sources is a Google source, without revealing anything outside its grant.
+
+### Itemized changes
+
+- `admin/dist`, `src/admin-embedded.ts`: rebuilt from `admin/src` (the fresh build is byte-identical to the embedded bundle; the stale one goes). The generator no longer stamps the date, and `check:admin-embedded` runs in verify. `test/admin-embedded-manifest.test.ts` (#7126).
+- `installPackagedSharedSkills`: the durable adoption id digests the request id with the skills and initial files, so an exact replay resumes and a changed payload gets its own key. `test/shared-skills-packaged-key-7734.test.ts` (#7734).
+- `gbrain setup`: the `harness_lane` owner conflict applies when a recorded harness target sits in the config directory setup would write (paths compared after resolving symlinks, so another spelling of the same HOME still counts), when the harness wired project-scoped hooks, or when the receipt records no paths for that host. `test/setup-harness-lane-scope-7771.test.ts` (#7771).
+- `inspectTurnHook` and `turnRuleHookYields` read `managed-settings.json` and its `managed-settings.d/*.json` drop-ins in the platform system directory. A managed turn-rule entry never makes the turn-rule lane yield to itself, and the install check names a managed hook as one it does not run. `test/turn-hook-managed-settings-8057.test.ts` (#8057).
+- `gbrain mcp verify`: the memory-writer fixture lives under `gbrain-verification/<fixture>`; the entity resolver is unchanged. `test/harness-verify-entity-fixture-7699.test.ts` (#7699).
+- `get_versions` / `known_as_of`: a segmented version's `body_ref` carries `version_id` and `total_bytes` only (#7800).
+- `get_active_schema_pack`, `schema_explain_type`, `schema_graph`, `schema_lint`: resolve the pack through the caller's own source, the same path capture uses. `test/schema-pack-source-inspection-7942.test.ts` (#7942).
+- `open_loops`: a `loops_no_google_in_scope` notice for a remote caller whose read covered no Google source and returned nothing. It names only the sources the call read, all inside the grant, and stays off when the source read itself failed; the result is byte-identical with and without sources outside the grant. `test/loops-remote-scope-notice-7286.test.ts` (#7286).
+- `test/serve-stdio-lifecycle.test.ts`: the watchdog forward-progress probe gave a 20 ms RPC loop too little headroom under a loaded runner, so one scheduler stall failed it. A forced 45 ms stall failed 3 of 3 on the old margin and passes 3 of 3 now (40 RPCs of 20 ms in a 200 ms window); the assertions are unchanged, and removing `noteForwardProgress` still fails it (#8446).
+- `scripts/{test,serial,e2e}-weights.json`: shard weights refreshed from the Nov 2 nightly runs.
+
 ## [0.60.553.0] - 2026-11-02
 
 **GPT models that fill every optional tool argument with an empty value can now read pages and walk the graph.** GPT-6.1 Sol fills optional arguments with `0`, `[]`, `{}` or `false` as well as `""` and `null`. The `""` and `null` case was fixed in v0.60.549.0, but read operations still refused the others. `get_page` refused `around_chunk_id: 0`, `lines: {}` and a `context` sent without `grep`. `traverse_graph` refused `hops: []` sent beside `depth`, `link_type` and `direction`. Twenty-seven other optional arguments refused the same way (`limit: 0` on nine read operations, `types: []`, `only: []`, `schema_version: 0`, `get_versions` `diff: false` and more). gbrain now reads these as not provided, but only where the argument's own schema rules the value out: `0` when the valid range starts above zero, `[]` when the list must not be empty, `{}` when the object needs a field, `false` on a flag that only acts when true, and `context` when there is no `grep`, since it has no effect without it. Any value inside the valid range is kept, and so is any value on an argument that declares no such rule. So the normalized call is always one the caller could have sent by leaving the argument out, and it never reads more than that call would. This runs on every path that hands model arguments to an operation: MCP over HTTP and stdio, `gbrain call`, the subagent tool registry and both SkillOpt registries.

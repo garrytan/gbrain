@@ -19,7 +19,7 @@ import { codexHookCensus, codexHookGroupRuns, codexHookTrustHash } from '../boot
 import { readCodexTomlTable } from '../bootstrap/codex-toml.ts';
 import { classifyHarnessHook, hookEntryHash } from '../bootstrap/hooks.ts';
 import { localSetupRecords } from './local-receipts.ts';
-import { CLAUDE_SETTINGS_FILE_RELPATH, GBRAIN_HOOK_MARKER_KEY, GBRAIN_SETUP_MARKER_VALUE, claudeUserSettingsPath, codexConfigPath, codexHooksPath } from '../bootstrap/host-specs.ts';
+import { CLAUDE_SETTINGS_FILE_RELPATH, GBRAIN_HOOK_MARKER_KEY, GBRAIN_SETUP_MARKER_VALUE, claudeManagedSettingsPaths, claudeUserSettingsPath, codexConfigPath, codexHooksPath } from '../bootstrap/host-specs.ts';
 import { hookLauncherInCommand, hookLauncherState, type HookLauncherState } from './hook-launcher.ts';
 import type { LauncherLane } from './launcher-lanes.ts';
 import { enabledPluginLanes } from '../bootstrap/plugin-lanes.ts';
@@ -64,12 +64,12 @@ function claudeEntries(path: string): Array<Record<string, unknown>> {
 const isGbrainPromptEntry = (e: Record<string, unknown>) =>
   isTurnRuleEntry(e) || typeof e[GBRAIN_HOOK_MARKER_KEY] === 'string' || !!classifyHarnessHook(e, 'UserPromptSubmit', 'any');
 
-/** Files only, no process run. `projectDir`: a project-scope Claude Code install's directory. */
-export function inspectTurnHook(harness: string, opts: { projectDir?: string } = {}): TurnHookState {
+/** Files only, no process run. `projectDir`: a project-scope Claude Code install's directory; `managedDir`: Claude Code's managed-settings directory (default: the system one). */
+export function inspectTurnHook(harness: string, opts: { projectDir?: string; managedDir?: string } = {}): TurnHookState {
   const native_inspect = TURN_HOOK_NATIVE_INSPECT[harness];
   const plugin = enabledPluginLanes('gbrain').find((l) => l.harness === harness);
   if (harness === 'claude-code') {
-    const files = [claudeUserSettingsPath(), ...(opts.projectDir ? [join(opts.projectDir, '.claude', 'settings.local.json'), join(opts.projectDir, '.claude', 'settings.json')] : [])];
+    const files = [claudeUserSettingsPath(), ...(opts.projectDir ? [join(opts.projectDir, '.claude', 'settings.local.json'), join(opts.projectDir, '.claude', 'settings.json')] : []), ...claudeManagedSettingsPaths(opts.managedDir)];
     for (const path of files) {
       const committed = !!opts.projectDir && path === join(opts.projectDir, '.claude', 'settings.json');
       const entries = claudeEntries(path).filter((e) => isTurnRuleEntry(e) || isOtherGbrainEntry(e, committed));
@@ -234,7 +234,7 @@ export function verifyTurnHook(harness: string, opts: { projectDir?: string; run
   if (state.via === 'plugin') return { ok: true, state, reason: 'plugin_lane', message: `${state.detail}; check it with ${state.native_inspect}` };
   if ((harness === 'claude-code' || harness === 'codex') && state.command) {
     // A command from a project's settings file is the repo's, not the user's: never run it.
-    if (harness === 'claude-code' && state.source !== claudeUserSettingsPath()) return { ok: true, state, reason: 'project_unverified', message: `${state.detail}; a project hook is not run here, so check it with ${state.native_inspect}` };
+    if (harness === 'claude-code' && state.source !== claudeUserSettingsPath()) return { ok: true, state, reason: 'project_unverified', message: `${state.detail}; a hook outside the user settings file (project or managed) is not run here, so check it with ${state.native_inspect}` };
     const r = run(['sh', '-c', state.command], JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: '', session_id: 'gbrain-install-check' }));
     if (!r.ok) return fail('hook_failed', `the UserPromptSubmit hook exited non-zero (${r.output.trim().split('\n').at(-1) || 'no output'})`);
     if (!r.output.includes('GBrain: before answering')) return fail('no_rule', 'the UserPromptSubmit hook ran but did not add the brain-first rule (is the brain-first block installed for this harness?)');
