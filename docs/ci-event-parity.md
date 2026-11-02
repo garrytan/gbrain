@@ -130,7 +130,7 @@ commit nor an older pass elsewhere skips a newer failure; a failed one refuses
 with no receipt. A run that did not run the full job (a diagnostic dispatch, a
 push that reused) is skipped. A tree that changes `.github/workflows/test.yml`,
 `.github/workflows/e2e.yml`, `scripts/ci-reuse.ts`, `scripts/lib/gh-issue.ts`,
-`scripts/ci-full-suite-tree.sh` or `scripts/ci-executed-counts.ts` relative to `origin/master` never reuses, since its runs would attest to themselves, and the
+`scripts/ci-full-suite-tree.sh`, `scripts/ci-executed-counts.ts` or `scripts/ci-manifest.ts` (which writes the run's `ci-manifest.json`) relative to `origin/master` never reuses, since its runs would attest to themselves, and the
 check runs without the model and database keys, like the gate. Every other case runs the gate: a dirty tree, a commit GitHub
 doesn't have, a missing workflow, an API error, or `GBRAIN_PREGATE_REUSE=0`.
 
@@ -161,8 +161,10 @@ inventory:
   discovery the gate runs, one file per line. It exits non-zero when the
   inventory fails or is empty (a doc-only tree under `:diff` runs no test file,
   so it clears through the gate as before). It also prints no inventory for a
-  tree that changes one of the six files above relative to `origin/master`
-  (or when there is no `origin/master`, or `GBRAIN_PREGATE_REUSE=0`), so
+  tree that changes one of the seven files above, or the inventory's own
+  builders `scripts/pregate-remote-gate.sh` and `scripts/ci-ubicloud.ts`,
+  relative to `origin/master` (or when there is no `origin/master`, or
+  `GBRAIN_PREGATE_REUSE=0`), so
   gstack refuses that tree's own runs (`inventory_failed`) and the gate runs,
   as remote-gate reuse already does. The gate leaves out the keyed-only
   Tier 2 file (`test/e2e/skills.test.ts`): a VM has neither the keys nor

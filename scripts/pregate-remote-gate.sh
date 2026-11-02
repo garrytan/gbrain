@@ -19,8 +19,8 @@
 # Any other tree, a stamp-only one included, runs the gate below; gstack's
 # stamp rule (`gstack-pregate clear --receipt`) handles a stamp-only head.
 # A tree that changes .github/workflows/test.yml, .github/workflows/e2e.yml,
-# scripts/ci-reuse.ts, scripts/lib/gh-issue.ts, scripts/ci-full-suite-tree.sh or
-# scripts/ci-executed-counts.ts relative to origin/master (or has no
+# scripts/ci-reuse.ts, scripts/lib/gh-issue.ts, scripts/ci-full-suite-tree.sh,
+# scripts/ci-executed-counts.ts or scripts/ci-manifest.ts relative to origin/master (or has no
 # origin/master) never reuses: its runs would attest to themselves. The reuse check runs
 # without the model and database keys, like the gate.
 # GBRAIN_PREGATE_REUSE=0 always runs the gate.
@@ -68,7 +68,7 @@ fail() { echo "pregate-remote-gate: $1" >&2; exit "${2:-1}"; }
 runs_may_attest() {
   git rev-parse -q --verify 'origin/master^{commit}' >/dev/null || { echo "pregate-remote-gate: no origin/master to compare the full-ci workflows against" >&2; return 1; }
   local path
-  for path in .github/workflows/test.yml .github/workflows/e2e.yml scripts/ci-reuse.ts scripts/ci-full-suite-tree.sh scripts/ci-executed-counts.ts scripts/lib/gh-issue.ts "$@"; do
+  for path in .github/workflows/test.yml .github/workflows/e2e.yml scripts/ci-reuse.ts scripts/ci-full-suite-tree.sh scripts/ci-executed-counts.ts scripts/ci-manifest.ts scripts/lib/gh-issue.ts "$@"; do
     git diff --quiet origin/master HEAD -- "$path" && continue
     echo "pregate-remote-gate: the tree changes $path relative to origin/master, so its own runs cannot attest to it" >&2
     return 1

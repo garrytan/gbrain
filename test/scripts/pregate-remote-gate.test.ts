@@ -190,7 +190,7 @@ describe('pregate-remote-gate.sh', () => {
     });
 
     it('a tree that changes the full-ci workflows or the scripts that attest its runs relative to origin/master never reuses its own runs', () => {
-      for (const path of ['.github/workflows/test.yml', '.github/workflows/e2e.yml', 'scripts/ci-reuse.ts', 'scripts/ci-full-suite-tree.sh', 'scripts/ci-executed-counts.ts', 'scripts/lib/gh-issue.ts']) {
+      for (const path of ['.github/workflows/test.yml', '.github/workflows/e2e.yml', 'scripts/ci-reuse.ts', 'scripts/ci-full-suite-tree.sh', 'scripts/ci-executed-counts.ts', 'scripts/lib/gh-issue.ts', 'scripts/ci-manifest.ts']) {
         rmSync(join(repo, '.git', 'reuse-args'), { force: true });
         rmSync(join(repo, '.git', 'gate-ran'), { force: true });
         mkdirSync(join(repo, path, '..'), { recursive: true });
@@ -324,7 +324,7 @@ describe('pregate-remote-gate.sh --list', () => {
     const gate = 'touch .git/list-ran; echo test/a.test.ts';
     const refused = (r: { code: number | null; out: string }) => { expect(r.code).toBe(1); expect(r.out).toBe(''); };
     // pregate-remote-gate.sh and ci-ubicloud.ts build the inventory itself, and gstack runs the branch's own copy.
-    for (const path of ['.github/workflows/test.yml', '.github/workflows/e2e.yml', 'scripts/ci-reuse.ts', 'scripts/ci-full-suite-tree.sh', 'scripts/ci-executed-counts.ts', 'scripts/lib/gh-issue.ts', 'scripts/pregate-remote-gate.sh', 'scripts/ci-ubicloud.ts']) {
+    for (const path of ['.github/workflows/test.yml', '.github/workflows/e2e.yml', 'scripts/ci-reuse.ts', 'scripts/ci-full-suite-tree.sh', 'scripts/ci-executed-counts.ts', 'scripts/lib/gh-issue.ts', 'scripts/ci-manifest.ts', 'scripts/pregate-remote-gate.sh', 'scripts/ci-ubicloud.ts']) {
       mkdirSync(join(repo, path, '..'), { recursive: true });
       writeFileSync(join(repo, path), `changed ${path}\n`);
       git('add', '.');
