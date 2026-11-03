@@ -109,7 +109,7 @@ export const EQUALS_READERS: Readonly<Record<string, readonly string[]>> = {
   // recall.ts:1183-1188 runForget (plain) and forget-purge.ts:44 flagValue (:114-123, purge); --match is purge-only, ignored by plain forget in any form.
   forget: ['--request-id', '--source', '--match'],
   // forget-purge.ts:131 flagValue --reason (runForgetPurge, routed on --purge at recall.ts:1170); plain forget reads only the separate token (recall.ts:1181).
-  'forget --purge': ['--reason'],
+  'forget --purge': ['--reason', '--reason-scan-limit'],
   // frontmatter.ts:356 runValidate.
   'frontmatter validate': ['--path'],
   // frontmatter.ts:667 runAudit.

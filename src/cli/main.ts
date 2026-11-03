@@ -727,7 +727,8 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     // routed path. Date → ISO string; bigint → string (postgres.js shape);
     // Buffer → object. Microsecond-cost; eliminates a whole drift bug class.
     const { result, stderr: noticeText } = applyCliOpNotices(normalizeLocalResult(rawResult), params.json === true);
-    const output = formatResult(op.name, result, params);
+    const paged = op.name === 'get_page' && await (await import('./page-render.ts')).finishAsOfRead(async p => normalizeLocalResult(await op.handler(ctx, p)) as Record<string, any>, result as Record<string, any>, params, writeStdoutFinal); // GBRA-217
+    const output = paged ? '' : formatResult(op.name, result, params);
     // Awaited delivery (#3423): queued stdout writes past 64KiB lose their
     // tail to a slow pipe reader when the exit grace lapses — see
     // writeStdoutFinal.
@@ -842,6 +843,8 @@ async function runThinClientRouted(
     if (envelopeMeta?.retrieval) captureRetrievalMeta('retrieval', envelopeMeta.retrieval);
     checkHostHonoredParams(op, params, raw);
     const result = unpackToolResult(raw);
+    if (op.name === 'get_page' && await (await import('./page-render.ts')).finishAsOfRead(async p => unpackToolResult(await callRemoteTool(cfg, 'get_page', p, { timeoutMs, signal: sigintController.signal })) as Record<string, any>, // GBRA-217: an older host's
+      result as Record<string, any>, params, writeStdoutFinal, { client: VERSION, host: identityCache.get(cfg.remote_mcp!.mcp_url)?.identity.version ?? null })) return; // reply fails closed
     hintAmbientNarrowing(op, params, result, ambientScope);
     const skew = (await import('../core/search/evidence-delivery.ts')).deliveryVersionSkewWarning(op.name, params, envelopeMeta?.retrieval as Record<string, unknown> | undefined, result);
     if (skew) process.stderr.write(skew + '\n');
@@ -1780,7 +1783,7 @@ export function formatResult(
         const truth = v.compiled_truth ?? v.title ?? '';
         const head = truth.slice(0, VERSION_TRUTH_PREVIEW_CHARS);
         const elided = truth.length > VERSION_TRUTH_PREVIEW_CHARS ? '...' : '';
-        return `#${v.id}  ${v.snapshot_at?.toString().slice(0, 19) || '?'}  ${head}${elided}`;
+        return `#${v.id}  ${v.snapshot_at?.toString().slice(0, 19) || '?'}  ${head}${elided}${typeof v.replaced_because === 'string' ? `\n    changed because: ${v.replaced_because}` : ''}`;
       }).join('\n') + '\n';
     }
     // MEMORY_VERBS v1 [F-E]: human-readable by default; trailing `--json`

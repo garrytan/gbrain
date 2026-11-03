@@ -57,6 +57,7 @@ import { assertUnboundPublication, classifyUnboundPage } from './unbound-source.
 import { boundPublication, declarePublication, publicationLeaseMs, publicationTransaction, type PublicationBound } from './publication-deadline.ts';
 import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { commitThroughDoor, doorMarker, sourceCanonicalGit, strictChanged } from './git-door.ts';
+import { settleGroupCommitNotes } from './change-reason.ts';
 import { assertNoPrivateCommit, declareStrictPublication } from './git-declared.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
 import { withFilesystemPublication } from './filesystem-guard.ts';
@@ -416,7 +417,9 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
       if (lane) { timed.apply?.turn(); await faultPoint('lane:applied', { requestId: head.request_id, sourceId: head.source_id, operation: head.operation }); await awaitLaneTurn(tx, lane, rows); timed.apply?.turned(); }
       // G2: one path-only commit for every member's file, in commit order, before the rows commit; a shared lease never reclaims an index lock.
       if (strict && recorded.size) {
-        const commit = await commitThroughDoor(binding.local_path!, [...recorded].map(([i, member]) => ({ path: member.record.path, planned: member.record.afterHash, note: prepared[i]!.file?.commit })), lane || joined ? undefined : lock,
+        // GBRA-217: notes are settled after every member applied, so a member a later one made private carries no reason.
+        const notes = await settleGroupCommitNotes(tx, [...recorded.keys()].map(i => ({ row: rows[i]!, note: prepared[i]!.file?.commit, outcome: outcomes[i]! })));
+        const commit = await commitThroughDoor(binding.local_path!, [...recorded].map(([i, member], n) => ({ path: member.record.path, planned: member.record.afterHash, note: notes[n] })), lane || joined ? undefined : lock,
           paths => {
             for (const [i, member] of recorded) {
               const rel = relative(binding.local_path!, member.record.path).split(sep).join('/');

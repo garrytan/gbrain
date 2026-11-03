@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 268798,
-    "stdoutSha256": "7e8ad692baa54268f6f79bf3109bfb03bf6c29119f65624e8847aff30963f591",
+    "stdoutBytes": 270103,
+    "stdoutSha256": "ccb57b716d643e6afb57f781afd358adcae942dcb303cc048d64a6013053ff19",
     "toolNames": [
       "remember",
       "entity",
@@ -429,6 +429,7 @@
         "name": "get_page",
         "parameters": {
           "around_chunk_id": "number?",
+          "as_of": "string?",
           "body": "string?",
           "bytes": "object?",
           "content_only": "boolean?",
@@ -458,6 +459,10 @@
             "around_chunk_id": {
               "description": "Window around a search hit chunk_id. One window selector only: not with lines, bytes or cursor.",
               "type": "number"
+            },
+            "as_of": {
+              "description": "YYYY-MM-DD: edition in force then. No valid_time in reply: current page.",
+              "type": "string"
             },
             "body": {
               "description": "auto: whole up to 256 KB, else outline + window; a window's edit_target is edit_page `within`. none: revision + size + tail_sha256 (append_page expected_tail_sha256).",
@@ -615,6 +620,7 @@
           "expected_revision": "string?",
           "force": "boolean?",
           "ingested_via": "string?",
+          "reason": "string?",
           "request_id": "string?",
           "slug": "string",
           "source_id": "string?",
@@ -660,6 +666,10 @@
             },
             "ingested_via": {
               "description": "Server-set remotely.",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Why this change, one line (max 500 chars); kept in page history.",
               "type": "string"
             },
             "request_id": {
@@ -1066,6 +1076,7 @@
         "parameters": {
           "edits": "array",
           "expected_revision": "string",
+          "reason": "string?",
           "request_id": "string?",
           "slug": "string",
           "source_id": "string?",
@@ -1098,6 +1109,10 @@
             },
             "expected_revision": {
               "description": "From get_page include_content:true.",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Why this change, one line (max 500 chars); kept in page history.",
               "type": "string"
             },
             "request_id": {
@@ -1254,6 +1269,10 @@
                   },
                   "expected_revision": {
                     "description": "Revision read; omit to create.",
+                    "type": "string"
+                  },
+                  "reason": {
+                    "description": "Why this change, one line (max 500 chars); kept in page history.",
                     "type": "string"
                   },
                   "slug": {
@@ -2989,7 +3008,7 @@
         "scope": "read"
       },
       {
-        "description": "Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest 20 versions by default. Pass include_body: true for each version's compiled_truth and timeline, and a larger limit (at most 100 over MCP) for older versions. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). revert_version takes the id field.",
+        "description": "Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest 20 versions by default. Pass include_body: true for each version's compiled_truth and timeline, and a larger limit (at most 100 over MCP) for older versions. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). replaced_because is the reason given for the write that replaced the snapshot (null when none was given). revert_version takes the id field.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -3046,6 +3065,7 @@
         "parameters": {
           "expected_revision": "string?",
           "force": "boolean?",
+          "reason": "string?",
           "request_id": "string?",
           "slug": "string",
           "source_id": "string?",
@@ -3061,6 +3081,10 @@
             "force": {
               "description": "Ignore the revision.",
               "type": "boolean"
+            },
+            "reason": {
+              "description": "Why this change, one line (max 500 chars); kept in page history.",
+              "type": "string"
             },
             "request_id": {
               "description": "Reuse only to retry.",
@@ -6989,6 +7013,7 @@
           "id": "number?",
           "match": "string?",
           "reason": "string?",
+          "reason_scan_limit": "number?",
           "request_id": "string?",
           "source_id": "string?",
           "status": "boolean?",
@@ -7028,6 +7053,10 @@
             "reason": {
               "description": "Optional short reason stored in the text-free purge ledger.",
               "type": "string"
+            },
+            "reason_scan_limit": {
+              "description": "Check only the newest N commits for change reasons quoting the claim (after a reason_purge_scan_capped refusal, with the user's choice); older commits are not tombstoned.",
+              "type": "number"
             },
             "request_id": {
               "description": "Reuse only to retry.",

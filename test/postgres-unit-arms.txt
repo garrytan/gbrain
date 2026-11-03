@@ -297,6 +297,8 @@ test/orphan-effect-diagnostics-7985.test.ts
 test/overwritten-edits-6712.test.ts
 test/owner-refusal.test.ts
 test/pack-relation-direction-engine.test.ts
+test/page-change-reason-gbra217.test.ts
+test/page-change-reason-git-gbra217.test.ts
 test/page-embedding-budget.test.ts
 test/page-embedding-content-validity.test.ts
 test/page-embedding-install-batch.test.ts
@@ -446,6 +448,7 @@ test/purge-read-surfaces.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
 test/qm-memory-tools.test.ts
 test/read-meta-diag.test.ts
+test/reason-trailers-gbra217.test.ts
 test/recall-page-fill.test.ts
 test/receipt-compaction-newest-sync-gbra130.test.ts
 test/reconcile-clears-stalled-hold-7364.test.ts
@@ -574,6 +577,7 @@ test/unbound-source-6536.test.ts
 test/unindexed-files-convergence-7149.test.ts
 test/unindexed-files.test.ts
 test/v273-validate-timeouts.test.ts
+test/valid-time-gbra217.test.ts
 test/vector-manifest-probe-bound.test.ts
 test/visibility-fail-closed-derived-writes.test.ts
 test/visibility-repair-scale.test.ts

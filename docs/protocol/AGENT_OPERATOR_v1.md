@@ -1013,6 +1013,8 @@ that work in this conversation.
 | 12 | `no_results`: a recall or entity lookup matched nothing (only with `GBRAIN_FAIL_ON_EMPTY=1`) | treat it as a miss, not a failure |
 | 13 | `pending_verify`: a harness wired, verification waits for the serve | start the serve, then run `fix.command` |
 | 14 | `bootstrap_cleanup_pending`: a harness is wired; old shared-skills enrollments or token ids still await cleanup | follow `fix.next` (re-run, or relay the owner's revoke step), then re-run |
+| 15 | `get --as-of`: no edition in force | read `valid_time`; quote nothing |
+| 16 | `host_upgrade_required` | relay `gbrain upgrade` on the host |
 | 75 | another runner holds the migration lock | wait, then retry |
 | 124 | the command's deadline elapsed | inspect what is still running |
 | 130 | interrupted | ask the user whether to re-run |

@@ -144,6 +144,19 @@ Keep an appropriate database backup before any destructive recovery, and do
 not delete historical unmatched facts or generate empty pages to make them
 appear file-backed.
 
+### Change reasons
+
+A page write's optional reason (GBRA-217, [page history](../guides/page-history.md#reasons))
+follows the same rule as content. On a page whose file reaches Git it is
+written into the commit as a path-mapped trailer
+(`gbrain-reason: <path>: <text>`): on a git-canonical source the commit lands
+before the database row, on other sources the row lands first and the Git
+effect commits after it. `page_versions.change_reason` mirrors it, stamped by
+the same write. Private, database-only and withheld pages, and repo-less
+brains, keep the reason in the database only, as they do their content.
+Existing rows are never re-stamped, and snapshot rows are not rebuilt from
+`git log`.
+
 ## Write attribution
 
 GBrain records write attribution: who wrote each page revision, page version,
