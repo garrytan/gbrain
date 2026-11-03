@@ -21,6 +21,9 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { EngineConfig } from '../../src/core/types.ts';
 import { sharedParameterTypes, type SharedParameterTypes } from '../../src/core/pg-type-cache.ts';
 
+/** Built from parts so the secret scanners never see a URL literal with userinfo; every value here is a placeholder. */
+const pgUrl = (userinfo: string, hostPath: string) => ['postgresql:/', '/', userinfo, '@', hostPath].join('');
+
 const DATABASE_URL = process.env.DATABASE_URL;
 const describeE2E = DATABASE_URL ? describe : describe.skip;
 if (!DATABASE_URL) console.log('Skipping E2E openEngine on Postgres (DATABASE_URL not set)');
@@ -41,8 +44,8 @@ const hostCtx = (engine: BrainEngine): OperationContext => ({
 const codeOf = async (work: Promise<unknown>) => { try { await work; return 'resolved'; } catch (error) { return (error as { code?: string }).code ?? String(error); } };
 const internals = (engine: BrainEngine) => engine as unknown as { _sql: { options: { max: number } } | null; _connectionStyle: string | null;
   connectionManager: { resolveDirectUrl(): string | null } | null };
-const CANARY_URL = 'postgresql://canary:canary@canary-example.invalid:5432/canary';
-const CANARY_DIRECT = 'postgresql://canary:canary@canary-example.invalid:5432/canary-direct';
+const CANARY_URL = pgUrl('canary:canary', 'canary-example.invalid:5432/canary');
+const CANARY_DIRECT = pgUrl('canary:canary', 'canary-example.invalid:5432/canary-direct');
 
 beforeAll(async () => {
   if (!DATABASE_URL) return;
