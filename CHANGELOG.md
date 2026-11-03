@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.559.0] - 2026-11-03
 
 **`gbrain setup <harness> --skill-loading spring` can now give an agent a short index of gbrain's bundled skills instead of the full skill text.** Today gbrain either reaches the agent with no skill text at all, or copies every skill into the harness's native skills directory, where Claude Code lists about 87 skills on every turn and usually ignores them. With `--skill-loading spring`, setup writes a compact index (one line per skill: name and trigger) beside the brain-first block in the harness's instruction file, and the agent loads a skill's full text only when it needs it, with `<gbrain> bundled-skill <name>`. The option is off by default, and `MCP get_skill` is unchanged. In an A/B eval on real Claude Code and Codex CLIs with three frontier models (gbrain-evals#192), the index got the agent to load the right skill before acting in 29 of 36 Claude Code trials, against 15 with native skills and 0 with no skill text, and tied native on Codex at 22 of 24, for about a quarter of native's standing tokens per turn.
 
