@@ -335,7 +335,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
   if (statusMode && hasScope(authInfo.scopes, 'read')) return statusToolResult(statusMode, 'http');
   const op = mcpOperations.find(o => o.name === name);
   if (!op) {
-    return qmMemoryToolResult(name, await rejectUnknownMcpOperation(ctx, state, name, requestMetaSessionId(request.params)));
+    return qmMemoryToolResult(name, await rejectUnknownMcpOperation(ctx, state, name, requestMetaSessionId(request.params)), state.actorHeader != null);
   }
 
   // Scope enforcement (v0.28: hasScope replaces exact-string-match so
@@ -351,7 +351,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
   // denial first would tell the operator to widen the grant for nothing.
   const scopeSatisfied = op.cliOnly !== undefined || operationScopesAllowed(authInfo.scopes, op);
   if (!scopeSatisfied) {
-    return qmMemoryToolResult(name, await rejectInsufficientMcpScope(ctx, state, name, requiredScope, requestMetaSessionId(request.params)));
+    return qmMemoryToolResult(name, await rejectInsufficientMcpScope(ctx, state, name, requiredScope, requestMetaSessionId(request.params)), state.actorHeader != null);
   }
 
   // F8: redact request payload by default (declared keys only via the

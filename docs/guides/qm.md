@@ -4,7 +4,8 @@ QM, a trusted system that already knows who each person is, keeps per-person
 memory in a brain through two MCP tools: `memory_recall` reads what the person may
 read, and `memory_write` saves facts only they read back. Both run as the person QM
 names in the `x-qm-actor` header. The wire contract QM vendors is
-[`docs/contracts/qm-memory-provider/v1.json`](../contracts/qm-memory-provider/README.md).
+[`docs/contracts/qm-memory-provider/v1.json`](../contracts/qm-memory-provider/README.md);
+`v2.json` adds the scope read and `v3.json` the personal tools for the person's own DM.
 
 ## Set up on the brain host
 
@@ -18,6 +19,14 @@ gbrain access member link alice-example --qm U0ALICE            # the canonical 
 Add `forget` with `--attest-ops forget,get_write_request,memory_recall,memory_write` if QM
 should withdraw facts; an attested `forget` reaches only facts on the person's own
 page, and any other id is `not_found`.
+The personal tools in [contract v3](../contracts/qm-memory-provider/README.md) (`query`,
+`get_page`, `get_timeline`, `get_backlinks`, `find_experts`, `whois`, `entity`,
+`context_pack`, `volunteer_context`, `forget_fact`) are opt-in the same way: the
+default stays `get_write_request,memory_recall,memory_write`, so list each one QM uses,
+for example `--attest-ops forget_fact,get_page,get_write_request,memory_recall,memory_write,query,whois`.
+They read as the person, their own restricted pages included, so grant them only to
+the client that serves the person's own DM, never to a client that serves shared
+rooms.
 Direct page writes (`add_timeline_entry`, `add_link`, `put_page`, `edit_page`) are not
 attestable: a person's words reach a shared page only through an owner-approved proposal,
 which is not served yet. `--attest-ops` refuses them, and a list that already names one
@@ -52,7 +61,14 @@ a repo exists, saved facts go through the same git-first writer door as `remembe
   answers `status: "pending"` with a `request_id` for `get_write_request`.
 
 On success the result is in `structuredContent`, and `content` holds only the text
-for the model. A person not yet linked gets an empty `memory_recall` with
+for the model. Each fact in `structuredContent.facts` carries `arm`: `own` (the
+person's own recent fact) or `ranked` (matched by `query`); a recall that names
+sources has only `ranked` rows. An attested call to a v3 personal tool also gets its
+result in `structuredContent` (a list as `structuredContent.results`), while
+`content` keeps the JSON; `context_pack`'s `content` is its rendered text alone. The
+same tools called without `x-qm-actor` answer as before, with no `structuredContent`.
+A personal read whose answer, counted with `structuredContent`, is over the
+connection's result cap is refused whole (`result_too_large`). A person not yet linked gets an empty `memory_recall` with
 `structuredContent.code: "actor_unlinked"` (its arguments are still checked
 first). Every refusal, including the transport's scope and unknown-tool ones,
 carries `structuredContent.error`. A request carrying `x-qm-audience` (channel
