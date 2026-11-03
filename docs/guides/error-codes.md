@@ -1333,6 +1333,16 @@ More: [docs/operations/spend-controls.md#dream-paid-loop-breaker-dreambreakermax
 
 More: [docs/guides/repair.md#embed-backfill-stalled](../../docs/guides/repair.md#embed-backfill-stalled)
 
+### embedded_core_required
+
+<a id="embedded_core_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| openEngine (gbrain/engine-open) was called without embedded_core: true, so no engine was opened. | Opening an engine from settings alone is an experimental embedding surface that is off by default; a host opts in explicitly so no existing caller changes behavior. | Pass embedded_core: true in the settings; the CLI, gbrain serve and mounts open brains through their own connect path and need nothing. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
+
 ### embedding_auth_failed
 
 <a id="embedding_auth_failed"></a>
@@ -1443,6 +1453,16 @@ More: [docs/guides/troubleshooting.md#embedding-state](../../docs/guides/trouble
 |---|---|---|---|---|---|---|
 | The embedding model cannot produce the width of the brain's vector column; nothing was changed. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### engine_embedding_mismatch
+
+<a id="engine_embedding_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An engine opened from settings names an embedding model or width that differs from the one its database already records, so initSchema changed nothing. | The vector column has one width and the brain one embedding model; seeding another over it would make every stored and future embedding unreadable. Changing it is an explicit re-embed the user decides on. | Pass the database's recorded model and width in settings.embedding, or read the recorded identity with gbrain migrate embeddings --status on the brain host and preview a migration from there. Run: gbrain migrate embeddings --status --json | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
+
 ### engine_graduated
 
 <a id="engine_graduated"></a>
@@ -1452,6 +1472,26 @@ More: [docs/guides/troubleshooting.md#embedding-state](../../docs/guides/trouble
 | A client opened a PGLite brain that moved to Postgres; its old path holds a tombstone. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/move-to-postgres.md#graduated-datastore](../../docs/guides/move-to-postgres.md#graduated-datastore)
+
+### engine_host_missing
+
+<a id="engine_host_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An engine opened from settings has no host identity, so nothing that needs one ran and no host.json was created. | An embedded engine publishes and claims work under the host id its host gave at open; minting a host.json under the home directory instead would tie its writes to whatever process happens to share that directory. | Pass host: { id: <uuid> } to openEngine; keep the same id for the same host across restarts. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
+
+### engine_settings_invalid
+
+<a id="engine_settings_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A setting passed to openEngine or registerLocalWriterValue is missing or malformed (engine kind, database url or path, pool size, host or writer id, writer credential or lane, embedding identity), so nothing was opened or registered. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the setting the message names and call again. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
 
 ### entity_types_unavailable
 

@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**An embedding host can open a brain from a settings value (experimental, off by default).** `openEngine(settings)` from `gbrain/engine-open` creates and connects an engine from one object: its database, its own pool, its direct URL, its persistence host identity, its local writer and its embedding identity. It reads no config file, environment variable or home directory for any of them, so two brains in one process never share a pool, a host id or a credential, and a stray `GBRAIN_DIRECT_DATABASE_URL` cannot send one brain's DDL somewhere else. It refuses unless the settings say `embedded_core: true`. The CLI, `gbrain serve` and mounts don't use it and behave exactly as before. Contributed by @bradgessler (#8455).
+
+### Itemized changes
+
+- `src/core/engine-open.ts` (new, exported as `./engine-open`): `openEngine`, refusing `embedded_core_required`, `engine_host_missing` and `engine_settings_invalid`. A connect never migrates; the host runs `initSchema()`. Documented in docs/ENGINES.md, "Opening an engine from settings".
+- `src/core/persistence/identity.ts`: `hostIdFor(engine)` and `setEngineHostId`, resolved through `engineKey`. Publication, admission, the consumer, worktree ownership, effects and the writer stamp use it; an unmarked engine still gets `localHostId()`. An embedded engine never reads or mints `host.json`, and its consumer heartbeat records `embedded:<host-id>`, which doctor and writer status read as an identity given at open. `registerLocalWriterValue` registers a writer the host holds as a value, and an embedded engine's writes use it instead of a `<brain>.<lane>.json` file.
+- `initSchema()` on an embedded engine seeds the embedding model and width from `settings.embedding` and refuses `engine_embedding_mismatch` on a database that records another one.
+- The decide spend cache is keyed by engine and held weakly, and a drained feedback queue no longer keeps its engine alive.
+- `test/engine-open.test.ts`, `test/engine-open-lifecycle.test.ts`, `test/e2e/engine-open-postgres.test.ts`.
+
 ## [0.60.556.0] - 2026-11-02
 
 **Mounted brains stop sharing settings and search telemetry.** In a process that serves several brains, search telemetry for every brain was written into the first brain's database, and a handful of per-brain settings were read once from whichever brain asked first and then applied to all of them. Each of those caches now belongs to its engine, and each engine gets its own telemetry writer, which stops its timer when the engine disconnects and keeps its buffer for a reconnect. A process with one brain behaves exactly as before. Contributed by @bradgessler (#8454).

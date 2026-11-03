@@ -6,7 +6,7 @@ import { isImageFilePath, type ImportResult } from '../import-file.ts';
 import { loadConfig } from '../config.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
-import { currentVerifiedLocalWriter, localHostId } from './identity.ts';
+import { currentVerifiedLocalWriter, hostIdFor } from './identity.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { SCREENING_SHARED_READS, batchSharedReads, emitFenceNotice, initializeLocalPersistence, pendingAwareResponse, preparePageAdmission, requestPrincipalForContext, withBatchAdmission,
   withLiveSearchable } from './page-mutations.ts';
@@ -101,7 +101,7 @@ export async function importManagedFiles(engine: BrainEngine, files: readonly Ma
   const fail = (i: number, reason: unknown) => { settled[i] = { status: 'rejected', reason }; };
   const sourceId = opts.sourceId ?? 'default';
   const binding = await getWorktreeBinding(engine, sourceId);
-  const unowned = !binding?.local_path || binding.owner_host_id !== localHostId() || binding.state !== 'active'
+  const unowned = !binding?.local_path || binding.owner_host_id !== hostIdFor(engine) || binding.state !== 'active'
     ? opError('owner_unavailable', 'Managed import must run on the active canonical owner for the selected source.',
       `This host is not the active owner of source ${sourceId}, so nothing was imported. Run the import on the owner host that writer status names, or wait until its owner is active.`,
       { fix: readFix(`Shows source ${sourceId}'s owner host and state, read-only.`, { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] }) }) : null;
