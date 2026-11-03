@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.562.0] - 2026-11-03
 
 **A degraded or partial read now says so on the result itself.** Search, query, recall and the other reads already recorded degraded stages (an embedding timeout, a failed arm, a keyword-only brain, a held file) in notices and `_meta` fields that a harness had to know to look for, and recall and think dropped their page search's stages entirely. Every degraded or partial read result now carries one stamp naming why with stable codes. An MCP result gets `_meta.degraded: { reasons: [...] }` and one extra text block, `[gbrain degraded: <reasons>] ...`, after the others; a CLI `--json` object gets a `degraded` key, and other CLI output gets that line on stderr. A clean result carries no stamp, and no existing field changed. The code table is in docs/protocol/MCP_META_CHANNELS.md.
 
