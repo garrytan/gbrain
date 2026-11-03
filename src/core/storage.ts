@@ -1,6 +1,7 @@
 import { closeSync, openSync, readSync } from 'fs';
 import type { FileHandle } from 'fs/promises';
 import { createHash } from 'crypto';
+import { embeddedSettingsRecord } from './embedded-engine.ts';
 
 /**
  * StorageBackend — pluggable interface for binary file storage.
@@ -76,6 +77,14 @@ export function hashStorageFile(filePath: string): string {
   } finally {
     closeSync(fd);
   }
+}
+
+/** The store an engine opened from settings keeps its files in (settings.storage under its prefix); undefined for any other engine or with no settings.storage. */
+export async function settingsStorage(engine: object): Promise<StorageBackend | undefined> {
+  const settings = embeddedSettingsRecord(engine)?.storage;
+  if (!settings) return undefined;
+  const { prefix, ...config } = settings;
+  return prefixedStorage(await createStorage({ bucket: '', ...config }), prefix);
 }
 
 /** `backend` with every object key under `<prefix>/`; list() returns keys without it. No prefix returns `backend` itself. */

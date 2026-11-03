@@ -780,7 +780,7 @@ working directory:
 - **Files.** Every file op uses `settings.storage` (local, or s3 with its endpoint), keys under a one-segment `prefix`;
   brains sharing a bucket each set their own.
 
-Still process-wide: file_upload's storage, transcription, the AI call log and timeouts, `GBRAIN_*` tuning variables (pool lifetime,
+Still process-wide: the `gbrain files` CLI's storage, transcription, the AI call log and timeouts, `GBRAIN_*` tuning variables (pool lifetime,
 connect and session timeouts, `GBRAIN_PREPARE`, `GBRAIN_DIRECT_POOL_SIZE`, `GBRAIN_DISABLE_DIRECT_POOL`,
 `GBRAIN_RLS_SCOPE_BINDING`, the PGLite close watchdog), `PG*` TLS and tuning
 variables, the connection-events audit log, and operation-level

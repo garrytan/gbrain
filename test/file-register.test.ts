@@ -142,6 +142,31 @@ describe('file_register', () => {
     expect(await run('file_verify', ctx, { storage_path: 'notes/plan/upload.txt' })).toMatchObject({ present: true, hash_matches: true });
   });
 
+  test('file_upload on an engine opened without settings.storage refuses and never writes the process store', async () => {
+    const engine = await embedded({ storage: undefined });
+    await addPage(engine, 'notes/plan');
+    const source = join(root, 'refused.txt');
+    writeFileSync(source, 'refused bytes');
+    const ctx = ctxFor(engine, { config: { storage: { backend: 'local', bucket: 'test', localPath: join(root, 'process-store-2') } } } as never);
+    expect((await failure(() => run('file_upload', ctx, { path: source, page_slug: 'notes/plan' })))?.code).toBe('storage_error');
+    expect([existsSync(join(root, 'process-store-2')), await fileRows(engine)]).toEqual([false, 0]);
+  });
+
+  test('a purge on an engine opened from settings deletes its blobs from that store, never the process store', async () => {
+    const engine = await embedded({ storage: { ...storage, prefix: 'brain-a' } });
+    const processDir = join(root, 'process-store-3');
+    store('brain-a/notes/plan/p.txt', Buffer.from('embedded'));
+    mkdirSync(join(processDir, 'notes/plan'), { recursive: true });
+    writeFileSync(join(processDir, 'notes/plan/p.txt'), 'another brain');
+    const { finishPagePurge } = await import('../src/core/persistence/page-purge.ts');
+    const purged = { status: 'purged', source_id: 'default', slug: 'notes/plan', request_id: randomUUID(), purge: { blobs: ['notes/plan/p.txt'], removed: {} } };
+    const result = await finishPagePurge({ engine, config: { storage: { backend: 'local', bucket: 'test', localPath: processDir } } } as never, purged) as { purge: { blobs_remaining: string[] } };
+    expect([result.purge.blobs_remaining, existsSync(join(storageRoot, 'brain-a/notes/plan/p.txt')), existsSync(join(processDir, 'notes/plan/p.txt'))]).toEqual([[], false, true]);
+    const bare = await embedded({ storage: undefined });
+    const kept = await finishPagePurge({ engine: bare, config: { storage: { backend: 'local', bucket: 'test', localPath: processDir } } } as never, { ...purged, request_id: randomUUID() }) as { purge: { blobs_remaining: string[] } };
+    expect([kept.purge.blobs_remaining, existsSync(join(processDir, 'notes/plan/p.txt'))]).toEqual([['notes/plan/p.txt'], true]);
+  });
+
   test('a store that cannot be reached is store_unavailable and records nothing', async () => {
     const engine = await embedded({ storage: unreachable });
     const bytes = Buffer.from('x');
@@ -150,6 +175,7 @@ describe('file_register', () => {
     expect(await fileRows(engine)).toBe(0);
     await engine.executeRaw(`INSERT INTO files (filename, storage_path, content_hash, size_bytes) VALUES ('a.txt', 'unsorted/a.txt', $1, 1)`, [sha(bytes)]);
     for (const params of [{}, { storage_path: 'unsorted/a.txt' }]) expect((await failure(() => run('file_verify', ctxFor(engine), params)))?.code).toBe('store_unavailable');
+    expect((await failure(() => run('file_url', ctxFor(engine), { storage_path: 'unsorted/a.txt' })))?.code).toBe('store_unavailable');
   });
 });
 

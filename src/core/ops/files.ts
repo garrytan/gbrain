@@ -227,9 +227,8 @@ async function embeddedStorage(ctx: OperationContext, op: string) {
   const settings = embeddedSettingsRecord(ctx.engine)?.storage;
   if (!settings) throw opError('storage_error', `This engine was opened with no settings.storage, so ${op} cannot check any stored object.`,
     'Open the engine with storage (local or s3, with its values) in its settings; the process storage config is never used for an engine opened from settings. Nothing was recorded.');
-  const { createStorage, prefixedStorage } = await import('../storage.ts');
-  const { prefix, ...config } = settings;
-  try { return prefixedStorage(await createStorage({ bucket: '', ...config }), prefix); } catch (error) { throw storeUnavailable(op, error); }
+  const { settingsStorage } = await import('../storage.ts');
+  try { return (await settingsStorage(ctx.engine))!; } catch (error) { throw storeUnavailable(op, error); }
 }
 
 async function embeddedFileStore(ctx: OperationContext, op: string) {
