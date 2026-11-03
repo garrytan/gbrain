@@ -775,8 +775,8 @@ working directory:
   their engine's scope; wrap any other direct call in `withEngineScope(engine, fn)`. With an embedded engine open,
   a call in no scope refuses `engine_scope_required`; `withLocalScope(fn)` (the CLI, serve and jobs enter it) uses
   the process gateway. Batch shrink, no-key and structured-output memory, usage rows and the alias policy are per
-  engine. Query embeddings are cached per engine until close, unless `cache_namespace` (a host-owned name
-  for one tenant database) keeps them warm; a replaced key starts cold.
+  engine. Query embeddings are cached per engine until close, unless `cache_namespace` (a host's name for
+  one tenant database) keeps them warm; a new key starts cold.
 - **Read back.** `embeddedSettings(engine)` returns a frozen copy with no secrets.
 - **Close.** `disconnect()` closes the engine for good and drops its settings, even while a reconnect is in flight
   (any pool that reconnect builds is ended). A later `connect()` or `reconnect()` refuses `engine_closed`; call
