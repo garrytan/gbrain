@@ -24,6 +24,7 @@
  */
 
 import { observationDateLine, observationDateRule, parseExtractedEventDate, type ObservationDate } from '../ai/date-grounding.ts';
+import { AUTOMATIC_CAPTURE_POLICY_BLOCK, automaticCaptureDecision } from './automatic-capture-policy.ts';
 import { chat, embedOne, isAvailable, getEmbeddingModel } from '../ai/gateway.ts';
 import { classifyGlobalLlmError } from '../ai/errors.ts';
 import { stripReasoningBlocks } from '../llm-json.ts';
@@ -141,6 +142,8 @@ export async function getFactsExtractionPromptAppendix(
  * `0` opt out.
  */
 export interface ExtractorVariant {
+  /** Trusted automatic-capture caller's opt-in; never enabled by model output. */
+  automaticCapturePolicy?: boolean;
   /** Resolve relative dates against the observation date; emit valid_from. */
   dateGrounding?: boolean;
   /** Keep assistant-made claims as their own, attributed facts. */
@@ -453,7 +456,7 @@ const ATTRIBUTION_BLOCK = [
 /** @internal Exported for the prompt-shape test. Both variants off → the historical prompt, byte-identical. */
 export function buildExtractorSystem(admitsLow: boolean, variant: ExtractorVariant = {}): string {
   const base = admitsLow ? EXTRACTOR_SYSTEM_ADMITS_LOW : EXTRACTOR_SYSTEM_SKIPS_LOW;
-  return base + (variant.dateGrounding ? DATE_GROUNDING_BLOCK : '') + (variant.attribution ? ATTRIBUTION_BLOCK : '');
+  return base + (variant.dateGrounding ? DATE_GROUNDING_BLOCK : '') + (variant.attribution ? ATTRIBUTION_BLOCK : '') + (variant.automaticCapturePolicy ? AUTOMATIC_CAPTURE_POLICY_BLOCK : '');
 }
 
 /** Extractor input ceiling; corpus windows (context/corpus-windows.ts) are cut to fit it. */
@@ -506,9 +509,14 @@ const FACTS_RESPONSE_SCHEMA = { name: 'facts_extraction', schema: FACTS_EXTRACTI
  * attribution a nullable `attributed_to`; both off → the historical schema.
  */
 function factsResponseSchema(variant: ExtractorVariant): typeof FACTS_RESPONSE_SCHEMA {
-  if (!variant.dateGrounding && !variant.attribution) return FACTS_RESPONSE_SCHEMA;
+  if (!variant.dateGrounding && !variant.attribution && !variant.automaticCapturePolicy) return FACTS_RESPONSE_SCHEMA;
   const items = (FACTS_EXTRACTION_SCHEMA.properties as { facts: { items: Record<string, unknown> } }).facts.items;
   const extra: Record<string, unknown> = {
+    ...(variant.automaticCapturePolicy ? {
+      capture_scope: { type: ['string', 'null'], enum: ['work', 'personal', 'mixed', 'unknown', null] },
+      capture_lifetime: { type: ['string', 'null'], enum: ['durable', 'temporary', 'omit', 'unknown', null] },
+      observed_at: { type: ['string', 'null'] }, valid_until: { type: ['string', 'null'] },
+    } : {}),
     ...(variant.dateGrounding ? { valid_from: { type: ['string', 'null'] } } : {}),
     ...(variant.attribution ? { attributed_to: { type: ['string', 'null'], enum: ['user', 'assistant', 'other', null] } } : {}),
   };
@@ -840,6 +848,8 @@ export async function extractFactsFromTurnWithOutcome(
     const claimUnit   = candidate.unit ?? null;
     const claimPeriod = candidate.period ?? null;
 
+    const capture = variant.automaticCapturePolicy ? automaticCaptureDecision(candidate, rawTurn) : undefined;
+    if (capture === null) continue;
     facts.push({
       fact: factText,
       kind,
@@ -864,6 +874,7 @@ export async function extractFactsFromTurnWithOutcome(
       claim_value:  claimValue,
       claim_unit:   claimUnit,
       claim_period: claimPeriod,
+      ...(capture ? { visibility: capture.visibility, valid_until: capture.validUntil } : {}),
       // Date grounding: a validated extractor-stated event date wins over the
       // caller's fallback (backstop precedence). Malformed / out-of-range
       // dates are dropped, never guessed.
@@ -911,6 +922,10 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
 }
 
 interface RawExtracted {
+  capture_scope?: string | null;
+  capture_lifetime?: string | null;
+  observed_at?: string | null;
+  valid_until?: string | null;
   fact: string;
   kind: string;
   entity?: string | null;
@@ -989,6 +1004,10 @@ function tryArrayShapeDetailed(s: string): ParsedExtractorShape | null {
         continue;
       }
       out.push({
+        ...('capture_scope' in o ? { capture_scope: typeof o.capture_scope === 'string' ? o.capture_scope : null } : {}),
+        ...('capture_lifetime' in o ? { capture_lifetime: typeof o.capture_lifetime === 'string' ? o.capture_lifetime : null } : {}),
+        ...('observed_at' in o ? { observed_at: typeof o.observed_at === 'string' ? o.observed_at : null } : {}),
+        ...('valid_until' in o ? { valid_until: typeof o.valid_until === 'string' ? o.valid_until : null } : {}),
         fact: o.fact,
         kind: o.kind,
         entity: typeof o.entity === 'string' ? o.entity : null,

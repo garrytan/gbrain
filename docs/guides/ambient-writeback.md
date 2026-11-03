@@ -408,9 +408,26 @@ Expiry is **exact-time and read-side**: active reads (`recall`, entity cards,
 hot-memory injection, dedup candidates) exclude facts whose `valid_until` has
 passed — no sweeper needed, nothing mutated. The rows stay in the database as
 history (`--asof` and supersession views still see them), and a re-stated
-fact after expiry inserts fresh. Backstop-extracted facts currently get no
-TTL (the extractor doesn't classify transience yet — a filed follow-up), so a
-transient fact caught only by the backstop is durable until forgotten.
+fact after expiry inserts fresh. By default, backstop-extracted facts get no
+TTL. The prospective `facts.automatic_capture_policy=work_shared_expiring`
+opt-in applies only to trusted-local automatic capture lanes. It asks the
+extractor to classify each atomic claim's scope and lifetime. A temporary
+claim is admitted only with a valid original ISO observation timestamp and
+an explicit ISO deadline present in the retained input (positive interval,
+at most 365 days). An undated temporary claim is omitted; file modification
+time and replay time never supply a new lifetime. Existing rows are untouched.
+
+Under this opt-in, a work-only claim is proposed as `world` only when its
+entity resolves to an existing project, company or organization page.
+Personal, mixed and uncertain claims stay `private`; an explicitly private
+caller, target page or known origin page also clamps visibility to private.
+Approval grants, instructions, examples and unclassified lifetimes are
+omitted. This does not change `facts.default_visibility` or share old private
+facts. The scope decision still depends on extraction-model classification:
+synthetic pipeline tests establish persistence and read boundaries, not
+semantic privacy accuracy. Validate the configured model on representative
+mixed input before enabling this policy. It does not infer a default three-day
+lifetime or add missing timestamps to older corpus text.
 
 **Note on lapsed rows:** `valid_until` is temporal validity and active reads
 honor it, so a brain that already carries lapsed rows sees them leave the

@@ -13,7 +13,7 @@ import type { Action } from '../agent-output.ts';
 import { resolveEntitySlugWithSource } from '../entities/resolve.ts';
 import { appendContextNote, type InferredVia } from '../facts/subject-infer.ts';
 import { inferenceNote } from '../facts/subject-infer-write.ts';
-import { resolveDefaultVisibility } from '../facts/visibility.ts';
+import { resolveDefaultVisibility, tightenToStoredPage } from '../facts/visibility.ts';
 import { FACT_WITHDRAWN_MESSAGE, isFactWithdrawn, withdrawnFromDetail } from '../facts/withdrawal.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
@@ -607,7 +607,10 @@ export async function publishManagedFacts(engine: BrainEngine, session: ManagedF
     const group = groups.get(slug) ?? [];
     const context = options.explicitContext ? fact.context ?? null : withSpeakerNote(ctx.speaker, ctx.sourceSlug ?? pageSlug ?? null);
     // #5836: an inferred subject carries its provenance note into the fence cell and the row.
-    group.push({ ...fact, entity_slug: attributed, visibility, context: fact.entity_inferred ? appendContextNote(context, inferenceNote(fact.entity_inferred)) : context,
+    const target = entitySlug ? await engine.getPage(entitySlug, { sourceId }) : null;
+    const proposed = ctx.visibility === 'private' ? 'private' : fact.visibility ?? visibility;
+    const factVisibility = target ? await tightenToStoredPage(engine, sourceId, proposed, target) : proposed;
+    group.push({ ...fact, entity_slug: attributed, visibility: factVisibility, context: fact.entity_inferred ? appendContextNote(context, inferenceNote(fact.entity_inferred)) : context,
       embedding: fact.embedding ? Array.from(fact.embedding) : null,
       valid_from: (factEventTime(fact, ctx) ?? new Date()).toISOString(), valid_until: fact.valid_until?.toISOString() ?? null });
     groups.set(slug, group);
