@@ -1010,7 +1010,7 @@ stored, and compaction frees the window's reservations as receipts age out.
 within `persistence.capacity.warn_days` (default 30), adds the
 `[gbrain notice write_capacity_low]` notice (kind `info`) with the same
 `gbrain config set` command. Write and sync receipts carry it at most once an
-hour per process per scope (a remote client sees only the brain and its own
+hour per engine per scope (a remote client sees only the brain and its own
 principal); `gbrain sync status`, doctor and autopilot cycle output carry it
 every time. `gbrain notices mute write_capacity_low` mutes it on receipts;
 doctor still reports it. When a cap passes

@@ -203,7 +203,7 @@ Several of the knobs deserve a sentence:
   order keeps closer in-filter candidates that strict order drops; results
   are re-sorted either way. `gbrain config set search.hnsw_iterative_scan
   strict_order` restores the older mode (restart serve and autopilot: it is
-  read once per process); another value is refused with exit 2.
+  read once per engine, so once per process on a one-brain server); another value is refused with exit 2.
 
 ### Setting and resolving the mode
 
