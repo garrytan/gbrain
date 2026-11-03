@@ -263,7 +263,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/facts/forget.ts` (4): the legacy fence expiry, withdrawal and strike-through each run in `maintenanceTransaction` (nested inside a caller's coordinated write, they keep its actor).
 - `src/core/facts/ontology-rekey.ts` (1): B-10's duplicate-observation drop runs in its caller's transaction immediately before the caller's re-key: the rename's `maintenanceTransaction`, the `relink_facts` publication, the phantom redirect's fact move and `repair facts-rehome`'s move; every caller is attributed.
 - `src/core/facts/proposal-supersede.ts` (4): unmanaged `decide` proposal accept and undo run in one `maintenanceTransaction` each; managed brains publish a `decide_proposal` request.
-- `src/core/facts/purge.ts` (2): `purge_fact` rewrites purged pages' bodies and redacts their versions inside `withCoordinatedWrite` with the purge request's attribution.
+- `src/core/facts/purge.ts` (3): `purge_fact` rewrites purged pages' bodies, redacts their versions and replaces those versions' change reasons with `[purged]` inside `withCoordinatedWrite` with the purge request's attribution.
 - `src/core/facts/relink-publish.ts` (2): `relink_facts` request preparer.
 - `src/core/facts/unfenced-facts.ts` (1): the cycle and v0.32.2 fence of `row_num`-NULL facts: a maintenance request on managed brains; the unmanaged row-number stamp runs in `maintenanceTransaction` (the body mirror goes through `facts/file-body-guard.ts`).
 - `src/core/facts/withdrawal.ts` (1): runs inside the `forget` request's coordinated write.
@@ -278,15 +278,15 @@ or a physical projection that leaves attribution untouched):
 - `src/core/generations/adapters/fact-rows.ts` (1): putting a fact's recorded before-state back (`restoreFactRow`) runs only inside a generation restore's `maintenanceTransaction` (`repair.ts`, GBRA-161 PR 2).
 - `src/core/import-file.ts` (12): direct markdown, code and image imports, the moved-file rename (`updateSlug`) and the #3694 legacy-hash re-stamp run in `maintenanceTransaction`; managed imports go through the page request preparer.
 - `src/core/minions/handlers/ingest-capture.ts` (1): the capture ingest tombstone soft delete runs in `maintenanceTransaction`.
-- `src/core/ops/extraction.ts` (2): extraction review promote (frontmatter) and reject (soft delete) each run in `maintenanceTransaction`.
 - `src/core/output/writer.ts` (4): `BrainWriter.transaction` is a `maintenanceTransaction`, so its pages and timeline rows carry the maintenance principal.
 - `src/core/page-body/segment-rewrite.ts` (2): a segmented page's fence rewrite (the soft-delete `deleted_at` restore after its generation flip, and the purged version's `page_versions` hash redaction) runs in its caller's transaction: `forget`'s `maintenanceTransaction`, the withdrawal inside the `forget` request's coordinated write, and `purge_fact`'s `withCoordinatedWrite`.
 - `src/core/page-body/streamed-import.ts` (1): the streamed segmented import's pre-replace version snapshot runs in its `maintenanceTransaction`.
 - `src/core/page-state/materialize.ts` (1): coordinated maintenance.
 - `src/core/page-state/rename-alias.ts` (5): the fact slug rewrite runs inside its caller's `updateSlug` transaction, and `movePageIdReferences` (#5431: page_versions, timeline_entries and links moved to the row that materialized under a fallback rename) runs inside `carryRenameIdentity`'s `maintenanceTransaction`; every caller is attributed.
-- `src/core/page-state/versions.ts` (2): `createVersion` itself and its segmented-page twin; the caller's scope supplies the actor.
+- `src/core/page-state/versions.ts` (3): `createVersion` itself, its segmented-page twin and the pruned-history marks (`successor_pruned`, `version_history_gap_at`); the caller's scope supplies the actor.
 - `src/core/persistence/atom-maintenance.ts` (1): request preparer.
 - `src/core/persistence/canonical-projections.ts` (8): fence projection inside the request's publication.
+- `src/core/persistence/change-reason.ts` (1): stamps a page write's `reason` on the snapshot its publication archived, inside that request's publication apply.
 - `src/core/persistence/connector-google-receipts.ts` (2): request preparer.
 - `src/core/persistence/connector-sync.ts` (2): connector publication inside `withCoordinatedWrite`.
 - `src/core/persistence/derived-facts.ts` (1): the gated conversation fact insert (`insertDerivedFacts`) on unmanaged brains, in `writeDerivedFacts`' `maintenanceTransaction` at the page's derived tier.
