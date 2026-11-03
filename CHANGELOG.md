@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.564.0] - 2026-11-03
 
 **A brain opened from settings brings its own AI providers.** `settings.ai` names the providers an embedded engine may call, with their keys and base URLs as values, and the models it uses for chat, expansion and reranking. Its embed, chat and rerank calls go only there, never to a key in the process environment, `~/.gbrain/config.json` or the process-wide gateway, so two brains in one process never spend each other's keys or see each other's cached query vectors. A call to a provider the settings don't name refuses `engine_scope_missing` and sends nothing. While such an engine is open, an AI call made outside any engine's scope refuses the same way unless the host configured a process gateway. Each engine's chat usage lands in its own database. Keys never show up in errors, logs, doctor output or `embeddedSettings()`, also for a call still in flight when the engine disconnects. Every other engine, and the CLI, keeps the process gateway exactly as before. Contributed by @bradgessler (#8456, #8085).
 
