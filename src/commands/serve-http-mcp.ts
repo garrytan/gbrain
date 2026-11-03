@@ -30,6 +30,7 @@ import { scopeDeniedError } from '../core/ops/op-fix.ts';
 import { resolveStrictParamsMode } from '../mcp/validate-params.ts';
 import { GBRAIN_CLIENT_HEADER, isGbrainThinClient, resolveResultRowsMode, resultRowsForRequest, type ResultRowsMode } from '../mcp/result-rows.ts';
 import { buildToolDefs } from '../mcp/tool-defs.ts';
+import { withEngineScope } from '../core/engine-scope.ts';
 import {
   filterOpsForSurface,
   advertisedOps,
@@ -138,7 +139,7 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
   // read-only; grantScopes still caps each grant to the client row's scope.
   app.post('/mcp', withBearerScopeHint(
     requireBearerAuth({ verifier: resourceVerifier, resourceMetadataUrl }), ['read', 'write'],
-  ), (req: Request, res: Response) => withRequestConfigSnapshot(engine, () => handleMcpPost(req, res)));
+  ), (req: Request, res: Response) => withEngineScope(engine, () => withRequestConfigSnapshot(engine, () => handleMcpPost(req, res))));
 
   // #6721: one config snapshot serves every config read of one POST /mcp (the
   // surface, row-shape and writeback reads below, tools/list and a read op's

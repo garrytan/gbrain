@@ -53,6 +53,7 @@ import { searchVectorFallback, searchWithoutEmbeddings } from './hybrid/keyword-
 import { factEmbeddingDisabled } from '../embedding-disabled.ts';
 import { capSessionPool, collapsePool, expandStructuralNeighbors, finalizeHybridResults, fuseArms, rerankAndPin, sizeReturnPool } from './hybrid/rank.ts';
 import { type StageTimer, UNTIMED } from './stage-timings.ts';
+import { needsEngineScope, withEngineScope } from '../engine-scope.ts';
 
 export const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
@@ -1080,6 +1081,7 @@ export async function hybridSearch(
   query: string,
   opts?: HybridSearchOpts,
 ): Promise<SearchResult[]> {
+  if (needsEngineScope(engine)) return withEngineScope(engine, () => hybridSearch(engine, query, opts));
   if (opts?.types?.length === 0) return [];
   const timer = opts?._timings ?? UNTIMED;
   if (opts?.type || opts?.types?.length) {
@@ -1205,6 +1207,7 @@ export async function hybridSearchCached(
   query: string,
   opts?: HybridSearchOpts,
 ): Promise<SearchResult[]> {
+  if (needsEngineScope(engine)) return withEngineScope(engine, () => hybridSearchCached(engine, query, opts));
   if (opts?.types?.length === 0) return [];
   const timer = opts?._timings ?? UNTIMED;
   const { modeInputForCache, resolvedForCache, knobsHash } = await timer.stage('setup', () => resolveCacheSearchMode(engine, opts));

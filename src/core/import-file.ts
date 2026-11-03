@@ -70,6 +70,7 @@ import type { PageBodyPolicy } from './page-body/limits.ts';
 import { parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning, replaceOrInsertFactsFence } from './facts-fence.ts';
 import { assertOriginUnclaimed, isOriginClaimRefusal } from './persistence/origin-guard.ts';
 import { fileBodyMatchesStored, readStoredBody } from './facts/file-body-guard.ts';
+import { needsEngineScope, withEngineScope } from './engine-scope.ts';
 
 /**
  * #2044 / #4548: row-level, visibility-aware fence merge for one page
@@ -352,6 +353,7 @@ export async function importFromContent(
     onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void;
   } & ImportFenceOptions = {},
 ): Promise<ImportResult> {
+  if (needsEngineScope(engine)) return withEngineScope(engine, () => importFromContent(engine, slug, content, opts));
   // Normalize BEFORE any tx write: putPage lowercases via validateSlug but
   // upsertChunks used to query by the caller's raw slug, so a mixed-case slug
   // created the page row then failed the chunk upsert with "Page not found",
@@ -1035,6 +1037,7 @@ export async function importFromFile(
     bodyPolicy?: PageBodyPolicy;
   } = {},
 ): Promise<ImportResult> {
+  if (needsEngineScope(engine)) return withEngineScope(engine, () => importFromFile(engine, filePath, relativePath, opts));
   // Defense-in-depth: reject symlinks before reading content.
   const lstat = lstatSync(filePath);
   if (lstat.isSymbolicLink()) {
@@ -1235,6 +1238,7 @@ export async function importCodeFile(
   opts: { noEmbed?: boolean; force?: boolean; sourceId?: string;
     prepare?: (prepared: import('./persistence/prepared-import.ts').PreparedContentImport) => Promise<ImportResult> } = {},
 ): Promise<ImportResult> {
+  if (needsEngineScope(engine)) return withEngineScope(engine, () => importCodeFile(engine, relativePath, content, opts));
   if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct file import', { sourceId: opts.sourceId ?? 'default' });
   if (opts.prepare && !opts.noEmbed) throw new Error('Coordinated code import requires provider-free preparation.');
   const slug = slugifyCodePath(relativePath);
@@ -1869,6 +1873,7 @@ export async function importImageFile(
   relativePath: string,
   opts: ImportImageOptions = {},
 ): Promise<ImportResult> {
+  if (needsEngineScope(engine)) return withEngineScope(engine, () => importImageFile(engine, filePath, relativePath, opts));
   if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct file import', { sourceId: opts.sourceId ?? 'default' });
   // Defense-in-depth: reject symlinks before reading bytes.
   const lstat = lstatSync(filePath);
