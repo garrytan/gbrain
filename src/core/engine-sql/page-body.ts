@@ -386,7 +386,7 @@ export async function openBodyStaging(exec: SqlExecutor, input: BodyStagingInput
  * Moves a live staging to `state`; a move to a live state restarts its idle deadline (never past its hard one). A staging
  * that is no longer live stays as it is (GST-1209): a fact purge's abort or a sweep's expiry deleted its staged rows, so a
  * write moving it on (to prepared or committed) refuses body_staging_expired instead of reviving it, and an abort or expiry
- * of it changes nothing.
+ * of it changes nothing. A move to the state it already holds (a retried commit) is a no-op.
  */
 export async function setBodyStagingState(exec: SqlExecutor, id: string, state: BodyStagingState, opts: { commitRequestId?: string | null } = {}): Promise<void> {
   const { rows } = await exec.run<{ id: string }>(sqlFragment`UPDATE page_body_stagings SET state = ${state}, updated_at = now(),
@@ -396,6 +396,7 @@ export async function setBodyStagingState(exec: SqlExecutor, id: string, state: 
     WHERE id = ${id}::uuid AND state = ANY(${LIVE_STAGING_STATES}::text[]) RETURNING id`);
   if (rows.length || state === 'aborted' || state === 'expired') return;
   const { rows: gone } = await exec.run<{ slug: string; state: string }>(sqlFragment`SELECT slug, state FROM page_body_stagings WHERE id = ${id}::uuid`);
+  if (gone[0]?.state === state) return;
   throw bodyStagingGoneError(gone[0]?.slug ?? id, id, gone[0]?.state ?? null);
 }
 

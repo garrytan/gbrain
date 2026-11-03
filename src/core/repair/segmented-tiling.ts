@@ -37,7 +37,8 @@ import { withCoordinatedWrite, withWriteAttribution } from '../persistence/conte
 import { readManagedMode } from '../persistence/managed-mode.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
 import { checkOwner, ownerUnavailableError } from '../persistence/owner-refusal.ts';
-import { localHostId } from '../persistence/identity.ts';
+import { hostIdFor } from '../persistence/identity.ts';
+import { gitChildEnv } from '../git-env.ts';
 import { loadRepairBusySet, repairBusy, repairBusyError } from '../persistence/repair-busy.ts';
 import { clearGitHold, readGitHold, requestGitHoldRetry, type GitHoldRecord } from '../persistence/sync-holds.ts';
 import { unreadPageImportScreen } from '../persistence/sync-screen.ts';
@@ -74,7 +75,7 @@ const previewCommand = (selection: Selection) => `gbrain repair segmented-tiling
 const receiptKey = (hash: string, pageId: number) => `${hash}:${pageId}`;
 const audit = createAuditWriter<{ ts: string } & Record<string, unknown>>({ featureName: 'segmented-tiling', errorLabel: 'segmented-tiling-audit', errorTrailer: '; repair continues' });
 const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
-const git = (root: string, args: string[], maxBuffer = 1024 * 1024) => execFileSync('git', ['-C', root, ...args], { maxBuffer, stdio: ['ignore', 'pipe', 'pipe'] });
+const git = (root: string, args: string[], maxBuffer = 1024 * 1024) => execFileSync('git', ['-C', root, ...args], { env: gitChildEnv(), maxBuffer, stdio: ['ignore', 'pipe', 'pipe'] });
 const gitText = (root: string, args: string[]): string | null => { try { return git(root, args).toString('utf8').trim(); } catch { return null; } };
 
 /**
@@ -89,8 +90,8 @@ async function sourceCheckout(engine: BrainEngine, sourceId: string): Promise<{ 
   if (managed) {
     const binding = await getWorktreeBinding(engine, sourceId);
     if (binding) {
-      const owner = checkOwner(binding, source.incarnation, localHostId());
-      if (owner.reason) throw ownerUnavailableError({ sourceId, reason: owner.reason, binding, incarnation: source.incarnation, hostId: localHostId(), remote: false, work: 'the segmented-tiling repair' });
+      const owner = checkOwner(binding, source.incarnation, hostIdFor(engine));
+      if (owner.reason) throw ownerUnavailableError({ sourceId, reason: owner.reason, binding, incarnation: source.incarnation, hostId: hostIdFor(engine), remote: false, work: 'the segmented-tiling repair' });
       root = join(owner.binding.local_path, owner.binding.relative_path);
     }
   }
