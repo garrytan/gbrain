@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.556.0] - 2026-11-02
+
+**Mounted brains stop sharing settings and search telemetry.** In a process that serves several brains, search telemetry for every brain was written into the first brain's database, and a handful of per-brain settings were read once from whichever brain asked first and then applied to all of them. Each of those caches now belongs to its engine, and each engine gets its own telemetry writer, which stops its timer when the engine disconnects and keeps its buffer for a reconnect. A process with one brain behaves exactly as before. Contributed by @bradgessler (#8454).
+
+### Itemized changes
+
+- `src/core/engine-key.ts`: `engineKey(engine)` resolves a page-transaction clone, a read-through view and a statement-deadline wrapper to the engine behind them. Every cache below keys on it.
+- `src/core/search/telemetry.ts`: one writer per engine (`getTelemetryWriter(engine)`), held weakly, flushing only into its own engine. The disconnect drain bounds every live writer. A disconnect suspends the writer (no timer, buffer kept), so a PGLite reconnect, which is a disconnect and a connect, still flushes what was buffered; a collected engine retires its writer. `setEngine` is gone.
+- Keyed by engine: `search.track_retrieval` (`last-retrieved.ts`), `persistence.publication_ceiling_ms` and the idle bound derived from it (`publication-deadline.ts`), the minion admission policy (`admission.ts`), the `mcp.strict_params` last-known-good fallback (`validate-params.ts`), the `write_capacity_low` throttle (`capacity-snapshot.ts`), and `search.hnsw_iterative_scan` / `search.vector_legacy_guard`, which are still latched once and now latched per engine.
+- `test/engine-keyed-caches.test.ts`: two engines per setting, the second read after the first warmed the cache. All six behavior cases fail on master.
+
 ## [0.60.555.0] - 2026-11-02
 
 **`gbrain query --limit N` without a token budget returns N rows again, a budgeted facts block takes at most N rows, the facts block never outscores the pages, and the CLI names fact rows instead of printing `undefined` (#8411).** Since the facts block went on by default (v0.60.491.0), it also ran on queries that passed no budget, because the shipped no-budget evidence plan carries an implicit 24,000-token budget. Its 22% share let up to 40 fact rows in ahead of the pages, so `--limit 3` could print more than a dozen fact rows before the 3 pages. Each block row was scored a hair above the top page, so they all showed the same score and outranked every hit, and the human CLI printed them as `[0.84xx] undefined -- …` because fact rows have no page slug.

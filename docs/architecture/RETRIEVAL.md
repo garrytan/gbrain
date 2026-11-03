@@ -113,7 +113,7 @@ written up in [`RETRIEVAL_MAXPOOL_INCIDENT.md`](../incidents/RETRIEVAL_MAXPOOL_I
   never reaches callers because the inner `ORDER BY distance` and the pooled
   outer sort re-sort it. `search.hnsw_iterative_scan` (`relaxed_order` |
   `strict_order` | `off`; env `GBRAIN_HNSW_ITERATIVE_SCAN` wins) restores the
-  older mode without a release; it is latched once per process, so restart
+  older mode without a release; it is latched once per engine (once per process on a one-brain server), so restart
   serve and autopilot after changing it. A filtered short pool is not
   proof that the corpus is exhausted. Postgres may make one exact fallback
   inside the remaining eight-second arm budget; PGLite does not pretend that

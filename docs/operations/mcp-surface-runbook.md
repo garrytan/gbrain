@@ -181,7 +181,7 @@ passthrough keys (D14.1), keeping schema-validating clients aligned with
 the server's reject posture. Read per request; flipping back to `warn`
 reopens the schemas on the next list. A transient config-read failure
 cannot re-open the grace period: dispatch holds the last successfully
-read mode per process, so a reject-mode server stays reject through a
+read mode per engine, so a reject-mode server stays reject through a
 config outage. `test/mcp-tool-defs.test.ts` pins
 both emission states; the default stays `warn` until the project-level
 flip (see TODOS.md, strict_params reject-flip).
