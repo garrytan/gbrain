@@ -394,7 +394,8 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * says otherwise.
  */
 export function syncSkillsBlock(opts: { target: BrainFirstTarget; launcher: string; decision: SkillLoadingDecision; writer: string; dryRun: boolean; audience?: SkillAudience; settingsPath?: string }): SkillsBlockOutcome {
-  if (opts.decision.value === 'spring') launcherCatalog(opts.launcher);
+  const mayFlip = !opts.dryRun && (opts.decision.source === 'prior' || opts.decision.source === 'default');
+  if (opts.decision.value === 'spring' || mayFlip) launcherCatalog(opts.launcher);
   return underInstructionLedgerLock(opts.dryRun, (outermost) => {
     const run = { ...opts, decision: outermost ? recordedSkillLoading(opts.target, opts.decision) : opts.decision };
     const outcome = syncSkillsBlockLocked(run);
@@ -426,8 +427,8 @@ function recordedSkillLoading(target: BrainFirstTarget, decision: SkillLoadingDe
 /**
  * #8485: Codex loads its global AGENTS.override.md when it is non-empty, else
  * AGENTS.md, so the file setup resolves moves when the override appears or
- * empties. An explicit opt-out (flag, env, --no-instructions) in one of the
- * two also reaches a spring index gbrain recorded in the other one in the
+ * empties. An opt-out (flag, env, or brain-first instructions declined now
+ * or on record) in one of the two also reaches a spring index gbrain recorded in the other one in the
  * same CODEX_HOME, so the index cannot come back when the override goes.
  * No other file is touched.
  */

@@ -353,6 +353,14 @@ export function inspectBrainFirst(path: string, expected?: string): { state: Bra
   return { state: current ? 'current' : 'stale', version };
 }
 
+function stateForRefusal(path: string): BrainFirstState {
+  try {
+    return inspectBrainFirst(path).state;
+  } catch {
+    return 'damaged';
+  }
+}
+
 export interface BrainFirstOutcome {
   harness: string;
   path: string;
@@ -398,7 +406,7 @@ export function syncBrainFirst(opts: { target: BrainFirstTarget; access: BrainFi
     return syncBrainFirstLocked(outermost && recorded ? { ...opts, decision: resolveBrainFirstDecision(undefined, priorBrainFirst(opts.target.harness, opts.target.path)) } : opts);
   }, (why) => ({
     harness: opts.target.harness, path: opts.target.path, role: opts.target.role, decision: opts.decision, action: 'preserve',
-    state_before: inspectBrainFirst(opts.target.path).state, detail: `${why}; ${opts.target.path} was left as it was`,
+    state_before: stateForRefusal(opts.target.path), detail: `${why}; ${opts.target.path} was left as it was`,
   }));
 }
 
@@ -465,7 +473,7 @@ function syncBrainFirstLocked(opts: { target: BrainFirstTarget; access: BrainFir
 export function removeBrainFirst(opts: { harness: string; path: string; dryRun: boolean; server?: string }): BrainFirstOutcome {
   return underInstructionLedgerLock(opts.dryRun, () => removeBrainFirstLocked(opts), (why) => ({
     harness: opts.harness, path: opts.path, role: 'instruction file', decision: { value: 'declined', source: 'flag' }, action: 'preserve',
-    state_before: inspectBrainFirst(opts.path).state, detail: `${why}; ${opts.path} was left as it was`,
+    state_before: stateForRefusal(opts.path), detail: `${why}; ${opts.path} was left as it was`,
   }));
 }
 

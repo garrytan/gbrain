@@ -15,7 +15,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
-import { brainFirstLedgerPath, brainFirstTargetAt, priorBrainFirst, resolveBrainFirstDecision, syncBrainFirst } from '../src/core/setup/brain-first.ts';
+import { brainFirstLedgerPath, brainFirstTargetAt, priorBrainFirst, removeBrainFirst, resolveBrainFirstDecision, syncBrainFirst } from '../src/core/setup/brain-first.ts';
 import { priorSkillLoading, readSkillLoadingLedger, resolveSkillLoading, skillLoadingLedgerPath, syncSkillsBlock } from '../src/core/setup/skills-block.ts';
 import { SKILL_INDEX_VERSION } from '../src/core/skills/spring-index.ts';
 
@@ -35,6 +35,7 @@ const next = JSON.parse(entry);
 ledger.entries = ledger.entries.filter((e) => !(e.harness === next.harness && e.path === next.path));
 ledger.entries.push(next);
 writeFileSync(ledgerPath, JSON.stringify(ledger, null, 2) + '\n');
+writeFileSync(marker + '.done', 'done');
 lock.release();
 `;
 
@@ -155,4 +156,43 @@ describe('#8484: an install that waited acts on what the other one recorded', ()
       expect(priorBrainFirst('claude-code', file)?.status).toBe('declined');
     });
   }, 60_000);
+
+  test('skills: an off decision that turns into spring while this install waited asks the launcher before taking the lock', async () => {
+    const home = sandbox();
+    await withEnv({ GBRAIN_HOME: home, HOME: home, GBRAIN_SKILL_LOADING: undefined }, async () => {
+      const file = join(home, '.codex', 'AGENTS.md');
+      const target = brainFirstTargetAt('codex', file);
+      expect(syncSkillsBlock({ target, launcher: LAUNCHER, decision: { value: 'spring', source: 'flag' }, writer: 'gbrain setup codex --skill-loading spring', dryRun: false }).action).toBe('write');
+      const springEntry = readSkillLoadingLedger()[0];
+      rmSync(skillLoadingLedgerPath());
+      rmSync(file);
+      const probe = join(BIN, 'gbrain-probe');
+      const asked = join(home, 'asked');
+      writeFileSync(probe, `#!/bin/sh\nif [ -f '${join(home, 'held.done')}' ]; then echo under-lock >> '${asked}'; else echo before-lock >> '${asked}'; fi\nexec '${LAUNCHER}' "$@"\n`);
+      chmodSync(probe, 0o755);
+      const { exited } = await otherInstall(home, skillLoadingLedgerPath(), springEntry);
+      const out = syncSkillsBlock({ target, launcher: probe, decision: { value: 'off', source: 'default' }, writer: 'gbrain setup codex', dryRun: false });
+      expect(await exited).toBe(0);
+      expect(out.decision).toEqual({ value: 'spring', source: 'prior' });
+      expect(out.action).toBe('write');
+      expect(readFileSync(asked, 'utf8').trim().split('\n')).toEqual(['before-lock']);
+    });
+  }, 60_000);
+});
+
+describe('#8484: a lock refusal on an unreadable instruction file reports preserve', () => {
+  test('syncBrainFirst and removeBrainFirst return preserve instead of throwing', async () => {
+    const home = sandbox();
+    await withEnv({ GBRAIN_HOME: home, HOME: home, GBRAIN_AGENT_INSTRUCTIONS: undefined }, async () => {
+      mkdirSync(join(home, '.gbrain', 'agent-instructions.lock'));
+      const file = join(home, '.claude', 'CLAUDE.md');
+      mkdirSync(file, { recursive: true });
+      const access = { kind: 'mcp' as const, server: 'gbrain' };
+      const sync = syncBrainFirst({ target: brainFirstTargetAt('claude-code', file), access, decision: { value: 'accepted', source: 'flag' }, writer: 'gbrain setup claude-code', dryRun: false });
+      expect(sync).toMatchObject({ action: 'preserve', state_before: 'damaged' });
+      expect(sync.detail).toContain('could not be locked');
+      const removed = removeBrainFirst({ harness: 'claude-code', path: file, dryRun: false });
+      expect(removed).toMatchObject({ action: 'preserve', state_before: 'damaged' });
+    });
+  });
 });
