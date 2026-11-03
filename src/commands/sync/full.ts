@@ -530,6 +530,13 @@ async function reconcileFullSyncDeletes(
             if (r.skipped === 'disabled_by_config' || r.skipped === 'url_clone') continue;
             if (r.skipped === 'file_changed') throw new OperationError('file_database_drift', 'The checkout file exists; re-export only restores absent files.', `If the file holds the newer edit, run gbrain sync --source ${sid} to import it; otherwise ask the user which version to keep.`);
             if (r.error) throw new Error(r.error);
+            if (r.skipped === 'over_push_scan_cap') {
+              reExportFailures++;
+              const fix = 'Kept the database page. Its file would pass the pre-push secret-scan cap, so it stays database-only and no sync re-exports it; read it with gbrain get.';
+              reexportFailures.push({ slug, path: pathBySlug.get(slug)!, code: 'over_push_scan_cap', message: 'The rendered file is over the pre-push secret-scan cap.', fix });
+              serr(`  ${slug} (over_push_scan_cap) ${fix}`);
+              continue;
+            }
             throw new OperationError('storage_error', `The page was not re-exported (${r.skipped}).`, 'Run gbrain doctor --json for the write-through target, then sync again.');
           } catch (error) {
             const failure = classifyItemFailure(error);

@@ -173,6 +173,11 @@ describe('GBRA-287: full-sync re-export of a DB-only page stored in segments', (
     expect(row!.source_path).toBeNull();
     expect(existsSync(join(repoPath, 'memories/huger.md'))).toBe(false);
     expect(stagingLeft(repoPath)).toEqual([]);
+    await engine.executeRaw("UPDATE pages SET source_path='memories/huger.md' WHERE slug='memories/huger'");
+    const result = await fullSync();
+    expect(result.reexport_failures).toEqual([expect.objectContaining({ slug: 'memories/huger', code: 'over_push_scan_cap' })]);
+    expect(result.reexport_failures![0]!.fix).not.toContain('--full');
+    expect(existsSync(join(repoPath, 'memories/huger.md'))).toBe(false);
   }, 600_000);
 
   test('the derived writer skips a generated page stored in segments instead of writing a file its rollback cannot compare', async () => {

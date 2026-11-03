@@ -478,11 +478,13 @@ export async function writePageThrough(
     const md = segmented ? null : serializePageToMarkdown(writtenPage, await engine.getTags(slug, { sourceId }), {
       frontmatterOverrides: opts.frontmatterOverrides,
     });
-    const streamed = segmented ? await segmentedPageFile(engine, slug, sourceId) : null;
-    if (segmented && !streamed) return { written: false, skipped: 'page_not_found_after_write' };
+    // A segmented body alone over the cap is refused before its segments are streamed to measure the file.
+    const overByBody = segmented && Number((writtenPage as { body_bytes?: number | string | null }).body_bytes ?? 0) > PUSH_SCAN_MAX_FILE_BYTES;
+    const streamed = segmented && !overByBody ? await segmentedPageFile(engine, slug, sourceId) : null;
+    if (segmented && !overByBody && !streamed) return { written: false, skipped: 'page_not_found_after_write' };
     // The pre-push secret scan refuses to push any file it cannot scan, so a
     // file over its cap would block every later push of the brain repo.
-    if ((md !== null ? Buffer.byteLength(md, 'utf-8') : streamed!.bytes) > PUSH_SCAN_MAX_FILE_BYTES) {
+    if (overByBody || (md !== null ? Buffer.byteLength(md, 'utf-8') : streamed!.bytes) > PUSH_SCAN_MAX_FILE_BYTES) {
       opts.logger?.warn(`[write-through] ${slug}: the rendered file is over the ${PUSH_SCAN_MAX_FILE_BYTES}-byte pre-push secret-scan cap — file not written (DB row is intact)`);
       return { written: false, skipped: 'over_push_scan_cap' };
     }
