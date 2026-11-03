@@ -163,6 +163,13 @@ brain/people/alice-example.md:
 Without back-links, you can't traverse the graph. "Show me everything related
 to Alice" only works if Alice's page links back to every mention.
 
+### Ingest
+
+`gbrain ingest` (MCP `ingest`) applies these rules in code to a pasted document: every name resolves by exact and
+alias identity first, a never-seen name one edit or one acronym letter away from an existing name is flagged in
+`near_names` and proposed, and new entity pages are proposed for the owner to approve unless the local owner passes
+`--trusted-extraction`. See [ingest](ingest.md).
+
 ## Tricky Spots
 
 1. **Don't block the conversation.** Entity detection runs async. The user
@@ -182,6 +189,22 @@ to Alice" only works if Alice's page links back to every mention.
 5. **Dedup before creating.** Always `gbrain search` before creating a page.
    Variant spellings, nicknames, and company abbreviations cause duplicates.
    "Alice Example" and "Alice" might be the same person.
+
+6. **Review near names, never auto-merge them.** A misheard name ("ACMX" for
+   "ACME") becomes a new page beside the real one. `gbrain extraction-pending
+   --include possible_duplicates` (MCP `extraction_pending` with `include:
+   ["possible_duplicates"]`) lists entity pages created in the last 30 days
+   whose name is one edit, or one acronym letter, away from another entity's
+   name or alias, whoever wrote them. It only flags: link the pair with
+   `entity-identity-link` (owner, manual), or add the name to the other
+   page's `aliases` frontmatter, which silences the pair. If they are
+   different entities, `gbrain extraction-review distinct --slugs <new>
+   --of <existing>` (owner, on the brain host) records it in the new page's
+   `distinct_from` frontmatter, committed to Git on a repository source, and
+   the pair is never flagged again. The
+   same command lists facts saved without an entity (`unattributed`); relink
+   one with `remember` plus `entity` and `replaces`, never by forgetting it
+   first.
 
 ## How to Verify
 

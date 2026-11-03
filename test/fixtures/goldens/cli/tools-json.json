@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 268798,
-    "stdoutSha256": "7e8ad692baa54268f6f79bf3109bfb03bf6c29119f65624e8847aff30963f591",
+    "stdoutBytes": 274768,
+    "stdoutSha256": "a0152c6a9965c546202c5d552da0934c7f70536dfed298fb40f88ca854c040ea",
     "toolNames": [
       "remember",
       "entity",
@@ -145,6 +145,8 @@
       "extract_entities",
       "extraction_pending",
       "extraction_review",
+      "ingest",
+      "ingest_undo",
       "entity_identity_link",
       "entity_identity_unlink",
       "entity_identity_list",
@@ -6416,24 +6418,47 @@
         "scope": "write"
       },
       {
-        "description": "List unverified auto-extracted entity stubs awaiting owner review (the quarantine lane from extract_entities). Promote or reject them with extraction_review.",
+        "description": "List what waits for review: unverified auto-extracted entity stubs (pending; promote or reject them with extraction_review), facts saved without an entity (unattributed; relink each with remember entity + replaces, never forget first), and, when include names it, recently created entity pages whose name is one edit or one acronym letter from another entity (possible_duplicates; flag only, never merged).",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "extraction_pending",
         "parameters": {
+          "include": "array?",
           "limit": "number?",
-          "offset": "number?"
+          "offset": "number?",
+          "possible_duplicates_cursor": "string?",
+          "since_days": "number?",
+          "unattributed_offset": "number?"
         },
         "required_scopes": [],
         "schema": {
           "properties": {
+            "include": {
+              "description": "Lists to return: pending, unattributed, possible_duplicates. Default pending and unattributed.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
             "limit": {
-              "description": "Max rows (default 100, cap 500).",
+              "description": "Max rows per list (default 100 for pending, 50 for the others; cap 500).",
               "type": "number"
             },
             "offset": {
-              "description": "Pagination offset.",
+              "description": "Pagination offset for pending.",
+              "type": "number"
+            },
+            "possible_duplicates_cursor": {
+              "description": "Continuation for possible_duplicates (its next_cursor).",
+              "type": "string"
+            },
+            "since_days": {
+              "description": "possible_duplicates: entity pages created in the last N days (default 30).",
+              "type": "number"
+            },
+            "unattributed_offset": {
+              "description": "Pagination offset for unattributed (its next_offset).",
               "type": "number"
             }
           },
@@ -6443,24 +6468,29 @@
         "scope": "read"
       },
       {
-        "description": "Promote or reject unverified auto-extracted entity stubs (batch). Promote flips `status` to verified (provenance kept for audit); reject soft-deletes the stub. Owner-only: this op is refused for any non-local caller. (The markers are ordinary frontmatter — the boundary against rewriting them wholesale is put_page write authz, same as for any page.)",
+        "description": "Decide on review rows (batch). promote flips an unverified auto-extracted stub's `status` to verified (provenance kept for audit); reject soft-deletes the stub; distinct records that each of slugs is a different entity from of (`distinct_from` frontmatter), so possible_duplicates stops pairing them. Every decision writes through the page door: Git first on a source with a repository, the database on a repo-less source. Owner-only: this op is refused for any non-local caller. (The markers are ordinary frontmatter — the boundary against rewriting them wholesale is put_page write authz, same as for any page.)",
         "idempotent": false,
         "local_only": true,
         "mutating": true,
         "name": "extraction_review",
         "parameters": {
           "action": "string",
+          "of": "string?",
           "slugs": "array"
         },
         "required_scopes": [],
         "schema": {
           "properties": {
             "action": {
-              "description": "'promote' or 'reject'.",
+              "description": "'promote', 'reject' or 'distinct'.",
+              "type": "string"
+            },
+            "of": {
+              "description": "distinct only: the existing entity page each of slugs is not the same as.",
               "type": "string"
             },
             "slugs": {
-              "description": "Stub slugs to act on (batch).",
+              "description": "Slugs to act on (batch).",
               "items": {
                 "type": "string"
               },
@@ -6470,6 +6500,131 @@
           "required": [
             "action",
             "slugs"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Save a pasted document: the whole text read in windows, every page and fact planned and checked before any write, then the source page, proposed pages for new entities and each fact on the entities it names. Returns an ingest report with a status per item, coverage, spend, and approve or undo actions. attempt_id alone reads a report (read-only); with resume: true it continues an incomplete attempt.",
+        "idempotent": false,
+        "local_only": false,
+        "mutating": true,
+        "name": "ingest",
+        "parameters": {
+          "attempt_id": "string?",
+          "content": "string?",
+          "dry_run": "boolean?",
+          "max_usd": "number?",
+          "no_facts": "boolean?",
+          "request_id": "string?",
+          "resume": "boolean?",
+          "slug": "string?",
+          "source_id": "string?",
+          "title": "string?",
+          "trusted_extraction": "boolean?",
+          "type": "string?",
+          "valid_from": "string?",
+          "visibility": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "attempt_id": {
+              "description": "An attempt id from a report: alone, read that report; with resume, continue it.",
+              "type": "string"
+            },
+            "content": {
+              "description": "The document text (at most 200,000 characters).",
+              "type": "string"
+            },
+            "dry_run": {
+              "description": "Preview the keyless candidate plan, window count and estimated cost; no provider call, nothing written.",
+              "type": "boolean"
+            },
+            "max_usd": {
+              "description": "Spend cap for this ingest in USD (default ingest.max_usd, 0.50).",
+              "type": "number"
+            },
+            "no_facts": {
+              "description": "Save the document and its entity pages without facts.",
+              "type": "boolean"
+            },
+            "request_id": {
+              "description": "Idempotency key: a repeat with the same key returns the same attempt.",
+              "type": "string"
+            },
+            "resume": {
+              "description": "Continue an incomplete attempt from its stored windows (pass the same content).",
+              "type": "boolean"
+            },
+            "slug": {
+              "description": "Slug of the source page (default inbox/ingest-<hash>).",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Source to write (default: your source).",
+              "type": "string"
+            },
+            "title": {
+              "description": "Title of the source page.",
+              "type": "string"
+            },
+            "trusted_extraction": {
+              "description": "Local owner only: create model-typed new entities as real pages instead of proposed.",
+              "type": "boolean"
+            },
+            "type": {
+              "description": "Page type of the source page (default note).",
+              "type": "string"
+            },
+            "valid_from": {
+              "description": "When the document's facts became true (ISO date).",
+              "type": "string"
+            },
+            "visibility": {
+              "description": "world (default) or private (local CLI).",
+              "enum": [
+                "world",
+                "private"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Undo one ingest attempt: without yes it previews what would be retracted and returns plan_hash (writes nothing); with yes and expect: <plan_hash> it strikes the facts the attempt wrote and soft-deletes the pages it created, skipping anything edited, promoted, referenced or supported since.",
+        "idempotent": false,
+        "local_only": false,
+        "mutating": true,
+        "name": "ingest_undo",
+        "parameters": {
+          "attempt_id": "string",
+          "expect": "string?",
+          "yes": "boolean?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "attempt_id": {
+              "description": "The attempt id from the ingest report.",
+              "type": "string"
+            },
+            "expect": {
+              "description": "The plan_hash from the preview you are applying.",
+              "type": "string"
+            },
+            "yes": {
+              "description": "Apply the undo (needs expect).",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "attempt_id"
           ],
           "type": "object"
         },
