@@ -590,6 +590,8 @@ export interface FactRow {
   /** #5575: the stored trust tier and write origin (absent on brains before the trust migration). */
   trust_tier?: import('./trust/tier.ts').TrustTier;
   write_origin?: Record<string, unknown> | null;
+  /** The typed claim columns (NewFact.claim_*), each set only when the row stores it. */
+  claim_metric?: string | null; claim_value?: number | null; claim_unit?: string | null; claim_period?: string | null;
 }
 
 /**

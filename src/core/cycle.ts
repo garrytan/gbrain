@@ -83,6 +83,7 @@ export type CyclePhase =
   //    narrative pattern statements + active bias tags. Voice-gated.
   | 'propose_takes' | 'grade_takes' | 'calibration_profile'
   | 'edge_contradictions' // temporal typed edges: LLM flags conflicts, date math closes
+  | 'claim_conflicts' // GBRA-216: keyless typed-claim conflicts filed as decide_proposals (default off)
   // #2653 — drift detection (default OFF; dream.drift.enabled). LLM-judges
   // soft-band takes against recent timeline evidence; report-only in v1
   // (writes reports/drift-<date>; auto_update mutates nothing).
@@ -184,6 +185,7 @@ export const ALL_PHASES: CyclePhase[] = [
   'grade_takes',
   'calibration_profile',
   'edge_contradictions', // temporal typed edges; after extract so it judges fresh relationship state
+  'claim_conflicts', // GBRA-216: keyless typed-claim conflicts; after extract_facts so it reads fresh fence claims
   // #2653 — drift detection. Default OFF (dream.drift.enabled). Runs AFTER
   // the calibration trio (fresh take resolutions) and BEFORE embed so the
   // drift report page gets embedded same-cycle. Report-only in v1.
@@ -356,6 +358,7 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'drift',
   'standing_questions', // C4: writes pinned answers and question pages.
   'edge_contradictions', // writes proposals and (apply mode) closure lines
+  'claim_conflicts', // writes decide_proposals rows
   // #5876 — writes event pages, projections and the chronicle ledger.
   'chronicle',
   // Lane D — writes facts (fence + index) through facts-absorb jobs.
@@ -2791,12 +2794,12 @@ async function runCycleUnscoped(
       }
     }
 
-    // Temporal typed edges: proposes (or, certified, applies) closures for live relationships that cannot both hold.
-    if (phases.includes('edge_contradictions')) {
-      checkAborted(cycleSignal);
-      progress.start('cycle.edge_contradictions');
-      const { edgeContradictionsCyclePhase } = await import('./cycle/edge-contradictions.ts');
-      const { result, duration_ms } = await timePhase(() => edgeContradictionsCyclePhase(engine, dryRun), 'edge_contradictions');
+    // Temporal typed edges (proposes or, certified, applies closures for live relationships that cannot both hold), then keyless typed-claim conflicts (GBRA-216); both cover sources with no local path.
+    for (const [phase, run] of [['edge_contradictions', async () => (await import('./cycle/edge-contradictions.ts')).edgeContradictionsCyclePhase(engine, dryRun)],
+      ['claim_conflicts', async () => (await import('./facts/claim-conflicts.ts')).claimConflictsCyclePhase(engine, dryRun)]] as const) {
+      if (!phases.includes(phase)) continue;
+      checkAborted(cycleSignal); progress.start(`cycle.${phase}`);
+      const { result, duration_ms } = await timePhase(run, phase);
       result.duration_ms = duration_ms; phaseResults.push(result); progress.finish();
       await safeYield(opts.yieldBetweenPhases);
     }
