@@ -296,7 +296,7 @@ describe('host identity', () => {
 });
 
 describe('writer given as a value', () => {
-  test('registration is idempotent; another credential or lane under its id refuses; a revoked one is never replaced', async () => {
+  test('registration is idempotent; another credential or lane under its id, or its credential under another id, refuses; a revoked one is never replaced', async () => {
     const engine = await openEngine(settingsFor());
     try {
       await engine.initSchema();
@@ -307,6 +307,8 @@ describe('writer given as a value', () => {
       expect(await rows()).toEqual([{ lane: 'stdio', revoked: false }]);
       expect(await codeOf(registerLocalWriterValue(engine, { ...writer, credential: randomBytes(32).toString('hex') }))).toBe('permission_denied');
       expect(await codeOf(registerLocalWriterValue(engine, { ...writer, lane: 'cli' }))).toBe('permission_denied');
+      // The same credential under another id is that other registration's, not a second one.
+      expect(await codeOf(registerLocalWriterValue(engine, { ...writer, id: randomUUID() }))).toBe('permission_denied');
       expect(await codeOf(registerLocalWriterValue(engine, { ...writer, id: 'not-a-uuid' }))).toBe('engine_settings_invalid');
       expect(await codeOf(registerLocalWriterValue(engine, { ...writer, credential: 'x'.repeat(31) }))).toBe('engine_settings_invalid');
       expect(await codeOf(registerLocalWriterValue(engine, { ...writer, lane: 'http' as 'cli' }))).toBe('engine_settings_invalid');

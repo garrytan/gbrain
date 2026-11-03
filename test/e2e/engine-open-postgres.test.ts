@@ -51,7 +51,7 @@ beforeAll(async () => {
   if (!DATABASE_URL) return;
   assertSafeE2eDatabaseUrl(DATABASE_URL);
   const admin = postgres(DATABASE_URL, { max: 1, prepare: false });
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 4; i++) {
     const name = `gbrain_test_engine_open_${randomUUID().replaceAll('-', '')}`;
     await admin.unsafe(`CREATE DATABASE ${name}`);
     const url = new URL(DATABASE_URL);
@@ -116,6 +116,26 @@ describeE2E('openEngine on Postgres', () => {
     // nothing else, and no host.json or writer credential, lands under the home.
     expect(filesUnder(gbrainHome).filter(path => !/^\.gbrain\/audit\/connection-events-\d{4}-W\d{2}\.jsonl$/.test(path))).toEqual([]);
     expect(filesUnder(home)).toEqual([]);
+  }, 300_000);
+
+  test('engines opened from one writer value all make their first write at once: one registration, no refusal', async () => {
+    const seed = await openEngine({ embedded_core: true, engine: 'postgres', database: { url: urls[3]! }, pool: { max: 2 }, host: { id: randomUUID() } });
+    try { await seed.initSchema(); } finally { await seed.disconnect(); }
+    // Each round is a fresh writer, so every round is that writer's first write; the race is between the
+    // registration read finding no row and the insert, so it takes a few rounds to land.
+    for (let round = 0; round < 12; round++) {
+      const settings = { embedded_core: true, engine: 'postgres', database: { url: urls[3]! }, pool: { max: 2 }, host: { id: randomUUID() }, writer: writerValue() } as EngineSettings;
+      const engines = await Promise.all([0, 1, 2, 3].map(() => openEngine({ ...settings, writer: { ...settings.writer! } })));
+      try {
+        const outcomes = await Promise.all(engines.map((engine, i) => codeOf(operationsByName.put_page.handler(hostCtx(engine),
+          { slug: `notes/first-write-${round}-${i}`, content: `---\ntitle: First write ${i}\n---\nRound ${round}, engine ${i}.\n` }))));
+        expect(outcomes).toEqual(['resolved', 'resolved', 'resolved', 'resolved']);
+        const rows = await engines[0]!.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM persistence_local_writers WHERE id=$1::uuid', [settings.writer!.id]);
+        expect(rows).toEqual([{ n: 1 }]);
+      } finally {
+        await Promise.all(engines.map(engine => engine.disconnect()));
+      }
+    }
   }, 300_000);
 
   test('a disconnect during an in-flight reconnect leaves no live pool, drops the settings and refuses a later reconnect', async () => {
