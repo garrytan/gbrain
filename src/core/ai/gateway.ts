@@ -65,7 +65,7 @@ import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
 import { unscopedInEmbeddedProcess, withEngineScope } from '../engine-scope.ts';
-import { engineScopeMissing, engineScopeRequired, freshGatewayState, releasedKeyEnv, scopedGatewayState, type GatewayState } from './engine-gateway.ts';
+import { engineScopeMissing, freshGatewayState, refuseUnscoped, releasedKeyEnv, scopedGatewayState, type GatewayState } from './engine-gateway.ts';
 import { AIConfigError, AITransientError, isStructuredOutputRejection, isUnbilledEmbeddingRejection, normalizeAIError } from './errors.ts';
 import { embeddingModelNotFoundHint, gatewayModelNotFoundHint } from './model-not-found-hint.ts';
 import { fitMatryoshkaPrefix, isEmbeddingZeroNormError, screenAlignedEmbeddings, screenEmbeddings, sendableEmbeddingInputs } from './embedding-guard.ts';
@@ -144,10 +144,6 @@ const processState: GatewayState = freshGatewayState(null, '');
 /** A call with no scope in a process holding open embedded engines: no config and no provider, so every read of it refuses or reads as unavailable. */
 const unscopedState: GatewayState = freshGatewayState(null, '', new Set());
 const gw = (): GatewayState => scopedGatewayState(gatewayConfigOf) ?? (unscopedInEmbeddedProcess() ? unscopedState : processState);
-/** Every AI call starts here: with no scope in a process holding open embedded engines it refuses `engine_scope_required`. */
-function refuseUnscoped(): void {
-  if (unscopedInEmbeddedProcess()) throw engineScopeRequired();
-}
 /** The config a call to `recipe` uses; an embedded engine not given that provider refuses `engine_scope_missing`. */
 function configFor(recipe: Recipe, touchpoint: string): AIGatewayConfig {
   refuseUnscoped();

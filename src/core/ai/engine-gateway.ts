@@ -8,7 +8,7 @@ import { opError } from '../ops/contract.ts';
 import { embeddedSettingsRecord, releasedEngineKeys, type EngineAISettings, type EngineSettings } from '../embedded-engine.ts';
 
 type EngineAIProvider = EngineAISettings['providers'][string];
-import { embeddedEngineInScope } from '../engine-scope.ts';
+import { embeddedEngineInScope, unscopedInEmbeddedProcess } from '../engine-scope.ts';
 import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL } from './defaults.ts';
 import { getRecipe } from './recipes/index.ts';
 import type { AIGatewayConfig, Recipe } from './types.ts';
@@ -158,6 +158,11 @@ export function releasedKeyEnv(): Record<string, string> {
 export function engineScopeRequired(): Error {
   return opError('engine_scope_required', 'An AI call ran outside any engine scope in a process that holds engines opened from settings.',
     'Its brain is unknown, so no process.env key, ~/.gbrain/config.json or process gateway is used and nothing was sent. Run it inside withEngineScope(engine, fn) for the engine it belongs to, or withLocalScope(fn) for a call that belongs to the process gateway.');
+}
+
+/** Every gateway AI call starts here: with no scope in a process holding open embedded engines it refuses `engine_scope_required`. */
+export function refuseUnscoped(): void {
+  if (unscopedInEmbeddedProcess()) throw engineScopeRequired();
 }
 
 /** In an embedded engine's scope, its settings.ai.models.reranker; search uses it in place of the mode bundle's default. */
