@@ -149,6 +149,19 @@ for (const kind of testBackends()) {
       rmSync(home, { recursive: true, force: true });
     });
 
+    test('member facts pair only on their own member page, never across member pages or with a fact elsewhere', async () => {
+      const src = await source();
+      const own = { metric: 'mrr', visibility: 'private' as const };
+      const onPage = async (f: F) => { const id = await fact(src, f); await engine.executeRaw('UPDATE facts SET row_num = id + 100000 WHERE id = $1', [id]); return id; };
+      await onPage({ ...own, value: 40000, at: '2026-10-02T09:00:00Z', provenancePage: 'memory/members/alice-example' });
+      await onPage({ ...own, value: 41000, at: '2026-10-03T09:00:00Z', provenancePage: 'memory/members/bob-example' });
+      await onPage({ ...own, value: 42000, at: '2026-10-04T09:00:00Z', provenancePage: 'companies/acme-example' });
+      const aliceOld = await onPage({ ...own, metric: 'arr', value: 1, at: '2026-10-05T09:00:00Z', provenancePage: 'memory/members/alice-example' });
+      const aliceNew = await onPage({ ...own, metric: 'arr', value: 2, at: '2026-10-06T09:00:00Z', provenancePage: 'memory/members/alice-example' });
+      const run = await runClaimConflicts(engine, { sourceIds: [src], dryRun: true });
+      expect(pairKeys(run.sources[0]!.pairs)).toEqual(pairKeys([{ new_fact_id: aliceNew, old_fact_id: aliceOld }]));
+    });
+
     test('the bucket SQL agrees with claimBucket on this engine', async () => {
       const cases: Array<[string | null, string]> = [[null, '2026-03-20T23:30:00Z'], ['monthly', '2026-03-02T00:00:00Z'], ['quarterly', '2026-03-30T00:00:00Z'],
         ['annual', '2026-12-31T12:00:00Z'], ['weekly', '2025-12-29T00:00:00Z'], ['weekly', '2027-01-03T00:00:00Z'], ['per launch', '2026-05-05T05:00:00Z']];

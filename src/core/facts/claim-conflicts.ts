@@ -8,8 +8,9 @@
  * visibility, the same non-null entity_slug, the same claim_metric, the same
  * claim_unit and claim_period (null-safe), the same as-of bucket
  * (typed-claim.ts claimBucket) and different claim_value. Points in different
- * buckets are history and are never proposed. The newer fact (valid_from, then
- * id) is proposed to supersede the older one.
+ * buckets are history and are never proposed. A fact on a member page pairs
+ * only with another fact on that same page (access/member-facts.ts onMemberPageSql).
+ * The newer fact (valid_from, then id) is proposed to supersede the older one.
  *
  * Bounded: at most max_pairs pairs per source per run, and a pair that already
  * has a proposal (any lane, any status) or a pending trust supersede_fact
@@ -25,6 +26,7 @@ import type { PhaseResult } from '../cycle.ts';
 import { AUDIT_ROW_SOURCES } from './audit-sources.ts';
 import { insertProposal } from '../ai/decide/proposals-store.ts';
 import { claimBucketSql } from './typed-claim.ts';
+import { onMemberPageSql } from '../access/member-facts.ts';
 import { CLAIM_CONFLICTS_MAX_PAIRS_KEY, readPhaseConfigNumber } from '../cycle/phase-config-values.ts';
 
 export const CLAIM_CONFLICTS_MODE_KEY = 'dream.claim_conflicts.mode';
@@ -76,7 +78,7 @@ export function claimConflictsModeRefusal(value: string): string | null {
 }
 
 const ACTIVE_CLAIMS = 'WITH f AS (\n'
-  + '  SELECT id, entity_slug, visibility, claim_metric, claim_value, claim_unit, claim_period, valid_from, ' + claimBucketSql('facts') + ' AS bucket\n'
+  + '  SELECT id, entity_slug, visibility, claim_metric, claim_value, claim_unit, claim_period, valid_from, source_markdown_slug, ' + claimBucketSql('facts') + ' AS bucket\n'
   + '    FROM facts\n'
   + '   WHERE source_id = $1 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())\n'
   + '     AND entity_slug IS NOT NULL AND claim_metric IS NOT NULL AND claim_value IS NOT NULL AND source <> ALL($2::text[]))';
@@ -84,6 +86,7 @@ const PAIR_JOIN = 'FROM f n JOIN f o\n'
   + '    ON o.entity_slug = n.entity_slug AND o.visibility = n.visibility AND o.claim_metric = n.claim_metric\n'
   + '   AND o.claim_unit IS NOT DISTINCT FROM n.claim_unit AND o.claim_period IS NOT DISTINCT FROM n.claim_period\n'
   + '   AND o.bucket = n.bucket AND o.claim_value <> n.claim_value\n'
+  + '   AND (NOT (' + onMemberPageSql('n') + ' OR ' + onMemberPageSql('o') + ') OR o.source_markdown_slug = n.source_markdown_slug)\n'
   + '   AND (o.valid_from < n.valid_from OR (o.valid_from = n.valid_from AND o.id < n.id))\n'
   + ' WHERE NOT EXISTS (SELECT 1 FROM decide_proposals p WHERE p.source_id = $1\n'
   + '         AND LEAST(p.new_fact_id, p.old_fact_id) = LEAST(n.id, o.id) AND GREATEST(p.new_fact_id, p.old_fact_id) = GREATEST(n.id, o.id))\n'
