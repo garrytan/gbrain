@@ -87,6 +87,7 @@ const EXEMPT: Record<string, string> = {
   'src/core/repair/conversation-labels.ts': 'owner repair of existing conversation labels',
   'src/core/facts/conversation-relink.ts': 'free conversation relink sets entity_slug and a context note on existing derived rows; no claim text is written, so there is nothing for the gate to judge',
   'src/core/generations/adapters/single-page.ts': 'the dream summary (an index of the run\'s output pages, stamped at their taint), the drift report (gbrain-generated) and the pending think --save page (quote-grounded synthesis, no page gate seam yet), each a single-item generation (GBRA-161 PR 5)',
+  'src/core/persistence/change-reason.ts': 'stamps the canonical reason of a page write onto the snapshot that write archived, inside the page publication the door already gated; it admits no content of its own',
   'src/core/facts/fence-fact-append.ts': 'remember gates in memory-prepare.ts before calling it and records the flag receipt on the row it indexes; it renders and indexes the fact its caller passes',
   'src/core/facts/fence-write.ts': 'callers decide the gate (backstop, loops-extract) and pass the decision; it records the flag receipt on the new row',
   'src/core/facts/write-single.ts': 'callers gate first (loops-extract decides; remember gates in memory-prepare); it records a passed decision\'s flag receipt',
