@@ -18,6 +18,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 - `src/core/skillopt/loop-deprecation.ts` (new): the notice text, the removal date and the one emitter, called by `gbrain skillopt` (after it resolves the mode, so a resumed loop run counts), the `run_skillopt` op (`ctx.emitNotice`, so MCP and `gbrain call` render it) and the `skillopt` job handler. `skillopt_loop_deprecated` is a new coaching code in `NOTICE_CODES`.
 - `gbrain skillopt --help`, the `run_skillopt` description and its `optimizer_mode` parameter, docs/guides/skillopt.md, the tutorial and the `skill-optimizer` skill mark the loop deprecated.
+- Ship policy: `.gstack/ship-policy.json` declares `stamp_placeholders: ["TBD"]` (and `min_gstack_version` 1.94.16.0, the first gstack that reads it), so a branch's own `since: 'TBD'` BEHAVIOR_CHANGES row that the slot restamp fills reads as a stamp instead of a change after /ship's review.
 - `test/skillopt/loop-deprecation.serial.test.ts`: each entry point that runs the loop emits the notice exactly once and still runs it; the one-shot default, a one-shot job and the cycle phase emit none.
 
 ## [0.60.565.0] - 2026-11-03
