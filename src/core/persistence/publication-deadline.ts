@@ -22,6 +22,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine, TransactionOptions } from '../engine.ts';
 import { gucMilliseconds, resolveSessionTimeouts } from '../db.ts';
 import { declareDurablePersistence } from './protocol.ts';
+import { engineKey } from '../engine-key.ts';
 
 export const PUBLICATION_CEILING_KEY = 'persistence.publication_ceiling_ms';
 /** `persistence.publication_ceiling_ms`' default (60000 to 3600000 accepted). */
@@ -36,23 +37,34 @@ export function publicationLeaseMs(ceilingMs: number, marginMs = 30_000): number
 }
 const CEILING_TTL_MS = 5_000;
 
-let ceiling = { value: PUBLICATION_CEILING_DEFAULT_MS, at: 0 };
+/** Per engine; a publication transaction reads its engine's entry. */
+let ceilings = new WeakMap<object, { value: number; at: number }>();
 const signals = new AsyncLocalStorage<AbortSignal>();
 
 /** Test seam (`_setPublicationTimingForTest`): a ceiling and grace below the accepted range, so a test can overrun the ceiling. */
 let testTiming: { ceilingMs: number; graceMs: number } | undefined;
 
-/** The ceiling (cached for 5 s); anything missing or outside 60000..3600000 reads as the default. */
+/** The engine's ceiling (cached per engine for 5 s); anything missing or outside 60000..3600000 reads as the default. */
 export async function readPublicationCeilingMs(engine: Pick<BrainEngine, 'getConfig'>): Promise<number> {
   if (testTiming) return testTiming.ceilingMs;
-  if (Date.now() - ceiling.at < CEILING_TTL_MS) return ceiling.value;
+  const key = engineKey(engine);
+  const cached = ceilings.get(key);
+  if (cached && Date.now() - cached.at < CEILING_TTL_MS) return cached.value;
   const n = Number((await engine.getConfig(PUBLICATION_CEILING_KEY).catch(() => null))?.trim());
-  ceiling = { value: Number.isInteger(n) && n >= 60_000 && n <= 3_600_000 ? n : PUBLICATION_CEILING_DEFAULT_MS, at: Date.now() };
-  return ceiling.value;
+  const value = Number.isInteger(n) && n >= 60_000 && n <= 3_600_000 ? n : PUBLICATION_CEILING_DEFAULT_MS;
+  ceilings.set(key, { value, at: Date.now() });
+  return value;
+}
+
+/** The ceiling `engine` (or the engine its transaction runs on) last read, without a read; the default before the first. */
+function lastReadCeilingMs(engine: object): number {
+  return ceilings.get(engineKey(engine))?.value ?? PUBLICATION_CEILING_DEFAULT_MS;
 }
 
 /** Test seam: the next readPublicationCeilingMs reads the config again. */
-export function _resetPublicationCeilingForTest(): void { ceiling = { ...ceiling, at: 0 }; }
+export function _resetPublicationCeilingForTest(): void {
+  ceilings = new WeakMap();
+}
 /** Test seam: every publication's ceiling and grace (undefined restores the configured ceiling and `PUBLICATION_GRACE_MS`). */
 export function _setPublicationTimingForTest(timing: { ceilingMs: number; graceMs: number } | undefined): void { testTiming = timing; }
 
@@ -66,7 +78,7 @@ export function publicationDeadlinePassed(): boolean {
 }
 
 /** The idle-in-transaction bound a publish transaction gets: the ceiling, never above the pool's own session value. */
-export function publicationIdleTimeoutMs(ceilingMs = ceiling.value): number {
+export function publicationIdleTimeoutMs(ceilingMs: number): number {
   const session = gucMilliseconds(resolveSessionTimeouts().idle_in_transaction_session_timeout);
   return session !== null && session > 0 ? Math.min(ceilingMs, session) : ceilingMs;
 }
@@ -78,7 +90,7 @@ export function publicationIdleTimeoutMs(ceilingMs = ceiling.value): number {
  */
 export async function bindPublicationTimeouts(tx: BrainEngine): Promise<void> {
   if (tx.kind !== 'postgres') return;
-  await tx.executeRaw("SELECT set_config('idle_in_transaction_session_timeout',$1,true)", [`${publicationIdleTimeoutMs()}ms`]);
+  await tx.executeRaw("SELECT set_config('idle_in_transaction_session_timeout',$1,true)", [`${publicationIdleTimeoutMs(lastReadCeilingMs(tx))}ms`]);
 }
 
 /**
@@ -86,7 +98,7 @@ export async function bindPublicationTimeouts(tx: BrainEngine): Promise<void> {
  * `declareDurablePersistence` in one round trip. A refused SET fails the publication's transaction as above.
  */
 export async function declarePublication(tx: BrainEngine, bound: Pick<BrainEngine, 'kind'> = tx): Promise<string | null> {
-  return declareDurablePersistence(tx, undefined, undefined, bound.kind === 'postgres' ? `${publicationIdleTimeoutMs()}ms` : undefined);
+  return declareDurablePersistence(tx, undefined, undefined, bound.kind === 'postgres' ? `${publicationIdleTimeoutMs(lastReadCeilingMs(tx))}ms` : undefined);
 }
 
 /**

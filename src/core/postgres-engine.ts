@@ -174,6 +174,7 @@ import type { SqlExecutor } from './engine-sql/executor.ts';
 import { scopedRead, unscopedExecutor } from './engine-sql/brands.ts';
 import { writerStamp } from './persistence/writer-versions.ts';
 import { wellFormedJson } from './text-safe.ts';
+import { ENGINE_ROOT } from './engine-root.ts';
 
 function escapeSqlStringLiteral(value: string): string {
   return value.replace(/'/g, "''");
@@ -205,6 +206,7 @@ export function getPostgresSchema(
 // follow-up that will reintroduce a typed retry mechanism.
 
 export class PostgresEngine implements BrainEngine {
+  readonly [ENGINE_ROOT]: object = this;
   private vectorIterativeScan?: Promise<boolean>;
   private keywordStatementTimeout?: Promise<string>;
   private keywordTimeouts = new KeywordTimeoutNegativeCache();
