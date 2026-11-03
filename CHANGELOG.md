@@ -10,11 +10,23 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A brain opened from settings brings its own AI providers.** `settings.ai` names the providers an embedded engine may call, with their keys and base URLs as values, and the models it uses for chat, expansion and reranking. Its embed, chat and rerank calls go only there: never to a key in the process environment, `~/.gbrain/config.json` or the process-wide gateway, so two brains in one process never spend each other's keys or see each other's cached query vectors. A call to a provider the settings don't name refuses `engine_scope_missing` and sends nothing. While such an engine is open, an AI call made outside any engine's scope refuses the same way unless the host configured a process gateway. Each engine's chat usage lands in its own database. Keys never show up in errors, logs, doctor output or `embeddedSettings()`, also for a call still in flight when the engine disconnects. Every other engine, and the CLI, keeps the process gateway exactly as before. Contributed by @bradgessler (#8456, #8085).
+
+### Itemized changes
+
+- `src/core/ai/engine-gateway.ts` (new) and `src/core/engine-scope.ts` (new): an embedded engine's gateway config, built from `settings.ai` and `settings.embedding` alone and held per engine until disconnect, and `withEngineScope(engine, fn)` (exported from `gbrain/engine-open`), which every operation handler, each persistence consumer tick and the subagent handler enter. `gateway.ts` reads that engine's config and model clients in its scope, refuses `engine_scope_missing` for a provider the engine lacks before anything is sent, pins native providers to the engine's base URLs (never `OPENAI_BASE_URL` or `ANTHROPIC_BASE_URL` from the process), skips OpenAI model discovery and the config-file fallback for it, and tags its query-embedding cache entries per engine; `anthropic-key.ts` answers the engine's own key. The scope resolves through `engineKey`, so page transactions, proxies and a recovered degraded engine share it. In a process that never opened an embedded engine no scope is entered at all.
+- Search on an embedded engine reranks with `settings.ai.models.reranker` unless the brain or the call names one, and a reranker provider the engine lacks is a `no_key` rerank skip, not a provider error.
+- `chat_usage_log` rows from an embedded engine's scope go to that engine's database; an unscoped call books only to a non-embedded engine.
+- The in-process facts queue runs each job in the engine scope it was enqueued from, so one brain's extraction never runs on another brain's keys.
+- `openEngine` refuses `engine_settings_invalid` for a malformed `ai` setting, an unknown provider, a provider with neither `apiKey` nor `baseUrl`, two providers that would share one environment key slot with different keys, or one that reads a login or endpoint from the environment (claude-cli, Azure OpenAI), naming the setting and never a key. `embeddedSettings()` reads each provider back as `{ baseUrl?, hasApiKey }`.
+- File storage is not an engine setting yet; it stays process-wide until Wave C.
+- `test/engine-gateway.test.ts`: fake-provider transports only, no network.
+
 ## [0.60.561.0] - 2026-11-03
 
 **An embedding host can open a brain from a settings value (experimental, off by default).** `openEngine(settings)` from `gbrain/engine-open` creates and connects an engine from one object: its database, its own pool, its direct URL, its persistence host identity, its local writer and its embedding identity. It reads no config file, environment variable or home directory for any of them, so two brains in one process never share a pool, a host id or a credential, and a stray `GBRAIN_DIRECT_DATABASE_URL` cannot send one brain's DDL somewhere else. It refuses unless the settings say `embedded_core: true`. The CLI, `gbrain serve` and mounts don't use it and behave exactly as before. Contributed by @bradgessler (#8455).
-
-**A brain opened from settings brings its own AI providers.** `settings.ai` names the providers an embedded engine may call, with their keys and base URLs as values, and the models it uses for chat, expansion and reranking. Its embed, chat and rerank calls go only there: never to a key in the process environment, `~/.gbrain/config.json` or the process-wide gateway, so two brains in one process never spend each other's keys or see each other's cached query vectors. A call to a provider the settings don't name refuses `engine_scope_missing` and sends nothing. Keys never show up in errors, logs, doctor output or `embeddedSettings()`. Every other engine, and the CLI, keeps the process gateway exactly as before. Contributed by @bradgessler (#8456, #8085).
 
 ### Itemized changes
 
@@ -25,10 +37,7 @@ identifiers and attribution are available in the pre-removal Git revision
 - `PostgresEngine.reconnect()` now ends the superseded connection manager's direct pool once its in-flight work finishes (#8478), so a long hold such as `CREATE INDEX CONCURRENTLY` or the schema lock held on the direct pool completes first. Before, every reconnect on an engine with a direct route left that pool open past `disconnect()`; this affected every Postgres engine, not only embedded ones.
 - The decide receipt and spend buffers write rows buffered for one brain to that brain when the next row names another, even while a flush is in flight. Before, those rows landed in the next brain's database.
 - The decide spend cache is keyed by engine and held weakly, and a drained feedback queue no longer keeps its engine alive.
-- File storage is not an engine setting yet; it stays process-wide until Wave C.
-- `src/core/ai/engine-gateway.ts` (new) and `src/core/engine-scope.ts` (new): an embedded engine's gateway config, built from `settings.ai` and `settings.embedding` alone and held per engine until disconnect, and `withEngineScope(engine, fn)` (exported from `gbrain/engine-open`), which every operation handler and each persistence consumer enters. `gateway.ts` reads that engine's config and model clients in its scope, refuses `engine_scope_missing` for a provider the engine lacks before anything is sent, skips OpenAI model discovery and the config-file fallback for it, and tags its query-embedding cache entries per engine; `anthropic-key.ts` answers the engine's own key. The scope resolves through `engineKey`, so page transactions, proxies and a recovered degraded engine share it. In a process that never opened an embedded engine no scope is entered at all.
-- `openEngine` refuses `engine_settings_invalid` for a malformed `ai` setting, an unknown provider, or one that reads a login or endpoint from the environment (claude-cli, Azure OpenAI), naming the setting and never a key. `embeddedSettings()` reads each provider back as `{ baseUrl?, hasApiKey }`.
-- `test/engine-gateway.test.ts`: fake-provider transports only, no network.
+- File storage and AI provider settings are not engine settings yet; they stay process-wide until Wave C.
 - `test/engine-open.test.ts`, `test/engine-open-lifecycle.test.ts`, `test/engine-open-upgrade.test.ts` (a brain built by an earlier release boots identically through the CLI path and `openEngine`), `test/e2e/engine-open-postgres.test.ts`.
 
 ## [0.60.560.0] - 2026-11-03
