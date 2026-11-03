@@ -7,12 +7,13 @@
  * Ownership by another user is forced with Git's own `GIT_TEST_ASSUME_DIFFERENT_OWNER` through a `git` wrapper first on
  * PATH, because the hardened environment drops every `GIT_*` variable a test could set.
  */
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { hardenedGitStream, hardenedGitSync } from '../src/core/hardened-git.ts';
+import { __resetOperatorGitConfigForTests, hardenedGitStream, hardenedGitSync } from '../src/core/hardened-git.ts';
+import * as spawn from '../src/core/spawn.ts';
 import { gitChildEnv } from '../src/core/git-env.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { makeGitFixture } from './helpers/git-fixture.ts';
@@ -78,6 +79,18 @@ describe.skipIf(process.platform === 'win32')('#7584 hardened reads of a reposit
       GIT_CONFIG_KEY_1: 'safe.directory', GIT_CONFIG_VALUE_1: root }, () => {
       expect(head(root).ok).toBe(true);
       expect(ignored(root)).toEqual({ ok: false, reason: 'exit', status: 1 });
+    });
+  });
+
+  test('GBRA-133: a streamed read honours the allowance and spawns no synchronous Git, even with nothing cached', async () => {
+    const { root, config, base } = await setup();
+    await withEnv({ ...base, GIT_CONFIG_GLOBAL: config('global', root) }, async () => {
+      __resetOperatorGitConfigForTests();
+      const sync = spyOn(spawn, 'spawnSync');
+      try {
+        expect((await hardenedGitStream(root, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], { ...LIMITS, onChunk: () => {} })).ok).toBe(true);
+        expect(sync).not.toHaveBeenCalled();
+      } finally { sync.mockRestore(); }
     });
   });
 
