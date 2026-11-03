@@ -30,6 +30,7 @@ import { configDir } from '../config.ts';
 import { probeBlock, removeBlock, spliceBlock, type BlockMarkers } from '../managed-block.ts';
 import { ensureGitExcluded } from '../context/compiled-core.ts';
 import type { McpSurface } from '../../mcp/surface.ts';
+import { acquireNativeLockSync } from '../persistence/native-lock.ts';
 
 export const BRAIN_FIRST_VERSION = 2;
 export const BRAIN_FIRST_BEGIN = '<!-- gbrain:brain-first:begin -->';
@@ -295,6 +296,22 @@ export function priorBrainFirst(harness: string, path: string): BrainFirstLedger
 
 // ── Decision, inspection, sync, removal ───────────────────────────────────
 
+/** Hold across surface edits AND the ledger snapshot/rename. A ledger-only
+ * lock still lets a second install forget who created the instruction file.
+ * Dry runs must not create even a lock file in the user's config directory.
+ */
+function withInstructionLock(dryRun: boolean, run: () => BrainFirstOutcome): BrainFirstOutcome {
+  if (dryRun) return run();
+  const lock = acquireNativeLockSync(`${brainFirstLedgerPath()}.lock`, { timeoutMs: 3000 });
+  if (!lock) throw new Error('another installer holds the instruction ledger lock; no instruction files were changed; re-run setup once it finishes');
+  try { return run(); } finally { lock.release(); }
+}
+
+function lockRefusal(harness: string, path: string, role: string, decision: BrainFirstDecision, error: unknown): BrainFirstOutcome {
+  return { harness, path, role, decision, action: 'preserve', state_before: inspectBrainFirst(path).state,
+    detail: `instruction update was not completed (${error instanceof Error ? error.message : String(error)})` };
+}
+
 export type BrainFirstDecisionSource = 'flag' | 'default' | 'prior' | 'opt_out';
 export interface BrainFirstDecision { value: 'accepted' | 'declined'; source: BrainFirstDecisionSource }
 
@@ -358,6 +375,18 @@ export function writeUnlessChanged(path: string, read: string, wasMissing: boole
  * of the install still finishes.
  */
 export function syncBrainFirst(opts: { target: BrainFirstTarget; access: BrainFirstAccess; decision: BrainFirstDecision; writer: string; dryRun: boolean }): BrainFirstOutcome {
+  try {
+    return withInstructionLock(opts.dryRun, () => {
+      // An installer can have waited behind an opt-out. Re-read implicit
+      // decisions under the same lock rather than resurrecting its block.
+      const decision = opts.decision.source === 'flag' ? opts.decision
+        : resolveBrainFirstDecision(undefined, priorBrainFirst(opts.target.harness, opts.target.path));
+      return syncBrainFirstLocked({ ...opts, decision });
+    });
+  } catch (error) { return lockRefusal(opts.target.harness, opts.target.path, opts.target.role, opts.decision, error); }
+}
+
+function syncBrainFirstLocked(opts: Parameters<typeof syncBrainFirst>[0], visitOtherPaths = true): BrainFirstOutcome {
   const { target, access, decision } = opts;
   const body = renderBrainFirstBlock(target.harness, access);
   const before = inspectBrainFirst(target.path, body);
@@ -376,9 +405,11 @@ export function syncBrainFirst(opts: { target: BrainFirstTarget; access: BrainFi
     if (decision.value === 'declined') {
       // The target moved (Codex: a non-empty AGENTS.override.md now wins), so an opt-out also strips the
       // blocks this harness still has at its other user-global paths; otherwise their records keep the per-turn rule on.
-      if (!target.project) {
+      if (!target.project && visitOtherPaths) {
         for (const other of readBrainFirstLedger().filter((e) => e.harness === target.harness && e.path !== target.path && e.status === 'installed' && !isProjectSurface(e.harness, e.path))) {
-          syncBrainFirst({ ...opts, target: { ...target, path: other.path }, access: other.access });
+          // Already inside the transaction: do not reacquire the native lock
+          // or walk back into this target while its old record is installed.
+          syncBrainFirstLocked({ ...opts, target: { ...target, path: other.path }, access: other.access }, false);
         }
       }
       if (before.state === 'no_file' || before.state === 'absent') {
@@ -418,6 +449,11 @@ export function syncBrainFirst(opts: { target: BrainFirstTarget; access: BrainFi
 
 /** The uninstall path: strip the block, delete the file only when gbrain created it and nothing else is left, forget the record. */
 export function removeBrainFirst(opts: { harness: string; path: string; dryRun: boolean; server?: string }): BrainFirstOutcome {
+  try { return withInstructionLock(opts.dryRun, () => removeBrainFirstLocked(opts)); }
+  catch (error) { return lockRefusal(opts.harness, opts.path, 'instruction file', { value: 'declined', source: 'flag' }, error); }
+}
+
+function removeBrainFirstLocked(opts: Parameters<typeof removeBrainFirst>[0]): BrainFirstOutcome {
   const prior = readBrainFirstLedger().find((e) => e.harness === opts.harness && e.path === opts.path);
   const before = inspectBrainFirst(opts.path);
   const decision: BrainFirstDecision = { value: 'declined', source: 'flag' };
