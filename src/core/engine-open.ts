@@ -10,7 +10,7 @@ import { constructEngine } from './engine-construct.ts';
 import { makeEngineChatUsageSink, registerEngineChatUsageSink } from './ai/chat-usage.ts';
 import { connectionUrlProblem, markEmbeddedEngine, releaseEmbeddedEngine, type EngineAISettings, type EngineSettings } from './embedded-engine.ts';
 import { assertLocalWriterValue, setEngineHostId } from './persistence/identity.ts';
-import { engineProviderProblem, recipeKeyEnv, sharedProviderEnvConflict } from './ai/engine-gateway.ts';
+import { engineProviderProblem, recipeKeyEnv, releaseEngineGatewayState, sharedProviderEnvConflict } from './ai/engine-gateway.ts';
 import { getRecipe } from './ai/recipes/index.ts';
 
 export type { EngineAISettings, EngineSettings, EmbeddedSettingsView } from './embedded-engine.ts';
@@ -153,6 +153,7 @@ export async function openEngine(settings: EngineSettings): Promise<BrainEngine>
     if (insideReconnect.getStore()) return disconnect();
     closed = true;
     dropUsageSink();
+    releaseEngineGatewayState(engine);
     releaseEmbeddedEngine(engine);
     await disconnect();
   };

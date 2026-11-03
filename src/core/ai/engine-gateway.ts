@@ -11,6 +11,7 @@ import { embeddedEngineInScope } from '../engine-scope.ts';
 import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL } from './defaults.ts';
 import { getRecipe } from './recipes/index.ts';
 import type { AIGatewayConfig, Recipe } from './types.ts';
+import { dropQueryEmbeddingsTagged } from './query-embed-cache.ts';
 
 /** Each native SDK reads its base URL from this env name when it is not given one, so an engine always gives one. */
 const NATIVE_BASE_URL: Partial<Record<Recipe['implementation'], { env: string; url: string }>> = {
@@ -83,8 +84,24 @@ export function engineGatewayInput(settings: EngineSettings): { config: AIGatewa
   };
 }
 
-/** The config a gateway call uses and the clients built from it. `providers` is set only on an embedded engine's state. */
-export interface GatewayState { config: AIGatewayConfig | null; modelCache: Map<string, any>; providers?: ReadonlySet<string>; cacheTag: string }
+/**
+ * The config a gateway call uses, the clients built from it and what its calls taught the gateway. `providers` is set
+ * only on an embedded engine's state; the process keeps its own (gateway.ts), so one engine's lessons never reach another.
+ */
+export interface GatewayState {
+  config: AIGatewayConfig | null; modelCache: Map<string, any>; providers?: ReadonlySet<string>; cacheTag: string;
+  /** Batch shrink-on-miss factor by recipe id (gateway.ts effectiveSafetyFactor). */
+  shrink: Map<string, { factor: number; consecutiveSuccesses: number }>;
+  /** Reranker models whose missing key already wrote its one no_key audit row. */
+  noKeyNoticed: Set<string>;
+  /** Recipes that rejected json_schema at call time, so their structured calls go straight to the text path. */
+  structuredOutputRejected: Set<string>;
+}
+
+/** A gateway state that has learned nothing yet. */
+export function freshGatewayState(config: AIGatewayConfig | null, cacheTag: string, providers?: ReadonlySet<string>): GatewayState {
+  return { config, modelCache: new Map(), ...(providers ? { providers } : {}), cacheTag, shrink: new Map(), noKeyNoticed: new Set(), structuredOutputRejected: new Set() };
+}
 
 /** Keyed by the settings the engine holds, so a disconnect (which drops them) drops the state; see releasedKeyEnv. */
 const states = new WeakMap<EngineSettings, GatewayState>();
@@ -101,10 +118,17 @@ export function scopedGatewayState(normalize: (config: AIGatewayConfig) => AIGat
   let state = states.get(settings);
   if (!state) {
     const { config, providers } = engineGatewayInput(settings);
-    state = { config: normalize(config), modelCache: new Map(), providers, cacheTag: `engine:${crypto.randomUUID()}:` };
+    state = freshGatewayState(normalize(config), `engine:${crypto.randomUUID()}:`, providers);
     states.set(settings, state);
   }
   return state;
+}
+
+/** At an embedded engine's close, before its settings go: drop the query embeddings its calls cached. */
+export function releaseEngineGatewayState(engine: object): void {
+  const settings = embeddedSettingsRecord(engine);
+  const state = settings && states.get(settings);
+  if (state) dropQueryEmbeddingsTagged(state.cacheTag);
 }
 
 /** Provider keys of a disconnected engine in scope, as env entries, so a call still in flight scrubs them from its error. */

@@ -65,7 +65,7 @@ import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
 import { unscopedInEmbeddedProcess, withEngineScope } from '../engine-scope.ts';
-import { engineScopeMissing, engineScopeRequired, releasedKeyEnv, scopedGatewayState, type GatewayState } from './engine-gateway.ts';
+import { engineScopeMissing, engineScopeRequired, freshGatewayState, releasedKeyEnv, scopedGatewayState, type GatewayState } from './engine-gateway.ts';
 import { AIConfigError, AITransientError, isStructuredOutputRejection, isUnbilledEmbeddingRejection, normalizeAIError } from './errors.ts';
 import { embeddingModelNotFoundHint, gatewayModelNotFoundHint } from './model-not-found-hint.ts';
 import { fitMatryoshkaPrefix, isEmbeddingZeroNormError, screenAlignedEmbeddings, screenEmbeddings, sendableEmbeddingInputs } from './embedding-guard.ts';
@@ -140,9 +140,9 @@ const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 // the mode bundles) — `voyage:rerank-3-lite` (was `voyage:rerank-2.5` from v0.48.2).
 
 /** What `configureGateway` writes and every call reads, except a call in an embedded engine's scope (engine-gateway.ts). */
-const processState: GatewayState = { config: null, modelCache: new Map(), cacheTag: '' };
+const processState: GatewayState = freshGatewayState(null, '');
 /** A call with no scope in a process holding open embedded engines: no config and no provider, so every read of it refuses or reads as unavailable. */
-const unscopedState: GatewayState = { config: null, modelCache: new Map(), providers: new Set(), cacheTag: '' };
+const unscopedState: GatewayState = freshGatewayState(null, '', new Set());
 const gw = (): GatewayState => scopedGatewayState(gatewayConfigOf) ?? (unscopedInEmbeddedProcess() ? unscopedState : processState);
 /** Every AI call starts here: with no scope in a process holding open embedded engines it refuses `engine_scope_required`. */
 function refuseUnscoped(): void {
@@ -211,8 +211,8 @@ let _generateObjectTransport: GenerateObjectFn = sdkGenerateObject;
 // reject json_schema at call time would otherwise pay the rejected attempt —
 // and a pessimistic '.failed' budget record — on EVERY expand() call
 // (persistent ~2x phantom overcount that can trip caps). Remember the
-// rejection per recipe for the process lifetime and go straight to viaText.
-const _structuredOutputRejectedRecipes = new Set<string>();
+// rejection per recipe for the gateway state's lifetime (the process, or one embedded
+// engine: GatewayState.structuredOutputRejected) and go straight to viaText.
 // v0.41.6.0 D1: tests that install a transport stub also pass the
 // embedding-creds preflight, matching the chat-transport fast-path
 // pattern. Set when __setEmbedTransportForTests is called with a
@@ -228,14 +228,13 @@ let _chatTransport: ((opts: ChatOpts) => Promise<ChatResult>) | null = null;
  * effective `safety_factor` so subsequent `embed()` calls pre-split smaller
  * out of the gate. After 10 consecutive batch successes, the factor heals
  * back toward the recipe default (×1.5 per heal, capped at the declared
- * `safety_factor`). Module-scoped because the gateway itself is module-scoped;
+ * `safety_factor`). Held on the gateway state (the process, or one embedded engine);
  * `resetGateway()` and `configureGateway()` clear it.
  */
 interface ShrinkEntry {
   factor: number;
   consecutiveSuccesses: number;
 }
-const _shrinkState = new Map<string, ShrinkEntry>();
 
 /** Floor for shrink-on-miss to prevent infinite shrinking. */
 const SHRINK_FLOOR = 0.05;
@@ -477,10 +476,10 @@ export function configureGateway(config: AIGatewayConfig): void {
   stashGatewayAnthropicKeyFromEnv(config.env ?? {}); // #2119: filter + rationale in anthropic-key.ts
   processState.modelCache.clear();
   clearQueryEmbedCache();
-  _shrinkState.clear();
+  processState.shrink.clear();
   // A (re)configure is a new env snapshot: a key that appeared or vanished
   // since the last no_key audit row deserves a fresh once-per-process row.
-  _noKeyNoticed.clear();
+  processState.noKeyNoticed.clear();
   warnRecipesMissingBatchTokens();
   installAICallLogFromEnv();
 }
@@ -657,7 +656,7 @@ async function resolveGatewayModels(engine: BrainEngine): Promise<AIGatewayConfi
   setGatewayModelSource('chat', chatFull, dbChat ? { source: 'config_key', origin: 'chat_model' } : gatewayModelSource('chat', chatDetailed, chatEffective));
   processState.modelCache.clear();
   clearQueryEmbedCache();
-  _shrinkState.clear();
+  processState.shrink.clear();
   return processState.config;
 }
 
@@ -742,11 +741,11 @@ function clearGatewayState(): void {
   stashGatewayAnthropicKeyFromEnv(undefined); // gateway-owned snapshot dies with the config
   processState.modelCache.clear();
   clearQueryEmbedCache();
-  _shrinkState.clear();
+  processState.shrink.clear();
   _embedTransport = sdkEmbedMany;
   _generateTextTransport = sdkGenerateText;
   _generateObjectTransport = sdkGenerateObject;
-  _structuredOutputRejectedRecipes.clear();
+  processState.structuredOutputRejected.clear();
   _embedTransportInstalled = false;
   _chatTransport = null;
   _warnedRecipes.clear();
@@ -769,7 +768,7 @@ export function _clearGatewayForTests(): void {
 
 export function resetGateway(): void {
   clearGatewayState();
-  // configureGateway re-clears _modelCache/_shrinkState; transports are NOT
+  // configureGateway re-clears the model cache and shrink state; transports are NOT
   // touched by it, so a stale test transport can never leak back in through
   // this path.
   if (_resetBaseline) configureGateway(_resetBaseline());
@@ -1434,10 +1433,9 @@ export const perplexityCompatFetch = (async (input: RequestInfo | URL, init?: Re
  * modes` read it); nothing is printed — shell-per-query agents would see a
  * line on every search, and today's keyless state is stderr-silent.
  */
-const _noKeyNoticed = new Set<string>();
 function noKeyOnce(modelStr: string, keyName: string, query: string, docCount: number): void {
   try {
-    if (_noKeyNoticed.has(modelStr)) return;
+    if (gw().noKeyNoticed.has(modelStr)) return;
     // Mark AFTER the write succeeds — a transient audit-dir failure must not
     // permanently silence the only trace of an unreranked process.
     logRerankFailure({
@@ -1449,7 +1447,7 @@ function noKeyOnce(modelStr: string, keyName: string, query: string, docCount: n
         `${keyName} not set — rerank calls skipped this process (results pass through ` +
         `unreranked); fix: export ${keyName}=… or gbrain config set search.reranker.enabled false`,
     });
-    _noKeyNoticed.add(modelStr);
+    gw().noKeyNoticed.add(modelStr);
   } catch {
     // Traceability must never block the fail-open path.
   }
@@ -1582,7 +1580,7 @@ const MIN_SUB_BATCH = 1;
  *               throw normalizeAIError(err, ...)
  * ```
  *
- * Per-recipe state lives in `_shrinkState` and survives across `embed()`
+ * Per-recipe state lives in the gateway state (`shrink`, per engine for embedded engines) and survives across `embed()`
  * calls within one process. The healing path (after `SHRINK_HEAL_AFTER`
  * consecutive batch successes) walks the factor back toward the recipe's
  * declared `safety_factor` so a transient miss doesn't permanently cap
@@ -1736,35 +1734,35 @@ export function isTokenLimitError(err: unknown): boolean {
  */
 function effectiveSafetyFactor(recipe: Recipe): number {
   const declared = recipe.touchpoints?.embedding?.safety_factor ?? DEFAULT_SAFETY_FACTOR;
-  const entry = _shrinkState.get(recipe.id);
+  const entry = gw().shrink.get(recipe.id);
   return entry?.factor ?? declared;
 }
 
 /** Tighten the recipe's effective safety factor on a token-limit miss. */
 function shrinkOnMiss(recipe: Recipe): void {
   const declared = recipe.touchpoints?.embedding?.safety_factor ?? DEFAULT_SAFETY_FACTOR;
-  const current = _shrinkState.get(recipe.id)?.factor ?? declared;
+  const current = gw().shrink.get(recipe.id)?.factor ?? declared;
   const next = Math.max(SHRINK_FLOOR, current * 0.5);
-  _shrinkState.set(recipe.id, { factor: next, consecutiveSuccesses: 0 });
+  gw().shrink.set(recipe.id, { factor: next, consecutiveSuccesses: 0 });
 }
 
 /** Bump the win counter; heal toward declared default after enough wins. */
 function recordSubBatchSuccess(recipe: Recipe): void {
   const declared = recipe.touchpoints?.embedding?.safety_factor ?? DEFAULT_SAFETY_FACTOR;
-  const entry = _shrinkState.get(recipe.id);
+  const entry = gw().shrink.get(recipe.id);
   if (!entry || entry.factor >= declared) {
     // Either no shrink active, or already at/above the declared ceiling — nothing to heal.
     if (entry) {
-      _shrinkState.set(recipe.id, { factor: entry.factor, consecutiveSuccesses: 0 });
+      gw().shrink.set(recipe.id, { factor: entry.factor, consecutiveSuccesses: 0 });
     }
     return;
   }
   const wins = entry.consecutiveSuccesses + 1;
   if (wins >= SHRINK_HEAL_AFTER) {
     const healed = Math.min(declared, entry.factor * 1.5);
-    _shrinkState.set(recipe.id, { factor: healed, consecutiveSuccesses: 0 });
+    gw().shrink.set(recipe.id, { factor: healed, consecutiveSuccesses: 0 });
   } else {
-    _shrinkState.set(recipe.id, { factor: entry.factor, consecutiveSuccesses: wins });
+    gw().shrink.set(recipe.id, { factor: entry.factor, consecutiveSuccesses: wins });
   }
 }
 
@@ -1774,7 +1772,7 @@ function recordSubBatchSuccess(recipe: Recipe): void {
  * @internal exported for tests; not part of the public gateway API.
  */
 export function __getShrinkStateForTests(recipeId: string): ShrinkEntry | undefined {
-  const entry = _shrinkState.get(recipeId);
+  const entry = gw().shrink.get(recipeId);
   return entry ? { ...entry } : undefined;
 }
 
@@ -2650,7 +2648,7 @@ export async function expand(query: string): Promise<string[]> {
       recordExpansionUsage(result.usage, true);
       const parsed = ExpansionSchema.safeParse(result.object);
       expansions = parsed.success ? parsed.data.queries : [];
-    } else if (recipeSupportsStructuredOutputs(recipe) && !_structuredOutputRejectedRecipes.has(recipe.id)) {
+    } else if (recipeSupportsStructuredOutputs(recipe) && !gw().structuredOutputRejected.has(recipe.id)) {
       // openai-compatible backend that honors strict json_schema: request the
       // schema (strict validation), and fall back to the text path if it is
       // rejected at call time so a mis-declared capability never drops expansion.
@@ -2677,7 +2675,7 @@ export async function expand(query: string): Promise<string[]> {
         recordExpansionFailure(err, true);
         // Adversarial F5: don't re-pay this attempt on every call — the
         // capability mis-declaration is stable for the process lifetime.
-        _structuredOutputRejectedRecipes.add(recipe.id);
+        gw().structuredOutputRejected.add(recipe.id);
         expansions = await viaText(false);
       }
     } else {
@@ -3779,13 +3777,13 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
   // lane already handles. Native + claude-cli lanes never see the field.
   // A declared backend that REJECTS it at call time (older Ollama build,
   // strict proxy) gets one schemaless retry below and is remembered in
-  // `_structuredOutputRejectedRecipes` — the same process-lifetime memory
+  // `structuredOutputRejected` on the gateway state — the same memory
   // expand() keeps — so the caller's own retry lanes don't re-pay the
   // rejection and turn every call into a permanent provider_error.
   const output = opts.responseSchema
     && recipe.implementation === 'openai-compatible'
     && recipeSupportsStructuredOutputs(recipe)
-    && !_structuredOutputRejectedRecipes.has(recipe.id)
+    && !gw().structuredOutputRejected.has(recipe.id)
     ? jsonSchemaOutput(opts.responseSchema)
     : undefined;
 
@@ -3813,7 +3811,7 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
       result = await generate(output);
     } catch (err) {
       if (!output || isAIInvocationPolicyError(err) || !isStructuredOutputRejection(err)) throw err;
-      _structuredOutputRejectedRecipes.add(recipe.id);
+      gw().structuredOutputRejected.add(recipe.id);
       console.warn(
         `[ai.gateway] ${recipe.id} rejected response_format json_schema; retrying without a schema ` +
         `and skipping it for the rest of this process: ${(err as Error)?.message ?? String(err)}`,

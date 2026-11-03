@@ -44,6 +44,16 @@ export function storeQueryEmbedding(key: string, vector: Float32Array, startedAt
   if (entries.size > MAX_ENTRIES) entries.delete(entries.keys().next().value!);
 }
 
+/** Drop every entry an engine cached under `tag` (its unique cache tag, engine-gateway.ts) when it closes. */
+export function dropQueryEmbeddingsTagged(tag: string): void {
+  for (const key of entries.keys()) if (key.includes(tag)) entries.delete(key);
+}
+
+/** @internal exported for tests: how many entries the cache holds. */
+export function __queryEmbedCacheSizeForTests(): number {
+  return entries.size;
+}
+
 export function clearQueryEmbedCache(): void {
   entries.clear();
   generation++;
