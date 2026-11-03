@@ -22,6 +22,9 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine } from '../engine.ts';
+import { embeddedEngineInScope } from '../engine-scope.ts';
+import { isEmbeddedEngine } from '../embedded-engine.ts';
+import { engineKey } from '../engine-key.ts';
 import { requestConfigRows } from '../config-snapshot.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { ACCESS_ID_RE, hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
@@ -495,20 +498,37 @@ export function privacyAliasSql(alias: string): string {
  */
 const honorAliasEngines = new Set<BrainEngine>();
 const aliasOptOutEngines = new Set<BrainEngine>();
+/**
+ * An engine opened from settings keeps its own policy here instead (keyed by engineKey, so it goes with the engine and a
+ * per-call engine is never retained): inside its scope its own setting decides, and it never sways the process sets.
+ */
+let embeddedPolicy = new WeakMap<object, { honorAliases?: boolean; expose?: boolean }>();
+const embeddedPolicyOf = (engine: object) => {
+  const key = engineKey(engine);
+  let policy = embeddedPolicy.get(key);
+  if (!policy) embeddedPolicy.set(key, policy = {});
+  return policy;
+};
 const ALIAS_OPT_OUT_VALUES = ['false', '0', 'off', 'no'];
 function honorAliases(): boolean {
+  const scoped = embeddedEngineInScope();
+  if (scoped) return embeddedPolicy.get(engineKey(scoped))?.honorAliases ?? true;
   return honorAliasEngines.size > 0 || aliasOptOutEngines.size === 0;
 }
 
-/** Reads this brain's `visibility.honor_aliases` into the process setting; true unless it is false/0/off/no. Unreadable keeps the last value. */
+/** Reads this brain's `visibility.honor_aliases` into the process setting (an embedded engine's: its own); true unless it is false/0/off/no. Unreadable keeps the last value. */
 export async function readHonorAliases(engine: BrainEngine): Promise<boolean> {
   try {
     const optOut = ALIAS_OPT_OUT_VALUES.includes((await engine.getConfig(HONOR_ALIASES_KEY))?.trim().toLowerCase() ?? '');
+    if (isEmbeddedEngine(engine)) {
+      embeddedPolicyOf(engine).honorAliases = !optOut;
+      return !optOut;
+    }
     (optOut ? aliasOptOutEngines : honorAliasEngines).add(engine);
     (optOut ? honorAliasEngines : aliasOptOutEngines).delete(engine);
     return !optOut;
   } catch {
-    return !aliasOptOutEngines.has(engine);
+    return isEmbeddedEngine(engine) ? embeddedPolicy.get(engineKey(engine))?.honorAliases ?? true : !aliasOptOutEngines.has(engine);
   }
 }
 
@@ -715,9 +735,15 @@ const strictEngines = new Set<BrainEngine>();
 /** GBRA-218: set once a page names readers or a member exists (sticky; a trigger and `gbrain access` write it). */
 export const ACCESS_RESTRICTIONS_KEY = 'access.restrictions_present';
 
+/** @internal exported for tests: engines the process-wide policy sets hold. */
+export function __aliasPolicyEngineCountForTests(): number {
+  return honorAliasEngines.size + aliasOptOutEngines.size + exposeEngines.size + strictEngines.size;
+}
+
 /** Test helper: drop the per-engine config cache. */
 export function __resetPrivateVisibilityCacheForTests(): void {
   cache = new WeakMap();
+  embeddedPolicy = new WeakMap();
   honorAliasEngines.clear();
   aliasOptOutEngines.clear();
   exposeEngines.clear();
@@ -730,7 +756,10 @@ export function __resetPrivateVisibilityCacheForTests(): void {
  * strict (the same lean-private rule as visibility.honor_aliases).
  */
 function processPrivacyRelaxed(): boolean {
-  return process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1' || (exposeEngines.size > 0 && strictEngines.size === 0);
+  if (process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1') return true;
+  const scoped = embeddedEngineInScope();
+  if (scoped) return embeddedPolicy.get(engineKey(scoped))?.expose === true;
+  return exposeEngines.size > 0 && strictEngines.size === 0;
 }
 
 /**
@@ -753,6 +782,10 @@ export async function remotePrivacyRelaxed(engine: BrainEngine): Promise<boolean
   }
   await readHonorAliases(engine);
   cache.set(engine, { at: Date.now(), expose });
+  if (isEmbeddedEngine(engine)) {
+    embeddedPolicyOf(engine).expose = expose;
+    return expose;
+  }
   (expose ? exposeEngines : strictEngines).add(engine);
   (expose ? strictEngines : exposeEngines).delete(engine);
   return expose;
