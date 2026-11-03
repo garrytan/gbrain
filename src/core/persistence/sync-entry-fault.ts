@@ -27,6 +27,7 @@ import { LockStolenError } from '../db-lock.ts';
 import { RECOVERY_VERSION } from '../markdown.ts';
 import { VERSION } from '../../version.ts';
 import { isWriteCapacityWait } from './admission-retry.ts';
+import { PAGE_BODY_FAULT_CODES } from './sync-fault-class.ts';
 import { gitBlobOid } from './digest.ts';
 import { readBlobBytes, type TreeBlob } from './sync-blobs.ts';
 import { readSyncFile, type SyncEntry } from './sync-discovery.ts';
@@ -95,12 +96,6 @@ function runScoped(error: unknown): boolean {
   return (error as { name?: unknown } | null)?.name === 'AbortError' || error instanceof LockStolenError || isWriteCapacityWait(error)
     || isRetryableConnError(error) || isStatementTimeoutError(error) || classifyItemFailure(error).scope !== 'item';
 }
-
-/**
- * GBRA-287: a stored page body this freeze could not read (`page_body_segmented`: a whole-body read of a page stored in
- * segments; `page_body_rows_unreadable`: segment rows that do not tile the body) is that page's fault, never the run's.
- */
-const PAGE_BODY_FAULT_CODES: ReadonlySet<string> = new Set(['page_body_segmented', 'page_body_rows_unreadable']);
 
 /**
  * S-63/S-64/S-33/S-7: the hold a throw while freezing one entry earns when holds are on, or null to rethrow it. A

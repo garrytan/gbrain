@@ -28,6 +28,7 @@ import { atomicStagingPath, atomicWriteFileSync } from './atomic-write.ts';
 import { flushDirectory } from './fs-durable.ts';
 import { isSegmentedPage } from './page-body/page-shape.ts';
 import type { BrainEngine } from './engine.ts';
+import type { StreamedFileContent } from './persistence/large-file.ts';
 import { isRelativeFileUri, serializePageToMarkdown, resolvePageFilePath, resolveSourceLocalFilePath } from './markdown.ts';
 import { isWriteTargetContained, msysToNativePath } from './path-confine.ts';
 import { readSlugRootMode, resolveSlugRootMode, type SlugRootMode } from './sync-anchor.ts';
@@ -474,9 +475,11 @@ export async function writePageThrough(
     const md = segmented ? null : serializePageToMarkdown(writtenPage, await engine.getTags(slug, { sourceId }), {
       frontmatterOverrides: opts.frontmatterOverrides,
     });
+    const streamed = segmented ? await segmentedPageFile(engine, slug, sourceId) : null;
+    if (segmented && !streamed) return { written: false, skipped: 'page_not_found_after_write' };
     // The pre-push secret scan refuses to push any file it cannot scan, so a
     // file over its cap would block every later push of the brain repo.
-    if (md !== null && Buffer.byteLength(md, 'utf-8') > PUSH_SCAN_MAX_FILE_BYTES) {
+    if ((md !== null ? Buffer.byteLength(md, 'utf-8') : streamed!.bytes) > PUSH_SCAN_MAX_FILE_BYTES) {
       opts.logger?.warn(`[write-through] ${slug}: the rendered file is over the ${PUSH_SCAN_MAX_FILE_BYTES}-byte pre-push secret-scan cap — file not written (DB row is intact)`);
       return { written: false, skipped: 'over_push_scan_cap' };
     }
@@ -522,13 +525,7 @@ export async function writePageThrough(
     const verify = () => { assertSourceFilesystemActive(); if (fileChanged()) throw changedWhileStaging; };
     try {
       if (md !== null) atomicWriteFileSync(filePath, md, { verify });
-      else {
-        const streamed = await writeSegmentedPageFile(engine, slug, sourceId, filePath, verify);
-        if (streamed === 'over_push_scan_cap') {
-          opts.logger?.warn(`[write-through] ${slug}: the rendered file is over the ${PUSH_SCAN_MAX_FILE_BYTES}-byte pre-push secret-scan cap — file not written (DB row is intact)`);
-        }
-        if (streamed !== 'written') return { written: false, skipped: streamed };
-      }
+      else await writeStreamedFile(engine, filePath, streamed!, verify);
     } catch (error) {
       if (error === changedWhileStaging) return { written: false, skipped: 'file_changed' };
       throw error;
@@ -568,32 +565,37 @@ export async function writePageThrough(
 }
 
 /**
- * The file of a page stored in segments, with the bytes `gbrain export` writes for it: measured and streamed from its
- * segments in one repeatable-read snapshot, so a body published meanwhile is never mixed in, through the streamed staging
- * writer the withdrawal mirror and restore_page use (stageStreamedContent: an in-progress name, renamed once whole), then
- * renamed over `filePath` after `verify`. Never held as one string, whatever its size.
+ * The file of a page stored in segments, with the bytes `gbrain export` writes for it: measured from the segments of
+ * the generation its snapshot names (unreadPageFile), as a segmented publication prepares its file, so it is sized
+ * before anything is bound or written. Null when the page is gone. Read on `engine` as given, so a caller inside a
+ * transaction (an owner repair) reads the rows it just wrote.
  */
-async function writeSegmentedPageFile(engine: BrainEngine, slug: string, sourceId: string, filePath: string,
-  verify: () => void): Promise<'written' | 'over_push_scan_cap' | 'page_not_found_after_write'> {
-  const [{ unreadPageFile }, { stageStreamedContent }] = await Promise.all([import('./persistence/page-prepare.ts'), import('./persistence/large-file.ts')]);
-  return engine.transaction(async tx => {
-    await tx.executeRaw('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
-    const snapshot = await tx.readPageSnapshot(slug, { sourceId });
-    if (!snapshot) return 'page_not_found_after_write';
-    const content = await unreadPageFile(tx, snapshot);
-    if (content.bytes > PUSH_SCAN_MAX_FILE_BYTES) return 'over_push_scan_cap';
-    const stage = { path: atomicStagingPath(filePath), bytes: content.bytes, hash: content.hash };
-    await stageStreamedContent(tx, filePath, content, stage, null);
-    try {
-      verify();
-      renameSync(stage.path, filePath);
-    } catch (error) {
-      rmSync(stage.path, { force: true });
-      throw error;
-    }
-    flushDirectory(dirname(filePath));
-    return 'written';
-  });
+async function segmentedPageFile(engine: BrainEngine, slug: string, sourceId: string): Promise<StreamedFileContent | null> {
+  const { unreadPageFile } = await import('./persistence/page-prepare.ts');
+  const snapshot = await engine.readPageSnapshot(slug, { sourceId });
+  return snapshot ? unreadPageFile(engine, snapshot) : null;
+}
+
+/**
+ * Streams measured file content to `filePath` through the staging writer the withdrawal mirror and restore_page use
+ * (stageStreamedContent: an in-progress name, renamed once whole; bytes that are not the measured ones refuse as
+ * `revision_conflict`), keeping an existing file's mode as atomicWriteFileSync does, then renames it over `filePath`
+ * after `verify`. Never held as one string, whatever its size.
+ */
+async function writeStreamedFile(engine: BrainEngine, filePath: string, content: StreamedFileContent, verify: () => void): Promise<void> {
+  const { stageStreamedContent } = await import('./persistence/large-file.ts');
+  let mode: number | null = null;
+  try { if (existsSync(filePath)) mode = statSync(filePath).mode & 0o7777; } catch { /* stat raced a delete: default mode */ }
+  const stage = { path: atomicStagingPath(filePath), bytes: content.bytes, hash: content.hash };
+  await stageStreamedContent(engine, filePath, content, stage, mode);
+  try {
+    verify();
+    renameSync(stage.path, filePath);
+  } catch (error) {
+    rmSync(stage.path, { force: true });
+    throw error;
+  }
+  flushDirectory(dirname(filePath));
 }
 
 export interface DeleteThroughResult {

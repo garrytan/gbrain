@@ -12,7 +12,7 @@
  * 3. PGLite.
  */
 import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -21,8 +21,11 @@ import { gitExec } from './helpers/git-exec.ts';
 import { importFromFile } from '../src/core/import-file.ts';
 import { readPageBodyPolicy, SEGMENT_MAX_BYTES } from '../src/core/page-body/limits.ts';
 import { largeFileWork } from '../src/core/persistence/large-file.ts';
-import { PAGE_MAX_BYTES } from '../src/core/page-size-policy.ts';
+import { PAGE_MAX_BYTES, PUSH_SCAN_MAX_FILE_BYTES } from '../src/core/page-size-policy.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../src/core/markdown.ts';
+import { writePageThrough } from '../src/core/write-through.ts';
+import { fileMatchesSnapshot } from '../src/core/persistence/page-prepare.ts';
+import { writeDerivedPageThrough } from '../src/core/cycle/derived-write-through.ts';
 
 let engine: PGLiteEngine;
 let dir: string;
@@ -132,6 +135,43 @@ describe('GBRA-287: full-sync re-export of a DB-only page stored in segments', (
     expect(await engine.getPage('memories/bad')).not.toBeNull();
     expect(stagingLeft(repoPath)).toEqual([]);
   }, 300_000);
+
+  test('a caller inside a transaction (an owner repair) writes the file of a segmented page, keeping its mode', async () => {
+    expect(['first_sync', 'synced']).toContain((await fullSync()).status);
+    await dbOnlySegmented('memories/big', 2 * 1024 * 1024);
+    await fullSync();
+    const file = join(repoPath, 'memories/big.md');
+    chmodSync(file, 0o600);
+    const result = await engine.transaction(async tx => {
+      await tx.executeRaw('SELECT 1');
+      return writePageThrough(tx, 'memories/big', { sourceId: 'default' });
+    });
+    expect(result).toMatchObject({ written: true });
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(readFileSync(file).equals(await exportedBytes('memories/big'))).toBe(true);
+    const snapshot = await engine.readPageSnapshot('memories/big', { sourceId: 'default' });
+    expect(await fileMatchesSnapshot(engine, 'memories/big', readFileSync(file, 'utf8'), snapshot!, 'memories/big.md')).toBe(true);
+    expect(stagingLeft(repoPath)).toEqual([]);
+  }, 180_000);
+
+  test('a segmented page whose file would pass the pre-push scan cap is skipped before its source_path is bound', async () => {
+    expect(['first_sync', 'synced']).toContain((await fullSync()).status);
+    await dbOnlySegmented('memories/huger', PUSH_SCAN_MAX_FILE_BYTES + 256 * 1024);
+    await engine.executeRaw("UPDATE pages SET source_path=NULL WHERE slug='memories/huger'");
+    expect(await writePageThrough(engine, 'memories/huger', { sourceId: 'default' })).toEqual({ written: false, skipped: 'over_push_scan_cap' });
+    const [row] = await engine.executeRaw<{ source_path: string | null }>("SELECT source_path FROM pages WHERE slug='memories/huger'");
+    expect(row!.source_path).toBeNull();
+    expect(existsSync(join(repoPath, 'memories/huger.md'))).toBe(false);
+    expect(stagingLeft(repoPath)).toEqual([]);
+  }, 600_000);
+
+  test('the derived writer skips a generated page stored in segments instead of writing a file its rollback cannot compare', async () => {
+    expect(['first_sync', 'synced']).toContain((await fullSync()).status);
+    await dbOnlySegmented('concepts/big', 2 * 1024 * 1024);
+    await engine.executeRaw("UPDATE pages SET source_path=NULL WHERE slug='concepts/big'");
+    expect(await writeDerivedPageThrough(engine, 'concepts/big', 'default')).toEqual({ written: false, skipped: 'segmented_page' });
+    expect(existsSync(join(repoPath, 'concepts/big.md'))).toBe(false);
+  }, 180_000);
 
   test('a repo-less (plain directory) source re-exports nothing and keeps the page', async () => {
     const plain = join(dir, 'plain');

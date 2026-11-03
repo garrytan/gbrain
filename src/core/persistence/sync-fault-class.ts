@@ -51,6 +51,13 @@ export const HOLD_ESCALATE_MS = 24 * 60 * 60 * 1000;
 export const STORAGE_ERROR_REPEATS = 2;
 const ESCALATE_AFTER = `${HOLD_ATTEMPTS_NEEDS_HUMAN} failed attempts over ${HOLD_ESCALATE_MS / 3_600_000} h`;
 
+/**
+ * GBRA-287: a stored page body a freeze could not read (`page_body_segmented`: a whole-body read of a page stored in
+ * segments; `page_body_rows_unreadable`: segment rows that do not tile the body) is that page's fault, never the run's.
+ * It is held `page_write_failed` (origin `freeze`) with this code in `meta.write_failure.code`, which classifies the hold.
+ */
+export const PAGE_BODY_FAULT_CODES: ReadonlySet<string> = new Set(['page_body_segmented', 'page_body_rows_unreadable']);
+
 export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
   // Page class: one entry, held; the run finished.
   { code: 'worktree_dirty', class: 'page', safe_actions: ['retry_when_clean'], needs_human: false,
