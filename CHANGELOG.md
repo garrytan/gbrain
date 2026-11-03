@@ -10,6 +10,20 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**The brain owner can now set a trusted system's attest right and manage members and their canonical-id links from another machine, over the running server, instead of needing a shell on the brain host.** Three owner-session routes back new `gbrain mcp admin` commands. Every refusal the local commands make still applies, and no OAuth token or MCP tool reaches them.
+
+### What changed
+
+| Task | Before | Now |
+|---|---|---|
+| Grant or clear a client's attest right | `gbrain auth rescope --client <id> --attest-actor qm` on the brain host | also `gbrain mcp admin attest <id> --attest-actor qm\|none [--attest-ops <list>] [--dry-run]` (`/admin/api/access/attest`) |
+| Add, disable, enable or list members | `gbrain access member add\|disable\|enable\|list` on the host | also `gbrain mcp admin member-add\|member-disable\|member-enable\|members` (`/admin/api/access/members`) |
+| Link or unlink a canonical id | `gbrain access member link\|unlink\|links` on the host | also `gbrain mcp admin link\|unlink\|links` (`/admin/api/access/member-links`) |
+
+These routes accept only the owner session. Each applied change writes an `access_admin` row to the request log. A member-bound or public client still can't hold the attest right, deferred operations still can't be attested, and a link still needs an enabled member and an unlinked id. Removing a member stays a brain-host command.
+
 ## [0.60.555.0] - 2026-11-02
 
 **`gbrain query --limit N` without a token budget returns N rows again, a budgeted facts block takes at most N rows, the facts block never outscores the pages, and the CLI names fact rows instead of printing `undefined` (#8411).** Since the facts block went on by default (v0.60.491.0), it also ran on queries that passed no budget, because the shipped no-budget evidence plan carries an implicit 24,000-token budget. Its 22% share let up to 40 fact rows in ahead of the pages, so `--limit 3` could print more than a dozen fact rows before the 3 pages. Each block row was scored a hair above the top page, so they all showed the same score and outranked every hit, and the human CLI printed them as `[0.84xx] undefined -- …` because fact rows have no page slug.

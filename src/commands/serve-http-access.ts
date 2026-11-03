@@ -1,0 +1,103 @@
+import express, { type Express, type Request, type Response, type RequestHandler } from 'express';
+import type { BrainEngine } from '../core/engine.ts';
+import { OperationError } from '../core/ops/contract.ts';
+import { addMember, bindCredential, disableMember, enableMember, listMembers, type BindingPatch } from '../core/access/members.ts';
+import { ATTEST_SYSTEMS, linkMember, listMemberLinks, parseAttestOps, unlinkMember } from '../core/access/actor.ts';
+import { operationsByName } from '../core/operations.ts';
+import { executeRawJsonb } from '../core/sql-query.ts';
+
+/**
+ * GST-1094 gap 4: owner administration of the people a trusted system serves, over the running server: the attest
+ * right on a client, members, and the canonical ids linked to them. Owner session only (requireAdmin); never an MCP
+ * operation or an OAuth scope. Every refusal is the library's, as on the local CLI (gbrain auth rescope --attest-actor,
+ * gbrain access member add|disable|enable|link|unlink).
+ */
+export function mountAdminAccess(app: Express, requireAdmin: RequestHandler, engine: BrainEngine): void {
+  const json = express.json();
+
+  app.get('/admin/api/access/members', requireAdmin, async (req, res) => {
+    await answer(res, false, async () => ({ members: await listMembers(engine, { includeRemoved: req.query.all === '1' || req.query.all === 'true' }) }));
+  });
+
+  app.post('/admin/api/access/members', requireAdmin, json, async (req, res) => {
+    const { action, id } = req.body ?? {};
+    if (action !== 'add' && action !== 'disable' && action !== 'enable') return refuse(res, 'action must be add, disable or enable.');
+    if (action === 'add' && req.body.name !== undefined && typeof req.body.name !== 'string') return refuse(res, 'name must be a string.');
+    if (action === 'add' && req.body.groups !== undefined && !(Array.isArray(req.body.groups) && req.body.groups.every((g: unknown) => typeof g === 'string'))) return refuse(res, 'groups must be an array of group ids.');
+    await answer(res, true, async () => {
+      if (action === 'add') {
+        const result = await addMember(engine, id, { name: req.body.name, groups: req.body.groups });
+        await audit(engine, 'member_add', { member: result.member.id, groups_created: result.groups_created });
+        return { applied: true, ...result };
+      }
+      const member = await (action === 'disable' ? disableMember : enableMember)(engine, id);
+      await audit(engine, `member_${action}`, { member: member.id });
+      return { applied: true, member };
+    });
+  });
+
+  app.get('/admin/api/access/member-links', requireAdmin, async (req, res) => {
+    const member = typeof req.query.member === 'string' && req.query.member ? req.query.member : undefined;
+    await answer(res, false, async () => ({ links: await listMemberLinks(engine, { member }) }));
+  });
+
+  app.post('/admin/api/access/member-links', requireAdmin, json, async (req, res) => {
+    const { action, member, externalId, dryRun } = req.body ?? {};
+    const system = req.body?.system ?? 'qm';
+    if (action !== 'link' && action !== 'unlink') return refuse(res, 'action must be link or unlink.');
+    if (!ATTEST_SYSTEMS.includes(system)) return refuse(res, `system must be ${ATTEST_SYSTEMS.join(' or ')}.`);
+    if (dryRun !== undefined && typeof dryRun !== 'boolean') return refuse(res, 'dryRun must be a boolean.');
+    await answer(res, dryRun !== true, async () => {
+      const result = action === 'link' ? await linkMember(engine, member, system, externalId, { dryRun }) : await unlinkMember(engine, system, externalId, { dryRun });
+      if (result.applied) await audit(engine, `member_${action}`, { system, external_id: result.link.external_id, member: result.link.member_id });
+      return result;
+    });
+  });
+
+  app.post('/admin/api/access/attest', requireAdmin, json, async (req, res) => {
+    const { clientId, attestActor, attestOps, dryRun } = req.body ?? {};
+    if (typeof clientId !== 'string' || !clientId) return refuse(res, 'clientId required.');
+    if (attestActor === undefined && attestOps === undefined) return refuse(res, 'Pass attestActor (qm or null) and/or attestOps.');
+    if (attestActor !== undefined && attestActor !== null && !ATTEST_SYSTEMS.includes(attestActor)) return refuse(res, `attestActor must be ${ATTEST_SYSTEMS.join(' or ')}, or null to clear the right.`);
+    if (attestOps !== undefined && attestOps !== null && !(Array.isArray(attestOps) && attestOps.every((op: unknown) => typeof op === 'string'))) return refuse(res, 'attestOps must be an array of operation names, or null for the default.');
+    if (dryRun !== undefined && typeof dryRun !== 'boolean') return refuse(res, 'dryRun must be a boolean.');
+    await answer(res, dryRun !== true, async () => {
+      const patch: BindingPatch = {
+        ...(attestActor !== undefined ? { attestActor } : {}),
+        ...(attestOps !== undefined ? { attestOps: attestOps === null ? null : parseAttestOps(attestOps.join(','), name => operationsByName[name]) } : {}),
+      };
+      const result = await bindCredential(engine, { kind: 'client', id: clientId }, patch, { dryRun });
+      if (result.changed && !dryRun) await audit(engine, 'client_attest', { client_id: clientId, attest_actor: result.attest_actor ?? null, attest_ops: result.attest_ops ?? null });
+      return { applied: result.changed && dryRun !== true, client_id: clientId, attest_actor: result.attest_actor ?? null, attest_ops: result.attest_ops ?? null, changed: result.changed,
+        tokenImplications: 'Takes effect on the next request; a client that newly holds the right takes a new token with grant_type=client_credentials.' };
+    });
+  });
+}
+
+function refuse(res: Response, message: string): void {
+  res.status(400).json({ error: 'invalid_params', code: 'invalid_params', message, outcome: 'failed' });
+}
+
+async function answer(res: Response, mutation: boolean, run: () => Promise<Record<string, unknown>>): Promise<void> {
+  res.set('Cache-Control', 'no-store');
+  try {
+    res.json(await run());
+  } catch (error) {
+    if (error instanceof OperationError) {
+      res.status(400).json({ error: error.code, code: error.code, message: error.message, suggestion: error.suggestion, ...(error.reason ? { reason: error.reason } : {}), outcome: 'failed' });
+      return;
+    }
+    res.status(503).json({ error: 'administration_unavailable', code: 'administration_unavailable', outcome: mutation ? 'unknown' : 'failed',
+      message: mutation ? 'The change outcome is unknown. List the members, links or client before another change.' : 'Administration is temporarily unavailable. Retry the read.' });
+  }
+}
+
+/** One audit row per applied change, in the request log like a surface change; fail-open, as there. */
+async function audit(engine: BrainEngine, action: string, detail: Record<string, unknown>): Promise<void> {
+  try {
+    await executeRawJsonb(engine, `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params) VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+      ['admin-api', 'admin-api', 'access_admin', 0, 'success'], [{ actor: 'admin-api', action, ...detail }]);
+  } catch (err) {
+    process.stderr.write(`[access-admin] failed to write the ${action} audit row: ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
