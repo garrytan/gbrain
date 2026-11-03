@@ -13,7 +13,8 @@
  * (purged page content, the write gate, private visibility, a fence it refuses), one that changes who can read the page
  * or one the next sync's content gate would quarantine, flag or skip embedding (the apply keeps the stored frontmatter),
  * or one over the 24 MiB the screen reads whole. A source without a Git
- * checkout (a repo-less brain) refuses: this repair republishes the copy Git holds, and the database has no other.
+ * checkout (a repo-less brain) that holds a damaged page refuses: this repair republishes the copy Git holds, and the
+ * database has no other; with no damaged page the preview lists nothing.
  *
  * `--apply --expect <hash>` re-checks every page (`preview_changed`), then per page, in one transaction under the page's
  * key lock (a coordinated maintenance write on a managed brain; refused while a sync or write in flight names the file):
@@ -168,12 +169,14 @@ async function stageable(engine: BrainEngine, page: { source_id: string; slug: s
 
 /** Every damaged page of the selection, as the preview lists it (republishable pages and held ones). */
 async function survey(engine: BrainEngine, selection: Selection): Promise<{ pages: HealPage[]; listing: RepairListing[]; held: number }> {
+  const damaged = await untiledSegmentedPages(engine, { sourceIds: [selection.source_id], ...(selection.slugs.length ? { slugs: selection.slugs } : {}) });
+  if (!damaged.length) return { pages: [], listing: [], held: 0 };
   const checkout = await sourceCheckout(engine, selection.source_id);
   const { maxBytes } = await readPageBodyPolicy(engine);
   const pages: HealPage[] = [];
   const listing: RepairListing[] = [];
   let held = 0;
-  for (const page of await untiledSegmentedPages(engine, { sourceIds: [selection.source_id], ...(selection.slugs.length ? { slugs: selection.slugs } : {}) })) {
+  for (const page of damaged) {
     const label = `${page.source_id}:${page.slug} (revision ${page.revision})`;
     const blob = page.source_path ? headBlob(checkout.root, page.source_path, maxBytes) : { held: 'the page has no file, so Git holds no copy of it' };
     if ('held' in blob) { held++; listing.push({ item: label, class: 'held', detail: blob.held }); continue; }
