@@ -12,6 +12,8 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
+**An attested call can no longer write pages directly: `add_timeline_entry`, `add_link`, `put_page` and `edit_page` are not attestable.** They write to pages that everyone who reads the page sees, so a trusted system acting as one person could put that person's words in front of a whole audience with no one approving them. They now wait for owner-approved proposals, the way `capture` and take writes already do. An operator whose `--attest-ops` list names one of them sees `gbrain auth rescope` refuse the list, and each attested call to it is refused (`actor_not_attested`, reason `op_not_attested`); a queued attested write of one fails when it publishes. Unattested calls, and credentials bound to a member, are unchanged. `v2.json` lists the new deferred operations; `v1.json` is unchanged.
+
 **A `memory_recall` that names sources reads as that scope, never as the attested person, so a shared turn can no longer recall one member's private facts into a shared channel.** `memory_recall` gains `source_id` and `source_ids`. Named, the read drops the person's own recent facts and every member-page fact, keeps restricted pages hidden and never relaxes `visibility: private`. The contract for it is the new `docs/contracts/qm-memory-provider/v2.json`; `v1.json` stays byte-identical and a test holds it there. Three smaller provider fixes ride along.
 
 ### What changed
