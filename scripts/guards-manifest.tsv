@@ -56,6 +56,7 @@ check-eval-glossary-fresh.sh	buildfresh	exempt	regenerates + diffs
 check-fuzz-purity.sh	buildfresh	exempt	executes fuzz corpus
 check-image-decoders-embedded.sh	buildfresh	exempt	binary embed check; in verify CHECKS (check:image-decoders); its smoketest compile bundles a handful of modules (~0.6s)
 check-pglite-embedded.sh	buildfresh	exempt	binary embed check
+check-skills-embedded.sh	buildfresh	exempt	binary embed check
 check-skills-manifest-fresh.sh	buildfresh	exempt	regenerates + diffs
 check-tool-catalog-fresh.sh	buildfresh	exempt	regenerates + diffs
 check-wasm-embedded.sh	buildfresh	exempt	binary embed check
