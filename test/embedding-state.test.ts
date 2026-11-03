@@ -221,14 +221,6 @@ describe('embedding state rows and fixes', () => {
   });
 });
 
-/**
- * Protects stored protected content from false healing and deletion advice while
- * keeping lost public prose detectable. Raw-body classification, filtering after
- * LIMIT, or a state-only fix recommendation breaks these cases. The nine cases
- * above do not classify protected-only cold pages or their command advice.
- * Existing engine and command APIs suffice. No production seam is required.
- * Cold rows and withdrawal ledger entries below are synthetic legacy fixtures.
- */
 import { spyOn } from 'bun:test';
 import type { Action, RenderedAction } from '../src/core/agent-output.ts';
 import type { EmbeddingState } from '../src/core/embedding-state.ts';
