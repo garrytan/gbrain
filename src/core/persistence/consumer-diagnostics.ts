@@ -24,7 +24,7 @@ import { existsSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { CONSUMER_LAPSED_MS, RESIDENT_CONSUMER_KINDS, listHostConsumers, type ListedConsumer } from './consumer-heartbeat.ts';
-import type { LocalHostIdentity } from './identity.ts';
+import { isEmbeddedIdentityValue, type LocalHostIdentity } from './identity.ts';
 import { hasManagedRootMarker } from './root-registry.ts';
 
 /** Both rows must be older than this before an overlap is a warning: two starters within one renewal are a known residual. */
@@ -85,6 +85,8 @@ type OwnerRow = { host_id: string; host_json_path: string; persistence_home: str
 
 /** The `GBRAIN_HOME` parent value a supervisor sets so this process mints under the owner's home: the owner's `gbrain_home`, else its persistence home's grandparent (`<home>/.gbrain/persistence`). */
 function fixEnv(owner: OwnerRow | undefined): string | null {
+  // An identity given at open (engine-open.ts) has no home to point a supervisor at.
+  if (isEmbeddedIdentityValue(owner?.host_json_path) || isEmbeddedIdentityValue(owner?.persistence_home)) return null;
   const minted = owner ? parse(owner.minted_under) : null;
   if (typeof minted?.gbrain_home === 'string' && minted.gbrain_home) return `GBRAIN_HOME=${minted.gbrain_home}`;
   if (owner?.persistence_home) return `GBRAIN_HOME=${dirname(dirname(owner.persistence_home))}`;

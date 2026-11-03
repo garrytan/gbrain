@@ -8,7 +8,7 @@ import { OperationError, opError, type OperationContext } from '../ops/contract.
 import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { authorizeStoredRequest, authorizeWrite, submissionAuthority } from './authority.ts';
-import { existingLocalHostId } from './identity.ts';
+import { existingHostIdFor } from './identity.ts';
 import { guardEffectSource } from './effect-recovery.ts';
 import { assertEmbeddingEffectEnabled, readEmbeddingEffectProjection, selectedEffectPage } from './effects.ts';
 import { PARK_AFTER_FAILURES, type PersistenceEffect } from './effect-model.ts';
@@ -141,7 +141,7 @@ export async function retryParkedEffects(engine: BrainEngine, sourceId: string, 
       OR (kind='git' AND state='failed' AND error_code=ANY($3::text[]))) ORDER BY kind`,
   [request.id, options.parkedOnly === true, [...options.failedCodes ?? []]]);
   if (!tracked.length) return null;
-  const hostId = existingLocalHostId();
+  const hostId = existingHostIdFor(engine);
   if (!hostId) throw unregisteredHost(sourceId, requestId);
   return engine.transaction(async tx => {
     const refusal = await storedAuthorityRefusal(tx, request, sourceId);
@@ -254,7 +254,7 @@ export async function retryEmbeddingEffect(engine: BrainEngine, sourceId: string
     `Request ${requestId} in source ${sourceId} has no single embedding effect and no parked Git or withdrawal effect, so nothing was queued. Check that the request_id is the one from the write receipt and that ${sourceId} is the source it was written to.`,
     { fix: receiptFix(requestId) });
   const request = requests[0];
-  const hostId = existingLocalHostId();
+  const hostId = existingHostIdFor(engine);
   if (!hostId) throw unregisteredHost(sourceId, requestId);
   const config = await loadConfigWithEngine(engine, baseConfig);
   const configuredSignature = config?.embedding_model && config.embedding_dimensions

@@ -22,7 +22,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { CONSUMER_LAPSED_MS } from './consumer-heartbeat.ts';
-import { existingLocalHostId } from './identity.ts';
+import { existingHostIdFor } from './identity.ts';
 
 /** An owner with no live consumer and no activity for this long reads as stale. */
 export const OWNER_STALE_MS = 24 * 60 * 60 * 1000;
@@ -57,7 +57,7 @@ export async function ownerActivity(engine: BrainEngine, worktreeIds: readonly s
     FROM persistence_worktrees w
     WHERE w.id::text = ANY($1::text[]) AND w.owner_host_id IS NOT NULL`, [ids, CONSUMER_LAPSED_MS],
     { signal: engine.kind === 'postgres' ? opts.signal : undefined });
-  const local = existingLocalHostId();
+  const local = existingHostIdFor(engine);
   for (const row of rows) {
     const lastActive = row.last_active === null ? null : new Date(row.last_active).toISOString();
     const self = local === row.owner_host_id;

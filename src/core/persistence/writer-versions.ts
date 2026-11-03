@@ -1,6 +1,6 @@
 /** Writer-version stamps on persistence_requests (migration 178): observation of older writers, not prevention. */
 import { VERSION } from '../../version.ts';
-import { existingLocalHostId, localHostId } from './identity.ts';
+import { existingHostIdFor, hostIdFor } from './identity.ts';
 import type { SqlEngine } from './model.ts';
 
 /** Writers older than this may still delete database-only timeline rows during publication. */
@@ -33,9 +33,10 @@ export function writerVersionBelowFloor(version: string | null, floor = WRITER_V
  * segmented pages write: a version string cannot tell a build with segment readers from a release of the same
  * version without them.
  */
-export function writerStamp(opts: { mint?: boolean } = {}): { version: string; hostId: string | null } {
+export function writerStamp(opts: { mint?: boolean; engine?: object } = {}): { version: string; hostId: string | null } {
   let hostId: string | null = null;
-  try { hostId = opts.mint === false ? existingLocalHostId() : localHostId(); } catch { /* unwritable or invalid identity: stamp the version only */ }
+  // `engine`: the host id that engine was opened with (engine-open.ts), else this process's file identity.
+  try { hostId = opts.mint === false ? existingHostIdFor(opts.engine) : hostIdFor(opts.engine); } catch { /* unwritable or invalid identity: stamp the version only */ }
   return { version: VERSION, hostId };
 }
 

@@ -36,7 +36,7 @@ export async function createEngine(config: EngineConfig): Promise<BrainEngine> {
   // route to a closed engine. Concurrent multi-engine attribution remains
   // top-of-stack best-effort; the sink is fail-open, so a not-yet-migrated
   // engine never breaks a chat call.
-  const deregisterUsageSink = registerChatUsageSink(makeEngineChatUsageSink(engine));
+  const deregisterUsageSink = registerChatUsageSink(makeEngineChatUsageSink(engine), engine);
   const origDisconnect = engine.disconnect.bind(engine);
   engine.disconnect = async (): Promise<void> => {
     deregisterUsageSink();

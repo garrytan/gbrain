@@ -1,4 +1,4 @@
-import { currentVerifiedLocalWriter, existingLocalHostId, readLocalWriter } from './identity.ts';
+import { currentVerifiedLocalWriter, existingHostIdFor, readLocalWriter } from './identity.ts';
 import type { Principal, SqlEngine, WriteRequest } from './model.ts';
 import type { BrainEngine } from '../engine.ts';
 import { withWriteAttribution } from './context.ts';
@@ -59,7 +59,7 @@ export async function maintenanceAttribution(engine: SqlEngine): Promise<WriteAt
   try { return principalAttribution({ kind: 'local_cli', id: await registration }); }
   catch {
     installationRegistration.delete(engine);
-    return principalAttribution({ kind: 'application', id: `host:${existingLocalHostId() ?? 'unregistered'}` });
+    return principalAttribution({ kind: 'application', id: `host:${existingHostIdFor(engine) ?? 'unregistered'}` });
   }
 }
 const installationRegistration = new WeakMap<SqlEngine, Promise<string>>();

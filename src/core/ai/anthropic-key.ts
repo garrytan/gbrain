@@ -24,6 +24,16 @@
  */
 
 import { loadConfig } from '../config.ts';
+import { embeddedSettingsRecord } from '../embedded-engine.ts';
+import { embeddedEngineInScope, unscopedInEmbeddedProcess } from '../engine-scope.ts';
+import { engineScopeMissing, engineScopeUnentered } from './engine-gateway.ts';
+
+/** In an embedded engine's scope (engine-scope.ts): its own `settings.ai` Anthropic key, or null. Undefined outside one. */
+function engineAnthropicKey(): string | null | undefined {
+  const engine = embeddedEngineInScope();
+  if (!engine) return undefined;
+  return embeddedSettingsRecord(engine)?.ai?.providers.anthropic?.apiKey || null;
+}
 
 /**
  * The Anthropic key the AI gateway was configured with, when it did NOT come
@@ -33,6 +43,8 @@ import { loadConfig } from '../config.ts';
  * `ANTHROPIC_API_KEY`). Cleared by the gateway reset paths via the stash.
  */
 let _gatewayEnvKeySnapshot: string | undefined;
+/** Whether `configureGateway()` set a process gateway: in a process holding embedded engines, only then may an unscoped call use process keys. */
+let _processGatewayConfigured = false;
 
 /**
  * Push seam for `configureGateway()`: stash the gateway env's Anthropic key
@@ -47,6 +59,7 @@ export function stashGatewayAnthropicKeyFromEnv(
 ): void {
   const key = env?.ANTHROPIC_API_KEY;
   _gatewayEnvKeySnapshot = key !== process.env.ANTHROPIC_API_KEY ? key : undefined;
+  _processGatewayConfigured = env !== undefined;
 }
 
 /**
@@ -64,7 +77,23 @@ export function setGatewayAnthropicKeySnapshot(key: string | undefined): void {
  * servable — without exposing a raw engine.getConfig read to the planner.
  */
 export function getGatewayAnthropicKeySnapshot(): string | undefined {
+  const scoped = engineAnthropicKey();
+  if (scoped !== undefined) return scoped ?? undefined;
   return _gatewayEnvKeySnapshot;
+}
+
+/**
+ * The options a directly built Anthropic client takes (the legacy subagent path). In an embedded engine's scope, that
+ * engine's own key and endpoint, because the SDK falls back to process.env for anything it is not given; an engine
+ * without an Anthropic provider refuses `engine_scope_missing`.
+ */
+export function anthropicClientOptions(): { apiKey?: string; baseURL?: string } {
+  const engine = embeddedEngineInScope();
+  if (!engine && unscopedInEmbeddedProcess() && !_processGatewayConfigured) throw engineScopeUnentered();
+  if (!engine) return { apiKey: resolveAnthropicKey() };
+  const provider = embeddedSettingsRecord(engine)?.ai?.providers.anthropic;
+  if (!provider?.apiKey) throw engineScopeMissing('anthropic', 'chat');
+  return { apiKey: provider.apiKey, baseURL: (provider.baseUrl ?? 'https://api.anthropic.com').replace(/\/+$/, '').replace(/\/v1$/, '') };
 }
 
 export function hasAnthropicKey(): boolean {
@@ -73,12 +102,16 @@ export function hasAnthropicKey(): boolean {
 
 /**
  * Resolve the actual key value: env first, then the gateway env snapshot,
- * then the gbrain config file. Callers constructing an Anthropic client
+ * then the gbrain config file. In an embedded engine's scope, only that engine's
+ * own `settings.ai.providers.anthropic.apiKey`. Callers constructing an Anthropic client
  * directly (e.g. the legacy subagent path) must pass this as `apiKey` — a
  * bare `new Anthropic()` only sees env, so launchd/MCP workers with
  * config-stored keys fail.
  */
 export function resolveAnthropicKey(): string | undefined {
+  const scoped = engineAnthropicKey();
+  if (scoped !== undefined) return scoped ?? undefined;
+  if (unscopedInEmbeddedProcess() && !_processGatewayConfigured) return undefined;
   if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
   if (_gatewayEnvKeySnapshot) return _gatewayEnvKeySnapshot;
   try {
