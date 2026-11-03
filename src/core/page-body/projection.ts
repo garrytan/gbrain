@@ -45,12 +45,12 @@ import { assertGenerationTiles } from './body-tiling.ts';
 export interface SegmentedProjectionResult { chunks: number; retired: number; sealed: boolean; claimLost?: true }
 
 interface ProjectionPage {
-  id: number; body_generation: number | string; knowledge_revision: string; text_projection_revision: string | null;
+  id: number; body_generation: number | string; body_bytes: number | string; knowledge_revision: string; text_projection_revision: string | null;
   title: string; frontmatter: JsonObject | null; body_flags: JsonObject | null; timeline_lead: string | null;
 }
 
 async function readProjectionPage(engine: Pick<BrainEngine, 'executeRaw'>, ref: { sourceId: string; slug: string }): Promise<ProjectionPage | null> {
-  const [page] = await engine.executeRaw<ProjectionPage>(`SELECT id, body_generation, knowledge_revision::text AS knowledge_revision,
+  const [page] = await engine.executeRaw<ProjectionPage>(`SELECT id, body_generation, body_bytes, knowledge_revision::text AS knowledge_revision,
       text_projection_revision::text AS text_projection_revision, title, frontmatter, body_flags, timeline_lead
     FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL AND body_storage='segmented'`, [ref.sourceId, ref.slug]);
   return page ?? null;
@@ -187,8 +187,8 @@ async function buildClaimedProjection(engine: BrainEngine, ref: { sourceId: stri
   claim: ProjectionClaim): Promise<SegmentedProjectionResult> {
   const generation = Number(page.body_generation);
   const pageId = Number(page.id);
-  const liveRows = await engine.readManifest(pageId);
-  await assertGenerationTiles(engine, pageId, generation, liveRows);
+  const liveRows = await engine.readManifest(pageId, { generation });
+  await assertGenerationTiles(engine, pageId, generation, liveRows, Number(page.body_bytes));
   const { retired, moved } = await retireStaleChunks(engine, ref, pageId, generation, liveRows.map(row => Number(row.occurrenceId)));
   if (moved) return { chunks: 0, retired, sealed: false };
   const frontmatter = page.frontmatter ?? {};

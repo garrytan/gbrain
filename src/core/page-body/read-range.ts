@@ -37,7 +37,7 @@ import { credentialSafeProjection } from '../credential-projection.ts';
 import { loadFenceChunkOverlay, markFenceChunk, renderFenceLowTier, type FenceChunkOverlay, type FenceLowTierRow } from '../eligibility/fence-overlay.ts';
 import { partialFenceRuns, withdrawalFenceBlocks } from '../facts/withdrawal-overlay.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../facts-fence.ts';
-import { assertRowsTile, generationBodyBytes } from './body-tiling.ts';
+import { assertRowsTile, generationBodyBytes, LIVE_READ_ATTEMPTS } from './body-tiling.ts';
 import { readEntryState } from './entry-state.ts';
 import { FENCE_MAX_BYTES, SEGMENT_MAX_BYTES } from './limits.ts';
 import { ledgerApplies, readBodyLedger, overlaySegmentText, type BodyLedger } from './segment-ledger.ts';
@@ -186,10 +186,12 @@ function manifestRows(engine: BrainEngine, pageId: number, generation: number | 
  *
  * The page row, the manifest rows and (given `expect`, the slug and source the caller already holds) the ledger are
  * read at once: rows read for another generation than the page row names (a body published between the statements)
- * are read again, and a ledger read under a name the page row does not carry is read again under its own.
+ * are read again, and a ledger read under a name the page row does not carry is read again under its own. A live read
+ * whose generation a publish retired before its rows were read (they no longer tile it) opens the new live generation,
+ * up to LIVE_READ_ATTEMPTS times (GBRA-287).
  */
 export async function openSegmentedBody(engine: BrainEngine, opts: { pageId: number; generation?: number; ledger?: BodyLedger; pin?: BodyPin;
-  expect?: { slug: string; sourceId: string } }): Promise<SegmentedBody> {
+  expect?: { slug: string; sourceId: string } }, attempt = 1): Promise<SegmentedBody> {
   const requested = opts.pin?.generation ?? opts.generation ?? null;
   const [[page], read, expected] = await Promise.all([
     engine.executeRaw<Record<string, unknown>>(`SELECT id, source_id, slug, body_storage, body_generation, body_bytes, body_lines, truth_bytes,
@@ -209,7 +211,14 @@ export async function openSegmentedBody(engine: BrainEngine, opts: { pageId: num
     byteStart: Number(r.byte_start), byteLen: Number(r.byte_len), lineStart: Number(r.line_start), lineCount: Number(r.line_count), staticProjBytes: Number(r.static_proj_bytes),
     staticProjLines: Number(r.static_proj_lines), outlineCount: Number(r.outline_count), hasFacts: r.has_facts === true, hasDate: r.has_date === true,
   }));
-  assertRowsTile(bodyRows, { slug, sourceId, total: await generationBodyBytes(engine, { id: opts.pageId, body_generation: page.body_generation, body_bytes: page.body_bytes }, generation) });
+  try {
+    assertRowsTile(bodyRows, { slug, sourceId, total: await generationBodyBytes(engine, { id: opts.pageId, body_generation: page.body_generation, body_bytes: page.body_bytes }, generation) });
+  } catch (error) {
+    if (requested !== null || attempt >= LIVE_READ_ATTEMPTS) throw error;
+    const [now] = await engine.executeRaw<{ body_generation: unknown }>('SELECT body_generation FROM pages WHERE id=$1', [opts.pageId]);
+    if (!now || Number(now.body_generation) === generation) throw error;
+    return openSegmentedBody(engine, opts, attempt + 1);
+  }
   const ledger = opts.ledger ?? (expected && opts.expect!.slug === slug && opts.expect!.sourceId === sourceId ? expected : await readBodyLedger(engine, sourceId, slug));
   return {
     pageId: opts.pageId, sourceId, slug, generation, bodyBytes: Number(page.body_bytes ?? 0), bodyLines: Number(page.body_lines ?? 0), truthBytes: Number(page.truth_bytes ?? 0),
