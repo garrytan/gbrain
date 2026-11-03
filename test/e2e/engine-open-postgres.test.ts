@@ -51,7 +51,7 @@ beforeAll(async () => {
   if (!DATABASE_URL) return;
   assertSafeE2eDatabaseUrl(DATABASE_URL);
   const admin = postgres(DATABASE_URL, { max: 1, prepare: false });
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < 3; i++) {
     const name = `gbrain_test_engine_open_${randomUUID().replaceAll('-', '')}`;
     await admin.unsafe(`CREATE DATABASE ${name}`);
     const url = new URL(DATABASE_URL);
@@ -126,6 +126,37 @@ describeE2E('openEngine on Postgres', () => {
     expect(internals(engine)._sql).toBeNull();
     expect(embeddedSettings(engine)).toBeUndefined();
     expect(await codeOf(engine.reconnect())).toBe('engine_closed');
+  }, 60_000);
+
+  test('PGPASSWORD never supplies a password the settings URL leaves out', async () => {
+    const withPassword = new URL(urls[0]!);
+    if (!withPassword.password) return;
+    const correct = decodeURIComponent(withPassword.password);
+    withPassword.password = '';
+    await withEnv({ PGPASSWORD: correct }, async () => {
+      expect(await codeOf(openEngine({ embedded_core: true, engine: 'postgres', database: { url: withPassword.toString() }, pool: { max: 1 }, host: { id: randomUUID() } }).then(e => e.disconnect()))).not.toBe('resolved');
+    });
+  }, 60_000);
+
+  test('two hosts initializing one fresh database with different embedding models: one refuses engine_embedding_mismatch', async () => {
+    const open = (model: string) => openEngine({ embedded_core: true, engine: 'postgres', database: { url: urls[2]! }, pool: { max: 2 }, host: { id: randomUUID() }, embedding: { model, dimensions: 1024 } });
+    const [first, second] = await Promise.all([open('voyage:voyage-4'), open('voyage:voyage-4-lite')]);
+    try {
+      const outcomes = (await Promise.all([codeOf(first.initSchema()), codeOf(second.initSchema())])).sort();
+      expect(outcomes).toEqual(['engine_embedding_mismatch', 'resolved']);
+    } finally {
+      await Promise.all([first.disconnect(), second.disconnect()]);
+    }
+  }, 180_000);
+
+  test('a reconnect ends the superseded direct pool, so nothing outlives disconnect()', async () => {
+    const engine = await openEngine({ embedded_core: true, engine: 'postgres', database: { url: urls[0]!, directUrl: urls[0]! }, pool: { max: 2 }, host: { id: randomUUID() } });
+    const manager = internals(engine).connectionManager as unknown as { ddl(): Promise<postgres.Sql> };
+    const oldDirect = await manager.ddl();
+    await oldDirect`SELECT 1`;
+    await engine.reconnect();
+    await engine.disconnect();
+    expect(await codeOf(oldDirect`SELECT 1`)).not.toBe('resolved');
   }, 60_000);
 
   test('the consumer heartbeat records the identity-given-at-open sentinel, not a host.json path', async () => {

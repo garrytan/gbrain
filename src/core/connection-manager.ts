@@ -43,6 +43,7 @@ import { redactPgUrl } from './url-redact.ts';
 import { logConnectionEvent } from './connection-audit.ts';
 import { directPoolProfile, type DirectPoolProfile } from './direct-pool-profile.ts';
 import { deriveDirectUrl, deriveSessionPoolerUrl, isSupabasePoolerUrl } from './supabase-pooler-url.ts';
+import { settingsConnectionOptions } from './embedded-engine.ts';
 
 export { deriveDirectUrl, deriveSessionPoolerUrl, isSupabasePoolerUrl };
 
@@ -61,6 +62,8 @@ export interface ConnectionManagerOpts {
    * the route a known pooler URL derives) and GBRAIN_DIRECT_DATABASE_URL is never read.
    */
   directUrlFromEnv?: boolean;
+  /** True for an engine opened from settings: the direct pool passes every connection field explicitly, never PG* env. */
+  settingsConnection?: boolean;
   /**
    * Inherit pools + kill-switch state from a parent manager (worker engines,
    * transaction clones). When set, this manager is a thin reference holder
@@ -434,7 +437,7 @@ export class ConnectionManager {
     const t0 = Date.now();
     let pool: Sql | null = null;
     try {
-      pool = postgres(this._directUrl, traceSqlOptions(opts, 'direct'));
+      pool = postgres(this._directUrl, traceSqlOptions(this.opts.settingsConnection ? { ...opts, ...settingsConnectionOptions(this._directUrl) } : opts, 'direct'));
       // Probe to validate connectivity early.
       await pool`SELECT 1`;
       logConnectionEvent({

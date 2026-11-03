@@ -7,7 +7,7 @@ import type { BrainEngine } from './engine.ts';
 import type { EngineConfig } from './types.ts';
 import { opError } from './ops/contract.ts';
 import { createEngine } from './engine-factory.ts';
-import { markEmbeddedEngine, releaseEmbeddedEngine, type EngineSettings } from './embedded-engine.ts';
+import { markEmbeddedEngine, missingConnectionField, releaseEmbeddedEngine, type EngineSettings } from './embedded-engine.ts';
 import { assertLocalWriterValue, setEngineHostId } from './persistence/identity.ts';
 
 export type { EngineSettings, EmbeddedSettingsView } from './embedded-engine.ts';
@@ -31,6 +31,10 @@ function checkSettings(settings: EngineSettings): void {
     if (!text(database.url)) throw invalid('database.url', 'A Postgres engine needs database.url.');
     if (database.path !== undefined) throw invalid('database.path', 'A Postgres engine takes database.url, not database.path.');
     if (database.directUrl !== undefined && !text(database.directUrl)) throw invalid('database.directUrl', 'database.directUrl is a connection URL when given.');
+    for (const [setting, url] of [['database.url', database.url], ['database.directUrl', database.directUrl]] as const) {
+      const missing = url === undefined ? undefined : missingConnectionField(url);
+      if (missing) throw invalid(setting, `${setting} names no ${missing}, and the driver would fill it from PG* environment variables.`);
+    }
   } else {
     if (database.url !== undefined || database.directUrl !== undefined) throw invalid('database.url', 'A PGLite engine takes database.path (or none for an in-memory brain), not a URL.');
     if (database.path !== undefined && !text(database.path)) throw invalid('database.path', 'database.path is a data directory when given.');

@@ -751,7 +751,11 @@ working directory:
 
 - **Connection.** Postgres always connects on the instance-pool path. The direct (DDL/session) pool uses only
   `database.directUrl`, or the route a known pooler URL derives; `GBRAIN_DIRECT_DATABASE_URL` is never consulted.
-  The statement-description cache stays in the process instead of `<home>/cache/pg-types`. PGLite skips the
+  Each URL must name its host, user and database (`engine_settings_invalid` otherwise), and both pools pass the
+  host, port (5432 when the URL names none), user, password and database to the driver explicitly, so `PGHOST`,
+  `PGPORT`, `PGUSER`, `PGPASSWORD` and `PGDATABASE` never pick the server or the credentials. A URL with no password
+  connects with none. The statement-description cache stays in the process instead of `<home>/cache/pg-types`
+  unless a CLI-path pool to the same database shares the process, which then shares that database's cache file. PGLite skips the
   `GBRAIN_PGLITE_SNAPSHOT` fast path.
 - **Host identity.** `hostIdFor(engine)` (`src/core/persistence/identity.ts`) answers `host.id` for the engine,
   its page transactions, its read-through views and every forwarding proxy over it. Every host-id read in
@@ -777,7 +781,8 @@ working directory:
 
 Still process-wide: the AI gateway (the model embedding calls use), `GBRAIN_*` tuning variables (pool lifetime,
 connect and session timeouts, `GBRAIN_PREPARE`, `GBRAIN_DIRECT_POOL_SIZE`, `GBRAIN_DISABLE_DIRECT_POOL`,
-`GBRAIN_RLS_SCOPE_BINDING`, the PGLite close watchdog), the connection-events audit log, and operation-level
+`GBRAIN_RLS_SCOPE_BINDING`, the PGLite close watchdog), the driver's TLS and tuning `PG*` variables (`PGSSL` and
+similar), the connection-events audit log, the AI usage log sink, and operation-level
 config reads (content-sanity screening, schema-pack resolution, the embedding switch on publication). None of them
 picks an engine's database, host identity, writer or embedding identity. A source with a git checkout keeps its native coordination lock under the
 process's persistence home.

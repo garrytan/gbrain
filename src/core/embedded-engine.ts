@@ -35,6 +35,35 @@ interface EmbeddedRecord {
   settings: EngineSettings | null;
 }
 
+const parseConnectionUrl = (url: string) => new URL(url.replace(/^postgres(ql)?:\/\//, 'http://'));
+
+/** The connection field a settings URL leaves out (host, user or database name), or undefined when it names all three. */
+export function missingConnectionField(url: string): string | undefined {
+  let parsed: URL;
+  try { parsed = parseConnectionUrl(url); } catch { return 'a parseable URL'; }
+  if (!parsed.hostname) return 'a host';
+  if (!parsed.username) return 'a user';
+  if (parsed.pathname.length <= 1) return 'a database name';
+  return undefined;
+}
+
+/**
+ * postgres.js fills each connection field a URL leaves out from PGHOST, PGPORT, PGUSER, PGPASSWORD or PGDATABASE. A
+ * pool opened from settings passes every field explicitly (the password as a function, so an empty one stays empty),
+ * so none of those variables picks its server, database or credentials.
+ */
+export function settingsConnectionOptions(url: string): { host: string; port: number; user: string; password: () => string; database: string } {
+  const parsed = parseConnectionUrl(url);
+  const password = decodeURIComponent(parsed.password);
+  return {
+    host: decodeURIComponent(parsed.hostname),
+    port: parsed.port ? Number(parsed.port) : 5432,
+    user: decodeURIComponent(parsed.username),
+    password: () => password,
+    database: decodeURIComponent(parsed.pathname.slice(1)),
+  };
+}
+
 /** Keyed by `engineKey`, so a page-transaction clone, a view and every forwarding proxy over the engine share its record. */
 const records = new WeakMap<object, EmbeddedRecord>();
 let embeddedProcess = false;

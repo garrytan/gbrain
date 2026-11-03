@@ -75,6 +75,17 @@ describe('openEngine refusals', () => {
     });
     expect(filesUnder(gbrainHome)).toEqual([]);
   });
+
+  test('refuses a Postgres URL that leaves its host, user or database name to PG* environment variables', async () => {
+    const { gbrainHome, env } = canaries();
+    await withEnv({ ...env, PGHOST: 'canary-example.invalid', PGUSER: 'canary', PGDATABASE: 'canary', PGPASSWORD: 'canary' }, async () => {
+      for (const url of [pgUrl('app:secret', 'db-a.example.internal:5432'), pgUrl('app:secret', 'db-a.example.internal:5432/'), 'postgresql://db-a.example.internal:5432/brain_a', 'postgresql:///brain_a']) {
+        expect(await codeOf(openEngine(settingsFor({ engine: 'postgres', database: { url } })))).toBe('engine_settings_invalid');
+        expect(await codeOf(openEngine(settingsFor({ engine: 'postgres', database: { url: pgUrl('app:secret', 'db-a.example.internal:5432/brain_a'), directUrl: url } })))).toBe('engine_settings_invalid');
+      }
+    });
+    expect(filesUnder(gbrainHome)).toEqual([]);
+  });
 });
 
 describe('openEngine on a clean home', () => {
