@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.567.0] - 2026-11-03
 
 **/ship now carries its unit, serial, slow and E2E lanes from a passed full-ci run instead of running them again.** `.gstack/pregate.json` declares `ship_lanes_from` (gstack 1.94+): `bun run test`, `bun run test:serial`, `bun run test:slow` and `bun run test:e2e` carry from the Test (`full-suite`) and E2E (`e2e-full-suite`) runs at the exact, clean tree, and print `LANE: <label> carried run=<id>/<attempt>`. A dirty tree, a newer red or running run, or a run whose `tree.json` misses a file the lane runs still runs the lane locally. Each lane's file list comes from `scripts/pregate-remote-gate.sh --list` on the full gate, so a tree that changes the CI reuse files never carries its own runs.
 
