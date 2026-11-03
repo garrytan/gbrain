@@ -17,6 +17,16 @@ export function withEngineScope<T>(engine: object, fn: () => T): T {
   return processHasEmbeddedEngines() ? scope.run(engine, fn) : fn();
 }
 
+/** The engine scope the current call runs in, for deferred work to resume in with runInEngineScope. */
+export function currentEngineScope(): object | undefined {
+  return scope.getStore();
+}
+
+/** Run fn in a captured engine scope, or outside every scope when none was captured, whatever scope the caller is in. */
+export function runInEngineScope<T>(engine: object | undefined, fn: () => T): T {
+  return engine ? scope.run(engine, fn) : scope.exit(fn);
+}
+
 /** True for a call that entered no engine scope while the process holds an open embedded engine. */
 export function unscopedInEmbeddedProcess(): boolean {
   return processHoldsEmbeddedEngines() && scope.getStore() === undefined;

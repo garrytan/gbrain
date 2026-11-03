@@ -15,6 +15,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { anthropicClientOptions, resolveAnthropicKey } from '../src/core/ai/anthropic-key.ts';
 import { embeddedEngineInScope } from '../src/core/engine-scope.ts';
 import { PersistenceConsumer } from '../src/core/persistence/consumer.ts';
+import { FactsQueue } from '../src/core/facts/queue.ts';
 import { makeSubagentHandler } from '../src/core/minions/handlers/subagent.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { applyReranker } from '../src/core/search/rerank.ts';
@@ -326,6 +327,31 @@ describe('chat usage and unscoped calls', () => {
       expect(resolveAnthropicKey()).toBe(PROCESS_KEY);
     });
   });
+});
+
+describe('facts queue', () => {
+  test('a queued facts job runs in the scope it was enqueued from, whichever engine started the pump', async () => {
+    installStubs();
+    configureProcessGateway();
+    const keyA = key('a'), keyB = key('b');
+    const a = await openEngine(settingsFor({ ai: { providers: { openai: { apiKey: keyA } }, models: { chat: 'openai:gpt-5.6' } } }));
+    const b = await openEngine(settingsFor({ ai: { providers: { openai: { apiKey: keyB } }, models: { chat: 'openai:gpt-5.6' } } }));
+    const keyOf = (engine: BrainEngine) => (engine === a ? keyA : keyB);
+    try {
+      for (const [first, second] of [[a, b], [b, a]]) {
+        sent.length = 0;
+        const queue = new FactsQueue();
+        const job = async () => { await chat({ messages: [{ role: 'user', content: 'extract facts' }] }); };
+        withEngineScope(first!, () => queue.enqueue(job, 'shared-session'));
+        withEngineScope(second!, () => queue.enqueue(job, 'shared-session'));
+        queue.enqueue(job, 'shared-session');
+        expect((await queue.drainPending({ timeout: 30_000 })).unfinished).toBe(0);
+        expect(sent.filter(s => s.kind === 'chat').map(s => s.auth)).toEqual([`Bearer ${keyOf(first!)}`, `Bearer ${keyOf(second!)}`, `Bearer ${PROCESS_KEY}`]);
+      }
+    } finally {
+      await Promise.all([a.disconnect(), b.disconnect()]);
+    }
+  }, 120_000);
 });
 
 describe('search reranking on an engine', () => {
