@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.562.0] - 2026-11-03
+## [0.60.563.0] - 2026-11-03
 
 **A degraded or partial read now says so on the result itself.** Search, query, recall and the other reads already recorded degraded stages (an embedding timeout, a failed arm, a keyword-only brain, a held file) in notices and `_meta` fields that a harness had to know to look for, and recall and think dropped their page search's stages entirely. Every degraded or partial read result now carries one stamp naming why with stable codes. An MCP result gets `_meta.degraded: { reasons: [...] }` and one extra text block, `[gbrain degraded: <reasons>] ...`, after the others; a CLI `--json` object gets a `degraded` key, and other CLI output gets that line on stderr. A clean result carries no stamp, and no existing field changed. The code table is in docs/protocol/MCP_META_CHANNELS.md.
 
@@ -24,6 +24,18 @@ identifiers and attribution are available in the pre-removal Git revision
 - `src/core/persistence/write-grant.ts` (new): `grantedWriteSource` and `writeGrantRefusal`, used by `remember`, `forget`, `forget_fact` and page writes. The `user_message` names the caller's `source_id` only when it is a valid source id. `OperationError.writableSourceIds` is exported.
 - Docs: docs/protocol/AGENT_OPERATOR_v1.md, MCP_META_CHANNELS.md, MEMORY_VERBS_v1.md and the agent-operator-protocol skill.
 - Tests: `test/degraded-stamp.test.ts`, `test/degraded-stamp-cli.test.ts`, `test/degraded-stamp-paths.serial.test.ts`, `test/write-grant-refusal.test.ts`, plus golden and fixture updates for the stamp.
+
+## [0.60.562.0] - 2026-11-03
+
+**A write to a page stored in segments can no longer publish a body nobody can read.** When a fact purge or a staging sweep collected a write's staging while the write was preparing, the write's last preparation step moved the staging back to `prepared`, so the publish passed its staging check, closed the page's old segment rows and published none. Every read of the page then refused `page_body_rows_unreadable` and a managed sync held its file on every retry. The write now refuses `body_staging_expired` (send it again) and the page keeps its previous body; the publish also refuses any generation whose rows do not cover the body it records. A new doctor check, `segmented_tiling`, lists pages an older version left like this, and `gbrain repair segmented-tiling --source <id>` republishes each from its file at HEAD, preview first, only when applied with the preview's hash.
+
+### Itemized changes
+
+- `src/core/engine-sql/page-body.ts`: `setBodyStagingState` moves only a live staging and refuses `body_staging_expired` for a move on to prepared or committed of an aborted or expired one; `flipBodyGeneration` refuses, inside its transaction, a generation whose live rows do not cover `body_bytes` from 0 with no gap (`bodyGenerationIncompleteError`, detail reason `generation_incomplete`).
+- `src/core/page-body/schema.ts` (`liveTilingSql`, `untiledSql`), `body-tiling.ts` (`untiledSegmentedPages`): the tiling of a page's live generation as SQL, shared by the flip guard, doctor and the repair.
+- Doctor `segmented_tiling` (BRAIN, host only, read-only): lists live segmented pages whose live generation does not tile, with the repair's preview as the fix.
+- `gbrain repair segmented-tiling --source <id> [--slug <slug>]`: explicit-only, preview-bound, trusted local CLI on the owner host. Republishes each listed page from the blob HEAD holds as a new generation, after the import screen the next sync would run and the purge and withdrawal overlay (a file another sync hold withholds, one the screen refuses, one that changes who can read the page, a privacy alias or a private-by-default type included, or one the content gate would quarantine, flag or stop embedding is listed held), versions the damaged generation, keeps the page's metadata and trust tier, clears the previewed sync hold and writes a receipt and an audit line. A source with no Git checkout refuses `not_a_git_repo`. See `docs/guides/repair.md#segmented-tiling`.
+- Tests: `test/helpers/segmented-publish-tiling-cases.ts` on PGLite (`test/large-pages/segmented-publish-tiling.serial.test.ts`) and Postgres (`test/e2e/segmented-publish-tiling-postgres.test.ts`): a purge abort, a sweep expiry and staged rows deleted under a live staging while the write prepares; each refuses and the page keeps its previous generation. `test/large-pages/segmented-tiling-repair.test.ts`: doctor lists a damaged managed page read-only, the repair's preview, refusals and apply, the next sync completes, a privacy alias or a content-gate quarantine holds the page, and a repo-less source refuses. The segment-GC fixture now publishes generations that tile, and the seal-bounded allowlist names the flip's tiling guard (it reads manifest rows, never chunk rows). Doctor goldens regenerated for the new check.
 
 ## [0.60.561.0] - 2026-11-03
 
