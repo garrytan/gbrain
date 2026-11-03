@@ -97,6 +97,7 @@ describe('spring-loaded skill index', () => {
   });
 
   test('the embedded bundled-skills module is fresh and imports no .json as text (a compiled binary hands it back parsed)', () => {
+    // test-reads-source-ok[generated-artifact]: the checked-in generated module must equal what the generator renders now.
     const mod = readFileSync(join(import.meta.dir, '../src/core/skills/bundled-skills.generated.ts'), 'utf8');
     expect(mod).toBe(renderBundledSkillsModule());
     expect(mod).not.toMatch(/\.json' with \{ type: 'text' \}/);

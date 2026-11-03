@@ -118,7 +118,8 @@ async function writeDerivedFile(engine: BrainEngine, slug: string, sourceId: str
   }
   const [row] = await engine.executeRaw<{ source_path: string | null }>(
     'SELECT source_path FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [sourceId, slug]);
-  const result = await writePageThrough(engine, slug, { sourceId, expectedFileBytes, deferCommit: true });
+  // inlineOnly: a page stored in segments has its file streamed without a string the batch rollback could compare (`after`).
+  const result = await writePageThrough(engine, slug, { sourceId, expectedFileBytes, deferCommit: true, inlineOnly: true });
   if (result.error) console.error(`[write-through] ${slug}: ${result.error}`);
   if (!result.written || !result.path) return result;
   noteWritten(resolved.target.writeRoot, result.path);
