@@ -353,6 +353,20 @@ describe('retrieval output: identity fields, dates and options', () => {
     expect(row!.valid_from.getTime()).toBe(when.getTime());
   });
 
+  test('link endpoint slugs are identities: a Voyage-shaped slug segment is not redacted', () => {
+    const district = 'schools/pa-' + 'x'.repeat(22) + '-district';
+    const secret = ['pa', '-'].join('') + rand(32);
+    const row = { from_slug: district, to_slug: district, origin_slug: district, link_type: 'mentions', context: `see ${secret}` };
+    const [out] = redactRetrievalOutput([row], {}, { uncapped: true }).results;
+    expect(out!.from_slug).toBe(district);
+    expect(out!.to_slug).toBe(district);
+    expect(out!.origin_slug).toBe(district);
+    // The free-text context of the same row is still scanned.
+    expect(out!.context).toBe('see <REDACTED:voyage>');
+    // The same string in a non-identity field is still treated as a credential shape.
+    expect(redactRetrievalOutput([{ title: district }], {}).results[0]!.title).not.toBe(district);
+  });
+
   test('uncapped scans an oversized field whole instead of withholding it', () => {
     const token = ['gh', 'p_'].join('') + rand(36);
     const text = 'x'.repeat(OUTPUT_REDACTION_MAX_FIELD_CHARS) + ` ${token} tail`;
@@ -390,6 +404,13 @@ describe('withOutputRedaction (ENG-4 registration wrapper)', () => {
     expect(await wrapped(ctx(false), {})).toEqual({ facts: [{ fact: secret }], text: '<REDACTED:github_token>' });
     expect(await wrapped(ctx(true), {})).toEqual({ facts: [{ fact: '<REDACTED:github_token>' }], text: '<REDACTED:github_token>' });
     expect(await wrapped({ remote: undefined } as unknown as OperationContext, {})).toEqual({ facts: [{ fact: '<REDACTED:github_token>' }], text: '<REDACTED:github_token>' });
+  });
+
+  test('a link-list result keeps endpoint slugs on the remote path', async () => {
+    const slug = 'schools/pa-' + 'x'.repeat(22) + '-district';
+    const handler = async () => [{ from_slug: 'notes/a', to_slug: slug, origin_slug: slug, context: 'plain' }];
+    const wrapped = withOutputRedaction({ handler, outputRedaction: 'retrieval' });
+    expect(await wrapped(ctx(true), {})).toEqual([{ from_slug: 'notes/a', to_slug: slug, origin_slug: slug, context: 'plain' }]);
   });
 
   test('exempt and no_stored_text ops keep their handler untouched', () => {
