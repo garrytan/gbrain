@@ -659,11 +659,11 @@ function removeSkillsBlockLocked(opts: { harness: string; path: string; dryRun: 
     : out('remove', `skills index from ${opts.path}${deleteFile ? ' (file removed: gbrain created it and nothing else was in it)' : ''}`, permission);
 }
 
-/** One human line per outcome, matching setup's step lines. */
 export function skillsOutcomeShown(o: SkillsBlockOutcome): boolean {
   return o.decision.value === 'spring' || o.action !== 'skip' || o.paired !== undefined;
 }
 
+/** One human line per outcome, matching setup's step lines. */
 export function describeSkillsBlockOutcome(o: SkillsBlockOutcome, dryRun: boolean): string {
   const how = o.decision.value === 'spring' ? 'turn off with --skill-loading off' : 'turn on with --skill-loading spring';
   const tag = o.decision.source === 'unresolved' ? '' : ` [${o.decision.source}; ${how}]`;
