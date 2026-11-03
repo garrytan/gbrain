@@ -394,15 +394,33 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * says otherwise.
  */
 export function syncSkillsBlock(opts: { target: BrainFirstTarget; launcher: string; decision: SkillLoadingDecision; writer: string; dryRun: boolean; audience?: SkillAudience; settingsPath?: string }): SkillsBlockOutcome {
-  return underInstructionLedgerLock(opts.dryRun, () => {
-    const outcome = syncSkillsBlockLocked(opts);
-    const other = codexPairedIndex(opts.target, opts.decision);
+  if (opts.decision.value === 'spring') launcherCatalog(opts.launcher);
+  return underInstructionLedgerLock(opts.dryRun, (outermost) => {
+    const run = { ...opts, decision: outermost ? recordedSkillLoading(opts.target, opts.decision) : opts.decision };
+    const outcome = syncSkillsBlockLocked(run);
+    const other = codexPairedIndex(run.target, run.decision);
     if (!other) return outcome;
-    return { ...outcome, paired: syncSkillsBlockLocked({ ...opts, target: { ...opts.target, path: other.path }, settingsPath: other.allow_settings }) };
+    return { ...outcome, paired: syncSkillsBlockLocked({ ...run, target: { ...run.target, path: other.path }, settingsPath: other.allow_settings }) };
   }, (why) => ({
     harness: opts.target.harness, path: opts.target.path, decision: opts.decision, action: 'preserve',
     state_before: inspectSkillsBlock(opts.target.path).state, detail: `${why}; ${opts.target.path} was left as it was`, reason: 'ledger_locked',
   }));
+}
+
+/**
+ * A decision taken from the record (or the default) is read again under the
+ * lock, so an install that waited for another one acts on what that one
+ * recorded (an opt-out stays an opt-out). An unreadable ledger keeps the
+ * decision; the sync reports the ledger itself.
+ */
+function recordedSkillLoading(target: BrainFirstTarget, decision: SkillLoadingDecision): SkillLoadingDecision {
+  if (decision.source !== 'prior' && decision.source !== 'default') return decision;
+  try {
+    const prior = priorSkillLoading(target.harness, target.path);
+    return prior ? { value: prior.mode, source: 'prior' } : { value: 'off', source: 'default' };
+  } catch {
+    return decision;
+  }
 }
 
 /**

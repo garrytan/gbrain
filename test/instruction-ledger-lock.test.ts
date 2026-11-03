@@ -15,8 +15,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
-import { brainFirstLedgerPath, brainFirstTargetAt, syncBrainFirst } from '../src/core/setup/brain-first.ts';
-import { skillLoadingLedgerPath, syncSkillsBlock } from '../src/core/setup/skills-block.ts';
+import { brainFirstLedgerPath, brainFirstTargetAt, priorBrainFirst, resolveBrainFirstDecision, syncBrainFirst } from '../src/core/setup/brain-first.ts';
+import { priorSkillLoading, readSkillLoadingLedger, resolveSkillLoading, skillLoadingLedgerPath, syncSkillsBlock } from '../src/core/setup/skills-block.ts';
 import { SKILL_INDEX_VERSION } from '../src/core/skills/spring-index.ts';
 
 const roots: string[] = [];
@@ -31,7 +31,9 @@ if (!lock) process.exit(3);
 const ledger = existsSync(ledgerPath) ? JSON.parse(readFileSync(ledgerPath, 'utf8')) : { version: 1, entries: [] };
 writeFileSync(marker, 'held');
 Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);
-ledger.entries.push(JSON.parse(entry));
+const next = JSON.parse(entry);
+ledger.entries = ledger.entries.filter((e) => !(e.harness === next.harness && e.path === next.path));
+ledger.entries.push(next);
 writeFileSync(ledgerPath, JSON.stringify(ledger, null, 2) + '\n');
 lock.release();
 `;
@@ -106,4 +108,51 @@ describe('#8484: concurrent installs keep every ledger entry', () => {
       expect(existsSync(brainFirstLedgerPath())).toBe(false);
     });
   });
+});
+
+describe('#8484: an install that waited acts on what the other one recorded', () => {
+  const BIN = mkdtempSync(join(tmpdir(), 'gbrain-ledger-lock-bin-'));
+  roots.push(BIN);
+  const LAUNCHER = join(BIN, 'gbrain');
+  writeFileSync(LAUNCHER, '#!/bin/sh\nexec \'' + process.execPath + '\' --no-env-file \'' + join(import.meta.dir, '..', 'src', 'cli.ts') + '\' "$@"\n');
+  chmodSync(LAUNCHER, 0o755);
+
+  test('skills: an opt-out recorded while this install waited is kept, and the index is not written back', async () => {
+    const home = sandbox();
+    await withEnv({ GBRAIN_HOME: home, HOME: home, GBRAIN_SKILL_LOADING: undefined }, async () => {
+      const file = join(home, '.codex', 'AGENTS.md');
+      const target = brainFirstTargetAt('codex', file);
+      const first = syncSkillsBlock({ target, launcher: LAUNCHER, decision: { value: 'spring', source: 'flag' }, writer: 'gbrain setup codex', dryRun: false });
+      expect(first.action).toBe('write');
+      const stale = resolveSkillLoading(undefined, priorSkillLoading('codex', file));
+      expect(stale).toEqual({ value: 'spring', source: 'prior' });
+      const ledger = skillLoadingLedgerPath();
+      const optOut = { ...readSkillLoadingLedger()[0], mode: 'off', writer: 'gbrain setup codex --skill-loading off' };
+      const { exited } = await otherInstall(home, ledger, optOut);
+      const out = syncSkillsBlock({ target, launcher: LAUNCHER, decision: stale, writer: 'gbrain setup codex', dryRun: false });
+      expect(await exited).toBe(0);
+      expect(out.decision).toEqual({ value: 'off', source: 'prior' });
+      expect(readSkillLoadingLedger()[0]!.mode).toBe('off');
+    });
+  }, 60_000);
+
+  test('brain-first: a decline recorded while this install waited is kept, and the block is not written back', async () => {
+    const home = sandbox();
+    await withEnv({ GBRAIN_HOME: home, HOME: home, GBRAIN_AGENT_INSTRUCTIONS: undefined }, async () => {
+      const file = join(home, '.claude', 'CLAUDE.md');
+      const target = brainFirstTargetAt('claude-code', file);
+      const access = { kind: 'mcp' as const, server: 'gbrain' };
+      expect(syncBrainFirst({ target, access, decision: { value: 'accepted', source: 'flag' }, writer: 'gbrain setup claude-code', dryRun: false }).action).toBe('write');
+      const stale = resolveBrainFirstDecision(undefined, priorBrainFirst('claude-code', file));
+      expect(stale).toEqual({ value: 'accepted', source: 'prior' });
+      writeFileSync(file, '# My rules\n');
+      const declined = { harness: 'claude-code', path: file, status: 'declined', block_version: 2, access, writer: 'gbrain setup claude-code --no-instructions', created_file: false, updated_at: '2026-11-03T00:00:00.000Z' };
+      const { exited } = await otherInstall(home, brainFirstLedgerPath(), declined);
+      const out = syncBrainFirst({ target, access, decision: stale, writer: 'gbrain setup claude-code', dryRun: false });
+      expect(await exited).toBe(0);
+      expect(out.decision).toEqual({ value: 'declined', source: 'prior' });
+      expect(readFileSync(file, 'utf8')).toBe('# My rules\n');
+      expect(priorBrainFirst('claude-code', file)?.status).toBe('declined');
+    });
+  }, 60_000);
 });

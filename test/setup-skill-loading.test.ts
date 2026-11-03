@@ -337,6 +337,16 @@ describe('skill loading: the Codex AGENTS.md / AGENTS.override.md pair (#8485)',
     expect(inspectSkillsBlock(join(otherHome, 'AGENTS.md')).state).toBe('current');
   });
 
+  test('the plain-text setup output names the paired removal', async () => {
+    const b = box();
+    const agents = join(b.home, '.codex', 'AGENTS.md');
+    await codex(b, ['--skill-loading', 'spring']);
+    writeFileSync(join(b.home, '.codex', 'AGENTS.override.md'), '# Override rules\n');
+    const r = await runCli(['setup', 'codex', '--instructions-only', '--gbrain-bin', LAUNCHER, '--skill-loading', 'off'], { env: b.env, cwd: b.project });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain(`skills index from ${agents}`);
+  });
+
   test('--no-instructions after the override took over also strips the index from AGENTS.md', async () => {
     const b = box();
     const agents = join(b.home, '.codex', 'AGENTS.md');

@@ -282,12 +282,15 @@ let ledgerLockHeld = false;
  * permission edits it records, the ledger write) under a lock shared by this
  * ledger and skill-loading.json, so two installs at once cannot drop each
  * other's entry. Reentrant within a process (an opt-out that syncs another
- * surface nests). A dry run writes nothing and takes no lock. When the lock is
- * held past the wait, or the host cannot take it, nothing runs and `refused`
- * reports why.
+ * surface nests): `fn` learns whether it is the outermost transaction, the
+ * one that re-reads a recorded decision another install may have changed
+ * while this one waited. A dry run writes nothing and takes no lock. When the
+ * lock is held past the wait, or the host cannot take it, nothing runs and
+ * `refused` reports why.
  */
-export function underInstructionLedgerLock<T>(dryRun: boolean, fn: () => T, refused: (why: string) => T): T {
-  if (dryRun || ledgerLockHeld) return fn();
+export function underInstructionLedgerLock<T>(dryRun: boolean, fn: (outermost: boolean) => T, refused: (why: string) => T): T {
+  if (ledgerLockHeld) return fn(false);
+  if (dryRun) return fn(true);
   const path = join(configDir(), LEDGER_LOCK_FILE);
   let lock: ReturnType<typeof acquireNativeLockSync>;
   try {
@@ -298,10 +301,10 @@ export function underInstructionLedgerLock<T>(dryRun: boolean, fn: () => T, refu
   if (!lock) return refused(`another gbrain install is updating the instruction ledgers (it holds ${path}); re-run once it finishes`);
   ledgerLockHeld = true;
   try {
-    return fn();
+    return fn(true);
   } finally {
     ledgerLockHeld = false;
-    lock.release();
+    try { lock.release(); } catch { /* the OS drops the lock with the handle when the process exits */ }
   }
 }
 
@@ -390,7 +393,10 @@ export function writeUnlessChanged(path: string, read: string, wasMissing: boole
  * of the install still finishes.
  */
 export function syncBrainFirst(opts: { target: BrainFirstTarget; access: BrainFirstAccess; decision: BrainFirstDecision; writer: string; dryRun: boolean }): BrainFirstOutcome {
-  return underInstructionLedgerLock(opts.dryRun, () => syncBrainFirstLocked(opts), (why) => ({
+  return underInstructionLedgerLock(opts.dryRun, (outermost) => {
+    const recorded = opts.decision.source === 'prior' || opts.decision.source === 'default';
+    return syncBrainFirstLocked(outermost && recorded ? { ...opts, decision: resolveBrainFirstDecision(undefined, priorBrainFirst(opts.target.harness, opts.target.path)) } : opts);
+  }, (why) => ({
     harness: opts.target.harness, path: opts.target.path, role: opts.target.role, decision: opts.decision, action: 'preserve',
     state_before: inspectBrainFirst(opts.target.path).state, detail: `${why}; ${opts.target.path} was left as it was`,
   }));
