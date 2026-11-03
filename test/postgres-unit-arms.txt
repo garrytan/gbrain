@@ -489,6 +489,7 @@ test/search/page-rank-cut.test.ts
 test/search/rerank-gate-hybrid.test.ts
 test/search/rerank-gate-telemetry.test.ts
 test/serve-head-watcher-managed.serial.test.ts
+test/serve-http-access.test.ts
 test/shared-content-freshness.test.ts
 test/shared-skills-catalog.test.ts
 test/shared-skills-retention-capacity.test.ts
