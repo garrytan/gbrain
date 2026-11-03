@@ -21,6 +21,7 @@ import { importFromFile } from '../src/core/import-file.ts';
 import { readPageBodyPolicy } from '../src/core/page-body/limits.ts';
 import { materializeSegmentedBody } from '../src/core/page-body/ingest.ts';
 import { openSegmentedBody } from '../src/core/page-body/read-range.ts';
+import { parseMarkdown } from '../src/core/markdown.ts';
 
 let engine: PGLiteEngine;
 let dir: string;
@@ -29,9 +30,12 @@ const SLUG = 'notes/live-example';
 const line = (tag: string, i: number) => '- ' + tag + String(i).padStart(9, '0') + ' acme-example journal line with enough text to fill a segment\n';
 const truth = (tag: string, bytes: number) => '# Live Example\n\n' + Array.from({ length: Math.ceil(bytes / line(tag, 0).length) }, (_, i) => line(tag, i)).join('');
 
+const published: Record<string, string> = {};
+
 async function publish(tag: string, bytes: number): Promise<void> {
   const file = join(dir, tag + '.md');
-  writeFileSync(file, '---\ntype: concept\ntitle: Live Example\n---\n\n' + truth(tag, bytes));
+  published[tag] = '---\ntype: concept\ntitle: Live Example\n---\n\n' + truth(tag, bytes);
+  writeFileSync(file, published[tag]);
   expect(await importFromFile(engine, file, SLUG + '.md', { noEmbed: true, bodyPolicy: await readPageBodyPolicy(engine) })).toMatchObject({ status: 'imported' });
 }
 
@@ -90,9 +94,7 @@ describe('GBRA-287: segmented reads across a concurrent publish', () => {
     const after = await pageRow();
     expect(after.generation).toBeGreaterThan(before.generation);
     expect(after.bytes).not.toBe(before.bytes);
-    expect(body.compiled_truth).toBe(truth('a', 2 * 1024 * 1024).trimEnd() === body.compiled_truth ? body.compiled_truth : truth('a', 2 * 1024 * 1024));
-    expect(body.compiled_truth.startsWith('# Live Example\n\n- a000000000')).toBe(true);
-    expect(body.compiled_truth).not.toContain('- b000000000');
+    expect(body.compiled_truth).toBe(parseMarkdown(published.a!, SLUG + '.md').compiled_truth);
   }, 120_000);
 
   test('a live open whose generation a publish retired opens the new live body', async () => {
