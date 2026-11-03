@@ -59,7 +59,7 @@ function checkAI(ai: EngineAISettings): void {
 /** Each setting openEngine reads, with the fields it reads inside it (null: a value, or fields another check reads: ai.providers, storage in Wave C). */
 const SETTINGS_FIELDS: Record<string, readonly string[] | null> = {
   embedded_core: null, engine: null, database: ['url', 'directUrl', 'path'], pool: ['max'], host: ['id'], writer: ['id', 'credential', 'lane'],
-  embedding: ['model', 'dimensions'], keyword_statement_timeout_ms: null, pglite: ['shared_buffers'], ai: ['providers', 'models'], storage: null,
+  embedding: ['model', 'dimensions'], keyword_statement_timeout_ms: null, pglite: ['shared_buffers'], ai: ['providers', 'models'], storage: null, cache_namespace: null,
 };
 
 /** A misspelled or foreign key would be silently ignored, so it refuses, naming the key and never its value. */
@@ -102,6 +102,8 @@ function checkSettings(settings: EngineSettings): void {
     throw invalid('embedding', 'embedding is { model, dimensions } with a model name and a positive whole width.');
   }
   if (settings.ai !== undefined) checkAI(settings.ai);
+  const namespace = settings.cache_namespace;
+  if (namespace !== undefined && !(text(namespace) && namespace.length <= 256)) throw invalid('cache_namespace', 'cache_namespace is an opaque string of 1 to 256 characters when given.');
 }
 
 /**

@@ -3,6 +3,7 @@
  * alone: no `process.env` key, no `~/.gbrain/config.json` and no process-wide gateway reaches it. The gateway
  * (gateway.ts) reads it for every call that runs in that engine's scope (engine-scope.ts).
  */
+import { createHash } from 'node:crypto';
 import { opError } from '../ops/contract.ts';
 import { embeddedSettingsRecord, releasedEngineKeys, type EngineAISettings, type EngineSettings } from '../embedded-engine.ts';
 
@@ -118,17 +119,30 @@ export function scopedGatewayState(normalize: (config: AIGatewayConfig) => AIGat
   let state = states.get(settings);
   if (!state) {
     const { config, providers } = engineGatewayInput(settings);
-    state = freshGatewayState(normalize(config), `engine:${crypto.randomUUID()}:`, providers);
+    state = freshGatewayState(normalize(config), queryCacheTag(settings), providers);
     states.set(settings, state);
   }
   return state;
 }
 
-/** At an embedded engine's close, before its settings go: drop the query embeddings its calls cached. */
+/**
+ * The query-embedding cache tag: unique to this engine object, or, with `settings.cache_namespace`, the namespace plus
+ * the provider-configuration generation (provider ids, base URLs and a fingerprint of each key; the key itself never
+ * enters the tag), so a reopened brain hits and a replaced key or endpoint starts cold.
+ */
+function queryCacheTag(settings: EngineSettings): string {
+  if (!settings.cache_namespace) return `engine:${crypto.randomUUID()}:`;
+  const sha = (value: string) => createHash('sha256').update(value).digest('hex');
+  const generation = Object.entries(settings.ai?.providers ?? {}).sort(([a], [b]) => a.localeCompare(b))
+    .map(([id, provider]) => [id, provider.baseUrl ?? '', provider.apiKey ? sha(provider.apiKey) : '']);
+  return `ns:${sha(JSON.stringify([settings.cache_namespace, generation]))}:`;
+}
+
+/** At an embedded engine's close, before its settings go: drop the query embeddings it cached, unless a namespace keeps them for its next open. */
 export function releaseEngineGatewayState(engine: object): void {
   const settings = embeddedSettingsRecord(engine);
   const state = settings && states.get(settings);
-  if (state) dropQueryEmbeddingsTagged(state.cacheTag);
+  if (state && !settings.cache_namespace) dropQueryEmbeddingsTagged(state.cacheTag);
 }
 
 /** Provider keys of a disconnected engine in scope, as env entries, so a call still in flight scrubs them from its error. */

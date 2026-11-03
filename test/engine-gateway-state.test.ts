@@ -13,7 +13,7 @@ import {
   __getShrinkStateForTests, __setEmbedTransportForTests, __setGenerateObjectTransportForTests, __setGenerateTextTransportForTests,
   configureGateway, embed, embedQuery, expand, rerank, resetGateway,
 } from '../src/core/ai/gateway.ts';
-import { __queryEmbedCacheSizeForTests } from '../src/core/ai/query-embed-cache.ts';
+import { __queryEmbedCacheKeysForTests } from '../src/core/ai/query-embed-cache.ts';
 import { readRecentRerankFailures } from '../src/core/rerank-audit.ts';
 import { openEngine, withEngineScope, withLocalScope, type EngineSettings } from '../src/core/engine-open.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -98,13 +98,13 @@ describe('per-engine adaptive gateway state', () => {
     const a = await open({ providers: { voyage: { apiKey: key('a') } } });
     const b = await open({ providers: { voyage: { apiKey: key('b') } } });
     try {
-      const before = __queryEmbedCacheSizeForTests();
+      const before = __queryEmbedCacheKeysForTests().length;
       await withEngineScope(a, () => embedQuery('a question'));
       await withEngineScope(a, () => embedQuery('another question'));
       await withEngineScope(b, () => embedQuery('a question'));
-      expect(__queryEmbedCacheSizeForTests()).toBe(before + 3);
+      expect(__queryEmbedCacheKeysForTests().length).toBe(before + 3);
       await a.disconnect();
-      expect(__queryEmbedCacheSizeForTests()).toBe(before + 1);
+      expect(__queryEmbedCacheKeysForTests().length).toBe(before + 1);
     } finally {
       await closeAll(a, b);
     }

@@ -30,6 +30,13 @@ export interface EngineSettings {
    * model is `embedding` above. Without it every AI call refuses `engine_scope_missing`; no process key is used.
    */
   ai?: EngineAISettings;
+  /**
+   * Opaque name the host owns for one tenant database incarnation. With it, query embeddings cached for this engine
+   * stay warm across reopens of the same brain (tagged by the namespace and a hash of the provider configuration);
+   * without it every engine starts cold and its entries go when it closes. Never derive it from the stored brain id:
+   * a cloned or restored database shares that.
+   */
+  cache_namespace?: string;
 }
 
 export interface EngineAISettings {

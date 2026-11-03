@@ -49,9 +49,9 @@ export function dropQueryEmbeddingsTagged(tag: string): void {
   for (const key of entries.keys()) if (key.includes(tag)) entries.delete(key);
 }
 
-/** @internal exported for tests: how many entries the cache holds. */
-export function __queryEmbedCacheSizeForTests(): number {
-  return entries.size;
+/** @internal exported for tests: the cache keys, oldest first. */
+export function __queryEmbedCacheKeysForTests(): string[] {
+  return [...entries.keys()];
 }
 
 export function clearQueryEmbedCache(): void {
