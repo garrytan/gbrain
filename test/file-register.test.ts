@@ -95,6 +95,23 @@ describe('file_register', () => {
     expect(await engine.executeRaw('SELECT page_slug, filename, content_hash FROM files')).toEqual([{ page_slug: null, filename: 'x.txt', content_hash: sha(old) }]);
   });
 
+  test('refuses a registration that would re-attribute a row to another page that took the same slug, keeping the row as it was', async () => {
+    const engine = await embedded();
+    await addPage(engine, 'notes/plan');
+    const old = Buffer.from('first page bytes');
+    store('notes/plan/a.txt', old);
+    const params = { storage_path: 'notes/plan/a.txt', filename: 'a.txt', page_slug: 'notes/plan' };
+    await run('file_register', ctxFor(engine), { ...params, content_hash: sha(old), size_bytes: old.length });
+    const [first] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug='notes/plan'");
+    await engine.updateSlug('notes/plan', 'notes/moved');
+    await importFromContent(engine, 'notes/plan', ['---', 'type: note', 'title: Replacement', '---', '# Replacement', '', 'A new page under the old slug.'].join('\n'));
+    const next = Buffer.from('second page bytes');
+    store('notes/plan/a.txt', next);
+    const err = await failure(() => run('file_register', ctxFor(engine), { ...params, content_hash: sha(next), size_bytes: next.length }));
+    expect(err?.code).toBe('invalid_params');
+    expect(await engine.executeRaw('SELECT page_id, content_hash FROM files')).toEqual([{ page_id: first!.id, content_hash: sha(old) }]);
+  });
+
   test('refuses a page that does not exist and an object it cannot read back, recording nothing', async () => {
     const engine = await embedded();
     const bytes = Buffer.from('orphan');

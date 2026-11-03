@@ -287,7 +287,7 @@ const file_register: Operation = {
     const existing = await ctx.engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM files f WHERE f.storage_path = $1 AND NOT (${await fileReadableSql(ctx)})`, [storagePath]);
     if (existing[0]!.n > 0) throw opError('page_not_found', `The file at ${storagePath} belongs to a page this caller cannot read.`, 'Nothing was recorded.');
     const owned = await ctx.engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM files WHERE storage_path = $1
-      AND (page_slug IS DISTINCT FROM $2 OR filename <> $3 OR source_id IS DISTINCT FROM $4)`, [storagePath, pageSlug, filename, sourceId]);
+      AND (page_slug IS DISTINCT FROM $2 OR filename <> $3 OR source_id IS DISTINCT FROM $4 OR page_id IS DISTINCT FROM $5)`, [storagePath, pageSlug, filename, sourceId, pageId]);
     if (owned[0]!.n > 0) throw opError('invalid_params', `${storagePath} is already registered to a different page, filename or source.`,
       'A registration never moves an existing row. Register under a path no other row uses. Nothing was recorded.');
     if (ctx.dryRun) return { dry_run: true, action: 'file_register', storage_path: storagePath };
@@ -308,7 +308,7 @@ const file_register: Operation = {
          mime_type = EXCLUDED.mime_type,
          ${FILES_METADATA_MERGE_SQL}
        WHERE files.page_slug IS NOT DISTINCT FROM EXCLUDED.page_slug AND files.filename = EXCLUDED.filename
-         AND files.source_id IS NOT DISTINCT FROM EXCLUDED.source_id
+         AND files.source_id IS NOT DISTINCT FROM EXCLUDED.source_id AND files.page_id IS NOT DISTINCT FROM EXCLUDED.page_id
        RETURNING 1`,
       [pageSlug, filename, storagePath, (p.mime_type as string | undefined) ?? null, size, hash, sourceId, pageId],
       [metadata]);
