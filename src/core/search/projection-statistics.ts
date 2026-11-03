@@ -24,7 +24,8 @@ interface ProjectionStatisticsRow {
 const projectionStatisticsSql = (n: number) => `SELECT pg_get_expr(e.stxexprs, e.stxrelid) AS expression,
        e.stxrelid = 'pages'::regclass AS correct_table,
        p.reltuples AS sampled_rows,
-       has_table_privilege(p.oid, 'SELECT') AND NOT row_security_active(p.oid) AS can_inspect,
+       has_table_privilege(p.oid, 'SELECT') AND NOT row_security_active(p.oid)
+         AND pg_has_role(current_user, p.relowner, 'USAGE') AS can_inspect,
        x.null_frac IS NOT NULL AS collected
      FROM pg_class p JOIN pg_statistic_ext e ON e.stxnamespace = p.relnamespace
      LEFT JOIN pg_stats_ext_exprs x
@@ -245,7 +246,12 @@ async function statisticsStillCurrent(engine: BrainEngine, changedPages: number)
   const rows = Number(state?.reltuples ?? -1);
   if (!state?.columns || rows <= (engine.kind === 'pglite' ? 500 : 0) || changedPages >= 50 + 0.1 * rows) return false;
   if ((await missingSearchStatistics(engine)).length > 0) return false;
-  return verifyProjectionStatistics(engine).then(() => true, () => false);
+  try {
+    const projection = await readProjectionStatistics(engine);
+    return projection === 'collected' || (projection === 'uninspectable' && !await canAnalyzePages(engine));
+  } catch {
+    return false;
+  }
 }
 
 /**
