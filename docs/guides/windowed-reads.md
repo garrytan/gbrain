@@ -169,7 +169,10 @@ backup and restore file writes, body digests, fence rewrites and purges, and
 timeline extraction. An export with such a page fails instead of writing a
 short file. The brain host's operator gives the reading role the same
 access to `page_body_manifest` and `page_segment_texts` it has to `pages`;
-`gbrain doctor --json` checks the segment tables.
+`gbrain doctor --json` checks the segment tables. A page whose rows are
+missing (an older write could publish a body without them) is listed by
+doctor `segmented_tiling`; [`gbrain repair segmented-tiling`](repair.md#segmented-tiling)
+republishes it from its file in Git.
 
 ## page_projection_stale
 
