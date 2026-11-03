@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.561.0] - 2026-11-03
 
 **An embedding host can open a brain from a settings value (experimental, off by default).** `openEngine(settings)` from `gbrain/engine-open` creates and connects an engine from one object: its database, its own pool, its direct URL, its persistence host identity, its local writer and its embedding identity. It reads no config file, environment variable or home directory for any of them, so two brains in one process never share a pool, a host id or a credential, and a stray `GBRAIN_DIRECT_DATABASE_URL` cannot send one brain's DDL somewhere else. It refuses unless the settings say `embedded_core: true`. The CLI, `gbrain serve` and mounts don't use it and behave exactly as before. Contributed by @bradgessler (#8455).
 
