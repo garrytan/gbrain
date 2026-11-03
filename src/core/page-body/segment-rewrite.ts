@@ -178,11 +178,11 @@ export async function rewriteLiveSegmentedFences(tx: BrainEngine, pageId: number
       COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id),'[]'::jsonb) AS tags FROM pages p WHERE p.id=$1`, [pageId]);
   if (page?.body_storage !== 'segmented') return null;
   const sourceId = page.source_id, slug = page.slug, frontmatter = page.frontmatter ?? {};
-  const rows = await tx.readManifest(pageId);
-  await assertGenerationTiles(tx, pageId, undefined, rows);
+  const generation = Number(page.body_generation);
+  const rows = await tx.readManifest(pageId, { generation });
+  await assertGenerationTiles(tx, pageId, generation, rows);
   const units = await changedUnits(tx, sourceId, rows, transform);
   if (!units.length) return null;
-  const generation = Number(page.body_generation);
   const prepared = await prepareSegmentedBody(tx, { sourceId, slug, title: page.title, type: page.type, frontmatter, tags: page.tags,
     live: { id: pageId, generation, storage: 'segmented', title: page.title, type: page.type, flags: page.body_flags },
     truth: rewrittenRegion(tx, sourceId, rows, units, 'truth'), timeline: rewrittenRegion(tx, sourceId, rows, units, 'timeline'),

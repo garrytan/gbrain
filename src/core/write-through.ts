@@ -22,9 +22,11 @@ import { hasSourceFilesystemLock, withSourceFilesystemLock, assertSourceFilesyst
  * only does "row exists + repo is a real dir → render + atomic write".
  */
 
-import { existsSync, statSync, mkdirSync, unlinkSync, readdirSync, readFileSync } from 'fs';
+import { existsSync, statSync, mkdirSync, unlinkSync, readdirSync, readFileSync, renameSync, rmSync } from 'fs';
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from 'path';
-import { atomicWriteFileSync } from './atomic-write.ts';
+import { atomicStagingPath, atomicWriteFileSync } from './atomic-write.ts';
+import { flushDirectory } from './fs-durable.ts';
+import { isSegmentedPage } from './page-body/page-shape.ts';
 import type { BrainEngine } from './engine.ts';
 import { isRelativeFileUri, serializePageToMarkdown, resolvePageFilePath, resolveSourceLocalFilePath } from './markdown.ts';
 import { isWriteTargetContained, msysToNativePath } from './path-confine.ts';
@@ -47,7 +49,7 @@ export interface WriteThroughLogger {
 export interface WriteThroughResult {
   written: boolean;
   path?: string;
-  /** The bytes written to `path` (set with `written: true`), so a caller can tell its own write from a later edit. */
+  /** The bytes written to `path` (set with `written: true` for an inline page; a page stored in segments is streamed and never held whole), so a caller can tell its own write from a later edit. */
   content?: string;
   /**
    * True when the write was also committed to git (#2426). Only attempted on
@@ -465,13 +467,16 @@ export async function writePageThrough(
       return { written: false, skipped: 'page_not_found_after_write' };
     }
 
-    const tags = await engine.getTags(slug, { sourceId });
-    const md = serializePageToMarkdown(writtenPage, tags, {
+    const segmented = isSegmentedPage(writtenPage);
+    if (segmented && opts.frontmatterOverrides) {
+      return { written: false, error: `page ${slug} is stored in segments, and its file is streamed as gbrain export writes it, without frontmatter overrides` };
+    }
+    const md = segmented ? null : serializePageToMarkdown(writtenPage, await engine.getTags(slug, { sourceId }), {
       frontmatterOverrides: opts.frontmatterOverrides,
     });
     // The pre-push secret scan refuses to push any file it cannot scan, so a
     // file over its cap would block every later push of the brain repo.
-    if (Buffer.byteLength(md, 'utf-8') > PUSH_SCAN_MAX_FILE_BYTES) {
+    if (md !== null && Buffer.byteLength(md, 'utf-8') > PUSH_SCAN_MAX_FILE_BYTES) {
       opts.logger?.warn(`[write-through] ${slug}: the rendered file is over the ${PUSH_SCAN_MAX_FILE_BYTES}-byte pre-push secret-scan cap — file not written (DB row is intact)`);
       return { written: false, skipped: 'over_push_scan_cap' };
     }
@@ -514,8 +519,16 @@ export async function writePageThrough(
     assertSourceFilesystemActive();
     if (fileChanged()) return { written: false, skipped: 'file_changed' };
     const changedWhileStaging = new Error('file_changed');
+    const verify = () => { assertSourceFilesystemActive(); if (fileChanged()) throw changedWhileStaging; };
     try {
-      atomicWriteFileSync(filePath, md, { verify: () => { assertSourceFilesystemActive(); if (fileChanged()) throw changedWhileStaging; } });
+      if (md !== null) atomicWriteFileSync(filePath, md, { verify });
+      else {
+        const streamed = await writeSegmentedPageFile(engine, slug, sourceId, filePath, verify);
+        if (streamed === 'over_push_scan_cap') {
+          opts.logger?.warn(`[write-through] ${slug}: the rendered file is over the ${PUSH_SCAN_MAX_FILE_BYTES}-byte pre-push secret-scan cap — file not written (DB row is intact)`);
+        }
+        if (streamed !== 'written') return { written: false, skipped: streamed };
+      }
     } catch (error) {
       if (error === changedWhileStaging) return { written: false, skipped: 'file_changed' };
       throw error;
@@ -544,7 +557,7 @@ export async function writePageThrough(
     return {
       written: true,
       path: filePath,
-      content: md,
+      ...(md !== null ? { content: md } : {}),
       ...(committed ? { committed, pushed, lastPushStatus } : {}),
     };
   } catch (e) {
@@ -552,6 +565,35 @@ export async function writePageThrough(
     opts.logger?.warn(`[write-through] failed for ${slug}: ${msg}`);
     return { written: false, error: msg };
   }
+}
+
+/**
+ * The file of a page stored in segments, with the bytes `gbrain export` writes for it: measured and streamed from its
+ * segments in one repeatable-read snapshot, so a body published meanwhile is never mixed in, through the streamed staging
+ * writer the withdrawal mirror and restore_page use (stageStreamedContent: an in-progress name, renamed once whole), then
+ * renamed over `filePath` after `verify`. Never held as one string, whatever its size.
+ */
+async function writeSegmentedPageFile(engine: BrainEngine, slug: string, sourceId: string, filePath: string,
+  verify: () => void): Promise<'written' | 'over_push_scan_cap' | 'page_not_found_after_write'> {
+  const [{ unreadPageFile }, { stageStreamedContent }] = await Promise.all([import('./persistence/page-prepare.ts'), import('./persistence/large-file.ts')]);
+  return engine.transaction(async tx => {
+    await tx.executeRaw('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const snapshot = await tx.readPageSnapshot(slug, { sourceId });
+    if (!snapshot) return 'page_not_found_after_write';
+    const content = await unreadPageFile(tx, snapshot);
+    if (content.bytes > PUSH_SCAN_MAX_FILE_BYTES) return 'over_push_scan_cap';
+    const stage = { path: atomicStagingPath(filePath), bytes: content.bytes, hash: content.hash };
+    await stageStreamedContent(tx, filePath, content, stage, null);
+    try {
+      verify();
+      renameSync(stage.path, filePath);
+    } catch (error) {
+      rmSync(stage.path, { force: true });
+      throw error;
+    }
+    flushDirectory(dirname(filePath));
+    return 'written';
+  });
 }
 
 export interface DeleteThroughResult {

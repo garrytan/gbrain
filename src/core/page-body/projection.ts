@@ -187,7 +187,7 @@ async function buildClaimedProjection(engine: BrainEngine, ref: { sourceId: stri
   claim: ProjectionClaim): Promise<SegmentedProjectionResult> {
   const generation = Number(page.body_generation);
   const pageId = Number(page.id);
-  const liveRows = await engine.readManifest(pageId);
+  const liveRows = await engine.readManifest(pageId, { generation });
   await assertGenerationTiles(engine, pageId, generation, liveRows);
   const { retired, moved } = await retireStaleChunks(engine, ref, pageId, generation, liveRows.map(row => Number(row.occurrenceId)));
   if (moved) return { chunks: 0, retired, sealed: false };

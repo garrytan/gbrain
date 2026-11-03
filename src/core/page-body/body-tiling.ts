@@ -7,6 +7,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
+import type { ManifestRow } from './types.ts';
 
 export interface RowSpan { byteStart: number; byteLen: number }
 
@@ -33,6 +34,34 @@ export async function generationBodyBytes(engine: Pick<BrainEngine, 'executeRaw'
   const [version] = await engine.executeRaw<{ body_bytes: number | string | null }>(`SELECT body_bytes FROM page_versions
     WHERE page_id=$1 AND body_generation=$2 AND body_storage='segmented' AND body_bytes IS NOT NULL ORDER BY id DESC LIMIT 1`, [page.id, generation]);
   return version ? Number(version.body_bytes) : null;
+}
+
+/** Attempts of a live read whose generation a publish retired between its reads (`readTiledManifest`). */
+export const LIVE_READ_ATTEMPTS = 3;
+
+/**
+ * GBRA-287: the manifest rows of `generation`, checked to tile it. A live read (no `generation`) names the live generation
+ * first and reads that generation's rows, so the rows and the size they are checked against are one generation's even
+ * when a body is published between the statements; reading the live rows and the page in two statements compared one
+ * generation's rows with the next one's size and refused a healthy page `page_body_rows_unreadable`. A live read whose
+ * generation no longer tiles because a publish retired it meanwhile (its rows gone) reads the new live generation, up to
+ * LIVE_READ_ATTEMPTS times; an explicit generation, or a live one that did not move, refuses as before.
+ */
+export async function readTiledManifest(engine: Pick<BrainEngine, 'executeRaw' | 'readManifest'>, pageId: number,
+  generation?: number): Promise<{ generation: number | null; rows: ManifestRow[] }> {
+  const live = async () => (await engine.executeRaw<{ body_generation: unknown }>('SELECT body_generation FROM pages WHERE id=$1', [pageId]))[0];
+  for (let attempt = 1; ; attempt++) {
+    const page = generation === undefined ? await live() : null;
+    const at = generation ?? (page ? Number(page.body_generation) : null);
+    const rows = await engine.readManifest(pageId, at === null ? {} : { generation: at });
+    try {
+      await assertGenerationTiles(engine, pageId, at ?? undefined, rows);
+      return { generation: at, rows };
+    } catch (error) {
+      const now = generation === undefined && attempt < LIVE_READ_ATTEMPTS ? await live() : undefined;
+      if (!now || Number(now.body_generation) === at) throw error;
+    }
+  }
 }
 
 /** The tiling check for a reader that read `rows` of `generation` (default live) through readManifest. */

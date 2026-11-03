@@ -10,6 +10,23 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A page stored in segments no longer stops a source's sync.** A managed sync re-importing a Git-tracked page stored in segments (`pages.segmented_storage`) whose working-tree bytes differ from the pinned commit, as on a live checkout, compared the file against the stored page with a whole-body read. That read refused with `page_body_segmented`, recorded as a run failure in the freeze phase, and every later sync stopped `sync_blocked` at the same file, with a retry command that could not help. The freeze now compares a segmented page up to 24 MiB read back whole, as its publication already did, so the page gets the outcome an inline page gets. A page whose stored body can't be read at the freeze (`page_body_segmented`, or `page_body_rows_unreadable`) is held `page_write_failed`, naming its code, and the rest of the source syncs. `gbrain sync status` classifies both codes instead of reporting them as unknown.
+
+A full sync's DB-only reconcile (#2426) now re-exports a page stored in segments instead of refusing it: the file is streamed from the segments in one snapshot through the staging writer the withdrawal mirror and restore_page use, written under an in-progress name and renamed once whole, with the bytes `gbrain export` writes. Pages whose re-export fails are listed in the result's `reexport_failures`, and the run completes. A segmented read no longer refuses a healthy page `page_body_rows_unreadable` because a new body published between its reads.
+
+### Itemized changes
+
+- `src/core/page-state/import-guard.ts` (`sameCanonicalImport`): a stored body left unread (over 24 MiB) differs from any parsed body, as `sameContentAnyKeyOrder` already said, instead of reading the throwing getter.
+- `src/core/persistence/sync-screen.ts` (`frozenImportScreenInput`): the freeze screen reads the page snapshot (and a rename's base) through `materializedSnapshot`.
+- `src/core/persistence/sync-entry-fault.ts` (`freezeFaultHold`): `page_body_segmented` and `page_body_rows_unreadable` thrown while freezing one entry hold that entry `page_write_failed` (origin `freeze`, `write_failure.code` the page-body code) instead of stopping the run. The item breaker still applies.
+- `src/core/persistence/sync-fault-class.ts`, `public-category.ts`: rows for both codes (`page_body_segmented`: upgrade, a person; `page_body_rows_unreadable`: retry, the segment-table grant).
+- `src/core/write-through.ts` (`writePageThrough`): a page stored in segments is measured and streamed from its segments inside one repeatable-read read-only transaction (`unreadPageFile`, `stageStreamedContent`), then renamed over the target after the file-changed check; frontmatter overrides on such a page are refused with an error result.
+- `src/commands/sync/full.ts`: the DB-only re-export no longer refuses segmented pages, and each failed re-export is returned in `reexport_failures` (slug, path, code, message, fix).
+- `src/core/page-body/body-tiling.ts` (`readTiledManifest`), `ingest.ts`, `read-range.ts`, `projection.ts`, `segment-rewrite.ts`: a live read names its generation first and checks that generation's rows against that generation's size; a live read whose generation a publish retired meanwhile reads the new live generation (up to 3 attempts).
+- Tests: `test/large-pages/managed-sync-segmented-freeze.test.ts` (the live-checkout freeze, with its inline twin, and a page whose rows don't tile held while the rest of the commit imports), `test/sync-reconcile-db-only-segmented.test.ts` (2 MiB and over-24 MiB re-exports byte-equal to `gbrain export`, one failing page listed while the run advances, a plain-directory source), `test/segmented-read-concurrent-publish.test.ts` (a forced publish between a reader's statements). Every case but the plain-directory one fails on master.
+
 ## [0.60.558.0] - 2026-11-03
 
 **The QM guide and the admin guide now warn that the attest client belongs only on QM's personal-scope memory route.** An attested call reads as the named person, including their own private facts, and gbrain can't tell who else reads the answer. Registering that client as a model-callable MCP connector, or routing it to a shared scope (a channel, group, project, team or the org), could show one person's private facts to a whole room. Shared conversations wait for `x-qm-audience` (wave 2). Docs only: no behavior changes.
