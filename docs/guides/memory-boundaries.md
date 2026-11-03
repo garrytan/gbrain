@@ -229,10 +229,12 @@ dies).
 `purge_fact` on a page stored in segments, on a source backed by files,
 rewrite its canonical file as they rewrite an inline page's: the file shows the
 row forgotten, or loses the purged row, and holds the bytes `gbrain export`
-writes for the page; the withdrawal's Git effect commits it. The file is
-streamed from the segments into its staging file, one segment at a time, and
-never held whole. Its recovery record names that staging file by path and
-SHA-256 instead of holding the file, so the mirror reserves the file once in
+writes for the page. The file is streamed from the segments into its staging
+file, one segment at a time, and never held whole. `forget` and `forget_fact`
+publish the struck file in their own write, before the withdrawal commits;
+`purge_fact`'s mirror writes it afterwards and its Git effect commits it. The
+mirror's recovery record names that staging file by path and SHA-256 instead
+of holding the file, so the mirror reserves the file once in
 the recovery budget. A mirror interrupted before, during or after writing the
 staging file finishes on the writer's next pass: a staging file a crash cut
 short is discarded and written again.
@@ -409,6 +411,17 @@ and [isolated local backup guide](in-agent-setup.md#6-back-up-the-complete-local
 `forget` **expires**: the fact stops being recalled, cannot be saved again in
 the same source and visibility, and its row is struck in the page's Markdown.
 The text stays in the row, the file, page history and backups.
+
+The struck rows are written first: every page file that carries the claim is
+published in one write (one Git commit on a source that commits through
+gbrain), and the withdrawal commits with it. A forget waits for the source's
+writer like any other write, so while that writer is unavailable the forget is
+accepted and pending, and the fact is still recalled. A brain rebuilt from Git
+keeps the withdrawal: a sync or import from the owner's checkout, or a local
+write, of a struck row dated in `valid_until` with a `forgotten:` context
+records it again. A row like that arriving in a remote page write is only an
+expired row; it withdraws nothing. A fact saved without an entity is a row of
+the `memory/unattributed` page, so its withdrawal has a file too.
 
 Automatic extraction (sync import, `put_page`, `extract_facts`, the sweep)
 skips a candidate whose exact claim was forgotten in that source and visibility

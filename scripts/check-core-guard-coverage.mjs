@@ -27,6 +27,7 @@ const EXEMPT = {
   'src/core/persistence/group-publish.ts': 'bulk managed sync of owner git edits; groupable() excludes core-locked members',
   'src/core/persistence/sync-pass-fold.ts': 'adds the pass checkpoint rows to the managed sync import sync-prepare.ts prepared (owner git edits); writes no page text of its own (test/sync-pass-fold-6712.test.ts, core guard)',
   'src/core/persistence/reconcile-prepare.ts': 'reconciles the owner checkout into the database (owner edit)',
+  'src/core/persistence/forget-prepare.ts': 'a withdrawal strikes rows that already carry the claim (it adds no claim; a remote caller passes guardRemoteForget), as the withdrawal mirror it replaces rewrote those pages; doctor core_memory reports any overage',
   'src/core/persistence/file-repair.ts': 'publishes bytes the owner approved with gbrain repair frontmatter --apply',
   'src/core/persistence/grandfather.ts': 'adopts pages that already exist at activation; no content change',
   'src/core/persistence/import-prepare.ts': 'owner-run local import (gbrain import); doctor reports any overage',

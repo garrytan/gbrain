@@ -233,6 +233,32 @@ describe('fence_integrity doctor check', () => {
     expect((await result()).status).toBe('ok');
   });
 
+  test('a legacy row that copies a fenced claim of its page (duplicate_claim) points at the duplicate-facts preview, never the claim (GBRA-190)', async () => {
+    const s = await source({ 'people/alice-example.md': md('Alice Example', CLEAN) });
+    const page = await stored(s.id, 'people/alice-example', CLEAN);
+    await engine.executeRaw('UPDATE pages SET source_path = $1 WHERE id = $2', ['people/alice-example.md', page.id]);
+    const insert = (rowNum: number | null) => engine.executeRaw<{ id: number }>(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, valid_from, source, confidence, row_num, source_markdown_slug)
+       VALUES ($1, 'people/alice-example', 'Clean synthetic fact', 'fact', 'private', 'medium', '2026-01-01', 'call', 1, $2, $3) RETURNING id`,
+      [s.id, rowNum, rowNum === null ? null : 'people/alice-example']);
+    await insert(1);
+    const [legacy] = await insert(null);
+    const check = await result();
+    expect(check.status).toBe('warn');
+    expect((check.details as any).unrenderable_legacy_facts).toEqual({ total: 1, complete: true, pages: [{ source_id: s.id, slug: 'people/alice-example',
+      rows: [{ fact_id: Number(legacy.id), reason: 'duplicate_claim', class: 'duplicate_claim' }] }] });
+    expect(check.message).toContain(`1 of them copy a claim their page's facts table already carries (duplicate_claim): gbrain repair duplicate-facts --source ${s.id} previews`);
+    expect(check.message).not.toContain('For the other rows there is no safe automatic fix');
+    expect(check.message).not.toContain('forget_fact');
+    const rendered = renderAction(check.fix!, cliRenderContext());
+    expect(rendered.next).toBe('run');
+    expect(rendered.command).toBe(`gbrain repair duplicate-facts --source ${s.id} --json`);
+    expect(rendered.docs).toContain('repair.md#duplicate-facts');
+    expect(JSON.stringify(check)).not.toContain('Clean synthetic fact');
+    await engine.executeRaw('DELETE FROM facts WHERE source_id = $1', [s.id]);
+    expect((await result()).status).toBe('ok');
+  });
+
   test('a census the scan did not finish is partial and never ok, even with nothing found so far', async () => {
     const s = await source({ 'notes/clean.md': md('Clean', CLEAN) });
     await stored(s.id, 'notes/clean', CLEAN);
