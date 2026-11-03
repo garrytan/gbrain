@@ -10,10 +10,11 @@ import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL } from './default
 import { getRecipe } from './recipes/index.ts';
 import type { AIGatewayConfig, Recipe } from './types.ts';
 
-const NATIVE_BASE_URL_ENV: Partial<Record<Recipe['implementation'], string>> = {
-  'native-openai': 'OPENAI_BASE_URL',
-  'native-anthropic': 'ANTHROPIC_BASE_URL',
-  'native-google': 'GOOGLE_GENERATIVE_AI_BASE_URL',
+/** Each native SDK reads its base URL from this env name when it is not given one, so an engine always gives one. */
+const NATIVE_BASE_URL: Partial<Record<Recipe['implementation'], { env: string; url: string }>> = {
+  'native-openai': { env: 'OPENAI_BASE_URL', url: 'https://api.openai.com/v1' },
+  'native-anthropic': { env: 'ANTHROPIC_BASE_URL', url: 'https://api.anthropic.com/v1' },
+  'native-google': { env: 'GOOGLE_GENERATIVE_AI_BASE_URL', url: 'https://generativelanguage.googleapis.com/v1beta' },
 };
 
 /** The env name the gateway reads a recipe's API key from; undefined for a recipe that takes none. */
@@ -43,10 +44,9 @@ export function engineGatewayInput(settings: EngineSettings): { config: AIGatewa
     const recipe = getRecipe(id)!;
     const keyEnv = recipeKeyEnv(recipe);
     if (provider.apiKey && keyEnv) env[keyEnv] = provider.apiKey;
-    if (!provider.baseUrl) continue;
-    const nativeEnv = NATIVE_BASE_URL_ENV[recipe.implementation];
-    if (nativeEnv) env[nativeEnv] = provider.baseUrl;
-    else base_urls[id] = provider.baseUrl;
+    const native = NATIVE_BASE_URL[recipe.implementation];
+    if (native) env[native.env] = provider.baseUrl ?? native.url;
+    else if (provider.baseUrl) base_urls[id] = provider.baseUrl;
   }
   const models = settings.ai?.models ?? {};
   return {

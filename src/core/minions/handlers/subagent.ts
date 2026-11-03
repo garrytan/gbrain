@@ -51,7 +51,7 @@ import {
 } from './subagent-audit.ts';
 import { resolveModel, isAnthropicProvider, isOpenRouterSubagentFamily, TIER_DEFAULTS } from '../../model-config.ts';
 import { splitProviderModelId, normalizeModelId } from '../../model-id.ts';
-import { resolveAnthropicKey } from '../../ai/anthropic-key.ts';
+import { anthropicClientOptions } from '../../ai/anthropic-key.ts';
 import { buildSystemPrompt, DEFAULT_SUBAGENT_SYSTEM } from '../system-prompt.ts';
 import { toolLoop as gatewayToolLoop, isThinkingModel, THINKING_MODEL_MAX_OUTPUT_TOKENS } from '../../ai/gateway.ts';
 import type { ChatToolDef, ChatMessage, ChatBlock, ChatResult, ToolHandler } from '../../ai/gateway.ts';
@@ -258,7 +258,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
   // Resolve the key env-first, then config (anthropic_api_key) — a bare
   // new Anthropic() only reads env, so launchd/MCP workers whose key lives
   // in the gbrain config file would fail auth (#2048).
-  const makeAnthropic = deps.makeAnthropic ?? (() => new Anthropic({ apiKey: resolveAnthropicKey() }));
+  const makeAnthropic = deps.makeAnthropic ?? (() => new Anthropic(anthropicClientOptions()));
   const client: MessagesClient = deps.client ?? makeAnthropic().messages;
   const config = deps.config ?? loadConfig() ?? ({ engine: 'postgres' } as GBrainConfig);
   const rateLeaseKey = deps.rateLeaseKey ?? DEFAULT_RATE_KEY;

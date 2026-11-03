@@ -11,7 +11,11 @@ import {
   __clearQueryEmbedCacheForTests, __setEmbedTransportForTests, __setGenerateTextTransportForTests, __setRerankTransportForTests,
   chat, configureGateway, embedQuery, requireConfig, rerank, resetGateway,
 } from '../src/core/ai/gateway.ts';
-import { resolveAnthropicKey } from '../src/core/ai/anthropic-key.ts';
+import Anthropic from '@anthropic-ai/sdk';
+import { anthropicClientOptions, resolveAnthropicKey } from '../src/core/ai/anthropic-key.ts';
+import { embeddedEngineInScope } from '../src/core/engine-scope.ts';
+import { PersistenceConsumer } from '../src/core/persistence/consumer.ts';
+import { startPersistenceConsumer, stopPersistenceConsumer } from '../src/core/persistence/service.ts';
 import { embeddedSettings, openEngine, withEngineScope, type EngineSettings } from '../src/core/engine-open.ts';
 import { createEngine } from '../src/core/engine-factory.ts';
 import { createDegradedEngine } from '../src/core/degraded-engine.ts';
@@ -35,7 +39,8 @@ type Sent = { kind: string; url: string; auth: string | null; model: string };
 const sent: Sent[] = [];
 async function sentBy(kind: string, model: any): Promise<void> {
   const headers = await model.config.headers();
-  sent.push({ kind, model: model.modelId, url: model.config.url({ path: '/x', modelId: model.modelId }), auth: headers.authorization ?? headers.Authorization ?? null });
+  const url = model.config.url ? model.config.url({ path: '/x', modelId: model.modelId }) : `${model.config.baseURL}/x`;
+  sent.push({ kind, model: model.modelId, url, auth: headers.authorization ?? headers.Authorization ?? headers['x-api-key'] ?? null });
 }
 function installStubs(): void {
   __setEmbedTransportForTests((async ({ model, values }: any) => {
@@ -167,6 +172,94 @@ describe('two engines in one process', () => {
       await b.disconnect();
     }
   }, 120_000);
+});
+
+describe('settings.ai validation', () => {
+  test('each malformed ai setting refuses engine_settings_invalid, names the setting and never echoes the key', async () => {
+    const canary = key('canary');
+    for (const [ai, setting] of [
+      [null, 'ai'],
+      [{ models: {} }, 'ai'],
+      [{ providers: { 'not-a-provider': { apiKey: canary } } }, 'ai.providers.not-a-provider'],
+      [{ providers: { openai: canary } }, 'ai.providers.openai'],
+      [{ providers: { openai: { apiKey: canary, key: canary } } }, 'ai.providers.openai.key'],
+      [{ providers: { openai: { apiKey: '' } } }, 'ai.providers.openai.apiKey'],
+      [{ providers: { openai: { apiKey: canary, baseUrl: 'ftp://proxy.example' } } }, 'ai.providers.openai.baseUrl'],
+      [{ providers: { openai: { apiKey: canary } }, models: { embedding: 'openai:text-embedding-3-small' } }, 'ai.models.embedding'],
+      [{ providers: { openai: { apiKey: canary } }, models: { chat: 'gpt-5.6' } }, 'ai.models.chat'],
+    ] as const) {
+      const error = await failure(() => openEngine(settingsFor({ ai: ai as never })));
+      expect([error?.code, error?.message]).toEqual(['engine_settings_invalid', `The ${setting} setting is invalid.`]);
+      expect(JSON.stringify(error) + error!.message + error!.suggestion).not.toContain(canary);
+    }
+  });
+});
+
+describe('process base URLs never reach an engine', () => {
+  const PROXY = 'https://process-proxy.invalid';
+  const processRoutes = { ...ambient, OPENAI_BASE_URL: `${PROXY}/v1`, ANTHROPIC_BASE_URL: PROXY };
+
+  test('an engine that names a provider without baseUrl calls that provider\'s default endpoint', async () => {
+    installStubs();
+    await withEnv(processRoutes, async () => {
+      const keyA = key('a');
+      const engine = await openEngine(settingsFor({ ai: { providers: { openai: { apiKey: keyA }, anthropic: { apiKey: keyA } }, models: { chat: 'anthropic:claude-sonnet-4-6' } } }));
+      try {
+        await withEngineScope(engine, () => embedQuery('a question'));
+        await withEngineScope(engine, () => chat({ messages: [{ role: 'user', content: 'hello' }] }));
+        expect(sent.map(s => [s.kind, s.url.slice(0, s.url.lastIndexOf('/'))])).toEqual([['embed', 'https://api.openai.com/v1'], ['chat', 'https://api.anthropic.com/v1']]);
+        expect(sent.map(s => s.auth)).toEqual([`Bearer ${keyA}`, keyA]);
+      } finally {
+        await engine.disconnect();
+      }
+    });
+  });
+
+  test('a directly built Anthropic client takes only the engine\'s key and endpoint, and refuses without its provider', async () => {
+    await withEnv(processRoutes, async () => {
+      const keyA = key('a');
+      const named = await openEngine(settingsFor({ ai: { providers: { anthropic: { apiKey: keyA } } } }));
+      const proxied = await openEngine(settingsFor({ ai: { providers: { anthropic: { apiKey: keyA, baseUrl: 'https://engine-proxy.example/v1' } } } }));
+      const without = await openEngine(settingsFor({ ai: { providers: { openai: { apiKey: keyA } } } }));
+      try {
+        const client = withEngineScope(named, () => new Anthropic(anthropicClientOptions()));
+        expect([client.apiKey, client.baseURL]).toEqual([keyA, 'https://api.anthropic.com']);
+        expect(withEngineScope(proxied, () => new Anthropic(anthropicClientOptions())).baseURL).toBe('https://engine-proxy.example');
+        const error = await withEngineScope(without, () => failure(async () => anthropicClientOptions()));
+        expect(error?.code).toBe('engine_scope_missing');
+        expect(anthropicClientOptions()).toEqual({ apiKey: PROCESS_KEY });
+      } finally {
+        await Promise.all([named.disconnect(), proxied.disconnect(), without.disconnect()]);
+      }
+    });
+  });
+});
+
+describe('the persistence consumer stays in its engine\'s scope', () => {
+  test('a wake from outside every scope still ticks for the consumer\'s engine', async () => {
+    const engine = await openEngine(settingsFor({ ai: { providers: { openai: { apiKey: key('a') } } } }));
+    const scopes: unknown[] = [];
+    const tick = PersistenceConsumer.prototype.tick;
+    const spy = spyOn(PersistenceConsumer.prototype, 'tick').mockImplementation(function (this: PersistenceConsumer, afterProgress?: boolean) {
+      scopes.push(embeddedEngineInScope());
+      return tick.call(this, afterProgress);
+    });
+    try {
+      await engine.initSchema();
+      const consumer = withEngineScope(engine, () => startPersistenceConsumer(engine, {} as never)) as PersistenceConsumer;
+      const idle = async () => { while (scopes.length === 0 || (consumer as unknown as { tickPromise?: unknown }).tickPromise) await Bun.sleep(10); };
+      await idle();
+      const before = scopes.length;
+      consumer.wake();
+      while (scopes.length === before) await Bun.sleep(10);
+      await idle();
+      expect(scopes.slice(before).map(scope => scope === engine)).toEqual(Array(scopes.length - before).fill(true));
+    } finally {
+      spy.mockRestore();
+      await stopPersistenceConsumer(engine);
+      await engine.disconnect();
+    }
+  }, 60_000);
 });
 
 describe('the gateway follows engineKey', () => {

@@ -1,5 +1,6 @@
 import type { BrainEngine, ReservedConnection } from '../engine.ts';
 import { withoutCallerAccess } from '../search/private-visibility.ts';
+import { withEngineScope } from '../engine-scope.ts';
 import type { GBrainConfig } from '../config.ts';
 import { claimableWriteSql, foregroundPrioritySql, claimGroupFollowers, claimNextLaneHead, claimNextWrite, publicationGroupKey, syncGroup, floorPreparationAttempts, hasClaimableWrite, getWriteRequestById, releaseUnpublishedClaim, renewWriteClaim, vacuumPersistenceQueues, independentGroup, sweepSegmentStorage, yieldToEventLoop } from './journal.ts';
 import { connectionCapFailure, finishPreparationStalled, finishUnpublishedFailure, preparationAbortReason, recoverPublication, transientDatabaseFailure, type PreparedMutation } from './coordinator.ts';
@@ -315,12 +316,13 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     if (this.timer) clearTimeout(this.timer);
     this.timerDueAt = Date.now() + ms;
     // GBRA-218: a wake from inside a request must not run publication, effects or scans under that caller's access record.
-    this.timer = withoutCallerAccess(() => setTimeout(() => {
+    // Whoever wakes it, the tick runs for this consumer's engine (engine-scope.ts).
+    this.timer = withoutCallerAccess(() => withEngineScope(this.engine, () => setTimeout(() => {
       this.timer = undefined;
       const afterProgress = this.progressWake;
       this.progressWake = false;
       void this.tick(afterProgress).finally(() => { const next = this.nextDelayMs ?? this.pollMs; this.nextDelayMs = undefined; this.schedule(next); });
-    }, ms));
+    }, ms)));
     this.timer.unref?.();
   }
   /**

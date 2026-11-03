@@ -26,6 +26,7 @@
 import { loadConfig } from '../config.ts';
 import { embeddedSettingsRecord } from '../embedded-engine.ts';
 import { embeddedEngineInScope } from '../engine-scope.ts';
+import { engineScopeMissing } from './engine-gateway.ts';
 
 /** In an embedded engine's scope (engine-scope.ts): its own `settings.ai` Anthropic key, or null. Undefined outside one. */
 function engineAnthropicKey(): string | null | undefined {
@@ -76,6 +77,19 @@ export function getGatewayAnthropicKeySnapshot(): string | undefined {
   const scoped = engineAnthropicKey();
   if (scoped !== undefined) return scoped ?? undefined;
   return _gatewayEnvKeySnapshot;
+}
+
+/**
+ * The options a directly built Anthropic client takes (the legacy subagent path). In an embedded engine's scope, that
+ * engine's own key and endpoint, because the SDK falls back to process.env for anything it is not given; an engine
+ * without an Anthropic provider refuses `engine_scope_missing`.
+ */
+export function anthropicClientOptions(): { apiKey?: string; baseURL?: string } {
+  const engine = embeddedEngineInScope();
+  if (!engine) return { apiKey: resolveAnthropicKey() };
+  const provider = embeddedSettingsRecord(engine)?.ai?.providers.anthropic;
+  if (!provider?.apiKey) throw engineScopeMissing('anthropic', 'chat');
+  return { apiKey: provider.apiKey, baseURL: (provider.baseUrl ?? 'https://api.anthropic.com').replace(/\/+$/, '').replace(/\/v1$/, '') };
 }
 
 export function hasAnthropicKey(): boolean {
