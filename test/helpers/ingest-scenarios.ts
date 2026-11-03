@@ -618,3 +618,24 @@ export async function trustTierScenario(engine: BrainEngine): Promise<void> {
   } finally { stub.restore(); }
 }
 
+
+/** A report read later hides a page that has since come to name readers the caller does not meet (GBRA-218), as get_page does. */
+export async function reportReadersScenario(engine: BrainEngine): Promise<void> {
+  await seedEntities(engine);
+  const stub = stubChat();
+  try {
+    const caller = await oauthCaller(engine, { boundSlugPrefixes: ['companies/', 'inbox/', 'ingest/'] });
+    const report = await ingest(engine, { content: goldenDocument(), title: 'Call notes' }, caller);
+    expect(report.status).toBe('complete');
+    expect(JSON.stringify(report)).toContain('companies/zentrix');
+    const snap = (await engine.readPageSnapshot('companies/zentrix'))!;
+    await operationsByName.put_page!.handler(reviewCtx(engine), { slug: 'companies/zentrix', expected_revision: snap.revision,
+      content: '---\ntype: company\ntitle: Zentrix\nreadable_by:\n  - member:alice-example\n---\n\nRestricted notes.\n' });
+    await drain(engine);
+    expect((await operationsByName.get_page!.handler(reviewCtx(engine, caller), { slug: 'companies/zentrix' }).catch(e => e) as OperationError).code).toBe('page_not_found');
+    const reread = JSON.stringify(await ingest(engine, { attempt_id: report.attempt_id }, caller));
+    expect(reread).not.toContain('companies/zentrix');
+    expect(reread).not.toContain('Zentrix signed its first enterprise customer.');
+  } finally { stub.restore(); }
+}
+

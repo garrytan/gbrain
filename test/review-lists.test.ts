@@ -137,6 +137,19 @@ describe('extraction_pending review lists', () => {
     expect(local.unattributed.rows.map((r: any) => r.fact).sort()).toEqual(['private claim', 'world claim']);
   });
 
+  test('a world fact from a page that names readers or is private stays hidden from remote callers (GBRA-218)', async () => {
+    await page('notes/restricted-call', 'Restricted call', { readable_by: ['member:alice-example'] }, 'note');
+    await page('notes/private-call', 'Private call', { visibility: 'private' }, 'note');
+    await page('notes/open-call', 'Open call', {}, 'note');
+    for (const [text, slug] of [['restricted claim', 'notes/restricted-call'], ['private page claim', 'notes/private-call'], ['open claim', 'notes/open-call']]) {
+      await engine.executeRaw(`INSERT INTO facts (fact, source, source_id, visibility, entity_slug, source_markdown_slug) VALUES ($1, 'fixture', 'default', 'world', NULL, $2)`, [text, slug]);
+    }
+    const remote = await pending.handler(ctx(), {}) as Record<string, any>;
+    expect(remote.unattributed.rows.map((r: any) => r.fact)).toEqual(['open claim']);
+    const local = await pending.handler(ctx({ remote: false }), {}) as Record<string, any>;
+    expect(local.unattributed.rows.map((r: any) => r.fact).sort()).toEqual(['open claim', 'private page claim', 'restricted claim']);
+  });
+
   test('unattributed pages with next_offset until complete', async () => {
     for (let i = 0; i < 5; i++) await fact(`claim ${i}`);
     const first = await pending.handler(ctx(), { limit: 2 }) as Record<string, any>;

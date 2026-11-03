@@ -101,7 +101,7 @@ export function reportAction(ctx: Pick<OperationContext, 'remote' | 'isCallable'
 export function reportActions(ctx: Pick<OperationContext, 'remote' | 'isCallable'>, state: IngestAttemptState, report: IngestReport): ReportAction[] {
   const id = state.attempt_id;
   const out: ReportAction[] = [];
-  const proposed = report.pages.filter(p => p.status === 'proposed').map(p => p.slug);
+  const proposed = report.pages.filter(p => p.status === 'proposed' && p.slug !== '[withheld]').map(p => p.slug);
   if (proposed.length) out.push(reportAction(ctx, { kind: 'approve_proposed', ownerOnly: true,
     argv: ['gbrain', 'extraction-review', 'promote', '--slugs', proposed.join(',')],
     why: 'Turns the proposed entity pages into real pages; only the brain owner decides this. Reject them with extraction-review reject instead.' }));
@@ -119,7 +119,8 @@ export function reportActions(ctx: Pick<OperationContext, 'remote' | 'isCallable
 
 /** The report as a caller may see it: pages it cannot read are withheld by slug, never named. */
 export function filterReportForCaller(report: IngestReport, visible: (slug: string) => boolean): IngestReport {
-  const pages = report.pages.map(p => p.slug && !visible(p.slug) ? { ...p, name: '[withheld]', slug: '[withheld]', near_names: undefined } : p);
+  const pages = report.pages.map(p => p.slug && !visible(p.slug) ? { ...p, name: '[withheld]', slug: '[withheld]', near_names: undefined }
+    : p.near_names?.some(n => !visible(n.slug)) ? { ...p, near_names: p.near_names.filter(n => visible(n.slug)) } : p);
   const facts = report.facts.map(f => f.copies.some(c => !visible(c.entity_slug)) ? { ...f, fact: '[withheld]', copies: f.copies.map(c => visible(c.entity_slug) ? c : { ...c, entity_slug: '[withheld]' }) } : f);
   return { ...report, pages, facts, write_requests: report.write_requests.filter(w => visible(w.slug)) };
 }

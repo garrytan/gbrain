@@ -22,7 +22,7 @@ import { isUnverifiedExtraction, quarantineMarkers } from '../extraction-review.
 import { tryAcquireDbLock } from '../db-lock.ts';
 import { withPublicationGuard } from '../persistence/publication-guard.ts';
 import { resolveFactWriteTarget } from '../persistence/fact-write-target.ts';
-import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { privatePagesFilterForCaller, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import {
   INGEST_EXTRACTOR_VERSION, attemptIdentity, claimIdentity, findAttemptByIdentity, isAttemptId, newAttemptId, principalKey,
   readAttempt, saveAttempt, sha256, supportingAttempts, attemptsOfDocument, dropAttempt,
@@ -190,22 +190,22 @@ function finish(ctx: OperationContext, state: IngestAttemptState, report: Ingest
   return report;
 }
 
+/** GBRA-218: a page is shown in a report only when this caller may read it now, as get_page judges it (privacy, readers, folder rules). */
 async function visibleTo(ctx: OperationContext, sourceId: string, slugs: string[]): Promise<(slug: string) => boolean> {
-  if (ctx.remote === false || !slugs.length) return () => true;
-  const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
-  const rows = await ctx.engine.executeRaw<{ slug: string; private: boolean }>(
-    "SELECT slug, COALESCE(frontmatter->>'visibility','') = 'private' AS private FROM pages WHERE source_id=$1 AND slug = ANY($2::text[]) AND deleted_at IS NULL",
+  if (!slugs.length || !await resolveExcludePrivatePages(ctx.engine, ctx.remote)) return () => true;
+  const rows = await ctx.engine.executeRaw<{ slug: string; readable: boolean }>(
+    'SELECT p.slug, ' + privatePagesFilterForCaller('p') + ' AS readable FROM pages p WHERE p.source_id=$1 AND p.slug = ANY($2::text[]) AND p.deleted_at IS NULL',
     [sourceId, slugs]);
-  const hidden = new Set(rows.filter(r => excludePrivate && r.private).map(r => r.slug));
+  const hidden = new Set(rows.filter(r => r.readable !== true).map(r => r.slug));
   return slug => !hidden.has(slug);
 }
 
 /** The stored report as this caller may see it (status and repeats; read-only, provider-free). */
 async function storedReport(ctx: OperationContext, state: IngestAttemptState, extra: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   const report = state.report ?? finish(ctx, state, emptyReport(state, DEFAULT_MAX_USD));
-  const fresh = { ...report, actions: reportActions(ctx, state, report) };
-  const visible = await visibleTo(ctx, state.source_id, [...report.pages.map(p => p.slug), ...report.facts.flatMap(f => f.copies.map(c => c.entity_slug))].filter(Boolean));
-  return { ...filterReportForCaller(fresh, visible), ...extra };
+  const slugs = [...report.pages.flatMap(p => [p.slug, ...(p.near_names ?? []).map(n => n.slug)]), ...report.facts.flatMap(f => f.copies.map(c => c.entity_slug))];
+  const filtered = filterReportForCaller(report, await visibleTo(ctx, state.source_id, slugs.filter(Boolean)));
+  return { ...filtered, actions: reportActions(ctx, state, filtered), ...extra };
 }
 
 async function principalOf(ctx: OperationContext) {

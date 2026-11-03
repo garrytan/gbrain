@@ -12,6 +12,7 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { OperationContext } from './ops/contract.ts';
+import { privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages } from './search/private-visibility.ts';
 import { buildNearNameIndex, loadEntityNames, normalizeEntityName, queryNearNames, shardCountFor, type NearNameKind } from './entities/near-name.ts';
 
 export interface ReviewAction { kind: string; run_by: 'caller' | 'owner'; argv: string[]; mcp?: { tool: string; arguments: Record<string, unknown> }; inputs?: Array<{ name: string; how: string }>; why: string }
@@ -24,11 +25,12 @@ export const REVIEW_LIST_MAX_LIMIT = 500;
 export async function listUnattributedFacts(engine: BrainEngine, ctx: OperationContext, sourceIds: string[], opts: { limit: number; offset: number }):
   Promise<{ count: number; rows: UnattributedRow[]; next_offset: number | null; complete: boolean }> {
   const worldOnly = ctx.remote !== false;
+  const provenance = await resolveExcludePrivatePages(engine, ctx.remote) ? ` AND ${privateProvenanceFilterUnderPolicy('facts')}` : '';
   const rows = await engine.executeRaw<{ id: number | string; fact: string; kind: string | null; visibility: string; source_id: string; created_at: string }>(
     `SELECT id, fact, kind, visibility, source_id, created_at::text AS created_at FROM facts
       WHERE source_id = ANY($1::text[]) AND entity_slug IS NULL AND expired_at IS NULL
         AND (valid_until IS NULL OR valid_until > now())
-        AND ($2::boolean = false OR visibility = 'world')
+        AND ($2::boolean = false OR visibility = 'world')${provenance}
       ORDER BY id DESC LIMIT $3 OFFSET $4`,
     [sourceIds, worldOnly, opts.limit + 1, opts.offset],
   );

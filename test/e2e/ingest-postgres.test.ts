@@ -73,6 +73,7 @@ d('ingest and ingest_undo (live Postgres)', () => {
     test('reserved report namespace (' + label + ')', async () => { fx = await fixture(storage); await S.namespaceScenario(engine); }, 60_000);
     test('private ingest (' + label + ')', async () => { fx = await fixture(storage); await S.privacyScenario(engine); }, 60_000);
     test('private request in the document (' + label + ')', async () => { fx = await fixture(storage); await S.privateRequestScenario(engine); }, 60_000);
+    test('report hides a page that now names readers (' + label + ')', async () => { fx = await fixture(storage); await S.reportReadersScenario(engine); }, 60_000);
     test('trust tier parity (' + label + ')', async () => { fx = await fixture(storage); await S.trustTierScenario(engine); }, 60_000);
     test('held natural slug (' + label + ')', async () => { fx = await fixture(storage); await S.heldSlugScenario(engine); }, 60_000);
     test('grants (' + label + ')', async () => { fx = await fixture(storage); await S.grantScenario(engine); }, 60_000);

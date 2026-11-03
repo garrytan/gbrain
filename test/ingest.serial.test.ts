@@ -88,6 +88,10 @@ for (const storage of ['git', 'database'] as ReviewStorage[]) {
       fx = await reviewDoorFixture(engine, storage);
       await S.privateRequestScenario(engine);
     }, 60_000);
+    test('a report read later hides a page that now names readers the caller does not meet', async () => {
+      fx = await reviewDoorFixture(engine, storage);
+      await S.reportReadersScenario(engine);
+    }, 60_000);
     test('ingest pages carry the trust tier the door gives the caller', async () => {
       fx = await reviewDoorFixture(engine, storage);
       await S.trustTierScenario(engine);
