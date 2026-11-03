@@ -172,17 +172,17 @@ export interface LiveFenceRewrite {
  */
 export async function rewriteLiveSegmentedFences(tx: BrainEngine, pageId: number, transform: FenceTransform): Promise<LiveFenceRewrite | null> {
   const [page] = await tx.executeRaw<{ id: number; slug: string; source_id: string; title: string; type: string; page_kind: string; frontmatter: JsonObject | null;
-    body_generation: number | string; body_flags: JsonObject | null; body_storage: string; deleted_at: string | null; tags: string[];
+    body_generation: number | string; body_bytes: number | string; body_flags: JsonObject | null; body_storage: string; deleted_at: string | null; tags: string[];
     contextual_retrieval_mode: string | null; corpus_generation: string | null }>(`SELECT p.id,p.slug,p.source_id,p.title,
-      p.type,p.page_kind,p.frontmatter,p.body_generation,p.body_flags,p.body_storage,p.deleted_at,p.contextual_retrieval_mode,p.corpus_generation,
+      p.type,p.page_kind,p.frontmatter,p.body_generation,p.body_bytes,p.body_flags,p.body_storage,p.deleted_at,p.contextual_retrieval_mode,p.corpus_generation,
       COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id),'[]'::jsonb) AS tags FROM pages p WHERE p.id=$1`, [pageId]);
   if (page?.body_storage !== 'segmented') return null;
   const sourceId = page.source_id, slug = page.slug, frontmatter = page.frontmatter ?? {};
-  const rows = await tx.readManifest(pageId);
-  await assertGenerationTiles(tx, pageId, undefined, rows);
+  const generation = Number(page.body_generation);
+  const rows = await tx.readManifest(pageId, { generation });
+  await assertGenerationTiles(tx, pageId, generation, rows, Number(page.body_bytes));
   const units = await changedUnits(tx, sourceId, rows, transform);
   if (!units.length) return null;
-  const generation = Number(page.body_generation);
   const prepared = await prepareSegmentedBody(tx, { sourceId, slug, title: page.title, type: page.type, frontmatter, tags: page.tags,
     live: { id: pageId, generation, storage: 'segmented', title: page.title, type: page.type, flags: page.body_flags },
     truth: rewrittenRegion(tx, sourceId, rows, units, 'truth'), timeline: rewrittenRegion(tx, sourceId, rows, units, 'timeline'),

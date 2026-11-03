@@ -9,7 +9,7 @@ import { slugifyPath } from '../sync.ts';
 import { recordedPathFromFileUri, scannerSlugRootMode } from '../write-through.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { submissionAuthority } from './authority.ts';
-import { currentVerifiedLocalWriter, existingLocalHostId, readLocalWriter, verifyLocalWriter } from './identity.ts';
+import { currentVerifiedLocalWriter, existingHostIdFor, readLocalWriter, verifyLocalWriter } from './identity.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { prepareFileTarget } from './page-prepare.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
@@ -49,7 +49,7 @@ export async function auditCanonicalSource(engine: BrainEngine, sourceId: string
         "Pass --after exactly as the previous audit's next_after slug, or omit it to start from the first page.");
     }
   }
-  const hostId = existingLocalHostId();
+  const hostId = existingHostIdFor(engine);
   const binding = hostId ? await getWorktreeBinding(engine, sourceId, hostId) : null;
   if (!binding?.local_path || binding.owner_host_id !== hostId || binding.state !== 'active') {
     throw opError('owner_unavailable', 'Read-only drift auditing must run on the active canonical owner.',
