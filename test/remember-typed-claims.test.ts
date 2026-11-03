@@ -214,7 +214,7 @@ for (const kind of testBackends()) {
     test('an entity-less claim is saved with its fields and never pairs', async () => {
       const a = await remember({ fact: 'Some MRR was 1', entity: undefined, claim_metric: 'mrr', claim_value: 1, valid_from: '2026-06-01' });
       const b = await remember({ fact: 'Some MRR was 2', entity: undefined, claim_metric: 'mrr', claim_value: 2, valid_from: '2026-06-01' });
-      expect(await row(a.id)).toMatchObject({ claim_metric: 'mrr', claim_value: 1, source_markdown_slug: null });
+      expect(await row(a.id)).toMatchObject({ claim_metric: 'mrr', claim_value: 1, source_markdown_slug: 'memory/unattributed' });
       expect(await row(b.id)).toMatchObject({ claim_metric: 'mrr', claim_value: 2 });
       expect(await runClaimConflicts(engine, { sourceIds: [src], dryRun: true })).toMatchObject({ pairs_found: 0 });
     });
