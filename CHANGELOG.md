@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A sync hold on a page whose segment rows are missing now says to run the repair, and `gbrain sync status` finds one hold without paging.** A page stored in segments whose segment rows do not cover its body refuses every read, so a managed sync holds its file (`page_write_failed` naming `page_body_rows_unreadable`). That hold read retry with no person needed and pointed at `gbrain sources retry-held`, which can never clear it. It now reads needs_human with safe_actions repair, and its fix previews `gbrain repair segmented-tiling --source <id> --slug <slug>` (read-only; the apply needs the user's agreement and clears the hold). On a source with hundreds of holds the hold also sorted onto a late page of `sync status`, so a check reading the first page missed it.
+
+### Itemized changes
+
+- `src/core/persistence/sync-fault-class.ts`, `sync-holds.ts` (`gitHoldFix`), `sync-entry-fault.ts`: the `freeze_page_body_rows_unreadable` verdict, the hold's fix and its message name the segmented-tiling repair; when doctor `segmented_tiling` does not list the page, the fix says to grant the reading role access and run retry-held. `gbrain sync unblock` refuses the hold by name with that fix.
+- `gbrain sync status`: each `page_write_failed` hold names its `fault_code`, `holds_summary.by_fault_code` counts them, and `--slug <slug>` / `--code <code>` (a hold code or a fault code) list one hold; a filtered page's cursor and `next_command` keep the filter.
+- Doctor: `segmented_tiling` runs as its own entry with its own budget, so a default run reports it even when the wave checks of `timeline_history` run out of theirs; an entry's last known result recorded before a check was added no longer hides that check (it reports unknown, or is named in `doctor_last_known`).
+- #8504 items 6 and 8: `untiledSegmentedPages` (doctor and the repair) skips archived sources; doctor's fix always names a `--source` and lists the other damaged sources' commands; a repair preview over 1,000 pages reports `truncated` and says to preview again after the apply.
+
 ## [0.60.565.0] - 2026-11-03
 
 **The per-file index describes how pages stored in segments are written and held.** The key-files entries for `write-through.ts` and `sync-entry-fault.ts` contradicted v0.60.560.0: the first said every page is rendered whole and `content` always holds the bytes written, and the second said a page-body fault at the freeze stops the run. They now describe the streamed write of a segmented page (measured at its snapshot's revision, checked against the scan cap before `source_path` binds, `inlineOnly` and `segmented_page`) and the `page_write_failed` hold that names `page_body_segmented` or `page_body_rows_unreadable`. The entries for full sync, `sync status`, the derived write-through and export also name `reexport_failures`, `last_error.request_id: null`, the `freeze_page_body_*` routing, the derived writer's `segmented_page` skip and the export's revision pin. Docs only.

@@ -487,6 +487,10 @@
       },
       {
         "category": "brain",
+        "name": "segmented_tiling"
+      },
+      {
+        "category": "brain",
         "name": "timeline_history"
       },
       {
@@ -556,10 +560,6 @@
       {
         "category": "ops",
         "name": "segmented_storage"
-      },
-      {
-        "category": "brain",
-        "name": "segmented_tiling"
       },
       {
         "category": "brain",

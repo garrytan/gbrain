@@ -423,14 +423,21 @@ write's staging (and deleted its staged rows) while the write prepared, and
 the write's last preparation step moved the staging back to `prepared`. The
 publish then passed its staging check, closed the page's old rows and
 published none. Every read of such a page refuses `page_body_rows_unreadable`,
-and a managed sync holds its file `page_write_failed` on every retry.
+and a managed sync holds its file `page_write_failed` on every retry; that
+hold reads `needs_human` with `safe_actions: ["repair"]`, and its fix is this
+repair's preview for the page (`gbrain sync status --source <id> --code
+page_body_rows_unreadable --json` lists it).
 Current versions refuse both steps with `body_staging_expired` (send the write
 again), but upgrading rewrites nothing, so a page damaged earlier stays
 unreadable until this repair runs.
 
 Doctor `segmented_tiling` lists such pages: source, slug, live generation,
 how many rows it has, the bytes they cover (or that they leave a gap) and the
-body size. It reads the manifest only and writes nothing.
+body size. It reads the manifest only and writes nothing. It skips archived
+sources, runs as its own doctor entry, and its fix names the first damaged
+source (`--source`) with the other sources' commands. A preview lists at most
+1,000 pages; one that finds more reports `truncated`, so preview again after
+the apply.
 
 To republish them from Git, preview, then apply after the user agrees:
 

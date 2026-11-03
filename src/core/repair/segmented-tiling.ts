@@ -168,10 +168,15 @@ async function stageable(engine: BrainEngine, page: { source_id: string; slug: s
     timeline: (await preserveWithdrawnFenceRows(engine, page.source_id, body.timeline ?? '', page.slug)).trim() };
 }
 
-/** Every damaged page of the selection, as the preview lists it (republishable pages and held ones). */
-async function survey(engine: BrainEngine, selection: Selection): Promise<{ pages: HealPage[]; listing: RepairListing[]; held: number }> {
-  const damaged = await untiledSegmentedPages(engine, { sourceIds: [selection.source_id], ...(selection.slugs.length ? { slugs: selection.slugs } : {}) });
-  if (!damaged.length) return { pages: [], listing: [], held: 0 };
+/** The most damaged pages one preview lists; a preview that finds more says so (`truncated`), and the next preview after the apply lists the rest. */
+export const PREVIEW_PAGE_LIMIT = 1000;
+
+/** Every damaged page of the selection, as the preview lists it (republishable pages and held ones), up to `limit`. */
+export async function survey(engine: BrainEngine, selection: Selection, limit = PREVIEW_PAGE_LIMIT): Promise<{ pages: HealPage[]; listing: RepairListing[]; held: number; truncated: boolean }> {
+  const found = await untiledSegmentedPages(engine, { sourceIds: [selection.source_id], ...(selection.slugs.length ? { slugs: selection.slugs } : {}), limit: limit + 1 });
+  const truncated = found.length > limit;
+  const damaged = found.slice(0, limit);
+  if (!damaged.length) return { pages: [], listing: [], held: 0, truncated };
   const checkout = await sourceCheckout(engine, selection.source_id);
   const { maxBytes } = await readPageBodyPolicy(engine);
   const pages: HealPage[] = [];
@@ -189,7 +194,7 @@ async function survey(engine: BrainEngine, selection: Selection): Promise<{ page
     pages.push(heal);
     listing.push({ item: label, class: 'republish', detail: describe(heal) });
   }
-  return { pages: pages.sort((a, b) => a.page_id - b.page_id), listing, held };
+  return { pages: pages.sort((a, b) => a.page_id - b.page_id), listing, held, truncated };
 }
 
 /**
@@ -246,11 +251,12 @@ export const segmentedTilingRepair: RepairHandler = {
     const selection = selectionOf(scope, opts.slugs);
     const command = previewCommand(selection);
     if (!opts.apply) {
-      const { pages, listing, held } = await survey(engine, selection);
+      const { pages, listing, held, truncated } = await survey(engine, selection);
       const hash = hashOf(scope, selection, pages);
       if (pages.length) await saveApprovedSet<HealPage & { selection: Selection }>(engine, { command: 'segmented-tiling', hash }, pages.map(page => ({ ...page, selection })));
       return { items: pages.map((page, index) => item(page, hash, index === pages.length - 1)), preview_hash: hash, listing,
-        residuals: { pages_to_republish: pages.length, held }, details: { pages } };
+        residuals: { pages_to_republish: pages.length, held, ...(truncated ? { more_pages_not_listed: 1 } : {}) },
+        details: { pages, ...(truncated ? { truncated: true, next: `More than ${PREVIEW_PAGE_LIMIT} damaged pages: apply this preview, then run ${command} again to list the rest.` } : {}) } };
     }
     if (!opts.expect) {
       throw new OperationError('invalid_params', 'gbrain repair segmented-tiling --apply republishes only the set a preview printed.',
