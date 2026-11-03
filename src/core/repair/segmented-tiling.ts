@@ -19,7 +19,7 @@
  * stored page in anything else imports normally), and writes the page's receipt, also appended to the `segmented-tiling`
  * audit log. Explicit-only: never from doctor, a remediation plan or an upgrade.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from '../spawn.ts';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';

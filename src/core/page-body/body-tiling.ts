@@ -21,7 +21,7 @@ export function assertRowsTile(rows: readonly RowSpan[], at: { slug: string; sou
   }
   if (end >= 0 && (at.total === null ? rows.length > 0 : end === at.total)) return;
   throw opError('page_body_rows_unreadable', `Page ${at.slug} (source ${at.sourceId}): the segment rows readable here do not cover its ${at.total ?? 'stored'}-byte body, so nothing was read.`,
-    'Give the role that reads the brain the same access to page_body_manifest and page_segment_texts it has to pages, then read again. When gbrain doctor --only segmented_tiling lists the page, its rows are missing: preview gbrain repair segmented-tiling --source <id>.',
+    `Give the role that reads the brain the same access to page_body_manifest and page_segment_texts it has to pages, then read again. When gbrain doctor --only segmented_tiling lists the page, its rows are missing: preview gbrain repair segmented-tiling --source ${at.sourceId}.`,
     { detail: JSON.stringify({ rows: rows.length, covered_bytes: end >= 0 ? end : null, body_bytes: at.total }) });
 }
 
