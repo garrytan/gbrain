@@ -40,6 +40,7 @@ import { corpusFileSessionId, corpusTextForExtraction, parseSegmentFileName, rea
 import { corpusFileStat, readCorpusProgress, runCorpusTurn, runCorpusWindows } from './corpus-windows.ts';
 import { isClaudeCliSelfSessionId } from '../ai/providers/claude-cli-scratch.ts';
 import { writeHeartbeat } from './hook-heartbeat.ts';
+import { speakerOf } from './session-speaker.ts';
 import { OperationError } from '../ops/contract.ts';
 
 /** Bounded queue — overflow is a typed skip; the sweep backstop extracts later. */
@@ -438,6 +439,7 @@ async function runOne(job: HarvestJob): Promise<{
             sourceId: job.sourceId,
             sessionId: job.sessionId,
             source: 'hook:compact',
+            ...speakerOf(full),
             mode: 'inline',
             remote: false,
             abortSignal: abort.signal,
@@ -605,6 +607,7 @@ async function runWritebackTurn(job: HarvestJob, full: string, ingestedPath: str
         sourceId: job.sourceId,
         sessionId: job.sessionId,
         source: 'hook:writeback',
+        ...speakerOf(full),
         mode: 'inline',
         remote: false,
         abortSignal: abort.signal,

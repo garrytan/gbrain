@@ -31,7 +31,7 @@
 import type { Page } from '../types.ts';
 import type { OperationContext, ParamDef } from './contract.ts';
 import { opError, OperationError } from './contract.ts';
-import { invalidParam, readFix } from './op-fix.ts';
+import { invalidParam, opTransport, readFix } from './op-fix.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { isSegmentedPage, pageBodyBytes } from '../page-body/page-shape.ts';
 import { deepResearchPageUrl, encodeDeepResearchId } from '../deep-research-id.ts';
@@ -49,7 +49,8 @@ import { confirmBodyPin, hiddenBefore, openSegmentedBody, type BodyPin } from '.
 import { inlineRegions, inlineTailDigest } from '../page-body/tail-digest.ts';
 import { TIMELINE_SEPARATOR } from '../page-window/document.ts';
 import { renderTrustedText, type TrustFields } from '../eligibility/labels.ts';
-import { pageTrustForRead, type QuarantinedView } from './get-page-projection.ts';
+import { fenceTranscriptText, neutralizeToolCalls } from '../search/transcript-quote.ts';
+import { pageTrustForRead, quotedPageMeta, type QuarantinedView } from './get-page-projection.ts';
 import { chunkGenerationProbe, chunkManifestReads } from '../search/safe-chunks.ts';
 import { GET_PAGE_SLICE_PARAMS, parseSliceRequest, readGrep, readSection, sliceCharBudget, type SliceRequest } from './get-page-slice.ts';
 
@@ -68,12 +69,12 @@ export const LARGE_PAGES_CAPABILITY = 'large_pages_v1';
 
 export const GET_PAGE_BODY_PARAMS: Record<string, ParamDef> = {
   body: { type: 'string', enum: [...BODY_MODES], description: 'auto: whole up to 256 KB, else outline + window; a window\'s edit_target is edit_page `within`. none: revision + size + tail_sha256 (append_page expected_tail_sha256).', fullSurfaceOnly: true },
-  lines: { type: 'object', cliRange: ['from', 'count'], description: 'Window: 1-based lines.', properties: { from: { type: 'number', required: true }, count: { type: 'number', required: true } }, fullSurfaceOnly: true },
-  bytes: { type: 'object', cliRange: ['offset', 'length'], description: 'Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start).', properties: { offset: { type: 'number', required: true }, length: { type: 'number', required: true } }, fullSurfaceOnly: true },
-  around_chunk_id: { type: 'number', description: 'Window around a search hit chunk_id.', fullSurfaceOnly: true },
+  lines: { type: 'object', cliRange: ['from', 'count'], description: 'Window: 1-based lines. One window selector only: not with bytes, around_chunk_id or cursor.', properties: { from: { type: 'number', required: true }, count: { type: 'number', required: true } }, fullSurfaceOnly: true },
+  bytes: { type: 'object', cliRange: ['offset', 'length'], description: 'Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start). One window selector only: not with lines, around_chunk_id or cursor.', properties: { offset: { type: 'number', required: true }, length: { type: 'number', required: true } }, fullSurfaceOnly: true },
+  around_chunk_id: { type: 'number', minimum: 1, description: 'Window around a search hit chunk_id. One window selector only: not with lines, bytes or cursor.', fullSurfaceOnly: true },
   context_lines: { type: 'number', description: 'Lines around around_chunk_id (20).', fullSurfaceOnly: true },
-  cursor: { type: 'string', description: 'next_cursor: read on.', fullSurfaceOnly: true },
-  max_bytes: { type: 'number', description: 'Window bytes (40000).', fullSurfaceOnly: true },
+  cursor: { type: 'string', description: 'next_cursor: read on. One window selector only: not with lines, bytes or around_chunk_id.', fullSurfaceOnly: true },
+  max_bytes: { type: 'number', minimum: 1, description: 'Window bytes (40000).', fullSurfaceOnly: true },
   view: { type: 'string', enum: ['read', 'markdown'], description: 'markdown: page the round-trip content.', fullSurfaceOnly: true },
   outline_from: { type: 'number', description: 'Outline next_from_index.', fullSurfaceOnly: true },
   ...GET_PAGE_SLICE_PARAMS,
@@ -97,6 +98,10 @@ export interface BodyRequest {
   /** section or grep (#7180): one part of the read view instead of a window. */
   slice?: SliceRequest;
 }
+
+/** The get_page arguments the two-selector refusal's fix keeps; anything else the caller sent (CLI-only keys, unknown keys) is left out. */
+const WINDOW_FIX_ARGS = ['slug', 'fuzzy', 'include_deleted', 'include_timeline_entries', 'grammar_diagnostics', 'source_id', 'include_quarantined', 'min_trust',
+  ...Object.keys(GET_PAGE_BODY_PARAMS)];
 
 const SELECTOR_EXAMPLE = { slug: 'notes/acme-example-log', body: 'window', lines: { from: 1, count: 200 } };
 
@@ -135,7 +140,19 @@ export function parseBodyRequest(ctx: Pick<OperationContext, 'remote' | 'transpo
     selectors.push({ kind: 'cursor', raw: p.cursor });
   }
   if (selectors.length > 1) {
-    throw bad(selectors[1].kind === 'around' ? 'around_chunk_id' : selectors[1].kind, `get_page: pass one window selector, not ${selectors.length} (got ${selectors.map(s => s.kind === 'around' ? 'around_chunk_id' : s.kind).join(' and ')}).`);
+    const [keep, ...drop]: string[] = selectors.map(s => s.kind === 'around' ? 'around_chunk_id' : s.kind);
+    const conflicts = ['include_content', 'content_only', ...(keep === 'around_chunk_id' && p.view === 'markdown' ? ['view'] : [])];
+    const args: Record<string, unknown> = Object.fromEntries(WINDOW_FIX_ARGS.filter(k => p[k] !== undefined && !drop.includes(k) && !conflicts.includes(k)).map(k => [k, p[k]]));
+    args.body = 'window';
+    const flag = (k: string) => `--${k.replace(/_/g, '-')}`;
+    const name = (k: string) => opTransport(ctx) === 'cli' ? flag(k) : `\`${k}\``;
+    const range = (k: string, v: Record<string, number>) => k === 'lines' ? `${v.from}-${v.from + v.count - 1}` : `${v.offset}-${v.offset + v.length - 1}`;
+    const argv = ['gbrain', 'get', ...Object.entries(args).filter(([k]) => k !== 'slug').flatMap(([k, v]) => v === true ? [flag(k)] : v === false ? []
+      : [flag(k), typeof v === 'object' && v ? range(k, v as Record<string, number>) : String(v)]), '--', String(p.slug)];
+    throw opError('invalid_params', `get_page: pass one window selector, not ${selectors.length} (got ${[keep, ...drop].join(' and ')}).`,
+      `Pass at most one window selector: lines, bytes, around_chunk_id or cursor. Drop ${drop.map(name).join(' and ')} to read the ${keep} window, or pass one of them alone to read there instead.`,
+      { fix: readFix(`The same call with one window selector (${keep}) and body: "window"; ${[...drop, ...conflicts.filter(k => p[k] !== undefined)].join(', ')} dropped.`,
+        { argv, mcp: { tool: 'get_page', arguments: args } }) });
   }
   const includeContent = p.include_content === true;
   const contentOnly = p.content_only === true;
@@ -281,6 +298,10 @@ export interface PartialReadInput {
   extras: Record<string, unknown>;
   /** A segmented page's reads are pinned to `revision`, this body generation (from the same snapshot) and `admit` (openSegmentedBody). */
   pin?: Omit<BodyPin, 'revision'>;
+  /** #8042: the page's text is third-party and the reader untrusted: every returned window is fenced as quoted source material (`quoted: "transcript"`). */
+  quote?: boolean;
+  /** GST-687 (get-page-projection.ts neutralizesBody): view 'read' windows carry tool-call blocks summarized; view 'markdown' stays byte-exact. */
+  neutralize?: boolean;
 }
 
 /** The pin of a segmented read after get_page's or fetch's authorization: the snapshot's generation, with the trust floor re-checked when the read confirms. */
@@ -288,8 +309,10 @@ export function authorizedReadPin(ctx: OperationContext, page: Page, generation:
   return { generation, admit: async () => { if (!await pageTrustForRead(ctx, page, minTrust)) throw refuse(); } };
 }
 
-function envelopeText(text: string, quarantined: QuarantinedView | null, trust?: TrustFields): string {
-  return quarantined?.body_enveloped && text ? renderTrustedText(text, { trust_tier: 'external_untrusted', origin: trust?.origin ?? 'quarantined' }) : text;
+/** Window text as the reader gets it: fenced as a quote of `quote` (#8042), then data-enveloped when quarantined. */
+function envelopeText(text: string, quarantined: QuarantinedView | null, trust: TrustFields | undefined, quote: string | null): string {
+  const quoted = quote && text ? fenceTranscriptText(text, quote) : text;
+  return quarantined?.body_enveloped && quoted ? renderTrustedText(quoted, { trust_tier: 'external_untrusted', origin: trust?.origin ?? 'quarantined' }) : quoted;
 }
 
 /**
@@ -458,10 +481,12 @@ async function noneResult(ctx: OperationContext, page: Page, out: Record<string,
  */
 export async function readPartialBody(ctx: OperationContext, input: PartialReadInput, req: BodyRequest): Promise<Record<string, unknown>> {
   const { page, revision, tags, quarantined, trust, extras } = input;
+  const neutralize = input.neutralize === true && req.view !== 'markdown';
+  const wrap = (text: string) => envelopeText(neutralize && text ? neutralizeToolCalls(text) : text, quarantined, trust, input.quote ? page.slug : null);
   const base: Record<string, unknown> = {
-    slug: page.slug, source_id: page.source_id, type: page.type, title: page.title, revision, tags,
-    frontmatter: page.frontmatter ?? {}, ...(page.deleted_at ? { deleted_at: page.deleted_at } : {}),
-    ...(trust ?? {}), ...extras,
+    slug: page.slug, source_id: page.source_id, type: page.type, revision, ...quotedPageMeta({ slug: page.slug, title: page.title, frontmatter: page.frontmatter ?? {} }, input.quote === true, tags),
+    ...(page.deleted_at ? { deleted_at: page.deleted_at } : {}),
+    ...(trust ?? {}), ...extras, ...(input.quote ? { quoted: 'transcript' } : {}),
   };
   const omitted = quarantined?.body_omitted === true;
   const mode = req.mode === 'auto' ? 'outline' : req.mode;
@@ -491,7 +516,6 @@ export async function readPartialBody(ctx: OperationContext, input: PartialReadI
     return 'chars' in result ? result : { ...result, chars: typeof text === 'string' ? text.length : 0 };
   };
   if (req.slice) {
-    const wrap = (text: string) => envelopeText(text, quarantined, trust);
     const budget = await sliceCharBudget(ctx);
     const sliced = req.slice.kind === 'section'
       ? await readSection(page, doc.stream(), req.slice.heading, budget, wrap)
@@ -506,7 +530,7 @@ export async function readPartialBody(ctx: OperationContext, input: PartialReadI
     out.outline = await doc.outline(req.outlineFrom, limit);
     if (req.mode === 'auto') {
       const first = await doc.from(0, await windowBudget(ctx, req.maxBytes, AUTO_WINDOW_BYTES));
-      out.window = { ...first, text: envelopeText(first.text, quarantined, trust) };
+      out.window = { ...first, text: wrap(first.text) };
       out.truncated = true;
       if (first.byte_end < doc.total) setNext(out, page, encodeCursor({ page_id: page.id, revision, view: 'read', offset: first.byte_end, max_bytes: req.maxBytes ?? DEFAULT_WINDOW_BYTES }), false);
       out.auto_reason = 'over_inline_bytes';
@@ -545,7 +569,7 @@ export async function readPartialBody(ctx: OperationContext, input: PartialReadI
     out.anchor = around.anchor;
     if (around.span) out.chunk_span = around.span;
     // T46: no exact position for the chunk, so no estimated neighborhood either: the chunk itself, without coordinates.
-    if (!around.window) out.window = { text: envelopeText(around.chunkText, quarantined, trust) };
+    if (!around.window) out.window = { text: wrap(around.chunkText) };
     return around.window;
   };
   const cap = await resultByteCap({ remote: ctx.remote, transport: ctx.transport, engine: ctx.engine, config: ctx.config });
@@ -553,7 +577,7 @@ export async function readPartialBody(ctx: OperationContext, input: PartialReadI
   for (let attempt = 0; ; attempt++) {
     const win = await select(maxBytes);
     if (!win) return confirmed({ ...out, truncated: true });
-    out.window = { ...win, text: envelopeText(win.text, quarantined, trust) };
+    out.window = { ...win, text: wrap(win.text) };
     const target = markdown || typeof win.byte_start !== 'number' ? undefined : await editTarget(ctx, page, doc, win, revision);
     if (target) out.edit_target = target; else delete out.edit_target;
     out.truncated = win.byte_start > 0 || win.byte_end < doc.total;
@@ -599,14 +623,15 @@ export async function fetchWindowResult(ctx: OperationContext, input: PartialRea
   const { page, revision, tags, quarantined, trust } = input;
   const { partial, anchorStatus } = await readFetchWindow(ctx, input, anchor);
   const w = partial.window ?? { text: '' };
+  const meta = quotedPageMeta(page, input.quote === true, tags);
   return {
     id,
-    title: page.title,
+    title: meta.title,
     text: w.text,
     url: deepResearchPageUrl(page.source_id, page.slug),
     metadata: {
-      revision, type: page.type, source_id: page.source_id, updated_at: page.updated_at, tags, ...(quarantined ? { quarantined } : {}), ...(trust ?? {}),
-      truncated: true, total_bytes: partial.size?.total_bytes, anchor: anchorStatus,
+      revision, type: page.type, source_id: page.source_id, updated_at: page.updated_at, tags: meta.tags, ...(quarantined ? { quarantined } : {}), ...(trust ?? {}),
+      ...(input.quote ? { quoted: 'transcript' } : {}), truncated: true, total_bytes: partial.size?.total_bytes, anchor: anchorStatus,
       ...(typeof w.byte_start === 'number' ? { window: { byte_start: w.byte_start, byte_end: w.byte_end, line_start: w.line_start, line_end: w.line_end } } : {}),
       ...(partial.next_cursor ? { next_id: encodeDeepResearchId(page.source_id, page.slug, { cursor: partial.next_cursor }) } : {}),
     },

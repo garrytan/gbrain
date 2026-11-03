@@ -24,29 +24,47 @@ the integrator runs the full gate.
 
 ## Ownership and teardown
 
-Every VM is named `ubirun-<owner>-<epoch>-<suffix>`, or
-`ubirun-<owner>-<epoch>-x<expiry epoch>-<suffix>` when it carries an expiry.
-The owner is `UBI_OWNER` (lowercased, letters and digits only, at most 12
-characters, starting with a letter) or a random per-machine id kept in the
-runner's state directory. Set `UBI_OWNER` to your thread code
-(`UBI_OWNER=gbra41 bun run ci:ubicloud`) so everyone can see whose VMs hold
-the quota. Ubicloud names allow 63 characters of `[a-z0-9-]`, so a full name
-stays under 52.
+`scripts/ubicloud/ubi-runner.sh` is gstack's runner, vendored (synced at gstack
+5532345a); its header lists gbrain's additions, which a sync keeps. Every VM
+the runner names is `ubirun-<owner>-<epoch>-<suffix>-t<H>`, gstack's runner
+grammar: its TTL ends H hours (1 to 999) after the creation epoch. The owner
+is `UBI_OWNER` (lowercased, letters and digits only, at most 12 characters,
+starting with a letter), and it is required: `up`, `run`, `verify`,
+`ci:ubicloud` and `scripts/pregate-remote-gate.sh` refuse without it, so no VM
+is created untagged (read-only commands fall back to a per-machine id). Set it
+to your thread code (`UBI_OWNER=gbra41 bun run ci:ubicloud`). Ubicloud names
+allow 63 characters of `[a-z0-9-]`, so a full name stays under 50.
 
-Ubicloud has no VM tags, so the expiry lives in the name. `ci:ubicloud` names
-every gate VM to expire two hours after creation (`--ttl-hours N` changes it,
-`--ttl-hours 0` means no expiry). `ubi-runner.sh up` and `run` take the same
-`--ttl-hours H`; without it their VMs never expire, which suits long dev,
-benchmark and eval VMs. `scripts/ubicloud/reap-expired.ts` is the operator
+Ubicloud has no VM tags, so the TTL lives in the name, and gstack's
+`ubi-runner.sh reap` reads the TTL of every name gbrain generates the same way. `ci:ubicloud` gives every gate VM a
+two-hour TTL (`--ttl-hours N` changes it, up to 999). `ubi-runner.sh up` and
+`run` take the same `--ttl-hours H`; without it their VMs get `UBI_TTL_HOURS`
+(gstack's default, 3 hours), so give a long dev, benchmark or eval VM
+`--ttl-hours` above its longest run. With `-n NAME`, `--ttl-hours H` appends
+`-t<H>`, and a `ubirun-` name without a TTL is refused (nothing could ever reap it).
+`ubi-runner.sh reap` destroys only the caller's own VMs: its `ubirun-<owner>-*`
+VMs whose TTL ended over ten minutes ago, and its TTL-less ones once they are
+`UBI_LEGACY_HOURS` (4) old. Another owner's expired VM, including one this machine
+created under a different tag (which `list --mine` and `gc` do cover), is only counted in reap's
+log; `reap-expired.ts` is the operator reaper that destroys expired VMs of every owner. gstack's `up` runs that reap first; gbrain's copy
+does only with `UBI_REAP=1` (or `true`, `yes`, `on`; `0`, `false`, `no` and `off`
+turn it off, and any other value is refused), and logs one `reap skipped` line otherwise, until
+gbrain's TTL-less VMs older than four hours are gone. `run`, `verify` and
+`ci:ubicloud` end with gstack's leftover line, `UBICLOUD: left=<n> owner=<owner> ...`
+(also appended to `UBI_LEFT_FILE`), counting their own VMs still in the
+project's list after teardown; anything but `left=0` fails a run that would
+otherwise pass, and `scripts/pregate-remote-gate.sh` treats it, or a missing
+line, as `PREGATE_REMOTE_INFRA` (exit 4, no receipt). `scripts/ubicloud/reap-expired.ts` is the operator
 side of the leak guard: run from the operator's Capy automation, where the
 Ubicloud token already lives (never from GitHub Actions), it lists the project's
-VMs, selects only names in the expiring format whose expiry plus a 15-minute
-grace has passed, and prints each `ubirun-*` VM's owner, age, expiry and action
+VMs, selects only names with a TTL (or the older
+`ubirun-<owner>-<epoch>-x<expiry epoch>-<suffix>` form, until none are left)
+whose expiry plus a 15-minute grace has passed, from any owner or tool, and prints each `ubirun-*` VM's owner, age, expiry and action
 plus an owner-notice block (expired VMs grouped by owner and the thread code
 the owner tag names). It is a dry run unless given `--apply`, which destroys
 each expired VM through `ubi-runner.sh down`, and it refuses the whole run when
 more than `--max` (40) VMs are expired. It never selects an owner-tagged name
-without an expiry, a legacy untagged `ubirun-<epoch>-*` name or a VM the
+without a TTL, a legacy untagged `ubirun-<epoch>-*` name or a VM the
 runner did not name, whoever owns it.
 
 Each name is recorded before its create request is sent: the runner writes
@@ -57,8 +75,11 @@ operation), an `up` still talking to the API finishes the request and destroys
 its own VM; further signals are ignored until teardown ends. Then every recorded name gets `down`, which destroys the VM and polls
 until it is confirmed gone. A create whose answer never arrived is waited out
 for `UBI_CREATE_GRACE` seconds (default 180) before the VM counts as never
-created. `down` gives up after `UBI_DOWN_TIMEOUT` seconds (default 900) and
-prints the command to rerun.
+created. A destroy request that times out or gets a 5xx (or 408, 429, 404) is
+retried on the next poll; another 4xx fails at once. `down` gives up after
+`UBI_DOWN_TIMEOUT` seconds (default 900), naming the last destroy status, and
+prints the command to rerun. `reap` waits at most `UBI_REAP_DOWN_TIMEOUT`
+seconds (default 180) for each VM.
 
 Nothing sweeps stale VMs unless you ask. With `UBI_GC_HOURS` set to a positive
 number, each `up` first destroys the caller's own VMs older than that many
@@ -148,7 +169,7 @@ runs every file in `test/postgres-unit-arms.txt` the way persistence-validation'
 `unit-postgres-arms` step does (`bun --no-env-file test --timeout=120000`,
 `GBRAIN_TEST_ALLOW_DATABASE_URL=1`, no timeout multiplier) against the slot's
 own empty `gbrain_arms_test` database. The summary takes the two-worker makespan of its
-measured durations over that job's `ARM_SHARDS` partition (12 shards, `ARM_WORKERS` = 2
+measured durations over that job's `ARM_SHARDS` partition (19 shards, `ARM_WORKERS` = 2
 files at a time), and a shard over the step's 20-minute timeout
 fails the run, since GitHub would cut that shard off mid-list. The committed
 weights must also fit each shard twice over with a minute to spare

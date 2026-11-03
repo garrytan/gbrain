@@ -33,6 +33,7 @@ import { startPersistenceConsumer } from '../src/core/persistence/service.ts';
 import { MANAGED_SYNC_PASS_OP } from '../src/core/persistence/sync-pass-row.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readSyncStatus } from '../src/core/persistence/sync-status.ts';
+import { readWriterDiagnostics } from '../src/core/persistence/diagnostics.ts';
 import { refreshWorktree } from '../src/core/persistence/worktree-refresh.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -253,6 +254,24 @@ for (const backend of testBackends()) {
       expect((await tick(engine)).kind).not.toBe('idle');
       const again = await readSyncStatus(engine, 'default', { detail: false });
       expect({ state: again.state, reason: again.reason }).toEqual({ state: 'blocked', reason: 'writeback_failed' });
+    }), 180_000);
+
+    test('#7423 a settled writeback effect no longer blocks sync status, idle detection or writer status', () => brain(async ({ engine, root }) => {
+      expect((await tick(engine)).status).toBe('first_sync');
+      writebackCommit(root);
+      expect((await tick(engine)).status).toBe('synced');
+      await effectSettled(engine);
+      const effect = (await writebackEffect(engine))!;
+      await park(engine, effect.effect_id);
+      const failedGit = async () => ((await readWriterDiagnostics(engine)).effects as Array<{ kind: string; state: string; count: number }>)
+        .filter(row => row.kind === 'git' && row.state === 'failed').reduce((n, row) => n + Number(row.count), 0);
+      expect(await failedGit()).toBe(1);
+      await asWriter(engine, "UPDATE persistence_effects SET data=data||'{\"settled\":{\"reason\":\"db_only\"}}'::jsonb WHERE id=$1", [effect.effect_id]);
+      const status = await readSyncStatus(engine, 'default', { detail: false });
+      expect(status.reason).not.toBe('writeback_failed');
+      expect(await failedGit()).toBe(0);
+      expect((await tick(engine)).kind).not.toBe('idle');
+      expect(await tick(engine)).toEqual({ status: 'up_to_date', kind: 'idle' });
     }), 180_000);
   });
 

@@ -30,7 +30,8 @@ knowledge, entity graphs, and durable memory that outlives a scope.
 Isolation model:
 
 - **Reads** are source-granular, SQL-enforced (`federated_read`): every
-  employee client reads `agents` + the read-only sources you grant.
+  employee client reads `agents` + the read-only sources you grant. Folder
+  rules can narrow reads inside a source (Known limitations).
 - **Writes** are slug-prefix-granular, server-enforced (`bound_slug_prefixes`): a client can only mutate pages under its own `emp-<slug>/`
   and its channels' `chan-<x>/` prefixes — on `put_page`, `delete_page`,
   `restore_page`, `add_tag`, `remove_tag`, `add_link`/`remove_link`,
@@ -77,9 +78,15 @@ boundary, and it does not make every side effect prefix-clean:
   ranking. Fencing `to` would break legitimate cross-referencing into
   `org-wiki`, so this is deliberate — treat inbound-edge context as untrusted
   content, the same way you treat page bodies.
-- **Reads are source-granular, never prefix-granular.** Everyone entitled to
-  a source can read every prefix in it. If a scope needs genuine read
-  privacy, give it its own source.
+- **Reads are source-granular unless you add folder rules.** Without them,
+  everyone entitled to a source can read every prefix in it. To keep
+  `emp-<slug>/` to one employee inside `agents`, make them a member
+  (`gbrain access member add <slug>`), bind their client to it
+  (`gbrain auth rescope --client <id> --member <slug>`) and add a
+  folder rule (`gbrain access rule add --prefix emp-<slug>/ --readers <slug>
+  --source agents`, preview, then `--yes`); see Model C in the
+  [company-brain tutorial](../tutorials/company-brain.md). A separate source
+  remains the strongest separation.
 - **`put_page` can create one reverse graph edge outside the fence.** If a
   page body cites a code location (`src/x.ts:42`) and a code page for it
   exists *in the same source*, doc↔impl reconciliation adds an edge
@@ -106,11 +113,12 @@ boundary, and it does not make every side effect prefix-clean:
   this route, give its client an explicit `--source` so its captures do not
   accumulate in the brain's `default` source. Bound clients are still refused
   the route outright, because the slug fence cannot run on this path.
-- **Tradeoff to state out loud:** read isolation is per-source, so within the
-  shared `agents` source every employee can *read* every prefix (including
-  other employees' `emp-*/`). That matches qm's transparent-by-default,
+- **Tradeoff to state out loud:** without folder rules, read isolation is
+  per-source, so within the shared `agents` source every employee can *read*
+  every prefix (including other employees' `emp-*/`). That matches qm's transparent-by-default,
   everything-audited posture. If you need hard read privacy for personal
-  memory, give those employees their own write source instead of a prefix
+  memory, add a folder rule per `emp-<slug>/` (above), or give those
+  employees their own write source instead of a prefix
   (one `sources add emp-<slug>` + `--source emp-<slug>` per client) and keep
   channel prefixes in `agents` via a second, channels-only client — at the
   cost of two credentials in that sandbox.
@@ -131,10 +139,18 @@ gbrain config set mcp.publish_advisor true
 gbrain sources add org-wiki --path ~/brains/org-wiki
 gbrain sync --all        # cron this
 
-# 4. Serve over HTTP MCP (OAuth 2.1):
+# 4. Serve over HTTP MCP (OAuth 2.1), listing the 7 memory verbs:
 gbrain serve --http --bind 0.0.0.0 --port 3131 \
-  --public-url https://brain.acme-example.com
+  --public-url https://brain.acme-example.com --advertise verbs
 ```
+
+`--advertise verbs` is the registration default gbrain's own installers use
+(`--surface starter --advertise verbs` since v0.60.503.0). QM sends every listed
+tool schema on every request, so a bare serve costs each turn about 11,800 input
+tokens for 33 tool schemas; with `--advertise verbs` it lists the seven verbs
+plus `request_tools`. Every operation stays callable, so the `gbrain` tool in the
+sandbox keeps working: the server keeps the `full` ceiling here because the
+skill's `gbrain link` (`add_link`) is outside `starter`.
 
 Never hand sandboxes `DATABASE_URL` — direct DB access bypasses OAuth, source
 federation, and the write fence entirely.
@@ -233,6 +249,3 @@ gbrain search "test"                                            # sees agents + 
 - **MCP-native attach:** qm pins `strictMcpConfig` with only its in-process
   server, so gbrain's MCP-discovered brain-resident skillpacks don't reach
   qm agents; the sandbox skill above covers it.
-- **Read-side prefix fencing** (hard privacy for `emp-*/` inside a shared
-  source) — tracked upstream; the roster layout is forward-compatible with
-  it.

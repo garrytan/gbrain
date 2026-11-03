@@ -86,6 +86,8 @@ async function probeUncached(
   const filters = coverageScopeFilters(scope, params);
   try {
     // One bound statement: unsealed pages that need work, then those unsealed by design (the class fragment doctor counts).
+    // by_design is read only when nothing is pending, and an InitPlan runs only when the CASE reaches it: while pages are
+    // pending its LIMIT 1 finds no protected page to stop at, so evaluating it anyway read every unsealed page (#8000).
     // The planner has no statistics for a column-to-column comparison, so it believes most pages are unsealed and an
     // EXISTS chose a sequential scan of pages that expected to stop at once; on a sealed brain it read every page
     // (~600 ms at 600k pages, on every cold call). Ordering by idx_pages_projection_pending's columns under LIMIT 1
@@ -97,8 +99,8 @@ async function probeUncached(
         ORDER BY p.source_id, p.page_kind, p.slug LIMIT 1) IS NOT NULL`;
     const cls = projectionClassSql('p', 's');
     const rows = await engine.executeRaw<{ pending: boolean; by_design: boolean }>(
-      `SELECT ${unsealed(`${cls} NOT IN ('protected','archived')`)} AS pending,
-        ${unsealed(`${cls} IN ('protected','archived')`)} AS by_design`,
+      `WITH r AS MATERIALIZED (SELECT ${unsealed(`${cls} NOT IN ('protected','archived')`)} AS pending)
+      SELECT r.pending, CASE WHEN r.pending THEN false ELSE ${unsealed(`${cls} IN ('protected','archived')`)} END AS by_design FROM r`,
       params,
     );
     if (typeof rows[0]?.pending !== 'boolean') throw new Error('Invalid readiness result');

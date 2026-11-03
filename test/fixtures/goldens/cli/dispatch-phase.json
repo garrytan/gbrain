@@ -4,6 +4,13 @@
       "readOnlyTimeoutMs !== null"
     ],
     "commands": {
+      "access": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "advisor": {
         "hasSwitchCase": true,
         "phase": "post-connect",
@@ -2068,6 +2075,20 @@
     "mainRules": [
       {
         "commands": [
+          "serve"
+        ],
+        "condition": "command === 'serve'",
+        "connectsEngine": false,
+        "refusesThinClient": false,
+        "routesThinClient": false,
+        "terminates": false,
+        "thinClientCheck": false,
+        "unconditionalFor": [
+          "serve"
+        ]
+      },
+      {
+        "commands": [
           "--help",
           "-h"
         ],
@@ -2210,7 +2231,7 @@
       },
       {
         "commands": [],
-        "condition": "['search', 'query', 'get', 'recall'].includes(command) && await (await import('./cli-socket-client.ts')).maybeServeFromCliSocket(command, subArgs)",
+        "condition": "cliOpts.as === undefined && ['search', 'query', 'get', 'recall'].includes(command) && await (await import('./cli-socket-client.ts')).maybeServeFromCliSocket(command, subArgs)",
         "connectsEngine": false,
         "refusesThinClient": false,
         "routesThinClient": false,

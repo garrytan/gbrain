@@ -213,7 +213,7 @@ export async function mirrorGates(engine: SqlEngine, requestIds: readonly string
  * requests it touched, for a park that settled after a concurrent mirror commit.
  */
 const REARMABLE = `e.request_id=ANY($1::uuid[])
-    AND e.kind IN ('git','embedding') AND e.state IN ('queued','failed') AND e.execution_token IS NULL AND e.recovery IS NULL
+    AND e.kind IN ('git','embedding') AND e.state IN ('queued','failed') AND e.execution_token IS NULL AND e.recovery IS NULL AND NOT (e.data ? 'settled')
     AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(e.data->'parked','[]'::jsonb)) AS p(target) WHERE p.target->>'error_code'=$2)
     AND EXISTS (SELECT 1 FROM persistence_effects m WHERE m.request_id=e.request_id AND m.kind='withdrawal-mirror' AND m.state='committed')`;
 

@@ -547,6 +547,7 @@ describeE2E('v0.18.0 multi-source — storage backfill against file_migration_le
     const uploaded = new Set<string>();
     const stub: StorageBackend = {
       upload: async (p: string) => { uploaded.add(p); },
+      uploadFile: async (p: string) => { uploaded.add(p); },
       download: async (p: string) => Buffer.from('bytes-for:' + p),
       delete: async (p: string) => { uploaded.delete(p); },
       exists: async (p: string) => uploaded.has(p),

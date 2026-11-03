@@ -31,7 +31,7 @@ import { isWriteThroughDisabled, resolvePageWriteTarget, writePageThrough, type 
 import { fileDatabaseDriftToken, replaceableFile } from '../core/facts/file-body-guard.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
 import { submitPageMutation } from '../core/persistence/page-mutations.ts';
-import { currentCliWriteWait, pendingReceiptOf, pollCommand } from '../core/persistence/write-wait.ts';
+import { acceptPendingCovers, currentCliWriteWait, pendingReceiptOf, pollCommand } from '../core/persistence/write-wait.ts';
 import { PENDING_WRITE_EXIT_CODE } from '../core/exit-codes.ts';
 import { randomBytes } from 'crypto';
 import { legacyNestedErrorDocument } from '../core/agent-output.ts';
@@ -415,7 +415,7 @@ export async function persistSavedIdea(
   } catch (err) {
     const receipt = pendingReceiptOf(err);
     if (receipt) return { dbSaved: false, writeThrough: { written: false }, pending: { requestId: receipt.request_id,
-      poll: pollCommand(receipt.request_id, (err as { fix?: { argv?: readonly string[] } }).fix), acceptPending: wait.acceptPending } };
+      poll: pollCommand(receipt.request_id, (err as { fix?: { argv?: readonly string[] } }).fix), acceptPending: wait.acceptPending && acceptPendingCovers(receipt) } };
     return { dbSaved: false, dbError: err instanceof Error ? err.message : String(err), writeThrough: { written: false } };
   }
   let dbSaved = false;

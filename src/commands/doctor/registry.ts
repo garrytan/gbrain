@@ -95,6 +95,8 @@ import { legacyTokenGrantsEntry } from './checks/legacy-token-grants.ts';
 import { grantNewOpsEntry } from './checks/grant-new-ops.ts';
 import { linksExtractionLagEntry, syncFreshnessEntry, searchModeEntry } from './checks/sync-search.ts';
 import { persistenceConsumersEntry, serveBuildDriftEntry } from './checks/persistence-consumers.ts';
+import { ownerHostStaleEntry } from './checks/owner-host-stale.ts';
+import { embeddingPlaneDisagreementEntry } from './checks/embedding-plane.ts';
 import { runtimeBuildSkewEntry } from './checks/runtime-build-skew.ts';
 import { cliSocketRefusalsEntry } from './checks/cli-socket-refusals.ts';
 import { gitConvergenceEntry } from './checks/git-convergence.ts';
@@ -130,6 +132,9 @@ import { dbAheadOfGitEntry } from './checks/db-ahead-of-git.ts';
 import { gitIndexLagEntry } from './checks/git-index-lag.ts';
 import { syncConfigKeysEntry } from './checks/sync-config-keys.ts';
 import { ghostPagesEntry } from './checks/ghost-pages.ts';
+import { memberAccessEntry } from './checks/member-access.ts';
+import { folderAccessEntry } from './checks/folder-access.ts';
+import { sharedAgentAccessEntry } from './checks/shared-agent-access.ts';
 import { originTwinsEntry } from './checks/origin-twins.ts';
 import { slugPathMismatchEntry } from './checks/slug-path-mismatch.ts';
 import { renameIdentityDowngradesEntry } from './checks/rename-identity-downgrades.ts';
@@ -140,6 +145,7 @@ import { derivationPurgeSweepsEntry } from './checks/derivation-purge-sweeps.ts'
 import { missingRecordedFilesEntry } from './checks/missing-recorded-files.ts';
 import { uncommittedSyncDeletionsEntry } from './checks/uncommitted-sync-deletions.ts';
 import { overwrittenEditsEntry } from './checks/overwritten-edits.ts';
+import { rowsBehindEntry } from './checks/rows-behind.ts';
 import { managedSyncMovementEntry } from './checks/managed-sync-movement.ts';
 import { managedSyncLatencyEntry } from './checks/managed-sync-latency.ts';
 import { commitNotifierEntry } from './checks/commit-notifier.ts';
@@ -210,6 +216,9 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   pgvectorEntry,
   // #7276: the privacy check next, with its own entry budget, before any full scan.
   derivedVisibilityEntry,
+  memberAccessEntry,
+  folderAccessEntry,
+  sharedAgentAccessEntry,
   rlsEntry,
   functionSearchPathEntry,
   schemaVersionEntry,
@@ -293,6 +302,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   uncommittedSyncDeletionsEntry,
   unindexedFilesEntry,
   overwrittenEditsEntry,
+  rowsBehindEntry,
   syncConfigKeysEntry,
   // #6712 PR 4a: the read-only convergence shadow (deep tier: a full level read per source).
   managedSyncConvergenceEntry,
@@ -304,6 +314,9 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   gitIndexLagEntry,
   // GBRA-221: live fence rows on imported pages whose body is outside-authored text (review only).
   outsideContentFencesEntry,
+  // GBRA-248 W0: writes waiting on a long-quiet owner host, and a file plane that disables embeddings over a database with vectors.
+  ownerHostStaleEntry,
+  embeddingPlaneDisagreementEntry,
   fenceIntegrityEntry,
   searchModeEntry,
 ];

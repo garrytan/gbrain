@@ -5,7 +5,7 @@
  * page-state guarded implementation (`page-state/tags.ts`) and stay there.
  * `getTags` was unscoped on master (EO4 inventory): `LegacyUnscopedRead`.
  */
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
 
@@ -23,7 +23,7 @@ export async function getTags(
       opts?.sourceIds && opts.sourceIds.length > 0
         ? sqlFragment`source_id = ANY(${opts.sourceIds}::text[])`
         : sqlFragment`source_id = ${opts?.sourceId ?? 'default'}`;
-    const privacy = opts?.excludePrivate ? trustedSql(`AND ${privatePagesFilterFragment('pages')}`) : sqlFragment``;
+    const privacy = opts?.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('pages')}`) : sqlFragment``;
     const live = opts?.liveOnly ? sqlFragment`AND deleted_at IS NULL` : sqlFragment``;
     const { rows } = await exec.run<{ tag: string }>(sqlFragment`
       SELECT DISTINCT tag FROM tags

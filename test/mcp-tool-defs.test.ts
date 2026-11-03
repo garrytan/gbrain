@@ -28,7 +28,7 @@ import type { Operation, ParamDef } from '../src/core/operations.ts';
 // every existing operation, but new ops that add a default get it on the
 // wire automatically.
 type ParamDefLike = {
-  type: 'string' | 'number' | 'boolean' | 'object' | 'array';
+  type: 'string' | 'number' | 'integer' | 'boolean' | 'object' | 'array';
   description?: string;
   enum?: string[];
   default?: unknown;

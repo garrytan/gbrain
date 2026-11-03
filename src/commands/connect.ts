@@ -44,7 +44,10 @@ import type { ConnectProbeResult } from '../core/connect-probe.ts';
 import { probeBrainIdentity, DEFAULT_PROBE_TIMEOUT_MS } from '../core/connect-probe.ts';
 import { opencodeGlobalConfigPath } from '../core/bootstrap/host-specs.ts';
 import { acquireBootstrapLock } from '../core/bootstrap/lock.ts';
-import { brainFirstTarget, describeBrainFirstOutcome, installerBrainFirst, isBrainFirstHarness } from '../core/setup/brain-first.ts';
+import { brainFirstTarget, describeBrainFirstOutcome, installerBrainFirst, isBrainFirstHarness, priorBrainFirst } from '../core/setup/brain-first.ts';
+import { describeTurnHookOutcome } from '../core/setup/turn-hook.ts';
+import { installerTurnHook, TURN_HOOK_NATIVE_INSPECT, turnHookFix } from '../core/setup/turn-hook-check.ts';
+import { resolveGbrainBin } from '../core/gbrain-bin.ts';
 import { describeSkillsBlockOutcome, indexLauncher, installerSkillsBlock, isSkillLoading, skillsOutcomeFailed, type SkillLoading } from '../core/setup/skills-block.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import {
@@ -447,6 +450,8 @@ export interface ConnectDeps {
   ): { configPath: string; replacedPrior: boolean } | Promise<{ configPath: string; replacedPrior: boolean }>;
   /** After a successful registration: the brain-first block in the agent's own instruction file. Returns the line to print. */
   writeInstructions(agent: AgentId, name: string, optOut: boolean, skillLoading?: SkillLoading, gbrainBin?: string): string | null;
+  /** After the block: the per-turn hook that puts the rule next to every turn (src/core/setup/turn-hook.ts). `ok: false` fails the install loudly. */
+  writeTurnHook(agent: AgentId): { lines: string[]; ok: boolean };
 }
 
 async function defaultPromptYesNo(question: string): Promise<boolean> {
@@ -515,6 +520,16 @@ const defaultDeps: ConnectDeps = {
     if (skills.decision.value === 'spring' || skills.action !== 'skip') lines.push(describeSkillsBlockOutcome(skills, false).trim());
     if (skillsOutcomeFailed(skills)) setCliExitVerdict(1);
     return lines.join('\n');
+  },
+  writeTurnHook: (agent) => {
+    const target = isBrainFirstHarness(agent) ? brainFirstTarget(agent) : null;
+    const accepted = !!target && !('error' in target) && priorBrainFirst(agent, target.path)?.status === 'installed' && process.env.GBRAIN_AGENT_INSTRUCTIONS !== '0';
+    const rerun = ['gbrain', 'setup', agent, '--instructions-only'];
+    const { outcome, verdict } = installerTurnHook({ harness: agent, accepted, gbrainBin: resolveGbrainBin(), gbrainHome: process.env.GBRAIN_HOME?.trim() || undefined, rerun: rerun.join(' ') });
+    const lines = [describeTurnHookOutcome(outcome).trim()];
+    if (!verdict || verdict.ok) return { lines: verdict ? [...lines, `verify   turn hook ${verdict.message}`] : lines, ok: true };
+    const fix = turnHookFix(agent, rerun);
+    return { lines: [...lines, `error turn_hook_not_loaded (${verdict.reason}): the per-turn gbrain hook is not active: ${verdict.message}. Fix: ${rerun.join(' ')}. Verify: ${fix.verify?.argv?.join(' ')}${TURN_HOOK_NATIVE_INSPECT[agent] ? `; the harness's own check: ${TURN_HOOK_NATIVE_INSPECT[agent]}` : ''}.`], ok: false };
   },
   writeOpencodeRemoteEntry: async (name, url, opts) => {
     // The writer's contract: callers hold acquireBootstrapLock on the config
@@ -790,6 +805,7 @@ export async function runConnect(args: string[], deps: ConnectDeps = defaultDeps
     );
     const ocInstructions = deps.writeInstructions(f.agent, f.name, f.noInstructions, f.skillLoading, f.gbrainBin);
     if (ocInstructions) console.error(ocInstructions);
+    for (const line of deps.writeTurnHook(f.agent).lines) console.error(line);
     if (deps.env(ENV_VAR) !== realToken) {
       console.error(`opencode resolves {env:${ENV_VAR}} at read time. Add this to your shell profile so sessions can reach the brain:`);
       console.error(`  export ${ENV_VAR}=<your-token>`);
@@ -840,6 +856,8 @@ export async function runConnect(args: string[], deps: ConnectDeps = defaultDeps
   console.error(`Added MCP server '${f.name}' -> ${url}.`);
   const instructions = deps.writeInstructions(f.agent, f.name, f.noInstructions, f.skillLoading, f.gbrainBin);
   if (instructions) console.error(instructions);
+  const turnHook = deps.writeTurnHook(f.agent);
+  for (const line of turnHook.lines) console.error(line);
 
   // Codex reads the token from the env var at runtime, not from its config.
   // If the current env doesn't already carry it, the user must export it.
@@ -855,6 +873,7 @@ export async function runConnect(args: string[], deps: ConnectDeps = defaultDeps
     console.error(`Verified: ${probe.identity || 'brain reachable'}`);
     console.error('');
     console.error(LEARN_INSTRUCTION);
+    if (!turnHook.ok) process.exit(1);
     return;
   }
   // Server is registered, but end-to-end auth did not verify. Exit non-zero so

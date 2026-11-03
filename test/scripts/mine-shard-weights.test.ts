@@ -5,15 +5,28 @@
 import { describe, expect, it } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   computeWeights,
+  medianWeights,
   mineWeights,
   parseLog,
   serializeWeights,
   sourceE2ECorpus,
 } from "../../scripts/mine-shard-weights.ts";
+
+/** A checkout tracking `files`, the set the miner bounds its output by (GBRAIN_MINE_ROOT). */
+function trackedCheckout(dir: string, files: string[]): NodeJS.ProcessEnv {
+  const root = join(dir, 'checkout');
+  mkdirSync(root, { recursive: true });
+  for (const file of files) {
+    mkdirSync(dirname(join(root, file)), { recursive: true });
+    writeFileSync(join(root, file), '');
+  }
+  for (const args of [['init', '-q'], ['add', '-A']]) expect(spawnSync('git', args, { cwd: root, encoding: 'utf8' }).status).toBe(0);
+  return { ...process.env, GBRAIN_MINE_ROOT: root };
+}
 
 const SAMPLE = `test (1)\tUNKNOWN STEP\t2026-05-25T11:26:40.000000Z ##[group]test/alpha.test.ts:
 test (1)\tUNKNOWN STEP\t2026-05-25T11:26:41.000000Z (pass) some test [1.00ms]
@@ -269,13 +282,14 @@ it('a failed CLI refresh leaves the existing output untouched', () => {
   try {
     const out = join(dir, 'weights');
     const input = join(dir, 'truncated.log');
+    const env = trackedCheckout(dir, ['keep', ...['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta'].map(name => `test/${name}.test.ts`)]);
     writeFileSync(out, '{"keep":123}\n');
     writeFileSync(input, SAMPLE);
-    const failed = spawnSync(process.execPath, [join(import.meta.dir, '../../scripts/mine-shard-weights.ts'), '--from-file', input, '--out', out], { encoding: 'utf8' });
+    const failed = spawnSync(process.execPath, [join(import.meta.dir, '../../scripts/mine-shard-weights.ts'), '--from-file', input, '--out', out], { env, encoding: 'utf8' });
     expect(failed.status).not.toBe(0);
     expect(readFileSync(out, 'utf8')).toBe('{"keep":123}\n');
     writeFileSync(input, SAMPLE + 'test (1)\tstep\t2026-05-25T11:26:56.000Z 0 fail\ntest (1)\tstep\t2026-05-25T11:26:57.000Z Ran 4 tests across 4 files. [17s]\ntest (2)\tstep\t2026-05-25T11:26:56.000Z 0 fail\ntest (2)\tstep\t2026-05-25T11:26:58.000Z Ran 2 tests across 2 files. [16s]\n');
-    const passed = spawnSync(process.execPath, [join(import.meta.dir, '../../scripts/mine-shard-weights.ts'), '--from-file', input, '--out', out], { encoding: 'utf8' });
+    const passed = spawnSync(process.execPath, [join(import.meta.dir, '../../scripts/mine-shard-weights.ts'), '--from-file', input, '--out', out], { env, encoding: 'utf8' });
     expect(passed.status, passed.stderr).toBe(0);
     const weights = JSON.parse(readFileSync(out, 'utf8'));
     expect(weights['test/delta.test.ts']).toBe(7000);
@@ -292,15 +306,16 @@ it('partial serial artifacts preserve unobserved files; malformed durations cann
     const input = join(dir, 'serial.log');
     const line = (text: string) => `serial-tests (1)\tstep\t2026-05-25T11:26:50.000Z ${text}\n`;
     const raw = line('[serial-tests] PASS 7s test/a.serial.test.ts (1pass)') + line('[serial-tests] all 1 file(s) passed in 7s (pool=4)');
+    const env = trackedCheckout(dir, ['test/a.serial.test.ts', 'test/unobserved.serial.test.ts']);
     writeFileSync(out, '{"test/unobserved.serial.test.ts":42}\n');
     writeFileSync(input, raw);
     const args = [join(import.meta.dir, '../../scripts/mine-shard-weights.ts'), '--lane', 'serial', '--from-file', input, '--out', out];
-    expect(spawnSync(process.execPath, args, { encoding: 'utf8' }).status).toBe(0);
+    expect(spawnSync(process.execPath, args, { env, encoding: 'utf8' }).status).toBe(0);
     expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual({ 'test/a.serial.test.ts': 7, 'test/unobserved.serial.test.ts': 42 });
     expect(JSON.parse(readFileSync(meta, 'utf8'))).toMatchObject({ measuredFiles: 1, totalFiles: 2, mergeExisting: true });
     const saved = [readFileSync(out, 'utf8'), readFileSync(meta, 'utf8')];
     writeFileSync(input, raw.replace('PASS 7s', 'PASS 1..2s'));
-    expect(spawnSync(process.execPath, args, { encoding: 'utf8' }).status).not.toBe(0);
+    expect(spawnSync(process.execPath, args, { env, encoding: 'utf8' }).status).not.toBe(0);
     expect([readFileSync(out, 'utf8'), readFileSync(meta, 'utf8')]).toEqual(saved);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -330,7 +345,7 @@ it('GitHub refresh verifies every eligible job before replacing the complete lan
     writeFileSync(out, '{"test/old.test.ts":42}\n');
     writeFileSync(meta, '{"existing":true}\n');
     const args = [join(import.meta.dir, '../../scripts/mine-shard-weights.ts'), '--run', '123', '--out', out];
-    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, FIXTURE_GH_INFO: info, FIXTURE_GH_ARTIFACTS: artifacts };
+    const env = { ...trackedCheckout(dir, ['test/one.test.ts', 'test/two.test.ts']), PATH: `${bin}:${process.env.PATH}`, FIXTURE_GH_INFO: info, FIXTURE_GH_ARTIFACTS: artifacts };
     for (const partial of [null, line('test (2)', '##[gbrain-capture-start]') + line('test (2)', 'snapshot setup started') + line('test (2)', '##[gbrain-capture-complete] exit=0')]) {
       artifact(2, partial);
       expect(spawnSync(process.execPath, args, { env, encoding: 'utf8' }).status).not.toBe(0);
@@ -372,7 +387,7 @@ it('GitHub serial refresh reads each job log by id instead of the whole-run log'
     const line = (text: string) => `${job}\tUNKNOWN STEP\t2026-10-10T06:00:01.000Z ${text}\n`;
     writeFileSync(log, line('[serial-tests] PASS 4s test/a.serial.test.ts (1pass)') + line('[serial-tests] all 1 file(s) passed in 4s (pool=4)'));
     const args = [join(import.meta.dir, '../../scripts/mine-shard-weights.ts'), '--lane', 'serial', '--run', '123', '--out', out];
-    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, FIXTURE_GH_INFO: info, FIXTURE_GH_LOG: log };
+    const env = { ...trackedCheckout(dir, ['test/a.serial.test.ts']), PATH: `${bin}:${process.env.PATH}`, FIXTURE_GH_INFO: info, FIXTURE_GH_LOG: log };
     writeFileSync(info, JSON.stringify({ conclusion: 'success', headSha: 'fixture-commit', jobs: [{ name: job, conclusion: 'success' }] }));
     expect(spawnSync(process.execPath, args, { env, encoding: 'utf8' }).stderr).toContain('serial: missing job identity');
     writeFileSync(info, JSON.stringify({ conclusion: 'success', headSha: 'fixture-commit', jobs: [{ name: job, conclusion: 'success', databaseId: 77 }] }));
@@ -461,7 +476,7 @@ it('GitHub refresh mines every shard of a packed unit job (test.yml runs two per
     writeFileSync(info, JSON.stringify({ conclusion: 'success', headSha: 'fixture-commit', jobs: [{ name: 'test (1, 2)', conclusion: 'success' }, { name: 'test (3, 4)', conclusion: 'success' }] }));
     writeFileSync(out, '{"test/old.test.ts":42}\n');
     const args = [join(import.meta.dir, '../../scripts/mine-shard-weights.ts'), '--run', '123', '--out', out];
-    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, FIXTURE_GH_INFO: info, FIXTURE_GH_ARTIFACTS: artifacts };
+    const env = { ...trackedCheckout(dir, ['test/one.test.ts', 'test/two.test.ts', 'test/three.test.ts', 'test/four.test.ts']), PATH: `${bin}:${process.env.PATH}`, FIXTURE_GH_INFO: info, FIXTURE_GH_ARTIFACTS: artifacts };
     expect(spawnSync(process.execPath, args, { env, encoding: 'utf8' }).status).not.toBe(0);
     expect(readFileSync(out, 'utf8')).toBe('{"test/old.test.ts":42}\n');
     writeFileSync(join(artifacts, 'timings-unit-2.log'), complete('test (2)', 'test/two.test.ts'));
@@ -469,4 +484,118 @@ it('GitHub refresh mines every shard of a packed unit job (test.yml runs two per
     expect(result.status, result.stderr).toBe(0);
     expect(Object.keys(JSON.parse(readFileSync(out, 'utf8')))).toEqual(['test/four.test.ts', 'test/one.test.ts', 'test/three.test.ts', 'test/two.test.ts']);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+it('a refresh from several GitHub runs takes each file\'s median, so one fast or slow run or runner cannot set the weights', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-mine-runs-'));
+  try {
+    const bin = join(dir, 'bin');
+    const fixtures = join(dir, 'fixtures');
+    mkdirSync(bin);
+    mkdirSync(fixtures);
+    writeFileSync(join(bin, 'gh'), '#!/bin/sh\ncase "$*" in\n  "run view "*" --json conclusion,headSha,jobs") cat "$FIXTURE_GH/$3.json" ;;\n  "run download "*" --name timings-unit-"*) [ -f "$FIXTURE_GH/$3-$5.log" ] && cp "$FIXTURE_GH/$3-$5.log" "$7/unit.log" ;;\n  *) exit 2 ;;\nesac\n', { mode: 0o755 });
+    const at = (ms: number) => new Date(Date.UTC(2026, 9, 30, 12) + ms).toISOString();
+    const line = (job: string, ms: number, text: string) => `${job}\tcapture\t${at(ms)} ${text}\n`;
+    const shard = (job: string, files: [string, number][]) => {
+      let t = 0;
+      let body = line(job, t, '##[gbrain-capture-start]');
+      for (const [file, ms] of files) { body += line(job, t, `::group::${file}:`); t += ms; }
+      return body + line(job, t, ' 0 fail') + line(job, t, `Ran ${files.length} tests across ${files.length} files. [1ms]`) + line(job, t, '##[gbrain-capture-complete] exit=0');
+    };
+    const run = (id: string, commit: string, files: [string, number][], conclusion = 'success') => {
+      writeFileSync(join(fixtures, `${id}.json`), JSON.stringify({ conclusion, headSha: commit, jobs: [{ name: 'test (1, 2)', conclusion }] }));
+      writeFileSync(join(fixtures, `${id}-timings-unit-1.log`), shard('test (1)', files.slice(0, 1)));
+      writeFileSync(join(fixtures, `${id}-timings-unit-2.log`), shard('test (2)', files.slice(1)));
+    };
+    run('101', 'commit-a', [['test/one.test.ts', 1000], ['test/two.test.ts', 9000], ['test/new.test.ts', 500]]);
+    run('102', 'commit-b', [['test/one.test.ts', 2000], ['test/two.test.ts', 6000]]);
+    // test/gone.test.ts was deleted after run 103 (git no longer tracks it), so it must not stay in the weights.
+    run('103', 'commit-c', [['test/one.test.ts', 4000], ['test/two.test.ts', 3000], ['test/gone.test.ts', 700]]);
+    run('104', 'commit-d', [['test/one.test.ts', 1], ['test/two.test.ts', 1]], 'failure');
+    const out = join(dir, 'weights.json');
+    const meta = join(dir, 'weights.metadata.json');
+    const env = { ...trackedCheckout(dir, ['test/one.test.ts', 'test/two.test.ts', 'test/new.test.ts']), PATH: `${bin}:${process.env.PATH}`, FIXTURE_GH: fixtures };
+    const mine = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dir, '../../scripts/mine-shard-weights.ts'), ...args, '--out', out], { env, encoding: 'utf8' });
+    writeFileSync(out, '{"test/old.test.ts":42}\n');
+    writeFileSync(meta, '{"prior":true}\n');
+    expect(mine('--run', '101', '--run', '104', '--run', '103').status).not.toBe(0);
+    expect(mine('--lane', 'e2e', '--e2e-profile', 'full', '--run', '101', '--run', '102').status).not.toBe(0);
+    expect(readFileSync(out, 'utf8')).toBe('{"test/old.test.ts":42}\n');
+    expect(readFileSync(meta, 'utf8')).toBe('{"prior":true}\n');
+    const result = mine('--run', '101', '--run', '102', '--run', '103');
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual({ 'test/new.test.ts': 500, 'test/one.test.ts': 2000, 'test/two.test.ts': 6000 });
+    expect(JSON.parse(readFileSync(meta, 'utf8'))).toMatchObject({
+      lane: 'unit', run: '101', commit: 'commit-a', runs: ['101', '102', '103'], commits: ['commit-a', 'commit-b', 'commit-c'],
+      measuredFiles: 3, totalFiles: 3, mergeExisting: false,
+    });
+    // Oldest first gives the same map: the tracked files decide what stays, not which run came first.
+    const oldestFirst = mine('--run', '103', '--run', '102', '--run', '101');
+    expect(oldestFirst.status, oldestFirst.stderr).toBe(0);
+    expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual({ 'test/new.test.ts': 500, 'test/one.test.ts': 2000, 'test/two.test.ts': 6000 });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+it('selected E2E from several runs keeps the median of a file only an older run selected', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-mine-e2e-runs-'));
+  try {
+    const bin = join(dir, 'bin');
+    const fixtures = join(dir, 'fixtures');
+    mkdirSync(bin);
+    mkdirSync(fixtures);
+    writeFileSync(join(bin, 'gh'), '#!/bin/sh\ncase "$*" in\n  "run view "*" --json conclusion,headSha,jobs") cat "$FIXTURE_GH/$3.json" ;;\n  "run view "*" --log") cat "$FIXTURE_GH/$3.log" ;;\n  *) exit 2 ;;\nesac\n', { mode: 0o755 });
+    const job = 'Selected E2E (diff-relevant) 1';
+    const line = (text: string) => job + '\tstep\t2026-10-30T12:00:00.000Z ' + text + '\n';
+    const run = (id: string, files: [string, number][]) => {
+      writeFileSync(join(fixtures, id + '.json'), JSON.stringify({ conclusion: 'success', headSha: 'commit-' + id, jobs: [{ name: job, conclusion: 'success' }] }));
+      writeFileSync(join(fixtures, id + '.log'), files.map(([name, ms]) => line('=== ' + name + ' ===') + line(' 0 fail') + line('Ran 1 test across 1 file. [' + ms + '.00ms]')).join('')
+        + line('Files: ' + files.length + ' total, ' + files.length + ' passed, 0 failed'));
+    };
+    run('201', [['alpha.test.ts', 1000]]);
+    run('202', [['alpha.test.ts', 3000], ['beta.test.ts', 800]]);
+    const out = join(dir, 'e2e-weights.json');
+    writeFileSync(out, '{"test/e2e/beta.test.ts":42}\n');
+    const result = spawnSync(process.execPath, [join(import.meta.dir, '../../scripts/mine-shard-weights.ts'), '--lane', 'e2e', '--run', '201', '--run', '202', '--out', out],
+      { env: { ...trackedCheckout(dir, ['test/e2e/alpha.test.ts', 'test/e2e/beta.test.ts']), PATH: bin + ':' + process.env.PATH, FIXTURE_GH: fixtures }, encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual({ 'test/e2e/alpha.test.ts': 2000, 'test/e2e/beta.test.ts': 800 });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+it('a merging source drops the existing entry of a test file git no longer tracks (#8103)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-mine-merge-prune-'));
+  try {
+    const out = join(dir, 'weights.json');
+    const input = join(dir, 'serial.log');
+    const line = (text: string) => `serial-tests (1)\tstep\t2026-05-25T11:26:50.000Z ${text}\n`;
+    writeFileSync(input, line('[serial-tests] PASS 7s test/a.serial.test.ts (1pass)') + line('[serial-tests] all 1 file(s) passed in 7s (pool=4)'));
+    writeFileSync(out, '{"test/a.serial.test.ts":3,"test/deleted.serial.test.ts":9,"test/unobserved.serial.test.ts":42}\n');
+    const env = trackedCheckout(dir, ['test/a.serial.test.ts', 'test/unobserved.serial.test.ts']);
+    const result = spawnSync(process.execPath, [join(import.meta.dir, '../../scripts/mine-shard-weights.ts'), '--lane', 'serial', '--from-file', input, '--out', out], { env, encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual({ 'test/a.serial.test.ts': 7, 'test/unobserved.serial.test.ts': 42 });
+    expect(JSON.parse(readFileSync(join(dir, 'weights.metadata.json'), 'utf8'))).toMatchObject({ measuredFiles: 1, totalFiles: 2, mergeExisting: true });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+describe('medianWeights', () => {
+  it('takes each file\'s median over the runs that measured it, averaging the middle two of an even count', () => {
+    const runs = [new Map([['a', 1], ['b', 10]]), new Map([['a', 9], ['b', 30], ['c', 7]]), new Map([['a', 3]]), new Map([['a', 5], ['b', 20]])];
+    expect(Object.fromEntries(medianWeights(runs))).toEqual({ a: 4, b: 20, c: 7 });
+    expect(medianWeights([]).size).toBe(0);
+  });
+});
+
+describe('committed shard weights', () => {
+  it.each([
+    ['scripts/test-weights.json', 'scripts/test-weights.metadata.json', 'unit', 'milliseconds'],
+    ['scripts/serial-weights.json', 'scripts/serial-weights.metadata.json', 'serial', 'seconds'],
+    ['scripts/e2e-weights.json', 'scripts/e2e-weights.metadata.json', 'e2e', 'milliseconds'],
+  ])('%s matches the metadata the miner wrote beside it', (weightsPath, metadataPath, lane, unit) => {
+    const root = join(import.meta.dir, '..', '..');
+    const weights = JSON.parse(readFileSync(join(root, weightsPath), 'utf8')) as Record<string, number>;
+    const metadata = JSON.parse(readFileSync(join(root, metadataPath), 'utf8'));
+    expect(metadata).toMatchObject({ lane, unit, totalFiles: Object.keys(weights).length });
+    expect(metadata.runs?.length ?? 1).toBe(metadata.commits?.length ?? 1);
+  });
 });

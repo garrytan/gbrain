@@ -18,6 +18,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { readPrimaryEmbeddingStores, readStoredEmbeddingIdentity } from '../core/stored-embedding-identity.ts';
 import { deferInitJsonError, flushInitJsonResult, initJsonError, setInitJsonResult, writeDeferredInitJsonError } from './init-json.ts';
 import { deferredEmbeddingHint, firstRunBundle, firstRunJson, harnessRegistrationCommand } from './init-first-run.ts';
+import { keptEmbeddingIdentity, keptEmbeddingNotice } from './init-embedding-plane.ts';
 import { writeCliNotices } from '../core/interop-notices.ts';
 import { exitCodeForCode } from '../core/error-catalogue.ts';
 import { promptLineStderr } from '../core/interaction.ts';
@@ -311,6 +312,8 @@ export interface ResolvedAIOptions {
   chat_model?: string;
   /** v0.37 (D9): user opted into deferred embedding setup. */
   noEmbedding?: boolean;
+  /** GBRA-248: noEmbedding came from the no-provider-key fallback, not a choice (init-embedding-plane.ts). */
+  implicitKeyless?: boolean;
 }
 
 /**
@@ -739,7 +742,7 @@ async function resolveEmbeddingByEnv(out: ResolvedAIOptions, nonInteractive: boo
     }
     if (!isTTY) {
       printKeylessContinueNotice();
-      out.noEmbedding = true;
+      out.noEmbedding = out.implicitKeyless = true;
       return;
     }
     // TTY → picker (local providers like ollama may be selectable); a null
@@ -748,7 +751,7 @@ async function resolveEmbeddingByEnv(out: ResolvedAIOptions, nonInteractive: boo
     const picked = await pickProvider({ touchpoint: 'embedding', env: effectiveEnv, isTTY: true });
     if (!picked) {
       printKeylessContinueNotice();
-      out.noEmbedding = true;
+      out.noEmbedding = out.implicitKeyless = true;
       return;
     }
     out.embedding_model = picked.fullModel;
@@ -1098,7 +1101,7 @@ export async function initPGLite(opts: {
   let resolvedModel: string | undefined;
   if (opts.aiOpts?.noEmbedding) {
     // D9 deferred-setup mode: skip preflight, no model/dim resolved.
-    console.log(deferredEmbeddingHint({ engine: 'pglite', database_path: dbPath, embedding_disabled: true }));
+    if (!opts.aiOpts.implicitKeyless) console.log(deferredEmbeddingHint({ engine: 'pglite', database_path: dbPath, embedding_disabled: true }));
   } else if (opts.aiOpts?.embedding_model) {
     const { resolveSchemaEmbeddingDim } = await import('../core/embedding-dim-check.ts');
     const pre = resolveSchemaEmbeddingDim({
@@ -1143,9 +1146,11 @@ export async function initPGLite(opts: {
     await engine.connect({ database_path: dbPath, engine: 'pglite' });
     const freshContentDatabase = await isNewContentDatabase(engine);
     await assertInitEmbeddingIdentity(engine, resolvedModel);
+    const kept = await keptEmbeddingIdentity(engine, opts.aiOpts, freshContentDatabase);
+    if (opts.aiOpts?.implicitKeyless) console.log(kept ? keptEmbeddingNotice(kept) : deferredEmbeddingHint({ engine: 'pglite', database_path: dbPath, embedding_disabled: true }));
     configureGateway({
-      embedding_model: resolvedModel ?? opts.aiOpts?.embedding_model,
-      embedding_dimensions: resolvedDim ?? opts.aiOpts?.embedding_dimensions ??
+      embedding_model: resolvedModel ?? kept?.model ?? opts.aiOpts?.embedding_model,
+      embedding_dimensions: resolvedDim ?? kept?.dimensions ?? opts.aiOpts?.embedding_dimensions ??
         (opts.aiOpts?.noEmbedding ? newInstallDims : undefined),
       expansion_model: opts.aiOpts?.expansion_model,
       chat_model: opts.aiOpts?.chat_model,
@@ -1212,7 +1217,7 @@ export async function initPGLite(opts: {
       database_path: dbPath,
       ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
       ...(opts.aiOpts?.noEmbedding
-        ? { embedding_disabled: true }
+        ? kept ? { embedding_model: kept.model, embedding_dimensions: kept.dimensions } : { embedding_disabled: true }
         : (resolvedModel && resolvedDim)
           ? { embedding_model: resolvedModel, embedding_dimensions: resolvedDim }
           : {}),
@@ -1396,7 +1401,7 @@ export async function initPostgresCore(opts: {
   let resolvedDim: number | undefined;
   let resolvedModel: string | undefined;
   if (opts.aiOpts?.noEmbedding) {
-    console.log(deferredEmbeddingHint({ engine: 'postgres', database_url: databaseUrl, embedding_disabled: true }));
+    if (!opts.aiOpts.implicitKeyless) console.log(deferredEmbeddingHint({ engine: 'postgres', database_url: databaseUrl, embedding_disabled: true }));
   } else if (opts.aiOpts?.embedding_model) {
     const { resolveSchemaEmbeddingDim } = await import('../core/embedding-dim-check.ts');
     const pre = resolveSchemaEmbeddingDim({
@@ -1455,9 +1460,11 @@ export async function initPostgresCore(opts: {
 
     const freshContentDatabase = await isNewContentDatabase(engine);
     await assertInitEmbeddingIdentity(engine, resolvedModel);
+    const kept = await keptEmbeddingIdentity(engine, opts.aiOpts, freshContentDatabase);
+    if (opts.aiOpts?.implicitKeyless) console.log(kept ? keptEmbeddingNotice(kept) : deferredEmbeddingHint({ engine: 'postgres', database_url: databaseUrl, embedding_disabled: true }));
     configureGateway({
-      embedding_model: resolvedModel ?? opts.aiOpts?.embedding_model,
-      embedding_dimensions: resolvedDim ?? opts.aiOpts?.embedding_dimensions ??
+      embedding_model: resolvedModel ?? kept?.model ?? opts.aiOpts?.embedding_model,
+      embedding_dimensions: resolvedDim ?? kept?.dimensions ?? opts.aiOpts?.embedding_dimensions ??
         (opts.aiOpts?.noEmbedding ? newInstallDims : undefined),
       expansion_model: opts.aiOpts?.expansion_model,
       chat_model: opts.aiOpts?.chat_model,
@@ -1555,7 +1562,7 @@ export async function initPostgresCore(opts: {
       database_path: undefined, // clear any stale PGLite path
       ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
       ...(opts.aiOpts?.noEmbedding
-        ? { embedding_disabled: true }
+        ? kept ? { embedding_model: kept.model, embedding_dimensions: kept.dimensions } : { embedding_disabled: true }
         : (resolvedModel && resolvedDim)
           ? { embedding_model: resolvedModel, embedding_dimensions: resolvedDim }
           : {}),

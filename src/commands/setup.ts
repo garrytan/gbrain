@@ -23,9 +23,11 @@
  * Engine-free: setup never opens the database itself.
  */
 import { realpathSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { removeHermesTurnHook, syncHermesTurnHook } from '../core/setup/hermes-turn-hook.ts';
 import { removeOpenclawTurnPlugin, syncOpenclawTurnPlugin } from '../core/setup/openclaw-turn-plugin.ts';
+import { hasTurnRuleHook, isTurnRuleHarness, removeTurnRuleHook, syncTurnRuleHook, type TurnHookOutcome, type TurnRuleHarness } from '../core/setup/turn-hook.ts';
+import { inspectTurnHook, TURN_HOOK_NATIVE_INSPECT, turnHookFix, verifyTurnHook, type TurnHookVerdict } from '../core/setup/turn-hook-check.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
 import { cliRenderContext, renderCliError, renderNotice, type Action, type Notice } from '../core/agent-output.ts';
 import { writeCliNotices } from '../core/interop-notices.ts';
@@ -35,6 +37,7 @@ import { writeJsonDocument } from '../core/cli-force-exit.ts';
 import { configDir, gbrainPath, loadConfig, type GBrainConfig } from '../core/config.ts';
 import { resolveGbrainBin } from '../core/gbrain-bin.ts';
 import { isRegistrationSurface, isValidName, REGISTRATION_SURFACE, registrationAdvertise, stdioServeArgv } from '../core/mcp-registration.ts';
+import { hookLauncherPath } from '../core/setup/hook-launcher.ts';
 import { isValidSourceId } from '../core/source-id.ts';
 import { peekLock } from '../core/pglite-lock.ts';
 import { claudePluginProvidesName, codexPluginProvidesName } from '../core/bootstrap/plugin-lanes.ts';
@@ -342,7 +345,7 @@ function describeTarget(t: Target, out: Out, harness: SetupHarnessId = 'claude-c
   say(out, `Target (${HARNESS_LABEL[harness]}, ${t.scope} scope):`);
   say(out, `  brain      ${brain}`);
   say(out, `  source     ${t.source.id ? `'${t.source.id}' (pinned, from ${t.source.from === 'flag' ? '--source' : 'GBRAIN_SOURCE'})` : 'the brain\'s default source (unpinned)'}`);
-  say(out, `  transport  stdio MCP: ${stdioServeArgv(t.launcher, t.surface, t.advertise ?? null).join(' ')}${t.advertise ? ` (lists the ${t.advertise === 'verbs' ? 'memory verbs and request_tools' : `${t.advertise} tools`}; every ${t.surface} tool stays callable)` : ''}`);
+  say(out, `  transport  stdio MCP: ${[hookLauncherPath(t.brain.config_dir), ...stdioServeArgv(t.launcher, t.surface, t.advertise ?? null)].join(' ')}${t.advertise ? ` (lists the ${t.advertise === 'verbs' ? 'memory verbs and request_tools' : `${t.advertise} tools`}; every ${t.surface} tool stays callable)` : ''}`);
   say(out, `  owner      ${t.registration_owner === 'setup' ? `this setup (${t.receipt_path})` : t.registration_owner === 'plugin' ? `the gbrain ${HARNESS_LABEL[harness]} plugin (MCP); setup adds hooks only` : `none yet; setup will own '${t.name}'`}`);
   if (t.live_owner) say(out, `  live       gbrain ${t.live_owner.transport === 'http' ? 'serve --http' : 'stdio serve'} PID ${t.live_owner.pid}${t.live_owner.ours ? ' (started by this registration)' : ''}`);
   say(out, `  files      ${t.config_path} (MCP${t.hooks_path ? ' + hook trust' : ''}), ${t.hooks_path ?? t.settings_path} (hooks)`);
@@ -447,7 +450,7 @@ export async function runSetup(args: string[]): Promise<number> {
     if (found.mcp.state === 'remote') return refuse(hostedConnection(found.mcp.url ?? 'a hosted brain', true, flags.name), out);
 
     const pluginOwner = flags.name === 'gbrain' ? claudePluginProvidesName(claudeUserSettingsPath(), 'gbrain') : null;
-    const { dataDir, liveOwner } = liveOwnerOf(cfg, prior?.status === 'installed' && found.mcp.state === 'current');
+    const { dataDir, liveOwner } = liveOwnerOf(cfg, prior?.status === 'installed' && (found.mcp.state === 'current' || found.mcp.state === 'owned'));
     const target: Target = {
       brain: !cfg ? { kind: 'new-local-pglite', path: gbrainPath('brain.pglite'), config_dir: brainHome }
         : cfg.engine === 'pglite' ? { kind: 'local-pglite', path: dataDir, config_dir: brainHome } : { kind: 'local-postgres', config_dir: brainHome },
@@ -464,11 +467,10 @@ export async function runSetup(args: string[]): Promise<number> {
     if (liveOwner && !liveOwner.ours) return refuse(liveServeConflict(liveOwner, 'claude-code', flags.name), out);
     if (found.mcp.state === 'unowned' && !pluginOwner) {
       return refuse(ownerConflict('unowned_entry', `${found.configPath} already has an MCP server named '${flags.name}' that gbrain setup did not write (or it was edited since); setup never overwrites it.`, {
-        actor: 'agent', argv: ['gbrain', 'setup', 'claude-code', '--name', `${flags.name}-local`, '--dry-run', '--json'],
-        why: 'Preview a setup under another name, or remove that entry yourself and run setup again.', verify: verifyDryRun('claude-code', flags.name) }), out);
+        actor: 'agent', argv: ['gbrain', 'setup', 'claude-code', '--instructions-only', ...(flags.name === 'gbrain' ? [] : ['--name', flags.name]), ...(scope === 'project' ? ['--scope', 'project'] : [])],
+        why: 'Keeps that entry and adds only the brain-first block and the per-turn hook, so its sessions are told to check gbrain first on every turn. Or preview a setup under another name (--name), or remove that entry yourself and run setup again.', verify: verifyDryRun('claude-code', flags.name) }), out);
     }
-    const harnessReceipt = readHarnessReceiptState(brainHome);
-    const harnessLane = harnessReceipt.state === 'ok' && harnessReceipt.receipt.targets.some((t) => t.host === 'claude-code');
+    const harnessLane = harnessLaneWires(brainHome, 'claude-code', [dirname(claudeUserSettingsPath()), dirname(found.settingsPath)]);
     const laneEvents = found.otherLaneEvents.filter((e) => (plan.events as string[]).includes(e));
     if (harnessLane || laneEvents.length > 0) {
       return refuse(ownerConflict('harness_lane', `${harnessLane ? '`gbrain bootstrap harness` already wires Claude Code for this install' : `${found.settingsPath} already wires ${laneEvents.join(', ')} through another gbrain install lane`}; two lanes would fire every hook twice.`, {
@@ -509,8 +511,10 @@ export async function runSetup(args: string[]): Promise<number> {
       verify = await smokeStdioRegistration({ harness: 'claude-code', source: found.configPath, kind: 'stdio', command: entry.command, args: entry.args, env: entry.env });
     }
     const states = ['configured', ...(verify.ok ? ['connection-verified', 'native-pending'] : [])];
+    const turnHook = plan.events.includes('UserPromptSubmit') && instructions?.decision.value === 'accepted' ? verifyTurnHook('claude-code', { projectDir }) : null;
     const code = await finish(out, { dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent, steps: result.steps, states, verify, notices, notes,
-      preserved: Object.keys(result.edited).map((event) => ({ kind: 'hook', event, reason: 'edited' })), instructions, skills });
+      preserved: Object.keys(result.edited).map((event) => ({ kind: 'hook', event, reason: 'edited' })), instructions, skills, turnHook });
+    if (turnHook && !turnHook.ok) return out.json ? 1 : refuse(turnHookNotLoaded('claude-code', turnHook, ['gbrain', 'setup', 'claude-code', ...(scope === 'project' ? ['--scope', 'project'] : [])]), out);
     return verify.ok || pluginOwner ? code : 1;
   } catch (e) {
     if (e instanceof OperationError) return refuse(e, out);
@@ -518,6 +522,27 @@ export async function runSetup(args: string[]): Promise<number> {
     process.stderr.write(`gbrain setup: ${(e as Error).message}\n`);
     return 1;
   }
+}
+
+/**
+ * #7771: whether `gbrain bootstrap harness` wired the configuration setup is
+ * about to wire. One install can serve several HOMEs (or CODEX_HOMEs), so the
+ * lane conflicts only through a target in one of `configDirs`, project-scoped
+ * hooks (every configuration loads a project's), or a receipt that records
+ * no paths for the host.
+ */
+function harnessLaneWires(brainHome: string, host: 'claude-code' | 'codex', configDirs: string[]): boolean {
+  const state = readHarnessReceiptState(brainHome);
+  if (state.state !== 'ok') return false;
+  const targets = state.receipt.targets.filter((t) => t.host === host);
+  if (targets.length === 0) return false;
+  if (!targets.some((t) => typeof t.path === 'string')) return true;
+  const real = (p: string): string => {
+    const abs = resolve(p);
+    try { return realpathSync(abs); } catch { return dirname(abs) === abs ? abs : join(real(dirname(abs)), basename(abs)); }
+  };
+  const dirs = new Set(configDirs.map(real));
+  return targets.some((t) => (t.kind === 'hooks' && t.scope !== 'user') || (typeof t.path === 'string' && dirs.has(real(dirname(resolve(t.path))))));
 }
 
 function liveOwnerOf(cfg: GBrainConfig | null, ours: boolean): { dataDir?: string; liveOwner: Target['live_owner'] } {
@@ -597,7 +622,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     if (found.mcp.state === 'remote') return refuse(hostedConnection(found.mcp.url ?? 'a hosted brain', true, flags.name, 'codex'), out);
 
     const pluginOwner = codexPluginProvidesName(paths.configPath, flags.name);
-    const { dataDir, liveOwner } = liveOwnerOf(cfg, prior?.status === 'installed' && found.mcp.state === 'current');
+    const { dataDir, liveOwner } = liveOwnerOf(cfg, prior?.status === 'installed' && (found.mcp.state === 'current' || found.mcp.state === 'owned'));
     const target: Target = {
       brain: !cfg ? { kind: 'new-local-pglite', path: gbrainPath('brain.pglite'), config_dir: brainHome }
         : cfg.engine === 'pglite' ? { kind: 'local-pglite', path: dataDir, config_dir: brainHome } : { kind: 'local-postgres', config_dir: brainHome },
@@ -614,11 +639,10 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     if (liveOwner && !liveOwner.ours) return refuse(liveServeConflict(liveOwner, 'codex', flags.name), out);
     if (found.mcp.state === 'unowned' && !pluginOwner) {
       return refuse(ownerConflict('unowned_entry', `${found.configPath} already has [mcp_servers.${flags.name}] that gbrain setup did not write (or it was edited since); setup never overwrites it.`, {
-        actor: 'agent', argv: ['gbrain', 'setup', 'codex', '--name', `${flags.name}-local`, '--dry-run', '--json'],
-        why: 'Preview a setup under another name, or remove that table yourself and run setup again.', verify: verifyDryRun('codex', flags.name) }), out);
+        actor: 'agent', argv: ['gbrain', 'setup', 'codex', '--instructions-only', ...(flags.name === 'gbrain' ? [] : ['--name', flags.name])],
+        why: 'Keeps that table and adds only the brain-first block and the per-turn hook, so its sessions are told to check gbrain first on every turn. Or preview a setup under another name (--name), or remove that table yourself and run setup again.', verify: verifyDryRun('codex', flags.name) }), out);
     }
-    const harnessReceipt = readHarnessReceiptState(brainHome);
-    const harnessLane = harnessReceipt.state === 'ok' && harnessReceipt.receipt.targets.some((t) => t.host === 'codex');
+    const harnessLane = harnessLaneWires(brainHome, 'codex', [dirname(found.configPath), dirname(found.hooksPath)]);
     const laneEvents = found.otherLaneEvents.filter((e) => (plan.events as string[]).includes(e));
     if (harnessLane || laneEvents.length > 0) {
       return refuse(ownerConflict('harness_lane', `${harnessLane ? '`gbrain bootstrap harness` already wires Codex for this install' : `${found.hooksPath} already wires ${laneEvents.join(', ')} through gbrain's bootstrap Codex lane`}; two lanes would fire every hook twice.`, {
@@ -663,8 +687,10 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     }
     const push = capabilityRows('codex')[0]!.push;
     const states = ['configured', ...(verify.ok ? ['connection-verified', push === 'native-verified' && result.receipt.trust.owned.UserPromptSubmit ? 'native-verified' : 'native-pending'] : [])];
+    const turnHook = plan.events.includes('UserPromptSubmit') && instructions?.decision.value === 'accepted' ? verifyTurnHook('codex') : null;
     const code = await finish(out, { harness: 'codex', dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent,
-      steps: result.steps, states, verify, notices, notes: [...notes, ...result.notes], preserved: result.preserved, instructions, skills });
+      steps: result.steps, states, verify, notices, notes: [...notes, ...result.notes], preserved: result.preserved, instructions, skills, turnHook });
+    if (turnHook && !turnHook.ok) return out.json ? 1 : refuse(turnHookNotLoaded('codex', turnHook, ['gbrain', 'setup', 'codex']), out);
     return verify.ok || pluginOwner ? code : 1;
   } catch (e) {
     if (e instanceof OperationError) return refuse(e, out);
@@ -811,21 +837,30 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
     skills = skillsFor(harness, flags, flags.gbrainBin ?? indexLauncher() ?? 'gbrain', where, instructions);
   }
   const off = flags.remove || instructions?.decision.value === 'declined';
-  const turnHook = harness === 'hermes'
+  const rerun = ['gbrain', 'setup', harness, '--instructions-only', ...(flags.name !== 'gbrain' ? ['--name', flags.name] : []), ...(flags.workspace ? ['--workspace', flags.workspace] : []), ...(projectDir && harness === 'claude-code' ? ['--scope', 'project'] : [])];
+  // The hook carries the block's rule, so it follows the block: none while no block could be placed (Hermes without a SOUL.md).
+  const placed = instructions?.action === 'write' || instructions?.action === 'keep';
+  const turnHook = !off && !placed ? null : harness === 'hermes'
     ? (off ? removeHermesTurnHook({ hermesHome: dirname(target.path), dryRun: flags.dryRun }) : syncHermesTurnHook({ hermesHome: dirname(target.path), access, dryRun: flags.dryRun }))
     : harness === 'openclaw'
       ? (off ? removeOpenclawTurnPlugin({ dryRun: flags.dryRun }) : syncOpenclawTurnPlugin({ access, dryRun: flags.dryRun }))
-      : null;
-  const code = instructions?.action === 'preserve' || skillsFailed(skills) ? 1 : 0;
+      : isTurnRuleHarness(harness) ? turnRuleHookFor(harness, off, flags, projectDir, rerun.join(' ')) : null;
+  // Loud failure: an accepted install whose per-turn hook does not load exits non-zero and names the harness's own check.
+  // A 'print' outcome installed nothing and already names the step that does, so it is reported, not verified.
+  const check = !off && !flags.dryRun && instructions?.decision.value === 'accepted' && !flags.noHooks && process.env.GBRAIN_HOOKS !== '0' && turnHook && turnHook.action !== 'print' && turnHook.action !== 'remove' ? verifyTurnHook(harness, { projectDir }) : null;
+  const code = instructions?.action === 'preserve' || skillsFailed(skills) || (check && !check.ok) ? 1 : 0;
   if (out.json) {
-    await writeJsonDocument(`${JSON.stringify({ harness, dry_run: flags.dryRun, remove: flags.remove, instructions_only: true, instructions, ...(turnHook ? { turn_hook: turnHook } : {}), skills, mcp }, null, 2)}\n`, (t) => process.stdout.write(t));
+    await writeJsonDocument(`${JSON.stringify({ harness, dry_run: flags.dryRun, remove: flags.remove, instructions_only: true, instructions, ...(turnHook ? { turn_hook: turnHook } : {}), ...(check ? { turn_hook_check: check } : {}), skills, mcp }, null, 2)}\n`, (t) => process.stdout.write(t));
     return code;
   }
   if (instructions) say(out, flags.remove ? describeBrainFirstOutcome(instructions, flags.dryRun) : describeInstructions(instructions, flags.dryRun));
-  if (turnHook) say(out, `  ${(flags.dryRun && (turnHook.action === 'write' || turnHook.action === 'remove') ? `would ${turnHook.action}` : turnHook.action).padEnd(8)} ${'turn hook'.padEnd(7)} ${turnHook.detail}${'snippet' in turnHook && turnHook.snippet ? `:\n${turnHook.snippet.replace(/^/gm, '    ')}` : ''}${'commands' in turnHook && turnHook.commands ? `:\n${turnHook.commands.map((c) => `    ${c}`).join('\n')}` : ''}`);
+  if (turnHook) say(out, `  ${(flags.dryRun && (turnHook.action === 'write' || turnHook.action === 'remove') ? `would ${turnHook.action}` : turnHook.action).padEnd(8)} ${'turn hook'.padEnd(7)} ${turnHook.detail}${'snippet' in turnHook && turnHook.snippet ? `:\n${turnHook.snippet.replace(/^/gm, '    ')}` : ''}${'commands' in turnHook && turnHook.commands ? `:\n${turnHook.commands.map((c) => `    ${c}`).join('\n')}` : ''}${'next' in turnHook && turnHook.next ? `; wire it with: ${turnHook.next}` : ''}`);
+  else if (!off && placed) say(out, `  note     ${'turn hook'.padEnd(7)} ${adapter.label} has no per-turn hook gbrain can install; the rule reaches it through ${target.path} only.`);
   if (skills && (skills.decision.value === 'spring' || skills.action !== 'skip')) say(out, describeSkillsBlockOutcome(skills, flags.dryRun));
+  if (check?.ok) say(out, `  verify   ${'turn hook'.padEnd(7)} ${check.message}`);
   if (mcp.setup === 'manual' && !flags.remove) say(out, `MCP: setup does not register ${adapter.label}'s MCP server. Follow ${adapter.guide} (one command), then start a new session.`);
   if (!flags.remove && instructions?.decision.value === 'accepted') say(out, 'Next: start a new session; the harness reads its instruction file at session start.');
+  if (check && !check.ok) return refuse(turnHookNotLoaded(harness, check, rerun), out);
   return code;
 }
 
@@ -846,11 +881,32 @@ async function runSkillsIndexOnly(flags: SetupFlags, out: Out): Promise<number> 
   return code;
 }
 
+/**
+ * Claude Code and Codex under --instructions-only (a plugin or a bare `mcp add`
+ * serves MCP): the per-turn rule hook, unless setup's own hooks, a bootstrap
+ * lane or a gbrain plugin already carry the rule.
+ */
+function turnRuleHookFor(harness: TurnRuleHarness, off: boolean, flags: SetupFlags, projectDir: string | undefined, rerun: string): TurnHookOutcome {
+  const paths = projectDir ? { claudeSettings: join(projectDir, '.claude', 'settings.local.json') } : {};
+  if (off || flags.noHooks) return removeTurnRuleHook({ harness, paths, dryRun: flags.dryRun });
+  if (process.env.GBRAIN_HOOKS === '0') return { harness, action: 'skip', path: '', detail: 'GBRAIN_HOOKS=0 is set: no per-turn hook installed' };
+  const carried = inspectTurnHook(harness, { projectDir });
+  // An entry of this lane beside another carrier still runs gbrain on every turn (it yields after starting), so it is refreshed, never left on an old launcher.
+  if (carried.state !== 'missing' && carried.via !== 'turn-rule' && !hasTurnRuleHook(harness, paths)) return { harness, action: 'skip', path: '', detail: `per-turn rule already carried: ${carried.detail}` };
+  return syncTurnRuleHook({ harness, gbrainBin: flags.gbrainBin ?? resolveGbrainBin(), gbrainHome: process.env.GBRAIN_HOME?.trim() || undefined, paths, dryRun: flags.dryRun, rerun });
+}
+
+function turnHookNotLoaded(harness: string, check: TurnHookVerdict, rerun: string[]): OperationError {
+  const fix = turnHookFix(harness, rerun);
+  return opError('turn_hook_not_loaded', `The per-turn gbrain hook for ${harness} is not active: ${check.message}.${TURN_HOOK_NATIVE_INSPECT[harness] ? ` The harness's own check: ${TURN_HOOK_NATIVE_INSPECT[harness]}.` : ''}`, fix.why, { reason: check.reason, docs: 'docs/guides/repair.md#turn-hook-not-loaded', fix });
+}
+
 async function finish(out: Out, doc: {
   harness?: SetupHarnessId; dryRun: boolean; remove?: boolean; target?: Target; consent?: SetupConsent; steps: Array<{ step: string; action: string; detail: string }>; states: string[];
   verify: { ok: boolean; reason: string; message: string } | null; notices: Notice[]; notes: string[]; preserved?: unknown[];
   instructions?: BrainFirstOutcome | null;
   skills?: SkillsBlockOutcome | null;
+  turnHook?: TurnHookVerdict | null;
 }): Promise<number> {
   const harness = doc.harness ?? 'claude-code';
   const state = doc.states.at(-1) ?? null;
@@ -859,7 +915,7 @@ async function finish(out: Out, doc: {
     await writeJsonDocument(`${JSON.stringify({
       harness, dry_run: doc.dryRun, remove: doc.remove ?? false,
       ...(doc.target ? { target: doc.target } : {}), ...(doc.consent ? { consent: doc.consent } : {}),
-      steps: doc.steps, preserved: doc.preserved ?? [], instructions: doc.instructions ?? null, skills: doc.skills ?? null, states: doc.states, state, verify: doc.verify,
+      steps: doc.steps, preserved: doc.preserved ?? [], instructions: doc.instructions ?? null, skills: doc.skills ?? null, ...(doc.turnHook ? { turn_hook_check: doc.turnHook } : {}), states: doc.states, state, verify: doc.verify,
       capability: capabilityRows(harness)[0], capability_table_version: SETUP_CAPABILITY_TABLE_VERSION,
       notes: doc.notes, notices: doc.notices.map((n) => renderNotice(n, cliRenderContext())),
     }, null, 2)}\n`, (t) => process.stdout.write(t));
@@ -868,6 +924,7 @@ async function finish(out: Out, doc: {
   if (doc.instructions) say(out, doc.remove ? describeBrainFirstOutcome(doc.instructions, doc.dryRun) : describeInstructions(doc.instructions, doc.dryRun));
   if (doc.skills && (doc.skills.decision.value === 'spring' || doc.skills.action !== 'skip')) say(out, describeSkillsBlockOutcome(doc.skills, doc.dryRun));
   if (doc.verify) say(out, `Verify: ${doc.verify.ok ? 'ok' : 'not verified'} (${doc.verify.reason}): ${doc.verify.message}`);
+  if (doc.turnHook?.ok) say(out, `Turn hook: ok (${doc.turnHook.reason}): ${doc.turnHook.message}`);
   if (state) say(out, `State: ${state} (${doc.states.join(' -> ')}).${state === 'native-verified' ? '' : ' Native push is not claimed until an observed event reaches a fresh session.'}`);
   if (state && !doc.remove) say(out, harness === 'codex'
     ? 'Next: start a new Codex session (config and hooks are read at session start) and check that /mcp lists gbrain.'

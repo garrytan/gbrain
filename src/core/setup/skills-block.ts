@@ -512,7 +512,7 @@ export function syncSkillsBlock(opts: { target: BrainFirstTarget; launcher: stri
   }
   if (replaced.removed) done.replaced_permission = { ...replaced.removed, change: 'removed' };
   if (permissionProblem) return { ...done, action: 'preserve', detail: `${done.detail} (the index is in place; the permission step did not finish): ${permissionProblem}`, reason: 'permission_update_failed' };
-  if (declined) return { ...done, detail: `${done.detail}; the Claude Code rule ${rule} was removed from ${settings} after gbrain added it, so gbrain left it out and Claude Code will ask before each skill load (re-run with --skill-loading spring to add it again)` };
+  if (declined) return { ...done, detail: `${done.detail}; the Claude Code rule ${rule} was removed from ${settings} after setup added it, so setup left it out and Claude Code will ask before each skill load (re-run with --skill-loading spring to add it again)` };
   return added && grant.allow_rule ? { ...done, detail: `${done.detail}; Claude Code may now run ${grant.allow_rule}`, permission: { rule: grant.allow_rule, settings, change: 'added' } } : done;
 }
 

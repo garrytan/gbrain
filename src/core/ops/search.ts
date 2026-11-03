@@ -32,6 +32,7 @@ import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '
 import type { HybridSearchMeta, SearchResult } from '../types.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { applySnippetCap, DEFAULT_AGENT_SNIPPET_CHARS, resultChunkCap } from '../search/snippet-cap.ts';
+import { fenceTranscriptRows, neutralizeTranscriptRows, quoteFacts, quoteLabel } from '../search/transcript-quote.ts';
 import { scoresFollowRank } from '../search/score-contract.ts';
 import { redactRetrievalOutput } from '../search/output-redaction.ts';
 import { leanRowsKeepId, projectRows, resultRowsFor } from '../search/lean-rows.ts';
@@ -43,7 +44,7 @@ import { keepFrontmatterMatches } from '../search/frontmatter-where.ts';
 import { WHERE_PARAM, whereOpParam } from './where-param.ts';
 import { searchFilterHint } from '../search/filter-hint.ts';
 import { TargetTrace, diagnoseProbe, diagnoseTrace, probeTarget, type ExplainTargetDiagnosis } from '../search/explain-target.ts';
-import { assembleEvidenceForHits, capDeliveredSnippets, capEvidenceToBudget, deliverEvidence, pagePlanHits, queryBudgetUsesAuto, resolveEvidencePlan, selectLongPages, unsupportedDelivery, withLongPagePolicy, type DeliveryMeta, type DeliveryScope, type EvidencePlan, type FrozenHit, type ReturnUnit } from '../search/evidence-delivery.ts';
+import { assembleEvidenceForHits, capDeliveredSnippets, capEvidenceToBudget, countEvidenceTokens, deliverEvidence, pagePlanHits, queryBudgetUsesAuto, resolveEvidencePlan, selectLongPages, unsupportedDelivery, withLongPagePolicy, type DeliveryMeta, type DeliveryScope, type EvidencePlan, type FrozenHit, type ReturnUnit } from '../search/evidence-delivery.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { SAFE_FENCE_CHUNKER_VERSION, chunkManifestReads } from '../search/safe-chunks.ts';
 import { expandEngineTypeFilters } from '../schema-pack/query-types.ts';
@@ -69,6 +70,7 @@ import type { TrustTier } from '../trust/tier.ts';
 import type { Operation, OperationContext } from './contract.ts';
 import { invalidParam, paramUse, readFix } from './op-fix.ts';
 import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './search-source-scope.ts';
+import { capVectorOnlyPages, remotePageCap } from '../search/remote-page-cap.ts';
 import {
   parseSourceIdParam,
   resolvePerCallMode,
@@ -123,7 +125,9 @@ function searchOutput(ctx: OperationContext, p: Record<string, unknown>, results
   // `explain: true` — every row carries its score breakdown (kept in lean rows).
   if (p.explain === true) for (const r of results) r.score_details = buildScoreDetails(r);
   // #7156: the returned score follows the returned order.
-  results = scoresFollowRank(results);
+  results = neutralizeTranscriptRows(scoresFollowRank(results), evidence?.delivery.date_header === true);
+  // GST-687: a remote reader also gets rows below the owner's tier quoted (rows carry their stamped trust_tier here).
+  const untrusted = ctx.remote !== false;
   // The shape is reported where it can vary: remote callers, or an explicit `fields`.
   const shown = ctx.remote !== false || p.fields !== undefined ? { rows } : {};
   // Stage timings are read last, after the returned rows are assembled (meta only, never content).
@@ -135,7 +139,7 @@ function searchOutput(ctx: OperationContext, p: Record<string, unknown>, results
   };
   if (!evidence) {
     const output = redactRetrievalOutput(results, { ...meta, ...shown });
-    return emit(output, projectRows(applySnippetCap(output.results, resultChunkCap(p.snippet_chars, snippetCap)).map(factRowOutput), rows, lean));
+    return emit(output, projectRows(fenceTranscriptRows(applySnippetCap(output.results, resultChunkCap(p.snippet_chars, snippetCap)), undefined, untrusted).map(factRowOutput), rows, lean));
   }
   // Evidence delivery: explicit snippet_chars wins over the delivered blocks;
   // otherwise the blocks are returned whole (their budget already bounds
@@ -143,8 +147,9 @@ function searchOutput(ctx: OperationContext, p: Record<string, unknown>, results
   const output = redactRetrievalOutput(results, { ...meta, delivery: evidence.delivery, ...shown });
   // An explicit budget's cap holds at this final boundary too (snippet
   // markers and redaction recounted); without one both are no-ops.
-  const capped = evidence.explicitSnippet ? capDeliveredSnippets(output.results, snippetCap, output.meta.delivery) : capEvidenceToBudget(output.results, output.meta.delivery);
-  return emit(output, projectRows(capped.map(factRowOutput), rows, lean));
+  const capped = capEvidenceToBudget(evidence.explicitSnippet ? capDeliveredSnippets(output.results, snippetCap, output.meta.delivery) : output.results, output.meta.delivery, true, untrusted);
+  const delivery = output.meta.delivery;
+  return emit(output, projectRows(fenceTranscriptRows(capped, { count: text => countEvidenceTokens(text, delivery.tokenizer), delivery }, untrusted).map(factRowOutput), rows, lean));
 }
 
 /** C1: the per-call row-shape escape hatch shared by `search` and `query` (`detail` is query's low/medium/high). */
@@ -163,6 +168,7 @@ const RETURN_UNIT_PARAM = {
 };
 const RETURN_WINDOW_PARAM = {
   type: 'number' as const,
+  minimum: 1,
   description: 'Window radius 1-3.',
   fullSurfaceOnly: true,
 };
@@ -405,7 +411,10 @@ async function buildRetrievalResponseMeta(
     : undefined;
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
   const excludeSlugPrefixes = resolveHardExcludes();
-  const aliases = (opts.declarations ?? new DeclarationMemo()).scan(results as DeclarationRow[], queryText);
+  const declared = (opts.declarations ?? new DeclarationMemo()).scan(results as DeclarationRow[], queryText);
+  // #8384: a remote reader gets no name a quoted row declares; other_names renders it outside that row's fence.
+  const aliases = ctx.remote === false ? declared
+    : declared.filter(a => !(results as SearchResult[]).some(r => r.slug === a.slug && quoteLabel(r, true) !== null));
   const relevance = coverageRelevance(results as SearchResult[], queryText, opts.types, FACT_MATCH_STOPWORDS);
   const readinessScope = { ...scope, excludePrivate, types: opts.types, excludeSlugPrefixes };
   // #6721: these reads depend on nothing but the inputs above, so they run at once: on a pooled Postgres
@@ -415,7 +424,7 @@ async function buildRetrievalResponseMeta(
     timed('readiness', probeProjectionReadiness(ctx.engine, readinessScope).then(async r =>
       [r, r.status === 'projection_pending' ? await countPendingProjections(ctx.engine, readinessScope, relevance) : null] as const)),
     // Facts saved about the entity the query names come first (newest first, one hop through entities they name).
-    timed('entity_facts', opts.entity && ctx.emitResponseMeta ? entitySavedFacts(ctx.engine, opts.entity, { remote: ctx.remote !== false, excludePrivate }) : []),
+    timed('entity_facts', opts.entity && ctx.emitResponseMeta ? entitySavedFacts(ctx.engine, opts.entity, { remote: ctx.remote !== false, excludePrivate, minTrust: scope.minTrust }) : []),
     timed('saved_facts', matchingSavedFacts(ctx, scope, queryText, aliases.flatMap(a => [a.name, a.alias]))),
     timed('held', stampHeldHits(ctx.engine, results as SearchResult[], scope, relevance, ctx).catch(() => ({ coverage: [], couldAffect: 0 }))),
     // GBRA-133 PR 2a.5: per-source freshness from the notifier's cached coverage record (no git call).
@@ -438,7 +447,9 @@ async function buildRetrievalResponseMeta(
     ...matchedFacts.filter(m => !entityFacts.some(e => e.id === m.id))].filter(f => !factRowIds.has(f.id)));
   const shownAs = new Map([...factRowIds].map(id => [id, id]));
   for (const f of merged) for (const id of f.collapsed_ids ?? [f.id]) shownAs.set(id, f.id);
-  const savedFacts = merged.map(({ corrected_by, ...f }) => {
+  // #8042: a lookup failure withholds saved_facts (degraded stage below) rather than return third-party text unquoted.
+  const quotedFacts = await quoteFacts(ctx.engine, merged, ctx.remote !== false).catch(() => null);
+  const savedFacts = (quotedFacts ?? []).map(({ corrected_by, ...f }) => {
     const by = corrected_by === undefined ? undefined : shownAs.get(corrected_by);
     return stripCollapseColumns(by === undefined || by === f.id ? f : { ...f, corrected_by: by });
   });
@@ -458,6 +469,7 @@ async function buildRetrievalResponseMeta(
   if (heldNotice) ctx.emitNotice?.(heldNotice);
   const degraded = [...(m?.degraded ?? [])];
   if (safeIndexPending) degraded.push({ stage: 'safe_index_pending' });
+  if (quotedFacts === null && merged.length) degraded.push({ stage: 'saved_facts_withheld' });
   if (readiness.status === 'by_design') degraded.push({ stage: 'projection_by_design' });
   else if (readiness.status !== 'ready') {
     degraded.push({ stage: readiness.status === 'projection_pending' ? 'projection_pending' : 'projection_status_unknown' });
@@ -761,6 +773,7 @@ const search: Operation = {
     const keywordCount = timings.overlap('keyword_count', startKeywordCount(ctx.engine, queryText, types, readOpts, searchDone.promise));
     const resolving = offset === 0 ? startEntityResolution(ctx, queryText, { ...scope, excludePrivate }) : undefined;
     const explainPrep = await setup(() => prepareExplainTarget(ctx, p, scope, excludePrivate, 'search'));
+    const pageCap = await setup(() => remotePageCap(ctx, p));
     const searchOpts = {
       limit,
       offset,
@@ -779,9 +792,10 @@ const search: Operation = {
       ...(plan?.rankCut ? { pageRankCut: plan.rankCut } : {}),
       _timings: timings,
     };
-    const primary = await hybridSearchCached(ctx.engine, queryText, {
+    const capped = capVectorOnlyPages(await hybridSearchCached(ctx.engine, queryText, {
       ...searchOpts, onMeta: (m) => { capturedMeta = m; }, explain: p.explain === true, explainTarget: explainPrep?.trace,
-    }).finally(searchDone.resolve);
+    }).finally(searchDone.resolve), pageCap);
+    const primary = capped.rows;
     const declarations = new DeclarationMemo();
     const fanned = offset === 0
       ? await timings.stage('alias_fanout', () => withAliasFanOut(ctx.engine, primary, queryText, { ...scope, excludePrivate },
@@ -796,7 +810,7 @@ const search: Operation = {
     maybeCaptureSearch(ctx, queryText, results, latency_ms, true, capturedMeta);
     // #3800: cap AFTER capture/meta so eval + cache see the real payload.
     return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, capturedMeta, snippetCap, timings,
-      async rows => withCountMeta(withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, capturedMeta, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'search', entity: fanned.entity, filterHintFor: { op: 'search', p }, timings })), ...(fanned.fanout ? { fanout: fanned.fanout } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'search')),
+      async rows => withCountMeta(withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, capturedMeta, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'search', entity: fanned.entity, filterHintFor: { op: 'search', p }, timings })), ...(fanned.fanout ? { fanout: fanned.fanout } : {}), ...(capped.meta ? { page_cap: capped.meta } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'search')),
         keywordCountMeta(await timings.part('response', 'keyword_count', () => keywordCount), offset + limit)));
   },
   scope: 'read', mutating: false,
@@ -980,12 +994,12 @@ const query: Operation = {
     const typeFilter = await setup(() => reconcileTypeFilter(ctx, querySourceScope, excludePrivate, types));
     types = typeFilter.types;
     let capturedMeta: HybridSearchMeta | null = null; let queryEmbedding: Float32Array | null = null; const resolving = startEntityResolution(ctx, queryText, { ...querySourceScope, excludePrivate });
-    const explainPrep = await setup(() => prepareExplainTarget(ctx, p, querySourceScope, excludePrivate, 'query'));
+    const [explainPrep, pageCap] = await setup(() => Promise.all([prepareExplainTarget(ctx, p, querySourceScope, excludePrivate, 'query'), remotePageCap(ctx, p)]));
     // v0.32.x search-lite: route the query op through hybridSearchCached so
     // token budget and intent weighting apply at the operation boundary.
     // Semantic cache reuse is suspended in the wrapper.
     // (#1663: `let` — the CRAG gate below may swap in an escalated run.)
-    let results = await hybridSearchCached(ctx.engine, queryText, {
+    let { rows: results, meta: pageCapMeta } = capVectorOnlyPages(await hybridSearchCached(ctx.engine, queryText, {
       // #4356 — was a hard `|| 20`, independent of the mode-resolution
       // hybridSearchCached applies when `limit` is falsy (undefined OR 0):
       // `opts?.limit || resolvedMode.searchLimit` (hybrid.ts). Passing
@@ -1040,7 +1054,7 @@ const query: Operation = {
       // v0.43 — relational recall override. Omitted = smart default (mode bundle).
       relationalRetrieval: typeof p.relational === 'boolean' ? (p.relational as boolean) : undefined,
       explain: p.explain === true, explainTarget: explainPrep?.trace, _timings: timings,
-    });
+    }), pageCap);
     const declarations = new DeclarationMemo();
     const primaryRows = results;
     const fanned = await timings.stage('alias_fanout', () => withAliasFanOut(ctx.engine, primaryRows, queryText, { ...querySourceScope, excludePrivate },
@@ -1126,7 +1140,7 @@ const query: Operation = {
           crag.escalated = true;
           crag.escalated_confidence = regraded.level;
           if (confidenceRank(regraded.level) > confidenceRank(grade.level)) {
-            results = escalated.slice(0, effectiveLimit);
+            ({ rows: results, meta: pageCapMeta } = capVectorOnlyPages(escalated.slice(0, effectiveLimit), pageCap));
             capturedMeta = escalatedMeta;
             grade = regraded;
             crag.confidence = regraded.level;
@@ -1207,7 +1221,7 @@ const query: Operation = {
     // #3800: cap AFTER capture/meta/CRAG so every internal consumer graded
     // and recorded the real payload; only the returned envelope is snipped.
     return evidenceOutput(ctx, p, results, plan, { ...querySourceScope, excludePrivate, detail }, capturedMeta, snippetCap, timings,
-      async rows => withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'query', entity: fanned.entity, filterHintFor: { op: 'query', p }, timings })), crag, ...(fanned.fanout ? { fanout: fanned.fanout } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'query')));
+      async rows => withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'query', entity: fanned.entity, filterHintFor: { op: 'query', p }, timings })), crag, ...(fanned.fanout ? { fanout: fanned.fanout } : {}), ...(pageCapMeta ? { page_cap: pageCapMeta } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'query')));
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'query', positional: ['query'] },
@@ -1258,7 +1272,7 @@ const assemble_evidence: Operation = {
       detail: p.detail as 'low' | 'medium' | 'high' | undefined,
       caller: { remote: ctx.remote !== false, ...scope, excludePrivate },
     });
-    return { ...out, results: await stampPageTrust(ctx.engine, out.results, scope.minTrust) };
+    return ctx.remote !== false ? out : { ...out, results: await stampPageTrust(ctx.engine, out.results, scope.minTrust) };
   },
 };
 

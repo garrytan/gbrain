@@ -19,7 +19,7 @@
 
 import { quarantineFilterFragment } from '../quarantine.ts';
 import { unverifiedExtractionFragment } from '../extraction-review.ts';
-import { privatePagesFilterFragment } from './private-visibility.ts';
+import { privatePagesFilterForCaller } from './private-visibility.ts';
 import { chunkVisibleFilter, currentTextProjectionFilter, requiresSafeChunks, safeChunksFilter } from './safe-chunks.ts';
 import { pageEligibleSql } from '../eligibility/sql.ts';
 import type { TrustTier } from '../trust/tier.ts';
@@ -205,7 +205,7 @@ export function buildVisibilityClause(
   // #4352 remediation: the predicate text lives ONCE in private-visibility.ts
   // (shared with listPages + the relational-arm hydrate) so it cannot drift.
   const privateClause = opts?.excludePrivate
-    ? ` AND ${privatePagesFilterFragment(pageAlias)}`
+    ? ` AND ${privatePagesFilterForCaller(pageAlias)}`
     : '';
   const chunksClause = requiresSafeChunks(opts) ? ` AND ${safeChunksFilter(pageAlias)}` : '';
   // C4: a pinned question's page holds only the question and owner notes; it is

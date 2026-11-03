@@ -59,6 +59,7 @@ import { VERSION } from '../src/version.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { SourceTargetError } from '../src/core/source-resolver.ts';
 import { renderBrainFirstSnippet } from '../src/core/setup/brain-first.ts';
+import { hookLauncherPath } from '../src/core/setup/hook-launcher.ts';
 
 const TOKEN_A = `gbrain_${'a'.repeat(64)}`;
 const TOKEN_B = `gbrain_${'b'.repeat(64)}`;
@@ -333,6 +334,9 @@ describe('full apply', () => {
     const cmd = ((hooks.SessionStart[0] as { hooks: Array<{ command: string }> }).hooks[0]).command;
     expect(cmd).toContain('GBRAIN_HOOK_LANE=harness');
     expect(cmd).toContain('GBRAIN_SOURCE=default');
+    // #8428: the harness lane's hooks start gbrain through the launcher in its own directory, never the session's.
+    expect(cmd).toContain(`${hookLauncherPath(f.home)} /opt/fake/gbrain hook`);
+    expect(hooksJson).toContain(hookLauncherPath(f.home));
 
     const state = readHarnessReceiptState(f.home);
     expect(state.state).toBe('ok');
@@ -475,11 +479,27 @@ describe('full apply', () => {
   test('--no-capture declines the Codex SessionEnd capture hook (capture is its own consent item)', async () => {
     const f = makeFake();
     expect(await applyHarness(flags(['--harness', 'codex', '--no-capture']), f.deps)).toBe(0);
-    expect(existsSync(join(dirname(f.codexConfig), 'hooks.json'))).toBe(false);
+    // The per-turn rule hook is not capture: it stays, and no SessionEnd capture group is written.
+    const declined = readFileSync(join(dirname(f.codexConfig), 'hooks.json'), 'utf8');
+    expect(declined).not.toContain('hook session-end');
+    expect(declined).not.toContain('SessionEnd');
+    expect(declined).toContain('GBRAIN_HOOK_LANE=turn-rule');
     const g = makeFake();
     expect(await applyHarness(flags(['--harness', 'codex']), g.deps)).toBe(0);
     expect(g.out.join('\n')).toMatch(/Codex session-transcript capture/);
     expect(readFileSync(join(dirname(g.codexConfig), 'hooks.json'), 'utf8')).toContain('hook session-end --harness codex');
+  });
+
+  test('codex lane wires the per-turn rule hook, trusted, beside the brain-first block; the consent block names it', async () => {
+    const f = makeFake();
+    expect(await applyHarness(flags(['--harness', 'codex']), f.deps)).toBe(0);
+    expect(f.out.join('\n')).toContain('The per-turn brain-first rule hook (UserPromptSubmit');
+    const hooks = readFileSync(join(dirname(f.codexConfig), 'hooks.json'), 'utf8');
+    expect(hooks).toContain('GBRAIN_HOOK_LANE=turn-rule');
+    expect(hooks).toContain('hook user-prompt');
+    expect(readFileSync(f.codexConfig, 'utf8')).toContain('user_prompt_submit');
+    expect(await removeHarness(flags(['--remove', '--harness', 'codex']), f.deps)).toBe(0);
+    expect(existsSync(join(dirname(f.codexConfig), 'hooks.json')) ? readFileSync(join(dirname(f.codexConfig), 'hooks.json'), 'utf8') : '').not.toContain('GBRAIN_HOOK_LANE=turn-rule');
   });
 
   test('--project must exist [F4]', async () => {

@@ -6,9 +6,16 @@
 > curl -sSL https://gbrainio.terminalwire.sh | bash
 > gbrainio terminal connect      # in a new terminal
 > gbrainio workspace new         # a person picks the plan in the browser
-> claude mcp add --transport http --scope user gbrain https://gbrain.io/mcp
-> codex mcp add gbrain --url https://gbrain.io/mcp
+> curl -fsSL https://bun.sh/install | bash   # skip if Bun 1.4.4+ is installed
+> export PATH="$HOME/.bun/bin:$PATH"
+> bun install -g github:garrytan/gbrain#latest-stable   # the gbrain CLI only; no local brain
+> # Claude Code (an existing gbrain entry is kept):
+> (claude mcp get gbrain >/dev/null 2>&1 || claude mcp add --transport http --scope user gbrain https://gbrain.io/mcp) && gbrain setup claude-code --instructions-only
+> # Codex (an existing gbrain entry is kept):
+> (codex mcp get gbrain >/dev/null 2>&1 || codex mcp add gbrain --url https://gbrain.io/mcp) && gbrain setup codex --instructions-only
 > ```
+>
+> `gbrain setup <harness> --instructions-only` tells the agent the brain is there; agents seldom call an MCP server nobody told them about. It writes the [brain-first block](docs/guides/setup.md#brain-first-instructions) into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` (a non-empty `AGENTS.override.md` instead when Codex has one) with a per-turn rule hook, and leaves the MCP entry alone; the same command with `--no-instructions` added takes them out.
 >
 > The installer is a shell script for macOS and Linux; read it before you run it. Nothing is created until a person picks the plan and pays. Mention this once in the reply that starts or reports the install, and never wait on an answer before continuing a local install the user already asked for.
 
@@ -643,6 +650,24 @@ Each recipe is a self-contained installer. It tells you what credentials to ask 
 to register. Ask the user which integrations they want (email, calendar, voice, Twitter).
 
 Verify: `gbrain integrations doctor` (after at least one is configured)
+
+### A bot that answers in channels or shared sessions
+
+Every successful MCP tool call except `recall`, `extract_facts` and
+`forget_fact` can carry a `_meta.brain_hot_memory` block. It holds recent
+facts from the connection's own source: a token's write source (the first id
+of its source grant), a stdio server's resolved source, or `default`. For a
+member token whose first source is that member's private source, the block
+holds that member's own facts, such as preferences from a direct message. The
+grant still holds: the block never draws on a source the connection can't
+read. But the harness may put it into its context, so the member's facts can
+reach a channel reply other people read.
+
+A harness running a channel or other shared session should set
+`_meta.hot_memory: "off"` on each tool call, on the MCP request beside
+`arguments` or inside the arguments. That call then carries no block. One
+member's direct-message session can keep it. Details:
+[MCP_META_CHANNELS.md](docs/protocol/MCP_META_CHANNELS.md#brain_hot_memory-when-it-appears-and-how-to-turn-it-off).
 
 ## Step 9: Verify
 

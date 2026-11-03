@@ -56,6 +56,7 @@ import type { CapabilityReport } from './capability.ts';
 import { maintenanceTransaction } from './persistence/attribution.ts';
 import { managedPersistenceEnabled } from './persistence/ownership.ts';
 import { isSegmentedPage } from './page-body/page-shape.ts';
+import { speakerOf } from './context/session-speaker.ts';
 
 /** Delay before the serve-startup sweep fires (post-connect settle). */
 export const STARTUP_SWEEP_DELAY_MS = 3_000;
@@ -916,6 +917,7 @@ async function runCorpusIngestPass(
         // notability filter so batch-extracted turns are indistinguishable
         // from prompt-harvested ones.
         source: wbMeta ? 'hook:writeback' : 'sweep:corpus',
+        ...speakerOf(full),
         mode: 'inline',
         remote: false,
         abortSignal: signal,

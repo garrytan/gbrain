@@ -168,13 +168,14 @@ describe('harness_wiring by state', () => {
   const BIN = '/opt/gbrain/bin/gbrain';
   const owner = (transport: 'stdio' | 'http', is_self = false): LockOwner => ({ pid: 4242, transport, is_self });
 
-  test('one harness, no serve: harness-native stdio registration with the absolute binary, --surface starter and --advertise verbs', () => {
+  test('one harness, no serve: gbrain setup registers the absolute binary behind the hook launcher, --surface starter and --advertise verbs', () => {
     const claude = harnessWiringEntry({ transport: 'cli', harnesses: ['claude-code'], lockOwner: null, gbrainBin: BIN });
-    expect(claude.fix?.argv).toEqual(['claude', 'mcp', 'add', 'gbrain', '--', BIN, 'serve', '--surface', 'starter', '--advertise', 'verbs']);
+    expect(claude.fix?.argv).toEqual(['gbrain', 'setup', 'claude-code', '--no-hooks', '--gbrain-bin', BIN]);
+    expect(claude.fix?.why).toContain(`/hook-launcher/gbrain-hook ${BIN} serve --surface starter --advertise verbs`);
     expect(claude.fix?.consent).toEqual(['persistent_install']);
     expect(claude.fix?.why).toContain('~/.claude.json');
     expect(harnessWiringEntry({ transport: 'cli', harnesses: ['codex'], lockOwner: null, gbrainBin: BIN }).fix?.argv)
-      .toEqual(['codex', 'mcp', 'add', 'gbrain', '--', BIN, 'serve', '--surface', 'starter', '--advertise', 'verbs']);
+      .toEqual(['gbrain', 'setup', 'codex', '--no-hooks', '--gbrain-bin', BIN]);
     expect(harnessWiringEntry({ transport: 'cli', harnesses: ['opencode'], lockOwner: null, gbrainBin: BIN }).fix?.argv)
       .toEqual(['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks']);
   });

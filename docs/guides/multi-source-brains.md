@@ -115,6 +115,36 @@ behave as you'd expect — every page appears in search.
 
 Flip later with `gbrain sources federate <id>` / `unfederate <id>`.
 
+### An unscoped connection whose sources hold no pages
+
+A remote token minted without `--sources`, or an agent stdio connection with
+no binding, has no source grant: it reads the `default` source plus every
+federated source. Because a new source is not federated, a brain whose pages
+all live in such sources would answer that connection's every search with an
+empty result that reads like a clean miss.
+
+So an unscoped `search`, `query`, `recall` or `list_pages` from such a
+connection that comes back empty is refused with `sources_not_readable` when
+the sources it reads hold no page at all (for `recall` and `query`, no world fact either)
+while other sources on the brain hold pages. The refusal
+never names a source the connection cannot read. Its fix is host-side: the
+user picks the source these connections should read and the brain host runs
+`gbrain sources federate <source>`, or grants the connection its sources
+(`gbrain auth rescope --token <name> --sources <ids>`).
+
+Nothing else changes. A read whose sources hold pages but match nothing
+answers empty, as does a brain where no source holds a page. A token granted
+sources, an OAuth client, a bound connection and a read that names
+`source_id` or `source_ids` are never refused: the refusal only ever stops a
+call, never widens what it reads. Federating a source never shows its
+`visibility: private` pages to a remote connection.
+
+On a brain that is not managed, `gbrain sources add` without `--federated` or `--no-federated` warns on stderr that the new source is not federated, and
+when the sources an unscoped connection reads hold no page it also prints the
+next step on stdout (`next: gbrain sources federate <id>`), and as `next`
+(`command`, `argv`, `why`) under `--json`. A managed brain's `sources add`
+prints its lifecycle receipt instead, without the warning or the next step.
+
 ### Explicit reads from a bound agent connection
 
 An agent connection started with `GBRAIN_SOURCE=<id>` (or inside a
@@ -139,12 +169,14 @@ grant.
 
 ### Narrow one request with `source_ids`
 
-`search` and `query` take `source_ids`, a list of source ids (CLI:
-`--source-ids source-a,source-b`). The request reads only those sources:
+`search`, `query`, `recall` and `list_pages` take `source_ids`, a list of
+source ids (CLI: `--source-ids source-a,source-b`). The request reads only
+those sources:
 
 - Each id is checked exactly like an explicit `source_id`. A remote agent
-  naming a source outside its grant gets `permission_denied` for the whole
-  request, and a removed or archived source gets `unknown_source`. So the
+  naming a source outside its grant gets `permission_denied` (`scope_denied`
+  from `recall`) for the whole request, and a removed or archived source gets
+  `unknown_source` (`not_found` from `recall`). So the
   list can narrow a request but never widen it.
 - Omitting `source_ids`, or passing `[]` or a blank string, reads every
   source the caller can read, as before.
@@ -153,10 +185,14 @@ grant.
   searched: the result is empty with an `empty_retrieval` notice, never a
   fallback to the wider scope.
 - `__all__` and malformed ids in the list are `invalid_params`.
+- On the starter surface, `recall` and `list_pages` accept `source_ids` but
+  leave it out of their listed schema to keep the tool list small; harness
+  code sets it, and `request_tools` returns the full schema.
 
 Every part of the request reads the narrowed sources: keyword, vector and
 title matches, other names, entity anchoring, saved facts, the CRAG re-run,
-think escalation and evidence delivery.
+think escalation and evidence delivery; on `recall`, every fact arm and the
+page-search arm.
 
 **Say to your agent:** *"Search my brain for the acme-example renewal, but
 only in source-a."*
@@ -166,7 +202,9 @@ only in source-a."*
 A shared brain often holds one source per member or project, with one bot
 answering for several people. Give each member their own token, granted only
 the sources that member may read, and send each member's requests with that
-member's token:
+member's token. This is the supported production setup today: one
+`serve-http` API key per member, each with its own source grant. The server
+never learns who is asking from the request itself.
 
 ```bash
 gbrain auth create bot-alice-example
@@ -185,9 +223,13 @@ per-member tokens for that, and `source_ids` to narrow further.
 
 ### Lay out sources by who may read them
 
-gbrain enforces access per source, never per page. Two pages in one source are
-readable by exactly the same tokens. So put content in sources by who may read
-it, before any member's bot connects:
+Source grants are the coarse boundary: without page readers, two pages in one
+source are readable by exactly the same tokens. Inside one source, a page that
+names readers in frontmatter `readable_by` is read only by credentials bound to
+a listed member, and a folder rule (`gbrain access rule add`) does the same for
+a whole prefix ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape));
+both only narrow a grant, never widen it. Either way, put content in sources by
+who may read it, before any member's bot connects:
 
 - **One source per channel, team or member.** Give a channel's pages a source
   of their own (`channel-a`), a team's documents theirs (`team-a`), and each
@@ -203,6 +245,24 @@ it, before any member's bot connects:
 
   The first id is the token's write source, so a member's saved memories land
   in their own private source.
+- **Let each member read their own private pages (optional).** Remote
+  reads hide every `visibility: private` page by default, even in a granted
+  source. To let a member's agent read the private pages in the sources its
+  grant names, and no others, opt that token or client in:
+
+  ```bash
+  gbrain auth rescope --token bot-alice-example --private-pages granted-sources
+  gbrain auth rescope --client <client_id> --private-pages granted-sources
+  ```
+
+  A token with no source grant, a federated source the grant does not name,
+  and a request's `source_ids` never add a source; `context_pack`, `delta`
+  and writes keep hiding private pages. In a named source the grant also
+  opens pages with a privacy alias (`access`, `confidentiality`), atoms,
+  concepts and events derived from private or unknown origins, and pages
+  whose declared lineage is private; pinned questions stay owner-only.
+  `--private-pages none` hides them again on the next request, and
+  `gbrain auth list` shows each token's setting.
 
 > **Warning: one shared source has no boundary inside it.** A bot that answers
 > everyone with one unscoped token over a single source exposes everything in
@@ -286,11 +346,12 @@ recorded mode (preview it first without `--apply`; see
 
 
 ```
-gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
+gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force] [--json]
                                Register a source. id: [a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?
                                --path must be a git repo (or a subdirectory of one) — see
                                "The git requirement for --path sources" below. --force
-                               skips that check to register before git-init exists.
+                               registers a plain directory: sync imports its files without
+                               Git, and a file removed from it keeps its page.
 gbrain sources add <id> --url <git-url> [--pat-file <p>] [--clone-dir <path>] [--no-harden]
                                Clone + register a remote repo in one step; auto-hardens
                                for durability when a PAT is provided (see "Durability" below).

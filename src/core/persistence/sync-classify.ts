@@ -57,8 +57,11 @@ export interface SyncPathState {
   levelSha256: string | null;
   /** `published`: the disk bytes hash to the attested publication's `expected_hash`, or the disk is absent after a deleting publication. */
   published: boolean;
-  /** An active hold at `p`: whether it is at level `L` in its own domain, re-screen due, or in the retry set. */
-  hold: { atLevel: boolean; rescreenDue: boolean; retried: boolean } | null;
+  /**
+   * An active hold at `p`: whether it is at level `L` in its own domain, re-screen due, or in the retry set. #7199 `unscreened`:
+   * a side-`unknown` drift hold an older gbrain wrote before the drift screen compared the page with the file at the baseline commit.
+   */
+  hold: { atLevel: boolean; rescreenDue: boolean; retried: boolean; unscreened?: boolean } | null;
   /**
    * A deletion marker at the origin: `deleted` (with the blob ids it held) or `legacy` (the baseline blob of a page deleted
    * before PR 4; `deletion` is the committed deleting request that proves it, and a legacy marker without one settles nothing).
@@ -83,6 +86,11 @@ export interface SyncPathState {
   fullObligation?: boolean;
   /** Under a `storage.keep_db` prefix, on a source that is not mirror-read-only. */
   keepDb: boolean;
+  /**
+   * #7324: a page under a declared `storage.db_only` dir: its database row is canonical, so an absent file is no deletion
+   * evidence. #8007: `unknown` while gbrain.yml's storage section is invalid; an absent file is then held, never deleted.
+   */
+  dbOnly?: boolean | 'unknown';
   /** Open work on the page or path (a queued/running/recovering request, a pending Git effect). */
   openWork: boolean;
   /**
@@ -108,7 +116,7 @@ export interface SyncClassified {
   side?: 'both' | 'unknown' | 'deleted';
   state?: 'tombstone_edited' | 'purged_differs' | 'file_gone';
   /** #7130: a `delete_drift` whose file Git never committed (`never_committed`), `.gitignore` excludes, or whose history read did not answer (`origin_unknown`). */
-  uncommitted?: 'never_committed' | 'ignored' | 'origin_unknown';
+  uncommitted?: 'never_committed' | 'ignored' | 'origin_unknown' | 'storage_invalid';
   /** `db_ahead` `db_only` under keep_db: also gets the DB-wins write. */
   keepDbWrite?: true;
   /** `db_ahead` `db_only`/`unproven` under an open full obligation: excluded and counted (`full_skipped_db_ahead`). */
@@ -173,6 +181,8 @@ function afterHold(s: SyncPathState): Matched {
   if (live && s.level === null) {
     if (s.mode === 'committed' && s.present) return { cls: 'kept', settled: true, action: 'none' };
     if (!s.present) {
+      if (s.dbOnly === true) return { cls: 'kept', settled: true, action: 'none' };
+      if (s.dbOnly === 'unknown') return { cls: 'delete_drift', settled: false, action: 'hold', side: 'deleted', state: 'file_gone', uncommitted: 'storage_invalid' };
       if (s.originEvidence && s.originEvidence !== 'committed') return { cls: 'delete_drift', settled: false, action: 'hold', side: 'deleted', state: 'file_gone',
         uncommitted: s.originEvidence === 'unknown' ? 'origin_unknown' : s.originEvidence };
       return proof ? { cls: 'delete', settled: false, action: 'delete' } : { cls: 'delete_drift', settled: false, action: 'hold', side: 'deleted', state: 'file_gone' };
@@ -204,7 +214,9 @@ function afterHold(s: SyncPathState): Matched {
     }
   }
   if ((!fileSame && proof && live) || !live) return { cls: 'import', settled: false, action: 'import' };
-  if (live && s.record?.revision == null && s.level !== null && s.level === s.baseline) return { cls: 'legacy_unverified', settled: true, action: 'none' };
+  // #7199: an older side-`unknown` hold's pass moved the baseline to its own level, so its one re-screen runs as drift. #7931: so
+  // does a hold someone asked to re-screen (`sources retry-held`, a `release_hold` apply): as legacy_unverified it would stand.
+  if (live && s.record?.revision == null && s.level !== null && s.level === s.baseline && !s.hold?.unscreened && !s.hold?.retried) return { cls: 'legacy_unverified', settled: true, action: 'none' };
   if (live && s.keepDb && s.mode === 'committed' && s.dirty === 'clean') return { cls: 'keep_db', settled: false, action: 'keep_db' };
   return { cls: 'drift', settled: false, action: 'hold', side: s.record?.revision != null ? 'both' : 'unknown' };
 }
@@ -238,7 +250,7 @@ function gitVerdict(state: SyncPathState): Matched {
     case 'drift': case 'keep_db': case 'deleted_edited': case 'legacy_unverified': return wins({ cls: 'import', settled: false, action: 'import' });
     case 'db_ahead': return rest.sub === 'pending' ? rest : wins({ cls: 'import', settled: false, action: 'import' });
     case 'delete': case 'delete_drift':
-      if (state.originEvidence === undefined) return rest;
+      if (state.originEvidence === undefined || rest.uncommitted === 'storage_invalid') return rest;
       if (state.originEvidence !== 'committed') return wins({ cls: 'kept', settled: true, action: 'none' });
       return rest.cls === 'delete' ? rest : wins({ cls: 'delete', settled: false, action: 'delete' });
     default: return rest;

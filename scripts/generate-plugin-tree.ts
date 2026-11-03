@@ -343,6 +343,19 @@ function emitVariant(variantsDir: string, personaName: string, def: PersonaDef, 
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   cpSync(join(ROOT, '.agents', 'gbrain-launcher'), join(root, '.agents', 'gbrain-launcher'));
 
+  // The per-turn hook names its plugin (GBRAIN_PLUGIN) so that, with several
+  // gbrain plugins enabled, the CLI runs only the highest-precedence one's
+  // (pluginHookYields, src/core/bootstrap/plugin-lanes.ts).
+  const LANE = 'env GBRAIN_HOOK_LANE=plugin ';
+  const withIdentity = (hooks: unknown): unknown => {
+    const text = JSON.stringify(hooks);
+    if (!/^[a-z0-9-]+$/.test(def.plugin_name) || !text?.includes(LANE)) {
+      console.error(`generate-plugin-tree: cannot name ${def.plugin_name} in the root manifests' hook commands (expected "${LANE}…")`);
+      process.exit(1);
+    }
+    return JSON.parse(text.replaceAll(LANE, `${LANE}GBRAIN_PLUGIN=${def.plugin_name} `));
+  };
+
   // Claude plugin manifest: model on the root manifest, retargeted at the
   // variant root (skills live at ./skills/ here, not ./plugin/skills/).
   const claudeBase = JSON.parse(readFileSync(join(ROOT, '.claude-plugin', 'plugin.json'), 'utf8')) as Record<
@@ -355,6 +368,7 @@ function emitVariant(variantsDir: string, personaName: string, def: PersonaDef, 
     version,
     description: `${def.description} (persona variant of the gbrain plugin — ${slugs.length} skills)`,
     skills: './skills/',
+    hooks: withIdentity(claudeBase.hooks),
   };
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   mkdirSync(join(root, '.claude-plugin'), { recursive: true });
@@ -374,6 +388,7 @@ function emitVariant(variantsDir: string, personaName: string, def: PersonaDef, 
     description: `${def.description} (persona variant of the gbrain plugin — ${slugs.length} skills)`,
     skills: './skills/',
     mcpServers: './.codex-plugin/mcp.json',
+    hooks: withIdentity(codexBase.hooks),
   };
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   mkdirSync(join(root, '.codex-plugin'), { recursive: true });

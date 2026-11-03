@@ -113,13 +113,24 @@ export function pendingReceiptOf(error: unknown): WriteReceipt | null {
 }
 
 /**
+ * GBRA-248: `--accept-pending` covers a write that will commit on its own, not
+ * one queued for an owner host that runs no consumer and has been quiet past
+ * the stale window (a moved or restored brain, a replaced container home).
+ */
+export function acceptPendingCovers(receipt: WriteReceipt | null | undefined): boolean {
+  return !receipt?.diagnostic?.owner;
+}
+
+/**
  * The one CLI exit verdict for a failed write (O-DX-1/O-ENG-1): an admitted
- * pending receipt exits PENDING_WRITE_EXIT_CODE (0 with the opt-in); every
- * other error, including a pre-admission `unavailable`, exits 1.
+ * pending receipt exits PENDING_WRITE_EXIT_CODE (0 with the opt-in, unless the
+ * receipt names a stale owner); every other error, including a pre-admission
+ * `unavailable`, exits 1.
  */
 export function writeErrorExitCode(error: unknown, acceptPending: boolean): number {
-  if (!pendingReceiptOf(error)) return 1;
-  return acceptPending ? 0 : PENDING_WRITE_EXIT_CODE;
+  const receipt = pendingReceiptOf(error);
+  if (!receipt) return 1;
+  return acceptPending && acceptPendingCovers(receipt) ? 0 : PENDING_WRITE_EXIT_CODE;
 }
 
 /**

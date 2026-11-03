@@ -191,3 +191,27 @@ describe('e2e file ownership', () => {
     expect(jobBlock('e2e-status')).toContain('needs.tier1-backend-matrix.result');
   });
 });
+
+describe('tier1-graduation job (GBRA-135 L2)', () => {
+  const GRADUATION = [...E2E_EXCLUSIONS].filter(f => f.startsWith('test/e2e/graduation-'));
+
+  test('runs every excluded graduation file once, in two weighted shards, on direct Postgres and PgBouncer', () => {
+    const job = jobBlock('tier1-graduation');
+    expect(GRADUATION).toHaveLength(15);
+    const run = job.split('\n').find(l => l.includes('run: bash scripts/run-e2e.sh '))!;
+    expect(run.trim().replace('run: bash scripts/run-e2e.sh ', '').split(' ').sort()).toEqual([...GRADUATION].sort());
+    expect(job).toContain('shard: [1, 2]');
+    expect(job).toContain('SHARD: ${{ matrix.shard }}/2');
+    expect(job).toContain('GBRAIN_PGBOUNCER_URL: postgresql://postgres:postgres@localhost:55433/gbrain_test?prepare=false');
+    expect(job).toContain('GBRAIN_TEST_RECEIPT_LANE: tier1');
+    expect(job).toContain('name: receipts-tier1-graduation-${{ matrix.shard }}');
+    for (const file of GRADUATION) expect(jobBlock('tier1')).not.toContain(file);
+  });
+
+  test('e2e-status requires the job and checks its result', () => {
+    const status = jobBlock('e2e-status');
+    expect(status).toContain('tier1-graduation');
+    expect(status).toContain('GRADUATION: ${{ needs.tier1-graduation.result }}');
+    expect(status).toContain('"$GRADUATION"');
+  });
+});

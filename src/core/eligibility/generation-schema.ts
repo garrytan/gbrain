@@ -24,6 +24,7 @@
  * change (backfill) updates it once (`gbrain.trust_generation_bumped`).
  */
 import { QUARANTINE_KEY } from '../quarantine.ts';
+import { requireMaintainerPoliciesSql } from '../derived-state-maintainers.ts';
 
 export const TRUST_POLICY_STATE_TABLE = 'trust_policy_state';
 export const TRUST_GENERATION_FUNCTION = 'gbrain_bump_trust_generation';
@@ -67,9 +68,11 @@ export const TRUST_GENERATION_WHEN: Readonly<Record<string, Partial<Record<Gener
   needs_rederive: { insert: 'TRUE' },
 };
 
-const BUMP_FUNCTION = `CREATE OR REPLACE FUNCTION ${TRUST_GENERATION_FUNCTION}() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+/** Under RLS the writer needs the counter row (#7637, derived-state-maintainers.ts), else a typed refusal at commit. */
+export const BUMP_FUNCTION = `CREATE OR REPLACE FUNCTION ${TRUST_GENERATION_FUNCTION}() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN
   IF COALESCE(current_setting('gbrain.trust_generation_bumped', true), '') = 'on' THEN RETURN NULL; END IF;
+  ${requireMaintainerPoliciesSql(TRUST_POLICY_STATE_TABLE, ['SELECT', 'INSERT', 'UPDATE'])}
   INSERT INTO ${TRUST_POLICY_STATE_TABLE} (id, generation, bumped_at) VALUES (1, 1, now())
     ON CONFLICT (id) DO UPDATE SET generation = ${TRUST_POLICY_STATE_TABLE}.generation + 1, bumped_at = now();
   PERFORM set_config('gbrain.trust_generation_bumped', 'on', true);

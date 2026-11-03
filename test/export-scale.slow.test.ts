@@ -15,6 +15,7 @@ if (!Number.isInteger(PAGES) || PAGES < 1001 || PAGES % 100 !== 1 || PAGES > 999
   throw new Error(`GBRAIN_TEST_EXPORT_SCALE_PAGES must be a multiple of 100 plus 1, between 1001 and 999901, got ${process.env.GBRAIN_TEST_EXPORT_SCALE_PAGES}`);
 }
 const FENCED = (PAGES - 1) / 100;
+const FOLDER_POLICY_READS = 1;
 const NONEMPTY_BATCHES = Math.ceil(PAGES / 256);
 const pageFile = (n: number) => `scale/p${String(n).padStart(6, '0')}.md`;
 
@@ -78,7 +79,7 @@ for (const backend of testBackends()) describe(`export scale: ${backend}`, () =>
       expect(batches).toBe(NONEMPTY_BATCHES + 1); expect(largestBatch).toBe(256);
       expect(ledgerReads).toBe(NONEMPTY_BATCHES); expect(normalizations).toBe(FENCED);
       expect(transactions).toBe(1); expect(rawQueries).toBe(FENCED);
-      expect(executeRawQueries).toBe(PAGES + (NONEMPTY_BATCHES + 1) + NONEMPTY_BATCHES * 2 + FENCED + 2);
+      expect(executeRawQueries).toBe(PAGES + (NONEMPTY_BATCHES + 1) + NONEMPTY_BATCHES * 2 + FENCED + 2 + FOLDER_POLICY_READS);
       expect(stagingPayloadBytes).toBeGreaterThan(PAGES);
       expect(stagingManifestBytes).toBeGreaterThan(stagingPayloadBytes);
       console.log(JSON.stringify({ backend, selected: PAGES, processed: PAGES, rawSidecars: FENCED, taggedPages: FENCED,

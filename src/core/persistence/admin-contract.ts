@@ -16,7 +16,7 @@ export const PERSISTENCE_ADMIN_OPERATIONS = [
  * added there: the owner advertises it in `administration_extensions`, which older clients ignore, and a client calls
  * one only when the owner lists it.
  */
-export const PERSISTENCE_ADMIN_EXTENSIONS = ['writer_failures', 'writer_transfer_cancel'] as const;
+export const PERSISTENCE_ADMIN_EXTENSIONS = ['writer_failures', 'writer_transfer_cancel', 'writer_settle_effects'] as const;
 export type PersistenceAdminExtension = typeof PERSISTENCE_ADMIN_EXTENSIONS[number];
 export type PersistenceAdminOperation = typeof PERSISTENCE_ADMIN_OPERATIONS[number] | PersistenceAdminExtension;
 export function isPersistenceAdminOperation(value: unknown): value is PersistenceAdminOperation {

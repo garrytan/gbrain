@@ -6,6 +6,9 @@
     "scripts/serial-files.tsv": [
       "test/scripts/serial-files.test.ts"
     ],
+    "docs/contracts/qm-memory-provider/v1.json": [
+      "test/qm-memory-contract.test.ts"
+    ],
     "src/cli.ts": [
       "test/cli-goldens.test.ts"
     ],
@@ -20,7 +23,11 @@
     ],
     "scripts/ubicloud/ubi-runner.sh": [
       "test/scripts/ubi-runner.test.ts",
+      "test/scripts/ubi-runner-run.test.ts",
       "test/scripts/ci-ubicloud-vm-names.test.ts"
+    ],
+    ".gstack/ubicloud.json": [
+      "test/scripts/ubi-runner-run.test.ts"
     ],
     "scripts/ubicloud/reap-expired.ts": [
       "test/scripts/ubicloud-reap-expired.test.ts"
@@ -34,6 +41,11 @@
     ".github/workflows/ci-health.yml": [
       "test/scripts/ci-cost-ledger.test.ts",
       "test/scripts/ci-health-report.test.ts"
+    ],
+    ".github/workflows/e2e.yml": [
+      "test/scripts/e2e-shard-budget.test.ts",
+      "test/scripts/e2e-wiring.test.ts",
+      "test/scripts/full-ci-workflow.test.ts"
     ],
     ".claude-plugin/plugin.json": [
       "test/codex-plugin-manifest.test.ts",
@@ -53,7 +65,28 @@
     ],
     "test/grandfather-capacity.test.ts": [
       "test/grandfather-managed.test.ts"
-    ]
+    ],
+    "scripts/ubicloud/*.sh": [
+      "test/scripts/awk-portability.test.ts"
+    ],
+    "scripts/postgres-arm-weights-postgres-only.json": [
+      "test/scripts/postgres-unit-arms.test.ts"
+    ],
+    "scripts/*-weights.metadata.json": [
+      "test/scripts/mine-shard-weights.test.ts"
+    ],
+    "docs/eval/system-one/runners/ubicloud-setup.sh": [
+      "test/scripts/vm-setup-usage.test.ts"
+    ],
+    "scripts/bench/production-soak/vm-setup.sh": [
+      "test/scripts/vm-setup-usage.test.ts"
+    ],
+    "scripts/bench/stall-repro-vm-setup.sh": [
+      "test/scripts/vm-setup-usage.test.ts"
+    ],
+    "scripts/bench/**": [],
+    "docs/eval/system-one/runners/**": [],
+    "docs/eval/system-one/generators/**": []
   },
   "guards": [
     {
@@ -112,5 +145,40 @@
     ],
     "visibility": "public"
   },
-  "remote_gate": "bash scripts/pregate-remote-gate.sh"
+  "remote_gate": "bash scripts/pregate-remote-gate.sh",
+  "run_profiles": {
+    "test": {
+      "workflow": "test.yml",
+      "events": ["workflow_dispatch", "push"],
+      "jobs": ["full-suite"],
+      "artifact": "full-suite-tree"
+    },
+    "e2e": {
+      "workflow": "e2e.yml",
+      "events": ["workflow_dispatch", "push"],
+      "jobs": ["e2e-full-suite"],
+      "artifact": "e2e-full-suite-tree"
+    }
+  },
+  "remote_gate_runs": {
+    "profiles": ["test", "e2e"],
+    "inventory": "bash scripts/pregate-remote-gate.sh --list"
+  },
+  "allowlist": [
+    {
+      "finding": "pii.phone.e164",
+      "paths": [
+        "scripts/*-weights.metadata.json"
+      ],
+      "reason": "shard-weight metadata records GitHub Actions run ids and commit counts, never phone numbers"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        ".github/workflows/*.yml"
+      ],
+      "pattern": "pglite-snapshot-(?:default-)?\\$\\{\\{ runner\\.os \\}\\}-\\$\\{\\{ hashFiles\\('(?:src|test|scripts)(?:/[a-z*][a-z*_-]*(?:\\.[a-z]+)?)+'(?:, '(?:src|test|scripts)(?:/[a-z*][a-z*_-]*(?:\\.[a-z]+)?)+')*\\) \\}\\}$",
+      "reason": "GitHub Actions PGLite snapshot cache keys: the whole value is pglite-snapshot-[default-]${{ runner.os }}-${{ hashFiles(<args>) }} and every argument is a lowercase path or glob under src/, test/ or scripts/; an argument with digits, capitals or a ./ prefix is not covered and stays flagged"
+    }
+  ]
 }

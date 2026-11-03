@@ -600,7 +600,9 @@ gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
 # run_config.via_operation_summary has the tree, p50/p95 latency and model calls
 # per query. A run that expects expansion fails (exit 1) when any question did
 # not expand (`expansion_not_applied`); --expansion, --keyword-only and
-# --capture-pool are refused with it.
+# --capture-pool are refused with it. The operation applies the remote page cap
+# (search.remote_page_cap, default 3), so recall past 3 pages is not comparable with
+# receipts from before it; set the cap to 0 to measure the uncapped list.
 gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
   --retrieval-only --top-k 5 --by-type --no-trajectory \
   --mode balanced --reranker on --via-operation query --op-expand off \

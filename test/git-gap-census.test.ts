@@ -355,8 +355,10 @@ for (const backend of testBackends()) describe(`git-gap census (git-canonical G1
     const root = tempDir('git-gap-policy-');
     git(root, 'init', '-q');
     await useCheckout(root);
-    put(root, 'gbrain.yml', 'storage:\n  db_only: [notes/]\n');
+    put(root, 'gbrain.yml', 'storage:\n  db_only: [notes/,\n    archive/]\n');
     await expect(censusGitGap(engine, 'default', { sample: 0 })).rejects.toMatchObject({ code: 'storage_error' });
+    put(root, 'gbrain.yml', 'storage:\n  db_only: [notes/]\n');
+    expect((await censusGitGap(engine, 'default', { sample: 0 })).declared.db_only_prefix).toBe(1);
     put(root, 'gbrain.yml', 'storage:\n  db_only:\n    - Notes/\n');
     expect((await censusGitGap(engine, 'default', { sample: 0 })).declared.db_only_prefix).toBe(1);
     rmSync(join(root, 'gbrain.yml'));

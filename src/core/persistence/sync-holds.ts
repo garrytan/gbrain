@@ -40,6 +40,7 @@ import { ORIGIN_TWINS_AUTO_RESOLVE_KEY, originTwinsPreviewArgv, type OriginConfl
 import { FENCE_REASONS, type FenceMessageLocation } from '../fence-repair/reasons.ts';
 import type { FenceReason, FenceTier, GateLetter } from '../fence-repair/types.ts';
 import { FENCE_VERSION } from '../fence-repair/refusal.ts';
+import { QUOTE_SCREEN_VERSION } from '../fence-repair/quote-markers.ts';
 import { fenceHoldFix, fenceHoldLocation, fencePreviewArgv, readFenceAutoRepair, type FenceAutoRepair, type FenceHoldLocation } from '../fence-repair/hold-fix.ts';
 import { contentHoldDocs, contentHoldFix } from '../content-repair/hold-fix.ts';
 import { classicRenameHoldFix } from '../classic-rename-holds.ts';
@@ -117,7 +118,7 @@ export interface PreparationStallMeta {
 }
 export type GitHoldReason = InvalidFrontmatterReason | 'rename_source_changed' | 'explicit_id_conflict' | FenceReason | OriginConflictReason | PageIdentityHoldReason
   | 'symlink_in_repo' | 'symlink_outside_root' | 'symlink_dangling' | 'symlink_loop' | 'permission_denied' | 'not_regular_file' | 'skip_worktree' | 'deleted_locally'
-  | 'not_utf8' | 'control_character' | 'never_committed' | 'ignored' | 'origin_unknown';
+  | 'not_utf8' | 'control_character' | 'never_committed' | 'ignored' | 'origin_unknown' | 'storage_invalid';
 /** GBRA-130: why a `page_identity_changed` hold's path has no page sync may write (A-17, B-3, B-4). */
 export type PageIdentityHoldReason = 'several_tombstones' | 'spelling' | 'identity_differs';
 /** #6712 PR 4b: the sides a `file_drift` Decision can be about, and the states of a deleted side (design v3.2 §4). */
@@ -136,6 +137,8 @@ export interface GitHoldMeta {
   fence?: FenceMessageLocation;
   /** #6188: the fence screen version that held it; an older one is re-screened by a newer gbrain. */
   fence_version?: number;
+  /** #8059: the quoted-marker screen version that held it (`QUOTE_SCREEN_VERSION`); an older one is re-screened once, without touching the parser version. */
+  quote_version?: number;
   /** Git-mode holds: the pinned blob, so discovery re-checks every hold with one `ls-tree`. */
   blob_oid?: string;
   /** The held bytes came from the working tree, not the pinned commit. */
@@ -203,6 +206,8 @@ export interface GitHoldMeta {
   identity_paths?: string[];
   /** GBRA-130 `page_identity_changed` (`identity_differs`): the frontmatter ids of the page and of the file. */
   identity_ids?: { page: string; file: string };
+  /** #8072 `file_too_large`: the streamed (segmented) preparation read the whole file to refuse it, under this gbrain; it re-screens when the file changes, on retry, or under another gbrain. */
+  streamed?: { gbrain_version: string };
 }
 
 /** #6188: why the last fence repair left a hold in place, and when the maintenance run tries it again (null: it does not). */
@@ -599,20 +604,25 @@ export async function holdBasisMoved(engine: Pick<BrainEngine, 'executeRaw'>, so
  * the file changes. GBRA-133: a `git_object_missing` hold rests on the repository's objects (a fetch restores them
  * under the same blob id), so it re-screens on every sync; a `page_write_failed` hold of a freeze fault (origin `freeze`,
  * S-63) is re-tested by every sync until it has been held `HOLD_ATTEMPTS_NEEDS_HUMAN` times, so a transient fault clears.
+ * #8072: a `file_too_large` hold is re-screened by every sync only while that costs its size (an lstat): one the streamed
+ * preparation refused after reading the whole file (`meta.streamed`) waits for its bytes to change, a retry or another gbrain.
  */
 /** GBRA-133: the `file_drift` screen version; 1 is #7340's rule (a page with no import record compares its file at the baseline commit). */
 export const FILE_DRIFT_VERSION = 1;
 
 export function holdRescreenDue(record: Pick<GitHoldRecord, 'code' | 'meta'>, retried: boolean): boolean {
-  return retried || ['frontmatter_slug_conflict', 'file_too_large', 'rename_held', 'parser_regression', 'content_rejected', 'write_gate_rejected', 'purged_content', 'legacy_slug_conflict', 'origin_conflict', 'page_identity_changed', 'git_object_missing'].includes(record.code)
+  return retried || (record.code === 'file_too_large' && record.meta.streamed?.gbrain_version !== VERSION) || ['frontmatter_slug_conflict', 'rename_held', 'parser_regression', 'content_rejected', 'write_gate_rejected', 'purged_content', 'legacy_slug_conflict', 'origin_conflict', 'page_identity_changed', 'git_object_missing'].includes(record.code)
     // #6712: a transient hold (the write owner stalled, not the file) is retried by every sync until it has been held HOLD_ATTEMPTS_NEEDS_HUMAN times.
     || (outOfAttemptsHold(record.code) && (record.meta.attempts ?? 1) < HOLD_ATTEMPTS_NEEDS_HUMAN)
     || (record.code === 'managed_image_sync_unsupported' && isMultimodalEnabled())
     || record.meta.recovery_version < RECOVERY_VERSION
     || (record.code === 'invalid_fence' && (record.meta.fence_version ?? 0) < FENCE_VERSION)
+    || (record.code === 'invalid_fence' && (record.meta.quote_version ?? 0) < QUOTE_SCREEN_VERSION)
     // GBRA-133: an unknown-side drift held before #7340's baseline rule (a Git edit to a page with no import record) imports
     // now when the page still holds its file at the baseline commit, so it is screened once more.
     || (record.code === 'file_drift' && fileDriftSide(record.meta) === 'unknown' && (record.meta.drift_version ?? 0) < FILE_DRIFT_VERSION)
+    // #8007: a deletion held while gbrain.yml's storage section was invalid is decided again by every sync, so a fixed file settles it.
+    || (record.code === 'file_drift' && record.meta.reason === 'storage_invalid')
     || (outOfAttemptsHold(record.code) && record.meta.stall?.gbrain_version !== VERSION)
     // GBRA-130 A-6: an owner fault is the writer's, not the file's: an upgrade re-tests the path.
     || (record.code === 'page_write_failed' && record.meta.write_failure?.gbrain_version !== VERSION)
@@ -716,6 +726,13 @@ function deletedDriftFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'met
   const revision = record.meta.page_revision ? ` (revision ${record.meta.page_revision})` : '';
   const preview = (prefer: 'database' | 'file') => heldDriftPreviewArgv(source, 'deleted', state, prefer, record.path);
   const verify = { argv: ['gbrain', 'sources', 'status', source, '--json'] };
+  if (state === 'file_gone' && record.meta.reason === 'storage_invalid') {
+    return { argv: ['gbrain', 'storage', 'status'], consent: [], actor: 'agent', requires_exclusive: false, docs: 'docs/storage-tiering.md',
+      why: `${record.path} is gone, but gbrain.yml's storage section is invalid or ambiguous about db_only (it does not load, declares db_only in a form that resolved no directory, or lists a deprecated supabase_only next to canonical keys), so sync cannot tell whether page ${slug} is database-only and kept it instead of deleting it (#8007). This read-only check names the problem; fix gbrain.yml at the source root (list db_only directories in block style or as a one-line [a/, b/] list), commit it, then sync again.`,
+      then: { argv: ['gbrain', 'sync', '--source', source, '--no-pull'], consent: [], actor: 'agent', requires_exclusive: false, verify,
+        why: `Decides ${record.path} again under the fixed gbrain.yml: a database-only page is kept, any other deletion follows its usual proof.` },
+      verify };
+  }
   const uncommitted = state === 'file_gone' && (record.meta.reason === 'never_committed' || record.meta.reason === 'ignored');
   const what = state === 'file_gone' && record.meta.reason === 'origin_unknown' ? `${record.path} is gone, and Git could not show whether a commit held it (its history read did not finish), so sync kept page ${slug} instead of deleting it (#7130). The --held preview reads the whole history and names the file's provenance. `
     : uncommitted ? `${record.path} is gone, but Git never committed it${record.meta.reason === 'ignored' ? ' (.gitignore excludes it)' : ''}, so its absence is no evidence of a deletion and sync kept page ${slug} instead of deleting it (#7130). Put the file back and commit it (un-ignore it first) to keep the page file-backed. `
@@ -846,7 +863,8 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
     }
     case 'file_too_large':
       return { argv: ['gbrain', 'config', 'get', 'sync.exclude'], consent: [], actor: 'agent', requires_exclusive: false,
-        why: `${record.path} is over the page size limit. The size limit is fixed, and every page under it syncs and is searchable. Leave the file out of the source: read the current sync.exclude list, then run gbrain config set sync.exclude '<current list>,${record.path}'; or, if it must be in the brain, split it into files under the limit and commit. The next gbrain sync --source ${source} --no-pull clears the hold.`,
+        why: `${record.path} is over the page size limit. The size limit is fixed, and every page under it syncs and is searchable. Leave the file out of the source: read the current sync.exclude list, then run gbrain config set sync.exclude '<current list>,${record.path}'; or, if it must be in the brain, split it into files under the limit and commit. The next gbrain sync --source ${source} --no-pull clears the hold.`
+          + (record.meta.streamed ? ` Sync read the whole file to refuse it, so it does not read it again until it changes, gbrain is upgraded, or gbrain sources retry-held ${source} schedules it (after a setting its message names changes).` : ''),
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'purged_content':
       return { argv: ['gbrain', 'pages', 'purges', 'list', '--source', source], consent: [], actor: 'user', requires_exclusive: false,
@@ -1303,8 +1321,8 @@ export function fencesNormalizedReport(sourceId: string, tally: FencesTally | un
  * commands. Remote callers get the counts and a relay instruction only.
  */
 export async function buildHoldReport(engine: Exec, input: { sourceId: string; incarnation: string; runId: string; remote: boolean;
-  policy: SyncHoldPolicy | Promise<SyncHoldPolicy>; screened: number; pendingScreen?: boolean }): Promise<Pick<import('../../commands/sync.ts').SyncResult,
-  'held' | 'held_count' | 'holds_outstanding' | 'holds_escalated' | 'holds_truncated' | 'holds_pending_screen' | 'holds_fix'>> {
+  policy: SyncHoldPolicy | Promise<SyncHoldPolicy>; screened: number; pendingScreen?: boolean; needsHuman?: (record: GitHoldRecord, auto: FenceAutoRepair | undefined) => boolean }): Promise<Pick<import('../../commands/sync.ts').SyncResult,
+  'held' | 'held_count' | 'held_needs_human' | 'holds_outstanding' | 'holds_escalated' | 'holds_truncated' | 'holds_pending_screen' | 'holds_fix'>> {
   // #6712 PR 4b: the summary, this run's holds and the policy (a caller may pass its read in flight) in one round trip.
   const [[summary], sourceHolds, policy] = await Promise.all([engine.executeRaw<{ count: number | string; images: number | string; fences: number | string; stalled: number | string; concurrent: number | string; dirty: number | string; drift: number | string }>(`SELECT COALESCE((completed_keys->0->>'count')::int,0) AS count,
       COALESCE((completed_keys->0->>'drift')::int,0) AS drift,
@@ -1325,6 +1343,8 @@ export async function buildHoldReport(engine: Exec, input: { sourceId: string; i
   // #6377: this run's slug-conflict holds route to the content lane; earlier runs' stay in `others` (the summary does not count them).
   const slugConflicts = runHolds.filter(hold => hold.code === 'frontmatter_slug_conflict').length;
   const auto = fences ? await readFenceAutoRepair(engine) : undefined;
+  // #7199: this run's holds whose verdict waits on a person (sync-status.ts holdVerdict).
+  const needsHuman = input.needsHuman ? runHolds.filter(hold => input.needsHuman!(hold, auto)).length : 0;
   const steps = holdRepairSteps(input.sourceId, { fences, others: Math.max(0, outstanding - fences - stalled - concurrent - dirty - drift - slugConflicts), ...(stalled ? { stalled } : {}),
     ...(concurrent ? { concurrent } : {}), ...(dirty ? { dirty } : {}), ...(drift ? { drift } : {}), ...(slugConflicts ? { slug_conflicts: slugConflicts } : {}) }, auto);
   // #6278: the escalation text is routed by code: stalled holds point at the writer, not at a generator.
@@ -1333,14 +1353,14 @@ export async function buildHoldReport(engine: Exec, input: { sourceId: string; i
     ? ' Escalated: more files are held than a source should carry, and most of them stalled while preparing, so the write owner (not the files) is the likely cause; inspect it with writer status before the backlog grows.'
     : ' Escalated: more files are held than a source should carry, so a generator or a gbrain upgrade is likely writing or reading them wrong; fix the cause before the backlog grows.';
   const verify = { argv: ['gbrain', 'sources', 'status', input.sourceId, '--json'] };
-  if (input.remote) return { held_count: runHolds.length, holds_fix: { argv: steps.argv, consent: [], actor: 'host_admin', requires_exclusive: false, verify,
+  if (input.remote) return { held_count: runHolds.length, ...(needsHuman ? { held_needs_human: needsHuman } : {}), holds_fix: { argv: steps.argv, consent: [], actor: 'host_admin', requires_exclusive: false, verify,
     why: `${outstanding} file(s) in source ${input.sourceId} are held and not imported; only the brain host can inspect and repair them.`,
     user_message: `Some files in source ${input.sourceId} could not be imported. Please run 'gbrain sources status ${input.sourceId}' on the brain host, then: ${steps.text}.` } };
   const fix: Action = { argv: steps.argv, consent: [], actor: 'agent', requires_exclusive: false, verify,
     why: `${runHolds.length} file(s) held this run, ${outstanding} held in source ${input.sourceId}; they do not block sync. Inspect them with 'gbrain sources status ${input.sourceId}'; `
       + (fences || stalled || concurrent || dirty || drift || slugConflicts ? `then ${steps.text}.` : 'the repair preview proposes each fix and writes nothing.')
       + (escalated ? escalation : '') };
-  return { held: runHolds.slice(0, policy.cap).map(hold => gitHoldItem(hold, auto)), held_count: runHolds.length, holds_outstanding: outstanding,
+  return { held: runHolds.slice(0, policy.cap).map(hold => gitHoldItem(hold, auto)), held_count: runHolds.length, ...(needsHuman ? { held_needs_human: needsHuman } : {}), holds_outstanding: outstanding,
     ...(escalated ? { holds_escalated: true } : {}), ...(runHolds.length > policy.cap ? { holds_truncated: true } : {}),
     ...(input.pendingScreen ? { holds_pending_screen: true } : {}), holds_fix: fix };
 }
@@ -1348,7 +1368,7 @@ export async function buildHoldReport(engine: Exec, input: { sourceId: string; i
 /** The hold fields as the sync JSON envelopes carry them (snake_case already). */
 export function syncHoldJsonFields(result: object): Record<string, unknown> {
   const fields = result as Record<string, unknown>;
-  return Object.fromEntries(['held', 'held_count', 'holds_outstanding', 'holds_escalated', 'holds_truncated', 'holds_pending_screen', 'holds_fix',
+  return Object.fromEntries(['held', 'held_count', 'held_needs_human', 'holds_outstanding', 'holds_escalated', 'holds_truncated', 'holds_pending_screen', 'holds_fix',
     'converted_from_failed', 'recovered_frontmatter', 'fences_normalized', 'fence_issues', 'dry_run', 'would_hold', 'would_hold_count', 'would_normalize', 'would_normalize_count', 'screen_skipped', 'breaker', 'slug_lines_removed']
     .filter(key => fields[key] !== undefined).map(key => [key, fields[key]]));
 }

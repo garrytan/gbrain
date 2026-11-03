@@ -118,6 +118,7 @@ function grantView(row: Record<string, unknown>) {
     scopes_grandfathered: row.scopes == null,
     sources: s.kind === 'default' ? 'default' : s.kind === 'none' ? [] : s.kind === 'scalar' ? [s.writeSource] : [...s.readSources],
     takes_holders: grant.takesHolders ?? ['world'],
+    private_pages: grant.privatePages,
   };
 }
 

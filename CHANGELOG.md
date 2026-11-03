@@ -10,6 +10,1012 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.556.0] - 2026-11-02
+
+**Mounted brains stop sharing settings and search telemetry.** In a process that serves several brains, search telemetry for every brain was written into the first brain's database, and a handful of per-brain settings were read once from whichever brain asked first and then applied to all of them. Each of those caches now belongs to its engine, and each engine gets its own telemetry writer, which stops its timer when the engine disconnects and keeps its buffer for a reconnect. A process with one brain behaves exactly as before. Contributed by @bradgessler (#8454).
+
+### Itemized changes
+
+- `src/core/engine-key.ts`: `engineKey(engine)` resolves a page-transaction clone, a read-through view and a statement-deadline wrapper to the engine behind them. Every cache below keys on it.
+- `src/core/search/telemetry.ts`: one writer per engine (`getTelemetryWriter(engine)`), held weakly, flushing only into its own engine. The disconnect drain bounds every live writer. A disconnect suspends the writer (no timer, buffer kept), so a PGLite reconnect, which is a disconnect and a connect, still flushes what was buffered; a collected engine retires its writer. `setEngine` is gone.
+- Keyed by engine: `search.track_retrieval` (`last-retrieved.ts`), `persistence.publication_ceiling_ms` and the idle bound derived from it (`publication-deadline.ts`), the minion admission policy (`admission.ts`), the `mcp.strict_params` last-known-good fallback (`validate-params.ts`), the `write_capacity_low` throttle (`capacity-snapshot.ts`), and `search.hnsw_iterative_scan` / `search.vector_legacy_guard`, which are still latched once and now latched per engine.
+- `test/engine-keyed-caches.test.ts`: two engines per setting, the second read after the first warmed the cache. All six behavior cases fail on master.
+
+## [0.60.555.0] - 2026-11-02
+
+**`gbrain query --limit N` without a token budget returns N rows again, a budgeted facts block takes at most N rows, the facts block never outscores the pages, and the CLI names fact rows instead of printing `undefined` (#8411).** Since the facts block went on by default (v0.60.491.0), it also ran on queries that passed no budget, because the shipped no-budget evidence plan carries an implicit 24,000-token budget. Its 22% share let up to 40 fact rows in ahead of the pages, so `--limit 3` could print more than a dozen fact rows before the 3 pages. Each block row was scored a hair above the top page, so they all showed the same score and outranked every hit, and the human CLI printed them as `[0.84xx] undefined -- …` because fact rows have no page slug.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| `query` without `token_budget` (CLI or MCP) | the facts block ran on the implicit budget: up to 40 fact rows on top of `limit` pages | the block does not run; the facts arm fills only free slots, so `limit` caps the whole result |
+| `query` with `token_budget` | up to 40 block rows (22% of the budget), whatever the `limit` | up to 40 block rows, 22% of the budget and at most `limit` rows, still oldest first ahead of the pages |
+| Block row `score` | top page score + n × 1e-6: above every page | the top page's score: placed first, never ranked above a page |
+| Human CLI line for a fact row | `[0.84xx] undefined -- [observed …]` and the fact text on a second line | `[0.84xx] fact:<fact_id> <entity slug> -- [observed …] <fact text>` on one line |
+
+The contract: `limit` caps the page rows. Without `token_budget`, saved facts only fill free rows, so the result never exceeds `limit`. With `token_budget`, the facts block adds at most `limit` rows (and at most 40, within 22% of the budget) ahead of the pages. `--json` rows already carried `fact_id` and keep it. The held-out arm that earned the default (`token_budget` 5,500, `limit` 25, a mean of 7.5 fact rows) runs the same block. `search.query_facts_block` stays on by default.
+
+## [0.60.554.0] - 2026-11-02
+
+**The admin UI loads again on installed builds, and setup, doctor and MCP verify stop failing on a set of install and serve shapes.** `/admin`, including the OAuth consent page, was blank on every installed build because `admin/dist/index.html` loaded a bundle the embedded manifest didn't carry. It is rebuilt from source, and `check:admin-embedded` now runs in verify so the two can't drift again. Migration 0.53.0's packaged-skill install no longer fails `idempotency_conflict` when a later release ships a different payload. `gbrain setup` refuses the bootstrap harness lane only when that lane wired the same configuration it would write, so one `GBRAIN_HOME` can serve several HOMEs. Doctor and the turn-rule lane now count a gbrain hook in Claude Code's managed settings. `gbrain mcp verify` saves its fixture under its own folder, so a nearby page no longer makes remember refuse it. On the MCP side, `get_versions` and `known_as_of` stop pointing at a `get_page` read that doesn't exist, schema inspection uses the caller's own source pack, and `open_loops` explains an empty answer when none of a scoped caller's sources is a Google source, without revealing anything outside its grant.
+
+### Itemized changes
+
+- `admin/dist`, `src/admin-embedded.ts`: rebuilt from `admin/src` (the fresh build is byte-identical to the embedded bundle; the stale one goes). The generator no longer stamps the date, and `check:admin-embedded` runs in verify. `test/admin-embedded-manifest.test.ts` (#7126).
+- `installPackagedSharedSkills`: the durable adoption id digests the request id with the skills and initial files, so an exact replay resumes and a changed payload gets its own key. `test/shared-skills-packaged-key-7734.test.ts` (#7734).
+- `gbrain setup`: the `harness_lane` owner conflict applies when a recorded harness target sits in the config directory setup would write (paths compared after resolving symlinks, so another spelling of the same HOME still counts), when the harness wired project-scoped hooks, or when the receipt records no paths for that host. `test/setup-harness-lane-scope-7771.test.ts` (#7771).
+- `inspectTurnHook` and `turnRuleHookYields` read `managed-settings.json` and its `managed-settings.d/*.json` drop-ins in the platform system directory. A managed turn-rule entry never makes the turn-rule lane yield to itself, and the install check names a managed hook as one it does not run. `test/turn-hook-managed-settings-8057.test.ts` (#8057).
+- `gbrain mcp verify`: the memory-writer fixture lives under `gbrain-verification/<fixture>`; the entity resolver is unchanged. `test/harness-verify-entity-fixture-7699.test.ts` (#7699).
+- `get_versions` / `known_as_of`: a segmented version's `body_ref` carries `version_id` and `total_bytes` only (#7800).
+- `get_active_schema_pack`, `schema_explain_type`, `schema_graph`, `schema_lint`: resolve the pack through the caller's own source, the same path capture uses. `test/schema-pack-source-inspection-7942.test.ts` (#7942).
+- `open_loops`: a `loops_no_google_in_scope` notice for a remote caller whose read covered no Google source and returned nothing. It names only the sources the call read, all inside the grant, and stays off when the source read itself failed; the result is byte-identical with and without sources outside the grant. `test/loops-remote-scope-notice-7286.test.ts` (#7286).
+- `test/serve-stdio-lifecycle.test.ts`: the watchdog forward-progress probe gave a 20 ms RPC loop too little headroom under a loaded runner, so one scheduler stall failed it. A forced 45 ms stall failed 3 of 3 on the old margin and passes 3 of 3 now (40 RPCs of 20 ms in a 200 ms window); the assertions are unchanged, and removing `noteForwardProgress` still fails it (#8446).
+- `scripts/{test,serial,e2e}-weights.json`: shard weights refreshed from the Nov 2 nightly runs.
+
+## [0.60.553.0] - 2026-11-02
+
+**GPT models that fill every optional tool argument with an empty value can now read pages and walk the graph.** GPT-6.1 Sol fills optional arguments with `0`, `[]`, `{}` or `false` as well as `""` and `null`. The `""` and `null` case was fixed in v0.60.549.0, but read operations still refused the others. `get_page` refused `around_chunk_id: 0`, `lines: {}` and a `context` sent without `grep`. `traverse_graph` refused `hops: []` sent beside `depth`, `link_type` and `direction`. Twenty-seven other optional arguments refused the same way (`limit: 0` on nine read operations, `types: []`, `only: []`, `schema_version: 0`, `get_versions` `diff: false` and more). gbrain now reads these as not provided, but only where the argument's own schema rules the value out: `0` when the valid range starts above zero, `[]` when the list must not be empty, `{}` when the object needs a field, `false` on a flag that only acts when true, and `context` when there is no `grep`, since it has no effect without it. Any value inside the valid range is kept, and so is any value on an argument that declares no such rule. So the normalized call is always one the caller could have sent by leaving the argument out, and it never reads more than that call would. This runs on every path that hands model arguments to an operation: MCP over HTTP and stdio, `gbrain call`, the subagent tool registry and both SkillOpt registries.
+
+`get_page` with `known_as_of` still refuses arguments that select a window or a view of the page, because those cut the current page's text and chunk ids and a recorded version has neither. The refusal now names each argument to drop and carries a `fix`: the same call with only the arguments a recorded-time read takes. Replaying the 651 GPT-6.1 Sol calls recorded in the SkillOpt probe, 30 of 38 `traverse_graph` calls now succeed. The other 8 send a non-empty hop chain beside `depth`. The 436 `get_page` calls that sent `context` without `grep` now pass that step and stop at the next rule, because they also send both `lines` and `bytes` (and often `around_chunk_id`), real window selectors that change the answer. Those still refuse, but `get_page`'s description and its selector parameters now say to pass at most one window selector, and the refusal's `fix` is a runnable single-selector call built from the caller's own arguments: the first selector alone, with `body: "window"`. All 436 fixes read the page in the replay.
+
+### Itemized changes
+
+- `src/core/ops/contract.ts` (`ParamDef`): new schema fields `minimum`, `exclusiveMinimum`, `minItems`, `actsWhenTrue` and `appliesWith`. Only the normalizer reads them, and they are left out of the advertised tools/list schema.
+- `src/mcp/validate-params.ts` (`normalizeOptionalParams`): drops the values those fields rule out, plus `{}` on a read operation's object whose properties require a member (a write keeps `{}`, so `edit_page within: {}` still refuses). It then drops any argument whose `appliesWith` argument is absent. Required arguments are never touched.
+- Read operations declare the fields where a sweep of every read operation showed the value refuses: `minimum: 1` on the swept limits, ids, `max_bytes`, `return_window`, `schema_version` and `min_n`; `exclusiveMinimum: 0` on `search_exact` `max_seconds`; `minItems: 1` on `types`, `only` and `hops`; `actsWhenTrue` on `get_versions` `diff`; `appliesWith: 'grep'` on `get_page` `context`.
+- `src/core/ops/get-page-body.ts`, `src/core/ops/pages.ts`, `src/core/ops/get-page-slice.ts`: the get_page description and the `lines`, `bytes`, `around_chunk_id`, `cursor` and `context` descriptions state the one-selector rule. The two-selector refusal names the selectors to drop and carries a read `fix`. `test/mcp-schema-budget.test.ts`: the starter list ceilings and the get_page budget rise by 100 characters for that sentence.
+- `src/core/ops/known-as-of.ts`: the `known_as_of does not combine with …` refusal names the arguments to drop for the caller's transport and carries a read `fix`.
+- `test/tool-args-empty-optional-sol.test.ts`: a table test over the sweep's 29 cases on every entry point (each one refuses on master), checks that in-range and non-empty values still refuse, and replays the Sol shapes for `get_page` and `traverse_graph`.
+
+## [0.60.552.0] - 2026-11-02
+
+**A master-red flake in the deferred-publish synthesis test is fixed.** `test/managed-synthesis-postprocess.test.ts` "#5854: a postprocess publish still pending after its wait is deferred, then finished by the next ordinary cycle" released the writer lock before disposing the in-process persistence consumer. Whenever the consumer drained the deferred publish in that gap, the "next ordinary cycle" found nothing left to write, and `written_slugs` came back `[]` (master run 41476223139, shard 14). The test now disposes the consumer before it releases the lock, so the next cycle is the only thing that can finish the publish. The assertions are unchanged. Forced probe: a 1.5 s pause after the lock release fails the old order with the exact CI diff and passes the new order (3 of 3).
+
+## [0.60.551.0] - 2026-11-02
+
+**The nightly opencode door now gates its nonce check on a paid Haiku turn, and a free-tier refusal fails in seconds with its reason instead of after eight silent minutes (#6049).** OpenCode's anonymous free models now cap usage per IP, and CI runners hit the cap. Past it, `opencode run` waits out the server's retry-after, which is hours, and prints nothing, so the keyless check timed out twice (about 487 s) with an empty reply and Heavy Tests went red on days the runner's IP was capped. The only trace was a `stream error` line in opencode's own log file. The paid check also could not have run in CI, because the test preload strips `ANTHROPIC_API_KEY` unless `GBRAIN_TEST_KEEP_PROVIDER_KEYS=1`, so a requested paid tier refused itself as keyless.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| Free-tier quota refusal during a door turn | two 240 s timeouts, then `Expected to contain: "kestrel-…" Received: ""` | the turn ends on the logged refusal; the test fails in about 11 s with `provider error(s): AI_APICallError: Free usage limit reached…` and makes no second attempt |
+| Nightly Heavy Tests, opencode door | keyless lane gates on 5 tests, including the free-tier nonce check (T4) | keyless lane gates on T1-T3 (4 tests); the credentialed lane runs every night and its paid nonce check (T5) gates; T4 runs only in the non-gating latest-version canary |
+| Paid nonce check model | `anthropic/claude-haiku-4-5` | `anthropic/claude-haiku-5-5`, validated against `opencode models --refresh` before any spend (1.18.18's bundled catalog predates it) |
+| Credentialed lane in CI | `ANTHROPIC_API_KEY` stripped by the test preload, so the paid tier refused to run | the step sets `GBRAIN_TEST_KEEP_PROVIDER_KEYS=1`; one Haiku turn a night |
+
+### Itemized changes
+
+- `test/helpers/agent-harness.ts`: `opencodeOneShotTurn` reads main-turn `stream error` lines from `<XDG_DATA_HOME>/opencode/log` written during the turn, returns them as `streamErrors`, and ends the turn on a quota refusal (`providerRefusal`). A provider rate limit, which opencode retries through, does not end it. `runOneShotSpawn` takes an `abortWhen` poll, and once it kills the child, a descendant that holds the output pipes open gets 8 s instead of the rest of the timeout.
+- `test/helpers/agent-harness.unit.test.ts`: stub-binary probes pin the quota fast-fail (it hangs to the timeout without the fix), the fast-fail with a descendant holding the pipes, a transient error and a rate limit that opencode recovers from, and per-turn log offsets.
+- `test/e2e/install-real-opencode.serial.test.ts`: T4 runs only with `GBRAIN_REAL_OPENCODE_FREE_TIER_E2E=1`, adds logged stream errors to its provider-error message, and skips its second attempt after a quota refusal. T5 pins `anthropic/claude-haiku-5-5`, refreshes the model list before its spend gate, and, like T4, reads the turn's JSON events and requires a `gbrain_*` MCP tool call, since opencode's file tools could find the nonce without one.
+- `.github/workflows/heavy-tests.yml`: the schedule requests the credentialed lane (`GBRAIN_PAID_LANES=0` still turns it off), the keyless lane expects 4 passes and its summary warns that no nonce check gates the run when `GBRAIN_PAID_LANES=0`, the credentialed step keeps provider keys, and the canary sets `GBRAIN_REAL_OPENCODE_FREE_TIER_E2E=1`. `test/scripts/heavy-door-workflow.test.ts` pins all four.
+- `docs/mcp/OPENCODE-CLI-PIN.md`: the per-IP free cap, where its trace is logged, the new gating split and two triage rows.
+
+**A merge slot's full-ci runs can now clear gstack's remote gate on their own, so each tree runs the full suite once.** `gstack-pregate clear --remote pregate.json/remote_gate --run <Test run> --run <E2E run> --allow-repo-commands` verifies both runs on GitHub (same tree, both full jobs green in the newest attempt, no newer red run, under 24 hours old) and checks that the files they executed cover the gate's inventory. Checked against Test run 41342917113 and E2E run 41342918866 on one tree: `REUSE: accepted … tests=68132` and `PREGATE_VERIFY: ok`, with all 5,701 inventory files covered. A tree that changes the full-ci workflows or the scripts that attest their runs still can't vouch for itself. It gets no inventory, so gstack refuses those runs and the gate runs, the same rule remote-gate reuse already follows. That rule now covers seven files: `ci-manifest.ts` joins the list.
+
+### Itemized changes
+
+- `.gstack/pregate.json`: `run_profiles` `test` (`test.yml`, `full-suite`, artifact `full-suite-tree`) and `e2e` (`e2e.yml`, `e2e-full-suite`, artifact `e2e-full-suite-tree`), both accepting `workflow_dispatch` and `push`, plus `remote_gate_runs` with `bash scripts/pregate-remote-gate.sh --list` as the inventory.
+- `.gstack/ship-policy.json`: `min_gstack_version` 1.91.377.0, the first gstack that reads these keys. An older gstack now refuses with an upgrade fix instead of an invalid-config error.
+- `scripts/pregate-remote-gate.sh`: the files whose change stops a tree's own full-ci runs from attesting to it are now seven: `test.yml`, `e2e.yml`, `ci-reuse.ts`, `ci-full-suite-tree.sh`, `ci-executed-counts.ts`, `lib/gh-issue.ts` and, new, `ci-manifest.ts`, which writes the `ci-manifest.json` that `ci-full-suite-tree.sh` trusts for completeness, executed files and counts. A tree that changes `ci-manifest.ts` therefore no longer reuses its full-ci and runs the gate. `--list` refuses (no inventory) for a tree that changes any of the seven, or the inventory's own builders `pregate-remote-gate.sh` and `ci-ubicloud.ts`, relative to `origin/master`, when there is no `origin/master`, and under `GBRAIN_PREGATE_REUSE=0`. Both paths run one check, and `--list` adds the two builders. `test/scripts/pregate-remote-gate.test.ts` pins this.
+- `docs/ci-event-parity.md`: the profiles and the refusal.
+
+**`ubi-runner.sh reap` now destroys only the caller's own VMs, and pack, usage and reap work on macOS and on an empty project (gstack #3756, #3746).** Reap used to destroy any owner's VM whose TTL had ended. That is how one project's `up` destroyed another lane's VMs (GST-573). Now it destroys only VMs whose owner tag equals `UBI_OWNER` and logs `reap: left N expired VMs of other owners` for the rest. The operator reaper, `reap-expired.ts`, still covers every owner. gbrain keeps `UBI_REAP=0` by default, so `up` still reaps nothing unless asked. On macOS, `pack` exited 1 under bsdtar after the VM was already created. On a project with no VMs, Ubicloud's bare-newline list read as a VM named `-`, and reap died on it. A failed size read made `usage` print a short total, which the quota preflight took as room.
+
+### Itemized changes
+
+- `scripts/ubicloud/ubi-runner.sh`, ported from gstack 74836e41 and 693ee713:
+  - `cmd_reap` checks the owner tag first and counts other owners' expired VMs. The quota refusal says reap frees only this owner's VMs and names `usage` and `reap-expired.ts` for the rest.
+  - `vm_rows` skips a blank row.
+  - `cmd_usage` exits 1 with no total when the list or a size read fails, and skips a VM whose `show` answers 404.
+  - `quota_preflight` retries an unreadable usage while `UBI_QUOTA_WAIT` lasts, then logs it and leaves the decision to the API.
+  - `cmd_pack` builds `files.tar`, appends `.git` with `tar -rf` and gzips it, with `COPYFILE_DISABLE=1` on every tar call.
+- `test/scripts/ubi-runner-run.test.ts` and `test/scripts/ubi-runner.test.ts` pin the owner-scoped reap, the empty project, the unreadable usage and `COPYFILE_DISABLE`. The six new cases and the two updated reap cases fail on the old runner. The updated cases expected another owner's VM destroyed and now expect it kept.
+- `test/scripts/ubi-runner-bsd-userland.test.ts` runs `pack` under bsdtar. It fails on the old runner and is skipped where no bsdtar is installed. `test/helpers/mock-ubicloud-api.ts` gains `listBody`, `ghosts` and a `show` fault.
+- `scripts/ubicloud/README.md`: reap's owner scope.
+
+**Two test-isolation flakes are fixed (found when this release's new test file moved files between CI shards).**
+
+- `test/context-pack-pinned-federation.test.ts` set `search.remote_private_pages=visible` and left its engine in the process-wide privacy cache, so a later test file in the same CI shard saw private pages and `test/private-visibility.test.ts` failed. Its `afterAll` now resets that cache.
+- `test/db-lock-fencing.test.ts` waited a fixed 120 ms for the lock refresher's second retry, which a busy runner could miss. It now waits for eight retries, up to 5 s, so its not-aborted check still covers a run of failed refreshes, with the same assertions.
+
+## [0.60.550.0] - 2026-11-02
+
+**Security: the stdio MCP server and the remaining hook lanes no longer let the session directory's bunfig.toml or .env run, and the hook's git probes no longer run a checkout's core.fsmonitor (#8426, #8428, #8427, #8435, #8436).** Claude Code, Codex and opencode start user-scope stdio MCP servers in the session's directory, just as they run hooks there, so with a script-mode install the `gbrain serve` entry `gbrain setup` and `gbrain bootstrap hooks` registered ran a cloned repository's `bunfig.toml` preload once per session, with nothing to approve. The user-global opencode entry `gbrain bootstrap hooks --harness opencode` writes did the same. Those entries now start serve through the same `<gbrain config dir>/hook-launcher/gbrain-hook` the setup hooks use, and `gbrain serve` reads `.gbrain-source`, a mounted brain's persistence socket, relative `file_upload` paths and the upload root from the session directory the launcher records, without changing its own directory.
+
+- The hooks from `gbrain bootstrap hooks` (the workspace lane), `gbrain bootstrap harness` and the Codex `SessionEnd` capture both write now start gbrain through the launcher too, and the gbrain plugins' per-turn hook changes into the plugin directory before it starts gbrain. The plugin hook now needs gbrain 0.60.547.0 or newer (it exits silently on an older CLI, which would read the plugin directory as the session's).
+- `gbrain post-upgrade` moves a user-scope `gbrain setup claude-code` MCP entry setup still owns onto the launcher, checking it again under setup's lock, and takes the entry's `GBRAIN_HOME` only from hooks or an MCP entry that install's receipt owns, so another install sharing the Claude settings file never redirects it to a different brain. It rewrites no Codex entry, the turn-rule hook included (a rewrite recomputes the trust of every install's groups in the shared hooks.json): for `gbrain setup codex`'s MCP table and hooks it prints the `gbrain setup codex` command, and for every `gbrain bootstrap` entry the bootstrap command that rewrites it, run from the workspace. An entry you edited after setup wrote it is kept and named, and the refresh stops when another install replaced the receipt it planned from.
+- `gbrain doctor` (`harness_wiring`, `hook_session_cwd`) now also covers the stdio MCP entries and the bootstrap, harness and Codex capture lanes, with the command that fixes each. Only a user-scope Claude Code entry setup owns gets an agent-runnable fix. It reruns the install that owns the entry with its recorded `--no-hooks`, `--source` and `--gbrain-bin`, so the rerun turns nothing on and keeps the binary the install chose instead of whatever `gbrain` is first on PATH. Every `gbrain setup codex` rerun is now the user's to run, because it rewrites the shared hooks.json and its trust.
+- `gbrain hook`'s git probes run with `-c core.fsmonitor=false`, and a session outside the workspace the install receipt names runs no git at all, so a `.git/config` from an extracted archive or shared folder cannot run a command at session start.
+- The readiness fix for an unwired Claude Code or Codex now names `gbrain setup <harness> --no-hooks` instead of `claude mcp add` / `codex mcp add`, so the entry it writes goes through the launcher; it also writes the brain-first block and records hooks as off. When `gbrain setup` already wired that harness, the fix reruns that install with the decisions its receipt recorded (the Codex rerun is the user's to run), so it never turns an install's hooks off. The install docs now teach `gbrain setup claude-code` / `gbrain setup codex` instead of a bare stdio `mcp add`. A project-scope `.mcp.json` and committed `.claude/settings.json` hooks stay PATH-resolved, because they belong to the repository.
+
+## [0.60.549.0] - 2026-11-02
+
+**GPT models that fill every optional tool argument with `""` or `null` can read pages again in SkillOpt rollouts and `gbrain call`.** GPT-6.1 Sol sends `known_as_of: ""`, `cursor: ""`, `section: ""` and `grep: ""` instead of leaving those arguments out. MCP dispatch and the subagent tool registry already treated `""` on an optional string argument, and `null` on any optional argument, as not provided. The SkillOpt rollout and write-capture registries and `gbrain call` passed the arguments to the handler unchanged. There `known_as_of: ""` sent `get_page` into its recorded-time branch, which refused with "known_as_of must be an ISO 8601 instant", so a SkillOpt probe on GPT-6.1 Sol saw every `get_page` call fail and the model answered from search snippets. The same empty arguments broke about 30 other read operations on those paths (`search`, `get_links`, `traverse_graph`, `recall`, `whois` and more). All three paths now run the same step as MCP dispatch. Empty optional arguments are dropped, then the arguments are checked against the operation's schema. A missing required argument or a non-empty invalid value still refuses with `invalid_params`. The SkillOpt registries now also refuse a wrong-typed or out-of-enum argument before the handler runs, with the same `invalid_params` error MCP returns. Over remote MCP, `memory_recall` with `acting_user: ""` or `acting_user: null` refused with `actor_not_attested`, because the attested-actor check read the arguments before they were normalized. It now reads the normalized arguments, so an empty `acting_user` means the same as leaving it out. A non-empty `acting_user` is still accepted only on an attested call and only when it matches the `x-qm-actor` header.
+
+### Itemized changes
+
+- `src/core/skillopt/rollout.ts`, `src/core/skillopt/write-capture.ts`: each read tool drops `""` and `null` optional arguments (`normalizeOptionalParams`), then validates (`findInvalidParam`, refusing through `schemaInvalidParams`), before calling the handler. In a rollout, the shared-skill read authorization still runs first.
+- `src/mcp/server.ts` (`handleToolCall`, behind `gbrain call`): drops empty optional arguments before validation, and the handler receives the cleaned arguments.
+- `src/mcp/dispatch.ts` (`dispatchToolCall`): the audience and attested-actor checks on a remote call read the normalized arguments.
+- `test/tool-args-empty-optional-sol.test.ts`: drives `get_page` with every optional string set to `""`, and again with every optional argument set to `null`, through MCP over HTTP (remote) and stdio (local), `gbrain call`, the subagent registry and both SkillOpt registries. It checks that a missing slug and non-empty bad values still refuse, then sweeps every read operation and checks that empty optional arguments give the same outcome as omitting them. Reverting any one of the three fixes fails it.
+
+## [0.60.548.0] - 2026-11-02
+
+**Meeting notes now flow into the brain on a schedule, with no custom script.**
+
+A new `meetings` source kind imports meetings from Fireflies (the first provider behind a provider interface) into one page per meeting: title, date, attendees, the provider's summary, action items and keywords, and optionally the transcript. You save the API key once on stdin with `gbrain connectors auth fireflies --token -` (probed before it is saved, 0600, never in argv, config or the database), add the source with `gbrain sources add meetings --kind meetings --provider fireflies`, and run the first sync yourself. After that, autopilot keeps it fresh every `--sync-interval-min` minutes (default 60) and waits out the provider's rate limit. Nothing syncs until you register a source and run its first sync.
+
+It works on a brain with no Git repository, where pages and the sync position are recorded in the database. On a brain with a Git checkout, `--dir` inside it records each page with a commit before its database row, and a missing checkout holds the meeting instead of writing it to the database alone. The record mode is chosen when the source is added and never re-inferred.
+
+| Situation | What happens |
+|---|---|
+| The key's owner did not attend the meeting | the page is private |
+| A meeting the provider is still processing | re-checked every sync; published when its summary arrives (or after 48 hours) |
+| A meeting edited upstream | the page updates and facts extracted from the old version are retired |
+| A meeting deleted upstream (inside the lookback) | the page is deleted and its facts are retired |
+| A key for a different account | refused (`connector_account_changed`) before anything is imported, even after the source's config changes |
+| Summary text that looks like a facts table, citation or timeline row | made inert before it lands in the page |
+
+Guide: [docs/guides/meeting-and-slack-sources.md](docs/guides/meeting-and-slack-sources.md).
+
+**Slack channels can flow into the brain the same way.** A new `slack` source kind reads the channels you name through your own internal Slack app and writes one page per channel per day, in the chat layout the conversation parser reads, with thread replies under their parent. Save the bot token with `gbrain connectors auth slack --token -`, then `gbrain sources add slack --kind slack --channels C0123ABCDEF`; the add checks the token and every channel first and refuses with the fix (a missing scope, or "invite the app to the channel"). It works on a brain with no Git repository, re-reads the last 7 days on every sync so edits and deletions converge (retiring the facts of the old page), keeps private channels private and out of any Git checkout, and moves a channel that becomes private out of the checkout. A channel the app loses is held while the others keep syncing.
+
+For both kinds, `gbrain sync --source <id> --full` re-reads the whole history window, `--dry-run` fetches and writes nothing (these sources have no preview), and `gbrain connectors status fireflies` (or `slack`) reports whether a key is saved without printing it.
+
+### Known limits
+
+- Fact retirement on a changed page still needs a redesign ([#8432](https://github.com/garrytan/gbrain/issues/8432)): on a managed brain a retirement can race the page's own write and is not retried if it fails, every new Slack message retires and re-extracts its whole day's facts, and facts from an unchanged prefix of a long page are not re-asserted.
+- Slack ([#7971](https://github.com/garrytan/gbrain/issues/7971)): a channel window too big for the per-run request cap (`s_max_requests`) or over 500 history pages does not make progress, and in Git record mode a channel that becomes private leaves HEAD but stays in Git history.
+- A meetings window with more than 20,000 meetings stops with `listing_unbounded`; use a smaller `--history-days`. `connectors status` does not read a source's `--token-env`.
+
+## [0.60.547.0] - 2026-11-02
+
+**Security: gbrain's hooks no longer let the session directory's bunfig.toml or .env run (#8424).** A script-mode install (`bun install -g`, `bun link`) runs gbrain as a Bun script, and Bun applies the working directory's `bunfig.toml` (a top-level `preload` runs before any gbrain code) and loads its `.env` files first. Claude Code and Codex run hooks in the session's directory, so with the hooks `gbrain setup claude-code|codex` writes, or the per-turn rule hook from `--instructions-only`, `gbrain connect --install` and `gbrain bootstrap harness`, opening a session in a cloned repository ran that repository's code as you on every prompt, with nothing to approve. Each of those hooks now starts gbrain through `<gbrain config dir>/hook-launcher/gbrain-hook`, a small sh script that records the session directory in `GBRAIN_HOOK_CWD`, changes into its own directory and starts gbrain there. Its directory holds only the launcher, and it refuses to start gbrain if anything else appears there.
+
+- `gbrain post-upgrade` moves existing hooks onto the launcher. That covers the turn-rule hook in Claude Code's user settings and in Codex's hooks.json, and the hooks of each user-scope `gbrain setup claude-code` install whose MCP entry is unchanged. A Codex turn-rule hook moves only when Codex already runs it, so an upgrade never trusts a hook you did not approve, and a hook you edited after setup wrote it is kept and named instead. `gbrain setup codex`'s hooks are not moved by an upgrade: rewriting them re-trusts them, so post-upgrade prints the `gbrain setup codex` command that does it, and doctor keeps flagging them until it runs. `gbrain setup <harness>` and `gbrain setup <harness> --instructions-only` rewrite them on their next run.
+- `gbrain doctor` (`harness_wiring`) warns with the new code `hook_session_cwd` when a hook still starts gbrain in the session directory, or its launcher is missing, changed or shares its directory with a file gbrain did not write, and names the setup command that fixes it. Project-scope installs get the command to run from their project directory.
+- Not covered yet: the stdio MCP server `gbrain setup` registers, which the harness also starts in the session's directory (#8426); the capture hooks from `gbrain bootstrap`'s own lanes and the gbrain plugins' hooks (#8428); and script-mode commands you run by hand in an untrusted checkout (SECURITY.md).
+- The launcher rewrite never leaves a temp file in its own directory, and doctor finds a setup hook whose `_gbrain` marker Claude Code dropped by its receipt hash.
+- `gbrain hook` resolves the recorded session directory the way the shell's working directory resolves, so project-scope rules still match under a symlinked path, and a `.env` in the session directory cannot set `GBRAIN_HOOK_CWD`.
+
+## [0.60.546.0] - 2026-11-02
+
+**QM can use gbrain as its memory provider. A trusted system that names the person (`x-qm-actor`) reads and writes as that linked member, each member's saved facts stay on their own page and are recalled by them alone, and `memory_recall` / `memory_write` give QM one plain-text read and one batched write (GST-359).**
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A trusted system that names the person (QM) | | a client-credentials client granted `gbrain auth rescope --client <id> --attest-actor qm [--attest-ops <list>]` sends `x-qm-actor: <canonical id>`; each attested operation runs as the member that id is linked to (`gbrain access member link <member> --qm <id>`, `unlink`, `links`), never reading private pages, and queued writes and jobs re-check the link and the operation list. `capture`, `extract_facts`, take writes and `list_write_conflicts` are not attestable yet. Refusals carry `structuredContent.error` (`actor_not_attested`, `actor_unlinked`). Every MCP server's `serverInfo` now has a one-line `description` |
+| A member saves a fact remotely (`remember` attested as a person, or from a credential bound to one member) | from a member-bound credential, went on the entity page as a fact every reader of the source recalled; an attested call could not run `remember` | goes on the member's own page `memory/members/<member>` (created with `readable_by: [member:<id>]`), private, with the entity kept as metadata; only that member recalls it, and it never dedups against, supersedes or contests another page's fact, never consolidates into a take and keeps its readers through a fence rebuild and relink. Two people's identical words make two facts. The page must name that member alone, or the fact is refused; remote `put_page`, `edit_page`, `delete_page` and every other remote page write under `memory/members/` are refused (`permission_denied`) unless the caller is that member. A member id a repo brain would store under another slug (`a--b`, `zed-`) holds no member facts (`invalid_params`) |
+| One attest client serving several people | hot memory, `delta` cursors, write receipts and agent jobs were keyed by the client | each is keyed by the person too: Alice and Bob on one session id never share a hot-memory payload or a `delta` cursor, Bob and the bare client get `not_found` for Alice's receipt (`get_write_request`, `list_write_requests`, `cancel_write_request`) and agent job (`get_agent_job`, and the client's own `get_job`, `wait_job`, `get_job_progress`, `list_jobs` and `cancel_job`), and Alice's `request_id` never replays for Bob. `remember`, `delta`, the receipt ops, `submit_agent` and `get_agent_job` are now attestable |
+| QM's memory provider | | `memory_recall {query, max_chars?}` answers the attested person's own recent facts first, then the facts they may read ranked by the query, one plain line per fact cut within `max_chars` (200-12000, default 6000), keyword-only on a keyless brain; `memory_write {facts, idempotency_key}` saves 1-20 facts on that person's own page through `remember`'s writer, with request ids derived per person from the key so a replay returns the first receipt. Results ride `structuredContent`, and every refusal carries `structuredContent.error`; an unlinked person gets an empty recall with `code: "actor_unlinked"`. `get_write_request` joins the default attested operations. A request carrying `x-qm-audience` is refused until channel audiences are served (`audience_not_supported`). `forget` from an attested person or a member-bound credential reaches only that member's own page. `remember` and `memory_write` take `valid_from` only as an ISO 8601 date or time in years 0001-9999. Contract: `docs/contracts/qm-memory-provider/v1.json`; guide: `docs/guides/qm.md` |
+| An attested `forget` or `forget_fact` | refused (`op_not_attested`) | withdraws only a fact on the person's own member page, and only there: another member's copy of the same claim stays active and rememberable |
+
+### What to watch for after you upgrade
+
+- A call that sends `x-qm-actor` or an `acting_user` argument from a credential without the attest right is now refused (`actor_not_attested`) instead of reading as the credential; tokens issued before this upgrade never attest, so a QM client takes a fresh client-credentials token after it is granted.
+- Migration v286 adds `access_member_links`, the attest columns on access tokens and OAuth clients, and the grant type on OAuth tokens; it is database-only, so a repo-less brain gets it unchanged.
+- Writers never dedup, supersede or contest across member pages: `extract_facts`, capture and supersession leave member-page facts out of their candidates, so a write never learns that another member saved the same claim.
+- A member's facts go only on `memory/members/<member>`, so a credential whose `bound_slug_prefixes` do not cover that page is refused (`permission_denied`) by `remember` and `memory_write` for that member.
+- `memory_write` binds its idempotency key to the whole batch, so a retry under the same key with more, fewer or different facts refuses (`idempotency_conflict`), and a batch with an invalid fact saves nothing.
+- The QM contract QM vendors is `docs/contracts/qm-memory-provider/v1.json`; the guide is `docs/guides/qm.md`.
+
+## [0.60.545.0] - 2026-11-02
+
+**The hosted gbrain.io install now tells the agent the brain is there.**
+
+Before, the hosted install in README.md, docs/INSTALL.md, INSTALL_FOR_AGENTS.md and AGENTS.md stopped at `claude mcp add` or `codex mcp add`, so nothing in the harness told the model to use the new MCP server, and in harness trials a server nobody mentions is almost never called. Each now installs the gbrain CLI with Bun (`bun install -g github:garrytan/gbrain#latest-stable`) and runs `gbrain setup claude-code --instructions-only` or `gbrain setup codex --instructions-only` after the MCP entry is in place. That writes the brain-first block into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` (or its non-empty `AGENTS.override.md`) and the per-turn rule hook, without creating a local brain. Each harness line checks for an existing `gbrain` entry first and keeps it (`mcp get` output goes to /dev/null, since it can print a stored token), adds the hosted entry otherwise, and skips the setup step when that harness isn't installed. Adding `--no-instructions` to that `gbrain setup` command takes them out, and a bare `mcp add` still works.
+
+## [0.60.544.0] - 2026-11-02
+
+**The remote gate stops waiting on an artifact GitHub has refused for good, and bench and eval scripts no longer fail pregate for having no test lane (#8370, #7690).** When reading a full run's `executed-identities` artifact failed, `fetchArtifactJson` marked every failure transient, so a 403 or an expired artifact's 410 kept the gate polling for up to 90 minutes before it fell back to VMs. Only no response, a 5xx, a 429 or a rate-limit 403 is transient now. Any other 4xx refuses reuse at once and the gate goes straight to VMs. This never made a gate pass, because a transient read was always `none` and never `reuse`. Separately, `scripts/bench/**` and the system-one eval runners and generators now declare that they need no test lane, so a PR that touches them no longer fails pregate with `PREGATE_NO_LANE`. The unit-lane PostgreSQL arms job also gets real headroom back. Its committed weights had drifted about 24% below what the files now take, so by measured times the busiest of master's 13 shards takes 694 s against its 570 s budget.
+
+### What changed
+
+| `unit-postgres-arms` (both arms, the CI cell) | Before | Now |
+|---|---|---|
+| Weights | mined from older runs, scaled by 0.763, 6 listed files unweighted (charged the 29 s p75) | median of the `ARM_FILE` times in eight full-ci runs from 2026-11-01 (41296667994, 41307060384, 41310113203, 41324518709, 41342917113, 41347700875, and train M's 41351675051 and 41365617585, covering every suite #8404, #8405, #8407 and M added), every listed file weighted |
+| Shards | 13 | 19 |
+| Two-worker makespan, largest shard, against the unchanged 570 s budget | 526.4 s (7.7% headroom) by the committed weights; 694.3 s by the fresh ones | 476.3 s (16.4% headroom) |
+| Measured job wall time | 438-923 s per job in train M's run 41365617585, against the 20-minute step timeout | about 475 s per shard, by the same measurements |
+| PostgreSQL-only cell, largest shard | 487.2 s | 333.8 s |
+
+### Itemized changes
+
+- `scripts/lib/gh-issue.ts`: `fetchArtifactJson` marks a failed artifact read transient only for no response, a 5xx, a 429 or a 403 whose message names a rate limit (#8370). Both clients' artifact downloads now carry the HTTP status and the response text, so the `gh` CLI client (used when no `GH_TOKEN` is set) classifies the same way. A rate-limit 403 stays transient whether its headers (`x-ratelimit-remaining: 0`, `retry-after`) or its text (rate limit, abuse detection) say so, and so does a refusal from the artifact storage the download redirects to, since a fresh read mints a new signed URL.
+- `test/scripts/ci-reuse.test.ts`: a probe checks that 403, 404 and 410 are refusals and that 429, a rate-limit 403, a 502 and no response stay transient, and that a refused receipt ends the gate's wait at once. It fails without the fix.
+- `.gstack/pregate.json`: `scripts/bench/**`, `docs/eval/system-one/runners/**` and `docs/eval/system-one/generators/**` declare no lane (`[]`), which applies only where no test maps the file, so the VM-setup scripts keep `test/scripts/vm-setup-usage.test.ts` (#7690).
+- `scripts/postgres-arm-weights.json`: re-mined with `bun scripts/postgres-unit-arms.ts mine` from those eight runs' 98 job logs, unscaled.
+- `scripts/postgres-unit-arms.ts`: `ARM_SHARDS` 19; `.github/workflows/persistence-validation.yml`: the matrix, job name and `run` argument follow it (pinned by `test/scripts/postgres-unit-arms.test.ts`, whose budget and assertion are unchanged). Check names become `Unit-lane PostgreSQL arms N/19 / Bun …`; none is a required check.
+- `docs/architecture/key-files/ci-health-and-test-guards.md`, `scripts/ubicloud/README.md`: shard count.
+
+## [0.60.543.0] - 2026-11-01
+
+**A shared brain can now keep a page to the members it names, inside one source. Put `readable_by: [alice-example, group:team-a]` in a page's frontmatter, bind each member's token, OAuth client or stdio server to a member, and remote reads of that page answer only for them. Nothing changes until a page names readers or a member is created.**
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A page names `readable_by` | ignored: every remote caller granted the source read it | read remotely only by a credential bound to a listed member (directly or through a group); everyone else gets the canonical `not_found` on every read path, and a remote write to it answers `page_not_found` |
+| Escape hatches and `--private-pages granted-sources` | relaxed `visibility: private` | still relax only `visibility: private`; they never open a page to an unlisted member |
+| A `visibility: private` page that also names readers | hidden remotely | still hidden from a listed member unless that member's credential also has `--private-pages granted-sources` |
+| Atoms, concepts and chronicle events derived from a restricted page | followed the origin's visibility | readable by no remote caller |
+| Members and groups | | `gbrain access member add\|disable\|enable\|rm\|list`, `gbrain access group add\|rm\|list`, `gbrain access who-can-read <slug>`, `gbrain access check --token\|--client <name>`; `--member` and `--may-act-for` on `auth create`, `auth rescope` and `auth register-client`; config `mcp.stdio_member` for a stdio server; `--as <member>` previews one member's view from the local CLI; `whoami` and `grant_diagnosis` show member and groups |
+| Doctor | | `access_readers_malformed`, `access_unknown_readers`, `access_recent_narrowings`, `access_page_readers_backfill`, `access_policy_pending`, `access_policy_widening_held`, `access_policy_invalid`, `access_policy_store_mismatch` |
+| Folder rules | | `gbrain access rule add\|rm\|list\|status\|history\|revert\|export\|import\|migrate`, `gbrain access apply` and `gbrain access resume` keep whole folders of a source to named members; a page under a rule is read remotely only by a member listed on every rule covering it and on its own `readable_by`. Rules live in the database on a repo-less source and in `.gbrain/access.yml` on a git-backed one |
+| Changing folder rules | | narrowing applies at once; widening is held until `gbrain access apply --source <id>` previews it and `--yes --expect <plan_hash>` approves it; an unfinished apply reads as nobody remotely until `gbrain access resume --source <id>` |
+| `gbrain export` and `gbrain import` | pages only | an export carries each source's applied folder rules under `.gbrain/`, and import installs them before publishing any page (`--access-policy <source>` maps a multi-source export) |
+| A shared agent (one bot serving a channel or many DMs) | read as its own credential, so it saw one view for everyone | its harness names each turn's audience (`X-Gbrain-On-Behalf-Of: alice-example, guest` or request-level `_meta.on_behalf_of`); the call reads only what every entry may read, within the agent's source grant, and only a one-member audience keeps the agent's private-page relaxation. The credential lists whom it may act for (`gbrain auth rescope --token <name> --may-act-for <list>`); every response carries `_meta.access`, and `whoami` returns it |
+
+### What to watch for after you upgrade
+
+- A page that already carried `readable_by` before this release reads as nobody remotely until you run `gbrain repair access` (preview) and then `gbrain repair access --apply`. Doctor's `access_page_readers_backfill` lists them.
+- On a brain with any restriction, the escape hatches no longer turn the remote read filter off, and secondary surfaces (proactive brief, retrieval reflex, entity resolution, known-as-of) hide restricted pages from every remote caller, listed members included.
+- A credential bound to a disabled or removed member is refused at verification (`access_member_disabled`).
+- Works the same on a repo-less brain: members, groups, bindings and folder rules live in the database. A source records which store holds its folder rules when its first rule is created, and only `gbrain access rule migrate --source <id>` moves them; doctor `access_policy_store_mismatch` names it when the filesystem changes.
+- The member-access and folder-rule SQL functions end their pinned `search_path` with `pg_temp`, like every other gbrain function (#7632), and frontmatter recovery never guesses a duplicated `readable_by` key: the file is held until a person fixes it.
+- Remote callers can no longer write pages under `.gbrain/`.
+- A database rebuilt from a git-backed source replays its committed `.gbrain/access.yml` history, so a removal that was held stays held. The source reads as nobody remotely until the replay finishes, and a shallow clone stays that way until `git fetch --unshallow`.
+- A page renamed into a ruled folder takes its atoms, concepts, chronicle events and `derived_from` pages with it, through later renames too and after another page takes its old slug (migration v285 keeps rename history for this; slug resolution does not use it).
+- On Postgres, a database role that neither owns the folder access tables nor bypasses row-level security now needs read policies on them, and an unfiltered policy on `slug_rename_history` (docs/ENGINES.md, "Folder access tables"). Without them its page writes are refused with `writer_coordinator_required` (`unreadable_state`) and its reads show nothing, instead of reading the tables as empty and treating every page as unruled. The owner, BYPASSRLS roles and PGLite are unaffected.
+- A harness that sends an audience its credential's `may_act_for` does not list gets `on_behalf_of_not_permitted` with the operator's command; an audience inside tool arguments is always refused (`on_behalf_of_in_arguments`). `may_act_for: *` is accepted and doctor warns (`access_may_act_for_wildcard`).
+
+## [0.60.542.0] - 2026-11-01
+
+**`gbrain skillopt` now makes one gated rewrite by default; the iterative edit loop is opt-in with `--loop`, and benchmark harnesses can drive every SkillOpt rollout.**
+
+In gbrain-evals' Cat 31 re-run the full loop and a one-shot rewrite both scored 0.54 on held-out tasks (paired bootstrap p = 1.00), and the loop cost about 1.8x as much. Until a benchmark shows the loop wins, the cheaper method is the default. The default is reversible: `--loop` on the CLI, or `optimizer_mode: "reflect"` on the `run_skillopt` MCP operation and queued jobs, runs the loop as before. The one-shot rewrite now reflects on training tasks only and must beat the baseline on the selection gate before anything is written, so a worse rewrite leaves the skill unchanged. Four bugs that made the loop look worse than it is are fixed too.
+
+### Itemized changes
+
+- One-shot rewrite is the default for the CLI, `run_skillopt`, `--all`, queued jobs and the dream-cycle phase. A job queued before this release without `optimizer_mode` keeps the loop it was queued for, and `--resume` continues in the mode its checkpoint ran (a changed mode is refused); resuming a one-shot run whose rewrite gave no usable reply retries the rewrite. Receipts carry `optimizer_mode`.
+- The optimizer's success criteria come from training tasks only, and a rule argument or LLM rubric is quoted only when every training task shares it; a per-task answer is described ("a task-specific required text"), never quoted. Before, every selection and test answer was shown to the optimizer. `criteriaText` replaces the generated criteria.
+- Held-out results never reach the optimizer. The held-out check runs once, on the final champion, before anything is written, and a refused champion is not filed in the rejected-edit buffer. Legacy `held_out_regression` rows on disk are skipped when the buffer loads.
+- Only edits that were applied are filed as rejected or recorded as accepted; edits the learning-rate budget clipped stay free to propose again.
+- The success-reflect prompt states the edit schema, so its edits are no longer all dropped (#7257; carried from #8324).
+- Library surface for benchmark harnesses (`src/core/skillopt/index.ts`): explicit `tasks: {train, sel, test?}` lists instead of a benchmark file; a `rolloutHook` that receives each scoring site's whole batch (baseline, training forward pass, selection gate, held-out, test) and whose budget refusal or malformed reply aborts the run without writing (the hook runs outside the run's budget, gets an abort signal at the runtime deadline, and a batch still running or answered after it aborts the run); `scoreSkillPerTask`; and receipt counts (`rollouts` by phase, `candidates_scored_on_sel`, `optimizer_calls`, `cost_scope`).
+- A skill can add the reviewed read tools `recall` and `get_timeline` to its rollouts by naming them in its frontmatter `tools:`; rollouts never offer `add_timeline_entry` or any other write.
+- Tests: `test/e2e/skillopt-wave-e1b1.serial.test.ts` (17 cases, each red before its fix), `test/skillopt/benchmark-hooks.test.ts`, and a mode case in `test/skillopt/models-four-paths.serial.test.ts`.
+
+## [0.60.541.0] - 2026-11-01
+
+**A saved fact from a quarantined page, or one waiting to be re-derived after a purge, no longer reaches agents through search, query, trajectories, entity cards, standing questions, local `gbrain recall` or consolidation.**
+
+Before, the facts `search` and `query` put first when a query names an entity skipped the read-eligibility check that recall and `saved_facts` apply, so remote MCP callers too got facts saved from a page the content gate quarantined, and facts a purge had hidden until a deriver regenerates them. The same check was missing from a few other fact reads. Now each one hides those facts the way recall does.
+
+Agents connected over MCP also get a quoted page's title on search rows, its tags, and a chronicle event's kind quoted too, and a remote `put_page` of a whole-markdown read saved with CRLF line endings stores the page instead of its fence.
+
+Before, a remote reader got a page's title raw on `search` and `query` rows, its tags raw on `get_page`, `fetch` and `get_tags`, a context card's title outside the card's trust label, and a chronicle row's `kind` (from an event page an agent may have rewritten) raw, while the rest of each row was quoted. A whole-markdown read whose line endings an editor converted to CRLF was stored with the read's marker and fence in the body and its frontmatter lost. A fenced title pasted into frontmatter next to a naive datetime (`date: 2026-10-03 23:30:00`) moved that date to UTC, so `effective_date` could land on another day. Local reads and owner-tier text are unchanged.
+
+### Itemized changes
+
+- `search` and `query` entity facts (`search/entity-facts.ts`) hide quarantined-page and `needs_rederive` facts, local and remote, and apply the caller's trust floor as `saved_facts` does.
+- `find_trajectory`, `gbrain think`'s trajectory read, `gbrain eval trajectory` and `gbrain founder scorecard` hide them too.
+- The entity card's `active_fact_count` counts only the facts the card may show.
+- A standing question's refresh gathers no fact, take or timeline row awaiting re-derivation as evidence.
+- Local `gbrain recall` (every arm, `--supersessions` and `--since-last-run` included) hides them like the `recall` op.
+- The consolidate phase never promotes such a fact into a take.
+- Tests: `test/search-entity-facts-eligibility.test.ts` (PGLite and Postgres), red with each read's filter removed.
+- Remote `put_page` unfences a whole-markdown read whose lines end in CRLF, closing fence kept or replaced, and stores what a plain CRLF write of the unfenced markdown stores.
+- `search`, `query`, `assemble_evidence` and remote `recall` rows quote a quoted row's `title` with its text (`fenceTranscriptRows`).
+- `context_pack` and the pushed pack render a card below the owner's tier with its title under the card's trust label.
+- Remote `get_page` (every shape), `fetch` and `get_tags` quote a quoted page's tags; remote `add_tag` and `remove_tag` take a tag copied out of those reads without the fence.
+- The chronicle reads and `volunteer_chronicle` quote an event row's `kind` by its event page's type and tier; `--narrative` keeps that fence on its own lines.
+- Remote `put_page` rewrites only the frontmatter keys that held a fence, so every other line (a naive datetime included) keeps the bytes sent; a rewrite that would not parse back to the same values (a flow mapping continued on the next line, an anchor another key aliases) rewrites the whole block instead.
+- A keyword row returned without its text (evidence omitted under a token budget) gets its title quoted for a remote reader like the text would be, and counted in the budget.
+- A remote reader's `other_names` on `search` and `query` leaves out names a quoted row declares.
+- `chronicle_since` (`kind`) and `list_pages` (`tag`) take a value copied out of a quoted read without its fence.
+- Tests: `test/search-transcript-quote-8384b.test.ts` (PGLite and Postgres), red on master for each change.
+
+Contributed by @tarush1989 (#7115, rebuilt on current master).
+
+## [0.60.540.0] - 2026-11-01
+
+**A write to a page with a facts or takes fence no longer re-embeds the whole page: `remember`, timeline and fence writes now embed only the chunks whose text changed (#6961).**
+
+Vector reuse was turned off for every page with a protected fence, so each write to an entity page deleted and re-embedded all of its chunks. One reporter measured 13 to 15 million embedding tokens a day from that alone. Entity pages carry the fences and take the most writes.
+
+### Itemized changes
+
+- **Fenced page reuse (#6961).** A fenced page now reuses a stored vector when its recorded embedding input equals the one the import would embed, the same check every other page gets. The stored index must still be sealed by the fence-safe chunker, so a reused vector's text holds no private fence row. A chunk whose text changed, such as the fence chunk a new fact lands in, is embedded again. On a fenced page the importer reuses only vectors with a recorded embedding input, so a legacy vector with none is embedded again. A one-row fact append on a five-chunk entity page now makes one embedding call instead of five. Contributed by @javieraldape (#7055, rewritten on master).
+
+## [0.60.539.0] - 2026-11-01
+
+**A remote `put_page` of a page an agent read whole now keeps its frontmatter and the code blocks it added, and timeline sources and ontology values are quoted below "your notes" like the rest of their rows.**
+
+Before, an agent that read a page with `include_content`, added a fenced code block, or had a newline prepended and the closing fence replaced, could store the page with the read's fence still in the body (its frontmatter inside it) or with its own code block's opener stripped. A timeline entry's free-text `source` and the ontology values `volunteer_chronicle`, `ontology_get` and `ontology_conflicts` return reached remote readers raw. Now the write keeps the page as the agent meant it, those fields are quoted by tier, and text copied back from them is stored without the fence. A remote read quoted only because the page's origin is unverified names the command that clears it.
+
+### Itemized changes
+
+- Remote `put_page` finds a whole-markdown read's closing fence as the first line that is exactly that fence outside a code block the content opens itself, so a backtick code block added inside, in place of or after the read is stored whole; a read with blank lines before its marker and its closing line replaced keeps its frontmatter. A fence naming another page, or one after other text, is stored as written. Content holding many markers that never close is kept as written in linear time (the unquote shares one scan budget per text).
+- `get_timeline`, the chronicle reads and `volunteer_chronicle` quote a timeline row's `source` with its summary and detail; remote `add_timeline_entry` stores a copied source without the fence.
+- `volunteer_chronicle`'s `ontologies`, `ontology_get` and `ontology_conflicts` quote a value by its fact's stored tier for remote readers (`quoted: "transcript"`); remote `ontology_propose` stores a copied value without the fence.
+- A remote `get_page` or `fetch` of a page quoted because its trust tier is `unknown` carries a `quoted_unverified_origin` info notice, once per session, naming `gbrain trust claim-sources` (preview with `--dry-run --json`) and `gbrain trust backfill`. Quoting is unchanged.
+- Tests: `test/search-transcript-quote-8384.test.ts` (PGLite and Postgres), red on master for each change.
+
+## [0.60.538.0] - 2026-11-01
+
+**Agents connected over MCP now see the chronicle reads, takes reads and a quoted page's title and frontmatter quoted as source material, and the context gbrain's hooks inject quotes facts below "your notes" too.**
+
+Before, #8367 left `chronicle_day`, `chronicle_since`, `chronicle_on_this_day`, `volunteer_chronicle`'s timeline, `takes_list`, `takes_search` and a quoted page's title and frontmatter returning agent-written text raw, and gbrain's per-turn hook and pushed context pack injected agent-written facts raw. Now a remote reader gets that text quoted when its stored tier is below `operator_curated`; owner-tier text and local reads are unchanged. **Harness authors: hook output can now hold quote fences** (a marker line naming the fact, then a code fence that closes on its own line).
+
+### Itemized changes
+
+- Chronicle reads quote each timeline row's summary and detail by its own page; `takes_list` and `takes_search` quote a claim below the owner's tier and its free-text `source` and `resolved_source`.
+- Remote `get_page` and `fetch` quote a quoted page's title and every frontmatter string; `include_content` and fetch `text` fence the whole serialized markdown, and the `put_page` round trip still stores the page unchanged. A thin client's `gbrain get` then `gbrain put`, or an agent that rebuilds the markdown from `title` and `frontmatter`, stores the title and frontmatter without the fences. Titles on search rows and context cards, and a chronicle entry's `kind`, are still returned as stored.
+- A thin client's paged `gbrain get` of a quoted page (above the inline limit) prints the page, and its `--json` content, inside one quote fence after verifying size and sha256.
+- The per-turn push hook and the pushed context pack quote hot and entity facts below the owner's tier; a fact injected before this change is not injected again.
+- `context_pack` counts the entity facts it withholds when the quote lookup fails (`suppressed`) instead of dropping them silently.
+- Remote `remember` stores a fact copied out of a quoted read without the fence, and remote `add_timeline_entry` stores an entry copied out of `get_timeline` without it, so the replay key matches and the entry is not duplicated. `takes_add`, `takes_update` and `takes_supersede` do the same for a claim or source copied out of a quoted takes read.
+- The `put_page` tool-call guard counts only summaries outside the content's own tool-call blocks, and admits a new turn that quotes a summary while every stored call stays; its refusal names `edit_page` first.
+- Tests: `test/search-transcript-quote-followups.test.ts` (every item, red on master for the changed reads and writes) and `test/trust-keep-maintenance-reimport-8352.test.ts` (maintenance re-imports keep an owner note's tier), both on PGLite and Postgres.
+
+## [0.60.537.0] - 2026-11-01
+
+**One source's stuck writes can no longer starve another source's sync: a write refused for a missing ownership marker ends terminally with its own code and restore step, the shared local principal keeps a fair share for every source, and doctor names the source holding the slots (#8368)**
+
+On Postgres, a bulk sync group whose checkout failed the ownership check when its worktree lock was taken threw out of the consumer and stayed `running`; after each lease lapse the owner claimed it into the same refusal, forever, while the source kept admitting more. A hundred of them filled the local CLI principal's outstanding cap, which every source's sync shares, so another source's sync stopped `write_capacity` and doctor read `ok`. Now a deterministic ownership refusal finishes every claimed, unpublished member `failed` (the single path already did), which releases its slot; transient failures keep retrying as before. A missing `.gbrain-owner.json` is refused `owner_marker_missing` instead of the generic identity refusal, and its fix is the verified self-transfer that re-creates it. At the principal cap a source holding less than its fair share (the cap over the sources holding outstanding requests on the local CLI principal) is still admitted, a sync publication group or page batch whole, the brain cap stays hard, and a refusal names the source holding the most slots. `persistence_capacity` warns when an outstanding-request cap is at 90% or more and its oldest request has waited over ten minutes, and names the source holding the most stalled requests.
+
+### Itemized changes
+
+- `src/core/persistence/consumer.ts`: `failRefusedClaims` settles a claimed group refused `recovery_required` or `owner_marker_missing` before publication, fenced on the claim token, no recovery record and publication not started; a member whose claim moved is left to its claimant and a connection loss gives the rest back.
+- `src/core/persistence/owner-marker.ts`, `physical-root-record.ts`, `ownership.ts`: `owner_marker_missing` for an absent stamp under a reservation that identifies the directory exactly, with the self-transfer restore as its fix; a stamp naming another owner keeps `recovery_required`. Registered in `error-registry.ts`, `WRITE_ERROR_CODES`, the sync fault table and the terminal classifier (the receipt's fix is the restore step).
+- `src/core/persistence/journal.ts`: `outstandingRefusal` applies the local CLI principal fair share on single and group admission (checked before the admission, so a group larger than the share is admitted whole) and names the top holder.
+- `src/commands/doctor/checks/persistence-capacity.ts`: `details.outstanding[]` with holders; a holder's writer status as the fix when it is the only finding.
+- `test/write-cap-wedge-8368.test.ts` (PGLite and Postgres, with `test/e2e/write-cap-wedge-8368-postgres.test.ts`).
+
+## [0.60.536.0] - 2026-11-01
+
+**Agents connected over MCP now see agent-written, ingested and unverified-origin text quoted as source material on search, recall, page, chunk, timeline, version and write-receipt reads, and conversation tool calls come back summarized on the reads that still returned them verbatim.**
+
+Before, the quote fence (#8066) covered chat page types and conversation-derived facts only. A note an agent wrote over MCP, a fact saved with `remember`, a chat message saved into a member source, and every placement read through `get_timeline`, `search_exact`, `get_chunks`, `think`'s extractive answer or a write receipt reached a remote reader as plain text, and a conversation page's tool-call JSON came back verbatim through `get_page`, `fetch`, `search_exact`, `get_chunks` and `think`. Now any text whose stored trust tier is below "your notes" (`operator_curated`) is quoted for a remote reader on those reads: written by an agent, tool data, external, or unverified origin. The `chronicle_*` reads, `takes_search` and `takes_list`, and a quoted page's title and frontmatter still return stored text unquoted; #8377 tracks them.
+
+**Remote MCP readers now see unverified-origin text quoted until you run trust backfill.** A note saved before gbrain tracked trust has no recorded origin, so it reads as unverified and is quoted for agents connected over MCP. Claim the sources that hold your own notes with `gbrain trust claim-sources` and run `gbrain trust backfill`; `gbrain doctor` (`trust_tiers`, `trust_sources_unclaimed`) names how many pages are affected and verifies the fix. Local reads are unchanged, nothing stored changes, and no trust tier is raised or lowered.
+
+### Itemized changes
+
+- `src/core/search/transcript-quote.ts`: `quotesTier` / `quotesStored` (a missing tier reads as `unknown`, so it fails closed); `quoteFacts` reads each fact's stored tier from the database for a remote reader.
+- Search, query, recall, assemble_evidence, saved facts, context_pack, delta, `_meta.brain_hot_memory` (its cache key carries the quoting), `get_page` (body, timeline, windows), `fetch`, `get_timeline`, `get_chunks`, `search_exact`, `think`'s extractive fallback, `get_versions` and `known_as_of` reads (by the version's tier snapshot; a version without one reads as unverified) and `list_write_requests` / `get_write_request` outcome text quote by tier for remote readers.
+- Tool-call blocks in conversation pages are summarized on `get_page`'s reading shape and `view: read` windows, `fetch`, `search_exact`, `get_chunks` and `think`; `include_content`, `view: markdown` and gbrain's thin client keep the stored bytes inside the fence. A remote `put_page` whose content holds a tool-call summary that a whole read of the stored conversation page never produces, or keeps a call's summary but fewer of that call than the page holds, refuses with `invalid_params` and stores nothing.
+- A remote `put_page` round trip of any quoted page stores the body, never the fence; a forged fence in stored text stays inside the quote.
+- Rendered context_pack/delta lines put a quoted fact's label on the marker line and close its fence on its own line.
+- `gbrain doctor`: `trust_tiers` and `trust_sources_unclaimed` say remote readers see unverified pages quoted and name the claim and backfill commands.
+- BrainBench poisoning: a payload inside a closed quote fence is judged by its fence's marker line, where its label is rendered.
+- Tests: `test/search-transcript-quote-tiers.test.ts` (every placement and read surface, red on master), `test/search-transcript-quote-legacy-claim.test.ts` (legacy note quoted, raw again after claim and backfill), both on PGLite and Postgres; existing fixtures that stand for the owner's own notes now write at the owner tier (`test/helpers/owner-tier.ts`).
+
+## [0.60.535.0] - 2026-11-01
+
+**Master's fence-census suite passes again after the 2026 DST fallback.** The test 'the incremental pass in batches of one reads every page across a DST fallback in the session time zone' wrote fixed `updated_at` values in the 2026-11-01 New York fallback hour. The census only reads pages updated at or after its watermark (the database clock minus two minutes), so once the clock passed about 05:22Z on 2026-11-01 those pages began falling behind the watermark, and the test has failed on every run since. It now uses the next fallback that is still ahead of the database clock and asserts that the four instants read 01:20-04, 01:40-04, 01:10-05 and 01:30-05 in the session time zone, so the DST coverage can't quietly disappear. It also runs with the clock pinned inside the 2026 and 2027 fallback hours.
+
+### Itemized changes
+
+- `test/fence-census.test.ts`: the DST-fallback census test derives its instants from the next New York fallback after `now()`, checks their local text offsets, and runs at the real clock plus two pinned clocks (2026-11-01T05:30Z and 2027-11-07T05:30Z). With the old fixed instants, all three fail.
+
+## [0.60.534.0] - 2026-11-01
+
+**Merge train S: five sync, refresh and maintenance fixes land in one release.** Page writes create a missing source folder and name a missing checkout (#8106). A diverged managed checkout can publish itself on opt-in, and every refresh fetch is logged (#8102). Sync-lane wave 2 repairs quoted fence markers, releases agreeing file-drift holds, syncs plain directories and retires former-binding effects (#8077). The `synthesize` phase survives a local writer replace (#8111). A door commit during a refresh is waited out instead of failing the refresh as `refresh_dirty` (#8117).
+
+### Missing source folders and checkouts (#8106)
+
+**Page writes to a source whose directory is missing on the brain host no longer fail with a misleading `storage_error`. A source that is a folder inside a checkout now gets its folder created on the first write, and a source whose whole checkout is gone gets a refusal that says so. A checkout restored or copied into place, or one whose private ownership records lost their mode, now refuses with the exact owner step that fixes it.**
+
+#### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| The source is a folder inside a checkout and the folder is missing (Git keeps no empty folder, so a fresh clone of a repository whose member folder has no files yet lacks it) | every `put_page`, `capture` and `add_timeline_entry` to it failed with `storage_error` ("The canonical file target cannot be accessed as a regular file"), so a token granted only that member's source could save nothing | the write creates the folder and the page, and the same token reads it back |
+| The source's whole checkout is missing (a brain copied to another machine or into a container without its source directories) | the same `storage_error`, whose fix told the agent to repair file permissions | `recovery_required` with `detail: source_checkout_missing`, naming the source; the fix is the read-only `gbrain sources writer status --source <id> --json`, which shows the registered path. Remote callers are not shown the path. Nothing is written, as before |
+| The checkout was restored, copied or recreated at its recorded path (new inode or birth time) | `recovery_required` whose `fix` only said to read the receipt | `detail: physical_root_directory_changed`, and the `fix` is the owner-run relocated-root self-transfer (`gbrain sources writer transfer prepare` then `accept`, both with `--self-transfer --confirm-relocated-root`) with `next: tell_user_to_run`. The re-stamp stays a deliberate step on the brain host |
+| An ownership record of the checkout became readable by other users (a recursive `chmod` of a copied brain) | `recovery_required` ("The private physical-checkout identity cannot be verified"), and doctor's `foreign_ownership_marker` called the file foreign and told the operator to remove it | `detail: ownership_record_not_private` with `gbrain doctor --only foreign_ownership_marker` as the fix; doctor now reports this brain's own record with its mode and the exact `chmod 600 '<path>'`, never removal, and lists each record once |
+
+A token's source grant decides where it writes exactly as before; this changes only how the file path inside the granted source is resolved and how these refusals name their exit.
+
+### Publishing a diverged checkout (#8102)
+
+**A managed checkout that gets local commits while a sibling checkout pushes the same branch can now stay current without a person in the loop. Turn on `sources.refresh_publish_diverged` and a diverged `gbrain sources refresh` publishes the local commits merged with the upstream, then fast-forwards.**
+
+Before, such a refresh always refused `refresh_diverged`, and the database lagged the upstream until someone ran the keep-checkout publish by hand or a scheduled publish caught up. That repeated every interval. The setting is the user's standing consent to push those local commits. It defaults to off, so nothing changes for existing brains.
+
+#### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| Diverged checkout, setting on | refused `refresh_diverged` | pushes HEAD merged with the upstream in memory (the `gbrain git commit-push --push-only --keep-checkout` publish), fast-forwards to the merge and reports `published` (sha, local commits, upstream commits merged) |
+| Diverged checkout, setting off (the default) | refused `refresh_diverged` | unchanged; the refusal now also names the setting |
+| A file both sides changed, setting on | n/a | refuses `integrate_conflict` naming the file; nothing is pushed, fenced or moved. With `gbrain.quarantine` on, the remote's version is published instead and the refresh names the ref that keeps this machine's version |
+| An uncommitted edit to a file the upstream changed, setting on | n/a | refuses `refresh_dirty` before anything is pushed |
+| An upstream rewritten by a force-push (it no longer holds a commit it held before), or no record of the upstream before the fetch, setting on | n/a | refuses `refresh_diverged` and pushes nothing, so the commits the rewrite removed never come back without the user |
+| A force-push that lands after the refresh checked the upstream but before the publish pushes, setting on | n/a | refuses `push_unconfirmed` and pushes nothing. The publish is bound to the upstream the refresh checked (`--expect-remote`), so the removed commits never come back. Run the refresh again; it checks the new history first |
+| A refusal after the publish landed | n/a | the refusal says the remote already holds the local commits |
+| `--dry-run` | refused `refresh_diverged` | unchanged: a dry run never publishes |
+| `gbrain config set sources.refresh_fetch_timeout_ms` / `sources.refresh_drain_wait_ms` | refused as an unknown key, although the refresh reads both | accepted |
+
+#### Things to watch after you upgrade
+
+- The publish needs a Git identity in the checkout for the merge commit, the same as the manual keep-checkout publish.
+- It never uses a `--pull` that moves the checkout. The merge is built in memory and pushed, and the checkout moves only through the refresh's usual fast-forward.
+- The push skips the checkout's pre-push hook, as the manual keep-checkout publish does. If you rely on a pre-push secret scanner, leave the setting off.
+- The setting covers every managed checkout in the brain.
+- If another publish of the same checkout is running, the refresh refuses at once instead of waiting; run it again.
+
+#### Itemized changes
+
+- `src/core/persistence/worktree-refresh.ts`: when `sources.refresh_publish_diverged` is on and the run is not a dry run, the precheck runs the keep-checkout publish (`gbrain git commit-push --push-only --keep-checkout` in a bounded child, never on the PGLite owner's event loop) for a diverged checkout (after refusing `refresh_dirty` first when an uncommitted edit touches a file the upstream changed), re-fetches and continues; it refuses `refresh_diverged` instead when the checkout holds a commit the upstream held before (reachable from the remote-tracking ref before this fetch, from its reflog, or from a completed refresh's target for the same upstream) but no longer contains, or when no record exists (no reflog entry, no completed refresh, and `core.logAllRefUpdates` off, so the ref before the fetch may already be past a force-push); every refresh fetch, with the setting on or off and in a dry run, records the move in the reflog, so a refusal's own fetch can never erase what the upstream held; the result carries `published` (with any quarantined or superseded paths, which the text output names), and a refusal after the publish says the remote already holds the local commits. The `refresh_diverged` suggestion names the setting.
+- `src/commands/sources-refresh.ts`: a text line for the publish.
+- `src/core/config-runtime-keys.ts`: registers `sources.refresh_publish_diverged`, `sources.refresh_fetch_timeout_ms` and `sources.refresh_drain_wait_ms`.
+- Docs: `docs/guides/live-sync.md`, `docs/guides/write-refusals.md`, `docs/guides/troubleshooting.md`, `docs/guides/shared-checkout-git.md`, `docs/architecture/canonical-writers.md` and its census.
+- Tests: `test/refresh-publish-diverged-7686.test.ts` (setting on and off, a conflict, quarantine, a dirty overlap, a refusal after the publish, a publish child that fails, and a dry run, on PGLite and on Postgres through `test/e2e/worktree-refresh-postgres.test.ts`). Tests 7c and 7d in `test/persistence-worktree-refresh.test.ts` share one fixture across their cells and run in about half the time, with every assertion kept (#7782).
+
+#### How to get it
+
+```bash
+gbrain config set sources.refresh_publish_diverged true
+```
+
+### Sync-lane wave 2 (#8077)
+
+**Sync-lane wave 2: a transcript that quotes a fence marker is repaired instead of held for a person, held files that already agree with their pages can be released, a plain directory added with `--force` syncs, and a parked effect left behind by a replaced binding has a guarded way out.**
+
+A page that quotes a facts or takes marker in prose was held `invalid_fence` as `repeated_marker` for a person to fix. It is now held as `quoted_marker`, and `gbrain repair fences`, `gbrain repair content`, `gbrain sync unblock --apply` and the maintenance run fix it by wrapping each mention in backticks, with a receipt per file. No reader counts fence lines any differently (#8059). Older `file_drift` holds on pages with no import record are checked once more against the file's earlier versions (#7199, re-port of #7228). A held file that agrees with its page apart from formatting is released (#7931, #7950). A refused `repair file-drift --apply` no longer reserves its request id (#7931).
+
+#### Itemized changes
+
+- **#8059 quoted fence markers.** The new `src/core/fence-repair/quote-markers.ts` wraps prose mentions: an exact marker outside code and table lines, with text after it on its line or on a blockquote line, that doesn't close a fence holding rows and isn't directly above a table. The edit is kept only when every row of every fence keeps its line and kind, and when nothing `protectedRegions` hid becomes visible. Only the repair makes the edit; write paths just name the reason `quoted_marker`. Existing `invalid_fence` holds get one more screen through a hold-only `quote_version`, and the parser version stays the same. `forget` now finds the facts fence with the parser's code-aware locator.
+- **Quoted-marker screen stays linear.** The write-path screen for prose-quoted markers found each mention's line by re-reading the page up to it, so a page with 40,000 mentions took 12 to 18 seconds and a 24 MiB page minutes. It now reads each page once, and the same 40,000 mentions take about 100 ms.
+- **markerCarry.** A segmented read carries only a marker that a cut splits, not a whole one.
+- **#7199 (re-port of #7228).** A record-less page that equals the file at the last synced commit, or one of its three earlier committed versions, imports without a hold. Side-unknown hold text now says what was compared. A pass that holds files for a person reports `held_needs_human`. Git tree listings are memoized by object id (GBRA-135).
+- **#7931 parts 2 and 3.** A held file whose page agrees apart from formatting is released. The request id of a `repair file-drift` apply now includes the approved artifact digest, so an apply refused before publishing doesn't block the next preview.
+- **#7950.** An agreeing held page found through `--slug` is listed `release_hold`, bound to the hold's `observed_at`. An empty preview applies nothing. Contributed by @Masashi-Ono0611 (supersedes #7953).
+- **#7974.** The stale-mirror drift read no longer throws on an ambiguous slug path, and it compares contents. `slugPathFile` uses the source's slug-root mode and doesn't follow symlinks. `release_hold` needs the held path and a file hash. The `keep_file_bytes` and file-wins docs are corrected.
+- **#7973.** `gbrain sync` on a plain directory added with `sources add --force` runs the import path instead of failing on `git rev-parse`. The managed Git path refuses with a typed `sync_not_applicable`.
+- **#7988.** Activation marks a non-git root in its own directory, never in the metadata of the repository that contains it, such as a dotfiles `$HOME`.
+- **#7985.** Parked effects of a former binding get their own group, with `settle-effects` as the next step. The exact retry names both bindings. `settle-effects --retire` (proof `former_binding_retired`) settles one only when its source was replaced or its page moved past the owed revision. The settlement is preview-first, bound to a hash, reversible with `--unsettle`, and never replays anything.
+- **#7982.** Repeated transient pass stops build the abandoned-pass streak. An unfenced `lease_lost` stop never inserts a row. The pass-row and drain-holder readers compare against the database clock.
+- **#8009.** The `repair provenance-stamps` preview and apply share one held-page filter, so the preview's count equals what the apply writes.
+- **#7998 flake.** The page-embedding-lease harness pushes other queued effects out of the way before it drains the one under test.
+
+### Synthesize postprocess after a writer replace (#8111)
+
+**A dream cycle's `synthesize` phase no longer fails on every pass after `gbrain auth local-writer register cli --replace` (#8110).** Postprocess settles on the earlier request it already found, checked under the current local CLI writer's grant, instead of looking it up again under the new principal and publishing against a stale revision (`revision_conflict` forever). A synthesis child output whose own stdio writer was revoked warns once as a `permission_denied` conflict and leaves the page alone. Receipt lookups stay principal-scoped.
+
+#### Itemized changes
+
+- `src/core/cycle/synthesize-postprocess.ts`: settle on the found row; a revoked child writer is a one-time `permission_denied` conflict.
+- Test: `test/managed-synthesis-postprocess.test.ts` (PGLite, and Postgres through its E2E wrapper).
+
+### Door commits during a refresh (#8117)
+
+**A `gbrain git commit-push` landing during a `gbrain sources refresh` no longer makes the refresh fail as `refresh_dirty` (#8117).** The refresh now runs its HEAD check and fast-forward merge under the checkout's commit lock, the same lock the door uses, so it waits for a door commit to finish instead of colliding with it on `.git/index.lock`.
+
+#### Itemized changes
+
+- `src/core/persistence/worktree-refresh.ts`: `fenceAndMerge` takes the checkout's commit lock (`brain-commit.lock` plus the legacy push lock, waiting `GBRAIN_COMMIT_LOCK_WAIT_SECONDS`, default 60) from the HEAD check through the merge. A lock still held past that wait aborts the fenced refresh as retryable `commit_lock_busy`. A git process outside the lock that holds `.git/index.lock` gets three short retries, then a retryable `git_index_locked` refusal instead of the caller-class `refresh_dirty`. Either way HEAD is unchanged and the next run starts fresh.
+- Test: `test/worktree-refresh-index-lock-8117.test.ts`.
+
+## [0.60.533.0] - 2026-11-01
+
+**A delegated sync no longer reports `done` while it is still finishing.** The serve's sync runner published `done` before it re-checked the wanted markers and scheduled the deferred embeds. A client polling in that window saw a finished job with no embed backlog queued yet, and a second `sync_start` could begin while the first run was still settling its markers. Since #7941 the marker re-check also reads the checkout HEAD through git, which widened the window enough to fail `test/serve-sync-runner.serial.test.ts` intermittently on master (#8354). Both lanes (the shared-secret lane and the verified lane) now set `done` only after those steps, and a deadline or client abort that arrives after the run has finished no longer marks it `aborting`.
+
+### Itemized changes
+
+- `src/core/serve-sync-runner.ts`: `job.state = 'done'` moves after `settleRunMarkers` and `scheduleDeferredSyncEmbeds` in both lanes (#8354); the deadline and `sync_abort` skip a job whose run already returned its result.
+- `test/serve-sync-runner.serial.test.ts`: a probe slows the post-run marker read and checks that `done` is only visible once the markers have settled and the deferred embeds are pending; a second probe aborts during that settle and checks the job still ends `done`. Both fail without the fix.
+
+## [0.60.532.0] - 2026-11-01
+
+**CI wave 3: a passed full-ci pair can now clear the remote gate without a second full suite on VMs, the import-rate scale gate no longer fails on one stall, an effect pass that loses its database connection gives its claims back at once, and the Ubicloud runner's teardown retries instead of leaking VMs (#7939, #8103, #8096, #7607, #8119).**
+
+The `full-suite-tree` and `e2e-full-suite-tree` artifacts now record every test file the run executed and the executed test count, taken from the run's complete `ci-manifest.json`, so gstack's `pregate clear --run` can accept a passed full-ci pair on the same tree as run evidence. `bash scripts/pregate-remote-gate.sh --list` prints the gate's own inventory, and the seven files that never left a receipt on GitHub now do, or leave the gate. The import-rate gate sets aside at most one stall per import (a paused database container, a WAL checkpoint) and never work that recurs; a cost that lands only once in a 10k import is a known gap the 20k nightly still sees. An effect pass whose database connection drops while claiming or flushing git effects gives back every claim it had not finished as soon as the database answers, within 30 s and stopping on shutdown, instead of leaving them to a 2-minute lease. The remote gate's CI-reuse wait keeps waiting for the head's own dispatch, refuses when the run in progress fails, and treats a failed artifact download as retryable. The Ubicloud runner's `down` retries a timed-out or 5xx destroy with backoff until `UBI_DOWN_TIMEOUT`, `reap` bounds each VM's wait, and `UBI_REAP` refuses spellings it cannot read.
+
+### Itemized changes
+
+- `scripts/ci-full-suite-tree.sh`, `.github/workflows/test.yml`, `e2e.yml`: `files` and `tests` in tree.json from a complete, matching manifest; the full jobs need `executed-receipts`. The reconciliation crash suites run through `run-with-receipt.sh` (now accepting `bun --no-env-file test`); the keyed-only `test/e2e/skills.test.ts` leaves the keyless gate.
+- `scripts/pregate-remote-gate.sh`, `scripts/ci-ubicloud.ts`: `--list` prints the gate inventory and fails on an empty one.
+- `scripts/scale/gates.ts`: one-stall rule for `import_rate`; `import.<basis>.excused` names the time set aside (#7939).
+- `src/core/persistence/effects.ts`: connection-loss give-back for claimed, set-aside and unflushed git effects, fenced on each claim's token (ported from #7607).
+- `scripts/ci-reuse.ts`, `scripts/lib/gh-issue.ts`: the gate waits for a run in progress beside a missing one, refuses a refused receipt only on the head itself, and retries a failed download; an earlier attempt's ledger counts only when its job was carried over (#8096).
+- `scripts/ubicloud/ubi-runner.sh`: `down` destroy retries with 1 to 60 s backoff, `reap` per-VM bound `UBI_REAP_DOWN_TIMEOUT`, strict `UBI_REAP` (#8103, #8096).
+- `scripts/mine-shard-weights.ts`: prunes against tracked files in every mode; shard weights refreshed (#8119).
+- Test fixes ported from #7607: page-embedding lease ordering, git-commit-push-6530 cases, timeline-chunk-reuse handback, segmented-prior-view heap sample, awk portability lint.
+
+## [0.60.531.0] - 2026-10-31
+
+**Five severe fixes: the secret scan now redacts keys that follow a JSON or percent escape, a connector page that turns private leaves Git HEAD, deleted pages no longer stay searchable under a scoped writer role, a stale freshness marker can no longer starve the job queue, and a slow embedder no longer loses `remember` writes (#7978, #7971, #7637, #7941, #8135).**
+
+The secret scan's rules required a non-word character before a key, but a JSON escape (`\n`, `\t`, `\u0022`) and a percent-escape (`%22`) end on a word character, so a key at the start of an escaped tool-output string or inside a URL-encoded value was never redacted. Every rule now also matches right after such an escape (an escaped quote between a keyword like `password` and its value is still a gap, tracked in #8265), and a vendor key that recurs glued to a word (`token_<key>`) is scrubbed wherever the same key is claimed elsewhere in the document. On a managed connector source bound to a Git checkout, a page that turned private kept its public file at HEAD; it is now removed in the same publication. A page that already turned private before this release keeps its old public file until it is removed by hand (#8269). Under a database role with row-level security that lacks policies on the derived-state tables, deleting a page left its retrieval rows searchable and page versions lost their trust and attribution stamps without an error; those writes now refuse with `writer_coordinator_required`, and `docs/ENGINES.md` lists the policies such a role needs. A freshness marker naming a commit the source had already passed kept every sync queuing another top-priority follow-up; a completed run now settles it once the checkout has nothing left to import. A `remember` whose embed took longer than its 30 s preparation budget ended `preparation_stalled` with nothing saved; the fact is now saved without a vector and embedded later.
+
+### Itemized changes
+
+- `src/core/secret-scan.ts`: escape-boundary twin for every rule, run only on lines holding an escape; vendor and JWT values (20 to 512 characters) join the echo dictionary under their own 32-value cap, so planted vendor strings cannot crowd out a bearer token's echo (#7978). The `high_entropy_assignment` shapes moved to `src/core/secret-scan-assignment.ts` (module size cap).
+- `src/core/persistence/connector-sync.ts`: a strict private import of a public page publishes the file removal from `preparePrivateTransition` (#7971 item 1).
+- `src/core/derived-state-maintainers.ts`, migration v281: the eight derived-state maintainer triggers stay `SECURITY INVOKER` and fail closed when the caller's row-level security hides a table they need; `docs/ENGINES.md` "Derived-state maintainers" recipe (#7637).
+- `src/core/notifier/store.ts`, `handoff.ts`, `resident.ts`: settlement takes the checkout HEAD after the run (#7941).
+- `src/core/facts/single-prepare.ts`, `src/core/persistence/memory-prepare.ts`, `service.ts`: the fact embed is bounded inside the preparation deadline (#8135).
+
+## [0.60.530.0] - 2026-10-31
+
+**`gbrain sources refresh` no longer exits with a bare `internal_error` when another database transaction holds a row its fence needs. A fence that waits past its 5 s lock timeout now refuses as `refresh_lock_timeout`, and `why` names the open transactions holding those tables. Nothing moves, and a later run completes once the holder is gone. Any other unexpected error now prints a typed `internal_error` refusal with its stack in `why` and the refresh row it left, which the next run resumes.**
+
+Before, a stuck transaction holding a source, worktree or brain row (a long-running job, for example) made an upstream-moved refresh fail after about 5 s with `canceling statement due to lock timeout`. That surfaced as a top-level `internal_error` with no `status`, no stack and no holder. If it happened after the drain, it also left a `draining` row for the next run to clean up.
+
+### Itemized changes
+
+- `src/core/persistence/worktree-refresh.ts`: Postgres `55P03` in either fence transaction (`fenceDraining`, `fenceAndMerge`) is the new `refresh_lock_timeout` refusal (registry, catalogue, `docs/guides/write-refusals.md`, `docs/guides/error-codes.md`). Its `why` lists the five oldest open transactions in the current database holding locks on `persistence_brain`, `persistence_worktrees`, `sources` or `persistence_worktree_refreshes` (pid, application, state, seconds open). These are candidates, and the blocker may not be among them, because `pg_locks` does not show which row each one holds; the fix says to confirm the blocker before ending any transaction. Plain readers, which cannot block the fence, are left out, the holders' SQL text is never copied into `why`, and a lookup that fails or takes longer than 3 s says so (the statement is cancelled at that bound, and after the drain the lookup runs only once the topology and worktree locks are released). A refusal after the drain aborts the draining row as other fence refusals do. That abort has its own 5 s lock timeout. When the same holder blocks it, the row stays `draining` for the next run instead of the refresh hanging, and the refusal says so.
+- `src/core/persistence/worktree-refresh.ts`: `refreshWorktree` turns any other non-`OperationError` throw into `internal_error` with the error name, error code (a SQLSTATE or a Node code) and message (credentials, connection details and the home directory redacted), the stack in `why`, and a fix naming the active refresh row and its state, or saying the row could not be read (also when that lookup takes more than 3 s; its statements are cancelled at that bound). A deadlock (`40P01`), serialization failure (`40001`), cancelled statement (`57014`) or lock timeout outside the fence (`55P03`) is marked retryable. The fix repeats `--dry-run`, `--abandon`, `--resume`, `--wait-drain` and `--fetch-timeout-ms` when given. Home-directory redaction replaces only the home path itself, not a sibling path that shares its prefix. The row is not changed, and a host identity file that cannot be read still yields that refusal. A database access error the classifier recognizes (connection refused, a missing table) is rethrown unchanged, so it keeps its `gbrain db-repair` or `gbrain apply-migrations` fix. The already-current path no longer throws a `TypeError` of its own when a member sync rejects with a non-object.
+- `src/commands/sources-refresh.ts`: refusals print `why` (a `why` key under `--json`, a `Why:` line otherwise).
+- Test: `test/worktree-refresh-unexpected-throw.test.ts` (PGLite, and Postgres under `DATABASE_URL`; the lock-timeout cases hold a source row from a second connection, before the fence and after the drain, and check that a plain reader is not named and no SQL text is echoed; an unreadable host identity file still gives a typed refusal, an access error is not wrapped, credentials and the home directory are redacted without touching a sibling path, `--abandon` and `--dry-run` survive into the fix, a lookup that never answers still gives the refusal and is cancelled (row lookup and lock-holder lookup), transient SQLSTATEs are retryable, the holder list is worded as candidates, and an abort blocked by the same holder still returns and says the row stays draining).
+
+## [0.60.529.0] - 2026-10-31
+
+**A pull request that adds a file to the PGLite snapshot inputs no longer gets stopped at gstack's pregate secrets check by its own workflow cache keys (#8107).**
+
+Pregate read every `key: pglite-snapshot-${{ runner.os }}-${{ hashFiles(...) }}` line in the workflow files as a possible secret (`env.kv`), and a branch can't allowlist findings on its own lines. `.gstack/pregate.json` now allowlists that one finding on those cache-key lines, and only when every `hashFiles` argument is a lowercase path or glob under `src/`, `test/` or `scripts/`. An argument with digits, capitals or a `./` prefix still gets flagged, and so does any recognized credential on the line. A new test checks that every cache-key line in the workflows is covered and that secret-shaped values are not. Nothing changes for users of the gbrain CLI.
+
+## [0.60.528.0] - 2026-10-31
+
+**The test-isolation scan is about 25 times faster on Linux and 12 times faster on macOS, so `bun run verify` and the macOS validation job no longer come close to their per-check caps (#8053, #8099).**
+
+`check:test-isolation` started several processes per test file, about 2,400 in all. It now reads every file in one awk pass with byte-identical output under mawk, gawk and macOS awk. Linux: 123 s to 1.3 s alone (about 5 s inside verify). macOS 26 validation (bash 3.2, a 240 s cap): 134-146 s to 10 s. Neither cap changed.
+
+This release also brings the Ubicloud runner up to date with gstack main, refreshes the shard weights from the median of ten recent runs, fixes CI gate edge cases and removes several flaky tests at their root cause. Nothing changes for users of the gbrain CLI.
+
+### Itemized changes
+
+- `scripts/check-test-isolation.sh`: one awk pass over all files instead of per-file greps (#8053, #8099).
+- `scripts/ubicloud/ubi-runner.sh`, `.gstack/ubicloud.json`, `scripts/ubicloud/reap-expired.ts`: runner synced from gstack main, owner-tagged VM names with an expiry (3 h default), a per-command idle watchdog, a committed remote verify, and `UBI_REAP=0` by default until legacy VMs without a TTL are gone. `scripts/ubicloud/ci-item.sh` now exits with the worst item's exit code, so the committed verify fails when its item fails.
+- `scripts/ci-ubicloud.ts`, `scripts/pregate-remote-gate.sh`: a gate that exits before requesting a VM reports `left=0 vms=0`, so its failure stays a gate result instead of an infrastructure failure.
+- `scripts/ci-reuse.ts`, `scripts/ci-executed-counts.ts`: gate reuse and executed-count edge cases (#8001, #7927). `scripts/ci-mcp-tap.sh`, `scripts/ci-openclaw-mcp.sh`: Tier 2 counts a tool call only when its request was answered (#8011). The crash robot stops a lane after a worker failure (#8062).
+- `scripts/mine-shard-weights.ts`, `scripts/test-weights.json`, `scripts/serial-weights.json`, `scripts/e2e-weights.json`: weights are the per-file median of several runs; a complete re-mine drops files only older runs measured.
+- Tests: flaky tests fixed at the cause (#7922, #7933, #7957, #7964, #8025, trust-release fence); the #7679 refresh matrices 7c and 7d moved to their own files to fit the per-file E2E cap (#8025).
+- `docs/TESTING.md`, `scripts/ubicloud/README.md`, `docs/eval/`: runner TTL and reap defaults; long repro recipes pass `--ttl-hours`.
+
+## [0.60.527.0] - 2026-10-31
+
+**A shared brain can now let each member's agent read that member's own private pages, and nobody else's. Access tokens and OAuth clients have a new private-pages grant: `none` for every token and client, existing or new, so remote reads keep hiding `visibility: private` pages exactly as before until the brain host opts a connection in with `gbrain auth rescope --token <name> --private-pages granted-sources` (or `--client <client_id>`). An opted-in connection then reads private pages only in the sources its grant names.**
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A member's agent reads a private page in its own granted source | hidden from every remote caller unless the operator set `search.remote_private_pages`, which shows private pages to every remote caller | still hidden by default; after `--private-pages granted-sources` it is visible to that token or client in `search`, `query`, `recall`, `entity`, `get_page`, `list_pages`, `get_chunks`, `get_versions`, `get_timeline`, links, backlinks, the graph and `resolve_slugs` |
+| Which sources count | | a token's `--sources` list, or a client's write source plus its read sources. A token with no source grant (the `default` floor), federated sources the grant does not name, a client's bound source and a request's `source_id` / `source_ids` never add one |
+| What the grant opens in a named source | | `visibility: private` pages, pages with a privacy alias (`access`, `confidentiality`), and atoms, concepts and events derived from private or unknown origins. Pinned questions stay owner-only |
+| Another member's private page, or a bot token granted every source without the setting | hidden | hidden |
+| `context_pack`, `delta` and writes | world-only | world-only, for every caller |
+| `--private-pages none` | | hides them again on the next request |
+| `gbrain auth list`, `auth clients`, `auth rescope`, the `serve --http` dashboard API key list and `whoami` | | show the setting; `gbrain auth list --json` is new |
+| A harness answering a channel or other shared session | every successful tool call could carry `_meta.brain_hot_memory`, which holds recent facts from the connection's write source (a member token's own private source), and there was no way to turn it off for one call | `_meta.hot_memory: "off"`, on the request or inside the arguments, drops the block for that call. Without it, nothing changes. `docs/protocol/MCP_META_CHANNELS.md`, `docs/mcp/README.md` and the install guide now say when the block appears and which source it reads |
+
+### What to watch for after you upgrade
+
+- Nothing changes until you opt a token or client in, and nothing is rewritten on upgrade. A schema migration adds a `private_pages` column (default `none`) to `access_tokens` and `oauth_clients`; the legacy permissions JSON is untouched, so an older binary keeps hiding private pages.
+- Opt in only connections that act for one person or one team. A bot answering several members over one token sees the private pages of every source that token is granted; give each member their own token ([lay out sources by who may read them](docs/guides/multi-source-brains.md#lay-out-sources-by-who-may-read-them)).
+- `search.remote_private_pages` and `GBRAIN_REMOTE_PRIVATE_PAGES` keep their meaning: when set, every remote caller sees private pages, whatever this grant says.
+- A local CLI call reads private pages as before.
+
+## [0.60.526.0] - 2026-10-31
+
+**The #7679 refresh state-matrix tests (7c and 7d) now run in about half the time, with every assertion kept (#7782).**
+
+These two tests built a fresh brain for each cell, and on a 2-CPU machine that cost added up to minutes per run. Now 7c hands a cell that ends settled to the next cell instead of building a new brain, and 7d builds one brain per kind of interrupted refresh and runs every action on it in turn, with each action undoing its seam. Nothing changes for users.
+
+### Itemized changes
+
+- Tests: 7c and 7d in `test/persistence-worktree-refresh.test.ts` share fixtures across their cells, and every assertion is kept (#7782).
+
+## [0.60.525.0] - 2026-10-31
+
+**Sync no longer moves its checkpoint past a file it never imported (#8071), a source refresh can no longer hold its lock for over an hour (#8072), and dream-cycle pages written into a Git checkout are now committed instead of left untracked (#8073).**
+
+If a file was edited while a sync pass was importing it, sync could record the newer bytes as imported while the page kept the older text. Once you committed the edit, sync treated the file as settled and the page stayed stale with no hold. Sync now records only the bytes the page actually holds, so the committed edit is imported on the next pass. To find pages already left behind, `gbrain doctor` adds `sync_rows_behind_checkpoint`: on each managed source's owner host it compares every live Markdown page with the file committed at the source's checkpoint, skips paths sync would not import, and reports `unknown` rather than ok when it runs out of time. `gbrain repair rows-behind --source <id>` previews the fix, and `--apply --expect <hash>` re-imports the committed file through the normal import (or opens the hold sync would have opened). Pages with no import record change only with `--include-ambiguous`, pages with uncommitted edits are listed and left alone, and nothing runs on upgrade. Repo-less brains are not affected.
+
+A refresh's member syncs now run under a deadline, `sources.refresh_sync_budget_ms` (default 5 minutes). A member that commits nothing in that time is reported `refresh_sync_timeout` with the write it waited on, a member that made progress is reported deferred, and the refresh always finishes and releases its lock, so later ticks run again. A Markdown file over 24 MiB that sync had to read whole to refuse (held `file_too_large`, for example for a facts fence) is no longer re-read on every tick; it is checked again only when it changes, after `gbrain sources retry-held <source>`, or after a gbrain upgrade.
+
+Atom and concept write-through and the reverse-written synthesis, patterns and cycle-summary pages now commit each batch through the checkout's commit door, naming only the files they wrote. Before, those files stayed untracked and made the scheduled pull skip every run. A refused commit rolls the batch's files back and the phase reports `write_through_failed`; files a crash left uncommitted are picked up by the next commit, and your own untracked files are never touched. Repo-less sources, non-Git folders, `storage.db_only` paths and gitignored paths behave as before.
+
+### Itemized changes
+
+- `src/core/persistence/sync-prepare.ts`: the import record names the working file only when it holds the imported bytes (line endings aside).
+- `src/core/persistence/rows-behind.ts` (new), `src/commands/doctor/checks/rows-behind.ts` (new), `src/core/repair/rows-behind.ts` (new): the `sync_rows_behind_checkpoint` doctor check and the explicit-only `rows-behind` repair kind; doctor and export goldens updated.
+- `src/core/persistence/worktree-refresh.ts`, `src/commands/sources-refresh.ts`: member syncs run through the governed drain under `sources.refresh_sync_budget_ms`; new code `refresh_sync_timeout`.
+- `src/core/persistence/sync-screen.ts`, `src/core/persistence/sync-holds.ts`: a held over-limit file is re-screened only when it changes.
+- `src/core/cycle/derived-write-through.ts`, `src/core/cycle/extract-atoms.ts`, `src/core/cycle/synthesize-concepts.ts`, `src/core/write-through.ts`: one commit per batch, rollback on a refused commit, pending write-through ledger.
+- `docs/guides/repair.md`, `docs/guides/live-sync.md`, `docs/guides/error-codes.md`, `docs/guides/write-refusals.md`: the new check, repair kind, budget and code.
+
+## [0.60.524.0] - 2026-10-31
+
+**A brain moved or restored under a new host identity no longer leaves writes pending forever behind an `--accept-pending` exit 0, and a keyless re-init from a cold `GBRAIN_HOME` no longer switches an embedded brain to keyword-only (GBRA-248 W0).**
+
+A managed source publishes only through the host that owns its checkout. When a brain moved to another machine, was restored from a backup, or ran in a container that restarted with a fresh `GBRAIN_HOME`, the new process got a new host identity, its writes queued for the old owner, and nothing said that owner was gone: the receipt read as an ordinary pending write and `--accept-pending` (or `GBRAIN_ACCEPT_PENDING=1`) exited 0, so hooks and cron treated writes that would never publish as saved. A pending receipt now flags that owner (reason `owner_unavailable` with a new `diagnostic.owner` block holding its last activity, which older clients ignore; doctor names the host) when it runs no live consumer and has been quiet for more than 24 hours, or at once on PGLite when this process holds the database file under another identity. `--accept-pending` does not cover such a write: `gbrain put`, `gbrain call`, brainstorm saves and `gbrain trust accept --all` exit 10 and say why. A consumer's clean stop now stamps the worktrees its host owns, so a stopped owner is not mistaken for a gone one. The owner host never sees the block, a repo-less (database-only) write never names an owner, and nothing claims or transfers ownership. New doctor check `owner_host_stale` lists the waiting writes with the owner and the read-only next step.
+
+`gbrain init` with no provider key in reach falls back to keyless. Run from a cold home against a database that already had an embedding model and vectors, it wrote `embedding_disabled: true` into the new config file, and the brain stopped embedding. When that fallback was implicit and the database holds vectors, init now keeps the database's stored model and width in the config file instead and prints the key to set and `gbrain embed --stale`. A fresh keyless install, a keyless brain with no vectors, an explicit `--no-embedding` and a database that already disables embeddings behave as before. New doctor check `embedding_plane_disagreement` finds brains the old behavior left in that state and prints the `gbrain init --force --embedding-model …` enable for the same model.
+
+### Itemized changes
+
+- `src/core/persistence/owner-activity.ts` (new): owner liveness, last activity and the stale rule; `journal.ts` attaches it to receipt facts inside budgets the reads already have, cancelled past them; `health.ts`, `types.ts`, `params.ts`: the optional `diagnostic.owner` receipt field.
+- `src/core/persistence/service.ts`: a write left pending carries its owner facts into the receipt.
+- `src/core/persistence/write-wait.ts`: `acceptPendingCovers`; `writeErrorExitCode` keeps exit 10 when `diagnostic.owner` is present; `persistence-delegate.ts`, `brainstorm.ts`, `trust.ts` follow it.
+- `src/core/persistence/consumer-heartbeat.ts`: a clean stop stamps `persistence_worktrees.heartbeat_at` for the host's worktrees.
+- `src/commands/init-embedding-plane.ts` (new), `src/commands/init.ts`: the implicit-keyless marker and the kept database identity on both engines.
+- Doctor: `owner_host_stale` (`checks/owner-host-stale.ts`) and `embedding_plane_disagreement` (`checks/embedding-plane.ts`); `core/readiness.ts` exports `enableArgv`.
+- Docs: troubleshooting entries `#owner-host-stale` (with the stable `GBRAIN_HOME` guidance for servers and containers) and `#embedding-plane-disagreement`; the exit-status tables.
+- Tests: `test/owner-stale-moved-brain.test.ts` (real CLI, PGLite), `test/persistence-owner-activity.test.ts` (PGLite and Postgres), `test/init-cold-home-embedding.test.ts` (PGLite and Postgres), `test/doctor-owner-host-stale.test.ts`, `test/doctor-embedding-plane-disagreement.test.ts`; doctor goldens.
+
+## [0.60.523.0] - 2026-10-31
+
+**A launcher can now tell gbrain that a session's user turns are an agent's, not yours, so orchestrator worker briefs stop landing in your brain as your own preferences (#8064). Codex sessions that open and close with no prompt no longer raise a week-long parser_drift alert (#8016), and task notifications and agent-team messages no longer get brain context injected as if you typed them (#8028).**
+
+Set `GBRAIN_SESSION_AGENT=<label>` on a worker's process and the capture hooks still save the session, but every claim from its user turns is saved as `attributed_to: other` with the context note `speaker: agent <label>, not the owner`, and the extractor is told the agent wrote them. `GBRAIN_SESSION_AGENT=off` saves nothing from the session; `owner` declares the turns yours. With the variable unset, a headless `claude -p` or `codex exec` session whose ancestors include another claude or codex process is detected and saved as agent `agent-launched`'s. The marker is a `<session>.speaker.json` sidecar written before any corpus file; if it can't be written, nothing is saved. Agent claims are never consolidated into your own takes. The marker covers the Claude Code and Codex hook lanes; the OpenClaw context-engine lane and dream synthesis don't read it yet.
+
+For facts already saved as yours, `gbrain repair agent-session-facts` previews a re-attribution: facts from sessions with a speaker marker, sessions you name (`--session`), or sessions whose working directory sits under a path you name (`--cwd`, for an orchestrator's worktree root). Sessions whose first turn opens with the same 160 characters as at least 3 other sessions (a template brief) are listed as ambiguous and change only with `--include-ambiguous`. `--apply --expect <hash> --yes` sets exactly the previewed facts to `attributed_to: other` with the speaker note and retires the self takes consolidate built only from them. It deletes nothing, keeps a claim you also made in another session, and works on repo-less brains. `gbrain doctor` (`agent_session_facts`) counts the candidates, and `doctor --remediation-plan` lists the preview command.
+
+### Itemized changes
+
+- `src/core/context/session-speaker.ts` (new): the env contract, ancestry detection, the speaker sidecar.
+- `src/commands/hook.ts`: compact, stop and session-end record the speaker before banking and skip banking on `off`; user-prompt skips `<task-notification` and `<teammate-message` prompts (`harness_prompt`); a session-end that saves turns clears its own lane's `parser_drift` status file, which now records the lane.
+- `src/core/facts/backstop.ts`, `src/core/facts/extract.ts`, `src/core/facts/speaker-context.ts`, `src/core/persistence/facts-maintenance.ts`: the `speaker` pipeline option.
+- `src/core/context/checkpoint-harvest.ts`, `src/core/sweep.ts`: the capture lanes pass the corpus file's speaker.
+- `src/core/transcripts/codex-hook-lane.ts`: `event_msg` / `thread_settings_applied` counts as a recognized record.
+- `src/core/repair/agent-session-facts.ts` (new), `src/commands/doctor/checks/agent-session-facts.ts` (new): the explicit-only repair kind, its `managed_maintenance_agent_session_facts` request and the `agent_session_facts` doctor check; registry, preview-approval and doctor goldens updated.
+- `docs/guides/ambient-writeback.md`: "Sessions an agent launches"; `docs/guides/repair.md`: the new kind.
+
+## [0.60.522.0] - 2026-10-31
+
+**`recall` and `list_pages` now honour `source_ids`, the per-request source narrowing `search` and `query` already had. Before, both ops ignored the list, so an agent narrowing each call to the asking member's sources still got other sources' facts and pages from these two tools.** A harness-evals run measured it: under per-request narrowing, `recall` returned a page from outside the requester's sources twice and `list_pages` 57 pages over three calls. Each id is checked like an explicit `source_id`, so the list can only narrow what the token's grant allows; an id outside a remote grant refuses the whole request, and an empty intersection with `source_id` returns nothing with an `empty_retrieval` notice. A call that names its own sources also no longer gets `_meta.brain_hot_memory`, which reads the connection's source.
+
+### Itemized changes
+
+- `src/core/ops/facts.ts`: `recall` takes `source_ids` and reads every fact arm and its page-search arm inside the narrowed scope.
+- `src/core/ops/pages.ts`: `list_pages` takes `source_ids`.
+- `src/core/ops/search-source-scope.ts`: the shared parser and resolver serve all four ops.
+- `src/mcp/dispatch.ts`: the hot-memory hook is skipped when a call names `source_ids` or a `source_id` other than the connection's.
+- `docs/protocol/MCP_META_CHANNELS.md`: says when `brain_hot_memory` is left out.
+- `docs/guides/multi-source-brains.md`: "Narrow one request with `source_ids`" names all four ops.
+- `test/recall-list-pages-source-ids.test.ts` (PGLite and Postgres): each recall arm and list_pages under narrowing, the grant refusal, the empty intersection, and starter-surface dispatch with the hot-memory hook; red on the old code.
+
+## [0.60.521.0] - 2026-10-30
+
+**Text from other people's messages is now quoted on every read that hands it to an agent, not only in `search` results for imported conversations: Slack, iMessage, email and meeting pages, facts saved from them, and `get_page`, `fetch`, `recall`, `delta`, hot memory and `think` all mark it as source material.**
+
+Since the previous release, `search`, `query` and `assemble_evidence` returned a `conversation` page's text inside a quote fence, a line naming the page as source material, not instructions, then a code fence the text cannot close, with tool calls in it summarized. Other chat page types and the facts extracted from them came back unmarked, and so did every other read. Now one rule decides what is quoted: a page of type `conversation`, `meeting`, `slack`, `slack-dm-day`, `slack-thread`, `email`, `email-digest`, `imessage`, `imessage-daily`, `transcript` or `chat`, and a fact taken from one: saved by the conversation-facts extractor (`cli:extract-conversation-facts`), extracted by the facts backstop or `extract_facts` from such a page (a synced or written Slack, email or meeting page), or held in such a page's facts fence. Which facts count is decided when they are read, from what each fact already records about its source page: the page holding it, the derivation edge the backstop has written since it started recording them, or, for older backstop facts and brains rebuilt from git, the page its `source_session` names (`sync:<slug>`, `put_page:<slug>`). This release adds no new write and changes nothing stored. Each comes back with `quoted: "transcript"` and its text fenced; a fact's marker names it as `fact <id>`.
+
+- `search`, `query` and `assemble_evidence` quote these rows for every caller, as they already did for `conversation` pages, including fact rows and `saved_facts`. If the lookup that decides which facts to quote fails, `saved_facts` is left out with the degraded stage `saved_facts_withheld` (and remote `recall` returns no facts, with `facts_degraded.reason: "saved_facts_withheld"`) rather than returning them unquoted.
+- Over MCP, `recall` quotes its `results` and the `fact` of each quoted fact, and `delta` facts and `_meta.brain_hot_memory` do the same.
+- Over MCP, `get_page` on such a page fences `compiled_truth`, `timeline`, `content` and every window's text, and `fetch` fences `text` (`metadata.quoted`). Tool calls are not summarized there, so the text inside the fence is the stored text: `edit_page` with `old_text` copied from inside still matches, and `put_page` given the fenced `content` back removes exactly those fences before it writes, so a read, edit and write round trip keeps the page as it was apart from your edit. Only a page whose stored or new type is quoted loses a fence naming it on such a write; a note whose own text looks like one keeps it, and a retried write that changes the type replays as the same request.
+- Over MCP, `get_page` with `known_as_of` and `get_versions` with `include_body` (and the `known_as_of` `diff`) fence the same pages' recorded bodies and mark them `quoted`.
+- `think` quotes these pages in the evidence it gives the model, on every run.
+- The local CLI (`gbrain get`, `gbrain put`, `gbrain recall`, `gbrain delta`) reads and writes as before. A thin-client `gbrain get` (and `--json`) prints the fences the host returns, except when it pages a large chat page window by window: it removes them and checks the page against the host's size and checksum. Stored pages, facts, ranking and scores are unchanged. `search_exact` and `get_chunks` still return text as stored.
+
+### What changes for you
+
+- An agent connected over MCP sees chat and email text, and facts saved from it, as quoted source material wherever it reads them.
+- A script reading `get_page` or `recall` over MCP sees the marker line and fence around such text; read `quoted` to tell. Writing `content` back with `put_page` needs no change.
+- Upgrade thin clients with the host: a thin client older than this release cannot page a large chat page from a host on it, because the fenced windows no longer match the reported checksum.
+- Not covered yet: `get_timeline` rows and `get_page include_timeline_entries` rows, the `context_pack` and `delta` text renderers, `search_exact` and `get_chunks`.
+
+## [0.60.520.0] - 2026-10-30
+
+**The Heavy nightly's Codex plugin door test checks the plugin's MCP surface against `PLUGIN_SURFACE`, the surface the plugin's `mcp.json` actually serves, instead of `REGISTRATION_SURFACE`. A unit-shard listing that dies on a signal now names the signal instead of an empty error.**
+
+The plugin ships `serve --surface PLUGIN_SURFACE --source-guard`, so the door test's launcher-args check and its `tools/list` oracle compared against the wrong surface and failed every Heavy nightly (#6049).
+
+`unitShards()` in `scripts/sharding.ts` threw `scripts/test-shard.sh --dry-run-list 26 28 failed: ` with nothing after it when a plain `bun test test/scripts/unit-shard-budget.test.ts` hit Bun's 5 s default test timeout. Bun ignores bunfig's `timeout`, the 28 listings take about 5.5 s, and the timeout kills the child, so the status is null and stderr is empty. The error now reads `killed by SIGTERM`. CI was never affected: `scripts/test-shard.sh` passes `--timeout=60000`.
+
+### Itemized changes
+
+- `test/e2e/codex-plugin-install-real.serial.test.ts`: assert `PLUGIN_SURFACE`.
+- `scripts/sharding.ts`: `unitShards()` names the signal that killed a listing.
+- `test/scripts/sharding.test.ts`: a listing killed by SIGTERM reports it.
+
+## [0.60.519.0] - 2026-10-30
+
+**The unit lane now runs 28 shards instead of 22, on shard weights refreshed from the Oct 30 nightly. With the fresh weights, every one of 22 shards would be planned at 624.4 s against the 600 s per-shard budget; at 28 shards the largest is 490.6 s.**
+
+`UNIT_SHARDS` is 28. `test.yml`'s unit matrix and `e2e.yml`'s `coverage-full-unit` matrix follow it, and `test/scripts/unit-shard-budget.test.ts` pins both, still two shards per runner. The unit, serial and E2E weight maps and their metadata come from the Oct 30 nightly mining run, and weight coverage is clean: 4366 unit, 446 serial and 832 E2E files, with no dead entries.
+
+### Itemized changes
+
+- `scripts/sharding.ts`: `UNIT_SHARDS = 28`.
+- `.github/workflows/test.yml`, `.github/workflows/e2e.yml`: the unit and coverage-full-unit matrices and their `--manifest-expect` lists.
+- `scripts/test-weights.json`, `scripts/serial-weights.json`, `scripts/e2e-weights.json` and their `.metadata.json`: the Oct 30 refresh.
+- `docs/TESTING.md`: the shard counts.
+
+## [0.60.518.0] - 2026-10-30
+
+**`gbrain repair secret-spans --source <id> --slug <slug>...` replaces the credentials the secret scanner finds in the database copies of the pages you name with `<REDACTED:rule>` markers and changes nothing else, held pages included (GST-327).**
+
+A credential pasted into a page lives in more places than its file: the page row, timeline, fact and take rows, link contexts, raw connector data and the chunks built from them. A page that sync holds keeps its stale database copy, so redacting the file never reaches it. The new kind reads every one of those copies, plans the spans with the scanner's own rules (`--rules`, default every named credential rule; the two broad heuristics only when named) and proves the result equals the scanner's redaction byte for byte before it writes. The preview shows counts per rule and each changed field's old and new SHA-256, never a value; `--apply --expect <hash>` rewrites exactly that set, one transaction per page, keeps trust tiers, rebuilds the chunks from the redacted body and re-scans what it wrote. It writes no file and no commit, leaves sync holds as they are, keeps page versions as history, and works the same on a repo-less brain. Explicit-only and trusted-local-CLI-only.
+
+### Itemized changes
+
+- `src/core/secret-spans.ts` (new): the pure span planner and proof (`redactFields`, `resolveSecretRules`, `residualMatches`); `src/core/secret-scan.ts` exports `NAMED_SECRET_RULES`.
+- `src/core/repair/secret-spans.ts` (new): the repair kind (preview, preview-bound apply, per-page receipt, re-scan), registered explicit-only and preview-bound; `gbrain repair` accepts `--rules` and `--slug` for it.
+- `docs/guides/repair.md`: the `secret-spans` section and table row.
+- Tests: `test/secret-spans.test.ts`, `test/repair-secret-spans.test.ts` (repo-less and managed brains, segmented embed_skip page, held page, impossible timeline date, `preview_changed`, remote refusal); the explicit-kind lists in `test/repair-explicit-only.test.ts` and `test/fix-wave-5-integration.test.ts` name the new kind.
+
+## [0.60.517.0] - 2026-10-30
+
+**The crash robot now runs two writer runs at a time, with the same runs, faults and manifest order as before, so its Postgres and PGLite cells finish well inside their ceilings again (#8036). reconcile-owner-journey is split by transport, so neither half hits the serial lane's 300 s per-file cap on a slow runner (#8040).**
+
+Every crash-robot run was executing one after another, so a slow runner plus the 2-minute `pooler_disconnect` lease wait pushed the Postgres cell to 899 s against its 880 s ceiling. The driver now draws every random schedule, fault point and seed in the old order before anything runs, executes `ROBOT_CONCURRENCY` (2) runs at a time, each with its own scratch root, database and `GBRAIN_HOME`, and reports results in the original manifest order. Ceilings and seeds are unchanged. Measured locally, Postgres went from 423 s to 258 s and PGLite from 699 s to 418 s, with identical manifests and no violations; on CI, Postgres took 369 s against its 880 s ceiling and PGLite 531 s against 1200 s.
+
+`test/reconcile-owner-journey.serial.test.ts` ran its stdio and http owner journeys in one file. On a runner pinned to one core it was killed at 301 s. Each transport is now its own file over a shared helper (`test/helpers/reconcile-owner-journey.ts`), with the same four cases and assertions; on that probe the two halves passed in 214 s and 193 s.
+
+The pregate allowlists `pii.phone.e164` only for `scripts/*-weights.metadata.json`, whose run IDs look like phone numbers, and two comments about the 22-minute unit job timeout no longer carry a bare shard-count literal.
+
+### Itemized changes
+
+- `scripts/persistence/robot-driver.ts`: a `pooled` runner at `ROBOT_CONCURRENCY`, results stored by item index, and a per-run `HOME`/`GBRAIN_HOME`. `test/persistence-crash-robot.test.ts` checks that concurrent runs cover exactly the serial runs, faults and manifest order.
+- `test/helpers/reconcile-owner-journey.ts`, `test/reconcile-owner-journey.serial.test.ts`, `test/reconcile-owner-journey-http.serial.test.ts`; `scripts/serial-files.tsv` gains the http file.
+- `.gstack/pregate.json`: the scoped allowlist. `scripts/test-shard.sh`, `test/scripts/unit-shard-budget.test.ts`: comment wording.
+- Docs: `scripts/persistence/README.md`, `docs/ci-event-parity.md`.
+
+## [0.60.516.0] - 2026-10-30
+
+**The crash robot no longer reports a lost write when the user's own Git commit in a sync race never landed (#8043).**
+
+In `sync_and_connector_race_direct_write`, the robot plays a user who edits a page file, commits it and syncs while an agent edits the same page. It ran `git add` and `git commit` without reading their exit status. On one Postgres run (seed 5105, `sync:mid_checkpoint#13`) the commit did not land, but the sync ran anyway and was counted as a committed write of the user's marker. Sync correctly imports nothing from an uncommitted file, so the group check called the page lost. The same missing commit explains why the agent's edit was refused as an "uncoordinated local edit" rather than `pending_import` (what it gets whenever the commit lands, 150 of 150 local Postgres runs), and why the planned fault was never reached: there were no imports to checkpoint. CI kept no git stderr, so this is the best-supported cause, not a proven one: a sync that advanced its cursor without importing the page would leave the same signature. The fix tells the two apart, so a `lost_write` here from now on is a real sync bug.
+
+The user step now checks that its commit landed. It retries while another Git process holds a lock, for up to 20 s. Any other failure throws with git's stderr and fails the run as a harness error, so the model never sees a sync whose commit does not exist. A failing run's trace now also shows each sync's `fromCommit`, `toCommit`, `added` and `modified`, so a recurrence is diagnosable from the manifest. The reference model is unchanged.
+
+### Itemized changes
+
+- `scripts/persistence/ops.ts`: `userEdit` writes and commits the user's files and verifies them clean at HEAD (retrying a held lock, throwing otherwise) before `executeOp`'s try, and `runSync` now only runs `sync_brain`; a sync observation keeps the commits and counts the sync reported. `scripts/persistence/crash-robot.ts`: the failure trace prints that for sync and connector ops.
+- Tests: `test/persistence-crash-robot.test.ts`, under "a sync op whose user commit did not land". The forced probe holds `index.lock` across the user's commit: on the previous code it reproduces the CI result (sy2 `uncoordinated local edit`, sy1 committed, `lost_write`), and now the commit lands and the race leaves no violation. A refused commit fails the op instead of reporting it committed, and a committed sync whose marker the page lacks is still `lost_write`.
+
+## [0.60.515.0] - 2026-10-30
+
+**gbrain's Ubicloud VMs now carry a TTL in gstack's name grammar, `ubirun-<owner>-<epoch>-<suffix>-t<H>`. gstack's runner reaps any TTL-less `ubirun-*` VM of the caller's owner after 4 h; under the new names, a gbrain gate, soak or dev VM lives until its own TTL ends and no longer.**
+
+`ci:ubicloud` names gate VMs `…-ciNN<hex>-t2` by default. `--ttl-hours` takes 1 to 999; `0` (no expiry) is gone. `ubi-runner.sh up` and `run` give every name they generate a TTL: `--ttl-hours H`, or `-t999` (about 41 days) without it. The production soak defaults to `-t15`. The operator reaper (`scripts/ubicloud/reap-expired.ts`) reads `-t<H>` names from every owner and tool as expiring H hours after creation. It keeps reaping the older `-x<expiry>` names until none are left, and still never selects a TTL-less, untagged-legacy or foreign name. Follow-ups are in #8050.
+
+### Itemized changes
+
+- `scripts/ubicloud/reap-expired.ts`: a `-t<H>` grammar ahead of the `-x<expiry>` one; `expiringVmName` writes `-t<H>`, 1 to 999.
+- `scripts/ubicloud/ubi-runner.sh`: `new_name` always appends `-t<H>` (default 999); `--ttl-hours` accepts 1 to 999.
+- `scripts/ci-ubicloud.ts`: `--ttl-hours` accepts 1 to 999; batch log names drop the TTL suffix.
+- `scripts/bench/production-soak/ubicloud.sh`: default TTL 15.
+- Docs: `scripts/ubicloud/README.md`, the runner header and usage text, `docs/TESTING.md`.
+
+## [0.60.514.0] - 2026-10-30
+
+**A correctly redacted transcript page now clears `gbrain transcripts audit-secrets`, and a missing-file page under a `db_only` directory is kept rather than deleted in two more cases: on company-brain sources (#8014), and whenever gbrain.yml's storage lines cannot be fully resolved (#8015).**
+
+The importer writes redaction markers like `login **<REDACTED:user-pattern>**`, and the `labeled_credential` detector read the marker itself as a typed user/password pair, so a page that was already redacted failed every audit (#7997). The labeled patterns now scan a copy of the line in which a standalone marker is rewritten to an inert token of the same length, while the reported value is still cut from the original line. A password written beside a marker, or glued straight onto one, is still found. The audit detector version moves to 3, so `gbrain doctor` asks for one fresh audit.
+
+Company-brain sources skipped the `db_only` check when retiring pages whose files are not in the approved manifest, so they deleted live database-only pages (#8014). Their deletes now go through the same verdict as other managed sources, read from gbrain.yml at the approved commit, never from the working tree.
+
+The `db_only` resolver now fails closed (#8015). A `db_only` or `supabase_only` line whose inline value the parser refuses (a missing comma, a nested list, an unquoted value with spaces) counts as unresolved even when another key resolved, and a held page is released only when its verdict is known. A deprecated `supabase_only` list ignored beside canonical keys now holds only the pages under its directories that `db_only` does not cover, `gbrain storage status` names those directories, and the deprecation warnings no longer point to a `gbrain doctor --fix` rename that does not exist.
+
+Contributed by @Masashi-Ono0611 (#7997 report and #7999).
+
+### Itemized changes
+
+- `src/core/secret-scan-labeled.ts`, `src/core/secret-scan.ts`: `neutralizeRedactionMarkers` and a per-pattern scan subject; `src/core/transcripts/secret-audit.ts`: audit version 3.
+- `src/core/persistence/sync-discovery.ts`: company delete entries carry their slug and go through `retireDbOnlyDeletes` with a verdict from the approved commit's gbrain.yml.
+- `src/core/storage-config.ts`: `dbOnlyVerdict`, a stricter flow-list parser, `ignored_db_only` in place of a boolean, and the stricter unresolved rule; `src/core/persistence/sync-pass.ts` and `source-storage.ts` use the per-slug verdict; `src/commands/storage.ts` warns about ignored directories.
+- Docs: `docs/storage-tiering.md`, `docs/guides/repair.md`. Three `BEHAVIOR_CHANGES` rows.
+- Tests: `test/secret-scan-redaction-marker-7997.test.ts` (new), `test/company-brain-runtime.test.ts`, `test/sync-storage-invalid-8007.test.ts`, `test/storage-config.test.ts`, `test/storage-pglite.test.ts`.
+
+## [0.60.513.0] - 2026-10-30
+
+**A search on a brain with many pages still waiting for a projection no longer spends seconds in the readiness check: the probe stops after it finds a pending page instead of also walking every unsealed page for the `by_design` answer it then discards (#8000).**
+
+The readiness probe that runs before every uncached `search` and `query` asked two questions in one statement: is any page in scope pending, and are the only unsealed pages protected ones (`by_design`). The second answer is only used when nothing is pending, but Postgres evaluated both. While pages are pending there is usually no protected page for its `LIMIT 1` to stop at, so it read every unsealed page on every cold call. On a synthetic brain with 235k pending image pages that was most of the `meta_readiness` stage. The statement now evaluates `by_design` only when nothing is pending, still in one round trip, and returns the same `ready`, `projection_pending` and `by_design` answers.
+
+Contributed by @Masashi-Ono0611, whose #8004 proposed the short-circuit.
+
+### Itemized changes
+
+- `src/core/search/projection-readiness.ts`: the probe reads `pending` in a materialized CTE and `by_design` inside `CASE WHEN pending THEN false ELSE … END`, so its subplan never runs while pages are pending.
+- Tests: `test/projection-readiness.test.ts` (PGLite) and `test/e2e/projection-readiness-plan-postgres.test.ts` (Postgres) pin the plan: with pending pages only one scan of `pages` executes.
+
+## [0.60.512.0] - 2026-10-30
+
+**After an automatic self-upgrade, the autopilot now restarts the serve your installed service runs when it is still on the old build, so one auto-upgrade no longer leaves two builds running until someone runs `gbrain upgrade --restart-only` by hand.**
+
+With `self_upgrade.mode auto`, the autopilot's `--swap-only` channel installs the new build and exits so its own supervisor relaunches it. The serve that launchd (`com.gbrain.serve`) or systemd (`gbrain-serve.service`) runs kept the old build, doctor's `runtime_build_skew` failed, and the audit's `restart_pending` was never acted on. The relaunched autopilot now checks that serve once per process. When it reports an older build, the autopilot restarts it through the service and verifies that it came back on the new build, under the same auto-mode, quiet-hours and idle gates as the swap. It records the step in the self-upgrade audit as `restart_serve` (`applied`, or `skipped` with `manual` or `unverified`). A serve that the service does not run, one started by hand or from another install, is never touched, and doctor's fix for it stays `gbrain upgrade --restart-only`.
+
+The systemd pid read also stopped passing a value flag to `systemctl show` and parses the `MainPID=` line instead, which removes a flag that `gbrain upgrade`, `gbrain post-upgrade` and `gbrain autopilot` listed as accepted but never took.
+
+### Itemized changes
+
+- `src/commands/upgrade-restart.ts`: `planServeRestart`, `restartStaleServeService` and `restartServeAfterSelfUpgrade` (auto mode, quiet hours and idle only, once per autopilot process, audited as `restart_serve`); the systemd `MainPID` read parses `MainPID=<n>`.
+- `src/commands/autopilot-daemon.ts`: runs the serve check after `attemptAutopilotSelfUpgrade` with the autopilot's idle signal; `src/commands/autopilot.ts` exports `computeAutopilotIdle` for it.
+- `src/core/cli-flag-registry.generated.ts`: regenerated; the never-accepted value flag is gone from the `upgrade`, `post-upgrade` and `autopilot` rows.
+- Docs: the Restart section of `docs/guides/upgrades-auto-update.md` and the `upgrade-restart.ts` key-files entry.
+- Tests: `test/autopilot-serve-restart-7475.test.ts`.
+
+## [0.60.511.0] - 2026-10-30
+
+**Sync no longer deletes pages it cannot prove are deletions while gbrain.yml's storage section is invalid, and one-line `db_only: [dir/]` lists now take effect.**
+
+A managed sync keeps a live page whose file is gone when the page sits under a declared `storage.db_only` directory, because the database copy is canonical. When gbrain.yml's storage section did not load (a directory in both `db_tracked` and `db_only`), or declared `db_only` in a shape the parser resolved to nothing, that check answered "not database-only". Those pages were then soft-deleted, and the retention purge removed them for good (#8007). Sync now treats the answer as unknown: it keeps each such page and holds its path as `file_drift` with reason `storage_invalid`. The same applies when a deprecated `supabase_only` list sits next to canonical keys, which makes gbrain ignore it. `gbrain repair file-drift --prefer file` and `sync.apply_held_deletions` skip these pages too. Once gbrain.yml is fixed and synced, the holds clear and each page is decided under the fixed config.
+
+### How to use it
+
+- If `gbrain sync` reports pages "kept, not deleted" or `gbrain sources status` shows `storage_invalid` holds, run `gbrain storage status`. It names the problem. Fix gbrain.yml, commit it, then run `gbrain sync --source <id> --no-pull`.
+- Storage tiers can be written as a one-line flow list: `db_only: [media/x/, 'archive/']`.
+
+### What changes after you upgrade
+
+| Situation | Before | After |
+|---|---|---|
+| gbrain.yml tiers overlap and a file disappears | the page was deleted, then purged | the page is kept and held `storage_invalid` |
+| `db_only` written as a flow list split over lines | resolved nothing: missing-file pages deleted | resolves nothing: missing-file pages held, and `gbrain storage status` warns |
+| `db_only: [dir/]` on one line | ignored | declared: gitignored, published database-only, kept when its file is gone |
+| `db_tracked: [...]` or `keep_db: [...]` on one line | ignored | take effect |
+| `db_only: []` | made the sync baseline commit refuse | declares no directory |
+
+### Itemized changes
+
+- `src/core/storage-config.ts`: quote-aware one-line flow lists; an explicit `[]` is no unresolved declaration; an ignored deprecated `supabase_only` list is flagged.
+- `src/core/persistence/source-storage.ts`, `sync-discovery.ts`, `sync-pass.ts`, `sync-classify.ts`, `sync-pass-apply.ts`, `sync-holds.ts`: the three-valued db_only verdict, the `storage_invalid` hold, its remediation, rescreen and release.
+- `src/core/persistence/sync-held-deletions.ts`, `src/core/repair/file-drift.ts`: skip pages whose db_only verdict is not a definite no.
+- `src/commands/storage.ts`, `src/commands/sync-diagnostics.ts`: the unresolved-declaration warning and the kept-pages summary line.
+- Tests: `test/sync-storage-invalid-8007.test.ts` (PGLite and Postgres), `test/sync-classify-storage-invalid-8007.test.ts`, and new cases in `test/storage-config.test.ts` and `test/storage-pglite.test.ts`.
+
+## [0.60.510.0] - 2026-10-30
+
+**Tier 2's keyed nightly now actually gives the agent gbrain's MCP tools and fails any test in which the agent never called one, and a Tier 1 graduation shard that executed nothing now fails instead of passing.**
+
+Tier 2 wrote its gbrain MCP server into `~/.openclaw/config.json`, which OpenClaw 2026.4.9 never reads, since it reads `mcp.servers` in `~/.openclaw/openclaw.json`. The agent ran with no gbrain tools, and each test checked only that OpenClaw exited 0 and printed something, which it also does when the model key is rejected (#8002). The job now saves the server with `openclaw mcp set` and fails unless `openclaw mcp show` reads it back. It serves gbrain's starter surface (31 tools), because OpenClaw's default agent model is `openai/gpt-5.4`, OpenAI refuses a request with more than 128 tools, and OpenClaw's own 31 tools plus gbrain's full 158 come to 189. The server runs behind `scripts/ci-mcp-tap.sh`, which logs every JSON-RPC request, and each Tier 2 test fails unless the agent made a gbrain tool call while it ran. The `tier1-graduation` shards now run `scripts/require-executed-tests.ts` after their tests, because the graduation files skip without `DATABASE_URL` and `run-e2e.sh` exits 0 on an all-skip run, so a shard with a broken database env used to pass with nothing executed (#8003).
+
+### Itemized changes
+
+- `.github/workflows/e2e.yml`: Tier 2's "Configure OpenClaw MCP" step runs `scripts/ci-openclaw-mcp.sh` and its test step gets `GBRAIN_TEST_TIER2_MCP_TAP_LOG`; each `tier1-graduation` shard runs the executed-tests check on lane `tier1`.
+- `scripts/ci-openclaw-mcp.sh`, `scripts/ci-mcp-tap.sh` and `scripts/mcp-tap-calls.ts`: the MCP registration, the request tap and its reader.
+- `test/e2e/skills.test.ts`: each test asks for a gbrain MCP tool and requires a gbrain tool call.
+- Tests: `test/scripts/tier2-openclaw-mcp.test.ts` and two new cases in `test/scripts/require-executed-tests.test.ts`.
+
+## [0.60.509.0] - 2026-10-30
+
+**Doctor stops flagging harnesses you already wired, large file uploads no longer load the whole file into memory, `restore --detach` keeps database-only pages, and you can clear Git push failures that no retry will ever fix.**
+
+This release fixes eight bugs that people hit in day-to-day use. Doctor said Claude Code had no gbrain connection even after setup had recorded one. It reported deleted workspaces as broken, and `doctor --only` ignored the check you named. Uploading a large original read the whole file into memory, and a file that changed partway through could leave a half-written copy behind. Restoring a page you had declared database-only, and then syncing, treated its missing file as a deletion. And a Git push that failed for good, because the file was now database-only or a later push had already written it, stayed "held" in status and doctor forever.
+
+### How to use it
+
+- `gbrain doctor --only harness_wiring` (or any wave check id) runs just that check.
+- `gbrain sources writer settle-effects <source> --parked-code <code>` previews which failed Git pushes can be settled. `--apply --expect <plan_hash>` records the settlement, and `--unsettle` reverses it.
+- Uploads (`gbrain files upload`, `upload-raw`, sync) stream from disk on their own. Nothing to turn on.
+
+### What changes after you upgrade
+
+| Situation | Before | After |
+|---|---|---|
+| Setup recorded a project-scope MCP registration | doctor warns "no gbrain MCP registration" | doctor reads it and reports ok |
+| A push-status record from a deleted workspace | reported as unreadable status | skipped |
+| A 5 GB original uploaded to S3 | read fully into memory | multipart upload with bounded memory |
+| The file changes while it uploads | a partial or mismatched object could be stored | refused, nothing stored, the existing attachment kept |
+| `restore --detach` on a page declared `db_only`, then sync | the next sync deleted it again | the page stays database-only |
+| A failed push whose target is now `db_only` | held in status and doctor indefinitely | settle it once and it stops blocking |
+
+### Things to watch
+
+- Settling never touches the failure record, the request or the file bytes. It only marks the effect settled, and only on proof: the target falls under `db_only` in the current `gbrain.yml`, or the upstream ref you already fetched holds bytes a later push wrote. Nothing is fetched, and a stale or missing ref refuses.
+- Downloads and restores of very large originals still read the whole object into memory. This release makes uploads memory-safe only.
+
+### Itemized changes
+
+- Doctor: `harness_wiring` reads the bootstrap receipt and its workspace `.mcp.json` (#7422). Push status skips records whose workspace is gone (#7377). `doctor --only <wave check>` runs just that check, and self-session lookups are read once per run (#7343).
+- Retention: purging tombstones under an adopted skillpack declared database-only also reaches skill paths outside the bundle (#7345).
+- `restore --detach` publishes a declared `db_only` page database-only, and sync keeps it (#7324).
+- Storage: S3 multipart, Supabase standard and TUS, and local streamed uploads with a hash check before each backend's publish step. The local backend writes a sibling `.partial` file and renames it into place. `file_changed_during_upload` refuses a file that changed during its upload (#7427). Contributed by @Masashi-Ono0611.
+- `gbrain sources writer settle-effects` (`writer_settle_effects`): preview-first, plan-bound settle and unsettle of failed Git effects. Doctor (`parked_effects`, git convergence), parked groups, push holds, writer status, sync status (`writeback_failed`, `git_push_held`), the pass idle probe, deactivation and bulk retries skip settled rows. `--parked-pushes` now reaches a failed current-binding push with no parked data (#7423, #7378).
+
+## [0.60.508.0] - 2026-10-30
+
+**The E2E full run is shorter and Tier 2 no longer reports green on a run where it executed nothing: Selected E2E uses up to 14 workers, Tier 1's graduation files run in 2 shards of their own, and Tier 2 runs keyed on the nightly schedule with a check that fails when any of its tests skipped.**
+
+Selected E2E shards set the E2E critical path in most full-ci runs, and Tier 1 ran its 15 graduation files one after another for about 15 minutes. Tier 2 installed OpenClaw on every run, then skipped all 3 tests because the test preload strips the model keys, and still counted green. Now Selected E2E can run up to 14 workers (`MAX_E2E_WORKERS`), and the graduation files run in a `tier1-graduation` job split into 2 weighted shards, against direct Postgres and PgBouncer as before and on the same `tier1` receipt lane; `e2e-status` requires that job. Tier 2 runs keyed only on the nightly E2E schedule and on a `full_corpus` dispatch. On other events `e2e-status` accepts its skip with a `Tier 2 (LLM Skills) not run: keys withheld` notice, and on the nightly `scripts/require-executed-tests.ts` fails the job when any Tier 2 test skipped or none ran. `GBRAIN_PAID_LANES=0` still turns it off. A new test fails when a Selected E2E or graduation shard of the full corpus, scaled by the measured actual-to-predicted factor plus setup time and a minute of margin, would pass its job timeout.
+
+### Itemized changes
+
+- `.github/workflows/e2e.yml`: 14 Selected E2E workers, the `tier1-graduation` shards, keyed Tier 2 on the nightly and `full_corpus`, and the keys-withheld notice in `e2e-status`.
+- `scripts/require-executed-tests.ts`: fails a lane whose tests skipped or never ran.
+- `scripts/e2e-matrix.ts`, `scripts/e2e-provider-key-notice.sh`, `scripts/structural-suites.tsv` and `.gstack/pregate.json` follow the new jobs.
+- Docs: `docs/ci-event-parity.md`, `docs/ci-red-runbook.md`, `docs/TESTING.md` and the key-files entry.
+- Tests: `test/scripts/e2e-shard-budget.test.ts`, `test/scripts/require-executed-tests.test.ts`, and the wiring, matrix, routing and paid-lane tests.
+
+## [0.60.507.0] - 2026-10-30
+
+**`search`, `query` and `assemble_evidence` now return a conversation page's text as a quoted excerpt, with tool calls in it (JSON or XML-style) replaced by a one-line summary, so an agent reading the result can't mistake an old tool call for a live one.**
+
+Imported chat transcripts can quote tool-call or function-call JSON, or XML-style call blocks, from the original conversation: a pasted agent log, a model that wrote its call as text. Search used to return that JSON verbatim, and one agent harness's prompt-injection classifier flagged such a result as malicious (#7600).
+
+A row whose page has type `conversation` (what `gbrain transcripts ingest` and the chat connectors write) now comes back with `quoted: "transcript"` and its `chunk_text` wrapped: a line naming the page as source material, not instructions, then the text inside a code fence it cannot close. Each tool-call block of these shapes becomes `[tool call: <name>, arguments omitted]`: a JSON object whose `type` names a tool or function call (`tool_use`, `function_call`, `tool_call` and their variants), a `tool_calls`, `function_call` or Gemini `functionCall` value, or an XML-style `function_calls`, `invoke`, `tool_use` or `tool_call` element. Escaped or untyped JSON is not summarized and stays inside the fence. An XML block cut off at either end of a chunk is replaced, and so is a JSON block cut at the end or whose type key is still in the chunk; tool results, prose that names a tag, and the conversation around a block stay. This happens at read time where `search` and `query` shape their rows (MCP and the CLI both pass through it) and where `assemble_evidence` assembles its evidence. An open-ended or cut block stops at the next message's speaker line, with LF or CRLF line endings. Under `return_unit: auto` an explicit `token_budget` counts the fence, so the delivered evidence still fits it, and a conversation-heavy result can come back with fewer or shorter rows (a rank-one conversation row is still returned when the fence alone is larger than a very small budget); budgets under other units and `query`'s legacy chunk budget do not count the fence, so those rows can run over by the marker and fence lines; a row's `delivered.tokens` and `match_spans` and the delivery's `tokens_delivered` and `budget_used` describe the fenced text. Stored pages, ranking and scores are unchanged, and every other page type comes back byte-for-byte as before. Only type `conversation` is quoted, and only by these three operations: `recall`, `think`, `search_exact`, `fetch` and `get_chunks` still return the text as stored.
+
+### What to watch for after you upgrade
+
+- A script that reads `chunk_text` of conversation rows sees the marker line and fence around the text. Read `quoted` to tell them apart; `get_page` still returns the page as stored.
+- `gbrain search` prints a conversation row as `[quoted transcript]` followed by the start of its text.
+- `snippet_chars` caps the text inside the fence; the marker and fence lines come on top. With `search.evidence_date_header` on, a quoted row's `[observed …]` header (with its title under `search.evidence_titles`) stays the first line of `chunk_text`, ahead of the marker line, as on every other delivered block. Only a first line that is that header stays outside the fence, and a tool-call block after it can never take it over; anything else is fenced.
+
+### Itemized changes
+
+- `src/core/search/transcript-quote.ts`: the JSON and XML tool-call neutralizer, the fence and the CLI preview; `src/core/ops/search.ts` `searchOutput` and `src/core/search/evidence-delivery.ts` `assembleEvidenceForHits` apply them, and `capEvidenceToBudget` counts the fence; `SearchResult.quoted`, kept in lean rows.
+- `test/search/transcript-quote.test.ts` (JSON and XML block shapes, blocks cut at either end or by an evidence omission or cut line, results and prose left alone) and `test/search-transcript-quote.test.ts` (a synthetic alice-example ChatGPT export through the importer; remote MCP `search`, `query` and `assemble_evidence` and the CLI human and `--json` output on both engines; an ordinary page with the same JSON unchanged), and `test/search-transcript-quote-budget.test.ts` (budget, spans and snippet cap through `search` and `assemble_evidence`, both engines). `test/e2e/evidence-delivery-leak.test.ts` checks the quote wrapper exactly and keeps its get_page subset and budget checks on the text inside it.
+- Docs: `docs/mcp/README.md` lean rows, `docs/evidence-delivery.md` (spans, tokens and the snippet cap on quoted rows), the key-files entry.
+
+## [0.60.506.0] - 2026-10-30
+
+**A remote `search` or `query` that names no `limit` now returns every page that matched the query's words, a name or an exact identity, but at most 3 pages in total that matched only by meaning. On the multi-member harness with embeddings on (two harnesses, 40 trials before and after), an agent's search used to return a median 13 pages, nearly the whole test brain, with 79 pages from other members' sources. With this release it returns 3, those pages drop to 17 (3 of them from calls that asked for `limit` themselves), and tasks passed rose from 0 of 39 to 18 of 40. Keyword-only searches were unchanged. A connection with no source grant whose sources hold no page is now refused with `sources_not_readable` instead of answering empty, and `gbrain sources add` prints the command that fixes it.**
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A remote `search` or `query` with no `limit`, embeddings on | the vector arm filled the mode's row limit with every page it could reach | every page with a keyword, title, alias or exact-identity match, plus pages found only by meaning up to 3 pages in total. A line after the results says how many were left out and that `limit` returns them; `_meta.retrieval.page_cap` counts them |
+| The same call with an explicit `limit`, a paged call (`offset`), an image `query`, a host-run subagent tool call, or any CLI call on the brain host (a thin-client CLI call is remote, so it gets the cap and prints the line on stderr; pass `--limit` for every row) | | unchanged |
+| `gbrain eval longmemeval --via-operation` | the operation's full default limit | the capped agent contract, so recall past 3 pages is not comparable with earlier via-operation receipts; `search.remote_page_cap 0` measures the uncapped list |
+| A brain with no embedding model (keyword search) | | unchanged: every keyword match comes back |
+| Changing the cap | | `gbrain config set search.remote_page_cap <n>`; `0` turns it off |
+| An unscoped remote `search`, `query`, `recall` or `list_pages` from a connection with no source grant that comes back empty, when every source it reads holds no page (for `recall` and `query`, no world fact either) and other sources do | `[]` with a `sources_not_readable` notice (kind degraded) | refused with `sources_not_readable` (class host_only). The fix runs on the brain host: `gbrain sources federate <source>`, with the source the user picks, or a grant for the token (`gbrain auth rescope --token <name> --sources <ids>`). It never names a source the connection cannot read |
+| The same read when its sources hold pages that match nothing, or on a brain with no pages; any read from a token granted sources, an OAuth client, a bound connection, or one that names `source_id` or `source_ids` | | unchanged |
+| `gbrain sources add` without `--federated` or `--no-federated` on a brain that is not managed, where connections with no source grant read no page | a stderr warning | also `next: gbrain sources federate <id>` on stdout |
+| `gbrain sources add --json` on a brain that is not managed (a managed brain prints its lifecycle receipt, as before) | not available | `{id, name, local_path, remote_url, federated, next?}` on stdout; the human lines move to stderr |
+
+Every vector path (the hybrid vector arm, the embedding-failure fallback and the `query` image branch) now has a test proving it reads only the sources the keyword path reads, for granted tokens and per-call `source_id`/`source_ids`, on PGLite and Postgres. No scope gap was found.
+
+### What to watch for after you upgrade
+
+- An agent that needs the full ranked list (a "find every" or landscape question) should pass `limit`; the line after capped results tells it so.
+- The cap is a default for what one call returns, not an access boundary. Access is still per source: give each member's token only its sources.
+- A deployment whose no-grant tokens used to get `[]` from an empty floor now gets an error. Federate the source those connections should read, or grant the tokens their sources.
+- Nothing is rewritten on upgrade, and there is no schema migration.
+
+## [0.60.505.0] - 2026-10-30
+
+**Every harness install path now puts "check gbrain first" next to each turn, and an install whose per-turn hook can't load fails instead of passing quietly.**
+
+Harness evals found agents use the brain when the rule reaches them on every turn and almost never when it rides only the MCP tool list or a startup file. `gbrain setup claude-code|codex --instructions-only` (the step after a plain `claude mcp add` or `codex mcp add`), `gbrain connect --install`, the hosted `gbrain connect --harness … --install` and `gbrain bootstrap harness` now add one UserPromptSubmit hook that prints only the brain-first rule. It reads no brain data, and it steps aside when setup, bootstrap or a gbrain plugin already wires the event, so a turn gets the rule once. Each install then proves the hook loads: it runs the hook on Claude Code and Codex, `openclaw plugins inspect gbrain-turn-rule --runtime --json` on OpenClaw and `hermes hooks doctor` on Hermes, and exits non-zero with `turn_hook_not_loaded`, naming that check, when it doesn't. With no absolute gbrain binary to put in the hook, the install prints the one-line next step instead.
+
+On OpenClaw and Hermes, a plain MCP registration hides gbrain's tools behind `tool_search`, so the per-turn rule there now names the tools and how to reach them. `_meta.brain_hot_memory` is documented for harness authors.
+
+### What to do after upgrading
+
+- Nothing for a new install. For an install made before this release, `gbrain doctor` (`harness_wiring`) warns when a recorded brain-first block has no per-turn hook and names the command that adds it: `gbrain setup <claude-code|codex> --instructions-only`.
+- `--no-instructions` removes the rule and its hook; `--no-hooks` on `bootstrap harness` installs none.
+
+### Itemized changes
+
+- New `src/core/setup/turn-hook.ts` (the `turn-rule` hook lane: Claude Code `turn-rule-v1` entry, Codex `hooks.json` group plus its trust entry) and `src/core/setup/turn-hook-check.ts` (`inspectTurnHook`, `verifyTurnHook`, the fix that names each harness's own check).
+- New error code `turn_hook_not_loaded` (reasons `missing`, `untrusted`, `hook_failed`, `no_rule`, `not_loaded`); runbook in `docs/guides/repair.md#turn-hook-not-loaded`. Doctor `harness_wiring` reports `details.turn_hooks`.
+- `gbrain bootstrap harness` names the rule hook in its consent block. Registrar mode (a non-loopback URL) stays MCP-only, and `--no-capture` keeps the rule hook because it captures nothing.
+- OpenClaw and Hermes per-turn rule text names the tools and the `tool_search` route (`tool_call` on OpenClaw, `mcp_<server>_<tool>` on Hermes).
+- `docs/protocol/MCP_META_CHANNELS.md` documents `_meta.brain_hot_memory`: when it is sent, which facts, the shape, and how a harness uses it. The QM integration's host serve adds `--advertise verbs` (about 11,800 fewer input tokens per QM request), keeping every operation callable.
+- Plugin per-turn hook follow-ups (#7963): the launcher exits 0 silently for `hook` when no gbrain binary is found and skips the plugin lane on a CLI older than 0.60.498.0; the gbrain-coding and gbrain-daily variants count as plugin lanes (gbrain wins, then gbrain-coding); Codex yields only to a trusted, enabled setup group.
+- Brain-first follow-ups (#7962): a Codex opt-out after `AGENTS.override.md` appears also strips the `AGENTS.md` block; a project-scope Claude Code install rules only inside its project once user scope declines; the Hermes allowlist write takes Hermes's lock; `gbrain bootstrap hooks --help` names the real default, and a replaced registration whose surface can't be read comes back at `full`.
+- Tests: `test/turn-hook-install-paths.test.ts` (new), plus `test/setup-brain-first.test.ts`, `test/connect.test.ts`, `test/bootstrap-harness.serial.test.ts`, `test/brain-first-turn-rule.test.ts`, `test/plugin-turn-hook.test.ts`, `test/bootstrap-plugin-lane.serial.test.ts`.
+
+## [0.60.504.0] - 2026-10-30
+
+**`gbrain sync status` and doctor stop calling a running managed sync abandoned or killed, a sync that stops for a passing reason ends resumable, and a read-only Postgres serve no longer takes the socket a read-write serve needs.**
+
+A pass whose holder still renews its drain lease now reads running (`pass_unfinished`) even when earlier passes were interrupted, and doctor's `managed_sync_blocked` lists nothing for it. Lock liveness is judged on the database clock, so a reader whose clock runs ahead no longer reads a renewing holder as dead, and a pass that ends between the pass read and the lease read is no longer reported killed. A pass that stops on a lost connection, a statement timeout, write back-pressure, a refresh fence or a lost lease now ends `resumable` (`stop_reason` `transient` or `lease_lost`) instead of staying open and reading `pass_interrupted`, then `pass_abandoned`. A killed holder's lock row no longer defers the on-commit notifier, so the next sync takes the expired lease over. On Postgres, `gbrain serve --access read-only` (stdio) binds its own read socket for resolve, turn_context and context_pack, so a read-write serve started later for the same source always answers delegated sync requests instead of `unsupported_kind`.
+
+### How to use it
+
+```bash
+gbrain sync status --source <id> --json    # a renewing holder reads pass_unfinished; a passing stop reads resumable
+gbrain doctor --only managed_sync_blocked
+```
+
+### Itemized changes
+
+- Sync pass and lease readers (`sync-status`, doctor `managed_sync_blocked`): one observation per decision, database-clock lock liveness, `openPassRowsStill`, one `inspectLocks` query for every open-pass source (#7611, #7614).
+- `resumableRowStop`: transient and lease-lost stops end the pass row `resumable`, while a permission refusal keeps the row open so it still reads interrupted, then abandoned; a lost-lease row is written under its own lease token only, and a stop never rewrites a row its pass already ended (a folded stamp's `synced` row keeps its watermark) (#7614).
+- `readLiveDrainHolder`: the notifier block, the on-commit notifier and `sources status` `writer_heartbeat` read the drain holder only while it renews (#7614).
+- Lean read-only Postgres serve: a source-keyed read socket; hooks try source, then read, then legacy; delegated sync never targets the read socket (#7612).
+- `EffectWorkerOptions.lockWaitMs` (test seam, default unchanged) cuts the w5 contention scenario from 37 s to 2.5 s (#7782).
+- Tests: `test/sync-pass-readers-7614.test.ts` (new), `test/resolve-ipc-source-keyed.test.ts`, `test/e2e/serve-read-only-session-lane-postgres.test.ts`, plus isolation fixes in four suites that failed only on dev machines.
+
 ## [0.60.503.0] - 2026-10-30
 
 **New harness and bot registrations list the seven memory verbs plus `request_tools`, and every tool they could call before stays callable.**
@@ -8388,6 +9394,7 @@ Eleven reports from large brains, managed checkouts and the schema tooling. Each
 - `postgres-engine/schema-lock-timeout.ts`: session-level `lock_timeout` on the reserved DDL backend restored on release, `SET LOCAL` inside transaction-wrapped migrations, `pg_blocking_pids()` sampling on a one-backend diagnostic connection, `schema_lock_blocked` registry row; conditional `ENABLE ROW LEVEL SECURITY` in `schema.sql` and eight fragment schemas; `init-schema-retry` retries SQLSTATE 55P03; the v24 RLS E2E test calls `runMigrationSQL` directly and the remaining `init` spawns dump `pg_stat_activity` at half their budget (#5227).
 
 Contributed by @andreineacsu (#5517 diagnosis of #5491).
+
 ## [0.60.167.0] - 2026-10-11
 
 **Wave 14 PR4: the Google connector, open loops, contacts, calendar, Windows and polish.** Gmail loops now find the person page wherever it lives in the brain, extraction runs under a daily spend cap and your own label exclusions, contacts land next to your people pages, and three Windows reports (parked tests, console windows, backups) get native coverage on CI.
@@ -8688,6 +9695,7 @@ The v0.13.1 grandfather stamped `validate: false` into the database. On an unman
 ### For contributors
 
 - `test/ingestion/put-page-write-through.test.ts` (#6429 case) proves the stamp carry on PGLite (fails before the fix with `source_changed`); `test/repair-failed-writes-conflict-6429.test.ts` covers the conflict replay and the doctor check on PGLite and Postgres; `test/doctor-lost-caller-writes.test.ts` pins the registry wiring. Doctor goldens were regenerated for the new check.
+
 ## [0.60.156.0] - 2026-10-10
 
 **`gbrain setup claude-code` gives Claude Code memory in one command.** It finds or creates your brain, wires the MCP server and the read-context hooks, and checks that they answer. A second run changes nothing, and `--remove` takes out only what setup wrote.
@@ -8795,6 +9803,7 @@ This release ships a visibility filter fix for remote fact reads. Reads from the
 ### For contributors
 
 - `test/remote-fact-list-private-provenance.test.ts` covers the fix on PGLite, and on Postgres through `test/e2e/remote-fact-list-private-provenance-postgres.test.ts`.
+
 ## [0.60.150.0] - 2026-10-10
 
 **On Postgres, one statement with an `undefined` parameter could wedge a pooled connection for good: the statement in flight ahead of it got its error, it stayed queued with nothing on the wire, every later reply arrived one statement late, and the backend sat `active / ClientRead` while `/health` answered 200 (#6383, the driver desync behind #6352). The vendored driver now answers a statement that fails to build in its place in the pipeline (the approach of porsager/postgres#1236), so only the culprit fails and a transaction it was part of is aborted rather than committed without it; a connection whose statement waits past `statement_timeout` plus 30 s with nothing coming back is retired and replaced; the pool numbers are live; and `/health?deep=1` probes through the same pool the handlers use.**
@@ -12987,6 +13996,7 @@ Things to watch: a script or third-party client that reads `page_id`, `cosine`, 
 - Search runs one indexed check for an active saved fact before scanning saved facts, and skips the scan when there is none. The declared-name scan skips rows without a declaration keyword and runs once per search when the response reads the same rows the other-name search did. Results are byte-identical (`test/search-c5-identical.test.ts`).
 - Per-search stage profile on the 10,000-page scale harness (PGLite, keyless): primary hybrid search 19.5 ms, projection-readiness check 6.0 ms, unsealed-pages check 0.5 ms, declared-name scans 0.01 ms each; the saved-facts scan does not run in the harness (it runs on the MCP dispatch path, where it took 3.1 ms on this fixture, which has saved facts).
 - `bun scripts/scale/run.ts --pages 10000 --seed 1`, agent (MCP) search p50: 41.1 ms before and 39.0 ms after this change, same machine and session. On the harness version that also runs v0.60.32.0, v0.60.32.0 measured 95.9 and 90.6 ms and this release 27.4 ms (27.3 ms before the search change); most of that gain is v0.60.37.0's planner statistics.
+
 ## [0.60.41.0] - 2026-10-04
 
 **A keyword-only `query` whose answer is in the top five now grades `moderate` again when the question merely uses a word the brain never writes, while questions about a missing attribute or an unknown company still grade `weak` (#5919). Conversation pages can set their own segmentation gap (#5918).**
@@ -14491,6 +15501,7 @@ Nothing to configure and nothing to run after upgrading. If you hit this on v0.6
 
 - `execFileBounded` (`src/core/brain-repo-durability.ts`) now sends SIGTERM at its deadline or on abort, and escalates to SIGKILL after a 2 second grace period. It still settles from its own timer if the exit event never arrives.
 - `test/bounded-child-exec.test.ts` adds a case where a child holding a lock file removes it on SIGTERM, plus one where a child ignoring SIGTERM is still stopped within the bound.
+
 ## [0.60.20.0] - 2026-09-30
 
 **Fix wave 4: managed syncs stop wedging on big write histories, one bad email or issue no longer stops a connector forever, stuck upgrade migrations finish, and you can finally leave managed mode.**
@@ -16057,7 +17068,6 @@ in [Testing](docs/TESTING.md).
 - Refresh full-profile scheduling weights from complete recorded runs and
   document the separate unit, integration, durability and native coverage owners.
 
-
 ## [0.58.0.0] - 2026-09-24
 
 **Separate confirmed attendance from mentions, and give question evidence room in recall.**
@@ -16516,6 +17526,7 @@ Contributed by @olivershe (#5171), @javieraldape (#5220), @sheelcheyne (#5000),
 @VXNCXNX (#5322), @Mr-B-1 (#4867), @turian (#5305),
 @rokas-tarasevicius (#5287), and @lubosxyz (#5348). Their focused contributions
 were adapted to the current persistence and source-identity contracts.
+
 ## [0.53.0.0] - 2026-09-23
 
 **Keep what your agents know and how they work in the same brain.** New local brains now create a content directory containing both knowledge and useful memory skills. Connected agents can discover the same published instructions instead of maintaining unrelated copies. An explicitly authorized editor can update a skill once, and other connections can fetch the same committed version, including its approved supporting files.
@@ -16629,7 +17640,6 @@ change, activation, or paid enrichment is required.
 - Add real-engine reconciliation, scoped-authority, concurrent-replay, privacy,
   retained-backup, bounded-audit, real-owner CLI, and process-kill regression tests.
 
-
 ## [0.52.1.0] - 2026-09-22
 
 **A search result opens the page it found, and routine repair stays routine.**
@@ -16719,6 +17729,7 @@ fingerprint just to make a refused request pass.
 - A bounded 3,600-page reindex fixture verifies transaction completion and crash
   recovery. It did not reproduce the reported macOS aged-store hang and is not
   presented as a fix or a performance improvement.
+
 ## [0.51.8.0] - 2026-09-22
 
 **Connect a company knowledge repository without rewriting its files.**
@@ -17050,6 +18061,7 @@ Activate only after verifying the preview and all upgraded writers. Once managed
 `gbrain upgrade`, then restart `gbrain serve --http` and run `gbrain doctor`. If it lists self-registered OAuth clients with a privileged scope you did not intend, run `gbrain auth rescope-client <client_id> --scopes read,write` or `gbrain auth revoke-client <client_id>`. Connectors that request `admin` at self-registration will now fail to register — pre-register them with `gbrain auth register-client <name> --scopes …` or let them self-register with `read write` and rescope later. If you kept `GBRAIN_GUARDRAILS_MODULE`, `GBRAIN_HOME`, a `GBRAIN_ALLOW_*` flag or another protected variable in a project's `.env`, move it to `~/.gbrain/.env` (or your service's EnvironmentFile / shell profile) — gbrain names the variable it ignored and where to put it. A hand-started worker that runs shell jobs should use `gbrain jobs work --allow-shell-jobs`. If `GBRAIN_GUARDRAILS_MODULE` is a package name or a relative path, change it to the module's absolute path (or a `~/` path) — gbrain exits 1 until you do. If you set `GBRAIN_DATABASE_URL` in a project's `.env` on purpose, export it from your shell or put it in `~/.gbrain/.env` instead. If you build the binary yourself, rebuild it with `bun run build` (**Say to your agent:** *"rebuild the gbrain binary"*) so it carries the new compile flag.
 
 **Say to your agent:** *"archive my session transcripts"* / *"import my conversations"* — *"a secret leaked into a brain page — rotate it and purge the page"* (your agent rotates the credential, then runs `gbrain delete <slug> --purge` on the host) — *"run a brain health check"* (your agent runs `gbrain doctor` and follows any `oauth_client_scope_health` advice) — *"start my brain's MCP server with self-service client registration"* (your agent runs `gbrain serve --http --enable-dcr`; you approve each new connection in the admin UI).
+
 ## [0.50.4.0] - 2026-09-16
 
 ### For contributors
@@ -18866,6 +19878,7 @@ lmstudio:<model-id> --embedding-dimensions <N>`) — *"Tell connected agents
 which brain this is"* (your agent runs `gbrain config set mcp.instructions
 "<identity>"`) — *"list the calendars my google account can read"* (your
 agent runs `gbrain google calendars`).
+
 ## [0.48.0.0] - 2026-09-01
 
 The eval retrieval fix wave. Honest re-baselining against the public
@@ -18946,6 +19959,7 @@ To take advantage of v0.48.0.0: upgrade and re-run `gbrain doctor`. No
 migration needed; the search-cache reset is automatic and self-heals on
 first use. OpenClaw users get the volunteer arm immediately (default on,
 kill-switchable as above).
+
 ## [0.47.10.0] - 2026-09-01
 
 Ambient memory writeback, opt-in and OFF by default: tell your agent
@@ -19128,6 +20142,7 @@ Nothing activates without the disclosure step — installs that skip it are
 byte-for-byte unaffected. Read `docs/memorable-agents.md` first: it states
 plainly what leaves the machine, that the CLI is closed source, and how to
 purge every local artifact after disabling.
+
 ## [0.47.8.0] - 2026-08-31
 
 **Your nightly dream cycle stops losing the good stuff. Sessions where the real
@@ -19629,6 +20644,7 @@ manual steps in this release.
   binds into known-JSONB columns; guard self-tests cover both new guards.
 - The unmapped-e2e baseline and the operation-coverage allowlist are seeded
   shrink-only; stale entries fail the build with removal instructions.
+
 ## [0.47.3.0] - 2026-08-27
 
 **Wave L: the wave-k close-out.** Three held-back items from the wave-k triage,
@@ -20026,6 +21042,7 @@ warns about a partial migration:
   holder; dry runs stay pure).
 - `src/core/workspace-push.ts` exports `aheadCount`; `InstallReceipt` gains the typed
   optional `repo_url` field (`src/core/bootstrap/format.ts`).
+
 ## [0.46.32.0] - 2026-08-26
 
 **The community train: 54 contributor PRs absorbed.** Wave K triaged all 141
@@ -20672,6 +21689,7 @@ To take advantage of v0.46.23.0:
   `docs/guides/github-source.md`.
 - DB-only brains can now skip disk dual-writes with
   `gbrain config set sync.write_through false`.
+
 ## [0.46.22.0] - 2026-08-18
 **A wedged database shutdown can now die fast and loud instead of hanging
 forever.** Issue #4284 (analysis and measurements by @cheRoma — thank you)
@@ -20891,6 +21909,7 @@ instructions. Schedule the heavier enrichment explicitly where you want it —
 `gbrain dream --source <id> --phase extract_atoms` per source, plus one
 brain-wide `gbrain dream --phase consolidate` — or wait for the scheduled
 background lane (tracked in TODOS).
+
 ## [0.46.19.0] - 2026-08-17
 
 Dream-cycle synthesis is now fast by default: transcript synthesis runs as a
@@ -20957,6 +21976,7 @@ jobs honest about truncation, failed writes, and provider quirks.
 ### Changed
 - `gbrain agent logs` audit lines now show the synthesis mode and fallback
   reason when present.
+
 ## [0.46.18.0] - 2026-08-17
 
 **Your harness now gets gbrain's skills as capability, not just knowledge —
@@ -21136,6 +22156,7 @@ section appear on re-entry). Then try
 printed one-line `@import` to your CLAUDE.md; re-run it (or `--check` in CI)
 whenever the brain changes. Codex/opencode users: the AGENTS.md target works
 today; native codex hooks are a filed follow-up.
+
 ## [0.46.16.0] - 2026-08-16
 
 **Seven verified breakages from the live issue queue, fixed at the root.**
@@ -21247,6 +22268,7 @@ Everything else is automatic. Capped runs that previously under-counted
 expansion/OCR spend may now hit their ceiling — that is the fix working;
 raise the cap if the new accounting says you were spending more than you
 budgeted.
+
 ## [0.46.15.0] - 2026-08-16
 
 **The brain now recognizes people the way you actually mention them.**
@@ -21401,6 +22423,7 @@ against HEAD with an adversarial second pass before entering scope).
 - If you intentionally route claude-cli through a cloud backend, switch that
   workload to the `anthropic` recipe with cloud credentials — claude-cli children
   now always use subscription auth.
+
 ## [0.46.13.0] - 2026-08-16
 
 **One brain can now safely serve many agents.** `gbrain agent register` mints
@@ -21482,6 +22505,7 @@ To take advantage of v0.46.13.0: on the brain host, run
 printed block into your agent. Existing setups keep working unchanged; if
 `gbrain doctor` flags dangling read grants or orphaned workspace sources, the
 message names the exact fix.
+
 ## [0.46.12.3] - 2026-08-16
 
 **Supply-chain hardening for how gbrain updates and how community code lands.**
@@ -21576,6 +22600,7 @@ To take advantage of v0.46.12.2: reconnect your coding agent (or restart
 surface every new tool is available immediately; on `starter`, `capture` joins
 the daily-driver set. Nothing to configure — the tools are read-only or
 scope-and-fence-protected exactly like the operations they mirror.
+
 ## [0.46.12.0] - 2026-08-16
 
 **Every surface that could still steer you toward the retiring embedding
@@ -21926,6 +22951,7 @@ automatically via `bun run verify`; coverage numbers appear in each CI run's
 summary. If `check:module-size` fails on your branch, the message names the
 exact ceiling to raise (a conscious, reviewer-visible TSV edit) or — better —
 the sibling module dir to put the new code in.
+
 ## [0.46.8.0] - 2026-08-15
 
 **The full local test suite is trustworthy again.** `bun run test` and
@@ -21985,6 +23011,7 @@ To take advantage of v0.46.8.0: `gbrain self-upgrade`, then `gbrain doctor`
 — no schema migration, no config changes. If you run tests locally,
 `bun run test` and `DATABASE_URL=<test-db> bun run test:e2e` should both
 exit 0 on a clean checkout; if they don't, the failure is real.
+
 ## [0.46.7.0] - 2026-08-15
 
 **gbrain is now a proper Codex plugin — and a Claude Code plugin — from one repo.**
@@ -22021,6 +23048,7 @@ environment that launches your harness (the plugin serve is user-global and
 binds the source from the env, not a flag;
 ambiguous writes are guarded until a source is bound — a sole-source brain
 needs nothing).
+
 ## [0.46.6.0] - 2026-08-15
 
 **A busy machine can no longer make the job queue evict its own healthy
@@ -22099,6 +23127,7 @@ every existing row to its handler's lease at next claim. If you tuned
 around the old eviction behavior (e.g. very high `--max-stalled`), you can
 likely lower it now. Mixed fleets are safe: an old worker simply keeps the
 old 30s behavior until restarted.
+
 ## [0.46.5.0] - 2026-08-15
 
 **CI in half, evals actually gating.** The Test workflow ran 8–9.5 minutes on
@@ -22133,6 +23162,7 @@ worker pool, `GBRAIN_NO_SNAPSHOT=1` opts any runner out of the snapshot
 fast-path. Run the retrieval canary yourself with
 `bun run scripts/run-eval-canary.ts` (add `--record` to append the committed
 ledger).
+
 ## [0.46.4.0] - 2026-08-15
 
 **opencode joins the supported-client roster — at full parity from day one.**
@@ -22201,6 +23231,7 @@ session). The keyless free tier is enough to verify the wiring end to end —
 `opencode mcp list` should show `✓ gbrain connected`. Existing installs:
 nothing changes; this release adds a client, it doesn't modify brain
 behavior.
+
 ## [0.46.3.0] - 2026-08-15
 
 **retired hosted provider is shutting down on 2026-09-04 — gbrain now gets you off it
@@ -22455,6 +23486,7 @@ to import them. Unzip consumer exports first and pass the extracted
 `conversations.json`. On PGLite, stop `gbrain serve` for the import (the
 single-writer lock error names the PID if you forget). Run
 `gbrain transcripts status` any time to see what's still waiting.
+
 ## [0.45.20.0] - 2026-08-14
 
 **Grok Build joins the supported-client roster.** xAI's `grok` CLI can now wire a gbrain brain in one command, and — like Hermes before it — the install path is proven against the real binary, not written from docs: every asserted flag, config shape, and exit-code quirk was observed against a pinned Grok Build install, recorded in a machine-checked pin document, and exercised by a real-binary e2e door that CI can run.
@@ -22474,6 +23506,7 @@ single-writer lock error names the PID if you forget). Run
 - **The hermes-door CI job got the same hardening sweep:** checkout token persistence off, and the door's full test output is preserved as evidence even for the failure class that previously left no trace.
 
 To take advantage of v0.45.20.0: nothing changes for existing installs — this release adds a client, it doesn't modify brain behavior. Grok Build users: follow [docs/mcp/GROK.md](docs/mcp/GROK.md) (two commands: register, then `grok mcp doctor gbrain` to verify the seven-verb handshake). Maintainers enabling the paid CI lane: create the `XAI_API_KEY` repo secret, then land the follow-up that adds the schedule and canary legs.
+
 ## [0.45.19.0] - 2026-08-15
 
 **The interactive `gbrain init` pickers are now tested on a real terminal — and the repo carries one PTY layer instead of two.** The first thing every new user touches (the embedding provider picker and the search-mode picker) previously had no true-TTY coverage; the comments that claimed otherwise pointed at a harness nothing ever called.
@@ -22583,6 +23616,7 @@ it protects.
 - **CI guards now prove they can fail.** A guard registry classifies all 45 check scripts; self-tested scanner guards run against known-bad fixtures on every verify (the registry tracks fixture coverage for the rest), so a guard whose pattern rots into a permanently-green no-op fails the build instead of masquerading as coverage. Two such rotted patterns were found and fixed in the process, along with three guards that were wired into a registry nobody ran.
 
 To take advantage of v0.45.16.0: upgrade and restart any long-running `gbrain serve`, autopilot, or jobs supervisor/worker daemon so the fenced lock refresh and job-reaper fixes take effect. If you run image search, run `gbrain backfill modality` once after upgrading to restore any image chunks a prior re-embed flipped to text (`gbrain doctor` surfaces the affected count and the exact command). No schema migration and no config changes are required.
+
 ## [0.45.15.0] - 2026-08-14
 
 **The queue that drains itself: three background-jobs fixes reported from a downstream agent deployment (upstream issues #2, #3, #4).** A brain whose autopilot cycle stalled mid-run could accumulate byte-identical queued cycles forever while every long job queued before an upgrade died minutes in — and the operator diagnosing it couldn't even find the worker entry point, because `gbrain jobs --help` printed a one-line stub. All three failure modes are closed, and the queue now tells you when it's holding work back.
@@ -22623,6 +23657,7 @@ To take advantage of v0.45.15.0: upgrade and run any gbrain command — migratio
 - Ship-review hardening (three adversarial passes at ship): the post-wiring verification now sends a deliberately invalid credential first — an endpoint that accepts it is not a real serve, wiring rolls back, and the fresh token is retired immediately on ANY failed verification; a failed verification also rolls a fresh Claude Code registration (and its headless pre-approval) back to the pre-run state; the pre-approval never lands when the registration itself failed; prior wiring is only cleaned up after the replacement verifies; `--status` and `gbrain doctor` report honestly on partially-applied or partially-removed installs instead of reading vacuously green, and `--status` only recovers a bearer from a registration it can verify as its own; token-scope reads fail closed on damaged rows across the verify and CLI display paths (`auth list` shows exactly what the serve enforces); a value-less `--project` or `--scopes` flag errors loudly instead of silently widening scope or minting a full-access token; settings writers refuse to rewrite permission policy shapes they don't understand; config writes serialize under cross-install locks on every path (apply, remove, cleanup, rollback); and per-turn hooks defer per-event to workspaces that carry their hook wiring in committed settings.
 
 To take advantage of v0.45.14.0: upgrade, then on any agent-framework box run `gbrain bootstrap harness --yes` against your running `gbrain serve --http`. On PGLite brains, pre-mint with `gbrain auth create bootstrap-harness --scopes read,write` while the serve is stopped and pass `--token`. Restart your serve after upgrading so token scoping is enforced by the new verify path — the install says this too, exactly when it applies. See the "Local harness mode" section of docs/guides/bootstrap.md.
+
 ## [0.45.13.0] - 2026-08-13
 
 **The Truthful Surface wave: your agent's MCP catalog now tells the truth. What's listed is callable, empty answers explain themselves, and new clients start with a focused ~26-tool surface they can widen on demand.**
@@ -22786,6 +23821,7 @@ contract problem; pain common to both is ours.
 - `claw-test --list-agents` no longer races CLI teardown; output is complete and ordered.
 - Live runs keep the agent's gbrain children pointed at the run's own hermetic brain even when the surrounding shell exports a database-pointing environment variable — the harness's verification and the agent's work can no longer land in two different places.
 - The test real-name guard now correctly distinguishes the public Hermes platform (documented and tested) from private deployment names (still banned).
+
 ## [0.45.11.0] - 2026-08-12
 
 **The install now ends by telling you the two things that matter: you own the brain, and here's the first skill to run.** A working install used to finish on a health report and three tour prompts — technically complete, but a new user walked away without the two facts that make gbrain worth trusting and worth using. Now `gbrain bootstrap verify` ends with a hand-off: **what you own** (every memory is a markdown file in YOUR private GitHub repo — read it, take it to a second machine, delete it and the brain is gone; or the local-only variant with the one command that gives it a durable home) and **what to do next** (run the `cold-start` skill — say "fill my brain" and your agent imports your Gmail, calendar, and contacts through ClawVisor, an OAuth vault so the agent never holds raw tokens, or offline archives like Google Takeout, one consented phase at a time).
@@ -23018,6 +24054,7 @@ cuts you may have already hit.
 - The boundary behavior is now pinned end to end, not just in units: a real spawned serve answers the compact→session-start warm-pack round trip over its real socket; a real stdio MCP session on `--surface verbs` advertises and serves exactly the seven verbs fail-closed; the new verbs are exercised over real HTTP with per-token session-cursor isolation; keyset pagination and the session-cursor table are parity-pinned on real Postgres; migration shape, sub-second latency gates, CLI invocations, and a live-Codex boundary-call check round it out (~55 new tests).
 
 To take advantage of v0.45.7.0: upgrade with `bun install -g github:garrytan/gbrain#latest-stable`. A schema migration runs automatically on first use — a new per-session cursor table, additive, no existing data touched. Codex and other MCP hosts see the two new verbs immediately; Claude Code installs pick up the boundary hooks on the next `gbrain bootstrap`. Read `docs/guides/ambient-recall.md` for where each verb belongs and how to wire your heartbeat to `delta`.
+
 ## [0.45.6.0] - 2026-08-12
 
 **Seventeen new production skills, distilled from a 324-skill audit of a mature personal-agent deployment.** The built-in pack grows from ~52 to 69 skills and picks up the trust disciplines a memory product lives or dies by: corrections that fix the source instead of papering over it, a confirmation gate before anything irreversible, claim verification before anything ships, an ingest gate that stops duplicate and misfiled pages at the door, and a sanitization procedure for turning a personal brain into a team brain. Every import was adversarially reviewed, privacy-scrubbed onto generic placeholders, pinned to its upstream source, and shipped with routing fixtures.
@@ -23048,6 +24085,7 @@ To take advantage of v0.45.7.0: upgrade with `bun install -g github:garrytan/gbr
 - Skill frontmatter now states its true effects: a skill that commits and pushes is marked mutating, and inert precedence markers were removed.
 
 To take advantage of v0.45.6.0: upgrade with `bun install -g github:garrytan/gbrain#latest-stable`, then run `gbrain skillpack reference --all` to sweep the new and upgraded skills into your agent repo (or `gbrain skillpack scaffold --all --workspace <your-agent-repo>` on a fresh install). Nothing to migrate — new skills route via their trigger phrases immediately, and `gbrain check-resolvable --strict --skills-dir skills/` verifies the pack end to end.
+
 ## [0.45.5.0] - 2026-08-12
 
 Brain currency, part one: a brain is only useful if it's CURRENT, and until now
@@ -23154,6 +24192,7 @@ say "fresh" forever.
   --repo <path>`) so the generated wrapper picks up the self-disable guard.
 - Keyless installs: your sync-and-embed cron chain now exits 0; no action
   needed beyond upgrading.
+
 ## [0.45.3.0] - 2026-08-12
 
 **Codex installs stop asking a question Codex can't honor.** The bootstrap used to offer every install a choice of MCP scope — this folder only, or the whole machine — but Codex has no per-folder registrations, so picking "this folder" led to a confusing round-trip where the agent asked permission to keep what it had already done. Now each harness gets the honest version: Claude Code records your scope choice during the interview (where it actually sticks), and Codex simply tells you the truth — its registration reaches the whole machine, read and write — along with the exact commands to remove it (just the registration, or the whole install).
@@ -23190,6 +24229,7 @@ To take advantage of v0.45.3.0: upgrade with `bun install -g github:garrytan/gbr
 - Automatic per-turn and session-end pushes wait until the repo phase has verified the repo is private, so nothing is published to an unverified remote.
 
 To take advantage of v0.45.2.0: upgrade with `bun install -g github:garrytan/gbrain#latest-stable`. Nothing to migrate. To use the new path, create an empty private repo under your own account, clone it, open it in your agent, and run the bootstrap block — it adopts your repo. If anything about the repo or push looks off, `gbrain doctor` names it with the exact fix.
+
 ## [0.45.1.0] - 2026-08-11
 
 **Your per-prompt brain hooks are now measurable and non-repetitive.** v0.45.0.0's paste-in agent install gave every prompt a context injection; this release makes that channel behave like a product instead of a firehose. The hook remembers what it already told you — a page it injected earlier in the session isn't re-injected every time the name comes up — and every delivery now lands in the same precision feedback loop the other push channels use, so `gbrain volunteer-context --stats` and a new doctor check show exactly which harnesses are firing and how useful their pushes are.
@@ -23277,6 +24317,7 @@ warns about a partial migration:
 4. **If any step fails or the numbers look wrong,** please file an issue:
    https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor`
    and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
 ## [0.44.1.0] - 2026-08-11
 
 **Any current model works now. gbrain stops rejecting model ids it hasn't heard of.**
@@ -23502,6 +24543,7 @@ saves are readable by every agent connected to the brain by default; pass
 files copy the old "search first, query if thin" rule, refresh them from
 `skills/conventions/brain-first.md` — the shipped skillpack carries the corrected
 routing.
+
 ## [0.42.76.0] - 2026-08-08
 
 **Mistyped or unsupported flags now fail loudly instead of being silently ignored — including the ones that were supposed to make a command safe.**
@@ -23519,6 +24561,7 @@ routing.
 **`gbrain doctor` and `repair-jsonb` see further and misfire less.** The double-encoded-JSON scan now covers the subagent execution columns, and the damage test requires the stored text to actually parse as JSON before flagging it — a legitimate string value that merely starts with `[` or `{` (a log line, a code snippet) is no longer misclassified, and a repair pass can no longer corrupt it. One damaged table no longer aborts the scan of the rest.
 
 ### To take advantage of v0.42.76.0
+
 ## [0.42.75.0] - 2026-08-08
 
 **The "PGLite crashes on macOS 26" era is over: gbrain now repairs a torn brain in place, automatically, with your data preserved.**
@@ -24106,6 +25149,7 @@ More AI providers work out of the box, including OpenRouter prompt caching, Mini
 - Confidential OAuth clients can now revoke access tokens through the standard revocation endpoint when client secrets are stored as hashes. Invalid credentials fail closed, malformed or mixed authentication is rejected, backend failures remain retryable, and discovery metadata accurately advertises supported authentication methods.
 
 No schema migrations.
+
 ## [0.42.63.0] - 2026-07-20
 
 **Schema commands now open the local brain you actually configured.**
@@ -24398,6 +25442,7 @@ The root cause was the page-generation clock that backs the search cache. Every 
 
 ### To take advantage of v0.42.51.0
 `gbrain upgrade`, then `gbrain doctor`. Existing brains pick up the contention-free clock and the checkpoint integrity constraint automatically on the next migration; the search cache rebuilds itself on first query. Nothing to configure.
+
 ## [0.42.50.0] - 2026-06-17
 
 **CI reliability hardening — a wedged job can no longer run for six hours, a superseded run no longer reports a stale flaky failure, and broken workflow YAML is caught before it ships.** gbrain's CI already had the deep machinery (content-hash run-skip cache, weight-aware shard balancing, test-isolation guards, hermetic E2E). What it lacked was the cheap GitHub-Actions hygiene that was already wired into `heavy-tests.yml` but never into the two hot-path workflows. This pass closes that gap, porting the patterns from the sibling GStack project's CI-reliability work.
@@ -24430,6 +25475,7 @@ Pacing is **opt-in** (default `off`) and built on one composable primitive: it c
 
 ### To take advantage of v0.42.49.0
 `gbrain upgrade`. Pacing is off by default — nothing changes until you opt in. To clear a big embed backlog safely on a busy pooler: `gbrain embed --stale --pace` (or `--pace=gentle` to be extra conservative). To pace the background embed-backfill job and every embed path automatically: `gbrain config set pace.mode balanced`. During an incident you can override without a redeploy: `GBRAIN_PACE_MODE=gentle` or `GBRAIN_PACE_MAX_CONCURRENCY=4`.
+
 ## [0.42.48.0] - 2026-06-16
 
 **Brain repos harden themselves for durability the moment gbrain is given a PAT and a GitHub URL.** Fresh agents kept drifting out of sync with their knowledge-wiki git repos: writes sat local-only and never pushed, long-lived sessions edited a stale tree, and scratch output landed outside the repo and vanished. Now `gbrain sources add --url <repo> --pat-file <p>` auto-hardens the managed clone, and `gbrain sources harden <id>` runs the same audit idempotently against any source. Hardening is six always-on guarantees: it pulls current state (divergence-safe rebase that skips a dirty tree and never leaves a half-rebase), installs a local auto-push safety net, ships a committed `scripts/brain-commit-push.sh` that refuses to report success without a confirmed push, writes always-on durability rules into the agent's context file (deterministic filing from the canonical taxonomy, commit-and-push-never-deferred, pull-before-each-write-batch), registers a 30-minute background pull so an idle session can't go stale, and verifies push access up front.
@@ -24466,6 +25512,7 @@ Nothing here forks the manifest, the installer, or the trust model — brain pac
 
 ### To take advantage of v0.42.47.0
 `gbrain upgrade`, then run `gbrain advisor` to see the top things worth doing on your brain right now. To publish a brain's skills to anyone who connects, run `gbrain skillpack init-brain-pack <name>` in the brain repo, fill in the README's five sections, and commit it. To let connecting agents discover packs over MCP, `gbrain config set mcp.publish_skills true`; to let a thin client run the advisor, `gbrain config set mcp.publish_advisor true` (both default off). Install the `gbrain-advisor` skill and its weekly cron recipe for a standing brain checkup.
+
 ## [0.42.46.0] - 2026-06-16
 
 **Federated read scope now reaches every by-slug read, not just search and query (gbrain#2200).** A client that mounts several sources (a `federated_read` grant) could find a page through search and query, but the by-slug reads — `get_page`'s tags, plus `get_tags`, `get_links`, `get_backlinks`, and `get_timeline` — didn't honor the same grant. For a page living outside the default source that meant two wrong outcomes: the read came back empty for content the client was authorized to see, or it resolved against the wrong source. This release routes all of those reads through the same source-scope ladder that already governs search/query, so a federated client reads exactly the sources it's granted — no more, no less. Thanks to @mlobo2012 for the report and the proposed fix.
@@ -24533,6 +25580,7 @@ This release also lands on top of v0.42.42.0's exit-contract work as a strict su
 
 ### To take advantage of v0.42.43.0
 `gbrain upgrade` (applies the new feedback-log migration automatically). The wider reflex window is on by default for context-engine hosts — set `retrieval_reflex_window_turns: 1` in `~/.gbrain/config.json` to restore single-turn behavior. Agents without the context engine: call `volunteer_context` per turn (window in, pointers out), or pipe a transcript through `gbrain watch --json`. After a few days, `gbrain volunteer-context --stats` shows which resolution arms are earning their keep; raise or lower `min_confidence` accordingly.
+
 ## [0.42.42.0] - 2026-06-12
 
 **`gbrain query` no longer pays a flat 10-second exit tax on managed Postgres behind a transaction-mode pooler — and CLI exit codes finally tell the truth on PGLite.** On deployments where the pooler holds sockets open past the bounded pool drain (gbrain#2084, a residual of gbrain#1972), every query printed its results and then sat for 10 seconds until the force-exit banner fired. The cause was two-layered: the hard-deadline timer was armed *before* the operation handler, so a multi-second search on a large brain burned the teardown budget (and any operation slower than 10 seconds was silently killed mid-run with exit 0 and truncated output); and the CLI never exited explicitly on success — it waited for Bun's event loop to drain, which a stuck pooler socket can hold open forever.
@@ -24555,6 +25603,7 @@ Along the way the wave fixed a deeper, silent bug: PGLite's WASM runtime writes 
 
 ### To take advantage of v0.42.42.0
 `gbrain upgrade`. No configuration needed. If your `gbrain query` has been printing results and then hanging ~10 seconds before a `force-exiting` banner, this release removes both the wait and the banner. If your scripts check gbrain exit codes on a PGLite brain, they will start seeing real failures — previously masked as exit 0 — so a wrapper that suddenly reports errors is the fix working, not a regression.
+
 ## [0.42.41.0] - 2026-06-11
 
 **A correctness-and-reliability wave: your conversation facts survive a cycle, write-through stops polluting other repos, autopilot rides out a DB blip instead of crash-looping, and concurrent PGLite processes stop corrupting each other.** A triage of open reports surfaced six bugs with no fix yet plus a batch of community PRs; this ships them together, each with a regression test.
@@ -24603,6 +25652,7 @@ The fix well-forms free text before it is serialized: any unpaired surrogate hal
 
 ### To take advantage of v0.42.40.0
 `gbrain upgrade`. No configuration needed. If a `gbrain extract` run had been stalling at the same page count every time, this is the release that unsticks it — the next run resumes and completes.
+
 ## [0.42.39.0] - 2026-06-09
 
 **Your agent now learns a brain page exists the moment you name someone — instead of talking about a close contact for four messages without ever opening their page.** gbrain was great at *storing* knowledge and at injecting deterministic per-turn context, but it never taught the agent the *policy* of retrieval: when to look something up, and what to pull. That lived in each user's hand-rolled instructions and failed silently. The Retrieval Reflex makes it a property of having a brain.
@@ -24696,6 +25746,7 @@ The fix is a smaller, exact diff. `git diff A..B` compares two trees and does no
 
 ### To take advantage of v0.42.35.0
 - Nothing to do. The next `gbrain sync` after upgrading self-heals a stuck bookmark automatically; watch for the one-line `[sync] last_commit … history rewritten` recovery message. If a source has been stale since a force-push or branch consolidation, this is the release that unsticks it.
+
 ## [0.42.34.0] - 2026-06-07
 
 **Relationship questions now get relationship answers.** Ask "who invested in widget-co", "who introduced me to alice-example", or "what connects fund-a and fund-b" and gbrain resolves the named entity and walks its typed-edge graph (`invested_in`, `works_at`, `founded`, `attended`, `advises`, …) to surface the answer — even when no single page mentions both sides. Until now the graph only re-ranked results that keyword/vector search had already found; a relationship that lived purely in the edges (an investor whose page never names the company) was invisible. It now enters retrieval as a first-class candidate.
@@ -24713,6 +25764,7 @@ This is on by default in the `balanced` and `tokenmax` search modes, a pure no-o
 ### To take advantage of v0.42.34.0
 - Just ask relationship questions in natural language — the arm is on by default in balanced/tokenmax. To turn it off: `gbrain config set search.relational_retrieval false`.
 - One-time cache note: this release advances the search-cache key version (a relational-on result must not be served to a relational-off lookup), so the first query after upgrade re-runs instead of hitting a stale cache row. No action needed; it self-heals on first use.
+
 ## [0.42.33.0] - 2026-06-07
 
 **`gbrain sync` will never delete a repo it didn't create.** If a source was registered with a `remote_url` but its `local_path` pointed at a working tree you manage yourself (not a gbrain-managed clone), a failed or degraded code sync could remove that directory and re-clone over it. Sync now re-clones **only** clones gbrain actually created — identified by an ownership marker, or by gbrain's own clone location for clones made before this release. Anything else, including your live working tree, is treated as read-only: indexed, never deleted. On an unowned path, sync aborts loudly **before touching the filesystem** and tells you how to fix the source registration. Thanks to @zaqwery for the report.
@@ -24726,6 +25778,7 @@ The re-clone path is also crash-safer now: it clones into a sibling temp on the 
 ### To take advantage of v0.42.33.0
 
 Upgrade. Nothing to configure. New `--url` sources are marked gbrain-owned automatically, and existing managed clones at the default location keep auto-recovering. If you registered a source whose `local_path` is a working tree you maintain yourself, `gbrain sync` now syncs it read-only and prints how to re-register it if you want gbrain to manage the clone.
+
 ## [0.42.32.0] - 2026-06-07
 
 **A single un-parseable note can no longer silently stop your brain from indexing anything new.** A page whose YAML frontmatter `title:` was a bare date (`title: 2024-06-01`) or number (`title: 1458`) parsed as a Date/number, not text — and the importer threw when it tried to lowercase it. That throw blocked the sync bookmark from advancing, so every later `gbrain sync` re-walked the whole repo, never reached HEAD, and quietly stopped indexing new commits. The page was committed and on GitHub, but `gbrain get` returned `page_not_found` with no surfaced error.
@@ -24787,6 +25840,7 @@ For the voice agent recipe, you can now summon a persona into a specific topic s
 ### To take advantage of v0.42.29.0
 
 Upgrade and restart your worker/supervisor. Nothing to configure. If `gbrain doctor` flags a supervisor singleton mismatch, stop the extra supervisor (`gbrain jobs supervisor stop`) and keep one per queue.
+
 ## [0.42.28.0] - 2026-06-06
 
 **`gbrain extract links --stale` no longer dies partway through on calendar and meeting pages.** A full re-extraction sweep (the kind a `LINK_EXTRACTOR_VERSION_TS` bump triggers) used to crash with a Postgres "malformed array literal" error the moment a calendar event's raw text (Zoom links, commas, quotes, braces, em-dashes) landed in a batch. One bad batch aborted the entire run, so the graph never finished reconciling and stale edges couldn't be dropped. The three bulk writers (links, timeline, takes) now pass each batch as a single JSONB document instead of a hand-built `text[]` literal, which encodes arbitrary free text safely. The sweep runs to completion on the messiest brains.
@@ -24862,6 +25916,7 @@ Nothing to configure. `gbrain upgrade` and your caps start enforcing on 4.8.
    gbrain skillopt <skill> --bootstrap-from-skill --dry-run --max-cost-usd 1
    ```
 2. The dream-cycle budget meter no longer prints `BUDGET_METER_NO_PRICING` for Opus 4.8.
+
 ## [0.42.24.0] - 2026-06-03
 
 **Minion workers no longer silently wedge mid-job on a Supabase brain.** The background worker that runs your cron jobs, enrich fan-out, and autopilot cycle holds a lock on each job and heartbeats it every couple of seconds to say "still working." On a Supabase brain that heartbeat was running on the transaction-mode pooler (the high-traffic 6543 port), which recycles its connections per transaction. A lock is held open for minutes, so the pooler would periodically drop the socket mid-heartbeat. The worker read that dropped socket as "the lock expired," force-evicted its own in-flight job, and then sat in a claim loop holding nothing — process alive, no errors in the log, just quietly doing no work. It showed up most under heavy `enrich` load.
@@ -24874,6 +25929,7 @@ The fix routes only the lock hot-path (`claim` and `renewLock`) to the direct **
 
 ### For contributors
 New `BrainEngine.executeRawDirect()` — same contract as `executeRaw`, but routes to the direct pool when dual-pool is active (no-op delegation on PGLite / non-Supabase / kill-switch). `claim`/`renewLock` in `minions/queue.ts` point at it. The Postgres impl shares its cancellation plumbing with `executeRaw` via a private `runUnsafe` helper; the in-transaction guard keys on `peekReadPool() !== _sql` so a tx clone is detected and never rerouted. New `test/postgres-execute-raw-direct.test.ts` covers the routing decision (dual-pool on/off × in-tx/not, plus abort short-circuit) without a live Postgres; `test/queue-lock-retry.test.ts` gains a guard that `claim` can never fall back to `executeRaw`. Eng review cleared the plan; the four lock/pool guards stay green.
+
 ## [0.42.23.0] - 2026-06-03
 
 **`gbrain jobs work` and `gbrain jobs supervisor` take a `--nice <n>` flag that lowers the background job tree's CPU scheduling priority without cutting concurrency.** When the Minions worker pool runs at full width (sync, embed, extract, subagent fans), it can drive a machine's load average high enough to starve your interactive shell. Dropping concurrency throws away throughput. Niceness is the right lever: keep full concurrency, run at low priority, and the work finishes just as fast when the box is idle while yielding politely when it's busy. In the real incident that drove this, reniceing the tree took load from ~7 to ~3 with no measurable throughput loss.
@@ -24891,6 +25947,7 @@ New `BrainEngine.executeRawDirect()` — same contract as `executeRaw`, but rout
 ### For contributors
 
 New `src/core/minions/niceness.ts` (`applyNiceness` re-reads the effective value in both the success and failure paths, so a denied renice records the real inherited value, not null), `worker-registry.ts` (live workers self-register under `gbrainPath('workers')`, brain-isolated, with `ESRCH`/`EPERM`-aware pruning and a pid-reuse start-time guard), and `supervisor-pid.ts` (shared PID-file reader, dedupes the status/doctor/stats copies). `buildWorkerArgs` was extracted from the supervisor for unit testing. Eng review + Codex outside-voice both cleared the plan; Codex caught the detached-supervisor renice-ordering bug and the `parseInt("3.5")` gap. Closes #1815.
+
 ## [0.42.22.0] - 2026-06-03
 
 **A background worker whose database connection quietly dies no longer sits there alive-but-doing-nothing for hours. Your brain keeps processing jobs instead of silently stalling overnight.**
@@ -25001,6 +26058,7 @@ Earlier partial fixes addressed symptoms: v0.41.27.0's retry-with-reconnect resc
 ### For contributors
 
 This is the canonical landing for a long-standing class with ~15 competing community PRs and zero merged. Thanks to **@nullhex-io** (#1651) and **@joelwp** (#1667) — the ownership-flag approach that shipped, and to **@BrendanGahan**, **@xaviroblessarries**, and the other #1471 reporters for the precise root-cause walkthroughs. Three follow-ups are filed in `TODOS.md` (connection-lifecycle hardening under concurrent module connects, facts-queue drain on the dream/fall-through paths, stale ConnectionManager refresh after reconnect) — all pre-existing and not reachable in current gbrain.
+
 ## [0.42.20.0] - 2026-06-03
 
 **Three ways GBrain could freeze or go silent are fixed.** This release closes a
@@ -25117,6 +26175,7 @@ schema change. After upgrading:
   for graceful drain on sync error exits (today they avoid the hang by skipping
   disconnect; worst case is a transient PGLite stale-lock that self-heals).
 - A gateway-level idle-timeout (vs absolute) for streaming chat.
+
 ## [0.42.19.0] - 2026-06-02
 
 **`gbrain skillopt --write-capture` rollouts now get full tool schemas, closing the last gap in the AI SDK v6 tool-loop fix.** The v6 fix that got agent loops working again on non-Anthropic providers (DeepSeek, Qwen, Groq, local models) shipped in v0.42.11.0 — but it fixed only one of the two places skillopt builds tool definitions. The `--write-capture` path (the virtual put_page/submit_job/file_upload registry the optimizer uses to test write-flavored skills) still handed the model a stripped-down schema with `enum`, `default`, and `items` dropped, so the optimizer couldn't see a tool's allowed values and proposed invalid calls. Both builders now use the same shared mapper.
@@ -25128,6 +26187,7 @@ schema change. After upgrading:
 - **SkillOpt schema-metadata test** (`test/skillopt/rollout-schema.test.ts`): asserts `enum` survives in BOTH the rollout and write-capture tool builders.
 
 Closes the remaining surface of #1782 / #1764. The core fix was a convergent effort — credit michaeladair44, justemu, and JE4NVRG for the original diagnoses and patches.
+
 ## [0.42.18.0] - 2026-06-03
 
 **A scheduled `gbrain sync` can no longer spin forever and pile up dead processes, and `gbrain doctor` stops showing "100% of pages need link extraction" right after you ran the thing that's supposed to fix it.**
@@ -25153,6 +26213,7 @@ The second fix: on Postgres, `gbrain doctor`'s `links_extraction_lag` check was 
 
 ### For contributors
 - New reusable primitive `src/core/process-watchdog.ts` (Bun worker-thread self-kill, `eval:true` so it survives `bun --compile`); `resolveSyncHardDeadline` + `composeAbortSignals` in `sync.ts`; watchdog armed in `cli.ts` before `connectEngine` (bounds connect-phase hangs). #1768 fix threads a full-µs `updated_at_iso` (projected via `to_char(... AT TIME ZONE 'UTC', '…US"Z"')`) into `StalePageRow`; the `markPagesExtractedBatch` SQL is unchanged so the version-arm / CDX-1 tests stay green. New tests: `test/process-watchdog.test.ts` (+ `.serial`), `test/sync-hard-deadline.test.ts`, and a deterministic µs regression in `test/extract-stale.test.ts`. Eng review + Codex outside-voice both cleared the plan (Codex empirically validated the worker-self-kill on Bun 1.3.13).
+
 ## [0.42.17.0] - 2026-06-03
 
 **A huge `gbrain sync` can no longer get stuck forever losing all its progress when it's killed partway through.** If your brain suddenly grows by tens of thousands of pages (say a background process is enriching one page per commit, all night long), the next sync has a giant backlog to import. If that sync gets killed before it finishes — a session timeout, a laptop sleep, anything — it used to throw away **everything** it had done and start over from zero. The next hour the backlog was even bigger, so it got killed again, and again. It could never catch up. This release makes sync **resumable**: a killed sync banks what it imported, and the next run picks up where it left off. It converges.
@@ -25290,6 +26351,7 @@ Evidence + the mechanical foundation this builds on: #1678 / #1735.
   `test/doctor-pool-reap-health.test.ts`, `test/audit/pool-recovery-audit.test.ts`,
   `test/extract-atoms-drain-handler.test.ts`, `test/autopilot-auto-drain-wiring.test.ts`,
   plus extensions to `test/extract-atoms-drain.test.ts`.
+
 ## [0.42.15.0] - 2026-06-02
 
 **Commands print real data when you run them from a subagent, a pipe, or cron, not just when you have a terminal.** A handful of gbrain commands quietly changed what they printed based on whether a terminal was attached. Run them from a coding agent, a `| cat` pipe, or a cron job and you'd get JSON when you wanted human text, or nothing useful at all. The read commands (`get`, `list`, `search`, `query`) were already fine; this fixes the ones that weren't.
@@ -25326,6 +26388,7 @@ Nothing here changes a TTY/interactive session: the live `jobs watch` dashboard,
    ```
 3. **If you scripted `gbrain jobs watch` for a JSON stream non-interactively,** add `--json --follow` to keep the old streaming behavior. (For scripting, `gbrain jobs stats --json` / `gbrain jobs list --json` remain the cleaner surfaces.)
 4. **If anything looks wrong,** file an issue at https://github.com/garrytan/gbrain/issues with the command you ran and what you saw.
+
 ## [0.42.14.0] - 2026-06-02
 
 **Two zero-config gaps closed: code-* queries now tell you whether the graph is built, and `gbrain init` tells you up front when your embedding key is missing.**
@@ -25373,6 +26436,7 @@ If anything looks off, file an issue with the output of `gbrain doctor`: https:/
 - **`src/core/db-lock.ts`** — `tryAcquireDbLock` adds same-host dead-pid auto-takeover (guarded `DELETE WHERE id=$1 AND holder_pid=$2` + one normal-upsert retry returning the standard handle). New exported `classifyHolderLiveness` / `isHolderDeadLocally` (injectable `process.kill` seam; `HOLDER_TAKEOVER_GRACE_MS = 60_000`; EPERM classified as `alive`, never reclaimed). TTL-expired locks stay the upsert's job; cross-host stays TTL-only.
 - **`src/commands/sync.ts`** — `runBreakLock`'s safe path consumes the shared `classifyHolderLiveness` predicate, fixing the prior bug where any `process.kill` throw (including EPERM) counted the holder as dead.
 - **Tests** — `test/code-graph-readiness.test.ts` (11), `test/db-lock-auto-takeover.test.ts` (11), `test/init-embed-check.test.ts` (9, hermetic via the gateway embed-transport seam + `withEnv`), plus readiness-envelope cases added to `test/e2e/code-intel-mcp-ops-pglite.test.ts`. Closes #1780.
+
 ## [0.42.13.0] - 2026-06-02
 
 **Pages under `archive/` are findable again.** If you committed a note to your brain under `archive/` (old conversation exports, prior-system logs, notes you filed away), GBrain was embedding it and graphing it but then hiding it from every search. You would search for an exact phrase you knew was in the page, get nothing back, and conclude the page did not exist. It did. A hardcoded list was quietly dropping the whole `archive/` subtree from results unless you knew to pass a special flag.
@@ -25431,6 +26495,7 @@ gbrain doctor --json    # look for the hidden_by_search_policy check
 
 - Verified on both PGLite (in-memory e2e) and real Postgres (seeded container smoke): archive findable + demoted below curated, `test/`/`.raw/`/`attachments/` still hidden, the new doctor SQL runs clean on both engines.
 - Side-effect documented above: adding `archive/: 0.5` to `DEFAULT_SOURCE_BOOSTS` reclassifies archive pages in the contradictions probe's source-tier breakdown (`src/core/eval-contradictions/cross-source.ts`) from `other` to `bulk` (boost < 0.95). Benign; no code change.
+
 ## [0.42.12.0] - 2026-06-02
 
 **GBrain now keeps itself current the way your coding agent already keeps gstack current: it rides every invocation.** Until now, a gbrain install would quietly drift. You'd run an old binary against a newer brain schema, `gbrain doctor` would mutter about it, and nobody would act. There was no nudge at the moment you'd actually see it.
@@ -25487,6 +26552,7 @@ Things worth knowing: this is the same TLS-plus-GitHub trust model `gbrain upgra
 #### For contributors
 
 - `src/core/semver.ts` extracted from `check-update.ts` (re-exported for back-compat) to break an import cycle with the self-upgrade module.
+
 ## [0.42.11.0] - 2026-06-03
 
 **Self-improving skills can no longer cheat. When you run `gbrain skillopt` to let
@@ -25849,6 +26915,7 @@ about a partial migration:
    Typed edges (`SELECT link_type, count(*) FROM links GROUP BY 1`) should jump.
 4. **If anything looks wrong,** file an issue at
    https://github.com/garrytan/gbrain/issues with `gbrain doctor` output.
+
 ## [0.42.6.0] - 2026-06-01
 
 **Most of your people and company pages are one-line stubs. `gbrain enrich --thin`
@@ -26179,6 +27246,7 @@ command you ran and `gbrain doctor` output.
   `test/ai/anthropic-key.test.ts`, `test/think-gateway-adapter.test.ts`,
   `test/think-pipeline.serial.test.ts`, `test/cycle/synthesize-gateway-adapter.test.ts`,
   `test/auto-think-phase.test.ts`.
+
 ## [0.42.3.0] - 2026-05-30
 
 **Search now returns the *confident handful* instead of a fixed wall of results
@@ -26295,6 +27363,7 @@ scores come back flat (no cliff) — autocut declines and you get the full set.
   (autocut declines on flat curves by construction). Floors are env-overridable.
   A live-corpus PrecisionMemBench run remains an optional empirical confirmation,
   not a blocker.
+
 ## [0.42.2.0] - 2026-05-30
 
 **One command now wires Claude Code, Codex, or Perplexity Computer to a remote
@@ -26820,6 +27889,7 @@ nor a `sync.repo_path`; run `gbrain doctor` and file an issue with its output.
   (9), `test/dream-postgres.test.ts` (8), `test/jobs-autopilot-cycle-braindir.test.ts`
   (1) — covering the pin chain, env/brain_default/sole_non_default tiers, the
   source-scope regression, the null-brainDir path, edges→ok, and the both-null exit.
+
 ## [0.41.37.0] - 2026-05-30
 
 **A four-bug critical fix wave: your tags stop disappearing on reindex, a
@@ -26924,6 +27994,7 @@ root-caused yet — their repro sample is the next step.)
 
 `gbrain upgrade` should do this automatically. If it didn't, or if `gbrain
 doctor` warns about a partial migration:
+
 ## [0.41.36.0] - 2026-05-30
 
 **Your MCP clients can now see and use your agent's skills. Point Codex desktop,
@@ -27001,6 +28072,7 @@ your skills to MCP clients — say yes to let Codex/Perplexity/Cowork discover t
    ```
 4. **If anything looks off,** file an issue at
    https://github.com/garrytan/gbrain/issues with the output of `gbrain skills`.
+
 ## [0.41.35.0] - 2026-05-30
 
 **GBrain now has five built-in spots where an outside content checker can watch
@@ -27330,6 +28402,7 @@ The feature is dormant until used.
 Measured against PrecisionMemBench in the sibling gbrain-evals repo (faithful
 vendored scorer); the default-off path is byte-identical to prior behavior (the
 existing search suite passes unchanged).
+
 ## [0.41.32.0] - 2026-05-30
 
 **A quiet repo that's fully caught up no longer screams `SEVERELY STALE` in
@@ -27557,6 +28630,7 @@ partial migration:
 #### Configuration
 - `sync.cost_gate_min_usd` (default 0.50) sets the inline-sync confirmation
   floor.
+
 ## [0.41.30.0] - 2026-05-30
 
 **`gbrain lsd --save` (and `brainstorm --save`) now actually writes the
@@ -27903,6 +28977,7 @@ the right ownership boundary.
 **Plan + 12 decisions + 15 codex findings absorbed at
 `~/.claude/plans/system-instruction-you-are-working-cuddly-panda.md`.
 Closes #1570.**
+
 ## [0.41.27.0] - 2026-05-27
 
 **`gbrain doctor` stops crying wolf about sources that have no new commits.**
@@ -27982,6 +29057,7 @@ shell. Co-Authored-By preserved for the original contributor.
 ### Supersedes
 
 PR #1564 (`@garrytan-agents`). Co-Authored-By preserved. Closed with a supersession comment explaining the production-quality additions. The surrogate-pair fix from commit `78b93f3f` in that PR is NOT brought over — already on master via `safeSplitIndex` at `synthesize.ts:192` (v0.42.0.0 wave).
+
 ## [0.41.26.1] - 2026-05-27
 
 **Your worker daemon stops crashing 39 times a day.**
@@ -28524,6 +29600,7 @@ it doesn't.
   pattern's regex requires `\)` immediately after the time group, so
   `(2024-03-15 9:00 AM)` shapes correctly fall through to the more
   specific pattern.
+
 ## [0.41.23.0] - 2026-05-26
 
 **You can now see how every extractor in your brain is doing — how
@@ -29021,6 +30098,7 @@ If something goes wrong:
 - File an issue: https://github.com/garrytan/gbrain/issues with
   `gbrain doctor --json` output + contents of
   `~/.gbrain/audit/schema-unify-YYYY-Www.jsonl` if it exists.
+
 ## [0.41.21.0] - 2026-05-27
 
 **Five daily-driver ops pains, fixed in one wave. Your big brains stop
@@ -30355,7 +31433,6 @@ review passes) on cascade-resilience and lock-stealing invariants.
   TypeScript exhaustiveness check fail until they add a `'partial'`
   arm.
 
-
 ## [0.41.14.0] - 2026-05-25
 
 **Your gbrain skills can declare their own routing triggers in their
@@ -30577,6 +31654,7 @@ New tests: `test/operations-fuzzy-source-scope.test.ts` (6 PGLite cases: scalar 
 `gbrain upgrade` runs migration v95 automatically. The migration is `CREATE INDEX CONCURRENTLY` on Postgres so it doesn't block other writers; the index is small (`~MB` even on 100K-page brains) and the dedup query becomes O(log n).
 
 ### To take advantage of v0.41.13.0
+
 ## [0.41.12.0] - 2026-05-25
 
 **`gbrain retired-provider-switch` no longer silently breaks multimodal search on brains that mix text and image embeddings.**
@@ -30608,6 +31686,7 @@ No manual action needed. If you already ran `gbrain retired-provider-switch` on 
 ### For contributors
 
 PR #1443 was incorporated through the standard fix-wave workflow: the original fork PR from `@garrytan-agents` was cherry-picked into a base-repo branch (fork PRs from non-collaborator accounts do not inherit base-repo CI secrets), eng-reviewed via `/plan-eng-review`, and the partial-WHERE-clause + schema-qualified-probe corrections were bundled into the same ship to keep the change atomic and bisect-friendly. The original PR is closed; attribution is preserved in the commit trailer.
+
 ## [0.41.11.1] - 2026-05-25
 
 **CI got twice as fast. Every PR now finishes in about four and a half
@@ -30955,6 +32034,7 @@ warns about a partial migration:
    - output of `gbrain doctor`
    - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
    - which step broke
+
 ## [0.41.10.0] - 2026-05-25
 
 **Your brain stops being mostly orphan pages.** A new `gbrain extract links --by-mention` pass scans every page's body text for mentions of people and companies you already have pages for, then creates links automatically. The same release also fixes a silent corruption bug in the dream-cycle chunker that could split UTF-16 surrogate pairs (emoji, non-BMP CJK, mathematical alphanumerics) at chunk boundaries, breaking the per-chunk idempotency key on retries.
@@ -31135,6 +32215,7 @@ What you can now do:
 To take advantage of v0.41.6.0: just `gbrain upgrade` and re-run your
 flow. No manual migration needed. New `--break-lock` / `--force-break-lock`
 flags are documented in `gbrain sync --help`.
+
 ## [0.41.8.0] - 2026-05-24
 
 **`gbrain search`, `gbrain query`, and `gbrain get` now actually exit when they finish on PGLite.**
@@ -31223,6 +32304,7 @@ We took the drain from #1259, took the snapshot+early-null pattern from #1337, a
 ### Credit
 
 PR [#1259](https://github.com/garrytan/gbrain/pull/1259) by jehoon supplied the structural drain pattern. PR [#1337](https://github.com/garrytan/gbrain/pull/1337) by matt-dean-git supplied the snapshot+early-null disconnect pattern and the force-exit idea we narrowed to fire only on the drain-timeout path. @eloe, @bcallender, and @61tH0b independently validated PR #1259's fix against real reproducers. Closing PRs land with `Co-Authored-By:` trailers on the merge commit.
+
 ## [0.41.7.0] - 2026-05-24
 
 **Your compact OpenClaw resolver actually works now.** If you've grown your agent past 200 skills and switched to the compact list-format resolver (`- **gift-advisor**: gift idea | birthday gift`) because the markdown-table version got unreadable, `gbrain doctor` used to silently report every single skill as unreachable. On a 306-skill agent, that was 238 FAIL errors on every doctor run, and the list-format resolver was effectively invisible to gbrain. v0.41.7.0 fixes that — the parser now reads both shapes natively, mixes them in one file, and `gbrain doctor` reports 0 errors on the same resolver that previously broke it.
@@ -31262,6 +32344,7 @@ On a real 306-skill agent with a list-format `RESOLVER.md`:
 ### For contributors
 
 - Codex outside-voice review surfaced four findings the eng review missed: the upstream PR's literal "add list branch below" instruction would have produced dead code (the existing `continue` short-circuits non-table rows before any list branch would fire); the explicit-path-suffix capture would have broken `routing-eval.ts:skillSlugFromPath` + the manifest check at `check-resolvable.ts:367`; the `docs/guides/scaling-skills.md` doc needed registration in `scripts/llms-config.ts` for `test/build-llms.test.ts` to pass; and the original em-dash cleanup instruction would have corrupted command flags like `--pglite`. All four caught and integrated pre-merge.
+
 ## [0.41.6.0] - 2026-05-25
 
 **Your PR CI stops taking 23 minutes.** The Test workflow on every pull request was wallclock-bound by one unlucky shard (shard 3, 22-26 min) while other shards finished in 5-13 min. After this release, every shard finishes in roughly the same time, the whole matrix runs in about 9-10 min on a fresh PR, and PRs that don't actually change test-affecting code (rebases, doc-only commits, retries) skip the test run entirely and finish in under 2 minutes via a content-hash cache.
@@ -31674,6 +32757,7 @@ After migrating, retire your OpenClaw's parallel atom-pipeline-coordinator + ato
 - op_checkpoint resumability for cross-cycle continuation in both new phases.
 - Parity-baseline eval gates against your OpenClaw outputs on 500-page sample.
 - OpenClaw-side cleanup (`atom-pipeline-coordinator` retire + SKILL.md shrinks) lives in `~/git/your-openclaw`, not this repo.
+
 ## [0.41.1.0] - 2026-05-24
 
 **Your CI can now fail a PR when search retrieval gets worse.** Before this release, gbrain shipped the pieces you'd need to measure retrieval quality (capture, replay, nightly probe, cross-modal runner) but nothing connected them into a loop. You could see a quality drop on your screen but nothing automatically caught it. v0.41 closes the loop end-to-end. You publish a baseline once — a snapshot of how your brain performs on a set of real queries — and then `gbrain eval gate` runs against that baseline on every PR. If results get materially worse OR if the brain stops finding pages it used to find, the command exits non-zero and CI turns red. The wave also wires the nightly quality probe into the autopilot daemon (opt-in via config) so a brain you've left running notices its own degradation.
@@ -31763,6 +32847,7 @@ If any step fails or numbers look wrong, please file an issue with `gbrain docto
 - `gbrain bench diff` + `gbrain bench list` companion verbs.
 
 Plan + 13 CEO-review decisions + 10 eng-review decisions + 2 codex outside-voice rounds (15 + 9 findings, all absorbed) at `~/.claude/plans/system-instruction-you-are-working-rustling-peacock.md`. Strategic frame: the v0.41 wave closes the eval LOOP end-to-end so retrieval regressions on master burn a publicly-visible score in BrainBench-Real (sibling `gbrain-evals` repo).
+
 ## [0.41.0.0] - 2026-05-24
 
 **Your 100-job subagent batch now actually completes.** A real user ran `gbrain jobs work --concurrency 10` against an Azure-hosted Anthropic endpoint, submitted 100 background jobs, and watched every single one dead-letter with `rate lease "anthropic:messages" full (8/8)`. The default cap of 8 starved 2 workers; every starved job got marked as a failure, hit `max_attempts = 3` after 3 lease-full bounces, and dead-lettered. This release turns minions from "a CLI you drive" into "a fleet you supervise" — submit a batch, walk away, come back to completed work.
@@ -31945,6 +33030,7 @@ Two failure modes treated differently:
 ### For contributors
 
 The plan file lives at `~/.claude/plans/system-instruction-you-are-working-temporal-brook.md` with the full decision provenance: CEO review (D1-D16) + Eng review (D1-D9) + Codex round 1 (17 findings) + Codex round 2 (13 findings). The deferred-to-v0.41+ TODOs are in `TODOS.md` under "v0.41 content-sanity follow-ups" — chunk-level quarantine, source-repo remediation CLI, threshold validation post-deploy, brain-score `no_junk_pages_score` component, plus the operator-regex + HTML-density features that need real ReDoS / code-fence-handling stories before they're worth shipping.
+
 ## [0.40.9.0] - 2026-05-24
 
 **`gbrain sync` now indexes your `.sql` files, and `gbrain code-def` works on SQL tables, functions, views, and indexes the same way it works on TypeScript.**
@@ -32099,6 +33185,7 @@ Four follow-up TODOs filed (in the plan file, not TODOS.md yet):
 - NEW-2: cycle-phase wrappers for the other 7 phases (sync, extract, embed, orphans, extract_facts, resolve_symbol_edges, recompute_emotional_weight)
 - NEW-3: HTTP-level trust-boundary E2E that proves serve-http.ts honors the localOnly filter at runtime (codex CMT-3 strongest defense)
 - NEW-4: render function extraction from runDoctor (would let doctor-cli-smoke move back into the parallel fast loop)
+
 ## [0.40.7.2] - 2026-05-23
 
 **TODOS.md gets a wave-commitments register at the top.** A `/plan-ceo-review` + `/plan-eng-review` pass clustered the 110 open TODOs into 12 feature themes, articulated the platonic ideal for each, and surfaced three strategic decisions. All three landed on the most ambitious option, and the seven verified-absent items the analysis caught got filed. Nothing in `src/` changed.
@@ -32119,6 +33206,7 @@ No action required — this is a docs-only release. The wave commitments below l
 - **Verified-missing items (8):** `gbrain sources promote`, `--explain` auto-on during `gbrain eval replay`, extend `gbrain remote doctor` to stream audit JSONL, new `gbrain costs` command, `gbrain jobs explain <id>`, `docs/security/threat-model.md` catalog, `gbrain doctor --thin-client` parity probe, `gbrain models migrate`. Each grep-verified absent before filing.
 
 Five items duplicate older entries lower in TODOS.md (`.sql` indexing, Magika, doc_comment, CJK items) — duplication noted inline. The new top section is the canonical wave-commitment register; historical entries stay as detail.
+
 ## [0.40.7.0] - 2026-05-23
 
 **Your agents can now author your brain's schema pack themselves — no more shell-out, no more hand-editing YAML.** If you've ever opened `gbrain` and noticed thousands of pages stuck as untyped "notes" under `meetings/` or `research/`, this release closes that loop. Tell your OpenClaw (or any agent connected via MCP) "my brain has 4000 untyped meetings pages — add a `meeting` type and backfill them," and it does the whole thing safely: locks the pack file so two agents can't race, validates the change won't create dangling references, writes atomically so a crash never leaves the pack half-written, audits the mutation with the agent's identity, then updates every matching page in 1000-row batches that never wedge concurrent writers. The cathedral that was bundled but unreachable in v0.39 is now reachable from the outside.
@@ -32306,6 +33394,7 @@ This release is built on top of community PR #1314 from @garrytan-agents — the
 4. **If anything looks off,** file an issue at https://github.com/garrytan/gbrain/issues with:
    - output of `gbrain doctor`
    - the exact command you ran + the stderr output (the connection-budget warning + any per-source error messages are particularly useful)
+
 ## [0.40.5.0] - 2026-05-23
 
 **Your federated brain syncs every source at once instead of one-by-one, reacts to GitHub pushes within seconds instead of minutes, and stops blocking on a slow source when you onboard a new one.**
@@ -32756,7 +33845,6 @@ The same plumbing lands in the LongMemEval benchmark, with a methodology change 
 
 Plan file at `~/.claude/plans/system-instruction-you-are-working-crystalline-owl.md` carries the full design rationale, the CEO/Eng/Codex review history (3 review passes, all CLEARED), the measurement plan (3 seeds per condition + paired-bootstrap CI), and the hand-verification gate list. Codex flagged 18 findings during outside-voice review; 6 load-bearing ones folded as design decisions (alias-map wording, `resolveEntitySlugWithSource` resolution_source signal, prompt-placement preserving both calibration AND default ordering, INJECTION_PATTERNS extension for `</trajectory>`, 5s findTrajectory timeout + 10s extractor timeout, doctor check deferred to v0.40.1+, real-LLM spot-check added, success metric broadened). The benchmark methodology contamination was the load-bearing decision — accepted with explicit CHANGELOG + JSON-envelope disclosure.
 
-
 ## [0.40.1.0] - 2026-05-22
 
 **Eval infrastructure that catches retrieval regressions before merge and proves answer-quality wins after ship.**
@@ -32881,6 +33969,7 @@ warns about a partial migration:
    - which step broke
 
    This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
 ## [0.40.0.0] - 2026-05-17
 
 **Voice agent reference lands — Mars + Venus personas, WebRTC-first, copy-into-your-repo not stuck-in-gbrain.**
@@ -32985,6 +34074,7 @@ The voice agent runs in YOUR repo, on YOUR cadence. When gbrain ships a new agen
 #### For contributors
 - New paradigm `install_kind: copy-into-host-repo` is documented in `recipes/agent-voice/README.md`. Future recipes that want this shape follow the sibling-directory convention pinned there.
 - The deterministic import script + scrub table are the canonical refresh-from-upstream mechanism. Update the table; re-run the script; the PII guard fail-closes if anything slipped through.
+
 ## [0.39.3.0] - 2026-05-22
 
 **`gbrain capture` now actually does what you expect: handles files with their own frontmatter cleanly, dedups identical text, rejects binary files, finds itself in `--help`, and tells you when something goes wrong instead of doing nothing.**
@@ -33146,7 +34236,6 @@ Content-Type: application/json
 - The smoke-test report at `docs/v0.38-smoke-test-report.md` was contributed by `@garrytan-agents` via PR #1299. PR closed as superseded; report ships verbatim with an Editor's Note prepended pointing at this CHANGELOG for the two factual corrections (BUG-2 line location was re-diagnosed; WARN-5 root cause was identified as a missing entry in `CLI_ONLY_SELF_HELP`).
 - The plan-eng-review flow on the v0 plan produced 15 decisions, 9 of them via codex outside-voice. Plan + decision trace at `~/.claude/plans/system-instruction-you-are-working-async-popcorn.md`.
 - Filed v0.39+ TODOs: SQL-shape rewrite of `listPrefixSampledPages` for PgBouncer; magic-byte allowlist for binary content detection; `--source-kind` override flag; facts:absorb root-cause trace; ingest_capture Minion handler architecture migration.
-
 
 ## [0.39.2.0] - 2026-05-22
 
@@ -33449,6 +34538,7 @@ warns about a partial migration:
    - which step broke
 
    This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
 ## [0.38.2.0] - 2026-05-22
 
 **`gbrain doctor` no longer hangs on big brains, and gives you real signal when it has to give up.**
@@ -33514,7 +34604,6 @@ Community PR #1287 (by @garrytan-agents) diagnosed the hang correctly and propos
 - The walker test surface changes shape: `walkDir` (brain-writer.ts) and `collectFiles` (frontmatter.ts) are now exported with an optional `visitDir` callback. Tests should use this for descent-time pruning assertions; leaf-output tests can pass under the original bug since `isSyncable` filters at the leaf.
 - `scanBrainSources` now returns `partial` + `aborted_at_source` on `AuditReport` and `status` + `files_scanned` (+ optional `db_page_count`) per `PerSourceReport`. Any test that constructs `AuditReport` literals needs to include the new required fields. (One pre-existing test was updated as part of this PR.)
 - `runDoctor` still calls `process.exit` at the end — behavioral tests against it can't run via the unit-test runner. That refactor stays a TODO; the unit-test layer covers `scanBrainSources` + doctor's render shape via source-grep, and the heavy script covers end-to-end against a subprocess.
-
 
 ## [0.38.1.0] - 2026-05-21
 
@@ -33616,6 +34705,7 @@ Four atomic slices behind feature flags, each shipping independently before the 
    - which step broke
 
    This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
 ## [0.38.0.0] - 2026-05-20
 
 **Your brain is now yours.**
@@ -33729,7 +34819,6 @@ The full plan estimated 12-14 weeks across all four phases. v0.38.0.0 lands Phas
 - `test/scope.test.ts` + `test/oauth.test.ts` + `test/model-config.serial.test.ts` updated for v0.38 semantics.
 
 **Plan:** `~/.claude/plans/system-instruction-you-are-working-shimmying-breeze.md`. Wave went through `/plan-ceo-review` (Option B locked), `/plan-eng-review` (7 decisions D3-D9), and two codex outside-voice rounds (D11-D13 absorbed; round 2 caught blocker on missing Slice 1 stable-ID migration + 4 non-blockers).
-
 
 ## [0.38.0.0] - 2026-05-21
 
@@ -33869,6 +34958,7 @@ These do not block the v0.38 release: the substrate is shipped and queryable; so
 
 `gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor`
 warns about a partial migration:
+
 ## [0.37.11.0] - 2026-05-21
 
 **Fresh `gbrain init --pglite` works out of the box now.**
@@ -34060,6 +35150,7 @@ The hard problem was the validator (shipped in v0.37.5.0). What's left is alignm
 
 - The auto-fix engine's key-scope decision matters. If a future need shows up to normalize arrays for keys beyond `tags`/`aliases` (e.g. an `authors:` field), extend the regex allow-list explicitly. Don't broaden to `[A-Za-z_][\w-]*` — that would rewrite typed-numeric arrays (`scores: ["1", "2"]`) into string arrays and break downstream typed-claim extraction.
 - Codex outside-voice review on this wave produced 11 findings; 1 dropped a planned layer (put_page auto-normalization, because storage hashes parsed fields not raw bytes), 1 narrowed the allow-list, 5 fixed plan housekeeping. Original PRs #1217 (closed, serializer fix) and #1238 (closed, four-layer defense-in-depth) absorbed into this wave.
+
 ## [0.37.8.0] - 2026-05-20
 
 **For agents indexing source code with gbrain, the right embedding model is now obvious — and the brain tells you so out loud.**
@@ -34379,6 +35470,7 @@ PR #1217 was closed; thanks to @garrytan-agents for the 6,981-error signal that 
 #### For contributors
 
 - `js-yaml` is now an explicit direct dep. New code that needs YAML emission/parsing should import from it directly rather than relying on gray-matter's transitive resolution.
+
 ## [0.37.4.0] - 2026-05-20
 
 **A nightly safety net for the bug class that bit gbrain 10 times in 2 years.**
@@ -34473,6 +35565,7 @@ Three review passes ran on the plan before any code: a CEO scope review (Approac
 - `test/regressions/v0_36_frontier_cap.test.ts` — 4 pinned contracts: cap-unset back-compat, cap-hit bounds result to `<= cap+1` (the actually-useful protection invariant), MCP wire-shape preservation (still Array), concurrency independence (two concurrent calls on same engine with different caps — larger cap sees >= as many nodes).
 - `CLAUDE.md` — file taxonomy gains `tests/heavy/*.sh` + `test/fuzz/*.test.ts` entries; `traverseGraph` entry notes the new opt + the stripped truncation callback.
 - `llms-full.txt` regenerated.
+
 ## [0.37.3.0] - 2026-05-19
 
 **Your agent now catches skills that would call the web before checking the brain. The same class of miss that flagged Garry's own Palantir tweet as a risk because none of the three eval models knew he built it.**
@@ -34706,6 +35799,7 @@ By default `brainstorm` saves to `wiki/ideas/<date>-brainstorm-<slug>.md` and `l
 ## To take advantage of v0.37.1.0
 
 `gbrain upgrade` should do this automatically. If it did not:
+
 ## [0.37.0.0] - 2026-05-19
 
 **Skillpacks become a real ecosystem. You can ship one, someone else can install it, and gbrain has an opinion about quality.**
@@ -34796,6 +35890,7 @@ If `gbrain skillpack doctor` or `gbrain skillpack scaffold` errors out, please f
 - `garrytan/gbrain-skillpack-registry` GitHub repo setup with the CI workflow split (codex G3).
 - Cross-listing in `mvanhorn/printing-press-library` (external repo PR).
 - Generated `gbrain-cli` via Printing Press for non-gbrain agents to hit a remote gbrain.
+
 ## [0.36.6.0] - 2026-05-19
 
 **Your photos finally show up when you ask. The brain just got eyes.**
@@ -35325,6 +36420,7 @@ What this means: you can run a side-by-side provider eval today. Set `embedding_
    ```
 
 If any step fails, file an issue at https://github.com/garrytan/gbrain/issues with `gbrain doctor` output and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
 ## [0.36.2.0] - 2026-05-17
 
 **retired hosted provider is the new default. Faster, cheaper, better quality on real queries. Existing users get a one-shot switch prompt with cost estimate; new installs land on it out of the box. README rewritten to match what gbrain actually is in 2026.**
@@ -35427,6 +36523,7 @@ If the prompt didn't fire (non-TTY upgrade, you already said "never"), run `gbra
 If any step misbehaves, please file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor --json` and the relevant `~/.gbrain/upgrade-errors.jsonl` if it exists.
 
 Credit: the retired hosted provider for the embedding + reranker stack (original attribution is preserved in the pre-removal Git revision cited above). Codex outside-voice review caught the double-re-embed bug class pre-implementation.
+
 ## [0.36.1.1] - 2026-05-18
 
 **Twenty-eight community-reported bugs fix themselves on your next `gbrain upgrade`.** The most painful ones first: fresh installs work again, `/admin` actually serves the dashboard, `gbrain config set openai_api_key` stops echoing your secret to stderr, and `extract_facts` no longer dead-letters autopilot when a sync no-op passes an empty slug list.
@@ -35541,6 +36638,7 @@ Real appreciation for the community on this release. The bug-report volume was a
 - **Cluster D singletons**: orphans soft-delete (v0.35.5.0), doctor `node_modules` walker (v0.35.5.0 `pruneDir`), Voyage 2048d `output_dimension` (v0.33.1.1 PR #962), doctor stale verb names (v0.31.7). (#922, #1033, #799, #865, #835, #1021.)
 - **Cluster E troll**: #1114 closed and locked.
 - **PRs absorbed by structural fixes**: #1050 (doctor crash count — v0.35.5.0 `summarizeCrashes()`), #1054 (schema v44→v45 wedge — v0.35.5.0 bootstrap extension), #1065 (embed PGLite hang — v66 partial index).
+
 ## [0.36.1.0] - 2026-05-17
 
 **The brain learns how you tend to be wrong, then argues against your blind spots on every advice call.**
@@ -36140,6 +37238,7 @@ A fix-wave shipping privacy work, bug fixes, observability, and one big perf win
    The supervisor check should show `clean_restarts=N` in the message when applicable, and `stub_guard_24h` should appear only if the guard has fired.
 3. **If `gbrain doctor` warns about something unexpected,** please file an issue at
    https://github.com/garrytan/gbrain/issues with the doctor output.
+
 ## [0.35.3.1] - 2026-05-15
 
 **The contradiction probe stops crying wolf on time. Six-member verdict enum + page-level date in the prompt + a new privacy lint for proposals.**
@@ -36505,6 +37604,7 @@ Underneath that, the supervisor and `gbrain autopilot` no longer maintain two pa
 - Zero `max_crashes_exceeded` events
 
 If `health_warn` with `reason: 'clean_restart_budget_exceeded'` starts firing on your deployment, that's the new D2 budget telling you the watchdog is firing too often. On Linux that means the worker really is leaking; investigate. On macOS that's the VmRSS-fallback fire pattern — set a higher `--max-rss` threshold to suppress.
+
 ## [0.34.2.0] - 2026-05-14
 
 **Path-based import checkpoint. The newest files in a partial import no longer disappear.**
@@ -36881,6 +37981,7 @@ To exercise the new W1/W2 edge shapes on an existing brain:
 Pre-v0.33.3 the four code-intelligence commands from v0.20+ Cathedral II lived in `CLI_ONLY` at `cli.ts:30`. An agent running through MCP saw `query`/`search` but no structural retrieval, so it grepped, missed callers in string literals, shipped plans with broken call chains, and got caught in review. v0.33.3 closes that gap and lays the foundation work that v0.34 Cathedral III (recursive blast/flow + Leiden clusters + wiki) will build on top of.
 
 This release was scoped after Codex's outside-voice review caught two load-bearing premise gaps in the original v0.34 plan: the call graph stored bare callee tokens (not qualified names), and source routing was already broken in `query` and `two-pass.ts`. Both are fixed here before any user-facing recursive op ships.
+
 ## [0.33.2.1] - 2026-05-14
 
 **Doc-only: name the fork-PR escape hatch so AI-authored PRs don't drop their CI secrets.**
@@ -37074,6 +38175,7 @@ The release is eval-gated by design (per /office-hours, /plan-ceo-review, and Co
 ### Process notes
 
 The plan went through `/office-hours` → `/plan-ceo-review` → Codex outside-voice → `/plan-eng-review`. Each pass changed the shape. Office-hours locked the headline + eval-first principle. CEO review proposed 8 deliverables in SCOPE EXPANSION mode. Codex pushed back on 5 fronts (sequencing, eval methodology, library choice, layer separation, schema design) and was accepted on all 5 + 3 substrate defects. Eng review locked the ranking formula, the two-layer eval gate, the 10-case test list, and the SQL-level typeFilter. Net result: scope reduced ~75% from the cathedral version while shipping the actual wedge users ask for.
+
 ## [0.33.0] - 2026-05-11
 
 **`gbrain recall` now answers "what changed since last time?" in one command, and thin-client installs stop silently lying about empty results.**
@@ -37257,6 +38359,7 @@ after Codex round 1 (10 findings; 3 structural, 7 mechanical) → eng review
 option) → Codex round 2 found 9 more findings (4 load-bearing, 5 mechanical
 hardening); all absorbed. Final scope: 13 files, ~800 LOC implementation
 + ~400 LOC tests. CEO + ENG + CODEX×2 CLEARED at plan approval.
+
 ## [0.32.8] - 2026-05-11
 
 **Multi-source brains finish what they start. Embed, extract, takes, patterns, integrity, migrate-engine all now respect which source a page belongs to. The disk-side collision is fixed via a per-source subdir layout, and a CI gate prevents the bug class from coming back.**
@@ -37650,6 +38753,7 @@ The bigger swing (chunk-level `revises` field + ranking change + synthesize-prom
 - `__setChatTransportForTests` already existed at `src/core/ai/gateway.ts:421` — judge tests use direct `chatFn` injection instead (cleaner for one-shot wrappers).
 - Codex outside-voice review caught 5 fixes that are now standard: command rename (`contradictions` → `suspected-contradictions`), judge_errors as first-class output, prompt_version + truncation_policy in cache key, Wilson CI on headline, query-conditioned judge prompt. All folded in.
 - Decision-point not in TODOS.md per user preference: after a month of nightly runs, check Wilson CI lower-bound. If <5%, source-boost + recency-decay + curated pages are doing the job and the bigger swing (chunk-level `revises`) stops here. If >15%, plan for v0.34+.
+
 ## [0.32.5] - 2026-05-11
 
 **Time, place, and what you're doing — reinjected on every turn, no matter how hard the session got compacted.**
@@ -39752,7 +40856,6 @@ stops being a search engine and starts being an aide who notices.
   vs computing the boundary in JS), v0.29 always picks the parity-safe
   path. See engine-parity-salience.test.ts for the smoke.
 
-
 ## [0.28.12] - 2026-05-07
 
 **gbrain hits 97.60% retrieval recall on the public LongMemEval benchmark.
@@ -39858,7 +40961,6 @@ gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s.json \
 
 If anything looks off, file at https://github.com/garrytan/gbrain/issues
 with `gbrain doctor` output.
-
 
 ## [0.28.11] - 2026-05-07
 
@@ -40423,7 +41525,6 @@ issue with the doctor output and we will look.
    - output of `gbrain --version`
    - which step broke
 
-
 ## [0.28.4] - 2026-05-06
 
 ## **`gbrain eval cross-modal` — three frontier models score your skill output BEFORE tests cement it.**
@@ -40747,7 +41848,6 @@ core feature:
   contract documented in the file header.
 - `bun run check:admin-scope-drift` — new gate; fails the build if
   `admin/src/lib/scope-constants.ts` falls behind `src/core/scope.ts`.
-
 
 ## [0.28.1] - 2026-05-06
 
@@ -41822,7 +42922,6 @@ React admin dashboard baked into the binary. Seven screens designed through Stev
 **Tests:**
 - `test/oauth.test.ts` ... 34 test cases covering provider: register, getClient, client_credentials exchange, auth_code flow with PKCE, refresh rotation, verifyAccessToken (OAuth + legacy fallback), revokeToken, sweepExpiredTokens, scope annotations on all 30 operations. Plus the post-/cso security-fix regressions: 10-concurrent auth code exchange (only 1 wins), 10-concurrent refresh rotation (only 1 wins), redirect_uri HTTPS-or-loopback gate, and pgArray comma-element round-trip (1 element in → 1 element out).
 
-
 ## [0.25.1] - 2026-05-01
 
 ## **Your brain can now read books with you. Nine new skills land at once.**
@@ -42159,6 +43258,7 @@ No schema migration. Existing brains work unchanged.
 ### Cross-model review credit
 
 This release's quality is directly attributable to running `/plan-ceo-review` + `/plan-eng-review` + `/codex review` in sequence on the v0.19.0 production-readiness audit. Codex caught one critical and three high findings the in-skill review missed: cumulative-install regression (load-bearing), `--llm` public-contract drift (4-surface scrub), Tier 2 framing as unowned dependency, and 6.5 hours of guesswork named files in the flake-diagnosis plan. The cross-model agreement on every fix is the signal that turns "ship the demo path" into "ship the production path."
+
 ## [0.23.2] - 2026-04-30
 
 **The dream cycle now stamps every page it writes. The guard checks for the stamp. No content guessing, no false positives.**
@@ -42185,6 +43285,7 @@ The configurable verdict model from v0.23.1 stays. `gbrain config set dream.synt
 - 12 new test cases in `test/cycle-synthesize.test.ts`:
   - `self-consumption guard (v0.23.2 marker-based)`: REGRESSION fixture built from a real `Page → renderPageToMarkdown → isDreamOutput` round-trip; legitimate user note citing a slug is NOT skipped; CRLF + BOM tolerated; whitespace and case variants tolerated; `false`/absent values do NOT match; `dream_generatedfoo` (no word boundary on key) does NOT match; marker buried past 2000 chars does NOT trigger (perf bound); `bypassGuard=true` overrides; `discoverTranscripts` respects the bypass; `DREAM_OUTPUT_MARKER_RE` is anchored at byte 0.
   - `judgeSignificance`: passes verdict_model override to `client.create`; defaults to `claude-haiku-4-5-20251001` when omitted; returns `worth_processing=false` on unparseable judge output.
+
 ## [0.23.1] - 2026-04-30
 
 **`bun run ci:local` runs the full CI gate on your laptop, 4-way sharded, in ~100 seconds warm. Doc-only diffs go in 5 seconds.**
@@ -42403,7 +43504,6 @@ Eight findings from the cross-model review caught real implementation traps befo
 - Auto git commit + push from the synthesize/patterns phases. v1 writes files locally; either commit yourself or let `gbrain autopilot` handle it.
 - Daily token budget cap. Cooldown is the v1 spend bound.
 - Cross-modal pattern review (currently reflections-only).
-
 
 ## [0.22.16] - 2026-04-29
 
@@ -43071,7 +44171,6 @@ Then point Claude Desktop, claude.ai/code, or any MCP client at `http://your-tun
 
 If anything breaks: `gbrain doctor`, `~/.gbrain/upgrade-errors.jsonl` (if present), and please file an issue at https://github.com/garrytan/gbrain/issues with both.
 
-
 ## [0.22.6.1] - 2026-04-26
 
 **Old brains can upgrade again.**
@@ -43458,6 +44557,7 @@ If you run `gbrain jobs supervisor` (the production-recommended path), `gbrain u
 
 - The watchdog cleanup path (`gracefulShutdown`) is intentionally co-located with `MinionWorker.stop()`. When a third caller appears (e.g., a future `pause()` method), extracting `unifiedShutdown(reason)` becomes worth the refactor. Until then, three lines is not a DRY emergency.
 - `isRetryableDbConnectError()` lives in `src/core/db.ts` and owns its own 5-pattern matcher. PR #406 (when it merges) introduces a 13-pattern matcher in `src/core/minions/supervisor.ts`; the right move at that merge is to delete the supervisor's local copy and import from `db.ts` (correct dependency direction, low → high). A follow-up TODO captures this.
+
 ## [0.22.1] - 2026-04-26
 
 **Autopilot stops being a noisy neighbor.**
@@ -44842,6 +45942,7 @@ Docs-only release. No code changed. Zero migration required.
 
 **Added**
 - **Minions worker deployment guide** — new `docs/guides/minions-deployment.md` covering watchdog cron patterns, inline `--follow` for cron-only workloads, and the sharp edges of running `gbrain jobs work` against Supabase in production. Addresses a real gap: existing Minions docs (`minions-fix.md`, `minions-shell-jobs.md`) cover schema repair and shell-job security, not deploy patterns. Contributed by your OpenClaw via #287. Pre-landing accuracy pass corrected five factual bugs against current source: the `max_stalled` column default (5, not 1 or 3), the stalled-jobs smoke-test query (`active`, not `waiting`), the SIGTERM-to-SIGKILL grace window (10s minimum, not 2s), the cron env pattern (crontab env lines, not `source ~/.bashrc`), and the `--follow` exit semantics (blocks until submitted job is terminal, not until queue is empty).
+
 ## [0.16.0] - 2026-04-20
 
 ## **Durable agents land. Your LLM loops survive crashes, timeouts, and worker restarts now.**
@@ -45113,6 +46214,7 @@ Progress for `embed`, `files`, `export`, `extract`, `import`, `migrate-engine` m
 
 #### Tests
 - New: `test/progress.test.ts` (17 cases — mode resolution, rate gating, EPIPE paths, SIGINT singleton, child phase composition), `test/cli-options.test.ts` (18 cases — flag parsing, `--quiet` skillpack-check collision regression, global-flag strip-and-dispatch), `test/e2e/doctor-progress.test.ts` (3 cases, Tier 1 — spawns the real CLI against a real Postgres, asserts stderr JSONL matches the schema and stdout stays clean).
+
 ## [0.15.1] - 2026-04-21
 
 ## **Fix wave: 4 hot issues that blocked real brains, landed together.**
@@ -45464,6 +46566,7 @@ The abort-path fix is the quietly-important one. Handlers that use `ctx.signal` 
 #### Pre-ship review
 
 Five independent rounds surfaced 29 issues across the plan. 26 resolved before a single line of code was written: spec-review adversarial subagent (x2 iterations) caught implementer-ergonomic gaps (caller derivation, mkdirSync, ISO-week formatter). CEO review + SELECTIVE EXPANSION cherry-picked argv form, audit log, SIGTERM grace, env allowlist, MCP-guard defense-in-depth, honest FS-read trust model, orphan-child `setTimeout.unref()` fix. DX review added the starvation warning block. Eng review added `ctx.shutdownSignal` separation, revised trusted-arg from opts-fold to separate 4th arg (stops accidental pass-through via `{...userOpts}` spreads), 18 additional test cases, 4 iron-rule regression tests. Codex outside voice caught 4 architectural dealbreakers: the worker abort silent-return bug (the "contract is a lie" finding), `--timeout-ms` CLI flag and `submit_job` param both missing, `PROTECTED_JOB_NAMES.has(name)` whitespace bypass before normalization. Effort estimate revised 8-10h → 16-20h once the full review was done.
+
 ## [0.13.1] - 2026-04-20
 
 ## **The brain stops being a write-once graph and starts being a runtime.**
@@ -46135,6 +47238,7 @@ Wave 3 fixes were contributed by **@garagon** (PRs #105-#109) and **@Hybirdss** 
 - `test/resolver.test.ts` validates RESOLVER.md coverage and routing consistency
 - `skills/manifest.json` now has `conformance_version` field and lists all 24 skills
 - Identity templates in `templates/` (SOUL.md, USER.md, ACCESS_POLICY.md, HEARTBEAT.md)
+
 ## [0.9.3] - 2026-04-12
 
 ### Added

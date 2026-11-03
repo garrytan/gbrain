@@ -40,7 +40,7 @@ export async function checkOrphanBindings(engine: BrainEngine): Promise<Check> {
 export async function checkForeignOwnershipMarkers(engine: BrainEngine): Promise<Check> {
   const name = 'foreign_ownership_marker';
   try {
-    const { readPhysicalRootReservation, readPhysicalRootStamp, physicalRootReservationPath, PHYSICAL_ROOT_MARKER } = await import('../../../core/persistence/physical-root-record.ts');
+    const { readPhysicalRootReservation, readPhysicalRootStamp, physicalRootReservationPath, PHYSICAL_ROOT_MARKER, openOwnershipRecord } = await import('../../../core/persistence/physical-root-record.ts');
     const { existingLocalHostId } = await import('../../../core/persistence/identity.ts');
     const { existsSync } = await import('node:fs');
     const { join } = await import('node:path');
@@ -49,14 +49,23 @@ export async function checkForeignOwnershipMarkers(engine: BrainEngine): Promise
     const roots = await engine.executeRaw<{ root: string; source_id: string | null }>(`
       SELECT DISTINCT local_path AS root,id AS source_id FROM sources WHERE local_path IS NOT NULL AND NOT COALESCE(archived,false)
       UNION SELECT DISTINCT h.local_path,NULL FROM persistence_host_bindings h WHERE h.host_id=$1::uuid`, [existingLocalHostId()]);
-    const markers: Array<{ path: string; source_id: string | null; kind: 'stamp' | 'reservation'; recorded_brain: string | null; worktree_known: boolean | null; problem: string }> = [];
+    const markers: Array<{ path: string; source_id: string | null; kind: 'stamp' | 'reservation'; recorded_brain: string | null; worktree_known: boolean | null; problem: string; fix_command?: string }> = [];
+    const seen = new Set<string>();
     for (const { root, source_id } of roots) {
-      if (!existsSync(root)) continue;
+      if (!existsSync(root) || seen.has(root)) continue;
+      seen.add(root);
       const candidates: Array<{ kind: 'stamp' | 'reservation'; path: string; read: () => { brainId: string; worktreeId: string } | null }> = [
         { kind: 'stamp', path: join(root, PHYSICAL_ROOT_MARKER), read: () => readPhysicalRootStamp(root) },
         { kind: 'reservation', path: physicalRootReservationPath(root), read: () => readPhysicalRootReservation(root) },
       ];
       for (const candidate of candidates) {
+        const open = openOwnershipRecord(candidate.path);
+        if (open && brain && open.brainId === brain.brain_id && worktrees.has(open.worktreeId)) {
+          const fix_command = `chmod 600 '${candidate.path.replaceAll("'", "'\\''")}'`;
+          markers.push({ path: candidate.path, source_id, kind: candidate.kind, recorded_brain: open.brainId, worktree_known: true, fix_command,
+            problem: `mode ${open.mode.toString(8).padStart(4, '0')}: other users can read it, so it no longer proves the owner; make it private again with ${fix_command}` });
+          continue;
+        }
         let value: { brainId: string; worktreeId: string } | null;
         try { value = candidate.read(); }
         catch { markers.push({ path: candidate.path, source_id, kind: candidate.kind, recorded_brain: null, worktree_known: null, problem: 'unreadable: not a private, well-formed ownership marker' }); continue; }
@@ -70,11 +79,17 @@ export async function checkForeignOwnershipMarkers(engine: BrainEngine): Promise
     }
     const details = { count: markers.length, markers, docs: 'docs/guides/write-refusals.md#foreign-ownership-marker' };
     if (!markers.length) return { name, status: 'ok', message: 'Every ownership marker beside a source checkout belongs to this brain.', details };
-    return { name, status: 'warn', details,
-      message: `${markers.length} ownership marker(s) beside source checkouts do not belong to this brain: `
-        + markers.slice(0, 5).map(marker => `${marker.path} (${marker.problem})`).join('; ')
-        + `. A claim of that checkout refuses recovery_required while one remains. Confirm with the user that the recorded brain is retired `
-        + '(moved to this database or deleted), then remove exactly the named file on the brain host and claim again; never remove a marker of a brain that is still in use.' };
+    const open = markers.filter(marker => marker.fix_command);
+    const foreign = markers.filter(marker => !marker.fix_command);
+    const parts: string[] = [];
+    if (open.length) parts.push(`${open.length} ownership marker(s) beside source checkouts are readable by other users, so every write to that checkout refuses recovery_required `
+      + `(ownership_record_not_private): ${open.slice(0, 5).map(marker => `${marker.path} (${marker.problem})`).join('; ')}. `
+      + 'Run the named chmod on the brain host; never remove these markers, which belong to this brain.');
+    if (foreign.length) parts.push(`${foreign.length} ownership marker(s) beside source checkouts do not belong to this brain: `
+      + foreign.slice(0, 5).map(marker => `${marker.path} (${marker.problem})`).join('; ')
+      + `. A claim of that checkout refuses recovery_required while one remains. Confirm with the user that the recorded brain is retired `
+      + '(moved to this database or deleted), then remove exactly the named file on the brain host and claim again; never remove a marker of a brain that is still in use.');
+    return { name, status: 'warn', details, message: parts.join(' ') };
   } catch (error) {
     return { name, status: 'warn', details: { count: 'unknown' },
       message: `Ownership markers could not be inspected: ${error instanceof Error ? error.message : String(error)}. Health is unknown.` };

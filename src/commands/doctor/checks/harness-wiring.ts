@@ -35,12 +35,19 @@ import { verifiedStatusMarkers } from '../../../core/serve-http-status-marker.ts
 import { agentProcessMarker } from '../../../core/interaction.ts';
 import { resolveGbrainBin } from '../../../core/gbrain-bin.ts';
 import { enabledPluginLanes } from '../../../core/bootstrap/plugin-lanes.ts';
-import { claudeConfigDir } from '../../../core/bootstrap/host-specs.ts';
+import { claudeConfigDir, claudeUserSettingsPath, opencodeProjectConfigPath } from '../../../core/bootstrap/host-specs.ts';
+import { readReceipt } from '../../../core/bootstrap/format.ts';
+import { resolveGbrainHome } from '../../../core/gbrain-home.ts';
 import type { Action } from '../../../core/agent-output.ts';
 import type { Check } from '../../doctor.ts';
 import { checkError, doctorVerify, infoCheck } from '../check-fix.ts';
 import type { DoctorContext, DoctorEntry } from '../context.ts';
 import { VERSION } from '../../../version.ts';
+import { TURN_HOOK_NATIVE_INSPECT, hookLauncherProblem, inspectTurnHook, turnHookFix, type HookLauncherProblem, type TurnHookState } from '../../../core/setup/turn-hook-check.ts';
+import { localSetupRecords } from '../../../core/setup/local-receipts.ts';
+import { launcherLaneFindings, setupRerunArgv } from '../../../core/setup/launcher-lanes.ts';
+import { readSetupReceipt } from '../../../core/setup/claude-code.ts';
+import { readCodexSetupReceipt } from '../../../core/setup/codex.ts';
 import { brainFirstTarget, inspectBrainFirst, isBrainFirstHarness, readBrainFirstLedger, renderBrainFirstBlock, type BrainFirstAccess } from '../../../core/setup/brain-first.ts';
 
 export const HARNESS_SMOKE_TIMEOUT_MS = 15_000;
@@ -86,16 +93,24 @@ function stringRecord(v: unknown): Record<string, string> | undefined {
   return out;
 }
 
+/** #7422: the install receipt `gbrain bootstrap` keeps (its workspace and the registrations it made), or null. */
+function bootstrapReceipt(): ReturnType<typeof readReceipt> {
+  try { return readReceipt(resolveGbrainHome()); } catch { return null; }
+}
+
 function claudeRegistration(name: string): HarnessRegistration | null {
   const path = join(home(), '.claude.json');
   const cfg = readJson(path) as { mcpServers?: Record<string, unknown>; projects?: Record<string, { mcpServers?: Record<string, unknown> }> } | null;
-  if (!cfg) return null;
-  const candidates = [cfg.mcpServers?.[name], ...Object.values(cfg.projects ?? {}).map((p) => p?.mcpServers?.[name])];
-  const entry = candidates.find((c) => c && typeof c === 'object') as Record<string, unknown> | undefined;
-  if (!entry) return null;
-  if (typeof entry.url === 'string') return { harness: 'claude-code', source: path, kind: 'http', url: entry.url };
+  const ws = bootstrapReceipt()?.workspace_dir;
+  const projectPath = ws ? join(ws, '.mcp.json') : null;
+  const project = projectPath ? readJson(projectPath) as { mcpServers?: Record<string, unknown> } | null : null;
+  const candidates: Array<[string, unknown]> = [[path, cfg?.mcpServers?.[name]], ...Object.values(cfg?.projects ?? {}).map((p): [string, unknown] => [path, p?.mcpServers?.[name]])];
+  if (projectPath) candidates.push([projectPath, project?.mcpServers?.[name]]);
+  const [source, entry] = (candidates.find(([, c]) => c && typeof c === 'object') ?? []) as [string?, Record<string, unknown>?];
+  if (!source || !entry) return null;
+  if (typeof entry.url === 'string') return { harness: 'claude-code', source, kind: 'http', url: entry.url };
   if (typeof entry.command !== 'string') return null;
-  return { harness: 'claude-code', source: path, kind: 'stdio', command: entry.command, args: strings(entry.args) ?? [], env: stringRecord(entry.env) };
+  return { harness: 'claude-code', source, kind: 'stdio', command: entry.command, args: strings(entry.args) ?? [], env: stringRecord(entry.env) };
 }
 
 /** `[mcp_servers.<name>]` from Codex's config.toml: the `command`/`args`/`url`/`env` keys only. */
@@ -123,14 +138,17 @@ export function parseCodexRegistration(text: string, name: string, source: strin
   return { harness: 'codex', source, kind: 'stdio', command, args: strings(parse(value('args'))) ?? [], env };
 }
 
+const codexConfigPath = () => join(process.env.CODEX_HOME || join(home(), '.codex'), 'config.toml');
+const opencodeConfigPath = () => join(process.env.XDG_CONFIG_HOME || join(home(), '.config'), 'opencode', 'opencode.json');
+
 function codexRegistration(name: string): HarnessRegistration | null {
-  const path = join(process.env.CODEX_HOME || join(home(), '.codex'), 'config.toml');
+  const path = codexConfigPath();
   if (!existsSync(path)) return null;
   try { return parseCodexRegistration(readFileSync(path, 'utf8'), name, path); } catch { return null; }
 }
 
 function opencodeRegistration(name: string): HarnessRegistration | null {
-  const path = join(process.env.XDG_CONFIG_HOME || join(home(), '.config'), 'opencode', 'opencode.json');
+  const path = opencodeConfigPath();
   const cfg = readJson(path) as { mcp?: Record<string, Record<string, unknown>> } | null;
   const entry = cfg?.mcp?.[name];
   if (!entry) return null;
@@ -143,6 +161,27 @@ function opencodeRegistration(name: string): HarnessRegistration | null {
 /** Every gbrain MCP registration this machine's harness configs carry. */
 export function readHarnessRegistrations(name = 'gbrain'): HarnessRegistration[] {
   return [claudeRegistration(name), codexRegistration(name), opencodeRegistration(name)].filter((r): r is HarnessRegistration => r !== null);
+}
+
+interface RecordedRegistration { harness: ReadinessHarness; scope: string; config: string }
+
+/**
+ * #7422: MCP registrations `gbrain bootstrap` recorded for these harnesses
+ * whose config file this process cannot read (a service running under
+ * another HOME, a permission): unverified here, not missing. A readable
+ * config without the registration is not listed (it was removed).
+ */
+function recordedUnreadableRegistrations(harnesses: readonly ReadinessHarness[]): RecordedRegistration[] {
+  const receipt = bootstrapReceipt();
+  if (!receipt) return [];
+  const configFor = (harness: ReadinessHarness, scope: string): string => harness === 'claude-code'
+    ? (scope === 'project' ? join(receipt.workspace_dir, '.mcp.json') : join(home(), '.claude.json'))
+    : harness === 'codex' ? codexConfigPath() : scope === 'project' ? opencodeProjectConfigPath(receipt.workspace_dir) : opencodeConfigPath();
+  const readable = (path: string) => { try { readFileSync(path); return true; } catch { return false; } };
+  return receipt.registrations
+    .filter((r) => harnesses.includes(r.host) && (r.detail?.split('+') ?? []).includes('mcp'))
+    .map((r) => ({ harness: r.host, scope: r.scope, config: configFor(r.host, r.scope) }))
+    .filter((r) => !readable(r.config));
 }
 
 /** Harnesses installed on this machine: the active agent marker, else their config files. */
@@ -446,7 +485,7 @@ export function withSkillsIndex(check: Check, views: SkillsIndexView[]): Check {
     : { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(NAME),
       why: `The skills index in ${broken.path} names a gbrain that is no longer there, so the agent cannot load any skill it lists.`,
       user_message: `The ${broken.harness} skills index points at a gbrain that was moved or uninstalled. Run: ${broken.refresh}, with the absolute path of the gbrain you use now.` };
-  return { name: check.name, status: 'warn', message, details, fix };
+  return { name: NAME, status: 'warn', message, details, fix };
 }
 
 /** The setup command that rewrites exactly this block: same file, same connection name and surface. A project file needs its own directory, so the user runs it there. */
@@ -479,11 +518,96 @@ export function instructionBlockUpgradeHints(): string[] {
   });
 }
 
-/** Registration read (full run) or registration read + smoke (`--only harness_wiring`), plus the brain-first block. */
+/**
+ * The per-turn hook beside every accepted brain-first block on a harness that
+ * has one (Claude Code, Codex, OpenClaw, Hermes). Files only: doctor never runs
+ * the hook; the fix names the harness's own inspect command.
+ */
+export function turnHookViews(views: InstructionBlockView[]): TurnHookState[] {
+  return views.filter((v) => (v.state === 'current' || v.state === 'stale') && TURN_HOOK_NATIVE_INSPECT[v.harness])
+    .map((v) => inspectTurnHook(v.harness, basename(v.path) === 'CLAUDE.local.md' ? { projectDir: dirname(v.path) } : {}));
+}
+
+/** An untrusted per-turn hook, or one missing beside a recorded block, turns an ok wiring into a warn (code turn_hook_not_loaded) whose fix re-runs the install that writes it. */
+export function withTurnHooks(check: Check, views: InstructionBlockView[], hooks: TurnHookState[]): Check {
+  if (hooks.length === 0) return check;
+  const details = { ...(check.details ?? {}), turn_hooks: hooks };
+  // Missing beside a block gbrain recorded writing (the ledger) is a failed install; beside an unrecorded default-path block it is only reported.
+  const bad = hooks.find((h) => h.state === 'untrusted' || (h.state === 'missing' && views.some((v) => v.harness === h.harness && v.from === 'ledger')));
+  if (!bad) return { ...check, details };
+  const message = `${check.message} Per-turn hook: ${bad.detail}, so the brain-first rule does not reach each turn (check: ${bad.native_inspect}).`;
+  if (check.status !== 'ok') return { ...check, message, details };
+  const view = views.find((v) => v.harness === bad.harness);
+  const rerun = view ? repairArgv(view).argv : undefined;
+  const fix: Action = rerun ? turnHookFix(bad.harness, rerun)
+    : { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(NAME), why: turnHookFix(bad.harness, []).why,
+      user_message: `The gbrain per-turn hook for ${bad.harness} is not active: ${bad.detail}. From that project directory, run: gbrain setup ${bad.harness} --instructions-only` };
+  return { name: NAME, status: 'warn', message, details: { ...details, code: 'turn_hook_not_loaded', turn_hook_reason: bad.state }, fix };
+}
+
+/**
+ * The first setup or turn-rule hook that would let a session directory's
+ * bunfig.toml or .env load (#8424): Claude Code user scope, every project a
+ * setup receipt or a CLAUDE.local.md block names, and Codex; then the stdio
+ * MCP entries and the bootstrap and harness lanes (#8426, #8428). Files only.
+ */
+export function hookLauncherProblems(views: InstructionBlockView[]): HookLauncherProblem | null {
+  const projects = new Set([
+    ...localSetupRecords().filter((r) => r.harness === 'claude-code' && r.scope === 'project' && r.projectDir).map((r) => r.projectDir!),
+    ...views.filter((v) => v.harness === 'claude-code' && basename(v.path) === 'CLAUDE.local.md').map((v) => dirname(v.path)),
+  ]);
+  return hookLauncherProblem('claude-code') ?? [...projects].map((projectDir) => hookLauncherProblem('claude-code', { projectDir })).find((p) => p !== null) ?? hookLauncherProblem('codex')
+    ?? launcherLaneFindings()[0] ?? null;
+}
+
+/** The setup command that rewrites the lane's hooks through the launcher; a project install or a foreign file needs the user. */
+export function hookLauncherFix(p: HookLauncherProblem): Action {
+  const project = p.harness === 'claude-code' && p.source !== claudeUserSettingsPath() ? dirname(dirname(p.source)) : null;
+  const setupHarness = p.lane === 'setup' && p.harness !== 'opencode' ? p.harness : null;
+  const record = setupHarness ? localSetupRecords().find((r) => r.harness === setupHarness && r.status === 'installed' && (p.receiptPath ? r.path === p.receiptPath : project ? r.projectDir === project : r.scope !== 'project')) : undefined;
+  const receipt = record && (() => { try { return (setupHarness === 'claude-code' ? readSetupReceipt(record.path) : readCodexSetupReceipt(record.path)).setup; } catch { return null; } })();
+  const argv = receipt && setupHarness ? setupRerunArgv(setupHarness, receipt, project ?? undefined)
+    : ['gbrain', 'setup', p.harness, ...(p.lane === 'turn-rule' ? ['--instructions-only'] : []), ...(record && record.name !== 'gbrain' ? ['--name', record.name] : []), ...(project ? ['--scope', 'project'] : [])];
+  const why = "Rewrites gbrain's hooks to start gbrain from its own launcher directory, so a repository's bunfig.toml or .env never runs when a session opens there. `gbrain post-upgrade` refreshes Claude Code's user-scope setup hooks too; it never rewrites a Codex file.";
+  // gbrain setup codex rewrites the shared hooks.json and recomputes its trust, which can re-enable or newly trust a group, so only the user runs it.
+  const codexTrust = '`gbrain setup codex` rewrites the Codex hooks.json and its trust entries, so run it yourself';
+  const verify = doctorVerify(NAME);
+  if (p.rerun) {
+    const run = `${p.rerunFrom ? `from ${p.rerunFrom}, ` : ''}run: ${p.rerun.join(' ')}`;
+    const laneWhy = `Rewrites the entry to start gbrain from its own launcher directory, so a repository's bunfig.toml or .env never runs when a session or MCP server starts there.${p.harness === 'codex' && p.rerun[1] === 'setup' ? " gbrain setup codex repeats the install's recorded decisions and re-trusts setup's own hook groups." : ''}`;
+    if (p.reason === 'foreign') return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. Remove that file (gbrain did not write it), then ${run}` };
+    if (p.edited) return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. Remove or rewrite that entry in ${p.source} (setup never overwrites an edit), then ${run}` };
+    if (p.setupOwned && p.harness === 'codex') return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. ${codexTrust}: ${p.rerun.join(' ')}` };
+    if (p.setupOwned) return { argv: p.rerun, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify, why: laneWhy };
+    return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. To move it onto gbrain's launcher, ${p.lane === 'mcp' && p.owner === 'none' ? `remove that entry from ${p.source} (gbrain does not rewrite it), then ` : ''}${run}` };
+  }
+  if (p.reason === 'foreign') return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove that file (gbrain did not write it), then run: ${argv.join(' ')}` };
+  if (p.edited) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove or rewrite that entry in ${p.source} (setup never overwrites an edit), then ${project ? `from ${project}, ` : ''}run: ${argv.join(' ')}` };
+  if (project) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `gbrain's hooks for ${project} start gbrain in the session's directory. From ${project}, run: ${argv.join(' ')}` };
+  if (p.harness === 'codex') return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. ${codexTrust}: ${argv.join(' ')}` };
+  return { argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify, why };
+}
+
+/**
+ * A hook that lets the session directory's bunfig.toml or .env load turns an ok
+ * check into a warn (code hook_session_cwd). A warn or fail keeps its own code
+ * and fix, with the launcher fix in details.hook_launcher_fix.
+ */
+export function withHookLaunchers(check: Check, problem: HookLauncherProblem | null): Check {
+  if (!problem) return check;
+  const message = `${check.message} Hook launcher: ${problem.detail}.`;
+  const details = { ...(check.details ?? {}), hook_launcher: problem };
+  const fix = hookLauncherFix(problem);
+  if (check.status === 'fail' || (check.status === 'warn' && check.fix)) return { ...check, message, details: { ...details, hook_launcher_fix: fix } };
+  return { name: NAME, status: 'warn', message, details: { ...details, code: 'hook_session_cwd', hook_launcher_reason: problem.reason }, fix };
+}
+
+/** Registration read (full run) or registration read + smoke (`--only harness_wiring`), plus the brain-first block, its per-turn hook and the hook launcher. */
 export async function harnessWiringCheck(opts: { smoke: boolean }): Promise<Check> {
   const regs = readHarnessRegistrations();
   const { skillsIndexViews } = await import('../../../core/setup/skills-block.ts');
-  return withSkillsIndex(withSurfaceNote(withInstructionBlocks(await registrationCheck(opts, regs), instructionBlockViews(regs)), regs), skillsIndexViews());
+  const views = instructionBlockViews(regs);
+  return withSkillsIndex(withHookLaunchers(withSurfaceNote(withTurnHooks(withInstructionBlocks(await registrationCheck(opts, regs), views), views, turnHookViews(views)), regs), hookLauncherProblems(views)), skillsIndexViews());
 }
 
 /**
@@ -508,7 +632,13 @@ async function registrationCheck(opts: { smoke: boolean }, regs: HarnessRegistra
   if (regs.length === 0) {
     const detected = detectedHarnesses();
     const plugins = enabledPluginLanes('gbrain').filter((lane) => detected.includes(lane.harness));
-    const harnesses = detected.filter((h) => !plugins.some((lane) => lane.harness === h));
+    const recorded = recordedUnreadableRegistrations(detected.filter((h) => !plugins.some((lane) => lane.harness === h)));
+    const harnesses = detected.filter((h) => !plugins.some((lane) => lane.harness === h) && !recorded.some((r) => r.harness === h));
+    if (detected.length > 0 && harnesses.length === 0 && recorded.length > 0) {
+      return infoCheck(NAME, `${recorded.map((r) => `${HARNESS_LABEL[r.harness]}: \`gbrain bootstrap\` recorded a gbrain MCP registration (${r.scope} scope)`).join('; ')}, `
+        + `but this process cannot read its config, so doctor did not verify it here. Verify it with \`gbrain doctor --only harness_wiring\` run as the user who runs the agent app.`,
+        'unknown', undefined, { reason: 'registration_recorded', harnesses: recorded.map((r) => r.harness), registrations: recorded });
+    }
     if (detected.length > 0 && harnesses.length === 0) {
       return { name: NAME, status: 'ok',
         message: `${plugins.map((p) => `${HARNESS_LABEL[p.harness]} gets gbrain from the enabled '${p.plugin}' plugin`).join('; ')}. Enabled is a config signal: doctor does not smoke-test plugin lanes, so verify by starting a new session in that app and checking that gbrain's tools (recall, remember) are listed.`,

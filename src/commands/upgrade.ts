@@ -934,6 +934,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
   }
 
   (await import('../core/setup/brain-first-upgrade-notice.ts')).printBrainFirstUpgradeNotice(); // GBRA-188: the command that writes a missing brain-first block
+  await (await import('../core/setup/hook-launcher-refresh.ts')).refreshHookLaunchers(); // #8424: hooks that start gbrain in the session's directory move onto the launcher
   (await import('../core/post-upgrade-notice.ts')).writePostUpgradeCliNotice(); // F7: safety notice ([AGENT] block for agents)
   // Mechanical: run every outstanding migration. Idempotent; exits 0 quickly
   // when nothing is pending. Stays inside the same process so a long Phase F

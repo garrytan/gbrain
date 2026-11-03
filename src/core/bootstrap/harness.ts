@@ -59,7 +59,7 @@ import {
   renderAmbientInstructionBlock,
   stripAmbientWritebackBlockAt,
 } from './instructions-block.ts';
-import { removeHarnessBrainFirst, writeHarnessBrainFirst } from './harness-brain-first.ts';
+import { harnessTurnRuleHosts, removeHarnessBrainFirst, removeHarnessTurnHooks, turnRuleConsentLine, writeHarnessBrainFirst, writeHarnessTurnHooks } from './harness-brain-first.ts';
 import { removeHarnessSkillsIndex, writeHarnessSkillsIndex } from './harness-skills-index.ts';
 import { isSkillLoading, skillsOutcomeFailed, type SkillLoading } from '../setup/skills-block.ts';
 import { createEngine } from '../engine-factory.ts';
@@ -95,6 +95,7 @@ import {
 } from './format.ts';
 import { atomicWriteTextFile } from './atomic-write.ts';
 import { removeCodexHooks, writeCodexHooks } from './codex-hooks.ts';
+import { ensureHookLauncher, hookLauncherPath } from '../setup/hook-launcher.ts';
 import {
   removeCodexHttpServerBlock,
   writeCodexHttpServerBlock,
@@ -581,6 +582,8 @@ export function buildConsentBlock(p: {
    * apply will write [X7 parity]. */
   instructionsPaths?: string[];
   skills?: 'follow' | 'memory-only';
+  /** Hosts that get only the per-turn brain-first rule hook (src/core/setup/turn-hook.ts). */
+  turnRuleHosts?: string[];
 }): string {
   const lines: string[] = [
     'gbrain bootstrap harness — wire framework-spawned coding sessions to this brain',
@@ -649,11 +652,12 @@ export function buildConsentBlock(p: {
     ...(p.wireOpencode ? ['opencode'] : []),
   ];
   const hosts = `EVERY ${hostNames.join(' and ')} session`;
-  const hookLine = !(p.wireClaude && p.hooks)
-    ? (p.codexCapture ? 'One hook is wired: Codex SessionEnd transcript capture.' : 'No hooks are wired by this invocation.')
+  const turnRule = turnRuleConsentLine(p.turnRuleHosts);
+  const hookLine = turnRule + (!(p.wireClaude && p.hooks)
+    ? (p.codexCapture ? 'One hook is wired: Codex SessionEnd transcript capture.' : turnRule ? 'No other hooks are wired by this invocation.' : 'No hooks are wired by this invocation.')
     : p.capture
       ? 'Hooks run in every Claude Code session (context injection + transcript capture); auto-commit/push lanes stay inert outside gbrain agent workspaces.'
-      : 'Hooks run in every Claude Code session (context injection only — capture is OFF); auto-commit/push lanes stay inert outside gbrain agent workspaces.';
+      : 'Hooks run in every Claude Code session (context injection only — capture is OFF); auto-commit/push lanes stay inert outside gbrain agent workspaces.');
   const offRamps = [
     'GBRAIN_HOOKS=0 (runtime)',
     '`gbrain bootstrap harness --remove`',
@@ -1022,6 +1026,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     codexConfig: d.codexConfig,
     opencodeConfig: d.opencodeConfig,
     ...(instructionsPaths.length > 0 ? { instructionsPaths } : {}),
+    turnRuleHosts: harnessTurnRuleHosts({ off: flags.noHooks || registrarMode || flags.noInstructions, wireClaude, claudeHooksWired: wireHooks, wireCodex }),
   });
   d.log(consent);
   const harnesses = [wireClaude ? 'Claude Code' : null, wireCodex ? 'Codex' : null, wireOpencode ? 'opencode' : null].filter(Boolean).join(', ');
@@ -1461,6 +1466,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         }
         const r = writeClaudeHooksAt(settingsPath, {
           gbrainBin: bin,
+          hookLauncher: ensureHookLauncher(hookLauncherPath(d.gbrainHome)),
           env,
           events: hookEvents,
           marker: GBRAIN_HARNESS_MARKER_VALUE,
@@ -1586,7 +1592,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         } else {
           // Paths derive from THIS TARGET's config.toml (CODEX_HOME-resolved
           // upstream, test-injectable) — never the ambient global default.
-          const hr = writeCodexHooks({ gbrainBin: hooksBin, configPath: t.path!, hooksPath: join(dirname(t.path!), 'hooks.json') });
+          const hr = writeCodexHooks({ gbrainBin: hooksBin, hookLauncher: ensureHookLauncher(hookLauncherPath(d.gbrainHome)), configPath: t.path!, hooksPath: join(dirname(t.path!), 'hooks.json') });
           if (hr.ok) d.log(`Codex SessionEnd hook wired: ${hr.hooksPath} + trust entry in ${hr.configPath}.`);
           else for (const note of hr.notes) d.logError(note);
         }
@@ -1991,10 +1997,11 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   const cleanup = await convergeHarnessCleanup({ receipt, prior, current: currentSkills, wired: allConfirmed && smokeOk, skillsReady,
     memoryOnly: skillsPolicy === 'memory-only', leave: leaveHarnessSkills, save }, d);
 
-  // 10b. Brain-first instructions beside each confirmed MCP entry.
-  const instructionHosts = hosts.filter((h) => targets.some((t) => t.host === h && t.kind === 'mcp' && t.state === 'confirmed'));
-  writeHarnessBrainFirst({ hosts: instructionHosts, server: flags.name, optOut: flags.noInstructions === true, paths: d, log: d.log });
-  const skillsIndex = writeHarnessSkillsIndex({ hosts: instructionHosts, launcher: flags.gbrainBin ?? d.gbrainBin ?? 'gbrain', optOut: flags.noInstructions === true,
+  // 10b. Brain-first instructions beside each confirmed MCP entry; 10c. the same rule next to every turn where this lane wires no UserPromptSubmit hook.
+  const mcpHosts = hosts.filter((h) => targets.some((t) => t.host === h && t.kind === 'mcp' && t.state === 'confirmed'));
+  writeHarnessBrainFirst({ hosts: mcpHosts, server: flags.name, optOut: flags.noInstructions === true, paths: d, log: d.log });
+  const turnHooks = writeHarnessTurnHooks({ hosts: mcpHosts, claudeHooksWired: wireHooks, noHooks: flags.noHooks || registrarMode, gbrainBin: d.gbrainBin, userSettingsPath: d.userSettingsPath, codexConfig: d.codexConfig, log: d.log, logError: d.logError });
+  const skillsIndex = writeHarnessSkillsIndex({ hosts: mcpHosts, launcher: flags.gbrainBin ?? d.gbrainBin ?? 'gbrain', optOut: flags.noInstructions === true,
     skillLoading: flags.skillLoading, paths: d, settingsPath: d.userSettingsPath, log: d.log });
   const skillsIndexFailed = skillsIndex.some(skillsOutcomeFailed);
   if (skillsIndexFailed) d.logError('the skills index was not written as asked (see the skills line above); fix that and re-run.');
@@ -2034,13 +2041,14 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
           smoke_ok: smokeOk,
           skills_index: skillsIndex,
           receipt_path: harnessReceiptPath(d.gbrainHome),
+          turn_hooks: turnHooks.results,
         },
         null,
         2,
       ),
     );
   }
-  const code = pendingFix ? HARNESS_PENDING_VERIFY_EXIT_CODE : allConfirmed && smokeOk ? (cleanup.length ? HARNESS_CLEANUP_PENDING_EXIT_CODE : 0) : 1;
+  const code = pendingFix ? HARNESS_PENDING_VERIFY_EXIT_CODE : allConfirmed && smokeOk && turnHooks.ok ? (cleanup.length ? HARNESS_CLEANUP_PENDING_EXIT_CODE : 0) : 1;
   return code === 0 && skillsIndexFailed ? 1 : code;
 }
 
@@ -2277,6 +2285,7 @@ export async function removeHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
   }
 
   removeHarnessBrainFirst(flags.name, d.log);
+  removeHarnessTurnHooks({ userSettingsPath: d.userSettingsPath, codexConfig: d.codexConfig, log: d.log });
   const skillsIndexDone = !removeHarnessSkillsIndex(flags.name, d.log).some(skillsOutcomeFailed);
 
   if (remaining.length === 0 && tokenDone && skillsDone && skillsIndexDone) {

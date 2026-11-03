@@ -27,7 +27,7 @@ export interface GrantMutationOptions {
   servingBrainId?: string;
 }
 export interface GrantMutationResult { before: ClientGrant; after: ClientGrant; revision: number; dryRun: boolean }
-const PATCH_FIELDS = new Set<keyof GrantPatch>(['scopes', 'sourceId', 'federatedRead', 'sourcesNone', 'takesHolders', 'boundSlugPrefixes', 'allowedOperations', 'boundTools', 'boundSourceId', 'boundBrainId', 'delegatedSlugPrefixes', 'delegatedNamespace', 'boundMaxConcurrent', 'budgetUsdPerDay', 'surface', 'surfaceSetBy', 'tokenTtlSeconds', 'profile', 'repairReasons']);
+const PATCH_FIELDS = new Set<keyof GrantPatch>(['scopes', 'sourceId', 'federatedRead', 'sourcesNone', 'takesHolders', 'boundSlugPrefixes', 'allowedOperations', 'boundTools', 'boundSourceId', 'boundBrainId', 'delegatedSlugPrefixes', 'delegatedNamespace', 'boundMaxConcurrent', 'budgetUsdPerDay', 'surface', 'surfaceSetBy', 'tokenTtlSeconds', 'profile', 'repairReasons', 'privatePages']);
 export function assertGrantPatch(patch: GrantPatch): void {
   for (const key of Object.keys(patch)) {
     if (!PATCH_FIELDS.has(key as keyof GrantPatch)) throw new GrantError('invalid_grant', `Unknown grant field: ${key}`);
@@ -114,6 +114,7 @@ export async function rescopeClientGrantInTransaction(db: GrantDatabase, clientI
   const rows = await sql`SELECT * FROM oauth_clients WHERE client_id = ${clientId} FOR UPDATE`;
   if (!rows.length) throw new GrantError('client_not_found', `No OAuth client found with id "${clientId}"`);
   if (!('grant_revision' in rows[0]) || !('takes_holders' in rows[0])) throw new GrantError('grant_schema_required', 'Run gbrain apply-migrations --yes before changing client grants');
+  if (patch.privatePages !== undefined && !('private_pages' in rows[0])) throw new GrantError('grant_schema_required', 'Run gbrain apply-migrations --yes before changing the private-pages grant');
   const before = grantFromRow(rows[0]);
   if (opts.expectedRevision !== undefined && before.revision !== opts.expectedRevision) {
     throw new GrantError('grant_conflict', `Grant changed (expected revision ${opts.expectedRevision}, current ${before.revision}); review a fresh preview`);
@@ -231,6 +232,9 @@ export async function persistGrant(sql: SqlQuery, before: ClientGrant, after: Cl
     ) SELECT client_id FROM audited
   `;
   if (!result.length) throw new GrantError('grant_conflict', 'Client grant changed; review a fresh preview');
+  if ((after.privatePages ?? 'none') !== (before.privatePages ?? 'none')) {
+    await sql`UPDATE oauth_clients SET private_pages = ${after.privatePages} WHERE client_id = ${before.clientId}`;
+  }
 }
 
 export { GrantError, grantFromRow, validateClientGrant, delegationReasons, intersectGrantedScopes } from './model.ts';

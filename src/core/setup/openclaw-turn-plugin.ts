@@ -30,7 +30,7 @@ export function openclawTurnPluginDir(): string {
 const DESCRIPTION = 'Puts the GBrain brain-first rule next to every user turn (managed by gbrain setup openclaw).';
 
 export function openclawTurnPluginFiles(access: BrainFirstAccess): Record<string, string> {
-  const rule = renderBrainFirstTurnRule(access);
+  const rule = renderBrainFirstTurnRule(access, 'openclaw');
   return {
     'package.json': `${JSON.stringify({ name: OPENCLAW_TURN_PLUGIN_ID, version: '1.0.0', private: true, type: 'module', openclaw: { extensions: ['./index.js'] } }, null, 2)}\n`,
     'openclaw.plugin.json': `${JSON.stringify({ id: OPENCLAW_TURN_PLUGIN_ID, name: 'GBrain turn rule', description: DESCRIPTION, configSchema: { type: 'object', additionalProperties: false } }, null, 2)}\n`,

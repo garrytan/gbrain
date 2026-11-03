@@ -9,6 +9,7 @@ import { buildToolDefs } from '../src/mcp/tool-defs.ts';
 import { estimateTokens } from '../src/core/search/token-budget.ts';
 import type { SearchResult } from '../src/core/types.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 import { ERROR_SCHEMA, RESPONSE_SCHEMAS } from '../src/core/verbs.ts';
@@ -47,12 +48,14 @@ async function recall(params: Record<string, unknown>, overrides: Partial<Operat
 }
 
 async function fact(text: string, extra: Partial<NewFact> = {}, sourceId = 'default') {
-  return engine.insertFact({ fact: text, source: 'synthetic-budget-test', visibility: 'world', ...extra }, { source_id: sourceId });
+  return asOwner(engine, tx => tx.insertFact({ fact: text, source: 'synthetic-budget-test', visibility: 'world', ...extra }, { source_id: sourceId }));
 }
 
 async function page(slug: string, title: string, text: string, sourceId = 'default', frontmatter = {}) {
-  await engine.putPage(slug, { type: 'note', title, compiled_truth: text, frontmatter }, { sourceId });
-  await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: text }], { sourceId });
+  await asOwner(engine, async tx => {
+    await tx.putPage(slug, { type: 'note', title, compiled_truth: text, frontmatter }, { sourceId });
+    await installFixtureChunks(tx, slug, [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: text }], { sourceId });
+  });
 }
 
 async function seedStarvation() {

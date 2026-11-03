@@ -405,7 +405,7 @@
     "traversePathsDetailed#out+sourceId+linkType": {},
     "updatePageContextualRetrievalState#default": {},
     "updateSlug#moved": {
-      "raw": 13,
+      "raw": 17,
       "tx": 1
     },
     "updateSlug#noop": {

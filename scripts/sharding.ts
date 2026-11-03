@@ -54,7 +54,7 @@ const DEFAULT_WEIGHTS_PATH = resolve(REPO_ROOT, "scripts/test-weights.json");
  * test.yml's unit matrix size, also e2e.yml's coverage-full-unit matrix;
  * test/scripts/unit-shard-budget.test.ts pins both workflows to it.
  */
-export const UNIT_SHARDS = 22;
+export const UNIT_SHARDS = 28;
 /** Unit shards each test.yml `test` job runs at once (scripts/test-shard-pack.sh); test/scripts/ci-gates.test.ts pins the matrix to it. */
 export const UNIT_SHARDS_PER_JOB = 2;
 /** test.yml's `test` job `timeout-minutes: 22`: the only bound on a unit shard, its setup steps included. */
@@ -73,7 +73,7 @@ export const UNIT_SHARD_BUDGET_MS = (UNIT_JOB_TIMEOUT_MS - UNIT_SETUP_ALLOWANCE_
 export function unitShards(root: string, n: number = UNIT_SHARDS): string[][] {
   return Array.from({ length: n }, (_, i) => {
     const r = spawnSync("bash", [join(root, "scripts/test-shard.sh"), "--dry-run-list", String(i + 1), String(n)], { cwd: root, encoding: "utf8" });
-    if (r.status !== 0) throw new Error(`scripts/test-shard.sh --dry-run-list ${i + 1} ${n} failed: ${r.stderr}`);
+    if (r.status !== 0) throw new Error(`scripts/test-shard.sh --dry-run-list ${i + 1} ${n} ${r.signal ? `killed by ${r.signal}` : "failed"}: ${r.stderr}`);
     return r.stdout.split("\n").filter(Boolean);
   });
 }

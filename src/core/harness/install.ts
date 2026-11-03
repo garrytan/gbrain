@@ -19,6 +19,9 @@ import { installSharedSkillsConnection } from './shared-skills.ts';
 import type { SharedSkillsToolCaller } from '../shared-skills/adapter.ts';
 import { harnessSharedSkillsRoot } from './status.ts';
 import { gitChildEnv } from '../git-env.ts';
+import { installerTurnHook, turnHookFix } from '../setup/turn-hook-check.ts';
+import type { TurnHookPaths } from '../setup/turn-hook.ts';
+import { resolveGbrainBin } from '../gbrain-bin.ts';
 import { brainFirstTargetAt, codexInstructionFile, installerBrainFirst, readBrainFirstLedger, renderBrainFirstSnippet, resolveBrainFirstDecision, type BrainFirstHarness } from '../setup/brain-first.ts';
 import { indexLauncher, inspectSkillsBlock, installerSkillsBlock, isSkillLoading, renderSkillsSnippet, resolveSkillLoading, skillsOutcomeFailed, type SkillLoading, type SkillsBlockOutcome } from '../setup/skills-block.ts';
 
@@ -108,6 +111,13 @@ function instructionFileBeside(connection: string, configPath: string): { harnes
   return { harness: 'claude-code', path: process.env.CLAUDE_CONFIG_DIR?.trim() === dir ? join(dir, 'CLAUDE.md') : join(dir, '.claude', 'CLAUDE.md') };
 }
 
+/** The per-turn hook files next to a config this install was pointed at (tests, a non-default config). */
+function turnHookPathsBeside(connection: string, configPath: string): TurnHookPaths {
+  const dir = dirname(configPath);
+  if (connection === 'codex-toml') return { codexHooks: join(dir, 'hooks.json'), codexConfig: configPath };
+  return { claudeSettings: process.env.CLAUDE_CONFIG_DIR?.trim() === dir ? join(dir, 'settings.json') : join(dir, '.claude', 'settings.json') };
+}
+
 /** Install only in the current environment. Foreign entries are never adopted. */
 export async function installHarnessConnection(c: HarnessCredentials, opts: InstallOptions) {
   // A cached unexpired token may be the invalidated one; every later step (config and shared skills) uses the new token.
@@ -186,11 +196,16 @@ export async function installHarnessConnection(c: HarnessCredentials, opts: Inst
       : installerSkillsBlock({ target: brainFirstTargetAt(beside.harness, beside.path), launcher: opts.gbrainBin ?? indexLauncher() ?? 'gbrain',
       writer: `gbrain connect --harness ${adapter.id} --install`, brainFirstDeclined: instructions.decision.value === 'declined', skillLoading: opts.skillLoading, audience: 'downstream', remove: opts.remove });
     const skillsFailed = skillsOutcomeFailed(skills) ? { skills_failed: true } : {};
+    const turn = installerTurnHook({ harness: beside.harness, accepted: !opts.remove && instructions.decision.value === 'accepted' && instructions.action !== 'preserve',
+      gbrainBin: resolveGbrainBin(), gbrainHome: process.env.GBRAIN_HOME?.trim() || undefined, paths: opts.configPath ? turnHookPathsBeside(adapter.connection, configPath) : undefined,
+      rerun: `gbrain setup ${beside.harness} --instructions-only` });
+    const turn_hook = { ...turn.outcome, ...(turn.verdict ? { check: turn.verdict } : {}),
+      ...(turn.verdict && !turn.verdict.ok ? { error: { code: 'turn_hook_not_loaded', reason: turn.verdict.reason, message: turn.verdict.message, fix: turnHookFix(beside.harness, ['gbrain', 'setup', beside.harness, '--instructions-only']) } } : {}) };
     if (opts.remove) {
       if (existsSync(receiptPath)) unlinkSync(receiptPath);
       const shared_skills = deactivated ?? await installSharedSkillsConnection(c, { ...opts, root: join(dirname(configPath), `.gbrain-${adapter.id}-${name}`) });
       const pending = 'remote_membership_pending' in shared_skills && shared_skills.remote_membership_pending === true;
-      return { ...common, status: 'removed', config_path: configPath, shared_skills, remote_membership_pending: pending, instructions, skills, ...skillsFailed,
+      return { ...common, status: 'removed', config_path: configPath, shared_skills, remote_membership_pending: pending, instructions, skills, turn_hook, ...skillsFailed,
         next_action: pending ? 'Local configuration and unchanged owned skills were removed. Remote membership deactivation remains pending; retry when host authority is available.'
           : 'The client configuration was removed. Revoke the grant on the brain host if access should end.' };
     }
@@ -198,7 +213,7 @@ export async function installHarnessConnection(c: HarnessCredentials, opts: Inst
       ...inlineTokenReceipt(c, adapter.id, name, configPath, adapter.reload, opts.credentialsFile) };
     atomicWriteTextFile(receiptPath, `${JSON.stringify(nextReceipt, null, 2)}\n`, { forceMode: 0o600 });
     const shared_skills = deactivated ?? await installSharedSkillsConnection(c, { ...opts, root: join(dirname(configPath), `.gbrain-${adapter.id}-${name}`) });
-    return { ...nextReceipt, shared_skills, instructions, skills, remote_membership_pending: 'remote_membership_pending' in shared_skills && shared_skills.remote_membership_pending === true, ...skillsFailed };
+    return { ...nextReceipt, shared_skills, instructions, skills, turn_hook, remote_membership_pending: 'remote_membership_pending' in shared_skills && shared_skills.remote_membership_pending === true, ...skillsFailed };
   } finally { lock.release(); }
 }
 

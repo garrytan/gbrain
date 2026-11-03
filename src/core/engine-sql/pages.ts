@@ -22,7 +22,7 @@ import { moveSlugBindings, recordRenameAlias } from '../page-state/rename-alias.
 import { segmentedRevertRefusal } from '../page-state/versions.ts';
 import { sanitizeText } from '../batch-rows.ts';
 import { SAFE_FENCE_CHUNKER_VERSION, bodyWriteChunkVersion } from '../search/safe-chunks.ts';
-import { privatePagesFilterFragment, privateSnapshotFilterFragment } from '../search/private-visibility.ts';
+import { privatePagesFilterFragment, privateSnapshotFilterFragment, privatePagesFilterForCaller, privacyForCaller, callerReadersAllowedSql } from '../search/private-visibility.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
 import { rederiveHiddenSql } from '../eligibility/sql.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, isMissingSchemaObject, warnOncePerProcess } from '../utils.ts';
@@ -495,7 +495,7 @@ export async function listPages(exec: ScopedRead, filters?: PageFilters): Promis
       : sqlFragment`AND p.deleted_at IS NULL`;
     // #4352: untrusted-caller private-page filter (see PageFilters.excludePrivate).
     const privateCondition = filters?.excludePrivate === true
-      ? trustedSql(`AND ${privatePagesFilterFragment('p')}`)
+      ? trustedSql(`AND ${privatePagesFilterForCaller('p')}`)
       : sqlFragment``;
     const effectiveAfterCondition = filters?.effective_after
       ? sqlFragment`AND p.effective_date >= ${filters.effective_after}::timestamptz`
@@ -723,7 +723,7 @@ export async function resolveSlugs(
     // `get_page`.
     const sources = opts?.sourceIds?.length ? opts.sourceIds : null;
     const scalar = opts?.sourceId ?? null;
-    const privacy = opts?.excludePrivate ? trustedSql(` AND ${privatePagesFilterFragment('pages')}`) : sqlFragment``;
+    const privacy = opts?.excludePrivate ? trustedSql(` AND ${privatePagesFilterForCaller('pages')}`) : sqlFragment``;
     const scopeFragment = sources
       ? sqlFragment` AND source_id = ANY(${sources}::text[])`
       : scalar
@@ -1011,7 +1011,7 @@ export async function getVersions<B extends boolean = true>(
   opts?: GetVersionsOpts<B>,
 ): Promise<PageVersionRows<B>> {
     const privacy = opts?.excludePrivate
-      ? trustedSql(`AND ${privatePagesFilterFragment('p')} AND ${privateSnapshotFilterFragment('pv')}`) : sqlFragment``;
+      ? trustedSql(`AND ${privatePagesFilterForCaller('p')} AND ${callerReadersAllowedSql('pv', 'snapshot')} AND ${privacyForCaller('p', privateSnapshotFilterFragment('pv'))}`) : sqlFragment``;
     const scope = opts?.sourceIds && opts.sourceIds.length > 0
       ? sqlFragment`AND p.source_id = ANY(${opts.sourceIds}::text[])`
       : opts?.sourceId ? sqlFragment`AND p.source_id = ${opts.sourceId}` : sqlFragment``;
@@ -1127,7 +1127,7 @@ export async function resolveSlugWithAliasDetailed(
 ): Promise<{ canonical_slug: string; source_id: string } | null> {
     const sources = Array.isArray(sourceOrSources) ? sourceOrSources : [sourceOrSources];
     if (sources.length === 0) return null;
-    const privacy = opts?.excludePrivate ? trustedSql(`AND EXISTS (SELECT 1 FROM pages p WHERE p.slug = slug_aliases.canonical_slug AND p.source_id = slug_aliases.source_id AND p.deleted_at IS NULL AND ${privatePagesFilterFragment('p')})`) : sqlFragment``;
+    const privacy = opts?.excludePrivate ? trustedSql(`AND EXISTS (SELECT 1 FROM pages p WHERE p.slug = slug_aliases.canonical_slug AND p.source_id = slug_aliases.source_id AND p.deleted_at IS NULL AND ${privatePagesFilterForCaller('p')})`) : sqlFragment``;
     try {
       const { rows } = await exec.run<{ canonical_slug: string; source_id: string }>(sqlFragment`
         SELECT canonical_slug, source_id

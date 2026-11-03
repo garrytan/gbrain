@@ -13,10 +13,11 @@ import {
   loadWeights,
   partition,
   predictedWeight,
+  unitShards,
   WeightsLoadError,
   type WeightMap,
 } from "../../scripts/sharding.ts";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -390,6 +391,19 @@ describe("predictedWeight / --sum", () => {
       expect(await bad.exited).toBe(2);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("unitShards", () => {
+  it("names the signal when scripts/test-shard.sh is killed, as a bun test timeout does", () => {
+    const root = mkdtempSync(join(tmpdir(), "unit-shards-test-"));
+    try {
+      mkdirSync(join(root, "scripts"));
+      writeFileSync(join(root, "scripts", "test-shard.sh"), "kill -TERM $$\n");
+      expect(() => unitShards(root, 1)).toThrow("scripts/test-shard.sh --dry-run-list 1 1 killed by SIGTERM: ");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

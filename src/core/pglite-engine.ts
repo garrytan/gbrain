@@ -124,7 +124,7 @@ import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns } from './search/sql-ranking.ts';
 import { RARE_TERM_CHUNK_CAP, rankOrFallbackByRarity, rareTermPagesSql, type RareTermPages } from './search/keyword-or-rarity.ts';
-import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
+import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment, privatePagesFilterForCaller } from './search/private-visibility.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
 import {
   vectorCastSuffix,
@@ -166,6 +166,7 @@ import * as titlesImpl from './engine-sql/titles.ts';
 import * as keywordPagesImpl from './engine-sql/keyword-pages.ts';
 import { applyForwardReferenceBootstrap, pgliteBootstrapTarget } from './engine-sql/bootstrap.ts';
 import { wellFormedJson } from './text-safe.ts';
+import { ENGINE_ROOT } from './engine-root.ts';
 
 /**
  * #4284 — opt-in out-of-band watchdog for a PGLite disconnect with a live
@@ -721,6 +722,7 @@ export async function probePgliteScratchStore(
 }
 
 export class PGLiteEngine implements BrainEngine {
+  readonly [ENGINE_ROOT]: object = this;
   private vectorIterativeScan?: Promise<boolean>;
   private readonly vectorScope = vectorScopeLoader(() => this.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL), ids => this.executeRaw<ScopeChunkCount>(SCOPE_CHUNKS_SQL, [ids]));
   /** Transaction clones keep chunk invalidation and replacement atomic. */
@@ -2311,7 +2313,7 @@ export class PGLiteEngine implements BrainEngine {
     // v0.31.8 (D21): build WHERE clause dynamically. Without opts.sourceId,
     // no source filter (preserves pre-v0.31.8 cross-source read).
     const where: string[] = ['p.slug = $1'];
-    if (opts?.excludePrivate) where.push(privatePagesFilterFragment('p'));
+    if (opts?.excludePrivate) where.push(privatePagesFilterForCaller('p'));
     if (!opts?.includeDeleted) where.push('p.deleted_at IS NULL'); // raw_data follows the page soft-delete
     const params: unknown[] = [slug];
     if (source) {
@@ -2502,7 +2504,7 @@ export class PGLiteEngine implements BrainEngine {
     source_id: string,
     entitySlug: string,
     factText: string,
-    opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; arm?: 'keyword'; attributedTo?: import('./engine.ts').FactAttribution | null },
+    opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; arm?: 'keyword'; attributedTo?: import('./engine.ts').FactAttribution | null; excludeMemberPages?: boolean; onlyPage?: string },
   ): Promise<FactRow[]> {
     return factsImpl.findCandidateDuplicates(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id, entitySlug, factText, opts);
   }

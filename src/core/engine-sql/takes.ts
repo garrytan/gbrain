@@ -23,7 +23,7 @@ import { deriveResolutionTuple, finalizeScorecard } from '../takes-resolution.ts
 import { normalizeWeightForStorage } from '../takes-fence.ts';
 import { buildTakeRows } from '../batch-rows.ts';
 import { staleTakeRowToRow, takeRowToTake, takeHitRowToHit, tryParseEmbedding } from '../utils.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
@@ -308,7 +308,7 @@ export async function listTakes(exec: LegacyUnscopedRead, opts: TakesListOpts = 
       FROM takes t
       JOIN pages p ON p.id = t.page_id
       WHERE 1=1
-        ${opts.excludePrivate ? trustedSql(`AND ${privatePagesFilterFragment('p')}`) : sqlFragment``}
+        ${opts.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('p')}`) : sqlFragment``}
         AND (${opts.page_id ?? null}::int   IS NULL OR t.page_id = ${opts.page_id ?? null}::int)
         AND (${opts.page_slug ?? null}::text IS NULL OR p.slug   = ${opts.page_slug ?? null}::text)
         AND (${opts.holder ?? null}::text   IS NULL OR t.holder  = ${opts.holder ?? null}::text)
@@ -354,7 +354,7 @@ export async function searchTakes(exec: LegacyUnscopedRead, query: string, opts:
       JOIN pages p ON p.id = t.page_id
       WHERE t.active
         AND ${query} <% t.claim
-        ${opts.excludePrivate ? trustedSql(`AND ${privatePagesFilterFragment('p')}`) : sqlFragment``}
+        ${opts.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('p')}`) : sqlFragment``}
         AND (
           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
@@ -389,7 +389,7 @@ export async function searchTakesVector(
       JOIN pages p ON p.id = t.page_id
       WHERE t.active
         AND t.embedding IS NOT NULL
-        ${opts.excludePrivate ? trustedSql(`AND ${privatePagesFilterFragment('p')}`) : sqlFragment``}
+        ${opts.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('p')}`) : sqlFragment``}
         AND (
           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
@@ -630,7 +630,7 @@ export async function getScorecard(exec: LegacyUnscopedRead, opts: TakesScorecar
         )::float                                                                               AS brier
       FROM takes
       WHERE 1=1 ${holderClause} ${domainClause} ${sinceClause} ${untilClause} ${allowed} ${sourceFilter}
-        ${opts.excludePrivate ? trustedSql(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND ${privatePagesFilterFragment('p')})`) : sqlFragment``}
+        ${opts.excludePrivate ? trustedSql(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND ${privatePagesFilterForCaller('p')})`) : sqlFragment``}
     `)).rows;
     const r = rows[0] as { total_bets: number; resolved: number; correct: number; incorrect: number; partial: number; unresolvable_count: number; brier: number | null };
     return finalizeScorecard(r);
@@ -671,7 +671,7 @@ export async function getCalibrationCurve(exec: LegacyUnscopedRead, opts: Calibr
         FROM takes
         WHERE resolved_quality IN ('correct','incorrect')
           ${holderClause} ${allowed} ${sourceFilter}
-          ${opts.excludePrivate ? trustedSql(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND ${privatePagesFilterFragment('p')})`) : sqlFragment``}
+          ${opts.excludePrivate ? trustedSql(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND ${privatePagesFilterForCaller('p')})`) : sqlFragment``}
       )
       SELECT
         (bucket_idx::numeric * ${bucketSize}::numeric)::float       AS bucket_lo,

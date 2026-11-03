@@ -76,6 +76,7 @@ export interface SyncResult {
   tail?: Omit<import('../core/persistence/sync-tail.ts').SyncTailReport, 'links'>;
   /** #5459 (P4.5): live pages a `--full` tree walk kept because their file is in the working tree and their import provenance is the working tree or unknown. */
   working_tree_kept?: number;
+  /** #8007: pages whose file is gone kept because gbrain.yml's storage section is invalid. */ storage_invalid_kept?: number;
   /**
    * Aggregated alias/undeclared explicit-type warnings (schema.type_warnings,
    * default on) — one entry per distinct non-canonical type this run.
@@ -134,12 +135,12 @@ export interface SyncResult {
   connectorHolds?: { held: number; newly_held: number; retry_command: string; status_command: string };
   /**
    * #5988 Git holds: files held this run instead of blocking (detail capped at
-   * `GBRAIN_SYNC_HOLD_CAP`), their count, the source's outstanding total and the
+   * `GBRAIN_SYNC_HOLD_CAP`), their count (#7199: how many wait on a person), the source's outstanding total and the
    * exact inspect and repair commands. Remote callers get `held_count` and
    * `holds_fix` (a host-operator relay) only.
    */
   held?: import('../core/persistence/sync-holds.ts').GitHoldItem[];
-  held_count?: number;
+  held_count?: number; held_needs_human?: number;
   holds_outstanding?: number;
   holds_escalated?: boolean;
   holds_truncated?: boolean;

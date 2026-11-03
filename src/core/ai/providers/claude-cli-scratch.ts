@@ -25,6 +25,8 @@ export const CLAUDE_CLI_CWD_PREFIX = 'gbrain-claude-cli-cwd-';
 /** Basename prefix of the per-PID hermetic CLAUDE_CONFIG_DIR (#4119). */
 export const CLAUDE_CLI_CONFIG_PREFIX = 'gbrain-claude-cli-config-';
 
+const SESSION_ID_RE = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
+
 /** The per-PID scratch cwd path for this process. */
 export function claudeCliCwdDir(pid: number = process.pid): string {
   return join(tmpdir(), `${CLAUDE_CLI_CWD_PREFIX}${pid}`);
@@ -54,7 +56,17 @@ export function isClaudeCliSelfTranscriptPath(path: string): boolean {
  * has since pruned is unclassifiable and stays in the corpus.
  */
 export function claudeCliSelfSessionIds(projectsRoot: string = claudeProjectsDir()): Set<string> {
-  const ids = new Set<string>();
+  return new Set(claudeCliSelfSessions(projectsRoot).keys());
+}
+
+/**
+ * #7343: every self session id mapped to the first scratch project holding its
+ * transcript, from one listing per scratch project. Bulk classifiers (doctor
+ * `self_capture`, `captured_facts_active`) look ids up here instead of
+ * checking every scratch project once per item.
+ */
+export function claudeCliSelfSessions(projectsRoot: string = claudeProjectsDir()): Map<string, string> {
+  const sessions = new Map<string, string>();
   for (const project of claudeCliSelfProjectDirs(projectsRoot)) {
     let files: string[];
     try {
@@ -63,10 +75,11 @@ export function claudeCliSelfSessionIds(projectsRoot: string = claudeProjectsDir
       continue;
     }
     for (const file of files) {
-      if (file.endsWith('.jsonl')) ids.add(file.slice(0, -'.jsonl'.length));
+      const id = file.slice(0, -'.jsonl'.length);
+      if (file.endsWith('.jsonl') && SESSION_ID_RE.test(id) && !sessions.has(id)) sessions.set(id, project);
     }
   }
-  return ids;
+  return sessions;
 }
 
 /** The harness project dirs of gbrain claude-cli scratch cwds (one listing of
@@ -91,7 +104,7 @@ export function isClaudeCliSelfSessionId(
   id: string,
   projectDirs: readonly string[] = claudeCliSelfProjectDirs(),
 ): boolean {
-  if (!/^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(id)) return false;
+  if (!SESSION_ID_RE.test(id)) return false;
   return projectDirs.some((dir) => existsSync(join(dir, `${id}.jsonl`)));
 }
 

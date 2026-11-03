@@ -137,8 +137,14 @@ export interface SkillOptOpts {
   };
   /** Kebab-case skill name. Resolves to `skills/<name>/SKILL.md`. */
   skillName: string;
-  /** Absolute path to the benchmark JSONL file. */
-  benchmarkPath: string;
+  /** Absolute path to the benchmark JSONL file. Exactly one of this and `tasks` is set. */
+  benchmarkPath?: string;
+  /**
+   * B1.2 (library only, never on the CLI, MCP or job data): explicit task
+   * lists used exactly as given. sel keeps the D_sel floor; an absent or empty
+   * test skips final test scoring.
+   */
+  tasks?: { train: BenchmarkTask[]; sel: BenchmarkTask[]; test?: BenchmarkTask[] };
   /** Brain engine (required for D14 lock + read-only tool calls during rollouts). */
   engine: BrainEngine;
   /** Skills directory root (used for bundled-skill detection, install-path gate). */
@@ -150,8 +156,8 @@ export interface SkillOptOpts {
   /** Max edits per step (the LR). */
   lr: number;
   lrSchedule: 'cosine' | 'linear' | 'constant';
-  /** Split ratio as 3-tuple, e.g. [4, 1, 5] for 4:1:5. */
-  split: [number, number, number];
+  /** Split ratio as 3-tuple, e.g. [4, 1, 5] for 4:1:5. Default [4, 1, 5]; unused with `tasks`. */
+  split?: [number, number, number];
 
   // Models.
   optimizerModel: string;
@@ -197,8 +203,17 @@ export interface SkillOptOpts {
   reflectMode?: 'both' | 'failure-only';
   /** Ablation: greedy-accept every applied edit, skip the D12 median+epsilon gate. Default false. */
   disableValidationGate?: boolean;
-  /** Ablation: 'one-shot-rewrite' does ONE rewrite call, no loop, no gate. Default 'reflect'. */
-  optimizerMode?: 'reflect' | 'one-shot-rewrite';
+  /**
+   * E1: 'one-shot-rewrite' (the product default: one rewrite from a train
+   * batch, gated on selection like a loop step) or 'reflect' (the iterative
+   * edit loop, opt-in). Required so no programmatic caller changes behavior
+   * silently.
+   */
+  optimizerMode: OptimizerMode;
+  /** B1.4 (library only): replaces the generated success criteria in every optimizer prompt, verbatim. */
+  criteriaText?: string;
+  /** B1.3 (library only): every rollout the run makes goes through this hook; gbrain's budget then meters optimizer calls only. */
+  rolloutHook?: RolloutBatchHook;
 
   // Safety.
   /** USD cap for the run. #3516: 0 means UNCAPPED (--no-max-cost) — pricing
@@ -214,6 +229,8 @@ export interface SkillOptOpts {
   force: boolean;
   resumeRunId?: string;
 }
+
+export type OptimizerMode = 'reflect' | 'one-shot-rewrite';
 
 export interface StepRecord {
   epoch: number;
@@ -287,7 +304,18 @@ export interface RunReceipt {
   // ablation knob was set.
   reflect_mode?: 'both' | 'failure-only';
   validation_gate_disabled?: boolean;
-  optimizer_mode?: 'reflect' | 'one-shot-rewrite';
+  /** E1: always present. */
+  optimizer_mode?: OptimizerMode;
+  /** B1.6: single rollouts this segment ran, by scoring site. */
+  rollouts?: Record<RolloutPhase, number>;
+  /** B1.6: distinct candidate skill texts (sha256, baseline excluded) that reached the selection gate. */
+  candidates_scored_on_sel?: number;
+  /** B1.6: optimizer (reflect + one-shot) calls across the run. */
+  optimizer_calls?: number;
+  /** B1.6: 'optimizer_only' when a rollout hook ran the rollouts, so final_cost_usd excludes them. */
+  cost_scope?: 'all' | 'optimizer_only';
+  /** D2: the single held-out check on the final champion, when one ran. */
+  held_out?: { baseline_score: number; candidate_score: number; passed: boolean };
 }
 
 export interface HistoryRow {
@@ -321,6 +349,34 @@ export const SKILLOPT_PURPOSE = {
   judge: 'skillopt.judge',
 } as const;
 
+// ─── Rollout hook (B1.3) ──────────────────────────────────────────────────
+
+/** Which scoring site a rollout batch belongs to. */
+export type RolloutPhase = 'baseline_sel' | 'train_forward' | 'sel_gate' | 'held_out' | 'test';
+
+export interface RolloutBatchRequest {
+  phase: RolloutPhase;
+  /** The full SKILL.md text the target runs with. */
+  skillText: string;
+  skillSha256: string;
+  /** In the order gbrain would run them. */
+  tasks: BenchmarkTask[];
+  /** 1 for train_forward, VALIDATION_RUNS_PER_TASK otherwise. */
+  runsPerTask: number;
+  /** 0 for baseline and test. */
+  epoch: number;
+  step: number;
+}
+
+/**
+ * Runs and scores one whole batch for a harness (shared rollout budget,
+ * metering). Returns one row per task, each with runsPerTask ScoredRollouts,
+ * in request order. Only train_forward trajectories reach an optimizer prompt;
+ * other phases read score and judge_error only. A throw ends the run; tag it
+ * with SKILLOPT_HOOK_BUDGET_EXHAUSTED or SKILLOPT_HOOK_INFRA_ERROR.
+ */
+export type RolloutBatchHook = (req: RolloutBatchRequest, signal?: AbortSignal) => Promise<ScoredRollout[][]>;
+
 export interface GateInput {
   candidateSkillText: string;
   selSet: BenchmarkTask[];
@@ -331,7 +387,7 @@ export interface GateInput {
 export interface GateResult {
   accepted: boolean;
   /** Per-task median across N runs. */
-  perTaskMedians: Array<{ task_id: string; median: number; runs: number[] }>;
+  perTaskMedians: Array<{ task_id: string; median: number; runs: number[]; error?: string }>;
   /** Mean of per-task medians. */
   selScore: number;
   reason?: 'no_margin' | 'below_baseline' | 'all_judge_errors';

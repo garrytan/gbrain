@@ -24,6 +24,8 @@ const EVAL_MANUAL: FenceReason[] = ['extra_cells', 'claim_split'];
 const SPEC_TIER3: FenceReason[] = ['header_unmapped', 'no_header', 'row_before_header', 'short_row', 'unclosed_trailing_content'];
 /** #6377: the user's hash-bound approval to close a fence ahead of trailing text on a world-visible page; nothing retries it by itself. */
 const APPROVAL: FenceReason[] = ['tail_exposure_approval'];
+/** #8059: a marker quoted in prose; the fences repair kind wraps it in backticks with no one acting. */
+const QUOTED: FenceReason[] = ['quoted_marker'];
 /** #6278: the owner conditions the `owner_unavailable` reasons matrix names (persistence/owner-refusal.ts); `owner_unavailable` stays the generic fallback. */
 const OWNER_CONDITIONS: FenceReason[] = ['host_mismatch', 'transfer_in_progress', 'clone_in_progress', 'incarnation_changed', 'local_path_missing', 'coordination_path_missing'];
 const SPEC_OTHERS: FenceReason[] = [
@@ -38,7 +40,7 @@ const SPEC_OTHERS: FenceReason[] = [
 
 describe('FENCE_REASONS', () => {
   test('holds exactly the reasons the spec names (plus the documented additions)', () => {
-    expect([...FENCE_REASON_CODES].sort()).toEqual([...SPEC_MANUAL, ...ADDED_MANUAL, ...EVAL_MANUAL, ...SPEC_TIER3, ...APPROVAL, ...OWNER_CONDITIONS, ...SPEC_OTHERS].sort());
+    expect([...FENCE_REASON_CODES].sort()).toEqual([...SPEC_MANUAL, ...ADDED_MANUAL, ...EVAL_MANUAL, ...SPEC_TIER3, ...APPROVAL, ...QUOTED, ...OWNER_CONDITIONS, ...SPEC_OTHERS].sort());
   });
 
   test('owner conditions match the owner_unavailable reasons matrix: host_admin acts, only the in-progress ones retry by themselves', () => {

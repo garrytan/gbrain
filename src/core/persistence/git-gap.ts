@@ -14,7 +14,7 @@ import type { BrainEngine } from '../engine.ts';
 import { hardenedGitStream, hardenedGitSync, NulRecordSplitter } from '../hardened-git.ts';
 import { exportBodyLedger, segmentedExportHead, segmentedExportMarkdown, type ExportSnapshot, type ExportWithdrawal } from '../export-snapshot.ts';
 import { parseMarkdown } from '../markdown.ts';
-import { isDerivationPrivate, isPrivatePage } from '../search/private-visibility.ts';
+import { isPrivacyDerivationPrivate, isPrivacyPrivatePage } from '../search/private-visibility.ts';
 import { alignWithStored } from './align-stored.ts';
 import { digest } from './digest.ts';
 import { isDeclaredReason, isNeverFiledDerivedPage } from './git-declared.ts';
@@ -39,15 +39,15 @@ export interface GitHomePolicy { mirror: boolean; databaseOnlySource?: boolean; 
  * private and alias-private pages never reach a remote; a page the database keeps on purpose (`database_only_reason`) or
  * under a `storage.db_only` prefix stays there; a derive-phase page that never recorded a file (page-prepare.ts
  * `isNeverFiledDerivedPage`, DERIVE_PHASE_DB_ONLY_DEFAULTS) publishes database-only; a path the checkout's Git ignores
- * can never be committed. `lineage_private` is what privatePagesFilterFragment adds over the row's own fields; the caller
+ * can never be committed. `lineage_private` is what privacyPartSql adds over the row's own fields; the caller
  * computes it in SQL. Callers load `visibility.honor_aliases` (readHonorAliases) first.
  */
 export function declaredDatabaseOnly(page: { slug: string; type?: string | null; frontmatter?: unknown; database_only_reason?: string | null;
   lineage_private?: boolean; source_path?: string | null; source_uri?: string | null; withheld_source_path?: string | null }, relativePath: string | null, policy: GitHomePolicy): DeclaredClass | null {
   if (policy.mirror) return 'mirror_source';
   if (policy.databaseOnlySource) return 'database_only_source';
-  if (isPrivatePage(page)) return 'private';
-  if (isDerivationPrivate(page)) return 'alias_private';
+  if (isPrivacyPrivatePage(page)) return 'private';
+  if (isPrivacyDerivationPrivate(page)) return 'alias_private';
   if (page.lineage_private) return 'lineage_private';
   // G7a (git-declared.ts): a strict publication stamps the class it declared; one whose cause is gone (an origin turned
   // public, `visibility.honor_aliases` off, the ignore rule removed) keeps it until the page is written again.
@@ -180,16 +180,16 @@ export function isGitCheckout(root: string): boolean {
 }
 
 /**
- * HEAD of the checkout at `root`, listed once with `ls-tree -r -l -z --full-tree` under the source's directory. Null when
- * Git cannot answer (not a checkout, a failed or truncated read).
+ * HEAD of the checkout at `root` (or the commit `rev` names), listed once with `ls-tree -r -l -z --full-tree` under the
+ * source's directory. Null when Git cannot answer (not a checkout, an unknown commit, a failed or truncated read).
  */
-export async function readHeadTree(root: string): Promise<HeadTree | null> {
+export async function readHeadTree(root: string, rev = 'HEAD'): Promise<HeadTree | null> {
   const top = gitLine(root, ['rev-parse', '--show-toplevel']);
   const format = gitLine(root, ['rev-parse', '--show-object-format']);
   if (top === null || (format !== 'sha1' && format !== 'sha256')) return null;
   const gitRoot = realpathSync(top), real = realpathSync(root);
-  const head = hardenedGitSync(root, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], GIT_LIMITS);
-  if (!head.ok) return head.reason === 'exit' && head.status === 1 ? { gitRoot, format, commit: null, blobs: new Map() } : null;
+  const head = hardenedGitSync(root, ['rev-parse', '--verify', '--quiet', `${rev}^{commit}`], GIT_LIMITS);
+  if (!head.ok) return rev === 'HEAD' && head.reason === 'exit' && head.status === 1 ? { gitRoot, format, commit: null, blobs: new Map() } : null;
   const commit = head.stdout.toString('utf8').trim();
   const scope = real === gitRoot ? '' : real.slice(gitRoot.length + 1);
   const blobs = new Map<string, TreeBlob>();

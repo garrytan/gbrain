@@ -97,9 +97,16 @@ This is the difference between a search engine and a brain. Search finds the pag
 > curl -sSL https://gbrainio.terminalwire.sh | bash
 > gbrainio terminal connect      # in a new terminal
 > gbrainio workspace new         # pick a plan in the browser
-> claude mcp add --transport http --scope user gbrain https://gbrain.io/mcp
-> codex mcp add gbrain --url https://gbrain.io/mcp
+> curl -fsSL https://bun.sh/install | bash   # skip if Bun 1.4.4+ is installed
+> export PATH="$HOME/.bun/bin:$PATH"
+> bun install -g github:garrytan/gbrain#latest-stable   # the gbrain CLI only; no local brain
+> # Claude Code (an existing gbrain entry is kept):
+> (claude mcp get gbrain >/dev/null 2>&1 || claude mcp add --transport http --scope user gbrain https://gbrain.io/mcp) && gbrain setup claude-code --instructions-only
+> # Codex (an existing gbrain entry is kept):
+> (codex mcp get gbrain >/dev/null 2>&1 || codex mcp add gbrain --url https://gbrain.io/mcp) && gbrain setup codex --instructions-only
 > ```
+>
+> `gbrain setup <harness> --instructions-only` tells the agent the brain is there; agents seldom call an MCP server nobody told them about. It writes the [brain-first block](docs/guides/setup.md#brain-first-instructions) into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` (a non-empty `AGENTS.override.md` instead when Codex has one) with a per-turn rule hook, and leaves the MCP entry alone; the same command with `--no-instructions` added takes them out.
 >
 > The installer is a shell script for macOS and Linux; read it before you run it.
 
@@ -158,7 +165,7 @@ The repo is not a complete backup; see the [bootstrap guide](docs/guides/bootstr
 
 ### Connect GBrain to your AI client (MCP)
 
-- **Local stdio client:** `claude mcp add gbrain -- "$(command -v gbrain)" serve --surface starter --advertise verbs` (lists the memory verbs; `--surface full` lists every tool); Codex, Cursor, Windsurf and other stdio clients take the same command. Then run `gbrain setup <harness> --instructions-only`: agents seldom call a brain nobody told them about.
+- **Local stdio client:** `gbrain setup claude-code` or `gbrain setup codex` registers `gbrain serve` (lists the memory verbs; `--surface full` lists every tool) behind gbrain's launcher, so a session opened in a cloned repository never loads that repository's `bunfig.toml` or `.env`, and adds the brain-first instructions: agents seldom call a brain nobody told them about. Cursor, Windsurf and other stdio clients take `"$(command -v gbrain)" serve --surface starter --advertise verbs`.
 - **Plugins with curated skills:** Codex `codex plugin marketplace add garrytan/gbrain@codex-plugin` + `codex plugin add gbrain@gbrain`; Claude Code `/plugin marketplace add garrytan/gbrain` + `/plugin install gbrain@gbrain`.
 - **This brain from anywhere:** `gbrain mcp expose` publishes it on your Tailscale tailnet as a user service (`--funnel` for cloud agents such as Grok Bot, Muse and ChatGPT). [Guide](docs/guides/remote-mcp.md).
 - **A brain on another host:** `gbrain connect https://your-host/mcp --token gbrain_xxx --install` (add `--agent codex` for Codex). Hosted brains use [native OAuth or a private handoff](docs/guides/hosted-harness-access.md); dashboard, clients and permissions live in [MCP administration](docs/mcp/ADMIN.md).
@@ -281,6 +288,7 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 
 - **Voice**: Phone calls create brain pages via Twilio + OpenAI Realtime (or DIY STT+LLM+TTS). Setup recipe: [`recipes/twilio-voice-brain.md`](recipes/twilio-voice-brain.md).
 - **Gmail + Calendar + Contacts (native)**: the google source kind syncs threads, events, and contacts through your own OAuth client and runs the open-loop engine on top (`gbrain waiting`). Setup: [`docs/guides/google-connect.md`](docs/guides/google-connect.md); recipes: [`recipes/email-to-brain.md`](recipes/email-to-brain.md), [`recipes/calendar-to-brain.md`](recipes/calendar-to-brain.md).
+- **Meeting notes + Slack channels (native)**: the `meetings` source kind (Fireflies first) writes one page per meeting and the `slack` source kind one page per channel per day, synced on a schedule, on brains with or without a Git repository. Setup: [`docs/guides/meeting-and-slack-sources.md`](docs/guides/meeting-and-slack-sources.md).
 - **Email + calendar (webhooks)**: webhook handlers that route to brain signals. [`docs/integrations/meeting-webhooks.md`](docs/integrations/meeting-webhooks.md).
 - **Embedding providers**: Voyage (new-install default: `voyage-4` @ 1024d), OpenAI, OpenRouter, Google Gemini, Azure OpenAI, MiniMax, Alibaba DashScope, Zhipu, Ollama (local), llama.cpp llama-server (local), LM Studio, Together, and LiteLLM proxy. Pricing matrix + decision tree in [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md). Existing vectors are never converted by changing the default; use the explicitly approved [embedding migration](docs/guides/embedding-migration.md).
 - **Rerankers**: Voyage `rerank-3-lite` hosted (the default unless `search.reranker.model` is set; on in `balanced` and `tokenmax`, same `VOYAGE_API_KEY` as embeddings; `gbrain config set search.reranker.model voyage:rerank-2.5` restores the previous default), plus the `llama-server-reranker` recipe for fully-local cross-encoder rerank via llama.cpp running Qwen3-Reranker against the same `gateway.rerank()` seam. Setup walkthrough in [`docs/ai-providers/llama-server-reranker.md`](docs/ai-providers/llama-server-reranker.md).

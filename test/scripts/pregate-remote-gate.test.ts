@@ -18,14 +18,25 @@
  * Seams: GBRAIN_PREGATE_GATE_CMD replaces `bun run ci:ubicloud:diff`,
  * GBRAIN_PREGATE_REUSE_CMD replaces `bun scripts/ci-reuse.ts --gate`,
  * GBRAIN_PREGATE_REPO names the repository.
+ * --list: prints the gate command's --list output (the inventory gstack's
+ * clear --run checks runs against) without UBI_OWNER or a gate; a failing or
+ * empty inventory exits non-zero.
+ * VM cleanup: the gate's UBICLOUD: left= line (UBI_LEFT_FILE) must say 0, or
+ * the run is PREGATE_REMOTE_INFRA (exit 4, no receipt), never a test result;
+ * a missing line counts as not confirmed.
+ * Policy floor: .gstack/pregate.json's run_profiles and remote_gate_runs are read
+ * only by gstack 1.91.377.0 and newer, so .gstack/ship-policy.json must declare
+ * at least that min_gstack_version while they exist; an older gstack would
+ * otherwise refuse the policy as invalid instead of naming the upgrade.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 const SCRIPT = resolve(import.meta.dir, '..', '..', 'scripts/pregate-remote-gate.sh');
+const LEFT0 = `echo 'UBICLOUD: left=0 owner=gbra0test vms=1 others=0' >> "$UBI_LEFT_FILE"`;
 const SUMMARY = [
   '=== ci-ubicloud summary ===',
   '  gitleaks 1 passed, 0 failed, 8s compute',
@@ -49,10 +60,11 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(repo, { recursive: true, force: true }));
 
-function run(gate: string, env: Record<string, string | undefined> = {}) {
+/** Runs the script with `gate` as the gate command; unless `raw`, the gate first reports a clean VM teardown (left=0). */
+function run(gate: string, env: Record<string, string | undefined> = {}, raw = false) {
   const r = spawnSync('bash', [SCRIPT], {
     cwd: repo, encoding: 'utf8',
-    env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', UBI_OWNER: 'gbra0test', PREGATE_TREE: undefined, GBRAIN_PREGATE_REPO: undefined, GBRAIN_PREGATE_REUSE: undefined, GBRAIN_PREGATE_REUSE_CMD: undefined, GBRAIN_PREGATE_GATE_CMD: gate, ...env },
+    env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', UBI_OWNER: 'gbra0test', UBI_LEFT_FILE: undefined, PREGATE_TREE: undefined, GBRAIN_PREGATE_REPO: undefined, GBRAIN_PREGATE_REUSE: undefined, GBRAIN_PREGATE_REUSE_CMD: undefined, GBRAIN_PREGATE_GATE_CMD: raw ? gate : `${LEFT0}; ${gate}`, ...env },
   });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
@@ -83,7 +95,7 @@ describe('pregate-remote-gate.sh', () => {
 
   it('a green gate exits 0 with failed=0 and receives the extra arguments', () => {
     const gate = join(repo, '.git', 'gate.sh');
-    writeFileSync(gate, `echo "args: $*"; printf '%s\\n' '=== ci-ubicloud summary ===' '  unit     4 passed, 0 failed, 1s compute'\n`);
+    writeFileSync(gate, `echo "args: $*"; ${LEFT0}; printf '%s\\n' '=== ci-ubicloud summary ===' '  unit     4 passed, 0 failed, 1s compute'\n`);
     const r = spawnSync('bash', [SCRIPT, '--vms', '8'], {
       cwd: repo, encoding: 'utf8',
       env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', UBI_OWNER: 'gbra0test', GBRAIN_PREGATE_GATE_CMD: `bash ${gate}` } as Record<string, string>,
@@ -96,7 +108,7 @@ describe('pregate-remote-gate.sh', () => {
   it('runs the development gate, bun run ci:ubicloud:diff, by default and passes the extra arguments on', () => {
     const bin = join(repo, '.git', 'fake-bin');
     mkdirSync(bin);
-    writeFileSync(join(bin, 'bun'), `#!/usr/bin/env bash\necho "fake-bun: $*"\nprintf '%s\\n' '=== ci-ubicloud summary ===' '  gitleaks 1 passed, 0 failed, 2s compute'\n`);
+    writeFileSync(join(bin, 'bun'), `#!/usr/bin/env bash\necho "fake-bun: $*"\n${LEFT0}\nprintf '%s\\n' '=== ci-ubicloud summary ===' '  gitleaks 1 passed, 0 failed, 2s compute'\n`);
     chmodSync(join(bin, 'bun'), 0o755);
     const r = spawnSync('bash', [SCRIPT, '--lanes', 'unit'], {
       cwd: repo, encoding: 'utf8',
@@ -119,6 +131,33 @@ describe('pregate-remote-gate.sh', () => {
     expect(r.out).not.toContain('PREGATE_REMOTE:');
     expect(r.err).toContain('changed during the gate');
     expect(r.code).toBe(1);
+  });
+
+  it('a gate whose VM cleanup is not confirmed (left=1, left=unknown or no left line) is PREGATE_REMOTE_INFRA, exit 4, never a test result', () => {
+    const green = `printf '%s\\n' '=== ci-ubicloud summary ===' '  unit     4 passed, 0 failed, 1s compute'`;
+    for (const [report, shown] of [[`echo 'UBICLOUD: left=1 owner=gbra0test vms=2 others=0' >> "$UBI_LEFT_FILE"; `, 'left=1'], [`echo 'UBICLOUD: left=unknown owner=gbra0test vms=2 others=unknown' >> "$UBI_LEFT_FILE"; `, 'left=unknown'], ['', 'left=missing']] as const) {
+      for (const gate of [`${report}${green}`, `${report}${green}; exit 1`]) {
+        const r = run(gate, {}, true);
+        expect(r.code).toBe(4);
+        expect(r.err).toContain(`pregate-remote-gate: PREGATE_REMOTE_INFRA: VM cleanup not confirmed (UBICLOUD: ${shown}, gate exit `);
+        expect(r.err).toContain('an infrastructure failure, not a test result, so no receipt. Check and destroy leftovers: UBI_OWNER=gbra0test scripts/ubicloud/ubi-runner.sh list --mine');
+        expect(r.out).not.toContain('PREGATE_REMOTE:');
+      }
+    }
+    // A clean teardown keeps the gate's own result: a test failure exits 1 with its receipt.
+    const failing = run(`printf '%s\\n' '=== ci-ubicloud summary ===' '  unit     4 passed, 1 failed, 1s compute'; exit 1`);
+    expect(failing.code).toBe(1);
+    expect(failing.out.trim().split('\n').at(-1)).toBe(`PREGATE_REMOTE: tree=${contentTree()} tests=5 failed=1`);
+  });
+
+  it('a ci-ubicloud run that exits before it requests any VM reports left=0 vms=0, so its failure stays a gate result, not PREGATE_REMOTE_INFRA', () => {
+    const ci = resolve(import.meta.dir, '..', '..', 'scripts/ci-ubicloud.ts');
+    const r = run(`bun ${ci}`, { UBICLOUD_API_KEY: undefined, UBICLOUD_API_TOKEN: undefined }, true);
+    expect(r.out).toContain('UBICLOUD_API_KEY (or UBICLOUD_API_TOKEN) is not set');
+    expect(r.out).toContain('UBICLOUD: left=0 owner=gbra0test vms=0 others=unknown');
+    expect(r.err).not.toContain('PREGATE_REMOTE_INFRA');
+    expect(r.err).toContain('no ci-ubicloud summary');
+    expect(r.code).toBe(2);
   });
 
   it('refuses before the gate without UBI_OWNER or when PREGATE_TREE is another tree', () => {
@@ -151,7 +190,7 @@ describe('pregate-remote-gate.sh', () => {
     });
 
     it('a tree that changes the full-ci workflows or the scripts that attest its runs relative to origin/master never reuses its own runs', () => {
-      for (const path of ['.github/workflows/test.yml', '.github/workflows/e2e.yml', 'scripts/ci-reuse.ts', 'scripts/ci-full-suite-tree.sh', 'scripts/ci-executed-counts.ts', 'scripts/lib/gh-issue.ts']) {
+      for (const path of ['.github/workflows/test.yml', '.github/workflows/e2e.yml', 'scripts/ci-reuse.ts', 'scripts/ci-full-suite-tree.sh', 'scripts/ci-executed-counts.ts', 'scripts/lib/gh-issue.ts', 'scripts/ci-manifest.ts']) {
         rmSync(join(repo, '.git', 'reuse-args'), { force: true });
         rmSync(join(repo, '.git', 'gate-ran'), { force: true });
         mkdirSync(join(repo, path, '..'), { recursive: true });
@@ -229,5 +268,89 @@ describe('pregate-remote-gate.sh', () => {
       run(gateMarking, { GBRAIN_PREGATE_REUSE_CMD: reuser('exit 4') });
       expect(spawnSync('cat', [join(repo, '.git', 'reuse-args')], { encoding: 'utf8' }).stdout).toContain('--repo owner-example/repo-example');
     });
+  });
+});
+
+describe('pregate-remote-gate.sh --list', () => {
+  beforeEach(() => git('update-ref', 'refs/remotes/origin/master', 'HEAD'));
+  /** Runs --list with `gate` as the gate command and no UBI_OWNER. */
+  const list = (gate: string | undefined, args: string[] = [], env: Record<string, string> = {}) => {
+    const r = spawnSync('bash', [SCRIPT, '--list', ...args], {
+      cwd: repo, encoding: 'utf8',
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', UBI_OWNER: undefined, UBI_LEFT_FILE: undefined, GBRAIN_PREGATE_GATE_CMD: gate, ...env },
+    });
+    return { code: r.status, out: r.stdout, err: r.stderr };
+  };
+
+  it("prints the gate command's --list output at the checkout top, with the extra arguments, needing no UBI_OWNER", () => {
+    mkdirSync(join(repo, 'sub'));
+    const gate = join(repo, '.git', 'gate.sh');
+    writeFileSync(gate, 'echo "args: $*" >&2; echo "cwd: $PWD" >&2; printf "%s\\n" test/a.test.ts test/e2e/b.test.ts\n');
+    const r = spawnSync('bash', [SCRIPT, '--list', '--lanes', 'unit'], {
+      cwd: join(repo, 'sub'), encoding: 'utf8',
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', UBI_OWNER: undefined, GBRAIN_PREGATE_GATE_CMD: `bash ${gate}` },
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toBe('test/a.test.ts\ntest/e2e/b.test.ts\n');
+    expect(r.stderr).toContain('args: --list --lanes unit');
+    expect(r.stderr).toContain(`cwd: ${repo}`);
+    expect(r.stderr).not.toContain('UBI_OWNER');
+  });
+
+  it('lists through the development gate, bun run ci:ubicloud:diff --list, by default', () => {
+    const bin = join(repo, '.git', 'fake-bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'bun'), '#!/usr/bin/env bash\necho "fake-bun: $*" >&2\necho test/a.test.ts\n');
+    chmodSync(join(bin, 'bun'), 0o755);
+    const r = list(undefined, [], { PATH: `${bin}:${process.env.PATH}` });
+    expect(r.code, r.err).toBe(0);
+    expect(r.err).toContain('fake-bun: run ci:ubicloud:diff --list');
+    expect(r.out).toBe('test/a.test.ts\n');
+  });
+
+  it('an empty or failing inventory exits non-zero with no list, and never starts the gate', () => {
+    const empty = list('true');
+    expect(empty.code).toBe(1);
+    expect(empty.out).toBe('');
+    expect(empty.err).toContain("the gate's inventory is empty");
+    const failing = list('echo test/a.test.ts; exit 3; echo');
+    expect(failing.code).toBe(1);
+    expect(failing.out).toBe('');
+    expect(failing.err).toContain("the gate's inventory failed (exit 3)");
+    for (const r of [empty, failing]) expect(r.out + r.err).not.toContain('PREGATE_REMOTE');
+  });
+
+  it('a tree whose full-ci runs would attest to themselves gets no inventory, so gstack clear --run refuses it and the gate runs', () => {
+    const gate = 'touch .git/list-ran; echo test/a.test.ts';
+    const refused = (r: { code: number | null; out: string }) => { expect(r.code).toBe(1); expect(r.out).toBe(''); };
+    // pregate-remote-gate.sh and ci-ubicloud.ts build the inventory itself, and gstack runs the branch's own copy.
+    for (const path of ['.github/workflows/test.yml', '.github/workflows/e2e.yml', 'scripts/ci-reuse.ts', 'scripts/ci-full-suite-tree.sh', 'scripts/ci-executed-counts.ts', 'scripts/lib/gh-issue.ts', 'scripts/ci-manifest.ts', 'scripts/pregate-remote-gate.sh', 'scripts/ci-ubicloud.ts']) {
+      mkdirSync(join(repo, path, '..'), { recursive: true });
+      writeFileSync(join(repo, path), `changed ${path}\n`);
+      git('add', '.');
+      git('commit', '-q', '-m', `change ${path}`);
+      const r = list(gate);
+      refused(r);
+      expect(r.err).toContain(`pregate-remote-gate: the tree changes ${path} relative to origin/master`);
+      expect(r.err).toContain('no inventory');
+      git('update-ref', 'refs/remotes/origin/master', 'HEAD');
+    }
+    refused(list(gate, [], { GBRAIN_PREGATE_REUSE: '0' }));
+    git('update-ref', '-d', 'refs/remotes/origin/master');
+    refused(list(gate));
+    expect(spawnSync('test', ['-e', join(repo, '.git', 'list-ran')]).status).not.toBe(0);
+  });
+});
+
+describe('.gstack policy floor', () => {
+  it('ship-policy.json declares min_gstack_version 1.91.377.0 or newer while pregate.json declares run_profiles or remote_gate_runs', () => {
+    const root = join(import.meta.dir, '..', '..');
+    const pregate = JSON.parse(readFileSync(join(root, '.gstack/pregate.json'), 'utf8'));
+    const ship = JSON.parse(readFileSync(join(root, '.gstack/ship-policy.json'), 'utf8'));
+    if (!('run_profiles' in pregate) && !('remote_gate_runs' in pregate)) return;
+    const floor = String(ship.min_gstack_version ?? '');
+    expect(floor).toMatch(/^\d+\.\d+\.\d+(\.\d+)?$/);
+    const [a, b, c] = floor.split('.').map(Number);
+    expect(a * 1e8 + b * 1e4 + c).toBeGreaterThanOrEqual(1 * 1e8 + 91 * 1e4 + 377);
   });
 });

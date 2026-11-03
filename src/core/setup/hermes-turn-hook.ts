@@ -18,6 +18,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
+import { acquireNativeLockSync } from '../persistence/native-lock.ts';
 import { loadBoundedYaml } from '../data-frontmatter.ts';
 import { probeBlock, removeBlock, spliceBlock, type BlockMarkers } from '../managed-block.ts';
 import { renderBrainFirstTurnRule, writeUnlessChanged, type BrainFirstAccess } from './brain-first.ts';
@@ -30,7 +31,7 @@ export interface HermesTurnHookOutcome { action: 'write' | 'keep' | 'print' | 'r
 
 /** `/bin/echo '<json>'`: Hermes splits the command without a shell (and checks the first path, /bin/echo, exists), and a quote in the rule is a JSON escape. */
 export function hermesTurnHookCommand(access: BrainFirstAccess): string {
-  return `/bin/echo '${JSON.stringify({ context: renderBrainFirstTurnRule(access) }).replace(/'/g, '\\u0027')}'`;
+  return `/bin/echo '${JSON.stringify({ context: renderBrainFirstTurnRule(access, 'hermes') }).replace(/'/g, '\\u0027')}'`;
 }
 
 const commandIn = (interior: string | undefined): string | null => {
@@ -54,20 +55,40 @@ function readAllowlist(path: string): Allowlist {
 
 const approves = (e: Record<string, unknown>, command: string) => e.event === EVENT && e.command === command;
 
+/**
+ * Read-modify-write the allowlist under Hermes's own lock: an exclusive
+ * flock(2) on the sibling `shell-hooks-allowlist.json.lock` (Hermes's
+ * agent/shell_hooks.py `_locked_update_approvals`), so an approval Hermes
+ * records at the same moment is never lost. Fails closed: a lock held past
+ * the wait, or no lock primitive on this host, throws and writes nothing.
+ */
+function withAllowlistLock(path: string, update: (list: Allowlist) => Allowlist | null): void {
+  const lockPath = `${path}.lock`;
+  const lock = acquireNativeLockSync(lockPath, { timeoutMs: 3000 });
+  if (!lock) throw new Error(`Hermes holds ${lockPath}; ${ALLOWLIST} was not changed. Run setup again once Hermes is idle`);
+  try {
+    const next = update(readAllowlist(path));
+    if (next) atomicWriteTextFile(path, `${JSON.stringify(next, null, 2)}\n`, { freshMode: 0o600 });
+  } finally {
+    lock.release();
+  }
+}
+
 function approve(hermesHome: string, command: string): void {
-  const path = join(hermesHome, ALLOWLIST);
-  const list = readAllowlist(path);
-  if (list.approvals.some((e) => approves(e, command))) return;
-  list.approvals.push({ event: EVENT, command, approved_at: new Date().toISOString(), script_mtime_at_approval: null });
-  atomicWriteTextFile(path, `${JSON.stringify(list, null, 2)}\n`, { freshMode: 0o600 });
+  withAllowlistLock(join(hermesHome, ALLOWLIST), (list) => {
+    if (list.approvals.some((e) => approves(e, command))) return null;
+    list.approvals.push({ event: EVENT, command, approved_at: new Date().toISOString(), script_mtime_at_approval: null });
+    return list;
+  });
 }
 
 function revoke(hermesHome: string, command: string): void {
   const path = join(hermesHome, ALLOWLIST);
   if (!existsSync(path)) return;
-  const list = readAllowlist(path);
-  const kept = list.approvals.filter((e) => !approves(e, command));
-  if (kept.length !== list.approvals.length) atomicWriteTextFile(path, `${JSON.stringify({ ...list, approvals: kept }, null, 2)}\n`, { freshMode: 0o600 });
+  withAllowlistLock(path, (list) => {
+    const kept = list.approvals.filter((e) => !approves(e, command));
+    return kept.length === list.approvals.length ? null : { ...list, approvals: kept };
+  });
 }
 
 /** Write or update the hook (accepted decision). Never throws: anything gbrain cannot edit safely is printed to add by hand. */
@@ -121,5 +142,18 @@ export function removeHermesTurnHook(opts: { hermesHome: string; dryRun: boolean
     return { action: 'remove', path, detail: `per-turn rule hook removed from ${path}` };
   } catch (e) {
     return { action: 'skip', path, detail: `per-turn rule hook in ${path} left as it is (${(e as Error).message})` };
+  }
+}
+
+/** Read-only: is the marked hook in config.yaml, and does Hermes's allowlist approve its exact command? */
+export function inspectHermesTurnHook(hermesHome: string): { state: 'absent' | 'unapproved' | 'approved'; path: string; command?: string } {
+  const path = join(hermesHome, 'config.yaml');
+  try {
+    const probe = probeBlock(MARKERS, existsSync(path) ? readFileSync(path, 'utf8') : '');
+    const command = probe.state === 'present' ? commandIn(probe.interior) : null;
+    if (!command) return { state: 'absent', path };
+    return { state: readAllowlist(join(hermesHome, ALLOWLIST)).approvals.some((e) => approves(e, command)) ? 'approved' : 'unapproved', path, command };
+  } catch {
+    return { state: 'absent', path };
   }
 }

@@ -179,10 +179,12 @@ $0.70–$1.00. The preflight refuses to start a real run whose estimate exceeds
 gbrain skillopt meeting-prep --split 1:1:1
 ```
 
-You'll watch it work: a baseline eval to set the bar, then per-step forward passes
-(run the skill), backward passes (propose edits), and a validation gate that
-runs each sel task's judge 3 times and takes the median — accepting only if the
-median beats the current best by more than 0.05.
+You'll watch it work: a baseline eval to set the bar, one forward pass over a
+batch of train tasks (run the skill), one rewrite of the skill body from those
+rollouts, and a validation gate that runs each sel task's judge 3 times and
+takes the median — accepting only if the median beats the baseline by more than
+0.05. (`--loop` runs the older iterative edit loop instead; see the
+[reference guide](../guides/skillopt.md#one-shot-rewrite-the-default).)
 
 When it finishes, the last lines tell you everything:
 

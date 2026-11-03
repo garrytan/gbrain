@@ -94,7 +94,7 @@ The nightly E2E workflow's `order-hunt` job (also `gh workflow run e2e.yml -f or
 
 ## Paid lanes switch
 
-The repository variable `GBRAIN_PAID_LANES=0` switches every paid lane off: Tier 2 (LLM Skills) in `e2e.yml`, the hermes door's paid leg and the OpenCode credentialed lane in `heavy-tests.yml` (#5903). Use it on a fork or during a spend freeze; unset (or any other value) keeps the lanes on. Each lane writes a visible "paid lanes disabled" step summary, and `e2e-status` accepts Tier 2 as `skipped` only under that exact value, saying so in its own summary; any other skip, failure or cancellation still fails the aggregate (`test/paid-lanes-switch-5903.test.ts` runs the aggregate script with every combination). A run with the variable set is not green coverage of the paid lanes.
+The repository variable `GBRAIN_PAID_LANES=0` switches every paid lane off: Tier 2 (LLM Skills) in `e2e.yml`, the hermes door's paid leg and the OpenCode credentialed lane in `heavy-tests.yml` (#5903). Use it on a fork or during a spend freeze; unset (or any other value) keeps the lanes on. Each lane writes a visible "paid lanes disabled" step summary, and `e2e-status` accepts Tier 2 as `skipped` only under that exact value, saying so in its own summary; any other skip, failure or cancellation still fails the aggregate (`test/paid-lanes-switch-5903.test.ts` runs the aggregate script with every combination). A run with the variable set is not green coverage of the paid lanes. Tier 2 runs keyed only on the nightly E2E schedule (and a `full_corpus` dispatch); elsewhere `e2e-status` accepts its skip with a "not run: keys withheld" notice, and a nightly run in which any Tier 2 test skipped fails (`scripts/require-executed-tests.ts`).
 
 ## CI failure manifest
 

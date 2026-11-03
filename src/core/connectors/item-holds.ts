@@ -95,7 +95,7 @@ export interface ItemHoldsState {
 
 const SOURCE_CODES = new Set([
   'writer_coordinator_required', 'owner_unavailable', 'database_contention', 'writer_lock_unavailable', 'writer_pool_capacity',
-  'queue_capacity', 'write_quota_exhausted', 'write_capacity_backpressure', 'recovery_required', 'write_pending', 'source_changed', 'permission_denied', 'scope_denied',
+  'queue_capacity', 'write_quota_exhausted', 'write_capacity_backpressure', 'recovery_required', 'owner_marker_missing', 'write_pending', 'source_changed', 'permission_denied', 'scope_denied',
   'writer_registration_required', 'writer_identity_invalid', 'writer_not_initialized', 'writer_upgrade_required',
   'writer_not_quiesced', 'writer_admin_locked', 'connector_account_changed', 'connector_intent_outdated',
   'unsupported_mutation_protocol', 'cancelled', 'write_claim_lost', 'lock_stolen', 'statement_timeout', 'lock_timeout',
@@ -104,6 +104,7 @@ const SOURCE_CODES = new Set([
 const CONTENT_CODES = new Set([
   'invalid_params', 'invalid_connector_text', 'request_too_large', 'page_identity_changed', 'take_row_collision',
   'connector_fence_below_timeline', 'malformed', 'http_4xx', 'file_database_drift', 'page_body_segmented',
+  'connector_shape_drift', 'connector_item_too_large', 'connector_response_too_large',
 ]);
 const POSTGRES_SOURCE_CODES: Record<string, string> = {
   '57014': 'statement_timeout', '55P03': 'lock_timeout', '40001': 'database_contention', '40P01': 'database_contention',
@@ -136,6 +137,7 @@ export function classifyConnectorError(error: unknown): ClassifiedConnectorError
     return { code, scope: 'item', class: CONTENT_CODES.has(code) ? 'content' : 'transient', message };
   }
   const pgCode = (error as { code?: unknown } | null)?.code;
+  if (typeof pgCode === 'string' && pgCode.startsWith('connector_') && CONTENT_CODES.has(pgCode)) return { code: pgCode, scope: 'item', class: 'content', message };
   if (typeof pgCode === 'string' && POSTGRES_SOURCE_CODES[pgCode]) return { code: POSTGRES_SOURCE_CODES[pgCode], scope: 'source', class: 'transient', message };
   const http = message.match(/API HTTP (\d{3})/);
   if (http) {

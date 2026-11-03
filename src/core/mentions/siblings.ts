@@ -72,9 +72,9 @@ export async function readIdentitySiblings(engine: BrainEngine, sourceId: string
     if (!policy.siblingMerge) return { pages: [], capped: false, verdict: 'disabled' };
     const pack = opts.pack !== undefined ? opts.pack : await loadSourcePack(engine, sourceId);
     const types = linkableTypesFor(pack, policy);
-    const { privatePagesFilterFragment } = await import('../search/private-visibility.ts');
+    const { privatePagesFilterForCaller } = await import('../search/private-visibility.ts');
     const { quarantineFilterFragment } = await import('../quarantine.ts');
-    const privacy = (opts.excludePrivate ? ` AND ${privatePagesFilterFragment('pages')}` : '')
+    const privacy = (opts.excludePrivate ? ` AND ${privatePagesFilterForCaller('pages')}` : '')
       + (opts.excludeQuarantined ? ` AND ${quarantineFilterFragment('pages')}` : '');
     const like = `%: ${subject.replace(/[\\%_]/g, m => `\\${m}`)}`;
     const rows = await engine.executeRaw<{ slug: string; title: string | null; type: string | null; identity: unknown }>(
@@ -106,10 +106,10 @@ export async function siblingCanonical(engine: BrainEngine, sourceId: string, sl
   try {
     const policy = await readMentionPolicy(engine);
     if (!policy.siblingMerge) return null;
-    const { privatePagesFilterFragment } = await import('../search/private-visibility.ts');
+    const { privatePagesFilterForCaller } = await import('../search/private-visibility.ts');
     const rows = await engine.executeRaw<{ slug: string; title: string | null; type: string | null; identity: unknown }>(
       `SELECT slug, title, type, frontmatter->>'identity' AS identity FROM pages
-        WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])${opts.excludePrivate ? ` AND ${privatePagesFilterFragment('pages')}` : ''}`,
+        WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])${opts.excludePrivate ? ` AND ${privatePagesFilterForCaller('pages')}` : ''}`,
       [sourceId, unique]);
     if (rows.length !== unique.length) return null;
     const pack = await loadSourcePack(engine, sourceId);

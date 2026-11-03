@@ -1,5 +1,6 @@
 /** Engine-free CLI routing to the process that already owns a PGLite brain. */
 import { randomUUID } from 'node:crypto';
+import { hookSessionCwd } from '../session-cwd.ts';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { configDir, type GBrainConfig } from '../config.ts';
@@ -50,7 +51,7 @@ export function persistenceConfigForBrain(
  * path), so a mounted serve binds the owner socket the CLI probes (#5237).
  * Host-level settings stay; only the datastore identity follows the mount.
  */
-export function residentPersistenceConfig(hostConfig: GBrainConfig | null, cwd = process.cwd()): GBrainConfig | null {
+export function residentPersistenceConfig(hostConfig: GBrainConfig | null, cwd = hookSessionCwd()): GBrainConfig | null {
   const brainId = resolveBrainId(getCliOptions().brain, cwd);
   if (brainId === 'host') return hostConfig;
   const brain = persistenceConfigForBrain(hostConfig, brainId, loadMounts())!;

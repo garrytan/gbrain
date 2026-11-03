@@ -27,6 +27,11 @@ import type { GBrainConfig } from './config.ts';
 import type { McpSurface } from '../mcp/surface.ts';
 import { REGISTRATION_SURFACE, registrationAdvertise, stdioServeArgv } from './mcp-registration.ts';
 import { gbrainPath } from './config.ts';
+import { hookLauncherPath } from './setup/hook-launcher.ts';
+import { localSetupRecords } from './setup/local-receipts.ts';
+import { setupRerunArgv } from './setup/launcher-lanes.ts';
+import { readSetupReceipt } from './setup/claude-code.ts';
+import { readCodexSetupReceipt } from './setup/codex.ts';
 import type { BrainEngine } from './engine.ts';
 import { redactForTransport, type Action, type ActionInput, type Effect, type Transport } from './agent-output.ts';
 import { detectCapabilities } from './capability.ts';
@@ -175,7 +180,7 @@ function keyInput(recipe: Recipe): ActionInput[] {
 }
 
 /** The datastore the enable command must target, resolved before any argv is built. */
-function enableArgv(cfg: GBrainConfig, model: string, width: number): string[] {
+export function enableArgv(cfg: GBrainConfig, model: string, width: number): string[] {
   const brainId = brainIdInMemory();
   if (brainId !== 'host') {
     return ['gbrain', 'embeddings', 'enable', '--brain', brainId, '--embedding-model', model, '--embedding-dimensions', String(width)];
@@ -414,11 +419,24 @@ const SURFACE_GLOSS: Record<McpSurface, string> = {
 function stdioRegistration(h: ReadinessHarness, bin: string, chosen?: McpSurface): Action {
   const surface = chosen ?? REGISTRATION_SURFACE;
   const advertise = registrationAdvertise({ userChoseSurface: chosen !== undefined });
-  const serve = stdioServeArgv(bin, surface, advertise);
-  const argv = h === 'claude-code' ? ['claude', 'mcp', 'add', 'gbrain', '--', ...serve]
-    : h === 'codex' ? ['codex', 'mcp', 'add', 'gbrain', '--', ...serve]
-      : ['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks', ...(chosen ? ['--surface', chosen] : [])];
-  const hooks = h === 'opencode' ? ' No lifecycle hooks are installed (--no-hooks); it must run inside an initialized agent workspace.' : ' No hooks, tool pre-approvals or tokens are added.';
+  // A setup install's hooks decision lives in its receipt, so a --no-hooks rerun would turn its hooks off: rerun with what it recorded.
+  const record = h === 'opencode' ? undefined : localSetupRecords().find((r) => r.harness === h && r.name === 'gbrain' && r.status === 'installed' && r.scope !== 'project');
+  const receipt = record && (() => { try { return (h === 'claude-code' ? readSetupReceipt(record.path) : readCodexSetupReceipt(record.path)).setup; } catch { return null; } })();
+  if (receipt && h !== 'opencode') {
+    const rerun = setupRerunArgv(h, receipt);
+    const why = `gbrain setup already registered gbrain for ${HARNESS_LABEL[h]}; rerunning it with the hooks, source and binary it recorded rewrites the entry in ${HARNESS_DESTINATION[h]}.`;
+    // gbrain setup codex rewrites the shared hooks.json and recomputes its trust, so only the user runs it.
+    if (h === 'codex') return { consent: [], actor: 'user', requires_exclusive: false, why, verify: VERIFY('harness_wiring'), docs: MEMORY_VERBS_INSTALL,
+      user_message: `gbrain setup codex rewrites the Codex hooks.json and its trust entries, so run it yourself: ${rerun.join(' ')}` };
+    return { argv: rerun, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, why, verify: VERIFY('harness_wiring'), docs: MEMORY_VERBS_INSTALL,
+      user_message: `I'd like to rerun gbrain setup for ${HARNESS_LABEL[h]} with the decisions it recorded, which rewrites its MCP entry in ${HARNESS_DESTINATION[h]}. OK?` };
+  }
+  // Each harness starts a user-scope stdio server in the session's directory, so its writer registers serve behind gbrain's launcher (#8426, #8435).
+  const serve = [hookLauncherPath(), ...stdioServeArgv(bin, surface, advertise)];
+  const argv = h === 'opencode' ? ['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks', ...(chosen ? ['--surface', chosen] : [])]
+    : ['gbrain', 'setup', h, '--no-hooks', '--gbrain-bin', bin, ...(chosen ? ['--surface', chosen] : [])];
+  const hooks = h === 'opencode' ? ' No lifecycle hooks are installed (--no-hooks); it must run inside an initialized agent workspace.'
+    : ' It also writes gbrain\'s brain-first instruction block, and records hooks as off (--no-hooks), so gbrain\'s per-turn hooks (setup\'s and the plugin\'s) stay off until setup runs again without it. No tool pre-approvals or tokens are added.';
   return {
     argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false,
     why: `Registers gbrain as a stdio MCP server (${serve.join(' ')}, ${advertise ? `listing ${SURFACE_GLOSS[advertise]} and request_tools; ${SURFACE_GLOSS[surface]} stays callable` : SURFACE_GLOSS[surface]}) in ${HARNESS_DESTINATION[h]}, so new ${HARNESS_LABEL[h]} sessions get memory tools.${hooks}`,
@@ -464,7 +482,7 @@ export function harnessWiringEntry(input: HarnessWiringInput): ReadinessEntry {
   if (harnesses.length === 0) {
     return { ...base, state: 'missing', reason: 'no_harness_detected', why: 'No agent harness was detected.',
       fix: { consent: ['persistent_install'], actor: 'user', requires_exclusive: false, docs: MEMORY_VERBS_INSTALL,
-        why: `Register \`${stdioServeArgv('<absolute path to gbrain>', input.surface ?? REGISTRATION_SURFACE, registrationAdvertise({ userChoseSurface: input.surface !== undefined })).join(' ')}\` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw).`,
+        why: `For Claude Code or Codex, run \`gbrain setup claude-code\` or \`gbrain setup codex\` (it registers serve behind gbrain's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register \`${stdioServeArgv('<absolute path to gbrain>', input.surface ?? REGISTRATION_SURFACE, registrationAdvertise({ userChoseSurface: input.surface !== undefined })).join(' ')}\` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw).`,
         user_message: 'Which agent app should get gbrain memory? The install guide has a one-line command for each.' } };
   }
   if (lockOwner?.transport === 'http') {

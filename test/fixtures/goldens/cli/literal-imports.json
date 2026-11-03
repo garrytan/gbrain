@@ -1,6 +1,9 @@
 {
   "golden": {
     "switchCaseImports": {
+      "access": [
+        "./commands/access.ts"
+      ],
       "advisor": [
         "./commands/advisor.ts"
       ],

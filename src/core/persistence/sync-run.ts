@@ -12,7 +12,7 @@ import { digest, sha256 } from './digest.ts';
 import { getWriteRequest, admitWriteInTransaction, foregroundPriority, intentDigest, receiptFor } from './journal.ts';
 import { preflightSyncCapacity } from './sync-capacity-preflight.ts';
 import { preparationConfigView } from './config-snapshot.ts';
-import { isWriteCapacityWait, retryWriteAdmission } from './admission-retry.ts';
+import { retryWriteAdmission } from './admission-retry.ts';
 import { assertPersistenceAccepting, awaitWrite, foregroundWriteCompletions, startPersistenceConsumer } from './service.ts';
 import { assertSyncEntryOrigin, discoverManagedSync, readManagedSyncRows, resolveManagedSyncContext, readSyncFile, syncGit, type ManagedSyncContext, type SyncDiscovery } from './sync-discovery.ts';
 import { checkpointRevival } from './sync-slug-mode.ts';
@@ -44,10 +44,10 @@ import { admittedBy, localResumeRequired, readAdmitted, withoutUnadmitted } from
 import { cursorFenceCause, isSyncKnockOn } from './sync-knock-on.ts';
 import { managedSyncResumeArgs } from '../sync-reconcile.ts';
 import { laneApplyMsPerMember, lanePolicy, openLanes } from './sync-lanes.ts';
-import { isRetryableConnError, isStatementTimeoutError } from '../retry-matcher.ts';
 import { SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
 import { readDryRunWriterState } from './sync-dry-run-writer.ts';
-import { driftBaselineContent, dryRunScreen, heldImageEntry, isSyncReadBound, loadSyncScreenRun, originConflictHold, oversizeHold, pinnedBlob, pinnedContent, pinnedImageBytes, preparationStalledHold, prepareTimeFenceHold, screenFrozenImport, streamedRefusalHold, unreadableFileHold, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
+import { fileMatchesSnapshot } from './page-prepare.ts';
+import { pageHoldsDriftBaseline, dryRunScreen, heldImageEntry, isSyncReadBound, loadSyncScreenRun, originConflictHold, oversizeHold, pinnedBlob, pinnedContent, pinnedImageBytes, preparationStalledHold, prepareTimeFenceHold, screenFrozenImport, streamedRefusalHold, unreadableFileHold, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
 import { frozenImageIntent, sameImageBytes } from './sync-image.ts';
 import { fenceReceiptLocation } from '../fence-repair/refusal.ts';
 import { managedSyncWriteDiagnostic, writeWaitOf } from './sync-write-diagnostic.ts';
@@ -65,11 +65,11 @@ import { recordSyncRunTrend } from '../fence-repair/census-store.ts';
 import { outOfAttemptsHold, addFencesNormalized, addRecovered, buildHoldReport, clearGitHold, clearGitHoldRetryPaths, heldGitPaths, fencesNormalizedReport, holdsEscalated, readSyncHoldPolicy, recordSyncConversion, releaseDiscoveredHolds, recoveredReport, writeGitHold, type FencesTally, type GitHoldCode, type SyncHoldPolicy } from './sync-holds.ts';
 import { withScreeningPaths } from './screening-paths.ts';
 import { withBoundedReadSession } from './bounded-reads.ts';
-import { receiptClass, recordedStop, replaysContentRefusal, resumableStop, stopRecorded } from './sync-stop-class.ts';
+import { receiptClass, recordedStop, replaysContentRefusal, resumableStop, stopRecorded, unrecordedStop } from './sync-stop-class.ts';
 import { advanceHeld, committedPast, deletionSettled, entryOf, indexOf, promoteWindow, waivedCursor, withHeldKeys, withoutPending } from './sync-cursor-moves.ts';
 import { withSyncTail } from './sync-tail.ts';
 import { assertDrainLease, currentDrainLease, leaseHeldResult, readDrainHolder, withDrainLease } from './sync-lease.ts';
-import { LockStolenError, LockUnavailableError, syncLockId } from '../db-lock.ts';
+import { LockUnavailableError, syncLockId } from '../db-lock.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { assertPassAdmission, isPassBatchKey, passBatchStep, passedOverBefore, passRequestId, readPassBatch, setPassBatch, type PassEntry } from './sync-pass-batch.ts';
 import type { PassStamp } from './sync-prepare.ts';
@@ -305,6 +305,7 @@ function result(cursor: Cursor | CursorHeader, status: SyncResult['status'], rea
     deleted: cursor.counts.deleted, renamed: cursor.counts.renamed ?? 0, chunksCreated: cursor.counts.chunks, embedded: 0, pagesAffected: [],
     ...(cursor.slugCollisions?.length ? { slugCollisions: cursor.slugCollisions } : {}), ...(cursor.identityDowngrades?.length ? { identityDowngrades: cursor.identityDowngrades } : {}),
     ...(cursor.fileRefusals?.length ? { fileRefusals: cursor.fileRefusals } : {}), ...(cursor.workingTreeKept?.length ? { working_tree_kept: cursor.workingTreeKept.length } : {}),
+    ...(cursor.storageInvalidKept?.length ? { storage_invalid_kept: cursor.storageInvalidKept.length } : {}),
     ...(cursor.stagedHead && !cursor.authority.writer.remote ? { staged: { target: cursor.target, head: cursor.stagedHead, ...(cursor.slice && !cursor.slice.done ? { slice: { phase: cursor.slice.phase, after: cursor.slice.after } } : {}) } } : {}),
     waived: { imports: cursor.counts.waived?.imports ?? 0, deletes: cursor.counts.waived?.deletes ?? 0 }, prescreened: cursor.counts.prescreened ?? 0,
     filesImported: cursor.index, bankedFiles: cursor.index,
@@ -465,11 +466,13 @@ async function freezeEntryOnce(engine: BrainEngine, cursor: Cursor, key: string,
       }
     }
     // #6712 PR 1: an import whose page moved since its file was last imported runs only as a proven no-op (sync-prescreen.ts).
+    // #7931: a file that holds the page as prepareFileTarget and repair file-drift read it (format-insensitive) is one too.
     if (entry.drift && !occupantRebound && content !== null && snapshot && !(image ? sameImageBytes(imageBytes, snapshot.page)
-      : await sameContentAtOrigin(engine, cursor, entry, key, snapshot, content, rawHash, lineEndingOnly, run.signal) || await sameContentAtOrigin(engine, cursor, entry, key, snapshot, driftBaselineContent(cursor.gitRoot, entry), null, false, run.signal, true))) {
+      : await sameContentAtOrigin(engine, cursor, entry, key, snapshot, content, rawHash, lineEndingOnly, run.signal)
+        || await fileMatchesSnapshot(engine, slug, content, snapshot, entry.sourcePath).catch(() => false) || await pageHoldsDriftBaseline(cursor.gitRoot, entry, baseline => sameContentAtOrigin(engine, cursor, entry, key, snapshot, baseline, null, false, run.signal, true)))) {
       if (!holdsOn) throw syncRunRefusal('file_drift', 'An import would overwrite a database version of the page that sync never saw.', retry, `Page ${slug} in source ${cursor.sourceId} ${entry.drift === 'unknown' ? `differs from ${entry.path} and has no import record to tell whether the file or the database changed` : `changed in the database since ${entry.path} was last imported, and the file differs from it`}, so the run stopped before admitting it (sync.holds=fail).`);
       const proof = await pageChangeProof(engine, { sourceId: cursor.sourceId, incarnation: cursor.incarnation, pageId, expectedRevision: null }); assertActive();
-      return { hold: fileDriftHold(entry, slug, pageId, frozenIntent, { sides: entry.drift, revision: snapshot.revision, proof, sharedOrigin: await sharedOriginSurvivor(engine, cursor.sourceId, entry.sourcePath) }) };
+      return { hold: fileDriftHold(entry, slug, pageId, frozenIntent, { sides: entry.drift, revision: snapshot.revision, proof, sharedOrigin: await sharedOriginSurvivor(engine, cursor.sourceId, entry.sourcePath), baseline: entry.driftBaseline ?? null }) };
     }
     if (screening && !image) {
       const hold = await screenFrozenImport(engine, { cursor, entry, slug, pageId, snapshot, content, rawHash, lineEndingOnly, blob, oversize, streamed: !!bodyRef,
@@ -1256,7 +1259,12 @@ export interface RetryWait { request_id: string; kind: string | null; slug: stri
  * returns `sync_drain_lease_held` (resumable). A dry run takes no lease.
  */
 export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, slice?: { maxPages: number; maxMs: number }): Promise<SyncResult> {
-  if (opts.dryRun || currentDrainLease(opts.sourceId ?? 'default')) return performManagedPass(engine, opts, slice);
+  if (opts.dryRun) return performManagedPass(engine, opts, slice);
+  // GBRA-218: every managed pass (sync, drain, sources refresh, git conversion, owner slice) applies the committed folder rules.
+  return (await import('../access/policy-git.ts')).withCommittedPolicy(engine, opts.sourceId ?? 'default', opts.repoPath, () => performLeasedPass(engine, opts, slice));
+}
+async function performLeasedPass(engine: BrainEngine, opts: SyncOpts, slice?: { maxPages: number; maxMs: number }): Promise<SyncResult> {
+  if (currentDrainLease(opts.sourceId ?? 'default')) return performManagedPass(engine, opts, slice);
   const sourceId = opts.sourceId ?? 'default';
   const remote = currentSubmissionAuthority()?.kind === 'remote_generic';
   let tailClear = false;
@@ -1278,11 +1286,13 @@ async function performManagedPass(engine: BrainEngine, opts: SyncOpts, slice?: {
   const cursor = state.cursor?.() ?? null;
   try {
     const report = await buildHoldReport(engine, { sourceId: state.sourceId, incarnation: state.incarnation, runId: cursor?.runId ?? '', remote: state.remote === true,
-      policy: readSyncHoldPolicy(engine), pendingScreen: synced.reason === 'writer_yield',
+      policy: readSyncHoldPolicy(engine), pendingScreen: synced.reason === 'writer_yield', needsHuman: (await import('./sync-status.ts')).holdNeedsHuman,
       screened: 'entries' in (cursor ?? {}) ? (cursor as Cursor).entries.slice(0, cursor!.index).filter(entry => entry.action === 'import').length : 0 });
     const recovered = state.remote ? undefined : recoveredReport(state.sourceId, cursor?.counts.recovered);
     const fences = fencesNormalizedReport(state.sourceId, cursor?.counts.fences, state.remote === true);
-    return { ...synced, ...report, ...(!state.remote && cursor?.convertedFromFailed?.length ? { converted_from_failed: cursor.convertedFromFailed } : {}),
+    // #7199: a pass that synced but held files a person must decide does not read as plain synced.
+    const humanHeld = report.held_needs_human && !synced.reason && ['synced', 'first_sync', 'up_to_date'].includes(synced.status);
+    return { ...synced, ...report, ...(humanHeld ? { reason: 'held_needs_human' as const } : {}), ...(!state.remote && cursor?.convertedFromFailed?.length ? { converted_from_failed: cursor.convertedFromFailed } : {}),
       ...(recovered ? { recovered_frontmatter: recovered } : {}), ...(fences ? { fences_normalized: fences } : {}) };
   } catch {
     return synced;
@@ -1364,11 +1374,9 @@ async function recordRunFailure(engine: BrainEngine, error: unknown, run: { curs
   discoveryRun: string; context: ManagedSyncContext; remote: boolean; syncOptions: Cursor['syncOptions']; processingOptions: NonNullable<Cursor['processingOptions']>; repoPath: string | undefined }): Promise<void> {
   const { cursor, key, phase, discoveryTarget, discoveryRun, context, syncOptions, processingOptions } = run;
   const code = error instanceof OperationError ? error.code : 'storage_error';
-  // A refresh fence, or an admission refused while other requests hold the writer's outstanding cap (#6278: the drain
-  // waits for them), is transient admission back-pressure, not a sync failure to record. #6340: neither is a lost
-  // database connection or a statement timeout: the cursor and its frozen manifest stay, and the next pass resumes them.
-  if (!['permission_denied', 'worktree_refreshing', 'refresh_recovery_required'].includes(code) && !isWriteCapacityWait(error) && !(error instanceof LockStolenError)
-    && !isRetryableConnError(error) && !isStatementTimeoutError(error)) {
+  // A refresh fence, write back-pressure, a lost connection or a statement timeout is not a sync failure to record: the
+  // cursor and its frozen manifest stay, and the next pass resumes them (`unrecordedStop`).
+  if (!unrecordedStop(error)) {
     const [stored] = cursor ? [] : await engine.executeRaw<{ completed_keys: [CursorHeader] }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [OP, key]);
     const failedCursor = cursor ?? stored?.completed_keys?.[0];
     const { failure } = await recordManagedSyncFailure(engine, { source_id: context.sourceId, source_incarnation: context.incarnation, path: cursor?.entries[cursor.index]?.path ?? failedCursor?.pending?.intent.path ?? `<${phase}>`, code,

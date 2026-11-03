@@ -188,7 +188,7 @@ test('a derive-phase page whose recorded file went missing still refuses', () =>
 
 const invalidStorage: Array<[string, string]> = [
   ['overlapping tiers', 'storage:\n  db_tracked:\n    - conversations/\n  db_only:\n    - conversations/\n'],
-  ['flow-style db_only', 'storage:\n  db_only: [conversations/]\n'],
+  ['a multi-line flow-style db_only', 'storage:\n  db_only: [conversations/,\n    archive/]\n'],
 ];
 for (const [name, gbrainYml] of invalidStorage) {
   test(`${name} in gbrain.yml only turn the missing-file refusal into storage_error`, () => fixture(async ({ engine, ctx, root }) => {

@@ -108,6 +108,15 @@ and prints those commands to run on the OpenClaw host; restart a running gateway
 afterwards. `--no-instructions` and `--remove` uninstall the plugin and delete
 its directory. A re-run after an upgrade rewrites the plugin with the new text.
 
+OpenClaw lists no gbrain tool after `openclaw mcp set`: the model reaches them
+only through `tool_search`, whose results it frames as external data. With an
+MCP connection the rule therefore names the tools (`recall`, `entity`, `search`,
+`query`) and says to find them with `tool_search` and run them with `tool_call`.
+With `openclaw` on PATH, setup runs
+`openclaw plugins inspect gbrain-turn-rule --runtime --json` and exits non-zero
+with `turn_hook_not_loaded` unless the plugin shows as loaded with
+`before_prompt_build` ([repair](../guides/repair.md#turn-hook-not-loaded)).
+
 ## Scheduled jobs and workspace scripts
 
 OpenClaw cron jobs, workspace scripts and hooks run with another `HOME` and

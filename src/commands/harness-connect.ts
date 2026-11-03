@@ -40,8 +40,10 @@ export async function runHarnessConnect(args: string[]): Promise<void> {
       if (token.token_warning) console.error(`WARNING: ${token.token_warning}`);
     }
     const skills = (result as { skills?: SkillsBlockOutcome }).skills;
-    if (skillsOutcomeFailed(skills)) {
-      console.error(`skills index: ${skills!.detail}${'remote_membership_pending' in result && result.remote_membership_pending ? ' (remote membership deactivation is also pending; exit 1 outranks its exit 2)' : ''}`);
+    const turnHookError = (result as { turn_hook?: { error?: { message: string; fix: { argv?: string[] } } } }).turn_hook?.error;
+    if (skillsOutcomeFailed(skills) || turnHookError) {
+      if (skillsOutcomeFailed(skills)) console.error(`skills index: ${skills!.detail}${'remote_membership_pending' in result && result.remote_membership_pending ? ' (remote membership deactivation is also pending; exit 1 outranks its exit 2)' : ''}`);
+      if (turnHookError) console.error(`turn_hook_not_loaded: the per-turn gbrain hook is not active: ${turnHookError.message}. Fix: ${turnHookError.fix.argv?.join(' ')}`);
       setCliExitVerdict(1);
     } else if (result.status === 'pending' || 'remote_membership_pending' in result && result.remote_membership_pending) setCliExitVerdict(2);
   } catch (error) {

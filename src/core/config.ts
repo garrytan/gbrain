@@ -1366,6 +1366,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.image_query.daily_budget_usd_per_client',
   'search.image_query.remote_max_bytes',
   'search.mcp_keyword_only',
+  'search.remote_page_cap', // GBRA-156: distinct-page cap of a remote search/query without limit (search/remote-page-cap.ts)
   REMOTE_PRIVATE_PAGES_KEY,
   'search.track_retrieval',
   // Retrieval feedback (feedback/settings.ts).
@@ -1392,7 +1393,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // weak-graded query), and unlike crag_think it is reachable by remote
   // callers — attacker-shaped weak queries drive that spend (ship security
   // review). See docs/operations/spend-controls.md.
-  // #5824 one-release rollback, latched per process (search/vector-legacy-guard.ts).
+  // #5824 one-release rollback, latched per engine (search/vector-legacy-guard.ts).
   'search.vector_legacy_guard',
   'search.hnsw_iterative_scan',
   'search.cjk_keyword_deadline_ms',

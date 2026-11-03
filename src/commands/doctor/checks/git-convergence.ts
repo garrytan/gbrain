@@ -63,7 +63,7 @@ async function unwatchedDurableRoots(engine: BrainEngine): Promise<Map<string, s
        (SELECT array_agg(b.relative_path) FROM persistence_source_bindings b WHERE b.worktree_id=h.worktree_id) AS relative_paths
      FROM persistence_host_bindings h JOIN persistence_worktrees w ON w.id=h.worktree_id
      WHERE h.host_id=$1::uuid AND w.owner_host_id=$1::uuid AND w.state='active' AND NOT EXISTS (
-       SELECT 1 FROM persistence_effects e WHERE e.worktree_id=h.worktree_id AND e.kind='git' AND e.state IN ('queued','running','failed'))`,
+       SELECT 1 FROM persistence_effects e WHERE e.worktree_id=h.worktree_id AND e.kind='git' AND e.state IN ('queued','running','failed') AND NOT (e.data ? 'settled'))`,
     [hostId]).catch(() => []);
   const roots = new Map<string, string[]>();
   for (const binding of bindings) {

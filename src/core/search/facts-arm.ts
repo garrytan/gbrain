@@ -26,6 +26,7 @@ import { enforceTokenBudget, resultTokens } from './token-budget.ts';
 import { configFlagOn, factDateHeader } from './evidence-date.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { conversationSignal } from './evidence-delivery.ts';
+import { factsFromQuotedPages } from './transcript-quote.ts';
 
 export { queryTerms } from './fact-relevance.ts';
 
@@ -45,7 +46,7 @@ export const MAX_RESERVE_ROWS = 20;
 /** Share of the caller's row count reserved facts may take (at least one row). */
 export const TEMPORAL_RESERVE_ROW_SHARE = 0.3;
 
-/** GBRA-205 facts block (`search.query_facts_block`, default off): every budgeted query, ahead of the pages. */
+/** GBRA-205 facts block (`search.query_facts_block`, default on): every query with a caller token budget, ahead of the pages. */
 export const QUERY_FACTS_BLOCK_KEY = 'search.query_facts_block';
 /** Share of the caller's token budget the facts block may take (about 1,800 of 8,100, as the measured combined lane). */
 export const QUERY_FACTS_BLOCK_SHARE = 0.22;
@@ -91,7 +92,7 @@ export async function matchQueryFacts(engine: BrainEngine, query: string, scope:
     .slice(0, MAX_FACT_ROWS);
 }
 
-function factRow(f: FactCandidate, score: number, pageSlug: string | undefined): SearchResult {
+function factRow(f: FactCandidate, score: number, pageSlug: string | undefined, fromQuotedPage: boolean): SearchResult {
   const from = day(f.valid_from);
   const until = day(f.valid_until);
   const args: Record<string, string> = f.entity_slug ? { entity: f.entity_slug } : { grep: f.fact.slice(0, 60) };
@@ -101,7 +102,8 @@ function factRow(f: FactCandidate, score: number, pageSlug: string | undefined):
     slug: `facts/${f.id}`, page_id: 0, title: f.entity_slug ? `Saved fact about ${f.entity_slug}` : 'Saved fact', type: 'note',
     chunk_text: `Saved fact (${f.kind}; valid from ${from ?? 'unknown'}${until ? ` to ${until}` : ''}; provenance: ${f.source}): ${f.fact}`,
     chunk_source: 'compiled_truth', chunk_id: -Number(f.id), chunk_index: 0, score, stale: false, source_id: f.source_id,
-    fact_row: { id: Number(f.id), valid_from: new Date(f.valid_from).toISOString(), valid_until: f.valid_until ? new Date(f.valid_until).toISOString() : null },
+    fact_row: { id: Number(f.id), valid_from: new Date(f.valid_from).toISOString(), valid_until: f.valid_until ? new Date(f.valid_until).toISOString() : null, source: f.source,
+      ...(fromQuotedPage ? { from_quoted_page: true as const } : {}) },
   } as SearchResult;
 }
 
@@ -174,7 +176,8 @@ export async function applyFactsArm(engine: BrainEngine, query: string, results:
     const floor = pages.reduce((m, r) => (Number.isFinite(r.score) && r.score < m ? r.score : m), pages[0]?.score ?? 1);
     const shown = facts.slice(0, free);
     const pageSlugs = await readableEntityPages(engine, shown, opts.readScope).catch(() => new Set<string>());
-    let rows = shown.map((f, i) => factRow(f, floor - (i + 1) * 1e-6, f.entity_slug && pageSlugs.has(`${f.source_id}\u0000${f.entity_slug}`) ? f.entity_slug : undefined));
+    const fromQuoted = await factsFromQuotedPages(engine, shown.map(f => Number(f.id)));
+    let rows = shown.map((f, i) => factRow(f, floor - (i + 1) * 1e-6, f.entity_slug && pageSlugs.has(`${f.source_id}\u0000${f.entity_slug}`) ? f.entity_slug : undefined, fromQuoted.has(Number(f.id))));
     if (opts.tokenBudget) {
       let left = opts.tokenBudget - enforceTokenBudget(pages, opts.tokenBudget).meta.used;
       rows = rows.filter(r => { const cost = resultTokens(r); if (cost > left) return false; left -= cost; return true; });
@@ -216,10 +219,13 @@ export function applyTemporalFactReserve(engine: BrainEngine, query: string, res
 
 /**
  * Facts block (GBRA-205): the same question-ranked, dated facts as the
- * temporal reserve, for every budgeted query, up to QUERY_FACTS_BLOCK_SHARE
- * of the budget and MAX_FACTS_BLOCK_ROWS rows, oldest first ahead of the
- * pages. The facts add rows (every page row stays) and pages fill the rest of
- * the budget. No match or any error: the results unchanged.
+ * temporal reserve, for every query whose caller passed a token budget, up to
+ * QUERY_FACTS_BLOCK_SHARE of the budget and MAX_FACTS_BLOCK_ROWS rows and
+ * never more rows than the caller's row count (#8411), oldest first ahead of
+ * the pages. Block rows take the top page's score: they are placed, not
+ * ranked against the pages, and never outscore them. The facts add rows
+ * (every page row stays) and pages fill the rest of the budget. No match or
+ * any error: the results unchanged.
  */
 export function applyFactsBlock(engine: BrainEngine, query: string, results: SearchResult[], opts: FactsArmOpts & { budget: number }): Promise<SearchResult[]> {
   return applyFactReserve(engine, query, results, opts, FACTS_BLOCK);
@@ -231,14 +237,16 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
       { depth: { keyword: 50, cosine: 50, entity: policy.maxRows }, cosineForAll: true });
     const scored = scoreFactCandidates(query, candidates).filter(s => admitted(s, 'reserve')).map(s => ({ c: s.candidate }));
     if (!scored.length) return results;
-    const rowCap = Math.max(results.length, (await opts.rowCap?.().catch(() => 0)) ?? 0);
-    const maxRows = policy.rowShare === null ? policy.maxRows : Math.min(policy.maxRows, Math.max(1, Math.floor(rowCap * policy.rowShare)));
+    const callerRows = (await opts.rowCap?.().catch(() => 0)) ?? 0;
+    const rowCap = Math.max(results.length, callerRows);
+    const maxRows = policy.rowShare === null ? Math.min(policy.maxRows, callerRows || policy.maxRows) : Math.min(policy.maxRows, Math.max(1, Math.floor(rowCap * policy.rowShare)));
     const pageSlugs = await readableEntityPages(engine, scored.map(x => x.c), opts.readScope).catch(() => new Set<string>());
+    const fromQuoted = await factsFromQuotedPages(engine, scored.map(x => Number(x.c.id)));
     let left = Math.floor(opts.budget * policy.share);
     const chosen: Array<{ c: FactCandidate; row: SearchResult }> = [];
     for (const { c } of scored) {
       if (chosen.length >= maxRows) break;
-      const row = factRow(c, 0, c.entity_slug && pageSlugs.has(`${c.source_id}\u0000${c.entity_slug}`) ? c.entity_slug : undefined);
+      const row = factRow(c, 0, c.entity_slug && pageSlugs.has(`${c.source_id}\u0000${c.entity_slug}`) ? c.entity_slug : undefined, fromQuoted.has(Number(c.id)));
       row.chunk_text = `${factDateHeader(c)}\n${c.fact}`;
       const cost = resultTokens(row);
       if (cost > left) continue;
@@ -251,7 +259,7 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
     const pagesTop = results.reduce((m, r) => (Number.isFinite(r.score) && r.score > m ? r.score : m), results[0]?.score ?? 1);
     const rows = policy.position === 'after'
       ? chosen.map(({ row }, i) => ({ ...row, score: pagesFloor - (i + 1) * 1e-6 }))
-      : chosen.map(({ row }, i) => ({ ...row, score: pagesTop + (chosen.length - i) * 1e-6 }));
+      : chosen.map(({ row }) => ({ ...row, score: pagesTop }));
     let pages = (policy.rowShare === null ? results : results.slice(0, Math.max(0, Math.min(results.length, rowCap - rows.length)))).map(r => ({ ...r }));
     if (opts.tokenBudget) pages = enforceTokenBudget(pages, Math.max(1, opts.tokenBudget - rows.reduce((n, r) => n + resultTokens(r), 0))).results;
     const merged = policy.position === 'after' ? [...pages, ...rows] : [...rows, ...pages];

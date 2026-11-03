@@ -30,6 +30,9 @@
  * so its existing importers are unaffected.
  */
 
+/** The `facts.source` prefix of every row the conversation-facts extractor writes (its facts and its audit rows). */
+export const CONVERSATION_FACTS_SOURCE_PREFIX = 'cli:extract-conversation-facts';
+
 export const TERMINAL_AUDIT_SOURCE = 'cli:extract-conversation-facts:terminal:v2';
 
 export const NON_EXTRACTABLE_AUDIT_SOURCE =

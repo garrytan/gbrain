@@ -37,6 +37,7 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 | `native-locks.yml` | `inputs.scope` (OpenClaw, musl, Windows probes, cross-target cells) | Named exception | Every push to master and the nightly Test schedule (`full`) |
 | `e2e.yml` | Doc-only merge-queue entry selects no E2E file | Named exception | Every push to master (whole corpus) and the nightly E2E schedule |
 | `e2e.yml` | Full-corpus coverage lanes and their `e2e-status` checks | Named exception | Nightly E2E schedule (or a `full_corpus` dispatch) |
+| `e2e.yml` | Tier 2 (LLM Skills) runs keyed on the nightly only; other events skip it, and `e2e-status` prints "not run: keys withheld" instead of counting it green | Named exception | Nightly E2E schedule (or a `full_corpus` dispatch), keyed; `scripts/require-executed-tests.ts` fails the job when any test skipped or none ran, and each test fails unless the agent called a gbrain MCP tool |
 | `heavy-tests.yml` | Label-gated jobs on pull requests | Named exception | Nightly Heavy Tests schedule |
 | `heavy-tests.yml` | `grok-door` (label or input only) | Recorded decision: no scheduled run until the `XAI_API_KEY` secret exists | None yet, by decision |
 | `heavy-tests.yml` | `opencode-door-canary` | Named exception: schedule-only, non-gating canary | Itself |
@@ -108,14 +109,28 @@ working tree's commit, or another head with the same tree, already passed the
 complete full runs of both Test and E2E under the master-push rules above. If
 both did, the receipt comes from them: the same `PREGATE_REMOTE: tree= tests=
 failed=` line, with the runs' executed test identities as the counts, and no VM
-starts. A full run on the tree still in progress is waited for (90 minutes at
-most, a progress line every minute). The newest full run on the tree decides,
+starts. The counts take each job at its newest attempt, so a run whose failed
+jobs were re-run counts its whole suite; a ledger that cannot show that is
+labelled `attempt N, partial count` on the `[ci-reuse] gate:` line. A ledger an
+earlier attempt wrote counts only while its `executed-receipts` job was not re-run
+since. A full run
+on the tree still in progress is waited for (90 minutes at most, a progress
+line every minute), also while the other workflow has no full run on the tree:
+full-ci's second dispatch can still appear, and a failure of the run in
+progress refuses instead of starting VMs. A passed run on the head whose
+executed-test receipt is refused (an unreadable, stale or empty ledger) ends the
+wait at once, since no later dispatch of the head is coming; the same refusal on
+another head with the same tree keeps waiting for the head's own dispatch, and a
+receipt download that failed transiently (no response, a 5xx, a 429, a rate-limit
+403, or a refusal from the artifact storage the download redirects to) is read
+again on the next poll. Any other 4xx, such as a 403 or an expired artifact's
+410, refuses at once. The newest full run on the tree decides,
 across the head and every recent head with the same tree, so neither an empty
 commit nor an older pass elsewhere skips a newer failure; a failed one refuses
 with no receipt. A run that did not run the full job (a diagnostic dispatch, a
 push that reused) is skipped. A tree that changes `.github/workflows/test.yml`,
 `.github/workflows/e2e.yml`, `scripts/ci-reuse.ts`, `scripts/lib/gh-issue.ts`,
-`scripts/ci-full-suite-tree.sh` or `scripts/ci-executed-counts.ts` relative to `origin/master` never reuses, since its runs would attest to themselves, and the
+`scripts/ci-full-suite-tree.sh`, `scripts/ci-executed-counts.ts` or `scripts/ci-manifest.ts` (which writes the run's `ci-manifest.json`) relative to `origin/master` never reuses, since its runs would attest to themselves, and the
 check runs without the model and database keys, like the gate. Every other case runs the gate: a dirty tree, a commit GitHub
 doesn't have, a missing workflow, an API error, or `GBRAIN_PREGATE_REUSE=0`.
 
@@ -124,6 +139,49 @@ new tree, so it needs its own passed full run or gate. A stamp-only difference
 reaches the head through gstack's stamp rule (`gstack-pregate clear --receipt`
 with the stamp files in `.gstack/ship-policy.json`), never through this check.
 Merge still requires `full-suite` and `e2e-full-suite` on the exact head.
+
+### Run evidence for gstack (`gstack-pregate clear --run`)
+
+gstack can take the same GitHub runs as evidence itself, so a slot runs one full
+suite per tree instead of a full-ci pass and a gate
+([gstack docs/pregate.md#run-evidence](https://github.com/garrytan/gstack/blob/main/docs/pregate.md#run-evidence)).
+`gstack-pregate clear --remote pregate.json/remote_gate --run <Test run> --run <E2E run> --allow-repo-commands`
+reads each run's `full-suite-tree` / `e2e-full-suite-tree` artifact and accepts the pair
+when both passed on pregate.json's tree and their executed files cover the gate's
+inventory:
+
+- `tree.json` carries `files` (every test file the run executed, repo-relative)
+  and `tests` (its executed tests). `scripts/ci-full-suite-tree.sh` takes them from
+  the run's `ci-manifest.json`, and only when that manifest is complete and names
+  the same run, attempt and commit. Otherwise both are left out with a warning:
+  the run still counts for merge, but gstack refuses it (`inventory_uncovered`).
+  A push that reused a run has no `full-suite` job, so it is never evidence.
+- `bash scripts/pregate-remote-gate.sh --list` prints the inventory: the gate
+  command with `--list` (`scripts/ci-ubicloud.ts --list`), the same lanes and
+  discovery the gate runs, one file per line. It exits non-zero when the
+  inventory fails or is empty (a doc-only tree under `:diff` runs no test file,
+  so it clears through the gate as before). It also prints no inventory for a
+  tree that changes one of the seven files above, or the inventory's own
+  builders `scripts/pregate-remote-gate.sh` and `scripts/ci-ubicloud.ts`,
+  relative to `origin/master` (or when there is no `origin/master`, or
+  `GBRAIN_PREGATE_REUSE=0`), so
+  gstack refuses that tree's own runs (`inventory_failed`) and the gate runs,
+  as remote-gate reuse already does. The gate leaves out the keyed-only
+  Tier 2 file (`test/e2e/skills.test.ts`): a VM has neither the keys nor
+  openclaw, so every test in it would skip.
+- gstack accepts only `push` and `workflow_dispatch` runs whose newest attempt
+  succeeded. **A flaky job means re-running the whole workflow.** "Re-run failed
+  jobs" carries every job that passed, the ledger job that writes the manifest
+  included, over from the older attempt, so the new attempt has no manifest of
+  its own and its `tree.json` has no `files` (`inventory_uncovered`); a
+  `tree.json` left from an older attempt is refused too (`artifact_mismatch`).
+- The profiles live in `.gstack/pregate.json`: `run_profiles` `test`
+  (`test.yml`, job `full-suite`, artifact `full-suite-tree`) and `e2e`
+  (`e2e.yml`, job `e2e-full-suite`, artifact `e2e-full-suite-tree`), each
+  accepting `workflow_dispatch` and `push` runs from the last 24 hours, and
+  `remote_gate_runs` naming both with this inventory command. gstack reads them
+  only from `origin/<base>`, so a branch cannot loosen them. gstack accepts
+  these keys from 1.91.377.0 on.
 
 ## Dependency-audit rule
 
@@ -173,6 +231,27 @@ Measured on ubicloud-standard-4, full scope, run 39996381819:
   `overlapping_slugs_two_sources` (2.4 s in the other cell). 880 s is the slowest cell plus
   about 30%; the nightly's two exploration seeds (about 15–20 s each on Postgres) fit inside
   that margin.
+- **Two runs at a time (#8036).** A full Postgres run went 899 s against 880 s on a
+  pull request that doesn't touch persistence (run 41087538943). Across the 13 full-scope Postgres
+  cells on ubicloud-standard-4 from 2026-10-30, wall time ranged from 379 s to 899 s with the same
+  54 runs. Two things varied: runner speed (the runs other than the two waiting faults took
+  342 s to 769 s), and whether `pooler_disconnect` waited out a 2-minute effect-claim lease
+  (125–132 s in 8 of the 13 cells, 2–8 s in the rest). One run at a time adds both waits to the wall
+  clock in full. Since #8036 the driver runs `ROBOT_CONCURRENCY` (2) runs at a time. Each run
+  still owns its database, scratch root and home. Every fault is drawn before any crash runs, so
+  the runs, the faults and the manifest order are the same as one at a time (unit-tested, and
+  identical in all four local manifests below). The process faults start first, so their waits
+  overlap the crash runs.
+
+  | Measurement | One at a time | Two at a time |
+  |---|---|---|
+  | Local postgres, 4 vCPU, full scope | 423 s | 258 s (each run about 15% slower) |
+  | Local pglite, 4 vCPU, full scope | 699 s | 418 s (each run about 20% slower) |
+  | Slowest CI cell (run 41087538943) | 899 s measured | 528 s predicted |
+
+  The prediction replays that cell's 54 measured run times, slowed by 15%, through two lanes. The
+  same model predicts 250 s for the local cell, which measured 258 s. The ceilings are unchanged,
+  so the slowest cell observed now uses about 60% of 880 s.
 - **Pull requests, 820 s PGLite and 620 s Postgres.** Scope `pr` crashes each seam once
   and skips the Postgres lease-bound seams. PGLite measured 510 s and 427 s (run
   40003479271), then 529 s and 474 s (run 40018836178); 820 s is the slowest plus about 30%.
