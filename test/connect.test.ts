@@ -538,13 +538,18 @@ describe('runConnect --install', () => {
 
   test('an unknown --skill-loading value is refused before anything is installed', async () => {
     const seen: unknown[] = [];
+    const ran: string[][] = [];
     const r = await runWithExitCapture(
       ['https://brain.example.com/mcp', '--token', 'gbrain_tok', '--install', '--yes', '--skill-loading', 'always'],
-      installDeps({ writeInstructions: (...a) => { seen.push(a); return null; } }),
+      installDeps({
+        writeInstructions: (...a) => { seen.push(a); return null; },
+        runBinary: (_binary, argv) => { ran.push(argv); return { code: 0, stdout: '', stderr: '' }; },
+      }),
     );
-    expect(r.exitCode).not.toBe(0);
+    expect(r.exitCode).toBe(1);
     expect(r.err.join('\n')).toContain("Unknown --skill-loading 'always'");
     expect(seen).toEqual([]);
+    expect(ran).toEqual([]);
   });
 
   test('probe failure warns + exits 1 + never echoes the token', async () => {
