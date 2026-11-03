@@ -409,12 +409,6 @@ describe('visibility: untrusted callers never count private text', () => {
 
 import { readKeywordPage, parseSearchPaging, type KeywordPage } from '../src/core/search/keyword-paging.ts';
 
-/**
- * Authoring gate: protects keyword-only totals when row delivery exceeds the
- * count floor. Omitting row completion loses a count delivered before rows or
- * inside their grace. Existing #6632 cases exercise the count helper only.
- * No production seam is added; gates delay real PGLite results, not their SQL.
- */
 describe('#6632: keyword-only row completion', () => {
   const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
   const gate = () => {
@@ -462,7 +456,6 @@ describe('#6632: keyword-only row completion', () => {
       },
     }) as BrainEngine;
     const result = readKeywordPage(wrapped, args, opts, paging, 3);
-    // Attach a rejection observer before a test can release the row failure.
     void result.catch(() => {});
     return {
       rows, count, rowsDelivered, countDelivered, calls, result,
