@@ -12,17 +12,16 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
-**A host that stores a file's bytes itself can now record and check them.** On an engine opened from settings, `file_register` records the files row for an object the host already wrote at the path `file_upload` would use, after reading it back and matching its size and SHA-256, and `file_verify` lists which rows still have their object or re-hashes one. Every file operation on such an engine, `file_upload` and `file_url` included, uses the engine's own `settings.storage` (a local path, or s3 with its endpoint and keys, and an optional one-segment key `prefix` so brains sharing a bucket each keep their own keys), never the process storage config. A brain the CLI or a server opens is unchanged: there both refuse `embedded_engine_required`, and neither is ever an MCP tool. Contributed by @bradgessler (#8457).
+**A brain opened from settings keeps its files in its own store.** On an engine opened from settings, every file operation (`file_upload`, `file_url`, page purge and the new `file_verify`) uses the engine's own `settings.storage`: a local path, or s3 with its endpoint and keys, and an optional one-segment key `prefix` so brains sharing a bucket each keep their own keys. The process storage config is never used there. `file_verify` lists which rows still have their object or re-hashes one. A brain the CLI or a server opens is unchanged: there `file_verify` refuses `embedded_engine_required`, and it is never an MCP tool. `file_register`, which lets a host record bytes it stored itself, ships separately. Contributed by @bradgessler (#8457).
 
 ### Itemized changes
 
-- `src/core/ops/files.ts`: `file_register` accepts only the upload layout path (`<page_slug>/<filename>`, or `unsorted/<first 8 hash chars>-<filename>`), refuses `page_not_found` for a page that does not exist or that the caller's read policy hides (member access and privacy, the private-pages hatch included), and records nothing unless the stored object matches. Rows record their store's backend and prefix, and the page and source they belong to, so purging that page finds them. Registering the same path again updates its row, and a registration that would move a row to another page, filename or source is refused `invalid_params`.
 - `src/core/storage/s3.ts`: `file_url` on an s3 store with an endpoint builds the URL from the endpoint the SDK resolves, instead of throwing.
-- A store that does not answer is the new `store_unavailable` code, never a file reported missing and never a row recorded.
+- A store that does not answer `file_verify` or `file_url` is the new `store_unavailable` code, never a file reported missing.
 - On an engine opened from settings, `delete_page` purge deletes a page's files from `settings.storage` too. A file it can't find there, or a store that doesn't answer, is reported in `blobs_remaining`, never as deleted; files an embedded engine's `file_upload` wrote before this release live in the process store, so delete those remaining paths by hand. Rows an embedded engine's `file_upload` wrote before this release point at the process store, so `file_url` and `file_verify` look for them in `settings.storage`.
 - `openEngine` refuses `engine_settings_invalid` for a `storage` setting missing a value its backend needs (so no backend falls back to a default path or environment credentials), an unknown field, a backend other than local or s3, or a prefix that is not one segment; an s3 store must name its endpoint, so no AWS_* variable or ~/.aws file picks it; `embeddedSettings()` reads back `hasSecret` instead of the secret.
 - `src/core/storage/local.ts` and `s3.ts` stream an object's size and SHA-256 (`hashObject`); other backends hash one download.
-- `test/file-register.test.ts`: real PGLite engines and a real local store; the unreachable store is a closed local port.
+- `test/embedded-file-store.test.ts`: real PGLite engines and a real local store; the unreachable store is a closed local port.
 
 ## [0.60.564.0] - 2026-11-03
 

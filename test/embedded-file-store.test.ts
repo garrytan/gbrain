@@ -1,5 +1,5 @@
 /**
- * GBRA-283 Wave C: file_register and file_verify, for an embedding host that stores a file's bytes itself.
+ * GBRA-283 Wave C: settings.storage and file_verify, for an embedding host that keeps a brain's files in its own store.
  * Contributed by @bradgessler (#8457); rewritten on master. Real PGLite engines and a real local storage backend.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
@@ -17,7 +17,7 @@ import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/privat
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
 
-const root = mkdtempSync(join(tmpdir(), 'gbrain-file-register-'));
+const root = mkdtempSync(join(tmpdir(), 'gbrain-embedded-file-store-'));
 const storageRoot = join(root, 'store');
 const storage: EngineStorageSettings = { backend: 'local', localPath: storageRoot };
 const unreachable: EngineStorageSettings = { backend: 's3', bucket: 'test', endpoint: 'http://127.0.0.1:1', region: 'us-east-1', accessKeyId: 'test-key', secretAccessKey: 'test-secret' };
@@ -35,6 +35,8 @@ function store(path: string, bytes: Buffer): void {
   writeFileSync(join(storageRoot, path), bytes);
 }
 const addPage = (engine: BrainEngine, slug: string) => importFromContent(engine, slug, ['---', 'type: note', `title: ${slug}`, '---', `# ${slug}`, '', 'Plan body.'].join('\n'));
+const addRow = (engine: BrainEngine, path: string, bytes: Buffer, pageSlug: string | null = null) =>
+  engine.executeRaw('INSERT INTO files (page_slug, filename, storage_path, content_hash, size_bytes) VALUES ($1, $2, $3, $4, $5)', [pageSlug, path.split('/').pop()!, path, sha(bytes), bytes.length]);
 const fileRows = async (engine: BrainEngine) => Number((await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM files'))[0]!.n);
 
 const engines: BrainEngine[] = [];
@@ -51,90 +53,10 @@ afterEach(async () => {
 });
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-describe('file_register', () => {
-  test('records one row for an object stored at the file_upload path, and registering again updates it', async () => {
-    const engine = await embedded();
-    await addPage(engine, 'notes/plan');
-    const bytes = Buffer.from('report bytes');
-    store('notes/plan/report.pdf', bytes);
-    const params = { storage_path: 'notes/plan/report.pdf', filename: 'report.pdf', page_slug: 'notes/plan', content_hash: sha(bytes), size_bytes: bytes.length, mime_type: 'application/pdf' };
-    expect(await run('file_register', ctxFor(engine), params)).toEqual({ status: 'registered', storage_path: 'notes/plan/report.pdf', size_bytes: bytes.length });
-    const next = Buffer.from('report bytes, revised');
-    store('notes/plan/report.pdf', next);
-    await run('file_register', ctxFor(engine), { ...params, content_hash: sha(next), size_bytes: next.length });
-    const rows = await engine.executeRaw<{ page_slug: string; content_hash: string; size_bytes: unknown }>('SELECT page_slug, content_hash, size_bytes FROM files');
-    expect(rows.map(r => ({ ...r, size_bytes: Number(r.size_bytes) }))).toEqual([{ page_slug: 'notes/plan', content_hash: sha(next), size_bytes: next.length }]);
-    expect(await run('file_register', ctxFor(engine, { dryRun: true }), { ...params, filename: 'other.pdf', storage_path: 'notes/plan/other.pdf' }))
-      .toEqual({ dry_run: true, action: 'file_register', storage_path: 'notes/plan/other.pdf' });
-    expect(await fileRows(engine)).toBe(1);
-  });
-
-  test('records the page and source a registration belongs to, so purging that page in a non-default source finds it', async () => {
-    const engine = await embedded();
-    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-a', 'source-a') ON CONFLICT DO NOTHING");
-    await importFromContent(engine, 'notes/plan', ['---', 'type: note', 'title: plan', '---', '# plan', '', 'Body.'].join('\n'), { sourceId: 'source-a' });
-    const bytes = Buffer.from('source-a bytes');
-    store('notes/plan/a.txt', bytes);
-    await run('file_register', ctxFor(engine, { sourceId: 'source-a' }), { storage_path: 'notes/plan/a.txt', filename: 'a.txt', page_slug: 'notes/plan', content_hash: sha(bytes), size_bytes: bytes.length });
-    const [page] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug='notes/plan' AND source_id='source-a'");
-    expect(await engine.executeRaw('SELECT source_id, page_id FROM files')).toEqual([{ source_id: 'source-a', page_id: page!.id }]);
-    expect((await failure(() => run('file_register', ctxFor(engine, { sourceId: 'default' }), { storage_path: 'notes/plan/a.txt', filename: 'a.txt', page_slug: 'notes/plan', content_hash: sha(bytes), size_bytes: bytes.length })))?.code).toBe('page_not_found');
-  });
-
-  test('refuses a registration that would move an existing row to another page, keeping the row as it was', async () => {
-    const engine = await embedded();
-    await addPage(engine, 'unsorted');
-    const old = Buffer.from('loose file');
-    const path = `unsorted/${sha(old).slice(0, 8)}-x.txt`;
-    store(path, old);
-    await run('file_register', ctxFor(engine), { storage_path: path, filename: 'x.txt', content_hash: sha(old), size_bytes: old.length });
-    const next = Buffer.from('bytes for the page');
-    store(path, next);
-    const err = await failure(() => run('file_register', ctxFor(engine), { storage_path: path, filename: `${sha(old).slice(0, 8)}-x.txt`, page_slug: 'unsorted', content_hash: sha(next), size_bytes: next.length }));
-    expect(err?.code).toBe('invalid_params');
-    expect(await engine.executeRaw('SELECT page_slug, filename, content_hash FROM files')).toEqual([{ page_slug: null, filename: 'x.txt', content_hash: sha(old) }]);
-  });
-
-  test('refuses a page that does not exist and an object it cannot read back, recording nothing', async () => {
-    const engine = await embedded();
-    const bytes = Buffer.from('orphan');
-    store('notes/none/o.txt', bytes);
-    expect((await failure(() => run('file_register', ctxFor(engine), { storage_path: 'notes/none/o.txt', filename: 'o.txt', page_slug: 'notes/none', content_hash: sha(bytes), size_bytes: bytes.length })))?.code).toBe('page_not_found');
-    await addPage(engine, 'notes/plan');
-    mkdirSync(join(storageRoot, 'notes/plan/dir.txt'), { recursive: true });
-    expect((await failure(() => run('file_register', ctxFor(engine), { storage_path: 'notes/plan/dir.txt', filename: 'dir.txt', page_slug: 'notes/plan', content_hash: sha(bytes), size_bytes: bytes.length })))?.code).toBe('store_unavailable');
-    expect(await fileRows(engine)).toBe(0);
-  });
-
-  test('refuses a path other than the file_upload layout, a missing or different object and bad inputs, recording nothing', async () => {
-    const engine = await embedded();
-    const bytes = Buffer.from('loose bytes');
-    const hash = sha(bytes);
-    store(`unsorted/${hash.slice(0, 8)}-scan.png`, bytes);
-    store('elsewhere/scan.png', bytes);
-    const base = { storage_path: `unsorted/${hash.slice(0, 8)}-scan.png`, filename: 'scan.png', content_hash: hash, size_bytes: bytes.length };
-    const cases: Array<[Record<string, unknown>, string, OperationContext?]> = [
-      [{ ...base, storage_path: 'elsewhere/scan.png' }, 'invalid_params'],
-      [{ ...base, storage_path: '../outside/scan.png' }, 'invalid_params'],
-      [{ ...base, content_hash: 'A'.repeat(64) }, 'invalid_params'],
-      [{ ...base, size_bytes: 1.5 }, 'invalid_params'],
-      [{ ...base, filename: '../scan.png' }, 'invalid_params'],
-      [{ ...base, size_bytes: bytes.length + 1 }, 'storage_error'],
-      [{ ...base, filename: 'other.png', storage_path: `unsorted/${hash.slice(0, 8)}-other.png` }, 'storage_error'],
-    ];
-    for (const [params, code, ctx] of cases) expect([params, (await failure(() => run('file_register', ctx ?? ctxFor(engine), params)))?.code]).toEqual([params, code]);
-    expect(await fileRows(engine)).toBe(0);
-    await run('file_register', ctxFor(engine), base);
-    expect(await fileRows(engine)).toBe(1);
-  });
-
+describe('embedded file store', () => {
   test('an engine opened without settings.storage refuses even when the process has a storage config', async () => {
     const engine = await embedded({ storage: undefined });
-    const bytes = Buffer.from('loose bytes');
-    store(`unsorted/${sha(bytes).slice(0, 8)}-scan.png`, bytes);
-    const params = { storage_path: `unsorted/${sha(bytes).slice(0, 8)}-scan.png`, filename: 'scan.png', content_hash: sha(bytes), size_bytes: bytes.length };
     const ctx = ctxFor(engine, { config: { storage } } as never);
-    expect((await failure(() => run('file_register', ctx, params)))?.code).toBe('storage_error');
     expect((await failure(() => run('file_verify', ctx, {})))?.code).toBe('storage_error');
     expect(await fileRows(engine)).toBe(0);
   });
@@ -143,12 +65,12 @@ describe('file_register', () => {
     const a = await embedded({ storage: { ...storage, prefix: 'brain-a' } });
     const b = await embedded({ storage: { ...storage, prefix: 'brain-b' } });
     await Promise.all([addPage(a, 'notes/plan'), addPage(b, 'notes/plan')]);
-    const bytes = Buffer.from('brain a bytes');
-    store('brain-a/notes/plan/a.txt', bytes);
-    const params = { storage_path: 'notes/plan/a.txt', filename: 'a.txt', page_slug: 'notes/plan', content_hash: sha(bytes), size_bytes: bytes.length };
-    await run('file_register', ctxFor(a), params);
-    expect((await failure(() => run('file_register', ctxFor(b), params)))?.code).toBe('storage_error');
-    expect(await fileRows(b)).toBe(0);
+    const source = join(root, 'a.txt');
+    writeFileSync(source, 'brain a bytes');
+    await run('file_upload', ctxFor(a), { path: source, page_slug: 'notes/plan' });
+    await addRow(b, 'notes/plan/a.txt', Buffer.from('brain a bytes'), 'notes/plan');
+    expect(existsSync(join(storageRoot, 'brain-a/notes/plan/a.txt'))).toBe(true);
+    expect(await run('file_verify', ctxFor(b), { slug: 'notes/plan' })).toEqual([{ storage_path: 'notes/plan/a.txt', page_slug: 'notes/plan', present: false }]);
     expect(await run('file_verify', ctxFor(a), { storage_path: 'notes/plan/a.txt' })).toEqual({ storage_path: 'notes/plan/a.txt', present: true, size_matches: true, hash_matches: true });
     const [{ metadata }] = await a.executeRaw<{ metadata: unknown }>('SELECT metadata FROM files');
     expect(metadata).toEqual({ storage: 'local', prefix: 'brain-a' });
@@ -206,13 +128,9 @@ describe('file_register', () => {
     expect([existsSync(join(processDir, 'notes/plan/old.txt')), existsSync(join(storageRoot, 'brain-a/notes/plan/new.txt'))]).toEqual([true, false]);
   });
 
-  test('a store that cannot be reached is store_unavailable and records nothing', async () => {
+  test('a store that cannot be reached is store_unavailable, never a file reported missing', async () => {
     const engine = await embedded({ storage: unreachable });
-    const bytes = Buffer.from('x');
-    const error = await failure(() => run('file_register', ctxFor(engine), { storage_path: `unsorted/${sha(bytes).slice(0, 8)}-a.txt`, filename: 'a.txt', content_hash: sha(bytes), size_bytes: 1 }));
-    expect(error?.code).toBe('store_unavailable');
-    expect(await fileRows(engine)).toBe(0);
-    await engine.executeRaw(`INSERT INTO files (filename, storage_path, content_hash, size_bytes) VALUES ('a.txt', 'unsorted/a.txt', $1, 1)`, [sha(bytes)]);
+    await addRow(engine, 'unsorted/a.txt', Buffer.from('x'));
     for (const params of [{}, { storage_path: 'unsorted/a.txt' }]) expect((await failure(() => run('file_verify', ctxFor(engine), params)))?.code).toBe('store_unavailable');
     expect((await failure(() => run('file_url', ctxFor(engine), { storage_path: 'unsorted/a.txt' })))?.code).toBe('store_unavailable');
   });
@@ -263,9 +181,9 @@ describe('hashing a stored object', () => {
     try {
       await withEnv({ AWS_ENDPOINT_URL_S3: `http://127.0.0.1:${envServer.port}`, AWS_ENDPOINT_URL: `http://127.0.0.1:${envServer.port}` }, async () => {
         const engine = await embedded({ storage: { ...unreachable, endpoint: `http://127.0.0.1:${settingsServer.port}` } });
-        const bytes = Buffer.from('s3');
-        const error = await failure(() => run('file_register', ctxFor(engine), { storage_path: `unsorted/${sha(bytes).slice(0, 8)}-s.txt`, filename: 's.txt', content_hash: sha(bytes), size_bytes: 2 }));
-        expect([error?.code, hits.env, hits.settings > 0]).toEqual(['storage_error', 0, true]);
+        await addRow(engine, 'unsorted/s.txt', Buffer.from('s3'));
+        const result = await run('file_verify', ctxFor(engine), { storage_path: 'unsorted/s.txt' }) as { present: boolean };
+        expect([result.present, hits.env, hits.settings > 0]).toEqual([false, 0, true]);
       });
     } finally {
       settingsServer.stop(true);
@@ -281,9 +199,7 @@ describe('file_verify', () => {
     const a = Buffer.from('alpha'), b = Buffer.from('bravo');
     store('notes/plan/a.txt', a);
     store('notes/plan/b.txt', b);
-    for (const [name, bytes] of [['a.txt', a], ['b.txt', b]] as const) {
-      await run('file_register', ctxFor(engine), { storage_path: `notes/plan/${name}`, filename: name, page_slug: 'notes/plan', content_hash: sha(bytes), size_bytes: bytes.length });
-    }
+    for (const [name, bytes] of [['a.txt', a], ['b.txt', b]] as const) await addRow(engine, `notes/plan/${name}`, bytes, 'notes/plan');
     rmSync(join(storageRoot, 'notes/plan/b.txt'));
     expect(await run('file_verify', ctxFor(engine), { slug: 'notes/plan' })).toEqual([
       { storage_path: 'notes/plan/a.txt', page_slug: 'notes/plan', present: true },
@@ -304,19 +220,13 @@ describe('who may call them', () => {
   });
   afterAll(() => cliEngine.disconnect());
 
-  test('an engine the CLI opens refuses both with embedded_engine_required and records nothing', async () => {
-    const engine = cliEngine;
-    const bytes = Buffer.from('cli');
-    store(`unsorted/${sha(bytes).slice(0, 8)}-c.txt`, bytes);
-    for (const [op, params] of [['file_register', { storage_path: `unsorted/${sha(bytes).slice(0, 8)}-c.txt`, filename: 'c.txt', content_hash: sha(bytes), size_bytes: 3 }], ['file_verify', {}]] as const) {
-      expect((await failure(() => run(op, ctxFor(engine), params)))?.code).toBe('embedded_engine_required');
-    }
-    expect(await fileRows(engine)).toBe(0);
+  test('an engine the CLI opens refuses file_verify with embedded_engine_required', async () => {
+    expect((await failure(() => run('file_verify', ctxFor(cliEngine), {})))?.code).toBe('embedded_engine_required');
   });
 
-  test('neither is listed or callable over MCP, stdio included', async () => {
+  test('file_verify is not listed or callable over MCP, stdio included', async () => {
     const engine = await embedded();
-    for (const op of ['file_register', 'file_verify']) {
+    for (const op of ['file_verify']) {
       for (const transport of ['stdio', 'http'] as const) expect(isCallable(operationsByName[op]!, { transport, surface: 'full', scopes: ['admin'], publishGates: {} })).toBe(false);
       const result = await dispatchToolCall(engine, op, {}, { remote: true, transport: 'stdio' } as never);
       expect(result.isError).toBe(true);
@@ -324,17 +234,13 @@ describe('who may call them', () => {
     }
   });
 
-  test('a caller under the read policy cannot attach to, replace or see a file on a page it cannot read; a local caller can', async () => {
+  test('a caller under the read policy cannot see or check a file on a page it cannot read; a local caller can', async () => {
     const engine = await embedded();
     await importFromContent(engine, 'notes/secret', ['---', 'type: note', 'title: Secret', 'visibility: private', '---', '# Secret', '', 'Private body.'].join('\n'));
     const bytes = Buffer.from('secret attachment');
     store('notes/secret/s.txt', bytes);
-    const params = { storage_path: 'notes/secret/s.txt', filename: 's.txt', page_slug: 'notes/secret', content_hash: sha(bytes), size_bytes: bytes.length };
+    await addRow(engine, 'notes/secret/s.txt', bytes, 'notes/secret');
     const remote = ctxFor(engine, { remote: true });
-    expect((await failure(() => run('file_register', remote, params)))?.code).toBe('page_not_found');
-    expect(await fileRows(engine)).toBe(0);
-    await run('file_register', ctxFor(engine), params);
-    expect((await failure(() => run('file_register', remote, params)))?.code).toBe('page_not_found');
     expect(await run('file_verify', remote, {})).toEqual([]);
     expect((await failure(() => run('file_verify', remote, { storage_path: 'notes/secret/s.txt' })))?.code).toBe('storage_error');
     expect(await run('file_verify', ctxFor(engine), {})).toEqual([{ storage_path: 'notes/secret/s.txt', page_slug: 'notes/secret', present: true }]);
@@ -345,12 +251,10 @@ describe('who may call them', () => {
     await importFromContent(engine, 'notes/members', ['---', 'type: note', 'title: Members', 'readable_by: [alice-example]', '---', '# Members', '', 'Member body.'].join('\n'));
     const bytes = Buffer.from('member attachment');
     store('notes/members/m.txt', bytes);
-    const params = { storage_path: 'notes/members/m.txt', filename: 'm.txt', page_slug: 'notes/members', content_hash: sha(bytes), size_bytes: bytes.length };
+    await addRow(engine, 'notes/members/m.txt', bytes, 'notes/members');
     await withEnv({ GBRAIN_REMOTE_PRIVATE_PAGES: '1' }, async () => {
       __resetPrivateVisibilityCacheForTests();
       const remote = ctxFor(engine, { remote: true });
-      expect((await failure(() => run('file_register', remote, params)))?.code).toBe('page_not_found');
-      await run('file_register', ctxFor(engine), params);
       expect(await run('file_verify', remote, { slug: 'notes/members' })).toEqual([]);
       expect((await failure(() => run('file_verify', remote, { storage_path: 'notes/members/m.txt' })))?.code).toBe('storage_error');
     });
