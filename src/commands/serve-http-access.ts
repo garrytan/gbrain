@@ -13,13 +13,12 @@ import { executeRawJsonb } from '../core/sql-query.ts';
  * gbrain access member add|disable|enable|link|unlink).
  */
 export function mountAdminAccess(app: Express, requireAdmin: RequestHandler, engine: BrainEngine): void {
-  const json = express.json();
 
   app.get('/admin/api/access/members', requireAdmin, async (req, res) => {
     await answer(res, false, async () => ({ members: await listMembers(engine, { includeRemoved: req.query.all === '1' || req.query.all === 'true' }) }));
   });
 
-  app.post('/admin/api/access/members', requireAdmin, json, async (req, res) => {
+  app.post('/admin/api/access/members', requireAdmin, express.json(), async (req, res) => {
     const { action, id } = req.body ?? {};
     if (action !== 'add' && action !== 'disable' && action !== 'enable') return refuse(res, 'action must be add, disable or enable.');
     if (action === 'add' && req.body.name !== undefined && typeof req.body.name !== 'string') return refuse(res, 'name must be a string.');
@@ -41,7 +40,7 @@ export function mountAdminAccess(app: Express, requireAdmin: RequestHandler, eng
     await answer(res, false, async () => ({ links: await listMemberLinks(engine, { member }) }));
   });
 
-  app.post('/admin/api/access/member-links', requireAdmin, json, async (req, res) => {
+  app.post('/admin/api/access/member-links', requireAdmin, express.json(), async (req, res) => {
     const { action, member, externalId, dryRun } = req.body ?? {};
     const system = req.body?.system ?? 'qm';
     if (action !== 'link' && action !== 'unlink') return refuse(res, 'action must be link or unlink.');
@@ -54,7 +53,7 @@ export function mountAdminAccess(app: Express, requireAdmin: RequestHandler, eng
     });
   });
 
-  app.post('/admin/api/access/attest', requireAdmin, json, async (req, res) => {
+  app.post('/admin/api/access/attest', requireAdmin, express.json(), async (req, res) => {
     const { clientId, attestActor, attestOps, dryRun } = req.body ?? {};
     if (typeof clientId !== 'string' || !clientId) return refuse(res, 'clientId required.');
     if (attestActor === undefined && attestOps === undefined) return refuse(res, 'Pass attestActor (qm or null) and/or attestOps.');
