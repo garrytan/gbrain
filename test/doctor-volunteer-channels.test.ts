@@ -10,6 +10,9 @@
  * Hermetic: stub engine + temp GBRAIN_HOME per test (the check reads the real
  * config for engine-aware guidance and the hook heartbeat for delivery
  * reconciliation — both must come from the temp home, never this machine's).
+ * DATABASE_URL and GBRAIN_DATABASE_URL are cleared too: loadConfig lets either
+ * override a PGLite config, so a Postgres arm run would turn the PGLite cases
+ * into Postgres ones.
  */
 import { describe, test, expect } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
@@ -50,10 +53,14 @@ function tmpHome(engine: 'pglite' | 'postgres'): string {
   return parent;
 }
 
+function homeEnv(home: string): Record<string, string | undefined> {
+  return { GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined };
+}
+
 describe('checkVolunteerChannels', () => {
   test('groups active channels with counts + last_fired; status ok', async () => {
     const home = tmpHome('pglite');
-    await withEnv({ GBRAIN_HOME: home }, async () => {
+    await withEnv(homeEnv(home), async () => {
       const check = await checkVolunteerChannels(
         stubEngine([
           { channel: 'claude-code', n: 12, last_fired: '2026-08-10T10:00:00Z' },
@@ -73,7 +80,7 @@ describe('checkVolunteerChannels', () => {
 
   test('quiet week on PGLite: registration/restart diagnosis; status ok (info-only)', async () => {
     const home = tmpHome('pglite');
-    await withEnv({ GBRAIN_HOME: home }, async () => {
+    await withEnv(homeEnv(home), async () => {
       const check = await checkVolunteerChannels(stubEngine([]));
       expect(check.status).toBe('ok');
       expect(check.message).toContain('no push-context activity');
@@ -84,7 +91,7 @@ describe('checkVolunteerChannels', () => {
 
   test('quiet week on Postgres: engine-aware message — never sends the operator chasing hook registration (red-team)', async () => {
     const home = tmpHome('postgres');
-    await withEnv({ GBRAIN_HOME: home }, async () => {
+    await withEnv(homeEnv(home), async () => {
       const check = await checkVolunteerChannels(stubEngine([]));
       expect(check.status).toBe('ok');
       expect(check.message).toContain('PGLite serve socket');
@@ -102,7 +109,7 @@ describe('checkVolunteerChannels', () => {
       ...Array.from({ length: 2 }, () => ({ ts: new Date().toISOString(), event: 'user-prompt', outcome: 'ok' })),
     ];
     writeFileSync(join(hooksDir, 'heartbeat.jsonl'), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
-    await withEnv({ GBRAIN_HOME: home }, async () => {
+    await withEnv(homeEnv(home), async () => {
       const check = await checkVolunteerChannels(
         stubEngine([{ channel: 'claude-code', n: 10, last_fired: '2026-08-11T09:00:00Z' }]),
       );
@@ -116,7 +123,7 @@ describe('checkVolunteerChannels', () => {
 
   test('pre-v117 brain (table absent) → ok with a note, never a throw', async () => {
     const home = tmpHome('pglite');
-    await withEnv({ GBRAIN_HOME: home }, async () => {
+    await withEnv(homeEnv(home), async () => {
       const check = await checkVolunteerChannels(stubEngine(new Error('relation "context_volunteer_events" does not exist')));
       expect(check.status).toBe('ok');
       expect(check.message).toContain('pre-v117');
@@ -127,7 +134,7 @@ describe('checkVolunteerChannels', () => {
 
   test('transient failure is NOT misreported as pre-v117 (multi-specialist finding)', async () => {
     const home = tmpHome('pglite');
-    await withEnv({ GBRAIN_HOME: home }, async () => {
+    await withEnv(homeEnv(home), async () => {
       const check = await checkVolunteerChannels(stubEngine(new Error('connection reset by peer')));
       expect(check.status).toBe('ok');
       expect(check.message).not.toContain('pre-v117');
@@ -138,7 +145,7 @@ describe('checkVolunteerChannels', () => {
 
   test('engine-parity row shapes: string counts and Date/null last_fired coerce correctly', async () => {
     const home = tmpHome('pglite');
-    await withEnv({ GBRAIN_HOME: home }, async () => {
+    await withEnv(homeEnv(home), async () => {
       const check = await checkVolunteerChannels(
         stubEngine([
           { channel: 'op', n: '7', last_fired: null },
@@ -155,7 +162,7 @@ describe('checkVolunteerChannels', () => {
 
   test('source isolation (cross-model P1): a scoped caller\'s query filters on its authorized sources', async () => {
     const home = tmpHome('pglite');
-    await withEnv({ GBRAIN_HOME: home }, async () => {
+    await withEnv(homeEnv(home), async () => {
       const captured: Array<{ sql: string; params: unknown[] }> = [];
       await checkVolunteerChannels(stubEngine([], captured), { sourceIds: ['team-a'] });
       expect(captured[0].sql).toContain('source_id = ANY');

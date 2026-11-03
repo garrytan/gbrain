@@ -18,6 +18,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { carryHoldsToClassicState, holdCarryBlocked, planHoldCarry } from '../src/core/connectors/item-holds-store.ts';
 import { carryLegacyFailCounts } from '../src/core/connectors/item-holds.ts';
 import { connectorCheckpointKey, connectorIdentity } from '../src/core/persistence/connector-identity.ts';
+import { connectorDbCursorKey, readConnectorDbCursor, writeConnectorDbCursor } from '../src/core/connectors/db-cursor.ts';
 
 let engine: PGLiteEngine;
 let dir: string;
@@ -86,5 +87,28 @@ describe('carrying connector holds into classic state', () => {
     expect(existsSync(stateFile())).toBe(false);
     // The owning host carries them.
     expect(holdCarryBlocked((await planHoldCarry(engine, other))[0])).toBe(false);
+  });
+});
+
+describe('carrying holds of a database-recorded connector source', () => {
+  test('a slack source with no checkout takes its managed holds into its database cursor, other state kept', async () => {
+    const slack = { kind: 'slack', s_channels: 'CGENERAL01', s_record: 'database' };
+    await engine.executeRaw('INSERT INTO sources (id, name, local_path, config) VALUES ($1, $1, NULL, $2::text::jsonb)', ['slack-a', JSON.stringify(slack)]);
+    try {
+      const [row] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text AS incarnation FROM sources WHERE id='slack-a'");
+      const identity = connectorIdentity('slack', slack, null);
+      await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-connector',$1,$2::text::jsonb)`,
+        [connectorCheckpointKey('slack-a', row.incarnation, identity), JSON.stringify([{ state: { channels: {}, item_holds: held() } }])]);
+      const cursor = connectorDbCursorKey('slack-a', row.incarnation, identity);
+      await writeConnectorDbCursor(engine, cursor, { channels: { CGENERAL01: { committed_to: '2026-10-01T00:00:00.000Z' } } });
+      const carried = await carryHoldsToClassicState(engine, HOST);
+      expect(carried.filter(c => c.source_id === 'slack-a').map(c => c.items)).toEqual([1]);
+      const state = (await readConnectorDbCursor(engine, cursor)).state as Record<string, unknown>;
+      expect(state.channels).toEqual({ CGENERAL01: { committed_to: '2026-10-01T00:00:00.000Z' } });
+      expect(state.item_holds).toEqual(JSON.parse(JSON.stringify(held())));
+    } finally {
+      await engine.executeRaw("DELETE FROM op_checkpoints WHERE fingerprint LIKE '%slack-a%'");
+      await engine.executeRaw("DELETE FROM sources WHERE id='slack-a'");
+    }
   });
 });

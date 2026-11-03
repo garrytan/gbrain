@@ -1,5 +1,5 @@
 import { fenceClaimHashes, overlayWithdrawalBody } from '../facts/withdrawal-overlay.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import type { ReadQuery } from '../search/read-enrichment.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { rowToPage } from '../utils.ts';
@@ -82,7 +82,7 @@ async function readSnapshotStatement(query: ReadQuery, slug: string, opts?: Page
     filters.push(`p.source_id=$${params.length}`);
   }
   if (!opts?.includeDeleted) filters.push('p.deleted_at IS NULL');
-  if (opts?.excludePrivate) filters.push(privatePagesFilterFragment('p'));
+  if (opts?.excludePrivate) filters.push(privatePagesFilterForCaller('p'));
   if (opts?.requireLiveSource) filters.push('EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived)');
   params.push(opts?.sourceIds?.[0] ?? 'default');
   const and = filters.map(filter => ` AND ${filter}`).join('');

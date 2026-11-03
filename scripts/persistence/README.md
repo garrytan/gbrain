@@ -316,9 +316,11 @@ revision and disclose skipped cells.
 on PGLite and, with an explicit safe `DATABASE_URL`, isolated PostgreSQL databases.
 It covers stale preconditions, current/original grants, private facts, retained
 backups, ordinary mutations after repair, and competing publications.
-`test/reconcile-owner-journey.serial.test.ts` drives real CLI requests through
-HTTP and stdio PGLite owners before and after activation, restarts the owner, and
-independently reads the newly remembered private fact and provenance.
+`test/reconcile-owner-journey.serial.test.ts` (stdio) and
+`test/reconcile-owner-journey-http.serial.test.ts` (HTTP) drive real CLI requests
+through PGLite owners before and after activation, restart the owner, and
+independently read the newly remembered private fact and provenance
+(`test/helpers/reconcile-owner-journey.ts`).
 
 `test/reconcile-crash-*.slow.test.ts` and `test/e2e/reconcile-crash*.test.ts` kill real
 processes at all eight publication boundaries with activation off/on. PostgreSQL

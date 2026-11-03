@@ -34,7 +34,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { SearchResult } from '../types.ts';
 import { boundedBodyPrefixSql, pageLeadSource, projectedLead } from '../page-window/bounded-lead.ts';
 import { type IdentityTierOpts, isExcludedIdentity } from './alias-hop.ts';
-import { isPrivatePage } from './private-visibility.ts';
+import { isPrivatePageForCaller } from './private-visibility.ts';
 
 export type CollapseReason = 'twin' | 'redirect' | 'family';
 export interface CollapsedRef { slug: string; source_id?: string; reason: CollapseReason }
@@ -204,7 +204,7 @@ async function readTarget(engine: BrainEngine, sourceId: string, slug: string, s
   if (opts.sourceId && opts.sourceId !== sourceId) return null;
   try {
     const page = await engine.getPage(slug, { sourceId, excludePrivate: opts.excludePrivate });
-    if (!page || (opts.excludePrivate && isPrivatePage(page))) return null;
+    if (!page || (opts.excludePrivate && isPrivatePageForCaller(page))) return null;
     const lead = await projectedLead(engine, { slug: page.slug, source_id: page.source_id ?? sourceId, compiled_truth: await pageLeadSource(engine, page) });
     if (!lead.trim()) return null;
     return {

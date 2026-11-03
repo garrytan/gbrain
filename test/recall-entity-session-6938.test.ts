@@ -5,6 +5,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { runRecall } from '../src/commands/recall.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 
 const ENTITY = 'people/session-example';
 const SESSION = "wanted-'%_session";
@@ -25,8 +26,8 @@ for (const backend of testBackends()) describe(`entity/session intersection (${b
     }
     await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('other-source', 'Other source')");
     const seed = (fact: string, session: string, date: string, extra: Partial<NewFact> = {}, source = 'default') =>
-      engine.insertFact({ fact, kind: 'fact', entity_slug: ENTITY, source: 'test', source_session: session,
-        valid_from: new Date(date), visibility: 'world', ...extra }, { source_id: source });
+      asOwner(engine, tx => tx.insertFact({ fact, kind: 'fact', entity_slug: ENTITY, source: 'test', source_session: session,
+        valid_from: new Date(date), visibility: 'world', ...extra }, { source_id: source }));
     await seed(WANTED, SESSION, '2020-01-01');
     await seed(OTHER, 'other-session', '2026-01-01');
     await seed('wanted session but another entity', SESSION, '2025-01-01', { entity_slug: 'people/someone-else' });

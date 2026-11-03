@@ -44,15 +44,15 @@ async function resetEffect(engine: BrainEngine, id: number, data: Record<string,
       claim_expires_at=NULL,error_code=NULL,outcome=NULL WHERE id=$1`, [id, JSON.stringify(data)]);
   });
 }
-/** Runs one effect attempt at a time with every other effect deferred. */
-async function runOnly(engine: BrainEngine, ctx: OperationContext, id: number, times = 1) {
+/** Runs one effect attempt at a time with every other effect deferred; `lockWaitMs` shortens a contended worktree wait. */
+async function runOnly(engine: BrainEngine, ctx: OperationContext, id: number, times = 1, lockWaitMs?: number) {
   await disposePersistenceConsumer(engine);
   for (let i = 0; i < times; i++) {
     await engine.transaction(async tx => {
       await declarePersistenceProtocol(tx);
       await tx.executeRaw("UPDATE persistence_effects SET next_attempt_at=CASE WHEN id=$1 THEN now() ELSE now()+interval '1 hour' END", [id]);
     });
-    await runPersistenceEffects(engine, ctx.config, { hostId: localHostId(), limit: 1 });
+    await runPersistenceEffects(engine, ctx.config, { hostId: localHostId(), limit: 1, lockWaitMs });
   }
 }
 const gitRepo = (root: string) => { writeFileSync(join(root, '.gitignore'), '\n'); durableGitRepo(root, ['.gitignore']); };
@@ -182,7 +182,7 @@ export async function healthyScanAndContentionNeverPark(databaseUrl?: string) {
     const scan = await gitEffect(engine, slugs[0]);
     await resetEffect(engine, scan.id, { source_scan: true });
     const lock = await acquireWorktree((await getWorktreeBinding(engine, 'default', localHostId()))!);
-    try { await runOnly(engine, ctx, scan.id, 7); }
+    try { await runOnly(engine, ctx, scan.id, 7, 50); }
     finally { await lock!.release(); }
     const busy = await gitEffect(engine, slugs[0]);
     expect(busy).toMatchObject({ state: 'queued', error_code: 'writer_busy' });

@@ -110,4 +110,14 @@ describe('gbrain book-mirror — source file invariants', () => {
     // contract by adding the wrong fields.
     expect(source).toContain('viaSubagent intentionally omitted');
   });
+
+  // gstack /ship Step 9 pass 1 (testing specialist). buildAssembledPage is private, so this pins it the way the
+  // invariants above pin the trust contract.
+  // Value: protects=each chapter analysis (model output over an untrusted book) is neutralized before assembly (GBRA-221);
+  //   fails_when=the neutralizeOutsideText call on a.result is removed; why_new=the GBRA-221 renderer suite has no
+  //   book-mirror case; seam=none; no_claim=the assembled page's parse (source text only).
+  it('neutralizes each chapter analysis before assembling the page (GBRA-221)', () => {
+    expect(source).toContain("import { neutralizeOutsideText } from '../core/outside-content.ts';");
+    expect(source).toContain('.map(a => neutralizeOutsideText(a.result.trim()))');
+  });
 });

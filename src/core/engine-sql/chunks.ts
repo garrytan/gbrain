@@ -34,7 +34,7 @@ import {
   EmbeddingColumnNotRegisteredError,
 } from '../search/embedding-column.ts';
 import { chunkDocumentOrder, chunkGenerationFilter, chunkManifestJoin, chunkVisibleFilter, chunkWriteInvalidations, currentTextProjectionFilter, movableChunkSql, requiresSafeChunks, safeChunksFilter } from '../search/safe-chunks.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import { splitEmbeddingSignature, lockEmbeddingSources } from '../embedding-invalidation.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from '../embed-skip.ts';
 import { QUARANTINE_FILTER_FRAGMENT } from '../quarantine.ts';
@@ -401,7 +401,7 @@ function chunkReadWhere(
     ? sqlFragment`p.source_id = ANY(${scope.sourceIds}::text[])`
     : sqlFragment`p.source_id = ${scope.sourceId}`;
   return sqlFragment`p.slug = ${slug} AND ${scopeSql}
-          ${opts?.excludePrivate ? trustedSql(`AND ${privatePagesFilterFragment('p')}`) : sqlFragment``}
+          ${opts?.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('p')}`) : sqlFragment``}
           AND ${trustedSql(opts?.includeUnsealed ? chunkGenerationFilter('p', 'cc', opts.chunkManifest ?? true) : chunkVisibleFilter('p', 'cc'))}
           ${requiresSafeChunks(opts) ? trustedSql(`AND ${safeChunksFilter('p')}`) : sqlFragment``}`;
 }
@@ -1122,7 +1122,7 @@ export async function getChunkWindows(exec: ScopedRead, requests: ChunkWindowReq
   const scopeSql = opts.sourceIds && opts.sourceIds.length > 0
     ? sqlFragment`AND p.source_id = ANY(${opts.sourceIds}::text[])`
     : opts.sourceId ? sqlFragment`AND p.source_id = ${opts.sourceId}` : sqlFragment``;
-  const privateSql = opts.excludePrivate ? trustedSql(`AND ${privatePagesFilterFragment('p')}`) : sqlFragment``;
+  const privateSql = opts.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('p')}`) : sqlFragment``;
   const safeSql = requiresSafeChunks(opts) ? trustedSql(`AND ${safeChunksFilter('p')}`) : sqlFragment``;
   const { rows } = await exec.run(sqlFragment`
     WITH req AS (

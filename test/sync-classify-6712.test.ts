@@ -63,7 +63,7 @@ function referenceAfterHold(s: SyncPathState): SyncClass {
     case 'FdP': case 'Fdp': return adoptable ? 'adopt' : 'db_ahead';
     case 'fDP': case 'fdP': return adoptable ? 'adopt' : 'import';
     case 'fdp':
-      if (s.record?.revision == null && s.level === s.baseline) return 'legacy_unverified';
+      if (s.record?.revision == null && s.level === s.baseline && !s.hold?.unscreened && !s.hold?.retried) return 'legacy_unverified';
       if (s.keepDb && s.mode === 'committed' && s.dirty === 'clean') return 'keep_db';
       return 'drift';
     default: throw new Error(`unreachable region ${region}`);
@@ -110,6 +110,9 @@ describe('rows (v3.2 §2.3)', () => {
     ['16 import with proof', { tree: 'B', level: 'B' }, 'import', false],
     ['16 a new file', { tree: 'B', level: 'B', page: null, record: null }, 'import', false],
     ['17 legacy_unverified', { tree: 'B', level: 'B', baseline: 'B', record: null, page: { live: true, revision: 'R2', originMatches: true } }, 'legacy_unverified', true],
+    ['17 a hold someone asked to re-screen at a legacy_unverified level re-runs as drift (#7931)', { tree: 'B', level: 'B', baseline: 'B', record: null, page: { live: true, revision: 'R2', originMatches: true }, hold: { atLevel: true, rescreenDue: false, retried: true } }, 'drift', false],
+    ['17 an older unscreened unknown-side hold at a legacy_unverified level re-runs as drift (#7199)', { tree: 'B', level: 'B', baseline: 'B', record: null, page: { live: true, revision: 'R2', originMatches: true }, hold: { atLevel: true, rescreenDue: true, retried: false, unscreened: true } }, 'drift', false],
+    ['17 any other hold at a legacy_unverified level stands', { tree: 'B', level: 'B', baseline: 'B', record: null, page: { live: true, revision: 'R2', originMatches: true }, hold: { atLevel: true, rescreenDue: true, retried: false } }, 'held', true],
     ['18 keep_db', { tree: 'B', level: 'B', keepDb: true, page: { live: true, revision: 'R2', originMatches: true } }, 'keep_db', false],
     ['19 drift (both)', { tree: 'B', level: 'B', page: { live: true, revision: 'R2', originMatches: true } }, 'drift', false],
   ];
@@ -265,6 +268,11 @@ describe('pass kind (v3.2 §2.2)', () => {
   test('probe 49 (pure): a re-screen-due hold alone runs a hold-only round, not a full round', () => {
     expect(syncPassKind({ ...idle, rescreenDueHold: true }).kind).toBe('hold_only');
     expect(syncPassKind({ ...idle, rescreenDueHold: true, requestNewer: true }).kind).toBe('full');
+  });
+  // Value: protects=a conversion strict pass (fullRound) reads the whole level without opening a --full episode; fails_when=fullRound stops forcing a full round or opens an episode; why_new=the table below holds no fullRound row; seam=none; no_claim=end-to-end no-reimport (git-canonical-conversion-strict-pass-7866.test.ts)
+  test('#7866: fullRound alone forces a full round for the converged head, with full_round_due and without open_episode', () => {
+    expect(syncPassKind({ ...idle, fullRound: true })).toEqual({ kind: 'full', blockers: ['full_round_due'] });
+    expect(syncPassKind({ ...idle, fullRound: false })).toEqual({ kind: 'idle', blockers: [] });
   });
   test('every obligation disqualifies idle (probe 30: --full or a retry at an unchanged HEAD runs a full round)', () => {
     for (const patch of [{ full: true }, { openEpisode: true }, { retryRow: true }, { owedTail: true }, { notConvergedStreak: 1 }, { mismatchStreak: 2 },

@@ -103,6 +103,34 @@ describe('Storage tiering on PGLite — full lifecycle (D8 + D4)', () => {
     }
   });
 
+  test('#8007: getStorageStatus names a db_only declaration that resolved no directory; a one-line flow list resolves', async () => {
+    try {
+      writeFileSync(join(tmp, 'gbrain.yml'), 'storage:\n  db_only: [media/x/,\n    media/y/]\n');
+      const unresolved = await getStorageStatus(engine, tmp);
+      expect(unresolved.warnings.some(w => w.includes('storage.db_only but no directory resolved'))).toBe(true);
+      expect(formatStorageStatusHuman(unresolved)).toContain('db_only: [a/, b/]');
+      writeFileSync(join(tmp, 'gbrain.yml'), 'storage:\n  db_only: [media/x/, "media/y/"]\n');
+      const resolved = await getStorageStatus(engine, tmp);
+      expect(resolved.config!.db_only).toEqual(['media/x/', 'media/y/']);
+      expect(resolved.warnings.some(w => w.includes('no directory resolved'))).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('#8015: getStorageStatus names a deprecated supabase_only list canonical keys ignore, only its uncovered dirs', async () => {
+    try {
+      writeFileSync(join(tmp, 'gbrain.yml'), 'storage:\n  db_only: [media/x/]\n  supabase_only:\n    - media/x/\n    - archive/\n');
+      const status = await getStorageStatus(engine, tmp);
+      expect(status.warnings.filter(w => w.includes('deprecated supabase_only'))).toHaveLength(1);
+      expect(status.warnings.find(w => w.includes('deprecated supabase_only'))).toContain('ignores it: archive/.');
+      writeFileSync(join(tmp, 'gbrain.yml'), 'storage:\n  db_only: [media/x/, archive/]\n  supabase_only:\n    - archive/\n');
+      expect((await getStorageStatus(engine, tmp)).warnings.some(w => w.includes('deprecated supabase_only'))).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
   test('getStorageStatus scopes page checks to the source that owns the repo path (#4763)', async () => {
     try {
       writeGbrainYml();

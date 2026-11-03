@@ -285,9 +285,15 @@ describe('defaultCommandRunner (real spawn, hermetic commands only)', () => {
     expect(missing.status).toBeNull();
     expect(missing.stdout).toBe('');
     expect(missing.stderr).toMatch(/ENOENT|no such file/i);
-    const killed = await defaultCommandRunner(['sh', '-c', 'sleep 5'], { timeoutMs: 50 });
+    // `sleep` itself, not `sh -c 'sleep 5'`: dash (Ubuntu's /bin/sh) forks the
+    // sleep, so the SIGTERM ends only the shell and the orphan holds the pipes
+    // open for the full 5s. The SIGTERM at 50ms must end the call well before
+    // the 3s SIGKILL grace.
+    const killStarted = Date.now();
+    const killed = await defaultCommandRunner(['sleep', '5'], { timeoutMs: 50 });
     expect(killed.status).toBeNull();
     expect(killed.stderr).toContain('(timed out after 50ms)');
+    expect(Date.now() - killStarted).toBeLessThan(3_000);
     // inherit (login / installer): nothing is captured, the child's status still comes back
     expect(await defaultCommandRunner(['sh', '-c', 'exit 7'], { inherit: true, stdoutToStderr: true })).toEqual({ status: 7, stdout: '', stderr: '' });
   });

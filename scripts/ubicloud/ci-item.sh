@@ -13,12 +13,15 @@
 #   e2e      scripts/run-e2e.sh FILE against this slot's own postgres + pgbouncer
 #            (backend-matrix files also run through the slot's pgbouncer)
 #   verify   check-bun-test-timeout.sh + bun run verify (no FILE)
+#   heavy    bun run test:heavy against this slot's gbrain_test, as
+#            heavy-tests.yml runs it (no FILE; .gstack/ubicloud.json's verify)
 #   gitleaks the ci:local host scans (no FILE)
 #
 # Every item is bracketed by marker lines the orchestrator parses:
 #   __ubi_item_begin__ <lane> <file>
 #   __ubi_item__ rc=<exit> ms=<duration> lane=<lane> file=<file>
 #   __ubi_load__ load1=<1-minute load average> vcpus=<nproc>   (the VM's load as the item ended)
+# The script exits with the highest item exit code, so a one-item run (.gstack/ubicloud.json's verify) carries its result.
 set -uo pipefail
 
 cd "$(dirname "$0")/../.."
@@ -62,6 +65,11 @@ run_item() {
       bash scripts/run-e2e.sh "$1"
       ;;
     verify) bash scripts/check-bun-test-timeout.sh && bun run verify ;;
+    heavy)
+      env -u GBRAIN_TEST_TIMEOUT_MULTIPLIER -u GBRAIN_TEST_EXPORT_SCALE_PAGES \
+        DATABASE_URL="$pg/gbrain_test" GBRAIN_TEST_ALLOW_DATABASE_URL=1 \
+        bun run test:heavy
+      ;;
     gitleaks)
       bash scripts/test-gitleaks-config.sh &&
         bash scripts/scan-worktree-secrets.sh &&
@@ -71,6 +79,7 @@ run_item() {
   esac
 }
 
+worst=0
 items=("$@")
 [ "${#items[@]}" -gt 0 ] || items=("-")
 for item in "${items[@]}"; do
@@ -78,6 +87,8 @@ for item in "${items[@]}"; do
   start=$(date +%s%3N)
   run_item "$item" 2>&1
   rc=$?
+  [ "$rc" -gt "$worst" ] && worst=$rc
   echo "__ubi_item__ rc=$rc ms=$(( $(date +%s%3N) - start )) lane=$lane file=$item"
   echo "__ubi_load__ load1=$(cut -d' ' -f1 /proc/loadavg) vcpus=$(nproc)"
 done
+exit "$worst"

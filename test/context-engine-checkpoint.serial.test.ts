@@ -29,21 +29,29 @@ describe('checkpoint compaction (cathedral 5)', () => {
 
   const { existsSync, readdirSync, readFileSync } = require('node:fs') as typeof import('node:fs');
   let home: string | undefined;
-  let savedHome: string | undefined;
   let servers: Array<{ close: () => void }> = [];
+  // The sandboxed home alone decides the engine: loadConfig lets an ambient
+  // DATABASE_URL / GBRAIN_DATABASE_URL override it, which would give rung 3 a
+  // Postgres engine instead of none or the home's PGLite IPC socket.
+  const SAVED: Record<string, string | undefined> = {};
+  const ENV_KEYS = ['GBRAIN_HOME', 'DATABASE_URL', 'GBRAIN_DATABASE_URL'];
 
   beforeEach(() => {
     __resetSdkLoadStateForTests();
-    savedHome = process.env.GBRAIN_HOME;
+    for (const k of ENV_KEYS) SAVED[k] = process.env[k];
     home = mkdtempSync(join(tmpdir(), 'gb-ce-ckpt-'));
     process.env.GBRAIN_HOME = home;
+    delete process.env.DATABASE_URL;
+    delete process.env.GBRAIN_DATABASE_URL;
   });
 
   afterEach(() => {
     for (const s of servers) { try { s.close(); } catch { /* noop */ } }
     servers = [];
-    if (savedHome === undefined) delete process.env.GBRAIN_HOME;
-    else process.env.GBRAIN_HOME = savedHome;
+    for (const k of ENV_KEYS) {
+      if (SAVED[k] === undefined) delete process.env[k];
+      else process.env[k] = SAVED[k];
+    }
     if (home) rmSync(home, { recursive: true, force: true });
     home = undefined;
     if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });

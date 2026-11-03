@@ -1,5 +1,5 @@
 /**
- * test.yml's unit shards run inside the `test` job's 22-minute timeout. A
+ * test.yml's unit shards run inside the `test` job's timeout-minutes. A
  * shard's mined weight must fit that timeout twice over, after setup, with a
  * minute to spare: master shards ran up to 1.4x their prediction, and shard
  * 5/10 of run 39121354115 was cancelled at the timeout with no failing test.

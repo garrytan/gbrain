@@ -23,7 +23,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
-import { privateLinkOriginFilterFragment, privatePagesFilterFragment, privatePagesFilterFragmentFast } from '../search/private-visibility.ts';
+import { privatePagesFilterFastForCaller, privatePagesFilterForCaller, privateLinkOriginFilterForCaller } from '../search/private-visibility.ts';
 import { isIdentityUnionEnabled, listEntityIdentities } from '../entity-identity.ts';
 import { stripTakesFence } from '../takes-fence.ts';
 import { stripFactsFence } from '../facts-fence.ts';
@@ -98,9 +98,9 @@ async function targetPages(engine: BrainEngine, scope: ReferrerScope, union?: bo
 /** The caller's read filters, shared by the single-target CTE and its batched variant. */
 function referrerFilters(scope: Pick<ReferrerScope, 'excludePrivate' | 'eligibility' | 'includeQuarantined'>) {
   return {
-    targetPriv: scope.excludePrivate ? ` AND ${privatePagesFilterFragment('t')}` : '',
-    linkPriv: scope.excludePrivate ? ` AND ${privateLinkOriginFilterFragment('l')}` : '',
-    pagePriv: scope.excludePrivate ? ` AND ${privatePagesFilterFragmentFast('f')}` : '',
+    targetPriv: scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('t')}` : '',
+    linkPriv: scope.excludePrivate ? ` AND ${privateLinkOriginFilterForCaller('l')}` : '',
+    pagePriv: scope.excludePrivate ? ` AND ${privatePagesFilterFastForCaller('f')}` : '',
     pageTrust: ` AND ${pageEligibleSql('f', scope.eligibility)}${scope.includeQuarantined ? '' : ` AND ${quarantineFilterFragment('f')}`}`,
   };
 }
@@ -358,7 +358,7 @@ export async function readPageStatusByRef(engine: BrainEngine, refs: Array<{ sou
   scope: { excludePrivate: boolean; includeQuarantined?: boolean }): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   if (!refs.length) return out;
-  const priv = scope.excludePrivate ? ` AND ${privatePagesFilterFragment('p')}` : '';
+  const priv = scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '';
   const quarantine = scope.includeQuarantined ? '' : ` AND ${quarantineFilterFragment('p')}`;
   const rows = await engine.executeRaw<{ source_id: string; slug: string; status: unknown }>(
     `SELECT p.source_id, p.slug, p.frontmatter->'status' AS status
@@ -385,8 +385,8 @@ export async function readRecordMetadata(engine: BrainEngine, pageIds: number[],
   scope: Pick<ReferrerScope, 'referrerSources' | 'excludePrivate' | 'includeQuarantined'>): Promise<Map<number, RecordMetadata>> {
   const out = new Map<number, RecordMetadata>();
   if (!pageIds.length) return out;
-  const linkPriv = scope.excludePrivate ? ` AND ${privateLinkOriginFilterFragment('l')}` : '';
-  const targetPriv = scope.excludePrivate ? ` AND ${privatePagesFilterFragment('t')}` : '';
+  const linkPriv = scope.excludePrivate ? ` AND ${privateLinkOriginFilterForCaller('l')}` : '';
+  const targetPriv = scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('t')}` : '';
   const targetQuarantine = scope.includeQuarantined ? '' : ` AND ${quarantineFilterFragment('t')}`;
   const [status, links] = await Promise.all([
     engine.executeRaw<{ id: number; status: unknown }>(`SELECT id, frontmatter->'status' AS status FROM pages WHERE id = ANY($1::int[])`, [pageIds]),

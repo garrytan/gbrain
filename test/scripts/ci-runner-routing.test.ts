@@ -48,6 +48,8 @@ describe('CI runner routing', () => {
     }
     expect(load('e2e.yml').jobs.tier1['runs-on']).toBe(normal);
     expect(load('e2e.yml').jobs['coverage-full-serial']['runs-on']).toBe(pooled);
+    // Graduation files run one at a time: 712-958 s whole on 8 vCPUs vs 751-770 s on 16 (GBRA-135 pilot).
+    expect(load('e2e.yml').jobs['tier1-graduation']['runs-on']).toBe(pooled);
     expect(load('persistence-validation.yml').jobs['read-performance']['runs-on']).toBe(single);
     expect(load('persistence-validation.yml').jobs.invariants['runs-on']).toBe(single);
     expect(load('persistence-validation.yml').jobs.reconciliation['runs-on']).toBe(single);

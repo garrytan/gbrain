@@ -244,7 +244,7 @@ function checkContent(content: string, slugPath: string | undefined, importable:
   const errors = (parsed.errors ?? []).map(e => ({ code: e.code, message: e.message, line: e.line, ...(e.recoverable ? { recoverable: true } : {}) }));
   const warnings = (parsed.warnings ?? []).map(w => ({ code: w.code, message: w.message, key: w.key, line: w.line,
     ...(w.original !== undefined ? { original: w.original } : {}), ...(w.replacement !== undefined ? { replacement: w.replacement } : {}) }));
-  const screen = importable ? screenImportContent({ content, path: slugPath ?? 'stdin.md', expectedSlug }) : null;
+  const screen = importable ? screenImportContent({ content, path: slugPath ?? 'stdin.md', expectedSlug, holdNoncanonicalPrivate: true }) : null;
   const hold = screen?.status === 'refused' ? screen.refusal : null;
   return {
     errors, warnings, hold,

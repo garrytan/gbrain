@@ -15,7 +15,7 @@ import { readFileSync, readdirSync, existsSync, statSync, mkdtempSync, mkdirSync
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { spawnSync } from 'child_process';
-import { REGISTRATION_SURFACE } from '../src/core/mcp-registration.ts';
+import { PLUGIN_SURFACE } from '../src/core/mcp-registration.ts';
 
 const ROOT = join(import.meta.dir, '..');
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf8');
@@ -394,11 +394,11 @@ describe('curated tree membership + scanner guard', () => {
 
   // #5858: the generator's only frontmatter change is one `when_to_use:` line built from triggers.
   const withoutWhenToUse = (text: string) => text.replace(/^when_to_use: .*\n/m, '');
-  // S0: the plugin serves REGISTRATION_SURFACE (full), so no bundled skill names
+  // The plugin serves PLUGIN_SURFACE (full), so no bundled skill names
   // an MCP op beyond it: the gap snapshot is empty and every lane skill ships
   // byte-identical to its source (no "Tools outside your MCP surface" note).
-  test('F6 under the full registration surface: no starter gaps; every lane skill is byte-identical', () => {
-    expect(REGISTRATION_SURFACE).toBe('full');
+  test('F6 under the full plugin surface: no starter gaps; every lane skill is byte-identical', () => {
+    expect(PLUGIN_SURFACE).toBe('full');
     expect(lanes.starter_gaps).toEqual({});
     expect(laneSet.size).toBeGreaterThan(0);
     for (const slug of laneSet) {

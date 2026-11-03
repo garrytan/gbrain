@@ -14,15 +14,22 @@
  *                        are expired: a burst that large needs a human look (default 40)
  *   --now EPOCH          evaluate at this time (default now; for tests and replays)
  *
- * Only names in the expiring format are ever selected:
+ * Only names that carry a TTL are ever selected, in gstack's runner grammar
+ * (exactly what gstack's `ubi-runner.sh reap` reads, expiring H hours after
+ * the creation epoch; an untagged ubirun-<epoch>-...-t<H> or -t0 counts too):
+ *
+ *   ubirun-<owner>-<created epoch>-<suffix>-t<H>
+ *
+ * which `ci:ubicloud` writes for its gate VMs (`--ttl-hours`, default 2) and
+ * `ubi-runner.sh up|run` writes for every name it generates (`--ttl-hours H`,
+ * else UBI_TTL_HOURS, default 3), whichever tool and owner made the VM; or in the older form
+ * gbrain wrote before it, reaped until none are left:
  *
  *   ubirun-<owner>-<created epoch>-x<expiry epoch>-<suffix>
  *
- * which `ci:ubicloud` writes for its gate VMs (`--ttl-hours`, default 2) and
- * `ubi-runner.sh up|run --ttl-hours H` writes on request. Owner-tagged names
- * without an expiry (`ubirun-<owner>-<epoch>-<suffix>`: long dev, benchmark
- * and eval VMs), legacy untagged `ubirun-<epoch>-*` names and VMs the runner
- * did not name are never selected. Ubicloud has no VM tags, so the expiry
+ * Owner-tagged names without a TTL (`ubirun-<owner>-<epoch>-<suffix>`), legacy
+ * untagged `ubirun-<epoch>-*` names and VMs the runner did not name are never
+ * selected. Ubicloud has no VM tags, so the expiry
  * lives in the name and the list's location and name columns are all the
  * reaper reads.
  *
@@ -45,6 +52,10 @@ import { join } from "node:path";
 const RUNNER = join(import.meta.dir, "ubi-runner.sh");
 const MAX_NAME = 63;
 const OWNER = "[a-z][a-z0-9]{0,11}";
+// gstack's vm_rows exactly: an owner-tagged or untagged ubirun- prefix, any
+// middle, and -t<1 to 3 digits> at the end (-t0 expires at creation).
+const TTL = new RegExp(`^ubirun-(${OWNER})-(\\d{10})(?:-[a-z0-9-]*)?-t(\\d{1,3})$`);
+const UNTAGGED_TTL = /^ubirun-(\d{10})(?:-[a-z0-9-]*)?-t(\d{1,3})$/;
 const EXPIRING = new RegExp(`^ubirun-(${OWNER})-(\\d{10})-x(\\d{10})-([a-z0-9]{1,24})$`);
 const NO_EXPIRY = new RegExp(`^ubirun-(${OWNER})-(\\d{10})-([a-z0-9]{1,24})$`);
 const LEGACY = /^ubirun-(\d{10})-[a-z0-9]{1,24}$/;
@@ -56,7 +67,11 @@ export type ParsedName =
   | { kind: "foreign" };
 
 export function parseVmName(name: string): ParsedName {
-  let m = EXPIRING.exec(name);
+  let m = TTL.exec(name);
+  if (m) return { kind: "expiring", owner: m[1]!, createdAt: Number(m[2]), expiresAt: Number(m[2]) + Number(m[3]) * 3600 };
+  m = UNTAGGED_TTL.exec(name);
+  if (m) return { kind: "expiring", owner: "(untagged)", createdAt: Number(m[1]), expiresAt: Number(m[1]) + Number(m[2]) * 3600 };
+  m = EXPIRING.exec(name);
   if (m) return { kind: "expiring", owner: m[1]!, createdAt: Number(m[2]), expiresAt: Number(m[3]) };
   m = NO_EXPIRY.exec(name);
   if (m) return { kind: "no-expiry", owner: m[1]!, createdAt: Number(m[2]) };
@@ -65,13 +80,11 @@ export function parseVmName(name: string): ParsedName {
   return { kind: "foreign" };
 }
 
-/** A gate VM name: expiring `ttlHours` after `createdAt`, or no expiry when ttlHours is 0. */
+/** A gate VM name in gstack's grammar: a TTL of `ttlHours` (1 to 999) after `createdAt`. */
 export function expiringVmName(o: { owner: string; createdAt: number; ttlHours: number; suffix: string }): string {
-  if (!Number.isInteger(o.ttlHours) || o.ttlHours < 0 || o.ttlHours > 8760) throw new Error(`ttl must be a whole number of hours from 0 to 8760, got ${o.ttlHours}`);
-  const name = o.ttlHours
-    ? `ubirun-${o.owner}-${o.createdAt}-x${o.createdAt + o.ttlHours * 3600}-${o.suffix}`
-    : `ubirun-${o.owner}-${o.createdAt}-${o.suffix}`;
-  if (name.length > MAX_NAME || parseVmName(name).kind !== (o.ttlHours ? "expiring" : "no-expiry")) throw new Error(`not a valid ubi-runner VM name: ${name}`);
+  if (!Number.isInteger(o.ttlHours) || o.ttlHours < 1 || o.ttlHours > 999) throw new Error(`ttl must be a whole number of hours from 1 to 999, got ${o.ttlHours}`);
+  const name = `ubirun-${o.owner}-${o.createdAt}-${o.suffix}-t${o.ttlHours}`;
+  if (name.length > MAX_NAME || !/^[a-z0-9]{1,24}$/.test(o.suffix) || parseVmName(name).kind !== "expiring") throw new Error(`not a valid ubi-runner VM name: ${name}`);
   return name;
 }
 
@@ -89,7 +102,7 @@ export function planReap(rows: VmRow[], o: { now: number; graceSeconds: number }
     if (parsed.kind === "foreign") return { ...row, parsed, action: "skip", reason: "not named by ubi-runner" };
     if (parsed.kind === "legacy") return { ...row, parsed, action: "skip", reason: "legacy name" };
     if (parsed.kind === "no-expiry") return { ...row, parsed, action: "skip", reason: "no expiry" };
-    if (parsed.expiresAt <= parsed.createdAt) return { ...row, parsed, action: "skip", reason: "expiry before creation" };
+    if (EXPIRING.test(row.name) && parsed.expiresAt <= parsed.createdAt) return { ...row, parsed, action: "skip", reason: "expiry before creation" };
     return { ...row, parsed, action: o.now >= parsed.expiresAt + o.graceSeconds ? "destroy" : "keep" };
   });
 }
@@ -143,8 +156,8 @@ export function ownerNotices(plan: PlanRow[], o: { now: number; apply: boolean }
       lines.push(`  - ${row.location}/${row.name} expired ${span(o.now - p.expiresAt)} ago (created ${span(o.now - p.createdAt)} ago)${row.result === "failed" ? ": destroy FAILED, still running" : ""}`);
     }
     lines.push(o.apply
-      ? `  Destroyed by the operator reaper at ${new Date(o.now * 1000).toISOString()}. Nothing to do unless a run still needed one: start long runs with ubi-runner.sh up/run --ttl-hours H, or without --ttl-hours for a VM that never expires.`
-      : `  Dry run: nothing was destroyed. The operator reaper destroys these once it runs with --apply. Destroy them now with UBI_OWNER=${owner} scripts/ubicloud/ubi-runner.sh down <name> -l <location>. An expiry can't be extended; start long runs with ubi-runner.sh up/run --ttl-hours H, or without --ttl-hours for a VM that never expires.`);
+      ? `  Destroyed by the operator reaper at ${new Date(o.now * 1000).toISOString()}. Nothing to do unless a run still needed one: start long runs with ubi-runner.sh up/run --ttl-hours H (up to 999).`
+      : `  Dry run: nothing was destroyed. The operator reaper destroys these once it runs with --apply. Destroy them now with UBI_OWNER=${owner} scripts/ubicloud/ubi-runner.sh down <name> -l <location>. An expiry can't be extended; start long runs with ubi-runner.sh up/run --ttl-hours H (up to 999).`);
   }
   return lines.join("\n");
 }

@@ -1,6 +1,8 @@
-import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync, readdirSync, realpathSync } from 'fs';
-import { join, dirname, resolve } from 'path';
-import type { StorageBackend } from '../storage.ts';
+import { chmodSync, createReadStream, createWriteStream, readFileSync, statSync, writeFileSync, unlinkSync, existsSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync } from 'fs';
+import { pipeline } from 'stream/promises';
+import { join, dirname, resolve, basename } from 'path';
+import { createHash, randomBytes } from 'crypto';
+import { fileChangedDuringUpload, type StorageBackend } from '../storage.ts';
 
 /**
  * Local filesystem storage — for testing and development.
@@ -26,6 +28,23 @@ export class LocalStorage implements StorageBackend {
     const full = this.contained(path);
     mkdirSync(dirname(full), { recursive: true });
     writeFileSync(full, data);
+  }
+
+  /** Streams into a sibling temporary file and renames it over the key, so a source that is the stored object itself is never truncated and a refused upload leaves the stored object as it was; an existing object keeps its mode, as a plain write would. */
+  async uploadFile(path: string, filePath: string, _mime?: string, sha256?: string): Promise<void> {
+    const full = this.contained(path);
+    mkdirSync(dirname(full), { recursive: true });
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- full is contained() under the storage root; the partial is its sibling named from its basename and random hex
+    const partial = join(dirname(full), `.${basename(full)}.${randomBytes(6).toString('hex')}.partial`);
+    const hash = createHash('sha256');
+    try {
+      await pipeline(createReadStream(filePath).on('data', chunk => hash.update(chunk)), createWriteStream(partial, { flags: 'wx' }));
+      if (sha256 !== undefined && hash.digest('hex') !== sha256) throw fileChangedDuringUpload(filePath);
+      if (existsSync(full)) chmodSync(partial, statSync(full).mode & 0o7777);
+      renameSync(partial, full);
+    } finally {
+      rmSync(partial, { force: true });
+    }
   }
 
   async download(path: string): Promise<Buffer> {

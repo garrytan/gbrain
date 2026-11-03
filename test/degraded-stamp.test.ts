@@ -82,8 +82,8 @@ describe('every degradation class stamps with a stable code', () => {
     }
   });
 
-  test('result notices: an empty scope, references, mention index, relational chain, pinned answer, unembedded facts', () => {
-    for (const code of ['sources_not_readable', 'references_unavailable', 'mention_index', 'relational_chain', 'pinned_answer_stale', 'facts_unembedded', 'delta_incomplete']) {
+  test('result notices: held files, references, mention index, relational chain, pinned answer, unembedded facts', () => {
+    for (const code of ['held_files', 'references_unavailable', 'mention_index', 'relational_chain', 'pinned_answer_stale', 'facts_unembedded', 'delta_incomplete']) {
       expect(reasons('list_pages', [], null, [notice(code)])).toEqual([code]);
     }
   });
@@ -98,8 +98,8 @@ describe('every degradation class stamps with a stable code', () => {
 
   test('reasons are sorted and unique across every channel', () => {
     expect(reasons('recall', { search_degraded: 'keyword_only_no_embedding_provider' },
-      retrieval([{ stage: 'keyword_candidates_incomplete' }, { stage: 'embed_unavailable' }]), [notice('sources_not_readable'), notice('sources_not_readable')]))
-      .toEqual(['embed_unavailable', 'keyword_candidates_incomplete', 'sources_not_readable']);
+      retrieval([{ stage: 'keyword_candidates_incomplete' }, { stage: 'embed_unavailable' }]), [notice('held_files'), notice('held_files')]))
+      .toEqual(['embed_unavailable', 'held_files', 'keyword_candidates_incomplete']);
   });
 });
 

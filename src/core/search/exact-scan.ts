@@ -33,7 +33,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
-import { privatePagesFilterFragment } from './private-visibility.ts';
+import { privatePagesFilterForCaller } from './private-visibility.ts';
 import { pageEligibleSql } from '../eligibility/sql.ts';
 import { buildHardExcludeClause } from './sql-ranking.ts';
 import { escapeLikePattern } from './sql-ranking.ts';
@@ -134,7 +134,7 @@ export function buildExactBatchStatement(opts: ExactScanOpts, after: number, bat
   else if (opts.sourceId) pageFilters.push('p.source_id = ' + add(opts.sourceId));
   if (opts.types?.length) pageFilters.push('p.type = ANY(' + add(opts.types) + '::text[])');
   if (opts.slugPrefix) pageFilters.push('p.slug LIKE ' + add(escapeLikePattern(opts.slugPrefix) + '%') + " ESCAPE '\\'");
-  if (opts.excludePrivate) pageFilters.push(privatePagesFilterFragment('p'));
+  if (opts.excludePrivate) pageFilters.push(privatePagesFilterForCaller('p'));
   if (opts.minTrust) pageFilters.push(pageEligibleSql('p', { floor: opts.minTrust }));
   const hardExclude = buildHardExcludeClause('p.slug', opts.excludeSlugPrefixes);
   const safe = opts.remote ? ` AND ${safeChunksFilter('p')}` : '';

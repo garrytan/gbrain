@@ -80,7 +80,7 @@ describe('client capability grants', () => {
     const created = await memoryClient('provenance-audit-example');
     const grant = await readClientGrant(engine, created.clientId);
     expect(grant.surface).toBe('full');
-    expect(grant.surfaceSetBy).toBe('operator');
+    expect(grant.surfaceSetBy).toBe('install');
     const [row] = await engine.executeRaw('SELECT after_grant FROM oauth_grant_audit WHERE client_id = $1', [created.clientId]);
     const audit = row.after_grant as { allowedOperations: string[]; catalogProvenance: { version: number; operations: string[] } };
     expect(audit.catalogProvenance.version).toBe(1);

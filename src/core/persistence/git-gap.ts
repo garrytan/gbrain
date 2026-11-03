@@ -9,11 +9,12 @@
  */
 import { createHash } from 'node:crypto';
 import { createReadStream, lstatSync, realpathSync } from 'node:fs';
+import { join, posix } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { hardenedGitStream, hardenedGitSync, NulRecordSplitter } from '../hardened-git.ts';
 import { exportBodyLedger, segmentedExportHead, segmentedExportMarkdown, type ExportSnapshot, type ExportWithdrawal } from '../export-snapshot.ts';
 import { parseMarkdown } from '../markdown.ts';
-import { isDerivationPrivate, isPrivatePage } from '../search/private-visibility.ts';
+import { isPrivacyDerivationPrivate, isPrivacyPrivatePage } from '../search/private-visibility.ts';
 import { alignWithStored } from './align-stored.ts';
 import { digest } from './digest.ts';
 import { isDeclaredReason, isNeverFiledDerivedPage } from './git-declared.ts';
@@ -38,15 +39,15 @@ export interface GitHomePolicy { mirror: boolean; databaseOnlySource?: boolean; 
  * private and alias-private pages never reach a remote; a page the database keeps on purpose (`database_only_reason`) or
  * under a `storage.db_only` prefix stays there; a derive-phase page that never recorded a file (page-prepare.ts
  * `isNeverFiledDerivedPage`, DERIVE_PHASE_DB_ONLY_DEFAULTS) publishes database-only; a path the checkout's Git ignores
- * can never be committed. `lineage_private` is what privatePagesFilterFragment adds over the row's own fields; the caller
+ * can never be committed. `lineage_private` is what privacyPartSql adds over the row's own fields; the caller
  * computes it in SQL. Callers load `visibility.honor_aliases` (readHonorAliases) first.
  */
 export function declaredDatabaseOnly(page: { slug: string; type?: string | null; frontmatter?: unknown; database_only_reason?: string | null;
   lineage_private?: boolean; source_path?: string | null; source_uri?: string | null; withheld_source_path?: string | null }, relativePath: string | null, policy: GitHomePolicy): DeclaredClass | null {
   if (policy.mirror) return 'mirror_source';
   if (policy.databaseOnlySource) return 'database_only_source';
-  if (isPrivatePage(page)) return 'private';
-  if (isDerivationPrivate(page)) return 'alias_private';
+  if (isPrivacyPrivatePage(page)) return 'private';
+  if (isPrivacyDerivationPrivate(page)) return 'alias_private';
   if (page.lineage_private) return 'lineage_private';
   // G7a (git-declared.ts): a strict publication stamps the class it declared; one whose cause is gone (an origin turned
   // public, `visibility.honor_aliases` off, the ignore rule removed) keeps it until the page is written again.
@@ -58,23 +59,65 @@ export function declaredDatabaseOnly(page: { slug: string; type?: string | null;
   return null;
 }
 
+/** Why Git could not say whether a path is ignored: a parent directory is a symlink, the path leaves the checkout, the check timed out, or Git refused it otherwise. */
+export const IGNORE_UNKNOWN_REASONS = ['symlink', 'outside_repo', 'timeout', 'git_error'] as const;
+export type IgnoreUnknownReason = typeof IGNORE_UNKNOWN_REASONS[number];
+export interface IgnoreStatus { ignored: Set<string>; unknown: Map<string, IgnoreUnknownReason> }
+const IGNORE_CHUNK = 1_000;
+
 /**
- * The paths among `relativePaths` (relative to `root`) that the checkout's ignore rules exclude, read with filter-free
- * `git check-ignore -z --stdin`; tracked files are never reported (Git commits them whatever the rules say). Exit 1
- * means none matched. Null when Git could not answer, so a caller never reads a failed check as "nothing ignored".
+ * Which of `relativePaths` (relative to `root`) the checkout's ignore rules exclude, read with filter-free
+ * `git check-ignore -z --stdin`; tracked files are never reported (Git commits them whatever the rules say). Git refuses a
+ * whole input for one path it cannot check (one beyond a symlink, one outside the repository), so the paths are checked
+ * IGNORE_CHUNK at a time and a refused chunk is bisected down to the paths Git refuses: those, and every path of a chunk
+ * that timed out, are `unknown`. Null when Git cannot answer at all (it refuses an empty input too), so a caller never
+ * reads a failed check as "nothing ignored".
  */
-export async function ignoredPaths(root: string, relativePaths: string[]): Promise<Set<string> | null> {
-  const ignored = new Set<string>();
-  if (!relativePaths.length) return ignored;
-  const splitter = new NulRecordSplitter();
-  const result = await hardenedGitStream(root, ['check-ignore', '-z', '--stdin'], {
-    stdin: relativePaths.map(path => path + '\0'), timeoutMs: 120_000, maxBytes: 64 * 1024 * 1024,
-    onChunk: chunk => { for (const record of splitter.push(chunk)) ignored.add(record.toString('utf8')); } });
-  if (result.ok) return result.endsWithNul || result.bytes === 0 ? ignored : null;
-  return result.reason === 'exit' && result.status === 1 && ignored.size === 0 ? ignored : null;
+export async function ignoredPaths(root: string, relativePaths: string[]): Promise<IgnoreStatus | null> {
+  const status: IgnoreStatus = { ignored: new Set(), unknown: new Map() };
+  let answers: boolean | undefined;
+  const settle = async (paths: string[]): Promise<boolean> => {
+    const answer = await checkIgnore(root, paths);
+    if (answer === 'timeout') { for (const path of paths) status.unknown.set(path, 'timeout'); return true; }
+    if (answer) { for (const path of answer) status.ignored.add(path); return true; }
+    answers ??= Array.isArray(await checkIgnore(root, []));
+    if (!answers) return false;
+    if (paths.length === 1) { status.unknown.set(paths[0]!, ignoreRefusal(root, paths[0]!)); return true; }
+    const half = Math.ceil(paths.length / 2);
+    return await settle(paths.slice(0, half)) && await settle(paths.slice(half));
+  };
+  for (let start = 0; start < relativePaths.length; start += IGNORE_CHUNK) {
+    if (!await settle(relativePaths.slice(start, start + IGNORE_CHUNK))) return null;
+  }
+  return status;
 }
 
-export type ExportFileComparison = { state: 'equal' } | { state: 'differs'; paths: string[] } | { state: 'unparseable' };
+/** One `git check-ignore` call: the ignored paths among `paths` (exit 1 means none), 'timeout', or null when Git refused it. */
+async function checkIgnore(root: string, paths: string[]): Promise<string[] | 'timeout' | null> {
+  const ignored: string[] = [];
+  const splitter = new NulRecordSplitter();
+  const result = await hardenedGitStream(root, ['check-ignore', '-z', '--stdin'], {
+    stdin: paths.map(path => path + '\0'), timeoutMs: 120_000, maxBytes: 64 * 1024 * 1024,
+    onChunk: chunk => { for (const record of splitter.push(chunk)) ignored.push(record.toString('utf8')); } });
+  if (result.ok) return result.endsWithNul || result.bytes === 0 ? ignored : null;
+  if (result.reason === 'timeout') return 'timeout';
+  return result.reason === 'exit' && result.status === 1 && ignored.length === 0 ? ignored : null;
+}
+
+/** Why Git refused one path it can otherwise answer for. */
+function ignoreRefusal(root: string, path: string): IgnoreUnknownReason {
+  const normal = posix.normalize(path);
+  if (posix.isAbsolute(normal) || normal === '..' || normal.startsWith('../')) return 'outside_repo';
+  const parts = normal.split('/');
+  for (let depth = 1; depth < parts.length; depth++) {
+    try { if (lstatSync(join(root, ...parts.slice(0, depth))).isSymbolicLink()) return 'symlink'; } catch { break; }
+  }
+  return 'git_error';
+}
+
+/** Why a committed file cannot be compared: a symlink (or another non-regular mode), bytes that are not UTF-8, or frontmatter that does not parse. */
+export type UnparseableReason = 'symlink' | 'non_regular_mode' | 'not_utf8' | 'frontmatter';
+export type ExportFileComparison = { state: 'equal' } | { state: 'differs'; paths: string[] } | { state: 'unparseable'; reason: UnparseableReason };
 
 /**
  * The equality contract for an inline page: the file, parsed the way reconcile parses a canonical file (aligned with the
@@ -84,10 +127,10 @@ export type ExportFileComparison = { state: 'equal' } | { state: 'differs'; path
 export function compareInlineExportFile(raw: Buffer, importPath: string, snapshot: ExportSnapshot): ExportFileComparison {
   const { page, tags } = snapshot;
   const text = raw.toString('utf8');
-  if (!Buffer.from(text).equals(raw)) return { state: 'unparseable' };
+  if (!Buffer.from(text).equals(raw)) return { state: 'unparseable', reason: 'not_utf8' };
   const reading = reconcileFileReading(text, importPath, page);
   const parsed = parseMarkdown(reading.content, `${page.slug}.md`, { validate: true, expectedSlug: page.slug });
-  if (parsed.errors?.some(e => !['MISSING_OPEN', 'EMPTY_FRONTMATTER'].includes(e.code))) return { state: 'unparseable' };
+  if (parsed.errors?.some(e => !['MISSING_OPEN', 'EMPTY_FRONTMATTER'].includes(e.code))) return { state: 'unparseable', reason: 'frontmatter' };
   if (parsed.slug !== page.slug) return { state: 'differs', paths: ['/slug'] };
   alignWithStored(parsed, page, reading.inferred);
   const file = reconcileCanonical(parsed, parsed.tags), database = reconcileCanonical(page, tags);
@@ -137,16 +180,16 @@ export function isGitCheckout(root: string): boolean {
 }
 
 /**
- * HEAD of the checkout at `root`, listed once with `ls-tree -r -l -z --full-tree` under the source's directory. Null when
- * Git cannot answer (not a checkout, a failed or truncated read).
+ * HEAD of the checkout at `root` (or the commit `rev` names), listed once with `ls-tree -r -l -z --full-tree` under the
+ * source's directory. Null when Git cannot answer (not a checkout, an unknown commit, a failed or truncated read).
  */
-export async function readHeadTree(root: string): Promise<HeadTree | null> {
+export async function readHeadTree(root: string, rev = 'HEAD'): Promise<HeadTree | null> {
   const top = gitLine(root, ['rev-parse', '--show-toplevel']);
   const format = gitLine(root, ['rev-parse', '--show-object-format']);
   if (top === null || (format !== 'sha1' && format !== 'sha256')) return null;
   const gitRoot = realpathSync(top), real = realpathSync(root);
-  const head = hardenedGitSync(root, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], GIT_LIMITS);
-  if (!head.ok) return head.reason === 'exit' && head.status === 1 ? { gitRoot, format, commit: null, blobs: new Map() } : null;
+  const head = hardenedGitSync(root, ['rev-parse', '--verify', '--quiet', `${rev}^{commit}`], GIT_LIMITS);
+  if (!head.ok) return rev === 'HEAD' && head.reason === 'exit' && head.status === 1 ? { gitRoot, format, commit: null, blobs: new Map() } : null;
   const commit = head.stdout.toString('utf8').trim();
   const scope = real === gitRoot ? '' : real.slice(gitRoot.length + 1);
   const blobs = new Map<string, TreeBlob>();

@@ -29,7 +29,7 @@ import { appendFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, re
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { execFileSync } from '../spawn.ts';
-import { gitChildEnv } from '../git-env.ts';
+import { gitChildEnv, literalPathspecs } from '../git-env.ts';
 import { GIT_ENV, GIT_ENV_AUTH, GIT_SSRF_SUBCOMMAND_FLAGS, durableSsrfFlags } from '../git-transport.ts';
 import { assertManagedFilesystemWrite, hasFilesystemPublication, managedFilesystemRootFor, type ManagedFilesystemRoot } from '../persistence/filesystem-guard.ts';
 import { acquireNativeLock, acquireNativeLockSync, type NativeLockSyncHandle } from '../persistence/native-lock.ts';
@@ -100,7 +100,11 @@ export interface CommitPushOptions {
   lockWaitMs?: number;
   /** `--resolve`: blob choice per conflicted path for the in-memory merge. */
   resolutions?: Map<string, Resolution>;
-  /** `--expect-remote`: the remote commit the resolutions were chosen against (required with resolutions). */
+  /**
+   * `--expect-remote`: the remote commit the resolutions were chosen against (required with resolutions). Without
+   * resolutions it binds the publish (#7686): HEAD is merged with that commit, pushed with a lease on it, and a remote that
+   * moved anywhere else refuses, so a rewrite made after the caller checked the remote is never merged back.
+   */
   expectRemote?: string;
   /** How long a foreground publish waits for another publish to finish. */
   publishWaitMs?: number;
@@ -397,7 +401,7 @@ function stagedPaths(root: string): string[] {
 
 /** The index entries under `rel` as `ls-files -s` records, so a failed commit can put them back exactly. */
 function indexEntries(root: string, rel: string[]): string[] {
-  return git(root, ['--literal-pathspecs', 'ls-files', '-s', '-z', '--', ...rel]).stdout.split('\0').filter(Boolean);
+  return git(root, ['ls-files', '-s', '-z', '--', ...literalPathspecs(rel)]).stdout.split('\0').filter(Boolean);
 }
 
 /**
@@ -436,7 +440,7 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
         docs: 'docs/guides/shared-checkout-git.md#outcomes' } });
   }
   const before = indexEntries(root, rel);
-  const add = withIndexRetry(root, ['--literal-pathspecs', 'add', '-A', '--', ...rel], 'git add');
+  const add = withIndexRetry(root, ['add', '-A', '--', ...literalPathspecs(rel)], 'git add');
   if (add.code !== 0) {
     throw opError('commit_paths_invalid', 'git add refused the given paths.', add.stderr.trim().slice(0, 300) || 'Check the paths exist or are tracked.');
   }
@@ -444,9 +448,11 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
     const paths = withRenamePartners(root, rel);
     const partners = paths.filter(p => !insideSourceRoots(p, scope.roots));
     if (partners.length) throw outsideRootError(root, scope.roots, partners, 'A staged rename would commit');
-    if (git(root, ['--literal-pathspecs', 'diff', '--cached', '--quiet', '--', ...paths]).code === 0) return null;
+    if (git(root, ['diff', '--cached', '--quiet', '--', ...literalPathspecs(paths)]).code === 0) return null;
     const env = { [COMMIT_VIA_ENV]: scope.lockPath, ...(scope.markHeld ? { [COMMIT_LOCK_ENV]: scope.lockPath } : {}) };
-    const commit = withIndexRetry(root, ['--literal-pathspecs', 'commit', '--only', '-m', message, '--', ...paths], 'git commit', env);
+    // #7759: literal per path, never git's global --literal-pathspecs: Git exports that to the commit's hooks, where a
+    // guard's glob pathspec ('*.json') then matches nothing and lets the commit through.
+    const commit = withIndexRetry(root, ['commit', '--only', '-m', message, '--', ...literalPathspecs(paths)], 'git commit', env);
     if (commit.code !== 0) {
       throw opError('git_unavailable', `git commit failed in ${root}; the paths were unstaged again and keep their bytes.`,
         `${commit.stderr.trim().slice(0, 300)} A missing git identity (user.name, user.email) or a refusing pre-commit hook are common causes.`);
@@ -498,8 +504,12 @@ export function pendingWriteThroughStillDirty(repo: string): PendingWriteThrough
   return pending.filter(e => dirty.has(e.path));
 }
 
-/** Appends without the lock (O_APPEND), so a writer that could not get it still records its file. */
-function notePending(root: string, paths: string[]): void {
+/**
+ * Appends without the lock (O_APPEND), so a writer that could not get it still records its file. `root` is the checkout
+ * root and `paths` are relative to it (`scopePaths`). The derived write-through also records each file right after writing
+ * it (#8073), so a crash before its commit leaves the file for the next locked commit to sweep.
+ */
+export function notePending(root: string, paths: string[]): void {
   try { appendFileSync(absGitPath(root, PENDING_NAME), paths.map(p => `${new Date().toISOString()}\t${JSON.stringify(p)}\n`).join('')); } catch { /* best-effort */ }
 }
 
@@ -507,7 +517,7 @@ function notePending(root: string, paths: string[]): void {
 function dirtyPaths(root: string, paths: string[]): Set<string> {
   const out = new Set<string>();
   for (let i = 0; i < paths.length; i += 500) {
-    const entries = git(root, ['--literal-pathspecs', 'status', '--porcelain', '-z', '--untracked-files=all', '--', ...paths.slice(i, i + 500)]).stdout.split('\0');
+    const entries = git(root, ['status', '--porcelain', '-z', '--untracked-files=all', '--', ...literalPathspecs(paths.slice(i, i + 500))]).stdout.split('\0');
     for (let j = 0; j < entries.length; j++) {
       if (entries[j].length < 4) continue;
       out.add(entries[j].slice(3));
@@ -706,7 +716,7 @@ function integrate(root: string, local: string, remote: string): Integration {
 interface TreeEntry { mode: string; type: string; sha: string }
 
 function treeEntry(root: string, commit: string, path: string): TreeEntry | null {
-  for (const line of git(root, ['--literal-pathspecs', 'ls-tree', '-z', commit, '--', path]).stdout.split('\0')) {
+  for (const line of git(root, ['ls-tree', '-z', commit, '--', ...literalPathspecs([path])]).stdout.split('\0')) {
     const tab = line.indexOf('\t');
     if (tab === -1 || line.slice(tab + 1) !== path) continue;
     const [mode, type, sha] = line.slice(0, tab).split(' ');
@@ -742,7 +752,7 @@ function supersededPaths(root: string, ours: string, theirs: string, merged: Mer
     if (explicit?.has(path) || merged.structural.includes(path) || path.includes('\n') || !blobConflict(root, base, ours, theirs, path)) return false;
     const remote = treeEntry(root, theirs, path);
     if (!remote) return false;
-    const commits = git(root, ['--literal-pathspecs', 'log', '--format=%H', '-n', String(MAX_SUPERSEDED_HISTORY), ours, '--', path]).stdout.split('\n').filter(Boolean);
+    const commits = git(root, ['log', '--format=%H', '-n', String(MAX_SUPERSEDED_HISTORY), ours, '--', ...literalPathspecs([path])]).stdout.split('\n').filter(Boolean);
     const blobs = git(root, ['cat-file', '--batch-check=%(objectname) %(objecttype)'], { input: commits.map(c => `${c}:${path}\n`).join('') })
       .stdout.split('\n').slice(0, commits.length).map(line => (line.endsWith(' blob') ? line.split(' ')[0] : null));
     const held = [treeEntry(root, ours, path)?.sha ?? null, ...blobs];
@@ -885,6 +895,7 @@ export function readQuarantine(repo: string): QuarantineEntry[] {
  * a merge built over it earlier) is returned so a lagging checkout catches up.
  */
 function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> | undefined, expectRemote: string | undefined, cwd: string): Published {
+  const bound = expectRemote && !resolutions?.size ? gitOk(ctx.root, ['rev-parse', '--verify', `${expectRemote}^{commit}`], 'rev-parse --expect-remote') : undefined;
   let candidate = start;
   let integrated = 0;
   let lastError = '';
@@ -898,15 +909,22 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
   };
   for (let attempt = 0; attempt < MAX_PUSH_ATTEMPTS; attempt++) {
     if (attempt) Atomics.wait(sleeper, 0, 0, Math.min(2000, 50 * 2 ** attempt) + Math.floor(Math.random() * 100));
-    const push = remoteGit(ctx.root, 'push', [...(ctx.keepCheckout ? ['--no-verify'] : []), '--', ctx.remote, `${candidate}:${ctx.mergeRef}`]);
-    if (push.code === 0) return { sha: candidate, integrated, confirmed: 'push', ...notes() };
-    lastError = push.stderr.trim();
-    if (remoteContains(ctx, candidate)) return onRemote();
-    const remoteTip = fetchTracking(ctx);
-    if (!remoteTip) break;
-    if (isAncestor(ctx.root, remoteTip, candidate)) {
-      if (++stalled > 1) break;
-      continue;
+    let remoteTip = bound && !isAncestor(ctx.root, bound, candidate) ? bound : null;
+    if (!remoteTip) {
+      const push = remoteGit(ctx.root, 'push', [...(ctx.keepCheckout ? ['--no-verify'] : []), ...(bound ? [`--force-with-lease=${ctx.mergeRef}:${bound}`] : []), '--', ctx.remote, `${candidate}:${ctx.mergeRef}`]);
+      if (push.code === 0) return { sha: candidate, integrated, confirmed: 'push', ...notes() };
+      lastError = push.stderr.trim();
+      if (remoteContains(ctx, candidate)) return onRemote();
+      remoteTip = fetchTracking(ctx);
+      if (!remoteTip) break;
+      if (bound && remoteTip !== bound) {
+        throw opError('push_unconfirmed', `The remote moved to ${remoteTip.slice(0, 12)} after --expect-remote ${bound.slice(0, 12)} was checked, so nothing was pushed: publishing now could merge back commits a rewrite removed.`,
+          'Check the remote history first (gbrain sources refresh checks it for a force-push), then rerun.', { detail: candidate, retryable: true });
+      }
+      if (isAncestor(ctx.root, remoteTip, candidate)) {
+        if (++stalled > 1) break;
+        continue;
+      }
     }
     const raw = integrate(ctx.root, candidate, remoteTip);
     const kept = supersededPaths(ctx.root, candidate, remoteTip, raw, resolutions);
@@ -1142,14 +1160,14 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
       { detail: committed ?? '', retryable: true });
   }
 
-  const cycle = (onlyWhenClean: boolean, start: string | null, resolutions?: Map<string, Resolution>) => {
+  const cycle = (onlyWhenClean: boolean, start: string | null, resolutions?: Map<string, Resolution>, expectRemote?: string) => {
     const requested = existsSync(requestPath);
     rmSync(requestPath, { force: true });
     try {
       const head = gitOk(root, ['rev-parse', 'HEAD'], 'rev-parse HEAD');
       const target = start && !isAncestor(root, start, head) ? start : head;
       if (!opts.allowOutsideSourceRoot) assertLocalCommitsInsideRoots(ctx, target, roots);
-      const published = publish(ctx, target, resolutions, opts.expectRemote, cwd);
+      const published = publish(ctx, target, resolutions, expectRemote, cwd);
       if (!elsewhere) rmSync(absGitPath(root, CONFLICT_STATE_NAME), { force: true });
       const moved = published.sha === head || elsewhere || opts.keepCheckout ? { checkout: 'unchanged' as const } : advanceWithLock(root, published.sha, head, onlyWhenClean, opts.lockWaitMs);
       return { published, moved };
@@ -1162,7 +1180,7 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
 
   let first: ReturnType<typeof cycle>;
   try {
-    first = cycle(unattended, committed, opts.resolutions);
+    first = cycle(unattended, committed, opts.resolutions, opts.expectRemote);
   } finally {
     pub.release();
   }

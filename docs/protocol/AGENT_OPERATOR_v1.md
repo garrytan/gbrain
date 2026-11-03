@@ -361,7 +361,7 @@ stdout (`--json`):
           "options": [
             {
               "id": "wire",
-              "label": "Register `<absolute path to gbrain> serve --surface full` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+              "label": "For Claude Code or Codex, run `gbrain setup claude-code` or `gbrain setup codex` (it registers serve behind gbrain's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to gbrain> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
             },
             {
               "id": "skip",
@@ -1246,8 +1246,10 @@ Relay the bundle's one `user_message` ("Reply 'defaults' to accept …"); apply
 each answer with the decision's `argv`. Then:
 
 1. Register gbrain with the harness using the `harness_wiring` fix. The
-   registration always uses the absolute gbrain path and `--surface starter`
-   (for example `claude mcp add gbrain -- /abs/path/gbrain serve --surface starter`;
+   registration always uses the absolute gbrain path and `--surface starter`,
+   started through gbrain's launcher (for example `gbrain setup claude-code
+   --no-hooks --gbrain-bin /abs/path/gbrain`, which registers
+   `<config dir>/hook-launcher/gbrain-hook /abs/path/gbrain serve --surface starter`;
    `gbrain init --surface <verbs|starter|full>` changes the surface it prints).
 2. Run `gbrain doctor --only harness_wiring --json`, a read-only smoke check:
    it reads the registration, then either finds the registered server already

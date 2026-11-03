@@ -377,7 +377,7 @@ export function reconcileSelfUpgradeAtBoot(): void {
 
 /** Conservative idle: no cycle running AND (Postgres) no active/waiting jobs.
  * Any ambiguity / error → NOT idle (we'd rather skip an upgrade window). */
-async function computeAutopilotIdle(engine: BrainEngine, engineType: string): Promise<boolean> {
+export async function computeAutopilotIdle(engine: BrainEngine, engineType: string): Promise<boolean> {
   try {
     const cycle = await inspectLock(engine, 'gbrain-cycle');
     if (cycle) return false; // a cycle (sync/extract/embed/...) is running

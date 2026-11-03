@@ -49,6 +49,7 @@ export const ARTIFACTS: Artifact[] = [
   { name: 'CLI flag registry', regen: ['bun', 'run', 'scripts/generate-flag-registry.ts'], check: [...BUN_TEST, 'test/generate-flag-registry.test.ts'] },
   { name: 'plugin tree + persona variants', regen: ['bun', 'run', 'scripts/generate-plugin-tree.ts', '--out', 'plugin', '--variants-out', 'plugin-variants'], check: ['bash', 'scripts/check-plugin-tree.sh'] },
   { name: 'structural suites manifest', regen: ['bun', 'scripts/classify-tests.ts'], check: ['bun', 'scripts/classify-tests.ts', '--check'] },
+  { name: 'QM memory-provider contract', regen: ['bun', 'scripts/build-qm-memory-contract.ts'], check: ['bun', 'scripts/build-qm-memory-contract.ts', '--check'] },
   { name: 'llms.txt + llms-full.txt', regen: ['bun', 'run', 'scripts/build-llms.ts'], check: [...BUN_TEST, 'test/build-llms.test.ts'] },
 ];
 

@@ -309,12 +309,25 @@ CREATE TABLE IF NOT EXISTS page_retrievals (
   page_id           INTEGER PRIMARY KEY,
   last_retrieved_at TIMESTAMPTZ NOT NULL
 );
+-- BEGIN GENERATED from src/core/derived-state-maintainers.ts (PAGE_RETRIEVALS_FORGET_FUNCTION_SQL). Edit that file, then run: bun run build:schema
 CREATE OR REPLACE FUNCTION gbrain_forget_page_retrievals() RETURNS trigger
-  LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+  LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
-  DELETE FROM page_retrievals r USING gbrain_deleted_pages d WHERE r.page_id = d.id;
+  IF EXISTS (SELECT 1 FROM gbrain_deleted_pages) THEN
+    IF pg_catalog.row_security_active('page_retrievals') THEN
+      IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r','d']) AS needed(cmd) WHERE NOT EXISTS (
+          SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'page_retrievals'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+            AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+        RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+          TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+          DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','page_retrievals')::text;
+      END IF;
+    END IF;
+    DELETE FROM page_retrievals r USING gbrain_deleted_pages d WHERE r.page_id = d.id;
+  END IF;
   RETURN NULL;
 END $$;
+-- END GENERATED from src/core/derived-state-maintainers.ts (PAGE_RETRIEVALS_FORGET_FUNCTION_SQL)
 DROP TRIGGER IF EXISTS pages_forget_retrievals ON pages;
 CREATE TRIGGER pages_forget_retrievals AFTER DELETE ON pages
   REFERENCING OLD TABLE AS gbrain_deleted_pages
@@ -1180,11 +1193,22 @@ CREATE INDEX IF NOT EXISTS idx_pages_title_search ON pages USING GIN (ts_filter(
 -- what searchKeyword() actually queries. See migrate.ts's v124 migration
 -- for the full rationale; keep in sync with that + reindex-search-vector.ts
 -- + pglite-schema.ts.
-CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger SET search_path = pg_catalog, public AS $$
+CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE
   timeline_text TEXT;
   timeline_lead_text TEXT;
 BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    IF pg_catalog.row_security_active('timeline_entries') THEN
+      IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r']) AS needed(cmd) WHERE NOT EXISTS (
+          SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'timeline_entries'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+            AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+        RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+          TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+          DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','timeline_entries')::text;
+      END IF;
+    END IF;
+  END IF;
   SELECT coalesce(string_agg(summary || ' ' || detail, ' ' ORDER BY id), '')
   INTO timeline_text
   FROM timeline_entries
@@ -1910,10 +1934,19 @@ CREATE OR REPLACE FUNCTION gbrain_advance_page_revision() RETURNS trigger LANGUA
 DROP TRIGGER IF EXISTS pages_knowledge_revision ON pages;
 CREATE TRIGGER pages_knowledge_revision BEFORE UPDATE ON pages
     FOR EACH ROW EXECUTE FUNCTION gbrain_advance_page_revision();
-CREATE OR REPLACE FUNCTION gbrain_advance_tag_revision() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+CREATE OR REPLACE FUNCTION gbrain_advance_tag_revision() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
     BEGIN
       IF TG_OP = 'UPDATE' AND (NEW.page_id, NEW.tag) IS NOT DISTINCT FROM (OLD.page_id, OLD.tag) THEN
         RETURN NULL;
+      END IF;
+      IF pg_catalog.row_security_active('pages') THEN
+        IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r','w']) AS needed(cmd) WHERE NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'pages'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+              AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+          RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+            TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+            DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','pages')::text;
+        END IF;
       END IF;
       IF TG_OP <> 'INSERT' THEN
         UPDATE pages SET knowledge_revision = gen_random_uuid() WHERE id = OLD.page_id;
@@ -2442,9 +2475,16 @@ CREATE TABLE IF NOT EXISTS persistence_consumers (
   );
 
 CREATE OR REPLACE FUNCTION gbrain_require_managed_writer() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
-DECLARE target_source text; old_source text; row_data jsonb; old_data jsonb; allowed jsonb;
+DECLARE managed boolean; strict_count integer; seen integer; git boolean; unreadable text; target_source text; old_source text; row_data jsonb; old_data jsonb; allowed jsonb;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM persistence_brain WHERE singleton=1 AND enabled) THEN
+  -- #7636: init always writes the singleton, so a missing row means this role cannot read it (RLS), never "unmanaged".
+  SELECT enabled INTO managed FROM persistence_brain WHERE singleton=1;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+      TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+      DETAIL=jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','persistence_brain')::text;
+  END IF;
+  IF NOT managed THEN
     IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
   END IF;
   IF TG_TABLE_NAME='page_segment_texts' THEN
@@ -2494,9 +2534,19 @@ BEGIN
   IF TG_TABLE_NAME NOT IN ('tags','timeline_entries','takes') THEN
     target_source := row_data->>'source_id'; old_source := old_data->>'source_id';
   END IF;
-  IF target_source IS NULL THEN SELECT source_id INTO target_source FROM pages WHERE id=(row_data->>'page_id')::integer; END IF;
+  IF target_source IS NULL THEN
+    SELECT source_id INTO target_source FROM pages WHERE id=(row_data->>'page_id')::integer;
+    IF NOT FOUND AND row_security_active('pages') THEN unreadable := 'pages'; END IF;
+  END IF;
   IF TG_OP='UPDATE' AND old_source IS NULL THEN
     SELECT source_id INTO old_source FROM pages WHERE id=(old_data->>'page_id')::integer;
+    IF NOT FOUND AND row_security_active('pages') THEN unreadable := 'pages'; END IF;
+  END IF;
+  -- A page row-level security hides is not a deleted parent (a cascade runs as the table owner, outside RLS).
+  IF unreadable IS NOT NULL THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+      TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+      DETAIL=jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state',unreadable)::text;
   END IF;
   -- Cascaded projection removal after the already-guarded parent deletion.
   IF target_source IS NULL AND TG_OP='DELETE' THEN RETURN OLD; END IF;
@@ -2509,12 +2559,24 @@ BEGIN
         'target_source',target_source,'old_source',old_source,'allowed',allowed)::text;
   END IF;
   -- G7a (git-canonical-schema.ts): a git-canonical source takes rows only from a writer that declares the git protocol.
-  IF COALESCE(current_setting('gbrain.git_protocol',true),'') <> '1'
-    AND EXISTS (SELECT 1 FROM git_canonical_brain WHERE singleton=1 AND strict_sources>0)
-    AND EXISTS (SELECT 1 FROM sources WHERE id IN (target_source, old_source) AND config->>'canonical'='git') THEN
-    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='git_protocol_required: this source is git-canonical and the writer does not declare the git protocol',
-      TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='git_canonical_fence:mutation',
-      DETAIL=jsonb_build_object('op',TG_OP,'target_source',target_source,'old_source',old_source)::text;
+  IF COALESCE(current_setting('gbrain.git_protocol',true),'') <> '1' THEN
+    SELECT strict_sources INTO strict_count FROM git_canonical_brain WHERE singleton=1;
+    IF NOT FOUND THEN unreadable := 'git_canonical_brain';
+    ELSIF strict_count>0 THEN
+      SELECT count(*), COALESCE(bool_or(config->>'canonical'='git'),false) INTO seen, git FROM sources WHERE id IN (target_source, old_source);
+      IF seen < (CASE WHEN old_source IS NULL OR old_source=target_source THEN 1 ELSE 2 END) AND row_security_active('sources') THEN
+        unreadable := 'sources';
+      ELSIF git THEN
+        RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='git_protocol_required: this source is git-canonical and the writer does not declare the git protocol',
+          TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='git_canonical_fence:mutation',
+          DETAIL=jsonb_build_object('op',TG_OP,'target_source',target_source,'old_source',old_source)::text;
+      END IF;
+    END IF;
+    IF unreadable IS NOT NULL THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+        TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+        DETAIL=jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state',unreadable)::text;
+    END IF;
   END IF;
   IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
 END $fn$;
@@ -2539,6 +2601,12 @@ CREATE TABLE IF NOT EXISTS git_canonical_brain (
 );
 CREATE OR REPLACE FUNCTION gbrain_count_git_canonical_sources() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
 BEGIN
+  -- #7636: a count over the rows row-level security lets this role see would undercount and could switch G7a off.
+  IF row_security_active('sources') THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+      TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+      DETAIL=jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','sources')::text;
+  END IF;
   INSERT INTO git_canonical_brain(singleton, strict_sources)
     VALUES (1, (SELECT count(*) FROM sources WHERE config->>'canonical' = 'git'))
     ON CONFLICT (singleton) DO UPDATE SET strict_sources = EXCLUDED.strict_sources;
@@ -2581,22 +2649,67 @@ CREATE TABLE IF NOT EXISTS page_projection_jobs (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY(source_incarnation,slug)
   );
-CREATE OR REPLACE FUNCTION gbrain_queue_page_projection() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+CREATE OR REPLACE FUNCTION gbrain_queue_page_projection() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
     DECLARE incarnation UUID;
     BEGIN
+      IF pg_catalog.row_security_active('sources') THEN
+        IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r']) AS needed(cmd) WHERE NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'sources'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+              AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+          RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+            TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+            DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','sources')::text;
+        END IF;
+      END IF;
       IF TG_OP='DELETE' THEN
+        IF pg_catalog.row_security_active('page_projection_jobs') THEN
+          IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r','d']) AS needed(cmd) WHERE NOT EXISTS (
+              SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'page_projection_jobs'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+                AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+            RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+              TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+              DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','page_projection_jobs')::text;
+          END IF;
+        END IF;
         DELETE FROM page_projection_jobs j USING sources s
           WHERE s.id=OLD.source_id AND j.source_incarnation=s.incarnation AND j.slug=OLD.slug;
         RETURN NULL;
       END IF;
       IF TG_OP='UPDATE' AND (OLD.source_id,OLD.slug) IS DISTINCT FROM (NEW.source_id,NEW.slug) THEN
+        IF pg_catalog.row_security_active('page_projection_jobs') THEN
+          IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r','d']) AS needed(cmd) WHERE NOT EXISTS (
+              SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'page_projection_jobs'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+                AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+            RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+              TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+              DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','page_projection_jobs')::text;
+          END IF;
+        END IF;
         DELETE FROM page_projection_jobs j USING sources s
           WHERE s.id=OLD.source_id AND j.source_incarnation=s.incarnation AND j.slug=OLD.slug;
       END IF;
       SELECT s.incarnation INTO incarnation FROM sources s WHERE s.id=NEW.source_id;
       IF NEW.deleted_at IS NOT NULL OR NEW.text_projection_revision=NEW.knowledge_revision THEN
+        IF pg_catalog.row_security_active('page_projection_jobs') THEN
+          IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r','d']) AS needed(cmd) WHERE NOT EXISTS (
+              SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'page_projection_jobs'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+                AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+            RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+              TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+              DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','page_projection_jobs')::text;
+          END IF;
+        END IF;
         DELETE FROM page_projection_jobs j WHERE j.source_incarnation=incarnation AND j.slug=NEW.slug;
       ELSIF TG_OP='INSERT' OR NEW.knowledge_revision IS DISTINCT FROM OLD.knowledge_revision THEN
+        IF pg_catalog.row_security_active('page_projection_jobs') THEN
+          IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r','a','w']) AS needed(cmd) WHERE NOT EXISTS (
+              SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'page_projection_jobs'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+                AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+            RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+              TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+              DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','page_projection_jobs')::text;
+          END IF;
+        END IF;
         INSERT INTO page_projection_jobs(source_incarnation,slug,revision,reason)
           VALUES (incarnation,NEW.slug,NEW.knowledge_revision,'canonical_change')
           ON CONFLICT(source_incarnation,slug) DO UPDATE SET revision=EXCLUDED.revision,reason=EXCLUDED.reason,updated_at=now();
@@ -2800,6 +2913,7 @@ CREATE OR REPLACE FUNCTION gbrain_guard_request_protocol() RETURNS trigger LANGU
     IF TG_OP='DELETE' THEN target:=OLD.target_kind; version:=OLD.protocol_version;
     ELSE target:=NEW.target_kind; version:=NEW.protocol_version; END IF;
     SELECT writer_protocol_floor,skill_bundles_enabled INTO floor,active FROM persistence_brain WHERE singleton=1 FOR SHARE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'writer_coordinator_required: writer state is unreadable to this database role' USING ERRCODE='42501'; END IF;
     PERFORM gbrain_require_persistence_protocol(GREATEST(floor,version,CASE WHEN target='skill_bundle' THEN 2 ELSE 1 END));
     IF TG_OP='DELETE' THEN RETURN OLD; END IF;
     IF TG_OP='UPDATE' AND (NEW.target_kind<>OLD.target_kind OR NEW.protocol_version<>OLD.protocol_version) THEN
@@ -2838,6 +2952,7 @@ CREATE OR REPLACE FUNCTION gbrain_guard_effect_protocol() RETURNS trigger LANGUA
   DECLARE floor integer;
   BEGIN
     SELECT writer_protocol_floor INTO floor FROM persistence_brain WHERE singleton=1 FOR SHARE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'writer_coordinator_required: writer state is unreadable to this database role' USING ERRCODE='42501'; END IF;
     PERFORM gbrain_require_persistence_protocol(floor);
     IF TG_OP='DELETE' THEN RETURN OLD; END IF;
     RETURN NEW;
@@ -2852,6 +2967,10 @@ CREATE OR REPLACE FUNCTION gbrain_guard_protocol_activation() RETURNS trigger LA
     END IF;
     IF NEW.writer_protocol_floor>OLD.writer_protocol_floor OR (NEW.skill_bundles_enabled AND NOT OLD.skill_bundles_enabled) THEN
       PERFORM gbrain_require_persistence_protocol(2);
+      IF row_security_active('persistence_requests') OR row_security_active('persistence_effects') OR row_security_active('persistence_worktrees')
+        OR row_security_active('persistence_source_bindings') OR row_security_active('sources') THEN
+        RAISE EXCEPTION 'writer_coordinator_required: writer state is unreadable to this database role' USING ERRCODE='42501';
+      END IF;
       IF COALESCE(current_setting('gbrain.writer_quiesced',true),'')<>'true' OR NOT NEW.enabled OR NEW.writer_protocol_floor<>2
         OR EXISTS (SELECT 1 FROM persistence_requests WHERE state IN ('queued','running','recovering') OR recovery IS NOT NULL)
         OR EXISTS (SELECT 1 FROM persistence_effects WHERE state='running' OR recovery IS NOT NULL)
@@ -3612,7 +3731,7 @@ BEGIN
   FOR f IN SELECT p.oid::regprocedure AS sig, substr(c.setting, 13) AS path
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace CROSS JOIN LATERAL unnest(p.proconfig) AS c(setting)
     WHERE n.nspname = 'public' AND p.prokind = 'f' AND c.setting IN ('search_path=pg_catalog, public', 'search_path=pg_catalog')
-      AND p.proname IN ('auto_enable_rls', 'bump_page_generation_clock_fn', 'bump_page_generation_fn', 'enforce_minion_queue_protocol', 'gbrain_advance_page_revision', 'gbrain_advance_tag_revision', 'gbrain_bump_trust_generation', 'gbrain_clear_atom_page_state', 'gbrain_count_git_canonical_sources', 'gbrain_count_modifications', 'gbrain_forget_page_retrievals', 'gbrain_fts_input', 'gbrain_graduation_fence', 'gbrain_guard_effect_protocol', 'gbrain_guard_inserted_facts', 'gbrain_guard_protocol_activation', 'gbrain_guard_request_protocol', 'gbrain_guard_skill_publication', 'gbrain_lease_shared_skill_delivery', 'gbrain_mark_derivation_scope_entry', 'gbrain_preserve_fact_withdrawal', 'gbrain_queue_page_projection', 'gbrain_refuse_purged_fact', 'gbrain_refuse_purged_page', 'gbrain_refuse_purged_take', 'gbrain_refuse_purging_derivation', 'gbrain_require_managed_writer', 'gbrain_require_persistence_protocol', 'gbrain_snapshot_version_trust', 'gbrain_stamp_revision_attribution', 'gbrain_stamp_trust_tier', 'gbrain_stamp_version_attribution', 'gbrain_stamp_write_attribution', 'gbrain_try_jsonb', 'notify_minion_job_change', 'update_chunk_search_vector', 'update_page_search_vector')
+      AND p.proname IN ('auto_enable_rls', 'bump_page_generation_clock_fn', 'bump_page_generation_fn', 'enforce_minion_queue_protocol', 'gbrain_access_derive_page_readers', 'gbrain_access_folder_rules', 'gbrain_access_mark_restricted', 'gbrain_access_norm_readers', 'gbrain_access_origin_restricted', 'gbrain_access_pending_covers', 'gbrain_access_readers', 'gbrain_access_stamp_folder_rules', 'gbrain_access_state_unreadable', 'gbrain_advance_page_revision', 'gbrain_advance_tag_revision', 'gbrain_bump_trust_generation', 'gbrain_clear_atom_page_state', 'gbrain_count_git_canonical_sources', 'gbrain_count_modifications', 'gbrain_forget_page_retrievals', 'gbrain_fts_input', 'gbrain_graduation_fence', 'gbrain_guard_effect_protocol', 'gbrain_guard_inserted_facts', 'gbrain_guard_protocol_activation', 'gbrain_guard_request_protocol', 'gbrain_guard_skill_publication', 'gbrain_lease_shared_skill_delivery', 'gbrain_mark_derivation_scope_entry', 'gbrain_preserve_fact_withdrawal', 'gbrain_queue_page_projection', 'gbrain_refuse_purged_fact', 'gbrain_refuse_purged_page', 'gbrain_refuse_purged_take', 'gbrain_refuse_purging_derivation', 'gbrain_require_managed_writer', 'gbrain_require_persistence_protocol', 'gbrain_snapshot_version_trust', 'gbrain_stamp_revision_attribution', 'gbrain_stamp_trust_tier', 'gbrain_stamp_version_attribution', 'gbrain_stamp_write_attribution', 'gbrain_try_jsonb', 'notify_minion_job_change', 'update_chunk_search_vector', 'update_page_search_vector')
       AND pg_has_role(current_user, p.proowner, 'USAGE')
     ORDER BY 1
   LOOP

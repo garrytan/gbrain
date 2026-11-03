@@ -1,5 +1,6 @@
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
 import { suffixedFrontmatterSlugHold } from './persistence/suffixed-slug.ts';
+import { noncanonicalPrivateHold } from './persistence/visibility-request.ts';
 import { maintenanceBeliefTransaction } from './belief/writers.ts';
 import { withUnmanagedBeliefs } from './belief/projection-point.ts';
 import { maintenanceTransaction, ownerSourceGateInput, suppliedTrustMarkerView, trustMarkerChanged, writeTrustOfGate } from './persistence/attribution.ts';
@@ -345,6 +346,8 @@ export async function importFromContent(
     overrideTier?: unknown;
     /** #5575: the caller's trust tier and origin for this write; absent skips the write gate (owner paths). */
     writeGate?: WriteGateInput;
+    /** #7880: external content (ingest_capture, connector and company-brain files) asking for `visibility: private` in a spelling page privacy does not read refuses `visibility_noncanonical` (`screenImportContent`); nothing is stored. */
+    holdNoncanonicalPrivate?: boolean;
     beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>;
     onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void;
   } & ImportFenceOptions = {},
@@ -364,7 +367,7 @@ export async function importFromContent(
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
   // so the network path behaves identically to the file path.
-  const screen = screenImportContent({ content, path: slug + '.md', ...(opts.activePack ? { activePack: opts.activePack } : {}), ...(opts.fenceScreen === undefined ? { fences: opts.fences ?? 'lenient' } : {}) });
+  const screen = screenImportContent({ content, path: slug + '.md', ...(opts.activePack ? { activePack: opts.activePack } : {}), ...(opts.fenceScreen === undefined ? { fences: opts.fences ?? 'lenient' } : {}), ...(opts.holdNoncanonicalPrivate ? { holdNoncanonicalPrivate: true } : {}) });
   if (screen.status === 'refused') {
     return { slug, status: screen.refusal.code === 'file_too_large' ? 'skipped' : 'error', chunks: 0, error: screen.refusal.message, refusal: screen.refusal, skip_reason: screen.refusal.code };
   }
@@ -662,8 +665,8 @@ export async function importFromContent(
   // recorded embedding input (#5553: column, model, dimensions, wrapper tier
   // and exact input) equals the one this import would embed, or, for a vector
   // recorded before provenance existed, when the input is the raw chunk text
-  // under the same model. The old index must be sealed and neither body may
-  // hold protected fences, so no reused vector can carry a private sibling.
+  // under the same model. The old index must be sealed (no private fence row in a chunk), and on a fenced page
+  // only a vector with a recorded input is reused (#6961); a changed fence chunk has new text and is embedded again.
   // A prepared (persistence) import defers embedding to its effect worker, so
   // it reuses inside its publication transaction, under the page guard, from
   // the chunks it is about to replace; only the chunks left without a vector
@@ -674,8 +677,8 @@ export async function importFromContent(
   const largePage = isLargePageBytes(bodyBytes) || segmented !== null;
   const postCommitEmbedding = largePage ? undefined : opts.onPostCommitEmbedding;
   const reusable = !!existing && !existing.deleted_at && !opts.forceRechunk && !postCommitEmbedding && chunks.length > 0 && bodyStorageOf(existing) !== 'segmented'
-    && !(opts.prepare && modeRequiresSynopsis(effectiveCRMode)) && !hasProtectedBody(`${existing.compiled_truth}\n${existing.timeline ?? ''}`) && !hasProtectedBody(`${parsed.compiled_truth}\n${parsed.timeline ?? ''}`);
-  const reuseCtx = { slug, sourceId: sourceId ?? 'default', title: parsed.title, corpusGeneration, tier: effectiveCRMode === 'title' ? 'title' as const : 'none' as const };
+    && !(opts.prepare && modeRequiresSynopsis(effectiveCRMode));
+  const reuseCtx = { slug, sourceId: sourceId ?? 'default', title: parsed.title, corpusGeneration, tier: effectiveCRMode === 'title' ? 'title' as const : 'none' as const, requireRecordedInput: reusable && (hasProtectedBody(`${existing.compiled_truth}\n${existing.timeline ?? ''}`) || hasProtectedBody(`${parsed.compiled_truth}\n${parsed.timeline ?? ''}`)) };
   const reuseStoredVectors = (exec: BrainEngine, into: ChunkInput[], keepUnembedded = false) => reuseStoredChunkVectors(exec, into, { ...reuseCtx, prepared: !!opts.prepare, keepUnembedded });
   const reused = reusable && !noEmbed && !opts.prepare ? await reuseStoredVectors(engine, chunks) : new Map<number, number | null>();
 
@@ -1083,6 +1086,8 @@ export async function importFromFile(
   if (preInferenceHold) {
     return { slug: slugifyPath(relativePath), status: 'skipped', chunks: 0, error: preInferenceHold.message, refusal: preInferenceHold, skip_reason: 'invalid_frontmatter' };
   }
+  const privateHold = noncanonicalPrivateHold(content, preInferenceParsed.frontmatter);
+  if (privateHold) return { slug: slugifyPath(relativePath), status: 'skipped', chunks: 0, error: privateHold.message, refusal: privateHold, skip_reason: privateHold.code };
   const recovery = { quoted: !!preInferenceParsed.errors?.some(e => e.code === 'YAML_PARSE' && e.recoverable),
     comment_value: !!preInferenceParsed.warnings?.some(w => w.code === 'FRONTMATTER_COMMENT_VALUE') };
 

@@ -30,6 +30,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { managedSynthesisFixture } from './helpers/managed-synthesis-fixture.ts';
+import { freezeCorpusSessions } from './helpers/frozen-corpus.ts';
 
 const backends = testBackends();
 const engines: BrainEngine[] = [];
@@ -116,6 +117,7 @@ async function withCorpus(run: (c: Corpus) => Promise<void>): Promise<void> {
             [{ ...(opts.dreamGenerated === false ? {} : { dream_generated: true }), raw_source: rawSource }]);
         },
         dryRun: async sourceId => {
+          freezeCorpusSessions(corpusDir, sourceId);
           await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
           const result = await runPhaseSynthesize(engine, { brainDir, sourceId, dryRun: true });
           expect(result.status).toBe('ok');

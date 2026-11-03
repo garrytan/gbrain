@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ensureCorpusSpoolDir, sessionCorpusFileName } from '../../src/core/context/corpus-segments.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { runThink, persistSynthesis, type ThinkLLMClient } from '../../src/core/think/index.ts';
 import { runPhaseDrift } from '../../src/core/cycle/drift.ts';
@@ -91,7 +92,7 @@ async function synthesisRig(engine: BrainEngine, dir: string) {
     'dream.synthesize.budget_usd': 'unlimited', 'models.dream.synthesize': 'anthropic:claude-sonnet-4-6', 'models.dream.triage': 'anthropic:claude-sonnet-4-6', 'agent.use_gateway_loop': 'true' })) await engine.setConfig(k, v);
   const usage = { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 };
   const run = async (name: string, during?: () => Promise<void>) => {
-    writeFileSync(join(corpus, `${name}.txt`), `[user]\nWe settled the storage plan for ${name}.\n\n${'[assistant]\nNoted.\n\n'.repeat(20)}`);
+    writeFileSync(join(ensureCorpusSpoolDir(corpus), sessionCorpusFileName(name, 'g5src')), `[user]\nWe settled the storage plan for ${name}.\n\n${'[assistant]\nNoted.\n\n'.repeat(20)}`);
     __setChatTransportForTests(async opts => {
       const mk = (text: string) => ({ text, blocks: [{ type: 'text', text }], stopReason: 'end', usage, model: opts.model!, providerId: 'anthropic' }) as never;
       if ((opts.system ?? '').startsWith('You triage a conversation transcript')) return mk(JSON.stringify({ score: 0.9, content_type: 'reflection', segments: [], entities: [], reasons: ['durable'] }));

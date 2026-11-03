@@ -46,11 +46,13 @@ function runHarness(env: Record<string, string>, readerDelayMs: number): Promise
       stream.on('close', () => note(`${name}.close`));
     }
     child.on('exit', (code, signal) => note(`exit:${code ?? signal}`));
+    // Listeners go on now and only the resume waits: the child_process exit handler resumes every
+    // stdio stream, so bytes still buffered when the child exits are emitted at once and lost to a later listener.
     child.stdout.pause();
     child.stderr.pause();
+    child.stdout.on('data', (d: Buffer) => (stdout += d.length));
+    child.stderr.on('data', (d: Buffer) => (stderr += d.length));
     setTimeout(() => {
-      child.stdout.on('data', (d: Buffer) => (stdout += d.length));
-      child.stderr.on('data', (d: Buffer) => (stderr += d.length));
       child.stdout.resume();
       child.stderr.resume();
     }, readerDelayMs);
@@ -74,6 +76,14 @@ describe('exit seam waits for delivery, not a fixed grace (real Bun pipes)', () 
     expect(run.code).toBe(3);
     expect({ stdout: run.stdout, stderr: run.stderr, streams: run.streams }).toEqual({ stdout: 100, stderr: 100, streams: run.streams });
     expect(run.durationMs).toBeLessThan(GRACE_MS / 2);
+  }, 40_000);
+
+  test('small output read only after the child exited: every byte still arrives', async () => {
+    const run = await runHarness({ HARNESS_STDOUT_BYTES: '100', HARNESS_STDERR_BYTES: '100', HARNESS_EXIT_CODE: '3' }, 500);
+    expect(run.code).toBe(3);
+    expect({ stdout: run.stdout, stderr: run.stderr, streams: run.streams }).toEqual({ stdout: 100, stderr: 100, streams: run.streams });
+    // gstack-timing-ok: the contract is that a read after exit never waits for the drain grace; half the grace is the headroom
+    expect(run.durationMs).toBeLessThan(GRACE_MS / 2 + 500);
   }, 40_000);
 
   test('stderr past the pipe buffer with a late reader: waits for drain, then exits', async () => {

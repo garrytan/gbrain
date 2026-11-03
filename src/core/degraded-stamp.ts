@@ -23,7 +23,7 @@ export interface DegradedStamp {
 
 /** Notices of kind `degraded` that say this call's own result is partial; the notice code is the reason. */
 const RESULT_NOTICE_REASONS: ReadonlySet<string> = new Set([
-  'held_files', 'sources_not_readable', 'references_unavailable', 'mention_index',
+  'held_files', 'references_unavailable', 'mention_index',
   'relational_chain', 'graph_walk_truncated', 'pinned_answer_stale', 'facts_unembedded', 'delta_incomplete',
 ]);
 

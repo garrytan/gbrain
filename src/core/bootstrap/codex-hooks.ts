@@ -49,6 +49,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, copyFileSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { atomicWriteTextFile } from './atomic-write.ts';
 import { ownedEntryFingerprint } from './adopted-connections.ts';
+import { readCodexTomlTable } from './codex-toml.ts';
 import type { HostSpecTarget } from './host-specs.ts';
 import { CODEX_HOOK_EVENTS, codexConfigPath, codexHooksPath } from './host-specs.ts';
 
@@ -112,14 +113,19 @@ function shellQuote(arg: string): string {
  * invocation and only /bin/sh ever parses the POSIX script. The outer sh's
  * $0 is the gbrain binary (no nested quoting of the path); the grandchild
  * inherits GBRAIN_BIN/GBRAIN_PAYLOAD through the env-prefix assignments.
+ * With `launcher` (src/core/setup/hook-launcher.ts) the outer $0 is the
+ * launcher and $1 the binary, so the grandchild starts gbrain from the
+ * launcher's directory instead of the session's.
  */
-export function buildCodexSessionEndCommand(gbrainBin: string): string {
-  const script =
-    't="$(mktemp)"; cat >"$t"; GBRAIN_PAYLOAD="$t" GBRAIN_BIN="$0" nohup sh -c ' +
-    `'"$GBRAIN_BIN" ${CODEX_HOOK_OWNERSHIP_TOKEN} <"$GBRAIN_PAYLOAD"; rm -f "$GBRAIN_PAYLOAD"' >/dev/null 2>&1 &`;
+export function buildCodexSessionEndCommand(gbrainBin: string, launcher?: string): string {
+  const script = launcher
+    ? 't="$(mktemp)"; cat >"$t"; GBRAIN_PAYLOAD="$t" GBRAIN_HOOK_LAUNCHER="$0" GBRAIN_BIN="$1" nohup sh -c ' +
+      `'"$GBRAIN_HOOK_LAUNCHER" "$GBRAIN_BIN" ${CODEX_HOOK_OWNERSHIP_TOKEN} <"$GBRAIN_PAYLOAD"; rm -f "$GBRAIN_PAYLOAD"' >/dev/null 2>&1 &`
+    : 't="$(mktemp)"; cat >"$t"; GBRAIN_PAYLOAD="$t" GBRAIN_BIN="$0" nohup sh -c ' +
+      `'"$GBRAIN_BIN" ${CODEX_HOOK_OWNERSHIP_TOKEN} <"$GBRAIN_PAYLOAD"; rm -f "$GBRAIN_PAYLOAD"' >/dev/null 2>&1 &`;
   // Embed the script into an outer single-quoted argument: ' → '\'' works
   // identically in POSIX shells AND fish (escaped-quote outside quotes).
-  return `sh -c '${script.replace(/'/g, "'\\''")}' ${shellQuote(gbrainBin)}`;
+  return `sh -c '${script.replace(/'/g, "'\\''")}' ${[...(launcher ? [launcher] : []), gbrainBin].map(shellQuote).join(' ')}`;
 }
 
 /** Compact JSON with recursively-sorted keys — codex's canonical form. */
@@ -182,6 +188,8 @@ export interface WriteCodexHooksResult {
  */
 export function writeCodexHooks(opts: {
   gbrainBin: string;
+  /** The trusted-directory launcher the capture starts gbrain through (src/core/setup/hook-launcher.ts), never the session's directory (#8428). */
+  hookLauncher?: string;
   hooksPath?: string;
   configPath?: string;
 }): WriteCodexHooksResult {
@@ -203,7 +211,7 @@ export function writeCodexHooks(opts: {
   }
   const hooks = (doc.hooks && typeof doc.hooks === 'object' && !Array.isArray(doc.hooks) ? doc.hooks : {}) as NonNullable<HooksJson['hooks']>;
   const sessionEnd = Array.isArray(hooks[SESSION_END_EVENT]) ? hooks[SESSION_END_EVENT]! : [];
-  const command = buildCodexSessionEndCommand(opts.gbrainBin);
+  const command = buildCodexSessionEndCommand(opts.gbrainBin, opts.hookLauncher);
   const ourGroup = { hooks: [{ type: 'command', command, timeout: SESSION_END_TIMEOUT_SEC }] };
   // Fresh install appends LAST; a re-run replaces our group IN PLACE — a
   // strip-then-append would shift every foreign group sitting after ours
@@ -356,6 +364,7 @@ export function removeCodexHooks(opts: { hooksPath?: string; configPath?: string
 // (src/core/setup/codex.ts), so an edited group is preserved, never removed.
 
 export const CODEX_SETUP_LANE_TOKEN = 'GBRAIN_HOOK_LANE=setup';
+const TURN_RULE_LANE_TOKEN = 'GBRAIN_HOOK_LANE=turn-rule';
 export const CODEX_SETUP_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SessionEnd'] as const;
 export type CodexSetupEvent = (typeof CODEX_SETUP_EVENTS)[number];
 
@@ -370,13 +379,13 @@ const SETUP_EVENT_SPECS: Record<CodexSetupEvent, { stateName: string; timeout: n
 
 export interface CodexHookGroup { hooks: Array<{ type: 'command'; command: string; timeout: number }> }
 
-/** Setup's group for one event. `env` is POSIX `env` (any $SHELL parses it); the values pin this install. */
-export function codexSetupHookGroup(gbrainBin: string, event: CodexSetupEvent, env: { GBRAIN_HOME?: string; GBRAIN_SOURCE?: string }): CodexHookGroup {
-  const assignments = [CODEX_SETUP_LANE_TOKEN, ...(env.GBRAIN_HOME ? [`GBRAIN_HOME=${env.GBRAIN_HOME}`] : []), ...(env.GBRAIN_SOURCE ? [`GBRAIN_SOURCE=${env.GBRAIN_SOURCE}`] : [])];
+/** Setup's group for one event (or the turn-rule lane's, src/core/setup/turn-hook.ts). `env` is POSIX `env` (any $SHELL parses it); the values pin this install. `launcher`: the trusted-directory hook launcher gbrain starts through (src/core/setup/hook-launcher.ts). */
+export function codexSetupHookGroup(gbrainBin: string, event: CodexSetupEvent, env: { GBRAIN_HOME?: string; GBRAIN_SOURCE?: string }, lane = 'setup', launcher?: string): CodexHookGroup {
+  const assignments = [`GBRAIN_HOOK_LANE=${lane}`, ...(env.GBRAIN_HOME ? [`GBRAIN_HOME=${env.GBRAIN_HOME}`] : []), ...(env.GBRAIN_SOURCE ? [`GBRAIN_SOURCE=${env.GBRAIN_SOURCE}`] : [])];
   const spec = SETUP_EVENT_SPECS[event];
   const command = event === 'SessionEnd'
-    ? ['env', ...assignments].map(shellQuote).join(' ') + ' ' + buildCodexSessionEndCommand(gbrainBin)
-    : ['env', ...assignments, gbrainBin, 'hook', spec.subcommand, '--harness', 'codex'].map(shellQuote).join(' ');
+    ? ['env', ...assignments].map(shellQuote).join(' ') + ' ' + buildCodexSessionEndCommand(gbrainBin, launcher)
+    : ['env', ...assignments, ...(launcher ? [launcher] : []), gbrainBin, 'hook', spec.subcommand, '--harness', 'codex'].map(shellQuote).join(' ');
   return { hooks: [{ type: 'command', command, timeout: spec.timeout }] };
 }
 
@@ -387,7 +396,7 @@ export function codexSetupTrustEntry(hooksPath: string, event: CodexSetupEvent, 
   return { key: `${hooksPath}:${stateName}:${index}:0`, trusted_hash: codexHookTrustHash(stateName, handler.command, handler.timeout) };
 }
 
-export interface CodexHookCensusGroup { event: string; index: number; hash: string; lane: 'setup' | 'bootstrap' | 'other'; commands: string[] }
+export interface CodexHookCensusGroup { event: string; index: number; hash: string; lane: 'setup' | 'bootstrap' | 'turn-rule' | 'other'; commands: string[] }
 
 function loadHooksJson(hooksPath: string): { doc: HooksJson; hooks: NonNullable<HooksJson['hooks']> } {
   if (!existsSync(hooksPath)) return { doc: {}, hooks: {} };
@@ -418,11 +427,35 @@ export function codexHookCensus(hooksPath: string): CodexHookCensusGroup[] {
     groups.forEach((group, index) => {
       const commands = (Array.isArray(group?.hooks) ? group.hooks : []).map((h) => h?.command).filter((c): c is string => typeof c === 'string');
       const lane = commands.some((c) => c.includes(CODEX_SETUP_LANE_TOKEN)) ? 'setup'
+        : commands.some((c) => c.includes(TURN_RULE_LANE_TOKEN)) ? 'turn-rule'
         : commands.some((c) => CONTEXT_LANE_TOKENS.some((t) => c.includes(t))) ? 'bootstrap' : 'other';
       out.push({ event, index, hash: ownedEntryFingerprint(group), lane, commands });
     });
   }
   return out;
+}
+
+/**
+ * Whether Codex runs gbrain's handler in group `index` of a context event
+ * (SessionStart, UserPromptSubmit): its `[hooks.state."<hooksPath>:<state>:
+ * <index>:<handler>"]` entry in `configPath` is not `enabled = false` and its
+ * `trusted_hash` equals the hash of the handler as written (gbrain's shape: no
+ * matcher, not async, an unset timeout normalized to 600). Codex never runs an
+ * untrusted or disabled user-layer hook. Throws on an unparseable file.
+ */
+export function codexHookGroupRuns(hooksPath: string, configPath: string, group: { event: string; index: number }): boolean {
+  if (group.event !== 'SessionStart' && group.event !== 'UserPromptSubmit') return false;
+  const { stateName } = SETUP_EVENT_SPECS[group.event];
+  const handlers = loadHooksJson(hooksPath).hooks[group.event]?.[group.index]?.hooks;
+  if (!Array.isArray(handlers)) return false;
+  const states = readCodexTomlTable(configPath, ['hooks', 'state']) as Record<string, { enabled?: unknown; trusted_hash?: unknown } | undefined> | undefined;
+  return handlers.some((h, i) => {
+    const command = h?.command;
+    if (typeof command !== 'string' || !(command.includes(CODEX_SETUP_LANE_TOKEN) || CONTEXT_LANE_TOKENS.some((t) => command.includes(t)))) return false;
+    const state = states?.[`${hooksPath}:${stateName}:${group.index}:${i}`];
+    if (!state || state.enabled === false) return false;
+    return state.trusted_hash === codexHookTrustHash(stateName, command, typeof h.timeout === 'number' ? Math.max(1, h.timeout) : 600);
+  });
 }
 
 /**
@@ -455,7 +488,7 @@ export function writeCodexSetupHooks(hooksPath: string, opts: {
     let next: typeof groups;
     if (wanted) {
       const first = ours[0];
-      next = first === undefined ? [...groups, wanted] : groups.flatMap((g, i) => (i === first ? [wanted] : ours.includes(i) ? [] : [g]));
+      next = first === undefined ? [...groups, wanted] : groups.flatMap<(typeof groups)[number]>((g, i) => (i === first ? [wanted] : ours.includes(i) ? [] : [g]));
       indexes[event] = first ?? next.length - 1;
       if (first !== undefined && ownedEntryFingerprint(groups[first]) === wantedHash && ours.length === 1) continue;
     } else {

@@ -1366,6 +1366,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.image_query.daily_budget_usd_per_client',
   'search.image_query.remote_max_bytes',
   'search.mcp_keyword_only',
+  'search.remote_page_cap', // GBRA-156: distinct-page cap of a remote search/query without limit (search/remote-page-cap.ts)
   REMOTE_PRIVATE_PAGES_KEY,
   'search.track_retrieval',
   // Retrieval feedback (feedback/settings.ts).
@@ -1392,7 +1393,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // weak-graded query), and unlike crag_think it is reachable by remote
   // callers — attacker-shaped weak queries drive that spend (ship security
   // review). See docs/operations/spend-controls.md.
-  // #5824 one-release rollback, latched per process (search/vector-legacy-guard.ts).
+  // #5824 one-release rollback, latched per engine (search/vector-legacy-guard.ts).
   'search.vector_legacy_guard',
   'search.hnsw_iterative_scan',
   'search.cjk_keyword_deadline_ms',
@@ -1434,10 +1435,13 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.auto_packing',
   'search.long_page_unit', 'search.long_page_min_chars', // F2: delivery unit for long (rendered body >= min_chars, default 20000) non-conversation hits under an implied auto: off (default) | window | section | page (search/evidence-delivery.ts)
   'search.evidence_date_header', // C1: one-line date header per delivered block (default off; search/evidence-date.ts)
+  'search.evidence_titles', 'search.query_budget_unit', // GBRA-205, default off: titles on page date headers and think <page> tags (search/evidence-date.ts); query token_budget as the delivery hard cap, chunk | auto (search/evidence-packing.ts)
   'search.evidence_tail_trim', // GBRA-156: protected top-3 tail trim of auto conversation blocks (default off; search/evidence-tail-trim.ts)
   'search.entity_anchoring', // entity-anchored retrieval for entity-scoped current-state query/search (default off; search/entity-anchor.ts)
   'search.query_facts_arm', // query adds matching active facts as rows in spare capacity (default on; search/facts-arm.ts)
+  'search.saved_facts_supersede', // search saved_facts: a newer fact with a correction cue goes ahead of the fact it corrects, labelled corrected_by (default on; search/saved-facts-match.ts)
   'search.temporal_fact_reserve', // temporal-cue queries reserve up to 15% of the token budget for question-ranked dated facts (default off; search/facts-arm.ts)
+  'search.query_facts_block', 'search.fact_source_pages', // GBRA-205: a dated facts block (up to 22% of a query budget) ahead of the pages, default on; matched facts' source conversations join the hits, default off (search/facts-arm.ts)
   'search.page_rank_cut', // W5: whole_pages (default) | off — page unit + caller token_budget stops adding pages once their whole pages fill factor x the budget (search/page-rank-cut.ts)
   'search.page_rank_cut_factor', // W5: whole_pages target = factor x the budget (default 1.5)
   'think.return_unit',

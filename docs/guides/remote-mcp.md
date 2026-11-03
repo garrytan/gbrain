@@ -32,7 +32,7 @@ in this shape.
 ## What `gbrain mcp expose` does
 
 ```bash
-gbrain mcp expose                # tailnet-only, port 3131, full surface, service installed
+gbrain mcp expose                # tailnet-only, port 3131, full surface listing the memory verbs, service installed
 gbrain mcp expose --funnel       # also reachable by cloud agents (public HTTPS)
 gbrain mcp expose --dry-run      # print the plan, change nothing
 ```
@@ -83,7 +83,7 @@ alone. Which exit 2 it is matters:
 The wrapper reads the admin token from its file at run time, sources your
 shell profile and `~/.gbrain/env`, prepends the Bun directory to `PATH`, and
 `exec`s `gbrain serve --http --port N --public-url URL [--surface X]
-[--enable-dcr]`. The token never lands in the plist, unit or wrapper.
+[--advertise verbs] [--enable-dcr]`. The token never lands in the plist, unit or wrapper.
 
 Paths above use the default GBrain home. Use the receipt's `admin_token_file`
 and `mcp_url` for the intended server, especially with a custom `GBRAIN_HOME`.
@@ -146,7 +146,7 @@ gbrain mcp expose --remove [--yes] [--json]
 | --- | --- |
 | `--port N` | Local port for `gbrain serve --http` (default `3131`). Tailscale proxies `:443` on your MagicDNS name to it. With `--status` or `--remove` and no receipt, the port whose leftover `:443` handler is looked for and cleaned up. |
 | `--funnel` | Public HTTPS via Tailscale Funnel instead of tailnet-only Serve. Required for cloud agents. |
-| `--surface verbs\|starter\|full` | Tool surface of the served MCP server (default `full`, same as `serve --http`). |
+| `--surface verbs\|starter\|full` | Tool surface, listed in full. Default: `full` with `--advertise verbs` (lists the memory verbs and `request_tools`; all stays callable). Older exposures keep their listing. |
 | `--enable-dcr` | Turn on self-service client registration on the served server (off by default; every self-registered connection still stops for your approval in the admin dashboard). |
 | `--no-tailscale` | Skip Tailscale entirely: install the service on loopback only, publish nothing. Exclusive with `--funnel`. |
 | `--no-service` | Do not create a user service; only publish a server you run yourself. Also the way to publish from a host with no brain config (`no_brain_config`). |
@@ -157,7 +157,7 @@ gbrain mcp expose --remove [--yes] [--json]
 | `--json` | One JSON document on stdout: `{ status, receipt, checks: [{name, status, detail}], next_actions, reason?, message? }`; prose goes to stderr. |
 
 `--status` and `--remove` are exclusive with each other. Defaults: port
-3131, tailnet-only, `--surface full`, DCR off, service installed whenever a
+3131, tailnet-only, `--surface full --advertise verbs`, DCR off, service installed whenever a
 supervisor exists.
 
 ### `--status`

@@ -55,8 +55,11 @@ async function ownedContentRows(engine: BrainEngine, sourceIds?: string[]): Prom
       AND NOT EXISTS (SELECT 1 FROM source_ingestion_receipts r WHERE r.source_id=s.id AND r.source_incarnation=s.incarnation AND r.profile='company-brain')`, [sourceIds ?? null, await graduationVerifyInheritsPersistence(engine)]);
 }
 
-/** The row's complete, ready, owned receipt of a plain content source (no connector, clone or company brain), else null. */
-function completeOwnedReceipt(row: OwnedContentRow, sourceIds?: string[]): Record<string, unknown> | null {
+/**
+ * The row's owned receipt of a plain content source (no connector, clone or company brain), else null; complete and
+ * ready unless `anyStage` (#7900: a setup checkpoint the migration resumes is stale too when it names another root).
+ */
+function ownedReceipt(row: OwnedContentRow, sourceIds?: string[], anyStage = false): Record<string, unknown> | null {
   if (sourceIds && !sourceIds.includes(row.id)) return null;
   if (!row.config || typeof row.config !== 'object' || Array.isArray(row.config) || row.last_commit !== null) return null;
   const config = row.config as Record<string, unknown>;
@@ -64,8 +67,8 @@ function completeOwnedReceipt(row: OwnedContentRow, sourceIds?: string[]): Recor
   let receipt: Record<string, unknown>;
   try { receipt = JSON.parse(row.receipt); } catch { return null; }
   return receipt && receipt.version === 1 && receipt.brain_id === row.brain_id && receipt.source_id === row.id
-    && receipt.source_incarnation === row.incarnation && receipt.owned_root === true && receipt.stage === 'complete'
-    && receipt.status === 'ready' && ['content_directory', 'git'].includes(String(receipt.repository_kind)) ? receipt : null;
+    && receipt.source_incarnation === row.incarnation && receipt.owned_root === true && (anyStage || receipt.stage === 'complete' && receipt.status === 'ready')
+    && ['content_directory', 'git'].includes(String(receipt.repository_kind)) ? receipt : null;
 }
 
 const ownerRootOf = (row: OwnedContentRow) => typeof row.owner_root === 'string' && typeof row.relative_path === 'string' ? resolve(row.owner_root, row.relative_path) : null;
@@ -78,7 +81,7 @@ function rootsAgree(row: OwnedContentRow, receipt: Record<string, unknown>): boo
 export async function ownedContentFreshness(engine: BrainEngine, sourceIds?: string[]): Promise<OwnedContentFreshness[]> {
   const result: OwnedContentFreshness[] = [];
   for (const row of await ownedContentRows(engine, sourceIds)) {
-    const receipt = completeOwnedReceipt(row, sourceIds);
+    const receipt = ownedReceipt(row, sourceIds);
     if (receipt && rootsAgree(row, receipt)) result.push({ sourceId: row.id, pending: Number(row.pending), recovering: Number(row.recovering) });
   }
   return result;
@@ -91,7 +94,7 @@ export async function ownedContentFreshness(engine: BrainEngine, sourceIds?: str
 export async function staleOwnedContent(engine: BrainEngine, sourceIds?: string[]): Promise<StaleOwnedContent[]> {
   const result: StaleOwnedContent[] = [];
   for (const row of await ownedContentRows(engine, sourceIds)) {
-    const receipt = completeOwnedReceipt(row, sourceIds);
+    const receipt = ownedReceipt(row, sourceIds, true);
     if (receipt && !rootsAgree(row, receipt)) result.push({ sourceId: row.id, receiptRoot: typeof receipt.root === 'string' ? receipt.root : null, ownerRoot: ownerRootOf(row), localPath: row.local_path });
   }
   return result;

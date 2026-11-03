@@ -159,6 +159,59 @@ describe('serve-sync-runner delegated jobs', () => {
     expect(await engine.getPage('topics/alpha')).not.toBeNull();
   }, 60_000);
 
+  test('#8354: done is published only after the run settles its markers and schedules the deferred embeds', async () => {
+    // The post-run marker re-check is slowed so a status poll lands inside it: done must not be visible yet.
+    let markerReads = 0;
+    const slowSettle = new Proxy(engine, { get(target, key) {
+      const value = Reflect.get(target, key, target);
+      if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
+        if (sql.includes('FROM sync_wanted_markers m JOIN sources') && ++markerReads > 1) await new Promise((r) => setTimeout(r, 400));
+        return target.executeRaw(sql, params);
+      };
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    const start = startDelegatedSync(slowSettle, { sourceId: 'default', noPull: true, timeoutSeconds: 120 }, 'token-8354');
+    expect(start.ok).toBe(true);
+    const deadline = Date.now() + 30_000;
+    for (;;) {
+      const s = getDelegatedSyncStatus(start.jobId!);
+      if (s.ok && (s.state === 'done' || s.state === 'error')) {
+        expect(s.state).toBe('done');
+        expect(markerReads).toBeGreaterThan(1);
+        expect(__deferredEmbedsPendingForTests()).toBe(true);
+        expect(isDelegatedSyncRunning()).toBe(false);
+        break;
+      }
+      if (Date.now() > deadline) throw new Error('job did not settle');
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  }, 60_000);
+
+  test('#8354: a client abort while the finished run settles its markers leaves it done, never aborting', async () => {
+    let markerReads = 0;
+    let release!: () => void;
+    const settling = new Promise<void>((r) => { release = r; });
+    let inSettle!: () => void;
+    const entered = new Promise<void>((r) => { inSettle = r; });
+    const slowSettle = new Proxy(engine, { get(target, key) {
+      const value = Reflect.get(target, key, target);
+      if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
+        if (sql.includes('FROM sync_wanted_markers m JOIN sources') && ++markerReads > 1) { inSettle(); await settling; }
+        return target.executeRaw(sql, params);
+      };
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    const start = startDelegatedSync(slowSettle, { sourceId: 'default', noPull: true, timeoutSeconds: 120 }, 'token-8354-abort');
+    await entered;
+    const ab = abortDelegatedSync(start.jobId!);
+    expect(ab.ok).toBe(true);
+    expect(ab.state).toBe('running');
+    release();
+    const s = await waitForTerminal(start.jobId!);
+    expect(s.state).toBe('done');
+    expect(s.result!.added).toBe(2);
+  }, 60_000);
+
   test('single-flight: a different token while running answers busy with the jobId', async () => {
     const first = startDelegatedSync(engine, { noPull: true, timeoutSeconds: 60, sourceId: 'default' }, 'token-a');
     expect(first.ok).toBe(true);

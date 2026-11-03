@@ -280,8 +280,8 @@ export async function resolveHybridRequest(
     // via normalizeEngineColumn; the descriptor path is the strict one.
     embeddingColumn: resolvedCol,
     // #5824 rollback switch, latched once per process from env/config.
-    vectorLegacyGuard: resolveVectorLegacyGuard(cfgForColumn),
-    hnswIterativeScan: resolveHnswIterativeScan(cfgForColumn),
+    vectorLegacyGuard: resolveVectorLegacyGuard(engine, cfgForColumn),
+    hnswIterativeScan: resolveHnswIterativeScan(engine, cfgForColumn),
     // #5989: bound the CJK keyword arm by one deadline; its outcome and wall time ride the meta.
     cjkKeyword: {
       deadlineMs: resolveCjkKeywordDeadlineMs(cfgForColumn),

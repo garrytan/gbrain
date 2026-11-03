@@ -60,18 +60,15 @@ package installation, post-upgrade and migration orchestration. It skips service
 installation and unit rewrites, not unrelated migration work. Paid reindexing
 has its own `GBRAIN_NO_REEMBED=1` control.
 
-The grandfathering batch in `src/commands/migrations/v0_13_1.ts` changes only
-`frontmatter.validate`. It holds canonical page guards and row locks, rechecks
-eligibility, and advances the text seal only for already-sealed snapshots.
-An unsealed page stays unsealed. This preserves keyword retrieval after a
-metadata-only upgrade without bypassing revision safety. The verify phase
-checks only the pages this run grandfathered, keyed on `pages.id` and the
-revision each write produced: a page a concurrent writer (such as a connector
-re-import) rewrote or deleted since is reported as `rewritten_concurrently`,
-and only a page still at that revision without `validate: false` fails the
-phase. The installed-lifecycle
-test and `test/e2e/grandfather-projection-postgres.test.ts` cover the actual
-upgrade consequence and engine parity respectively.
+`src/commands/migrations/v0_13_1.ts` writes nothing (#7814). It used to stamp
+`validate: false` into every page's frontmatter, which an upgrade ran on any
+brain whose ledger never recorded v0.13.1 and which moved every content_hash.
+The orchestrator now records completion only, and a queued
+`managed_grandfather` request from an older binary ends `conflict` without
+writing (`src/core/persistence/grandfather.ts`).
+`test/upgrade-preserves-pages-7814.slow.test.ts` (PGLite) and
+`test/e2e/upgrade-preserves-pages-7814-postgres.test.ts` upgrade a
+v0.59.2.0-shaped brain, repo-less and repo, and assert no page changes.
 
 ## Write request ids
 

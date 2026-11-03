@@ -10,7 +10,7 @@ import { pricingSetCommand } from '../../../core/budget/no-pricing.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { checkError } from '../check-fix.ts';
-import { isConnectorSourceKind } from '../../../core/persistence/connector-identity.ts';
+import { CONNECTOR_KINDS_SQL, isConnectorSourceKind } from '../../../core/persistence/connector-identity.ts';
 import { isCrossSourceLinksEnabled } from '../../../core/link-extraction.ts';
 
 /**
@@ -492,7 +492,7 @@ export async function checkJunkEntityHubs(
               (SELECT t.source_id FROM pages t LEFT JOIN sources ts ON ts.id = t.source_id
                 WHERE t.slug = p.slug AND t.source_id <> p.source_id AND t.deleted_at IS NULL
                   AND (t.frontmatter ->> 'google_contact_id') IS NULL
-                  AND COALESCE(ts.config ->> 'kind', '') NOT IN ('google', 'github')
+                  AND COALESCE(ts.config ->> 'kind', '') NOT IN (${CONNECTOR_KINDS_SQL})
                 ORDER BY (t.source_id = 'default') DESC, t.source_id LIMIT 1) AS canonical_twin_source
        FROM edge_counts ec
        JOIN pages p ON p.id = ec.page_id AND p.deleted_at IS NULL

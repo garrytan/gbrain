@@ -12,7 +12,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { Page, PageVersion } from '../types.ts';
 import { importFromContent, verifyPageReadable, type ParsedPage } from '../import-file.ts';
-import { comparableFrontmatter, frontmatterHoldMessageWithoutKeys, parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, resolveSourceLocalFilePath, type ParsedMarkdown, type ParseOpts } from '../markdown.ts';
+import { classifyImportHold, comparableFrontmatter, frontmatterHoldMessageWithoutKeys, parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, resolveSourceLocalFilePath, type ParsedMarkdown, type ParseOpts } from '../markdown.ts';
 import { alignWithStored } from './align-stored.ts';
 import { assertLargePageReplacement } from './large-page-guard.ts';
 import { applyInference } from '../frontmatter-inference.ts';
@@ -26,17 +26,18 @@ import { isOpPageSlug } from '../ops/context.ts';
 import { shellQuote, type Action } from '../agent-output.ts';
 import type { RegistryCode } from '../error-registry.ts';
 import { pageIdentityError } from './page-identity.ts';
-import { contentRefusalError, PAGE_OVER_LIMIT_SUGGESTION } from '../import-screen.ts';
+import { contentRefusalError, PAGE_OVER_LIMIT_SUGGESTION, type ContentRefusal } from '../import-screen.ts';
 import { ContentSanityBlockError } from '../content-sanity.ts';
 import { assertPageRevision, type PageSnapshot } from '../page-state/types.ts';
 import { GIT_HOLD_OP, gitHoldFingerprint, gitHoldFix, readGitHold } from './sync-holds.ts';
 import { hostOperatorFix, recordRoute } from './held-reads.ts';
-import { heldFileMessage } from './verb-errors.ts';
+import { heldFileMessage, sourceCheckoutMissingRefusal } from './verb-errors.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { recordedPathFromFileUri, scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
 import { engineMutationPrecondition, parseMutationPrecondition } from './preconditions.ts';
 import { assertPurgeParams } from './purge-params.ts';
 import { authorizeWrite, slugDisclosable } from './authority.ts';
+import { remoteReadersChecked } from './page-visibility.ts';
 import { findLiveFileClaimants, type FileClaimant, type FileClaimTarget } from './file-claims.ts';
 import { digest, sha256 } from './digest.ts';
 import { replaceableFile } from '../facts/file-body-guard.ts';
@@ -45,6 +46,7 @@ import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { isUnboundSourcePage } from './unbound-source.ts';
+import { slugPathFile } from './unbound-pages.ts';
 import { isOriginTwinPage } from './origin-twins.ts';
 import { sealImportedPage, sealPageTextProjection } from '../page-state/projections.ts';
 import { materializedSnapshot, sealSegmentedPage } from './segmented-apply.ts';
@@ -67,6 +69,7 @@ import { DEFAULT_WRITE_GATE_CONFIG, writeGateApplies } from '../write-gate.ts';
 import { materializeTimeline, prepareCanonicalProjections, type TimelineRowsRemoved } from './canonical-projections.ts';
 import { assertTimelineNotOmitted, timelineWritePolicy } from './timeline-omission.ts';
 import { preserveProtectedTakes } from './protected-takes.ts';
+import { assertPrivateRequestKept, privateRequestGuarded, readPrivateRequest } from './visibility-request.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { prepareAutomaticLinks } from './links-preparation.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
@@ -90,6 +93,7 @@ import { withoutSafetyAssessments } from './reconcile-safety.ts';
 import { preparePagePurge, purgePageInTransaction, type PreparedPagePurge } from './page-purge.ts';
 import { withTrustKeep } from './context.ts';
 import { isFenceEditWrite, pageGateTrust, pageWriteTrust, recordAgentPageLowering, stampPageTrustMarker, storedPageTier } from '../trust/page-write.ts';
+import { compareTrust, type WriteTrust } from '../trust/tier.ts';
 import { suppliedTrustMarkerView } from '../trust/channel.ts';
 import { gateField, gateInput } from '../trust/gate-outcomes.ts';
 import { PUSH_SCAN_MAX_FILE_BYTES } from '../page-size-policy.ts';
@@ -125,14 +129,21 @@ function canonical(page: Pick<Page, 'type' | 'title' | 'compiled_truth' | 'timel
     frontmatter: comparableFrontmatter(page.frontmatter), tags: [...new Set(tags)].sort() };
 }
 interface CanonicalProvenance { source_kind: string; ingested_via: string; ingested_at: string; }
-/** Canonical stamps belong to the first write, never to a later preparation attempt. */
+/**
+ * Writes whose caller supplies the page text, and so could supply provenance stamps in its frontmatter. Unlike
+ * trust/page-write.ts CONTENT_OPERATIONS, revert_version and restore_page are absent: they replay a stored version.
+ */
+const CALLER_CONTENT_OPERATIONS = ['put_page', 'edit_page', 'append_page', 'capture'];
+/**
+ * Canonical stamps belong to the first write, never to a later preparation attempt. #7873: they are server-owned on
+ * every caller-content write a remote caller makes, with or without a repository: the caller's values are dropped and
+ * the stored page's kept. A managed put_page (local too) also stamps the first write's provenance.
+ */
 function putProvenance(row: WriteRequest, snapshot: PageSnapshot | null, parsed: ParsedPage): CanonicalProvenance | undefined {
-  if (row.operation !== 'put_page' || !row.worktree_id) return undefined;
-  const keys = ['source_kind', 'ingested_via', 'ingested_at'] as const;
-  for (const key of keys) {
-    delete parsed.frontmatter[key];
-    if (snapshot?.page.frontmatter[key] !== undefined) parsed.frontmatter[key] = snapshot.page.frontmatter[key];
-  }
+  if (!serverOwnsProvenance(row)) return undefined;
+  const managedPut = row.operation === 'put_page' && !!row.worktree_id;
+  keepStoredProvenance(parsed.frontmatter, snapshot?.page.frontmatter);
+  if (!managedPut) return undefined;
   const tags = [...new Set([...(snapshot?.tags ?? []), ...parsed.tags])].sort();
   if (snapshot && !snapshot.page.deleted_at && digest(canonical(snapshot.page, snapshot.tags)) === digest(canonical(parsed, tags))) {
     return undefined;
@@ -149,6 +160,29 @@ function putProvenance(row: WriteRequest, snapshot: PageSnapshot | null, parsed:
   };
   Object.assign(parsed.frontmatter, stamp);
   return stamp;
+}
+function serverOwnsProvenance(row: WriteRequest): boolean {
+  return (row.operation === 'put_page' && !!row.worktree_id) || (row.authority.remote === true && CALLER_CONTENT_OPERATIONS.includes(row.operation));
+}
+/**
+ * #7873: the tier of a write whose provenance stamps are server-owned is the lower of its own frontmatter's and the
+ * frontmatter it publishes (the stored stamps kept), so dropping a stored lowering stamp escapes neither the write gate
+ * nor the page row's tier.
+ */
+export function provenanceWriteTrust(row: WriteRequest, frontmatter: Record<string, unknown> | null, stored: Record<string, unknown> | null | undefined): WriteTrust | undefined {
+  const trust = pageWriteTrust(row, frontmatter);
+  if (!trust || !frontmatter || !serverOwnsProvenance(row)) return trust;
+  const published = { ...frontmatter };
+  keepStoredProvenance(published, stored);
+  const kept = pageWriteTrust(row, published);
+  return kept && compareTrust(kept.tier, trust.tier) < 0 ? kept : trust;
+}
+/** The provenance stamps of `stored` replace whatever `frontmatter` carries for them (removed when the stored page has none). */
+export function keepStoredProvenance(frontmatter: Record<string, unknown>, stored: Record<string, unknown> | null | undefined): void {
+  for (const key of ['source_kind', 'ingested_via', 'ingested_at'] as const) {
+    delete frontmatter[key];
+    if (stored?.[key] !== undefined) frontmatter[key] = stored[key];
+  }
 }
 export { isNeverFiledDerivedPage };
 /**
@@ -280,6 +314,7 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
   if (!binding?.local_path) throw opError('owner_unavailable', 'The canonical worktree is unavailable on this host.',
     `This host does not hold source ${row.source_id}'s canonical worktree (or it has no local path), so the file of ${row.slug} was not written. Inspect the owner before resubmitting; the write publishes on the host that owns the source.`,
     { fix: ownerStatusFix(row.source_id) });
+  if (!existsSync(binding.local_path)) throw sourceCheckoutMissingRefusal(row.source_id, row.slug);
   const root = join(binding.local_path, binding.relative_path);
   // #5622: a new page captured from a file inside the source is published to that file.
   const capturedPath = !snapshot && options.capture ? options.capture.path : recordedPathFromFileUri(snapshot?.page.source_uri, root);
@@ -287,12 +322,12 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
   const recordedPath = snapshot?.page.source_path || snapshot?.page.withheld_source_path || null;
   const mode = recordedPath ? await scannerSlugRootMode(engine, row.source_id, root) : undefined;
   const candidate = resolveSourceLocalFilePath(root, recordedPath, row.slug, mode)
-    ?? (capturedPath ? join(root, capturedPath) : join(root, `${row.slug}.md`));
+    ?? (capturedPath ? join(root, capturedPath) : snapshot ? slugPathFile(root, row.slug, await scannerSlugRootMode(engine, row.source_id, root)) : join(root, `${row.slug}.md`));
   if (isWindowsColonTarget(relative(root, candidate))) {
     if (!options.allowMissing && publishesDatabaseOnly(root, row.slug, snapshot)) return undefined;
     throw colonSlugWindowsRefusal(row.slug, row.source_id);
   }
-  const path = nativeFileTarget(root, candidate);
+  const path = nativeFileTarget(binding.local_path, candidate);
   if (!isWriteTargetContained(path, root)) throw opError('source_changed', 'The canonical file target is outside its registered source.',
     `The file of ${row.slug} resolves outside source ${row.source_id}'s registered root (a symlinked directory or a moved checkout), so nothing was written. Inspect the owner before resubmitting; how to repair the checkout is the user's decision.`,
     { fix: ownerStatusFix(row.source_id) });
@@ -726,6 +761,21 @@ export async function preparePageMutation(unbounded: BrainEngine, row: WriteRequ
   return prepareInlineOrSegmentedMutation(unbounded, row, _config, preparedIntent, signal, options);
 }
 
+/** A remote caller's refusal names the line, never a key: keys can be private, and the receipt keeps the message. */
+const remoteSafeRefusal = (row: WriteRequest, refusal: ContentRefusal): ContentRefusal =>
+  row.authority.remote && refusal.code === 'invalid_frontmatter' ? { ...refusal, key: undefined, message: frontmatterHoldMessageWithoutKeys(refusal.message) } : refusal;
+
+const frontmatterRefusalError = (refusal: ContentRefusal) => contentRefusalError(refusal,
+  `Correct ${refusal.line !== undefined ? `frontmatter line ${refusal.line}${refusal.key ? ` (key "${refusal.key}")` : ''}` : 'the frontmatter'}: one line per key with its whole value quoted, then submit the corrected content with a new request_id.`,
+  { legacy_error: 'invalid_params' });
+
+/** A private request the importer would hold keeps the importer's typed refusal; any other must be kept as written. */
+function assertPrivateRequestAllowed(row: WriteRequest, content: string, frontmatter: Record<string, unknown> | null | undefined): void {
+  const hold = classifyImportHold(parseMarkdown(content, row.slug, { validate: true }));
+  if (hold) throw frontmatterRefusalError(remoteSafeRefusal(row, hold));
+  assertPrivateRequestKept(row, frontmatter);
+}
+
 async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: WriteRequest, _config: Parameters<typeof preparePageMutation>[2],
   preparedIntent: Parameters<typeof preparePageMutation>[3], signal: AbortSignal | undefined,
   options: NonNullable<Parameters<typeof preparePageMutation>[5]>): Promise<PreparedMutation> {
@@ -772,6 +822,8 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   // #5616: edits apply to the caller's view of the locked snapshot (revision checked above).
   const edited = row.operation === 'edit_page' ? editLockedPage(row, snapshot) : undefined;
   let content = edited?.content ?? preparedIntent?.content ?? p.content as string;
+  const privateRequest = privateRequestGuarded(row.operation, p.kind) && typeof content === 'string' ? readPrivateRequest(content, () => parseMarkdown(content as string, row.slug, { activePack }).frontmatter) : null;
+  if (privateRequest) assertPrivateRequestAllowed(row, content as string, privateRequest.frontmatter);
   let versionTags: string[] | undefined = preparedIntent?.tags;
   // A replacement/restore publishes a live page. Only a recorded version may
   // explicitly restore a tombstone; legacy versions leave this state unchanged.
@@ -850,7 +902,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   let provenance: CanonicalProvenance | undefined;
   let suppliedTrustMarker: unknown;
   // #5575: the page's tier, computed once before import so the write gate sees exactly it (ENG-18).
-  const trust = pageWriteTrust(row, typeof content === 'string' && !isFenceEditWrite(row) ? parseMarkdown(content, row.slug, { activePack }).frontmatter : null);
+  const trust = provenanceWriteTrust(row, typeof content === 'string' && !isFenceEditWrite(row) ? parseMarkdown(content, row.slug, { activePack }).frontmatter : null, snapshot?.page.frontmatter);
   const gateTrust = pageGateTrust(row, trust, storedTier);
   // The apply diet: the publisher's locked read of row.slug is the import base, and one read after the
   // last page write serves the read-back check, the seal, the core notice and the receipt (as sync does).
@@ -872,7 +924,8 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     prepareFrontmatter: page => {
       provenance = putProvenance(row, snapshot, page);
       suppliedTrustMarker = page.frontmatter.trust_tier;
-      stampPageTrustMarker(row, page.frontmatter, trust, storedTier);
+      stampPageTrustMarker(row, page.frontmatter, trust, storedTier, snapshot?.page.frontmatter);
+      if (privateRequest) assertPrivateRequestKept(row, page.frontmatter);
     },
     prepare: async value => { prepared = value; return value.result; },
   }).catch(error => {
@@ -883,16 +936,14 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   signal?.throwIfAborted();
   if (!prepared) {
     // A remote caller's refusal names the line, never a key: keys can be private, and the receipt keeps the message.
-    const refusal = result.refusal && row.authority.remote && result.refusal.code === 'invalid_frontmatter'
-      ? { ...result.refusal, key: undefined, message: frontmatterHoldMessageWithoutKeys(result.refusal.message) } : result.refusal;
+    const refusal = result.refusal && remoteSafeRefusal(row, result.refusal);
     if (refusal?.code === 'file_too_large') throw contentRefusalError(refusal, PAGE_OVER_LIMIT_SUGGESTION, { legacy_error: 'request_too_large' });
     if (refusal?.code === 'invalid_fence') throw contentRefusalError(refusal, `Page ${row.slug} was not written. Fix ${fenceWhere(refusal.fence)} as the message says (fence_issues lists every row and column; use the allowed values), `
       + 'or write facts with remember and takes with takes_add instead of a hand-built table, then submit the corrected content with a new request_id.', { legacy_error: 'invalid_params' });
-    if (refusal) throw contentRefusalError(refusal, `Correct ${refusal.line !== undefined ? `frontmatter line ${refusal.line}${refusal.key ? ` (key "${refusal.key}")` : ''}` : 'the frontmatter'}: one line per key with its whole value quoted, then submit the corrected content with a new request_id.`,
-      { legacy_error: 'invalid_params' });
+    if (refusal) throw frontmatterRefusalError(refusal);
     throw opError('invalid_params', 'The content was rejected before publication.', 'Check the content and frontmatter, then submit the corrected content with a new request_id.');
   }
-  const ready = prepared;
+  const ready = await remoteReadersChecked(engine, row.authority, snapshot?.page.frontmatter, prepared);
   if (ready.observedRevision !== observedRevision) throw pageRefusal('revision_conflict', 'The page changed during import preparation.', row,
     `Page ${row.slug} was written by another request while this one was being prepared, so it published nothing. Read the current page and revision, then submit the intended change against it.`,
     pageFix(row.source_id, row.slug));

@@ -18,15 +18,16 @@ tunnel, no token needed. Works with both PGLite and Supabase engines.
 ## Register (recommended)
 
 ```bash
-grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface full
+grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface starter --advertise verbs
 ```
 
-`--surface full` serves the whole operation catalog, the seven-verb memory
-protocol (`recall`, `remember`, `entity`, `synthesize`, `forget`,
-`context_pack`, `delta` — [MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md))
-included; it is the surface every registration gbrain writes pins. A harness
-that caps its tool count can register `--surface starter` or `--surface verbs`
-(only the seven verbs) instead.
+`--surface starter` lists the daily-driver tools: the seven memory verbs
+([MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)), `search`, `query`,
+`get_page`, `put_page`, `capture`, graph reads and skills. It is the surface every
+new registration gbrain writes pins. A parameter it leaves out is still accepted,
+and `request_tools` returns full schemas or widens the session to a left-out tool. `--surface full` lists every
+operation (`put_pages`, admin and tuning ops) and is the opt-in; `--surface verbs`
+lists only the seven verbs.
 Three facts about `grok mcp add`, all observed:
 
 - **The env flag is repeatable, one `KEY=value` per flag** (`-e A=1 -e B=2`).
@@ -37,6 +38,21 @@ Three facts about `grok mcp add`, all observed:
 - **Scope:** the default writes to `~/.grok/config.toml`; add `-s project`
   to write a committable `./.grok/config.toml` instead (reference secrets as
   `${VAR}` in project scope — values are stored verbatim).
+
+## Brain-first instructions
+
+Registering the MCP server only makes the tools available. Agents seldom call a
+brain nobody told them about, so finish the install with:
+
+```bash
+gbrain setup grok-build --instructions-only
+```
+
+Grok Build has no instruction file gbrain writes, so this prints the block to
+paste into your Grok Build instructions: search the brain before reading
+sources one by one, read the best hit, fill gaps with other tools, apply your own
+access rules, then finish the task. Keep the marker lines, so a later paste
+replaces the old block; delete the block to opt out.
 
 ## Direct config (equally supported)
 

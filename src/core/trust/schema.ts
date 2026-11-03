@@ -38,6 +38,7 @@
  */
 import { HASH_EPHEMERAL_FRONTMATTER_KEYS } from '../utils.ts';
 import { OWNER_TIER_FLOOR, TRUST_TIERS, trustRankSql } from './tier.ts';
+import { requireMaintainerPoliciesSql } from '../derived-state-maintainers.ts';
 
 export type TrustTable = 'facts' | 'takes' | 'timeline_entries' | 'pages';
 export const TRUST_TABLES: readonly TrustTable[] = ['facts', 'takes', 'timeline_entries', 'pages'];
@@ -149,10 +150,12 @@ END $fn$`;
  * A version row snapshots the page before the archiving write changes it, in
  * the same transaction, so the page row still carries the snapshotted tier
  * (ENG-10). A supplied value is honored only under the backfill setting.
+ * Under RLS the archiving writer needs the page (#7637, derived-state-maintainers.ts).
  */
-const SNAPSHOT_VERSION_FUNCTION = `CREATE OR REPLACE FUNCTION gbrain_snapshot_version_trust() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+export const SNAPSHOT_VERSION_FUNCTION = `CREATE OR REPLACE FUNCTION gbrain_snapshot_version_trust() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN
   IF COALESCE(current_setting('gbrain.write_trust_backfill', true), '') = 'on' AND NEW.trust_tier IS NOT NULL THEN RETURN NEW; END IF;
+  ${requireMaintainerPoliciesSql('pages', ['SELECT'])}
   SELECT p.trust_tier, p.write_origin INTO NEW.trust_tier, NEW.write_origin FROM pages p WHERE p.id = NEW.page_id;
   RETURN NEW;
 END $fn$`;

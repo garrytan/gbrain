@@ -17,11 +17,13 @@
  * Serial: spawns `gbrain serve` subprocesses against one PGLite brain.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { peekLock } from '../src/core/pglite-lock.ts';
+import { renderBrainFirstSnippet } from '../src/core/setup/brain-first.ts';
+import { ensureHookLauncher, hookLauncherPath } from '../src/core/setup/hook-launcher.ts';
 import { makeDoctorHome, runGbrain, type DoctorHome } from './helpers/doctor-json-golden.ts';
 
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
@@ -31,6 +33,16 @@ function register(command: string, args: string[]): void {
   writeFileSync(join(h.home, '.claude.json'), JSON.stringify({
     mcpServers: { gbrain: { type: 'stdio', command, args, env: { GBRAIN_HOME: h.home, GBRAIN_SKIP_STARTUP_HOOKS: '1' } } },
   }));
+  // A complete wiring also carries the brain-first block, or harness_wiring warns on it.
+  mkdirSync(join(h.home, '.claude'), { recursive: true });
+  writeFileSync(join(h.home, '.claude', 'CLAUDE.md'), renderBrainFirstSnippet('claude-code', { kind: 'mcp', server: 'gbrain' }));
+}
+
+/** The entry gbrain setup writes: serve starts through the hook launcher, never in the session's directory (#8426). */
+function registerThroughLauncher(args: string[]): void {
+  const launcher = hookLauncherPath(join(h.home, '.gbrain'));
+  ensureHookLauncher(launcher);
+  register(launcher, [process.execPath, ...args]);
 }
 
 function harnessCheck(run: { json: unknown; stdout: string }): Record<string, unknown> {
@@ -59,15 +71,24 @@ describe('doctor --only harness_wiring', () => {
   }, 60_000);
 
   test('a registered stdio serve answers initialize + tools/list + recall', async () => {
-    register(process.execPath, ['--no-env-file', CLI, 'serve', '--surface', 'verbs']);
+    registerThroughLauncher(['--no-env-file', CLI, 'serve', '--surface', 'verbs']);
     const run = await runGbrain(h, ['doctor', '--only', 'harness_wiring', '--json']);
     const check = harnessCheck(run);
     expect(check, run.stderr).toMatchObject({ status: 'ok', details: { reason: 'wired_running', smoke: 'smoke_passed', harness: 'claude-code' } });
     expect(String(check.message)).toContain('recall answered');
   }, 60_000);
 
-  test('a live serve holding the brain lock passes without spawning a second one', async () => {
+  test('a registration that starts serve in the session directory answers, and warns hook_session_cwd (#8426)', async () => {
     register(process.execPath, ['--no-env-file', CLI, 'serve', '--surface', 'verbs']);
+    const run = await runGbrain(h, ['doctor', '--only', 'harness_wiring', '--json']);
+    const check = harnessCheck(run);
+    expect(check, run.stderr).toMatchObject({ status: 'warn', details: { code: 'hook_session_cwd', hook_launcher_reason: 'session_cwd', smoke: 'smoke_passed' }, fix: { actor: 'user' } });
+    expect(String((check.fix as Record<string, unknown>).user_message)).toContain(`the 'gbrain' MCP server in ${join(h.home, '.claude.json')} starts gbrain in the session's directory`);
+    expect(String((check.fix as Record<string, unknown>).user_message)).toContain('run: gbrain setup claude-code');
+  }, 60_000);
+
+  test('a live serve holding the brain lock passes without spawning a second one', async () => {
+    registerThroughLauncher(['--no-env-file', CLI, 'serve', '--surface', 'verbs']);
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
     Object.assign(env, { HOME: h.home, GBRAIN_HOME: h.home, GBRAIN_SKIP_STARTUP_HOOKS: '1' });

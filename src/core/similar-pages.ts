@@ -13,7 +13,7 @@
  */
 import type { BrainEngine } from './engine.ts';
 import { normalizeAlias } from './search/alias-normalize.ts';
-import { privatePagesFilterFragment } from './search/private-visibility.ts';
+import { privatePagesFilterForCaller } from './search/private-visibility.ts';
 
 export type SimilarPageEvidence = 'exact_title' | 'alias' | 'same_name_other_directory' | 'similar_title';
 
@@ -37,7 +37,7 @@ export async function findSimilarPages(engine: Pick<BrainEngine, 'executeRaw'>, 
   const dir = input.slug.includes('/') ? input.slug.slice(0, input.slug.indexOf('/')) : '';
   // ILIKE without wildcards is an exact case-insensitive match the title
   // trigram index (idx_pages_trgm) serves; % and _ in the title are escaped.
-  const privacy = input.excludePrivate ? ` AND ${privatePagesFilterFragment('p')}` : '';
+  const privacy = input.excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '';
   const rows = await engine.executeRaw<{ slug: string; evidence: SimilarPageEvidence }>(`
     WITH hits AS (
       SELECT NULL::text AS slug, 'page_exists' AS evidence, 0 AS tier, 0::real AS sim FROM pages p

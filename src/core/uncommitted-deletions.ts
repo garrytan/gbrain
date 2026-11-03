@@ -85,6 +85,7 @@ export async function scanUncommittedDeletions(engine: BrainEngine, sourceId: st
   const gitRoot = resolve(context.root, ...context.gitScope.map(() => '..'));
   const candidates = tombstones.flatMap(row => {
     const file = canonicalPath(context, row);
+    if (file === null) return [];
     const gitPath = relative(gitRoot, file).split(sep).join('/');
     return gitPath.startsWith('../') ? [] : [{ row, file, gitPath }];
   });

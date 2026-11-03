@@ -15,26 +15,70 @@ import type { McpSurface } from '../mcp/surface.ts';
 export { shellQuote };
 
 /**
- * The surface a new stdio registration pins: `full`, callable and advertised
- * (S0, wave 0; the maintainer chose no narrowing). Every install path reads
- * this one value: README, docs/mcp, INSTALL_FOR_AGENTS.md, the plugin
- * manifests and every registration gbrain writes. A narrower list, where a
- * harness caps its tool count, is the user's explicit `--surface starter|verbs`.
+ * The surface a new stdio registration pins: `starter`, the daily-driver tool
+ * list (Garry, 2026-10-24: new installs register starter instead of full;
+ * gbrain-evals#191 measured unchanged reach and accuracy with 17-23% fewer
+ * input tokens). Every install path reads this one value: README, docs/mcp,
+ * the plugin manifests and every registration gbrain writes. An existing
+ * registration keeps its surface; `--surface full` is the opt-in for every
+ * operation, and any hidden parameter or tool stays reachable through
+ * `request_tools`.
  */
-export const REGISTRATION_SURFACE: McpSurface = 'full';
+export const REGISTRATION_SURFACE: McpSurface = 'starter';
+
+/**
+ * The surface the Codex and Claude Code plugin manifests pin: `full`. A plugin
+ * update rewrites the registration of every existing plugin install, so
+ * narrowing it would change existing installs without asking; plugins keep
+ * full (as does a bare `serve`, whose default is unchanged).
+ */
+export const PLUGIN_SURFACE: McpSurface = 'full';
+
+/**
+ * What a new registration's tools/list shows: the seven memory verbs plus
+ * request_tools (`serve --advertise verbs`). Everything REGISTRATION_SURFACE
+ * allows stays callable, and request_tools returns any tool's full schema.
+ * Approved 2026-10-25 on harness-evals#70: no pass-rate cost, no
+ * cross-scope reads, recall about 3x faster than search. Applies only when
+ * the user chose no surface: an explicit `--surface` or GBRAIN_SURFACE lists
+ * that surface in full, and an existing registration keeps its own form.
+ */
+export const REGISTRATION_ADVERTISE: McpSurface = 'verbs';
 
 /** A registration command's surface value (`verbs`, `starter` or `full`). */
 export function isRegistrationSurface(v: unknown): v is McpSurface {
   return v === 'verbs' || v === 'starter' || v === 'full';
 }
 
+const SURFACE_ORDER: readonly McpSurface[] = ['verbs', 'starter', 'full'];
+
 /**
- * `<bin> serve --surface <surface>`. `null` renders a bare `<bin> serve`
- * (config/default resolution): never-narrow keeps an existing bare
- * registration bare when it replaces it.
+ * `<bin> serve --surface <surface> [--advertise <advertise>]`. `null` renders
+ * a bare `<bin> serve` (config/default resolution): never-narrow keeps an
+ * existing bare registration bare when it replaces it. `--advertise` is
+ * written only when it is narrower than the surface.
  */
-export function stdioServeArgv(bin: string, surface: McpSurface | null = REGISTRATION_SURFACE): string[] {
-  return surface ? [bin, 'serve', '--surface', surface] : [bin, 'serve'];
+export function stdioServeArgv(bin: string, surface: McpSurface | null = REGISTRATION_SURFACE, advertise: McpSurface | null = null): string[] {
+  if (!surface) return [bin, 'serve'];
+  return [bin, 'serve', '--surface', surface, ...(advertise && SURFACE_ORDER.indexOf(advertise) < SURFACE_ORDER.indexOf(surface) ? ['--advertise', advertise] : [])];
+}
+
+/**
+ * The listing a registration writes. A surface the user chose (flag or
+ * GBRAIN_SURFACE) is listed in full; an existing registration keeps its own
+ * `--advertise` (none on registrations written before this default); a new
+ * registration lists REGISTRATION_ADVERTISE.
+ */
+export function registrationAdvertise(opts: { userChoseSurface: boolean; prior?: { advertise?: McpSurface | null } | null }): McpSurface | null {
+  if (opts.userChoseSurface) return null;
+  if (opts.prior) return opts.prior.advertise ?? null;
+  return REGISTRATION_ADVERTISE;
+}
+
+/** An existing registration's `--advertise` value, `null` when it lists everything it serves. */
+export function registeredAdvertise(text: string): McpSurface | null {
+  const m = /--advertise[\s=]+["']?(verbs|starter|full)\b/.exec(text);
+  return m ? m[1] as McpSurface : null;
 }
 
 /**

@@ -53,7 +53,7 @@ import { readDeletionProvenance } from '../persistence/sync-origin-evidence.ts';
 import { maintenancePreflight, submitMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { MASS_RECONCILE_MIN_PAGES, MASS_RECONCILE_RATIO, massReconcileAllowed } from '../sync-reconcile.ts';
-import { ghostPageNow, scanGhostSource, type GhostOwner, type GhostPage, type GhostSourceScan } from '../ghost-pages.ts';
+import { ghostPageNow, scanGhostSource, UNRESOLVABLE_PATH_CODE, type GhostOwner, type GhostPage, type GhostSourceScan, type UnresolvablePage } from '../ghost-pages.ts';
 import { afterCursor, REPAIR_ITEM_FAILURE_CODES, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
 
 export const GHOST_PAGES_INTENT = GHOST_RETIREMENT_INTENT;
@@ -70,6 +70,11 @@ export const SKILL_PACK_MEMBER_CODE = 'ghost_skill_pack_member';
 export const SKILL_PATH_NOTE = 'A ghost page whose path is a file of the source\'s adopted shared skillpack (skills/<name>/..., skillpack.json) is the pack\'s own file missing from the checkout; '
   + 'the shared skill publisher owns it, so this repair never removes the page. Restore the file on the owner host (git -C <source root> checkout -- <path> when it is committed; '
   + 'otherwise republish the skill with put_skill and its catalog expected_revision so the publisher writes it again); the page then stops being a ghost. These pages never block the other ghosts.';
+/** #7736: why a page whose recorded path names no file inside its source is left alone; the preview, `gbrain pages ghosts` and doctor say it. */
+export const UNRESOLVABLE_NOTE = 'A page whose recorded file path names no file inside its source (an absolute path, a path with .., or NUL) is never treated as a ghost or removed: '
+  + 'gbrain cannot tell whether its file exists. Read it with gbrain pages status <slug> --source <id> --json; the page stays as it is.';
+/** The `unresolvable` detail every reader prints. */
+export const unresolvableDetail = (count: number, samples: UnresolvablePage[]) => ({ code: UNRESOLVABLE_PATH_CODE, count, samples, note: UNRESOLVABLE_NOTE, docs: DOCS });
 /** The exact restore command for one pack-member ghost. */
 export const skillPathRestore = (root: string | undefined, ghost: GhostPage) => `git -C ${root ?? '<source root>'} checkout -- ${ghost.path}`;
 /** The `skill_paths` detail every reader prints. */
@@ -170,19 +175,24 @@ export const ghostPagesRepair: RepairHandler = {
         ...(mass ? [`${scan.ghosts.length} of ${scan.file_backed} file-backed page(s) are ghosts (more than ${Math.round(MASS_RECONCILE_RATIO * 100)}%): the apply refuses (ghost_mass_delete_refused) unless GBRAIN_ALLOW_MASS_RECONCILE=1; check the checkout first.`] : []),
         ...(scan.truncated ? [`More ghosts may exist past the first ${GHOST_REPAIR_LIMIT} checked; apply this set, then preview again.`] : []),
         ...(skillPaths ? [`${skillPaths} ghost page(s) on files of the shared skillpack are listed apart (${SKILL_PACK_MEMBER_CODE}) and not applied: ${SKILL_PATH_NOTE}`] : []),
+        ...(scan.unresolvable_count ? [`${scan.unresolvable_count} page(s) record a file path that names no file inside the source; they are listed apart (${UNRESOLVABLE_PATH_CODE}) and not applied: ${UNRESOLVABLE_NOTE}`] : []),
         ...(ahead.length ? [`${ahead.length} ghost page(s) were written in the database after their file last held them, so each holds the only copy of that content; they are listed apart (${DATABASE_AHEAD_CODE}) and not applied.`] : []),
         ...(scan.reason === 'mirror_read_only' ? [`Source ${sourceId} is a read-only mirror: its pages publish no file, so none is a ghost.`] : []),
         ...(ghosts.length ? Object.values(GHOST_CONSEQUENCES) : []),
       ];
       return { warnings, items: ghosts.map((ghost, index) => item(ghost, scan.owner!, hash, index === ghosts.length - 1)), preview_hash: hash,
-        residuals: { ghosts: ghosts.length, file_backed: scan.file_backed, inspected: scan.inspected, ...(skillPaths ? { skill_paths: skillPaths } : {}), ...(ahead.length ? { database_ahead: ahead.length } : {}) },
+        residuals: { ghosts: ghosts.length, file_backed: scan.file_backed, inspected: scan.inspected, ...(skillPaths ? { skill_paths: skillPaths } : {}), ...(ahead.length ? { database_ahead: ahead.length } : {}),
+          ...(scan.unresolvable_count ? { unresolvable: scan.unresolvable_count } : {}) },
         listing: [...ghosts.map(ghost => ({ item: `${ghost.source_id}:${ghost.slug}`, class: 'canonical_file_missing',
           detail: `file ${ghost.path} is missing; revision ${ghost.revision}` })),
         ...ahead.map(ghost => ({ item: `${ghost.source_id}:${ghost.slug}`, class: DATABASE_AHEAD_CODE, detail: databaseAheadDetail(ghost) })),
         ...scan.skill_paths.map(ghost => ({ item: `${ghost.source_id}:${ghost.slug}`, class: SKILL_PACK_MEMBER_CODE,
-          detail: `shared skillpack file ${ghost.path} is missing; not applied. Restore it: ${skillPathRestore(scan.root, ghost)}` }))],
+          detail: `shared skillpack file ${ghost.path} is missing; not applied. Restore it: ${skillPathRestore(scan.root, ghost)}` })),
+        ...scan.unresolvable.map(page => ({ item: `${page.source_id}:${page.slug}`, class: UNRESOLVABLE_PATH_CODE,
+          detail: `recorded path ${page.source_path} names no file inside the source; not applied` }))],
         details: { purge_fuse_hours: GHOST_PURGE_FUSE_HOURS, undo: 'gbrain restore <slug> --force', keep: GHOST_CONSEQUENCES.keep, mass_delete: mass, truncated: scan.truncated, docs: DOCS,
-          ...(skillPaths ? { skill_paths: skillPathDetail(scan.root, scan.skill_paths) } : {}) } };
+          ...(skillPaths ? { skill_paths: skillPathDetail(scan.root, scan.skill_paths) } : {}),
+          ...(scan.unresolvable_count ? { unresolvable: unresolvableDetail(scan.unresolvable_count, scan.unresolvable) } : {}) } };
     }
     if (!opts.expect) {
       throw opError('invalid_params', 'gbrain repair ghost-pages --apply removes only the set a preview printed.',
@@ -252,7 +262,7 @@ export const databaseAheadDetail = (ghost: GhostPage) => `file ${ghost.path} is 
 /** Whether the live page is still the approved ghost under the approved owner, with a file-backed revision; otherwise the outcome that skips it. */
 async function stillApproved(engine: BrainEngine, ghost: GhostPage, owner: GhostOwner): Promise<RepairItemOutcome | null> {
   const now = await ghostPageNow(engine, ghost.source_id, ghost.slug);
-  if (!now.ghost) return now.reason === 'agrees' || now.reason === 'file_database_drift' ? restored(ghost) : changed(`the page is no longer a ghost (${now.reason})`);
+  if (!now.ghost) return ['agrees', 'file_database_drift', 'recorded_file_present'].includes(now.reason) ? restored(ghost) : changed(`the page is no longer a ghost (${now.reason})`);
   if (!sameOwner(now.owner, owner)) return changed('the source\'s canonical owner changed since the preview');
   if (now.ghost.revision !== ghost.revision || now.ghost.page_id !== ghost.page_id || now.ghost.path !== ghost.path) return changed('the page or its recorded canonical path changed since the preview');
   if (!await ghostFileBacked(engine, ghost, owner)) return { applied: false, outcome: 'refused', reason: DATABASE_AHEAD_CODE, detail: { message: databaseAheadDetail(ghost) } };
@@ -293,7 +303,10 @@ export async function retireGhost(ctx: OperationContext, ghost: GhostPage, owner
 /**
  * Preparer for `managed_maintenance_retire_ghost_page`: re-runs the classifier under the approved owner, prepares a
  * `delete_page` with `allowMissingFile`, and refuses unless the prepared file target is the approved path with no
- * bytes (a file restored in between refuses here, or at filesystem publication when it appears later).
+ * bytes (a file restored in between refuses here, or at filesystem publication when it appears later). #7736: a page
+ * whose approved path is a recorded non-Markdown file is prepared at its slug path, which must hold no bytes either;
+ * the classifier re-checks the recorded file here; one restored after preparation is not seen at publication, and
+ * the soft delete stays undoable with `gbrain restore <slug> --force` until the purge.
  */
 export async function prepareGhostPageRetirement(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
   const ghost = row.intent!.ghost as GhostPage | undefined;
@@ -313,7 +326,11 @@ export async function prepareGhostPageRetirement(engine: BrainEngine, row: Write
   if (skip) throw refuse(skip);
   await authorizeWrite(engine, row.authority, 'delete_page', row.slug);
   const page = await preparePageMutation(engine, { ...row, operation: 'delete_page' }, config, undefined, undefined, { allowMissingFile: true });
-  if (!page.file || relative(page.file.root, page.file.path).split(sep).join('/') !== ghost.path) throw refuse(changed('its canonical file target moved'));
+  const target = page.file ? relative(page.file.root, page.file.path).split(sep).join('/') : null;
+  // #7736: a code or image page's write target is its slug path (prepareFileTarget resolves Markdown paths only), not the
+  // recorded file the classifier just found missing again; that target must expect no bytes like any other.
+  const recordedFile = !/\.mdx?$/i.test(ghost.path) && target === `${ghost.slug}.md`;
+  if (!page.file || (target !== ghost.path && !recordedFile)) throw refuse(changed('its canonical file target moved'));
   if (page.file.expectedBeforeHash !== null) throw refuse(restored(ghost));
   return { ...page, validate: async tx => { await page.validate?.(tx); await authorizeWrite(tx, row.authority, 'delete_page', row.slug); },
     // GBRA-133: the soft delete is the decision a held deletion of this file waited for, so its hold clears with it.

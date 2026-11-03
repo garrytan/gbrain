@@ -37,6 +37,8 @@ import {
   type ClaudeHookEvent,
 } from '../bootstrap/host-specs.ts';
 import { stdioServeArgv } from '../mcp-registration.ts';
+import { isTurnRuleEntry } from './turn-hook.ts';
+import { ensureHookLauncher, hookLauncherPath } from './hook-launcher.ts';
 import type { McpSurface } from '../../mcp/surface.ts';
 
 export type WiringScope = 'user' | 'project';
@@ -64,6 +66,8 @@ export interface ClaudeSetupReceipt {
   project_dir?: string;
   source_id: string | null;
   surface: McpSurface;
+  /** The registration's `--advertise` (absent: tools/list shows the whole surface). */
+  advertise?: McpSurface;
   config_path: string;
   entry_hash: string | null;
   pending_entry_hash: string | null;
@@ -90,6 +94,8 @@ export interface ClaudeSetupPlan {
   gbrainHomeEnv?: string;
   sourceId: string | null;
   surface: McpSurface;
+  /** `serve --advertise`; null lists the whole surface. */
+  advertise: McpSurface | null;
   events: ClaudeHookEvent[];
 }
 
@@ -173,13 +179,14 @@ export function desiredMcpEntry(plan: ClaudeSetupPlan): Record<string, unknown> 
   const env: Record<string, string> = {};
   if (plan.gbrainHomeEnv) env.GBRAIN_HOME = plan.gbrainHomeEnv;
   if (plan.sourceId) env.GBRAIN_SOURCE = plan.sourceId;
-  return { type: 'stdio', command: plan.launcher, args: stdioServeArgv(plan.launcher, plan.surface).slice(1), env };
+  // The harness starts stdio servers in the session's directory, so serve starts through the launcher too (#8426).
+  return { type: 'stdio', command: hookLauncherPath(plan.brainHome), args: stdioServeArgv(plan.launcher, plan.surface, plan.advertise), env };
 }
 
 export function desiredHookHashes(plan: ClaudeSetupPlan): HookHashes {
   const out: HookHashes = {};
   for (const event of plan.events) {
-    out[event] = hookEntryHash({ type: 'command', command: buildClaudeHookCommand(plan.launcher, event, hookEnv(plan)), timeout: CLAUDE_HOOK_DEFAULT_TIMEOUT_SECS[event] })!;
+    out[event] = hookEntryHash({ type: 'command', command: buildClaudeHookCommand(plan.launcher, event, hookEnv(plan), hookLauncherPath(plan.brainHome)), timeout: CLAUDE_HOOK_DEFAULT_TIMEOUT_SECS[event] })!;
   }
   return out;
 }
@@ -203,6 +210,7 @@ function hookCensus(settingsPath: string): HookCensus {
       if (!Array.isArray(entries)) continue;
       for (const entry of entries) {
         const marker = (entry as Record<string, unknown> | null)?.[GBRAIN_HOOK_MARKER_KEY];
+        if (isTurnRuleEntry(entry)) continue;
         if ((typeof marker === 'string' && marker !== GBRAIN_SETUP_MARKER_VALUE) || classifyHarnessHook(entry, event, 'any')) {
           if ((CLAUDE_HOOK_EVENTS as readonly string[]).includes(event)) otherLane.add(event);
           continue;
@@ -263,12 +271,17 @@ export interface ApplyResult { steps: SetupStep[]; receipt: ClaudeSetupReceipt; 
 export async function applyClaudeSetup(
   plan: ClaudeSetupPlan,
   consent: SetupConsent,
-  opts: { pluginOwner: string | null; brainCreated: boolean; beforeMcp?: () => Promise<void>; abortAfter?: string },
+  opts: { pluginOwner: string | null; brainCreated: boolean; beforeMcp?: () => Promise<void>; abortAfter?: string; refreshOf?: ClaudeSetupReceipt },
 ): Promise<ApplyResult> {
   const paths = claudeSetupPaths(plan);
   const lock = await acquireBootstrapLock(dirname(paths.configPath));
   try {
+    // The MCP entry and every hook command start gbrain through the launcher, so it goes down before anything names it (#8424, #8426).
+    ensureHookLauncher(hookLauncherPath(plan.brainHome));
     const found = inspectClaudeSetup(plan);
+    // post-upgrade's refresh: it rewrites only the install it planned from, and the MCP entry only while it is still setup's, both read again under the lock (#8426).
+    if (opts.refreshOf && JSON.stringify(found.prior) !== JSON.stringify(opts.refreshOf)) throw new Error(`the '${plan.name}' setup receipt changed before setup's entries were rewritten`);
+    if (opts.refreshOf && opts.pluginOwner === null && found.mcp.state !== 'current' && found.mcp.state !== 'owned') throw new Error(`the '${plan.name}' MCP entry changed before setup's entries were rewritten`);
     const now = new Date().toISOString();
     const desired = desiredMcpEntry(plan);
     const desiredHash = entryHash(desired);
@@ -288,7 +301,7 @@ export async function applyClaudeSetup(
       harness: 'claude-code', connection: 'local-stdio', setup_receipt_version: 1, status: 'prepared',
       name: plan.name, gbrain_home: plan.brainHome, launcher: plan.launcher, scope: plan.scope,
       ...(plan.projectDir ? { project_dir: plan.projectDir } : {}),
-      source_id: plan.sourceId, surface: plan.surface, config_path: paths.configPath,
+      source_id: plan.sourceId, surface: plan.surface, ...(plan.advertise ? { advertise: plan.advertise } : {}), config_path: paths.configPath,
       entry_hash: prior?.entry_hash ?? null, pending_entry_hash: opts.pluginOwner ? null : desiredHash,
       ...(prior?.mcp_adopted ? { mcp_adopted: true } : {}),
       ...(opts.pluginOwner ? { mcp_plugin: opts.pluginOwner } : {}),
@@ -327,7 +340,7 @@ export async function applyClaudeSetup(
     } else {
       const ownedHashes = new Set([...values(prior?.hooks.owned), ...values(prior?.hooks.pending), ...values(receipt.hooks.pending)]);
       writeClaudeHooksAt(paths.settingsPath, {
-        gbrainBin: plan.launcher, env: hookEnv(plan), events: writeEvents, marker: GBRAIN_SETUP_MARKER_VALUE,
+        gbrainBin: plan.launcher, hookLauncher: hookLauncherPath(plan.brainHome), env: hookEnv(plan), events: writeEvents, marker: GBRAIN_SETUP_MARKER_VALUE,
         ownedEntryHashes: ownedHashes, freshMode: 0o600,
       });
       steps.push({ step: 'hooks', action: 'write', detail: writeEvents.length ? `${writeEvents.join(', ')} in ${paths.settingsPath}` : `removed setup's hooks from ${paths.settingsPath}` });

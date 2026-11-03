@@ -44,7 +44,11 @@ another writer has half-written.
    instead of skipping silently. The push itself runs under a separate push
    lock, so a slow remote never blocks commits or gbrain's own page writes.
 2. **Commits only the paths you name.** It stages and commits exactly those
-   paths (`git add -A -- <paths>`, `git commit --only -- <paths>`). Another
+   paths (`git add -A -- <paths>`, `git commit --only -- <paths>`), each
+   marked literal (`:(literal)<path>`), so a name with `*`, `?` or `[` matches
+   only itself. The repository's hooks run as they do for a plain
+   `git commit`: a pre-commit check that picks files by pattern still sees
+   them and can refuse the commit. Another
    writer's dirty files are never staged, committed, stashed or touched. A file
    another writer already staged under a directory you named is refused
    (`commit_prestaged_paths`) instead of swept in; name the file to claim it.
@@ -264,7 +268,11 @@ commits come in. Four rules keep that checkout able to move:
    stray commits merged with the upstream
    (`gbrain git commit-push --push-only --keep-checkout --path <checkout>`)
    and retry the refresh, as the [refusal](write-refusals.md#refresh_diverged)
-   says. Never force the checkout.
+   says. Never force the checkout. When local commits there are expected
+   (automations committing alongside a sibling checkout that pushes the same
+   branch), the user can turn on `sources.refresh_publish_diverged` (default
+   off) so each refresh runs that publish itself
+   ([live sync](live-sync.md)); it never publishes over a rewritten upstream.
 3. **Stop syncing a source before rewriting its history.** Before a
    force-push or `git filter-repo`, run `gbrain sources set-sync <id> off`
    (with the user's agreement) so automatic sync skips it, and

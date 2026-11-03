@@ -288,7 +288,7 @@ so a `ClientRead` wedge is visible in one command; leave
 
 ```bash
 # the mechanism, either build (RELEASE_COMMIT for 0.60.110; omit --cli-repo for this branch)
-UBI_OWNER=gbra61 scripts/ubicloud/ubi-runner.sh run -s standard-16 --setup scripts/bench/stall-repro-vm-setup.sh \
+UBI_OWNER=gbra61 scripts/ubicloud/ubi-runner.sh run -s standard-16 --ttl-hours 4 --setup scripts/bench/stall-repro-vm-setup.sh \
   --env RELEASE_COMMIT=1935c74a9 -- 'python3 scripts/bench/stall-debug-instrument.py ../gbrain-release && \
   bun scripts/bench/managed-sync-stall-repro.ts --cli-repo ../gbrain-release --scenario passes --lanes 1 --files 3000 --history 300 \
   --legacy-facts 0 --marker-pages 0 --doomed-pages 0 --backlog-marker-pages 0 --adoption-interval 0 --rtt 57 --pool-size 10 \

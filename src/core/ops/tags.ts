@@ -5,12 +5,18 @@
  * ../operations.ts. Never import from '../operations.ts' here (cycle).
  */
 
-import type { Operation } from './contract.ts';
+import type { Operation, OperationContext } from './contract.ts';
+import { fenceTranscriptText, quotesStored, unquoteTranscriptText } from '../search/transcript-quote.ts';
 import { enforceClientSlugFence, readPolicyOpts } from './context.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { MERGE_PRECONDITION_PARAMS, WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 
 // --- Tags ---
+
+/** #8384: a remote caller's tag copied out of a quoted read (get_tags, get_page, fetch) names the tag, not its fence. */
+function unquotedTag(ctx: OperationContext, p: Record<string, unknown>): Record<string, unknown> {
+  return ctx.remote === false || typeof p.tag !== 'string' || typeof p.slug !== 'string' ? p : { ...p, tag: unquoteTranscriptText(p.tag, p.slug.toLowerCase()) };
+}
 
 const add_tag: Operation = {
   name: 'add_tag',
@@ -29,7 +35,7 @@ const add_tag: Operation = {
     enforceClientSlugFence(ctx, p.slug as string, 'add_tag');
     if (ctx.dryRun) return { dry_run: true, action: 'add_tag', slug: p.slug, tag: p.tag };
     // v0.31.8 (D7): thread ctx.sourceId.
-    return submitPageMutation(ctx, { operation: 'add_tag', params: p });
+    return submitPageMutation(ctx, { operation: 'add_tag', params: unquotedTag(ctx, p) });
   },
   cliHints: { name: 'tag', positional: ['slug', 'tag'] },
 };
@@ -50,7 +56,7 @@ const remove_tag: Operation = {
   handler: async (ctx, p) => {
     enforceClientSlugFence(ctx, p.slug as string, 'remove_tag');
     if (ctx.dryRun) return { dry_run: true, action: 'remove_tag', slug: p.slug, tag: p.tag };
-    return submitPageMutation(ctx, { operation: 'remove_tag', params: p });
+    return submitPageMutation(ctx, { operation: 'remove_tag', params: unquotedTag(ctx, p) });
   },
   cliHints: { name: 'untag', positional: ['slug', 'tag'] },
 };
@@ -72,12 +78,18 @@ const get_tags: Operation = {
     // Untrusted callers never learn a private or soft-deleted page's tags
     // (readPolicyOpts resolves the operator's private-pages posture).
     const policy = await readPolicyOpts(ctx);
-    return ctx.engine.getTags(p.slug as string, {
+    const tags = await ctx.engine.getTags(p.slug as string, {
       sourceId: policy.sourceId,
       sourceIds: policy.sourceIds,
       excludePrivate: policy.excludePrivate,
       liveOnly: ctx.remote !== false,
     });
+    if (ctx.remote === false || tags.length === 0) return tags;
+    // #8384: a remote reader gets a quoted page's tags quoted, as get_page and fetch return them.
+    const pages = await ctx.engine.executeRaw<{ type: string | null; trust_tier: string | null }>(
+      'SELECT type, trust_tier FROM pages WHERE slug = $1 AND source_id = ANY($2::text[]) AND deleted_at IS NULL',
+      [p.slug, policy.sourceIds?.length ? policy.sourceIds : [policy.sourceId ?? 'default']]);
+    return pages.length && pages.every(r => !quotesStored(r.type, r.trust_tier)) ? tags : tags.map(t => fenceTranscriptText(t, p.slug as string));
   },
   scope: 'read',
   cliHints: { name: 'tags', positional: ['slug'] },

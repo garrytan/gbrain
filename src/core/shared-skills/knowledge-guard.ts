@@ -8,7 +8,7 @@ import { localHostId } from '../persistence/identity.ts';
 import type { SqlEngine, WriteRequest } from '../persistence/model.ts';
 import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
 
-export type KnowledgePublicationTarget = Pick<WriteRequest, 'source_id' | 'source_incarnation' | 'slug' | 'target_kind'> & Partial<Pick<WriteRequest, 'intent'>>;
+export type KnowledgePublicationTarget = Pick<WriteRequest, 'source_id' | 'source_incarnation' | 'slug' | 'target_kind'> & Partial<Pick<WriteRequest, 'intent' | 'operation'>>;
 export interface KnowledgePublicationFile { path: string; root: string; expectedBeforeHash?: string | null }
 
 /** The maintenance intent that soft-deletes an approved ghost page (`gbrain repair ghost-pages`, `file-drift --prefer file`). */
@@ -58,6 +58,19 @@ async function retiresNonMemberGhost(engine: SqlEngine, row: KnowledgePublicatio
   return !(await sharedPackMember(engine, row.source_id, row.source_incarnation, [ghost.path, `${row.slug}.md`]));
 }
 
+/**
+ * #7345: the retention purge of an expired tombstone that is not a pack member and expects no file bytes is a database-only
+ * hard delete of a legacy knowledge page, as #6910's ghost retirement is a database-only soft delete. A pack member's
+ * tombstone, or one whose file is still on disk (the purge would remove it), stays refused.
+ */
+async function purgesNonMemberTombstone(engine: SqlEngine, row: KnowledgePublicationTarget, preparedFile?: KnowledgePublicationFile): Promise<boolean> {
+  if (row.operation !== 'delete_page' || row.intent?.purge !== true || row.intent.retention !== true || (preparedFile && preparedFile.expectedBeforeHash !== null)) return false;
+  const [tombstone] = await engine.executeRaw<{ source_path: string | null }>(
+    'SELECT source_path FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NOT NULL', [row.source_id, row.slug]);
+  if (!tombstone) return false;
+  return !(await sharedPackMember(engine, row.source_id, row.source_incarnation, [...(tombstone.source_path ? [tombstone.source_path] : []), `${row.slug}.md`]));
+}
+
 const packsInTransaction = new WeakMap<object, Promise<PackRoot[]>>();
 /** Engines (the connection owner, not a transaction view of it) whose schema has shared_skill_packs; migrations never drop it. */
 const packTablePresent = new WeakSet<object>();
@@ -98,7 +111,7 @@ export async function assertKnowledgePublicationAllowed(
   if (row.target_kind === 'skill_bundle') return;
   const packs = await sharedPacks(engine);
   if (!packs.length) return;
-  if (await retiresNonMemberGhost(engine, row, preparedFile)) return;
+  if (await retiresNonMemberGhost(engine, row, preparedFile) || await purgesNonMemberTombstone(engine, row, preparedFile)) return;
   const ownPack = packs.find(pack => pack.source_id === row.source_id && pack.source_incarnation === row.source_incarnation);
   if (ownPack && reserved(row.slug)) reject();
   const roots = [...new Set(packs.flatMap(pack => [

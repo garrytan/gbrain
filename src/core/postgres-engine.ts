@@ -121,7 +121,7 @@ import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, b
 import { narrowedOrFallbackQuery } from './search/keyword-or-narrow.ts';
 import { RARE_TERM_CHUNK_CAP, rankOrFallbackByRarity, rareTermPagesSql, type RareTermPages } from './search/keyword-or-rarity.ts';
 import { buildKeywordChunkMatch, KEYWORD_RANK_CANDIDATES, KEYWORD_RANKED_ROWS_CTE, KEYWORD_STATEMENT_SETTINGS } from './search/keyword-chunk-match.ts';
-import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
+import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment, privatePagesFilterForCaller } from './search/private-visibility.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { readStoredEmbeddingIdentity } from './stored-embedding-identity.ts';
 import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP, TRAVERSE_WALK_ROW_CAP } from './engine-constants.ts';
@@ -174,6 +174,7 @@ import type { SqlExecutor } from './engine-sql/executor.ts';
 import { scopedRead, unscopedExecutor } from './engine-sql/brands.ts';
 import { writerStamp } from './persistence/writer-versions.ts';
 import { wellFormedJson } from './text-safe.ts';
+import { ENGINE_ROOT } from './engine-root.ts';
 
 function escapeSqlStringLiteral(value: string): string {
   return value.replace(/'/g, "''");
@@ -205,6 +206,7 @@ export function getPostgresSchema(
 // follow-up that will reintroduce a typed retry mechanism.
 
 export class PostgresEngine implements BrainEngine {
+  readonly [ENGINE_ROOT]: object = this;
   private vectorIterativeScan?: Promise<boolean>;
   private keywordStatementTimeout?: Promise<string>;
   private keywordTimeouts = new KeywordTimeoutNegativeCache();
@@ -2094,7 +2096,7 @@ export class PostgresEngine implements BrainEngine {
     opts?: PageReadScope & { includeDeleted?: boolean },
   ): Promise<RawData[]> {
     const sql = this.sql;
-    const privacy = opts?.excludePrivate ? sql.unsafe(`AND ${privatePagesFilterFragment('p')}`) : sql``;
+    const privacy = opts?.excludePrivate ? sql.unsafe(`AND ${privatePagesFilterForCaller('p')}`) : sql``;
     const alive = opts?.includeDeleted ? sql`` : sql`AND p.deleted_at IS NULL`; // raw_data follows the page soft-delete
     const sourceIds = opts?.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : undefined;
     const sourceId = sourceIds ? undefined : opts?.sourceId;
@@ -2338,7 +2340,7 @@ export class PostgresEngine implements BrainEngine {
     source_id: string,
     entitySlug: string,
     factText: string,
-    opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; arm?: 'keyword'; attributedTo?: import('./engine.ts').FactAttribution | null },
+    opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; arm?: 'keyword'; attributedTo?: import('./engine.ts').FactAttribution | null; excludeMemberPages?: boolean; onlyPage?: string },
   ): Promise<FactRow[]> {
     return factsImpl.findCandidateDuplicates(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id, entitySlug, factText, opts);
   }

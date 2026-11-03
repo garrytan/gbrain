@@ -178,7 +178,7 @@ bun scripts/bench/managed-sync-stall-repro.ts --cli-repo <checkout> --files 600 
 The reporter-shape run on a VM:
 
 ```bash
-UBI_OWNER=gbra59 scripts/ubicloud/ubi-runner.sh run -s standard-16 --setup scripts/bench/stall-repro-vm-setup.sh \
+UBI_OWNER=gbra59 scripts/ubicloud/ubi-runner.sh run -s standard-16 --ttl-hours 4 --setup scripts/bench/stall-repro-vm-setup.sh \
   --env RELEASE_COMMIT=8e11aa1f -- 'bun scripts/bench/managed-sync-stall-repro.ts --cli-repo ../gbrain-release \
   --files 15000 --history 1500 --legacy-facts 60 --marker-pages 6 --doomed-pages 9 --drip-rows 6 --backlog-marker-pages 20 \
   --rtt 57 --pool-size 10 --max-minutes 170 --passes 3 --adoption-interval 120 --stall-signal SIGUSR2 --out .context/bench/stall-run'

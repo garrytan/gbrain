@@ -10,7 +10,7 @@
 import { applyExtractAtomsNoPricing, readExtractAtomsNoPricing } from '../../../core/cycle/extract-atoms-cost-gate.ts';
 import { applyFactsReconcileBacklog, readFactsReconcileBacklog } from '../../../core/facts/reconcile-watermark.ts';
 import { managedPersistenceEnabled } from '../../../core/persistence/ownership.ts';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { gbrainPath } from '../../../core/config.ts';
 import { multiSourceDriftCheck, multiSourceDriftNotVerified } from '../schema-pack-checks.ts';
 import { computeConversationFormatCoverageCheck } from './conversation-coverage.ts';
@@ -401,10 +401,27 @@ async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
   // unrelated that can shadow the real binary on PATH. Classify every
   // `gbrain` that `which -a` finds (pure helpers in
   // src/core/npm-squat-check.ts) and warn when an unrelated install wins on
-  // PATH or the entry is broken. Skips silently when gbrain isn't on PATH
-  // at all (e.g. running via `bun src/cli.ts`).
+  // PATH or the entry is broken. The `gbrain` packages under `npm root -g`
+  // and Bun's global dir are classified too, so an unrelated global install
+  // whose bin is not on PATH still warns when no real gbrain is. Skips
+  // silently when neither finds anything (e.g. running via `bun src/cli.ts`).
   try {
-    const { execSync } = await import('../../../core/spawn.ts');
+    const { execSync, execFileSync } = await import('../../../core/spawn.ts');
+    const { homedir } = await import('node:os');
+    const bunGlobalRoot = join(process.env.BUN_INSTALL || join(homedir(), '.bun'), 'install', 'global');
+    const globalPackages = [join(bunGlobalRoot, 'node_modules', 'gbrain')];
+    let npmRoot: string | undefined;
+    try {
+      npmRoot = execFileSync('npm', ['root', '-g'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 5000,
+        shell: process.platform === 'win32',
+      }).trim();
+      if (npmRoot) globalPackages.push(join(npmRoot, 'gbrain'));
+    } catch {
+      // No npm (or it failed): only Bun's global dir is checked.
+    }
     let candidates: string[] = [];
     try {
       candidates = execSync('which -a gbrain', {
@@ -419,12 +436,16 @@ async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
       // entirely on this platform) — nothing to check.
     }
     const { assessGbrainBinaries } = await import('../../../core/npm-squat-check.ts');
-    const assessment = assessGbrainBinaries(candidates);
+    const { fileURLToPath } = await import('node:url');
+    const assessment = assessGbrainBinaries(candidates, {
+      globalPackages, bunGlobalRoot, npmRoot, selfDir: dirname(fileURLToPath(import.meta.url)),
+    });
     if (assessment.status !== 'skip') {
       checks.push({
         name: 'npm_squat',
         status: assessment.status,
         message: assessment.message,
+        ...(assessment.fix ? { fix: assessment.fix } : {}),
       });
     }
   } catch {

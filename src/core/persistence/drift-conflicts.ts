@@ -35,10 +35,12 @@ import type { PageSnapshot } from '../page-state/types.ts';
 import { sha256 } from './digest.ts';
 import { existingLocalHostId } from './identity.ts';
 import { getWorktreeBinding } from './ownership.ts';
+import { staleMirrorPage } from './mirror-read-only.ts';
 import { prepareFileTarget } from './page-prepare.ts';
 import { readReconcileState } from './reconcile-state.ts';
 import { reconcileCanonical } from './reconcile-merge.ts';
 import { classifyDrift } from './reconcile-additive.ts';
+import { recordsNoFileOrigin, slugPathFile } from './unbound-pages.ts';
 
 /** The refusal message `prepareFileTarget` stores on a drift conflict receipt (the detail is not kept on the row). */
 export const FILE_DRIFT_MESSAGE = 'The canonical file contains an uncoordinated local edit.';
@@ -81,6 +83,20 @@ export async function liveFileDrift(engine: BrainEngine, sourceId: string, slug:
   const page = snapshot === undefined ? await engine.readPageSnapshot(slug, { sourceId }) : snapshot;
   if (!page || page.page.deleted_at) return { still_present: null, reason: 'page_missing' };
   const root = join(binding.local_path, binding.relative_path);
+  // GBRA-133 (#7931): a stale mirror page publishes database-only but reconciles against the file at its slug path.
+  // #7974: it is compared as reconcile reads it; a slug path that reading cannot settle (several spellings) is unknown.
+  if (await staleMirrorPage(engine, sourceId, page.page)) {
+    try {
+      const state = await readReconcileState(engine, sourceId, slug);
+      const agrees = classifyDrift(state.file, reconcileCanonical(state.snapshot.page, state.snapshot.tags)).verdict === 'no_drift';
+      return { still_present: !agrees, reason: agrees ? 'agrees' : 'file_database_drift', db_revision: state.snapshot.revision,
+        path: relative(state.root, state.path).split(sep).join('/'), file_hash: sha256(state.raw) };
+    } catch (error) {
+      if (!(error instanceof OperationError)) return { still_present: null, reason: 'error' };
+      if (error.detail === 'canonical_file_missing') return { still_present: false, reason: 'database_only', db_revision: page.revision };
+      return { still_present: null, reason: typeof error.detail === 'string' ? error.detail : error.code };
+    }
+  }
   try {
     const file = await prepareFileTarget(engine, { source_id: sourceId, worktree_id: binding.worktree_id, slug }, page, null, hostId!);
     if (!file) return { still_present: false, reason: 'database_only', db_revision: page.revision };
@@ -103,9 +119,9 @@ export async function liveFileDrift(engine: BrainEngine, sourceId: string, slug:
 
 /** The path `prepareFileTarget` compares, resolved the same way (recorded source path, captured file URI, then the slug path). */
 async function canonicalFilePath(engine: BrainEngine, sourceId: string, root: string, snapshot: PageSnapshot, slug: string): Promise<string> {
-  const mode = snapshot.page.source_path ? await scannerSlugRootMode(engine, sourceId, root) : undefined;
+  const mode = await scannerSlugRootMode(engine, sourceId, root);
   const captured = recordedPathFromFileUri(snapshot.page.source_uri, root);
-  return resolveSourceLocalFilePath(root, snapshot.page.source_path, slug, mode) ?? (captured ? join(root, captured) : join(root, `${slug}.md`));
+  return resolveSourceLocalFilePath(root, snapshot.page.source_path, slug, mode) ?? (captured ? join(root, captured) : slugPathFile(root, slug, mode));
 }
 
 /** Whether Git tracks the canonical file and whether its bytes equal the last commit (null: Git cannot say). */
@@ -279,7 +295,7 @@ export async function auditDriftConflicts(engine: BrainEngine, sourceId: string,
         if (live.path) { result.path = live.path; result.git = gitState(root, live.path); }
         if (live.still_present) {
           report.totals.still_present++;
-          result.class = await driftClass(engine, sourceId, row.slug, !page?.source_path && !page?.source_uri);
+          result.class = await driftClass(engine, sourceId, row.slug, !!page && recordsNoFileOrigin(page));
         }
       }
     }

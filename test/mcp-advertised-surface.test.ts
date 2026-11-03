@@ -13,7 +13,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { operations } from '../src/core/operations.ts';
-import { advertisedOps, filterOpsForSurface, resolveAdvertisedSurface } from '../src/mcp/surface.ts';
+import { advertisedOps, filterOpsForSurface, parseAdvertiseFlag, resolveAdvertisedSurface } from '../src/mcp/surface.ts';
 import { buildMcpInstructions } from '../src/mcp/instructions.ts';
 import { keylessBrainEnv } from './helpers/provider-env.ts';
 
@@ -52,12 +52,25 @@ beforeAll(async () => {
 afterAll(() => { rmSync(home, { recursive: true, force: true }); });
 
 describe('advertised surface (pure)', () => {
-  test('narrows the callable list, never widens it', () => {
+  test('narrows the callable list, never widens it, and keeps request_tools so the rest stays reachable', () => {
     const full = filterOpsForSurface(operations, 'full');
-    expect(advertisedOps(full, 'full', 'verbs').map(o => o.name).sort()).toEqual(filterOpsForSurface(operations, 'verbs').map(o => o.name).sort());
+    expect(advertisedOps(full, 'full', 'verbs').map(o => o.name).sort()).toEqual([...filterOpsForSurface(operations, 'verbs').map(o => o.name), 'request_tools'].sort());
+    expect(advertisedOps(full.filter(o => o.name !== 'request_tools'), 'full', 'verbs').map(o => o.name)).not.toContain('request_tools');
     const verbs = filterOpsForSurface(operations, 'verbs');
     expect(advertisedOps(verbs, 'verbs', 'full')).toBe(verbs);
     expect(advertisedOps(full, 'full', null)).toBe(full);
+  });
+
+  test('the --advertise flag wins over both config planes', async () => {
+    const engine = { getConfig: async (k: string) => (k === 'mcp.advertised_surface' ? 'starter' : null) } as never;
+    expect(await resolveAdvertisedSurface(engine, { mcp: { advertised_surface: 'starter' } } as never, 'verbs')).toBe('verbs');
+    expect(await resolveAdvertisedSurface(engine, null, null)).toBe('starter');
+    expect(parseAdvertiseFlag(['--surface', 'full', '--advertise', 'verbs'])).toBe('verbs');
+    expect(parseAdvertiseFlag(['--surface', 'full'])).toBeNull();
+    expect(() => parseAdvertiseFlag(['--advertise', 'everything'])).toThrow('--advertise takes verbs, starter or full');
+    expect(() => parseAdvertiseFlag(['--advertise'])).toThrow('--advertise takes verbs, starter or full');
+    expect(parseAdvertiseFlag(['--advertise=verbs'])).toBe('verbs');
+    expect(() => parseAdvertiseFlag(['--advertise=everything'])).toThrow('--advertise takes verbs, starter or full');
   });
 
   test('the database plane wins over the file plane; unrecognized values advertise everything', async () => {
@@ -79,7 +92,7 @@ describe('stdio session', () => {
   test('lists the verbs, calls an unlisted tool, and lists it once request_tools describes it', async () => {
     await session([], async (client, changed) => {
       const listed = (await client.listTools()).tools.map(t => t.name);
-      expect(listed.sort()).toEqual(filterOpsForSurface(operations, 'verbs').map(o => o.name).sort());
+      expect(listed.sort()).toEqual([...filterOpsForSurface(operations, 'verbs').map(o => o.name), 'request_tools'].sort());
       expect(listed).not.toContain('put_page');
       const put = await client.callTool({ name: 'put_page', arguments: { slug: 'notes/advertised', content: '---\ntype: note\ntitle: Advertised\n---\nHidden but callable.\n' } });
       expect(put.isError).toBeFalsy();
@@ -123,6 +136,45 @@ describe('stdio session', () => {
       expect(restore.code).toBe(0);
     }
   }, 180_000);
+
+  test('serve --surface full --advertise verbs (an explicit full registration) lists the verbs and request_tools over any config, instructs from that list, and keeps every operation callable', async () => {
+    const advertise = await gbrain(['config', 'set', 'mcp.advertised_surface', 'full']);
+    expect(advertise.code).toBe(0);
+    try {
+      await session(['--surface', 'full', '--advertise', 'verbs'], async (client) => {
+        const listed = (await client.listTools()).tools.map(t => t.name);
+        expect(listed.sort()).toEqual([...filterOpsForSurface(operations, 'verbs').map(o => o.name), 'request_tools'].sort());
+        const instructions = client.getInstructions() ?? '';
+        expect(instructions).toContain('Use `recall` before external lookup');
+        expect(instructions).toContain('more are callable. Call request_tools');
+        expect(instructions).not.toContain('Use `search` or `query` before external lookup');
+        const put = await client.callTool({ name: 'put_page', arguments: { slug: 'notes/advertise-flag', content: '---\ntype: note\ntitle: Advertise flag\n---\nCallable while unlisted.\n' } });
+        expect(put.isError).toBeFalsy();
+        const described = await client.callTool({ name: 'request_tools', arguments: { tools: ['search'] } });
+        expect(described.isError).toBeFalsy();
+        expect(JSON.parse((described as { content: Array<{ text: string }> }).content[0].text).tools.map((t: { name: string }) => t.name)).toEqual(['search']);
+      });
+      await session(['--surface', 'full'], async (client) => {
+        expect((await client.listTools()).tools.map(t => t.name)).toContain('put_page');
+      });
+    } finally {
+      const restore = await gbrain(['config', 'set', 'mcp.advertised_surface', 'verbs']);
+      expect(restore.code).toBe(0);
+    }
+  }, 180_000);
+
+  test('serve --surface starter --advertise verbs (the registration default) lists the verbs and request_tools and keeps the starter tools callable', async () => {
+    await session(['--surface', 'starter', '--advertise', 'verbs'], async (client) => {
+      const listed = (await client.listTools()).tools.map(t => t.name);
+      expect(listed.sort()).toEqual([...filterOpsForSurface(operations, 'verbs').map(o => o.name), 'request_tools'].sort());
+      expect(client.getInstructions() ?? '').toContain('Use `recall` before external lookup');
+      const searched = await client.callTool({ name: 'search', arguments: { query: 'advertise flag' } });
+      expect(searched.isError).toBeFalsy();
+      const described = await client.callTool({ name: 'request_tools', arguments: { tools: ['search'] } });
+      expect(described.isError).toBeFalsy();
+      expect(JSON.parse((described as { content: Array<{ text: string }> }).content[0].text).tools.map((t: { name: string }) => t.name)).toEqual(['search']);
+    });
+  }, 120_000);
 
   test('the callable ceiling still blocks', async () => {
     await session(['--surface', 'verbs'], async (client) => {

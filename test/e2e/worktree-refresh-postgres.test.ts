@@ -6,4 +6,5 @@ await registerPostgresTests(
   () => import('../persistence-worktree-refresh.test.ts'),
   () => import('../persistence-worktree-refresh-restart.test.ts'),
   () => import('../worktree-refresh-orphan-7679.test.ts'),
+  () => import('../refresh-publish-diverged-7686.test.ts'),
 );

@@ -26,9 +26,9 @@ import type { SkillOptOpts } from './types.ts';
 
 export type SkillOptJobInput = Pick<SkillOptOpts,
   | 'skillsDir' | 'skillName' | 'benchmarkPath' | 'epochs' | 'batchSize' | 'lr' | 'lrSchedule' | 'split'
-  | 'reflectMaxTokens' | 'mode' | 'dryRun' | 'noMutate' | 'allowMutateBundled' | 'heldOutPath'
+  | 'reflectMaxTokens' | 'mode' | 'optimizerMode' | 'dryRun' | 'noMutate' | 'allowMutateBundled' | 'heldOutPath'
   | 'bootstrapReviewed' | 'maxCostUsd' | 'maxCostSource' | 'maxRuntimeMin' | 'force'
-> & { models: SkillOptModels; modelFlags: SkillOptModelFlags; modelsStrict: boolean };
+> & { benchmarkPath: string; models: SkillOptModels; modelFlags: SkillOptModelFlags; modelsStrict: boolean };
 
 export function buildSkillOptJobData(input: SkillOptJobInput): Record<string, unknown> {
   const flags = input.modelFlags;
@@ -57,6 +57,7 @@ export function buildSkillOptJobData(input: SkillOptJobInput): Record<string, un
     ...(input.modelsStrict ? { models_strict: true } : {}),
     ...(input.reflectMaxTokens !== undefined ? { reflect_max_tokens: input.reflectMaxTokens } : {}),
     mode: input.mode,
+    optimizer_mode: input.optimizerMode,
     dry_run: input.dryRun,
     no_mutate: input.noMutate,
     allow_mutate_bundled: input.allowMutateBundled,
@@ -112,6 +113,8 @@ export async function runSkillOptJob(engine: BrainEngine, rawData: unknown): Pro
     modelsStrict: data.models_strict === true,
     reflectMaxTokens: clampRemoteReflectMaxTokens(data.reflect_max_tokens),
     mode: (data.mode as 'patch' | 'rewrite') ?? 'patch',
+    // A job queued before one-shot became the default carries no mode: it was queued for the loop.
+    optimizerMode: data.optimizer_mode === 'one-shot-rewrite' ? 'one-shot-rewrite' : 'reflect',
     dryRun: Boolean(data.dry_run),
     noMutate: Boolean(data.no_mutate),
     allowMutateBundled: Boolean(data.allow_mutate_bundled),

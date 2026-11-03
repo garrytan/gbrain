@@ -8,6 +8,7 @@ import { PersistenceIpcTransportError, persistenceSocketPathForConfig, startPers
 import { resolveSourceId } from '../src/core/source-resolver.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { captureHookSessionCwd } from '../src/core/session-cwd.ts';
 
 const BRAIN = '10000000-0000-4000-8000-000000000001';
 const dirs: string[] = [];
@@ -33,6 +34,22 @@ describe('engine-free local persistence routing', () => {
     await withEnv({ GBRAIN_MOUNTS_PATH: mounts, GBRAIN_BRAIN_ID: undefined }, () => {
       expect(residentPersistenceConfig(host, dir)).toBe(host);
       expect(residentPersistenceConfig(host, project)).toEqual({ ...host, engine: 'pglite', database_path: '/mount/db', database_url: undefined });
+    });
+  });
+
+  test('#8426: a serve the hook launcher started binds the socket of the mount its session directory names', async () => {
+    const dir = temp(), project = join(dir, 'project'), mounts = join(dir, 'mounts.json');
+    mkdirSync(project);
+    writeFileSync(join(project, '.gbrain-mount'), 'example-brain\n'); chmodSync(join(project, '.gbrain-mount'), 0o644);
+    writeFileSync(mounts, JSON.stringify({ version: 1, mounts: [{ id: 'example-brain', engine: 'pglite', path: join(dir, 'clone'), database_path: '/mount/db' }] }), { mode: 0o600 });
+    const host = { engine: 'postgres' as const, database_url: 'postgresql://example.invalid/host' };
+    await withEnv({ GBRAIN_MOUNTS_PATH: mounts, GBRAIN_BRAIN_ID: undefined, GBRAIN_HOOK_CWD: project }, () => {
+      captureHookSessionCwd();
+      try {
+        expect(residentPersistenceConfig(host)).toEqual({ ...host, engine: 'pglite', database_path: '/mount/db', database_url: undefined });
+      } finally {
+        captureHookSessionCwd();
+      }
     });
   });
 

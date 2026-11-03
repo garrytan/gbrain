@@ -16,6 +16,7 @@ import { pageDocument } from '../src/core/page-window/document.ts';
 import { decodeCursor } from '../src/core/page-window/window.ts';
 import { encodedFrameBytes } from '../src/core/egress-budget.ts';
 import { normalizeLoweredClaim } from '../src/core/facts/withdrawal-schema.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 
 let engine: PGLiteEngine;
 const get_page = operations.find(o => o.name === 'get_page')!;
@@ -27,8 +28,8 @@ function ctx(overrides: Partial<OperationContext> = {}): OperationContext {
 const local = () => ctx({ remote: false, transport: undefined });
 
 async function put(slug: string, body: string, timeline = '', frontmatter: Record<string, unknown> = {}) {
-  const r = await importFromContent(engine, slug, serializeMarkdown(frontmatter, body, timeline, { type: 'note', title: slug, tags: [] }),
-    { sourceId: 'default', noEmbed: true, forceRechunk: true });
+  const r = await asOwner(engine, tx => importFromContent(tx, slug, serializeMarkdown(frontmatter, body, timeline, { type: 'note', title: slug, tags: [] }),
+    { sourceId: 'default', noEmbed: true, forceRechunk: true }));
   expect(r.status).toBe('imported');
 }
 

@@ -66,6 +66,9 @@ CHECKS=(
   # ── heavy (longest-first) ──
   "typecheck"
   "check:admin-build"
+  # #7126: src/admin-embedded.ts embeds exactly the committed admin/dist; the
+  # admin build above writes a throwaway directory, so it cannot catch this.
+  "check:admin-embedded"
   "check:wasm"
   "check:pglite-embedded"
   # HEIC + AVIF decoders survive bun build --compile (~0.6s: the smoketest
@@ -199,6 +202,8 @@ CHECKS=(
   # CQ3 / EO17 (refactor wave 1): engine-sql splices only constant text, no
   # composed $n, no expanded IN lists.
   "check:engine-sql-dynamic"
+  # GBRA-218: the remote-privacy relaxations are read only in private-visibility.ts.
+  "check:remote-privacy-reads"
   # EO4 (refactor wave 1): RLS read brands stay unforgeable; brand factories
   # importable only from their allowlists (never src/core/ops/**).
   "check:engine-sql-brands"

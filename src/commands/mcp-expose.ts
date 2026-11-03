@@ -47,7 +47,7 @@ import {
   SERVE_LAUNCHD_LABEL, SERVE_SYSTEMD_UNIT, uninstallServeService, wrapperPath as wrapperPathFor, writeExposeReceipt,
   type ExposeReceipt, type ServiceState, type ServiceTarget, type UninstallServiceResult,
 } from '../core/serve-service.ts';
-import { shellQuote } from '../core/mcp-registration.ts';
+import { registrationAdvertise, shellQuote } from '../core/mcp-registration.ts';
 import { cliRenderContext, renderNotice } from '../core/agent-output.ts';
 import { EXPOSE_FRICTION_REASONS, hostedOptionLine, hostedOptionMuted, hostedOptionNotice } from '../core/onboard/hosted-option.ts';
 
@@ -67,7 +67,9 @@ node attribute) enabled — otherwise exit 2 with the admin URL to fix it.
 --port N          Local port for the gbrain HTTP server (default: 3131)
 --funnel          Publish on the public internet via Tailscale Funnel (cloud agents:
                   Grok Bot, Muse, ChatGPT). Default is tailnet-only — your own devices.
---surface X       MCP tool surface: verbs | starter | full (default: full)
+--surface X       MCP tool surface: verbs | starter | full, listed in full (default: full,
+                  listing the memory verbs and request_tools; an earlier exposure
+                  keeps its listing)
 --enable-dcr      Allow OAuth Dynamic Client Registration on the server
 --no-tailscale    Skip every Tailscale step (you publish the port yourself)
 --no-service      Publish only; do not install or start the user service
@@ -257,6 +259,8 @@ export interface ExposeOptions {
   port: number;
   funnel: boolean;
   surface: Surface;
+  /** --surface was passed: that surface is listed in full (no --advertise). */
+  surfaceChosen: boolean;
   enableDcr: boolean;
   noTailscale: boolean;
   noService: boolean;
@@ -287,6 +291,7 @@ export function parseExposeArgs(args: string[]): ExposeOptions {
     port,
     funnel: args.includes('--funnel'),
     surface: (rawSurface as Surface | undefined) ?? 'full',
+    surfaceChosen: rawSurface !== undefined,
     enableDcr: args.includes('--enable-dcr'),
     noTailscale: args.includes('--no-tailscale'),
     noService: args.includes('--no-service'),
@@ -618,6 +623,7 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
   const engine = engineKind(cfg);
   const receiptPath = receiptPathFor(d.serveDir);
   const existing = readExposeReceipt(receiptPath);
+  const advertise = registrationAdvertise({ userChoseSurface: opts.surfaceChosen, prior: existing });
   const tailscaleBinary = opts.noTailscale ? null : findTailscaleBinary({ which: d.which, fileExists: d.fileExists });
   const hasBrew = !!d.which('brew');
   const installPlan = tailscaleInstallPlan(d.platform, hasBrew);
@@ -632,7 +638,7 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
   // mapping stays live and unfindable. Refused before consent; `--remove` first.
   const tailscaleReceipt = opts.noTailscale && existing?.tailscale.dns_name ? existing : null;
   const plan: string[] = [];
-  plan.push(`Server    gbrain serve (HTTP) on 127.0.0.1:${opts.port} (surface ${opts.surface}${opts.enableDcr ? ', DCR on' : ''}); engine ${engine}`);
+  plan.push(`Server    gbrain serve (HTTP) on 127.0.0.1:${opts.port} (surface ${opts.surface}${advertise ? `, listing ${advertise === 'verbs' ? 'the memory verbs and request_tools' : advertise}` : ''}${opts.enableDcr ? ', DCR on' : ''}); engine ${engine}`);
   if (tailscaleReceipt) plan.push(`Tailscale ${opts.dryRun ? 'WOULD BE REFUSED' : 'REFUSED'} (--no-tailscale): this brain is already published on your tailnet at ${tailscaleReceipt.public_url} — run \`gbrain mcp expose --remove --yes\` first, or re-run without --no-tailscale`);
   else if (opts.noTailscale) plan.push('Tailscale skipped (--no-tailscale): you publish the port yourself');
   else if (tailscaleBinary) plan.push(`Tailscale ${tailscaleBinary} — sign in if needed, then \`tailscale ${tailscaleServeArgv(opts.port, { funnel: opts.funnel }).join(' ')}\``);
@@ -901,6 +907,7 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
       admin_url: `${publicUrl}/admin`,
       mode,
       surface: opts.surface,
+      ...(advertise ? { advertise } : {}),
       enable_dcr: opts.enableDcr,
       tailscale: { binary, dns_name: tsStatus?.dnsName ?? null, tailscale_version: tsStatus?.version ?? null },
       service: serviceReceipt,
@@ -928,7 +935,7 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
       // (a foreign listener was already refused in the plan step, before publishing)
       const content = renderServeWrapper({
         gbrainCommand: d.gbrainCommand(), adminTokenPath: tokenPath, gbrainEnvFile: d.gbrainEnvFile, gbrainHome: d.env.GBRAIN_HOME,
-        runtimeDir: d.runtimeDir, port: opts.port, publicUrl: publicUrl!, surface: opts.surface, enableDcr: opts.enableDcr,
+        runtimeDir: d.runtimeDir, port: opts.port, publicUrl: publicUrl!, surface: opts.surface, advertise, enableDcr: opts.enableDcr,
       });
       const installed = await installServeService({
         target, wrapperPath: wrapper, wrapperContent: content, home: d.home, logPath: serveLogPath(d.serveDir), errPath: serveErrPath(d.serveDir),
@@ -972,7 +979,7 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
     // 9. verify
     if (opts.noService && !listeningBefore && !keptService) {
       s.check('verify.local', 'skipped', `--no-service and nothing listens on ${localHealthUrl} yet`);
-      s.say(`Nothing listens on 127.0.0.1:${opts.port} yet — start the server: ${['gbrain', ...serveCommandArgv({ port: opts.port, publicUrl: publicUrl!, surface: opts.surface, enableDcr: opts.enableDcr })].join(' ')}`);
+      s.say(`Nothing listens on 127.0.0.1:${opts.port} yet — start the server: ${['gbrain', ...serveCommandArgv({ port: opts.port, publicUrl: publicUrl!, surface: opts.surface, advertise, enableDcr: opts.enableDcr })].join(' ')}`);
     } else if (target === 'none' && !opts.noService && !listeningBefore) {
       s.check('verify.local', 'skipped', 'manual service: start the wrapper, then run --status');
     } else {
@@ -1054,7 +1061,7 @@ function publishFlags(opts: ExposeOptions): string[] {
   const parts: string[] = [];
   if (opts.port !== DEFAULT_EXPOSE_PORT) parts.push('--port', String(opts.port));
   if (opts.funnel) parts.push('--funnel');
-  if (opts.surface !== 'full') parts.push('--surface', opts.surface);
+  if (opts.surfaceChosen) parts.push('--surface', opts.surface);
   if (opts.enableDcr) parts.push('--enable-dcr');
   if (opts.noTailscale) parts.push('--no-tailscale');
   if (opts.noService) parts.push('--no-service');

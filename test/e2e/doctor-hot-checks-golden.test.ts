@@ -16,7 +16,7 @@ import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { defineNormalizer, expectGolden, expectNormalizerStable } from '../helpers/golden.ts';
 import { doctorJsonNormalizer, makeDoctorHome, networkAttempts, runGbrain, type DoctorHome, type GbrainRun } from '../helpers/doctor-json-golden.ts';
 import { FENCE_TREND_OP } from '../../src/core/fence-repair/census-store.ts';
-import { buildHotCheckFixture, editHotCheckFixture, stampSoakDays, stampSyncDay, type Sql } from '../helpers/doctor-hot-checks-fixture.ts';
+import { buildHotCheckFixture, editHotCheckFixture, stampFixtureHead, stampSoakDays, stampSyncDay, type Sql } from '../helpers/doctor-hot-checks-fixture.ts';
 import { SOAK_COUNTERS_OP } from '../../src/core/persistence/soak-counters.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -84,7 +84,7 @@ async function capture(adminUrl: string): Promise<PgCaptures> {
   ]).finally(() => db.end());
   expect(stamped.length).toBe(1);
   const day = stamped[0]!.day as string;
-  for (const run of [first, second]) run.json = stampSoakDays(stampSyncDay(run.json, day, syncDays), soak.map(r => String(r.fingerprint)));
+  for (const run of [first, second]) run.json = stampFixtureHead(stampSoakDays(stampSyncDay(run.json, day, syncDays), soak.map(r => String(r.fingerprint))), h);
   return { first, second, url, name };
 }
 

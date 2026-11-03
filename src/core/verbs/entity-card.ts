@@ -27,6 +27,7 @@ import type { ReadEligibility } from '../eligibility/policy.ts';
 import { trustFields } from '../eligibility/labels.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { loadPageTrust } from '../eligibility/stamp.ts';
+import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { loadRelationshipNotes, relationshipNoteKey } from '../link-relationship-notes.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { isIdentityEntity, slugify } from '../entities/resolve.ts';
@@ -306,10 +307,10 @@ export async function selectEntityCandidates(
   scope: EntityLookupScope,
   opts: { omitQuarantined?: boolean; suggest?: boolean; variants?: boolean } = {},
 ): Promise<EntityCandidates> {
-  const { privatePagesFilterFragment } = await import('../search/private-visibility.ts');
+  const { privatePagesFilterForCaller } = await import('../search/private-visibility.ts');
   // Predicate text lives ONCE (private-visibility.ts) — both card queries
   // below select `FROM pages` unaliased, so qualify with the table name.
-  const privatePredicate = scope.excludePrivate ? ` AND ${privatePagesFilterFragment('pages')}` : '';
+  const privatePredicate = scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('pages')}` : '';
 
   const norm = normalizeAlias(trimmed);
   const titleLc = trimmed.toLowerCase();
@@ -403,7 +404,7 @@ export async function selectEntityCandidates(
     const variants = opts.variants && await nameVariantsEnabled(engine)
       ? await resolveNameVariant<CardPageRow>(engine, sourceId, trimmed, {
         selectColumns: CARD_ROW_COLUMNS, privatePredicate, entityTypes: scope.entityTypes, omitQuarantined: opts.omitQuarantined,
-        retirementPrivacy: scope.excludePrivate ? ` AND ${privatePagesFilterFragment('p')}` : '' })
+        retirementPrivacy: scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '' })
       : { matches: [] };
     const variantSuggestions = (matches: typeof variants.matches): EntitySuggestion[] => matches.map(m => ({
       slug: m.row.slug, title: m.row.title ?? m.row.slug, create_safety: 'exists', source_id: sourceId }));
@@ -506,11 +507,11 @@ export async function buildEntityCard(
       await readCardIdentity(engine, hitSource, row, { excludePrivate: scope.excludePrivate, excludeQuarantined: opts.omitQuarantined === true, surfaceCeiling: opts.surfaceCeiling, aka: card.aka }));
     await attachCardRecords(engine, hitSource, card, opts, scope.excludePrivate);
     if (await nameVariantsEnabled(engine)) {
-      const { privatePagesFilterFragment } = await import('../search/private-visibility.ts');
+      const { privatePagesFilterForCaller } = await import('../search/private-visibility.ts');
       const duplicates = await readPossibleDuplicates<CardPageRow>(engine, hitSource, row, {
         selectColumns: CARD_ROW_COLUMNS, entityTypes: scope.entityTypes, omitQuarantined: opts.omitQuarantined,
-        privatePredicate: scope.excludePrivate ? ` AND ${privatePagesFilterFragment('pages')}` : '',
-        retirementPrivacy: scope.excludePrivate ? ` AND ${privatePagesFilterFragment('p')}` : '' });
+        privatePredicate: scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('pages')}` : '',
+        retirementPrivacy: scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '' });
       if (duplicates.length) card.possible_duplicates = duplicates;
     }
     // #7161: a thin card while mentions are behind may be a stale stub; show where the name appears in text.
@@ -583,9 +584,9 @@ async function assembleCard(
   const visibility = remote ? (['world'] as ('private' | 'world')[]) : undefined;
   // Facts saved about this entity may sit under a sibling page or the bare subject slug (siblings.ts).
   const factSlugs = await factEntitySlugs(engine, sourceId, pageSlug, { excludePrivate }).catch(() => [pageSlug]);
-  const { privatePagesFilterFragment, privateLinkOriginFilterFragment, privateProvenanceFilterFragment } = await import('../search/private-visibility.ts');
+  const { privatePagesFilterForCaller, privateLinkOriginFilterForCaller, privateProvenanceFilterFragment } = await import('../search/private-visibility.ts');
   const inboundPrivacy = excludePrivate
-    ? ` AND ${privatePagesFilterFragment('f')} AND ${privateLinkOriginFilterFragment('l')}`
+    ? ` AND ${privatePagesFilterForCaller('f')} AND ${privateLinkOriginFilterForCaller('l')}`
     : '';
 
   // Parallel depth-1 reads — every arm individually fail-soft so a partial
@@ -654,7 +655,8 @@ async function assembleCard(
         `SELECT COUNT(*) AS n
            FROM facts
           WHERE source_id = $1 AND entity_slug = ANY($2::text[])
-            AND expired_at IS NULL${remote ? ` AND visibility = 'world'` : ''}${excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`,
+            AND expired_at IS NULL${remote ? ` AND visibility = 'world'` : ''}${excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}
+            AND ${projectionEligibleSql('facts', 'facts', eligibility)}`,
         [sourceId, factSlugs],
       )
       .then(rs => Number(rs[0]?.n ?? 0))

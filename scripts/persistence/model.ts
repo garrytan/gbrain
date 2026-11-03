@@ -18,6 +18,7 @@ import { parseFactsFence } from '../../src/core/facts-fence.ts';
 import { parseTakesFence } from '../../src/core/takes-fence.ts';
 import { FACT_FENCE_KIND, TAKE_FENCE_KIND, fenceOwnerKey, readFenceBlocks } from '../../src/core/generations/fence.ts';
 import { isRegistryCode } from '../../src/core/error-catalogue.ts';
+import { unquoteTranscriptText } from '../../src/core/search/transcript-quote.ts';
 import { CONNECTOR_SLUG, contextFor, retryingRead, type OpDescriptor, type OpKind, type OpObservation, type World } from './ops.ts';
 
 /**
@@ -287,8 +288,9 @@ export class ReferenceModel {
   async recall(actor: string, source: string, entity: string): Promise<string[]> {
     try {
       const r = await this.retrying(() => operationsByName.recall.handler(contextFor(this.world, actor, source),
-        { entity, limit: 100, ...(actor === 'local' ? { source_id: source } : {}) })) as { facts?: { fact?: string }[] };
-      return (r.facts ?? []).map(f => String(f.fact ?? ''));
+        { entity, limit: 100, ...(actor === 'local' ? { source_id: source } : {}) })) as { facts?: { id?: number; fact?: string; quoted?: string }[] };
+      // GST-687: a remote reader gets an agent-written fact quoted; the stored text is what the receipt promised.
+      return (r.facts ?? []).map(f => f.quoted ? unquoteTranscriptText(String(f.fact ?? ''), `fact ${f.id}`) : String(f.fact ?? ''));
     } catch { return []; }
   }
 

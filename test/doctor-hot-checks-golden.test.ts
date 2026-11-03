@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { defineNormalizer, expectGolden, expectNormalizerStable } from './helpers/golden.ts';
 import { doctorJsonNormalizer, makeDoctorHome, networkAttempts, runGbrain, type DoctorHome, type GbrainRun } from './helpers/doctor-json-golden.ts';
-import { buildHotCheckFixture, editHotCheckFixture, HOT_CHECK_CLOCK, pgliteSql } from './helpers/doctor-hot-checks-fixture.ts';
+import { buildHotCheckFixture, editHotCheckFixture, HOT_CHECK_CLOCK, pgliteSql, stampFixtureHead } from './helpers/doctor-hot-checks-fixture.ts';
 
 const DOCTOR = doctorJsonNormalizer();
 const homes: DoctorHome[] = [];
@@ -39,6 +39,7 @@ async function capture(): Promise<Captures> {
   await editHotCheckFixture(h, sql);
   const second = await runGbrain(h, ['doctor', '--json', '--skills-dir', h.skillsDir]);
   expect(networkAttempts(h)).toEqual([]);
+  for (const run of [first, second]) run.json = stampFixtureHead(run.json, h);
   return { first, second };
 }
 

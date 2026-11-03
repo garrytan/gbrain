@@ -4,6 +4,7 @@ import { isUndefinedColumnError } from '../utils.ts';
 import { assertValidSlugPrefixes, pgArray } from './encoding.ts';
 import { rescopeClientGrantInTransaction } from './service.ts';
 import type { GrantPatch, GrantProfileId } from './model.ts';
+import type { INSTALL_SURFACE_SET_BY } from '../../mcp/surface.ts';
 
 export interface RescopeClientOptions {
   sourceId?: string;
@@ -16,6 +17,8 @@ export interface RescopeClientOptions {
    * (the operator lock: request_tools persist cannot override it).
    */
   surface?: 'verbs' | 'starter' | 'full' | null;
+  /** Who set a non-null surface; default 'operator'. INSTALL_SURFACE_SET_BY marks an install default. */
+  surfaceSetBy?: 'operator' | typeof INSTALL_SURFACE_SET_BY;
   scopes?: string[];
   allowedOperations?: string[] | null;
   boundTools?: string[] | null;
@@ -36,7 +39,7 @@ export type RescopeClientResult = { clientId: string; clientName: string; source
 
 export async function rescopeOAuthClient(sql: SqlQuery, clientId: string, opts: RescopeClientOptions): Promise<RescopeClientResult> {
     const { sourceId, federatedRead, boundSlugPrefixes, surface } = opts;
-    if (sourceId === undefined && federatedRead === undefined && boundSlugPrefixes === undefined && surface === undefined && !Object.entries(opts).some(([key, value]) => !['actor', 'expectedRevision', 'dryRun', 'repair'].includes(key) && value !== undefined)) {
+    if (sourceId === undefined && federatedRead === undefined && boundSlugPrefixes === undefined && surface === undefined && !Object.entries(opts).some(([key, value]) => !['actor', 'expectedRevision', 'dryRun', 'repair', 'surfaceSetBy'].includes(key) && value !== undefined)) {
       throw new Error('rescope-client requires --source, --federated-read, --bound-slug-prefixes, and/or --surface');
     }
     if (sourceId !== undefined) assertValidSourceId(sourceId);
@@ -70,8 +73,8 @@ export async function rescopeOAuthClient(sql: SqlQuery, clientId: string, opts: 
       WHERE table_schema = current_schema() AND table_name = 'oauth_clients'
         AND column_name IN ('grant_revision', 'allowed_operations', 'delegated_slug_prefixes', 'delegated_namespace', 'grant_profile', 'grant_repair_reasons', 'surface', 'surface_set_by', 'token_ttl', 'source_id', 'federated_read', 'bound_slug_prefixes', 'bound_tools', 'bound_source_id', 'bound_brain_id', 'bound_max_concurrent', 'budget_usd_per_day')`;
     if (schema.length === 17) {
-      const { expectedRevision, actor, repair, dryRun, ...patch } = opts;
-      if (surface !== undefined) (patch as GrantPatch).surfaceSetBy = surface === null ? null : 'operator';
+      const { expectedRevision, actor, repair, dryRun, surfaceSetBy, ...patch } = opts;
+      if (surface !== undefined) (patch as GrantPatch).surfaceSetBy = surface === null ? null : surfaceSetBy ?? 'operator';
       if (sourceId !== undefined) {
         const found = await sql`SELECT id FROM sources WHERE id = ${sourceId}`;
         if (!found.length) throw new Error(`Source "${sourceId}" does not exist. Create it first: gbrain sources add ${sourceId} ...`);
@@ -82,7 +85,7 @@ export async function rescopeOAuthClient(sql: SqlQuery, clientId: string, opts: 
         ...(boundSlugPrefixes !== undefined ? { boundSlugPrefixes: result.after.boundSlugPrefixes } : {}),
         ...(surface !== undefined ? { surface: result.after.surface, surfaceOld: result.before.surface } : {}) };
     }
-    if (Object.entries(opts).some(([key, value]) => !['sourceId', 'federatedRead', 'boundSlugPrefixes', 'surface'].includes(key) && value !== undefined)) {
+    if (Object.entries(opts).some(([key, value]) => !['sourceId', 'federatedRead', 'boundSlugPrefixes', 'surface', 'surfaceSetBy'].includes(key) && value !== undefined)) {
       throw new Error('Client grant changes require an up-to-date OAuth schema; run gbrain apply-migrations --yes');
     }
     let rows: Record<string, unknown>[];
@@ -101,7 +104,7 @@ export async function rescopeOAuthClient(sql: SqlQuery, clientId: string, opts: 
       // `rescope-client --source wiki` fail on a brain that has the v60/v61
       // OAuth columns but not v85's bound_* set (or v127's surface set) — a
       // regression on an axis the caller never asked about.
-      const surfaceSetBy = surface === null ? null : 'operator';
+      const surfaceSetBy = surface === null ? null : opts.surfaceSetBy ?? 'operator';
       if (boundSlugPrefixes === undefined && surface === undefined) {
         rows = await sql`
             UPDATE oauth_clients

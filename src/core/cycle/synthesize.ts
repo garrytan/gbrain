@@ -2,6 +2,7 @@ import { observationDateLine, observationDateRule } from '../ai/date-grounding.t
 import { isConsumerDateGroundingOn } from '../facts/extract.ts';
 import { maintenancePreflight, publishMaintenancePage, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { reportFileHolds, reverseWriteDreamRefs, writeDreamPageFile } from './derived-write-through.ts';
+import { emptySessionSourceRouting, keepSessionSourceTranscripts, withSessionSourceRouting, type SessionSourceRouting } from './synthesize-source-routing.ts';
 import { deferPublishOrThrow, finishDeferredPostprocess, loadCommittedOutputsOrDefer, postprocessManagedSynthesis, withPostprocessConflicts, withPublishPending, type PostprocessConflict, type RetainedOutput } from './synthesize-postprocess.ts';
 /**
  * Synthesize phase (v0.23; #4152 two-stage cascade) — conversation-to-brain
@@ -405,12 +406,14 @@ export async function runPhaseSynthesize(
   // wins (minions/worker.ts wraps each job), and that is intentional: the
   // authoritative child spend rolls up from minion_jobs token columns below.
   const startedAt = Date.now(); // #6757: outputs an earlier pass deferred finish even when this pass returns before postprocessing
-  return withChatPhase('phase:synthesize', async () => finishDeferredPostprocess(engine, opts, startedAt, await runPhaseSynthesizeInner(engine, opts), loadSynthConfig));
+  const routing = emptySessionSourceRouting(); // #7805: corpus files left out because they belong to another source, or to none yet
+  return withChatPhase('phase:synthesize', async () => withSessionSourceRouting(await finishDeferredPostprocess(engine, opts, startedAt, await runPhaseSynthesizeInner(engine, opts, routing), loadSynthConfig), routing, opts.sourceId ?? 'default'));
 }
 
 async function runPhaseSynthesizeInner(
   engine: BrainEngine,
   opts: SynthesizePhaseOpts,
+  routing: SessionSourceRouting,
 ): Promise<PhaseResult> {
   const start = Date.now();
   let ownedPrivateQueue: { queue: MinionQueue; name: string } | null = null;
@@ -501,7 +504,7 @@ async function runPhaseSynthesizeInner(
     const priorContradictionsBlock = await loadPriorContradictionsBlock(engine);
 
     // Discover: the corpus walk (or --input) plus #4419 imported conversation pages.
-    const transcripts = await withConversationPages(engine, opts, config, opts.inputFile
+    const transcripts = await keepSessionSourceTranscripts(engine, await withConversationPages(engine, opts, config, opts.inputFile
       ? loadAdHocTranscript(opts.inputFile, config.minChars, config.excludePatterns, opts.bypassDreamGuard)
       : !config.corpusDir ? [] : discoverTranscripts({
           corpusDir: config.corpusDir,
@@ -524,7 +527,7 @@ async function runPhaseSynthesizeInner(
               ].map(prefix => join(opts.brainDir, prefix)),
           // #5413: corpus files captured from gbrain's own claude-cli calls.
           selfCaptureSessionIds: claudeCliSelfSessionIds(),
-        }));
+        })), { corpusDir: config.corpusDir, sourceId: opts.sourceId ?? 'default', readOnly: opts.dryRun }, routing);
 
     if (transcripts.length === 0) {
       return ok('no transcripts to process', { transcripts_processed: 0, pages_written: 0 });
@@ -924,7 +927,7 @@ async function runPhaseSynthesizeInner(
             : t.contentHash.slice(0, 6),
           oneshot_task_prefixes: [config.reflectionsPrefix, config.originalsPrefix], // #6160: oneshot task shapes
           ...(maintenance ? { dream_output: { raw_source: t.filePath, transcript_hash: t.contentHash, cycle_date: summaryDate, quote_verify: config.quoteVerify, ...(t.seat ? { seat: t.seat } : {}) } } : {}), // GBRA-60
-          require_writes: true,
+          require_writes: true, ...(t.corpusSource ? { corpus_source: t.corpusSource } : {}), // #7850: re-resolved when the child runs
           // #1586: scope every child tool call to the cycle's resolved source
           // so put_page writes land there instead of the hardcoded 'default'.
           ...(opts.sourceId ? { source_id: opts.sourceId } : {}),

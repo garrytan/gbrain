@@ -649,6 +649,14 @@ export interface SubagentHandlerData {
    */
   dream_output?: DreamOutputSpec;
   /**
+   * #7850: the session-corpus file a dream synthesis child writes for, the corpus dir and the source incarnation discovery
+   * resolved it to. The child resolves the file again (read-only) before any model call and refuses
+   * (`session_source_changed: <reason>`) when the session no longer resolves to `source_id` or the incarnation changed; a
+   * child without it is re-checked from `dream_output.raw_source` and the configured corpus dir. Trusted field
+   * (PROTECTED_JOB_NAMES); a delegated (remote-owned) job ignores it.
+   */
+  corpus_source?: { raw_source: string; corpus_dir: string; incarnation: string };
+  /**
    * GBRA-60: the agent loop's put_page stages each page instead of writing it (minions/tools/staged-put-page.ts): every
    * check put_page runs before journaling still refuses, but the page lives only in this job's tool-execution ledger
    * until the submitting phase publishes it (a managed patterns run grounds, stamps and publishes the staged pages as
@@ -830,4 +838,20 @@ export interface SubagentResult {
    * completion that `require_writes` must not dead-letter.
    */
   oneshot_skipped?: boolean;
+}
+
+/**
+ * GST-359 C2: the attested actor an agent job belongs to. submit_agent stores it in the accepted grant
+ * (`submission_authority.grant.actor`); every owner-fenced job read and cancel also matches it, so behind one attest
+ * client a job is visible only to the person it was submitted for, and a job without one only to unattested calls.
+ */
+export type JobActor = readonly [string, string, string];
+
+/** The actor of a caller without an attested one. */
+export const NO_JOB_ACTOR: JobActor = ['', '', ''];
+
+/** SQL: the job's accepted actor equals the three parameters starting at `$first`. `alias` is a code-provided table alias. */
+export function jobActorSql(first: number, alias?: string): string {
+  const actor = `${alias ? alias + '.' : ''}submission_authority->'grant'->'actor'`;
+  return ['system', 'external_id', 'member'].map((key, i) => `COALESCE(${actor}->>'${key}', '') = $${first + i}::text`).join(' AND ');
 }

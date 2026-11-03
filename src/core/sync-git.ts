@@ -529,14 +529,13 @@ export function createSyncBaselineCommit(repoPath: string): void {
   const dbOnlyDirs = storageConfig?.db_only ?? [];
   // Sniff-test fail-closed (round 6, P2): `loadStorageConfig` warns-and-
   // returns an EMPTY config for syntactically-valid-but-unsupported YAML
-  // (e.g. flow-style `db_only: [dir/]`; the narrow custom parser only
-  // handles block-style lists), which would silently resolve zero
+  // (e.g. a flow list split over lines; the narrow custom parser handles
+  // block lists and one-line flow lists), which would silently resolve zero
   // exclusions from a file that clearly intended some. If gbrain.yml has a
   // db_only (or deprecated `supabase_only`) key line but nothing resolved
   // from it, refuse rather than guess; `hasUnresolvedDbOnlyDeclaration`
-  // owns the key-line rules. Accepted trade-off: an intentionally empty
-  // `db_only: []` also refuses (same empty config); silently committing
-  // db_only content into permanent git history is high-cost and hard to undo.
+  // owns the key-line rules (an explicit empty `db_only: []` declares none, #8007);
+  // silently committing db_only content into permanent git history is high-cost and hard to undo.
   if (hasUnresolvedDbOnlyDeclaration(repoPath, storageConfig)) {
     const yamlPath = join(repoPath, 'gbrain.yml');
     throw new Error(

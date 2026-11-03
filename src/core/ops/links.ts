@@ -1,5 +1,6 @@
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
+import { remoteTargetHidden } from '../persistence/page-visibility.ts';
 import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 import { MANAGED_LINK_SOURCES } from '../links-fence.ts';
 import { backlinkTypeFilter, readBacklinkPage, withLinkPageStatus } from './backlinks-paged.ts';
@@ -30,7 +31,7 @@ import {
   assertSourceInCallerScope,
 } from './context.ts';
 import { listWantedPages } from '../wanted-links-store.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import type { OperationContext } from './contract.ts';
 import type { Link, PageReadPolicy } from '../types.ts';
 import { ALL_SOURCES } from '../source-id.ts';
@@ -200,6 +201,9 @@ const remove_link: Operation = {
   handler: async (ctx, p) => {
     enforceClientSlugFence(ctx, p.from as string, 'remove_link');
     if (ctx.dryRun) return { dry_run: true, action: 'remove_link', from: p.from, to: p.to };
+    const writeSource = ctx.sourceId || 'default';
+    if (await remoteTargetHidden(ctx.engine, ctx.remote, writeSource, p.from as string)
+      || await remoteTargetHidden(ctx.engine, ctx.remote, writeSource, p.to as string)) return { status: 'ok', removed: 0 };
     await primeRelationSemantics(ctx.engine);
     const linkOpts = ctx.sourceId
       ? { fromSourceId: ctx.sourceId, toSourceId: ctx.sourceId }
@@ -243,7 +247,7 @@ const LINK_ALL_SOURCES_PARAM = {
   description: 'Same as source_id __all__.',
   fullSurfaceOnly: true,
 } as const;
-const LINK_LIMIT_PARAM = { type: 'number', description: `Rows per call (default ${LINK_READ_DEFAULT_LIMIT}, max ${LINK_READ_MAX_LIMIT}).` } as const;
+const LINK_LIMIT_PARAM = { type: 'number', minimum: 1, description: `Rows per call (default ${LINK_READ_DEFAULT_LIMIT}, max ${LINK_READ_MAX_LIMIT}).` } as const;
 const LINK_CURSOR_PARAM = { type: 'string', description: 'next_cursor from the previous call (same filters).' } as const;
 const LINK_ALL_PARAM = { type: 'boolean', description: 'Local CLI only: every row, paging internally.', fullSurfaceOnly: true } as const;
 
@@ -445,7 +449,7 @@ const get_backlinks: Operation = {
     all_sources: LINK_ALL_SOURCES_PARAM,
     type: { type: 'string', description: 'Referrer type.' },
     group: { type: 'string', enum: ['page'], description: 'Per page.' },
-    limit: { type: 'number', description: `≤${LINK_READ_MAX_LIMIT}` },
+    limit: { type: 'number', minimum: 1, description: `≤${LINK_READ_MAX_LIMIT}` },
     cursor: { type: 'string', description: 'Next.' },
     all: LINK_ALL_PARAM,
   },
@@ -569,6 +573,7 @@ const traverse_graph: Operation = {
     direction: { type: 'string', description: 'Remote default both.', enum: ['in', 'out', 'both'] },
     hops: {
       type: 'array',
+      minItems: 1,
       description: '≤3 typed hops, e.g. [{"link_type":"founded","toward":"subject"}]; toward: object|subject.',
       items: { type: 'object', properties: { link_type: { type: 'string' }, toward: { type: 'string' } } },
       fullSurfaceOnly: true,
@@ -649,7 +654,7 @@ const wanted_pages: Operation = {
   description: 'Link targets that have no page yet, most-referenced first: each was written as a link but its page does not exist, so no edge exists. Use to find entities worth a page (enrichment) or typo links to fix. The edge appears on its own once the page is created.',
   params: {
     source_id: { type: 'string', description: 'Only targets referenced from this source (must be inside your source grant).' },
-    limit: { type: 'number', description: `Rows per page (default ${WANTED_DEFAULT_LIMIT}, max ${WANTED_MAX_LIMIT}).` },
+    limit: { type: 'number', minimum: 1, description: `Rows per page (default ${WANTED_DEFAULT_LIMIT}, max ${WANTED_MAX_LIMIT}).` },
     offset: { type: 'number', description: 'Skip the first N targets.' },
     count_only: { type: 'boolean', description: 'Return the total with no rows.' },
   },
@@ -667,7 +672,7 @@ const wanted_pages: Operation = {
         limitOk ? { def: wanted_pages.params.offset, example: 0 } : { def: wanted_pages.params.limit, example: WANTED_DEFAULT_LIMIT });
     }
     const { total, rows } = await listWantedPages(ctx.engine, { sourceId: policy.sourceId, sourceIds: policy.sourceIds,
-      excludePrivate: policy.excludePrivate, privateFilter: privatePagesFilterFragment,
+      excludePrivate: policy.excludePrivate, privateFilter: privatePagesFilterForCaller,
       limit: p.count_only === true ? 1 : limit, offset });
     const next = offset + limit < total ? offset + limit : null;
     return {

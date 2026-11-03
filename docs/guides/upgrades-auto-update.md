@@ -280,9 +280,18 @@ and wait until `gbrain jobs list --status active --json` returns no jobs, so no
 job runs half on each build; resume with `gbrain autopilot resume` once the
 checks below pass ([the order](../../skills/gbrain-upgrade/SKILL.md#always-on-hosts-pause-drain-upgrade-verify-resume)).
 
-The autopilot `--swap-only` channel still exits for its own supervisor to
-relaunch and restarts nothing else; doctor's `runtime_build_skew` fails while
-two builds run, with `gbrain upgrade --restart-only` as its fix.
+The autopilot `--swap-only` channel exits for its own supervisor to relaunch.
+Once the relaunched autopilot runs the new build, it checks the serve that the
+installed serve service runs (`com.gbrain.serve` under launchd,
+`gbrain-serve.service` under systemd). If that serve is on an older build, the
+autopilot restarts it through the service and verifies that it came back on
+the new build. It does this once per autopilot process, under the swap's own
+auto-mode, quiet-hours and idle gates, and records it in the self-upgrade
+audit as `restart_serve` (`applied`, or `skipped` with `manual` or
+`unverified`). It leaves alone a serve that the service does not run (one
+started by hand or from another install), the jobs supervisor and MCP
+servers. For those, doctor's `runtime_build_skew` fails while two builds run,
+and `gbrain upgrade --restart-only` is its fix.
 
 <a id="restart-and-verify"></a>
 ### Restart and verify: a deploy ends with data movement

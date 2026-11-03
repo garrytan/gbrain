@@ -66,6 +66,20 @@ export function slugDerivedOrigin(root: string, slug: string, mode: 'git-root' |
   return matches[0] ?? { path, sourcePath };
 }
 
+/** GBRA-133: whether a page records no file origin: no source path and no `file:` source URI (a URL or a capture label names no file). */
+export function recordsNoFileOrigin(page: { source_path?: string | null; source_uri?: string | null }): boolean {
+  return !page.source_path && !/^file:/i.test(page.source_uri?.trim() ?? '');
+}
+
+/**
+ * GBRA-133: the file at a page's slug path, in the source's slug-root mode. When no ordinary file is spelled `<slug>.md`,
+ * the one file whose path imports as the slug in another spelling (`README.md` for slug `readme`) is that file, as
+ * discovery names it (#7974: read through `slugDerivedOrigin`, so a symlink or a case-insensitive match never stands in).
+ */
+export function slugPathFile(root: string, slug: string, mode: 'git-root' | 'source-root'): string {
+  return slugDerivedOrigin(root, slug, mode)?.path ?? join(root, `${slug}.md`);
+}
+
 function entries(dir: string): Dirent[] {
   try { return readdirSync(dir, { withFileTypes: true }); } catch { return []; }
 }

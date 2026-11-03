@@ -716,16 +716,19 @@ describe('boot-readiness deadline (#3273)', () => {
   });
 
   // The 52k-document serve kept answering tool calls while its boot waited on
-  // the engine behind them; completed requests are progress too.
+  // the engine behind them; completed requests are progress too. The window is
+  // 10x one request so scheduling stalls on a loaded runner never open a real
+  // no-progress gap as long as the window (#8446), and the boot still runs
+  // about four windows, which only per-request progress keeps alive.
   test('a boot phase waiting behind answered tool calls is not killed', async () => {
     const { trackStdioRpc } = await import('../src/mcp/server.ts');
     const h = makeHarness();
     h.opts.startMcpServer = async (_engine, startOpts) => {
       startOpts?.onBootPhase?.('mcp_connect');
       startOpts?.onBootPhase?.('persistence_consumer');
-      for (let i = 0; i < 12; i++) await trackStdioRpc(() => new Promise(r => setTimeout(r, 20)));
+      for (let i = 0; i < 40; i++) await trackStdioRpc(() => new Promise(r => setTimeout(r, 20)));
     };
-    h.opts.bootTimeoutMs = 60;
+    h.opts.bootTimeoutMs = 200;
     await runServe(h.engine as unknown as BrainEngine, [], h.opts);
     await new Promise(r => setTimeout(r, 100));
     expect(h.engine.disconnectCalls).toBe(0);

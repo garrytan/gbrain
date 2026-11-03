@@ -58,6 +58,7 @@ export const DEGRADED_STAGE_GUIDANCE: Readonly<Record<RecallStage, StageGuidance
   projection_by_design: { why: 'some image pages in scope hold protected OCR content and stay out of the search index by design; nothing is pending', fix: null },
   projection_status_unknown: { why: 'whether recent writes are in the search index could not be checked', fix: 'doctor' },
   keyword_count_unavailable: { why: 'the keyword match count did not finish, so how many pages match the query is unknown', fix: null },
+  saved_facts_withheld: { why: 'saved facts could not be checked for third-party text to quote, so they were withheld; the page results are complete', fix: 'doctor' },
   deadline: { why: 'the pack hit its time limit and is partial', fix: null },
   server_budget: { why: 'the server ran out of time budget for this pack', fix: null },
   no_query_terms: { why: 'the question has no searchable words and semantic search did not run, so no saved fact could be ranked against it', fix: 'embeddings' },

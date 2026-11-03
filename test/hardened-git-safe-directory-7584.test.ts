@@ -29,7 +29,7 @@ async function setup() {
   const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
   const shim = join(dir, 'bin');
   execFileSync('mkdir', ['-p', shim]);
-  writeFileSync(join(shim, 'git'), `#!/bin/sh\nGIT_TEST_ASSUME_DIFFERENT_OWNER=1 exec "${realGit}" "$@"\n`);
+  writeFileSync(join(shim, 'git'), `#!/bin/sh\nGIT_TEST_ASSUME_DIFFERENT_OWNER=1 PATH='${process.env.PATH}' exec "${realGit}" "$@"\n`);
   chmodSync(join(shim, 'git'), 0o755);
   const excludes = join(dir, 'excludes');
   writeFileSync(excludes, '*.md\n');

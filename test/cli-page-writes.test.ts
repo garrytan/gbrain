@@ -222,6 +222,14 @@ for (const backend of testBackends()) {
       expect(await uploads()).toBe(before);
     }, 600_000);
 
+    test('local put --file over the page ceiling on an unmanaged brain refuses a noncanonical private request, as a smaller put does, and writes nothing (#7848)', async () => {
+      await sql('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      const put = await cli(['put', 'notes/huge-private', '--file', file('huge-private.md', `---\nVisibility: Private\n---\n${hugeBody('Huge private')}`)]);
+      expect(put.code).not.toBe(0);
+      expect(put.stderr).toContain('visibility_not_applied');
+      expect(await sql<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE slug = $1', ['notes/huge-private'])).toEqual([{ n: 0 }]);
+    }, 600_000);
+
     test('local capture --file over the page ceiling on an unmanaged brain streams in under the capture slug and frontmatter once the write gate allows it, with no upload session', async () => {
       const before = await uploads();
       const raw = hugeBody('Captured');

@@ -18,7 +18,7 @@ import type {
 import { executeRawJsonb } from '../sql-query.ts';
 import { sanitizeForJsonb, buildTimelineRows } from '../batch-rows.ts';
 import { finalizeLastSeen } from '../chronicle/last-seen.ts';
-import { privatePagesFilterFragment, privateTimelineEventFilterFragment } from '../search/private-visibility.ts';
+import { privatePagesFilterForCaller, privateTimelineEventFilterForCaller } from '../search/private-visibility.ts';
 import { PageMissingError } from '../engine-errors.ts';
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
@@ -119,8 +119,8 @@ export async function getTimeline(exec: LegacyUnscopedRead, slug: string, opts?:
     const rows = (await exec.run(sqlFragment`
       SELECT te.* FROM ${pagesJoin}
       WHERE p.slug = ${slug} ${sourceCond} ${afterCond} ${beforeCond}
-        ${opts?.excludePrivate ? trustedSql(`AND ${privatePagesFilterFragment('p')}
-          AND ${privateTimelineEventFilterFragment('te')}`) : sqlFragment``}${opts?.eligibility ? sqlFragment` AND ${trustedSql(projectionEligibleSql('timeline_entries', 'te', opts.eligibility))}` : sqlFragment``}
+        ${opts?.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('p')}
+          AND ${privateTimelineEventFilterForCaller('te')}`) : sqlFragment``}${opts?.eligibility ? sqlFragment` AND ${trustedSql(projectionEligibleSql('timeline_entries', 'te', opts.eligibility))}` : sqlFragment``}
       ORDER BY te.date DESC, te.id DESC LIMIT ${limit}`)).rows;
     return rows as unknown as TimelineEntry[];
   }
@@ -134,7 +134,7 @@ export async function getTimeline(exec: LegacyUnscopedRead, slug: string, opts?:
   // ep=true: the ep LEFT JOIN carries the same scope so out-of-scope event fields null out (#2200 origin-join shape).
 function chronicleSourceCond(opts?: PageReadScope, ep = false) {
     const privacy = opts?.excludePrivate && !ep
-      ? trustedSql(`AND ${privatePagesFilterFragment('p')} AND ${privateTimelineEventFilterFragment('te')}`)
+      ? trustedSql(`AND ${privatePagesFilterForCaller('p')} AND ${privateTimelineEventFilterForCaller('te')}`)
       : sqlFragment``;
     if (opts?.sourceIds && opts.sourceIds.length > 0)
       return ep ? sqlFragment`AND ep.source_id = ANY(${opts.sourceIds}::text[])` : sqlFragment`AND p.source_id = ANY(${opts.sourceIds}::text[]) ${privacy}`;
@@ -149,7 +149,7 @@ export async function getTimelineForDate(exec: LegacyUnscopedRead, date: string,
     const lower = opts?.week ? sqlFragment`date_trunc('week', ${date}::date)::date` : sqlFragment`${date}::date`;
     const upper = opts?.week ? sqlFragment`(date_trunc('week', ${date}::date) + interval '6 days')::date` : sqlFragment`${date}::date`;
     const rows = (await exec.run(sqlFragment`
-      SELECT te.date::text AS date, te.summary, te.detail, te.source,
+      SELECT te.date::text AS date, te.summary, te.detail, te.source, te.trust_tier,
              te.page_id, p.slug AS page_slug,
              te.event_page_id, ep.slug AS event_slug,
              ep.effective_date::text AS effective_date,
@@ -170,7 +170,7 @@ export async function getSince(exec: LegacyUnscopedRead, date: string, opts?: Ch
     const limit = opts?.limit ?? 200;
     const kindCond = opts?.kind ? sqlFragment`AND ep.frontmatter->'event'->>'kind' = ${opts.kind}` : sqlFragment``;
     const rows = (await exec.run(sqlFragment`
-      SELECT te.date::text AS date, te.summary, te.detail, te.source,
+      SELECT te.date::text AS date, te.summary, te.detail, te.source, te.trust_tier,
              te.page_id, p.slug AS page_slug,
              te.event_page_id, ep.slug AS event_slug,
              ep.effective_date::text AS effective_date,
@@ -192,7 +192,7 @@ export async function getOnThisDay(exec: LegacyUnscopedRead, opts?: PageReadScop
     const limit = opts?.limit ?? 50;
     const target = opts?.date ? sqlFragment`${opts.date}::date` : sqlFragment`current_date`;
     const rows = (await exec.run(sqlFragment`
-      SELECT te.date::text AS date, te.summary, te.detail, te.source,
+      SELECT te.date::text AS date, te.summary, te.detail, te.source, te.trust_tier,
              te.page_id, p.slug AS page_slug,
              te.event_page_id, ep.slug AS event_slug,
              ep.effective_date::text AS effective_date,

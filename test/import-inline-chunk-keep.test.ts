@@ -136,14 +136,17 @@ for (const kind of ['pglite', 'postgres'] as const) {
       expect(embeddedRows.every(row => row.embedding !== null)).toBe(true);
     }, 120_000);
 
-    test('an unchanged re-import with a protected fence keeps nothing', async () => {
+    test('an edit with a protected fence keeps its unchanged rows, and the fence text reaches no row (#6961)', async () => {
       const fence = '\n<!--- gbrain:takes:begin -->\nPRIVATE_CANARY\n<!--- gbrain:takes:end -->\n';
       await write('notes/protected', page('Protected', ['mike', 'november', 'oscar'], fence));
       const before = await rows('notes/protected');
       await write('notes/protected', page('Protected', ['mike', 'november', 'papa'], fence), true);
       const after = await rows('notes/protected');
-      expect(after.some(row => before.some(old => old.id === row.id))).toBe(false);
-      expect(after.every(row => row.embedding === null)).toBe(true);
+      const kept = after.filter(row => before.some(old => old.id === row.id));
+      expect(kept.length).toBeGreaterThan(0);
+      for (const row of kept) expect(row).toEqual(before.find(old => old.id === row.id)!);
+      expect(after.filter(row => row.embedding === null).every(row => String(row.chunk_text).includes('papa'))).toBe(true);
+      expect(after.some(row => String(row.chunk_text).includes('PRIVATE_CANARY'))).toBe(false);
     }, 120_000);
   });
 }
