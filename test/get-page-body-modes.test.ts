@@ -122,11 +122,50 @@ describe('mode resolution', () => {
   });
 
   test('conflicting selectors and modes are invalid_params', async () => {
-    await expectCode(get(ctx(), { slug: 'logs/big', lines: { from: 1, count: 5 }, bytes: { offset: 0, length: 10 } }), 'invalid_params');
+    await expectCode(get(ctx(), { slug: 'logs/big', lines: { from: 1, count: 5 }, bytes: { offset: -1, length: 10 } }), 'invalid_params');
     await expectCode(get(ctx(), { slug: 'logs/big', body: 'outline', lines: { from: 1, count: 5 } }), 'invalid_params');
     await expectCode(get(ctx(), { slug: 'logs/big', body: 'window', include_content: true }), 'invalid_params');
     await expectCode(get(ctx(), { slug: 'logs/big', lines: { from: 0, count: 5 } }), 'invalid_params');
     await expectCode(get(ctx(), { slug: 'logs/big', body: 'everything' }), 'invalid_params');
+  });
+});
+
+describe('several window selectors (GBRA-280)', () => {
+  const chunk = async (slug: string) => Number((await engine.executeRaw<{ id: number }>(
+    'SELECT c.id FROM content_chunks c JOIN pages p ON p.id = c.page_id WHERE p.slug = $1 ORDER BY c.id OFFSET 3 LIMIT 1', [slug]))[0]!.id);
+  const strip = (r: Record<string, any>) => { const { window_selector: _w, ...rest } = r; return rest; };
+
+  test('precedence is cursor, then around_chunk_id, then lines, then bytes, and the read equals the applied selector alone', async () => {
+    const first = await get(ctx(), { slug: 'logs/big', body: 'window', max_bytes: 30_000 });
+    const chunkId = await chunk('logs/big');
+    const lines = { from: 100, count: 3 };
+    const bytes = { offset: 5003, length: 2000 };
+    const cases: Array<[Record<string, unknown>, Record<string, unknown>, string, string[]]> = [
+      [{ cursor: first.next_cursor, around_chunk_id: chunkId, lines, bytes }, { cursor: first.next_cursor }, 'cursor', ['around_chunk_id', 'lines', 'bytes']],
+      [{ around_chunk_id: chunkId, lines, bytes }, { around_chunk_id: chunkId }, 'around_chunk_id', ['lines', 'bytes']],
+      [{ lines, bytes }, { lines }, 'lines', ['bytes']],
+    ];
+    for (const [several, alone, applied, ignored] of cases) {
+      const r = await get(ctx(), { slug: 'logs/big', ...several });
+      expect([applied, r.window_selector.applied, r.window_selector.ignored]).toEqual([applied, applied, ignored]);
+      expect(strip(r)).toEqual(await get(ctx(), { slug: 'logs/big', ...alone }));
+    }
+  });
+
+  test('a whole-page ask beside a selector reads the window, never the page, and its edit_target is the window returned', async () => {
+    const r = await get(ctx(), { slug: 'logs/big', body: 'full', include_content: true, content_only: true, lines: { from: 100, count: 3 } });
+    expect([r.body, r.compiled_truth, r.content, r.timeline]).toEqual(['window', undefined, undefined, undefined]);
+    expect(r.window_selector.ignored).toEqual(['body', 'include_content', 'content_only']);
+    const alone = await get(ctx(), { slug: 'logs/big', lines: { from: 100, count: 3 } });
+    expect(r.edit_target).toEqual(alone.edit_target);
+    expect(r.window).toEqual(alone.window);
+  });
+
+  test('body none or outline beside a selector still refuses, and a trusted local read applies the same precedence', async () => {
+    await expectCode(get(ctx(), { slug: 'logs/big', body: 'none', lines: { from: 1, count: 5 }, bytes: { offset: 0, length: 10 } }), 'invalid_params');
+    await expectCode(get(ctx(), { slug: 'logs/big', body: 'outline', lines: { from: 1, count: 5 }, bytes: { offset: 0, length: 10 } }), 'invalid_params');
+    const r = await get(local(), { slug: 'logs/big', lines: { from: 100, count: 3 }, bytes: { offset: 0, length: 10 } });
+    expect([r.window.line_start, r.window_selector.applied]).toEqual([100, 'lines']);
   });
 });
 

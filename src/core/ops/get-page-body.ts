@@ -11,9 +11,11 @@
  *   body: 'none'    metadata, revision, size and chunk/embedding counts, no text:
  *                   the cheap read before edit_page / put_page.
  *   body: 'outline' metadata, size and a paged outline.
- *   body: 'window'  metadata, size and one window chosen by ONE selector:
+ *   body: 'window'  metadata, size and one window chosen by one selector:
  *                   lines {from, count}, bytes {offset, length}, around_chunk_id
- *                   (+ context_lines) or cursor; none = from the start.
+ *                   (+ context_lines) or cursor; none = from the start. With
+ *                   several, cursor, then around_chunk_id, then lines, then
+ *                   bytes applies, and `window_selector` names what was set aside.
  *
  * A partial shape NEVER carries compiled_truth, timeline or content, so no
  * caller can mistake a window for the page and write it back whole. Windows
@@ -22,16 +24,18 @@
  * markdown `content` instead (thin-client complete downloads), with its
  * sha256 for verification.
  *
- * Precedence: an explicit `body` wins; without it include_content or
- * content_only mean 'full' (content_only keeps the round-trip shape), a
- * selector means 'window', gbrain's thin client means 'full' (an older thin
+ * Precedence: a window selector means 'window' (body 'full', include_content
+ * and content_only beside it are set aside; body 'none' or 'outline' beside it
+ * is refused); otherwise an explicit `body` wins; without it include_content
+ * or content_only mean 'full' (content_only keeps the round-trip shape),
+ * gbrain's thin client means 'full' (an older thin
  * client renders compiled_truth as the whole page), a trusted local read means
  * 'full', anything else 'auto'.
  */
 import type { Page } from '../types.ts';
 import type { OperationContext, ParamDef } from './contract.ts';
 import { opError, OperationError } from './contract.ts';
-import { invalidParam, opTransport, readFix } from './op-fix.ts';
+import { invalidParam, readFix } from './op-fix.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { isSegmentedPage, pageBodyBytes } from '../page-body/page-shape.ts';
 import { deepResearchPageUrl, encodeDeepResearchId } from '../deep-research-id.ts';
@@ -69,11 +73,11 @@ export const LARGE_PAGES_CAPABILITY = 'large_pages_v1';
 
 export const GET_PAGE_BODY_PARAMS: Record<string, ParamDef> = {
   body: { type: 'string', enum: [...BODY_MODES], description: 'auto: whole up to 256 KB, else outline + window; a window\'s edit_target is edit_page `within`. none: revision + size + tail_sha256 (append_page expected_tail_sha256).', fullSurfaceOnly: true },
-  lines: { type: 'object', cliRange: ['from', 'count'], description: 'Window: 1-based lines. One window selector only: not with bytes, around_chunk_id or cursor.', properties: { from: { type: 'number', required: true }, count: { type: 'number', required: true } }, fullSurfaceOnly: true },
-  bytes: { type: 'object', cliRange: ['offset', 'length'], description: 'Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start). One window selector only: not with lines, around_chunk_id or cursor.', properties: { offset: { type: 'number', required: true }, length: { type: 'number', required: true } }, fullSurfaceOnly: true },
-  around_chunk_id: { type: 'number', minimum: 1, description: 'Window around a search hit chunk_id. One window selector only: not with lines, bytes or cursor.', fullSurfaceOnly: true },
+  lines: { type: 'object', cliRange: ['from', 'count'], description: 'Window: 1-based lines.', properties: { from: { type: 'number', required: true }, count: { type: 'number', required: true } }, fullSurfaceOnly: true },
+  bytes: { type: 'object', cliRange: ['offset', 'length'], description: 'Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start).', properties: { offset: { type: 'number', required: true }, length: { type: 'number', required: true } }, fullSurfaceOnly: true },
+  around_chunk_id: { type: 'number', minimum: 1, description: 'Window around a search hit chunk_id.', fullSurfaceOnly: true },
   context_lines: { type: 'number', description: 'Lines around around_chunk_id (20).', fullSurfaceOnly: true },
-  cursor: { type: 'string', description: 'next_cursor: read on. One window selector only: not with lines, bytes or around_chunk_id.', fullSurfaceOnly: true },
+  cursor: { type: 'string', description: 'next_cursor: read on.', fullSurfaceOnly: true },
   max_bytes: { type: 'number', minimum: 1, description: 'Window bytes (40000).', fullSurfaceOnly: true },
   view: { type: 'string', enum: ['read', 'markdown'], description: 'markdown: page the round-trip content.', fullSurfaceOnly: true },
   outline_from: { type: 'number', description: 'Outline next_from_index.', fullSurfaceOnly: true },
@@ -86,9 +90,28 @@ type Selector =
   | { kind: 'around'; chunkId: number }
   | { kind: 'cursor'; raw: string };
 
+/** Several window selectors: the first of these applies, most specific first (GBRA-280: GPT-6.1 Sol sends them all and never followed the refusal's fix). */
+const SELECTOR_ORDER: readonly Selector['kind'][] = ['cursor', 'around', 'lines', 'bytes'];
+const PRECEDENCE_NOTE = 'get_page reads one window: cursor, then around_chunk_id, then lines, then bytes.';
+const selectorParam = (s: Selector) => (s.kind === 'around' ? 'around_chunk_id' : s.kind);
+
+/** The response's account of a read that set window arguments aside: what applied, what was ignored, and the rule. */
+function selectorNote(applied: Selector, ignored: string[], staleChunk?: number): { applied: string; ignored: string[]; note: string } {
+  const list = (ks: string[]) => ks.length > 1 ? `${ks.slice(0, -1).join(', ')} and ${ks[ks.length - 1]}` : ks[0]!;
+  const rest = ignored.filter(k => staleChunk === undefined || k !== 'around_chunk_id');
+  const what = staleChunk === undefined
+    ? `Read the ${selectorParam(applied)} window; ignored ${list(rest)}`
+    : `around_chunk_id ${staleChunk} is not on this page at its current revision, so this is the ${selectorParam(applied)} window${rest.length ? `; ignored ${list(rest)}` : ''}`;
+  return { applied: selectorParam(applied), ignored, note: `${what}. ${PRECEDENCE_NOTE}` };
+}
+
 export interface BodyRequest {
   mode: BodyMode;
   selector?: Selector;
+  /** The next selector by precedence: applies when an around_chunk_id selector's chunk is not on the page. */
+  fallback?: Selector;
+  /** Window arguments the read set aside: lower-precedence selectors, and body 'full', include_content or content_only beside a selector. */
+  ignored?: string[];
   view: WindowView;
   maxBytes?: number;
   contextLines: number;
@@ -98,10 +121,6 @@ export interface BodyRequest {
   /** section or grep (#7180): one part of the read view instead of a window. */
   slice?: SliceRequest;
 }
-
-/** The get_page arguments the two-selector refusal's fix keeps; anything else the caller sent (CLI-only keys, unknown keys) is left out. */
-const WINDOW_FIX_ARGS = ['slug', 'fuzzy', 'include_deleted', 'include_timeline_entries', 'grammar_diagnostics', 'source_id', 'include_quarantined', 'min_trust',
-  ...Object.keys(GET_PAGE_BODY_PARAMS)];
 
 const SELECTOR_EXAMPLE = { slug: 'notes/acme-example-log', body: 'window', lines: { from: 1, count: 200 } };
 
@@ -139,37 +158,23 @@ export function parseBodyRequest(ctx: Pick<OperationContext, 'remote' | 'transpo
     if (typeof p.cursor !== 'string' || !p.cursor) throw bad('cursor', 'get_page: cursor must be the next_cursor string from the previous window.', 'gpw1.…');
     selectors.push({ kind: 'cursor', raw: p.cursor });
   }
-  if (selectors.length > 1) {
-    const [keep, ...drop]: string[] = selectors.map(s => s.kind === 'around' ? 'around_chunk_id' : s.kind);
-    const conflicts = ['include_content', 'content_only', ...(keep === 'around_chunk_id' && p.view === 'markdown' ? ['view'] : [])];
-    const args: Record<string, unknown> = Object.fromEntries(WINDOW_FIX_ARGS.filter(k => p[k] !== undefined && !drop.includes(k) && !conflicts.includes(k)).map(k => [k, p[k]]));
-    args.body = 'window';
-    const flag = (k: string) => `--${k.replace(/_/g, '-')}`;
-    const name = (k: string) => opTransport(ctx) === 'cli' ? flag(k) : `\`${k}\``;
-    const range = (k: string, v: Record<string, number>) => k === 'lines' ? `${v.from}-${v.from + v.count - 1}` : `${v.offset}-${v.offset + v.length - 1}`;
-    const argv = ['gbrain', 'get', ...Object.entries(args).filter(([k]) => k !== 'slug').flatMap(([k, v]) => v === true ? [flag(k)] : v === false ? []
-      : [flag(k), typeof v === 'object' && v ? range(k, v as Record<string, number>) : String(v)]), '--', String(p.slug)];
-    throw opError('invalid_params', `get_page: pass one window selector, not ${selectors.length} (got ${[keep, ...drop].join(' and ')}).`,
-      `Pass at most one window selector: lines, bytes, around_chunk_id or cursor. Drop ${drop.map(name).join(' and ')} to read the ${keep} window, or pass one of them alone to read there instead.`,
-      { fix: readFix(`The same call with one window selector (${keep}) and body: "window"; ${[...drop, ...conflicts.filter(k => p[k] !== undefined)].join(', ')} dropped.`,
-        { argv, mcp: { tool: 'get_page', arguments: args } }) });
-  }
+  selectors.sort((a, b) => SELECTOR_ORDER.indexOf(a.kind) - SELECTOR_ORDER.indexOf(b.kind));
+  const ignored: string[] = selectors.slice(1).map(selectorParam);
   const includeContent = p.include_content === true;
   const contentOnly = p.content_only === true;
   let mode: BodyMode;
-  if (typeof body === 'string') {
+  if (selectors.length && (body === undefined || body === 'full' || body === 'auto' || body === 'window')) {
+    mode = 'window';
+    if (body === 'full') ignored.push('body');
+    if (includeContent) ignored.push('include_content');
+    if (contentOnly) ignored.push('content_only');
+  } else if (typeof body === 'string') {
     mode = body as BodyMode;
     if ((includeContent || contentOnly) && mode !== 'full') {
       throw bad('body', `get_page: include_content and content_only return the whole page; they cannot be combined with body: '${mode}'.`, { slug: 'notes/acme-example-log', body: 'full', include_content: true });
     }
-    if (selectors.length && mode !== 'window' && mode !== 'auto') {
-      throw bad('body', `get_page: a window selector needs body: 'window' (got body: '${mode}').`);
-    }
-    if (mode === 'auto' && selectors.length) mode = 'window';
-  } else if (includeContent || contentOnly) {
-    if (selectors.length) throw bad('include_content', 'get_page: include_content returns the whole page; drop it to read a window.');
-    mode = 'full';
-  } else if (selectors.length) mode = 'window';
+    if (selectors.length) throw bad('body', `get_page: a window selector needs body: 'window' (got body: '${mode}').`);
+  } else if (includeContent || contentOnly) mode = 'full';
   else if (ctx.thinClient === true || ctx.remote === false) mode = 'full';
   else mode = 'auto';
   const view = p.view === undefined ? 'read' : p.view;
@@ -192,7 +197,7 @@ export function parseBodyRequest(ctx: Pick<OperationContext, 'remote' | 'transpo
     if (!int(p.outline_from) || p.outline_from < 0) throw bad('outline_from', 'get_page: outline_from must be a non-negative integer (the previous next_from_index).', 100);
     outlineFrom = p.outline_from;
   }
-  return { mode, ...(selectors[0] ? { selector: selectors[0] } : {}), view, ...(maxBytes !== undefined ? { maxBytes } : {}), contextLines, outlineFrom,
+  return { mode, ...(selectors[0] ? { selector: selectors[0] } : {}), ...(selectors[1] ? { fallback: selectors[1] } : {}), ...(ignored.length ? { ignored } : {}), view, ...(maxBytes !== undefined ? { maxBytes } : {}), contextLines, outlineFrom,
     legacyThin: typeof body !== 'string' && ctx.thinClient === true && !includeContent && !contentOnly && !selectors.length };
 }
 
@@ -540,7 +545,8 @@ export async function readPartialBody(ctx: OperationContext, input: PartialReadI
   }
 
   // window: chosen, then measured as the final encoded frame; text that escapes heavily shrinks the window until it fits.
-  const sel = req.selector;
+  let sel = req.selector;
+  if (sel && req.ignored) out.window_selector = selectorNote(sel, req.ignored);
   let cursorMax = req.maxBytes ?? DEFAULT_WINDOW_BYTES;
   const select = async (maxBytes: number): Promise<WindowSlice | null> => {
     if (!sel) return doc.from(0, maxBytes);
@@ -565,7 +571,16 @@ export async function readPartialBody(ctx: OperationContext, input: PartialReadI
       cursorMax = c.max_bytes;
       return doc.from(c.offset, Math.min(c.max_bytes, maxBytes));
     }
-    const around = await aroundChunk(ctx, page, doc, sel.chunkId, req.contextLines, maxBytes, revision);
+    const chunkId = sel.chunkId;
+    let around: Awaited<ReturnType<typeof aroundChunk>>;
+    try { around = await aroundChunk(ctx, page, doc, chunkId, req.contextLines, maxBytes, revision); }
+    catch (e) {
+      if (!req.fallback || !(e instanceof OperationError) || (e.canonical ?? e.code) !== 'revision_changed') throw e;
+      const next = req.fallback;
+      sel = next;
+      out.window_selector = selectorNote(next, ['around_chunk_id', ...(req.ignored ?? []).filter(k => k !== 'around_chunk_id' && k !== selectorParam(next))], chunkId);
+      return select(maxBytes);
+    }
     out.anchor = around.anchor;
     if (around.span) out.chunk_span = around.span;
     // T46: no exact position for the chunk, so no estimated neighborhood either: the chunk itself, without coordinates.

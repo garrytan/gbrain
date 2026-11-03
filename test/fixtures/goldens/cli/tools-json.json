@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 268798,
-    "stdoutSha256": "7e8ad692baa54268f6f79bf3109bfb03bf6c29119f65624e8847aff30963f591",
+    "stdoutBytes": 268520,
+    "stdoutSha256": "242bc8215a968adddacad62e575c6877cfa2517f932c4ac613473bc406340488",
     "toolNames": [
       "remember",
       "entity",
@@ -422,7 +422,7 @@
         "scope": "write"
       },
       {
-        "description": "Read a page; `section`/`grep` reads one part. Pass at most one window selector: lines, bytes, around_chunk_id or cursor (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.",
+        "description": "Read a page; `section`/`grep` reads one part. Window selector order: cursor, around_chunk_id, lines, bytes (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -456,7 +456,7 @@
         "schema": {
           "properties": {
             "around_chunk_id": {
-              "description": "Window around a search hit chunk_id. One window selector only: not with lines, bytes or cursor.",
+              "description": "Window around a search hit chunk_id.",
               "type": "number"
             },
             "body": {
@@ -472,7 +472,7 @@
             },
             "bytes": {
               "additionalProperties": false,
-              "description": "Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start). One window selector only: not with lines, around_chunk_id or cursor.",
+              "description": "Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start).",
               "properties": {
                 "length": {
                   "type": "number"
@@ -500,7 +500,7 @@
               "type": "number"
             },
             "cursor": {
-              "description": "next_cursor: read on. One window selector only: not with lines, bytes or around_chunk_id.",
+              "description": "next_cursor: read on.",
               "type": "string"
             },
             "fuzzy": {
@@ -537,7 +537,7 @@
             },
             "lines": {
               "additionalProperties": false,
-              "description": "Window: 1-based lines. One window selector only: not with bytes, around_chunk_id or cursor.",
+              "description": "Window: 1-based lines.",
               "properties": {
                 "count": {
                   "type": "number"

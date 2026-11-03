@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**GPT-style get_page calls that send several window selectors now read a window instead of refusing.** GPT-6.1 Sol fills every get_page argument it can, so it sends `lines`, `bytes` and often a real `around_chunk_id` together, beside `body: "full"` and `include_content: true`. get_page refused every such call with `invalid_params`. The refusal carried a runnable fix, but on GBEV-30's SkillOpt re-read Sol followed it 0 times in 305, so 52% of its briefing reads and 84% of its fact-check reads failed. Now get_page reads one window, in a fixed order: `cursor`, then `around_chunk_id`, then `lines`, then `bytes`. A whole-page flag beside a selector is set aside, so the answer is still a window and never the page. The response's `window_selector` names what applied and what was ignored. A call with one selector behaves as before.
+
+### Itemized changes
+
+- `src/core/ops/get-page-body.ts`: `parseBodyRequest` still validates each selector on its own, then orders them cursor, around_chunk_id, lines, bytes, and the first one applies. `body: "full"`, `include_content` and `content_only` beside a selector are set aside, while `body: "none"` or `"outline"` beside one still refuses. When an `around_chunk_id`'s chunk is no longer on the page and another selector was sent, the read falls back to that selector; on its own, such an id still refuses `revision_changed`. A read that set anything aside returns `window_selector {applied, ignored, note}`.
+- get_page's tool description states the order, and the four selector descriptions drop "One window selector only". `docs/guides/windowed-reads.md` and `docs/mcp/TOOL_REFERENCE.md` describe the rule.
+- Tests: `test/tool-args-empty-optional-sol.test.ts` replays Sol's recorded argument shape on every entry point (MCP over HTTP and stdio, `gbrain call`, the subagent registry and both SkillOpt registries). `test/get-page-body-modes.test.ts` checks the order, that the read equals the applied selector sent alone (`edit_target` included), and that a whole-page ask beside a selector returns no page body.
+
 ## [0.60.562.0] - 2026-11-03
 
 **A write to a page stored in segments can no longer publish a body nobody can read.** When a fact purge or a staging sweep collected a write's staging while the write was preparing, the write's last preparation step moved the staging back to `prepared`, so the publish passed its staging check, closed the page's old segment rows and published none. Every read of the page then refused `page_body_rows_unreadable` and a managed sync held its file on every retry. The write now refuses `body_staging_expired` (send it again) and the page keeps its previous body; the publish also refuses any generation whose rows do not cover the body it records. A new doctor check, `segmented_tiling`, lists pages an older version left like this, and `gbrain repair segmented-tiling --source <id>` republishes each from its file at HEAD, preview first, only when applied with the preview's hash.
