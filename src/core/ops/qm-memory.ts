@@ -244,7 +244,7 @@ const memory_write: Operation = {
     },
     idempotency_key: { type: 'string', required: true, description: '1-128 visible ASCII characters; the same key replays this write.' },
     [ACTOR_ARGUMENT]: actorParam,
-    source_id: { type: 'string', description: `Save on this scope source's shared page (${SCOPE_PAGE_SLUG}), read by everyone who reads that source; it must be one of the credential's scope sources. Omit to save for the person alone.` },
+    source_id: { type: 'string', description: `One of this credential's scope sources: save on its shared ${SCOPE_PAGE_SLUG} page.` },
   },
   scope: 'write',
   annotations: { title: 'memory_write (QM memory write)', idempotentHint: true },

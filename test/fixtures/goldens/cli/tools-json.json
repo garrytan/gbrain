@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 269780,
-    "stdoutSha256": "cda3d9e0ad1f81977a5a7dfacb8b786702ba2be1f5c278ab7d4ba09e36c6e09d",
+    "stdoutBytes": 269677,
+    "stdoutSha256": "4ce1f054ec59831dd8a3da42f2a45dca03771480f6ef3e03a649a31660e206a5",
     "toolNames": [
       "remember",
       "entity",
@@ -7220,7 +7220,7 @@
               "type": "string"
             },
             "source_id": {
-              "description": "Save on this scope source's shared page (memory/scope), read by everyone who reads that source; it must be one of the credential's scope sources. Omit to save for the person alone.",
+              "description": "One of this credential's scope sources: save on its shared memory/scope page.",
               "type": "string"
             }
           },

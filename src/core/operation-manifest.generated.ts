@@ -6256,7 +6256,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "source_id": {
         "type": "string",
-        "description": "Save on this scope source's shared page (memory/scope), read by everyone who reads that source; it must be one of the credential's scope sources. Omit to save for the person alone."
+        "description": "One of this credential's scope sources: save on its shared memory/scope page."
       }
     },
     "scope": "write",
