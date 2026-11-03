@@ -95,8 +95,8 @@ function checkSettings(settings: EngineSettings): void {
  *
  * A connect is not a migration: the host runs `initSchema()` (or the migrations) itself. On an existing database
  * `initSchema()` refuses `engine_embedding_mismatch` when `settings.embedding` names another model or width.
- * `disconnect()` closes it for good and drops the settings it held, even while a reconnect is in flight; a later
- * `connect()` or `reconnect()` refuses `engine_closed`.
+ * `disconnect()` closes it for good and drops the settings it held (its provider keys stay only to scrub a call still in
+ * flight), even while a reconnect is in flight; a later `connect()` or `reconnect()` refuses `engine_closed`.
  */
 export async function openEngine(settings: EngineSettings): Promise<BrainEngine> {
   if (settings?.embedded_core !== true) {

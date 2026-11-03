@@ -86,7 +86,7 @@ export function engineGatewayInput(settings: EngineSettings): { config: AIGatewa
 /** The config a gateway call uses and the clients built from it. `providers` is set only on an embedded engine's state. */
 export interface GatewayState { config: AIGatewayConfig | null; modelCache: Map<string, any>; providers?: ReadonlySet<string>; cacheTag: string }
 
-/** Keyed by the settings the engine holds, so a disconnect (which drops them) drops the state and its keys too. */
+/** Keyed by the settings the engine holds, so a disconnect (which drops them) drops the state; see releasedKeyEnv. */
 const states = new WeakMap<EngineSettings, GatewayState>();
 const CLOSED = {} as EngineSettings;
 

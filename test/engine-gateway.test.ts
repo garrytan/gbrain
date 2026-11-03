@@ -250,7 +250,7 @@ describe('keys stay scrubbed past disconnect and in shared slots', () => {
     await engine.disconnect();
   });
 
-  test('a call still in flight when its engine disconnects scrubs that engine\'s key from its error', async () => {
+  test.each([1, 2])('a call still in flight when its engine disconnects (%i times) scrubs that engine\'s key from its error', async (disconnects) => {
     const keyA = key('a');
     const engine = await openEngine(settingsFor({ ai: { providers: { openai: { apiKey: keyA } } } }));
     await engine.initSchema();
@@ -260,7 +260,7 @@ describe('keys stay scrubbed past disconnect and in shared slots', () => {
     __setEmbedTransportForTests((() => { started(); return new Promise((_, fail) => { reject = fail; }); }) as any);
     const pending = withEngineScope(engine, () => failure(() => embedQuery('a question')));
     await begun;
-    await engine.disconnect();
+    for (let i = 0; i < disconnects; i++) await engine.disconnect().catch(() => {});
     reject(Object.assign(new Error(`401 Incorrect API key provided: ${keyA}`), { statusCode: 401 }));
     const error = await pending;
     expect(error).not.toBeNull();

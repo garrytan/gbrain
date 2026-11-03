@@ -135,8 +135,8 @@ export function embeddedSettings(engine: object): EmbeddedSettingsView | undefin
 /** Drops the settings (the writer credential included) an embedded engine held; it stays marked embedded with its host id. */
 export function releaseEmbeddedEngine(engine: object): void {
   const record = recordOf(engine);
-  if (!record) return;
-  record.releasedKeys = Object.values(record.settings?.ai?.providers ?? {}).flatMap(provider => provider.apiKey ? [provider.apiKey] : []);
+  if (!record?.settings) return;
+  record.releasedKeys = Object.values(record.settings.ai?.providers ?? {}).flatMap(provider => provider.apiKey ? [provider.apiKey] : []);
   record.settings = null;
 }
 
