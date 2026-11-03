@@ -150,7 +150,8 @@ export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, 
     'SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND slug = ANY($2::text[])', [sourceId, slugs])).map(row => [row.slug, row]));
   const liveSlugs = [...new Set([...byOrigin.values()].filter(page => !page.deleted).map(page => page.slug))];
   const searchability = await readPageSearchability(engine, sourceId, liveSlugs);
-  const embedding = new Map([...searchability].filter(([, page]) => page.embedding_state).map(([slug, page]) => [slug, { state: page.embedding_state!, chunks: page.chunks, unembedded: page.unembedded }]));
+  const embedding = new Map([...searchability].filter(([, page]) => page.embedding_state).map(([slug, page]) => [slug, { state: page.embedding_state!, chunks: page.chunks, unembedded: page.unembedded,
+    ...(page.projection_empty ? { projection_empty: true as const } : {}) }]));
   const budgetHolds = new Map([...searchability].filter(([, page]) => page.embedding_hold).map(([slug, page]) => [slug, page.embedding_hold!]));
   const sync = ['gbrain', 'sync', '--source', sourceId, '--no-pull'];
   const syncStatus = ['gbrain', 'sync', 'status', '--source', sourceId, '--json'];
@@ -216,9 +217,10 @@ export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, 
       continue;
     }
     const state = emb ? PAGE_STATE[emb.state as Exclude<EmbeddingState, 'deleted_page_chunks'>] ?? 'searchable' : 'chunkless';
-    const fix = emb && emb.state !== 'embedded' ? embeddingStateFix(emb.state, { sourceId, slug: live.slug, embeddingsEnabled: !disabled, verify: { argv: verify(p.input) } }) : null;
+    const fix = emb && emb.state !== 'embedded' ? embeddingStateFix(emb.state, { sourceId, slug: live.slug, projectionEmpty: emb.projection_empty, embeddingsEnabled: !disabled, verify: { argv: verify(p.input) } }) : null;
     push(state, liveSearch, state === 'searchable' ? `Page ${live.slug} is live and every chunk has a vector.`
       : state === 'pending_embedding' ? (disabled ? `Page ${live.slug} is searchable by keyword; embeddings are off on this brain, so its chunks carry no vector.` : `Page ${live.slug} is searchable by keyword; ${emb!.unembedded} chunk(s) still wait for a vector.`)
+      : state === 'empty' && emb?.projection_empty ? `Page ${live.slug} intentionally has no indexable ordinary-chunk projection; its stored content is unchanged.`
       : `Page ${live.slug} is ${state.replace('_', ' ')}.`, disabled && state === 'pending_embedding' ? null : fix);
   }
   return { source_id: sourceId, mode: managed ? 'managed' : 'classic', last_commit: source.last_commit, head, embeddings_enabled: !disabled, paths: out };

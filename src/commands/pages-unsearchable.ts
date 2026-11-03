@@ -60,7 +60,7 @@ function reasonFor(row: EmbeddingStateRow, embeddingsEnabled: boolean): string {
     case 'pending': return embeddingsEnabled ? 'no_vector' : 'embeddings_disabled';
     case 'keyword_only': return row.embed_skip_reason ?? 'embed_skip';
     case 'quarantined': return row.quarantine_reason ?? 'quarantine';
-    case 'empty': return 'empty_body';
+    case 'empty': return row.projection_empty ? 'no_indexable_ordinary_projection' : 'empty_body';
     case 'deleted_page_chunks': return row.overdue ? 'past_purge_window' : 'within_purge_window';
     case 'chunkless_healable': return 'no_chunk_rows';
   }
@@ -76,7 +76,7 @@ export async function runPagesUnsearchable(engine: BrainEngine, args: string[]):
   const summary = await readEmbeddingState(engine, { mode: 'full', sourceIds: [sourceId] });
   const blockBytes = (summary.keyword_only as { threshold_bytes?: number } | undefined)?.threshold_bytes;
   const rows = found.slice(0, parsed.limit).map(row => {
-    const fix = embeddingStateFix(row.state, { sourceId, slug: row.slug, markerBytes: row.marker_bytes, blockBytes, embeddingsEnabled });
+    const fix = embeddingStateFix(row.state, { sourceId, slug: row.slug, markerBytes: row.marker_bytes, blockBytes, projectionEmpty: row.projection_empty, embeddingsEnabled });
     return {
       slug: row.slug, source_id: row.source_id, state: row.state, reason: reasonFor(row, embeddingsEnabled), chunks: row.chunks, bytes: row.bytes,
       ...(row.marker_bytes !== null ? { marker_bytes: row.marker_bytes } : {}),
