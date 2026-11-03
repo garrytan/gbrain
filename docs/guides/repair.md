@@ -478,7 +478,9 @@ makes the page `changed_since_preview`) as a new generation through the same fli
 refuses a generation that does not cover its body, keeps the page's title,
 type, frontmatter, tags and trust tier, clears the sync hold the preview saw
 (a newer hold stays until the next sync re-imports the file),
-asks the next sync to screen the file again (so a file that differs from the
+records the new revision as imported from the HEAD blob when the file imports
+to the stored title, type, frontmatter and tags (so the next sync holds no
+`file_drift` for it), asks the next sync to screen the file again (so a file that differs from the
 stored page in anything else imports normally) and writes the page's receipt
 (`op_checkpoints` op `segmented-tiling-receipt`) and a `segmented-tiling` audit
 line. A rerun with the same hash skips pages that already have a receipt.

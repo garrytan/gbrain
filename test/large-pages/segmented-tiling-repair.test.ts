@@ -14,14 +14,14 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { performManagedSync } from '../../src/core/persistence/sync-run.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
-import { readGitHold, writeGitHold } from '../../src/core/persistence/sync-holds.ts';
+import { readGitHold, readSyncImportProvenance, writeGitHold } from '../../src/core/persistence/sync-holds.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { materializeSegmentedBody } from '../../src/core/page-body/ingest.ts';
 import { untiledSegmentedPages } from '../../src/core/page-body/body-tiling.ts';
@@ -225,6 +225,47 @@ test('a claim the owner purged stays out: the apply republishes the file through
   expect(body.compiled_truth).toContain(KEPT);
   expect(body.compiled_truth).not.toContain(PURGED);
   expect(await engine.executeRaw('SELECT count(*)::int AS n FROM content_chunks WHERE page_id=$1 AND chunk_text LIKE $2', [f.pageId, `%${PURGED}%`])).toEqual([{ n: 0 }]);
+}), 300_000);
+
+test('the republished page is recorded as imported from HEAD: the next sync holds no file_drift for a page the file imports', async () => withEnv(env, async () => {
+  const f = await managedFixture();
+  // A tag only the database holds: every import keeps it, so importing the file would also write the tag back into it.
+  await withManagedFixtureWrite(engine, [f.sourceId], tx => tx.addTag(SLUG, 'kept-example', { sourceId: f.sourceId }));
+  appendFileSync(join(f.root, FILE), '- **2026-11-01** | meeting — first follow-up\n');
+  commit(f.root);
+  expect((await performManagedSync(engine, { sourceId: f.sourceId, noPull: true, noEmbed: true, noExtract: true })).held ?? []).toEqual([]);
+  await damage(f.sourceId, f.pageId);
+  appendFileSync(join(f.root, FILE), '- **2026-11-02** | meeting — second\n');
+  commit(f.root);
+  expect(((await performManagedSync(engine, { sourceId: f.sourceId, noPull: true, noEmbed: true, noExtract: true })).held ?? []).map(hold => hold.code)).toEqual(['page_write_failed']);
+  const scope = await resolveRepairScope(engine, f.sourceId);
+  const run = (apply: boolean, expect?: string) => repairRunner(engine, { apply, logger }).then(runner => runner.run('segmented-tiling', scope, { explicit: true, sourceFlag: f.sourceId, ...(expect ? { expect } : {}) }));
+  expect(await run(true, (await run(false)).preview_hash!)).toMatchObject({ applied: 1 });
+  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [f.sourceId]);
+  const [republished] = await engine.executeRaw<{ revision: string }>('SELECT knowledge_revision::text AS revision FROM pages WHERE id=$1', [f.pageId]);
+  const blob = git(f.root, 'rev-parse', `HEAD:${FILE}`);
+  expect(await readSyncImportProvenance(engine, f.sourceId, source!.incarnation, f.pageId)).toMatchObject({ revision: republished!.revision, disk_blob_oid: blob, blob_oid: blob, origin: FILE });
+
+  const after = await performManagedSync(engine, { sourceId: f.sourceId, noPull: true, noEmbed: true, noExtract: true });
+  expect(after.held ?? []).toEqual([]);
+  expect(after.status).toBe('synced');
+  expect((await readSyncStatus(engine, f.sourceId, { detail: false })).holds).toEqual([]);
+}), 300_000);
+
+test('a republished page whose stored frontmatter the file no longer imports records no provenance, so sync guards the stored frontmatter', async () => withEnv(env, async () => {
+  const f = await managedFixture();
+  await damage(f.sourceId, f.pageId);
+  writeFileSync(join(f.root, FILE), readFileSync(join(f.root, FILE), 'utf8').replace('type: person', 'type: person\nstatus: active') + '- **2026-11-02** | meeting — second\n');
+  commit(f.root);
+  await performManagedSync(engine, { sourceId: f.sourceId, noPull: true, noEmbed: true, noExtract: true });
+  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [f.sourceId]);
+  const before = await readSyncImportProvenance(engine, f.sourceId, source!.incarnation, f.pageId);
+  const scope = await resolveRepairScope(engine, f.sourceId);
+  const run = (apply: boolean, expect?: string) => repairRunner(engine, { apply, logger }).then(runner => runner.run('segmented-tiling', scope, { explicit: true, sourceFlag: f.sourceId, ...(expect ? { expect } : {}) }));
+  expect(await run(true, (await run(false)).preview_hash!)).toMatchObject({ applied: 1 });
+  expect(await readSyncImportProvenance(engine, f.sourceId, source!.incarnation, f.pageId)).toEqual(before);
+  const after = await performManagedSync(engine, { sourceId: f.sourceId, noPull: true, noEmbed: true, noExtract: true });
+  expect((after.held ?? []).map(hold => hold.code)).toEqual(['file_drift']);
 }), 300_000);
 
 test('#8504: an archived source is never listed, a multi-source fix names a source, a preview over its limit says so, an unknown source refuses', async () => withEnv(env, async () => {
