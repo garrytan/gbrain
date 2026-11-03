@@ -263,6 +263,10 @@ read or write is not yet kept to the person: `list_write_conflicts`, `capture`,
 `add_timeline_entry`, `add_link`, `put_page` and `edit_page`, which wait for owner-approved
 proposals. An `--attest-ops` list that already names one of these is refused for it
 (`actor_not_attested`, reason `op_not_attested`), and a queued attested write of one fails when it publishes.
+An attested read that names `source_id` or `source_ids` (`get_page`, `entity`, `whois`, `get_backlinks`,
+`get_timeline`, `find_experts`, `volunteer_context`, `query`, `memory_recall`) reads those sources as their
+audience, never as the person; `--attest-read person` makes such reads run as the person, and `--attest-read scope`
+also refuses every call that names no person (`actor_required`) ([QM guide](../guides/qm.md#reads-that-name-sources)).
 `gbrain access check --token <name>` shows the
 result ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape)).
 

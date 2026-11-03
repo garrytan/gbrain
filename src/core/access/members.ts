@@ -288,9 +288,9 @@ export function parseMemberFlag(raw: string): string | null {
   return raw.trim() === 'none' ? null : assertAccessId(raw);
 }
 
-/** GST-359 C1: attestActor names the system whose actor header this credential may send (null clears it and attestOps). */
-export interface BindingPatch { member?: string | null; mayActFor?: string[] | null; attestActor?: string | null; attestOps?: string[] | null }
-export interface BindingResult { member: string | null; may_act_for: string[] | null; attest_actor?: string; attest_ops?: string[] | null; changed: boolean }
+/** GST-359 C1: attestActor names the system whose actor header this credential may send (null clears it, attestOps and attestRead). */
+export interface BindingPatch { member?: string | null; mayActFor?: string[] | null; attestActor?: string | null; attestOps?: string[] | null; attestRead?: 'person' | 'scope' | null }
+export interface BindingResult { member: string | null; may_act_for: string[] | null; attest_actor?: string; attest_ops?: string[] | null; attest_read?: 'person' | 'scope' | null; changed: boolean }
 
 function attestRefused(message: string, suggestion: string): OperationError {
   return opError('invalid_params', message, suggestion, { why: 'Only a credential bound to no member that authenticates as itself (a client-credentials client with a secret, or a legacy token) may name the people a trusted system serves.' });
@@ -305,8 +305,8 @@ export async function bindCredential(engine: BrainEngine, target: { kind: 'token
   if (patch.member != null) await requireEnabledMember(engine, patch.member);
   const table = target.kind === 'token' ? 'access_tokens' : 'oauth_clients';
   const key = target.kind === 'token' ? 'id::text' : 'client_id';
-  const [before] = await engine.executeRaw<{ member_id: string | null; may_act_for: string[] | null; attest_actor: string | null; attest_ops: string[] | null; grant_types?: string[] | null; confidential?: boolean }>(
-    `SELECT member_id, may_act_for, attest_actor, attest_ops${target.kind === 'client' ? ', grant_types, client_secret_hash IS NOT NULL AS confidential' : ''} FROM ${table} WHERE ${key} = $1`, [target.id]);
+  const [before] = await engine.executeRaw<{ member_id: string | null; may_act_for: string[] | null; attest_actor: string | null; attest_ops: string[] | null; attest_read: 'person' | 'scope' | null; grant_types?: string[] | null; confidential?: boolean }>(
+    `SELECT member_id, may_act_for, attest_actor, attest_ops, attest_read${target.kind === 'client' ? ', grant_types, client_secret_hash IS NOT NULL AS confidential' : ''} FROM ${table} WHERE ${key} = $1`, [target.id]);
   if (!before) {
     throw opError('invalid_params', `No ${target.kind === 'token' ? 'token' : 'OAuth client'} "${target.id}" exists.`,
       target.kind === 'token' ? 'List tokens with gbrain auth list.' : 'List clients with gbrain auth clients --json.');
@@ -315,8 +315,10 @@ export async function bindCredential(engine: BrainEngine, target: { kind: 'token
   const mayActFor = patch.mayActFor === undefined ? before.may_act_for : patch.mayActFor;
   const attestActor = patch.attestActor === undefined ? before.attest_actor : patch.attestActor;
   const attestOps = attestActor === null ? null : patch.attestOps === undefined ? before.attest_ops : patch.attestOps;
+  const attestRead = attestActor === null ? null : patch.attestRead === undefined ? before.attest_read : patch.attestRead;
   const what = target.kind === 'token' ? 'This token' : `OAuth client ${target.id}`;
   if (patch.attestOps != null && attestActor === null) throw attestRefused('--attest-ops needs the attest right.', 'Pass --attest-actor qm with it.');
+  if (patch.attestRead != null && attestActor === null) throw attestRefused('--attest-read needs the attest right.', 'Pass --attest-actor qm with it.');
   const deferred = (patch.attestOps ?? []).filter(op => ACTOR_DEFERRED_OPS.has(op));
   if (deferred.length) throw attestRefused(`--attest-ops names ${deferred.join(', ')}, which an attested actor cannot run yet.`, `Leave them out. Not attestable yet: ${[...ACTOR_DEFERRED_OPS].join(', ')}.`);
   if (attestActor !== null && (patch.attestActor !== undefined || patch.member !== undefined)) {
@@ -327,12 +329,12 @@ export async function bindCredential(engine: BrainEngine, target: { kind: 'token
     }
   }
   const changed = member !== before.member_id || JSON.stringify(mayActFor ?? null) !== JSON.stringify(before.may_act_for ?? null)
-    || attestActor !== before.attest_actor || JSON.stringify(attestOps ?? null) !== JSON.stringify(before.attest_ops ?? null);
+    || attestActor !== before.attest_actor || JSON.stringify(attestOps ?? null) !== JSON.stringify(before.attest_ops ?? null) || (attestRead ?? null) !== (before.attest_read ?? null);
   if (changed && !opts.dryRun) {
-    await engine.executeRaw(`UPDATE ${table} SET member_id = $2, may_act_for = $3::text[], attest_actor = $4, attest_ops = $5::text[] WHERE ${key} = $1`,
-      [target.id, member, mayActFor, attestActor, attestOps]);
+    await engine.executeRaw(`UPDATE ${table} SET member_id = $2, may_act_for = $3::text[], attest_actor = $4, attest_ops = $5::text[], attest_read = $6 WHERE ${key} = $1`,
+      [target.id, member, mayActFor, attestActor, attestOps, attestRead ?? null]);
   }
-  return { member, may_act_for: mayActFor ?? null, ...(attestActor ? { attest_actor: attestActor, attest_ops: attestOps ?? null } : {}), changed };
+  return { member, may_act_for: mayActFor ?? null, ...(attestActor ? { attest_actor: attestActor, attest_ops: attestOps ?? null, attest_read: attestRead ?? null } : {}), changed };
 }
 
 /** A credential bound to a member that cannot read: verification refuses it. */

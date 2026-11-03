@@ -1357,6 +1357,9 @@ Usage:
                                                           the person a QM call serves (x-qm-actor; linked with gbrain
                                                           access member link); ops default get_write_request,
                                                           memory_recall,memory_write
+     --attest-read <person|scope|none>                    How an attested call that names sources reads them:
+                                                          person, or scope (every call must then name a person);
+                                                          none (default) reads them as the scope
      --private-pages <granted-sources|none>               Remote reads see visibility: private pages in the
                                                           sources this grant names explicitly (never the
                                                           no-grant floor, federation, a client's bound source

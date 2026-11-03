@@ -27,6 +27,30 @@ A client whose `bound_slug_prefixes` do not cover `memory/members/<member>` is r
 Links and the right are database state, so a repo-less brain works the same; where
 a repo exists, saved facts go through the same git-first writer door as `remember`.
 
+### Reads that name sources
+
+An attested call to `get_page`, `entity`, `whois`, `get_backlinks`, `get_timeline`,
+`find_experts`, `volunteer_context`, `query` or `memory_recall` that names `source_id`
+or `source_ids` reads those sources as their audience, never as the person: the
+person's restricted pages and their member page read as missing, a source outside
+the grant is refused, and `__all__` or `all_sources` is refused (`invalid_params`).
+`volunteer_context` refuses `stats: true` there. List the ops a client needs with
+`--attest-ops`. `context_pack` is not a scope read yet, so keep it off a client that
+serves shared turns.
+
+Set how each client reads named sources with `--attest-read`:
+
+```bash
+gbrain auth rescope --client <room_client_id> --attest-read scope    # every call must name a person
+gbrain auth rescope --client <dm_client_id> --attest-read person     # named sources, read as the person
+```
+
+`scope` also refuses any call that names no person (`actor_not_attested`, reason
+`actor_required`), so the client never reads as itself. `person` is for a client that
+serves only one person's own conversations; a `person` client that reads a source a
+room client reads is flagged by `gbrain doctor` (`attest_read_shared_scope`). Unset
+(`none`) reads named sources as the scope and still serves calls that name no person.
+
 ## What the tools do
 
 - `memory_recall {query, max_chars?, source_id?, source_ids?}` answers plain text, one fact per line
@@ -38,7 +62,8 @@ a repo exists, saved facts go through the same git-first writer door as `remembe
   one line: line breaks and control characters in it become spaces. Ranking is
   keyword-only on a keyless brain. A call that names sources (`source_id`,
   `source_ids`, narrowed inside the credential's grant) reads as that scope,
-  never as the person: no own facts first and no fact from any member page.
+  never as the person: no own facts first and no fact from any member page
+  (unless the client is set `--attest-read person`; see below).
   Name the shared scope on a shared turn; leave sources out only for the
   person's own conversations.
 - `memory_write {facts, idempotency_key}` saves 1-20 facts on

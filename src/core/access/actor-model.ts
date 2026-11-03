@@ -29,7 +29,8 @@ export const ACTOR_DEFERRED_OPS: ReadonlySet<string> = new Set([
 /** Canonical person ids: 1-256 visible ASCII characters (QM's credential broker rule), no case folding. */
 export const EXTERNAL_ID_RE = /^[\x21-\x7e]{1,256}$/;
 
-export interface AttestRight { system: string; ops: string[] }
+/** GST-1158 F3: `read` is how an attested call that names sources reads them; absent (the column unset) reads as the scope. */
+export interface AttestRight { system: string; ops: string[]; read?: 'person' | 'scope' }
 export interface AttestedActor { system: string; external_id: string; member: string }
 
 /**
@@ -42,7 +43,8 @@ export function attestRightFrom(row: Record<string, unknown> | undefined, grant:
   if (typeof system !== 'string' || !ATTEST_SYSTEMS.includes(system) || member != null) return null;
   if (grant !== 'legacy' && grant !== 'client_credentials') return null;
   const ops = Array.isArray(row!.attest_ops) ? (row!.attest_ops as unknown[]).filter((v): v is string => typeof v === 'string') : [...DEFAULT_ATTEST_OPS];
-  return { system, ops };
+  const read = row!.attest_read === 'person' || row!.attest_read === 'scope' ? row!.attest_read : null;
+  return { system, ops, ...(read ? { read } : {}) };
 }
 
 /** The verify join plus the live attest right, for AuthInfo (a verifier spreads the result). */

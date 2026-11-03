@@ -1217,6 +1217,10 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'oauth_clients.attest_actor',
   'oauth_clients.attest_ops',
   'oauth_tokens.grant_type',
+  // GST-1158 F3 (migration v287) - how an attested call that names sources reads them. Same posture as v286: absent
+  // from both schema blobs; readers read it through to_jsonb(row), so a schema before it reads as NULL (the scope).
+  'access_tokens.attest_read',
+  'oauth_clients.attest_read',
   // GBRA-218 A2 (migration v283) - folder rules. Same posture as v282: absent from both schema blobs; the migration
   // creates the folder_rule_ids trigger and functions itself, and no index or function in either blob references it.
   'pages.folder_rule_ids',

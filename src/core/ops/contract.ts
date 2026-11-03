@@ -303,10 +303,10 @@ export interface AuthInfo {
   mayActFor?: string[] | null;
   /**
    * GST-359 C1: the live right to name the person a call serves (x-qm-actor), joined by the verifier: the system and
-   * the operations an attested call may run. Null when the credential holds none, is bound to a member, or (an OAuth
+   * the operations an attested call may run, and (GST-1158 F3) how it reads named sources. Null when the credential holds none, is bound to a member, or (an OAuth
    * client) its token did not come from the client-credentials grant. Undefined when no verifier joined it.
    */
-  attest?: { system: string; ops: string[] } | null;
+  attest?: { system: string; ops: string[]; read?: 'person' | 'scope' } | null;
   /**
    * Human-readable agent name resolved at token-verification time.
    * For OAuth clients this is `oauth_clients.client_name`; for legacy

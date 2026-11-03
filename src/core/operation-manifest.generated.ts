@@ -2469,6 +2469,17 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         ],
         "description": "Lowest trust tier to return (the connection floor still applies).",
         "fullSurfaceOnly": true
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Read only this source."
+      },
+      "source_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Narrow to these sources (omit or [] for all you can read)."
       }
     },
     "scope": "read",
@@ -5450,6 +5461,13 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "days": {
         "type": "number",
         "description": "Stats window in days (default 30; stats mode only)."
+      },
+      "source_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Narrow to these sources (omit or [] for all you can read)."
       }
     },
     "cliHints": {
@@ -6325,6 +6343,13 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "explain": {
         "type": "boolean",
         "description": "Include factor breakdown per result (expertise, recency, salience)."
+      },
+      "source_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Narrow to these sources (omit or [] for all you can read)."
       }
     },
     "cliHints": {

@@ -23,7 +23,8 @@ import { federatedSearchScope, parseSourceIdParam } from './context.ts';
 import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './search-source-scope.ts';
 import type { FactRow } from '../engine.ts';
 import { resolveReadEligibility } from '../eligibility/policy.ts';
-import { currentCallerAccess, resolveExcludePrivatePages, withCallerAccess, type CallerAccess } from '../search/private-visibility.ts';
+import { currentCallerAccess, resolveExcludePrivatePages, withCallerAccess } from '../search/private-visibility.ts';
+import { currentReadMode, SCOPE_READ_ACCESS } from '../access/scope-read.ts';
 import { callerMember, memberPageSlug } from '../access/member-facts.ts';
 import { ACTOR_ARGUMENT, ACTOR_HEADER } from '../access/actor-model.ts';
 import { uuidV5 } from '../persistence/preconditions.ts';
@@ -118,16 +119,6 @@ async function ownRecentFacts(ctx: OperationContext, sources: string[], read: Re
   return lists.flat().sort((a, b) => b.created_at.getTime() - a.created_at.getTime() || b.id - a.id).slice(0, MEMORY_RECALL_ARM_LIMIT);
 }
 
-/**
- * GST-1094: the caller record of a recall that names sources. It is read as the scope, never as the person: no member
- * identity, actor or audience, so no member-page fact is admitted and every restricted page is hidden, and privacy is
- * never relaxed.
- */
-const SCOPE_READ_ACCESS: Partial<CallerAccess> = {
-  identity: [], audienceIdentities: [], audience: null, actor: null, satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [],
-  hidePrivate: true, applyRemoteReadPolicy: false, restricted: true, remotePolicy: { privacyRelaxed: false, restricted: true },
-};
-
 /** The sources a recall reads and whether it names them; a named recall whose sources intersect to none reads nothing. */
 async function recallSources(ctx: OperationContext, p: Record<string, unknown>): Promise<{ sources: string[]; named: boolean }> {
   const sourceIdParam = parseSourceIdParam(p.source_id, 'memory_recall');
@@ -179,7 +170,8 @@ const memory_recall: Operation = {
   handler: async (ctx, p) => {
     const { query, maxChars } = recallArguments(p);
     const { sources, named } = await recallSources(ctx, p);
-    if (!named || ctx.remote === false) return recallFacts(ctx, query, maxChars, sources, named);
+    const mode = currentReadMode();
+    if (!named || ctx.remote === false || mode) return recallFacts(ctx, query, maxChars, sources, named && mode !== 'person');
     return withCallerAccess(SCOPE_READ_ACCESS, () => recallFacts(ctx, query, maxChars, sources, true));
   },
 };
