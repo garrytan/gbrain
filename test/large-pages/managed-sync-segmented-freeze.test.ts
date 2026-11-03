@@ -5,7 +5,8 @@
  *    the stored page read back whole, as its publication does, so a segmented page up to the single-string ceiling earns
  *    exactly the outcome its inline twin earns (here the `worktree_dirty` hold) and the run completes. A page whose
  *    stored body cannot be read (segment rows that do not tile it) is held at the freeze, naming
- *    `page_body_rows_unreadable`, while the rest of the commit imports and the run completes.
+ *    `page_body_rows_unreadable`, while the rest of the commit imports and the run completes; `gbrain sync status` classifies
+ *    that hold by its page-body code. A run that does stop in its freeze phase reports `request_id: null` (none admitted).
  * 2. Fails when: the freeze reads the snapshot's throwing body getter (`rowToPage.compiled_truth`, `page_body_segmented`)
  *    and the run stops `blocked` with a recorded failure, or a page-body fault blocks the run instead of holding the page.
  * 3. PGLite.
@@ -21,6 +22,9 @@ import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { performManagedSync } from '../../src/core/persistence/sync-run.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { withEnv } from '../helpers/with-env.ts';
+import { opError } from '../../src/core/ops/contract.ts';
+import { installFaultHook } from '../../src/core/persistence/fault-points.ts';
+import { readSyncStatus } from '../../src/core/persistence/sync-status.ts';
 import { withManagedFixtureWrite } from '../helpers/managed-e2e-fixture-write.ts';
 import { conversationBody } from '../helpers/conversation-page.ts';
 
@@ -88,10 +92,22 @@ test('a segmented page whose rows do not tile its body is held at the freeze; th
   expect(result.failures).toBeUndefined();
   expect((result.held ?? []).map(hold => [hold.path, hold.code])).toEqual([['people/person-example.md', 'page_write_failed']]);
   expect(result.held![0]!.message).toContain('page_body_rows_unreadable');
-  const { readSyncStatus } = await import('../../src/core/persistence/sync-status.ts');
   expect((await readSyncStatus(engine, f.sourceId, { detail: false })).holds).toEqual([expect.objectContaining({ code: 'page_write_failed',
     path: 'people/person-example.md', needs_human: false, safe_actions: ['retry'] })]);
   const [other] = await engine.executeRaw<{ compiled_truth: string }>("SELECT compiled_truth FROM pages WHERE source_id=$1 AND slug='people/other-example'", [f.sourceId]);
   expect(other!.compiled_truth).toContain('second');
   expect(await engine.executeRaw('SELECT last_commit FROM sources WHERE id=$1', [f.sourceId])).toEqual([{ last_commit: git(f.root, 'rev-parse', 'HEAD') }]);
+}), 300_000);
+
+test('a run stopped in its freeze phase, before any request is admitted, says so in sync status (request_id null)', async () => withEnv(env, async () => {
+  const f = await fixture(false, 4 * 1024);
+  writeFileSync(join(f.root, 'people/other-example.md'), '---\ntype: person\ntitle: Other Example\n---\n\nsecond\n');
+  commit(f.root);
+  installFaultHook(point => { if (point === 'sync:after_freeze') throw opError('plan_stale', 'synthetic deliberate refusal', 'none'); });
+  try {
+    await expect(performManagedSync(engine, { sourceId: f.sourceId, noPull: true, noEmbed: true, noExtract: true })).rejects.toThrow('request=<not-admitted>');
+  } finally { installFaultHook(undefined); }
+  const { last_error } = await readSyncStatus(engine, f.sourceId, { detail: false });
+  expect(last_error).toMatchObject({ code: 'plan_stale', phase: 'freeze', path: 'people/other-example.md', request_id: null });
+  expect(last_error!.root_cause).toBeUndefined();
 }), 300_000);

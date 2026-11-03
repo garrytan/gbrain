@@ -79,7 +79,12 @@ export interface SyncStatusError extends SyncFaultVerdict {
   write_error_detail?: Record<string, unknown>;
   slug?: string;
   path?: string;
-  request_id?: string;
+  /**
+   * The write request the failure's receipt belongs to (`gbrain write-request <id>`). GBRA-287: null when the run stopped
+   * in its discovery, freeze or admission phase before any request was admitted, so there is no receipt, root request
+   * (`root_cause`) or `write_error_detail` to read; `phase`, `code` and `message` name the error.
+   */
+  request_id?: string | null;
   phase: ManagedSyncFailure['phase'];
   first_seen: string;
   attempts: number;
@@ -388,7 +393,7 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
   const lastError: SyncStatusError | null = failure ? { code: failure.code, category: recorded!.category, public_category: recorded!.public_category,
     ...(laneFault ? { detail: laneFault } : {}), message: failure.message, ...(failure.write_error_detail ? { write_error_detail: failure.write_error_detail } : {}),
     path: failure.path, phase: failure.phase, first_seen: failure.first_seen, attempts: failure.attempts,
-    ...(failure.request_id ? { request_id: failure.request_id } : {}), ...(rootCause ? { root_cause: rootCause } : {}),
+    request_id: failure.request_id ?? null, ...(rootCause ? { root_cause: rootCause } : {}),
     ...(failure.repeats ? { repeats: failure.repeats } : {}),
     ...classifySyncFault({ code: failure.code, detail: laneFault, message: failure.message, repeated: failure.repeats ? { path: failure.path, runs: failure.repeats } : null }) }
     : retired ? { code: 'cursor_incarnation_retired', category: 'sync_fault', public_category: 'superseded', message: `An unfinished sync cursor of ${sourceId} was recorded under an incarnation the source no longer has; no current sync selects it, and it says nothing about whether the current files are imported. `
