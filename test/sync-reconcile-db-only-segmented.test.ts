@@ -154,6 +154,16 @@ describe('GBRA-287: full-sync re-export of a DB-only page stored in segments', (
     expect(stagingLeft(repoPath)).toEqual([]);
   }, 180_000);
 
+  test('write-through of a segmented page with frontmatter overrides returns an error and writes nothing', async () => {
+    expect(['first_sync', 'synced']).toContain((await fullSync()).status);
+    await dbOnlySegmented('memories/big', 2 * 1024 * 1024);
+    const result = await writePageThrough(engine, 'memories/big', { sourceId: 'default', frontmatterOverrides: { provenance: 'example' } });
+    expect(result).toMatchObject({ written: false });
+    expect(result.error).toContain('stored in segments');
+    expect(existsSync(join(repoPath, 'memories/big.md'))).toBe(false);
+    expect(stagingLeft(repoPath)).toEqual([]);
+  }, 180_000);
+
   test('a segmented page whose file would pass the pre-push scan cap is skipped before its source_path is bound', async () => {
     expect(['first_sync', 'synced']).toContain((await fullSync()).status);
     await dbOnlySegmented('memories/huger', PUSH_SCAN_MAX_FILE_BYTES + 256 * 1024);

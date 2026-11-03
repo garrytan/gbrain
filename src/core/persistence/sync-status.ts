@@ -310,7 +310,7 @@ export function holdVerdict(record: GitHoldRecord, auto: FenceAutoRepair | undef
   if (record.code === 'page_identity_changed') return classifySyncFault({ code: record.code, detail: 'page_identity_decision', ...escalation });
   if (record.code === 'file_drift' && fileDriftSide(record.meta) === 'unknown') return classifySyncFault({ code: record.code, detail: 'file_drift_unknown', ...escalation });
   const bodyFault = record.code === 'page_write_failed' ? record.meta.write_failure?.code : undefined;
-  if (bodyFault && PAGE_BODY_FAULT_CODES.has(bodyFault)) return classifySyncFault({ code: record.code, detail: bodyFault, ...escalation });
+  if (bodyFault && PAGE_BODY_FAULT_CODES.has(bodyFault)) return classifySyncFault({ code: record.code, detail: `freeze_${bodyFault}`, ...escalation });
   const disposition = contentHoldDisposition(record, auto);
   if (disposition.action !== 'listed' || disposition.state === 'owner') return classifySyncFault({ code: record.code, ...escalation, ...content });
   const verdict = classifySyncFault({ code: record.code, ...escalation, detail: disposition.reason, ...content });

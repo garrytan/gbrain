@@ -103,7 +103,7 @@ export interface WriteThroughResult {
    *   - over_push_scan_cap: the rendered file is over the pre-push secret-scan
    *     cap (PUSH_SCAN_MAX_FILE_BYTES), so committing it would block every push.
    */
-  skipped?: 'disabled_by_config' | 'url_clone' | 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision' | 'file_changed' | 'over_push_scan_cap';
+  skipped?: 'disabled_by_config' | 'url_clone' | 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision' | 'file_changed' | 'over_push_scan_cap' | 'segmented_page';
   /** Caller-visible advisory when a permitted DB-only outcome is still risky. */
   warning?: string;
   /** Set when the render/write/rename itself threw (EACCES, ENOTDIR, disk full). */
@@ -114,6 +114,8 @@ export interface WritePageThroughOpts {
   sourceId?: string;
   /** Merged over the page's own frontmatter at render time (e.g. provenance). */
   frontmatterOverrides?: Record<string, unknown>;
+  /** Skip a page stored in segments (`segmented_page`): the caller compares the written file as a string (derived writes). */
+  inlineOnly?: boolean;
   logger?: WriteThroughLogger;
   /**
    * The file bytes the caller read before writing the database row (null:
@@ -469,6 +471,7 @@ export async function writePageThrough(
     }
 
     const segmented = isSegmentedPage(writtenPage);
+    if (segmented && opts.inlineOnly) return { written: false, skipped: 'segmented_page' };
     if (segmented && opts.frontmatterOverrides) {
       return { written: false, error: `page ${slug} is stored in segments, and its file is streamed as gbrain export writes it, without frontmatter overrides` };
     }

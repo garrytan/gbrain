@@ -54,7 +54,8 @@ const ESCALATE_AFTER = `${HOLD_ATTEMPTS_NEEDS_HUMAN} failed attempts over ${HOLD
 /**
  * GBRA-287: a stored page body a freeze could not read (`page_body_segmented`: a whole-body read of a page stored in
  * segments; `page_body_rows_unreadable`: segment rows that do not tile the body) is that page's fault, never the run's.
- * It is held `page_write_failed` (origin `freeze`) with this code in `meta.write_failure.code`, which classifies the hold.
+ * It is held `page_write_failed` (origin `freeze`) with this code in `meta.write_failure.code`; the hold is classified by the
+ * `freeze_<code>` row (holdVerdict).
  */
 export const PAGE_BODY_FAULT_CODES: ReadonlySet<string> = new Set(['page_body_segmented', 'page_body_rows_unreadable']);
 
@@ -96,10 +97,11 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
   { code: 'settle_mismatch', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: the pass cannot tell why the path does not settle',
     human_reason: 'Sync settled this file three passes in a row but it never read settled afterwards; read gbrain doctor --json and gbrain sources writer status <source> (read-only), fix what they name, then run gbrain sources retry-held <source> to re-test it.' },
   // GBRA-130 A-6: one path's write failed the same unclassifiable way on repeated attempts; held so the rest of the source moves.
-  // GBRA-287: a stored page body a sync path could not read: whole (a page stored in segments), or at all (rows that do not tile it).
-  { code: 'page_body_segmented', class: 'page', safe_actions: ['upgrade'], needs_human: true, escalate: 'always: a sync path read a page stored in segments whole',
+  // GBRA-287: a freeze hold whose stored page body a sync path could not read: whole (a page stored in segments), or at all
+  // (rows that do not tile it). Keyed by detail codes no receipt carries, so a write receipt with the bare code keeps its class.
+  { code: 'freeze_page_body_segmented', class: 'page', safe_actions: ['upgrade'], needs_human: true, escalate: 'always: a sync path read a page stored in segments whole',
     human_reason: 'A sync path read this page stored in segments as one string, so its file is held and the rest of the source synced; upgrade gbrain, then run gbrain sources retry-held <source>, and report it with the gbrain version if it stays held.' },
-  { code: 'page_body_rows_unreadable', class: 'page', safe_actions: ['retry'], needs_human: false, escalate: 'the page stays unreadable across syncs (a grant or row-level security policy hides its segment rows)',
+  { code: 'freeze_page_body_rows_unreadable', class: 'page', safe_actions: ['retry'], needs_human: false, escalate: 'the page stays unreadable across syncs (a grant or row-level security policy hides its segment rows)',
     human_reason: 'Give the role that reads the brain the same access to page_body_manifest and page_segment_texts it has to pages, then run gbrain sources retry-held <source>.' },
   { code: 'page_write_failed', class: 'page', safe_actions: ['upgrade'], needs_human: true, escalate: 'always: the writer cannot place the failure',
     human_reason: 'The write of this file keeps failing with an error gbrain cannot classify (an owner exception or an unplaced refusal); read its receipt (gbrain write-request <request_id>), report it with the gbrain version or fix the file when the error names its content, then run gbrain sources retry-held <source>.' },
