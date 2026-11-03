@@ -303,6 +303,7 @@ test/page-embedding-budget.test.ts
 test/page-embedding-content-validity.test.ts
 test/page-embedding-install-batch.test.ts
 test/page-embedding-lease.serial.test.ts
+test/page-history-guards-gbra286.test.ts
 test/page-prepare-shared-origin-6517.test.ts
 test/page-purge-batch-sweep-6884.test.ts
 test/page-purge-journal-timeout-6511.test.ts
