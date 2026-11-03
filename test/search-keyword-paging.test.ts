@@ -406,3 +406,175 @@ describe('visibility: untrusted callers never count private text', () => {
     }
   });
 });
+
+import { readKeywordPage, parseSearchPaging, type KeywordPage } from '../src/core/search/keyword-paging.ts';
+
+/**
+ * Authoring gate: protects keyword-only totals when row delivery exceeds the
+ * count floor. Omitting row completion loses a count delivered before rows or
+ * inside their grace. Existing #6632 cases exercise the count helper only.
+ * No production seam is added; gates delay real PGLite results, not their SQL.
+ */
+describe('#6632: keyword-only row completion', () => {
+  const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+  const gate = () => {
+    let release!: () => void;
+    const promise = new Promise<void>(resolve => { release = resolve; });
+    return { promise, release };
+  };
+  const args = { query: TERM, match: 'keyword', limit: 3, source_id: 'default' };
+  const opts = { sourceId: 'default', requireSafeChunks: true, excludePrivate: true };
+  const paging = { match: 'keyword' as const, offset: 0, cursor: null };
+
+  const delivery = (rowError?: Error) => {
+    const rows = gate();
+    const count = gate();
+    const rowsReady = gate();
+    const countReady = gate();
+    const rowsDelivered = gate();
+    const countDelivered = gate();
+    const calls = { rows: 0, count: 0 };
+    const wrapped = new Proxy(engine, {
+      get(target, prop, receiver) {
+        if (prop === 'searchKeywordPages') {
+          return async (...params: Parameters<BrainEngine['searchKeywordPages']>) => {
+            calls.rows++;
+            const result = await target.searchKeywordPages(...params);
+            rowsReady.release();
+            await rows.promise;
+            rowsDelivered.release();
+            if (rowError) throw rowError;
+            return result;
+          };
+        }
+        if (prop === 'countKeywordPages') {
+          return async (...params: Parameters<BrainEngine['countKeywordPages']>) => {
+            calls.count++;
+            const result = await target.countKeywordPages(...params);
+            countReady.release();
+            await count.promise;
+            countDelivered.release();
+            return result;
+          };
+        }
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as BrainEngine;
+    const result = readKeywordPage(wrapped, args, opts, paging, 3);
+    // Attach a rejection observer before a test can release the row failure.
+    void result.catch(() => {});
+    return {
+      rows, count, rowsDelivered, countDelivered, calls, result,
+      ready: Promise.all([rowsReady.promise, countReady.promise]),
+      async drain() {
+        rows.release();
+        count.release();
+        await Promise.allSettled([result, rowsDelivered.promise, countDelivered.promise]);
+      },
+    };
+  };
+
+  const assertPage = async (page: KeywordPage, total: number | null) => {
+    expect(page.rows).toHaveLength(3);
+    expect(page.meta).toMatchObject({ match: 'keyword', total, truncated: true, shown_from: 1, shown_to: 3 });
+    expect(page.meta.total_capped).toBeUndefined();
+    const next = page.meta.next as Record<string, unknown>;
+    expect(next).toEqual({ ...args, cursor: expect.any(String) });
+    const parsed = parseSearchPaging({ remote: true } as never, next);
+    const last = page.rows[2];
+    expect(parsed).toEqual({ match: 'keyword', offset: 0, cursor: { score: last.score, page_id: last.page_id, shown: 3 } });
+    const rest = await readKeywordPage(engine, next, opts, parsed, matching.length);
+    expect([...page.rows, ...rest.rows].map(row => row.slug).sort()).toEqual([...matching].sort());
+    expect(rest.meta).toEqual({ match: 'keyword', total: matching.length, truncated: false, shown_from: 4, shown_to: matching.length });
+    expect(rest.degraded).toBeUndefined();
+  };
+
+  test('retains the exact count delivered after the floor but before slow rows, with a fast-count control', async () => {
+    for (const slow of [false, true]) {
+      const d = delivery();
+      try {
+        await d.ready;
+        if (slow) await pause(2_200);
+        d.count.release();
+        await d.countDelivered.promise;
+        await pause(0);
+        d.rows.release();
+        const page = await d.result;
+        expect(d.calls).toEqual({ rows: 1, count: 1 });
+        await assertPage(page, matching.length);
+        expect(page.degraded).toBeUndefined();
+      } finally {
+        await d.drain();
+      }
+    }
+  }, 15_000);
+
+  test('retains the exact count delivered shortly after slow rows inside their grace', async () => {
+    const d = delivery();
+    try {
+      await d.ready;
+      await pause(2_200);
+      d.rows.release();
+      await d.rowsDelivered.promise;
+      await pause(40);
+      d.count.release();
+      const page = await d.result;
+      expect(d.calls).toEqual({ rows: 1, count: 1 });
+      await assertPage(page, matching.length);
+      expect(page.degraded).toBeUndefined();
+    } finally {
+      await d.drain();
+    }
+  }, 15_000);
+
+  test('gives up a count still withheld beyond slow rows and their grace without losing paging', async () => {
+    const d = delivery();
+    try {
+      await d.ready;
+      await pause(2_200);
+      d.rows.release();
+      const page = await d.result;
+      expect(d.calls).toEqual({ rows: 1, count: 1 });
+      await assertPage(page, null);
+      expect(page.degraded).toEqual({ stage: 'keyword_count_unavailable', reason: 'timeout' });
+      expect(searchCountLine(page.rows, { ...page.meta, degraded: [page.degraded] }))
+        .toStartWith('[gbrain search] Keyword match count unavailable (timed out; not a count of zero); showing 1-3');
+    } finally {
+      await d.drain();
+    }
+  }, 15_000);
+
+  test('rejects a row-query failure without an unhandled rejection while count delivery is pending', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+    process.on('unhandledRejection', onUnhandled);
+    const failure = new Error('synthetic keyword row delivery failure');
+    try {
+      for (const rowError of [undefined, failure]) {
+        const d = delivery(rowError);
+        try {
+          await d.ready;
+          if (!rowError) d.count.release();
+          d.rows.release();
+          if (rowError) {
+            await expect(d.result).rejects.toBe(failure);
+            await pause(2_500);
+            expect(unhandled).toEqual([]);
+          } else {
+            const page = await d.result;
+            await assertPage(page, matching.length);
+            expect(page.degraded).toBeUndefined();
+          }
+          expect(d.calls).toEqual({ rows: 1, count: 1 });
+        } finally {
+          await d.drain();
+        }
+      }
+      await pause(0);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  }, 15_000);
+});
