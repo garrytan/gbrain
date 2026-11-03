@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.560.0] - 2026-11-03
 
 **A page stored in segments no longer stops a source's sync.** A managed sync re-importing a Git-tracked page stored in segments (`pages.segmented_storage`) whose working-tree bytes differ from the pinned commit, as on a live checkout, compared the file against the stored page with a whole-body read. That read refused with `page_body_segmented`, recorded as a run failure in the freeze phase, and every later sync stopped `sync_blocked` at the same file, with a retry command that could not help. The freeze now compares a segmented page up to 24 MiB read back whole, as its publication already did, so the page gets the outcome an inline page gets. A page whose stored body can't be read at the freeze (`page_body_segmented`, or `page_body_rows_unreadable`) is held `page_write_failed`, naming its code, and the rest of the source syncs. `gbrain sync status` classifies such a hold by that code (`page_body_rows_unreadable`: retry, no person needed), not as an unplaced `page_write_failed`. A run that does stop before any write request is admitted (discovery, freeze or admission) now shows `last_error.request_id: null` in `gbrain sync status --json` instead of leaving the field out: there is no receipt, root request or `write_error_detail` to look for, and the phase, code and message name the error.
 
