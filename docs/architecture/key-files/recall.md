@@ -46,11 +46,15 @@ fence row `fenceRowOf` renders, the hold payload and its release
 the receipt. A typed write never supersedes a typed fact in another claim slot
 (`sameClaimSlot` in `src/core/facts/single-prepare.ts`); the same text with a
 claim supersedes an untyped copy and never rewrites a typed one
-(`claim_ignored: existing_claim`).
+(`claim_ignored: existing_claim`). A remote recall fences a quoted fact's
+claim strings like its text (`recallClaimColumns` in `src/core/ops/facts.ts`),
+and a remote `remember` strips that fence from copied claim fields.
 
 The detector proposes one `decide_proposals` row per conflicting pair: same
 source, entity, metric, unit and period (null-safe), same as-of bucket, both
-facts active, non-audit and the same visibility. The unique expression index
+facts active, non-audit and the same visibility. A fact on a member page pairs
+only with another fact on that page (`onMemberPageSql`,
+`src/core/access/member-facts.ts`). The unique expression index
 `decide_proposals_claim_pair_uidx` (migration v288) over the unordered pair for
 `claim_conflicts:` sweeps and `insertProposal`'s `ON CONFLICT DO NOTHING` keep
 concurrent runs to one row; the anti-joins skip pairs any sweep already
