@@ -47,6 +47,7 @@ import { pipelined } from '../page-state/transactions.ts';
 import { holdsSummarizedToolCalls, isQuotedPageType, quotesTier, unquoteTranscriptText } from '../search/transcript-quote.ts';
 import { readStoredBody } from '../facts/file-body-guard.ts';
 import { isMirrorOnlyPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
+import { perCallWriteSource } from '../access/attest-sources.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
   // #5994: a failed-writes replay is admitted under the original writer.
@@ -141,7 +142,7 @@ export function pageMutationSource(ctx: OperationContext, params: Record<string,
       `Pass source_id as one source (for example ${ctx.sourceId && ctx.sourceId !== '__all__' ? ctx.sourceId : 'default'}); writes never fan out across sources.`);
   }
   const granted = ctx.auth?.sourceId ?? ctx.sourceId ?? 'default';
-  if (ctx.remote !== false && sourceId !== granted) {
+  if (ctx.remote !== false && sourceId !== granted && !perCallWriteSource(ctx, sourceId)) {
     throw new OperationError('permission_denied', 'This source is outside the current write grant.',
       `This connection writes only to source ${granted}. Pass source_id ${granted} (or omit it), or ask the brain host's operator to grant write access to ${sourceId}.`);
   }

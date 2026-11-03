@@ -37,6 +37,7 @@ import {
   tokenGrantFromPermissions, validatePrincipalGrant, TOKEN_GRANT_COLUMNS, type LegacyGrantAxis, type PrincipalGrant, type PrivatePagesGrant,
 } from './model.ts';
 import { parsePrivatePagesFlag } from './cli.ts';
+import { assertScopeSourceGrant, sourcesOf } from '../access/attest-sources.ts';
 
 export type { LegacyGrantAxis } from './model.ts';
 
@@ -198,6 +199,8 @@ function schemaError(error: unknown): unknown {
 
 /** Write the unified columns and the `permissions` mirror in one UPDATE; returns the new revision. */
 async function writeTokenGrant(tx: BrainEngine, row: Record<string, unknown>, grant: TokenGrantAxes, scopes?: string[]): Promise<number> {
+  const before = sourcesOf(grantFromTokenRow(row).sources).reads;
+  await assertScopeSourceGrant(tx, { kind: 'token', id: String(row.id) }, sourcesOf(grant.sources).reads.filter(s => !before.includes(s)));
   const [written] = await executeRawJsonb<{ grant_revision: number }>(
     tx,
     `UPDATE access_tokens SET source_grant = $2, source_id = $3, federated_read = $4::text[], allowed_operations = $5::text[],
@@ -304,6 +307,7 @@ async function rescopeInTransaction(tx: BrainEngine, args: RescopeTokenArgs): Pr
   const write = !args.dryRun && (edits || Boolean(args.adopt));
   const revision = write ? await writeTokenGrant(tx, row, next, args.scopes) : current.revision;
   if (write && privatePages !== current.privatePages) {
+    await assertScopeSourceGrant(tx, { kind: 'token', id }, [], { privatePages: privatePages === 'granted_sources' });
     await tx.executeRaw('UPDATE access_tokens SET private_pages = $2 WHERE id = $1::uuid', [id, privatePages]);
   }
   return {

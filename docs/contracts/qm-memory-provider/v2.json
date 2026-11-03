@@ -123,6 +123,10 @@
           "acting_user": {
             "type": "string",
             "description": "Set by the trusted system: equal to the x-qm-actor header, or omit."
+          },
+          "source_id": {
+            "type": "string",
+            "description": "Save on this scope source's shared page (memory/scope), read by everyone who reads that source; it must be one of the credential's scope sources. Omit to save for the person alone."
           }
         },
         "required": [
@@ -252,6 +256,21 @@
         ]
       },
       "poll": "get_write_request {request_id}"
+    },
+    "scope_write": {
+      "argument": "source_id",
+      "rule": "names one of the credential's scope sources (attest_sources, which the brain operator sets on the host); checked on the call and again when the write publishes, so a source the operator drops refuses queued writes; omit it to save for the person alone, exactly as without it",
+      "saved_as": {
+        "page": "memory/scope",
+        "readers": "none: whoever holds read on the scope source, which only scope credentials may",
+        "visibility": "world",
+        "provenance": "qm:<actor id>; <caller provenance>"
+      },
+      "request_id": "uuidv5(uuidv5(namespace, \"member:<member>#source:<source_id>\"), idempotency_key) for the first fact; later facts derive from it; without source_id the member derivation above is unchanged",
+      "replay": "per person and source: the same idempotency_key in another source is a separate write",
+      "pending": "a scope source with a repository publishes git-first through its writer and answers pending until it commits; a source without one commits to the database",
+      "recall": "read it with memory_recall source_id (read as the scope); a memory_recall without sources never reads a scope source",
+      "withdrawal": "forget and forget_fact reach only the person's own member page, so a scope fact is not_found remotely"
     }
   },
   "errors": {
@@ -336,7 +355,7 @@
         "class": "caller",
         "summary": "A parameter is missing, has the wrong type, or has an invalid value.",
         "docs": "docs/guides/error-codes.md#invalid_params",
-        "note": "Bad arguments, refused before anything is saved. A reused idempotency_key with different facts carries write_error idempotency_conflict; a claim the person forgot carries the fact_withdrawn message."
+        "note": "Bad arguments, refused before anything is saved. A reused idempotency_key with different facts carries write_error idempotency_conflict; a claim the person forgot carries the fact_withdrawn message. A memory_write whose source_id is the credential's own source carries reason source_is_member_source (omit source_id instead)."
       },
       {
         "code": "scope_denied",
@@ -385,7 +404,7 @@
         "class": "host_only",
         "summary": "This caller is not authorized for the operation.",
         "docs": "docs/guides/error-codes.md#permission_denied",
-        "note": "memory_recall named a source (source_id or source_ids) outside the credential's read grant; nothing was read."
+        "note": "memory_recall named a source (source_id or source_ids) outside the credential's read grant; nothing was read. memory_write named a source_id that is not one of the credential's scope sources (reason source_not_attested, also at publication after the operator drops it), or the scope page names readers (reason scope_page_not_shared); nothing was saved."
       }
     ]
   },

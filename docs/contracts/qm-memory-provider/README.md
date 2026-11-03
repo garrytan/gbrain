@@ -11,4 +11,6 @@ It is generated from the live operation registry by
 `test/qm-memory-contract.test.ts` fails when the committed file drifts.
 
 A change to the shape is a new file, `v2.json`; `v1.json` stays until QM moves.
+`v2.json` adds `source_id` / `source_ids` on `memory_recall` (scope reads, `scope_read`) and `source_id` on
+`memory_write` (scope writes, `scope_write`).
 Operator setup is in [docs/guides/qm.md](../../guides/qm.md).

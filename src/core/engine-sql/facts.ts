@@ -30,7 +30,7 @@ import { compileRowNormalizer } from './normalize.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { FACT_WITHDRAWAL_STAMP_DEFERRED_SETTING } from '../facts/insert-guard-schema.ts';
 import { privateProvenanceFilterUnderPolicy } from '../search/private-visibility.ts';
-import { factVisibilitySql, onMemberPageSql } from '../access/member-facts.ts';
+import { factVisibilitySql, onOwnedMemoryPageSql } from '../access/member-facts.ts';
 import { storedTrustTier } from '../trust/tier.ts';
 import { ensureWellFormed } from '../text-safe.ts';
 
@@ -589,7 +589,7 @@ export async function findCandidateDuplicates(
       ? sqlFragment`AND (attributed_to IS NULL OR attributed_to = ${opts.attributedTo})`
       : sqlFragment``;
     const members = opts?.onlyPage ? sqlFragment` AND source_markdown_slug = ${opts.onlyPage}`
-      : opts?.excludeMemberPages ? sqlFragment` AND NOT ${trustedSql(onMemberPageSql('facts'))}` : sqlFragment``;
+      : opts?.excludeMemberPages ? sqlFragment` AND NOT ${trustedSql(onOwnedMemoryPageSql('facts'))}` : sqlFragment``;
     // Validity-lapsed rows are not dedup candidates: a re-stated fact after
     // its valid_until lapses re-inserts fresh (WP5 read-time TTL honesty).
     if (opts?.arm === 'keyword') return findKeywordCandidates(exec, source_id, entitySlug, factText, k, opts);
@@ -657,7 +657,7 @@ async function findKeywordCandidates(
         AND (f.valid_until IS NULL OR f.valid_until > now())
         AND f.source != ALL(${AUDIT_ROW_SOURCES}::text[])
         ${comparable}
-        ${speaker}${opts.onlyPage ? sqlFragment` AND f.source_markdown_slug = ${opts.onlyPage}` : opts.excludeMemberPages ? sqlFragment` AND NOT ${trustedSql(onMemberPageSql('f'))}` : sqlFragment``}
+        ${speaker}${opts.onlyPage ? sqlFragment` AND f.source_markdown_slug = ${opts.onlyPage}` : opts.excludeMemberPages ? sqlFragment` AND NOT ${trustedSql(onOwnedMemoryPageSql('f'))}` : sqlFragment``}
         AND q.q IS NOT NULL AND to_tsvector(${lang}::regconfig, f.fact) @@ q.q
       ORDER BY ts_rank_cd(to_tsvector(${lang}::regconfig, f.fact), q.q) DESC, f.created_at DESC, f.id DESC
       LIMIT ${k}

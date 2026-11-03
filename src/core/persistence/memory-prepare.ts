@@ -23,7 +23,7 @@ import { prepareFenceFactAppend, prepareFenceFactCreate, requestReceiptFix, type
 import { privateProvenanceFilterFragment, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
 import { tightenToPage } from '../facts/visibility.ts';
 import { noteBelief } from '../belief/ledger.ts';
-import { MEMBER_PAGE_PREFIX, memberPageFrontmatter, memberPageIsOwn, memberPageNotOwned, onMemberPageSql } from '../access/member-facts.ts';
+import { MEMBER_PAGE_PREFIX, memberPageFrontmatter, memberPageIsOwn, memberPageNotOwned, onOwnedMemoryPageSql, scopePageFrontmatter, scopePageIsShared, scopePageNotShared } from '../access/member-facts.ts';
 
 function conflict(row: WriteRequest): never {
   throw opError('revision_conflict', 'The memory changed during semantic preparation.',
@@ -57,7 +57,7 @@ async function activeUnlinkedCopy(engine: BrainEngine, sourceId: string, input: 
   const [row] = await engine.executeRaw<{ id: number }>(`SELECT id FROM facts
     WHERE source_id=$1 AND visibility=$2 AND entity_slug IS NULL AND expired_at IS NULL
       AND (valid_until IS NULL OR valid_until > now()) AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3)${excludePrivate && !input.page_slug ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}
-      AND ${input.page_slug ? 'source_markdown_slug=$4' : `($4::text IS NULL AND NOT ${onMemberPageSql('facts')})`}
+      AND ${input.page_slug ? 'source_markdown_slug=$4' : `($4::text IS NULL AND NOT ${onOwnedMemoryPageSql('facts')})`}
     ORDER BY id DESC LIMIT 1`, [sourceId, input.visibility, input.fact, input.page_slug ?? null]);
   return row ? Number(row.id) : null;
 }
@@ -73,12 +73,13 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const p = row.intent;
   const input: SingleFactIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as SingleFactIntent['kind'],
     visibility: (p.visibility ?? 'world') as SingleFactIntent['visibility'], entity_slug: p.entity_slug as string | null,
-    ...(p.member_page === true ? { page_slug: row.slug } : {}) };
+    ...(p.member_page === true || p.scope_page === true ? { page_slug: row.slug } : {}) };
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
-  // GST-359 C2: a member page another write created after this one was accepted is the same page, not a recreation.
-  const createdSince = p.member_page === true && row.page_id === null && snapshot !== null && !snapshot.page.deleted_at;
+  // GST-359 C2: a member page (GST-1113: or scope page) another write created after this one was accepted is the same page, not a recreation.
+  const createdSince = (p.member_page === true || p.scope_page === true) && row.page_id === null && snapshot !== null && !snapshot.page.deleted_at;
   if ((snapshot?.page.id ?? null) !== row.page_id && !createdSince) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted entity was deleted or recreated.');
   if (p.member_page === true && snapshot && !memberPageIsOwn(row.slug, snapshot.page.frontmatter)) throw memberPageNotOwned(row.slug);
+  if (p.scope_page === true && snapshot && !await scopePageIsShared(engine, { ...snapshot.page, source_id: row.source_id, slug: row.slug })) throw scopePageNotShared(row.source_id);
   // A defaulted visibility never lands broader than the target page as it stands at publication.
   if (p.visibility_defaulted === true && snapshot) input.visibility = tightenToPage(input.visibility, await withFolderRestricted(engine, snapshot.page));
   if (p.expected_revision !== undefined) assertPageRevision(snapshot, engineMutationPrecondition(parseMutationPrecondition(p)));
@@ -150,6 +151,9 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   } else if (p.fence === true && p.member_page === true) {
     fence = await prepareFenceFactCreate(engine, row, config, { fact, pendingTier: fenceAppendPendingTier(writerTier),
       frontmatter: memberPageFrontmatter(row.slug.slice(MEMBER_PAGE_PREFIX.length)), heading: `# Memory of ${row.slug.slice(MEMBER_PAGE_PREFIX.length)}` }, signal);
+  } else if (p.fence === true && p.scope_page === true) {
+    fence = await prepareFenceFactCreate(engine, row, config, { fact, pendingTier: fenceAppendPendingTier(writerTier),
+      frontmatter: scopePageFrontmatter(), heading: '# Scope memory' }, signal);
   }
   // The belief ledger records the superseded fact in its own stream, so that stream's page key is held too.
   const supersededStream = status === 'superseded' ? decision.candidate!.source_markdown_slug ?? decision.candidate!.entity_slug ?? null : null;

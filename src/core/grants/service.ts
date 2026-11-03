@@ -2,6 +2,7 @@ import type { BrainEngine } from '../engine.ts';
 import { sqlQueryForEngine, type SqlQuery } from '../sql-query.ts';
 import { GrantError, grantFromRow, normalizeGrantBrain, validateClientGrant, type ClientGrant, type GrantPatch, type GrantValidationContext } from './model.ts';
 import { catalogProvenance, grantCatalog, type CatalogProvenance } from './profiles.ts';
+import { assertScopeSourceGrant, clientGrantReads } from '../access/attest-sources.ts';
 
 export type GrantDatabase = BrainEngine | SqlQuery;
 const query = (db: GrantDatabase): SqlQuery => typeof db === 'function' ? db : sqlQueryForEngine(db);
@@ -77,6 +78,7 @@ export async function readClientCatalogProvenance(db: GrantDatabase, clientId: s
 
 /** Called after validation. Never exposes the credential in the audit document. */
 export async function insertClientGrant(sql: SqlQuery, grant: ClientGrant, metadata: GrantClientMetadata, actor = 'operator'): Promise<void> {
+  await assertScopeSourceGrant(sql, null, clientGrantReads(grant));
   await sql`
     WITH created AS (
       INSERT INTO oauth_clients (client_id, client_name, client_secret_hash, redirect_uris, grant_types,
@@ -190,6 +192,8 @@ export async function recordFirstConsentInTransaction(db: GrantDatabase, clientI
 
 /** One UPDATE+audit statement: SQL-only provider callers get atomicity too. */
 export async function persistGrant(sql: SqlQuery, before: ClientGrant, after: ClientGrant, actor: string, action: string): Promise<void> {
+  const widened = clientGrantReads(after).filter(s => !clientGrantReads(before).includes(s));
+  await assertScopeSourceGrant(sql, { kind: 'client', id: before.clientId }, widened, { privatePages: after.privatePages === 'granted_sources' && before.privatePages !== 'granted_sources' });
   const result = await sql`
     WITH updated AS (
       UPDATE oauth_clients SET

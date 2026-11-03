@@ -98,6 +98,12 @@ describe('QM memory-provider contract v2 (GST-1094 scope read, GST-900)', () => 
     expect(fixture.errors.codes.map((c: { code: string }) => c.code)).toContain('permission_denied');
     const v1 = JSON.parse(readFileSync(QM_CONTRACT_PATH, 'utf8'));
     expect(fixture.wave_2).toEqual(v1.wave_2);
-    expect(fixture.memory_write).toEqual(v1.memory_write);
+    const { scope_write: scopeWrite, ...memoryWrite } = fixture.memory_write;
+    expect(memoryWrite).toEqual(v1.memory_write);
+    const write = fixture.tools.find((t: { name: string }) => t.name === 'memory_write');
+    expect(write.input_schema.properties.source_id.type).toBe('string');
+    expect(write.input_schema.required).toEqual(v1.tools.find((t: { name: string }) => t.name === 'memory_write').input_schema.required);
+    expect(scopeWrite.saved_as).toMatchObject({ page: 'memory/scope', visibility: 'world' });
+    expect(scopeWrite.rule).toContain('attest_sources');
   });
 });

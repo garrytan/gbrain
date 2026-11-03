@@ -10,7 +10,7 @@ import { outcomeMarkerSql } from './audit-sources.ts';
 import { coverageActive, noteBelief, readLedgerSource, withBeliefBatch } from '../belief/ledger.ts';
 import { createPageVersion } from '../page-state/versions.ts';
 import { validateSlug } from '../utils.ts';
-import { factWithdrawalSubjectSql, onMemberPageSql } from '../access/member-facts.ts';
+import { factWithdrawalSubjectSql, onOwnedMemoryPageSql } from '../access/member-facts.ts';
 
 export interface WithdrawalCommit {
   withdrawn: boolean;
@@ -57,7 +57,7 @@ export async function recordFactWithdrawal(
 ): Promise<WithdrawalCommit> {
   // GST-359 D: an attested person's own member-page fact (memberPage) is admitted besides world facts; the caller checked it.
   const admit = `AND ($3::boolean=false OR visibility='world' OR (visibility='private' AND source_markdown_slug=$4::text))${opts.excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`;
-  const pageScoped = `(${onMemberPageSql('facts')} AND source_markdown_slug=$4)`;
+  const pageScoped = `(${onOwnedMemoryPageSql('facts')} AND source_markdown_slug=$4)`;
   return engine.transaction(async tx => {
     // A managed caller takes this EXCLUSIVE source lock before authority,
     // counters and request rows. Repeating an already-held lock is safe.

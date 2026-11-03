@@ -24,7 +24,8 @@ import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './sea
 import type { FactRow } from '../engine.ts';
 import { resolveReadEligibility } from '../eligibility/policy.ts';
 import { currentCallerAccess, resolveExcludePrivatePages, withCallerAccess, type CallerAccess } from '../search/private-visibility.ts';
-import { callerMember, memberPageSlug } from '../access/member-facts.ts';
+import { callerMember, memberPageSlug, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
+import { markedScopeSources, sourceNotAttested, withoutScopeSources } from '../access/attest-sources.ts';
 import { ACTOR_ARGUMENT, ACTOR_HEADER } from '../access/actor-model.ts';
 import { uuidV5 } from '../persistence/preconditions.ts';
 import { isStrictIsoDateTime } from '../utils.ts';
@@ -134,7 +135,7 @@ async function recallSources(ctx: OperationContext, p: Record<string, unknown>):
   const sourceIds = parseSourceIdsParam(ctx, 'memory_recall', p.source_ids);
   if (sourceIdParam === undefined && sourceIds === undefined) {
     const scope = federatedSearchScope(ctx, undefined);
-    return { sources: [...new Set(scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default'])], named: false };
+    return { sources: await withoutScopeSources(ctx, [...new Set(scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default'])]), named: false };
   }
   const scope = await requestSourceScope(ctx, sourceIdParam, sourceIds);
   return { sources: [...new Set(scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : []))], named: true };
@@ -185,8 +186,9 @@ const memory_recall: Operation = {
 };
 
 /** The request id of fact `index` in a memory_write: uuidv5 of the key under the member's own namespace for fact 0, derived from it after. */
-export async function memoryWriteRequestId(member: string, idempotencyKey: string, index: number): Promise<string> {
-  const root = uuidV5(uuidV5(QM_MEMORY_REQUEST_NAMESPACE, `member:${member}`), idempotencyKey);
+export async function memoryWriteRequestId(member: string, idempotencyKey: string, index: number, scopeSource?: string): Promise<string> {
+  // GST-1113: a scope write keys under (member, source), so one key never replays across sources; '#' is outside member ids.
+  const root = uuidV5(uuidV5(QM_MEMORY_REQUEST_NAMESPACE, scopeSource === undefined ? `member:${member}` : `member:${member}#source:${scopeSource}`), idempotencyKey);
   if (index === 0) return root;
   const { childRequestId } = await import('../remember-batch.ts');
   return childRequestId(root, index);
@@ -242,6 +244,7 @@ const memory_write: Operation = {
     },
     idempotency_key: { type: 'string', required: true, description: '1-128 visible ASCII characters; the same key replays this write.' },
     [ACTOR_ARGUMENT]: actorParam,
+    source_id: { type: 'string', description: `Save on this scope source's shared page (${SCOPE_PAGE_SLUG}), read by everyone who reads that source; it must be one of the credential's scope sources. Omit to save for the person alone.` },
   },
   scope: 'write',
   annotations: { title: 'memory_write (QM memory write)', idempotentHint: true },
@@ -255,15 +258,22 @@ const memory_write: Operation = {
       throw invalid('idempotency_key must be 1 to 128 visible ASCII characters (no spaces).', 'Send a stable key per write, for example a UUID; the same key replays the same write.');
     }
     const key = p.idempotency_key;
+    const scopeSource = p.source_id === undefined ? undefined : parseSourceIdParam(p.source_id, 'memory_write');
+    if (scopeSource !== undefined && scopeSource === (ctx.auth?.sourceId ?? ctx.sourceId)) {
+      throw opError('invalid_params', `source_id ${scopeSource} is this connection's own source, where the person's member page lives; nothing was saved.`,
+        'Omit source_id to save for the person alone; send source_id only for a shared scope\'s source.', { reason: 'source_is_member_source' });
+    }
+    if (scopeSource !== undefined && (!ctx.auth?.attest?.sources?.includes(scopeSource) || !(await markedScopeSources(ctx.engine, [scopeSource])).has(scopeSource))) throw sourceNotAttested(scopeSource);
+    const writeCtx: OperationContext = scopeSource === undefined ? ctx : { ...ctx, sourceId: scopeSource, attestedSource: scopeSource };
     const parsed = parseFacts(p.facts, actor.external_id);
     // Every fact's replay intent carries the whole batch, so a key reused with more, fewer or other facts is an
     // idempotency_conflict at its first fact, before anything new is written.
     const qm_batch = createHash('sha256').update(JSON.stringify(parsed)).digest('hex');
-    const items = await Promise.all(parsed.map(async (f, i) => ({ ...f, qm_batch, request_id: await memoryWriteRequestId(actor.member, key, i) })));
+    const items = await Promise.all(parsed.map(async (f, i) => ({ ...f, qm_batch, request_id: await memoryWriteRequestId(actor.member, key, i, scopeSource) })));
     const { verbOperations } = await import('../verbs.ts');
     const remember = verbOperations.find(op => op.name === 'remember')!;
     for (const [index, item] of items.entries()) {
-      try { await remember.handler({ ...ctx, attestedOp: 'memory_write', dryRun: true }, item); } catch (e) {
+      try { await remember.handler({ ...writeCtx, attestedOp: 'memory_write', dryRun: true }, item); } catch (e) {
         if (e instanceof OperationError) e.message = `facts[${index}]: ${e.message} Nothing was saved.`;
         throw e;
       }
@@ -275,8 +285,10 @@ const memory_write: Operation = {
     const principal = await requestPrincipalForContext(ctx);
     for (const [index, item] of parsed.entries()) {
       if (await getWriteRequest(ctx.engine, principal, items[index]!.request_id)) continue;
-      const intent = { fact: item.fact as string, kind: (item.kind ?? 'fact') as never, visibility: 'private' as const, entity_slug: null, page_slug: memberPageSlug(actor.member) };
-      try { await assertFactNotWithdrawn(ctx.engine, ctx.sourceId ?? 'default', intent, { excludePrivate }); } catch (e) {
+      const intent = scopeSource === undefined
+        ? { fact: item.fact as string, kind: (item.kind ?? 'fact') as never, visibility: 'private' as const, entity_slug: null, page_slug: memberPageSlug(actor.member) }
+        : { fact: item.fact as string, kind: (item.kind ?? 'fact') as never, visibility: 'world' as const, entity_slug: null, page_slug: SCOPE_PAGE_SLUG };
+      try { await assertFactNotWithdrawn(ctx.engine, writeCtx.sourceId ?? 'default', intent, { excludePrivate }); } catch (e) {
         if (e instanceof OperationError) e.message = `facts[${index}]: ${e.message} Nothing was saved.`;
         throw e;
       }
@@ -285,7 +297,7 @@ const memory_write: Operation = {
     const saved: Array<{ request_id: string; fact_id?: string; pending?: true }> = [];
     for (const [index, item] of items.entries()) {
       try {
-        const out = await remember.handler({ ...ctx, attestedOp: 'memory_write' }, item) as { id?: string | number } | null;
+        const out = await remember.handler({ ...writeCtx, attestedOp: 'memory_write' }, item) as { id?: string | number } | null;
         saved.push({ request_id: item.request_id, ...(out?.id !== undefined ? { fact_id: String(out.id) } : {}) });
       } catch (e) {
         if (e instanceof OperationError && e.writeError === 'write_pending') { saved.push({ request_id: item.request_id, pending: true }); continue; }

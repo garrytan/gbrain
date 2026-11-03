@@ -1171,6 +1171,7 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
     console.error(`Source "${id}" not found.`);
     process.exit(4);
   }
+  if (value) await (await import('../core/access/attest-sources.ts')).assertNotScopeSource(engine, id);
   const config = parseConfig(src.config);
   config.federated = value;
   await engine.executeRaw(

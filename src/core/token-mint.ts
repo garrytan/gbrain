@@ -20,6 +20,7 @@ import type { BrainEngine } from './engine.ts';
 import { ALLOWED_SCOPES_LIST, assertAllowedScopes } from './scope.ts';
 import type { SqlQuery } from './sql-query.ts';
 import { opError } from './ops/contract.ts';
+import { assertScopeSourceGrant, sourcesOf } from './access/attest-sources.ts';
 import { generateToken, hashToken, isUndefinedColumnError } from './utils.ts';
 import { permissionsMirror, tokenGrantColumnValues, tokenGrantFromPermissions, TOKEN_GRANT_COLUMNS, type GrantSources, type PrincipalGrant } from './grants/model.ts';
 
@@ -103,6 +104,7 @@ export async function insertUnifiedToken(engine: BrainEngine, opts: {
   grant: Pick<PrincipalGrant, 'sources' | 'allowedOperations' | 'takesHolders'>;
 }): Promise<Array<{ id: string }>> {
   const scopes = opts.scopes === undefined ? null : `{${opts.scopes.join(',')}}`;
+  await assertScopeSourceGrant(engine, null, sourcesOf(opts.grant.sources).reads);
   try {
     return await engine.executeRaw<{ id: string }>(
       `INSERT INTO access_tokens (name, token_hash, scopes, permissions, ${TOKEN_GRANT_COLUMNS.join(', ')}, grant_revision)

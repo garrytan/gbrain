@@ -13,6 +13,7 @@ import { operations } from '../src/core/operations.ts';
 import { paramDefToSchema } from '../src/mcp/tool-defs.ts';
 import { CODES } from '../src/core/error-registry.ts';
 import { ACTOR_ARGUMENT, ACTOR_DEFERRED_OPS, ACTOR_HEADER, DEFAULT_ATTEST_OPS, EXTERNAL_ID_RE, QM_AUDIENCE_HEADER } from '../src/core/access/actor-model.ts';
+import { SCOPE_PAGE_SLUG } from '../src/core/access/principals.ts';
 import { IDEMPOTENCY_KEY_RE, MEMORY_RECALL_MAX_CHARS, MEMORY_RECALL_QUERY_CHARS, MEMORY_WRITE_KINDS, MEMORY_WRITE_MAX_FACTS, MEMORY_WRITE_PROVENANCE_MAX, OWN_RECENT_WINDOW_HOURS, QM_MEMORY_OPS, unlinkedRecallResult } from '../src/core/ops/qm-memory.ts';
 
 export type QmContractVersion = 1 | 2;
@@ -76,7 +77,8 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
   const codes = v2 ? [...ERROR_CODES, 'permission_denied' as const] : ERROR_CODES;
   const notes: Record<string, string | undefined> = v2 ? { ...ERROR_NOTES,
     actor_not_attested: 'With no x-qm-actor header, acting_user is accepted only from a credential bound to a member and only naming that member (its member id or a canonical id linked to it); the call then runs exactly as the credential.',
-    permission_denied: 'memory_recall named a source (source_id or source_ids) outside the credential\'s read grant; nothing was read.' } : ERROR_NOTES;
+    invalid_params: `${ERROR_NOTES.invalid_params} A memory_write whose source_id is the credential's own source carries reason source_is_member_source (omit source_id instead).`,
+    permission_denied: 'memory_recall named a source (source_id or source_ids) outside the credential\'s read grant; nothing was read. memory_write named a source_id that is not one of the credential\'s scope sources (reason source_not_attested, also at publication after the operator drops it), or the scope page names readers (reason scope_page_not_shared); nothing was saved.' } : ERROR_NOTES;
   return {
     contract: 'gbrain.qm-memory-provider', version,
     transport: { protocol: 'mcp', session: 'stateless', session_header_issued: false, success_codes_in: 'structuredContent',
@@ -116,6 +118,16 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
       retries: 'never retried server-side; a write still publishing answers pending',
       committed: { content: 'Saved <N> fact(s).', structuredContent: { status: 'committed', request_id: 'uuid', fact_ids: ['string'] }, fact_ids: 'distinct; facts repeating one claim in a call share one id, and <N> counts distinct facts' },
       pending: { content: 'Accepted <N> fact(s); <M> still publishing.', structuredContent: { status: 'pending', request_id: 'uuid', fact_ids: ['string'], pending_request_ids: ['uuid'] }, poll: 'get_write_request {request_id}' },
+      ...(v2 ? { scope_write: {
+        argument: 'source_id',
+        rule: 'names one of the credential\'s scope sources (attest_sources, which the brain operator sets on the host); checked on the call and again when the write publishes, so a source the operator drops refuses queued writes; omit it to save for the person alone, exactly as without it',
+        saved_as: { page: SCOPE_PAGE_SLUG, readers: 'none: whoever holds read on the scope source, which only scope credentials may', visibility: 'world', provenance: 'qm:<actor id>; <caller provenance>' },
+        request_id: 'uuidv5(uuidv5(namespace, "member:<member>#source:<source_id>"), idempotency_key) for the first fact; later facts derive from it; without source_id the member derivation above is unchanged',
+        replay: 'per person and source: the same idempotency_key in another source is a separate write',
+        pending: 'a scope source with a repository publishes git-first through its writer and answers pending until it commits; a source without one commits to the database',
+        recall: 'read it with memory_recall source_id (read as the scope); a memory_recall without sources never reads a scope source',
+        withdrawal: 'forget and forget_fact reach only the person\'s own member page, so a scope fact is not_found remotely',
+      } } : {}),
     },
     errors: {
       shape: { isError: true, content: 'one JSON text block with top-level code, message, suggestion and optional reason and fix', structuredContent: { error: { code: 'string', message: 'string', reason: 'string?', write_error: 'string?', fix: 'object?' } } },

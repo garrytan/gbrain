@@ -21,6 +21,8 @@ export interface WriteAuthority {
   actingFor?: string[] | { system: string; external_id: string; member: string };
   /** GST-359 D: the attested operation this write serves when it differs from the stored one (memory_write as remember). */
   attestedOp?: string;
+  /** GST-1113: the scope source an attested memory_write named instead of the principal's own; publication re-checks attest_sources. */
+  attestedSource?: string;
   databaseOnlyReason?: 'subagent_sandbox' | 'disabled_by_config' | 'no_repo_configured' | 'connector_database' | 'unbound_source' | 'overwrite_restore' | 'detached';
   autoLinkTrusted?: boolean;
   restrictedNamespace?: boolean;

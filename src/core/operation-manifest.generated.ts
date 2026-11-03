@@ -6252,6 +6252,10 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "string",
         "description": "Set by the trusted system: equal to the x-qm-actor header, or omit.",
         "fullSurfaceOnly": true
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Save on this scope source's shared page (memory/scope), read by everyone who reads that source; it must be one of the credential's scope sources. Omit to save for the person alone."
       }
     },
     "scope": "write",

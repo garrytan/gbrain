@@ -259,7 +259,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
       }else if(input.operation==='archive') await tx.executeRaw(`UPDATE sources SET archived=true,archived_at=COALESCE(archived_at,now()),
         archive_expires_at=COALESCE(archive_expires_at,now()+interval '72 hours'),config=$2::text::jsonb WHERE id=$1`,[input.sourceId,JSON.stringify({...source?.config,federated:false})]);
       else if(input.operation==='restore') await tx.executeRaw(`UPDATE sources SET archived=false,archived_at=NULL,archive_expires_at=NULL,
-        config=$2::text::jsonb WHERE id=$1`,[input.sourceId,JSON.stringify({...source?.config,federated:input.refederate!==false})]);
+        config=$2::text::jsonb WHERE id=$1`,[input.sourceId,JSON.stringify({...source?.config,federated:input.refederate!==false&&source?.config?.qm_scope!==true})]);
       else if(input.operation==='rebind'&&relocated){
         // #5914 (P1.3c): the recorded root now resolves through a symlink to the new directory; the worktree keeps its id
         // and its ownership records move to the real path (reservation under the new sha256(root) name, stamp naming it).

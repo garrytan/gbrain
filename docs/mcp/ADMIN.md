@@ -246,7 +246,8 @@ what every named person may read.
 A trusted system that already knows who each person is (QM) instead holds the
 attest right: register a client-credentials client, grant it with `gbrain auth
 rescope --client <id> --attest-actor qm [--attest-ops <op,...>]` (default
-`get_write_request,memory_recall,memory_write`), and link each person's canonical id with `gbrain
+`get_write_request,memory_recall,memory_write`; `--attest-sources <scope sources>` lets `memory_write` save to a shared scope's
+`memory/scope` page, see the [QM guide](../guides/qm.md#shared-scopes-projects-channels-teams)), and link each person's canonical id with `gbrain
 access member link <member> --qm <id>` (`unlink`, `links`). Its `x-qm-actor`
 header then runs each attested operation as that member, never reading private
 pages; see [attested-actor refusals](../guides/write-refusals.md#attested-actor-refusals).

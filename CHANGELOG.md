@@ -26,6 +26,17 @@ identifiers and attribution are available in the pre-removal Git revision
 
 QM clients that read v1 keep working unchanged. A shared-scope turn should name its sources and read the v2 contract.
 
+**QM can now save a shared scope's memory (a project, channel or team) as well as each person's, and nothing else can read that scope.** `memory_write` gains `source_id`: named, the facts go to that scope source's `memory/scope` page, world-readable inside the source, still attested to the person who said them. The operator lists the scope sources on the QM credential with `gbrain auth rescope --attest-sources`, which marks each one a scope source for good. A scope source is never federated and never joins another credential's read grant, so its memory is read only by naming it from the scope credential, and a person read never sees it.
+
+| Situation | Before | Now |
+|---|---|---|
+| `memory_write` with `source_id` | refused (`unknown_param`) | saves on `memory/scope` in that source when the credential lists it in `--attest-sources`; otherwise `permission_denied` reason `source_not_attested`; the credential's own write source is `invalid_params` reason `source_is_member_source` |
+| `gbrain auth rescope --attest-sources a,b\|none` | no such flag | lists the scope sources; refuses `default`, a federated source, the own write source, a source another credential reads, ops beyond the memory tools and the private-pages grant |
+| A grant, token or registration that reads a scope source | n/a | refused (`QM scope source`), also after the scope credential is revoked |
+| `sources federate` / `sources restore` on a scope source | federates | refused / restored unfederated; a federated flag on a scope source is ignored |
+| Remote write to `memory/scope` (put_page, remember, delete_page, tags, links, timeline) | allowed like any page | refused unless it is a scope `memory_write` |
+| `memory_recall` without sources from a credential that reads a scope source | n/a | never reads the scope source |
+
 ## [0.60.555.0] - 2026-11-02
 
 **`gbrain query --limit N` without a token budget returns N rows again, a budgeted facts block takes at most N rows, the facts block never outscores the pages, and the CLI names fact rows instead of printing `undefined` (#8411).** Since the facts block went on by default (v0.60.491.0), it also ran on queries that passed no budget, because the shipped no-budget evidence plan carries an implicit 24,000-token budget. Its 22% share let up to 40 fact rows in ahead of the pages, so `--limit 3` could print more than a dozen fact rows before the 3 pages. Each block row was scored a hair above the top page, so they all showed the same score and outranked every hit, and the human CLI printed them as `[0.84xx] undefined -- …` because fact rows have no page slug.
