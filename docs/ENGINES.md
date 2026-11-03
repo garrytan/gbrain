@@ -751,26 +751,23 @@ working directory:
 
 - **Connection.** Postgres always connects on the instance-pool path. The direct (DDL/session) pool uses only
   `database.directUrl`, or the route a known pooler URL derives; `GBRAIN_DIRECT_DATABASE_URL` is never consulted.
-  Each URL must be one single-host URL that names its host, user and database (`engine_settings_invalid` otherwise;
-  multi-host failover URLs are not read), and both pools pass the
-  host, port (5432 when the URL names none), user, password and database to the driver explicitly, so `PGHOST`,
-  `PGPORT`, `PGUSER`, `PGPASSWORD` and `PGDATABASE` never pick the server or the credentials. A URL with no password
-  connects with none. The statement-description cache stays in the process instead of `<home>/cache/pg-types`
-  unless a CLI-path pool to the same database shares the process, which then shares that database's cache file. PGLite skips the
+  Each URL must be one single-host URL naming its host, user and database (`engine_settings_invalid` otherwise).
+  Both pools pass every connection field to the driver (port 5432 when unnamed; no password when the URL has none),
+  so no `PG*` variable picks the server or credentials. The statement-description cache stays in the process
+  instead of `<home>/cache/pg-types` unless a CLI-path pool to the same database shares the process. PGLite skips the
   `GBRAIN_PGLITE_SNAPSHOT` fast path.
 - **Host identity.** `hostIdFor(engine)` (`src/core/persistence/identity.ts`) answers `host.id` for the engine,
   its page transactions, its read-through views and every forwarding proxy over it. Every host-id read in
   `src/core` goes through it (or `existingHostIdFor`), except `gbrain migrate`'s engine graduation and the
   coordination-lock fallback for a caller that passes no host id; the CLI layer keeps the file identity. No
-  `host.json` is read or minted, and an embedded engine without an id refuses `engine_host_missing`. Its consumer heartbeat row records `embedded:<host-id>` in `host_json_path` and
-  `embedded` in `persistence_home`; doctor and writer status read that as "identity given at open", never as a path.
+  `host.json` is read or minted, and an embedded engine without an id refuses `engine_host_missing`. Its consumer heartbeat records `embedded:<host-id>` as
+  `host_json_path` (`embedded` as `persistence_home`), which doctor reads as identity given at open.
   For every other engine `hostIdFor` is `localHostId()`.
-- **Writer.** An unauthenticated write uses `settings.writer` for its lane, registered in
-  `persistence_local_writers` on first use (`registerLocalWriterValue`: idempotent; another credential or lane under
-  the same id refuses `permission_denied`; a revoked registration is never replaced). A writer value never widens
-  what the engine may write. Its lane is the one in the settings (a remote call needs a `stdio` writer, a local one a
-  `cli` writer), a new registration gets the default ceiling (read and write), and an existing registration keeps
-  its own ceiling. No `<brain>.<lane>.json` credential file is read or minted; without a writer for the lane the write refuses `writer_registration_required`.
+- **Writer.** An unauthenticated write uses `settings.writer` for its lane (a remote call needs a `stdio` writer, a
+  local one `cli`), registered in `persistence_local_writers` on first use with the default read/write ceiling. An
+  existing registration keeps its own ceiling, another credential or lane under the id refuses `permission_denied`,
+  and a revoked one is never replaced. No `<brain>.<lane>.json` file is read or minted; with no writer for the lane
+  the write refuses `writer_registration_required`.
 - **Embedding identity.** `initSchema()` seeds a fresh brain from `settings.embedding` (else the built-in default),
   never from the process gateway, and refuses `engine_embedding_mismatch` on a database that records another model
   or width; `gbrain migrate embeddings --status` previews a migration.
@@ -782,8 +779,8 @@ working directory:
 
 Still process-wide: the AI gateway (the model embedding calls use), `GBRAIN_*` tuning variables (pool lifetime,
 connect and session timeouts, `GBRAIN_PREPARE`, `GBRAIN_DIRECT_POOL_SIZE`, `GBRAIN_DISABLE_DIRECT_POOL`,
-`GBRAIN_RLS_SCOPE_BINDING`, the PGLite close watchdog), the driver's TLS and tuning `PG*` variables (`PGSSL` and
-similar), the connection-events audit log, the AI usage log sink, and operation-level
+`GBRAIN_RLS_SCOPE_BINDING`, the PGLite close watchdog), `PG*` TLS and tuning
+variables, the connection-events audit log, the AI usage log sink, and operation-level
 config reads (content-sanity screening, schema-pack resolution, the embedding switch on publication). None of them
 picks an engine's database, host identity, writer or embedding identity. A source with a git checkout keeps its native coordination lock under the
 process's persistence home.
