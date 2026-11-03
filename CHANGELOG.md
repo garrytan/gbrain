@@ -10,6 +10,20 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**`gbrain setup <harness> --skill-loading spring` can now give an agent a short index of gbrain's bundled skills instead of the full skill text.** Today gbrain either reaches the agent with no skill text at all, or copies every skill into the harness's native skills directory, where Claude Code lists about 87 skills on every turn and usually ignores them. With `--skill-loading spring`, setup writes a compact index (one line per skill: name and trigger) beside the brain-first block in the harness's instruction file, and the agent loads a skill's full text only when it needs it, with `<gbrain> bundled-skill <name>`. The option is off by default, and `MCP get_skill` is unchanged. In an A/B eval on real Claude Code and Codex CLIs with three frontier models (gbrain-evals#192), the index got the agent to load the right skill before acting in 29 of 36 Claude Code trials, against 15 with native skills and 0 with no skill text, and tied native on Codex at 22 of 24, for about a quarter of native's standing tokens per turn.
+
+### Itemized changes
+
+- `gbrain bundled-skill [<name>] [--asset <path>] [--json]`: prints a bundled skill's text, or a file it links, from inside the binary. It needs no brain or engine, and on a thin-client install it serves only the skills that apply there (host-only skills such as `db-repair` are refused with `skill_not_found`).
+- `--skill-loading off|spring` on `gbrain setup` (Claude Code, Codex, OpenCode, OpenClaw, Hermes, Cursor), `gbrain connect --install` and `gbrain bootstrap harness`, plus `GBRAIN_SKILL_LOADING`. The choice is recorded in `~/.gbrain/skill-loading.json`, so a re-run keeps it. `--no-instructions` and `--remove` take the index out with the brain-first block.
+- The index names the absolute launcher the install recorded. Setup refuses to write it when that launcher serves a different skill catalog or fewer skills than the index lists, and on a thin client the index lists only the skills the loader serves there.
+- Claude Code gets one narrow allow rule, `Bash(<launcher> bundled-skill:*)`, so a skill load doesn't stop for a permission prompt. Setup removes the rule on opt-out only when it added it. `gbrain setup <harness> --skills-index-only` refreshes the index after an upgrade and keeps the rule in the Claude profile the install recorded.
+- `gbrain doctor`: harness_wiring reports a stale, missing or damaged index and warns when its launcher is gone or the record cannot be read. resolver_health reads past the index block (an unterminated block hides nothing), and skill_currency no longer counts indexed skills as missing from the native directory.
+- `scripts/check-skills-embedded.sh` (in verify) proves a compiled binary serves every bundled skill file byte-identical to `skills/`.
+- Two known issues remain on the opt-in path. Concurrent installs can lose a skill-loading ledger entry (#8484, shared with the brain-first ledger), and `setup codex --no-instructions` leaves an index in `AGENTS.md` after `AGENTS.override.md` takes over (#8485).
+
 ## [0.60.558.0] - 2026-11-03
 
 **The QM guide and the admin guide now warn that the attest client belongs only on QM's personal-scope memory route.** An attested call reads as the named person, including their own private facts, and gbrain can't tell who else reads the answer. Registering that client as a model-callable MCP connector, or routing it to a shared scope (a channel, group, project, team or the org), could show one person's private facts to a whole room. Shared conversations wait for `x-qm-audience` (wave 2). Docs only: no behavior changes.
