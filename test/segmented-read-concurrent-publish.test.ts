@@ -147,6 +147,9 @@ describe('GBRA-287: segmented reads across a concurrent publish', () => {
     const snapshot = await engine.readPageSnapshot(SLUG, { sourceId: 'default' });
     await publish('b', 2 * 1024 * 1024, 'b', 'Live Example Renamed');
     const { unreadPageFile } = await import('../src/core/persistence/page-prepare.ts');
-    await expect(unreadPageFile(engine, snapshot!)).rejects.toThrow('changed after this read was authorized');
+    const { mayReprepare } = await import('../src/core/persistence/semantic.ts');
+    const refused = await unreadPageFile(engine, snapshot!).then(() => null, (error: { code?: string }) => error);
+    expect(refused).toMatchObject({ code: 'revision_conflict' });
+    expect(mayReprepare({ operation: 'add_tag', intent: {} } as never, refused!)).toBe(true);
   }, 120_000);
 });

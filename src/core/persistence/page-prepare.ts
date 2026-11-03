@@ -31,7 +31,7 @@ import { ContentSanityBlockError } from '../content-sanity.ts';
 import { assertPageRevision, type PageSnapshot } from '../page-state/types.ts';
 import { GIT_HOLD_OP, gitHoldFingerprint, gitHoldFix, readGitHold } from './sync-holds.ts';
 import { hostOperatorFix, recordRoute } from './held-reads.ts';
-import { heldFileMessage, sourceCheckoutMissingRefusal } from './verb-errors.ts';
+import { heldFileMessage, PAGE_CHANGED_DURING_PREPARATION_MESSAGE, sourceCheckoutMissingRefusal } from './verb-errors.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { recordedPathFromFileUri, scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
 import { engineMutationPrecondition, parseMutationPrecondition } from './preconditions.ts';
@@ -675,12 +675,18 @@ async function prepareUnreadRestore(engine: BrainEngine, row: WriteRequest, snap
  * serializePageToMarkdown's bytes for a page whose body was not read back, streamed from its segments by export's
  * serializer: measured here, produced again into the publication's staging file (large-file.ts), never concatenated.
  * A withdrawal mirror of a segmented page (effects.ts, effect-recovery.ts) renders its file the same way, with
- * `between` (its claim renewal) run after each piece each time the file is produced.
+ * `between` (its claim renewal) run after each piece each time the file is produced. The body is read at the snapshot's
+ * revision; a page that moved since refuses `revision_conflict`, as a changed staging hash does, so the request prepares again.
  */
 export async function unreadPageFile(engine: BrainEngine, snapshot: PageSnapshot, between?: () => Promise<void>): Promise<StreamedFileContent> {
   const head = serializePageToMarkdown({ ...withoutBody(snapshot.page), compiled_truth: '', timeline: '' }, snapshot.tags).slice(0, -1);
   const ledger = snapshotLedger(snapshot);
-  const produce = (exec: BrainEngine) => segmentedExportMarkdown(exec, snapshot.page, ledger, head, snapshot.revision);
+  const produce = async function* (exec: BrainEngine) {
+    try { yield* segmentedExportMarkdown(exec, snapshot.page, ledger, head, snapshot.revision); } catch (error) {
+      if (!(error instanceof OperationError) || error.canonical !== 'revision_changed') throw error;
+      throw new OperationError('revision_conflict', PAGE_CHANGED_DURING_PREPARATION_MESSAGE, 'Read its current revision and submit the updated intent with a new request_id.');
+    }
+  };
   return StreamedFileContent.measure(engine, !between ? produce : async function* (exec) { for await (const piece of produce(exec)) { yield piece; await between(); } });
 }
 
