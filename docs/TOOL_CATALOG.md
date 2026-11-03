@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 164 tools across 25 areas. **Starter** marks membership in the ~40-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 166 tools across 26 areas. **Starter** marks membership in the ~42-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -61,7 +61,7 @@ Every non-localOnly operation on the MCP surface: 164 tools across 25 areas. **S
 |---|---|---|---|---|
 | `entity_identity_list` | List cross-source entity identity groups and their member pages. | read |  |  |
 | `extract_entities` | Extract entity names (people, companies) from text and create/update their brain stub pages. | write |  |  |
-| `extraction_pending` | List unverified auto-extracted entity stubs awaiting owner review (the quarantine lane from extract_entities). | read |  |  |
+| `extraction_pending` | List what waits for review: unverified auto-extracted entity stubs (pending; promote or reject them with extraction_review), facts saved without an entity (unattributed; relink each with remember entity + replaces, never forget first), and, when include names it, recently created entity pages whose name is one edit or one acronym letter from another entity (possible_duplicates; flag only, never merged). | read |  |  |
 
 ## facts
 
@@ -167,6 +167,13 @@ Every non-localOnly operation on the MCP surface: 164 tools across 25 areas. **S
 | `ontology_dimensions` | Life Chronicle meta-ontology: which dimensions the brain tracks across entities, with entity + observation counts. | read |  |  |
 | `ontology_get` | Life Chronicle: the current resolved per-entity ontology (dimension → value) at `asof` (default now), with provenance + confidence + validity. | read |  |  |
 | `ontology_propose` | Life Chronicle: record one ontology observation (entity has dimension=value), sourced + confidence-weighted + bi-temporal. | write |  |  |
+
+## other
+
+| Tool | Description | Scope | Starter | Gate |
+|---|---|---|---|---|
+| `ingest` | Save a pasted document as a source page, proposed pages for new entities and facts on the entities it names, all planned and checked before any write. | write | yes |  |
+| `ingest_undo` | Undo one ingest attempt. | write | yes |  |
 
 ## pages
 

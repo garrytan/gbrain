@@ -31,6 +31,14 @@
           "cliHintsHidden": false,
           "op": "forget"
         },
+        "ingest": {
+          "cliHintsHidden": true,
+          "op": "ingest"
+        },
+        "ingest-undo": {
+          "cliHintsHidden": true,
+          "op": "ingest_undo"
+        },
         "orphans": {
           "cliHintsHidden": true,
           "op": "find_orphans"
@@ -73,6 +81,9 @@
         "diag",
         "edge-proposals",
         "feedback",
+        "ingest",
+        "ingest-show",
+        "ingest-undo",
         "questions",
         "trust",
         "watch"
@@ -154,6 +165,9 @@
         "graph-query",
         "hook",
         "import",
+        "ingest",
+        "ingest-show",
+        "ingest-undo",
         "init",
         "integrations",
         "integrity",
@@ -270,6 +284,9 @@
         "google",
         "graph-query",
         "hook",
+        "ingest",
+        "ingest-show",
+        "ingest-undo",
         "init",
         "integrations",
         "integrity",
@@ -401,6 +418,9 @@
         "facts",
         "feedback",
         "files",
+        "ingest",
+        "ingest-show",
+        "ingest-undo",
         "integrity",
         "migrate",
         "orphans",

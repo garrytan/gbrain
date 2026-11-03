@@ -452,3 +452,5 @@ test/page-embedding-lease.serial.test.ts	global-state	global-state: process-wide
 test/migrate-search-path-best-effort.serial.test.ts	R2	R2: mock.module(v277 migration module) replaces modules for every file in the process
 test/agent-session-speaker-8064.serial.test.ts	R1	R1: sets GBRAIN_HOME and GBRAIN_SESSION_AGENT and clears DATABASE_URL and the hook env on process.env
 test/launcher-lanes-bunfig.serial.test.ts	global-state	global-state: spawns gbrain serve subprocesses against one shared PGLite brain and its data-dir lock; withEnv scopes HOME, GBRAIN_HOME and CODEX_HOME around the bootstrap and setup writers
+test/extraction-review-door.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME) around real git subprocesses against tmp repos for the page-door review decisions
+test/ingest.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME) around real git subprocesses; also swaps the process-wide chat transport stub (__setChatTransportForTests)

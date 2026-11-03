@@ -107,4 +107,16 @@ d('extraction quarantine lane (live Postgres)', () => {
     expect(rej.results[0].status).toBe('rejected');
     expect(await engine.getPage('people/pg-reject')).toBeNull();
   });
+  test('review lists (#2942/#2947): unattributed world-only for remote, possible_duplicates flags a near name', async () => {
+    await engine.executeRaw(`INSERT INTO facts (fact, source, source_id, visibility) VALUES ('pg world claim', 'fixture', 'default', 'world'), ('pg private claim', 'fixture', 'default', 'private')`);
+    await engine.putPage('companies/pg-acme', { title: 'PGACME', type: 'company', compiled_truth: '# PGACME', timeline: '', frontmatter: {} });
+    await engine.putPage('companies/pg-acmx', { title: 'PGACMX', type: 'company', compiled_truth: '# PGACMX', timeline: '', frontmatter: {} });
+    const out = await operationsByName['extraction_pending']!.handler(ctx(), { include: ['unattributed', 'possible_duplicates'] }) as Record<string, any>;
+    const facts = out.unattributed.rows.map((r: any) => r.fact);
+    expect(facts).toContain('pg world claim');
+    expect(facts).not.toContain('pg private claim');
+    const flagged = out.possible_duplicates.rows.flatMap((r: any) => [r.slug, ...r.near.map((n: any) => n.slug)]);
+    expect(flagged).toContain('companies/pg-acme');
+    expect(flagged).toContain('companies/pg-acmx');
+  });
 });

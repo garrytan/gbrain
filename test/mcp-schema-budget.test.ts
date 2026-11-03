@@ -63,14 +63,14 @@ import { stdioVisibleTools } from '../src/mcp/server.ts';
 import { buildMcpInstructions, GBRAIN_MCP_INSTRUCTIONS } from '../src/mcp/instructions.ts';
 import { cl100kAvailable, estimateTokens } from '../src/core/chunkers/token-estimate.ts';
 
-const SERVED_STARTER_MAX_CHARS = 18_420; // GBRA-217: +120 for get_page `as_of` on starter (decision 9: valid-time reads for delegating agents; `reason` moved to the full surface to pay part of it); GST-927: +100 for get_page's one-window-selector rule (GPT-6.1 Sol sent lines, bytes and around_chunk_id together on 436 of 607 recorded calls); get_page's own text paid 3
+const SERVED_STARTER_MAX_CHARS = 19_863; // GBRA-217: +120 for get_page `as_of` on starter (decision 9: valid-time reads for delegating agents; `reason` moved to the full surface to pay part of it); GST-927: +100 for get_page's one-window-selector rule (GPT-6.1 Sol sent lines, bytes and around_chunk_id together on 436 of 607 recorded calls); get_page's own text paid 3; GBRA-215 L3: +1,443 for ingest and ingest_undo joining starter (the approved starter listing, row ingest_starter_listing), after their descriptions and parameter text were trimmed (ingest 944, ingest_undo 573 JSON characters); measured 19,539, headroom 204 as on master (18,096)
 /** Headroom the served starter list must keep under the ceiling (wave 16: 24,998 of 25,000 left 2 characters; 200 is what the wave reaches without touching text other threads own, raised to 300 once the entity card and query/search trims land). */
 const SERVED_STARTER_MIN_HEADROOM = 200;
-const SERVED_STARTER_MAX_TOKENS = 4_300;
+const SERVED_STARTER_MAX_TOKENS = 4_609; // GBRA-215 L3: +309 for ingest and ingest_undo joining starter (the approved starter listing, row ingest_starter_listing), after their descriptions and parameter text were trimmed (ingest 944, ingest_undo 573 JSON characters); measured 4,432 (4,123 without them)
 /** The whole tools/list JSON, annotations included (25,735 measured at v0.60.46.0; traverse_graph's `hops` is full-surface-only, 25,941 measured; 26,402 once mute_notice, the dismissal for the coaching notices starter sessions receive, joined starter; 26,671 with #6007's put_page wait_ms param and write guidance, which carry the put_pages hint and the receipt poll rule starter agents need; 26,679 with delta's opaque `cursor` param, paid for by trimming delta's own descriptions, model-visible 24,985; 26,692 with recall's `question` param, paid for by trimming recall's own parameter text, model-visible 24,998; 24,996 after the #6446 merge, recall's grep text trimmed again). */
-const SERVED_STARTER_MAX_JSON_CHARS = 20_000; // GBRA-156: 19,431 measured; GST-927: +100 for get_page's one-window-selector rule; GBRA-217 get_page as_of: +100 (19,905 measured at the lane D merge)
+const SERVED_STARTER_MAX_JSON_CHARS = 21_517; // GBRA-156: 19,431 measured; GST-927: +100 for get_page's one-window-selector rule; GBRA-217 get_page as_of: +100 (19,905 measured at the lane D merge); GBRA-215 L3: +1,517 for ingest and ingest_undo joining starter (the approved starter listing, row ingest_starter_listing), after their descriptions and parameter text were trimmed (ingest 944, ingest_undo 573 JSON characters); measured 21,307
 /** GBRA-156: the UTF-8 bytes of the served starter tools/list result (`{"tools":[...]}`, annotations included) that harnesses re-fetch every turn. */
-const SERVED_STARTER_MAX_RESULT_BYTES = 20_000; // 26,546 before GBRA-156, 19,489 after; GST-927: +100 for get_page's one-window-selector rule; GBRA-217 get_page as_of: +100 (19,963 measured at the lane D merge)
+const SERVED_STARTER_MAX_RESULT_BYTES = 21_519; // 26,546 before GBRA-156, 19,489 after; GST-927: +100 for get_page's one-window-selector rule; GBRA-217 get_page as_of: +100 (19,963 measured at the lane D merge); GBRA-215 L3: +1,519 for ingest and ingest_undo joining starter (the approved starter listing, row ingest_starter_listing), after their descriptions and parameter text were trimmed (ingest 944, ingest_undo 573 JSON characters); measured 21,367
 /** 4,042 at the cost wave + 586 for the operator contract's error protocol, notice prefix and memory loop (F1); no schema guidance moved here. */
 const INSTRUCTIONS_MAX_CHARS = 5_108; // #6007: +240 for the issue-required write guidance (put_pages, wait_ms); Cat 40 Hard round 4: +107 for batching lists of names (entity names, keyword OR) and sending independent calls together; d5b: +70 for the brief naming the fields compact `entity names` rows carry (the maximal rendering, record types enrolled; +39 at the default) instead of a `referenced_by` walk batch mode cannot do; F4: +63 for instruction 7's governing rule (the record whose terms are in effect on the date asked about governs; page dates are named as page dates), 74 characters longer than the "prefer the newest governing source" sentence it replaces, 11 paid by cutting "the best-ranked excerpts" to "top excerpts" in the same clause
 const DESCRIPTION_HARD_CAP = 1_200;
@@ -102,12 +102,14 @@ const PARAM_DESCRIPTION_HARD_CAP = 200;
  * `Name lists: entity names.` stays, so the growth is paid by other tools.
  * get_page 600 -> 700 (GBRA-217, lane D merge): the starter `as_of` param (the edition in force on a date, and the rule
  * that a reply without valid_time is the current page) on top of GST-927's one-window-selector rule, measured at 700.
+ * ingest 970 and ingest_undo 600 (GBRA-215 L3, the approved starter listing): measured at 944 and 573 after
+ * their descriptions and parameter text were trimmed, plus about 25 as GBRA-156 sized its rows.
  */
 const TOOL_BUDGETS: Record<string, number> = {
   add_timeline_entry: 730, cancel_job: 270, cancel_write_request: 350, capture: 710, context_pack: 500,
   delete_skill: 810, delta: 580, edit_page: 1040, entity: 550, find_anomalies: 400, forget: 530, get_agent_job: 270,
   get_backlinks: 710, get_ingest_log: 280, get_page: 700, get_recent_salience: 450, get_skill: 490,
-  get_skill_asset: 530, get_write_request: 360, join_brain: 560, leave_brain: 540, list_brain_skillpack: 230,
+  get_skill_asset: 530, get_write_request: 360, ingest: 970, ingest_undo: 600, join_brain: 560, leave_brain: 540, list_brain_skillpack: 230,
   list_link_sources: 220, list_pages: 850, list_skills: 400, list_write_requests: 370, put_page: 1090,
   mute_notice: 420, put_skill: 1420, query: 1700, recall: 840, remember: 940, request_tools: 530, resolve_slugs: 410, search: 1420,
   submit_agent: 420, sync_brain_skills: 770, synthesize: 510, traverse_graph: 600, whoami: 230,
@@ -163,10 +165,10 @@ async function served(publishSkills: boolean): Promise<Operation[]> {
 }
 
 describe('served starter tool list (Cat 40 configuration)', () => {
-  test('publish_skills on (the fresh-init default): 35 tools within the character ceiling', async () => {
+  test('publish_skills on (the fresh-init default): 37 tools within the character ceiling', async () => {
     const ops = await served(true);
     expect(ops.map(o => o.name)).toContain('get_skill');
-    expect(ops.length).toBe(35);
+    expect(ops.length).toBe(37); // GBRA-215 L3: +2, ingest and ingest_undo
     expect(size(ops)).toBeLessThanOrEqual(SERVED_STARTER_MAX_CHARS);
     expect(json(ops)).toBeLessThanOrEqual(SERVED_STARTER_MAX_JSON_CHARS);
   });

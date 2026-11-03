@@ -5536,17 +5536,40 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "List unverified auto-extracted entity stubs awaiting owner review (the quarantine lane from extract_entities). Promote or reject them with extraction_review.",
+    "description": "List what waits for review: unverified auto-extracted entity stubs (pending; promote or reject them with extraction_review), facts saved without an entity (unattributed; relink each with remember entity + replaces, never forget first), and, when include names it, recently created entity pages whose name is one edit or one acronym letter from another entity (possible_duplicates; flag only, never merged).",
     "params": {
       "limit": {
         "type": "number",
         "required": false,
-        "description": "Max rows (default 100, cap 500)."
+        "description": "Max rows per list (default 100 for pending, 50 for the others; cap 500)."
       },
       "offset": {
         "type": "number",
         "required": false,
-        "description": "Pagination offset."
+        "description": "Pagination offset for pending."
+      },
+      "include": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "required": false,
+        "description": "Lists to return: pending, unattributed, possible_duplicates. Default pending and unattributed."
+      },
+      "unattributed_offset": {
+        "type": "number",
+        "required": false,
+        "description": "Pagination offset for unattributed (its next_offset)."
+      },
+      "possible_duplicates_cursor": {
+        "type": "string",
+        "required": false,
+        "description": "Continuation for possible_duplicates (its next_cursor)."
+      },
+      "since_days": {
+        "type": "number",
+        "required": false,
+        "description": "possible_duplicates: entity pages created in the last N days (default 30)."
       }
     },
     "scope": "read",
@@ -5559,12 +5582,12 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "extraction_review",
     "idempotent": false,
     "outputRedaction": "no_stored_text",
-    "description": "Promote or reject unverified auto-extracted entity stubs (batch). Promote flips `status` to verified (provenance kept for audit); reject soft-deletes the stub. Owner-only: this op is refused for any non-local caller. (The markers are ordinary frontmatter — the boundary against rewriting them wholesale is put_page write authz, same as for any page.)",
+    "description": "Decide on review rows (batch). promote flips an unverified auto-extracted stub's `status` to verified (provenance kept for audit); reject soft-deletes the stub; distinct records that each of slugs is a different entity from of (`distinct_from` frontmatter), so possible_duplicates stops pairing them. Every decision writes through the page door: Git first on a source with a repository, the database on a repo-less source. Owner-only: this op is refused for any non-local caller. (The markers are ordinary frontmatter — the boundary against rewriting them wholesale is put_page write authz, same as for any page.)",
     "params": {
       "action": {
         "type": "string",
         "required": true,
-        "description": "'promote' or 'reject'."
+        "description": "'promote', 'reject' or 'distinct'."
       },
       "slugs": {
         "type": "array",
@@ -5572,7 +5595,12 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "items": {
           "type": "string"
         },
-        "description": "Stub slugs to act on (batch)."
+        "description": "Slugs to act on (batch)."
+      },
+      "of": {
+        "type": "string",
+        "required": false,
+        "description": "distinct only: the existing entity page each of slugs is not the same as."
       }
     },
     "mutating": true,
@@ -5594,6 +5622,115 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       ]
     },
     "area": "entities"
+  },
+  {
+    "name": "ingest",
+    "description": "Save a pasted document as a source page, proposed pages for new entities and facts on the entities it names, all planned and checked before any write. Returns a report: status per item, coverage, spend, approve and undo actions. attempt_id alone reads a report; with resume: true continues it.",
+    "params": {
+      "content": {
+        "type": "string",
+        "description": "Document text (max 200,000 chars)."
+      },
+      "attempt_id": {
+        "type": "string",
+        "description": "From a report: alone reads it; with resume continues it."
+      },
+      "resume": {
+        "type": "boolean",
+        "description": "Continue an incomplete attempt (same content)."
+      },
+      "type": {
+        "type": "string",
+        "description": "Source page type (default note)."
+      },
+      "title": {
+        "type": "string",
+        "description": "Source page title."
+      },
+      "slug": {
+        "type": "string",
+        "description": "Slug of the source page (default inbox/ingest-<hash>).",
+        "fullSurfaceOnly": true
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Source to write (default: your source).",
+        "fullSurfaceOnly": true
+      },
+      "valid_from": {
+        "type": "string",
+        "description": "When the document's facts became true (ISO date).",
+        "fullSurfaceOnly": true
+      },
+      "visibility": {
+        "type": "string",
+        "enum": [
+          "world",
+          "private"
+        ],
+        "description": "world (default) or private (local CLI).",
+        "fullSurfaceOnly": true
+      },
+      "no_facts": {
+        "type": "boolean",
+        "description": "Save the document and its entity pages without facts.",
+        "fullSurfaceOnly": true
+      },
+      "trusted_extraction": {
+        "type": "boolean",
+        "description": "Local owner only: create model-typed new entities as real pages instead of proposed.",
+        "fullSurfaceOnly": true
+      },
+      "max_usd": {
+        "type": "number",
+        "description": "Spend cap for this ingest in USD (default ingest.max_usd, 0.50).",
+        "fullSurfaceOnly": true
+      },
+      "request_id": {
+        "type": "string",
+        "description": "Idempotency key: a repeat with the same key returns the same attempt.",
+        "fullSurfaceOnly": true
+      },
+      "dry_run": {
+        "type": "boolean",
+        "description": "Preview candidates, windows and cost; no provider call or write."
+      }
+    },
+    "outputRedaction": "retrieval",
+    "writeInference": "explicit_llm",
+    "mutating": true,
+    "scope": "write",
+    "cliHints": {
+      "name": "ingest",
+      "hidden": true
+    }
+  },
+  {
+    "name": "ingest_undo",
+    "description": "Undo one ingest attempt. Without yes: a preview and plan_hash, no write. With yes and expect: <plan_hash>: strikes its facts and soft-deletes its pages, skipping anything edited, promoted, referenced or supported since.",
+    "params": {
+      "attempt_id": {
+        "type": "string",
+        "required": true,
+        "description": "From the ingest report."
+      },
+      "yes": {
+        "type": "boolean",
+        "description": "Apply (needs expect)."
+      },
+      "expect": {
+        "type": "string",
+        "description": "plan_hash from the preview."
+      }
+    },
+    "outputRedaction": "no_stored_text",
+    "writeInference": "none",
+    "mutating": true,
+    "scope": "write",
+    "cliHints": {
+      "name": "ingest-undo",
+      "hidden": true
+    }
   },
   {
     "name": "entity_identity_link",
