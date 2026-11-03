@@ -7,11 +7,14 @@ import type { BrainEngine } from './engine.ts';
 import type { EngineConfig } from './types.ts';
 import { opError } from './ops/contract.ts';
 import { createEngine } from './engine-factory.ts';
-import { connectionUrlProblem, markEmbeddedEngine, releaseEmbeddedEngine, type EngineSettings } from './embedded-engine.ts';
+import { connectionUrlProblem, markEmbeddedEngine, releaseEmbeddedEngine, type EngineAISettings, type EngineSettings } from './embedded-engine.ts';
 import { assertLocalWriterValue, setEngineHostId } from './persistence/identity.ts';
+import { engineProviderProblem, recipeKeyEnv, sharedProviderEnvConflict } from './ai/engine-gateway.ts';
+import { getRecipe } from './ai/recipes/index.ts';
 
-export type { EngineSettings, EmbeddedSettingsView } from './embedded-engine.ts';
+export type { EngineAISettings, EngineSettings, EmbeddedSettingsView } from './embedded-engine.ts';
 export { embeddedSettings, isEmbeddedEngine, processHasEmbeddedEngines } from './embedded-engine.ts';
+export { withEngineScope } from './engine-scope.ts';
 export { hostIdFor } from './persistence/identity.ts';
 
 /** Connections a Postgres engine opened from settings may open when `pool.max` is not given. */
@@ -22,6 +25,35 @@ const closedError = () => opError('engine_closed', 'This engine was disconnected
 const invalid = (setting: string, why: string) => opError('engine_settings_invalid', `The ${setting} setting is invalid.`, `${why} Nothing was opened.`);
 const text = (value: unknown) => typeof value === 'string' && value.length > 0;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const AI_MODELS = ['chat', 'expansion', 'reranker'];
+
+/** Names the setting that is wrong, never a key: a key's value is never part of a refusal. */
+function checkAI(ai: EngineAISettings): void {
+  if (!ai || typeof ai !== 'object' || !ai.providers || typeof ai.providers !== 'object') {
+    throw invalid('ai', 'ai is { providers: { <provider id>: { apiKey?, baseUrl? } }, models?: { chat?, expansion?, reranker? } }.');
+  }
+  for (const [id, provider] of Object.entries(ai.providers)) {
+    const problem = engineProviderProblem(id);
+    if (problem) throw invalid(`ai.providers.${id}`, problem);
+    const fields = provider && typeof provider === 'object' ? Object.keys(provider) : null;
+    const extra = fields?.find(field => field !== 'apiKey' && field !== 'baseUrl');
+    if (!fields || extra) throw invalid(`ai.providers.${id}${extra ? `.${extra}` : ''}`, 'Each provider is { apiKey?, baseUrl? }.');
+    if (provider.apiKey !== undefined && !text(provider.apiKey)) throw invalid(`ai.providers.${id}.apiKey`, 'apiKey is a non-empty string when given.');
+    if (provider.apiKey !== undefined && !recipeKeyEnv(getRecipe(id)!)) throw invalid(`ai.providers.${id}.apiKey`, `${id} takes no API key.`);
+    if (provider.apiKey === undefined && provider.baseUrl === undefined && getRecipe(id)!.auth_env?.required.length) {
+      throw invalid(`ai.providers.${id}.apiKey`, `${id} needs an apiKey, or a baseUrl for a server that takes none.`);
+    }
+    if (provider.baseUrl !== undefined && !(text(provider.baseUrl) && /^https?:\/\/[^\s/]+/i.test(provider.baseUrl))) {
+      throw invalid(`ai.providers.${id}.baseUrl`, 'baseUrl is an http or https URL when given.');
+    }
+  }
+  const conflict = sharedProviderEnvConflict(ai.providers);
+  if (conflict) throw invalid('ai.providers', conflict);
+  for (const [name, model] of Object.entries(ai.models ?? {})) {
+    if (!AI_MODELS.includes(name)) throw invalid(`ai.models.${name}`, 'ai.models takes chat, expansion and reranker; the embedding model is settings.embedding.');
+    if (!text(model) || !model.includes(':')) throw invalid(`ai.models.${name}`, 'Each model is a provider:model string.');
+  }
+}
 
 function checkSettings(settings: EngineSettings): void {
   if (settings.engine !== 'postgres' && settings.engine !== 'pglite') throw invalid('engine', "engine is 'postgres' or 'pglite'.");
@@ -51,18 +83,20 @@ function checkSettings(settings: EngineSettings): void {
   if (embedding !== undefined && !(text(embedding.model) && Number.isInteger(embedding.dimensions) && embedding.dimensions > 0)) {
     throw invalid('embedding', 'embedding is { model, dimensions } with a model name and a positive whole width.');
   }
+  if (settings.ai !== undefined) checkAI(settings.ai);
 }
 
 /**
  * Creates and connects an engine from `settings` alone. It reads no config file, no environment variable, no home
- * directory and no working directory for its database, pool, direct URL, host identity, writer or embedding identity.
+ * directory and no working directory for its database, pool, direct URL, host identity, writer, embedding identity or
+ * AI gateway: its embed, chat and rerank calls reach only `settings.ai` (ai/engine-gateway.ts).
  * A Postgres engine always gets its own pool (never the module singleton in db.ts), and its direct pool is only
  * `database.directUrl` (or the one a known pooler URL derives); `GBRAIN_DIRECT_DATABASE_URL` is never consulted.
  *
  * A connect is not a migration: the host runs `initSchema()` (or the migrations) itself. On an existing database
  * `initSchema()` refuses `engine_embedding_mismatch` when `settings.embedding` names another model or width.
- * `disconnect()` closes it for good and drops the settings it held, even while a reconnect is in flight; a later
- * `connect()` or `reconnect()` refuses `engine_closed`.
+ * `disconnect()` closes it for good and drops the settings it held (its provider keys stay only to scrub a call still in
+ * flight), even while a reconnect is in flight; a later `connect()` or `reconnect()` refuses `engine_closed`.
  */
 export async function openEngine(settings: EngineSettings): Promise<BrainEngine> {
   if (settings?.embedded_core !== true) {
@@ -78,6 +112,10 @@ export async function openEngine(settings: EngineSettings): Promise<BrainEngine>
     ...(settings.writer ? { writer: { ...settings.writer } } : {}),
     ...(settings.embedding ? { embedding: { ...settings.embedding } } : {}),
     ...(settings.pglite ? { pglite: { ...settings.pglite } } : {}),
+    ...(settings.ai ? { ai: {
+      providers: Object.fromEntries(Object.entries(settings.ai.providers).map(([id, provider]) => [id, { ...provider }])),
+      ...(settings.ai.models ? { models: { ...settings.ai.models } } : {}),
+    } } : {}),
   };
   const config: EngineConfig = {
     engine: held.engine,

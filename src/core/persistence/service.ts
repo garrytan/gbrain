@@ -8,6 +8,7 @@ import { RESIDENT_CONSUMER_KINDS, startConsumerHeartbeat, type ConsumerHeartbeat
 import { enginePoolStats } from '../postgres-engine/pool-stats.ts';
 import { claimOwnerKind, isOneShotCommand } from './claim-phase.ts';
 import { noteDirectPoolLease } from '../direct-pool-profile.ts';
+import { withEngineScope } from '../engine-scope.ts';
 import { preparePageMutation } from './page-prepare.ts';
 import { prepareSemanticPageMutation } from './semantic-pages.ts';
 import { getWriteRequestById, getWriteRequestProgress, receiptFor, type WriteRequestProgress } from './journal.ts';
@@ -151,7 +152,8 @@ export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConf
     // An explicit switch to another datastore must not inherit the old brain's config.
     if (sameDatastore) startPersistenceConsumer(engine, config);
   });
-  consumer.start();
+  // The consumer's publications (embeddings included) run in its engine's scope (engine-scope.ts).
+  withEngineScope(engine, () => consumer.start());
   return consumer;
 }
 export async function stopPersistenceConsumer(engine: BrainEngine): Promise<void> {

@@ -31,6 +31,7 @@ import { privateReadableSources, currentCallerAccess } from './private-visibilit
 import { loadConfigSnapshot, type BulkConfigReader } from '../config-snapshot.ts';
 import { pickDecideConfig } from '../ai/decide/config.ts';
 import { getRecipe } from '../ai/recipes/index.ts';
+import { engineRerankerModel } from '../ai/engine-gateway.ts';
 // #3657 seam: the runtime/mode-bundle reranker default has ONE code home
 // (ai/defaults.ts — a leaf module, no SDK loads). The three bundles below
 // resolve through DEFAULT_RERANKER_MODEL (voyage:rerank-3-lite, gbrain-evals #148).
@@ -879,7 +880,7 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     return bundle[key];
   };
 
-  const resolvedRerankerModel = pick('reranker_model');
+  const resolvedRerankerModel = pc.reranker_model ?? ov.reranker_model ?? engineRerankerModel() ?? bundle.reranker_model;
   const pickRerankerTimeoutMs = (): number => {
     if (pc.reranker_timeout_ms !== undefined) return pc.reranker_timeout_ms;
     if (ov.reranker_timeout_ms !== undefined) return ov.reranker_timeout_ms;
