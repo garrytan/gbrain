@@ -159,6 +159,22 @@ test('a page HEAD no longer holds, or whose file another sync hold withholds, is
   expect(await readGitHold(engine, f.sourceId, source!.incarnation, FILE)).toMatchObject({ code: 'write_gate_rejected' });
 }), 300_000);
 
+test('a file the next sync would hold, or one that changes who can read the page, is listed held and never written', async () => withEnv(env, async () => {
+  const f = await managedFixture();
+  await damage(f.sourceId, f.pageId);
+  const scope = await resolveRepairScope(engine, f.sourceId);
+  const run = (apply: boolean, expect?: string) => repairRunner(engine, { apply, logger }).then(runner => runner.run('segmented-tiling', scope, { explicit: true, sourceFlag: f.sourceId, ...(expect ? { expect } : {}) }));
+  const [damaged] = await untiledSegmentedPages(engine, { sourceIds: [f.sourceId] });
+  for (const [frontmatter, detail] of [['slug: people/other-example', 'the next sync would hold the file ('], ['readable_by: [alice-example]', 'changes who can read the page']] as const) {
+    writeFileSync(join(f.root, FILE), person(1260 * 1024).replace('type: person\n', `type: person\n${frontmatter}\n`));
+    commit(f.root);
+    const preview = await run(false);
+    expect(preview.listing).toEqual([expect.objectContaining({ class: 'held', detail: expect.stringContaining(detail) })]);
+    expect(await run(true, preview.preview_hash!)).toMatchObject({ applied: 0 });
+    expect(await untiledSegmentedPages(engine, { sourceIds: [f.sourceId] })).toEqual([damaged!]);
+  }
+}), 300_000);
+
 test('the apply refuses preview_changed when HEAD moved after the preview, and writes nothing', async () => withEnv(env, async () => {
   const f = await managedFixture();
   await damage(f.sourceId, f.pageId);

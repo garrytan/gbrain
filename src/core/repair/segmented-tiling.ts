@@ -10,7 +10,8 @@
  * the sync hold on it. The hash binds the pages, their revisions and generations, the blobs and the holds. A page with no
  * file, a file HEAD does not hold or one over pages.max_bytes is listed held and never written, as is one another sync
  * hold withholds (any but the unreadable-body `page_write_failed` hold) or one the next sync's import screen would hold
- * (purged page content, the write gate, private visibility, a fence it refuses). A source without a Git
+ * (purged page content, the write gate, private visibility, a fence it refuses), one that changes who can read the page
+ * (the apply keeps the stored frontmatter) or one over the 24 MiB the screen reads whole. A source without a Git
  * checkout (a repo-less brain) refuses: this repair republishes the copy Git holds, and the database has no other.
  *
  * `--apply --expect <hash>` re-checks every page (`preview_changed`), then per page, in one transaction under the page's
@@ -45,6 +46,8 @@ import { applySegmentedBody, sealSegmentedPage, segmentedLivePage } from '../per
 import { withPageTierKept } from '../trust/fence-append.ts';
 import { prepareSegmentedBody, stringBodyFlags, stringRegion } from '../page-body/ingest.ts';
 import { readPageBodyPolicy } from '../page-body/limits.ts';
+import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
+import { assertPreparedFactWithdrawals } from '../facts/withdrawal.ts';
 import { buildSegmentedProjection } from '../page-body/projection.ts';
 import { untiledSegmentedPages, type UntiledPage } from '../page-body/body-tiling.ts';
 import { isQuarantined } from '../quarantine.ts';
@@ -100,6 +103,7 @@ function headBlob(root: string, path: string, maxBytes: number): { head: string;
   if (!oid || gitText(root, ['cat-file', '-t', oid]) !== 'blob') return { held: `HEAD (${head.slice(0, 12)}) holds no file at ${path}` };
   const bytes = Number(gitText(root, ['cat-file', '-s', oid]));
   if (bytes > maxBytes) return { held: `the file at HEAD is ${bytes} bytes, over pages.max_bytes (${maxBytes})` };
+  if (bytes > PAGE_MAX_BYTES) return { held: `the file at HEAD is ${bytes} bytes, over the ${PAGE_MAX_BYTES} bytes this repair screens whole as the next sync's import would` };
   return { head, oid, bytes };
 }
 
@@ -137,6 +141,11 @@ async function stageable(engine: BrainEngine, page: { source_id: string; slug: s
     snapshot: await engine.readPageSnapshot(page.slug, { sourceId: page.source_id }) });
   if (screen.status === 'refused') return { held: `the next sync would hold the file (${screen.refusal.code}): ${screen.refusal.message}` };
   const parsed = screen.status === 'importable' && screen.parsed ? screen.parsed : parseMarkdown(content, `${page.slug}.md`);
+  const [stored] = await engine.executeRaw<{ frontmatter: Record<string, unknown> | null }>('SELECT frontmatter FROM pages WHERE source_id=$1 AND slug=$2', [page.source_id, page.slug]);
+  const access = (fm: Record<string, unknown> | null | undefined) => JSON.stringify([fm?.visibility ?? null, fm?.readable_by ?? null]);
+  if (access(parsed.frontmatter) !== access(stored?.frontmatter)) {
+    return { held: 'the file changes who can read the page (visibility or readable_by), and this repair republishes the body under the stored frontmatter' };
+  }
   const body = screen.status === 'importable' && screen.fences ? screen.fences.after : { compiled_truth: parsed.compiled_truth, timeline: parsed.timeline ?? '' };
   return { hold, truth: (await preserveWithdrawnFenceRows(engine, page.source_id, body.compiled_truth, page.slug)).trim(),
     timeline: (await preserveWithdrawnFenceRows(engine, page.source_id, body.timeline ?? '', page.slug)).trim() };
@@ -164,11 +173,18 @@ async function survey(engine: BrainEngine, selection: Selection): Promise<{ page
   return { pages: pages.sort((a, b) => a.page_id - b.page_id), listing, held };
 }
 
-/** Republishes one page's body (`stageable`'s) in the caller's transaction and clears `hold`; false when the page changed since the preview. */
-async function republish(tx: BrainEngine, page: HealPage, body: { truth: string; timeline: string }, hold: GitHoldRecord | null): Promise<{ generation: number; unsealed: boolean; hold_cleared: boolean } | false> {
+/**
+ * Republishes one page's body (`stageable`'s) in the caller's transaction and clears the sync hold the preview saw (a newer
+ * one stays for the requested re-screen); false when the page, or a fact withdrawal it carries, changed since the preview.
+ */
+async function republish(tx: BrainEngine, page: HealPage, body: { truth: string; timeline: string }): Promise<{ generation: number; unsealed: boolean; hold_cleared: boolean } | false> {
   await tx.lockPageKeys([{ sourceId: page.source_id, slug: page.slug }]);
   const [now] = await untiledSegmentedPages(tx, { sourceIds: [page.source_id], slugs: [page.slug] });
   if (!now || now.page_id !== page.page_id || now.revision !== page.revision || now.body_generation !== page.body_generation) return false;
+  try { await assertPreparedFactWithdrawals(tx, page.source_id, body.truth, body.timeline, page.slug); } catch (error) {
+    if (error instanceof OperationError && error.code === 'revision_conflict') return false;
+    throw error;
+  }
   const [row] = await tx.executeRaw<{ title: string; type: string; page_kind: string; frontmatter: Record<string, unknown> | null; contextual_retrieval_mode: string | null;
     corpus_generation: string | null; tags: string[] }>(`SELECT p.title, p.type, p.page_kind, p.frontmatter, p.contextual_retrieval_mode, p.corpus_generation,
       COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS tags FROM pages p WHERE p.id=$1`, [page.page_id]);
@@ -187,8 +203,8 @@ async function republish(tx: BrainEngine, page: HealPage, body: { truth: string;
     pageId: page.page_id, prepared, promotion: false, retireMaxRows: flipRetireMaxRows,
     meta: { title: row!.title, type: row!.type as never, frontmatter: frontmatter as never, page_kind: row!.page_kind as never } }));
   if (applied.complete) await sealSegmentedPage(tx, page.page_id);
-  const hold_cleared = hold !== null
-    && await clearGitHold(tx, { sourceId: page.source_id, incarnation: page.incarnation, path: page.source_path, observedAt: hold.observed_at });
+  const hold_cleared = page.hold_observed_at !== null
+    && await clearGitHold(tx, { sourceId: page.source_id, incarnation: page.incarnation, path: page.source_path, observedAt: page.hold_observed_at });
   await requestGitHoldRetry(tx, page.source_id, page.incarnation, [page.source_path]);
   return { generation: prepared.newGeneration, unsealed: !applied.complete, hold_cleared };
 }
@@ -258,7 +274,7 @@ export const segmentedTilingRepair: RepairHandler = {
       const written = await ctx.engine.transaction(async tx => {
         const attribution = await maintenanceAttribution(tx);
         const write = async () => {
-          const result = await republish(tx, page, staged, staged.hold);
+          const result = await republish(tx, page, staged);
           if (!result) return null;
           const [after] = await tx.executeRaw<{ revision: string }>('SELECT knowledge_revision::text AS revision FROM pages WHERE id=$1', [page.page_id]);
           const receipt = { kind: 'segmented-tiling', hash, source_id: page.source_id, slug: page.slug, page_id: page.page_id, revision_before: page.revision,

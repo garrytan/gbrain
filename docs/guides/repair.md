@@ -448,7 +448,10 @@ is listed `held` and never written. So is a file that another sync hold
 withholds (any hold but the `page_write_failed` one a sync opens when it
 cannot read the stored body), and a file the next sync's import screen would
 hold: purged page content, a write-gate reject, private visibility it would
-not store, a fence it refuses. A source without a Git checkout, a
+not store, a fence it refuses. A file that changes who can read the page
+(`visibility` or `readable_by`) is held too, because the apply keeps the
+stored frontmatter, and so is a file over 24 MiB, the most the import screen
+reads whole. A source without a Git checkout, a
 repo-less brain included, refuses with `not_a_git_repo`: this repair
 republishes the copy Git holds, and there the database has no other copy.
 On such a brain, rewrite the page from a copy you hold (`put_page`).
@@ -459,9 +462,11 @@ page, in one transaction under the page's key lock (a coordinated maintenance
 write on a managed brain), it versions the damaged generation by reference,
 screens the blob again, publishes the body the screen's fence step and the
 purge and withdrawal overlay admit (a claim the owner purged stays out even
-when the file still carries it) as a new generation through the same flip that
+when the file still carries it; a withdrawal committed after the preview
+makes the page `changed_since_preview`) as a new generation through the same flip that
 refuses a generation that does not cover its body, keeps the page's title,
-type, frontmatter, tags and trust tier, clears the sync hold the preview saw,
+type, frontmatter, tags and trust tier, clears the sync hold the preview saw
+(a newer hold stays until the next sync re-imports the file),
 asks the next sync to screen the file again (so a file that differs from the
 stored page in anything else imports normally) and writes the page's receipt
 (`op_checkpoints` op `segmented-tiling-receipt`) and a `segmented-tiling` audit
