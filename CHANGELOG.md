@@ -23,6 +23,20 @@ identifiers and attribution are available in the pre-removal Git revision
 - File storage and AI provider settings are not engine settings yet; they stay process-wide until Wave C.
 - `test/engine-open.test.ts`, `test/engine-open-lifecycle.test.ts`, `test/engine-open-upgrade.test.ts` (a brain built by an earlier release boots identically through the CLI path and `openEngine`), `test/e2e/engine-open-postgres.test.ts`.
 
+## [0.60.558.0] - 2026-11-03
+
+**The QM guide and the admin guide now warn that the attest client belongs only on QM's personal-scope memory route.** An attested call reads as the named person, including their own private facts, and gbrain can't tell who else reads the answer. Registering that client as a model-callable MCP connector, or routing it to a shared scope (a channel, group, project, team or the org), could show one person's private facts to a whole room. Shared conversations wait for `x-qm-audience` (wave 2). Docs only: no behavior changes.
+
+## [0.60.557.0] - 2026-11-03
+
+**SkillOpt rollouts now see the same tool errors MCP callers get.** When a read tool refused or failed during a SkillOpt rollout, the model saw only the error's one-line message. MCP callers get the full error for the same call: its code, the suggestion and a runnable `fix`. So skills were tuned against a weaker error surface than real callers read. Both SkillOpt registries (the read-only rollout registry and write-capture) now hand the model the error text a read-scope HTTP MCP caller receives for the same call, and they keep `code` for callers that branch on it. A fix names only tools the rollout offers. MCP output is unchanged. Write ops keep refusing as before.
+
+### Itemized changes
+
+- `src/mcp/dispatch.ts` (`asAgentToolError`): turns a failed read into an error whose message is the MCP error text for the same call, rendered for the caller's grant (a read-scope reader when the loop has none) and the loop's own tools. An AI invocation policy stop passes through unchanged, because the tool loop rethrows it.
+- `src/core/skillopt/rollout.ts`, `src/core/skillopt/write-capture.ts`: read handlers throw that error, naming the source the read used.
+- `test/skillopt-rollout-agent-errors.test.ts`: on both registries, a two-selector refusal and a missing-page error read exactly as a read-scope MCP caller gets them, including the suggestion and the runnable fix. A policy stop passes through, and a revoked remote grant reads `permission_denied`. The four parity cases fail on master.
+
 ## [0.60.556.0] - 2026-11-02
 
 **Mounted brains stop sharing settings and search telemetry.** In a process that serves several brains, search telemetry for every brain was written into the first brain's database, and a handful of per-brain settings were read once from whichever brain asked first and then applied to all of them. Each of those caches now belongs to its engine, and each engine gets its own telemetry writer, which stops its timer when the engine disconnects and keeps its buffer for a reconnect. A process with one brain behaves exactly as before. Contributed by @bradgessler (#8454).
