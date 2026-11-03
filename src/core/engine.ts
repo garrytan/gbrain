@@ -785,6 +785,8 @@ export interface TrajectoryOpts {
  * second SQL round-trip.
  */
 export interface TrajectoryPoint {
+  /** Producer time basis + population from facts.context (trajectory-context.ts); absent = legacy. */
+  trajectory_evidence?: import('./trajectory-context.ts').TrajectoryEvidence;
   fact_id: number;
   valid_from: Date;
   metric: string | null;

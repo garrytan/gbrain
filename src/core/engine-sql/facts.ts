@@ -33,6 +33,7 @@ import { privateProvenanceFilterUnderPolicy } from '../search/private-visibility
 import { factVisibilitySql, onMemberPageSql } from '../access/member-facts.ts';
 import { storedTrustTier } from '../trust/tier.ts';
 import { ensureWellFormed } from '../text-safe.ts';
+import { parseTrajectoryEvidence } from '../trajectory-context.ts';
 
 export type EmbeddingCast = '::vector' | '::halfvec';
 
@@ -697,6 +698,7 @@ export async function findTrajectory(exec: LegacyUnscopedRead, opts: import('../
       claim_period: string | null;
       event_type: string | null;
       fact: string;
+      context: string | null;
       source_session: string | null;
       source_markdown_slug: string | null;
       embedding: string | null;
@@ -704,7 +706,7 @@ export async function findTrajectory(exec: LegacyUnscopedRead, opts: import('../
       SELECT id, valid_from,
              claim_metric, claim_value, claim_unit, claim_period,
              event_type,
-             fact, source_session, source_markdown_slug,
+             fact, context, source_session, source_markdown_slug,
              CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model')
                AND embedded_text_hash=md5(fact) THEN embedding::text END AS embedding
       FROM facts
@@ -730,6 +732,7 @@ export async function findTrajectory(exec: LegacyUnscopedRead, opts: import('../
       unit: r.claim_unit,
       period: r.claim_period,
       event_type: r.event_type,
+      trajectory_evidence: parseTrajectoryEvidence(r.context),
       text: r.fact,
       source_session: r.source_session,
       source_markdown_slug: r.source_markdown_slug,

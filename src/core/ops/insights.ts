@@ -367,6 +367,7 @@ const find_trajectory: Operation = {
       value: pt.value,
       unit: pt.unit,
       period: pt.period,
+      ...(pt.trajectory_evidence ? { trajectory_evidence: pt.trajectory_evidence } : {}),
       event_type: pt.event_type,
       text: pt.text,
       source_session: pt.source_session,

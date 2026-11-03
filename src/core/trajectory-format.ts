@@ -21,8 +21,12 @@
  *     comfortably alongside calibration + retrieval blocks.
  *   - `knowledge_update` intent annotates value-change rows with
  *     `(superseded prior)` — the explicit signal Codex flagged was
- *     missing from default RRF-ordered retrieval. Other intents skip
- *     the annotation to keep the block compact.
+ *     missing from default RRF-ordered retrieval. Only a change from the
+ *     prior comparable observation (`comparableTrajectoryPairs`) counts.
+ *     Other intents skip the annotation to keep the block compact.
+ *   - A point whose trajectory evidence marks a report date reads
+ *     `reported on <date>` (unknown basis: `time unknown; ordered at`), and
+ *     its population is shown, so the model does not read it as valid time.
  *   - INJECTION_PATTERNS sanitization applied per row's `text` field
  *     (parity with renderTakesBlock + renderChatBlock).
  *   - Deterministic output: groups sorted alphabetically by key, points
@@ -30,6 +34,7 @@
  */
 
 import type { TrajectoryPoint } from './engine.ts';
+import { comparableTrajectoryPairs } from './trajectory.ts';
 import { INJECTION_PATTERNS } from './think/sanitize.ts';
 
 export type TrajectoryIntent = 'temporal' | 'knowledge_update' | 'other';
@@ -107,6 +112,12 @@ function fmtValue(p: TrajectoryPoint): string {
   return parts.join(' ');
 }
 
+/** Producer scope text is data inside the block: sanitize it and keep it from closing tags. */
+function escapeScope(scope: string): string {
+  return sanitizeRowText(scope).text
+    .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replace(/[\r\n]/g, ' ');
+}
+
 /**
  * Format a single group as `<trajectory entity="..." metric="...">` (when
  * the key is a metric) or `<trajectory entity="..." event_type="...">`
@@ -118,35 +129,36 @@ function formatGroup(
   groupKeyValue: string,
   points: TrajectoryPoint[],
   opts: { intent?: TrajectoryIntent },
+  changedInGroup: ReadonlySet<TrajectoryPoint>,
 ): { block: string; sanitizedCount: number } {
   const isMetric = points[0]?.metric !== null;
   const attr = isMetric ? `metric="${groupKeyValue}"` : `event_type="${groupKeyValue}"`;
 
   const lines: string[] = [];
   let sanitizedCount = 0;
-  let priorValue: number | null = null;
   const annotateSupersession = opts.intent === 'knowledge_update' && isMetric;
+  const changed = annotateSupersession ? changedInGroup : new Set<TrajectoryPoint>();
 
   for (const p of points) {
     const { text, matched } = sanitizeRowText(p.text);
     if (matched) sanitizedCount++;
     const date = fmtDate(p.valid_from);
     const valueStr = fmtValue(p);
+    const evidence = p.trajectory_evidence;
+    const timeLabel = evidence?.time_basis === 'reported' ? 'reported on'
+      : evidence?.time_basis === 'unknown' ? 'time unknown; ordered at' : 'as of';
+    const scopeSuffix = evidence ? ` [population: ${escapeScope(evidence.scope ?? 'unknown')}]` : '';
     const provenance = p.source_session ?? p.source_markdown_slug ?? null;
     const provSuffix = provenance ? ` (source: ${provenance})` : '';
 
     let suffix = '';
-    if (annotateSupersession && p.value !== null && priorValue !== null && p.value !== priorValue) {
-      suffix = ' (superseded prior)';
-    }
+    if (changed.has(p)) suffix = ' (superseded prior)';
 
     lines.push(
       isMetric
-        ? `  as of ${date}: ${valueStr} — ${text}${suffix}${provSuffix}`
-        : `  as of ${date}: ${text}${suffix}${provSuffix}`,
+        ? `  ${timeLabel} ${date}: ${valueStr} — ${text}${scopeSuffix}${suffix}${provSuffix}`
+        : `  ${timeLabel} ${date}: ${text}${scopeSuffix}${suffix}${provSuffix}`,
     );
-
-    if (p.value !== null) priorValue = p.value;
   }
 
   const block = `<trajectory entity="${entitySlug}" ${attr}>\n${lines.join('\n')}\n</trajectory>`;
@@ -204,7 +216,10 @@ export function formatTrajectoryBlock(
     const kept = groupPoints.length > capPerGroup
       ? groupPoints.slice(groupPoints.length - capPerGroup)
       : groupPoints;
-    const { block, sanitizedCount: gs } = formatGroup(entitySlug, key, kept, opts);
+    // Comparability is decided on the whole group before the cap, so a
+    // dropped same-time conflict still breaks the chain for kept rows.
+    const changed = new Set(comparableTrajectoryPairs(groupPoints).filter(([a, b]) => a.value !== b.value).map(([, b]) => b));
+    const { block, sanitizedCount: gs } = formatGroup(entitySlug, key, kept, opts, changed);
     renderedBlocks.push(block);
     sanitizedCount += gs;
     emittedPoints += kept.length;
