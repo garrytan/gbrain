@@ -38,7 +38,7 @@ async function runSyncPhases(engine: BrainEngine, opts: SyncOpts, holds: LegacyH
 /** GBRA-217: the pass's one reason-trailer scan over `last_commit..pin`, when it imports or renames files. */
 async function withPassReasons(engine: BrainEngine, plan: SyncPlan): Promise<SyncPlan> {
   const { filtered } = plan;
-  const reasons = await scanClassicReasons(engine, { sourceId: plan.opts.sourceId, company: plan.company, anchorPath: plan.anchorPath,
+  const reasons = await scanClassicReasons(engine, { sourceId: plan.opts.sourceId, company: plan.company, anchorPath: plan.anchorPath, gitRoot: plan.gitContextRoot,
     from: plan.lastCommit, to: plan.pin, imports: filtered.added.length + filtered.modified.length + filtered.renamed.length });
   return { ...plan, reasons };
 }

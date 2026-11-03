@@ -10,10 +10,10 @@ import type { SyncResult } from '../sync.ts';
 export { importHistoryFor as fileHistory } from '../../core/reason-trailers.ts';
 
 /** The pass's scan, or null when it imports nothing or the source is a company brain (its pinned revision is not annotated). */
-export async function scanClassicReasons(engine: BrainEngine, input: { sourceId: string | undefined; company: unknown; anchorPath: string;
+export async function scanClassicReasons(engine: BrainEngine, input: { sourceId: string | undefined; company: unknown; anchorPath: string; gitRoot: string;
   from: string | null; to: string; imports: number }): Promise<SyncReasonScan | null> {
   if (input.company || input.imports === 0) return null;
-  return scanSyncReasons(engine, { sourceId: input.sourceId ?? 'default', sourceRoot: input.anchorPath, from: input.from, to: input.to });
+  return scanSyncReasons(engine, { sourceId: input.sourceId ?? 'default', sourceRoot: input.anchorPath, gitRoot: input.gitRoot, from: input.from, to: input.to });
 }
 
 /** The result with the pass's reason notices (a failed or capped scan, secrets in pushed trailers), when there are any. */

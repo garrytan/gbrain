@@ -131,8 +131,8 @@ export interface SyncReasonScan {
  * canonicalised and secret-scanned (a secret, an over-long value or a tombstoned (commit, path) gives NULL); a value
  * naming no path its commit touched is malformed and counted. A failed or capped scan maps nothing.
  */
-export async function scanSyncReasons(engine: BrainEngine, input: { sourceId: string; sourceRoot: string; from: string | null; to: string }): Promise<SyncReasonScan | null> {
-  const repo = gitTopLevel(input.sourceRoot);
+export async function scanSyncReasons(engine: BrainEngine, input: { sourceId: string; sourceRoot: string; gitRoot?: string; from: string | null; to: string }): Promise<SyncReasonScan | null> {
+  const repo = input.gitRoot ? knownGitTopLevel(input.gitRoot, input.sourceRoot) : gitTopLevel(input.sourceRoot);
   if (!repo) return null;
   const range = input.from ? `${input.from}..${input.to}` : input.to;
   const byPath = new Map<string, ReasonDecision>();
@@ -187,6 +187,14 @@ export function gitTopLevel(sourceRoot: string): { gitRoot: string; scopePrefix:
   return top.status === 'found' ? { gitRoot: top.gitRoot, scopePrefix: top.scopePrefix } : null;
 }
 
+/**
+ * GBRA-133: a classic sync pass already discovered its checkout's top level (real path) without blocking, so its scan places
+ * `sourceRoot` under it and runs no synchronous `git rev-parse` on the resident's path; null when the source path is gone.
+ */
+function knownGitTopLevel(gitRoot: string, sourceRoot: string): { gitRoot: string; scopePrefix: string } | null {
+  try { return { gitRoot, scopePrefix: relative(gitRoot, realpathSync(sourceRoot)).split(sep).join('/') }; } catch { return null; }
+}
+
 /** A file's path relative to the scan's Git top level, resolving its directory's real path (the file itself may be gone). */
 function repoPathOf(scan: SyncReasonScan, filePath: string): string {
   let dir = dirname(filePath);
@@ -228,6 +236,7 @@ export function reasonScanNotices(scan: SyncReasonScan | null | undefined, sourc
   return notices;
 }
 
+export const SOURCE_PURGE_EPOCH_SQL = 'SELECT purge_epoch FROM sources WHERE id = $1';
 const cache = new Map<string, { at: number; scan: Promise<SyncReasonScan | null> }>();
 const CACHE_TTL_MS = 10 * 60_000;
 
@@ -237,7 +246,7 @@ const CACHE_TTL_MS = 10 * 60_000;
  * that writes its tombstones, so a purge from any process makes the next request scan again and read them.
  */
 export async function cachedSyncReasonScan(engine: BrainEngine, input: Parameters<typeof scanSyncReasons>[1]): Promise<SyncReasonScan | null> {
-  const [source] = await engine.executeRaw<{ purge_epoch: string | number }>('SELECT purge_epoch FROM sources WHERE id = $1', [input.sourceId]);
+  const [source] = await engine.executeRaw<{ purge_epoch: string | number }>(SOURCE_PURGE_EPOCH_SQL, [input.sourceId]);
   const key = [input.sourceId, String(source?.purge_epoch ?? 0), input.sourceRoot, input.from ?? '', input.to].join('\0');
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.scan;
