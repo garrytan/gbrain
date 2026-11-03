@@ -164,6 +164,24 @@
     "profiles": ["test", "e2e"],
     "inventory": "bash scripts/pregate-remote-gate.sh --list"
   },
+  "ship_lanes_from": {
+    "bun run test": {
+      "profiles": ["test"],
+      "inventory": "GBRAIN_PREGATE_GATE_CMD='bun run ci:ubicloud' bash scripts/pregate-remote-gate.sh --list --lanes unit,serial"
+    },
+    "bun run test:serial": {
+      "profiles": ["test"],
+      "inventory": "GBRAIN_PREGATE_GATE_CMD='bun run ci:ubicloud' bash scripts/pregate-remote-gate.sh --list --lanes serial"
+    },
+    "bun run test:slow": {
+      "profiles": ["test"],
+      "inventory": "GBRAIN_PREGATE_GATE_CMD='bun run ci:ubicloud' bash scripts/pregate-remote-gate.sh --list --lanes slow"
+    },
+    "bun run test:e2e": {
+      "profiles": ["test", "e2e"],
+      "inventory": "GBRAIN_PREGATE_GATE_CMD='bun run ci:ubicloud' bash scripts/pregate-remote-gate.sh --list --lanes e2e"
+    }
+  },
   "allowlist": [
     {
       "finding": "pii.phone.e164",
