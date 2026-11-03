@@ -152,7 +152,7 @@ Every non-localOnly operation on the MCP surface: 167 tools across 26 areas. **S
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
 | `get_memory_settings` | Memory writeback settings: the mode agents follow, the exact rule text, every mode's rule, background capture state, and whether you may change it. | read |  |  |
-| `memory_conversation_mode` | Use when the user says "save everything from here" (all) or "stop saving" (off: explicit saves only): returns the memory rule for the rest of this conversation. | write | yes |  |
+| `memory_conversation_mode` | Use when the user says "save everything from here" (all) or "stop saving" (off): returns this conversation's memory rule. | write | yes |  |
 | `set_memory_writeback` | Change the brain-wide writeback mode agents are told to follow (inherit uses the operator's setting). | admin |  | `mcp.publish_memory_settings` |
 
 ## memory-verbs

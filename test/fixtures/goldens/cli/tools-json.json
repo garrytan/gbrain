@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 271005,
-    "stdoutSha256": "e3ba5ed101382f6e0f990c2046a20d1730cc41cb88111ec449c76f9eda49e5b4",
+    "stdoutBytes": 270943,
+    "stdoutSha256": "7c79fd98e53d0f3c3d4b0b18131b6b5ef694d21ce3bdafb216d66de24a77e1d6",
     "toolNames": [
       "remember",
       "entity",
@@ -7263,7 +7263,7 @@
         "scope": "admin"
       },
       {
-        "description": "Use when the user says \"save everything from here\" (all) or \"stop saving\" (off: explicit saves only): returns the memory rule for the rest of this conversation. Stores nothing.",
+        "description": "Use when the user says \"save everything from here\" (all) or \"stop saving\" (off): returns this conversation's memory rule. Stores nothing.",
         "idempotent": false,
         "local_only": false,
         "mutating": false,
@@ -7275,7 +7275,7 @@
         "schema": {
           "properties": {
             "mode": {
-              "description": "all | salient | off (only what the user explicitly asks to keep) | brain (this brain's mode).",
+              "description": "all | salient | off (explicit saves only) | brain (this brain's mode).",
               "enum": [
                 "brain",
                 "off",

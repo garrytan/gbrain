@@ -51,7 +51,7 @@ const BATCHING_CLAUSE_BYTES = 200;
 const NAMES_ROW_REFERENCES_BYTES = 70;
 /**
  * GBRA-219: the per-conversation memory switch clause ("save everything from here" / "stop saving" →
- * memory_conversation_mode), 146 bytes on every surface serving the tool (starter and full), placed after the
+ * memory_conversation_mode), 111 bytes on every surface serving the tool (starter and full), placed after the
  * governing rule so that rule's offsets do not move (test/mcp-instructions-governing-rule.test.ts).
  */
 const CONVERSATION_SWITCH_CLAUSE_BYTES = 150;

@@ -6288,7 +6288,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   {
     "name": "memory_conversation_mode",
     "outputRedaction": "no_stored_text",
-    "description": "Use when the user says \"save everything from here\" (all) or \"stop saving\" (off: explicit saves only): returns the memory rule for the rest of this conversation. Stores nothing.",
+    "description": "Use when the user says \"save everything from here\" (all) or \"stop saving\" (off): returns this conversation's memory rule. Stores nothing.",
     "params": {
       "mode": {
         "type": "string",
@@ -6299,7 +6299,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
           "salient",
           "all"
         ],
-        "description": "all | salient | off (only what the user explicitly asks to keep) | brain (this brain's mode)."
+        "description": "all | salient | off (explicit saves only) | brain (this brain's mode)."
       }
     },
     "scope": "write",

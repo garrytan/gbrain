@@ -200,9 +200,9 @@ const set_memory_writeback: Operation = {
 const memory_conversation_mode: Operation = {
   name: 'memory_conversation_mode',
   outputRedaction: 'no_stored_text',
-  description: 'Use when the user says "save everything from here" (all) or "stop saving" (off: explicit saves only): returns the memory rule for the rest of this conversation. Stores nothing.',
+  description: 'Use when the user says "save everything from here" (all) or "stop saving" (off): returns this conversation\'s memory rule. Stores nothing.',
   params: {
-    mode: { type: 'string', required: true, enum: [...CONVERSATION_MODES], description: 'all | salient | off (only what the user explicitly asks to keep) | brain (this brain\'s mode).' },
+    mode: { type: 'string', required: true, enum: [...CONVERSATION_MODES], description: 'all | salient | off (explicit saves only) | brain (this brain\'s mode).' },
   },
   scope: 'write',
   area: 'memory-settings',
