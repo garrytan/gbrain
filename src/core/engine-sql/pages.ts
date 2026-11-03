@@ -1006,16 +1006,17 @@ const PAGE_VERSION_SEGMENTED_COLUMNS = trustedSql('pv.body_storage, pv.body_gene
  * next snapshot of the page, or the live page, which the caller's own page predicate checks) and the successor was not
  * pruned (`successor_pruned`: its visibility can no longer be checked, so the reason is withheld). The successor is
  * read over every snapshot of the page, never only the rows the reader may see. Shared by get_versions and get_page as_of.
+ * GBRA-286: a successor snapshot that names readers the caller does not meet (GBRA-218 readable_by) withholds it too.
  */
-/** GBRA-217: each version's parsed valid time (the shared normaliser), so a timeline reads in one get_versions call. */
-const VERSION_VALID_TIME_COLUMNS = `${validDateSql("pv.frontmatter->>'valid_from'")} AS valid_from, ${validDateSql("pv.frontmatter->>'valid_until'")} AS valid_until`;
-
 export function replacedBecauseSql(pv: string, excludePrivate: boolean): string {
   if (!excludePrivate) return `${pv}.change_reason`;
   return `CASE WHEN ${pv}.change_reason IS NULL OR COALESCE(${pv}.successor_pruned, false) THEN NULL
-    WHEN COALESCE((SELECT ${privateSnapshotFilterFragment('rb_next')} FROM page_versions rb_next
+    WHEN COALESCE((SELECT ${privateSnapshotFilterFragment('rb_next')} AND ${callerReadersAllowedSql('rb_next', 'snapshot')} FROM page_versions rb_next
       WHERE rb_next.page_id = ${pv}.page_id AND rb_next.id > ${pv}.id ORDER BY rb_next.id LIMIT 1), true) THEN ${pv}.change_reason END`;
 }
+
+/** GBRA-217: each version's parsed valid time (the shared normaliser), so a timeline reads in one get_versions call. */
+const VERSION_VALID_TIME_COLUMNS = `${validDateSql("pv.frontmatter->>'valid_from'")} AS valid_from, ${validDateSql("pv.frontmatter->>'valid_until'")} AS valid_until`;
 
 /**
  * Newest first (`pv.id` breaks snapshot_at ties). Scope, privacy and

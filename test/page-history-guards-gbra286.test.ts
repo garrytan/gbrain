@@ -74,12 +74,14 @@ for (const backend of testBackends()) {
 
       const unlisted = await versions(slug, true);
       expect(unlisted).toHaveLength(1);
-      expect(unlisted[0]!.replaced_because).toBeUndefined();
+      expect(unlisted[0]!.replaced_because).toBeNull();
       expect(JSON.stringify(unlisted)).not.toContain('canaryrbreason');
       expect(JSON.stringify(await versions(slug, true, { include_body: true }))).not.toContain('canaryrbreason');
 
       const member = await asMember(() => versions(slug, true));
-      expect(member.map(v => v.replaced_because)).toEqual(['opened again', 'restricted-time reason canaryrbreason']);
+      expect(member).toHaveLength(2);
+      expect(member[0]!.replaced_because).toContain('opened again');
+      expect(member[1]!.replaced_because).toContain('restricted-time reason canaryrbreason');
     });
 
     test('as_of: an edition that names readers reads as not found for an unlisted remote reader, and as text for a listed member', async () => {
@@ -98,7 +100,7 @@ for (const backend of testBackends()) {
       const member = await asMember(() => call('get_page', { slug, as_of: '2026-03-01' }, true));
       expect(member.valid_time.status).toBe('in_force');
       expect(member.compiled_truth).toContain('canaryasofbody');
-      expect(member.valid_time.replaced_because).toBe('opened to everyone canaryasofreason');
+      expect(member.valid_time.replaced_because).toContain('opened to everyone canaryasofreason');
     });
 
     test('as_of: an unlisted remote reader never sees a reason whose successor edition names readers', async () => {
@@ -112,7 +114,7 @@ for (const backend of testBackends()) {
       expect(old.valid_time.replaced_because).toBeNull();
       expect(JSON.stringify(old)).not.toContain('canaryasofsuccessor');
       const member = await asMember(() => call('get_page', { slug, as_of: '2026-03-01' }, true));
-      expect(member.valid_time.replaced_because).toBe('restricted canaryasofsuccessor');
+      expect(member.valid_time.replaced_because).toContain('restricted canaryasofsuccessor');
     });
 
     test('as_of and get_versions quote text below the owner tier for a remote reader', async () => {

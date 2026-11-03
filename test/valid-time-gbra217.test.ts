@@ -25,6 +25,7 @@ import { assertValidTimeEcho, currentValidTime, validDate, validDateSql, validTi
 import { exitCodeForCode } from '../src/core/error-catalogue.ts';
 import { asOfExitCode, formatGetPage, validTimeLine } from '../src/cli/page-render.ts';
 import { utcToday } from '../src/core/link-validity.ts';
+import { unquoteTranscriptText } from '../src/core/search/transcript-quote.ts';
 import { testBackends, requirePostgresTestDatabase } from './helpers/test-backends.ts';
 import { importSegmented } from './helpers/segmented-privacy-fixture.ts';
 
@@ -213,7 +214,7 @@ for (const backend of testBackends()) {
       expect(early.valid_time.replaced_because).toBeNull();
       expect((await read(slug, '2026-03-01')).valid_time.replaced_because).toBe('reason-r2-private-time');
       const late = await read(slug, '2026-10-01', true);
-      expect(late.valid_time.introduced_because).toBe('reason-r3-back-to-world');
+      expect(unquoteTranscriptText(late.valid_time.introduced_because, slug)).toBe('reason-r3-back-to-world');
       for (const d of ['2025-01-01', '2026-03-01', '2026-10-01']) expect(JSON.stringify(await read(slug, d, true))).not.toContain('reason-r2');
     });
 
@@ -326,14 +327,15 @@ for (const backend of testBackends()) {
         expect(r.valid_time).toMatchObject({ status: 'in_force', chosen_version_id: v1 });
         expect(r.compiled_truth).toBeUndefined();
         expect(r.body).toBe('window');
-        let text = r.window.text;
+        // GBRA-286: put_page writes agent_written text, so each remote window comes quoted (GST-687).
+        let text = unquoteTranscriptText(r.window.text, slug);
         let hops = 0;
         while (r.next) {
           expect(r.next.arguments).toMatchObject({ slug, source_id: 'default', as_of: '2026-03-01' });
           if (hops === 1) await put(slug, 'A third edition written mid-read.', ["valid_from: '2026-02-01'"]);
           r = await call('get_page', r.next.arguments, true);
           expect(r.version_id).toBe(v1);
-          text += r.window.text;
+          text += unquoteTranscriptText(r.window.text, slug);
           hops++;
         }
         expect(hops).toBeGreaterThan(2);

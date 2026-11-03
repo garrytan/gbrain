@@ -19,7 +19,9 @@ import { inlineBodyBytes } from './get-page-body.ts';
 import { pageTrustForRead } from './get-page-projection.ts';
 import { isCalendarDate } from '../link-validity.ts';
 import { replacedBecauseSql } from '../engine-sql/pages.ts';
-import { privateLinkOriginFilterFragment, privatePagesFilterFragment, privateSnapshotFilterFragment, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { callerReadersAllowedSql, privacyForCaller, privateLinkOriginFilterFragment, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { fenceTranscriptText, isQuotedPageType, neutralizeToolCalls, quotesStored } from '../search/transcript-quote.ts';
+import { quotedPageMeta } from './get-page-projection.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { pageDocument } from '../page-window/document.ts';
@@ -47,6 +49,8 @@ interface Identity { id: number; source_id: string; slug: string; source_path: s
 interface PickRow {
   version_id: number | null; ord: number; replaced_at: string | null; valid_from: string; valid_until: string | null; visible: boolean;
   reason: string | null; successor_pruned: boolean; segmented: boolean; recorded_since: string | null; introduced_because: string | null; chosen: boolean;
+  /** GBRA-286 (GST-687): the stored trust tier of this edition and of the write that replaced it (the next row), for the quote fence. */
+  tier: string | null; successor_tier: string | null;
 }
 interface PickResult { row: PickRow | null; competing: number[]; undated: number; largeVersions: number; segmentedVersions: number; anyFiled: boolean; gapAt: string | null; createdAt: string | null }
 
@@ -88,7 +92,7 @@ async function resolveIdentity(tx: BrainEngine, ctx: OperationContext, slug: str
   const rows = await tx.executeRaw<Identity>(`SELECT p.id, p.source_id, p.slug, p.source_path, s.local_path, ${privatePagesFilterFragment('p')} AS world
       FROM pages p JOIN sources s ON s.id = p.source_id
      WHERE p.slug = $1 AND p.deleted_at IS NULL AND ($2::text IS NULL OR p.source_id = $2) AND ($3::text[] IS NULL OR p.source_id = ANY($3::text[]))
-       ${excludePrivate ? `AND ${privatePagesFilterFragment('p')}` : ''}
+       ${excludePrivate ? `AND ${privatePagesFilterForCaller('p')}` : ''}
      ORDER BY p.source_id LIMIT 6`, [slug, scope.sourceId ?? null, scope.sourceIds ?? null]);
   if (rows.length > 1) {
     const sources = rows.map(r => r.source_id);
@@ -111,17 +115,18 @@ async function pick(tx: BrainEngine, pageId: number, asOf: string, excludePrivat
   const vd = (a: string, key: string) => validDateSql(`${a}.frontmatter->>'${key}'`);
   const [r] = await tx.executeRaw<Record<string, unknown>>(`WITH rows AS (
       SELECT pv.id AS version_id, pv.id::bigint AS ord, pv.snapshot_at AS replaced_at, ${vd('pv', 'valid_from')} AS valid_from, ${vd('pv', 'valid_until')} AS valid_until,
-             ${bodyKey('pv')} AS body_key, ${privateSnapshotFilterFragment('pv')} AS visible, ${replacedBecauseSql('pv', excludePrivate)} AS reason,
+             ${bodyKey('pv')} AS body_key, (${callerReadersAllowedSql('pv', 'snapshot')} AND ${privacyForCaller('p', privateSnapshotFilterFragment('pv'))}) AS visible,
+             ${replacedBecauseSql('pv', excludePrivate)} AS reason, pv.trust_tier AS tier,
              COALESCE(pv.successor_pruned, false) AS successor_pruned, COALESCE(pv.body_storage = 'segmented', false) AS segmented,
              (pv.body_storage IS DISTINCT FROM 'segmented' AND octet_length(COALESCE(pv.compiled_truth, '')) + octet_length(COALESCE(pv.timeline, '')) > $3) AS large,
              pv.source_path IS NOT NULL AS filed
-        FROM page_versions pv WHERE pv.page_id = $1
+        FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE pv.page_id = $1
       UNION ALL
-      SELECT NULL, ${CURRENT_ORD}::bigint, NULL, ${vd('p', 'valid_from')}, ${vd('p', 'valid_until')}, ${bodyKey('p')}, ${privatePagesFilterFragment('p')}, NULL,
+      SELECT NULL, ${CURRENT_ORD}::bigint, NULL, ${vd('p', 'valid_from')}, ${vd('p', 'valid_until')}, ${bodyKey('p')}, ${privatePagesFilterForCaller('p')}, NULL, p.trust_tier,
              false, COALESCE(p.body_storage = 'segmented', false), false, p.source_path IS NOT NULL
         FROM pages p WHERE p.id = $1),
     seq AS (
-      SELECT r.*, lag(r.replaced_at) OVER w AS recorded_since, lag(r.reason) OVER w AS introduced_because,
+      SELECT r.*, lag(r.replaced_at) OVER w AS recorded_since, lag(r.reason) OVER w AS introduced_because, lead(r.tier) OVER w AS successor_tier,
              lag(r.ord) OVER w AS prev_ord, lead(r.ord) OVER w AS next_ord
         FROM rows r WINDOW w AS (ORDER BY r.ord)),
     pick AS (
@@ -131,7 +136,7 @@ async function pick(tx: BrainEngine, pageId: number, asOf: string, excludePrivat
                 CASE WHEN s.valid_from > $2::text THEN s.valid_from END ASC, s.ord DESC
        LIMIT 1)
     SELECT k.version_id, k.ord, k.replaced_at, k.valid_from, k.valid_until, k.visible, k.reason, k.successor_pruned, k.segmented,
-           k.recorded_since, k.introduced_because, k.chosen,
+           k.recorded_since, k.introduced_because, k.chosen, k.tier, k.successor_tier,
            (SELECT array_agg(c.ord ORDER BY c.ord) FROM (SELECT s.ord FROM seq s
               WHERE s.valid_from IS NOT NULL AND s.ord <> k.ord AND (
                 (s.ord > k.ord AND s.valid_from < k.valid_from)
@@ -148,6 +153,7 @@ async function pick(tx: BrainEngine, pageId: number, asOf: string, excludePrivat
     valid_until: r.valid_until == null ? null : String(r.valid_until), visible: r.visible === true, reason: (r.reason as string | null) ?? null,
     successor_pruned: r.successor_pruned === true, segmented: r.segmented === true, recorded_since: iso(r.recorded_since),
     introduced_because: (r.introduced_because as string | null) ?? null, chosen: r.chosen === true,
+    tier: (r.tier as string | null) ?? null, successor_tier: (r.successor_tier as string | null) ?? null,
   } : null;
   return { row, competing: ((r?.competing as unknown[] | null) ?? []).map(Number), undated: Number(r?.undated ?? 0),
     largeVersions: Number(r?.large_versions ?? 0), segmentedVersions: Number(r?.segmented_versions ?? 0), anyFiled: r?.any_filed === true,
@@ -241,13 +247,25 @@ async function loadEdition(tx: BrainEngine, identity: Identity, row: PickRow): P
     segmented: v.body_storage === 'segmented', ...(v.body_generation != null ? { generation: Number(v.body_generation) } : {}) } };
 }
 
-/** The edition as the caller may read it: whole, or one window (with the next call pinned to it) when it is large or segmented. */
-async function editionView(ctx: OperationContext, identity: Identity, e: Edition, asOf: string, offset: number | null, maxBytes: number): Promise<Record<string, unknown> | 'gone'> {
-  const clean = (s: string) => ctx.remote === false ? s : sanitizeRemoteBody(s, { includeWithdrawn: true, keepMaterializedMarkers: true });
-  const meta = { ...(e.versionId === null ? { revision: e.revision } : { version_id: e.versionId }), title: e.title, type: e.type, tags: e.tags, frontmatter: e.frontmatter };
+/**
+ * The edition as the caller may read it: whole, or one window (with the next call pinned to it) when it is large or segmented.
+ * GBRA-286 (#8042, GST-687): with `quote` (a remote reader, and an edition below the owner's tier or of a third-party
+ * type) its text and metadata are fenced as quoted source material, a third-party edition's tool-call blocks summarized,
+ * as get_page quotes the current page.
+ */
+async function editionView(ctx: OperationContext, identity: Identity, e: Edition, asOf: string, offset: number | null, maxBytes: number, quote: boolean): Promise<Record<string, unknown> | 'gone'> {
+  const neutralize = quote && ctx.thinClient !== true && isQuotedPageType(e.type);
+  const clean = (s: string) => {
+    if (ctx.remote === false) return s;
+    const safe = sanitizeRemoteBody(s, { includeWithdrawn: true, keepMaterializedMarkers: true });
+    return neutralize ? neutralizeToolCalls(safe) : safe;
+  };
+  const fence = (s: string) => quote && s ? fenceTranscriptText(s, identity.slug) : s;
+  const { title, frontmatter, tags } = quotedPageMeta({ slug: identity.slug, title: e.title, frontmatter: e.frontmatter }, quote, e.tags);
+  const meta = { ...(e.versionId === null ? { revision: e.revision } : { version_id: e.versionId }), title, type: e.type, tags, frontmatter, ...(quote ? { quoted: 'transcript' } : {}) };
   const truth = e.segmented ? '' : clean(e.compiled_truth), timeline = e.segmented ? '' : clean(e.timeline);
   const bytes = Buffer.byteLength(truth, 'utf8') + Buffer.byteLength(timeline, 'utf8');
-  if (!e.segmented && offset === null && (ctx.remote === false || bytes <= await inlineBodyBytes(ctx))) return { ...meta, compiled_truth: truth, timeline };
+  if (!e.segmented && offset === null && (ctx.remote === false || bytes <= await inlineBodyBytes(ctx))) return { ...meta, compiled_truth: fence(truth), timeline: fence(timeline) };
   let total: number, slice: WindowSlice, lines: number | undefined;
   if (e.segmented) {
     try {
@@ -262,7 +280,7 @@ async function editionView(ctx: OperationContext, identity: Identity, e: Edition
     slice = windowFrom(doc.bytes, offset ?? 0, maxBytes);
   }
   const out: Record<string, unknown> = { ...meta, body: 'window', size: { total_bytes: total, ...(lines !== undefined ? { total_lines: lines } : {}) },
-    window: slice, truncated: slice.byte_start > 0 || slice.byte_end < total };
+    window: quote ? { ...slice, text: fence(slice.text) } : slice, truncated: slice.byte_start > 0 || slice.byte_end < total };
   if (slice.byte_end < total) {
     const cursor = encodeCursor({ page_id: identity.id, revision: e.versionId === null ? e.revision : `v:${e.versionId}`, view: 'read', offset: slice.byte_end, max_bytes: maxBytes });
     out.next_cursor = cursor;
@@ -323,15 +341,20 @@ export async function getPageAsOf(ctx: OperationContext, p: Record<string, unkno
   let { history, uncertain, why } = verdict;
   let view: Record<string, unknown> | 'gone' | null = null;
   const requested = typeof p.max_bytes === 'number' && Number.isSafeInteger(p.max_bytes) && p.max_bytes > 0 ? p.max_bytes : pin?.maxBytes ?? DEFAULT_WINDOW_BYTES;
-  if (!read.pinGone) view = await editionView(ctx, identity, loaded.edition, asOf, pin ? pin.offset : null, ctx.remote === false ? requested : Math.min(requested, MAX_WINDOW_BYTES));
+  const quotes = (tier: string | null) => ctx.remote !== false && quotesStored(loaded.edition.type, tier);
+  if (!read.pinGone) view = await editionView(ctx, identity, loaded.edition, asOf, pin ? pin.offset : null, ctx.remote === false ? requested : Math.min(requested, MAX_WINDOW_BYTES), quotes(row.tier));
   if (read.pinGone || view === 'gone') { history = 'incomplete'; uncertain = true; why = 'edition_pruned'; view = null; }
-  const reason = (s: string | null) => s === null ? null : ctx.remote === false ? s : sanitizeRemoteBody(s);
+  const reason = (s: string | null, tier: string | null) => {
+    if (s === null || ctx.remote === false) return s;
+    const clean = sanitizeRemoteBody(s);
+    return quotes(tier) && clean ? fenceTranscriptText(clean, identity.slug) : clean;
+  };
   const chosen = row.chosen;
   const validTime = {
     as_of: asOf, status: verdict.status,
     chosen_version_id: chosen ? row.version_id : null, chosen_is_current: chosen && row.version_id === null,
     valid_from: chosen ? row.valid_from : null, valid_until: chosen ? row.valid_until : null,
-    introduced_because: chosen ? reason(row.introduced_because) : null, replaced_because: chosen ? reason(row.reason) : null,
+    introduced_because: chosen ? reason(row.introduced_because, row.tier) : null, replaced_because: chosen ? reason(row.reason, row.successor_tier) : null,
     history, uncertain, why, undated_versions: picked.undated, amendments_not_applied: amendments,
     recorded_since: chosen ? row.recorded_since ?? (picked.gapAt === null ? picked.createdAt : null) : null,
     ...(why === 'ambiguous_edition_dates' ? { competing_version_ids: picked.competing.map(o => o === CURRENT_ORD ? null : o) } : {}),

@@ -14,6 +14,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { operationsByName, OperationError, type OperationContext } from '../src/core/operations.ts';
 import { canonicalChangeReason, CHANGE_REASON_MAX } from '../src/core/persistence/change-reason.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { unquoteTranscriptText } from '../src/core/search/transcript-quote.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 
@@ -156,7 +157,8 @@ for (const backend of testBackends()) describe(`[${backend}] page change reasons
     expect(JSON.stringify(remote)).not.toContain('private-time reason');
 
     await call('put_page', { slug: SLUG, content: page('world three'), expected_revision: await revision(), reason: 'third edition', wait_ms: 30_000 });
-    expect((await versions(true))[0]!.replaced_because).toBe('third edition');
+    // GBRA-286: put_page writes agent_written text, so a remote reader gets the reason quoted (GST-687).
+    expect(unquoteTranscriptText(String((await versions(true))[0]!.replaced_because), SLUG)).toBe('third edition');
     await engine.executeRaw("UPDATE page_versions SET successor_pruned = true WHERE change_reason = 'third edition'");
     expect((await versions(true))[0]!.replaced_because).toBeNull();
     expect((await versions(false))[0]!.replaced_because).toBe('third edition');

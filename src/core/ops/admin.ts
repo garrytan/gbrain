@@ -231,7 +231,8 @@ const get_versions: Operation = {
       const metadata = page(await ctx.engine.getVersions(p.slug as string, { ...opts, includeBody: false }))
         .map(v => { const { compiled_truth: _b, timeline: _t, ...rest } = v as typeof v & { compiled_truth?: unknown; timeline?: unknown }; return rest; });
       const sized = [];
-      for (const v of metadata) sized.push({ ...await remoteVersionSize(ctx, v), ...(ctx.remote === false ? {} : remoteReason(v)) });
+      const reason = await remoteReasons(ctx, String(p.slug), metadata);
+      for (const v of metadata) sized.push({ ...await remoteVersionSize(ctx, v), ...reason(v) });
       return canReadWriteAttribution(ctx) ? attributeVersions(ctx.engine, sized) : sized;
     }
     const plain = page(await ctx.engine.getVersions(p.slug as string, opts));
@@ -240,11 +241,12 @@ const get_versions: Operation = {
     const out = [];
     const snapshotTiers = ctx.remote === false || versions.length === 0 ? new Map<number, unknown>() : new Map((await ctx.engine.executeRaw<{ id: number | string; trust_tier: string | null }>(
       'SELECT id, trust_tier FROM page_versions WHERE id = ANY($1::bigint[])', [versions.map(v => Number(v.id))])).map(r => [Number(r.id), r.trust_tier] as const));
+    const reason = await remoteReasons(ctx, String(p.slug), versions);
     for (const v of versions) {
       if (isSegmentedPage(v)) {
         const sized = await remoteVersionSize(ctx, v);
         const { compiled_truth: _b, timeline: _t, ...rest } = sized;
-        out.push({ ...rest, ...(ctx.remote === false ? {} : remoteReason(v)), body_ref: { version_id: v.id, total_bytes: 'total_bytes' in sized ? sized.total_bytes : pageBodyBytes(v) } });
+        out.push({ ...rest, ...reason(v), body_ref: { version_id: v.id, total_bytes: 'total_bytes' in sized ? sized.total_bytes : pageBodyBytes(v) } });
         continue;
       }
       if (ctx.remote === false) { out.push(v); continue; }
@@ -252,7 +254,7 @@ const get_versions: Operation = {
       // GST-687: so does one whose snapshot tier is below the owner's (a version with no snapshot reads as unknown).
       const quote = quotesStored(v.type, snapshotTiers.get(Number(v.id)));
       const body = (text: string) => { const clean = sanitizeRemoteBody(text); return quote && clean ? fenceTranscriptText(clean, String(p.slug)) : clean; };
-      out.push({ ...v, compiled_truth: body(v.compiled_truth), ...remoteReason(v),
+      out.push({ ...v, compiled_truth: body(v.compiled_truth), ...reason(v),
         ...(typeof v.timeline === 'string' ? { timeline: body(v.timeline) } : {}), ...(quote ? { quoted: 'transcript' } : {}) });
     }
     return out;
@@ -261,9 +263,26 @@ const get_versions: Operation = {
   cliHints: { name: 'history', positional: ['slug'] },
 };
 
-/** GBRA-217: a remote reader's `replaced_because` goes through the same sanitizer as the version bodies. */
-function remoteReason(v: { replaced_because?: string | null }): { replaced_because?: string } {
-  return typeof v.replaced_because === 'string' ? { replaced_because: sanitizeRemoteBody(v.replaced_because) } : {};
+/**
+ * GBRA-217: a remote reader's `replaced_because` goes through the same sanitizer as the version bodies. GBRA-286
+ * (#8042, GST-687): it is quoted when the write that gave it (the next snapshot, or the live page when none) is of a
+ * third-party type or below the owner's tier, as that write's text is. A trusted local reader gets it as stored.
+ */
+async function remoteReasons(ctx: OperationContext, slug: string, versions: ReadonlyArray<{ id: number; replaced_because?: string | null }>):
+  Promise<(v: { id: number; replaced_because?: string | null }) => { replaced_because?: string }> {
+  const ids = versions.filter(v => typeof v.replaced_because === 'string').map(v => Number(v.id));
+  if (ctx.remote === false || ids.length === 0) return () => ({});
+  const writers = new Map((await ctx.engine.executeRaw<{ id: number | string; type: string | null; tier: string | null }>(
+    `SELECT pv.id, COALESCE(nx.type, p.type) AS type, CASE WHEN nx.id IS NULL THEN p.trust_tier ELSE nx.trust_tier END AS tier
+       FROM page_versions pv JOIN pages p ON p.id = pv.page_id
+       LEFT JOIN LATERAL (SELECT n.id, n.type, n.trust_tier FROM page_versions n WHERE n.page_id = pv.page_id AND n.id > pv.id ORDER BY n.id LIMIT 1) nx ON true
+      WHERE pv.id = ANY($1::bigint[])`, [ids])).map(r => [Number(r.id), r] as const));
+  return v => {
+    if (typeof v.replaced_because !== 'string') return {};
+    const clean = sanitizeRemoteBody(v.replaced_because);
+    const writer = writers.get(Number(v.id));
+    return { replaced_because: clean && quotesStored(writer?.type, writer?.tier) ? fenceTranscriptText(clean, slug) : clean };
+  };
 }
 
 /**

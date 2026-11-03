@@ -17,6 +17,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall, type ToolResult } from '../src/mcp/dispatch.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { unquoteTranscriptText } from '../src/core/search/transcript-quote.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
@@ -42,7 +43,8 @@ describe('A-T10: reasons over MCP, remote=true', () => {
       expect(second.isError).toBeFalsy();
       expect(JSON.stringify(body(second))).toContain('"no_repository"');
       const versions = body(await call('get_versions', { slug })) as unknown as Array<Record<string, unknown>>;
-      expect(versions[0]!.replaced_because).toBe('Client asked for the 30-day window.');
+      // GBRA-286: the reason of an agent-written edition reaches a remote reader quoted (GST-687).
+      expect(unquoteTranscriptText(String(versions[0]!.replaced_because), slug)).toBe('Client asked for the 30-day window.');
 
       const secret = 'ghp_' + 'Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4J3i2';
       const refused = await call('put_page', { slug, content: page('x'), request_id: randomUUID(), reason: `new token ${secret}` });
