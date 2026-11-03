@@ -56,7 +56,24 @@ function checkAI(ai: EngineAISettings): void {
   }
 }
 
+/** Each setting openEngine reads, with the fields it reads inside it (null: a value, or fields another check reads: ai.providers, storage in Wave C). */
+const SETTINGS_FIELDS: Record<string, readonly string[] | null> = {
+  embedded_core: null, engine: null, database: ['url', 'directUrl', 'path'], pool: ['max'], host: ['id'], writer: ['id', 'credential', 'lane'],
+  embedding: ['model', 'dimensions'], keyword_statement_timeout_ms: null, pglite: ['shared_buffers'], ai: ['providers', 'models'], storage: null,
+};
+
+/** A misspelled or foreign key would be silently ignored, so it refuses, naming the key and never its value. */
+function checkKnownKeys(settings: EngineSettings): void {
+  for (const [name, value] of Object.entries(settings)) {
+    if (!Object.hasOwn(SETTINGS_FIELDS, name)) throw invalid(name, `openEngine reads ${Object.keys(SETTINGS_FIELDS).join(', ')}, so a misspelled or foreign setting would be ignored.`);
+    const fields = SETTINGS_FIELDS[name];
+    const extra = fields && value && typeof value === 'object' ? Object.keys(value).find(field => !fields.includes(field)) : undefined;
+    if (extra) throw invalid(`${name}.${extra}`, `${name} takes ${fields!.join(', ')}.`);
+  }
+}
+
 function checkSettings(settings: EngineSettings): void {
+  checkKnownKeys(settings);
   if (settings.engine !== 'postgres' && settings.engine !== 'pglite') throw invalid('engine', "engine is 'postgres' or 'pglite'.");
   const database = settings.database;
   if (!database || typeof database !== 'object') throw invalid('database', 'database is an object: { url, directUrl? } for Postgres, { path? } for PGLite.');
