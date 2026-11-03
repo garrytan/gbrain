@@ -105,12 +105,18 @@ class BufferedWriter<T extends object> {
   private engine: BrainEngine | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private inFlight: Promise<void> | null = null;
+  /** Rows written to the engine they were buffered for when the next push names another brain. */
+  private readonly handoffs = new Set<Promise<void>>();
   constructor(private readonly write: (engine: BrainEngine, rows: T[]) => Promise<void>) {}
 
   push(engine: BrainEngine, rows: readonly T[]): void {
     if (rows.length === 0) return;
     if (this.engine !== engine) {
-      if (this.engine && this.rows.length > 0) void this.flush().catch(() => {});
+      if (this.engine && this.rows.length > 0 && engineKey(this.engine) !== engineKey(engine)) {
+        const handoff: Promise<void> = this.write(this.engine, this.rows).catch(() => {}).finally(() => { this.handoffs.delete(handoff); });
+        this.handoffs.add(handoff);
+        this.rows = [];
+      }
       this.engine = engine;
     }
     this.rows.push(...rows);
@@ -133,7 +139,10 @@ class BufferedWriter<T extends object> {
     return this.inFlight;
   }
 
-  pending(): Promise<void> | null { return this.inFlight; }
+  pending(): Promise<void> | null {
+    const work = [...this.handoffs, ...(this.inFlight ? [this.inFlight] : [])];
+    return work.length > 0 ? Promise.all(work).then(() => {}) : null;
+  }
   hasBuffered(): boolean { return this.rows.length > 0; }
   reset(): void {
     if (this.timer) clearInterval(this.timer);
@@ -141,6 +150,7 @@ class BufferedWriter<T extends object> {
     this.rows = [];
     this.engine = null;
     this.inFlight = null;
+    this.handoffs.clear();
   }
 }
 
@@ -162,7 +172,7 @@ export function recordSpend(engine: BrainEngine, row: SpendRow): void {
 
 /** Flush both buffers now (CLI commands that read what they just wrote, tests). */
 export async function flushDecideWrites(): Promise<void> {
-  await Promise.all([receipts.flush(), spend.flush()]);
+  await Promise.all([receipts.flush(), spend.flush(), receipts.pending(), spend.pending()]);
 }
 
 export async function drainDecideWrites(timeoutMs: number, mode: BackgroundWorkDrainMode): Promise<{ unfinished: number }> {
