@@ -74,8 +74,8 @@ const OP_AREAS: Record<string, string> = {
   sources_status: 'sources', sources_resolve_path: 'sources',
   // sync (localOnly)
   sync_brain: 'sync',
-  // ingest log
-  log_ingest: 'ingest', get_ingest_log: 'ingest',
+  // ingest (the log and document ingest)
+  log_ingest: 'ingest', get_ingest_log: 'ingest', ingest: 'ingest', ingest_undo: 'ingest',
   get_usage: 'admin',
   // files (localOnly)
   file_list: 'files', file_upload: 'files', file_url: 'files',

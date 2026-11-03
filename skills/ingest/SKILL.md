@@ -5,6 +5,7 @@ triggers:
   - "ingest this"
   - "save this to brain"
   - "process this meeting"
+  - "save this pasted document"
 tools:
   - ingest
   - ingest_undo

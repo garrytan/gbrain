@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 278507,
-    "stdoutSha256": "8b48348d77364b33846c7b34c36f5e38a0327347552eb2373d26ce4e8015ca33",
+    "stdoutBytes": 278503,
+    "stdoutSha256": "a330c0d3f62d08f5106cf86b509c134c80da998f1e34b9b089cc7d5ac5a3a195",
     "toolNames": [
       "remember",
       "entity",
@@ -6645,7 +6645,7 @@
       },
       {
         "description": "Undo one ingest attempt. Without yes: a preview and plan_hash, no write. With yes and expect: <plan_hash>: strikes its facts and soft-deletes its pages, skipping anything edited, promoted, referenced or supported since.",
-        "idempotent": false,
+        "idempotent": true,
         "local_only": false,
         "mutating": true,
         "name": "ingest_undo",
@@ -7418,7 +7418,7 @@
       },
       {
         "description": "Memory writeback settings: the mode agents follow, the exact rule text, every mode's rule, background capture state, and whether you may change it.",
-        "idempotent": false,
+        "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "get_memory_settings",
@@ -7468,9 +7468,9 @@
       },
       {
         "description": "Use when the user says \"save everything from here\" (all) or \"stop saving\" (off): returns this conversation's memory rule. Stores nothing.",
-        "idempotent": false,
+        "idempotent": true,
         "local_only": false,
-        "mutating": false,
+        "mutating": true,
         "name": "memory_conversation_mode",
         "parameters": {
           "mode": "string"

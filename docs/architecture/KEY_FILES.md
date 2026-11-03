@@ -9,8 +9,7 @@ Find a path's entry:
 rg -n -F 'src/core/ops/pages.ts' docs/architecture/key-files/
 ```
 
-Ranges use each entry's first path; an entry can cover several
-files. Search when a path crosses subsystems.
+Ranges use each entry's first path. Search when a path crosses subsystems.
 Edit the subsystem entry, not this page, when behavior changes.
 Keep entries current-state: history belongs in `CHANGELOG.md` and Git.
 Where a new storage method, migration, doctor check, command, route or sync
@@ -47,7 +46,7 @@ link it here; never raise the cap.
 | [Core Minions (2/2)](key-files/core-minions-2.md) | `src/core/minions/queue.ts` through `src/core/minions/worker.ts` |
 | [Core Persistence](key-files/core-persistence.md) | `src/core/persistence/` journal, coordinator, effects, managed sync |
 | [Core Persistence (continued)](key-files/core-persistence-continued.md) | connectors, holds, receipts; [Git writer](key-files/core-persistence-git.md); [fence repair](key-files/core-fence-repair.md) |
-| [Persistence capacity](key-files/core-persistence-capacity.md) | write caps, true-up; [history](key-files/page-history.md) |
+| [Persistence capacity](key-files/core-persistence-capacity.md) | write caps, true-up; [history](key-files/page-history.md), [as_of](key-files/valid-time.md) |
 | [Core Persistence (seams)](key-files/core-persistence-request-indexes.md) | `checkpoint-validation`, `fault-points`, `native-file-target`, `admission-retry`, `unbound-source` |
 | [Core Persistence (managed facts)](key-files/core-persistence-facts.md) | `facts-maintenance.ts`, `facts-prepare.ts`, `derived-facts.ts`, `same-page-shadow.ts` |
 | [Core Persistence (engine graduation)](key-files/core-persistence-graduation.md) | `engine-graduation*.ts`, `graduation-*.ts`, `commands/migrate-graduation.ts` |

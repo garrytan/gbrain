@@ -5,6 +5,7 @@ triggers:
   - "ingest this"
   - "save this to brain"
   - "process this meeting"
+  - "save this pasted document"
 tools:
   - ingest
   - ingest_undo
@@ -22,7 +23,7 @@ writes_to:
   - concepts/
   - meetings/
   - sources/
-when_to_use: "Use when the user asks: \"ingest this\", \"save this to brain\", \"process this meeting\"."
+when_to_use: "Use when the user asks: \"ingest this\", \"save this to brain\", \"process this meeting\", \"save this pasted document\"."
 ---
 
 # Ingest Skill

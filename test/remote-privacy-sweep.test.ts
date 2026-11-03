@@ -222,6 +222,9 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   takes_add: { slug: WORLD_PAGE_SLUG, claim: 'fresh sweep take', kind: 'take', holder: 'world' },
   delete_page: { slug: 'notes/sweep-fresh-write' },
   restore_page: { slug: 'notes/sweep-fresh-write' },
+  // A valid mode, so the call reaches the publish gate (pinned off in beforeAll) instead of failing validation.
+  set_memory_writeback: { mode: 'off' },
+  memory_conversation_mode: { mode: 'all' },
 };
 
 // Per-(op × shape) overrides for ops whose behavior legitimately differs
@@ -237,6 +240,8 @@ const COORDINATED_WRITES = new Set(['put_page', 'put_pages', 'capture', 'delete_
 const EXPECTED_BY_SHAPE: Record<string, Partial<Record<Shape, Outcome>>> = {
   whoami: { scalar: 'error', federated: 'ok' },
   list_jobs: { scalar: 'error', federated: 'ok' },
+  // The switch needs a connection that can call remember: the read-only federated grant cannot.
+  memory_conversation_mode: { scalar: 'ok', federated: 'error' },
 };
 
 // ── Expected outcome per op ──────────────────────────────────────────────
@@ -356,6 +361,13 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   get_skill: 'denied',
   list_brain_skillpack: 'denied',
   advisor: 'denied',
+  set_memory_writeback: 'denied',
+  // Memory settings reads and the per-conversation switch return config and rule text, never corpus data.
+  get_memory_settings: 'ok',
+  memory_conversation_mode: 'ok', // base unused — per-shape override in EXPECTED_BY_SHAPE (above)
+  // Document ingest: the generic invocation omits content and attempt_id; undo omits the required attempt_id.
+  ingest: 'error',
+  ingest_undo: 'error',
   // mutating ops (fresh-slug targets; envelope-echo checks only)
   remember: 'ok',
   // GST-359 D: memory_write saves only as an attested person; the sweep's callers attest none (actor_required).
@@ -500,6 +512,7 @@ beforeAll(async () => {
   // mcp.publish_* enabled in ~/.gbrain config can't flip the denied arm.
   await engine.setConfig('mcp.publish_skills', 'false');
   await engine.setConfig('mcp.publish_advisor', 'false');
+  await engine.setConfig('mcp.publish_memory_settings', 'false');
 
   // ── Seed the corpus (source: default) ──────────────────────────────
   const put = operationsByName['put_page'];

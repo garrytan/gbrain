@@ -72,6 +72,10 @@ op	run_onboard	no_canonical_write	Runs remediation steps; each step keeps its ow
 op	run_skillopt	no_canonical_write	Skill files and proposals outside the brain database.
 op	loops_close	coordinator	open_loops state rows; the commitment fact is retired (expired, fence row struck) through the loop-fact-retirement coordinator mutation (#5869).
 op	loops_mute	no_canonical_write	Loop suppression rows.
+op	ingest	coordinator	Source, entity and report pages through submitPageMutation and facts through the remember handler; the attempt journal is an op_checkpoints row.
+op	ingest_undo	coordinator	Fence-row strikes and soft deletes through submitPageMutation (revision-bound); the attempt journal is an op_checkpoints row.
+op	memory_conversation_mode	no_canonical_write	Returns the rule for the rest of the calling conversation; stores nothing.
+op	set_memory_writeback	no_canonical_write	memory.agent_writeback config row plus an mcp_request_log audit row; no page content.
 op	mute_notice	no_canonical_write	Notice mute list in <GBRAIN_HOME>/notices/muted.json; no brain table or canonical file.
 op	questions_pin	coordinator	pinned_questions side-table rows; the question page publishes through coordinated put_page (trusted local callers only).
 op	questions_refresh	coordinator	Answer and evidence pointers in the pinned_questions side tables; question page sync through coordinated put_page (trusted local callers only).

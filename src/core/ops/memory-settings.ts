@@ -85,6 +85,7 @@ function degradedNote(res: AgentWritebackResolution): string | undefined {
 const get_memory_settings: Operation = {
   name: 'get_memory_settings',
   mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description: 'Memory writeback settings: the mode agents follow, the exact rule text, every mode\'s rule, background capture state, and whether you may change it.',
   params: {},
@@ -199,6 +200,8 @@ const set_memory_writeback: Operation = {
 
 const memory_conversation_mode: Operation = {
   name: 'memory_conversation_mode',
+  mutating: true,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description: 'Use when the user says "save everything from here" (all) or "stop saving" (off): returns this conversation\'s memory rule. Stores nothing.',
   params: {
