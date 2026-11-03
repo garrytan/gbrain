@@ -313,3 +313,30 @@ describe('formatTrajectoryBlock — provenance', () => {
     expect(r.rendered).not.toContain('(source:');
   });
 });
+
+describe('formatTrajectoryBlock — supersession needs a comparable prior', () => {
+  const superseded = (rendered: string) => rendered.split('\n').filter(l => l.includes('(superseded prior)'));
+
+  test('same-time conflicting values are both emitted and neither supersedes the other', () => {
+    const points = [
+      mkMetricPoint({ id: 1, date: '2026-02-03', metric: 'users', value: 900, text: 'cohort A count' }),
+      mkMetricPoint({ id: 2, date: '2026-02-03', metric: 'users', value: 90, text: 'cohort B count' }),
+    ];
+    const r = formatTrajectoryBlock(points, 'companies/example-co', { intent: 'knowledge_update' });
+    expect(r.emittedPoints).toBe(2);
+    expect(superseded(r.rendered)).toEqual([]);
+  });
+
+  test('a unit change is not a supersession; the next same-unit value still is', () => {
+    const points = [
+      mkMetricPoint({ id: 1, date: '2026-01-01', metric: 'arr', value: 100, unit: 'USD' }),
+      mkMetricPoint({ id: 2, date: '2026-02-01', metric: 'arr', value: 90, unit: 'EUR' }),
+      mkMetricPoint({ id: 3, date: '2026-03-01', metric: 'arr', value: 80, unit: 'USD' }),
+    ];
+    const r = formatTrajectoryBlock(points, 'companies/example-co', { intent: 'knowledge_update' });
+    expect(r.emittedPoints).toBe(3);
+    const lines = superseded(r.rendered);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('as of 2026-03-01: 80 USD');
+  });
+});

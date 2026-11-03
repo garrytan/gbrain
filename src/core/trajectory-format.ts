@@ -22,7 +22,9 @@
  *   - `knowledge_update` intent annotates value-change rows with
  *     `(superseded prior)` — the explicit signal Codex flagged was
  *     missing from default RRF-ordered retrieval. Other intents skip
- *     the annotation to keep the block compact.
+ *     the annotation to keep the block compact. Only a comparable prior
+ *     (same unit and period, strictly earlier; `comparableTrajectoryPairs`)
+ *     can be superseded: a same-time conflict or a unit change is not one.
  *   - INJECTION_PATTERNS sanitization applied per row's `text` field
  *     (parity with renderTakesBlock + renderChatBlock).
  *   - Deterministic output: groups sorted alphabetically by key, points
@@ -30,6 +32,7 @@
  */
 
 import type { TrajectoryPoint } from './engine.ts';
+import { comparableTrajectoryPairs } from './trajectory.ts';
 import { INJECTION_PATTERNS } from './think/sanitize.ts';
 
 export type TrajectoryIntent = 'temporal' | 'knowledge_update' | 'other';
@@ -124,8 +127,9 @@ function formatGroup(
 
   const lines: string[] = [];
   let sanitizedCount = 0;
-  let priorValue: number | null = null;
-  const annotateSupersession = opts.intent === 'knowledge_update' && isMetric;
+  const superseding = new Set<TrajectoryPoint>(opts.intent === 'knowledge_update' && isMetric
+    ? comparableTrajectoryPairs(points).filter(([older, newer]) => older.value !== newer.value).map(([, newer]) => newer)
+    : []);
 
   for (const p of points) {
     const { text, matched } = sanitizeRowText(p.text);
@@ -134,19 +138,13 @@ function formatGroup(
     const valueStr = fmtValue(p);
     const provenance = p.source_session ?? p.source_markdown_slug ?? null;
     const provSuffix = provenance ? ` (source: ${provenance})` : '';
-
-    let suffix = '';
-    if (annotateSupersession && p.value !== null && priorValue !== null && p.value !== priorValue) {
-      suffix = ' (superseded prior)';
-    }
+    const suffix = superseding.has(p) ? ' (superseded prior)' : '';
 
     lines.push(
       isMetric
         ? `  as of ${date}: ${valueStr} — ${text}${suffix}${provSuffix}`
         : `  as of ${date}: ${text}${suffix}${provSuffix}`,
     );
-
-    if (p.value !== null) priorValue = p.value;
   }
 
   const block = `<trajectory entity="${entitySlug}" ${attr}>\n${lines.join('\n')}\n</trajectory>`;
