@@ -6,7 +6,7 @@ import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 import { parseWriteRequestId } from '../persistence/preconditions.ts';
 import { countEvidenceTokens, deliverEvidence, effectivePlan, resolveEvidencePlan, type DeliveryMeta, type EvidencePlan } from '../search/evidence-delivery.ts';
 import { withFactDateHeaders } from '../search/evidence-date.ts';
-import { fenceTranscriptRows, neutralizeTranscriptRows, quoteFacts } from '../search/transcript-quote.ts';
+import { fenceTranscriptRows, fenceTranscriptText, neutralizeTranscriptRows, quoteFacts } from '../search/transcript-quote.ts';
 import { randomUUID } from 'node:crypto';
 import { readHolders } from './context.ts';
 /**
@@ -229,6 +229,13 @@ async function quoteRecall<F extends { id: number; fact: string; source?: string
   const recount = delivery ? { count: (text: string) => countEvidenceTokens(text, delivery.tokenizer), delivery } : undefined;
   const quoted = await quoteFacts(ctx.engine, facts.map((f, i) => ({ ...f, ...redacted[i] })), true).catch(() => null);
   return { facts: quoted ?? [], withheld: quoted === null && facts.length > 0, results: fenceTranscriptRows(neutralizeTranscriptRows(results, delivery?.date_header === true), recount, true) };
+}
+
+/** A delivered fact's typed claim; a quoted fact's claim strings are fenced like its text (quoteFacts), the value is a number. */
+function recallClaimColumns(row: { id: number; quoted?: string; claim_metric?: string | null; claim_value?: number | null; claim_unit?: string | null; claim_period?: string | null }) {
+  const claim = claimColumns(row);
+  if (!row.quoted) return claim;
+  return Object.fromEntries(Object.entries(claim).map(([key, value]) => [key, typeof value === 'string' ? fenceTranscriptText(value, `fact ${row.id}`) : value]));
 }
 
 /**
@@ -630,7 +637,7 @@ const recall: Operation = {
         // pre-v1 consumers — legacy fields are frozen byte-equal). `provenance`
         // is the protocol name for the stored source attribution.
         fact_id: String(r.id),
-        provenance: r.source, ...(r.attributed_to ? { attributed_to: r.attributed_to } : {}), ...(r.quoted ? { quoted: r.quoted } : {}), ...claimColumns(r),
+        provenance: r.source, ...(r.attributed_to ? { attributed_to: r.attributed_to } : {}), ...(r.quoted ? { quoted: r.quoted } : {}), ...recallClaimColumns(r),
         ...(r.entity_slugs ? { entity_slugs: r.entity_slugs } : {}), ...(r.collapsed_count ? { collapsed_count: r.collapsed_count } : {}),
         ...(ranking ? { relevance: ranking.relevance.get(r.id), ...(ranking.weighting ? { rank_score: ranking.weighting.rank.get(r.id), confidence_factor: ranking.weighting.factor.get(r.id) } : {}) } : {}),
       })), f => f.id)), { remote: ctx.remote !== false, excludePrivate, eligibility }, contested),

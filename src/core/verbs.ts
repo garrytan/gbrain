@@ -182,7 +182,8 @@ const remember: Operation = {
         'Pass when the fact was said or became true as YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS][Z|±HH:MM], e.g. valid_from: "2026-03-01", or omit it.',
       );
     }
-    const claim = (await import('./facts/typed-claim.ts')).parseClaimParams(p);
+    const claim = (await import('./facts/typed-claim.ts')).parseClaimParams(ctx.remote === false ? p : { ...p,
+      ...Object.fromEntries((['claim_metric', 'claim_unit', 'claim_period'] as const).flatMap(k => typeof p[k] === 'string' ? [[k, unquoteFactText(p[k] as string)]] : [])) });
     if (p.content_origin !== undefined && !CONTENT_ORIGIN_PARAM.enum!.includes(p.content_origin as string)) {
       throw verbError('invalid_params', `content_origin must be one of ${CONTENT_ORIGIN_PARAM.enum!.join(', ')}; got ${JSON.stringify(p.content_origin)}.`,
         'Pass content_origin as user_said, tool_output (text from a web page, email, file or other tool) or inferred, or omit it.');
