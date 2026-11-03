@@ -10,7 +10,7 @@
  * `gbrain conversation-parser scan <slug>`.
  */
 import type { BrainEngine } from '../../../core/engine.ts';
-import { ALLOWED_TYPES, isConversationFactsEligiblePage, requireParseableConversationFlag } from '../../../core/facts/conversation-types.ts';
+import { ALLOWED_TYPES, isConversationFactsEligiblePage, pageTypesForAllowed, requireParseableConversationFlag } from '../../../core/facts/conversation-types.ts';
 import type { Check } from '../../doctor.ts';
 import { checkError } from '../check-fix.ts';
 
@@ -25,7 +25,7 @@ export async function computeConversationFormatCoverageCheck(
     const { ConversationBodyTooLargeError, readConversationBodyForParsing } = await import('../../../core/conversation-parser/body.ts');
     const { parseConversation } = await import('../../../core/conversation-parser/parse.ts');
     // Single source of truth for the conversation-facts type allowlist (#4135).
-    const allowedTypes = ALLOWED_TYPES;
+    const allowedTypes = pageTypesForAllowed(ALLOWED_TYPES);
     // PageFilters supports singular `type` only; iterate the allowed types
     // and cap at ~50/each to land at ~200 total max.
     const sample: import('../../../core/types.ts').Page[] = [];
