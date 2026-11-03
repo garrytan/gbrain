@@ -861,8 +861,7 @@ every scanner that names a split file, listed in
 `scripts/check-layering.ts` (`bun run check:layering`, in `bun run verify`)
 parses every file under `src/core/engine-sql/`, `src/core/schema-migrations/`
 and `src/core/persistence/` and fails on any import, type-only included, of an
-engine façade (`pglite-engine.ts`, `postgres-engine.ts`, `engine-factory.ts`,
-`engine-construct.ts`)
+engine façade (`pglite-engine.ts`, `postgres-engine.ts`, `engine-factory.ts`)
 from engine-sql, of `src/core/migrate.ts` from schema-migrations, or of
 `src/core/ai/gateway.ts` from persistence. The first two directories are loaded
 by the engines and by `migrate.ts`, so an import back up is an ESM cycle that

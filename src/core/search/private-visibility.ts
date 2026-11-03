@@ -22,9 +22,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine } from '../engine.ts';
-import { embeddedEngineInScope } from '../engine-scope.ts';
-import { isEmbeddedEngine } from '../embedded-engine.ts';
-import { engineKey } from '../engine-key.ts';
+import { embeddedKey, embeddedKeyInScope } from '../engine-scope-store.ts';
 import { requestConfigRows } from '../config-snapshot.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { ACCESS_ID_RE, hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
@@ -503,16 +501,15 @@ const aliasOptOutEngines = new Set<BrainEngine>();
  * per-call engine is never retained): inside its scope its own setting decides, and it never sways the process sets.
  */
 let embeddedPolicy = new WeakMap<object, { honorAliases?: boolean; expose?: boolean }>();
-const embeddedPolicyOf = (engine: object) => {
-  const key = engineKey(engine);
+const embeddedPolicyOf = (key: object) => {
   let policy = embeddedPolicy.get(key);
   if (!policy) embeddedPolicy.set(key, policy = {});
   return policy;
 };
 const ALIAS_OPT_OUT_VALUES = ['false', '0', 'off', 'no'];
 function honorAliases(): boolean {
-  const scoped = embeddedEngineInScope();
-  if (scoped) return embeddedPolicy.get(engineKey(scoped))?.honorAliases ?? true;
+  const scoped = embeddedKeyInScope();
+  if (scoped) return embeddedPolicy.get(scoped)?.honorAliases ?? true;
   return honorAliasEngines.size > 0 || aliasOptOutEngines.size === 0;
 }
 
@@ -520,15 +517,17 @@ function honorAliases(): boolean {
 export async function readHonorAliases(engine: BrainEngine): Promise<boolean> {
   try {
     const optOut = ALIAS_OPT_OUT_VALUES.includes((await engine.getConfig(HONOR_ALIASES_KEY))?.trim().toLowerCase() ?? '');
-    if (isEmbeddedEngine(engine)) {
-      embeddedPolicyOf(engine).honorAliases = !optOut;
+    const embedded = embeddedKey(engine);
+    if (embedded) {
+      embeddedPolicyOf(embedded).honorAliases = !optOut;
       return !optOut;
     }
     (optOut ? aliasOptOutEngines : honorAliasEngines).add(engine);
     (optOut ? honorAliasEngines : aliasOptOutEngines).delete(engine);
     return !optOut;
   } catch {
-    return isEmbeddedEngine(engine) ? embeddedPolicy.get(engineKey(engine))?.honorAliases ?? true : !aliasOptOutEngines.has(engine);
+    const embedded = embeddedKey(engine);
+    return embedded ? embeddedPolicy.get(embedded)?.honorAliases ?? true : !aliasOptOutEngines.has(engine);
   }
 }
 
@@ -757,8 +756,8 @@ export function __resetPrivateVisibilityCacheForTests(): void {
  */
 function processPrivacyRelaxed(): boolean {
   if (process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1') return true;
-  const scoped = embeddedEngineInScope();
-  if (scoped) return embeddedPolicy.get(engineKey(scoped))?.expose === true;
+  const scoped = embeddedKeyInScope();
+  if (scoped) return embeddedPolicy.get(scoped)?.expose === true;
   return exposeEngines.size > 0 && strictEngines.size === 0;
 }
 
@@ -782,8 +781,9 @@ export async function remotePrivacyRelaxed(engine: BrainEngine): Promise<boolean
   }
   await readHonorAliases(engine);
   cache.set(engine, { at: Date.now(), expose });
-  if (isEmbeddedEngine(engine)) {
-    embeddedPolicyOf(engine).expose = expose;
+  const embedded = embeddedKey(engine);
+  if (embedded) {
+    embeddedPolicyOf(embedded).expose = expose;
     return expose;
   }
   (expose ? exposeEngines : strictEngines).add(engine);

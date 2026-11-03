@@ -1,6 +1,7 @@
 import { engineKey } from './engine-key.ts';
 import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL } from './ai/defaults.ts';
 import { opError } from './ops/contract.ts';
+import { setEmbeddedKeyResolver } from './engine-scope-store.ts';
 
 /**
  * The value an embedding host passes to `openEngine` (engine-open.ts). Nothing in it is read from a config file, an
@@ -89,6 +90,7 @@ export function settingsConnectionOptions(url: string): { host: string; port: nu
 const records = new WeakMap<object, EmbeddedRecord>();
 let embeddedProcess = false;
 let openEmbeddedEngines = 0;
+setEmbeddedKeyResolver(engine => (records.has(engineKey(engine)) ? engineKey(engine) : undefined));
 
 function recordOf(engine: object): EmbeddedRecord | undefined {
   return records.get(engineKey(engine));
