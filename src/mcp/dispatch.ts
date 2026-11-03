@@ -815,11 +815,14 @@ export function errorResult(e: unknown, opts: DispatchOpts, extra: { op?: string
 /**
  * GST-1054: SkillOpt's tool loops hand the model a thrown error's message, so their read handlers throw this: the
  * error text an MCP caller reads for the same failed read (code, message, suggestion, fix), with `code` kept for
- * callers that branch on it. An AI invocation policy stop passes through unchanged, because the loop rethrows it.
+ * callers that branch on it. It renders for the caller's grant (a read-scope reader when the loop has none) and the
+ * loop's own tools, so a fix names a tool call the model can make. An AI invocation policy stop passes through
+ * unchanged, because the loop rethrows it.
  */
-export function asAgentToolError(e: unknown, op: string, sourceId?: string): unknown {
+export function asAgentToolError(e: unknown, op: string, ctx: Pick<OperationContext, 'sourceId' | 'auth'>, allowedOps: ReadonlySet<string>): unknown {
   if (isAIInvocationPolicyError(e)) return e;
-  const text = errorResult(e, { remote: true, transport: 'http', sourceId }, { op, mutating: false, idempotent: true }).content[0]!.text;
+  const auth: AuthInfo = ctx.auth ?? { token: '', clientId: '', scopes: ['read'] };
+  const text = errorResult(e, { remote: true, transport: 'http', sourceId: ctx.sourceId, auth, allowedOps }, { op, mutating: false, idempotent: true }).content[0]!.text;
   return Object.assign(new Error(text), { code: (JSON.parse(text) as { code?: string }).code });
 }
 

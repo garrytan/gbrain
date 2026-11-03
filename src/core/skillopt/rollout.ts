@@ -213,10 +213,9 @@ interface ToolRegistry {
 function buildReadOnlyToolRegistry(ctx: OperationContext, offered: ReadonlySet<string>, allowed?: ReadonlySet<string>, original?: OperationContext): ToolRegistry {
   const defs: ChatToolDef[] = [];
   const handlers = new Map<string, ToolHandler>();
-  for (const op of operations) {
-    if (!offered.has(op.name)) continue;
-    if (op.mutating || op.localOnly) continue;
-    if (allowed && !allowed.has(op.name)) continue;
+  const ops = operations.filter(op => offered.has(op.name) && !op.mutating && !op.localOnly && (!allowed || allowed.has(op.name)));
+  const opNames = new Set(ops.map(op => op.name));
+  for (const op of ops) {
     const toolName = `brain_${op.name}`;
     defs.push({
       name: toolName,
@@ -234,7 +233,7 @@ function buildReadOnlyToolRegistry(ctx: OperationContext, offered: ReadonlySet<s
           if (failure) throw schemaInvalidParams(op, failure, { remote: true }, params);
           return await op.handler({ ...active, remote: true }, params);
         } catch (e) {
-          throw asAgentToolError(e, op.name, active.sourceId);
+          throw asAgentToolError(e, op.name, active, opNames);
         }
       },
     });

@@ -32,7 +32,7 @@ async function rolloutHandlers(operationContext?: OperationContext): Promise<Map
 }
 
 async function mcpText(args: Record<string, unknown>): Promise<string> {
-  const r = await dispatchToolCall(engine, 'get_page', args, { remote: true, transport: 'http', sourceId: 'default' });
+  const r = await dispatchToolCall(engine, 'get_page', args, { remote: true, transport: 'http', sourceId: 'default', auth: { token: '', clientId: '', scopes: ['read'] } });
   expect(r.isError).toBe(true);
   return (r.content as Array<{ text: string }>)[0]!.text;
 }
@@ -68,10 +68,12 @@ describe('GST-1054: SkillOpt rollout tool errors carry the MCP error text', () =
     test(name + ': a refusal reaches the model with its code, suggestion and runnable fix, as MCP returns it', async () => {
       const message = await thrownMessage(handlers(), twoSelectors);
       expect(message).toBe(await mcpText(twoSelectors));
-      const body = JSON.parse(message) as { code: string; suggestion?: string; fix?: { argv?: string[] } };
+      const body = JSON.parse(message) as { code: string; suggestion?: string; fix?: { argv?: string[]; next?: string; mcp?: { tool: string } } };
       expect(body.code).toBe('invalid_params');
       expect(body.suggestion).toContain('Drop `bytes`');
       expect(body.fix?.argv).toEqual(['gbrain', 'get', '--lines', '1-1', '--body', 'window', '--source', 'default', '--', SLUG]);
+      expect(body.fix?.next).toBe('run');
+      expect(body.fix?.mcp?.tool).toBe('get_page');
     });
 
     test(name + ': a handler error reads the same as the MCP error', async () => {
@@ -84,7 +86,7 @@ describe('GST-1054: SkillOpt rollout tool errors carry the MCP error text', () =
     await expect(withAIInvocationGuard(async () => { throw stop; }, () =>
       invokeAI({ operation: 'synthetic.expand', kind: 'embedding', model: 'synthetic:model', maxInputTokens: 8 }, async () => 'unreached', () => null))).rejects.toBe(stop);
     expect(isAIInvocationPolicyError(stop)).toBe(true);
-    expect(asAgentToolError(stop, 'get_page', 'default')).toBe(stop);
+    expect(asAgentToolError(stop, 'get_page', { sourceId: 'default' }, new Set(['get_page']))).toBe(stop);
   });
 
   test('a remote rollout whose grant was revoked reads the permission_denied error with its fix', async () => {
