@@ -10,6 +10,19 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.568.0] - 2026-11-03
+
+**A brain opened from settings keeps its files in its own store.** On an engine opened from settings, every file operation (`file_upload`, `file_url`, page purge and the new `file_verify`) uses the engine's own `settings.storage`: a local path, or s3 with its endpoint and keys, and an optional one-segment key `prefix` so brains sharing a bucket each keep their own keys. The process storage config is never used there. `file_verify` lists which rows still have their object or re-hashes one. A brain the CLI or a server opens is unchanged, and there `file_verify` refuses `embedded_engine_required`; it is never an MCP tool. `file_register`, which lets a host record bytes it stored itself, ships separately. Contributed by @bradgessler (#8457).
+
+### Itemized changes
+
+- `src/core/storage/s3.ts`: `file_url` on an s3 store with an endpoint builds the URL from the endpoint the SDK resolves, instead of throwing.
+- A store that does not answer `file_verify` or `file_url` is the new `store_unavailable` code, never a file reported missing.
+- On an engine opened from settings, `delete_page` purge deletes a page's files from `settings.storage` too. A file it can't find there, or a store that doesn't answer, is reported in `blobs_remaining`, never as deleted; files an embedded engine's `file_upload` wrote before this release live in the process store, so delete those remaining paths by hand. Rows an embedded engine's `file_upload` wrote before this release point at the process store, so `file_url` and `file_verify` look for them in `settings.storage`.
+- `openEngine` refuses `engine_settings_invalid` for a `storage` setting missing a value its backend needs (so no backend falls back to a default path or environment credentials), an unknown field, a backend other than local or s3, or a prefix that is not one segment; an s3 store must name its endpoint, so no AWS_* variable or ~/.aws file picks it; `embeddedSettings()` reads back `hasSecret` instead of the secret.
+- `src/core/storage/local.ts` and `s3.ts` stream an object's size and SHA-256 (`hashObject`); other backends hash one download.
+- `test/embedded-file-store.test.ts`: real PGLite engines and a real local store; the unreachable store is a closed local port.
+
 ## [0.60.567.0] - 2026-11-03
 
 **/ship now carries its unit, serial, slow and E2E lanes from a passed full-ci run instead of running them again.** `.gstack/pregate.json` declares `ship_lanes_from` (gstack 1.94+): `bun run test`, `bun run test:serial`, `bun run test:slow` and `bun run test:e2e` carry from the Test (`full-suite`) and E2E (`e2e-full-suite`) runs at the exact, clean tree, and print `LANE: <label> carried run=<id>/<attempt>`. A dirty tree, a newer red or running run, or a run whose `tree.json` misses a file the lane runs still runs the lane locally. Each lane's file list comes from `scripts/pregate-remote-gate.sh --list` on the full gate, so a tree that changes the CI reuse files never carries its own runs.
