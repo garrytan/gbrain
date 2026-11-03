@@ -12,6 +12,8 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
+**The brain owner can declare an email on a member and link a trusted system's canonical id to the member by that email, instead of looking up the member id first.** `gbrain access member add <id> --email <addr>` and `gbrain access member set <id> --email <addr>|none` declare or clear it, `member list` shows it, and `gbrain access member link --email <addr> --qm <id>` makes the same link `link <id> --qm <id>` makes. Over the running server, `gbrain mcp admin member-add --email`, `member-set` and `link --email` do the same through the owner-session routes. An email is stored lower-case, is unique per brain, and is cleared when a member is removed. An email no member declares is `not_found` and creates nothing. This changes no trust: the operator still makes every link, and no OAuth token, attested call or MCP tool can set an email or make a link. Members and emails are database state (migration v287), so a repo-less brain works the same.
+
 **The brain owner can now set a trusted system's attest right and manage members and their canonical-id links from another machine, over the running server, instead of needing a shell on the brain host.** Three owner-session routes back new `gbrain mcp admin` commands. Every refusal the local commands make still applies, and no OAuth token or MCP tool reaches them.
 
 ### What changed

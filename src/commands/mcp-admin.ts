@@ -19,10 +19,12 @@ gbrain mcp admin setup ID --harness ID [--flow authorization-code|client-credent
 gbrain mcp admin invalidate-tokens|revoke|delete ID [--yes --if-version N]
 gbrain mcp admin attest CLIENT_ID --attest-actor qm|none [--attest-ops LIST] [--dry-run]
 gbrain mcp admin members [--all]
-gbrain mcp admin member-add ID [--name NAME] [--groups G1,G2]
+gbrain mcp admin member-add ID [--name NAME] [--email ADDR] [--groups G1,G2]
+gbrain mcp admin member-set ID --email ADDR|none
 gbrain mcp admin member-disable|member-enable ID
 gbrain mcp admin links [--member ID]
 gbrain mcp admin link MEMBER --qm CANONICAL_ID [--dry-run]
+gbrain mcp admin link --email ADDR --qm CANONICAL_ID [--dry-run]
 gbrain mcp admin unlink --qm CANONICAL_ID [--dry-run]
 
 --url URL                          Running server URL or /mcp endpoint (required)
@@ -40,6 +42,7 @@ gbrain mcp admin unlink --qm CANONICAL_ID [--dry-run]
 --attest-actor qm|none             Grant or clear the right to name the person a call serves (x-qm-actor)
 --attest-ops LIST                  Operations an attested call may run (default get_write_request,memory_recall,memory_write)
 --qm ID                            A canonical person id from the trusted system
+--email ADDR                       A member's declared email (case-folded, unique); link finds the member by it
 --timeout-ms N                     Request timeout, 100..300000 (default: 30000)
 --json                             Structured result; credentials stay in private exports
 
@@ -63,8 +66,8 @@ const commandValues: Record<string, string[]> = {
   register: ['--redirect-uri', '--token-endpoint-auth-method', '--source', '--federated-read', '--scopes', '--profile', '--credentials-out', '--harness'],
   setup: ['--harness', '--flow', '--credentials-out'],
   'invalidate-tokens': ['--if-version'], revoke: ['--if-version'], delete: ['--if-version'],
-  attest: ['--attest-actor', '--attest-ops'], members: [], 'member-add': ['--name', '--groups'], 'member-disable': [], 'member-enable': [],
-  links: ['--member'], link: ['--qm'], unlink: ['--qm'],
+  attest: ['--attest-actor', '--attest-ops'], members: [], 'member-add': ['--name', '--groups', '--email'], 'member-set': ['--email'], 'member-disable': [], 'member-enable': [],
+  links: ['--member'], link: ['--qm', '--email'], unlink: ['--qm'],
 };
 const untargeted = ['login-link', 'clients', 'members', 'links', 'unlink'];
 const previewable = ['register', 'invalidate-tokens', 'revoke', 'delete', 'attest', 'link', 'unlink'];
@@ -72,7 +75,7 @@ const previewable = ['register', 'invalidate-tokens', 'revoke', 'delete', 'attes
 export function parseMcpAdmin(args: string[]): AdminArgs {
   const command = args[0];
   if (!command || !Object.hasOwn(commandValues, command)) throw new McpAdminError('invalid_admin_command', `Expected one of: ${Object.keys(commandValues).join(', ')}. Use mcp admin --help.`);
-  const targeted = !untargeted.includes(command);
+  const targeted = !untargeted.includes(command) && !(command === 'link' && args[1]?.startsWith('-'));
   const target = targeted ? args[1] : undefined;
   if (targeted && (!target || target.startsWith('-'))) throw new McpAdminError('missing_target', `${command} requires ${command === 'register' ? 'a name' : command.startsWith('member') || command === 'link' ? 'a member ID' : 'a client ID'}.`);
   const allowedValues = new Set([...common, ...commandValues[command]]);
@@ -113,7 +116,13 @@ const ACCESS_COMMANDS: Record<string, (client: AdminClient, parsed: AdminArgs, v
   },
   members: (client, parsed) => client.request(`/admin/api/access/members${parsed.flags.has('--all') ? '?all=1' : ''}`),
   'member-add': (client, parsed, value) => client.request('/admin/api/access/members', { method: 'POST', mutation: true, nextAction: `gbrain mcp admin members --url ${client.base}`,
-    body: { action: 'add', id: parsed.target, ...(value('--name') === undefined ? {} : { name: value('--name') }), ...(value('--groups') === undefined ? {} : { groups: list(value('--groups')) }) } }),
+    body: { action: 'add', id: parsed.target, ...(value('--name') === undefined ? {} : { name: value('--name') }), ...(value('--email') === undefined ? {} : { email: value('--email') }),
+      ...(value('--groups') === undefined ? {} : { groups: list(value('--groups')) }) } }),
+  'member-set': (client, parsed, value) => {
+    const email = value('--email');
+    if (email === undefined) throw new McpAdminError('invalid_arguments', 'member-set needs --email <addr>|none.');
+    return client.request('/admin/api/access/members', { method: 'POST', mutation: true, nextAction: `gbrain mcp admin members --url ${client.base}`, body: { action: 'set', id: parsed.target, email: email === 'none' ? null : email } });
+  },
   'member-disable': (client, parsed) => client.request('/admin/api/access/members', { method: 'POST', mutation: true, nextAction: `gbrain mcp admin members --url ${client.base}`, body: { action: 'disable', id: parsed.target } }),
   'member-enable': (client, parsed) => client.request('/admin/api/access/members', { method: 'POST', mutation: true, nextAction: `gbrain mcp admin members --url ${client.base}`, body: { action: 'enable', id: parsed.target } }),
   links: (client, _parsed, value) => client.request(`/admin/api/access/member-links${value('--member') ? `?member=${encodeURIComponent(value('--member')!)}` : ''}`),
@@ -124,9 +133,11 @@ const ACCESS_COMMANDS: Record<string, (client: AdminClient, parsed: AdminArgs, v
 function linkRequest(client: AdminClient, parsed: AdminArgs, value: (flag: string) => string | undefined, action: 'link' | 'unlink'): Promise<unknown> {
   const externalId = value('--qm');
   if (externalId === undefined) throw new McpAdminError('invalid_arguments', `${action} needs --qm <canonical id>.`);
+  const email = value('--email');
+  if (action === 'link' && (email === undefined) === (parsed.target === undefined)) throw new McpAdminError('invalid_arguments', 'link needs a member ID or --email <addr>, not both.');
   const dryRun = parsed.flags.has('--dry-run');
   return client.request('/admin/api/access/member-links', { method: 'POST', mutation: !dryRun, nextAction: `gbrain mcp admin links --url ${client.base}`,
-    body: { action, externalId, dryRun, ...(action === 'link' ? { member: parsed.target } : {}) } });
+    body: { action, externalId, dryRun, ...(action === 'link' ? (email === undefined ? { member: parsed.target } : { email }) : {}) } });
 }
 
 function destinationAvailable(path: string): void {

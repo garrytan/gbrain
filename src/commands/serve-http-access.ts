@@ -1,8 +1,8 @@
 import express, { type Express, type Request, type Response, type RequestHandler } from 'express';
 import type { BrainEngine } from '../core/engine.ts';
 import { OperationError } from '../core/ops/contract.ts';
-import { addMember, bindCredential, disableMember, enableMember, listMembers, type BindingPatch } from '../core/access/members.ts';
-import { ATTEST_SYSTEMS, linkMember, listMemberLinks, parseAttestOps, unlinkMember } from '../core/access/actor.ts';
+import { addMember, bindCredential, disableMember, enableMember, listMembers, setMemberEmail, type BindingPatch } from '../core/access/members.ts';
+import { ATTEST_SYSTEMS, linkMember, linkMemberByEmail, listMemberLinks, parseAttestOps, unlinkMember } from '../core/access/actor.ts';
 import { operationsByName } from '../core/operations.ts';
 import { executeRawJsonb } from '../core/sql-query.ts';
 
@@ -11,24 +11,32 @@ import { executeRawJsonb } from '../core/sql-query.ts';
  * right on a client, members, and the canonical ids linked to them. Owner session only (requireAdmin); never an MCP
  * operation or an OAuth scope. Every refusal is the library's, as on the local CLI (gbrain auth rescope --attest-actor,
  * gbrain access member add|disable|enable|link|unlink).
+ *
+ * GST-1158: a member's declared email is set on add or with action set, and a link may name the member by that email
+ * instead of its id. Only here and on the brain host: no MCP operation or OAuth scope reads or sets it.
  */
 export function mountAdminAccess(app: Express, requireAdmin: RequestHandler, engine: BrainEngine): void {
-  const json = express.json();
-
   app.get('/admin/api/access/members', requireAdmin, async (req, res) => {
     await answer(res, false, async () => ({ members: await listMembers(engine, { includeRemoved: req.query.all === '1' || req.query.all === 'true' }) }));
   });
 
-  app.post('/admin/api/access/members', requireAdmin, json, async (req, res) => {
+  app.post('/admin/api/access/members', requireAdmin, express.json(), async (req, res) => {
     const { action, id } = req.body ?? {};
-    if (action !== 'add' && action !== 'disable' && action !== 'enable') return refuse(res, 'action must be add, disable or enable.');
+    if (action !== 'add' && action !== 'set' && action !== 'disable' && action !== 'enable') return refuse(res, 'action must be add, set, disable or enable.');
+    if (action === 'add' && req.body.email !== undefined && typeof req.body.email !== 'string') return refuse(res, 'email must be a string.');
+    if (action === 'set' && !(typeof req.body.email === 'string' || req.body.email === null)) return refuse(res, 'set needs email: an address, or null to clear it.');
     if (action === 'add' && req.body.name !== undefined && typeof req.body.name !== 'string') return refuse(res, 'name must be a string.');
     if (action === 'add' && req.body.groups !== undefined && !(Array.isArray(req.body.groups) && req.body.groups.every((g: unknown) => typeof g === 'string'))) return refuse(res, 'groups must be an array of group ids.');
     await answer(res, true, async () => {
       if (action === 'add') {
-        const result = await addMember(engine, id, { name: req.body.name, groups: req.body.groups });
+        const result = await addMember(engine, id, { name: req.body.name, email: req.body.email, groups: req.body.groups });
         await audit(engine, 'member_add', { member: result.member.id, groups_created: result.groups_created });
         return { applied: true, ...result };
+      }
+      if (action === 'set') {
+        const result = await setMemberEmail(engine, id, req.body.email);
+        if (result.changed) await audit(engine, 'member_set', { member: result.member.id, email: result.member.email === null ? 'cleared' : 'declared' });
+        return { applied: result.changed, ...result };
       }
       const member = await (action === 'disable' ? disableMember : enableMember)(engine, id);
       await audit(engine, `member_${action}`, { member: member.id });
@@ -41,20 +49,22 @@ export function mountAdminAccess(app: Express, requireAdmin: RequestHandler, eng
     await answer(res, false, async () => ({ links: await listMemberLinks(engine, { member }) }));
   });
 
-  app.post('/admin/api/access/member-links', requireAdmin, json, async (req, res) => {
-    const { action, member, externalId, dryRun } = req.body ?? {};
+  app.post('/admin/api/access/member-links', requireAdmin, express.json(), async (req, res) => {
+    const { action, member, email, externalId, dryRun } = req.body ?? {};
     const system = req.body?.system ?? 'qm';
     if (action !== 'link' && action !== 'unlink') return refuse(res, 'action must be link or unlink.');
+    if (email !== undefined && (action !== 'link' || member !== undefined || typeof email !== 'string')) return refuse(res, 'email names the member of a link, instead of member; it is a string and only link takes it.');
     if (!ATTEST_SYSTEMS.includes(system)) return refuse(res, `system must be ${ATTEST_SYSTEMS.join(' or ')}.`);
     if (dryRun !== undefined && typeof dryRun !== 'boolean') return refuse(res, 'dryRun must be a boolean.');
     await answer(res, dryRun !== true, async () => {
-      const result = action === 'link' ? await linkMember(engine, member, system, externalId, { dryRun }) : await unlinkMember(engine, system, externalId, { dryRun });
+      const result = action === 'unlink' ? await unlinkMember(engine, system, externalId, { dryRun })
+        : email !== undefined ? await linkMemberByEmail(engine, email, system, externalId, { dryRun }) : await linkMember(engine, member, system, externalId, { dryRun });
       if (result.applied) await audit(engine, `member_${action}`, { system, external_id: result.link.external_id, member: result.link.member_id });
       return result;
     });
   });
 
-  app.post('/admin/api/access/attest', requireAdmin, json, async (req, res) => {
+  app.post('/admin/api/access/attest', requireAdmin, express.json(), async (req, res) => {
     const { clientId, attestActor, attestOps, dryRun } = req.body ?? {};
     if (typeof clientId !== 'string' || !clientId) return refuse(res, 'clientId required.');
     if (attestActor === undefined && attestOps === undefined) return refuse(res, 'Pass attestActor (qm or null) and/or attestOps.');

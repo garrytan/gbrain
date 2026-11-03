@@ -269,13 +269,17 @@ over the running server:
 ```bash
 gbrain mcp admin attest CLIENT_ID --attest-actor qm [--attest-ops <op,...>] --dry-run \
   --url https://brain.example.com/mcp --admin-token-file /absolute/private/admin-token
-gbrain mcp admin member-add alice-example --url … --admin-token-file …
+gbrain mcp admin member-add alice-example --email alice@example.com --url … --admin-token-file …
 gbrain mcp admin link alice-example --qm U0ALICE --dry-run --url … --admin-token-file …
+gbrain mcp admin link --email alice@example.com --qm U0ALICE --dry-run --url … --admin-token-file …
 ```
 
 The other commands are `--attest-actor none` (clear the right),
-`member-disable|member-enable ID`, `members [--all]`, `unlink --qm ID` and
-`links [--member ID]`. They call `/admin/api/access/attest`, `/admin/api/access/members` and
+`member-set ID --email ADDR|none`, `member-disable|member-enable ID`, `members [--all]`,
+`unlink --qm ID` and `links [--member ID]`. A member's email is optional,
+stored lower-case and unique per brain; `link --email` finds the one member that
+declares it and makes the same link `link ID` makes, and an unknown email is
+`not_found` and creates nothing. They call `/admin/api/access/attest`, `/admin/api/access/members` and
 `/admin/api/access/member-links`. These routes accept only the owner session:
 no OAuth token and no MCP tool reaches them. They refuse exactly what the
 local commands refuse, and each applied change is logged as `access_admin` in

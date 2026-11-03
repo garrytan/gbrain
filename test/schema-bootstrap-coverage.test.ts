@@ -1217,6 +1217,10 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'oauth_clients.attest_actor',
   'oauth_clients.attest_ops',
   'oauth_tokens.grant_type',
+  // GST-1158 (migration v287) - a member's operator-declared email. Same posture as v286: access_members exists only
+  // through migrations, so no index or function in either blob references it, and only the operator's access commands
+  // and owner-session routes read or write it.
+  'access_members.email',
   // GBRA-218 A2 (migration v283) - folder rules. Same posture as v282: absent from both schema blobs; the migration
   // creates the folder_rule_ids trigger and functions itself, and no index or function in either blob references it.
   'pages.folder_rule_ids',

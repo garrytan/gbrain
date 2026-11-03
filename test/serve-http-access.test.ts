@@ -7,6 +7,8 @@
  *    leaves an audit row.
  * 2. Fails when: a route answers without the owner session, an HTTP change skips a refusal the local CLI makes, a
  *    preview writes, or a change leaves no audit row.
+ *    GST-1158: a declared member email is set only here and on the brain host, and a link made by email is the same link
+ *    an id makes; no OAuth token, attested call or MCP operation reaches either.
  * 3. Real seams: the routes mounted on an Express app over a real socket, OAuth clients registered and issued tokens by
  *    the provider's client-credentials grant and verified by it, on a repo-less brain (PGLite, and Postgres when
  *    DATABASE_URL is set).
@@ -24,6 +26,7 @@ import { addMember, bindCredential, getMember } from '../src/core/access/members
 import { listMemberLinks } from '../src/core/access/actor.ts';
 import { mountAdminAccess } from '../src/commands/serve-http-access.ts';
 import { createRequireAdmin } from '../src/commands/serve-http-admin-api.ts';
+import { operations } from '../src/core/operations.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
@@ -107,6 +110,51 @@ for (const kind of testBackends()) {
       expect(await listMemberLinks(engine, { member: 'bob-example' })).toEqual([]);
       expect((await audits()).filter(a => String(a.action).startsWith('member_link') || a.action === 'member_unlink'))
         .toEqual([{ actor: 'admin-api', action: 'member_link', system: 'qm', external_id: 'ext-bob', member: 'bob-example' }, { actor: 'admin-api', action: 'member_unlink', system: 'qm', external_id: 'ext-bob', member: 'bob-example' }]);
+    });
+
+    test('GST-1158: email on member add and set, and link by email, apply with audit rows; refusals hold; nothing changes without the owner session', async () => {
+      const qm = await register('qm-email', ['client_credentials']);
+      await bindCredential(engine, { kind: 'client', id: qm.clientId }, { attestActor: 'qm' });
+      const bearer = (await provider().exchangeClientCredentials(qm.clientId, qm.clientSecret!)).access_token;
+      const outsider = async (path: string, body: unknown) => (await fetch(base + path, { method: 'POST', body: JSON.stringify(body),
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + bearer, 'x-qm-actor': 'ext-carol' } })).status;
+      const before = (await audits()).length;
+      expect(await outsider('/admin/api/access/members', { action: 'add', id: 'carol-example', email: 'carol@example.com' })).toBe(401);
+      expect(await outsider('/admin/api/access/members', { action: 'set', id: 'bob-example', email: 'carol@example.com' })).toBe(401);
+      expect(await outsider('/admin/api/access/member-links', { action: 'link', email: 'carol@example.com', externalId: 'ext-carol' })).toBe(401);
+      expect((await call('POST', '/admin/api/access/members', { action: 'set', id: 'bob-example', email: 'carol@example.com' }, false)).status).toBe(401);
+      expect(await getMember(engine, 'carol-example')).toBeNull();
+      expect((await getMember(engine, 'bob-example'))!.email).toBeNull();
+      expect((await audits()).length).toBe(before);
+      for (const op of operations) expect(Object.keys(op.params)).not.toContain('email');
+
+      const added = await call('POST', '/admin/api/access/members', { action: 'add', id: 'carol-example', email: 'Carol@Example.com' });
+      expect(added.json).toMatchObject({ applied: true, member: { id: 'carol-example', email: 'carol@example.com' } });
+      expect((await call('POST', '/admin/api/access/members', { action: 'add', id: 'dave-example', email: 'CAROL@example.com' })).json).toMatchObject({ code: 'access_member_invalid', reason: 'email_taken' });
+      expect((await call('POST', '/admin/api/access/members', { action: 'add', id: 'dave-example', email: 'no-at-sign' })).json).toMatchObject({ code: 'access_member_invalid', reason: 'invalid_email' });
+      expect((await call('POST', '/admin/api/access/members', { action: 'add', id: 'dave-example', email: 7 })).json).toMatchObject({ code: 'invalid_params' });
+      expect(await getMember(engine, 'dave-example')).toBeNull();
+      expect((await call('POST', '/admin/api/access/members', { action: 'set', id: 'bob-example' })).json).toMatchObject({ code: 'invalid_params' });
+      expect((await call('POST', '/admin/api/access/members', { action: 'set', id: 'bob-example', email: 'Bob@Example.com' })).json).toMatchObject({ applied: true, changed: true, member: { id: 'bob-example', email: 'bob@example.com' } });
+      expect((await call('POST', '/admin/api/access/members', { action: 'set', id: 'bob-example', email: 'carol@example.com' })).json).toMatchObject({ code: 'access_member_invalid', reason: 'email_taken' });
+      expect((await call('POST', '/admin/api/access/members', { action: 'set', id: 'bob-example', email: null })).json).toMatchObject({ applied: true, member: { email: null } });
+      expect((await call('GET', '/admin/api/access/members')).json.members.find((m: { id: string }) => m.id === 'carol-example')).toMatchObject({ email: 'carol@example.com' });
+
+      const preview = await call('POST', '/admin/api/access/member-links', { action: 'link', email: 'CAROL@example.com', externalId: 'ext-carol', dryRun: true });
+      expect(preview.json).toMatchObject({ applied: false, link: { member_id: 'carol-example', external_id: 'ext-carol' } });
+      expect(await listMemberLinks(engine, { member: 'carol-example' })).toEqual([]);
+      expect((await call('POST', '/admin/api/access/member-links', { action: 'link', email: 'carol@example.com', member: 'carol-example', externalId: 'ext-carol' })).json).toMatchObject({ code: 'invalid_params' });
+      expect((await call('POST', '/admin/api/access/member-links', { action: 'link', email: 'nobody@example.com', externalId: 'ext-nobody' })).json).toMatchObject({ code: 'not_found', outcome: 'failed' });
+      expect(await getMember(engine, 'nobody-example')).toBeNull();
+      expect((await call('POST', '/admin/api/access/member-links', { action: 'link', email: 'carol@example.com', externalId: 'ext-carol' })).json).toMatchObject({ applied: true, link: { member_id: 'carol-example' } });
+      expect(await listMemberLinks(engine, { member: 'carol-example' })).toMatchObject([{ system: 'qm', external_id: 'ext-carol', member_id: 'carol-example' }]);
+      expect((await call('POST', '/admin/api/access/member-links', { action: 'unlink', email: 'carol@example.com', externalId: 'ext-carol' })).json).toMatchObject({ code: 'invalid_params' });
+      expect((await audits()).slice(before)).toEqual([
+        { actor: 'admin-api', action: 'member_add', member: 'carol-example', groups_created: [] },
+        { actor: 'admin-api', action: 'member_set', member: 'bob-example', email: 'declared' },
+        { actor: 'admin-api', action: 'member_set', member: 'bob-example', email: 'cleared' },
+        { actor: 'admin-api', action: 'member_link', system: 'qm', external_id: 'ext-carol', member: 'carol-example' },
+      ]);
     });
 
     test('attest: a confidential client-credentials client gets the right its next token carries; every CLI refusal holds', async () => {

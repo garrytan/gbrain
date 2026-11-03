@@ -25,7 +25,7 @@ import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import {
   addGroup, addMember, bindCredential, disableMember, enableMember, getMember, listGroups, listMembers, memberIdentity,
-  parseMayActFor, previewRemoveGroup, previewRemoveMember, removeGroup, removeGroupMembers, removeMember,
+  memberByEmail, parseMayActFor, previewRemoveGroup, previewRemoveMember, removeGroup, removeGroupMembers, removeMember, setMemberEmail,
 } from '../src/core/access/members.ts';
 import { accessCheck, whoCanRead } from '../src/commands/access.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -174,6 +174,33 @@ for (const kind of testBackends()) {
       expect(await refusal(accessCheck(engine, { token: 'alice-laptop', as: 'nobody-example' }))).toEqual({ code: 'access_member_invalid', reason: 'unknown' });
       expect((await accessCheck(engine, { token: 'alice-laptop', as: 'bob-example,group:team-a' })).audience).toEqual([
         { principal: 'member:bob-example', covered_by_may_act_for: false }, { principal: 'group:team-a', covered_by_may_act_for: false }]);
+    });
+
+    test('GST-1158: a declared email is case-folded, validated and unique; set changes or clears it; rm frees it', async () => {
+      const added = await addMember(engine, 'gina-example', { email: '  Gina.Example@Example.COM ' });
+      expect(added.member).toMatchObject({ id: 'gina-example', email: 'gina.example@example.com' });
+      expect((await memberByEmail(engine, 'GINA.example@example.com')).id).toBe('gina-example');
+      for (const bad of ['', '   ', 'no-at-sign', 'two@@example.com', 'a@b@example.com', 'has space@example.com', 'tab\t@example.com', '@example.com', 'gina@', `${'x'.repeat(250)}@e.co`, 42]) {
+        expect(await refusal(addMember(engine, 'hal-example', { email: bad as string }))).toEqual({ code: 'access_member_invalid', reason: 'invalid_email' });
+      }
+      expect(await getMember(engine, 'hal-example')).toBeNull();
+      expect(await refusal(addMember(engine, 'hal-example', { email: 'gina.example@EXAMPLE.com' }))).toEqual({ code: 'access_member_invalid', reason: 'email_taken' });
+      expect(await getMember(engine, 'hal-example')).toBeNull();
+      expect((await addMember(engine, 'hal-example')).member.email).toBeNull();
+      expect(await refusal(setMemberEmail(engine, 'hal-example', 'Gina.Example@example.com'))).toEqual({ code: 'access_member_invalid', reason: 'email_taken' });
+      expect(await refusal(setMemberEmail(engine, 'hal-example', 'not an email'))).toEqual({ code: 'access_member_invalid', reason: 'invalid_email' });
+      expect(await refusal(setMemberEmail(engine, 'nobody-example', 'nobody@example.com'))).toEqual({ code: 'access_member_invalid', reason: 'unknown' });
+      expect(await setMemberEmail(engine, 'hal-example', 'Hal@Example.com')).toMatchObject({ member: { id: 'hal-example', email: 'hal@example.com' }, changed: true });
+      expect(await setMemberEmail(engine, 'hal-example', 'hal@example.com')).toMatchObject({ changed: false });
+      expect((await listMembers(engine)).find(m => m.id === 'hal-example')?.email).toBe('hal@example.com');
+      await expect(engine.executeRaw("UPDATE access_members SET email = 'hal@example.com' WHERE id = 'gina-example'")).rejects.toThrow();
+      expect(await setMemberEmail(engine, 'gina-example', null)).toMatchObject({ member: { email: null }, changed: true });
+      expect(await refusal(memberByEmail(engine, 'gina.example@example.com'))).toEqual({ code: 'not_found' });
+      expect(await refusal(memberByEmail(engine, 'not an email'))).toEqual({ code: 'access_member_invalid', reason: 'invalid_email' });
+      await removeMember(engine, 'hal-example');
+      expect(await getMember(engine, 'hal-example')).toMatchObject({ status: 'removed', email: null });
+      expect(await refusal(setMemberEmail(engine, 'hal-example', 'hal@example.com'))).toEqual({ code: 'access_member_id_retired' });
+      expect((await addMember(engine, 'hal2-example', { email: 'hal@example.com' })).member.email).toBe('hal@example.com');
     });
   });
 }

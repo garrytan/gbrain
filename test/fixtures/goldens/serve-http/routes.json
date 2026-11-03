@@ -457,6 +457,54 @@
     {
       "handlers": [
         "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/access/members",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/access/members",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/access/member-links",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/access/member-links",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/access/attest",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
         "express.json()",
         "<inline>"
       ],

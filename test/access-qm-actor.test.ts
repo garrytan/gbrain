@@ -31,8 +31,8 @@ import { startHttpTransport } from '../src/mcp/http-transport.ts';
 import { RateLimiter } from '../src/mcp/rate-limit.ts';
 import { GBRAIN_MCP_INSTRUCTIONS, MCP_SERVER_DESCRIPTION } from '../src/mcp/instructions.ts';
 import { __resetPrivateVisibilityCacheForTests, withCallerAccess } from '../src/core/search/private-visibility.ts';
-import { addMember, bindCredential, disableMember, enableMember } from '../src/core/access/members.ts';
-import { ACTOR_DEFERRED_OPS, attestedCallerAccess, linkMember, listMemberLinks, parseAttestOps, unlinkMember } from '../src/core/access/actor.ts';
+import { addMember, bindCredential, disableMember, enableMember, setMemberEmail } from '../src/core/access/members.ts';
+import { ACTOR_DEFERRED_OPS, attestedCallerAccess, linkMember, linkMemberByEmail, listMemberLinks, parseAttestOps, unlinkMember } from '../src/core/access/actor.ts';
 import { readAudienceAssertions } from '../src/core/access/audience.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { submissionAuthority, authorizeStoredRequest } from '../src/core/persistence/authority.ts';
@@ -290,6 +290,43 @@ for (const kind of testBackends()) {
         await expect(engine.executeRaw("INSERT INTO access_member_links (system, external_id, member_id) VALUES ('qm', $1, 'dan-example')", [bad])).rejects.toThrow();
       }
       expect((await listMemberLinks(engine, { member: 'alice-example' })).map(l => l.external_id).sort()).toEqual([ALICE_ID, LONG_ID, OIDC_ID].sort());
+    }, 60_000);
+
+    test('GST-1158: link by declared email links exactly as link by member id; it never creates a member or picks among several', async () => {
+      await setMemberEmail(engine, 'dan-example', 'Dan@Example.com');
+      try {
+        const preview = await linkMemberByEmail(engine, 'DAN@example.com', 'qm', 'U0DAN-EMAIL', { dryRun: true });
+        expect(preview).toEqual({ applied: false, link: { system: 'qm', external_id: 'U0DAN-EMAIL', member_id: 'dan-example', created_at: null } });
+        expect(await listMemberLinks(engine, { member: 'dan-example' })).toEqual([]);
+        expect(await linkMemberByEmail(engine, 'dan@example.com', 'qm', 'U0DAN-EMAIL')).toMatchObject({ applied: true, link: { system: 'qm', external_id: 'U0DAN-EMAIL', member_id: 'dan-example' } });
+        await expect(linkMemberByEmail(engine, 'dan@example.com', 'qm', 'U0DAN-EMAIL')).rejects.toMatchObject({ code: 'access_member_invalid', reason: 'link_exists' });
+        await expect(linkMemberByEmail(engine, 'dan@example.com', 'qm', ALICE_ID)).rejects.toMatchObject({ code: 'access_member_invalid', reason: 'link_exists' });
+        await expect(linkMemberByEmail(engine, 'dan@example.com', 'qm', 'has space')).rejects.toMatchObject({ code: 'access_member_invalid', reason: 'invalid_external_id' });
+        const count = async () => (await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM access_members'))[0]!.n;
+        const members = await count();
+        await expect(linkMemberByEmail(engine, 'nobody@example.com', 'qm', 'U0NOBODY')).rejects.toMatchObject({ code: 'not_found' });
+        expect(await count()).toBe(members);
+        expect(await engine.executeRaw("SELECT 1 FROM access_member_links WHERE external_id = 'U0NOBODY'")).toEqual([]);
+        await disableMember(engine, 'dan-example');
+        try {
+          await expect(linkMemberByEmail(engine, 'dan@example.com', 'qm', 'U0DAN-2')).rejects.toMatchObject({ code: 'access_member_invalid', reason: 'disabled' });
+        } finally {
+          await enableMember(engine, 'dan-example');
+        }
+        const rollback = new Error('rollback');
+        await expect(engine.transaction(async tx => {
+          await tx.executeRaw('DROP INDEX access_members_email_key');
+          await tx.executeRaw("UPDATE access_members SET email = 'dan@example.com' WHERE id = 'bob-example'");
+          await expect(linkMemberByEmail(tx, 'dan@example.com', 'qm', 'U0AMBIG')).rejects.toMatchObject({ code: 'access_member_invalid', reason: 'email_ambiguous' });
+          expect(await tx.executeRaw("SELECT 1 FROM access_member_links WHERE external_id = 'U0AMBIG'")).toEqual([]);
+          throw rollback;
+        })).rejects.toBe(rollback);
+        expect((await engine.executeRaw<{ email: string | null }>("SELECT email FROM access_members WHERE id = 'bob-example'"))[0]!.email).toBeNull();
+        await expect(engine.executeRaw("UPDATE access_members SET email = 'dan@example.com' WHERE id = 'bob-example'")).rejects.toThrow();
+      } finally {
+        await unlinkMember(engine, 'qm', 'U0DAN-EMAIL').catch(() => undefined);
+        await setMemberEmail(engine, 'dan-example', null);
+      }
     }, 60_000);
 
     test('the attest right is granted only to a member-less client-credentials client or legacy token, for attestable ops', async () => {

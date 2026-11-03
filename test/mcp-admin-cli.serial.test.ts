@@ -203,3 +203,28 @@ test('people administration commands send owner-session requests to the access r
   expect(serverRefusal.exitCode).toBe(1);
 });
 
+test('GST-1158: member-add and member-set send a declared email, and link finds the member by --email', async () => {
+  const cases: Array<[string[], string, unknown]> = [
+    [['member-add', 'alice-example', '--email', 'Alice@Example.com'], '/admin/api/access/members', { action: 'add', id: 'alice-example', email: 'Alice@Example.com' }],
+    [['member-set', 'alice-example', '--email', 'alice@example.com'], '/admin/api/access/members', { action: 'set', id: 'alice-example', email: 'alice@example.com' }],
+    [['member-set', 'alice-example', '--email', 'none'], '/admin/api/access/members', { action: 'set', id: 'alice-example', email: null }],
+    [['link', '--qm', 'ext-alice', '--email', 'alice@example.com', '--dry-run'], '/admin/api/access/member-links', { action: 'link', externalId: 'ext-alice', dryRun: true, email: 'alice@example.com' }],
+  ];
+  for (const [args, path, body] of cases) {
+    expect(mcpNeedsEngine(['admin', args[0]!], undefined)).toBe(false);
+    const run = await capture(args, () => Response.json({ applied: false }));
+    expect(run.exitCode).toBe(0);
+    const sent = run.requests.at(-1)!;
+    expect(sent.url).toBe(base + path);
+    expect(JSON.parse(String(sent.init.body))).toEqual(body);
+    expect(run.output).not.toContain(owner);
+  }
+  for (const args of [['member-set', 'alice-example'], ['link', 'alice-example', '--qm', 'ext-alice', '--email', 'alice@example.com'], ['link', '--qm', 'ext-alice']]) {
+    const refused = await capture(args, () => Response.json({}));
+    expect(refused.result).toMatchObject({ status: 'error', reason: 'invalid_arguments' });
+    expect(refused.requests.filter(r => !r.url.endsWith('/admin/login'))).toEqual([]);
+  }
+  const notFound = await capture(['link', '--qm', 'ext-nobody', '--email', 'nobody@example.com'], () => Response.json({ error: 'not_found', code: 'not_found', message: 'No member has that email.', outcome: 'failed' }, { status: 400 }));
+  expect(notFound.result.status).toBe('error');
+  expect(notFound.exitCode).toBe(1);
+});

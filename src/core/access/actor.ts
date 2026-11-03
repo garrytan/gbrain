@@ -19,7 +19,7 @@ import { catalogueError, ERROR_CATALOGUE } from '../error-catalogue.ts';
 import type { CallerAccess } from '../search/private-visibility.ts';
 import { identityFor } from './principals.ts';
 import { isMissingSchemaObject } from '../utils.ts';
-import { memberIdentity } from './members.ts';
+import { memberByEmail, memberIdentity } from './members.ts';
 import { folderAccessFor } from './caller.ts';
 import { ACTOR_ARGUMENT, ACTOR_DEFERRED_OPS, ACTOR_HEADER, attestRightFrom, DEFAULT_ATTEST_OPS, EXTERNAL_ID_RE, QM_AUDIENCE_HEADER, type AttestedActor, type AttestRight } from './actor-model.ts';
 
@@ -289,6 +289,11 @@ export async function linkMember(engine: BrainEngine, rawMember: unknown, system
   if (opts.dryRun) return { link: { system, external_id: externalId, member_id: member, created_at: null }, applied: false };
   await engine.executeRaw('INSERT INTO access_member_links (system, external_id, member_id) VALUES ($1, $2, $3)', [system, externalId, member]);
   return { link: (await linkRow(engine, system, externalId))!, applied: true };
+}
+
+/** GST-1158: the operator names the member by its declared email (memberByEmail); the link is then exactly linkMember's. */
+export async function linkMemberByEmail(engine: BrainEngine, rawEmail: unknown, system: string, rawId: unknown, opts: { dryRun?: boolean } = {}): Promise<{ link: MemberLink; applied: boolean }> {
+  return linkMember(engine, (await memberByEmail(engine, rawEmail)).id, system, rawId, opts);
 }
 
 /** Removes one link; the next attested call naming the id is refused (actor_unlinked). */
