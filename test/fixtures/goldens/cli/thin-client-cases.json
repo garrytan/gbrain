@@ -718,6 +718,36 @@
       "stdout": []
     },
     {
+      "argv": "ingest",
+      "exitCode": 1,
+      "stderr": [
+        "Error [requires_local_engine]: `gbrain ingest` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain ingest",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "ingest-show",
+      "exitCode": 1,
+      "stderr": [
+        "Error [requires_local_engine]: `gbrain ingest-show` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain ingest-show",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "ingest-undo",
+      "exitCode": 1,
+      "stderr": [
+        "Error [requires_local_engine]: `gbrain ingest-undo` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain ingest-undo",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+      ],
+      "stdout": []
+    },
+    {
       "argv": "edge-proposals",
       "exitCode": 1,
       "stderr": [

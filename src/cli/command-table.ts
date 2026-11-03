@@ -398,9 +398,9 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'questions', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/questions.ts') },
   // CLI_ONLY: GBRA-215 ingest a pasted document, read an attempt's report, undo an attempt; trusted-local op dispatch of
   // the ingest / ingest_undo ops (thin clients call the MCP tools).
-  { name: 'ingest', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/ingest.ts') },
-  { name: 'ingest-show', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, read_only: true, load: () => import('./commands/ingest-show.ts') },
-  { name: 'ingest-undo', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/ingest-undo.ts') },
+  { name: 'ingest', phase: 'post-connect', thinClient: 'refuse', help: () => import('./help/ingest.ts'), routes_source: true, load: () => import('./commands/ingest.ts') },
+  { name: 'ingest-show', phase: 'post-connect', thinClient: 'refuse', help: () => import('./help/ingest-show.ts'), read_only: true, load: () => import('./commands/ingest-show.ts') },
+  { name: 'ingest-undo', phase: 'post-connect', thinClient: 'refuse', help: () => import('./help/ingest-undo.ts'), load: () => import('./commands/ingest-undo.ts') },
   // CLI_ONLY: relationship-contradiction proposals (temporal typed edges); host-local, writes canonical timeline lines.
   { name: 'edge-proposals', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/edge-proposals.ts') },
   // selfHelp: core prints its own usage (commands/core.ts). Always-loaded core memory, docs/guides/core-memory.md.
