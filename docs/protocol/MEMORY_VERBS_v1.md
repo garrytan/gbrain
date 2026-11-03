@@ -328,6 +328,21 @@ rides the immediate refusal, the `items[]` error, the failed write receipt and
 paraphrase, and its absence carries no meaning: the message prefix, code and
 suggestion are unchanged.
 
+#### write-grant refusal detail (additive)
+
+A `remember` naming a `source_id` outside the connection's write grant is
+refused `scope_denied` with `write_error: permission_denied` (a page write:
+`permission_denied`), and the envelope carries `writable_source_ids`: the sources this connection's own grant
+lets it write (one id, or `[]` when the grant holds no single writable source).
+It never names a source outside the grant, a federated read source included,
+and the refusal is identical whether the named source exists or not. On
+`remember` with one writable source, `fix` is the same call with `source_id` set
+to it (no `request_id`; a `visibility` the caller left out stays out, so the
+brain's default still applies) with `next: ask_user`: its `user_message` names both
+sources, because the writable source's readers may differ from the one the user
+named. `forget`, `forget_fact` and page writes carry no fix, so a withdrawal is
+never retargeted and page content is never echoed back.
+
 #### remember replaces (additive)
 
 `replaces` (string): the `fact_id` this fact replaces, caller-directed: the

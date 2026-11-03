@@ -2,7 +2,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { WRITER_ADMIN_LOCK_KEY } from './admin-contract.ts';
-import { existingLocalHostId, localHostId } from './identity.ts';
+import { hostIdFor, existingHostIdFor } from './identity.ts';
 import type { SqlEngine } from './model.ts';
 
 export { WRITER_ADMIN_LOCK_KEY };
@@ -56,7 +56,7 @@ export async function writeWriterAdminLock(tx: SqlEngine, locked: boolean): Prom
       'Finish the prepared transfer with gbrain sources writer transfer accept, inspect gbrain sources writer status --json, then lock.');
   }
   const [now] = await tx.executeRaw<{ at: string }>(`SELECT to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at`);
-  const next: WriterAdminLock = { locked, set_at: now.at, host_id: localHostId(), generation: current.generation + 1 };
+  const next: WriterAdminLock = { locked, set_at: now.at, host_id: hostIdFor(tx), generation: current.generation + 1 };
   await tx.executeRaw(`INSERT INTO config(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`,
     [WRITER_ADMIN_LOCK_KEY, JSON.stringify(next)]);
   return { admin_lock: next, changed: true };
@@ -64,5 +64,5 @@ export async function writeWriterAdminLock(tx: SqlEngine, locked: boolean): Prom
 
 export async function setWriterAdminLock(engine: BrainEngine, locked: boolean): Promise<{ admin_lock: WriterAdminLock; changed: boolean; local_host_id: string | null }> {
   const result = await engine.transaction(tx => writeWriterAdminLock(tx, locked));
-  return { ...result, local_host_id: existingLocalHostId() };
+  return { ...result, local_host_id: existingHostIdFor(engine) };
 }

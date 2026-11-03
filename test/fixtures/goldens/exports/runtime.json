@@ -640,6 +640,15 @@
       "./engine-factory": [
         "createEngine"
       ],
+      "./engine-open": [
+        "DEFAULT_EMBEDDED_POOL_MAX",
+        "embeddedSettings",
+        "hostIdFor",
+        "isEmbeddedEngine",
+        "openEngine",
+        "processHasEmbeddedEngines",
+        "withEngineScope"
+      ],
       "./eval/longmemeval/reader": [
         "READER_MAX_SESSION_CHARS",
         "READER_MAX_TOKENS",
