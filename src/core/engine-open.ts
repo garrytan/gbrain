@@ -9,7 +9,7 @@ import { opError } from './ops/contract.ts';
 import { createEngine } from './engine-factory.ts';
 import { connectionUrlProblem, markEmbeddedEngine, releaseEmbeddedEngine, type EngineAISettings, type EngineSettings } from './embedded-engine.ts';
 import { assertLocalWriterValue, setEngineHostId } from './persistence/identity.ts';
-import { engineProviderProblem, recipeKeyEnv } from './ai/engine-gateway.ts';
+import { engineProviderProblem, recipeKeyEnv, sharedProviderEnvConflict } from './ai/engine-gateway.ts';
 import { getRecipe } from './ai/recipes/index.ts';
 
 export type { EngineAISettings, EngineSettings, EmbeddedSettingsView } from './embedded-engine.ts';
@@ -40,10 +40,15 @@ function checkAI(ai: EngineAISettings): void {
     if (!fields || extra) throw invalid(`ai.providers.${id}${extra ? `.${extra}` : ''}`, 'Each provider is { apiKey?, baseUrl? }.');
     if (provider.apiKey !== undefined && !text(provider.apiKey)) throw invalid(`ai.providers.${id}.apiKey`, 'apiKey is a non-empty string when given.');
     if (provider.apiKey !== undefined && !recipeKeyEnv(getRecipe(id)!)) throw invalid(`ai.providers.${id}.apiKey`, `${id} takes no API key.`);
+    if (provider.apiKey === undefined && provider.baseUrl === undefined && getRecipe(id)!.auth_env?.required.length) {
+      throw invalid(`ai.providers.${id}.apiKey`, `${id} needs an apiKey, or a baseUrl for a server that takes none.`);
+    }
     if (provider.baseUrl !== undefined && !(text(provider.baseUrl) && /^https?:\/\/[^\s/]+/i.test(provider.baseUrl))) {
       throw invalid(`ai.providers.${id}.baseUrl`, 'baseUrl is an http or https URL when given.');
     }
   }
+  const conflict = sharedProviderEnvConflict(ai.providers);
+  if (conflict) throw invalid('ai.providers', conflict);
   for (const [name, model] of Object.entries(ai.models ?? {})) {
     if (!AI_MODELS.includes(name)) throw invalid(`ai.models.${name}`, 'ai.models takes chat, expansion and reranker; the embedding model is settings.embedding.');
     if (!text(model) || !model.includes(':')) throw invalid(`ai.models.${name}`, 'Each model is a provider:model string.');

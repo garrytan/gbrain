@@ -4,7 +4,9 @@
  * (gateway.ts) reads it for every call that runs in that engine's scope (engine-scope.ts).
  */
 import { opError } from '../ops/contract.ts';
-import { embeddedSettingsRecord, type EngineSettings } from '../embedded-engine.ts';
+import { embeddedSettingsRecord, releasedEngineKeys, type EngineAISettings, type EngineSettings } from '../embedded-engine.ts';
+
+type EngineAIProvider = EngineAISettings['providers'][string];
 import { embeddedEngineInScope } from '../engine-scope.ts';
 import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL } from './defaults.ts';
 import { getRecipe } from './recipes/index.ts';
@@ -35,18 +37,35 @@ export function engineProviderProblem(id: string): string | null {
   return null;
 }
 
+/** The gateway env entries a provider fills: its key and, for a native SDK, its endpoint. */
+function providerEnv(id: string, provider: EngineAIProvider): [string, string][] {
+  const recipe = getRecipe(id)!;
+  const keyEnv = recipeKeyEnv(recipe);
+  const native = NATIVE_BASE_URL[recipe.implementation];
+  return [...(provider.apiKey && keyEnv ? [[keyEnv, provider.apiKey] as [string, string]] : []), ...(native ? [[native.env, provider.baseUrl ?? native.url] as [string, string]] : [])];
+}
+
+/** Why two providers cannot share this engine (they read one env entry with different values), or null. Names no value. */
+export function sharedProviderEnvConflict(providers: Record<string, EngineAIProvider>): string | null {
+  const owners = new Map<string, [string, string]>();
+  for (const [id, provider] of Object.entries(providers)) {
+    for (const [name, value] of providerEnv(id, provider)) {
+      const prior = owners.get(name);
+      if (prior && prior[1] !== value) return `${prior[0]} and ${id} both read ${name}, so they take the same ${name.endsWith('_URL') ? 'baseUrl' : 'apiKey'}.`;
+      owners.set(name, [id, value]);
+    }
+  }
+  return null;
+}
+
 /** The gateway config and the providers an engine's calls may reach. Keys live only in `config.env`. */
 export function engineGatewayInput(settings: EngineSettings): { config: AIGatewayConfig; providers: ReadonlySet<string> } {
   const env: Record<string, string> = {};
   const base_urls: Record<string, string> = {};
   const providers = settings.ai?.providers ?? {};
   for (const [id, provider] of Object.entries(providers)) {
-    const recipe = getRecipe(id)!;
-    const keyEnv = recipeKeyEnv(recipe);
-    if (provider.apiKey && keyEnv) env[keyEnv] = provider.apiKey;
-    const native = NATIVE_BASE_URL[recipe.implementation];
-    if (native) env[native.env] = provider.baseUrl ?? native.url;
-    else if (provider.baseUrl) base_urls[id] = provider.baseUrl;
+    for (const [name, value] of providerEnv(id, provider)) env[name] = value;
+    if (provider.baseUrl && !NATIVE_BASE_URL[getRecipe(id)!.implementation]) base_urls[id] = provider.baseUrl;
   }
   const models = settings.ai?.models ?? {};
   return {
@@ -86,6 +105,12 @@ export function scopedGatewayState(normalize: (config: AIGatewayConfig) => AIGat
     states.set(settings, state);
   }
   return state;
+}
+
+/** Provider keys of a disconnected engine in scope, as env entries, so a call still in flight scrubs them from its error. */
+export function releasedKeyEnv(): Record<string, string> {
+  const engine = embeddedEngineInScope();
+  return Object.fromEntries((engine ? releasedEngineKeys(engine) : []).map((value, i) => [`RELEASED_${i}_API_KEY`, value]));
 }
 
 /** In an embedded engine's scope, its settings.ai.models.reranker; search uses it in place of the mode bundle's default. */

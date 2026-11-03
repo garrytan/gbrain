@@ -9,7 +9,7 @@ import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { randomBytes, randomUUID } from 'node:crypto';
 import {
   __clearQueryEmbedCacheForTests, __setEmbedTransportForTests, __setGenerateTextTransportForTests, __setRerankTransportForTests,
-  chat, configureGateway, embedQuery, requireConfig, rerank, resetGateway,
+  chat, configureGateway, diagnoseEmbedding, embedQuery, isAvailable, requireConfig, rerank, resetGateway,
 } from '../src/core/ai/gateway.ts';
 import Anthropic from '@anthropic-ai/sdk';
 import { anthropicClientOptions, resolveAnthropicKey } from '../src/core/ai/anthropic-key.ts';
@@ -190,9 +190,11 @@ describe('settings.ai validation', () => {
       [{ providers: { openai: canary } }, 'ai.providers.openai'],
       [{ providers: { openai: { apiKey: canary, key: canary } } }, 'ai.providers.openai.key'],
       [{ providers: { openai: { apiKey: '' } } }, 'ai.providers.openai.apiKey'],
+      [{ providers: { openai: {} } }, 'ai.providers.openai.apiKey'],
       [{ providers: { openai: { apiKey: canary, baseUrl: 'ftp://proxy.example' } } }, 'ai.providers.openai.baseUrl'],
       [{ providers: { openai: { apiKey: canary } }, models: { embedding: 'openai:text-embedding-3-small' } }, 'ai.models.embedding'],
       [{ providers: { openai: { apiKey: canary } }, models: { chat: 'gpt-5.6' } }, 'ai.models.chat'],
+      [{ providers: { dashscope: { apiKey: canary }, 'dashscope-rerank': { apiKey: key('other') } } }, 'ai.providers'],
     ] as const) {
       const error = await failure(() => openEngine(settingsFor({ ai: ai as never })));
       expect([error?.code, error?.message]).toEqual(['engine_settings_invalid', `The ${setting} setting is invalid.`]);
@@ -241,6 +243,43 @@ describe('process base URLs never reach an engine', () => {
   });
 });
 
+describe('keys stay scrubbed past disconnect and in shared slots', () => {
+  test('two providers that read one key slot open when given the same key', async () => {
+    const shared = key('shared');
+    const engine = await openEngine(settingsFor({ ai: { providers: { dashscope: { apiKey: shared }, 'dashscope-rerank': { apiKey: shared } } } }));
+    await engine.disconnect();
+  });
+
+  test('a call still in flight when its engine disconnects scrubs that engine\'s key from its error', async () => {
+    const keyA = key('a');
+    const engine = await openEngine(settingsFor({ ai: { providers: { openai: { apiKey: keyA } } } }));
+    await engine.initSchema();
+    let reject!: (error: unknown) => void;
+    let started!: () => void;
+    const begun = new Promise<void>(resolve => { started = resolve; });
+    __setEmbedTransportForTests((() => { started(); return new Promise((_, fail) => { reject = fail; }); }) as any);
+    const pending = withEngineScope(engine, () => failure(() => embedQuery('a question')));
+    await begun;
+    await engine.disconnect();
+    reject(Object.assign(new Error(`401 Incorrect API key provided: ${keyA}`), { statusCode: 401 }));
+    const error = await pending;
+    expect(error).not.toBeNull();
+    expect(`${error!.message} ${JSON.stringify(error)} ${error!.stack}`).not.toContain(keyA);
+  });
+});
+
+describe('availability follows the engine\'s providers', () => {
+  test('a keyless provider the engine does not name reads as unavailable', async () => {
+    const engine = await openEngine(settingsFor({ embedding: { model: 'ollama:nomic-embed-text', dimensions: 768 }, ai: { providers: { openai: { apiKey: key('a') } } } }));
+    try {
+      expect(withEngineScope(engine, () => [diagnoseEmbedding().ok, isAvailable('embedding'), isAvailable('chat', 'ollama:llama3')])).toEqual([false, false, false]);
+      expect(withEngineScope(engine, () => isAvailable('chat', 'openai:gpt-5.6'))).toBe(true);
+    } finally {
+      await engine.disconnect();
+    }
+  });
+});
+
 describe('search reranking on an engine', () => {
   test('search uses the engine\'s settings.ai.models.reranker unless the brain or the call names one', async () => {
     const engine = await openEngine(settingsFor({ ai: { providers: { voyage: { apiKey: key('v') } }, models: { reranker: 'voyage:rerank-2.5' } } }));
@@ -284,6 +323,22 @@ describe('the subagent handler\'s Anthropic client', () => {
     } as unknown as MinionJobContext;
     return handler(ctx);
   }
+
+  test('a provider error that echoes the engine\'s key leaves the handler scrubbed', async () => {
+    const keyA = key('a');
+    const fetchSpy = spyOn(Anthropic.prototype as unknown as { fetchWithTimeout: () => Promise<Response> }, 'fetchWithTimeout').mockImplementation((async () =>
+      new Response(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: `invalid x-api-key ${keyA}` } }), { status: 401, headers: { 'content-type': 'application/json' } })) as never);
+    const engine = await openEngine(settingsFor({ ai: { providers: { anthropic: { apiKey: keyA } } } }));
+    try {
+      await engine.initSchema();
+      const error = await failure(() => runJob(engine));
+      expect(error).not.toBeNull();
+      expect(`${error!.message} ${error!.stack} ${JSON.stringify(error)}`).not.toContain(keyA);
+    } finally {
+      fetchSpy.mockRestore();
+      await engine.disconnect();
+    }
+  }, 120_000);
 
   test('is built for the handler\'s engine, whatever scope built the handler, and only when a job calls it', async () => {
     const calls: { url: string; key: string | null }[] = [];

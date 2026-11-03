@@ -47,6 +47,8 @@ export type EmbeddedSettingsView = DeepReadonly<Omit<EngineSettings, 'writer' | 
 interface EmbeddedRecord {
   hostId: string | undefined;
   settings: EngineSettings | null;
+  /** The provider keys it held, kept past disconnect only so a call still in flight can scrub them from its error. */
+  releasedKeys?: string[];
 }
 
 const parseConnectionUrl = (url: string) => new URL(url.replace(/^postgres(ql)?:\/\//, 'settings://'));
@@ -133,7 +135,14 @@ export function embeddedSettings(engine: object): EmbeddedSettingsView | undefin
 /** Drops the settings (the writer credential included) an embedded engine held; it stays marked embedded with its host id. */
 export function releaseEmbeddedEngine(engine: object): void {
   const record = recordOf(engine);
-  if (record) record.settings = null;
+  if (!record) return;
+  record.releasedKeys = Object.values(record.settings?.ai?.providers ?? {}).flatMap(provider => provider.apiKey ? [provider.apiKey] : []);
+  record.settings = null;
+}
+
+/** The provider keys an embedded engine held before it disconnected; empty while it is open. */
+export function releasedEngineKeys(engine: object): readonly string[] {
+  return recordOf(engine)?.releasedKeys ?? [];
 }
 
 /**

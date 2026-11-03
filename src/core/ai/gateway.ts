@@ -65,7 +65,7 @@ import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
 import { withEngineScope } from '../engine-scope.ts';
-import { engineScopeMissing, scopedGatewayState, type GatewayState } from './engine-gateway.ts';
+import { engineScopeMissing, releasedKeyEnv, scopedGatewayState, type GatewayState } from './engine-gateway.ts';
 import { AIConfigError, AITransientError, isStructuredOutputRejection, isUnbilledEmbeddingRejection, normalizeAIError } from './errors.ts';
 import { embeddingModelNotFoundHint, gatewayModelNotFoundHint } from './model-not-found-hint.ts';
 import { fitMatryoshkaPrefix, isEmbeddingZeroNormError, screenAlignedEmbeddings, screenEmbeddings, sendableEmbeddingInputs } from './embedding-guard.ts';
@@ -149,7 +149,7 @@ function configFor(recipe: Recipe, touchpoint: string): AIGatewayConfig {
   return requireConfig();
 }
 /** #5137: provider auth errors echo keys; scrub every key in effect before the text leaves the gateway. */
-const redactKeys = (text: string): string => redactProviderKeys(text, gw().config?.env ?? {});
+const redactKeys = (text: string): string => redactProviderKeys(text, { ...gw().config?.env, ...releasedKeyEnv() });
 
 /**
  * Materialize `applyResolveAuth`'s SDK-shaped result ({apiKey}|{headers}) into
@@ -990,6 +990,7 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
     };
   }
 
+  if (gw().providers && !gw().providers!.has(recipe.id)) return { ok: false, reason: 'unknown_provider', model: modelStr, provider: parsed.providerId, message: engineScopeMissing(recipe.id, 'embedding').message };
   const tp = recipe.touchpoints.embedding;
   if (!tp) {
     return {
@@ -1101,7 +1102,7 @@ export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string):
     // Anthropic declares only expansion + chat (no embedding model); requesting
     // embedding from an anthropic-configured brain is unavailable regardless of auth.
     const touchpointConfig = recipe.touchpoints[touchpoint as 'expansion' | 'chat' | 'reranker'];
-    if (!touchpointConfig) return false;
+    if (!touchpointConfig || (gw().providers && !gw().providers!.has(recipe.id))) return false;
 
     // For openai-compatible without auth requirements (Ollama local), treat as always-available.
     const required = recipe.auth_env?.required ?? [];
