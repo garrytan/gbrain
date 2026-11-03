@@ -173,8 +173,9 @@ export class S3Storage implements StorageBackend {
     // For custom endpoints (R2, MinIO), use the endpoint URL
     const endpoint = (this.client.config as any).endpoint;
     if (endpoint) {
-      const base = typeof endpoint === 'function' ? (await endpoint()).url.toString() : endpoint;
-      return `${base}/${this.bucket}/${path}`;
+      const e = typeof endpoint === 'function' ? await endpoint() : endpoint;
+      const base = typeof e === 'string' ? e : e.url ? e.url.toString() : `${e.protocol}//${e.hostname}${e.port ? `:${e.port}` : ''}${e.path ?? ''}`;
+      return `${base.replace(/\/+$/, '')}/${this.bucket}/${path}`;
     }
     const region = await this.client.config.region();
     return `https://${this.bucket}.s3.${region}.amazonaws.com/${path}`;

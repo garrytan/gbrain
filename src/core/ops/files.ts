@@ -247,10 +247,10 @@ function uploadLayoutPath(pageSlug: string | null, filename: string, hash: strin
   return pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
 }
 
-async function pageReadable(ctx: OperationContext, slug: string): Promise<boolean> {
-  const rows = await ctx.engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages fp WHERE fp.slug = $1
-    AND ${await resolveExcludePrivatePages(ctx.engine, ctx.remote) ? privatePagesFilterForCaller('fp') : 'TRUE'}`, [slug]);
-  return rows[0]!.n > 0;
+async function readablePageId(ctx: OperationContext, slug: string, sourceId: string): Promise<number | undefined> {
+  const rows = await ctx.engine.executeRaw<{ id: number }>(`SELECT fp.id FROM pages fp WHERE fp.slug = $1 AND fp.source_id = $2
+    AND ${await resolveExcludePrivatePages(ctx.engine, ctx.remote) ? privatePagesFilterForCaller('fp') : 'TRUE'}`, [slug, sourceId]);
+  return rows[0]?.id;
 }
 
 const file_register: Operation = {
@@ -281,9 +281,15 @@ const file_register: Operation = {
     const storagePath = uploadLayoutPath(pageSlug, filename, hash);
     if (p.storage_path !== storagePath) throw opError('invalid_params', `storage_path must be ${storagePath} for this page, filename and hash.`,
       `Store the object at ${storagePath} (the path file_upload uses) and register that path. Nothing was recorded.`);
-    if (pageSlug && !await pageReadable(ctx, pageSlug)) throw opError('page_not_found', `No page '${pageSlug}' is visible to this caller.`, 'Attach the file to a page this caller can read. Nothing was recorded.');
+    const sourceId = ctx.sourceId ?? 'default';
+    const pageId = pageSlug ? await readablePageId(ctx, pageSlug, sourceId) : null;
+    if (pageId === undefined) throw opError('page_not_found', `No page '${pageSlug}' in source '${sourceId}' is visible to this caller.`, 'Attach the file to a page this caller can read. Nothing was recorded.');
     const existing = await ctx.engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM files f WHERE f.storage_path = $1 AND NOT (${await fileReadableSql(ctx)})`, [storagePath]);
     if (existing[0]!.n > 0) throw opError('page_not_found', `The file at ${storagePath} belongs to a page this caller cannot read.`, 'Nothing was recorded.');
+    const owned = await ctx.engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM files WHERE storage_path = $1
+      AND (page_slug IS DISTINCT FROM $2 OR filename <> $3 OR source_id IS DISTINCT FROM $4)`, [storagePath, pageSlug, filename, sourceId]);
+    if (owned[0]!.n > 0) throw opError('invalid_params', `${storagePath} is already registered to a different page, filename or source.`,
+      'A registration never moves an existing row. Register under a path no other row uses. Nothing was recorded.');
     if (ctx.dryRun) return { dry_run: true, action: 'file_register', storage_path: storagePath };
     const { hashStoredObject } = await import('../storage.ts');
     let stored: { size: number; sha256: string } | null;
@@ -293,16 +299,20 @@ const file_register: Operation = {
     if (stored.size !== size || stored.sha256 !== hash) throw opError('storage_error', `The object at ${storagePath} does not match size_bytes and content_hash, so no row was recorded.`,
       'Register the size and SHA-256 of the bytes actually stored at that path.');
     const { executeRawJsonb, FILES_METADATA_MERGE_SQL } = await import('../sql-query.ts');
-    await executeRawJsonb(ctx.engine,
-      `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+    const written = await executeRawJsonb(ctx.engine,
+      `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, source_id, page_id, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
        ON CONFLICT (storage_path) DO UPDATE SET
          content_hash = EXCLUDED.content_hash,
          size_bytes = EXCLUDED.size_bytes,
          mime_type = EXCLUDED.mime_type,
-         ${FILES_METADATA_MERGE_SQL}`,
-      [pageSlug, filename, storagePath, (p.mime_type as string | undefined) ?? null, size, hash],
+         ${FILES_METADATA_MERGE_SQL}
+       WHERE files.page_slug IS NOT DISTINCT FROM EXCLUDED.page_slug AND files.filename = EXCLUDED.filename
+         AND files.source_id IS NOT DISTINCT FROM EXCLUDED.source_id
+       RETURNING 1`,
+      [pageSlug, filename, storagePath, (p.mime_type as string | undefined) ?? null, size, hash, sourceId, pageId],
       [metadata]);
+    if (!written.length) throw opError('invalid_params', `${storagePath} was registered to a different page, filename or source meanwhile.`, 'Nothing was recorded.');
     return { status: 'registered', storage_path: storagePath, size_bytes: size };
   },
 };

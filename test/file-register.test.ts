@@ -69,6 +69,32 @@ describe('file_register', () => {
     expect(await fileRows(engine)).toBe(1);
   });
 
+  test('records the page and source a registration belongs to, so purging that page in a non-default source finds it', async () => {
+    const engine = await embedded();
+    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-a', 'source-a') ON CONFLICT DO NOTHING");
+    await importFromContent(engine, 'notes/plan', ['---', 'type: note', 'title: plan', '---', '# plan', '', 'Body.'].join('\n'), { sourceId: 'source-a' });
+    const bytes = Buffer.from('source-a bytes');
+    store('notes/plan/a.txt', bytes);
+    await run('file_register', ctxFor(engine, { sourceId: 'source-a' }), { storage_path: 'notes/plan/a.txt', filename: 'a.txt', page_slug: 'notes/plan', content_hash: sha(bytes), size_bytes: bytes.length });
+    const [page] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug='notes/plan' AND source_id='source-a'");
+    expect(await engine.executeRaw('SELECT source_id, page_id FROM files')).toEqual([{ source_id: 'source-a', page_id: page!.id }]);
+    expect((await failure(() => run('file_register', ctxFor(engine, { sourceId: 'default' }), { storage_path: 'notes/plan/a.txt', filename: 'a.txt', page_slug: 'notes/plan', content_hash: sha(bytes), size_bytes: bytes.length })))?.code).toBe('page_not_found');
+  });
+
+  test('refuses a registration that would move an existing row to another page, keeping the row as it was', async () => {
+    const engine = await embedded();
+    await addPage(engine, 'unsorted');
+    const old = Buffer.from('loose file');
+    const path = `unsorted/${sha(old).slice(0, 8)}-x.txt`;
+    store(path, old);
+    await run('file_register', ctxFor(engine), { storage_path: path, filename: 'x.txt', content_hash: sha(old), size_bytes: old.length });
+    const next = Buffer.from('bytes for the page');
+    store(path, next);
+    const err = await failure(() => run('file_register', ctxFor(engine), { storage_path: path, filename: `${sha(old).slice(0, 8)}-x.txt`, page_slug: 'unsorted', content_hash: sha(next), size_bytes: next.length }));
+    expect(err?.code).toBe('invalid_params');
+    expect(await engine.executeRaw('SELECT page_slug, filename, content_hash FROM files')).toEqual([{ page_slug: null, filename: 'x.txt', content_hash: sha(old) }]);
+  });
+
   test('refuses a page that does not exist and an object it cannot read back, recording nothing', async () => {
     const engine = await embedded();
     const bytes = Buffer.from('orphan');
@@ -216,6 +242,12 @@ describe('hashing a stored object', () => {
     const client = { send: async () => ({ Body: (async function* () { yield* parts; })() }) };
     const s3 = new S3Storage({ backend: 's3', bucket: 'test' }, client as never);
     expect(await s3.hashObject('a/b.txt')).toEqual({ size: 23, sha256: sha(Buffer.concat(parts)) });
+  });
+
+  test('an s3 store with an endpoint builds file URLs from it', async () => {
+    const { S3Storage } = await import('../src/core/storage/s3.ts');
+    const s3 = new S3Storage({ backend: 's3', bucket: 'test', endpoint: 'http://127.0.0.1:9000', region: 'us-east-1', accessKeyId: 'k', secretAccessKey: 's' });
+    expect(await s3.getUrl('notes/plan/a.txt')).toBe('http://127.0.0.1:9000/test/notes/plan/a.txt');
   });
 
   test('a backend without hashObject is hashed from one download', async () => {
