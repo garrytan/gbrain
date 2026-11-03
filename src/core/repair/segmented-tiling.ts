@@ -156,9 +156,9 @@ async function stageable(engine: BrainEngine, page: { source_id: string; slug: s
     return { held: 'the file changes who can read the page (visibility, readable_by, a privacy alias such as access or confidentiality, or a type that is private by default), and this repair republishes the body under the stored frontmatter' };
   }
   const settled = structuredClone(parsed);
-  const writeGate = await ownerSourceGateInput(engine, page.source_id, settled.frontmatter);
-  stripGateOwnedMarkers(settled, { preserveGateMarkers: true, writeGate });
-  try { await settleContentDisposition(engine, settled, { slug: page.slug, sourceId: page.source_id, stripped: false, writeGate }); } catch (error) {
+  const gate = await ownerSourceGateInput(engine, page.source_id, settled.frontmatter);
+  stripGateOwnedMarkers(settled, { preserveGateMarkers: true, writeGate: gate });
+  try { await settleContentDisposition(engine, settled, { slug: page.slug, sourceId: page.source_id, stripped: false, writeGate: gate }); } catch (error) {
     return { held: `the next sync's content gate refuses the file: ${error instanceof Error ? error.message : String(error)}` };
   }
   const marked = [QUARANTINE_KEY, EMBED_SKIP_KEY, CONTENT_FLAG_KEY].filter(key => settled.frontmatter[key] != null && storedFrontmatter[key] == null);
