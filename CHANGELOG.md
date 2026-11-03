@@ -12,13 +12,13 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [0.60.557.0] - 2026-11-03
 
-**SkillOpt rollouts now see the same tool errors MCP callers get.** When a read tool refused or failed during a SkillOpt rollout, the model saw only the error's one-line message. MCP callers get the full error for the same call: its code, the suggestion and a runnable `fix`. So skills were tuned against a weaker error surface than real callers read. Both SkillOpt registries (the read-only rollout registry and write-capture) now hand the model the exact error text an HTTP MCP caller receives, and they keep `code` for callers that branch on it. MCP output is unchanged. Write ops keep refusing as before.
+**SkillOpt rollouts now see the same tool errors MCP callers get.** When a read tool refused or failed during a SkillOpt rollout, the model saw only the error's one-line message. MCP callers get the full error for the same call: its code, the suggestion and a runnable `fix`. So skills were tuned against a weaker error surface than real callers read. Both SkillOpt registries (the read-only rollout registry and write-capture) now hand the model the error text a read-scope HTTP MCP caller receives for the same call, and they keep `code` for callers that branch on it. A fix names only tools the rollout offers. MCP output is unchanged. Write ops keep refusing as before.
 
 ### Itemized changes
 
-- `src/mcp/dispatch.ts` (`asAgentToolError`): turns a failed read into an error whose message is the MCP error text for the same call. An AI invocation policy stop passes through unchanged, because the tool loop rethrows it.
-- `src/core/skillopt/rollout.ts`, `src/core/skillopt/write-capture.ts`: read handlers throw that error.
-- `test/skillopt-rollout-agent-errors.test.ts`: on both registries, a two-selector refusal and a missing-page error read exactly as MCP returns them, including the suggestion and the fix argv. All four cases fail on master.
+- `src/mcp/dispatch.ts` (`asAgentToolError`): turns a failed read into an error whose message is the MCP error text for the same call, rendered for the caller's grant (a read-scope reader when the loop has none) and the loop's own tools. An AI invocation policy stop passes through unchanged, because the tool loop rethrows it.
+- `src/core/skillopt/rollout.ts`, `src/core/skillopt/write-capture.ts`: read handlers throw that error, naming the source the read used.
+- `test/skillopt-rollout-agent-errors.test.ts`: on both registries, a two-selector refusal and a missing-page error read exactly as a read-scope MCP caller gets them, including the suggestion and the runnable fix. A policy stop passes through, and a revoked remote grant reads `permission_denied`. The four parity cases fail on master.
 
 ## [0.60.556.0] - 2026-11-02
 
