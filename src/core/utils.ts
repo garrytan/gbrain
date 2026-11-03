@@ -597,6 +597,17 @@ export function rowToSearchResult(row: Record<string, unknown>): SearchResult {
 }
 
 /**
+ * since/until_date are TEXT (since v0.28 — DATE was too restrictive for
+ * partial dates like '2017-01' that the spec uses). Shared by the Take and
+ * TakeHit mappers so a search hit reports the same window as the row.
+ */
+function dateTextOrNull(v: unknown): string | null {
+  if (v == null) return null;
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  return String(v);
+}
+
+/**
  * Convert a takes-table SQL row (joined with pages.slug AS page_slug) to the
  * `Take` shape. Handles Date → ISO string conversion for timestamp/date columns.
  */
@@ -604,13 +615,6 @@ export function takeRowToTake(row: Record<string, unknown>): Take {
   const isoOrNull = (v: unknown): string | null => {
     if (v == null) return null;
     if (v instanceof Date) return v.toISOString();
-    return String(v);
-  };
-  // since/until_date are TEXT (since v0.28 — DATE was too restrictive for
-  // partial dates like '2017-01' that the spec uses).
-  const dateOrNull = (v: unknown): string | null => {
-    if (v == null) return null;
-    if (v instanceof Date) return v.toISOString().slice(0, 10);
     return String(v);
   };
   return {
@@ -622,8 +626,8 @@ export function takeRowToTake(row: Record<string, unknown>): Take {
     kind: row.kind as string,
     holder: String(row.holder),
     weight: Number(row.weight),
-    since_date: dateOrNull(row.since_date),
-    until_date: dateOrNull(row.until_date),
+    since_date: dateTextOrNull(row.since_date),
+    until_date: dateTextOrNull(row.until_date),
     source: row.source == null ? null : String(row.source),
     superseded_by: row.superseded_by == null ? null : Number(row.superseded_by),
     active: Boolean(row.active),
@@ -658,6 +662,9 @@ export function takeHitRowToHit(row: Record<string, unknown>): TakeHit {
     kind: row.kind as TakeKind,
     holder: String(row.holder),
     weight: Number(row.weight),
+    since_date: dateTextOrNull(row.since_date),
+    until_date: dateTextOrNull(row.until_date),
+    source: row.source == null ? null : String(row.source),
     score: Number(row.score),
   };
 }

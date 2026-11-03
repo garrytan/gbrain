@@ -5,7 +5,7 @@ import { operationsByName } from '../src/core/operations.ts';
 import { runThink, persistSynthesis, type ThinkLLMClient } from '../src/core/think/index.ts';
 import { sanitizeTakeForPrompt, renderTakesBlock } from '../src/core/think/sanitize.ts';
 import { resolveCitations, parseInlineCitations, normalizeStructuredCitations } from '../src/core/think/cite-render.ts';
-import { runGather, renderPagesBlock } from '../src/core/think/gather.ts';
+import { runGather, renderPagesBlock, takesHitToTakeForPrompt } from '../src/core/think/gather.ts';
 import { withoutAnthropicKey } from './helpers/no-anthropic-key.ts';
 import { configureGateway, resetGateway, __setGenerateTextTransportForTests } from '../src/core/ai/gateway.ts';
 import { __resetChatFallbackHopNoticeForTests } from '../src/core/ai/fallback-hop-queue.ts';
@@ -92,6 +92,30 @@ describe('sanitizeTakeForPrompt', () => {
     expect(r.rendered).toContain('who=garry');
     expect(r.rendered).toContain('weight=0.85');
     expect(r.sanitizedCount).toBe(0);
+  });
+
+  test('renderTakesBlock emits the validity window and source when present', () => {
+    const r = renderTakesBlock([{
+      page_slug: 'companies/acme-example', row_num: 60,
+      claim: 'Priced per seat during the pilot', kind: 'fact', holder: 'world', weight: 0.9,
+      since_date: '2025-09-01', until_date: '2026-01-31', source: 'pilot-review',
+    }]);
+    expect(r.rendered).toContain('since=2025-09-01 until=2026-01-31');
+    expect(r.rendered).toContain('source="pilot-review"');
+    const bare = renderTakesBlock([{ page_slug: 'companies/acme-example', row_num: 61, claim: 'c', kind: 'take', holder: 'dana', weight: 0.5 }]);
+    expect(bare.rendered).not.toContain('since=');
+    expect(bare.rendered).not.toContain('until=');
+  });
+
+  test('takesHitToTakeForPrompt keeps a search hit\'s window and source', () => {
+    const row = takesHitToTakeForPrompt({
+      take_id: 1, page_id: 2, page_slug: 'companies/acme-example', row_num: 60,
+      claim: 'Priced per seat during the pilot', kind: 'fact', holder: 'world', weight: 0.9, score: 0.5,
+      since_date: '2025-09-01', until_date: '2026-01-31', source: 'pilot-review',
+    });
+    expect(row).toMatchObject({ since_date: '2025-09-01', until_date: '2026-01-31', source: 'pilot-review' });
+    const legacy = takesHitToTakeForPrompt({ take_id: 1, page_id: 2, page_slug: 'companies/acme-example', row_num: 61, claim: 'c', kind: 'take', holder: 'dana', weight: 0.5, score: 0.1 });
+    expect(legacy).toMatchObject({ since_date: null, until_date: null, source: null });
   });
 });
 
