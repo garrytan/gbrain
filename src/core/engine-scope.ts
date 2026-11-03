@@ -1,0 +1,25 @@
+/**
+ * Which engine a call runs for, for code that reads per-engine state without taking the engine as an argument: the
+ * AI gateway (ai/gateway.ts) and the Anthropic key resolver (ai/anthropic-key.ts). Every operation handler runs inside
+ * its context's engine scope (operation-load.ts), and so does each persistence consumer (persistence/service.ts).
+ * A host that calls core functions directly, outside an operation, wraps them in `withEngineScope(engine, fn)`.
+ *
+ * Only an engine `openEngine` opened changes anything: for every other engine, and in a process that never opened
+ * one, the gateway keeps its process-wide state exactly as before, and no scope is even entered.
+ */
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { isEmbeddedEngine, processHasEmbeddedEngines } from './embedded-engine.ts';
+
+const scope = new AsyncLocalStorage<object>();
+
+/** Runs `fn` as a call for `engine`. A plain call in a process that holds no embedded engine. */
+export function withEngineScope<T>(engine: object, fn: () => T): T {
+  return processHasEmbeddedEngines() ? scope.run(engine, fn) : fn();
+}
+
+/** The embedded engine the current call runs for (a page transaction, view or proxy over one counts), else undefined. */
+export function embeddedEngineInScope(): object | undefined {
+  if (!processHasEmbeddedEngines()) return undefined;
+  const engine = scope.getStore();
+  return engine && isEmbeddedEngine(engine) ? engine : undefined;
+}
