@@ -89,8 +89,10 @@ describe('openEngine refusals', () => {
 
   test('a settings URL keeps the port it names, and a multi-host URL is refused as one openEngine cannot read', async () => {
     expect(settingsConnectionOptions(pgUrl('app:secret', 'db-a.example.internal:80/brain_a')).port).toBe(80);
-    const refusal = await openEngine(settingsFor({ engine: 'postgres', database: { url: pgUrl('app:secret', 'db-a.example.internal:5432,db-b.example.internal:5433/brain_a') } })).catch((error: { code?: string; suggestion?: string }) => error);
-    expect(refusal).toMatchObject({ code: 'engine_settings_invalid', suggestion: expect.stringContaining('multi-host') });
+    for (const hosts of ['db-a.example.internal:5432,db-b.example.internal:5433', 'db-a.example.internal,db-b.example.internal', 'db-a.example.internal,db-b.example.internal:5433']) {
+      const refusal = await openEngine(settingsFor({ engine: 'postgres', database: { url: pgUrl('app:secret', `${hosts}/brain_a`) } })).catch((error: { code?: string; suggestion?: string }) => error);
+      expect(refusal).toMatchObject({ code: 'engine_settings_invalid', suggestion: expect.stringContaining('multi-host') });
+    }
   });
 });
 

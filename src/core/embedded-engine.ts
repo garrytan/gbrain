@@ -40,7 +40,7 @@ const parseConnectionUrl = (url: string) => new URL(url.replace(/^postgres(ql)?:
 /** Why openEngine refuses a settings URL (not one parseable single-host URL, or no host, user or database name), or undefined. */
 export function connectionUrlProblem(url: string): string | undefined {
   let parsed: URL;
-  try { parsed = parseConnectionUrl(url); } catch { return 'is not a parseable single-host connection URL (openEngine reads no multi-host URL)'; }
+  try { parsed = parseConnectionUrl(url); if (parsed.hostname.includes(',')) throw new Error('multi-host'); } catch { return 'is not a parseable single-host connection URL (openEngine reads no multi-host URL)'; }
   const missing = !parsed.hostname ? 'host' : !parsed.username ? 'user' : parsed.pathname.length <= 1 ? 'database name' : undefined;
   return missing && `names no ${missing}, and the driver would fill it from PG* environment variables`;
 }
