@@ -2033,21 +2033,21 @@
         "kind": "function",
         "name": "__setChatTransportForTests",
         "signature": [
-          "(fn: ((opts: ChatOpts) => Promise<ChatResult>) | null) => void"
+          "(fn: ChatTransport | null, engine?: object) => void"
         ]
       },
       {
         "kind": "function",
         "name": "__setDecideTransportForTests",
         "signature": [
-          "(fn: RerankTransport | null) => void"
+          "(fn: RerankTransport | null, engine?: object) => void"
         ]
       },
       {
         "kind": "function",
         "name": "__setEmbedTransportForTests",
         "signature": [
-          "(fn: EmbedManyFn | null) => void"
+          "(fn: EmbedManyFn | null, engine?: object) => void"
         ]
       },
       {
@@ -2061,21 +2061,21 @@
         "kind": "function",
         "name": "__setGenerateObjectTransportForTests",
         "signature": [
-          "(fn: GenerateObjectFn | null) => void"
+          "(fn: GenerateObjectFn | null, engine?: object) => void"
         ]
       },
       {
         "kind": "function",
         "name": "__setGenerateTextTransportForTests",
         "signature": [
-          "(fn: GenerateTextFn | null) => void"
+          "(fn: GenerateTextFn | null, engine?: object) => void"
         ]
       },
       {
         "kind": "function",
         "name": "__setRerankTransportForTests",
         "signature": [
-          "(fn: RerankTransport | null) => void"
+          "(fn: RerankTransport | null, engine?: object) => void"
         ]
       },
       {
@@ -2139,6 +2139,13 @@
         "name": "configureGateway",
         "signature": [
           "(config: AIGatewayConfig) => void"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "configureGatewayForEngine",
+        "signature": [
+          "(engine: object, config: AIGatewayConfig) => void"
         ]
       },
       {

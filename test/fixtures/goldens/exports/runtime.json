@@ -482,6 +482,7 @@
         "chat",
         "chunk",
         "configureGateway",
+        "configureGatewayForEngine",
         "configureGatewayIfUninitialized",
         "decide",
         "decideTransport",

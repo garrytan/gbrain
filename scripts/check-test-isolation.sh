@@ -18,7 +18,7 @@
 #  R4: any file that creates `new PGLiteEngine(` must call `.disconnect(`
 #      inside an `afterAll(` block. Without disconnect, engines leak across
 #      file boundaries within a shard process.
-#  R5: a file whose code calls `configureGateway(` must also call
+#  R5: a file whose code calls `configureGateway(` or `configureGatewayForEngine(` must also call
 #      `resetGateway(` in its code (normally from afterAll/afterEach). The
 #      AI gateway is one object per process, so whatever a file configures
 #      (embedding model and width, keys, base URLs) is still in force for
@@ -128,7 +128,7 @@ fi
 ENV_MUTATION_PATTERN='process\.env\.[A-Za-z_][A-Za-z_0-9]*[[:space:]]*=[^=]|process\.env\[[^]]+\][[:space:]]*=[^=]|delete[[:space:]]+process\.env\.|delete[[:space:]]+process\.env\[|Object\.assign[[:space:]]*\([[:space:]]*process\.env|Reflect\.set[[:space:]]*\([[:space:]]*process\.env'
 MODULE_MOCK_PATTERN='mock\.module[[:space:]]*\('
 ENGINE_PATTERN='new PGLiteEngine[[:space:]]*\('
-GATEWAY_PATTERN='configureGateway[[:space:]]*\('
+GATEWAY_PATTERN='configureGateway(ForEngine)?[[:space:]]*\('
 GATEWAY_OPT_OUT='isolation-lint: R5-subprocess-only'
 VERDICT_PATTERN='currentExitCode[[:space:]]*\('
 UNCONFIGURE_PATTERN='(__unconfigureGatewayForTests|_clearGatewayForTests)[[:space:]]*\('
@@ -225,7 +225,7 @@ function scan(f,   nl, line, i, k, env, mock, scratch, engine, gw, opt, verdict,
     for (i = 1; i <= nl; i++) {
       if (!strip(L[i])) continue
       if (CODE ~ /resetGateway[[:space:]]*\(/) restored = 1
-      if (CODE ~ /configureGateway[[:space:]]*\(/) calls = calls i ":" L[i] "\n"
+      if (CODE ~ /configureGateway(ForEngine)?[[:space:]]*\(/) calls = calls i ":" L[i] "\n"
     }
     if (calls != "" && !restored) emit(f, "R5", "configureGateway() with no resetGateway(); the gateway is process-global, so this config reaches every later file in the shard. Add afterAll(() => resetGateway()) or rename to *.serial.test.ts", calls)
   }

@@ -43,7 +43,22 @@ export function foldNativeBaseUrlsFromFilePlane(
   return out;
 }
 
-export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
+/**
+ * Where `buildGatewayConfig` reads what is not in the config it is given. The
+ * defaults are this process's `process.env` and its config file, which is
+ * what the CLI wants. A host building a config from values (one per engine,
+ * for `configureGatewayForEngine`) passes both, so nothing is read from the
+ * process or the home directory: `env` carries that brain's provider keys and
+ * `*_BASE_URL` overrides, and `fileConfig: null` folds no file-plane native
+ * base URLs.
+ */
+export interface GatewayConfigSource {
+  env?: Record<string, string | undefined>;
+  fileConfig?: GBrainConfig | null;
+}
+
+export function buildGatewayConfig(c: GBrainConfig, source: GatewayConfigSource = {}): AIGatewayConfig {
+  const env = source.env ?? process.env;
   // The file-plane key fold + env merge live in mergedProviderEnv
   // (src/core/ai/provider-env.ts) — the single canonical mapping shared with
   // detectCapabilities and the key-aware model resolution. Config keys are a
@@ -57,25 +72,31 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // recipe's base_url_default (localhost:8080). Same fix applies to
   // OLLAMA_BASE_URL. Caller-provided cfg.provider_base_urls wins.
   const envBaseUrls: Record<string, string> = {};
-  if (process.env.LLAMA_SERVER_BASE_URL) envBaseUrls['llama-server'] = process.env.LLAMA_SERVER_BASE_URL;
+  if (env.LLAMA_SERVER_BASE_URL) envBaseUrls['llama-server'] = env.LLAMA_SERVER_BASE_URL;
   // v0.40.6.1: sibling recipe for llama-server in reranking mode. Separate
   // env var because --reranking and --embeddings are mutually exclusive at
   // server launch — users running both will have two llama-server processes
   // on different ports.
-  if (process.env.LLAMA_SERVER_RERANKER_BASE_URL) envBaseUrls['llama-server-reranker'] = process.env.LLAMA_SERVER_RERANKER_BASE_URL;
-  if (process.env.OLLAMA_BASE_URL) envBaseUrls['ollama'] = process.env.OLLAMA_BASE_URL;
-  if (process.env.LMSTUDIO_BASE_URL) envBaseUrls['lmstudio'] = process.env.LMSTUDIO_BASE_URL;
-  if (process.env.LITELLM_BASE_URL) envBaseUrls['litellm'] = process.env.LITELLM_BASE_URL;
-  if (process.env.OPENROUTER_BASE_URL) envBaseUrls['openrouter'] = process.env.OPENROUTER_BASE_URL;
+  if (env.LLAMA_SERVER_RERANKER_BASE_URL) envBaseUrls['llama-server-reranker'] = env.LLAMA_SERVER_RERANKER_BASE_URL;
+  if (env.OLLAMA_BASE_URL) envBaseUrls['ollama'] = env.OLLAMA_BASE_URL;
+  if (env.LMSTUDIO_BASE_URL) envBaseUrls['lmstudio'] = env.LMSTUDIO_BASE_URL;
+  if (env.LITELLM_BASE_URL) envBaseUrls['litellm'] = env.LITELLM_BASE_URL;
+  if (env.OPENROUTER_BASE_URL) envBaseUrls['openrouter'] = env.OPENROUTER_BASE_URL;
 
   // #3350: native base-URL fold — MUST read the file plane directly, not `c`
   // (callers can pass a DB-merged config; see foldNativeBaseUrlsFromFilePlane's
-  // mount-safety note). Fail-open: an unreadable config folds nothing.
+  // mount-safety note). Fail-open: an unreadable config folds nothing. A
+  // caller that holds the file config (or has none: `fileConfig: null`)
+  // passes it, and nothing is read from the home directory here.
   let fileCfg: GBrainConfig | null = null;
-  try {
-    fileCfg = loadConfig();
-  } catch {
-    fileCfg = null;
+  if (source.fileConfig !== undefined) {
+    fileCfg = source.fileConfig;
+  } else {
+    try {
+      fileCfg = loadConfig();
+    } catch {
+      fileCfg = null;
+    }
   }
 
   return {
@@ -92,6 +113,6 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
     provider_chat_options: c.provider_chat_options,
     // #1249 empty-string drop + GEMINI alias applied inside mergedProviderEnv.
     // #3350 file-plane native base-URL fold layered on top (env wins).
-    env: foldNativeBaseUrlsFromFilePlane(fileCfg, mergedProviderEnv(c, process.env)),
+    env: foldNativeBaseUrlsFromFilePlane(fileCfg, mergedProviderEnv(c, env)),
   };
 }

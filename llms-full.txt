@@ -6191,9 +6191,10 @@ working directory:
 - **Close.** `disconnect()` closes the engine for good and drops its settings, even while a reconnect is in flight
   (any pool that reconnect builds is ended). A later `connect()` or `reconnect()` refuses `engine_closed`; call
   `openEngine` again instead. File storage (backend and object prefix) and AI provider settings are not settings yet (Wave C): file
-  operations use the process's storage config and embedding calls use the process AI gateway.
+  operations use the process's storage config and embedding calls use the process AI gateway, unless
+  `configureGatewayForEngine(engine, config)` gave the engine its own.
 
-Still process-wide: the AI gateway (the model embedding calls use), `GBRAIN_*` tuning variables (pool lifetime,
+Still process-wide: the AI gateway otherwise, `GBRAIN_*` tuning variables (pool lifetime,
 connect and session timeouts, `GBRAIN_PREPARE`, `GBRAIN_DIRECT_POOL_SIZE`, `GBRAIN_DISABLE_DIRECT_POOL`,
 `GBRAIN_RLS_SCOPE_BINDING`, the PGLite close watchdog), `PG*` TLS and tuning
 variables, the connection-events audit log, the AI usage log sink, and operation-level
