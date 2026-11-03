@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**/ship now carries its unit, serial, slow and E2E lanes from a passed full-ci run instead of running them again.** `.gstack/pregate.json` declares `ship_lanes_from` (gstack 1.94+): `bun run test`, `bun run test:serial`, `bun run test:slow` and `bun run test:e2e` carry from the Test (`full-suite`) and E2E (`e2e-full-suite`) runs at the exact, clean tree, and print `LANE: <label> carried run=<id>/<attempt>`. A dirty tree, a newer red or running run, or a run whose `tree.json` misses a file the lane runs still runs the lane locally. Each lane's file list comes from `scripts/pregate-remote-gate.sh --list` on the full gate, so a tree that changes the CI reuse files never carries its own runs.
+
+### Itemized changes
+
+- `.gstack/pregate.json`: `ship_lanes_from` maps the four lane commands to the `test` and `e2e` run profiles. The E2E lane names both, because test.yml's reconciliation job runs two `test/e2e/` files. `bun run verify` and `bun run typecheck` still run locally: `tree.json` records test files only.
+- `.gstack/ship-policy.json`: `min_gstack_version` is 1.94.4.0. A gstack below 1.94.0.0 rejects `ship_lanes_from` as an unknown key.
+- `docs/ci-event-parity.md#ship-lanes` lists the exact lane commands and the carry conditions; AGENTS.md and CONTRIBUTING.md point /ship at it. `test/scripts/pregate-remote-gate.test.ts` keeps the table and the config in step.
+- Nightly shard weights refreshed (2026-11-03).
+
 ## [0.60.566.0] - 2026-11-03
 
 **Two installs at once no longer drop each other's instruction-ledger entry, and a Codex skills opt-out reaches the file Codex used before.** Every install lane reads the brain-first ledger (`~/.gbrain/agent-instructions.json`) or the skill-loading ledger, edits the instruction file and rewrites the ledger. Two installs at once (say `setup claude-code` and `setup codex`) could each read the ledger before the other wrote it, and one entry was lost; a later opt-out then left that block, and its Claude Code allow rule, in place. Each install now holds one shared lock for the whole step, and the second waits for the first. Separately, Codex loads `AGENTS.override.md` when it is non-empty and `AGENTS.md` otherwise, so an explicit skills opt-out made after the override appeared left the index in `AGENTS.md`, where it came back once the override was removed.
