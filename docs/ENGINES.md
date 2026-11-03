@@ -740,6 +740,7 @@ const engine = await openEngine({
   host: { id: hostId },                // required UUID: the persistence host identity
   writer: { id, credential, lane: 'stdio' },
   embedding: { model: 'voyage:voyage-4', dimensions: 1024 },
+  ai: { providers: { voyage: { apiKey } }, models: { chat } },
 });
 await engine.initSchema();             // a connect is not a migration: the host runs it
 // ...
@@ -769,15 +770,19 @@ working directory:
 - **Embedding identity.** `initSchema()` seeds a fresh brain from `settings.embedding` (else the built-in default),
   never from the process gateway, and refuses `engine_embedding_mismatch` on a database that records another model
   or width; `gbrain migrate embeddings --status` previews a migration.
-- **Read back.** `embeddedSettings(engine)` returns the settings without the writer credential; `disconnect()` drops
-  them. File storage (backend and object prefix) and AI provider settings are not settings yet (Wave C): file
-  operations use the process's storage config and embedding calls use the process AI gateway.
+- **AI gateway.** Embed, chat, expansion and rerank calls use only `settings.ai` (`providers`: id to
+  `{ apiKey, baseUrl }`; `models`: chat, expansion, reranker) and `settings.embedding`, never a `process.env`
+  key, the config file or the process gateway. An unnamed provider refuses `engine_scope_missing` and nothing is
+  sent. Operations and persistence consumers run in their engine's scope; a host calling core directly wraps it in
+  `withEngineScope(engine, fn)`. Transactions, proxies and a recovered degraded engine share it (`engineKey`).
+- **Read back.** `embeddedSettings(engine)` returns the settings without the writer credential or provider keys;
+  `disconnect()` drops them.
 
-Still process-wide: the AI gateway (the model embedding calls use), `GBRAIN_*` tuning variables (pool lifetime,
+Still process-wide: file storage, transcription, the AI call log and timeouts, `GBRAIN_*` tuning variables (pool lifetime,
 connect and session timeouts, `GBRAIN_PREPARE`, `GBRAIN_DIRECT_POOL_SIZE`, `GBRAIN_DISABLE_DIRECT_POOL`,
 `GBRAIN_RLS_SCOPE_BINDING`, the PGLite close watchdog), the connection-events audit log, and operation-level
 config reads (content-sanity screening, schema-pack resolution, the embedding switch on publication). None of them
-picks an engine's database, host identity, writer or embedding identity. A source with a git checkout keeps its native coordination lock under the
+picks an engine's database, host identity, writer, embedding identity or AI keys. A source with a git checkout keeps its native coordination lock under the
 process's persistence home.
 
 ## Canonical schema sources
