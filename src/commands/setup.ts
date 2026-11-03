@@ -81,6 +81,7 @@ import {
 import type { CodexSetupEvent } from '../core/bootstrap/codex-hooks.ts';
 import {
   describeSkillsBlockOutcome,
+  skillsOutcomeShown,
   InvalidSkillLoadingEnv,
   isSkillLoading,
   indexLauncher,
@@ -856,7 +857,7 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   if (instructions) say(out, flags.remove ? describeBrainFirstOutcome(instructions, flags.dryRun) : describeInstructions(instructions, flags.dryRun));
   if (turnHook) say(out, `  ${(flags.dryRun && (turnHook.action === 'write' || turnHook.action === 'remove') ? `would ${turnHook.action}` : turnHook.action).padEnd(8)} ${'turn hook'.padEnd(7)} ${turnHook.detail}${'snippet' in turnHook && turnHook.snippet ? `:\n${turnHook.snippet.replace(/^/gm, '    ')}` : ''}${'commands' in turnHook && turnHook.commands ? `:\n${turnHook.commands.map((c) => `    ${c}`).join('\n')}` : ''}${'next' in turnHook && turnHook.next ? `; wire it with: ${turnHook.next}` : ''}`);
   else if (!off && placed) say(out, `  note     ${'turn hook'.padEnd(7)} ${adapter.label} has no per-turn hook gbrain can install; the rule reaches it through ${target.path} only.`);
-  if (skills && (skills.decision.value === 'spring' || skills.action !== 'skip' || skills.paired)) say(out, describeSkillsBlockOutcome(skills, flags.dryRun));
+  if (skills && skillsOutcomeShown(skills)) say(out, describeSkillsBlockOutcome(skills, flags.dryRun));
   if (check?.ok) say(out, `  verify   ${'turn hook'.padEnd(7)} ${check.message}`);
   if (mcp.setup === 'manual' && !flags.remove) say(out, `MCP: setup does not register ${adapter.label}'s MCP server. Follow ${adapter.guide} (one command), then start a new session.`);
   if (!flags.remove && instructions?.decision.value === 'accepted') say(out, 'Next: start a new session; the harness reads its instruction file at session start.');
@@ -922,7 +923,7 @@ async function finish(out: Out, doc: {
     return code;
   }
   if (doc.instructions) say(out, doc.remove ? describeBrainFirstOutcome(doc.instructions, doc.dryRun) : describeInstructions(doc.instructions, doc.dryRun));
-  if (doc.skills && (doc.skills.decision.value === 'spring' || doc.skills.action !== 'skip' || doc.skills.paired)) say(out, describeSkillsBlockOutcome(doc.skills, doc.dryRun));
+  if (doc.skills && skillsOutcomeShown(doc.skills)) say(out, describeSkillsBlockOutcome(doc.skills, doc.dryRun));
   if (doc.verify) say(out, `Verify: ${doc.verify.ok ? 'ok' : 'not verified'} (${doc.verify.reason}): ${doc.verify.message}`);
   if (doc.turnHook?.ok) say(out, `Turn hook: ok (${doc.turnHook.reason}): ${doc.turnHook.message}`);
   if (state) say(out, `State: ${state} (${doc.states.join(' -> ')}).${state === 'native-verified' ? '' : ' Native push is not claimed until an observed event reaches a fresh session.'}`);
