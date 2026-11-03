@@ -67,6 +67,24 @@ describe('settings.cache_namespace', () => {
     expect(await askOnce(settingsFor(undefined, apiKey))).toBe(1);
   }, 60_000);
 
+  test('a query embed still in flight when its engine closes leaves no entry behind for it', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    __setEmbedTransportForTests((async ({ values }: any) => {
+      calls.push('in-flight');
+      await gate;
+      return { embeddings: values.map(() => Array.from({ length: EMBEDDING.dimensions }, (_, i) => (i % 7) + 1)), usage: { tokens: 1 } };
+    }) as any);
+    const engine = await openEngine(settingsFor(undefined, key()));
+    const pending = withEngineScope(engine, () => embedQuery('asked by brain-a just before it closed')).catch(() => null);
+    for (let i = 0; i < 200 && calls.length === 0; i++) await Bun.sleep(5);
+    expect(calls).toEqual(['in-flight']);
+    await engine.disconnect();
+    release();
+    await pending;
+    expect(__queryEmbedCacheKeysForTests().filter(k => k.includes('asked by brain-a just before it closed'))).toEqual([]);
+  }, 60_000);
+
   test('the namespace is an opaque non-empty string, read back as given, and no tag carries the key', async () => {
     for (const bad of ['', 42, { id: 'x' }, 'x'.repeat(257)]) {
       const error = await openEngine({ ...settingsFor(undefined, key()), cache_namespace: bad as never }).then(e => e.disconnect().then(() => null), e => e);

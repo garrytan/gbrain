@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { __setEmbedTransportForTests, configureGateway, embedQuery, resetGateway } from '../src/core/ai/gateway.ts';
-import { openEngine, type EngineSettings } from '../src/core/engine-open.ts';
+import { openEngine, withEngineScope, type EngineSettings } from '../src/core/engine-open.ts';
 import { embeddedEngineInScope } from '../src/core/engine-scope.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { hybridSearch, hybridSearchCached } from '../src/core/search/hybrid.ts';
@@ -51,6 +51,27 @@ describe('entry points a host calls without a scope', () => {
       sent.length = 0;
       await hybridSearch(a, 'quarterly plan');
       await hybridSearchCached(a, 'acme-example plan');
+      expect(sent.length).toBeGreaterThan(0);
+      expect(new Set(sent)).toEqual(new Set([`Bearer ${keyA}`]));
+    } finally {
+      await Promise.all([a.disconnect(), b.disconnect()]);
+    }
+  }, 120_000);
+
+  test('a deferred post-commit embedding from an import embeds with its engine\'s key, whatever scope drains it', async () => {
+    installEmbedStub();
+    const keyA = key('a');
+    const a = await openEngine(settingsFor(keyA));
+    const b = await openEngine(settingsFor(key('b')));
+    try {
+      await a.initSchema();
+      const deferred: Array<() => Promise<{ status: string }>> = [];
+      await importFromContent(a, 'notes/alpha-example', '# Alpha\n\nA note about acme-example for brain-a.', { onPostCommitEmbedding: complete => { deferred.push(complete); } });
+      await importFromContent(a, 'notes/beta-example', '# Beta\n\nAnother note about acme-example for brain-a.', { onPostCommitEmbedding: complete => { deferred.push(complete); } });
+      expect(deferred.length).toBe(2);
+      sent.length = 0;
+      expect((await deferred[0]()).status).toBe('embedded');
+      expect((await withEngineScope(b, () => deferred[1]())).status).toBe('embedded');
       expect(sent.length).toBeGreaterThan(0);
       expect(new Set(sent)).toEqual(new Set([`Bearer ${keyA}`]));
     } finally {

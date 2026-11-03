@@ -70,7 +70,7 @@ import type { PageBodyPolicy } from './page-body/limits.ts';
 import { parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning, replaceOrInsertFactsFence } from './facts-fence.ts';
 import { assertOriginUnclaimed, isOriginClaimRefusal } from './persistence/origin-guard.ts';
 import { fileBodyMatchesStored, readStoredBody } from './facts/file-body-guard.ts';
-import { needsEngineScope, withEngineScope } from './engine-scope.ts';
+import { currentEngineScope, needsEngineScope, runInEngineScope, withEngineScope } from './engine-scope.ts';
 
 /**
  * #2044 / #4548: row-level, visibility-aware fence merge for one page
@@ -917,9 +917,9 @@ export async function importFromContent(
   }));
   const searchable = await segmented?.afterCommit(engine);
 
-
   if (postCommitEmbedding && !noEmbed && chunks.length > 0) {
-    postCommitEmbedding(async () => {
+    const importScope = currentEngineScope();
+    postCommitEmbedding(() => runInEngineScope(importScope, async (): Promise<ImportEmbeddingResult> => {
       try {
         if (!persistedProjection) return { status: 'superseded' };
         const signature = currentEmbeddingSignature();
@@ -929,7 +929,7 @@ export async function importFromContent(
       } catch {
         return { status: 'failed', error: 'Page content was saved, but embedding failed. Check the embedding provider and database on the brain host, then run gbrain embed --stale --source <source-id>.' };
       }
-    });
+    }));
   }
 
   return {
