@@ -5809,7 +5809,8 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "max_chars": {
         "type": "integer",
-        "description": "Cap on fact (then results) text, 200-12000; whole items only, truncated says if cut."
+        "description": "Cap on fact (then results) text, 200-12000; whole items only, truncated says if cut.",
+        "fullSurfaceOnly": true
       }
     },
     "scope": "read",
