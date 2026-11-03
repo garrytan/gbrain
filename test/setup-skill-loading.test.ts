@@ -299,3 +299,51 @@ describe('skill loading: launcher, permission and refresh', () => {
     expect(none.doc.skills).toEqual([]);
   });
 });
+
+describe('skill loading: the Codex AGENTS.md / AGENTS.override.md pair (#8485)', () => {
+  const codex = (b: Box, extra: string[], env: Record<string, string | undefined> = {}) => setup(b, ['codex', '--instructions-only', '--gbrain-bin', LAUNCHER, ...extra], env);
+  const ledgerMode = (b: Box, path: string) => (JSON.parse(read(join(b.home, '.gbrain', 'skill-loading.json'))).entries as { path: string; mode: string }[]).find((e) => e.path === path)?.mode;
+
+  test('an opt-out after AGENTS.override.md took over also strips the index from AGENTS.md, previewed in --dry-run; nothing else is touched', async () => {
+    const b = box();
+    const agents = join(b.home, '.codex', 'AGENTS.md');
+    const override = join(b.home, '.codex', 'AGENTS.override.md');
+    const otherHome = join(b.home, '.codex-b');
+    expect((await codex(b, ['--skill-loading', 'spring'], { CODEX_HOME: otherHome })).doc.skills.action).toBe('write');
+    expect((await codex(b, ['--skill-loading', 'spring'])).doc.skills.action).toBe('write');
+    writeFileSync(override, '# Override rules\n');
+
+    const plain = await codex(b, []);
+    expect(plain.doc.skills.paired).toBeUndefined();
+    expect(inspectSkillsBlock(agents).state).toBe('current');
+
+    const before = read(agents);
+    const dry = await codex(b, ['--skill-loading', 'off', '--dry-run']);
+    expect(dry.doc.skills.path).toBe(override);
+    expect(dry.doc.skills.paired).toMatchObject({ path: agents, action: 'remove' });
+    expect(read(agents)).toBe(before);
+    expect(ledgerMode(b, agents)).toBe('spring');
+
+    const off = await codex(b, ['--skill-loading', 'off']);
+    expect(off.exitCode).toBe(0);
+    expect(off.doc.skills.paired).toMatchObject({ path: agents, action: 'remove' });
+    expect(inspectSkillsBlock(agents).state).toBe('absent');
+    expect(count(read(agents), BRAIN_FIRST_BEGIN)).toBe(1);
+    expect(ledgerMode(b, agents)).toBe('off');
+
+    rmSync(override);
+    expect((await codex(b, [])).doc.skills.decision).toEqual({ value: 'off', source: 'prior' });
+    expect(inspectSkillsBlock(agents).state).toBe('absent');
+    expect(inspectSkillsBlock(join(otherHome, 'AGENTS.md')).state).toBe('current');
+  });
+
+  test('--no-instructions after the override took over also strips the index from AGENTS.md', async () => {
+    const b = box();
+    const agents = join(b.home, '.codex', 'AGENTS.md');
+    await codex(b, ['--skill-loading', 'spring']);
+    writeFileSync(join(b.home, '.codex', 'AGENTS.override.md'), '# Override rules\n');
+    const r = await codex(b, ['--no-instructions']);
+    expect(r.doc.skills.paired).toMatchObject({ path: agents, action: 'remove', decision: { value: 'off', source: 'instructions_off' } });
+    expect(existsSync(agents)).toBe(false);
+  });
+});

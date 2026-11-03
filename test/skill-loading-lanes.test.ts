@@ -450,6 +450,8 @@ describe('Claude Code loader rule: refresh, dry-run, ledger failures', () => {
       const c = ctx(b);
       const dir = join(b.home, '.gbrain');
       mkdirSync(dir, { recursive: true });
+      // An earlier install left the shared ledger lock behind, so the lock opens and the ledger write is what fails.
+      writeFileSync(join(dir, 'agent-instructions.lock'), '');
       chmodSync(dir, 0o500);
       let failed: SkillsBlockOutcome;
       try {

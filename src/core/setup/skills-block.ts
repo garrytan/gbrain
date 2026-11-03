@@ -21,7 +21,7 @@
  * nothing else was written into.
  */
 import { accessSync, constants as fsConstants, existsSync, lstatSync, readFileSync, unlinkSync } from 'node:fs';
-import { basename, isAbsolute, join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { resolveGbrainBin } from '../gbrain-bin.ts';
 import { addPermissionsAllowEntry, removePermissionsAllowEntry } from '../bootstrap/hooks.ts';
 import { claudeUserSettingsPath } from '../bootstrap/host-specs.ts';
@@ -34,7 +34,7 @@ import { bundledCatalogId, bundledSkills, type SkillAudience } from '../skills/b
 import { shellQuote } from '../shell-quote.ts';
 import { renderSkillIndexBlock, SKILL_INDEX_VERSION, SkillIndexTooLarge, skillIndexCatalog } from '../skills/spring-index.ts';
 import { SKILLS_BLOCK_BEGIN, SKILLS_BLOCK_END } from '../skills/index-block.ts';
-import { BRAIN_FIRST_END, brainFirstTargetAt, CURSOR_HEAD, direntExists, readBrainFirstLedger, writeUnlessChanged, type BrainFirstHarness, type BrainFirstTarget } from './brain-first.ts';
+import { BRAIN_FIRST_END, brainFirstTargetAt, CURSOR_HEAD, direntExists, readBrainFirstLedger, underInstructionLedgerLock, writeUnlessChanged, type BrainFirstHarness, type BrainFirstTarget } from './brain-first.ts';
 
 export { SKILLS_BLOCK_BEGIN, SKILLS_BLOCK_END };
 export const SKILL_LOADING_ENV = 'GBRAIN_SKILL_LOADING';
@@ -341,7 +341,7 @@ export function inspectSkillsBlock(path: string, expected?: string): { state: Sk
 
 /** Why an outcome is `preserve` (or a skip that needs the user), stable for JSON consumers. */
 export type SkillsBlockReason = 'damaged_markers' | 'index_too_large' | 'launcher_unusable' | 'launcher_catalog_mismatch'
-  | 'ledger_unreadable' | 'invalid_env' | 'permission_update_failed' | 'write_failed' | 'recorded_partially' | 'hermes_soul_missing';
+  | 'ledger_unreadable' | 'ledger_locked' | 'invalid_env' | 'permission_update_failed' | 'write_failed' | 'recorded_partially' | 'hermes_soul_missing';
 
 export interface SkillsBlockOutcome {
   harness: string;
@@ -355,6 +355,8 @@ export interface SkillsBlockOutcome {
   permission?: { rule: string; settings: string; change: 'added' | 'removed' | 'would_add' | 'would_remove' };
   /** Claude Code: the previous launcher's rule a launcher change took out (or would). */
   replaced_permission?: { rule: string; settings: string; change: 'removed' | 'would_remove' };
+  /** Codex: the opt-out also stripped (or would strip) the index recorded in the other global instruction file of the same CODEX_HOME. */
+  paired?: SkillsBlockOutcome;
 }
 
 /**
@@ -364,6 +366,7 @@ export interface SkillsBlockOutcome {
  */
 export const skillsOutcomeFailed = (o: SkillsBlockOutcome | null | undefined): boolean => {
   if (!o) return false;
+  if (skillsOutcomeFailed(o.paired)) return true;
   if (o.action === 'preserve') return o.decision.value === 'spring' || o.decision.source !== 'default';
   return o.action === 'skip' && o.reason !== undefined && o.decision.value === 'spring' && (o.decision.source === 'flag' || o.decision.source === 'env');
 };
@@ -391,6 +394,39 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * says otherwise.
  */
 export function syncSkillsBlock(opts: { target: BrainFirstTarget; launcher: string; decision: SkillLoadingDecision; writer: string; dryRun: boolean; audience?: SkillAudience; settingsPath?: string }): SkillsBlockOutcome {
+  return underInstructionLedgerLock(opts.dryRun, () => {
+    const outcome = syncSkillsBlockLocked(opts);
+    const other = codexPairedIndex(opts.target, opts.decision);
+    if (!other) return outcome;
+    return { ...outcome, paired: syncSkillsBlockLocked({ ...opts, target: { ...opts.target, path: other.path }, settingsPath: other.allow_settings }) };
+  }, (why) => ({
+    harness: opts.target.harness, path: opts.target.path, decision: opts.decision, action: 'preserve',
+    state_before: inspectSkillsBlock(opts.target.path).state, detail: `${why}; ${opts.target.path} was left as it was`, reason: 'ledger_locked',
+  }));
+}
+
+/**
+ * #8485: Codex loads its global AGENTS.override.md when it is non-empty, else
+ * AGENTS.md, so the file setup resolves moves when the override appears or
+ * empties. An explicit opt-out (flag, env, --no-instructions) in one of the
+ * two also reaches a spring index gbrain recorded in the other one in the
+ * same CODEX_HOME, so the index cannot come back when the override goes.
+ * No other file is touched.
+ */
+function codexPairedIndex(target: BrainFirstTarget, decision: SkillLoadingDecision): SkillLoadingLedgerEntry | undefined {
+  if (target.harness !== 'codex' || target.project || decision.value !== 'off') return undefined;
+  if (decision.source !== 'flag' && decision.source !== 'env' && decision.source !== 'instructions_off') return undefined;
+  const sibling = { 'AGENTS.md': 'AGENTS.override.md', 'AGENTS.override.md': 'AGENTS.md' }[basename(target.path)];
+  if (!sibling) return undefined;
+  const path = join(dirname(target.path), sibling);
+  try {
+    return readSkillLoadingLedger().find((e) => e.harness === 'codex' && e.path === path && e.mode === 'spring');
+  } catch {
+    return undefined;
+  }
+}
+
+function syncSkillsBlockLocked(opts: { target: BrainFirstTarget; launcher: string; decision: SkillLoadingDecision; writer: string; dryRun: boolean; audience?: SkillAudience; settingsPath?: string }): SkillsBlockOutcome {
   const { target, launcher, decision } = opts;
   const settings = opts.settingsPath ?? claudeUserSettingsPath();
   const audience = opts.audience ?? 'owner';
@@ -559,6 +595,13 @@ function undoUnrecorded(opts: { path: string; written?: { before: string | null;
 
 /** The uninstall path: strip the block, delete the file only when gbrain created it and nothing else is left, forget the record. */
 export function removeSkillsBlock(opts: { harness: string; path: string; dryRun: boolean }): SkillsBlockOutcome {
+  return underInstructionLedgerLock(opts.dryRun, () => removeSkillsBlockLocked(opts), (why) => ({
+    harness: opts.harness, path: opts.path, decision: { value: 'off', source: 'flag' }, action: 'preserve',
+    state_before: inspectSkillsBlock(opts.path).state, detail: `${why}; ${opts.path} was left as it was`, reason: 'ledger_locked',
+  }));
+}
+
+function removeSkillsBlockLocked(opts: { harness: string; path: string; dryRun: boolean }): SkillsBlockOutcome {
   const before = inspectSkillsBlock(opts.path);
   const decision: SkillLoadingDecision = { value: 'off', source: 'flag' };
   const out = (action: SkillsBlockOutcome['action'], detail: string, extra: Partial<SkillsBlockOutcome> = {}): SkillsBlockOutcome =>
@@ -604,7 +647,8 @@ export function describeSkillsBlockOutcome(o: SkillsBlockOutcome, dryRun: boolea
   const tag = o.decision.source === 'unresolved' ? '' : ` [${o.decision.source}; ${how}]`;
   const rule = (p: { rule: string; settings: string; change: string } | undefined) =>
     p && p.change !== 'added' ? `; ${p.change.replace('_', ' ')} Claude Code permission ${p.rule} in ${p.settings}` : '';
-  return `  ${(dryRun && o.action !== 'keep' && o.action !== 'skip' ? `would ${o.action}` : o.action).padEnd(8)} ${'skills'.padEnd(7)} ${o.detail}${rule(o.replaced_permission)}${rule(o.permission)}${tag}`;
+  const line = `  ${(dryRun && o.action !== 'keep' && o.action !== 'skip' ? `would ${o.action}` : o.action).padEnd(8)} ${'skills'.padEnd(7)} ${o.detail}${rule(o.replaced_permission)}${rule(o.permission)}${tag}`;
+  return o.paired ? `${line}\n${describeSkillsBlockOutcome(o.paired, dryRun)}` : line;
 }
 
 /**
