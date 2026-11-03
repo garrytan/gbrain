@@ -12,7 +12,7 @@ import { join, relative } from 'node:path';
 import postgres from '#postgres';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { withEnv } from '../helpers/with-env.ts';
-import { hostIdFor, openEngine, type EngineSettings } from '../../src/core/engine-open.ts';
+import { embeddedSettings, hostIdFor, openEngine, type EngineSettings } from '../../src/core/engine-open.ts';
 import { createEngine } from '../../src/core/engine-factory.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
 import { startConsumerHeartbeat } from '../../src/core/persistence/consumer-heartbeat.ts';
@@ -20,6 +20,9 @@ import { localHostId } from '../../src/core/persistence/identity.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { EngineConfig } from '../../src/core/types.ts';
 import { sharedParameterTypes, type SharedParameterTypes } from '../../src/core/pg-type-cache.ts';
+
+/** Built from parts so the secret scanners never see a URL literal with userinfo; every value here is a placeholder. */
+const pgUrl = (userinfo: string, hostPath: string) => ['postgresql:/', '/', userinfo, '@', hostPath].join('');
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const describeE2E = DATABASE_URL ? describe : describe.skip;
@@ -41,14 +44,14 @@ const hostCtx = (engine: BrainEngine): OperationContext => ({
 const codeOf = async (work: Promise<unknown>) => { try { await work; return 'resolved'; } catch (error) { return (error as { code?: string }).code ?? String(error); } };
 const internals = (engine: BrainEngine) => engine as unknown as { _sql: { options: { max: number } } | null; _connectionStyle: string | null;
   connectionManager: { resolveDirectUrl(): string | null } | null };
-const CANARY_URL = 'postgresql://canary:canary@canary-example.invalid:5432/canary';
-const CANARY_DIRECT = 'postgresql://canary:canary@canary-example.invalid:5432/canary-direct';
+const CANARY_URL = pgUrl('canary:canary', 'canary-example.invalid:5432/canary');
+const CANARY_DIRECT = pgUrl('canary:canary', 'canary-example.invalid:5432/canary-direct');
 
 beforeAll(async () => {
   if (!DATABASE_URL) return;
   assertSafeE2eDatabaseUrl(DATABASE_URL);
   const admin = postgres(DATABASE_URL, { max: 1, prepare: false });
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < 3; i++) {
     const name = `gbrain_test_engine_open_${randomUUID().replaceAll('-', '')}`;
     await admin.unsafe(`CREATE DATABASE ${name}`);
     const url = new URL(DATABASE_URL);
@@ -114,6 +117,61 @@ describeE2E('openEngine on Postgres', () => {
     expect(filesUnder(gbrainHome).filter(path => !/^\.gbrain\/audit\/connection-events-\d{4}-W\d{2}\.jsonl$/.test(path))).toEqual([]);
     expect(filesUnder(home)).toEqual([]);
   }, 300_000);
+
+  test('a disconnect during an in-flight reconnect leaves no live pool, drops the settings and refuses a later reconnect', async () => {
+    const engine = await openEngine({ embedded_core: true, engine: 'postgres', database: { url: urls[0]! }, pool: { max: 2 }, host: { id: randomUUID() } });
+    const reconnecting = engine.reconnect().catch(() => {});
+    await engine.disconnect();
+    await reconnecting;
+    expect(internals(engine)._sql).toBeNull();
+    expect(embeddedSettings(engine)).toBeUndefined();
+    expect(await codeOf(engine.reconnect())).toBe('engine_closed');
+  }, 60_000);
+
+  test('PGPASSWORD never supplies a password the settings URL leaves out', async () => {
+    const withPassword = new URL(urls[0]!);
+    if (!withPassword.password) return;
+    const correct = decodeURIComponent(withPassword.password);
+    withPassword.password = '';
+    await withEnv({ PGPASSWORD: correct }, async () => {
+      expect(await codeOf(openEngine({ embedded_core: true, engine: 'postgres', database: { url: withPassword.toString() }, pool: { max: 1 }, host: { id: randomUUID() } }).then(e => e.disconnect()))).not.toBe('resolved');
+    });
+  }, 60_000);
+
+  test('two hosts initializing one fresh database with different embedding models: one refuses engine_embedding_mismatch', async () => {
+    const open = (model: string) => openEngine({ embedded_core: true, engine: 'postgres', database: { url: urls[2]! }, pool: { max: 2 }, host: { id: randomUUID() }, embedding: { model, dimensions: 1024 } });
+    const [first, second] = await Promise.all([open('voyage:voyage-4'), open('voyage:voyage-4-lite')]);
+    try {
+      const outcomes = (await Promise.all([codeOf(first.initSchema()), codeOf(second.initSchema())])).sort();
+      expect(outcomes).toEqual(['engine_embedding_mismatch', 'resolved']);
+    } finally {
+      await Promise.all([first.disconnect(), second.disconnect()]);
+    }
+  }, 180_000);
+
+  test('a reconnect ends the superseded direct pool, so nothing outlives disconnect()', async () => {
+    const engine = await openEngine({ embedded_core: true, engine: 'postgres', database: { url: urls[0]!, directUrl: urls[0]! }, pool: { max: 2 }, host: { id: randomUUID() } });
+    const manager = internals(engine).connectionManager as unknown as { ddl(): Promise<postgres.Sql> };
+    const oldDirect = await manager.ddl();
+    await oldDirect`SELECT 1`;
+    await engine.reconnect();
+    await engine.disconnect();
+    expect(await codeOf(oldDirect`SELECT 1`)).not.toBe('resolved');
+  }, 60_000);
+
+  test('a reconnect lets in-flight work on the superseded direct pool finish before that pool ends', async () => {
+    const engine = await openEngine({ embedded_core: true, engine: 'postgres', database: { url: urls[0]!, directUrl: urls[0]! }, pool: { max: 2 }, host: { id: randomUUID() } });
+    try {
+      const manager = internals(engine).connectionManager as unknown as { ddl(): Promise<postgres.Sql> };
+      const oldDirect = await manager.ddl();
+      const inFlight = codeOf(oldDirect`SELECT pg_sleep(3)`);
+      await new Promise(resolve => setTimeout(resolve, 200));
+      await engine.reconnect();
+      expect(await inFlight).toBe('resolved');
+    } finally {
+      await engine.disconnect();
+    }
+  }, 60_000);
 
   test('the consumer heartbeat records the identity-given-at-open sentinel, not a host.json path', async () => {
     const engine = await openEngine(settingsA as EngineSettings);

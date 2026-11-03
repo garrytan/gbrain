@@ -38,7 +38,8 @@ export interface EngineAISettings {
 }
 
 /** The settings `embeddedSettings` returns: everything the host passed except the writer credential and the provider keys. */
-export type EmbeddedSettingsView = Readonly<Omit<EngineSettings, 'writer' | 'ai'> & {
+type DeepReadonly<T> = { readonly [K in keyof T]: DeepReadonly<T[K]> };
+export type EmbeddedSettingsView = DeepReadonly<Omit<EngineSettings, 'writer' | 'ai'> & {
   writer?: { id: string; lane: 'cli' | 'stdio' };
   ai?: { providers: Record<string, { baseUrl?: string; hasApiKey: boolean }>; models?: EngineAISettings['models'] };
 }>;
@@ -46,6 +47,33 @@ export type EmbeddedSettingsView = Readonly<Omit<EngineSettings, 'writer' | 'ai'
 interface EmbeddedRecord {
   hostId: string | undefined;
   settings: EngineSettings | null;
+}
+
+const parseConnectionUrl = (url: string) => new URL(url.replace(/^postgres(ql)?:\/\//, 'settings://'));
+
+/** Why openEngine refuses a settings URL (not one parseable single-host URL, or no host, user or database name), or undefined. */
+export function connectionUrlProblem(url: string): string | undefined {
+  let parsed: URL;
+  try { parsed = parseConnectionUrl(url); if (parsed.hostname.includes(',')) throw new Error('multi-host'); } catch { return 'is not a parseable single-host connection URL (openEngine reads no multi-host URL)'; }
+  const missing = !parsed.hostname ? 'host' : !parsed.username ? 'user' : parsed.pathname.length <= 1 ? 'database name' : undefined;
+  return missing && `names no ${missing}, and the driver would fill it from PG* environment variables`;
+}
+
+/**
+ * postgres.js fills each connection field a URL leaves out from PGHOST, PGPORT, PGUSER, PGPASSWORD or PGDATABASE. A
+ * pool opened from settings passes every field explicitly (the password as a function, so an empty one stays empty),
+ * so none of those variables picks its server, database or credentials.
+ */
+export function settingsConnectionOptions(url: string): { host: string; port: number; user: string; password: () => string; database: string } {
+  const parsed = parseConnectionUrl(url);
+  const password = decodeURIComponent(parsed.password);
+  return {
+    host: decodeURIComponent(parsed.hostname),
+    port: parsed.port ? Number(parsed.port) : 5432,
+    user: decodeURIComponent(parsed.username),
+    password: () => password,
+    database: decodeURIComponent(parsed.pathname.slice(1)),
+  };
 }
 
 /** Keyed by `engineKey`, so a page-transaction clone, a view and every forwarding proxy over the engine share its record. */
@@ -84,15 +112,22 @@ export function embeddedSettingsRecord(engine: object): EngineSettings | undefin
   return recordOf(engine)?.settings ?? undefined;
 }
 
-/** The settings an embedded engine was opened with, without the writer credential or provider keys; undefined after disconnect. */
+/** A frozen copy of the settings an embedded engine was opened with, without the writer credential or provider keys; undefined after disconnect. */
 export function embeddedSettings(engine: object): EmbeddedSettingsView | undefined {
   const settings = embeddedSettingsRecord(engine);
   if (!settings) return undefined;
   const { writer, ai, ...rest } = settings;
   const providers = ai && Object.fromEntries(Object.entries(ai.providers)
     .map(([id, p]) => [id, { ...(p.baseUrl ? { baseUrl: p.baseUrl } : {}), hasApiKey: !!p.apiKey }]));
-  return Object.freeze({ ...rest, ...(writer ? { writer: { id: writer.id, lane: writer.lane } } : {}),
+  const view = structuredClone({ ...rest, ...(writer ? { writer: { id: writer.id, lane: writer.lane } } : {}),
     ...(ai ? { ai: { providers: providers!, ...(ai.models ? { models: { ...ai.models } } : {}) } } : {}) });
+  const freeze = (value: unknown): void => {
+    if (!value || typeof value !== 'object' || Object.isFrozen(value)) return;
+    Object.freeze(value);
+    for (const child of Object.values(value)) freeze(child);
+  };
+  freeze(view);
+  return view;
 }
 
 /** Drops the settings (the writer credential included) an embedded engine held; it stays marked embedded with its host id. */

@@ -2,11 +2,12 @@
  * Experimental: open an engine from a settings value (`gbrain/engine-open`). Off by default; see
  * docs/ENGINES.md "Opening an engine from settings".
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine } from './engine.ts';
 import type { EngineConfig } from './types.ts';
 import { opError } from './ops/contract.ts';
 import { createEngine } from './engine-factory.ts';
-import { markEmbeddedEngine, releaseEmbeddedEngine, type EngineAISettings, type EngineSettings } from './embedded-engine.ts';
+import { connectionUrlProblem, markEmbeddedEngine, releaseEmbeddedEngine, type EngineAISettings, type EngineSettings } from './embedded-engine.ts';
 import { assertLocalWriterValue, setEngineHostId } from './persistence/identity.ts';
 import { engineProviderProblem, recipeKeyEnv } from './ai/engine-gateway.ts';
 import { getRecipe } from './ai/recipes/index.ts';
@@ -19,6 +20,8 @@ export { hostIdFor } from './persistence/identity.ts';
 /** Connections a Postgres engine opened from settings may open when `pool.max` is not given. */
 export const DEFAULT_EMBEDDED_POOL_MAX = 4;
 
+const closedError = () => opError('engine_closed', 'This engine was disconnected and cannot connect again.',
+  'disconnect() on an engine opened from settings closes it for good and drops the settings it held, so nothing was reopened. Call openEngine again with the settings.');
 const invalid = (setting: string, why: string) => opError('engine_settings_invalid', `The ${setting} setting is invalid.`, `${why} Nothing was opened.`);
 const text = (value: unknown) => typeof value === 'string' && value.length > 0;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -55,6 +58,10 @@ function checkSettings(settings: EngineSettings): void {
     if (!text(database.url)) throw invalid('database.url', 'A Postgres engine needs database.url.');
     if (database.path !== undefined) throw invalid('database.path', 'A Postgres engine takes database.url, not database.path.');
     if (database.directUrl !== undefined && !text(database.directUrl)) throw invalid('database.directUrl', 'database.directUrl is a connection URL when given.');
+    for (const [setting, url] of [['database.url', database.url], ['database.directUrl', database.directUrl]] as const) {
+      const problem = url === undefined ? undefined : connectionUrlProblem(url);
+      if (problem) throw invalid(setting, `${setting} ${problem}.`);
+    }
   } else {
     if (database.url !== undefined || database.directUrl !== undefined) throw invalid('database.url', 'A PGLite engine takes database.path (or none for an in-memory brain), not a URL.');
     if (database.path !== undefined && !text(database.path)) throw invalid('database.path', 'database.path is a data directory when given.');
@@ -83,7 +90,8 @@ function checkSettings(settings: EngineSettings): void {
  *
  * A connect is not a migration: the host runs `initSchema()` (or the migrations) itself. On an existing database
  * `initSchema()` refuses `engine_embedding_mismatch` when `settings.embedding` names another model or width.
- * `disconnect()` closes it for good and drops the settings it held.
+ * `disconnect()` closes it for good and drops the settings it held, even while a reconnect is in flight; a later
+ * `connect()` or `reconnect()` refuses `engine_closed`.
  */
 export async function openEngine(settings: EngineSettings): Promise<BrainEngine> {
   if (settings?.embedded_core !== true) {
@@ -114,17 +122,25 @@ export async function openEngine(settings: EngineSettings): Promise<BrainEngine>
   const engine = await createEngine(config);
   markEmbeddedEngine(engine, held);
   setEngineHostId(engine, held.host.id);
-  let reconnecting = false;
+  let closed = false;
+  const insideReconnect = new AsyncLocalStorage<true>();
   const disconnect = engine.disconnect.bind(engine);
   engine.disconnect = async (): Promise<void> => {
-    try { await disconnect(); }
-    finally { if (!reconnecting) releaseEmbeddedEngine(engine); }
+    if (insideReconnect.getStore()) return disconnect();
+    closed = true;
+    releaseEmbeddedEngine(engine);
+    await disconnect();
+  };
+  const connect = engine.connect.bind(engine);
+  engine.connect = async (...args: Parameters<BrainEngine['connect']>): Promise<void> => {
+    if (closed) throw closedError();
+    await connect(...args);
   };
   const reconnect = engine.reconnect.bind(engine);
   engine.reconnect = async (ctx?: { error?: unknown }): Promise<void> => {
-    reconnecting = true;
-    try { await reconnect(ctx); }
-    finally { reconnecting = false; }
+    if (closed) throw closedError();
+    try { await insideReconnect.run(true, () => reconnect(ctx)); }
+    finally { if (closed) await disconnect().catch(() => {}); }
   };
   try {
     if (held.engine === 'postgres') await engine.connect({ ...config, poolSize: held.pool?.max ?? DEFAULT_EMBEDDED_POOL_MAX } as EngineConfig & { poolSize: number });

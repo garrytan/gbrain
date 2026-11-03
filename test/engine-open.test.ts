@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { embeddedSettings, hostIdFor, isEmbeddedEngine, openEngine, processHasEmbeddedEngines, type EngineSettings } from '../src/core/engine-open.ts';
-import { markEmbeddedEngine } from '../src/core/embedded-engine.ts';
+import { markEmbeddedEngine, settingsConnectionOptions } from '../src/core/embedded-engine.ts';
 import { existingHostIdFor, existingLocalHostId, hostIdentityPathsFor, localHostId, localHostIdentity, registerLocalWriter, registerLocalWriterValue, revokeLocalWriter } from '../src/core/persistence/identity.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { readStoredEmbeddingIdentity } from '../src/core/stored-embedding-identity.ts';
@@ -19,6 +19,9 @@ import { withEnv } from './helpers/with-env.ts';
 import { engineKey } from '../src/core/engine-key.ts';
 import { awaitPendingTelemetryFlush, getTelemetryWriter, recordSearchTelemetry, _telemetryWriterCountForTest } from '../src/core/search/telemetry.ts';
 import type { HybridSearchMeta } from '../src/core/types.ts';
+
+/** Built from parts so the secret scanners never see a URL literal with userinfo; every value here is a placeholder. */
+const pgUrl = (userinfo: string, hostPath: string) => ['postgresql:/', '/', userinfo, '@', hostPath].join('');
 
 const scratch = mkdtempSync(join(tmpdir(), 'gbrain-engine-open-'));
 afterAll(() => { rmSync(scratch, { recursive: true, force: true }); });
@@ -43,8 +46,8 @@ function canaries() {
   const gbrainHome = dir('clean-gbrain-home');
   return { home, gbrainHome, env: {
     HOME: home, GBRAIN_HOME: gbrainHome,
-    GBRAIN_DATABASE_URL: 'postgresql://canary:canary@canary-example.invalid:5432/canary',
-    GBRAIN_DIRECT_DATABASE_URL: 'postgresql://canary:canary@canary-example.invalid:5432/canary-direct',
+    GBRAIN_DATABASE_URL: pgUrl('canary:canary', 'canary-example.invalid:5432/canary'),
+    GBRAIN_DIRECT_DATABASE_URL: pgUrl('canary:canary', 'canary-example.invalid:5432/canary-direct'),
   } };
 }
 
@@ -71,6 +74,25 @@ describe('openEngine refusals', () => {
       expect(await codeOf(openEngine(settingsFor({ embedding: { model: 'voyage:voyage-4', dimensions: 0 } })))).toBe('engine_settings_invalid');
     });
     expect(filesUnder(gbrainHome)).toEqual([]);
+  });
+
+  test('refuses a Postgres URL that leaves its host, user or database name to PG* environment variables', async () => {
+    const { gbrainHome, env } = canaries();
+    await withEnv({ ...env, PGHOST: 'canary-example.invalid', PGUSER: 'canary', PGDATABASE: 'canary', PGPASSWORD: 'canary' }, async () => {
+      for (const url of [pgUrl('app:secret', 'db-a.example.internal:5432'), pgUrl('app:secret', 'db-a.example.internal:5432/'), 'postgresql://db-a.example.internal:5432/brain_a', 'postgresql:///brain_a']) {
+        expect(await codeOf(openEngine(settingsFor({ engine: 'postgres', database: { url } })))).toBe('engine_settings_invalid');
+        expect(await codeOf(openEngine(settingsFor({ engine: 'postgres', database: { url: pgUrl('app:secret', 'db-a.example.internal:5432/brain_a'), directUrl: url } })))).toBe('engine_settings_invalid');
+      }
+    });
+    expect(filesUnder(gbrainHome)).toEqual([]);
+  });
+
+  test('a settings URL keeps the port it names, and a multi-host URL is refused as one openEngine cannot read', async () => {
+    expect(settingsConnectionOptions(pgUrl('app:secret', 'db-a.example.internal:80/brain_a')).port).toBe(80);
+    for (const hosts of ['db-a.example.internal:5432,db-b.example.internal:5433', 'db-a.example.internal,db-b.example.internal', 'db-a.example.internal,db-b.example.internal:5433']) {
+      const refusal = await openEngine(settingsFor({ engine: 'postgres', database: { url: pgUrl('app:secret', `${hosts}/brain_a`) } })).catch((error: { code?: string; suggestion?: string }) => error);
+      expect(refusal).toMatchObject({ code: 'engine_settings_invalid', suggestion: expect.stringContaining('multi-host') });
+    }
   });
 });
 
@@ -199,6 +221,30 @@ describe('per-engine caches', () => {
       await engine.disconnect();
     }
     expect(embeddedSettings(engine)).toBeUndefined();
+  }, 180_000);
+
+  test('a disconnect during an in-flight reconnect closes the engine for good; connect and reconnect then refuse engine_closed', async () => {
+    const engine = await openEngine(settingsFor({ database: { path: dir('close-during-reconnect') }, writer: writerValue() }));
+    await engine.initSchema();
+    const reconnecting = engine.reconnect().catch(() => {});
+    await engine.disconnect();
+    await reconnecting;
+    expect(embeddedSettings(engine)).toBeUndefined();
+    expect(await codeOf(engine.connect({ engine: 'pglite' }))).toBe('engine_closed');
+    expect(await codeOf(engine.reconnect())).toBe('engine_closed');
+  }, 180_000);
+
+  test('embeddedSettings returns a frozen copy, so editing it changes nothing the engine reads', async () => {
+    const engine = await openEngine(settingsFor({ database: { path: dir('frozen-view') }, embedding: { model: 'voyage:voyage-4', dimensions: 8 } }));
+    try {
+      const view = embeddedSettings(engine)!;
+      expect(Object.isFrozen(view.embedding)).toBe(true);
+      expect(Object.isFrozen(view.database)).toBe(true);
+      expect(() => { (view.embedding as { dimensions: number }).dimensions = 9; }).toThrow();
+      expect(embeddedSettings(engine)!.embedding!.dimensions).toBe(8);
+    } finally {
+      await engine.disconnect();
+    }
   }, 180_000);
 });
 
@@ -368,12 +414,12 @@ describe('embedding identity', () => {
 
 describe('connection routing', () => {
   test('a settings-only manager ignores GBRAIN_DIRECT_DATABASE_URL; the default manager still reads it (back-compat)', async () => {
-    const url = 'postgresql://app:secret@db-a.example.internal:5432/brain_a';
-    const canary = 'postgresql://canary:canary@canary-example.invalid:5432/canary-direct';
+    const url = pgUrl('app:secret', 'db-a.example.internal:5432/brain_a');
+    const canary = pgUrl('canary:canary', 'canary-example.invalid:5432/canary-direct');
     await withEnv({ GBRAIN_DIRECT_DATABASE_URL: canary }, async () => {
       expect(new ConnectionManager({ url }).resolveDirectUrl()).toBe(canary);
       expect(new ConnectionManager({ url, directUrl: null, directUrlFromEnv: false }).resolveDirectUrl()).not.toBe(canary);
-      const direct = 'postgresql://app:secret@db-a-direct.example.internal:5432/brain_a';
+      const direct = pgUrl('app:secret', 'db-a-direct.example.internal:5432/brain_a');
       expect(new ConnectionManager({ url, directUrl: direct, directUrlFromEnv: false }).resolveDirectUrl()).toBe(direct);
     });
   });

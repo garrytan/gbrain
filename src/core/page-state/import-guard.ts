@@ -26,9 +26,13 @@ export async function assertImportBase(tx: BrainEngine, slug: string, sourceId: 
 const canonicalFields = (p: Page | ParsedPage) => ({ type: p.type, title: p.title, compiled_truth: p.compiled_truth,
   timeline: p.timeline ?? '', frontmatter: p.frontmatter });
 
-/** Content hashes omit volatile metadata; a prepared no-op must compare all canonical fields. */
+/**
+ * Content hashes omit volatile metadata; a prepared no-op must compare all canonical fields. A stored body left unread
+ * (over the single-string ceiling) differs from any parsed body, which is within it (GBRA-287: reading it threw
+ * `page_body_segmented` and blocked the source's sync).
+ */
 export function sameCanonicalImport(existing: PageSnapshot | null, parsed: ParsedPage): boolean {
-  if (!existing) return false;
+  if (!existing || bodyUnread(existing.page)) return false;
   const tags = [...new Set([...existing.tags, ...parsed.tags])].sort();
   return stableJson(canonicalFields(existing.page)) === stableJson(canonicalFields(parsed)) && stableJson([...existing.tags].sort()) === stableJson(tags);
 }

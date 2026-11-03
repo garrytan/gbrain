@@ -726,7 +726,7 @@ the same reason and fix on its `connection` check.
 
 `openEngine(settings)` (`src/core/engine-open.ts`, exported as `gbrain/engine-open`) creates and connects an engine
 from one value, for a host that embeds several brains in one process or keeps its settings somewhere other than
-`~/.gbrain`. It is off by default: it refuses unless `settings.embedded_core === true` (`embedded_core_required`).
+`~/.gbrain`. It is off by default and refuses unless `settings.embedded_core === true` (`embedded_core_required`).
 The CLI, `gbrain serve` and mounts never call it and behave exactly as before.
 
 ```ts
@@ -742,45 +742,46 @@ const engine = await openEngine({
   embedding: { model: 'voyage:voyage-4', dimensions: 1024 },
   ai: { providers: { voyage: { apiKey } }, models: { chat } },
 });
-await engine.initSchema();             // a connect is not a migration: the host runs it
-// ...
+await engine.initSchema();             // the host migrates; a connect never does
 await engine.disconnect();
 ```
 
 What the settings decide, with nothing read from a config file, an environment variable, the home directory or the
 working directory:
 
-- **Connection.** Postgres always connects on the instance-pool path. The direct (DDL/session) pool uses only
+- **Connection.** The direct (DDL/session) pool uses only
   `database.directUrl`, or the route a known pooler URL derives; `GBRAIN_DIRECT_DATABASE_URL` is never consulted.
-  The statement-description cache stays in the process instead of `<home>/cache/pg-types`. PGLite skips the
+  Each URL must be one single-host URL naming its host, user and database (`engine_settings_invalid` otherwise).
+  Both pools pass every connection field to the driver (port 5432 when unnamed; no password when the URL has none),
+  so no `PG*` variable picks the server or credentials. The statement-description cache stays in the process
+  instead of `<home>/cache/pg-types` unless a CLI-path pool to the same database shares the process. PGLite skips the
   `GBRAIN_PGLITE_SNAPSHOT` fast path.
-- **Host identity.** `hostIdFor(engine)` (`src/core/persistence/identity.ts`) answers `host.id` for the engine,
-  its page transactions, its read-through views and every forwarding proxy over it. Every host-id read in
-  `src/core` goes through it (or `existingHostIdFor`), except `gbrain migrate`'s engine graduation and the
-  coordination-lock fallback for a caller that passes no host id; the CLI layer keeps the file identity. No
-  `host.json` is read or minted, and an embedded engine without an id refuses `engine_host_missing`. Its consumer heartbeat row records `embedded:<host-id>` in `host_json_path` and
-  `embedded` in `persistence_home`; doctor and writer status read that as "identity given at open", never as a path.
-  For every other engine `hostIdFor` is `localHostId()`.
-- **Writer.** An unauthenticated write uses `settings.writer` for its lane, registered in
-  `persistence_local_writers` on first use (`registerLocalWriterValue`: idempotent; another credential or lane under
-  the same id refuses `permission_denied`; a revoked registration is never replaced). A writer value never widens
-  what the engine may write: its lane is the one in the settings (a remote call needs a `stdio` writer, a local one a
-  `cli` writer), a new registration gets the default ceiling (read and write), and an existing registration keeps
-  its own ceiling. No `<brain>.<lane>.json` credential file is read or minted; without a writer for the lane the write refuses `writer_registration_required`.
+- **Host identity.** `hostIdFor(engine)` (`src/core/persistence/identity.ts`) answers `host.id` for the engine and
+  everything sharing its `engineKey`; every host-id read in `src/core` goes through it (two CLI-only sites
+  excepted), and for any other engine it is `localHostId()`. No `host.json` is read or minted; no id refuses
+  `engine_host_missing`. The consumer heartbeat records `embedded:<host-id>`, read as identity given at open.
+- **Writer.** An unauthenticated write uses `settings.writer` for its lane (a remote call needs a `stdio` writer, a
+  local one `cli`), registered in `persistence_local_writers` on first use with the default read/write ceiling. An
+  existing registration keeps its own ceiling, another credential or lane under the id refuses `permission_denied`,
+  and a revoked one is never replaced. No `<brain>.<lane>.json` file is read or minted; with no writer for the lane
+  the write refuses `writer_registration_required`.
 - **Embedding identity.** `initSchema()` seeds a fresh brain from `settings.embedding` (else the built-in default),
   never from the process gateway, and refuses `engine_embedding_mismatch` on a database that records another model
-  or width; `gbrain migrate embeddings --status` previews a migration.
+  or width.
 - **AI gateway.** Embed, chat, expansion and rerank calls use only `settings.ai` (`providers`: id to
   `{ apiKey, baseUrl }`; `models`: chat, expansion, reranker) and `settings.embedding`, never a `process.env`
   key, the config file or the process gateway. An unnamed provider refuses `engine_scope_missing` and nothing is
   sent. Operations and persistence consumers run in their engine's scope; a host calling core directly wraps it in
-  `withEngineScope(engine, fn)`. Transactions, proxies and a recovered degraded engine share it (`engineKey`).
-- **Read back.** `embeddedSettings(engine)` returns the settings without the writer credential or provider keys;
-  `disconnect()` drops them.
+  `withEngineScope(engine, fn)`.
+- **Read back.** `embeddedSettings(engine)` returns a frozen copy without the writer credential or provider keys.
+- **Close.** `disconnect()` closes the engine for good and drops its settings, even while a reconnect is in flight
+  (any pool that reconnect builds is ended). A later `connect()` or `reconnect()` refuses `engine_closed`; call
+  `openEngine` again instead. File storage (backend and object prefix) is not a setting yet (Wave C).
 
 Still process-wide: file storage, transcription, the AI call log and timeouts, `GBRAIN_*` tuning variables (pool lifetime,
 connect and session timeouts, `GBRAIN_PREPARE`, `GBRAIN_DIRECT_POOL_SIZE`, `GBRAIN_DISABLE_DIRECT_POOL`,
-`GBRAIN_RLS_SCOPE_BINDING`, the PGLite close watchdog), the connection-events audit log, and operation-level
+`GBRAIN_RLS_SCOPE_BINDING`, the PGLite close watchdog), `PG*` TLS and tuning
+variables, the connection-events audit log, the AI usage log sink, and operation-level
 config reads (content-sanity screening, schema-pack resolution, the embedding switch on publication). None of them
 picks an engine's database, host identity, writer, embedding identity or AI keys. A source with a git checkout keeps its native coordination lock under the
 process's persistence home.

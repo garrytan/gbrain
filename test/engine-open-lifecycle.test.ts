@@ -5,7 +5,7 @@
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { dailySpend, __resetDecideStoreForTests } from '../src/core/ai/decide/store.ts';
+import { dailySpend, flushDecideWrites, recordSpend, __resetDecideStoreForTests, type SpendRow } from '../src/core/ai/decide/store.ts';
 import { _resetFeedbackRecordingForTests, drainFeedbackQueue, recordAnswer } from '../src/core/feedback/record.ts';
 import { _resetFeedbackSettingsCacheForTests } from '../src/core/feedback/settings.ts';
 import { hostIdentityMismatches } from '../src/core/persistence/consumer-diagnostics.ts';
@@ -34,6 +34,28 @@ describe('decide spend cache', () => {
     expect(await dailySpend(engine, now)).toEqual({ total: 2, remote: 1 });
     expect(await dailySpend(transactionOn(engine), now)).toEqual({ total: 2, remote: 1 });
     expect(reads).toBe(1);
+  });
+
+  test('spend rows buffered for one brain are written to that brain when the next row names another, even during a flush', async () => {
+    const written = new Map<string, string[]>();
+    const brain = (name: string, delayMs: number) => ({
+      executeRaw: async (_sql: string, params: string[][]) => {
+        await Bun.sleep(delayMs);
+        written.set(name, [...(written.get(name) ?? []), ...params[0]!]);
+        return [];
+      },
+    }) as unknown as BrainEngine;
+    const a = brain('a', 200);
+    const b = brain('b', 0);
+    const row = (request_id: string): SpendRow => ({ request_id, slot: 'rerank', provider: 'p', model_resolved: 'm', lane: 'hot', remote: false, input_tokens: 1, cost_usd: 0.01, outcome: 'ok' });
+    recordSpend(a, row('a-1'));
+    const inFlight = flushDecideWrites();
+    recordSpend(a, row('a-2'));
+    recordSpend(b, row('b-1'));
+    await inFlight;
+    await flushDecideWrites();
+    expect(written.get('a')?.sort()).toEqual(['a-1', 'a-2']);
+    expect(written.get('b')).toEqual(['b-1']);
   });
 });
 
