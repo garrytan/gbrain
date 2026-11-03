@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.569.0] - 2026-11-03
 
 **A brain opened from settings no longer leaks into the process, or into another brain, when a call forgets its scope.** While an embedded engine is open, an embed, chat, expansion or rerank call that entered no scope now refuses `engine_scope_required` and sends nothing, even if the host configured a process gateway; it decides by scope presence alone. `withLocalScope(fn)` marks a call that belongs to the process gateway, and the CLI, `gbrain serve` and `gbrain jobs` enter it, so they behave exactly as before. `hybridSearch`, the import paths, minion jobs and `POST /mcp` enter their engine's scope themselves. Each embedded engine keeps its own chat-usage sink (it survives `reconnect()`), batch-shrink, no-key and structured-output memory, and alias and remote-privacy policy, and a closed per-call engine is no longer held by the policy sets. A host that reopens a brain per call can pass `settings.cache_namespace` to keep its query embeddings warm. `openEngine` now refuses a settings key it does not know. Everything here is behind `embedded_core`, which is off by default.
 
