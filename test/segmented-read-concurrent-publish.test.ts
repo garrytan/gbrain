@@ -4,9 +4,12 @@
  * 1. Protects: a reader of a page stored in segments never refuses a healthy page `page_body_rows_unreadable` because a
  *    publish landed between its statements. A live read names its generation first and checks that generation's rows
  *    against that generation's size (`readSegmentedBody`, behind readPageSnapshot's read-back), and a live open whose
- *    generation a publish retired before its rows were read opens the new live generation (`openSegmentedBody`).
+ *    generation a publish retired before its rows were read opens the new live generation (`openSegmentedBody`). A live read
+ *    whose retired generation left only the rows the new body shares is checked against the size read with it, and a
+ *    snapshot's streamed file never puts its frontmatter over a later revision's body (`unreadPageFile`).
  * 2. Fails when: the rows of one generation are checked against the next generation's body_bytes, or a retired
- *    generation's missing rows refuse the read instead of reading the live body.
+ *    generation's missing rows refuse the read instead of reading the live body, or a surviving prefix passes as a whole
+ *    body, or the streamed body is opened live rather than at the snapshot's revision.
  * 3. PGLite. The interleaving is forced by an engine wrapper that publishes a new body (and, for the open, retires the old
  *    generation's rows as segment maintenance does once no version references them) at the exact point between reads.
  */
@@ -21,6 +24,7 @@ import { importFromFile } from '../src/core/import-file.ts';
 import { readPageBodyPolicy } from '../src/core/page-body/limits.ts';
 import { materializeSegmentedBody } from '../src/core/page-body/ingest.ts';
 import { openSegmentedBody } from '../src/core/page-body/read-range.ts';
+import { readTiledManifest } from '../src/core/page-body/body-tiling.ts';
 import { parseMarkdown } from '../src/core/markdown.ts';
 
 let engine: PGLiteEngine;
@@ -32,10 +36,10 @@ const truth = (tag: string, bytes: number) => '# Live Example\n\n' + Array.from(
 
 const published: Record<string, string> = {};
 
-async function publish(tag: string, bytes: number): Promise<void> {
-  const file = join(dir, tag + '.md');
-  published[tag] = '---\ntype: concept\ntitle: Live Example\n---\n\n' + truth(tag, bytes);
-  writeFileSync(file, published[tag]);
+async function publish(tag: string, bytes: number, name = tag, title = 'Live Example', body = truth(tag, bytes)): Promise<void> {
+  const file = join(dir, name + '.md');
+  published[name] = '---\ntype: concept\ntitle: ' + title + '\n---\n\n' + body;
+  writeFileSync(file, published[name]);
   expect(await importFromFile(engine, file, SLUG + '.md', { noEmbed: true, bodyPolicy: await readPageBodyPolicy(engine) })).toMatchObject({ status: 'imported' });
 }
 
@@ -47,7 +51,7 @@ async function pageRow(): Promise<{ id: number; generation: number; bytes: numbe
 }
 
 /** The engine with `hook` run once, at the first call of `method` whose arguments `when` accepts, before or after the real call. */
-function interleaved(method: 'readManifest' | 'executeRaw', when: (args: unknown[]) => boolean, at: 'before' | 'after', hook: () => Promise<void>): BrainEngine {
+function interleaved(method: 'readManifest' | 'executeRaw' | 'readPageSnapshot', when: (args: unknown[]) => boolean, at: 'before' | 'after', hook: () => Promise<void>): BrainEngine {
   let armed = true;
   return new Proxy(engine, {
     get(target, key) {
@@ -110,5 +114,39 @@ describe('GBRA-287: segmented reads across a concurrent publish', () => {
     expect(after.generation).toBeGreaterThan(before.generation);
     expect(body.generation).toBe(after.generation);
     expect(body.rows.reduce((sum, row) => sum + row.byteLen, 0)).toBe(after.bytes);
+  }, 120_000);
+
+  test('a live read whose generation a publish retired, leaving only a shared prefix of its rows, reads the new generation whole', async () => {
+    await publish('p', 2 * 1024 * 1024);
+    const before = await pageRow();
+    const half = truth('p', 1024 * 1024);
+    await publish('p', 3 * 1024 * 1024, 'p-new-tail', 'Live Example', half + Array.from({ length: Math.ceil(2 * 1024 * 1024 / line('q', 0).length) }, (_, i) => line('q', i)).join(''));
+    const live = await pageRow();
+    await engine.executeRaw('DELETE FROM page_versions WHERE page_id=$1 AND body_generation=$2', [live.id, before.generation]);
+    await engine.executeRaw('DELETE FROM page_body_manifest WHERE page_id=$1 AND staging_id IS NULL AND gen_to IS NOT NULL AND gen_to<=$2', [live.id, live.generation]);
+    const prefix = await engine.readManifest(live.id, { generation: before.generation });
+    expect(prefix.length).toBeGreaterThan(0);
+    expect(prefix.reduce((sum, row) => sum + row.byteLen, 0)).toBeLessThan(before.bytes);
+    let stale = true;
+    const reader = new Proxy(engine, {
+      get(target, key) {
+        const value = Reflect.get(target, key, target);
+        if (key !== 'executeRaw') return typeof value === 'function' ? value.bind(target) : value;
+        return async (sql: string, params?: unknown[]) => {
+          if (stale && /^SELECT body_generation(, body_bytes)? FROM pages/.test(sql)) { stale = false; return [{ body_generation: before.generation, body_bytes: before.bytes }]; }
+          return target.executeRaw(sql, params as never);
+        };
+      },
+    }) as unknown as BrainEngine;
+    const read = await readTiledManifest(reader, before.id);
+    expect(read.generation).toBe(live.generation);
+    expect(read.rows.reduce((sum, row) => sum + row.byteLen, 0)).toBe(live.bytes);
+  }, 120_000);
+
+  test('the streamed file of a snapshot is never one revision\'s frontmatter over the next revision\'s body', async () => {
+    const snapshot = await engine.readPageSnapshot(SLUG, { sourceId: 'default' });
+    await publish('b', 2 * 1024 * 1024, 'b', 'Live Example Renamed');
+    const { unreadPageFile } = await import('../src/core/persistence/page-prepare.ts');
+    await expect(unreadPageFile(engine, snapshot!)).rejects.toThrow('changed after this read was authorized');
   }, 120_000);
 });

@@ -680,7 +680,7 @@ async function prepareUnreadRestore(engine: BrainEngine, row: WriteRequest, snap
 export async function unreadPageFile(engine: BrainEngine, snapshot: PageSnapshot, between?: () => Promise<void>): Promise<StreamedFileContent> {
   const head = serializePageToMarkdown({ ...withoutBody(snapshot.page), compiled_truth: '', timeline: '' }, snapshot.tags).slice(0, -1);
   const ledger = snapshotLedger(snapshot);
-  const produce = (exec: BrainEngine) => segmentedExportMarkdown(exec, snapshot.page, ledger, head);
+  const produce = (exec: BrainEngine) => segmentedExportMarkdown(exec, snapshot.page, ledger, head, snapshot.revision);
   return StreamedFileContent.measure(engine, !between ? produce : async function* (exec) { for await (const piece of produce(exec)) { yield piece; await between(); } });
 }
 

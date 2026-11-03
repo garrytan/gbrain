@@ -49,13 +49,13 @@ export const LIVE_READ_ATTEMPTS = 3;
  */
 export async function readTiledManifest(engine: Pick<BrainEngine, 'executeRaw' | 'readManifest'>, pageId: number,
   generation?: number): Promise<{ generation: number | null; rows: ManifestRow[] }> {
-  const live = async () => (await engine.executeRaw<{ body_generation: unknown }>('SELECT body_generation FROM pages WHERE id=$1', [pageId]))[0];
+  const live = async () => (await engine.executeRaw<{ body_generation: unknown; body_bytes: unknown }>('SELECT body_generation, body_bytes FROM pages WHERE id=$1', [pageId]))[0];
   for (let attempt = 1; ; attempt++) {
     const page = generation === undefined ? await live() : null;
     const at = generation ?? (page ? Number(page.body_generation) : null);
     const rows = await engine.readManifest(pageId, at === null ? {} : { generation: at });
     try {
-      await assertGenerationTiles(engine, pageId, at ?? undefined, rows);
+      await assertGenerationTiles(engine, pageId, at ?? undefined, rows, page ? Number(page.body_bytes ?? 0) : undefined);
       return { generation: at, rows };
     } catch (error) {
       const now = generation === undefined && attempt < LIVE_READ_ATTEMPTS ? await live() : undefined;
@@ -64,11 +64,16 @@ export async function readTiledManifest(engine: Pick<BrainEngine, 'executeRaw' |
   }
 }
 
-/** The tiling check for a reader that read `rows` of `generation` (default live) through readManifest. */
-export async function assertGenerationTiles(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number, generation: number | undefined, rows: readonly RowSpan[]): Promise<void> {
+/**
+ * The tiling check for a reader that read `rows` of `generation` (default live) through readManifest. `bodyBytes`: the
+ * size the reader read with the generation (a live generation's page body_bytes), so a generation a publish retired
+ * meanwhile, whose size nothing records any more, is still checked whole and never passes on a surviving prefix.
+ */
+export async function assertGenerationTiles(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number, generation: number | undefined, rows: readonly RowSpan[],
+  bodyBytes?: number): Promise<void> {
   const [page] = await engine.executeRaw<{ id: number; slug: string; source_id: string; body_generation: unknown; body_bytes: unknown }>(
     'SELECT id, slug, source_id, body_generation, body_bytes FROM pages WHERE id=$1', [pageId]);
   if (!page) return;
   const at = generation ?? Number(page.body_generation);
-  assertRowsTile(rows, { slug: page.slug, sourceId: page.source_id, total: await generationBodyBytes(engine, { ...page, id: pageId }, at) });
+  assertRowsTile(rows, { slug: page.slug, sourceId: page.source_id, total: bodyBytes ?? await generationBodyBytes(engine, { ...page, id: pageId }, at) });
 }
