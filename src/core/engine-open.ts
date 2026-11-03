@@ -6,7 +6,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine } from './engine.ts';
 import type { EngineConfig } from './types.ts';
 import { opError } from './ops/contract.ts';
-import { createEngine } from './engine-factory.ts';
+import { constructEngine } from './engine-construct.ts';
+import { makeEngineChatUsageSink, registerEngineChatUsageSink } from './ai/chat-usage.ts';
 import { connectionUrlProblem, markEmbeddedEngine, releaseEmbeddedEngine, type EngineAISettings, type EngineSettings } from './embedded-engine.ts';
 import { assertLocalWriterValue, setEngineHostId } from './persistence/identity.ts';
 import { engineProviderProblem, recipeKeyEnv, sharedProviderEnvConflict } from './ai/engine-gateway.ts';
@@ -124,15 +125,17 @@ export async function openEngine(settings: EngineSettings): Promise<BrainEngine>
     ...(held.keyword_statement_timeout_ms !== undefined ? { keyword_statement_timeout_ms: held.keyword_statement_timeout_ms } : {}),
     ...(held.pglite?.shared_buffers ? { pglite_shared_buffers: held.pglite.shared_buffers } : {}),
   };
-  const engine = await createEngine(config);
+  const engine = await constructEngine(config);
   markEmbeddedEngine(engine, held);
   setEngineHostId(engine, held.host.id);
+  const dropUsageSink = registerEngineChatUsageSink(engine, makeEngineChatUsageSink(engine));
   let closed = false;
   const insideReconnect = new AsyncLocalStorage<true>();
   const disconnect = engine.disconnect.bind(engine);
   engine.disconnect = async (): Promise<void> => {
     if (insideReconnect.getStore()) return disconnect();
     closed = true;
+    dropUsageSink();
     releaseEmbeddedEngine(engine);
     await disconnect();
   };
