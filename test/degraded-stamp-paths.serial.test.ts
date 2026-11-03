@@ -172,6 +172,13 @@ describe('traverse_graph', () => {
       expectStamped(out, 'graph_walk_truncated');
       expect(Array.isArray(JSON.parse(out.content[0]!.text))).toBe(true);
       expect(out.content.some(c => c.text.startsWith('[gbrain notice graph_walk_truncated kind=degraded]'))).toBe(true);
+      const notice = (d: number) => call('traverse_graph', { slug: 'alice-example', depth: d, link_type: 'works_at', direction: 'out' })
+        .then(o => o.content.find(c => c.text.startsWith('[gbrain notice graph_walk_truncated'))!.text);
+      const deep = await notice(2);
+      expect(deep).toContain('fix: traverse_graph {');
+      expect(deep).toContain('"depth":1');
+      expect(deep).toContain('"link_type":"works_at"');
+      expect(await notice(1)).not.toContain('fix: traverse_graph');
     } finally {
       (engine as unknown as { traversePathsDetailed: unknown }).traversePathsDetailed = original;
     }

@@ -40,9 +40,11 @@ describe('remember outside the write grant (GBRA-200)', () => {
     expect(await savedFacts()).toEqual([]);
   });
 
-  test('the fix repeats the call against the writable source, and running it saves the fact there', async () => {
+  test('the fix repeats the call against the writable source once the user agrees, and running it saves the fact there', async () => {
     const e = envelope(await call('remember', { ...fact, source_id: 'source-c' }));
-    expect(e.fix).toMatchObject({ next: 'run', mcp: { tool: 'remember', arguments: { ...fact, source_id: 'source-a' } } });
+    expect(e.fix).toMatchObject({ next: 'ask_user', mcp: { tool: 'remember', arguments: { ...fact, source_id: 'source-a' } } });
+    expect(e.fix.user_message).toContain('source-a');
+    expect(e.fix.user_message).toContain('source-c');
     expect(e.fix.mcp.arguments.request_id).toBeUndefined();
     const retried = await call(e.fix.mcp.tool, e.fix.mcp.arguments);
     expect(retried.isError).toBeFalsy();
@@ -61,6 +63,18 @@ describe('remember outside the write grant (GBRA-200)', () => {
     expect(e.error).toBe('scope_denied');
     expect(e.writable_source_ids).toEqual([]);
     expect(e.fix?.mcp?.tool).not.toBe('remember');
+  });
+});
+
+describe('withdrawals outside the write grant (GBRA-200)', () => {
+  test('forget and forget_fact on a connection resolved outside the grant name the writable source and offer no retry', async () => {
+    const auth = member('source-a');
+    for (const [tool, id] of [['forget', '1'], ['forget_fact', 1]] as const) {
+      const e = envelope(await dispatchToolCall(engine, tool, { request_id: randomUUID(), id }, { remote: true, transport: 'stdio', sourceId: 'source-c', auth } as never) as Out);
+      expect(['scope_denied', 'permission_denied']).toContain(e.error);
+      expect(e.writable_source_ids).toEqual(['source-a']);
+      expect(e.fix?.mcp?.tool).not.toBe(tool);
+    }
   });
 });
 

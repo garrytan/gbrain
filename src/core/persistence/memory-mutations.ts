@@ -55,7 +55,7 @@ async function submission(ctx: OperationContext, operation: string, params: Reco
   if (ctx.remote !== false && sourceId !== granted) {
     throw writeGrantRefusal(ctx,
       `This connection may write only to source ${granted}. Omit source_id to write there, or ask the brain host's operator to grant source ${sourceId}.`,
-      { tool: operation, arguments: params });
+      operation === 'remember' ? { tool: operation, arguments: params } : undefined);
   }
   await initializeLocalPersistence(ctx);
   const principal = await requestPrincipalForContext(ctx);
