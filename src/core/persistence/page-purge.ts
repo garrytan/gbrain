@@ -379,10 +379,16 @@ export async function finishPagePurge(ctx: Pick<OperationContext, 'engine' | 'co
   if (purge.blobs?.length) {
     try {
       const { createStorage, settingsStorage } = await import('../storage.ts');
-      const storage = isEmbeddedEngine(ctx.engine) ? await settingsStorage(ctx.engine)
+      const embedded = isEmbeddedEngine(ctx.engine);
+      const storage = embedded ? await settingsStorage(ctx.engine)
         : await createStorage((ctx.config as { storage?: unknown } | undefined)?.storage as never);
       if (!storage) throw new Error('This engine was opened with no settings.storage.');
-      for (const path of purge.blobs) { try { await storage.delete(path); } catch { remaining.push(path); } }
+      for (const path of purge.blobs) {
+        try {
+          if (embedded && !(await storage.exists(path))) { remaining.push(path); continue; }
+          await storage.delete(path);
+        } catch { remaining.push(path); }
+      }
     } catch { remaining.push(...purge.blobs); }
   }
   const { verifyPagePurge } = await import('../facts/purge-verify.ts');

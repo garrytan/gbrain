@@ -167,6 +167,19 @@ describe('file_register', () => {
     expect([kept.purge.blobs_remaining, existsSync(join(processDir, 'notes/plan/p.txt'))]).toEqual([['notes/plan/p.txt'], true]);
   });
 
+  test('a purge never counts a blob missing from settings.storage as deleted (an older row whose object is in the process store)', async () => {
+    const engine = await embedded({ storage: { ...storage, prefix: 'brain-a' } });
+    const processDir = join(root, 'process-store-4');
+    mkdirSync(join(processDir, 'notes/plan'), { recursive: true });
+    writeFileSync(join(processDir, 'notes/plan/old.txt'), 'uploaded before this release');
+    store('brain-a/notes/plan/new.txt', Buffer.from('embedded'));
+    const { finishPagePurge } = await import('../src/core/persistence/page-purge.ts');
+    const purged = { status: 'purged', source_id: 'default', slug: 'notes/plan', request_id: randomUUID(), purge: { blobs: ['notes/plan/old.txt', 'notes/plan/new.txt'], removed: {} } };
+    const result = await finishPagePurge({ engine, config: { storage: { backend: 'local', bucket: 'test', localPath: processDir } } } as never, purged) as { purge: { blobs_remaining: string[]; blobs_deleted: number } };
+    expect([result.purge.blobs_remaining, result.purge.blobs_deleted]).toEqual([['notes/plan/old.txt'], 1]);
+    expect([existsSync(join(processDir, 'notes/plan/old.txt')), existsSync(join(storageRoot, 'brain-a/notes/plan/new.txt'))]).toEqual([true, false]);
+  });
+
   test('a store that cannot be reached is store_unavailable and records nothing', async () => {
     const engine = await embedded({ storage: unreachable });
     const bytes = Buffer.from('x');
