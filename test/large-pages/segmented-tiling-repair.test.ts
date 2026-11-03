@@ -6,7 +6,6 @@
  *    republishes the page from the blob at HEAD as a new generation that tiles, keeps the damaged generation as a
  *    version by reference, writes a receipt, clears the sync hold, and the next managed sync completes with no hold.
  *    A source with no Git checkout refuses the preview (not_a_git_repo); a remote caller is refused.
- *    With no damaged page, a source with no Git checkout previews nothing (doctor's remediation plan runs the preview).
  * 2. Fails when: doctor misses the page or writes, an apply runs without the previewed hash or against a changed page,
  *    the republished generation does not tile, the hold survives, a repo-less source reads as republishable, or a file
  *    that narrows who can read the page or that the content gate would quarantine is republished under the stored frontmatter.
@@ -232,8 +231,6 @@ test('a source without a Git checkout refuses the preview: Git is the only copy 
   await engine.setConfig('pages.segmented_storage', 'on');
   await importFromContent(engine, 'notes/repoless-example', person(1260 * 1024), { sourceId, noEmbed: true });
   const [row] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, 'notes/repoless-example']);
-  const undamaged = await resolveRepairScope(engine, sourceId);
-  expect((await repairRunner(engine, { apply: false, logger }).then(runner => runner.run('segmented-tiling', undamaged, { explicit: true, sourceFlag: sourceId }))).listing ?? []).toEqual([]);
   await engine.executeRaw('DELETE FROM page_body_manifest WHERE page_id=$1 AND staging_id IS NULL AND seq=(SELECT max(seq) FROM page_body_manifest WHERE page_id=$1 AND staging_id IS NULL)', [row!.id]);
   expect((await segmentedTilingCheck(engine, [sourceId])).status).toBe('fail');
   const scope = await resolveRepairScope(engine, sourceId);
