@@ -632,7 +632,6 @@ const traverse_graph: Operation = {
       );
       const why = `The walk stopped at its cap (${TRAVERSE_WALK_ROW_CAP} pages, ${TRAVERSE_PATH_ROW_CAP} edge rows; shallowest first), so deeper edges are missing; walk one level shallower or narrow with link_type or direction for a complete walk.`;
       const fix = depth > 1 ? readFix(why, {
-        argv: ['gbrain', 'graph', slug, cliFlag('depth'), String(depth - 1), ...(linkType ? ['--type', linkType] : []), '--direction', direction],
         mcp: { tool: 'traverse_graph', arguments: { slug, depth: depth - 1, ...(linkType ? { link_type: linkType } : {}), direction } },
       }) : undefined;
       ctx.emitNotice?.({ code: 'graph_walk_truncated', kind: 'degraded', why, ...(fix ? { fix } : {}) });
