@@ -34,7 +34,7 @@ import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { recordUpstreamObservation } from '../sync-upstream.ts';
 import { checkpointRetryCommand } from './checkpoint-validation.ts';
-import { existingLocalHostId, localHostId, persistenceHome } from './identity.ts';
+import { persistenceHome, hostIdFor, existingHostIdFor } from './identity.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { getWorktreeBinding, managedPersistenceEnabled, type WorktreeBinding } from './ownership.ts';
 import { isPhysicalRootMetadata } from './physical-root-record.ts';
@@ -82,7 +82,7 @@ export interface WorktreeRefreshResult {
 export interface RefreshHolder { host_id: string | null; hostname: string; pid: number; started_at: string }
 /** `live`: a process holds the refresh lock; `orphaned`: none does; `unknown`: the lock is on another host, or unreadable. */
 export type RefreshLiveness = 'live' | 'orphaned' | 'unknown';
-const refreshHolder = (): RefreshHolder => ({ host_id: existingLocalHostId(), hostname: hostname(), pid: process.pid,
+const refreshHolder = (engine: object): RefreshHolder => ({ host_id: existingHostIdFor(engine), hostname: hostname(), pid: process.pid,
   started_at: new Date(Date.now() - process.uptime() * 1000).toISOString() });
 const holderOf = (row: Pick<WorktreeRefreshRow, 'outcome'>): RefreshHolder | null => (row.outcome?.holder as RefreshHolder | undefined) ?? null;
 const describeHolder = (holder: RefreshHolder | null) => holder ? `pid ${holder.pid} on ${holder.hostname} (host ${holder.host_id ?? 'unknown'}), started ${holder.started_at}` : 'a process that recorded no holder';
@@ -104,8 +104,8 @@ function refusal(name: CatalogueName, cause: string, fix: string, refreshId?: st
  * GBRA-133: the owner check reads this process's host identity without minting one (a cron job with another HOME would
  * otherwise become a new host silently), and its refusal names the identity file it read and the HOME it resolved from.
  */
-function assertRefreshOwner<B extends { owner_host_id: string | null; local_path: string | null }>(binding: B, sourceId: string, action: string): asserts binding is B & { local_path: string } {
-  const hostId = existingLocalHostId();
+function assertRefreshOwner<B extends { owner_host_id: string | null; local_path: string | null }>(engine: object, binding: B, sourceId: string, action: string): asserts binding is B & { local_path: string } {
+  const hostId = existingHostIdFor(engine);
   if (binding.owner_host_id === hostId && binding.local_path) return;
   const path = join(persistenceHome(), 'host.json');
   const self = hostId ? `host identity ${hostId} from ${path}` : `no host identity at ${path} (none was created)`;
@@ -239,10 +239,10 @@ export const REFRESH_PUBLISH_DIVERGED_KEY = 'sources.refresh_publish_diverged';
 async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTimeoutMs: number, publishDiverged = false): Promise<Plan> {
   if (!await managedPersistenceEnabled(engine)) throw refusal('refresh_not_managed',
     'This brain is not managed, so gbrain sync pulls the checkout itself; there is no worktree fence to coordinate.', `gbrain sync --source ${sourceId}`);
-  const binding = await getWorktreeBinding(engine, sourceId, existingLocalHostId());
+  const binding = await getWorktreeBinding(engine, sourceId, existingHostIdFor(engine));
   if (!binding) throw refusal('refresh_not_managed',
     `Source ${sourceId} has no claimed canonical worktree, so gbrain sync pulls it without a refresh.`, `gbrain sync --source ${sourceId}`);
-  assertRefreshOwner(binding, sourceId, 'move its checkout');
+  assertRefreshOwner(engine, binding, sourceId, 'move its checkout');
   const root = binding.local_path;
   const active = await readActiveRefresh(engine, binding.worktree_id);
   if (active?.state === 'recovery_required') {
@@ -616,7 +616,7 @@ async function unexpectedRefreshFailure(engine: BrainEngine, sourceId: string, o
   const thrown = error instanceof Error ? error : new Error(String(error));
   const code = typeof (error as { code?: unknown } | null)?.code === 'string' ? (error as { code: string }).code : null;
   const lookup = await boundedLookup(engine, async reads => {
-    const binding = await getWorktreeBinding(reads, sourceId, existingLocalHostId());
+    const binding = await getWorktreeBinding(reads, sourceId, existingHostIdFor(reads));
     return { active: binding ? await readActiveRefresh(reads, binding.worktree_id) : null };
   });
   const command = `gbrain sources refresh ${sourceId}${opts.dryRun ? ' --dry-run' : ''}${opts.abandon ? ' --abandon' : opts.resume ? ' --resume' : ''}`
@@ -717,7 +717,7 @@ async function fenceDraining(engine: BrainEngine, sourceId: string, plan: Plan, 
       (worktree_id,source_ids,principal_id,owner_epoch,topology_generation,state,old_head,target_head,upstream_ref,preserved_uncommitted,outcome)
       VALUES($1::uuid,$2::text[],$3::uuid,$4,$5,'draining',$6,$7,$8,$9::text[],$10::text::jsonb) RETURNING *`,
     [plan.binding.worktree_id, plan.members, principal, String(current.owner_epoch), String(current.topology_generation),
-      plan.oldHead, plan.targetHead, plan.upstreamRef, plan.preserved, JSON.stringify({ holder: refreshHolder() })]);
+      plan.oldHead, plan.targetHead, plan.upstreamRef, plan.preserved, JSON.stringify({ holder: refreshHolder(engine) })]);
     return row;
   })).catch(async error => {
     if ((error as { code?: string }).code === '23505' && !classifyOriginUniqueViolation(error)) throw inProgress('Another refresh of this worktree started first.', sourceId);
@@ -827,7 +827,7 @@ async function fenceAndMerge(engine: BrainEngine, git: Git, sourceId: string, pl
   return fenced;
 }
 
-async function hostRoot(engine: BrainEngine, worktreeId: string, hostId = localHostId()): Promise<string | null> {
+async function hostRoot(engine: BrainEngine, worktreeId: string, hostId = hostIdFor(engine)): Promise<string | null> {
   const [row] = await engine.executeRaw<{ local_path: string | null }>(
     'SELECT local_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid', [worktreeId, hostId]);
   return row?.local_path ?? null;
@@ -871,7 +871,7 @@ const laggingSyncing = new Map<string, { commits: string; at: number }>();
 const LAGGING_RECHECK_MS = 60_000;
 
 export async function resumeWorktreeRefreshes(engine: BrainEngine, opts: { hostId?: string } = {}): Promise<number> {
-  const host = opts.hostId ?? localHostId();
+  const host = opts.hostId ?? hostIdFor(engine);
   const rows = await engine.executeRaw<WorktreeRefreshRow>(`SELECT f.* FROM persistence_worktree_refreshes f
     JOIN persistence_worktrees w ON w.id=f.worktree_id WHERE w.owner_host_id=$1::uuid AND f.state IN ('draining','fenced','merged','syncing')
     AND (f.state<>'syncing' OR NOT EXISTS (SELECT 1 FROM sources s WHERE s.id=ANY(f.source_ids) AND (s.last_commit IS NULL OR s.last_commit=f.old_head)))
@@ -931,10 +931,10 @@ async function membersAtTarget(engine: BrainEngine, git: Git, row: WorktreeRefre
 }
 
 async function resumeOrAbandon(engine: BrainEngine, sourceId: string, opts: RefreshOptions, syncBudgetMs: number): Promise<WorktreeRefreshResult> {
-  const binding = await getWorktreeBinding(engine, sourceId, existingLocalHostId());
+  const binding = await getWorktreeBinding(engine, sourceId, existingHostIdFor(engine));
   if (!await managedPersistenceEnabled(engine) || !binding) throw refusal('refresh_not_managed',
     `Source ${sourceId} has no claimed canonical worktree on a managed brain, so there is no refresh to resume.`, `gbrain sync --source ${sourceId}`);
-  assertRefreshOwner(binding, sourceId, 'resume its refresh');
+  assertRefreshOwner(engine, binding, sourceId, 'resume its refresh');
   const root = binding.local_path;
   const active = await readActiveRefresh(engine, binding.worktree_id);
   const empty: WorktreeRefreshResult = { status: 'nothing_to_resume', refresh_id: null, worktree_id: binding.worktree_id, source_ids: [sourceId],
@@ -970,7 +970,7 @@ async function resumeOrAbandon(engine: BrainEngine, sourceId: string, opts: Refr
  */
 async function resumeHeld(engine: BrainEngine, git: Git, sourceId: string, refreshId: string, root: string, head: string | null, empty: WorktreeRefreshResult, syncBudgetMs: number, unattended = false): Promise<WorktreeRefreshResult> {
   await engine.executeRaw(`UPDATE persistence_worktree_refreshes SET outcome=outcome||jsonb_build_object('holder',$2::text::jsonb,'previous_holder',COALESCE(outcome->'previous_holder',outcome->'holder'))
-    WHERE id=$1::uuid AND state IN ${ACTIVE_REFRESH_STATES_SQL}`, [refreshId, JSON.stringify(refreshHolder())]);
+    WHERE id=$1::uuid AND state IN ${ACTIVE_REFRESH_STATES_SQL}`, [refreshId, JSON.stringify(refreshHolder(engine))]);
   let row = await withTopologyLocks(engine, sourceId, async () => recoverOne(engine, git, await readRefresh(engine, refreshId), root, unattended), undefined, 30_000);
   if (row.state === 'recovery_required' && head === row.old_head) throw refusal('refresh_recovery_required',
     `The checkout is back at the pre-refresh commit ${row.old_head}; nothing remains to resume.`, `gbrain sources refresh ${sourceId} --abandon`, row.id);
@@ -1000,7 +1000,7 @@ async function resumeHeld(engine: BrainEngine, git: Git, sourceId: string, refre
  */
 async function adoptOrphanedRefresh(engine: BrainEngine, sourceId: string, syncBudgetMs: number): Promise<WorktreeRefreshResult | null> {
   if (!await managedPersistenceEnabled(engine)) return null;
-  const hostId = existingLocalHostId();
+  const hostId = existingHostIdFor(engine);
   const binding = await getWorktreeBinding(engine, sourceId, hostId);
   if (!binding || !hostId || binding.owner_host_id !== hostId || !binding.local_path) return null;
   const active = await readActiveRefresh(engine, binding.worktree_id);
@@ -1046,8 +1046,8 @@ export async function assertManagedSyncAllowed(engine: BrainEngine, worktreeId: 
  * recorded holder's, else the worktree owner's), so only that host can tell; a free lock means the refresher exited.
  * The probe takes the lock for an instant and releases it; a refresh starting at that instant waits a second for it.
  */
-export async function refreshLiveness(worktreeId: string, holderHostId: string | null): Promise<RefreshLiveness> {
-  const local = existingLocalHostId();
+export async function refreshLiveness(worktreeId: string, holderHostId: string | null, engine?: object): Promise<RefreshLiveness> {
+  const local = existingHostIdFor(engine);
   if (!local || holderHostId !== local) return 'unknown';
   const lock = await tryAcquireNativeLock(refreshLockPath(worktreeId)).catch(() => undefined);
   if (lock === undefined) return 'unknown';
@@ -1061,7 +1061,7 @@ export async function refreshHolderReport(engine: BrainEngine, row: Pick<Worktre
   Promise<{ holder: RefreshHolder | null; liveness: RefreshLiveness; orphaned: boolean | null; auto_recovery: 'next_refresh' | 'none' | 'unknown'; fix: Action | null }> {
   const holder = holderOf(row);
   const holderHost = holder?.host_id ?? row.owner_host_id;
-  const liveness = await refreshLiveness(row.worktree_id, holderHost);
+  const liveness = await refreshLiveness(row.worktree_id, holderHost, engine);
   const source = row.source_ids[0];
   const resume = ['gbrain', 'sources', 'refresh', source, '--resume'];
   const verify = { argv: ['gbrain', 'sources', 'writer', 'status', '--source', source, '--json'] };

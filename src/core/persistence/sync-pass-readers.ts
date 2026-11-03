@@ -12,7 +12,7 @@ import { resolve } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { hardenedGitSync } from '../hardened-git.ts';
 import { managedSyncResumeArgs } from '../sync-reconcile.ts';
-import { localHostId } from './identity.ts';
+import { hostIdFor } from './identity.ts';
 import { passHealth, readLivePassRows, type PassHealth, type PassRow } from './sync-pass-row.ts';
 
 export interface PassReading { source_id: string; row: PassRow; head: string | null; health: PassHealth }
@@ -23,7 +23,7 @@ export async function readCheckoutHeads(engine: Pick<BrainEngine, 'executeRaw'>,
   if (!sourceIds.length) return heads;
   const rows = await engine.executeRaw<{ source_id: string; local_path: string; relative_path: string }>(`SELECT b.source_id, h.local_path, b.relative_path
     FROM persistence_source_bindings b JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$2::uuid
-    WHERE b.source_id=ANY($1::text[])`, [[...sourceIds], localHostId()]);
+    WHERE b.source_id=ANY($1::text[])`, [[...sourceIds], hostIdFor(engine)]);
   for (const row of rows) {
     const out = hardenedGitSync(resolve(row.local_path, row.relative_path), ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], { timeoutMs: 10_000, maxBytes: 4096 });
     heads.set(row.source_id, out.ok ? out.stdout.toString('utf8').trim() || null : null);
