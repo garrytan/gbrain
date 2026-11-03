@@ -64,8 +64,8 @@ import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
-import { withEngineScope } from '../engine-scope.ts';
-import { engineScopeMissing, releasedKeyEnv, scopedGatewayState, type GatewayState } from './engine-gateway.ts';
+import { unscopedInEmbeddedProcess, withEngineScope } from '../engine-scope.ts';
+import { engineScopeMissing, engineScopeUnentered, releasedKeyEnv, scopedGatewayState, type GatewayState } from './engine-gateway.ts';
 import { AIConfigError, AITransientError, isStructuredOutputRejection, isUnbilledEmbeddingRejection, normalizeAIError } from './errors.ts';
 import { embeddingModelNotFoundHint, gatewayModelNotFoundHint } from './model-not-found-hint.ts';
 import { fitMatryoshkaPrefix, isEmbeddingZeroNormError, screenAlignedEmbeddings, screenEmbeddings, sendableEmbeddingInputs } from './embedding-guard.ts';
@@ -172,7 +172,7 @@ export function authToHeaders(auth: { apiKey?: string; headers?: Record<string, 
  * are deliberately left unchanged.
  */
 export function configureGatewayIfUninitialized(): void {
-  if (processState.config || gw() !== processState) return;
+  if (processState.config || gw() !== processState || unscopedInEmbeddedProcess()) return;
   const config = loadConfig();
   if (config) configureGateway(buildGatewayConfig(config));
 }
@@ -467,7 +467,7 @@ export function recipeSupportsStructuredOutputs(recipe: Recipe): boolean {
 /** Configure the gateway. Called by cli.ts#connectEngine. Clears cached models. */
 export function configureGateway(config: AIGatewayConfig): void {
   processState.config = gatewayConfigOf(config);
-  stashGatewayAnthropicKeyFromEnv(config.env); // #2119: filter + rationale in anthropic-key.ts
+  stashGatewayAnthropicKeyFromEnv(config.env ?? {}); // #2119: filter + rationale in anthropic-key.ts
   processState.modelCache.clear();
   clearQueryEmbedCache();
   _shrinkState.clear();
@@ -844,6 +844,7 @@ export function __setChatTransportForTests(
 export function requireConfig(): AIGatewayConfig {
   const config = gw().config;
   if (!config) {
+    if (unscopedInEmbeddedProcess()) throw engineScopeUnentered();
     throw new AIConfigError(
       'AI gateway is not configured. Call configureGateway() during engine connect.',
       'This is a gbrain bug — file an issue at https://github.com/garrytan/gbrain/issues',

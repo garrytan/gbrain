@@ -8,13 +8,18 @@
  * one, the gateway keeps its process-wide state exactly as before, and no scope is even entered.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { isEmbeddedEngine, processHasEmbeddedEngines } from './embedded-engine.ts';
+import { isEmbeddedEngine, processHasEmbeddedEngines, processHoldsEmbeddedEngines } from './embedded-engine.ts';
 
 const scope = new AsyncLocalStorage<object>();
 
 /** Runs `fn` as a call for `engine`. A plain call in a process that holds no embedded engine. */
 export function withEngineScope<T>(engine: object, fn: () => T): T {
   return processHasEmbeddedEngines() ? scope.run(engine, fn) : fn();
+}
+
+/** True for a call that entered no engine scope while the process holds an open embedded engine. */
+export function unscopedInEmbeddedProcess(): boolean {
+  return processHoldsEmbeddedEngines() && scope.getStore() === undefined;
 }
 
 /** The embedded engine the current call runs for (a page transaction, view or proxy over one counts), else undefined. */

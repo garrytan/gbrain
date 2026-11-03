@@ -81,6 +81,7 @@ export function settingsConnectionOptions(url: string): { host: string; port: nu
 /** Keyed by `engineKey`, so a page-transaction clone, a view and every forwarding proxy over the engine share its record. */
 const records = new WeakMap<object, EmbeddedRecord>();
 let embeddedProcess = false;
+let openEmbeddedEngines = 0;
 
 function recordOf(engine: object): EmbeddedRecord | undefined {
   return records.get(engineKey(engine));
@@ -92,6 +93,7 @@ export function markEmbeddedEngine(engine: object, settings: EngineSettings): vo
   const record: EmbeddedRecord = { hostId: typeof id === 'string' && id ? id.toLowerCase() : undefined, settings };
   records.set(engineKey(engine), record);
   embeddedProcess = true;
+  openEmbeddedEngines++;
 }
 
 /** True for an engine `openEngine` opened, and for its page transactions and read-through views. */
@@ -102,6 +104,11 @@ export function isEmbeddedEngine(engine: object): boolean {
 /** True once any `openEngine` call in this process has marked an engine; it never resets. */
 export function processHasEmbeddedEngines(): boolean {
   return embeddedProcess;
+}
+
+/** True while an embedded engine is open in this process: then an AI call outside any engine scope refuses (engine-gateway.ts). */
+export function processHoldsEmbeddedEngines(): boolean {
+  return openEmbeddedEngines > 0;
 }
 
 /** The host id an embedded engine was opened with; undefined for every other engine. */
@@ -136,6 +143,7 @@ export function embeddedSettings(engine: object): EmbeddedSettingsView | undefin
 export function releaseEmbeddedEngine(engine: object): void {
   const record = recordOf(engine);
   if (!record?.settings) return;
+  openEmbeddedEngines--;
   record.releasedKeys = Object.values(record.settings.ai?.providers ?? {}).flatMap(provider => provider.apiKey ? [provider.apiKey] : []);
   record.settings = null;
 }

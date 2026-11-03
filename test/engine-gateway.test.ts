@@ -8,7 +8,7 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { randomBytes, randomUUID } from 'node:crypto';
 import {
-  __clearQueryEmbedCacheForTests, __setEmbedTransportForTests, __setGenerateTextTransportForTests, __setRerankTransportForTests,
+  __clearQueryEmbedCacheForTests, __setEmbedTransportForTests, __unconfigureGatewayForTests, __setGenerateTextTransportForTests, __setRerankTransportForTests,
   chat, configureGateway, diagnoseEmbedding, embedQuery, isAvailable, requireConfig, rerank, resetGateway,
 } from '../src/core/ai/gateway.ts';
 import Anthropic from '@anthropic-ai/sdk';
@@ -277,6 +277,54 @@ describe('availability follows the engine\'s providers', () => {
     } finally {
       await engine.disconnect();
     }
+  });
+});
+
+describe('chat usage and unscoped calls', () => {
+  const usageRows = async (engine: BrainEngine) => Number((await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM chat_usage_log'))[0]!.n);
+  const settled = () => Bun.sleep(200);
+
+  test('chat usage lands in the in-scope engine\'s database, and an unscoped call never books to an embedded engine', async () => {
+    installStubs();
+    configureProcessGateway();
+    const cli = await createEngine({ engine: 'pglite' });
+    await cli.connect({ engine: 'pglite' } as never);
+    await cli.initSchema();
+    const a = await openEngine(settingsFor({ ai: { providers: { openai: { apiKey: key('a') } }, models: { chat: 'openai:gpt-5.6' } } }));
+    const b = await openEngine(settingsFor({ ai: { providers: { openai: { apiKey: key('b') } }, models: { chat: 'openai:gpt-5.6' } } }));
+    try {
+      await a.initSchema();
+      await b.initSchema();
+      await withEngineScope(a, () => chat({ messages: [{ role: 'user', content: 'hello from a' }] }));
+      await settled();
+      expect([await usageRows(a), await usageRows(b), await usageRows(cli)]).toEqual([1, 0, 0]);
+      await chat({ messages: [{ role: 'user', content: 'hello from the host' }] });
+      await settled();
+      expect([await usageRows(a), await usageRows(b), await usageRows(cli)]).toEqual([1, 0, 1]);
+    } finally {
+      await Promise.all([a.disconnect(), b.disconnect(), cli.disconnect()]);
+    }
+  }, 120_000);
+
+  test('a process holding an embedded engine refuses an unscoped AI call unless the host configured a process gateway', async () => {
+    __unconfigureGatewayForTests();
+    installStubs();
+    await withEnv(ambient, async () => {
+      const engine = await openEngine(settingsFor({ ai: { providers: { openai: { apiKey: key('a') } } } }));
+      try {
+        const error = await failure(() => chat({ messages: [{ role: 'user', content: 'hello' }] }));
+        expect(error?.code).toBe('engine_scope_missing');
+        expect(`${error!.message} ${error!.suggestion}`).toContain('withEngineScope');
+        expect(resolveAnthropicKey()).toBeUndefined();
+        expect((await failure(async () => anthropicClientOptions()))?.code).toBe('engine_scope_missing');
+        configureProcessGateway();
+        expect(await failure(() => chat({ messages: [{ role: 'user', content: 'hello' }] }))).toBeNull();
+        expect(resolveAnthropicKey()).toBe(PROCESS_KEY);
+      } finally {
+        await engine.disconnect();
+      }
+      expect(resolveAnthropicKey()).toBe(PROCESS_KEY);
+    });
   });
 });
 
