@@ -23,7 +23,7 @@
  *   HOST                     default '127.0.0.1' (loopback-only; set 0.0.0.0
  *                            for containers / direct LAN exposure)
  *   OPENAI_API_KEY           required for /session
- *   OPENAI_REALTIME_MODEL    default 'gpt-4o-realtime-preview'
+ *   OPENAI_REALTIME_MODEL    default 'gpt-realtime-1.5'
  *   DEFAULT_PERSONA          default 'venus' (one of 'mars' | 'venus')
  *   AGENT_VOICE_CORS_ORIGIN  comma-separated exact origins allowed via CORS
  *                            (default unset = default-deny; the served /call
@@ -58,7 +58,7 @@ const PORT = parseInt(process.env.PORT || '8765', 10);
 // flows keep working; container/LAN deployments set HOST=0.0.0.0.
 const HOST = process.env.HOST || '127.0.0.1';
 const DEFAULT_PERSONA = (process.env.DEFAULT_PERSONA || 'venus').toLowerCase();
-const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview';
+const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-1.5';
 const OPENAI_REALTIME_URL = 'https://api.openai.com/v1/realtime/calls';
 
 // ── CORS + origin gate (default-deny) ─────────────────────────────────

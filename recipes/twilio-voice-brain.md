@@ -310,7 +310,7 @@ The voice server needs these components in `server.mjs`:
 
 2. **WebSocket handler** at `/ws` that:
    - Accepts Twilio media stream (g711_ulaw audio)
-   - Opens a second WebSocket to `wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview`
+   - Opens a second WebSocket to `wss://api.openai.com/v1/realtime?model=gpt-realtime-1.5`
    - Bridges audio bidirectionally (no transcoding — both sides use g711_ulaw)
    - Handles `response.function_call_arguments.done` events from OpenAI (tool execution)
    - Sends tool results back via `conversation.item.create` with type `function_call_output`
@@ -348,7 +348,7 @@ The voice server needs these components in `server.mjs`:
 
      sessionConfig = JSON.stringify({
        type: 'realtime',
-       model: 'gpt-4o-realtime-preview',
+       model: 'gpt-realtime-1.5',
        audio: { output: { voice: VOICE } },
        instructions: buildPrompt(null),
        tools: TOOL_SETS.unauthenticated,
