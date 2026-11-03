@@ -6170,24 +6170,30 @@ working directory:
   The statement-description cache stays in the process instead of `<home>/cache/pg-types`. PGLite skips the
   `GBRAIN_PGLITE_SNAPSHOT` fast path.
 - **Host identity.** `hostIdFor(engine)` (`src/core/persistence/identity.ts`) answers `host.id` for the engine,
-  its page transactions and its read-through views; the consumer, publication, admission stamps and worktree
-  ownership use it. No `host.json` is read or minted, and an embedded engine without an id refuses
-  `engine_host_missing`. Its consumer heartbeat row records `embedded:<host-id>` in `host_json_path` and
+  its page transactions, its read-through views and every forwarding proxy over it. Every host-id read in
+  `src/core` goes through it (or `existingHostIdFor`), except `gbrain migrate`'s engine graduation and the
+  coordination-lock fallback for a caller that passes no host id; the CLI layer keeps the file identity. No
+  `host.json` is read or minted, and an embedded engine without an id refuses `engine_host_missing`. Its consumer heartbeat row records `embedded:<host-id>` in `host_json_path` and
   `embedded` in `persistence_home`; doctor and writer status read that as "identity given at open", never as a path.
   For every other engine `hostIdFor` is `localHostId()`.
 - **Writer.** An unauthenticated write uses `settings.writer` for its lane, registered in
   `persistence_local_writers` on first use (`registerLocalWriterValue`: idempotent; another credential or lane under
-  the same id refuses `permission_denied`; a revoked registration is never replaced). No `<brain>.<lane>.json`
-  credential file is read or minted; without a writer for the lane the write refuses `writer_registration_required`.
+  the same id refuses `permission_denied`; a revoked registration is never replaced). A writer value never widens
+  what the engine may write: its lane is the one in the settings (a remote call needs a `stdio` writer, a local one a
+  `cli` writer), a new registration gets the default ceiling (read and write), and an existing registration keeps
+  its own ceiling. No `<brain>.<lane>.json` credential file is read or minted; without a writer for the lane the write refuses `writer_registration_required`.
 - **Embedding identity.** `initSchema()` seeds a fresh brain from `settings.embedding` (else the built-in default),
   never from the process gateway, and refuses `engine_embedding_mismatch` on a database that records another model
   or width; `gbrain migrate embeddings --status` previews a migration.
-- **Carried for later waves.** `storage`, `storagePrefix` and `ai` are held as given and read back with
-  `embeddedSettings(engine)` (the writer credential is left out). `disconnect()` drops them.
+- **Read back.** `embeddedSettings(engine)` returns the settings without the writer credential; `disconnect()` drops
+  them. File storage (backend and object prefix) and AI provider settings are not settings yet (Wave C): file
+  operations use the process's storage config and embedding calls use the process AI gateway.
 
-Still process-wide: the AI gateway, `GBRAIN_*` tuning variables (pool lifetime, session timeouts), the
-connection-events audit log, and operation-level config reads (content-sanity screening, schema-pack resolution,
-the embedding switch on publication). A source with a git checkout keeps its native coordination lock under the
+Still process-wide: the AI gateway (the model embedding calls use), `GBRAIN_*` tuning variables (pool lifetime,
+connect and session timeouts, `GBRAIN_PREPARE`, `GBRAIN_DIRECT_POOL_SIZE`, `GBRAIN_DISABLE_DIRECT_POOL`,
+`GBRAIN_RLS_SCOPE_BINDING`, the PGLite close watchdog), the connection-events audit log, and operation-level
+config reads (content-sanity screening, schema-pack resolution, the embedding switch on publication). None of them
+picks an engine's database, host identity, writer or embedding identity. A source with a git checkout keeps its native coordination lock under the
 process's persistence home.
 
 ## Canonical schema sources

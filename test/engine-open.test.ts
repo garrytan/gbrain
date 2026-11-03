@@ -8,14 +8,17 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync }
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { embeddedSettings, hostIdFor, isEmbeddedEngine, openEngine, processHasEmbeddedEngines, registerLocalWriterValue, type EngineSettings } from '../src/core/engine-open.ts';
+import { embeddedSettings, hostIdFor, isEmbeddedEngine, openEngine, processHasEmbeddedEngines, type EngineSettings } from '../src/core/engine-open.ts';
 import { markEmbeddedEngine } from '../src/core/embedded-engine.ts';
-import { existingHostIdFor, existingLocalHostId, hostIdentityPathsFor, localHostId, localHostIdentity, revokeLocalWriter } from '../src/core/persistence/identity.ts';
+import { existingHostIdFor, existingLocalHostId, hostIdentityPathsFor, localHostId, localHostIdentity, registerLocalWriter, registerLocalWriterValue, revokeLocalWriter } from '../src/core/persistence/identity.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { readStoredEmbeddingIdentity } from '../src/core/stored-embedding-identity.ts';
 import { ConnectionManager } from '../src/core/connection-manager.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { engineKey } from '../src/core/engine-key.ts';
+import { awaitPendingTelemetryFlush, getTelemetryWriter, recordSearchTelemetry, _telemetryWriterCountForTest } from '../src/core/search/telemetry.ts';
+import type { HybridSearchMeta } from '../src/core/types.ts';
 
 const scratch = mkdtempSync(join(tmpdir(), 'gbrain-engine-open-'));
 afterAll(() => { rmSync(scratch, { recursive: true, force: true }); });
@@ -77,8 +80,7 @@ describe('openEngine on a clean home', () => {
     const path = dir('brain');
     const hostId = randomUUID();
     const writer = writerValue('stdio');
-    const settings = settingsFor({ database: { path }, host: { id: hostId }, writer, embedding: { model: 'voyage:voyage-4-lite', dimensions: 512 },
-      storage: { backend: 'local', bucket: 'files-example', localPath: dir('objects') }, storagePrefix: 'tenant-a/', ai: { provider: 'opaque-example' } });
+    const settings = settingsFor({ database: { path }, host: { id: hostId }, writer, embedding: { model: 'voyage:voyage-4-lite', dimensions: 512 } });
     await withEnv(env, async () => {
       const first = await openEngine(settings);
       try {
@@ -87,9 +89,7 @@ describe('openEngine on a clean home', () => {
         expect(processHasEmbeddedEngines()).toBe(true);
         expect(hostIdFor(first)).toBe(hostId);
         const held = embeddedSettings(first)!;
-        expect(held.storage).toEqual(settings.storage!);
-        expect(held.storagePrefix).toBe('tenant-a/');
-        expect(held.ai).toEqual({ provider: 'opaque-example' });
+        expect(held.embedding).toEqual(settings.embedding!);
         expect(held.writer).toEqual({ id: writer.id, lane: 'stdio' });
         expect(JSON.stringify(held)).not.toContain(writer.credential);
         const [source] = await first.executeRaw<{ local_path: string | null }>("SELECT local_path FROM sources WHERE id='default'");
@@ -148,6 +148,57 @@ describe('two engines in one process', () => {
       }
     });
     expect(filesUnder(gbrainHome)).toEqual([]);
+  }, 180_000);
+});
+
+describe('per-engine caches', () => {
+  const meta: HybridSearchMeta = { vector_enabled: true, detail_resolved: null, expansion_applied: false, intent: 'general', mode: 'balanced' };
+  const telemetryCount = async (engine: BrainEngine) => (await engine.executeRaw<{ n: number }>('SELECT COALESCE(SUM(count),0)::int AS n FROM search_telemetry'))[0]!.n;
+
+  test('each opened engine has its own engineKey entry and telemetry writer; its transactions share them', async () => {
+    const a = await openEngine(settingsFor({ database: { path: dir('cache-a') } }));
+    const b = await openEngine(settingsFor({ database: { path: dir('cache-b') } }));
+    try {
+      await a.initSchema();
+      await b.initSchema();
+      expect(engineKey(a)).toBe(a);
+      expect(engineKey(b)).toBe(b);
+      expect(getTelemetryWriter(a)).not.toBe(getTelemetryWriter(b));
+      await a.transaction(async tx => {
+        expect(engineKey(tx)).toBe(a);
+        expect(getTelemetryWriter(tx)).toBe(getTelemetryWriter(a));
+        expect(hostIdFor(tx)).toBe(hostIdFor(a));
+      });
+      recordSearchTelemetry(a, meta, { results_count: 1 });
+      recordSearchTelemetry(b, meta, { results_count: 1 });
+      recordSearchTelemetry(b, meta, { results_count: 1 });
+      await awaitPendingTelemetryFlush(5000, 'exit');
+      expect(await telemetryCount(a)).toBe(1);
+      expect(await telemetryCount(b)).toBe(2);
+    } finally {
+      await Promise.all([a.disconnect(), b.disconnect()]);
+    }
+  }, 180_000);
+
+  test('a disconnect suspends the telemetry writer; after a reconnect the next record resumes it into the same brain', async () => {
+    const engine = await openEngine(settingsFor({ database: { path: dir('cache-reconnect') } }));
+    try {
+      await engine.initSchema();
+      const writer = getTelemetryWriter(engine);
+      const live = _telemetryWriterCountForTest();
+      recordSearchTelemetry(engine, meta, { results_count: 1 });
+      await engine.reconnect();
+      expect(_telemetryWriterCountForTest()).toBe(live - 1);
+      expect(embeddedSettings(engine)).toBeDefined();
+      recordSearchTelemetry(engine, meta, { results_count: 1 });
+      expect(getTelemetryWriter(engine)).toBe(writer);
+      expect(_telemetryWriterCountForTest()).toBe(live);
+      await awaitPendingTelemetryFlush(5000, 'exit');
+      expect(await telemetryCount(engine)).toBe(2);
+    } finally {
+      await engine.disconnect();
+    }
+    expect(embeddedSettings(engine)).toBeUndefined();
   }, 180_000);
 });
 
@@ -248,18 +299,48 @@ describe('writer given as a value', () => {
     });
     expect(filesUnder(gbrainHome)).toEqual([]);
   }, 180_000);
+
+  test('a writer value never widens past the settings: its own lane, the default ceiling, and an existing ceiling kept', async () => {
+    const path = dir('writer-ceiling');
+    const writer = writerValue('stdio');
+    const ceiling = async (engine: BrainEngine) => (await engine.executeRaw<{ grant_ceiling: unknown }>('SELECT grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid', [writer.id]))[0]?.grant_ceiling;
+    const first = await openEngine(settingsFor({ database: { path }, writer }));
+    try {
+      await first.initSchema();
+      await operationsByName.put_page.handler(hostCtx(first), { slug: 'notes/ceiling', content: '---\ntitle: Ceiling\n---\nWritten with the stdio writer.\n' });
+      expect(await ceiling(first)).toEqual({ sourceIds: ['*'], operations: null, scopes: ['read', 'write'], slugPrefixes: null });
+      expect(await codeOf(registerLocalWriter(first, 'cli'))).toBe('writer_registration_required');
+      expect(await codeOf(operationsByName.put_page.handler({ ...hostCtx(first), remote: false } as OperationContext, { slug: 'notes/cli-lane', content: '---\ntitle: CLI lane\n---\nNo cli writer.\n' })))
+        .toBe('writer_registration_required');
+      expect(await first.getPage('notes/cli-lane')).toBeNull();
+      await first.executeRaw(`UPDATE persistence_local_writers SET grant_ceiling='{"sourceIds":["default"],"operations":["put_page"],"scopes":["write"],"slugPrefixes":["notes/"]}'::jsonb WHERE id=$1::uuid`, [writer.id]);
+    } finally {
+      await first.disconnect();
+    }
+    const second = await openEngine(settingsFor({ database: { path }, writer: { ...writer } }));
+    try {
+      await second.initSchema();
+      await operationsByName.put_page.handler(hostCtx(second), { slug: 'notes/narrowed', content: '---\ntitle: Narrowed\n---\nStill the narrowed writer.\n' });
+      expect(await ceiling(second)).toEqual({ sourceIds: ['default'], operations: ['put_page'], scopes: ['write'], slugPrefixes: ['notes/'] });
+    } finally {
+      await second.disconnect();
+    }
+  }, 180_000);
 });
 
 describe('embedding identity', () => {
   test('initSchema seeds settings.embedding, not the process gateway, and an existing brain with another width refuses', async () => {
     const path = dir('brain-embedding');
-    const first = await openEngine(settingsFor({ database: { path }, embedding: { model: 'voyage:voyage-4-lite', dimensions: 512 } }));
-    try {
-      await first.initSchema();
-      expect(await readStoredEmbeddingIdentity(first)).toEqual({ model: 'voyage:voyage-4-lite', dimensions: 512 });
-    } finally {
-      await first.disconnect();
-    }
+    const { env } = canaries();
+    await withEnv({ ...env, GBRAIN_EMBEDDING_MODEL: 'openai:text-embedding-3-large', GBRAIN_EMBEDDING_DIMENSIONS: '3072' }, async () => {
+      const first = await openEngine(settingsFor({ database: { path }, embedding: { model: 'voyage:voyage-4-lite', dimensions: 512 } }));
+      try {
+        await first.initSchema();
+        expect(await readStoredEmbeddingIdentity(first)).toEqual({ model: 'voyage:voyage-4-lite', dimensions: 512 });
+      } finally {
+        await first.disconnect();
+      }
+    });
     const wider = await openEngine(settingsFor({ database: { path }, embedding: { model: 'voyage:voyage-4-lite', dimensions: 1024 } }));
     try {
       const refusal = await wider.initSchema().then(() => null, (error: unknown) => error as { code?: string; message?: string; suggestion?: string });

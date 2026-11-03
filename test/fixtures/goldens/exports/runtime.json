@@ -646,8 +646,7 @@
         "hostIdFor",
         "isEmbeddedEngine",
         "openEngine",
-        "processHasEmbeddedEngines",
-        "registerLocalWriterValue"
+        "processHasEmbeddedEngines"
       ],
       "./eval/longmemeval/reader": [
         "READER_MAX_SESSION_CHARS",

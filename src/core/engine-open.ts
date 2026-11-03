@@ -11,7 +11,7 @@ import { assertLocalWriterValue, setEngineHostId } from './persistence/identity.
 
 export type { EngineSettings, EmbeddedSettingsView } from './embedded-engine.ts';
 export { embeddedSettings, isEmbeddedEngine, processHasEmbeddedEngines } from './embedded-engine.ts';
-export { hostIdFor, registerLocalWriterValue } from './persistence/identity.ts';
+export { hostIdFor } from './persistence/identity.ts';
 
 /** Connections a Postgres engine opened from settings may open when `pool.max` is not given. */
 export const DEFAULT_EMBEDDED_POOL_MAX = 4;
@@ -69,7 +69,6 @@ export async function openEngine(settings: EngineSettings): Promise<BrainEngine>
     ...(settings.pool ? { pool: { ...settings.pool } } : {}),
     ...(settings.writer ? { writer: { ...settings.writer } } : {}),
     ...(settings.embedding ? { embedding: { ...settings.embedding } } : {}),
-    ...(settings.storage ? { storage: { ...settings.storage } } : {}),
     ...(settings.pglite ? { pglite: { ...settings.pglite } } : {}),
   };
   const config: EngineConfig = {

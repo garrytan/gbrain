@@ -17,10 +17,11 @@ identifiers and attribution are available in the pre-removal Git revision
 ### Itemized changes
 
 - `src/core/engine-open.ts` (new, exported as `./engine-open`): `openEngine`, refusing `embedded_core_required`, `engine_host_missing` and `engine_settings_invalid`. A connect never migrates; the host runs `initSchema()`. Documented in docs/ENGINES.md, "Opening an engine from settings".
-- `src/core/persistence/identity.ts`: `hostIdFor(engine)` and `setEngineHostId`, resolved through `engineKey`. Publication, admission, the consumer, worktree ownership, effects and the writer stamp use it; an unmarked engine still gets `localHostId()`. An embedded engine never reads or mints `host.json`, and its consumer heartbeat records `embedded:<host-id>`, which doctor and writer status read as an identity given at open. `registerLocalWriterValue` registers a writer the host holds as a value, and an embedded engine's writes use it instead of a `<brain>.<lane>.json` file.
+- `src/core/persistence/identity.ts`: `hostIdFor(engine)` and `setEngineHostId`, resolved through `engineKey`. Every host-id read in `src/core` goes through it or `existingHostIdFor(engine)` (publication, admission, the consumer, worktree ownership and refresh, topology, effects, repair and the writer stamp), except `gbrain migrate`'s engine graduation; an unmarked engine still gets `localHostId()`, so the CLI's behavior is unchanged. An embedded engine never reads or mints `host.json`, and its consumer heartbeat records `embedded:<host-id>`, which doctor and writer status read as an identity given at open. `registerLocalWriterValue` registers a writer the host holds as a value, and an embedded engine's writes use it instead of a `<brain>.<lane>.json` file. It never widens past the settings: the lane is the one given, a new registration gets the default read/write ceiling, and an existing registration keeps its own.
 - `initSchema()` on an embedded engine seeds the embedding model and width from `settings.embedding` and refuses `engine_embedding_mismatch` on a database that records another one.
 - The decide spend cache is keyed by engine and held weakly, and a drained feedback queue no longer keeps its engine alive.
-- `test/engine-open.test.ts`, `test/engine-open-lifecycle.test.ts`, `test/e2e/engine-open-postgres.test.ts`.
+- File storage and AI provider settings are not engine settings yet; they stay process-wide until Wave C.
+- `test/engine-open.test.ts`, `test/engine-open-lifecycle.test.ts`, `test/engine-open-upgrade.test.ts` (a brain built by an earlier release boots identically through the CLI path and `openEngine`), `test/e2e/engine-open-postgres.test.ts`.
 
 ## [0.60.556.0] - 2026-11-02
 

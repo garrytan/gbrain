@@ -4433,13 +4433,12 @@
         "kind": "type",
         "name": "EmbeddedSettingsView",
         "signature": [
-          "{ readonly pglite?: { shared_buffers?: string; } | undefined; readonly host: { id: string; }; readonly database: { url?: string; directUrl?: string; path?: string; }; readonly embedding?: { model: string; dimensions: number; } | undefined; readonly embedded_core: boolean; readonly engine: \"postgres\" | \"pglite\"; readonly pool?: { max?: number; } | undefined; readonly storage?: StorageConfig | undefined; readonly storagePrefix?: string | undefined; readonly keyword_statement_timeout_ms?: number | undefined; readonly ai?: Record<string, unknown> | undefined; readonly writer?: { id: string; lane: \"cli\" | \"stdio\"; } | undefined; }"
+          "{ readonly pglite?: { shared_buffers?: string; } | undefined; readonly host: { id: string; }; readonly database: { url?: string; directUrl?: string; path?: string; }; readonly embedding?: { model: string; dimensions: number; } | undefined; readonly embedded_core: boolean; readonly engine: \"postgres\" | \"pglite\"; readonly pool?: { max?: number; } | undefined; readonly keyword_statement_timeout_ms?: number | undefined; readonly writer?: { id: string; lane: \"cli\" | \"stdio\"; } | undefined; }"
         ]
       },
       {
         "kind": "interface",
         "members": [
-          "ai?: Record<string, unknown> | undefined",
           "database: { url?: string; directUrl?: string; path?: string; }",
           "embedded_core: boolean",
           "embedding?: { model: string; dimensions: number; } | undefined",
@@ -4448,8 +4447,6 @@
           "keyword_statement_timeout_ms?: number | undefined",
           "pglite?: { shared_buffers?: string; } | undefined",
           "pool?: { max?: number; } | undefined",
-          "storage?: StorageConfig | undefined",
-          "storagePrefix?: string | undefined",
           "writer?: { id: string; credential: string; lane: \"cli\" | \"stdio\"; } | undefined"
         ],
         "name": "EngineSettings"
@@ -4487,13 +4484,6 @@
         "name": "processHasEmbeddedEngines",
         "signature": [
           "() => boolean"
-        ]
-      },
-      {
-        "kind": "function",
-        "name": "registerLocalWriterValue",
-        "signature": [
-          "(engine: SqlEngine, local: LocalRegistration, grant?: LocalGrant) => Promise<void>"
         ]
       }
     ],

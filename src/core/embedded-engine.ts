@@ -1,5 +1,4 @@
 import { engineKey } from './engine-key.ts';
-import type { StorageConfig } from './storage.ts';
 import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL } from './ai/defaults.ts';
 import { opError } from './ops/contract.ts';
 
@@ -22,14 +21,9 @@ export interface EngineSettings {
   writer?: { id: string; credential: string; lane: 'cli' | 'stdio' };
   /** The embedding identity `initSchema()` seeds a fresh brain with and checks an existing one against. */
   embedding?: { model: string; dimensions: number };
-  /** The file storage backend and the host's object prefix, carried for the file operations. */
-  storage?: StorageConfig;
-  storagePrefix?: string;
   /** `search.keyword_statement_timeout_ms` for this engine (Postgres). */
   keyword_statement_timeout_ms?: number;
   pglite?: { shared_buffers?: string };
-  /** AI provider settings for this engine; opaque here and recorded as given. */
-  ai?: Record<string, unknown>;
 }
 
 /** The settings `embeddedSettings` returns: everything the host passed except the writer credential. */
@@ -84,7 +78,7 @@ export function embeddedSettings(engine: object): EmbeddedSettingsView | undefin
   return Object.freeze({ ...rest, ...(writer ? { writer: { id: writer.id, lane: writer.lane } } : {}) });
 }
 
-/** Drops the settings (credentials, AI keys, storage) an embedded engine held; it stays marked embedded with its host id. */
+/** Drops the settings (the writer credential included) an embedded engine held; it stays marked embedded with its host id. */
 export function releaseEmbeddedEngine(engine: object): void {
   const record = recordOf(engine);
   if (record) record.settings = null;
