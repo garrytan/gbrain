@@ -34,7 +34,7 @@ import { bundledCatalogId, bundledSkills, type SkillAudience } from '../skills/b
 import { shellQuote } from '../shell-quote.ts';
 import { renderSkillIndexBlock, SKILL_INDEX_VERSION, SkillIndexTooLarge, skillIndexCatalog } from '../skills/spring-index.ts';
 import { SKILLS_BLOCK_BEGIN, SKILLS_BLOCK_END } from '../skills/index-block.ts';
-import { BRAIN_FIRST_END, brainFirstTargetAt, CURSOR_HEAD, direntExists, isProjectSurface, readBrainFirstLedger, writeUnlessChanged, type BrainFirstHarness, type BrainFirstTarget } from './brain-first.ts';
+import { BRAIN_FIRST_END, brainFirstTargetAt, CURSOR_HEAD, direntExists, readBrainFirstLedger, writeUnlessChanged, type BrainFirstHarness, type BrainFirstTarget } from './brain-first.ts';
 
 export { SKILLS_BLOCK_BEGIN, SKILLS_BLOCK_END };
 export const SKILL_LOADING_ENV = 'GBRAIN_SKILL_LOADING';
@@ -390,7 +390,7 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * outcome with a reason, and the file is left as it was unless the detail
  * says otherwise.
  */
-export function syncSkillsBlock(opts: { target: BrainFirstTarget; launcher: string; decision: SkillLoadingDecision; writer: string; dryRun: boolean; audience?: SkillAudience; settingsPath?: string; thisFileOnly?: boolean }): SkillsBlockOutcome {
+export function syncSkillsBlock(opts: { target: BrainFirstTarget; launcher: string; decision: SkillLoadingDecision; writer: string; dryRun: boolean; audience?: SkillAudience; settingsPath?: string }): SkillsBlockOutcome {
   const { target, launcher, decision } = opts;
   const settings = opts.settingsPath ?? claudeUserSettingsPath();
   const audience = opts.audience ?? 'owner';
@@ -421,11 +421,6 @@ export function syncSkillsBlock(opts: { target: BrainFirstTarget; launcher: stri
     return out('preserve', `the skills markers in ${target.path} were hand-edited (duplicate, orphan or out of order); fix or delete them, then re-run`, { reason: 'damaged_markers' });
   }
   if (decision.value === 'off') {
-    if (!target.project && !opts.thisFileOnly && decision.source !== 'default') {
-      for (const other of readSkillLoadingLedger().filter((e) => e.harness === target.harness && e.path !== target.path && e.mode === 'spring' && !isProjectSurface(e.harness, e.path))) {
-        syncSkillsBlock({ ...opts, target: { ...target, path: other.path }, audience: other.audience, settingsPath: other.allow_settings, thisFileOnly: true });
-      }
-    }
     if (decision.source === 'default' && !prior && (before.state === 'current' || before.state === 'stale')) {
       return out('skip', `the skills index in ${target.path} is not in this gbrain's record (${skillLoadingLedgerPath()}); another gbrain home or install probably wrote it, so it is left as it is. Pass --skill-loading off to remove it from here`);
     }
@@ -730,7 +725,6 @@ export function refreshSkillsIndexes(harness: BrainFirstHarness, opts: { mode?: 
     writer: e.writer,
     dryRun: opts.dryRun,
     settingsPath: e.allow_settings,
-    thisFileOnly: true,
   }));
   if (!opts.dryRun || harness !== 'claude-code') return outcomes;
   // Each row previewed alone sees the others still owning a shared rule. When the batch drops that rule from every

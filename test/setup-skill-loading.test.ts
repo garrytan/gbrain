@@ -262,19 +262,6 @@ describe('skill loading: launcher, permission and refresh', () => {
     expect(existsSync(join(profileB, 'settings.json')) ? JSON.parse(read(join(profileB, 'settings.json'))).permissions?.allow ?? [] : []).not.toContain(rule);
   });
 
-  test('codex --no-instructions also strips the index left in AGENTS.md after AGENTS.override.md took over', async () => {
-    const b = box();
-    const agents = join(b.home, '.codex', 'AGENTS.md');
-    await setup(b, ['codex', '--instructions-only', '--gbrain-bin', LAUNCHER, '--skill-loading', 'spring']);
-    expect(read(agents)).toContain(SKILLS_BLOCK_BEGIN);
-    writeFileSync(join(b.home, '.codex', 'AGENTS.override.md'), '# override rules for alice-example\n');
-    const r = await setup(b, ['codex', '--instructions-only', '--no-instructions', '--no-hooks']);
-    expect(r.exitCode).toBe(0);
-    expect(existsSync(agents) ? read(agents) : '').not.toContain(SKILLS_BLOCK_BEGIN);
-    const ledger = JSON.parse(read(join(b.home, '.gbrain', 'skill-loading.json')));
-    expect(ledger.entries.filter((e: { mode: string }) => e.mode === 'spring')).toEqual([]);
-  });
-
   test('codex gets no permission edit (its sandbox runs the read-only loader)', async () => {
     const b = box();
     await setup(b, ['codex', '--instructions-only', '--gbrain-bin', LAUNCHER, '--skill-loading', 'spring']);
