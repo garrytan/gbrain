@@ -184,6 +184,7 @@ const SWEEP: Record<string, Row> = {
   add_timeline_entry: { args: { slug: 'notes/n1', date: TODAY, summary: planted('new timeline'), request_id: randomUUID() } },
   ontology_propose: { skip: 'write op; returns the merged ontology row, covered by the wrapper registration test' },
   extract_entities: { skip: 'write op over the extraction pipeline; covered by the wrapper registration test' },
+  ingest: { skip: 'LLM-backed document ingest write (explicit_llm); its report and remote posture are owned by test/ingest.serial.test.ts' },
   quarantine_list: { args: {}, content: false },
   get_agent_job: { skip: 'agent-scope job poll needs a submitted agent job; covered by the wrapper registration test' },
   // no_stored_text — read
@@ -215,6 +216,7 @@ const SWEEP: Record<string, Row> = {
   schema_explain_type: { args: { type: 'note' } },
   schema_review_orphans: { args: { limit: 50 } },
   list_write_conflicts: { args: {} },
+  get_memory_settings: { args: {} },
   // no_stored_text — write receipts (the planted content is the caller's own
   // input here; the receipt must not echo it)
   remember: { args: { fact: planted('remembered'), provenance: 'test:sweep', request_id: randomUUID() } },

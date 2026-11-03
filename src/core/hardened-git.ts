@@ -39,7 +39,7 @@ function operatorConfigSafeDirectories(): string[] {
   const key = operatorConfigKey();
   const known = freshOperatorConfig(key);
   if (known) return known;
-  const run = spawnSync('git', OPERATOR_CONFIG_ARGS, { ...operatorConfigOptions(), stdio: ['ignore', 'pipe', 'ignore'] });
+  const run = spawnSync('git', OPERATOR_CONFIG_ARGS, { ...operatorConfigOptions(), env: { ...gitChildEnv(), LC_ALL: 'C' }, stdio: ['ignore', 'pipe', 'ignore'] });
   return rememberOperatorConfig(key, run.status === 0 ? run.stdout : null);
 }
 
@@ -48,12 +48,12 @@ async function operatorConfigSafeDirectoriesAsync(): Promise<string[]> {
   const key = operatorConfigKey();
   const known = freshOperatorConfig(key);
   if (known) return known;
-  const stdout = await promisify(execFile)('git', OPERATOR_CONFIG_ARGS, { ...operatorConfigOptions(), encoding: 'buffer' }).then(run => run.stdout, () => null);
+  const stdout = await promisify(execFile)('git', OPERATOR_CONFIG_ARGS, { ...operatorConfigOptions(), env: { ...gitChildEnv(), LC_ALL: 'C' }, encoding: 'buffer' }).then(run => run.stdout, () => null);
   return rememberOperatorConfig(key, stdout);
 }
 
 const OPERATOR_CONFIG_ARGS = ['config', '--includes', '--show-scope', '-z', '--get-all', 'safe.directory'];
-const operatorConfigOptions = () => ({ cwd: '/', env: { ...gitChildEnv(), LC_ALL: 'C' }, timeout: 10_000, maxBuffer: 1024 * 1024, killSignal: 'SIGKILL' as const });
+const operatorConfigOptions = () => ({ cwd: '/', timeout: 10_000, maxBuffer: 1024 * 1024, killSignal: 'SIGKILL' as const });
 const operatorConfigKey = () => ['HOME', 'XDG_CONFIG_HOME', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM', 'PATH'].map(name => process.env[name] ?? '').join('\0');
 const freshOperatorConfig = (key: string) => operatorConfig?.key === key && Date.now() - operatorConfig.at < OPERATOR_CONFIG_TTL_MS ? operatorConfig.values : null;
 
@@ -73,11 +73,7 @@ export function __resetOperatorGitConfigForTests(): void { operatorConfig = null
  * (system, global, then environment, as Git orders them), carried as environment config (#7584). They relax only Git's
  * ownership check for a repository owned by another user, which the operator allowed for their own `git` too.
  */
-export function hardenedGitEnvironment(): NodeJS.ProcessEnv {
-  return hardenedEnvironmentWith(operatorConfigSafeDirectories());
-}
-
-function hardenedEnvironmentWith(operatorSafeDirectories: string[]): NodeJS.ProcessEnv {
+export function hardenedGitEnvironment(operatorSafeDirectories: string[] = operatorConfigSafeDirectories()): NodeJS.ProcessEnv {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
   return { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0',
     GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0', GIT_LFS_SKIP_SMUDGE: '1', LC_ALL: 'C',
@@ -185,7 +181,7 @@ export function hardenedGitStream(root: string, args: string[],
   let onChunk = opts.onChunk;
   return operatorConfigSafeDirectoriesAsync().then(operator => new Promise<HardenedGitStreamResult>((accept, reject) => {
     const child = spawn('git', [...HARDENED_GIT_ARGS, '-C', root, ...args],
-      { env: hardenedEnvironmentWith(operator), stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'] });
+      { env: hardenedGitEnvironment(operator), stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'] });
     let bytes = 0;
     let last = -1;
     let stopped: 'timeout' | 'too_large' | undefined;

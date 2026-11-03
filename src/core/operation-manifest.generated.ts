@@ -5699,11 +5699,13 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": "retrieval",
     "writeInference": "explicit_llm",
     "mutating": true,
+    "idempotent": false,
     "scope": "write",
     "cliHints": {
       "name": "ingest",
       "hidden": true
-    }
+    },
+    "area": "ingest"
   },
   {
     "name": "ingest_undo",
@@ -5726,11 +5728,13 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": "no_stored_text",
     "writeInference": "none",
     "mutating": true,
+    "idempotent": true,
     "scope": "write",
     "cliHints": {
       "name": "ingest-undo",
       "hidden": true
-    }
+    },
+    "area": "ingest"
   },
   {
     "name": "entity_identity_link",
@@ -6434,6 +6438,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   {
     "name": "get_memory_settings",
     "mutating": false,
+    "idempotent": true,
     "outputRedaction": "no_stored_text",
     "description": "Memory writeback settings: the mode agents follow, the exact rule text, every mode's rule, background capture state, and whether you may change it.",
     "params": {},
@@ -6472,6 +6477,8 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   },
   {
     "name": "memory_conversation_mode",
+    "mutating": true,
+    "idempotent": true,
     "outputRedaction": "no_stored_text",
     "description": "Use when the user says \"save everything from here\" (all) or \"stop saving\" (off): returns this conversation's memory rule. Stores nothing.",
     "params": {

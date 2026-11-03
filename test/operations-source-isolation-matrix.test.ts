@@ -129,6 +129,7 @@ const MATRIX: Row[] = [
   { name: 'get_brain_identity', mode: 'brainwide', args: {}, rationale: 'brain-level identity document by design' },
   { name: 'get_brain_health', mode: 'skip', reason: 'returns count bands with no slug or source identity, so the beta-marker scan here would pass vacuously; test/doctor-ops-remote-6696.test.ts seeds per-source write failures and pins the handler to the scalar and federated grant' },
   { name: 'whoami', mode: 'brainwide', args: {}, rationale: 'caller identity/transport echo, no page data' },
+  { name: 'get_memory_settings', mode: 'brainwide', args: {}, rationale: 'brain-wide memory writeback config and its rule text; no page data' },
   { name: 'sources_list', mode: 'brainwide', args: {}, rationale: 'listing sources is its purpose; exposes ids/names only' },
   { name: 'request_tools', mode: 'brainwide', args: { tools: ['get_page'] }, rationale: 'tool registry surface, no page data' },
   { name: 'list_link_sources', mode: 'brainwide', args: {}, rationale: 'distinct link-origin kinds; enumerates kinds not content' },
