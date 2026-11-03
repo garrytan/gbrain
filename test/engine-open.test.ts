@@ -203,6 +203,30 @@ describe('per-engine caches', () => {
     }
     expect(embeddedSettings(engine)).toBeUndefined();
   }, 180_000);
+
+  test('a disconnect during an in-flight reconnect closes the engine for good; connect and reconnect then refuse engine_closed', async () => {
+    const engine = await openEngine(settingsFor({ database: { path: dir('close-during-reconnect') }, writer: writerValue() }));
+    await engine.initSchema();
+    const reconnecting = engine.reconnect().catch(() => {});
+    await engine.disconnect();
+    await reconnecting;
+    expect(embeddedSettings(engine)).toBeUndefined();
+    expect(await codeOf(engine.connect({ engine: 'pglite' }))).toBe('engine_closed');
+    expect(await codeOf(engine.reconnect())).toBe('engine_closed');
+  }, 180_000);
+
+  test('embeddedSettings returns a frozen copy, so editing it changes nothing the engine reads', async () => {
+    const engine = await openEngine(settingsFor({ database: { path: dir('frozen-view') }, embedding: { model: 'voyage:voyage-4', dimensions: 8 } }));
+    try {
+      const view = embeddedSettings(engine)!;
+      expect(Object.isFrozen(view.embedding)).toBe(true);
+      expect(Object.isFrozen(view.database)).toBe(true);
+      expect(() => { (view.embedding as { dimensions: number }).dimensions = 9; }).toThrow();
+      expect(embeddedSettings(engine)!.embedding!.dimensions).toBe(8);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 180_000);
 });
 
 describe('host identity', () => {

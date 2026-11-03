@@ -726,7 +726,7 @@ the same reason and fix on its `connection` check.
 
 `openEngine(settings)` (`src/core/engine-open.ts`, exported as `gbrain/engine-open`) creates and connects an engine
 from one value, for a host that embeds several brains in one process or keeps its settings somewhere other than
-`~/.gbrain`. It is off by default: it refuses unless `settings.embedded_core === true` (`embedded_core_required`).
+`~/.gbrain`. It is off by default and refuses unless `settings.embedded_core === true` (`embedded_core_required`).
 The CLI, `gbrain serve` and mounts never call it and behave exactly as before.
 
 ```ts
@@ -763,14 +763,16 @@ working directory:
 - **Writer.** An unauthenticated write uses `settings.writer` for its lane, registered in
   `persistence_local_writers` on first use (`registerLocalWriterValue`: idempotent; another credential or lane under
   the same id refuses `permission_denied`; a revoked registration is never replaced). A writer value never widens
-  what the engine may write: its lane is the one in the settings (a remote call needs a `stdio` writer, a local one a
+  what the engine may write. Its lane is the one in the settings (a remote call needs a `stdio` writer, a local one a
   `cli` writer), a new registration gets the default ceiling (read and write), and an existing registration keeps
   its own ceiling. No `<brain>.<lane>.json` credential file is read or minted; without a writer for the lane the write refuses `writer_registration_required`.
 - **Embedding identity.** `initSchema()` seeds a fresh brain from `settings.embedding` (else the built-in default),
   never from the process gateway, and refuses `engine_embedding_mismatch` on a database that records another model
   or width; `gbrain migrate embeddings --status` previews a migration.
-- **Read back.** `embeddedSettings(engine)` returns the settings without the writer credential; `disconnect()` drops
-  them. File storage (backend and object prefix) and AI provider settings are not settings yet (Wave C): file
+- **Read back.** `embeddedSettings(engine)` returns a frozen copy of the settings without the writer credential.
+- **Close.** `disconnect()` closes the engine for good and drops its settings, even while a reconnect is in flight
+  (any pool that reconnect builds is ended). A later `connect()` or `reconnect()` refuses `engine_closed`; call
+  `openEngine` again instead. File storage (backend and object prefix) and AI provider settings are not settings yet (Wave C): file
   operations use the process's storage config and embedding calls use the process AI gateway.
 
 Still process-wide: the AI gateway (the model embedding calls use), `GBRAIN_*` tuning variables (pool lifetime,

@@ -27,7 +27,8 @@ export interface EngineSettings {
 }
 
 /** The settings `embeddedSettings` returns: everything the host passed except the writer credential. */
-export type EmbeddedSettingsView = Readonly<Omit<EngineSettings, 'writer'> & { writer?: { id: string; lane: 'cli' | 'stdio' } }>;
+type DeepReadonly<T> = { readonly [K in keyof T]: DeepReadonly<T[K]> };
+export type EmbeddedSettingsView = DeepReadonly<Omit<EngineSettings, 'writer'> & { writer?: { id: string; lane: 'cli' | 'stdio' } }>;
 
 interface EmbeddedRecord {
   hostId: string | undefined;
@@ -70,12 +71,14 @@ export function embeddedSettingsRecord(engine: object): EngineSettings | undefin
   return recordOf(engine)?.settings ?? undefined;
 }
 
-/** The settings an embedded engine was opened with, without the writer credential; undefined after disconnect. */
+/** A frozen copy of the settings an embedded engine was opened with, without the writer credential; undefined after disconnect. */
 export function embeddedSettings(engine: object): EmbeddedSettingsView | undefined {
   const settings = embeddedSettingsRecord(engine);
   if (!settings) return undefined;
   const { writer, ...rest } = settings;
-  return Object.freeze({ ...rest, ...(writer ? { writer: { id: writer.id, lane: writer.lane } } : {}) });
+  const view = structuredClone({ ...rest, ...(writer ? { writer: { id: writer.id, lane: writer.lane } } : {}) });
+  for (const value of Object.values(view)) if (value && typeof value === 'object') Object.freeze(value);
+  return Object.freeze(view);
 }
 
 /** Drops the settings (the writer credential included) an embedded engine held; it stays marked embedded with its host id. */

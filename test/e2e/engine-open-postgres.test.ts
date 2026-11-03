@@ -12,7 +12,7 @@ import { join, relative } from 'node:path';
 import postgres from '#postgres';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { withEnv } from '../helpers/with-env.ts';
-import { hostIdFor, openEngine, type EngineSettings } from '../../src/core/engine-open.ts';
+import { embeddedSettings, hostIdFor, openEngine, type EngineSettings } from '../../src/core/engine-open.ts';
 import { createEngine } from '../../src/core/engine-factory.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
 import { startConsumerHeartbeat } from '../../src/core/persistence/consumer-heartbeat.ts';
@@ -117,6 +117,16 @@ describeE2E('openEngine on Postgres', () => {
     expect(filesUnder(gbrainHome).filter(path => !/^\.gbrain\/audit\/connection-events-\d{4}-W\d{2}\.jsonl$/.test(path))).toEqual([]);
     expect(filesUnder(home)).toEqual([]);
   }, 300_000);
+
+  test('a disconnect during an in-flight reconnect leaves no live pool, drops the settings and refuses a later reconnect', async () => {
+    const engine = await openEngine({ embedded_core: true, engine: 'postgres', database: { url: urls[0]! }, pool: { max: 2 }, host: { id: randomUUID() } });
+    const reconnecting = engine.reconnect().catch(() => {});
+    await engine.disconnect();
+    await reconnecting;
+    expect(internals(engine)._sql).toBeNull();
+    expect(embeddedSettings(engine)).toBeUndefined();
+    expect(await codeOf(engine.reconnect())).toBe('engine_closed');
+  }, 60_000);
 
   test('the consumer heartbeat records the identity-given-at-open sentinel, not a host.json path', async () => {
     const engine = await openEngine(settingsA as EngineSettings);
