@@ -23,7 +23,7 @@ import { resolveSearchMode } from '../src/core/search/mode.ts';
 import { DEFAULT_RERANKER_MODEL } from '../src/core/ai/defaults.ts';
 import type { MinionJobContext } from '../src/core/minions/types.ts';
 import { startPersistenceConsumer, stopPersistenceConsumer } from '../src/core/persistence/service.ts';
-import { embeddedSettings, openEngine, withEngineScope, type EngineSettings } from '../src/core/engine-open.ts';
+import { embeddedSettings, openEngine, withEngineScope, withLocalScope, type EngineSettings } from '../src/core/engine-open.ts';
 import { createEngine } from '../src/core/engine-factory.ts';
 import { createDegradedEngine } from '../src/core/degraded-engine.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
@@ -236,7 +236,7 @@ describe('process base URLs never reach an engine', () => {
         expect(withEngineScope(proxied, () => new Anthropic(anthropicClientOptions())).baseURL).toBe('https://engine-proxy.example');
         const error = await withEngineScope(without, () => failure(async () => anthropicClientOptions()));
         expect(error?.code).toBe('engine_scope_missing');
-        expect(anthropicClientOptions()).toEqual({ apiKey: PROCESS_KEY });
+        expect(withLocalScope(() => anthropicClientOptions())).toEqual({ apiKey: PROCESS_KEY });
       } finally {
         await Promise.all([named.disconnect(), proxied.disconnect(), without.disconnect()]);
       }
@@ -285,7 +285,7 @@ describe('chat usage and unscoped calls', () => {
   const usageRows = async (engine: BrainEngine) => Number((await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM chat_usage_log'))[0]!.n);
   const settled = () => Bun.sleep(200);
 
-  test('chat usage lands in the in-scope engine\'s database, and an unscoped call never books to an embedded engine', async () => {
+  test('chat usage lands in the in-scope engine\'s database, and a local-scope call never books to an embedded engine', async () => {
     installStubs();
     configureProcessGateway();
     const cli = await createEngine({ engine: 'pglite' });
@@ -299,7 +299,7 @@ describe('chat usage and unscoped calls', () => {
       await withEngineScope(a, () => chat({ messages: [{ role: 'user', content: 'hello from a' }] }));
       await settled();
       expect([await usageRows(a), await usageRows(b), await usageRows(cli)]).toEqual([1, 0, 0]);
-      await chat({ messages: [{ role: 'user', content: 'hello from the host' }] });
+      await withLocalScope(() => chat({ messages: [{ role: 'user', content: 'hello from the host' }] }));
       await settled();
       expect([await usageRows(a), await usageRows(b), await usageRows(cli)]).toEqual([1, 0, 1]);
     } finally {
@@ -307,20 +307,22 @@ describe('chat usage and unscoped calls', () => {
     }
   }, 120_000);
 
-  test('a process holding an embedded engine refuses an unscoped AI call unless the host configured a process gateway', async () => {
+  test('a process holding an embedded engine refuses an unscoped AI call engine_scope_required, also with a process gateway; a local scope uses it', async () => {
     __unconfigureGatewayForTests();
     installStubs();
     await withEnv(ambient, async () => {
       const engine = await openEngine(settingsFor({ ai: { providers: { openai: { apiKey: key('a') } } } }));
       try {
         const error = await failure(() => chat({ messages: [{ role: 'user', content: 'hello' }] }));
-        expect(error?.code).toBe('engine_scope_missing');
+        expect(error?.code).toBe('engine_scope_required');
         expect(`${error!.message} ${error!.suggestion}`).toContain('withEngineScope');
         expect(resolveAnthropicKey()).toBeUndefined();
-        expect((await failure(async () => anthropicClientOptions()))?.code).toBe('engine_scope_missing');
+        expect((await failure(async () => anthropicClientOptions()))?.code).toBe('engine_scope_required');
         configureProcessGateway();
-        expect(await failure(() => chat({ messages: [{ role: 'user', content: 'hello' }] }))).toBeNull();
-        expect(resolveAnthropicKey()).toBe(PROCESS_KEY);
+        expect((await failure(() => chat({ messages: [{ role: 'user', content: 'hello' }] })))?.code).toBe('engine_scope_required');
+        expect(resolveAnthropicKey()).toBeUndefined();
+        expect(await withLocalScope(() => failure(() => chat({ messages: [{ role: 'user', content: 'hello' }] })))).toBeNull();
+        expect(withLocalScope(resolveAnthropicKey)).toBe(PROCESS_KEY);
       } finally {
         await engine.disconnect();
       }
@@ -344,7 +346,7 @@ describe('facts queue', () => {
         const job = async () => { await chat({ messages: [{ role: 'user', content: 'extract facts' }] }); };
         withEngineScope(first!, () => queue.enqueue(job, 'shared-session'));
         withEngineScope(second!, () => queue.enqueue(job, 'shared-session'));
-        queue.enqueue(job, 'shared-session');
+        withLocalScope(() => queue.enqueue(job, 'shared-session'));
         expect((await queue.drainPending({ timeout: 30_000 })).unfinished).toBe(0);
         expect(sent.filter(s => s.kind === 'chat').map(s => s.auth)).toEqual([`Bearer ${keyOf(first!)}`, `Bearer ${keyOf(second!)}`, `Bearer ${PROCESS_KEY}`]);
       }
@@ -507,7 +509,8 @@ describe('an engine that openEngine did not open', () => {
       const cli = await createEngine({ engine: 'pglite' });
       try {
         expect(await withEngineScope(cli, snapshot)).toBe(outside);
-        expect(await snapshot()).toBe(outside);
+        expect(await withLocalScope(snapshot)).toBe(outside);
+        expect((await failure(snapshot))?.code).toBe('engine_scope_required');
         expect(await withEngineScope(embedded, snapshot)).not.toBe(outside);
       } finally {
         await embedded.disconnect();

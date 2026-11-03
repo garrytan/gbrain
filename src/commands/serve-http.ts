@@ -54,6 +54,7 @@ import { registerCleanup } from '../core/process-cleanup.ts';
 import { VERSION } from '../version.ts';
 import { NoticeLedger } from '../core/notice-ledger.ts';
 import { createReadinessCache, type ReadinessCache } from '../core/readiness.ts';
+import { withLocalScope } from '../core/engine-scope-store.ts';
 
 export { extractGitHubItemRef, githubKindCoversRepo, selectGitHubItemSources } from './serve-http-webhooks.ts';
 export { HEALTH_TIMEOUT_MS, probeHealth, probeLiveness, type ProbeHealthResult } from './serve-http-metrics.ts';
@@ -843,7 +844,12 @@ export async function buildServeHttpApp(app: express.Express, engine: BrainEngin
   return { bind, config, sql, issuerUrl, skillStatus, bootstrapToken, bootstrapFromEnv, suppressBootstrapPrint };
 }
 
-export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
+/** The HTTP server runs in a local scope; each POST /mcp enters its engine's scope (serve-http-mcp.ts). */
+export function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
+  return withLocalScope(() => serveHttp(engine, options));
+}
+
+async function serveHttp(engine: BrainEngine, options: ServeHttpOptions) {
   const { port, tokenTtl, enableDcr, enableDcrInsecure } = options;
   // Express 5 app
   const app = express();

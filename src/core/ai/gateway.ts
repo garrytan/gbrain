@@ -65,7 +65,7 @@ import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
 import { unscopedInEmbeddedProcess, withEngineScope } from '../engine-scope.ts';
-import { engineScopeMissing, engineScopeUnentered, releasedKeyEnv, scopedGatewayState, type GatewayState } from './engine-gateway.ts';
+import { engineScopeMissing, engineScopeRequired, releasedKeyEnv, scopedGatewayState, type GatewayState } from './engine-gateway.ts';
 import { AIConfigError, AITransientError, isStructuredOutputRejection, isUnbilledEmbeddingRejection, normalizeAIError } from './errors.ts';
 import { embeddingModelNotFoundHint, gatewayModelNotFoundHint } from './model-not-found-hint.ts';
 import { fitMatryoshkaPrefix, isEmbeddingZeroNormError, screenAlignedEmbeddings, screenEmbeddings, sendableEmbeddingInputs } from './embedding-guard.ts';
@@ -141,9 +141,16 @@ const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 
 /** What `configureGateway` writes and every call reads, except a call in an embedded engine's scope (engine-gateway.ts). */
 const processState: GatewayState = { config: null, modelCache: new Map(), cacheTag: '' };
-const gw = (): GatewayState => scopedGatewayState(gatewayConfigOf) ?? processState;
+/** A call with no scope in a process holding open embedded engines: no config and no provider, so every read of it refuses or reads as unavailable. */
+const unscopedState: GatewayState = { config: null, modelCache: new Map(), providers: new Set(), cacheTag: '' };
+const gw = (): GatewayState => scopedGatewayState(gatewayConfigOf) ?? (unscopedInEmbeddedProcess() ? unscopedState : processState);
+/** Every AI call starts here: with no scope in a process holding open embedded engines it refuses `engine_scope_required`. */
+function refuseUnscoped(): void {
+  if (unscopedInEmbeddedProcess()) throw engineScopeRequired();
+}
 /** The config a call to `recipe` uses; an embedded engine not given that provider refuses `engine_scope_missing`. */
 function configFor(recipe: Recipe, touchpoint: string): AIGatewayConfig {
+  refuseUnscoped();
   const { providers } = gw();
   if (providers && !providers.has(recipe.id)) throw engineScopeMissing(recipe.id, touchpoint);
   return requireConfig();
@@ -172,7 +179,7 @@ export function authToHeaders(auth: { apiKey?: string; headers?: Record<string, 
  * are deliberately left unchanged.
  */
 export function configureGatewayIfUninitialized(): void {
-  if (processState.config || gw() !== processState || unscopedInEmbeddedProcess()) return;
+  if (processState.config || gw() !== processState) return;
   const config = loadConfig();
   if (config) configureGateway(buildGatewayConfig(config));
 }
@@ -842,9 +849,9 @@ export function __setChatTransportForTests(
  *  `models doctor` base-URL probe (which reads the same merged config the
  *  gateway calls with, inside its own fail-open guard). */
 export function requireConfig(): AIGatewayConfig {
+  refuseUnscoped();
   const config = gw().config;
   if (!config) {
-    if (unscopedInEmbeddedProcess()) throw engineScopeUnentered();
     throw new AIConfigError(
       'AI gateway is not configured. Call configureGateway() during engine connect.',
       'This is a gbrain bug — file an issue at https://github.com/garrytan/gbrain/issues',
@@ -1620,6 +1627,7 @@ export interface EmbedOpts {
 }
 
 export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32Array[]> {
+  refuseUnscoped();
   if (!texts || texts.length === 0) return [];
 
   const cfg = requireConfig();
@@ -1915,6 +1923,7 @@ export async function embedMultimodal(
   inputs: MultimodalInput[],
   opts: EmbedMultimodalOpts = {},
 ): Promise<Float32Array[]> {
+  refuseUnscoped();
   if (!inputs || inputs.length === 0) return [];
   // Fix wave 13 P1.18: reserve on the ambient tracker before any provider call,
   // as embed() does. An image is reserved at the provider's per-input maximum
@@ -2512,6 +2521,7 @@ function normalizeSdkUsage(usage: unknown): { inputTokens: number; outputTokens:
  * Caller is responsible for sanitizing the query (prompt-injection boundary stays in expansion.ts).
  */
 export async function expand(query: string): Promise<string[]> {
+  refuseUnscoped();
   if (!query || !query.trim()) return [query];
   if (!isAvailable('expansion')) return [query];
 
@@ -3569,6 +3579,7 @@ export function toAISDKTools(tools: ChatToolDef[] | undefined): Record<string, a
 }
 
 export async function chat(opts: ChatOpts): Promise<ChatResult> {
+  refuseUnscoped();
   await discoverBeforeOpenAICall(opts.model ?? gw().config?.chat_model);
   const fallbackChain = opts.allowFallback === false ? undefined : gw().config?.chat_fallback_chain;
   if (fallbackChain?.length) return chatWithFallback(opts, opts.model ?? getChatModel(), fallbackChain, chat, { onRefusal: gw().config?.chat_fallback_on_refusal !== false });
@@ -4044,6 +4055,7 @@ export interface ToolLoopResult {
  * via `__setChatTransportForTests` without any DB.
  */
 export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
+  refuseUnscoped();
   const maxTurns = opts.maxTurns ?? 20;
   const maxTokens = opts.maxTokens ?? defaultMaxOutputTokens(opts.model ?? getChatModel());
   const handlers = opts.toolHandlers;
@@ -4339,6 +4351,7 @@ export function __setRerankTransportForTests(fn: RerankTransport | null): void {
 const DEFAULT_RERANK_TIMEOUT_MS = 5000;
 
 export async function rerank(input: RerankInput): Promise<RerankResult[]> {
+  refuseUnscoped();
   if (!input.query) {
     throw new RerankError('rerank: query is required', 'unknown');
   }

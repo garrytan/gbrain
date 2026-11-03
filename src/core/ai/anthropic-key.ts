@@ -26,7 +26,7 @@
 import { loadConfig } from '../config.ts';
 import { embeddedSettingsRecord } from '../embedded-engine.ts';
 import { embeddedEngineInScope, unscopedInEmbeddedProcess } from '../engine-scope.ts';
-import { engineScopeMissing, engineScopeUnentered } from './engine-gateway.ts';
+import { engineScopeMissing, engineScopeRequired } from './engine-gateway.ts';
 
 /** In an embedded engine's scope (engine-scope.ts): its own `settings.ai` Anthropic key, or null. Undefined outside one. */
 function engineAnthropicKey(): string | null | undefined {
@@ -43,8 +43,6 @@ function engineAnthropicKey(): string | null | undefined {
  * `ANTHROPIC_API_KEY`). Cleared by the gateway reset paths via the stash.
  */
 let _gatewayEnvKeySnapshot: string | undefined;
-/** Whether `configureGateway()` set a process gateway: in a process holding embedded engines, only then may an unscoped call use process keys. */
-let _processGatewayConfigured = false;
 
 /**
  * Push seam for `configureGateway()`: stash the gateway env's Anthropic key
@@ -59,7 +57,6 @@ export function stashGatewayAnthropicKeyFromEnv(
 ): void {
   const key = env?.ANTHROPIC_API_KEY;
   _gatewayEnvKeySnapshot = key !== process.env.ANTHROPIC_API_KEY ? key : undefined;
-  _processGatewayConfigured = env !== undefined;
 }
 
 /**
@@ -89,7 +86,7 @@ export function getGatewayAnthropicKeySnapshot(): string | undefined {
  */
 export function anthropicClientOptions(): { apiKey?: string; baseURL?: string } {
   const engine = embeddedEngineInScope();
-  if (!engine && unscopedInEmbeddedProcess() && !_processGatewayConfigured) throw engineScopeUnentered();
+  if (!engine && unscopedInEmbeddedProcess()) throw engineScopeRequired();
   if (!engine) return { apiKey: resolveAnthropicKey() };
   const provider = embeddedSettingsRecord(engine)?.ai?.providers.anthropic;
   if (!provider?.apiKey) throw engineScopeMissing('anthropic', 'chat');
@@ -111,7 +108,7 @@ export function hasAnthropicKey(): boolean {
 export function resolveAnthropicKey(): string | undefined {
   const scoped = engineAnthropicKey();
   if (scoped !== undefined) return scoped ?? undefined;
-  if (unscopedInEmbeddedProcess() && !_processGatewayConfigured) return undefined;
+  if (unscopedInEmbeddedProcess()) return undefined;
   if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
   if (_gatewayEnvKeySnapshot) return _gatewayEnvKeySnapshot;
   try {

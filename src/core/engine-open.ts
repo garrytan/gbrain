@@ -14,7 +14,7 @@ import { getRecipe } from './ai/recipes/index.ts';
 
 export type { EngineAISettings, EngineSettings, EmbeddedSettingsView } from './embedded-engine.ts';
 export { embeddedSettings, isEmbeddedEngine, processHasEmbeddedEngines } from './embedded-engine.ts';
-export { withEngineScope } from './engine-scope.ts';
+export { withEngineScope, withLocalScope } from './engine-scope.ts';
 export { hostIdFor } from './persistence/identity.ts';
 
 /** Connections a Postgres engine opened from settings may open when `pool.max` is not given. */

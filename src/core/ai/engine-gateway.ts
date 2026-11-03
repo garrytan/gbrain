@@ -113,10 +113,13 @@ export function releasedKeyEnv(): Record<string, string> {
   return Object.fromEntries((engine ? releasedEngineKeys(engine) : []).map((value, i) => [`RELEASED_${i}_API_KEY`, value]));
 }
 
-/** The refusal for an AI call made outside any engine scope in a process holding embedded engines whose host configured no process gateway. */
-export function engineScopeUnentered(): Error {
-  return opError('engine_scope_missing', 'An AI call ran outside any engine scope in a process that holds engines opened from settings.',
-    'Its brain is unknown, so no process.env key, ~/.gbrain/config.json or default gateway is used and nothing was sent. Run it inside withEngineScope(engine, fn), or configure a process gateway (configureGateway) for calls that belong to no engine.');
+/**
+ * The refusal for an AI call that entered no scope in a process holding open embedded engines. It decides by scope
+ * presence alone: a process gateway the host configured never opens it.
+ */
+export function engineScopeRequired(): Error {
+  return opError('engine_scope_required', 'An AI call ran outside any engine scope in a process that holds engines opened from settings.',
+    'Its brain is unknown, so no process.env key, ~/.gbrain/config.json or process gateway is used and nothing was sent. Run it inside withEngineScope(engine, fn) for the engine it belongs to, or withLocalScope(fn) for a call that belongs to the process gateway.');
 }
 
 /** In an embedded engine's scope, its settings.ai.models.reranker; search uses it in place of the mode bundle's default. */
