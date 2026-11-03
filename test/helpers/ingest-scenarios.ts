@@ -567,3 +567,54 @@ export async function undoUnverifiableScenario(engine: BrainEngine): Promise<voi
   expect((await factsOn(engine, 'companies/zentrix')).every(f => f.valid_until === null && f.expired_at === null)).toBe(true);
 }
 
+
+/**
+ * Master's private-request hold (#7841, #7880, #7897) on a pasted document: a document whose leading frontmatter asks for
+ * `visibility: private`, in any spelling, is refused `visibility_not_applied` before any provider call or write unless the
+ * ingest itself is private; ingest never stores such a document world-readable.
+ */
+export async function privateRequestScenario(engine: BrainEngine): Promise<void> {
+  await seedEntities(engine);
+  const stub = stubChat();
+  try {
+    const body = '\n\nZentrix signed its first enterprise customer last week.\n';
+    const cases: Array<[string, string, Partial<OperationContext>]> = [
+      ['---\nVisibility: private\n---' + body, 'noncanonical_value', {}],
+      ['---\nvisibility: Private\n---' + body, 'noncanonical_value', {}],
+      ['---\nvisibility: private\n---' + body, 'not_kept', {}],
+      ['---\nvisibility:\n  - private\n---' + body, 'noncanonical_value', {}],
+      ['---\nVisibility: private\n---' + body, 'noncanonical_value', { remote: true } as never],
+    ];
+    for (const [content, reason, over] of cases) {
+      const before = await pageCount(engine);
+      const err = await ingest(engine, { content, title: 'Board notes' }, over).catch(e => e) as OperationError;
+      expect(err).toBeInstanceOf(OperationError);
+      expect([err.code, err.reason]).toEqual(['visibility_not_applied', reason]);
+      expect(stub.calls).toBe(0);
+      expect(await pageCount(engine)).toBe(before);
+      expect(await ingestCheckpoints(engine)).toBe(0);
+    }
+    const report = await ingest(engine, { content: '---\nvisibility: private\n---' + body, title: 'Board notes', visibility: 'private' });
+    expect(report.status).toBe('complete');
+    expect((await engine.getPage(report.source_page.slug))!.frontmatter.visibility).toBe('private');
+  } finally { stub.restore(); }
+}
+
+/** Trust-tier provenance: ingest's pages carry the tier the page door gives the same caller's own put_page (#7873). */
+export async function trustTierScenario(engine: BrainEngine): Promise<void> {
+  await seedEntities(engine);
+  const stub = stubChat();
+  const tier = async (slug: string) => (await engine.executeRaw<{ trust_tier: string | null }>('SELECT trust_tier FROM pages WHERE slug = $1 AND deleted_at IS NULL', [slug]))[0]?.trust_tier ?? null;
+  try {
+    const caller = await oauthCaller(engine, { boundSlugPrefixes: ['companies/', 'inbox/', 'ingest/', 'notes/'] });
+    const remote = await ingest(engine, { content: 'Zentrix signed its first enterprise customer last week.', title: 'Remote notes' }, caller);
+    expect(remote.status).toBe('complete');
+    await operationsByName.put_page!.handler(reviewCtx(engine, caller), { slug: 'notes/remote-put', content: '---\ntype: note\ntitle: Remote put\n---\n\nZentrix signed.\n' });
+    const local = await ingest(engine, { content: 'Zentrix signed its second enterprise customer this week.', title: 'Local notes' });
+    await operationsByName.put_page!.handler(reviewCtx(engine), { slug: 'notes/local-put', content: '---\ntype: note\ntitle: Local put\n---\n\nZentrix signed.\n' });
+    await drain(engine);
+    expect(await tier(remote.source_page.slug)).toBe(await tier('notes/remote-put'));
+    expect(await tier(local.source_page.slug)).toBe(await tier('notes/local-put'));
+  } finally { stub.restore(); }
+}
+

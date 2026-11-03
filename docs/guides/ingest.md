@@ -182,6 +182,7 @@ first, ingest plans that entity once more and reports what it found (`existing`,
 | `ingest_attempt_not_found` | | check the attempt id |
 | `ingest_undo_unverifiable` | | review the attempt's pages by hand |
 | `ingest_namespace_reserved` | | use ingest-undo or another slug |
+| `visibility_not_applied` | `noncanonical_value`, `not_kept` | the document's own frontmatter asks for `visibility: private` (any spelling) and the ingest is world: run it on the brain host with `--visibility private`, or remove the request; nothing was read or written |
 
 All of them are in [error codes](error-codes.md); `gbrain errors <code>` explains each offline.
 

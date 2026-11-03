@@ -13,7 +13,8 @@ import { readFix } from './op-fix.ts';
 import { VERSION } from '../../version.ts';
 import type { Page } from '../types.ts';
 import { stringifyDataFrontmatter } from '../data-frontmatter.ts';
-import { serializePageToMarkdown } from '../markdown.ts';
+import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
+import { readPrivateRequest } from '../persistence/visibility-request.ts';
 import { assertInlineBody } from '../page-body/page-shape.ts';
 import { strikeFenceRow } from '../facts/forget.ts';
 import { checkFactAgainstSaved } from '../facts/backstop.ts';
@@ -49,6 +50,23 @@ function invalid(code: 'ingest_input_invalid' | 'ingest_option_invalid', reason:
   return opError(code, message, 'Nothing was written. ' + suggestion, { reason, docs: DOCS + '#errors', ...(fix ? { fix } : {}) });
 }
 
+/**
+ * #7841/#7880/#7897: a document whose leading frontmatter asks for visibility: private (any spelling) is never stored
+ * world-readable; ingest keeps the document as the source page's body, so only a private ingest keeps that request.
+ */
+function assertNoPrivateRequest(text: string): void {
+  let frontmatter: Record<string, unknown> | null | undefined;
+  let asks: boolean;
+  try {
+    asks = readPrivateRequest(text, () => (frontmatter = parseMarkdown(text, 'ingest-document.md').frontmatter)) !== null;
+  } catch { asks = true; }
+  if (!asks) return;
+  const reason = frontmatter?.visibility === 'private' ? 'not_kept' : 'noncanonical_value';
+  throw opError('visibility_not_applied', 'The document asks for visibility: private, but this ingest would store it world-readable, so nothing was read or written (' + reason + ').',
+    'Nothing was extracted or written. Ingest it on the brain host with gbrain ingest --visibility private, or remove the request from the document if it may be world-readable.',
+    { reason, docs: 'docs/guides/write-refusals.md#visibility_not_applied' });
+}
+
 /** Rule 1: every input and option is checked before any read of the brain that could lead to a write. */
 async function validateRun(ctx: OperationContext, p: Params): Promise<{ text: string; options: IngestOptions; maxUsd: number; title: string | null; slug: string | null }> {
   if (typeof p.content !== 'string') throw invalid('ingest_input_invalid', 'missing', 'No document text was passed.', 'Pass the document as content (CLI: --file <path> or --stdin).');
@@ -75,6 +93,7 @@ async function validateRun(ctx: OperationContext, p: Params): Promise<{ text: st
   const visibility = p.visibility === undefined ? 'world' : p.visibility;
   if (visibility !== 'world' && visibility !== 'private') throw invalid('ingest_option_invalid', 'visibility', 'visibility "' + String(visibility).slice(0, 40) + '" is not world or private.', 'Pass visibility world or private.');
   if (visibility === 'private' && ctx.remote !== false) throw invalid('ingest_option_invalid', 'visibility', 'Only the local CLI can ingest with visibility private.', 'Omit visibility, or run gbrain ingest --visibility private on the brain host.');
+  if (visibility !== 'private') assertNoPrivateRequest(text);
   const configured = Number(await ctx.engine.getConfig(INGEST_MAX_USD_KEY) ?? DEFAULT_MAX_USD);
   const ceiling = Number.isFinite(configured) && configured >= 0 ? configured : DEFAULT_MAX_USD;
   let maxUsd = ceiling;
@@ -662,13 +681,13 @@ async function runUndo(ctx: OperationContext, p: Params): Promise<Record<string,
 
 const ingest: Operation = {
   name: 'ingest',
-  description: 'Save a pasted document: the whole text read in windows, every page and fact planned and checked before any write, then the source page, proposed pages for new entities and each fact on the entities it names. Returns an ingest report with a status per item, coverage, spend, and approve or undo actions. attempt_id alone reads a report (read-only); with resume: true it continues an incomplete attempt.',
+  description: 'Save a pasted document as a source page, proposed pages for new entities and facts on the entities it names, all planned and checked before any write. Returns a report: status per item, coverage, spend, approve and undo actions. attempt_id alone reads a report; with resume: true continues it.',
   params: {
-    content: { type: 'string', description: 'The document text (at most 200,000 characters).' },
-    attempt_id: { type: 'string', description: 'An attempt id from a report: alone, read that report; with resume, continue it.' },
-    resume: { type: 'boolean', description: 'Continue an incomplete attempt from its stored windows (pass the same content).' },
-    type: { type: 'string', description: 'Page type of the source page (default note).' },
-    title: { type: 'string', description: 'Title of the source page.' },
+    content: { type: 'string', description: 'Document text (max 200,000 chars).' },
+    attempt_id: { type: 'string', description: 'From a report: alone reads it; with resume continues it.' },
+    resume: { type: 'boolean', description: 'Continue an incomplete attempt (same content).' },
+    type: { type: 'string', description: 'Source page type (default note).' },
+    title: { type: 'string', description: 'Source page title.' },
     slug: { type: 'string', description: 'Slug of the source page (default inbox/ingest-<hash>).', fullSurfaceOnly: true },
     source_id: { type: 'string', description: 'Source to write (default: your source).', fullSurfaceOnly: true },
     valid_from: { type: 'string', description: 'When the document\'s facts became true (ISO date).', fullSurfaceOnly: true },
@@ -677,7 +696,7 @@ const ingest: Operation = {
     trusted_extraction: { type: 'boolean', description: 'Local owner only: create model-typed new entities as real pages instead of proposed.', fullSurfaceOnly: true },
     max_usd: { type: 'number', description: 'Spend cap for this ingest in USD (default ingest.max_usd, 0.50).', fullSurfaceOnly: true },
     request_id: { type: 'string', description: 'Idempotency key: a repeat with the same key returns the same attempt.', fullSurfaceOnly: true },
-    dry_run: { type: 'boolean', description: 'Preview the keyless candidate plan, window count and estimated cost; no provider call, nothing written.' },
+    dry_run: { type: 'boolean', description: 'Preview candidates, windows and cost; no provider call or write.' },
   },
   outputRedaction: 'retrieval',
   writeInference: 'explicit_llm',
@@ -689,11 +708,11 @@ const ingest: Operation = {
 
 const ingest_undo: Operation = {
   name: 'ingest_undo',
-  description: 'Undo one ingest attempt: without yes it previews what would be retracted and returns plan_hash (writes nothing); with yes and expect: <plan_hash> it strikes the facts the attempt wrote and soft-deletes the pages it created, skipping anything edited, promoted, referenced or supported since.',
+  description: 'Undo one ingest attempt. Without yes: a preview and plan_hash, no write. With yes and expect: <plan_hash>: strikes its facts and soft-deletes its pages, skipping anything edited, promoted, referenced or supported since.',
   params: {
-    attempt_id: { type: 'string', required: true, description: 'The attempt id from the ingest report.' },
-    yes: { type: 'boolean', description: 'Apply the undo (needs expect).' },
-    expect: { type: 'string', description: 'The plan_hash from the preview you are applying.' },
+    attempt_id: { type: 'string', required: true, description: 'From the ingest report.' },
+    yes: { type: 'boolean', description: 'Apply (needs expect).' },
+    expect: { type: 'string', description: 'plan_hash from the preview.' },
   },
   outputRedaction: 'no_stored_text',
   writeInference: 'none',

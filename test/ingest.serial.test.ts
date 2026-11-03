@@ -84,6 +84,14 @@ for (const storage of ['git', 'database'] as ReviewStorage[]) {
       fx = await reviewDoorFixture(engine, storage);
       await S.privacyScenario(engine);
     }, 60_000);
+    test('a document asking for visibility: private is refused unless the ingest is private (master private-request hold)', async () => {
+      fx = await reviewDoorFixture(engine, storage);
+      await S.privateRequestScenario(engine);
+    }, 60_000);
+    test('ingest pages carry the trust tier the door gives the caller', async () => {
+      fx = await reviewDoorFixture(engine, storage);
+      await S.trustTierScenario(engine);
+    }, 60_000);
     test('a natural slug held by an unreadable page takes the hash-tagged slug, proposed', async () => {
       fx = await reviewDoorFixture(engine, storage);
       await S.heldSlugScenario(engine);

@@ -5581,27 +5581,27 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   },
   {
     "name": "ingest",
-    "description": "Save a pasted document: the whole text read in windows, every page and fact planned and checked before any write, then the source page, proposed pages for new entities and each fact on the entities it names. Returns an ingest report with a status per item, coverage, spend, and approve or undo actions. attempt_id alone reads a report (read-only); with resume: true it continues an incomplete attempt.",
+    "description": "Save a pasted document as a source page, proposed pages for new entities and facts on the entities it names, all planned and checked before any write. Returns a report: status per item, coverage, spend, approve and undo actions. attempt_id alone reads a report; with resume: true continues it.",
     "params": {
       "content": {
         "type": "string",
-        "description": "The document text (at most 200,000 characters)."
+        "description": "Document text (max 200,000 chars)."
       },
       "attempt_id": {
         "type": "string",
-        "description": "An attempt id from a report: alone, read that report; with resume, continue it."
+        "description": "From a report: alone reads it; with resume continues it."
       },
       "resume": {
         "type": "boolean",
-        "description": "Continue an incomplete attempt from its stored windows (pass the same content)."
+        "description": "Continue an incomplete attempt (same content)."
       },
       "type": {
         "type": "string",
-        "description": "Page type of the source page (default note)."
+        "description": "Source page type (default note)."
       },
       "title": {
         "type": "string",
-        "description": "Title of the source page."
+        "description": "Source page title."
       },
       "slug": {
         "type": "string",
@@ -5649,7 +5649,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "dry_run": {
         "type": "boolean",
-        "description": "Preview the keyless candidate plan, window count and estimated cost; no provider call, nothing written."
+        "description": "Preview candidates, windows and cost; no provider call or write."
       }
     },
     "outputRedaction": "retrieval",
@@ -5663,20 +5663,20 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   },
   {
     "name": "ingest_undo",
-    "description": "Undo one ingest attempt: without yes it previews what would be retracted and returns plan_hash (writes nothing); with yes and expect: <plan_hash> it strikes the facts the attempt wrote and soft-deletes the pages it created, skipping anything edited, promoted, referenced or supported since.",
+    "description": "Undo one ingest attempt. Without yes: a preview and plan_hash, no write. With yes and expect: <plan_hash>: strikes its facts and soft-deletes its pages, skipping anything edited, promoted, referenced or supported since.",
     "params": {
       "attempt_id": {
         "type": "string",
         "required": true,
-        "description": "The attempt id from the ingest report."
+        "description": "From the ingest report."
       },
       "yes": {
         "type": "boolean",
-        "description": "Apply the undo (needs expect)."
+        "description": "Apply (needs expect)."
       },
       "expect": {
         "type": "string",
-        "description": "The plan_hash from the preview you are applying."
+        "description": "plan_hash from the preview."
       }
     },
     "outputRedaction": "no_stored_text",

@@ -172,8 +172,8 @@ Every non-localOnly operation on the MCP surface: 166 tools across 26 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `ingest` | Save a pasted document: the whole text read in windows, every page and fact planned and checked before any write, then the source page, proposed pages for new entities and each fact on the entities it names. | write | yes |  |
-| `ingest_undo` | Undo one ingest attempt: without yes it previews what would be retracted and returns plan_hash (writes nothing); with yes and expect: <plan_hash> it strikes the facts the attempt wrote and soft-deletes the pages it created, skipping anything edited, promoted, referenced or supported since. | write | yes |  |
+| `ingest` | Save a pasted document as a source page, proposed pages for new entities and facts on the entities it names, all planned and checked before any write. | write | yes |  |
+| `ingest_undo` | Undo one ingest attempt. | write | yes |  |
 
 ## pages
 
