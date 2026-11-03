@@ -12,7 +12,7 @@ import { parseSourceConfig } from '../sources-load.ts';
 import type { SourceLifecycleInput } from './source-lifecycle.ts';
 import type { TopologyCloneRecovery } from './topology-clone-model.ts';
 import { compactStoredManifest, getWorktreeBinding, humanManifestProgress, storedManifestScope, worktreeManifest } from './ownership.ts';
-import { localHostId } from './identity.ts';
+import { hostIdFor } from './identity.ts';
 import { resolveCoordinationLock } from './coordination-lock.ts';
 import { acquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { canonicalFilesystemPath, recordManagedRoots } from './root-registry.ts';
@@ -51,7 +51,7 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
     `Source ${input.sourceId} is ${source?`now incarnation ${source.incarnation}`:'no longer registered'}, not the expected ${input.expectedIncarnation}; nothing was cloned. Re-read the source and confirm the ${input.operation} still applies before passing the current incarnation.`,
     {fix:writerStatusFix(input.sourceId)});
   const binding=input.operation==='reclone'?await getWorktreeBinding(engine,input.sourceId):null;
-  if(input.operation==='reclone'&&(!binding?.local_path||binding.owner_host_id!==localHostId()||binding.relative_path!==''))
+  if(input.operation==='reclone'&&(!binding?.local_path||binding.owner_host_id!==hostIdFor(engine)||binding.relative_path!==''))
     throw opError('owner_unavailable','Reclone must run on the owner of the complete canonical worktree.',
     `This host does not own source ${input.sourceId}'s whole canonical worktree (it is unclaimed, owned elsewhere, or a subdirectory of a shared root), so nothing was recloned. Check the owner and run the reclone on that host.`,
     {fix:writerStatusFix(input.sourceId)});
@@ -86,7 +86,7 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
       {fix:writerStatusFix(input.sourceId)});
     const reservedIdentity=readPhysicalRootReservation(target);
     const worktreeId=currentBinding?.worktree_id??reservedIdentity?.worktreeId??randomUUID();
-    const coordination=resolveCoordinationLock(target,worktreeId,{reservation:reservedIdentity?.coordinationPath,binding:currentBinding?.coordination_path}).path;
+    const coordination=resolveCoordinationLock(target,worktreeId,{reservation:reservedIdentity?.coordinationPath,binding:currentBinding?.coordination_path},hostIdFor(engine)).path;
     let newLock:NativeLockHandle|null=null;
     if(!bindings.some(binding=>binding.worktree_id===worktreeId)){newLock=await acquireNativeLock(coordination!,{timeoutMs:5000});if(!newLock)throw opError('writer_lock_unavailable','The new clone coordination lock is busy.',
       `Another gbrain process holds the coordination lock for ${target}, so source ${input.sourceId} was not cloned. Run the command again once that process has finished.`,
@@ -106,8 +106,8 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
         if(preparedOwner){
           const members=await tx.executeRaw('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid LIMIT 1',[worktreeId]);
           const [host]=await tx.executeRaw<{local_path:string;coordination_path:string}>(
-            'SELECT local_path,coordination_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid',[worktreeId,localHostId()]);
-          if(preparedOwner.owner_host_id!==localHostId()||preparedOwner.state!=='active'||members.length
+            'SELECT local_path,coordination_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid',[worktreeId,hostIdFor(engine)]);
+          if(preparedOwner.owner_host_id!==hostIdFor(engine)||preparedOwner.state!=='active'||members.length
             ||host?.local_path!==target||host.coordination_path!==coordination)
             throw opError('recovery_required','The reserved checkout is still bound, recovering, or has a different physical identity.',
               `${target} is reserved by worktree ${worktreeId}, which is still bound to a source, recovering, or owned elsewhere, so source ${input.sourceId} was not cloned. Show the user the writer status; an interrupted clone there must finish recovery first.`,
@@ -130,7 +130,7 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
             `Source ${input.sourceId} has no manifest matching its current canonical content, so a fresh clone could not be verified and nothing was recloned. Show the user the writer status; restoring the checkout from a verified copy is their decision (docs/architecture/topologies.md).`,
             {fix:writerStatusFix(input.sourceId)});
         const recovery:TopologyCloneRecovery={version:1,kind:'clone',phase:'reserved',operation:input.operation as 'add'|'reclone',sourceId:input.sourceId,
-          incarnation,worktreeId,ownerHostId:localHostId(),ownerEpoch:String(currentBinding?.owner_epoch??preparedOwner?.owner_epoch??1),target,stage,aside,
+          incarnation,worktreeId,ownerHostId:hostIdFor(engine),ownerEpoch:String(currentBinding?.owner_epoch??preparedOwner?.owner_epoch??1),target,stage,aside,
           beforeHash:before?.digest??null,afterHash:null,manifest,...(manifest?{hashScope:storedManifestScope(manifest)}:{}),canonicalStamp,checkpoint:source?.last_commit??null,sourceRemoteUrl:source?.config.remote_url as string??null,input,cloneBudget:0};
         recovery.cloneBudget=reserved-oldBytes-Buffer.byteLength(JSON.stringify(recovery))-65_536;
         if(recovery.cloneBudget<65_536)throw opError('request_too_large','The old checkout leaves insufficient configured recovery space for a staged clone.',
@@ -138,8 +138,8 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
           {fix:recoveryCapacityFix()});
         if(!currentBinding){
           if(preparedOwner)await tx.executeRaw("UPDATE persistence_worktrees SET state='recovering' WHERE id=$1::uuid",[worktreeId]);
-          else await tx.executeRaw("INSERT INTO persistence_worktrees(id,owner_host_id,owner_epoch,state) VALUES($1::uuid,$2::uuid,1,'recovering')",[worktreeId,localHostId()]);
-          await tx.executeRaw('INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path) VALUES($1::uuid,$2::uuid,$3,$4) ON CONFLICT(worktree_id,host_id) DO NOTHING',[worktreeId,localHostId(),target,coordination]);
+          else await tx.executeRaw("INSERT INTO persistence_worktrees(id,owner_host_id,owner_epoch,state) VALUES($1::uuid,$2::uuid,1,'recovering')",[worktreeId,hostIdFor(engine)]);
+          await tx.executeRaw('INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path) VALUES($1::uuid,$2::uuid,$3,$4) ON CONFLICT(worktree_id,host_id) DO NOTHING',[worktreeId,hostIdFor(engine),target,coordination]);
           await tx.executeRaw('INSERT INTO persistence_source_bindings(source_id,source_incarnation,worktree_id) VALUES($1,$2::uuid,$3::uuid)',[input.sourceId,incarnation,worktreeId]);
         }else await tx.executeRaw("UPDATE persistence_worktrees SET state='recovering',manifest=$2::text::jsonb WHERE id=$1::uuid",[worktreeId,JSON.stringify(manifest)]);
         const [brain]=await tx.executeRaw<{brain_id:string}>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
@@ -155,7 +155,7 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
         mkdirSync(dirname(target),{recursive:true});flushTopologyDirectory(dirname(target));
         await topologyTransaction(engine,async tx=>{
           await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-          await reservePhysicalRoot(tx,target,{hostId:localHostId(),worktreeId,coordinationPath:coordination!});
+          await reservePhysicalRoot(tx,target,{hostId:hostIdFor(tx),worktreeId,coordinationPath:coordination!});
         });
         if(existsSync(recovery.stage))throw opError('recovery_required','The recorded staging path is already occupied.',
           `Staging directory ${recovery.stage} already exists, so source ${input.sourceId}'s clone stopped without touching it and is rolled back. Show the user that path; lifecycle request ${requestId}'s receipt records the failure.`,
@@ -180,7 +180,7 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
             {fix:recoveryCapacityFix()});
         await topologyTransaction(engine,async tx=>{
           await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-          await preparePhysicalRootReplacement(tx,recovery.stage,target,{hostId:localHostId(),worktreeId,coordinationPath:coordination!});
+          await preparePhysicalRootReplacement(tx,recovery.stage,target,{hostId:hostIdFor(tx),worktreeId,coordinationPath:coordination!});
           await tx.executeRaw("UPDATE persistence_topology_changes SET recovery=$2::text::jsonb,updated_at=now() WHERE id=$1::uuid AND state='recovering'",[accepted!.id,JSON.stringify(recovery)]);
         });
         await hooks.boundary?.('prepared');
