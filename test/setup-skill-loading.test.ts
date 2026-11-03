@@ -23,7 +23,7 @@ import { runCli } from './helpers/cli-spawn.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { BRAIN_FIRST_BEGIN, BRAIN_FIRST_END } from '../src/core/setup/brain-first.ts';
 import { inspectSkillsBlock, loaderAllowRule, renderSkillsBlock, SKILLS_BLOCK_BEGIN, SKILLS_BLOCK_END } from '../src/core/setup/skills-block.ts';
-import { bundledCatalogId } from '../src/core/skills/bundled.ts';
+import { bundledCatalogId, bundledSkills } from '../src/core/skills/bundled.ts';
 
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
 const BIN_DIR = mkdtempSync(join(tmpdir(), 'gbrain-skill-bin-'));
@@ -173,6 +173,21 @@ describe('skill loading: selection', () => {
     expect(text).not.toContain('get_skill');
     const ledger = JSON.parse(read(join(b.home, '.gbrain', 'skill-loading.json')));
     expect(ledger.entries[0]).toMatchObject({ harness: 'claude-code', mode: 'spring', launcher: LAUNCHER, audience: 'owner', catalog: bundledCatalogId() });
+  });
+
+  test('on a thin-client install the index lists only the skills the loader serves there', async () => {
+    const b = box();
+    mkdirSync(join(b.home, '.gbrain'), { recursive: true });
+    writeFileSync(join(b.home, '.gbrain', 'config.json'), JSON.stringify({ remote_mcp: { mcp_url: 'https://brain.example.test/mcp' } }));
+    const r = await setup(b, ['codex', '--instructions-only', '--gbrain-bin', LAUNCHER, '--skill-loading', 'spring']);
+    expect(r.exitCode).toBe(0);
+    const text = read(join(b.home, '.codex', 'AGENTS.md'));
+    const hostOnly = bundledSkills('owner').filter((s) => s.audience === 'owner');
+    expect(hostOnly.length).toBeGreaterThan(0);
+    for (const s of hostOnly) expect(text).not.toContain('- ' + s.name + ':');
+    for (const s of bundledSkills('downstream')) expect(text).toContain('- ' + s.name + ':');
+    const ledger = JSON.parse(read(join(b.home, '.gbrain', 'skill-loading.json')));
+    expect(ledger.entries[0]).toMatchObject({ harness: 'codex', mode: 'spring', audience: 'downstream' });
   });
 
   test('an index an upgrade left behind (older catalog) is reported stale and a bare re-run refreshes it', async () => {

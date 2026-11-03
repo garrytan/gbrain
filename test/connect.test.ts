@@ -536,6 +536,17 @@ describe('runConnect --install', () => {
     expect(seen).toEqual([['spring', '/opt/alice-example/gbrain']]);
   });
 
+  test('an unknown --skill-loading value is refused before anything is installed', async () => {
+    const seen: unknown[] = [];
+    const r = await runWithExitCapture(
+      ['https://brain.example.com/mcp', '--token', 'gbrain_tok', '--install', '--yes', '--skill-loading', 'always'],
+      installDeps({ writeInstructions: (...a) => { seen.push(a); return null; } }),
+    );
+    expect(r.exitCode).not.toBe(0);
+    expect(r.err.join('\n')).toContain("Unknown --skill-loading 'always'");
+    expect(seen).toEqual([]);
+  });
+
   test('probe failure warns + exits 1 + never echoes the token', async () => {
     const r = await runWithExitCapture(
       ['https://brain.example.com/mcp', '--token', 'gbrain_secret', '--install', '--yes'],
