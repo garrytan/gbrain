@@ -30,6 +30,8 @@ import {
   computeSkillsManifest,
 } from '../src/core/skills-integrity.ts';
 import { findGbrainRoot } from '../src/core/skillpack/bundle.ts';
+import { renderSkillsBlock, SKILLS_BLOCK_BEGIN, SKILLS_BLOCK_END } from '../src/core/setup/skills-block.ts';
+import { skillsIndexedIn } from '../src/core/skills/index-block.ts';
 
 const cleanups: string[] = [];
 
@@ -133,6 +135,22 @@ describe('skillCurrencyCheck', () => {
     expect(check.message).toContain('`gbrain skillpack sync`');
     const details = check.details as { new: string[]; drifted: string[] };
     expect(details.new.length).toBeGreaterThan(0);
+  });
+
+  test('skills the spring-loaded index already lists are not reported as missing or sent to `gbrain skillpack sync`', () => {
+    const workspace = makeDir('gbrain-currency-spring-');
+    const skillsDir = join(workspace, 'skills');
+    mkdirSync(skillsDir, { recursive: true });
+    const without = (skillCurrencyCheck(skillsDir).details as { new: string[] }).new;
+    const agents = `# Agent\n\n${SKILLS_BLOCK_BEGIN}\n${renderSkillsBlock('openclaw', '/home/alice-example/.bun/bin/gbrain')}\n${SKILLS_BLOCK_END}\n`;
+    writeFileSync(join(workspace, 'AGENTS.md'), agents);
+    const indexed = skillsIndexedIn(agents);
+    const check = skillCurrencyCheck(skillsDir);
+    const reported = (check.details as { new: string[] }).new;
+    expect(indexed.length).toBeGreaterThan(0);
+    expect(reported).toEqual(without.filter(s => !indexed.includes(s)));
+    expect(check.message).toStartWith(`${reported.length} new built-in skill(s)`);
+    expect(reported.some(s => indexed.includes(s))).toBe(false);
   });
 
   // #5606: on a managed canonical worktree `skillpack sync` is refused, so the hint names the coordinator route instead.

@@ -105,16 +105,17 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       });
     }, 180_000);
 
-    test('D-15 segmented pages are held without mutation while inline siblings restore', async () => {
+    // GBRA-287: a segmented page is re-exported from its segments (streamed), no longer held as page_body_segmented.
+    test('D-15 segmented pages are re-exported from their segments without mutation while inline siblings restore', async () => {
       await withBrain(databaseUrl, async b => {
         const fixture = await segmentPage(b.engine, ALICE, { generation: 1,
           occurrences: [{ id: 1, byteStart: 0, genFrom: 1, chunks: [{ text: 'Synthetic segmented body.' }] }] });
         const before = await segmentedPageState(b.engine, fixture.pageId);
         const lines = await expectUnitNotAborted(() => b.sync());
         expect(await segmentedPageState(b.engine, fixture.pageId)).toEqual(before);
-        expect(existsSync(b.file(ALICE))).toBe(false);
+        expect(readFileSync(b.file(ALICE), 'utf8')).toContain('Synthetic segmented body.');
         expect(readFileSync(b.file(BOB), 'utf8')).toBe(await b.rendered(BOB));
-        expect(lines.some(line => line.includes(ALICE) && line.includes('page_body_segmented'))).toBe(true);
+        expect(lines.some(line => line.includes(ALICE) && line.includes('page_body_segmented'))).toBe(false);
       });
     }, 180_000);
 

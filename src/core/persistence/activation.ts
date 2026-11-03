@@ -5,7 +5,7 @@ import type { Action } from '../agent-output.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { acquireWorktree, getWorktreeBinding, readManagedMode, type WorktreeBinding } from './ownership.ts';
-import { localHostId, existingLocalHostId, persistenceHome, registerLocalWriter } from './identity.ts';
+import { persistenceHome, registerLocalWriter, hostIdFor, existingHostIdFor } from './identity.ts';
 import { nativeLockCapability, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { assertWriterAdminState, WRITER_INSPECTION_HINT } from './admin-intent.ts';
@@ -192,7 +192,7 @@ export async function activatePersistence(engine: BrainEngine, opts: { confirmQu
       JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation WHERE NOT s.archived`);
     return { enabled: true, activated: false, filesystem_sources: count.count, native_lock: native, ...ALREADY_ENABLED };
   }
-  const hostId = opts.dryRun ? existingLocalHostId() : localHostId();
+  const hostId = opts.dryRun ? existingHostIdFor(engine) : hostIdFor(engine);
   const sources = await configuredSources(engine);
   const writeThrough = writeThroughConfigured(await engine.getConfig('sync.write_through'));
   const { bindings: initial, databaseOnly } = await validatedBindings(engine, sources, hostId, writeThrough);

@@ -96,6 +96,8 @@ export interface SyncResult {
   extract_error?: string;
   /** #5050: full sync re-sealed unchanged pages at the safe-chunk fence (see RunImportResult.resealed). */
   resealed?: import('./import.ts').RunImportResult['resealed'];
+  /** GBRA-287: DB-only pages (#2426) a full sync kept but could not re-export to the working tree; the run still completed. */
+  reexport_failures?: import('./sync/full.ts').ReexportFailure[];
   /**
    * v0.41.13.0 partial-sync fields (only set when status === 'partial').
    *

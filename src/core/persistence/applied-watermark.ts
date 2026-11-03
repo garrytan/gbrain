@@ -107,7 +107,7 @@ export async function readAppliedWatermark(engine: BrainEngine, sourceId: string
   const [source] = await engine.executeRaw<{ incarnation: string | null; root: string | null }>(`SELECT s.incarnation::text AS incarnation,
       COALESCE((SELECT h.local_path FROM persistence_host_bindings h JOIN persistence_source_bindings b ON b.worktree_id=h.worktree_id
         WHERE b.source_id=s.id AND h.host_id::text=$2 LIMIT 1), s.local_path) AS root FROM sources s WHERE s.id=$1`,
-    [sourceId, (await import('./identity.ts')).existingLocalHostId()]);
+    [sourceId, (await import('./identity.ts')).existingHostIdFor(engine)]);
   const commit = write.indexed_through.commit;
   const root = !opts.remote && source?.root && commit ? source.root : null;
   const lag = root ? await (opts.behind ?? readGitBehind)(root, commit!).catch(() => null) : null;

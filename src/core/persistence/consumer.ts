@@ -3,7 +3,7 @@ import { withoutCallerAccess } from '../search/private-visibility.ts';
 import type { GBrainConfig } from '../config.ts';
 import { claimableWriteSql, foregroundPrioritySql, claimGroupFollowers, claimNextLaneHead, claimNextWrite, publicationGroupKey, syncGroup, floorPreparationAttempts, hasClaimableWrite, getWriteRequestById, releaseUnpublishedClaim, renewWriteClaim, vacuumPersistenceQueues, independentGroup, sweepSegmentStorage, yieldToEventLoop } from './journal.ts';
 import { connectionCapFailure, finishPreparationStalled, finishUnpublishedFailure, preparationAbortReason, recoverPublication, transientDatabaseFailure, type PreparedMutation } from './coordinator.ts';
-import { localHostId } from './identity.ts';
+import { hostIdFor } from './identity.ts';
 import { executeClaimedGroup, PAGE_BATCH_GROUP_MAX, publishSingleWrite, singleWrite } from './group-publish.ts';
 import { preparationConfigView } from './config-snapshot.ts';
 import { CLAIM_LOST, DEFAULT_CLAIM_LEASE_TIMING, endLostLease, holdClaimForPublication, startClaimLease, type ClaimLeaseTiming } from './claim-lease.ts';
@@ -278,7 +278,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
        * interval across this host's processes (housekeeping-turn.ts).
        */
       oneShot?: { waiting: () => boolean } } = {}) {
-    this.hostId = opts.hostId ?? localHostId();
+    this.hostId = opts.hostId ?? hostIdFor(engine);
     this.statements = consumerStatementEngine(engine);
   }
   private get checkoutObservable(): ((listener: () => void) => () => void) | undefined {
