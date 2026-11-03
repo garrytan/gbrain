@@ -99,6 +99,26 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "string",
         "description": "fact_id this fact replaces (same entity, or none).",
         "fullSurfaceOnly": true
+      },
+      "claim_metric": {
+        "type": "string",
+        "description": "Typed claim metric, e.g. mrr (with claim_value).",
+        "fullSurfaceOnly": true
+      },
+      "claim_value": {
+        "type": "number",
+        "description": "Typed claim value (finite number).",
+        "fullSurfaceOnly": true
+      },
+      "claim_unit": {
+        "type": "string",
+        "description": "Typed claim unit, e.g. USD.",
+        "fullSurfaceOnly": true
+      },
+      "claim_period": {
+        "type": "string",
+        "description": "Typed claim period, e.g. monthly.",
+        "fullSurfaceOnly": true
       }
     },
     "mutating": true,

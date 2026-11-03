@@ -10,6 +10,40 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**`recall` can weigh how much a fact deserves to be believed, and can group a no-entity question's facts by entity. Both are opt-in.**
+
+### What changed
+
+| Situation | Before | With the switch on |
+|---|---|---|
+| `recall {question}`: a year-old fact you confirmed and a fresh agent-written or external fact match equally | the newest fact ranked first | the confirmed fact ranks first (`recall.confidence_weighting on`) |
+| The same, between two agent-written facts | newest first | newest first (age still decays) |
+| A dated historical fact ("founded in 2015") | ranked by match | ranked by match; it does not decay |
+| `recall {question}` with no `entity` answered by two clients' facts | one flat list, the clients' figures interleaved | each entity's facts together, `facts_groups`, and an `entity_unspecified` notice offering the recall per entity (`recall.group_by_entity on`) |
+| `gbrain config set recall.question_admission <typo>` | stored and silently ignored | refused; the new switches take only `on` or `off` |
+
+Weighting is `relevance × (0.5 + 0.5 × weight)`: facts you confirmed and your own notes keep full weight at any age, other tiers decay from `valid_from` and carry a tier weight (tool 0.9, agent 0.8, external 0.6). It only reorders facts that already matched; `relevance` stays the plain score and `rank_score` and `confidence_factor` show the weighting. Grouping runs after the limit and budget cuts, so no entity is cut off by it. Both read database rows only, so they work the same on brains with no git repository.
+
+On a keyless 60-question fixture (old confirmed truth against fresh agent and external text, an agent knowledge update, dated history), weighting moved the confirmed truth to first in 20 of 20 questions, from 0 of 20, and left the update and history cases at 20 of 20. Grouping removed entity interleaving in 10 of 10 two-client questions with the same number of entities delivered.
+
+**Typed figures you save can now be checked for conflicts without an API key, and you decide each conflict from the trust review.**
+
+`remember` takes an optional typed claim (`claim_metric`, `claim_value`, `claim_unit`, `claim_period`). Two saved claims about the same entity with the same metric, unit and period in the same as-of bucket (the day, or the week, month, quarter or year the period names) are a conflict. Figures in different buckets are history, so a monthly series, a run of funding rounds or a forecast next to an actual are never flagged. Finding conflicts is off by default: `gbrain config set dream.claim_conflicts.mode propose` turns on the nightly phase, and `gbrain decide sweep --claims` runs it once (`--dry-run` writes nothing). Each conflict becomes one pending proposal that nothing applies until you decide it.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| `remember` a figure | text only | optional typed claim, stored on the fact and in the entity page's `## Facts` table; a bad value is refused with the corrected call |
+| Two saved figures disagree for the same month | found only by the paid conflict sweep | found by `gbrain decide sweep --claims` or the `claim_conflicts` dream phase (`propose`), with no key and no model call |
+| A typed figure saved for April next to March's | could supersede March's if the text was close | both kept: a typed write never supersedes a typed fact in another bucket |
+| `gbrain trust review` | proposals, lowered pages, preferences, holds | also `contradiction` items (`dp<id>`) with supersede, forget, confirm and drop; `--accept-all` skips them |
+| `recall` of a fact in a pending decide proposal | no label | `contested` with the other fact's id, only when the caller can read that fact |
+
+A run files at most `dream.claim_conflicts.max_pairs` (default 500) proposals per source and leaves the rest for the next run. A new unique index keeps concurrent runs to one proposal per pair (migration v288); it rewrites no data. Everything reads and writes database rows, so it works the same on a brain with no git repository. Guide: the "Old and conflicting facts" section of `docs/guides/memory-trust.md`.
+
 ## [0.60.558.0] - 2026-11-03
 
 **The QM guide and the admin guide now warn that the attest client belongs only on QM's personal-scope memory route.** An attested call reads as the named person, including their own private facts, and gbrain can't tell who else reads the answer. Registering that client as a model-callable MCP connector, or routing it to a shared scope (a channel, group, project, team or the org), could show one person's private facts to a whole room. Shared conversations wait for `x-qm-audience` (wave 2). Docs only: no behavior changes.

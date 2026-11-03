@@ -288,6 +288,7 @@ import { v284 } from './v284-access-page-indexes.ts';
 import { v285 } from './v285-slug-rename-history.ts';
 import { v286 } from './v286-qm-actor-links.ts';
 import { v287 } from './v287-multi-page-recovery-record.ts';
+import { v288 } from './v288-decide-proposals-claim-pair-index.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -574,4 +575,5 @@ export const MIGRATIONS: Migration[] = [
   v285,
   v286,
   v287,
+  v288,
 ];
