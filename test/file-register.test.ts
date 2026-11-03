@@ -2,7 +2,7 @@
  * GBRA-283 Wave C: file_register and file_verify, for an embedding host that stores a file's bytes itself.
  * Contributed by @bradgessler (#8457); rewritten on master. Real PGLite engines and a real local storage backend.
  */
-import { afterAll, afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -168,20 +168,22 @@ describe('file_verify', () => {
 });
 
 describe('who may call them', () => {
+  let cliEngine: PGLiteEngine;
+  beforeAll(async () => {
+    cliEngine = new PGLiteEngine();
+    await cliEngine.connect({});
+    await cliEngine.initSchema();
+  });
+  afterAll(() => cliEngine.disconnect());
+
   test('an engine the CLI opens refuses both with embedded_engine_required and records nothing', async () => {
-    const engine = new PGLiteEngine();
-    await engine.connect({});
-    await engine.initSchema();
-    try {
-      const bytes = Buffer.from('cli');
-      store(`unsorted/${sha(bytes).slice(0, 8)}-c.txt`, bytes);
-      for (const [op, params] of [['file_register', { storage_path: `unsorted/${sha(bytes).slice(0, 8)}-c.txt`, filename: 'c.txt', content_hash: sha(bytes), size_bytes: 3 }], ['file_verify', {}]] as const) {
-        expect((await failure(() => run(op, ctxFor(engine), params)))?.code).toBe('embedded_engine_required');
-      }
-      expect(await fileRows(engine)).toBe(0);
-    } finally {
-      await engine.disconnect();
+    const engine = cliEngine;
+    const bytes = Buffer.from('cli');
+    store(`unsorted/${sha(bytes).slice(0, 8)}-c.txt`, bytes);
+    for (const [op, params] of [['file_register', { storage_path: `unsorted/${sha(bytes).slice(0, 8)}-c.txt`, filename: 'c.txt', content_hash: sha(bytes), size_bytes: 3 }], ['file_verify', {}]] as const) {
+      expect((await failure(() => run(op, ctxFor(engine), params)))?.code).toBe('embedded_engine_required');
     }
+    expect(await fileRows(engine)).toBe(0);
   });
 
   test('neither is listed or callable over MCP, stdio included', async () => {
