@@ -232,9 +232,12 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
 }
 
 export async function installPackagedSharedSkills(ctx: OperationContext, sourceId: string, preservePaths: string[] = []): Promise<void> {
+  if (ctx.remote !== false) {
+    throw opError('permission_denied', 'Packaged skill installation requires the trusted local host.',
+      'Run gbrain init on the brain host; remote callers cannot pin or publish the default pack.');
+  }
   await assertPackagedSkillSource(ctx.engine, sourceId);
-  const files = packagedSharedSkills();
-  for (const path of preservePaths) if (['README.md', 'LICENSE'].includes(path)) delete files[path];
+  const files = await pinnedPackagedFiles(ctx.engine, sourceId, preservePaths);
   const { adoptSharedSkillpack } = await import('./catalog.ts');
   const result = await adoptSharedSkillpack(ctx, sourceId, {
     request_id: 'gbrain-default-content-v1', pack_id: DEFAULT_SHARED_PACK_ID,
@@ -250,4 +253,42 @@ export async function installPackagedSharedSkills(ctx: OperationContext, sourceI
       `Inspect the accepted request${pending.request_id ? ` ${pending.request_id}` : ''} first; gbrain init resumes the same durable request (same request_id), so it never publishes the pack twice.`,
       pending.request_id ? { fix: readFix('Shows whether the default pack publication committed, is still pending, or failed.', { argv: ['gbrain', 'write-request', '--', pending.request_id] }) } : {});
   }
+}
+
+/** Init is a one-time adoption, not a pack upgrade. Keep the exact payload (and
+ * preservation choices) before admission, so a release change cannot strand an
+ * accepted request or turn a committed installation into a new null-CAS write.
+ * General adoptSharedSkillpack callers retain their payload-bound request keys.
+ */
+async function pinnedPackagedFiles(engine: BrainEngine, sourceId: string, preservePaths: string[]): Promise<Record<string, string>> {
+  return engine.transaction(async tx => {
+    const [source] = await tx.executeRaw<{ incarnation: string }>(
+      'SELECT incarnation FROM sources WHERE id=$1 AND NOT archived FOR SHARE', [sourceId]);
+    if (!source) throw opError('source_changed', 'The packaged skill source is no longer active.',
+      'Choose an active owned content source and rerun gbrain init.');
+    await assertPackagedSkillSource(tx, sourceId);
+    const key = JSON.stringify([sourceId, source.incarnation]);
+    const op = 'packaged-shared-skills';
+    const read = () => tx.executeRaw<{ completed_keys: [{ source_id: string; incarnation: string; files: Record<string, string> }] }>(
+      'SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [op, key]);
+    let [row] = await read();
+    if (!row) {
+      const files = packagedSharedSkills();
+      for (const path of preservePaths) if (['README.md', 'LICENSE'].includes(path)) delete files[path];
+      // Atomic first-writer wins, including competing init processes/releases.
+      // Keep this outside config: ordinary commands must not load the bundle.
+      await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
+        VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING`, [op, key, JSON.stringify([{ source_id: sourceId, incarnation: source.incarnation, files }])]);
+      [row] = await read();
+    }
+    const pin = row?.completed_keys?.[0];
+    const files = pin?.files;
+    if (pin?.source_id !== sourceId || pin?.incarnation !== source.incarnation
+      || !files || typeof files !== 'object' || Array.isArray(files)
+      || typeof files['skillpack.json'] !== 'string' || Object.values(files).some(value => typeof value !== 'string')) {
+      throw opError('local_conflict', 'The pinned default-pack payload is malformed.',
+        'Inspect the packaged-shared-skills checkpoint on the brain host before retrying; do not discard an accepted publication.');
+    }
+    return files;
+  });
 }
