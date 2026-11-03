@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**SkillOpt's iterative loop is deprecated and will be removed on or after 2026-12-03.** The loop tied a single rewrite on gbrain-evals' benchmarks at about 1.8 times the cost, and every edit it kept came from its first step, so it is being retired. `gbrain skillopt --loop`, a `--resume` of a run the loop started, `run_skillopt` with `optimizer_mode: "reflect"` and a queued `skillopt` job in loop mode now print the `skillopt_loop_deprecated` coaching notice once (over MCP, once per session) and otherwise run exactly as before. Nothing replaces the loop: edit the skill directly, or run the default one-shot rewrite, which stays. Nothing is removed and no default changes in this release.
+
+### Itemized changes
+
+- `src/core/skillopt/loop-deprecation.ts` (new): the notice text, the removal date and the one emitter, called by `gbrain skillopt` (after it resolves the mode, so a resumed loop run counts), the `run_skillopt` op (`ctx.emitNotice`, so MCP and `gbrain call` render it) and the `skillopt` job handler. `skillopt_loop_deprecated` is a new coaching code in `NOTICE_CODES`.
+- `gbrain skillopt --help`, the `run_skillopt` description and its `optimizer_mode` parameter, docs/guides/skillopt.md, the tutorial and the `skill-optimizer` skill mark the loop deprecated.
+- `test/skillopt/loop-deprecation.serial.test.ts`: each entry point that runs the loop emits the notice exactly once and still runs it; the one-shot default, a one-shot job and the cycle phase emit none.
+
 ## [0.60.565.0] - 2026-11-03
 
 **The per-file index describes how pages stored in segments are written and held.** The key-files entries for `write-through.ts` and `sync-entry-fault.ts` contradicted v0.60.560.0: the first said every page is rendered whole and `content` always holds the bytes written, and the second said a page-body fault at the freeze stops the run. They now describe the streamed write of a segmented page (measured at its snapshot's revision, checked against the scan cap before `source_path` binds, `inlineOnly` and `segmented_page`) and the `page_write_failed` hold that names `page_body_segmented` or `page_body_rows_unreadable`. The entries for full sync, `sync status`, the derived write-through and export also name `reexport_failures`, `last_error.request_id: null`, the `freeze_page_body_*` routing, the derived writer's `segmented_page` skip and the export's revision pin. Docs only.

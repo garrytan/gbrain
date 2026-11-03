@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 268798,
-    "stdoutSha256": "7e8ad692baa54268f6f79bf3109bfb03bf6c29119f65624e8847aff30963f591",
+    "stdoutBytes": 268935,
+    "stdoutSha256": "c93966124678ecbf3623a199aeebea8b5eac5e8d990bd4c9622531affc20a7bc",
     "toolNames": [
       "remember",
       "entity",
@@ -7879,7 +7879,7 @@
         "scope": "admin"
       },
       {
-        "description": "Run SkillOpt against a single skill. Admin scope and remote skill allowlist required. shared_skill stages an exact catalog revision privately and requires explicit skill_editor and put_skill grants; only accepted body changes publish through the original revision CAS. Rate-limited per-skill via DB lock.",
+        "description": "Run SkillOpt against a single skill; its iterative loop (optimizer_mode \"reflect\") is deprecated and removed on or after 2026-12-03. Admin scope and remote skill allowlist required. shared_skill stages an exact catalog revision privately and requires explicit skill_editor and put_skill grants; only accepted body changes publish through the original revision CAS. Rate-limited per-skill via DB lock.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -7948,7 +7948,7 @@
               "type": "boolean"
             },
             "optimizer_mode": {
-              "description": "Default one-shot-rewrite: one gated rewrite. reflect opts into the iterative edit loop, which has not yet beaten one-shot on gbrain benchmarks.",
+              "description": "Default one-shot-rewrite: one gated rewrite. reflect runs the iterative edit loop, which is deprecated (removed on or after 2026-12-03) and emits the skillopt_loop_deprecated notice.",
               "enum": [
                 "one-shot-rewrite",
                 "reflect"

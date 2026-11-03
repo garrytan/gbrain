@@ -400,6 +400,7 @@
   "test/shared-skills-optimizer.serial.test.ts": 25,
   "test/shared-skills-restore.serial.test.ts": 27,
   "test/skillopt/cycle-phase-caps.serial.test.ts": 4,
+  "test/skillopt/loop-deprecation.serial.test.ts": 3,
   "test/skillopt/models-four-paths.serial.test.ts": 4,
   "test/skillopt/models-plan.serial.test.ts": 3,
   "test/skillopt/run-skillopt-op.serial.test.ts": 3,
