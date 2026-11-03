@@ -424,6 +424,10 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "string",
         "fullSurfaceOnly": true,
         "description": "Recorded time: the page as this brain had recorded it at this ISO 8601 instant (2026-10-01T12:00:00Z), from the belief ledger. Not as_of, which is valid time (a date)."
+      },
+      "as_of": {
+        "type": "string",
+        "description": "YYYY-MM-DD: edition in force then. No valid_time in reply: current page."
       }
     },
     "scope": "read",
@@ -499,6 +503,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "wait_ms": {
         "type": "number",
         "description": "Commit wait ms (0-30000, default 5000)."
+      },
+      "reason": {
+        "type": "string",
+        "description": "Why this change, one line (max 500 chars); kept in page history.",
+        "fullSurfaceOnly": true
       },
       "source_kind": {
         "type": "string",
@@ -934,6 +943,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "request_id": {
         "type": "string",
         "description": "Reuse only to retry."
+      },
+      "reason": {
+        "type": "string",
+        "description": "Why this change, one line (max 500 chars); kept in page history.",
+        "fullSurfaceOnly": true
       }
     },
     "mutating": true,
@@ -1036,6 +1050,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
             "drop_timeline": {
               "type": "boolean",
               "description": "Content without a Timeline section deletes its dated entries."
+            },
+            "reason": {
+              "type": "string",
+              "description": "Why this change, one line (max 500 chars); kept in page history.",
+              "fullSurfaceOnly": true
             }
           }
         }
@@ -2570,7 +2589,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "full page version snapshots by slug; a page read governed by visibility like get_page (CEO-17)"
     },
-    "description": "Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest 20 versions by default. Pass include_body: true for each version's compiled_truth and timeline, and a larger limit (at most 100 over MCP) for older versions. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). revert_version takes the id field.",
+    "description": "Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest 20 versions by default. Pass include_body: true for each version's compiled_truth and timeline, and a larger limit (at most 100 over MCP) for older versions. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). replaced_because is the reason given for the write that replaced the snapshot (null when none was given). revert_version takes the id field.",
     "params": {
       "slug": {
         "type": "string",
@@ -2643,6 +2662,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "number",
         "required": true,
         "description": "Numeric version id to revert to, as returned by get_versions. Not a version NUMBER offset — pass the id field."
+      },
+      "reason": {
+        "type": "string",
+        "description": "Why this change, one line (max 500 chars); kept in page history.",
+        "fullSurfaceOnly": true
       }
     },
     "mutating": true,
@@ -6094,6 +6118,10 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "source_id": {
         "type": "string",
         "description": "Source holding the fact (default: the routed source)."
+      },
+      "reason_scan_limit": {
+        "type": "number",
+        "description": "Check only the newest N commits for change reasons quoting the claim (after a reason_purge_scan_capped refusal, with the user's choice); older commits are not tombstoned."
       }
     },
     "mutating": true,

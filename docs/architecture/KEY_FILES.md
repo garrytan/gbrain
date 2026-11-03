@@ -47,7 +47,7 @@ link it here; never raise the cap.
 | [Core Minions (2/2)](key-files/core-minions-2.md) | `src/core/minions/queue.ts` through `src/core/minions/worker.ts` |
 | [Core Persistence](key-files/core-persistence.md) | `src/core/persistence/` journal, coordinator, effects, managed sync |
 | [Core Persistence (continued)](key-files/core-persistence-continued.md) | connectors, holds, receipts; [Git writer](key-files/core-persistence-git.md); [fence repair](key-files/core-fence-repair.md) |
-| [Persistence capacity](key-files/core-persistence-capacity.md) | write caps, true-up |
+| [Persistence capacity](key-files/core-persistence-capacity.md) | write caps, true-up; [page history](key-files/page-history.md) |
 | [Core Persistence (seams)](key-files/core-persistence-request-indexes.md) | `checkpoint-validation`, `fault-points`, `native-file-target`, `admission-retry`, `unbound-source` |
 | [Core Persistence (managed facts)](key-files/core-persistence-facts.md) | `facts-maintenance.ts`, `facts-prepare.ts`, `derived-facts.ts`, `same-page-shadow.ts` |
 | [Core Persistence (engine graduation)](key-files/core-persistence-graduation.md) | `engine-graduation*.ts`, `graduation-*.ts`, `commands/migrate-graduation.ts` |

@@ -70,20 +70,22 @@ async function syncCapacityNotices(engine: BrainEngine, json: boolean, result?: 
   const { capacityNotices, CAPACITY_READ_WAIT_MS } = await import('../../core/persistence/capacity-snapshot.ts');
   // #6712 PR 2 (L5): a degraded post-checkpoint tail rides the same notices. #6803 C4: the snapshot wait is bounded.
   const capacity = await capacityNotices(engine, { throttle: true, deadlineAt: Date.now() + CAPACITY_READ_WAIT_MS }).catch(() => []);
-  const notices = [...(result?.tail?.notice ? [result.tail.notice] : []), ...capacity].map(notice => renderNotice(notice, cliRenderContext()));
+  const notices = [...(result?.tail?.notice ? [result.tail.notice] : []), ...(result?.reason_notices ?? []), ...capacity].map(notice => renderNotice(notice, cliRenderContext()));
   if (!json) for (const notice of notices) process.stderr.write(`[gbrain notice ${notice.code}] ${notice.why}\n`);
   return notices.length ? { notices } : {};
 }
 
 /** #6712 PR 2 (L5): one source's post-checkpoint tail in a `sync --all` receipt: its report and its rendered degraded notice. */
 function syncTailJsonFields(result: SyncResult): { tail?: Omit<NonNullable<SyncResult['tail']>, 'notice'>; notices?: unknown[] } {
-  if (!result.tail) return {};
-  const { notice, ...tail } = result.tail;
-  return { tail, ...(notice ? { notices: [renderNotice(notice, cliRenderContext())] } : {}) };
+  const notices = [...(result.tail?.notice ? [result.tail.notice] : []), ...(result.reason_notices ?? [])].map(n => renderNotice(n, cliRenderContext()));
+  const rendered = notices.length ? { notices } : {};
+  if (!result.tail) return rendered;
+  const { notice: _notice, ...tail } = result.tail;
+  return { tail, ...rendered };
 }
 
 function printTailNotice(result: SyncResult): void {
-  if (result.tail?.notice) process.stderr.write(`[gbrain notice ${result.tail.notice.code}] ${result.tail.notice.why}\n`);
+  for (const notice of [...(result.tail?.notice ? [result.tail.notice] : []), ...(result.reason_notices ?? [])]) process.stderr.write(`[gbrain notice ${notice.code}] ${notice.why}\n`);
 }
 
 export async function runSyncInner(engine: BrainEngine, args: string[]) {

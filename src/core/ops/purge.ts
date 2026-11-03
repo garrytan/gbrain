@@ -26,6 +26,7 @@ const purge_fact: Operation = {
     continue: { type: 'boolean', description: 'With status: first continue the purge\'s sweep of stored derivation results (derivation_sweep pending or stalled), then report.' },
     vacuum: { type: 'boolean', description: 'PGLite only: VACUUM the touched tables after the purge.' },
     source_id: { type: 'string', description: 'Source holding the fact (default: the routed source).' },
+    reason_scan_limit: { type: 'number', description: 'Check only the newest N commits for change reasons quoting the claim (after a reason_purge_scan_capped refusal, with the user\'s choice); older commits are not tombstoned.' },
   },
   mutating: true,
   scope: 'admin',

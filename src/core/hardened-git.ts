@@ -60,7 +60,15 @@ export function hardenedGitEnvironment(): NodeJS.ProcessEnv {
     ...safeDirectoryEnv([...operatorConfigSafeDirectories(), ...envSafeDirectories()]) };
 }
 
-export type HardenedGitResult = { ok: true; stdout: Buffer } | { ok: false; reason: 'exit' | 'timeout' | 'too_large' | 'unavailable'; status?: number };
+export type HardenedGitResult = { ok: true; stdout: Buffer } | { ok: false; reason: 'exit' | 'timeout' | 'too_large' | 'unavailable'; status?: number; stderr?: string };
+
+/**
+ * GBRA-217: the one `git log` gbrain runs in an untrusted checkout, the reason-trailer read (`reason-trailers.ts`). A
+ * name-only listing of the first-parent line with no renames compares tree entries only, so no filter, textconv or
+ * external diff runs; signatures are not verified (no gpg). Every option is required, so no other `log` passes.
+ */
+export const REASON_LOG_OPTIONS: readonly string[] = ['-z', '--first-parent', '--diff-merges=first-parent', '--root', '--name-only', '--no-renames', '--no-relative',
+  '--no-ext-diff', '--no-textconv', '--no-show-signature', '--format=%x00%H%x00%(trailers:key=gbrain-reason,valueonly,unfold)'];
 
 /**
  * The exact options each allowed plumbing subcommand may take; anything not
@@ -76,6 +84,7 @@ const ALLOWED_OPTIONS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['check-ignore', new Set(['-z', '--stdin'])],
   ['diff-index', new Set(['--cached', '--quiet'])],
   ['diff-tree', new Set(['-r', '-z', '--no-renames'])],
+  ['log', new Set(REASON_LOG_OPTIONS)],
 ]);
 
 /** Options a subcommand must carry, so its output stays raw and machine-readable. */
@@ -83,6 +92,7 @@ const REQUIRED_OPTIONS: ReadonlyMap<string, readonly string[]> = new Map([
   ['hash-object', ['--no-filters']],
   ['diff-index', ['--cached']],
   ['diff-tree', ['-r', '-z', '--no-renames']],
+  ['log', REASON_LOG_OPTIONS],
 ]);
 
 /**
@@ -102,16 +112,19 @@ export function assertHardenedGitArgs(args: readonly string[]): void {
   if (!ok) throw new Error(`hardened git refuses \`git ${args.slice(0, 2).join(' ')}\`: only filter-free plumbing may run in an untrusted checkout (see src/core/hardened-git.ts)`);
 }
 
-/** Runs `git -C <root> <args>` synchronously under the hardening above, within `timeoutMs` and `maxBytes` of stdout. */
-export function hardenedGitSync(root: string, args: string[], limits: { timeoutMs: number; maxBytes: number }): HardenedGitResult {
+/**
+ * Runs `git -C <root> <args>` synchronously under the hardening above, within `timeoutMs` and `maxBytes` of stdout. With
+ * `stderr`, a nonzero exit carries Git's message, so a caller can tell one failure from another.
+ */
+export function hardenedGitSync(root: string, args: string[], limits: { timeoutMs: number; maxBytes: number; stderr?: boolean }): HardenedGitResult {
   assertHardenedGitArgs(args);
   const run = spawnSync('git', [...HARDENED_GIT_ARGS, '-C', root, ...args],
-    { env: hardenedGitEnvironment(), stdio: ['ignore', 'pipe', 'ignore'], timeout: limits.timeoutMs, maxBuffer: limits.maxBytes, killSignal: 'SIGKILL' });
+    { env: hardenedGitEnvironment(), stdio: ['ignore', 'pipe', limits.stderr ? 'pipe' : 'ignore'], timeout: limits.timeoutMs, maxBuffer: limits.maxBytes, killSignal: 'SIGKILL' });
   const code = (run.error as NodeJS.ErrnoException | undefined)?.code;
   if (code === 'ETIMEDOUT') return { ok: false, reason: 'timeout' };
   if (code === 'ENOBUFS') return { ok: false, reason: 'too_large' };
   if (run.error) return { ok: false, reason: 'unavailable' };
-  if (run.status !== 0) return { ok: false, reason: 'exit', ...(run.status === null ? {} : { status: run.status }) };
+  if (run.status !== 0) return { ok: false, reason: 'exit', ...(run.status === null ? {} : { status: run.status }), ...(limits.stderr && run.stderr ? { stderr: run.stderr.toString('utf8') } : {}) };
   return { ok: true, stdout: run.stdout };
 }
 

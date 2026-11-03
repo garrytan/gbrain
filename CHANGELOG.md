@@ -44,6 +44,36 @@ On a keyless 60-question fixture (old confirmed truth against fresh agent and ex
 
 A run files at most `dream.claim_conflicts.max_pairs` (default 500) proposals per source and leaves the rest for the next run. A new unique index keeps concurrent runs to one proposal per pair (migration v288); it rewrites no data. Everything reads and writes database rows, so it works the same on a brain with no git repository. Guide: the "Old and conflicting facts" section of `docs/guides/memory-trust.md`.
 
+**A page write can say why it was made, and page history shows it.**
+
+`put_page`, `edit_page`, `revert_version` and each `put_pages` item take an optional `reason` (one line, at most 500 characters; `--reason` on the CLI). It is stored on the version the write replaced, and `get_versions` returns it as `replaced_because`, so the newest version explains the text you read now; `gbrain history` prints it as `changed because: …`. When the page's file reaches Git, the commit carries it as a trailer naming the file, `gbrain-reason: <path>: <text>`, beside any `gbrain-repair:` trailer. A brain with no Git repository gets the same history from the database. Every write result reports where the reason went in `reason_recorded`.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A write passes `reason` | refused as an unknown parameter | stored with the replaced version and, for a world-visible file, in the commit |
+| A reason over 500 characters, or one that looks like a credential | n/a | refused before admission: `change_reason_rejected` (`reason_too_long`, `reason_contains_secret`), and no journal row keeps it |
+| A remote caller reads `get_versions` | no reasons | `replaced_because` when the version and the one that replaced it are both world-visible and the replacement was not pruned |
+| A private page's write has a reason | n/a | the reason stays out of every commit message |
+| A write without a reason | | the same commit message and history as before |
+| A newer write to the same file commits first (non-strict source) | n/a | the receipt says `git: superseded` with a `reason_not_committed` notice; the reason stays in history |
+
+Guide: [page history](docs/guides/page-history.md).
+
+### Read a page as it stood on a date
+
+A page can now say when its text takes effect, with `valid_from` and `valid_until` in its frontmatter, and you can ask what was in force on any date: `get_page {slug, as_of: '2026-03-01'}`, or `gbrain get <slug> --as-of 2026-03-01`. Say to your agent: *"What did our refund policy say on March 1?"*
+
+- The answer is the edition with the latest `valid_from` on or before the date, picked across the current page and every version gbrain kept. Its `valid_time` block says whether that edition was `in_force`, `not_in_force`, `not_yet_in_force` or `before_recorded_history`, and whether gbrain held enough history to be sure. Only an `in_force` answer returns the text at the top level, so an agent that skips the status cannot quote expired text as current.
+- When history is missing (pruned versions, a sync that imported several commits at once, a page that came from a file) or the dates look ambiguous (a corrected date and a renewal leave the same trace), the answer says `uncertain: true`, why, and how to recover: the file's `git log`, or asking the user for a backup. It never guesses.
+- Works the same on a brain with no Git repository, the default keyless install.
+- `gbrain get --as-of` exits 15 when no edition was in force, and 16 (`host_upgrade_required`) when the brain host is too old to answer by date, printing nothing historical.
+- Writes say when they keep or change an edition's date (`valid_time_correction`, `valid_time_date_only`, `valid_from_unparsed`), and `get_versions` rows carry each version's `valid_from` and `valid_until`.
+- Behavior change: a plain `get_page` of a page whose own `valid_from` is in the future, or whose `valid_until` has passed, now also carries a `valid_time` status. Pages without those dates read exactly as before.
+
+Guide: [page history](docs/guides/page-history.md#valid-time).
+
 ## [0.60.558.0] - 2026-11-03
 
 **The QM guide and the admin guide now warn that the attest client belongs only on QM's personal-scope memory route.** An attested call reads as the named person, including their own private facts, and gbrain can't tell who else reads the answer. Registering that client as a model-callable MCP connector, or routing it to a shared scope (a channel, group, project, team or the org), could show one person's private facts to a whole room. Shared conversations wait for `x-qm-audience` (wave 2). Docs only: no behavior changes.
