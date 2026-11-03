@@ -1483,6 +1483,16 @@ More: [docs/guides/move-to-postgres.md#graduated-datastore](../../docs/guides/mo
 
 More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
 
+### engine_scope_missing
+
+<a id="engine_scope_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An engine opened from settings made an AI call (embed, chat, expansion or rerank) through a provider its settings.ai does not name, so nothing was sent. | An embedded engine's AI calls reach only the providers and keys its host passed as values. Falling back to a process.env key, ~/.gbrain/config.json or the process-wide gateway would spend another brain's key and send this brain's text where its host never pointed it. | Pass the provider in settings.ai.providers (apiKey, and baseUrl when it is not the default) to openEngine, or point settings.ai.models (or settings.embedding) at a provider the engine has. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
+
 ### engine_settings_invalid
 
 <a id="engine_settings_invalid"></a>

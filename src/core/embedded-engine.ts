@@ -24,10 +24,24 @@ export interface EngineSettings {
   /** `search.keyword_statement_timeout_ms` for this engine (Postgres). */
   keyword_statement_timeout_ms?: number;
   pglite?: { shared_buffers?: string };
+  /**
+   * This engine's AI gateway: the only providers its embed, chat and rerank calls reach, keyed by provider id
+   * (`openai`, `voyage`, ...), and the `provider:model` it uses for chat, expansion and reranking. The embedding
+   * model is `embedding` above. Without it every AI call refuses `engine_scope_missing`; no process key is used.
+   */
+  ai?: EngineAISettings;
 }
 
-/** The settings `embeddedSettings` returns: everything the host passed except the writer credential. */
-export type EmbeddedSettingsView = Readonly<Omit<EngineSettings, 'writer'> & { writer?: { id: string; lane: 'cli' | 'stdio' } }>;
+export interface EngineAISettings {
+  providers: Record<string, { apiKey?: string; baseUrl?: string }>;
+  models?: { chat?: string; expansion?: string; reranker?: string };
+}
+
+/** The settings `embeddedSettings` returns: everything the host passed except the writer credential and the provider keys. */
+export type EmbeddedSettingsView = Readonly<Omit<EngineSettings, 'writer' | 'ai'> & {
+  writer?: { id: string; lane: 'cli' | 'stdio' };
+  ai?: { providers: Record<string, { baseUrl?: string; hasApiKey: boolean }>; models?: EngineAISettings['models'] };
+}>;
 
 interface EmbeddedRecord {
   hostId: string | undefined;
@@ -70,12 +84,15 @@ export function embeddedSettingsRecord(engine: object): EngineSettings | undefin
   return recordOf(engine)?.settings ?? undefined;
 }
 
-/** The settings an embedded engine was opened with, without the writer credential; undefined after disconnect. */
+/** The settings an embedded engine was opened with, without the writer credential or provider keys; undefined after disconnect. */
 export function embeddedSettings(engine: object): EmbeddedSettingsView | undefined {
   const settings = embeddedSettingsRecord(engine);
   if (!settings) return undefined;
-  const { writer, ...rest } = settings;
-  return Object.freeze({ ...rest, ...(writer ? { writer: { id: writer.id, lane: writer.lane } } : {}) });
+  const { writer, ai, ...rest } = settings;
+  const providers = ai && Object.fromEntries(Object.entries(ai.providers)
+    .map(([id, p]) => [id, { ...(p.baseUrl ? { baseUrl: p.baseUrl } : {}), hasApiKey: !!p.apiKey }]));
+  return Object.freeze({ ...rest, ...(writer ? { writer: { id: writer.id, lane: writer.lane } } : {}),
+    ...(ai ? { ai: { providers: providers!, ...(ai.models ? { models: { ...ai.models } } : {}) } } : {}) });
 }
 
 /** Drops the settings (the writer credential included) an embedded engine held; it stays marked embedded with its host id. */

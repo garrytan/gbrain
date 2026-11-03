@@ -24,6 +24,15 @@
  */
 
 import { loadConfig } from '../config.ts';
+import { embeddedSettingsRecord } from '../embedded-engine.ts';
+import { embeddedEngineInScope } from '../engine-scope.ts';
+
+/** In an embedded engine's scope (engine-scope.ts): its own `settings.ai` Anthropic key, or null. Undefined outside one. */
+function engineAnthropicKey(): string | null | undefined {
+  const engine = embeddedEngineInScope();
+  if (!engine) return undefined;
+  return embeddedSettingsRecord(engine)?.ai?.providers.anthropic?.apiKey || null;
+}
 
 /**
  * The Anthropic key the AI gateway was configured with, when it did NOT come
@@ -64,6 +73,8 @@ export function setGatewayAnthropicKeySnapshot(key: string | undefined): void {
  * servable — without exposing a raw engine.getConfig read to the planner.
  */
 export function getGatewayAnthropicKeySnapshot(): string | undefined {
+  const scoped = engineAnthropicKey();
+  if (scoped !== undefined) return scoped ?? undefined;
   return _gatewayEnvKeySnapshot;
 }
 
@@ -73,12 +84,15 @@ export function hasAnthropicKey(): boolean {
 
 /**
  * Resolve the actual key value: env first, then the gateway env snapshot,
- * then the gbrain config file. Callers constructing an Anthropic client
+ * then the gbrain config file. In an embedded engine's scope, only that engine's
+ * own `settings.ai.providers.anthropic.apiKey`. Callers constructing an Anthropic client
  * directly (e.g. the legacy subagent path) must pass this as `apiKey` — a
  * bare `new Anthropic()` only sees env, so launchd/MCP workers with
  * config-stored keys fail.
  */
 export function resolveAnthropicKey(): string | undefined {
+  const scoped = engineAnthropicKey();
+  if (scoped !== undefined) return scoped ?? undefined;
   if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
   if (_gatewayEnvKeySnapshot) return _gatewayEnvKeySnapshot;
   try {
