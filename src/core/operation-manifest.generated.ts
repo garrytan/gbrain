@@ -6247,6 +6247,65 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "area": "memory"
   },
   {
+    "name": "get_memory_settings",
+    "mutating": false,
+    "outputRedaction": "no_stored_text",
+    "description": "Memory writeback settings: the mode agents follow, the exact rule text, every mode's rule, background capture state, and whether you may change it.",
+    "params": {},
+    "scope": "read",
+    "area": "memory-settings",
+    "cliHints": {
+      "name": "memory-settings"
+    }
+  },
+  {
+    "name": "set_memory_writeback",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Change the brain-wide writeback mode agents are told to follow (inherit uses the operator's setting). Admin scope and the operator's grant required; background capture is not changed.",
+    "params": {
+      "mode": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "inherit",
+          "off",
+          "salient",
+          "all"
+        ],
+        "description": "inherit | off | salient | all."
+      },
+      "dry_run": {
+        "type": "boolean",
+        "description": "Preview the change; writes nothing."
+      }
+    },
+    "scope": "admin",
+    "area": "memory-settings",
+    "publishGateKey": "mcp.publish_memory_settings"
+  },
+  {
+    "name": "memory_conversation_mode",
+    "outputRedaction": "no_stored_text",
+    "description": "Use when the user says \"save everything from here\" (all) or \"stop saving\" (off: explicit saves only): returns the memory rule for the rest of this conversation. Stores nothing.",
+    "params": {
+      "mode": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "brain",
+          "off",
+          "salient",
+          "all"
+        ],
+        "description": "all | salient | off (only what the user explicitly asks to keep) | brain (this brain's mode)."
+      }
+    },
+    "scope": "write",
+    "area": "memory-settings"
+  },
+  {
     "name": "find_contradictions",
     "mutating": false,
     "idempotent": true,

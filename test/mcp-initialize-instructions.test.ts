@@ -49,7 +49,13 @@ const BATCHING_CLAUSE_BYTES = 200;
  * `entity names` rows carry on this brain (`next`, and `records` when record types are enrolled); 70 bytes at most.
  */
 const NAMES_ROW_REFERENCES_BYTES = 70;
-const LANE_I_CEILING = Math.floor(PRE_F1_BYTES * 1.15) + WRITING_CLAUSE_BYTES + BATCHING_CLAUSE_BYTES + NAMES_ROW_REFERENCES_BYTES;
+/**
+ * GBRA-219: the per-conversation memory switch clause ("save everything from here" / "stop saving" →
+ * memory_conversation_mode), 146 bytes on every surface serving the tool (starter and full), placed after the
+ * governing rule so that rule's offsets do not move (test/mcp-instructions-governing-rule.test.ts).
+ */
+const CONVERSATION_SWITCH_CLAUSE_BYTES = 150;
+const LANE_I_CEILING = Math.floor(PRE_F1_BYTES * 1.15) + WRITING_CLAUSE_BYTES + BATCHING_CLAUSE_BYTES + NAMES_ROW_REFERENCES_BYTES + CONVERSATION_SWITCH_CLAUSE_BYTES;
 /** Claude Code reads only the first 2,048 characters of a server's initialize instructions. */
 const HARNESS_READ_LIMIT = 2_048;
 
@@ -102,8 +108,9 @@ describe('F1 generated instructions', () => {
     // d5b: the brief names the fields compact `entity names` rows carry (NAMES_ROW_REFERENCES_BYTES): +39 at the default
     // (names-row references on, no records) on every surface serving entity; +70 with records enrolled (maximal).
     // F4: instruction 7's governing rule (in effect on the date asked about), +63 on starter and full; verbs serves no clause 7.
-    const recorded = { verbs: 2_225, starter: 4_926, full: 5_077 };
-    const maximal = { verbs: 2_256, starter: 4_957, full: 5_108 };
+    // GBRA-219: the conversation-switch clause (CONVERSATION_SWITCH_CLAUSE_BYTES), +145 on starter and full; verbs does not serve the tool.
+    const recorded = { verbs: 2_225, starter: 5_071, full: 5_223 };
+    const maximal = { verbs: 2_256, starter: 5_102, full: 5_254 };
     for (const surface of SURFACES) {
       const listed = new Set(filterOpsForSurface(operations, surface).map(o => o.name));
       const size = buildMcpInstructions({ tools: { callable: n => listed.has(n) } }).length;
@@ -127,7 +134,7 @@ describe('F1 generated instructions', () => {
     expect(text).toContain('worker missing: 3 jobs');
     expect(text).not.toContain('keyless by choice');
     expect(text).not.toContain('Schema is behind');
-    expect(Buffer.byteLength(text) - PRE_F1_BYTES).toBeLessThanOrEqual(1200 + WRITING_CLAUSE_BYTES);
+    expect(Buffer.byteLength(text) - PRE_F1_BYTES).toBeLessThanOrEqual(1200 + WRITING_CLAUSE_BYTES + CONVERSATION_SWITCH_CLAUSE_BYTES);
   });
 
   for (const surface of SURFACES) {

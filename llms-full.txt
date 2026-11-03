@@ -9494,6 +9494,16 @@ it; each change carries its `trust_tier`. The
 CLI twin is `gbrain beliefs changes [<entity>...] [--since 7d]`. Design:
 [BELIEF_LEDGER.md section 15](../designs/BELIEF_LEDGER.md#15-w4-as-built-the-weekly-change-diff).
 
+### Adjacent memory-settings ops (not verbs)
+
+Three ops sit next to `remember` without joining the frozen verb set, so
+`--surface verbs` does not serve them: `get_memory_settings` (read the
+writeback mode and rule text), `set_memory_writeback` (admin scope plus the
+operator's `mcp.publish_memory_settings` grant) and `memory_conversation_mode`
+(the per-conversation "save everything from here" / "stop saving" switch, on
+the starter surface). See
+[Reading and changing it remotely](../guides/ambient-writeback.md#reading-and-changing-it-remotely).
+
 ## Latency classes (per verb)
 
 Published so harness authors place calls by cost, not by learning at timeout:

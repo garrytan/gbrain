@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 268798,
-    "stdoutSha256": "7e8ad692baa54268f6f79bf3109bfb03bf6c29119f65624e8847aff30963f591",
+    "stdoutBytes": 271005,
+    "stdoutSha256": "e3ba5ed101382f6e0f990c2046a20d1730cc41cb88111ec449c76f9eda49e5b4",
     "toolNames": [
       "remember",
       "entity",
@@ -158,6 +158,9 @@
       "unpurge_page",
       "memory_recall",
       "memory_write",
+      "get_memory_settings",
+      "set_memory_writeback",
+      "memory_conversation_mode",
       "find_contradictions",
       "find_experts",
       "find_trajectory",
@@ -7204,6 +7207,86 @@
           "required": [
             "facts",
             "idempotency_key"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Memory writeback settings: the mode agents follow, the exact rule text, every mode's rule, background capture state, and whether you may change it.",
+        "idempotent": false,
+        "local_only": false,
+        "mutating": false,
+        "name": "get_memory_settings",
+        "parameters": {},
+        "required_scopes": [],
+        "schema": {
+          "properties": {},
+          "required": [],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Change the brain-wide writeback mode agents are told to follow (inherit uses the operator's setting). Admin scope and the operator's grant required; background capture is not changed.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "set_memory_writeback",
+        "parameters": {
+          "dry_run": "boolean?",
+          "mode": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "dry_run": {
+              "description": "Preview the change; writes nothing.",
+              "type": "boolean"
+            },
+            "mode": {
+              "description": "inherit | off | salient | all.",
+              "enum": [
+                "inherit",
+                "off",
+                "salient",
+                "all"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "type": "object"
+        },
+        "scope": "admin"
+      },
+      {
+        "description": "Use when the user says \"save everything from here\" (all) or \"stop saving\" (off: explicit saves only): returns the memory rule for the rest of this conversation. Stores nothing.",
+        "idempotent": false,
+        "local_only": false,
+        "mutating": false,
+        "name": "memory_conversation_mode",
+        "parameters": {
+          "mode": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "mode": {
+              "description": "all | salient | off (only what the user explicitly asks to keep) | brain (this brain's mode).",
+              "enum": [
+                "brain",
+                "off",
+                "salient",
+                "all"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode"
           ],
           "type": "object"
         },

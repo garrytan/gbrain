@@ -20,7 +20,8 @@ import { httpInstructionTools } from '../mcp/initialize-context.ts';
 import { installCapabilitiesResource, mcpAdministrationGuidance } from '../mcp/capabilities.ts';
 import { createSkillResources } from '../mcp/skill-resources.ts';
 import { resolveAuthCapabilities } from '../core/harness/capabilities.ts';
-import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
+import { ambientOptsFrom, type WritebackConfig } from '../core/facts/writeback-config.ts';
+import { resolveAgentWriteback } from '../core/facts/writeback-settings.ts';
 import { hasScope, operationScopesAllowed } from '../core/scope.ts';
 import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult, requestMetaSessionId, hotMemoryOffIn, acceptedPendingReceipt, unknownToolEnvelope, errorResult, dispatchRenderContext, grantBlockedNotices, admitNotices, audienceRefusal, type ToolResult } from '../mcp/dispatch.ts';
 import { toAgentError } from '../core/agent-output.ts';
@@ -173,7 +174,7 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
     const canWrite = hasScope(authInfo.scopes, 'write');
     const [{ ceiling: surfaceCeiling, effective: surface }, writeback, hostResultRows] = await Promise.all([
       resolveEffectiveSurface(authInfo),
-      canWrite ? resolveWritebackConfig(engine, config) : Promise.resolve(null),
+      canWrite ? resolveAgentWriteback(engine, config).then(r => r.bundle) : Promise.resolve(null),
       resolveResultRowsMode(engine, config),
     ]);
     // C1: gbrain's thin client keeps full rows. The header is unverified and
@@ -195,7 +196,7 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
 function createMcpRequestServer(
   ctx: ServeHttpContext,
   state: McpRequestState,
-  writeback: Awaited<ReturnType<typeof resolveWritebackConfig>> | null,
+  writeback: WritebackConfig | null,
 ): Server {
   const { engine, config, mcpResourceUrl } = ctx;
   const { authInfo, mcpOperations, surface, surfaceCeiling, surfaceAllowedOps } = state;

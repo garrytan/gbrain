@@ -548,6 +548,72 @@ files from gbrain's own claude-cli sessions, and `captured_facts_active`
 counts facts captured before v0.60.30.0 from those sessions or from pasted
 text (cleared by `gbrain repair captured-facts`).
 
+## Reading and changing it remotely
+
+Three MCP tools let a connected agent or a product settings screen read the
+rule, change the mode agents follow, and switch saving for one conversation.
+They keep everything in the brain's database (the config table and the
+request log), so a brain with no git repository gets all of them.
+
+| Tool | Who can call it | What it does |
+|---|---|---|
+| `get_memory_settings` | any connection (read scope) | the mode agents follow, where it came from, the exact rule text, every mode's rule, background capture state, and whether you may change it |
+| `set_memory_writeback` | admin scope, after the operator's grant | changes `memory.agent_writeback` for the whole brain; `dry_run: true` previews |
+| `memory_conversation_mode` | any connection that can call `remember` | returns the rule to follow for the rest of this conversation; stores nothing |
+
+**Two keys, two jobs.** `memory.auto_writeback` is the operator's setting: it
+drives the instruction section and the host capture lanes (Stop hook,
+compaction harvest, SessionEnd transcripts). `memory.agent_writeback`
+(`inherit` | `off` | `salient` | `all`, unset means inherit) changes only
+what agents are told over MCP. The capture lanes never read it, so a remote
+`off` can't retire the host's banked session text, and a remote `all` can't
+start capture the operator never turned on. Harness instruction blocks
+installed by `gbrain bootstrap harness` also keep following the operator's
+`memory.auto_writeback`; converge them with another bootstrap run if you
+change that. An unreadable or unrecognized `memory.agent_writeback` makes
+agents act as if writeback is off (never as if it inherited a wider mode), and
+`get_memory_settings` reports `status: degraded` with the reason instead of a
+plain `off`.
+
+**Turning on remote changes (operator, on the brain host):**
+
+```bash
+gbrain config set mcp.publish_memory_settings true      # the grant; default off
+gbrain auth create settings-app --scopes read,write,admin   # or: gbrain auth rescope --id TOKEN_ID --scopes read,write,admin
+# From an admin-scope connection:
+#   set_memory_writeback {"mode": "salient", "dry_run": true}   -> preview, writes nothing
+#   set_memory_writeback {"mode": "salient"}                    -> applied, audited
+#   get_memory_settings {}                                      -> effective_mode: "salient", source: "agent_override"
+gbrain config get memory.agent_writeback   # the same value from the CLI
+gbrain config set memory.agent_writeback inherit   # back to the operator's mode
+```
+
+Admin scope also carries `sources_admin` and `users_admin`, so grant it only
+to a connection you'd trust with those. While the grant is off, the tool is
+hidden from network tool lists; `get_memory_settings` names why in
+`can_set.blocked_by` (`gate_off`, `scope`, `bound_client`, `surface`) and
+carries the grant command in `can_set.fix`.
+
+Each change writes the setting and a `memory_setting_change` row in
+`mcp_request_log` (client, transport, old, new) in one transaction. If the
+database write doesn't confirm, the call fails with
+`memory_setting_write_outcome_unknown`: read `get_memory_settings` before
+trying again, because a lost acknowledgement looks the same as a rollback.
+On a brain that looks like a team brain, enabling returns a `caution`.
+
+**When a change takes effect:** HTTP sessions on their next initialize; a
+stdio server after it restarts; the conversation switch immediately.
+
+**The conversation switch.** When the user says "save everything from here",
+the agent calls `memory_conversation_mode {"mode": "all"}` and follows the
+returned `rule_text` for the rest of the conversation. "Stop saving" is
+`{"mode": "off"}`: save only what the user explicitly asks to keep. `brain`
+returns the brain's own rule. Nothing is stored: a new conversation starts
+from the brain's mode, and after compaction the agent calls it again. Every
+save still goes through `remember` with the connection's own scope and the
+brain's visibility posture. The switch doesn't stop background capture from
+host session hooks, and its response says so.
+
 ## Enable / verify / disable
 
 ```bash

@@ -2793,6 +2793,16 @@ More: [docs/guides/shared-brain-skills.md#membership-inactive-after-a-re-enrollm
 
 More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover)
 
+### memory_setting_write_outcome_unknown
+
+<a id="memory_setting_write_outcome_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A memory writeback setting change did not confirm, so it may or may not have been saved. | A database write that throws can be a rollback or a lost acknowledgement, and the two look the same to the caller. The setting and its audit row commit together, so a re-read shows which happened. | Call get_memory_settings to read the mode in effect, and change it again only if the change did not land. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/ambient-writeback.md#reading-and-changing-it-remotely](../../docs/guides/ambient-writeback.md#reading-and-changing-it-remotely)
+
 ### merge_recommended
 
 <a id="merge_recommended"></a>

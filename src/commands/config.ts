@@ -944,6 +944,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       : fileOnly
         ? fileVal
         : (fileVal !== undefined && fileVal !== null ? fileVal : dbVal);
+    if (key === 'memory.agent_writeback' && (val === null || val === undefined)) return (await import('./config-agent-writeback.ts')).printUnsetAgentWriteback(engine);
     if (val !== null && val !== undefined) {
       // #3943: redact by default like `show`/`set` — `get` output lands in
       // agent transcripts and shell history; scripts opt out with the flag.
@@ -1008,10 +1009,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     // Ambient-writeback keys DUAL-WRITE (OV2-5): file mirror first (the
     // engine-free readers' plane), then the authoritative DB row. A DB
     // failure leaves the planes briefly diverged — reported, not hidden.
-    if (key === EMBEDDING_DISABLED_KEY) {
-      await setEmbeddingDisabled(engine, value);
-      return;
-    }
+    if (key === EMBEDDING_DISABLED_KEY) return setEmbeddingDisabled(engine, value);
     if (key === BRAIN_AUDIENCE_KEY) {
       // Dual-plane like memory.* (WP8): the engine-free harness lane gates
       // its enable-nudge advisory on the file-plane declared audience.
@@ -1043,6 +1041,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       console.log(`Set ${key} = ${audience} (${hostPlane ? 'file + db planes' : 'db plane only — mounted brain'})`);
       return;
     }
+    if (key === 'memory.agent_writeback') return (await import('./config-agent-writeback.ts')).setAgentWritebackFromCli(engine, value);
     if (MEMORY_DUAL_PLANE_KEYS.has(key)) {
       const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
       const cfg = (loadConfigFileOnly() ?? { engine: 'pglite' }) as Parameters<typeof saveConfig>[0];
@@ -1520,5 +1519,5 @@ async function refuseSchemaSizingKey(key: 'embedding_model' | 'embedding_dimensi
 async function writebackLanesNote(engine: BrainEngine, key: string): Promise<string> {
   if (key !== 'memory.auto_writeback') return '';
   const { captureLaneSummary, resolveWritebackConfig } = await import('../core/facts/writeback-config.ts');
-  return `; capture lanes: ${captureLaneSummary(await resolveWritebackConfig(engine, loadConfig(), { gate: true }))}`;
+  return `; capture lanes: ${captureLaneSummary(await resolveWritebackConfig(engine, loadConfig(), { gate: true }))}${await (await import('./config-agent-writeback.ts')).agentWritebackNote(engine)}`;
 }

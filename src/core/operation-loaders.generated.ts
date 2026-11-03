@@ -28,6 +28,7 @@ const load_insights = () => import('./ops/insights.ts') as Promise<Record<string
 const load_jobs = () => import('./ops/jobs.ts') as Promise<Record<string, unknown>>;
 const load_links = () => import('./ops/links.ts') as Promise<Record<string, unknown>>;
 const load_loops = () => import('./ops/loops.ts') as Promise<Record<string, unknown>>;
+const load_memory_settings = () => import('./ops/memory-settings.ts') as Promise<Record<string, unknown>>;
 const load_notices = () => import('./ops/notices.ts') as Promise<Record<string, unknown>>;
 const load_orphans = () => import('./ops/orphans.ts') as Promise<Record<string, unknown>>;
 const load_page_append = () => import('./ops/page-append.ts') as Promise<Record<string, unknown>>;
@@ -212,6 +213,9 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "unpurge_page": [load_purge, "purgeOperations"],
   "memory_recall": [load_qm_memory, "qmMemoryOperations"],
   "memory_write": [load_qm_memory, "qmMemoryOperations"],
+  "get_memory_settings": [load_memory_settings, "memorySettingsOperations"],
+  "set_memory_writeback": [load_memory_settings, "memorySettingsOperations"],
+  "memory_conversation_mode": [load_memory_settings, "memorySettingsOperations"],
   "find_contradictions": [load_insights, "find_contradictions"],
   "find_experts": [load_insights, "find_experts"],
   "find_trajectory": [load_insights, "find_trajectory"],
