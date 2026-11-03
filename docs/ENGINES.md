@@ -751,7 +751,8 @@ working directory:
 
 - **Connection.** Postgres always connects on the instance-pool path. The direct (DDL/session) pool uses only
   `database.directUrl`, or the route a known pooler URL derives; `GBRAIN_DIRECT_DATABASE_URL` is never consulted.
-  Each URL must name its host, user and database (`engine_settings_invalid` otherwise), and both pools pass the
+  Each URL must be one single-host URL that names its host, user and database (`engine_settings_invalid` otherwise;
+  multi-host failover URLs are not read), and both pools pass the
   host, port (5432 when the URL names none), user, password and database to the driver explicitly, so `PGHOST`,
   `PGPORT`, `PGUSER`, `PGPASSWORD` and `PGDATABASE` never pick the server or the credentials. A URL with no password
   connects with none. The statement-description cache stays in the process instead of `<home>/cache/pg-types`

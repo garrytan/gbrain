@@ -506,6 +506,15 @@ export class ConnectionManager {
     await Promise.all(ends);
   }
 
+  /** Ends a manager a reconnect superseded once its in-flight work finishes, with no hard bound (a long hold such as CREATE INDEX CONCURRENTLY completes). */
+  retire(): void {
+    const pools = [this._directPool, this._readPoolOwnedExternally ? null : this._readPool];
+    this._directPool = null;
+    this._directInit = null;
+    this._readPool = null;
+    for (const pool of pools) pool?.end().catch(() => {});
+  }
+
   /**
    * Diagnostic snapshot for doctor / get_health surfaces.
    */

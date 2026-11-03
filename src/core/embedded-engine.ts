@@ -35,16 +35,14 @@ interface EmbeddedRecord {
   settings: EngineSettings | null;
 }
 
-const parseConnectionUrl = (url: string) => new URL(url.replace(/^postgres(ql)?:\/\//, 'http://'));
+const parseConnectionUrl = (url: string) => new URL(url.replace(/^postgres(ql)?:\/\//, 'settings://'));
 
-/** The connection field a settings URL leaves out (host, user or database name), or undefined when it names all three. */
-export function missingConnectionField(url: string): string | undefined {
+/** Why openEngine refuses a settings URL (not one parseable single-host URL, or no host, user or database name), or undefined. */
+export function connectionUrlProblem(url: string): string | undefined {
   let parsed: URL;
-  try { parsed = parseConnectionUrl(url); } catch { return 'a parseable URL'; }
-  if (!parsed.hostname) return 'a host';
-  if (!parsed.username) return 'a user';
-  if (parsed.pathname.length <= 1) return 'a database name';
-  return undefined;
+  try { parsed = parseConnectionUrl(url); } catch { return 'is not a parseable single-host connection URL (openEngine reads no multi-host URL)'; }
+  const missing = !parsed.hostname ? 'host' : !parsed.username ? 'user' : parsed.pathname.length <= 1 ? 'database name' : undefined;
+  return missing && `names no ${missing}, and the driver would fill it from PG* environment variables`;
 }
 
 /**

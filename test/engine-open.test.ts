@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { embeddedSettings, hostIdFor, isEmbeddedEngine, openEngine, processHasEmbeddedEngines, type EngineSettings } from '../src/core/engine-open.ts';
-import { markEmbeddedEngine } from '../src/core/embedded-engine.ts';
+import { markEmbeddedEngine, settingsConnectionOptions } from '../src/core/embedded-engine.ts';
 import { existingHostIdFor, existingLocalHostId, hostIdentityPathsFor, localHostId, localHostIdentity, registerLocalWriter, registerLocalWriterValue, revokeLocalWriter } from '../src/core/persistence/identity.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { readStoredEmbeddingIdentity } from '../src/core/stored-embedding-identity.ts';
@@ -85,6 +85,12 @@ describe('openEngine refusals', () => {
       }
     });
     expect(filesUnder(gbrainHome)).toEqual([]);
+  });
+
+  test('a settings URL keeps the port it names, and a multi-host URL is refused as one openEngine cannot read', async () => {
+    expect(settingsConnectionOptions(pgUrl('app:secret', 'db-a.example.internal:80/brain_a')).port).toBe(80);
+    const refusal = await openEngine(settingsFor({ engine: 'postgres', database: { url: pgUrl('app:secret', 'db-a.example.internal:5432,db-b.example.internal:5433/brain_a') } })).catch((error: { code?: string; suggestion?: string }) => error);
+    expect(refusal).toMatchObject({ code: 'engine_settings_invalid', suggestion: expect.stringContaining('multi-host') });
   });
 });
 

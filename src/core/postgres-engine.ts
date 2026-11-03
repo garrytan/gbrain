@@ -2879,7 +2879,7 @@ export class PostgresEngine implements BrainEngine {
       await this.connect(this._savedConfig);
       // New pool is live — discard the old one best-effort, and the superseded manager's direct pool with it.
       if (oldSql) { try { await oldSql.end({ timeout: 5 }); } catch { /* swallow */ } }
-      if (oldManager && oldManager !== this.connectionManager) await oldManager.disconnect().catch(() => {});
+      if (oldManager && oldManager !== this.connectionManager) oldManager.retire();
       try {
         logPoolRecovery('reconnect_succeeded');
       } catch { /* best-effort */ }

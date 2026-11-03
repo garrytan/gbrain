@@ -159,6 +159,20 @@ describeE2E('openEngine on Postgres', () => {
     expect(await codeOf(oldDirect`SELECT 1`)).not.toBe('resolved');
   }, 60_000);
 
+  test('a reconnect lets in-flight work on the superseded direct pool finish before that pool ends', async () => {
+    const engine = await openEngine({ embedded_core: true, engine: 'postgres', database: { url: urls[0]!, directUrl: urls[0]! }, pool: { max: 2 }, host: { id: randomUUID() } });
+    try {
+      const manager = internals(engine).connectionManager as unknown as { ddl(): Promise<postgres.Sql> };
+      const oldDirect = await manager.ddl();
+      const inFlight = codeOf(oldDirect`SELECT pg_sleep(3)`);
+      await new Promise(resolve => setTimeout(resolve, 200));
+      await engine.reconnect();
+      expect(await inFlight).toBe('resolved');
+    } finally {
+      await engine.disconnect();
+    }
+  }, 60_000);
+
   test('the consumer heartbeat records the identity-given-at-open sentinel, not a host.json path', async () => {
     const engine = await openEngine(settingsA as EngineSettings);
     try {
