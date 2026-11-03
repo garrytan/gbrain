@@ -2568,6 +2568,15 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
       return null;
     }
   }
+  // Thin-client serve forwards over native OAuth and must never open a local engine.
+  if (command === 'serve') {
+    const config = loadConfig();
+    if (config && isThinClient(config)) {
+      const { startRemoteMcpBridge } = await import('../mcp/server.ts');
+      await startRemoteMcpBridge(config);
+      return null;
+    }
+  }
   return { args, syncWatchdog };
 }
 

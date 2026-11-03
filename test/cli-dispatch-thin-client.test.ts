@@ -1,10 +1,9 @@
 /**
  * Tests for the top-level CLI dispatch guard introduced in multi-topology v1.
  *
- * When `~/.gbrain/config.json` has `remote_mcp` set, 9 commands are refused
- * with a canonical error pointing at the remote host:
- *   sync, embed, extract, migrate, apply-migrations, repair-jsonb, orphans,
- *   integrity, serve.
+ * With `remote_mcp` configured, DB-bound commands are refused with a canonical
+ * error pointing at the remote host. `serve` instead starts an engine-free
+ * native stdio bridge to that host.
  *
  * Doctor is NOT in the refused set — it routes to runRemoteDoctor instead.
  *
@@ -97,7 +96,6 @@ describe('thin-client dispatch guard refuses DB-bound commands', () => {
     ['repair-jsonb', '--dry-run'],
     ['orphans'],
     ['integrity', 'check'],
-    ['serve'],
     // v0.32 audit REFUSE additions (no MCP route, or localOnly ops) and the
     // v0.31.1-era refusals not covered above.
     ['pages', 'purge-deleted'],
@@ -153,6 +151,20 @@ describe('thin-client dispatch guard refuses DB-bound commands', () => {
 
 describe('thin-client dispatch guard does NOT refuse safe commands', () => {
   useFreshHome();
+
+  for (const args of [['serve'], ['serve', '--http']] as const) {
+    test(`\`gbrain ${args.join(' ')}\` starts a native stdio bridge without a local engine`, async () => {
+      const databasePath = join(tmp, 'must-not-open.pglite');
+      seedThinClientConfig(tmp, { engine: 'pglite', database_path: databasePath });
+      const r = await run([...args]);
+      expect(r.exitCode).toBe(0);
+      expect(existsSync(databasePath)).toBe(false);
+      expect(existsSync(join(tmp, '.gbrain', 'brain.pglite'))).toBe(false);
+      expect(r.stdout + r.stderr).not.toContain('Setting up brain schema');
+      expect(r.stdout + r.stderr).not.toContain('Schema version');
+      expect(r.stderr).not.toContain('not routable');
+    });
+  }
 
   // Commands that are still useful in thin-client mode (init, auth, version,
   // help) MUST NOT be refused. We assert the canonical thin-client error
