@@ -30,12 +30,13 @@ import type { BrainEngine } from '../core/engine.ts';
 import { PageMissingError } from '../core/engine-errors.ts';
 import type { Page } from '../core/types.ts';
 import { extractCodeRefs, type CodeRef } from '../core/link-extraction.ts';
-import { OperationError } from '../core/ops/contract.ts';
+import { OperationError, opError } from '../core/ops/contract.ts';
 import { isSegmentedPage } from '../core/page-body/page-shape.ts';
 import { bodyLines } from '../core/page-body/segment-lines.ts';
 import { slugifyCodePath } from '../core/sync.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { ALL_SOURCES, resolveSourceId } from '../core/source-resolver.ts';
 
 export interface ReconcileLinksResult {
   status: 'ok' | 'auto_link_disabled';
@@ -69,9 +70,12 @@ async function pageCodeRefs(engine: BrainEngine, page: Page): Promise<CodeRef[]>
 }
 
 export interface ReconcileLinksOpts {
+  /** The one source to reconcile. Defaults to `default`, the source `addLink` writes to when none is named. */
   sourceId?: string;
   dryRun?: boolean;
 }
+
+export const RECONCILE_LINKS_USAGE = 'Usage: gbrain reconcile-links [--source <id>] [--dry-run] [--json]';
 
 /**
  * Scan every markdown page for code-path references (e.g.
@@ -89,6 +93,14 @@ export async function runReconcileLinks(
   engine: BrainEngine,
   opts: ReconcileLinksOpts = {},
 ): Promise<ReconcileLinksResult> {
+  // Edges are written inside one source, so `__all__` has no meaning here. Refuse
+  // it before any read or write rather than scanning pages it cannot link.
+  const sourceId = opts.sourceId ?? 'default';
+  if (sourceId === ALL_SOURCES) {
+    throw opError('invalid_params', `reconcile-links writes edges inside one source; ${ALL_SOURCES} is not a valid target.`,
+      `Name one source with --source (gbrain sources list shows the ids). ${RECONCILE_LINKS_USAGE}`);
+  }
+
   // Respect auto_link config (same gate put_page uses). A user that
   // explicitly turned off auto-link doesn't want reconcile-links
   // writing edges back either.
@@ -105,11 +117,12 @@ export async function runReconcileLinks(
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
 
-  // Walk all markdown slugs. listPages(markdown-only filter) isn't exposed,
-  // so filter at call time via page_kind. Not using getAllSlugs because we
-  // also need compiled_truth + timeline for extractCodeRefs.
+  // Walk the selected source's markdown slugs. listPages(markdown-only filter)
+  // isn't exposed, so filter at call time via page_kind. Not using getAllSlugs
+  // because we also need compiled_truth + timeline for extractCodeRefs.
   const mdSlugs = (await engine.executeRaw<{ slug: string }>(
-    `SELECT slug FROM pages WHERE page_kind = 'markdown' ORDER BY slug`,
+    `SELECT slug FROM pages WHERE page_kind = 'markdown' AND source_id = $1 ORDER BY slug`,
+    [sourceId],
   )).map(r => r.slug);
 
   progress.start('reconcile_links.scan', mdSlugs.length);
@@ -126,10 +139,8 @@ export async function runReconcileLinks(
   // intended-source row for `default`-vs-`<source>` ambiguity. The link
   // edges below also propagate the same sourceId (Data R1 MED 1: opt was
   // declared on ReconcileLinksOpts but ignored end-to-end).
-  const getPageOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
-  const linkOpts = opts.sourceId
-    ? { fromSourceId: opts.sourceId, toSourceId: opts.sourceId, originSourceId: opts.sourceId }
-    : undefined;
+  const getPageOpts = { sourceId };
+  const linkOpts = { fromSourceId: sourceId, toSourceId: sourceId, originSourceId: sourceId };
   for (const mdSlug of mdSlugs) {
     const page = await engine.getPage(mdSlug, getPageOpts);
     if (!page) {
@@ -168,12 +179,14 @@ export async function runReconcileLinks(
         await engine.addLink(mdSlug, codeSlug, ctx, 'documents', 'markdown', mdSlug, 'compiled_truth', linkOpts); // gbrain-allow-direct-insert: gbrain reconcile-links command — code-graph reconciliation from markdown references
         await engine.addLink(codeSlug, mdSlug, ref.path, 'documented_by', 'markdown', mdSlug, 'compiled_truth', linkOpts); // gbrain-allow-direct-insert: gbrain reconcile-links command — reverse documented_by edge
       } catch (e: unknown) {
-        // Per-link errors don't abort the batch. Track them for the summary.
+        // A missing target is expected (the code page may not be synced yet) and counted.
+        // Anything else is a real write failure: stop, so the command never reports 'ok'
+        // for a batch that did not complete.
         if (e instanceof PageMissingError) {
           edgesTargetsMissing++;
         } else {
-          // Real error — log but keep going. Agents can inspect progress events.
-          console.warn(`[reconcile-links] ${mdSlug} → ${codeSlug}: ${e instanceof Error ? e.message : String(e)}`);
+          progress.finish();
+          throw e;
         }
       }
     }
@@ -194,13 +207,25 @@ export async function runReconcileLinks(
 
 /**
  * CLI entry. Parses argv, runs runReconcileLinks, prints a summary.
+ * --source <id> selects the one source to reconcile (otherwise the ambient
+ * source chain: GBRAIN_SOURCE, .gbrain-source, registered path, brain default).
  * --dry-run reports counts without writing. --json emits machine output.
  */
 export async function runReconcileLinksCli(engine: BrainEngine, args: string[]): Promise<void> {
   const dryRun = args.includes('--dry-run');
   const jsonOut = args.includes('--json');
 
-  const result = await runReconcileLinks(engine, { dryRun });
+  let explicitSource: string | null = null;
+  const sourceAt = args.indexOf('--source');
+  if (sourceAt !== -1) {
+    const value = args[sourceAt + 1];
+    if (!value || value.startsWith('-')) throw opError('invalid_params', '--source needs a source id.', RECONCILE_LINKS_USAGE);
+    if (args.indexOf('--source', sourceAt + 1) !== -1) throw opError('invalid_params', '--source was given more than once.', RECONCILE_LINKS_USAGE);
+    explicitSource = value;
+  }
+  const sourceId = await resolveSourceId(engine, explicitSource);
+
+  const result = await runReconcileLinks(engine, { dryRun, sourceId });
 
   if (jsonOut) {
     console.log(JSON.stringify(result));
