@@ -715,7 +715,8 @@ function graphEvidenceLine(p: SearchResult): string {
 
 export function takesHitToTakeForPrompt(h: TakeHit | Take): {
   page_slug: string; row_num: number; claim: string; kind: string;
-  holder: string; weight: number; source?: string | null; since_date?: string | null; trust_tier?: TrustTier; origin?: string;
+  holder: string; weight: number; source_id?: string | null; source?: string | null;
+  since_date?: string | null; until_date?: string | null; trust_tier?: TrustTier; origin?: string;
 } {
   // TakeHit + Take share the slug/claim/kind/holder/weight surface.
   const t = h as Take & TakeHit;
@@ -727,8 +728,10 @@ export function takesHitToTakeForPrompt(h: TakeHit | Take): {
     kind: t.kind,
     holder: t.holder,
     weight: t.weight,
+    source_id: 'source_id' in t ? t.source_id ?? null : null,
     source: 'source' in t ? (t as Take).source : null,
     since_date: 'since_date' in t ? (t as Take).since_date : null,
+    until_date: 'until_date' in t ? (t as Take).until_date : null,
     ...(lt.trust_tier ? { trust_tier: lt.trust_tier, origin: lt.origin } : {}),
   };
 }

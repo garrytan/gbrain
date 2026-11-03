@@ -366,11 +366,15 @@ export interface TakeHit {
   take_id: number;
   page_id: number;
   page_slug: string;
+  source_id?: string | null; // the take's page source: where the claim applies
   row_num: number;
   claim: string;
   kind: TakeKind;
   holder: string;
   weight: number;
+  since_date?: string | null;
+  until_date?: string | null;
+  source?: string | null;
   score: number;            // search rank score (ts_rank for keyword, 1-cos_dist for vector)
 }
 

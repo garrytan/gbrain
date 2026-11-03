@@ -117,6 +117,20 @@ describe('searchTakes', () => {
     const hits = await engine.searchTakes('consolidate');
     expect(hits.some(h => h.claim.includes('consolidate the mid-market'))).toBe(true);
   });
+
+  test('hits carry where and when the take applies: source_id, since/until, source', async () => {
+    await engine.addTakesBatch([{
+      page_id: acmePageId, row_num: 51,
+      claim: 'Quarterly freeze window applies to the billing rollout',
+      kind: 'fact', holder: 'world', weight: 0.9,
+      since_date: '2025-01', until_date: '2025-03-31', source: 'meetings/2025-01-06-planning',
+    }]);
+    const hit = (await engine.searchTakes('quarterly freeze window')).find(h => h.row_num === 51);
+    expect(hit).toMatchObject({
+      page_slug: 'companies/acme-example', source_id: 'default',
+      since_date: '2025-01', until_date: '2025-03-31', source: 'meetings/2025-01-06-planning',
+    });
+  });
 });
 
 describe('updateTake', () => {
@@ -424,5 +438,8 @@ describe('take embedding writes', () => {
     expect(result.embedded).toBeGreaterThan(0);
     const hits = await engine.searchTakesVector(new Float32Array(dims).fill(0.5), { limit: 10 });
     expect(hits.length).toBeGreaterThan(0);
+    // Vector hits carry the same applicability fields as keyword hits.
+    const scoped = (await engine.searchTakesVector(new Float32Array(dims).fill(0.5), { limit: 100 })).find(h => h.row_num === 51);
+    expect(scoped).toMatchObject({ source_id: 'default', since_date: '2025-01', until_date: '2025-03-31' });
   });
 });

@@ -347,8 +347,9 @@ export async function searchTakes(exec: LegacyUnscopedRead, query: string, opts:
         ? sqlFragment`AND p.source_id = ${opts.sourceId}`
         : sqlFragment``;
     const rows = (await exec.run(sqlFragment`
-      SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
-             t.claim, t.kind, t.holder, t.weight,
+      SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, p.source_id,
+             t.row_num, t.claim, t.kind, t.holder, t.weight,
+             t.since_date, t.until_date, t.source,
              word_similarity(${query}, t.claim)::real AS score
       FROM takes t
       JOIN pages p ON p.id = t.page_id
@@ -382,8 +383,9 @@ export async function searchTakesVector(
         ? sqlFragment`AND p.source_id = ${opts.sourceId}`
         : sqlFragment``;
     const rows = (await exec.run(sqlFragment`
-      SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
-             t.claim, t.kind, t.holder, t.weight,
+      SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, p.source_id,
+             t.row_num, t.claim, t.kind, t.holder, t.weight,
+             t.since_date, t.until_date, t.source,
              (1 - (t.embedding <=> ${vec}::vector))::real AS score
       FROM takes t
       JOIN pages p ON p.id = t.page_id

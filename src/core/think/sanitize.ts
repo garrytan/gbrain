@@ -199,11 +199,26 @@ export interface TakeForPrompt {
   kind: string;
   holder: string;
   weight: number;
+  /** The take's page source id: the scope the claim was recorded in. */
+  source_id?: string | null;
   source?: string | null;
   since_date?: string | null;
+  until_date?: string | null;
   /** #5575 A6: the take's trust tier and short origin, rendered as attributes. */
   trust_tier?: TrustTier;
   origin?: string;
+}
+
+/**
+ * A stored take field rendered as a `<take>` attribute value: neutralized like
+ * the claim (neutralizeForPrompt), entity-escaped so it cannot close the
+ * attribute or the tag, kept on one line and bounded (before escaping, so an
+ * entity is never cut).
+ */
+function takeAttrValue(raw: unknown, max = 80): string {
+  const escaped = String(raw).replace(/[\r\n\t]+/g, ' ').slice(0, max)
+    .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return neutralizeForPrompt(escaped).text;
 }
 
 export function renderTakesBlock(takes: TakeForPrompt[]): { rendered: string; sanitizedCount: number } {
@@ -213,8 +228,10 @@ export function renderTakesBlock(takes: TakeForPrompt[]): { rendered: string; sa
     const { text, matched } = sanitizeTakeForPrompt(t.claim);
     if (matched.length > 0) sanitizedCount++;
     const meta = [`kind=${t.kind}`, `who=${t.holder}`, `weight=${t.weight.toFixed(2)}`];
-    if (t.since_date) meta.push(`since=${t.since_date}`);
-    if (t.source) meta.push(`source="${String(t.source).replace(/"/g, '\\"').slice(0, 80)}"`);
+    if (t.source_id) meta.push(`origin_source="${takeAttrValue(t.source_id)}"`);
+    if (t.since_date) meta.push(`since="${takeAttrValue(t.since_date, 32)}"`);
+    if (t.until_date) meta.push(`until="${takeAttrValue(t.until_date, 32)}"`);
+    if (t.source) meta.push(`source="${takeAttrValue(t.source)}"`);
     if (t.trust_tier) meta.push(trustAttributes({ trust_tier: t.trust_tier, origin: t.origin ?? 'legacy' }));
     lines.push(
       `<take id="${t.page_slug}#${t.row_num}" ${meta.join(' ')}>\n${text}\n</take>`,
