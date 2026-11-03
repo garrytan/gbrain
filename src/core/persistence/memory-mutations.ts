@@ -46,7 +46,7 @@ export function isSemanticMemoryMutation(row: WriteRequest): boolean {
 }
 
 /** Stable caller intent is checked before entity resolution, relative TTLs or providers. */
-async function submission(ctx: OperationContext, operation: string, params: Record<string, unknown>) {
+async function submission(ctx: OperationContext, operation: string, params: Record<string, unknown>, retryArguments?: Record<string, unknown>) {
   assertPersistenceAccepting(ctx.engine);
   const p: Record<string, unknown> = { ...params, ...parseMutationPrecondition(params) };
   const requestId = typeof p.request_id === 'string' ? p.request_id : randomUUID();
@@ -55,7 +55,7 @@ async function submission(ctx: OperationContext, operation: string, params: Reco
   if (ctx.remote !== false && sourceId !== granted) {
     throw writeGrantRefusal(ctx,
       `This connection may write only to source ${granted}. Omit source_id to write there, or ask the brain host's operator to grant source ${sourceId}.`,
-      operation === 'remember' ? { tool: operation, arguments: params } : undefined);
+      retryArguments ? { tool: operation, arguments: retryArguments } : undefined);
   }
   await initializeLocalPersistence(ctx);
   const principal = await requestPrincipalForContext(ctx);
@@ -185,7 +185,8 @@ async function inferRememberTarget(ctx: OperationContext, sourceId: string, sour
 export async function submitRememberMutation(ctx: OperationContext, params: Record<string, unknown>, waitMs?: number,
   opts: { visibilityDefaulted?: boolean } = {}): Promise<Record<string, unknown>> {
   registerMutationPreparer('remember', prepareMemoryMutation);
-  const sub = await submission(ctx, 'remember', params);
+  const { visibility: _defaulted, ...withoutDefault } = params;
+  const sub = await submission(ctx, 'remember', params, opts.visibilityDefaulted ? withoutDefault : params);
   if (sub.prior) { const prior = sub.prior; const settled = await waitForWrite(ctx.engine, prior, ctx.config, waitMs ?? ctx.writeWaitMs); return throwIfHeld(withRememberTarget(prior, () => writeResponse(settled))); }
   const { p, sourceId, principal, callerIntent, requestId, clientRequestId } = sub;
   const [source] = await ctx.engine.executeRaw<RememberSource>(

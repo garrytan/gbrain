@@ -337,7 +337,8 @@ lets it write (one id, or `[]` when the grant holds no single writable source).
 It never names a source outside the grant, a federated read source included,
 and the refusal is identical whether the named source exists or not. On
 `remember` with one writable source, `fix` is the same call with `source_id` set
-to it (no `request_id`) with `next: ask_user`: its `user_message` names both
+to it (no `request_id`; a `visibility` the caller left out stays out, so the
+brain's default still applies) with `next: ask_user`: its `user_message` names both
 sources, because the writable source's readers may differ from the one the user
 named. `forget`, `forget_fact` and page writes carry no fix, so a withdrawal is
 never retargeted and page content is never echoed back.
