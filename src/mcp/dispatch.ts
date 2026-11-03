@@ -823,7 +823,9 @@ export function asAgentToolError(e: unknown, op: string, ctx: Pick<OperationCont
   if (isAIInvocationPolicyError(e)) return e;
   const auth: AuthInfo = ctx.auth ?? { token: '', clientId: '', scopes: ['read'] };
   const text = errorResult(e, { remote: true, transport: 'http', sourceId: ctx.sourceId, auth, allowedOps }, { op, mutating: false, idempotent: true }).content[0]!.text;
-  return Object.assign(new Error(text), { code: (JSON.parse(text) as { code?: string }).code });
+  const err: Error & { code?: string } = new Error(text);
+  err.code = (JSON.parse(text) as { code?: string }).code;
+  return err;
 }
 
 const stderrLogger: OperationContext['logger'] = {
