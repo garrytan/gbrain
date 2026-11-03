@@ -125,6 +125,7 @@ import { ingestOperations } from './ops/ingest.ts';
 import { entityIdentityOperations } from './ops/entity-identity.ts';
 import { requestToolsOperations } from './ops/request-tools.ts';
 import { noticesOperations } from './ops/notices.ts';
+import { memorySettingsOperations } from './ops/memory-settings.ts';
 import { pageEditOperations } from './ops/page-edit.ts';
 import { pageAppendOperations } from './ops/page-append.ts';
 import { pageBatchOperations } from './ops/page-batch.ts';
@@ -215,7 +216,7 @@ export const operations: Operation[] = [
   ...entityIdentityOperations,
   // v0.31: hot memory (extract_facts, recall, context_pack, delta,
   // forget_fact) — ops/facts.ts
-  ...factsOperations, ...purgeOperations, ...qmMemoryOperations, // + GST-359 QM memory pair — ops/qm-memory.ts
+  ...factsOperations, ...purgeOperations, ...qmMemoryOperations, ...memorySettingsOperations, // + GST-359 QM memory pair — ops/qm-memory.ts; GBRA-219 memory settings — ops/memory-settings.ts
   // v0.32.6: contradiction probe MCP surface (M3) — ops/insights.ts
   find_contradictions,
   // v0.33: expertise + relationship-proximity routing — ops/insights.ts

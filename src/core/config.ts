@@ -1544,6 +1544,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Fire-once sentinel for the ambient-writeback consent nudge (WP8):
   // stamped 'true' after the init/post-upgrade ask has been shown once.
   'memory.auto_writeback_notice_shown',
+  'memory.agent_writeback', // GBRA-219: DB-only override of what AGENTS are told (inherit|off|salient|all); never the capture lanes (facts/writeback-settings.ts)
   // Always-loaded core memory + context-pressure notice (docs/guides/core-memory.md#configuration).
   'memory.core.enabled', 'memory.core.max_chars', 'memory.core.remote_edit',
   'memory.pressure.enabled', 'memory.pressure.warn_ratio', 'memory.pressure.context_window',
@@ -1658,6 +1659,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // the advisor exposes operational diagnostics (version/jobs/key presence),
   // not prose skills. Default OFF; read-only over MCP.
   'mcp.publish_advisor',
+  'mcp.publish_memory_settings', // GBRA-219: operator grant for set_memory_writeback over MCP (admin scope too); default off
   // WP3 — unknown tool-call argument posture ('warn' default | 'reject').
   // Read dual-plane by src/mcp/validate-params.ts (DB > file > 'warn').
   'mcp.strict_params',

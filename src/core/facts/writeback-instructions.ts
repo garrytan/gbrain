@@ -32,6 +32,8 @@ export interface AmbientWritebackOpts {
    * 'unknown' and gets HEDGED lines ("when it is in your tool list") that
    * stay honest whether the serve is full-surface or clamped to verbs. */
   extractFactsAvailable: boolean | 'unknown';
+  /** Who turned it on: the brain (default) or the user, for this conversation only (memory_conversation_mode). */
+  origin?: 'brain' | 'conversation';
 }
 
 export function buildAmbientWritebackSection(opts: AmbientWritebackOpts): string {
@@ -51,7 +53,10 @@ export function buildAmbientWritebackSection(opts: AmbientWritebackOpts): string
   const visibilityLine = opts.visibility === 'world'
     ? 'Pass visibility: "world" explicitly on every save. "world" means readable by agents authorized on THIS brain — not the public internet. Never widen a private fact on your own.'
     : 'Pass visibility: "private" explicitly on every save — this brain\'s operator keeps facts private by default (omitting visibility would silently widen: remember defaults to world). Private facts are readable by the local CLI only, not by remote sessions: you, and every other MCP or HTTP session, cannot recall or forget a fact you save as private. Never widen to world on your own.';
-  return `Ambient memory writeback (enabled by this brain's operator — mode: ${opts.mode}):
+  const header = opts.origin === 'conversation'
+    ? `Memory writeback for the rest of this conversation (the user asked for it — mode: ${opts.mode}):`
+    : `Ambient memory writeback (enabled by this brain's operator — mode: ${opts.mode}):`;
+  return `${header}
 1. Treat every substantive statement the user makes about themselves, their people, projects, or plans as a memory candidate. ${candidatePolicy}
 2. Save with remember: ONE claim per call; set kind (event | preference | commitment | belief | fact) and set entity whenever a person, company, or project is the subject (e.g. people/alice-example, companies/acme-example).
 3. ${multiFact}

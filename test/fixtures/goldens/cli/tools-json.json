@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 269438,
-    "stdoutSha256": "3357c0e14372b349878c08bca39acd59ad25fe3851a8b6bbb630c738b6740cac",
+    "stdoutBytes": 278507,
+    "stdoutSha256": "8b48348d77364b33846c7b34c36f5e38a0327347552eb2373d26ce4e8015ca33",
     "toolNames": [
       "remember",
       "entity",
@@ -145,6 +145,8 @@
       "extract_entities",
       "extraction_pending",
       "extraction_review",
+      "ingest",
+      "ingest_undo",
       "entity_identity_link",
       "entity_identity_unlink",
       "entity_identity_list",
@@ -158,6 +160,9 @@
       "unpurge_page",
       "memory_recall",
       "memory_write",
+      "get_memory_settings",
+      "set_memory_writeback",
+      "memory_conversation_mode",
       "find_contradictions",
       "find_experts",
       "find_trajectory",
@@ -449,6 +454,7 @@
         "name": "get_page",
         "parameters": {
           "around_chunk_id": "number?",
+          "as_of": "string?",
           "body": "string?",
           "bytes": "object?",
           "content_only": "boolean?",
@@ -478,6 +484,10 @@
             "around_chunk_id": {
               "description": "Window around a search hit chunk_id. One window selector only: not with lines, bytes or cursor.",
               "type": "number"
+            },
+            "as_of": {
+              "description": "YYYY-MM-DD: edition in force then. No valid_time in reply: current page.",
+              "type": "string"
             },
             "body": {
               "description": "auto: whole up to 256 KB, else outline + window; a window's edit_target is edit_page `within`. none: revision + size + tail_sha256 (append_page expected_tail_sha256).",
@@ -635,6 +645,7 @@
           "expected_revision": "string?",
           "force": "boolean?",
           "ingested_via": "string?",
+          "reason": "string?",
           "request_id": "string?",
           "slug": "string",
           "source_id": "string?",
@@ -680,6 +691,10 @@
             },
             "ingested_via": {
               "description": "Server-set remotely.",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Why this change, one line (max 500 chars); kept in page history.",
               "type": "string"
             },
             "request_id": {
@@ -1086,6 +1101,7 @@
         "parameters": {
           "edits": "array",
           "expected_revision": "string",
+          "reason": "string?",
           "request_id": "string?",
           "slug": "string",
           "source_id": "string?",
@@ -1118,6 +1134,10 @@
             },
             "expected_revision": {
               "description": "From get_page include_content:true.",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Why this change, one line (max 500 chars); kept in page history.",
               "type": "string"
             },
             "request_id": {
@@ -1274,6 +1294,10 @@
                   },
                   "expected_revision": {
                     "description": "Revision read; omit to create.",
+                    "type": "string"
+                  },
+                  "reason": {
+                    "description": "Why this change, one line (max 500 chars); kept in page history.",
                     "type": "string"
                   },
                   "slug": {
@@ -3009,7 +3033,7 @@
         "scope": "read"
       },
       {
-        "description": "Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest 20 versions by default. Pass include_body: true for each version's compiled_truth and timeline, and a larger limit (at most 100 over MCP) for older versions. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). revert_version takes the id field.",
+        "description": "Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest 20 versions by default. Pass include_body: true for each version's compiled_truth and timeline, and a larger limit (at most 100 over MCP) for older versions. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). replaced_because is the reason given for the write that replaced the snapshot (null when none was given). revert_version takes the id field.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -3066,6 +3090,7 @@
         "parameters": {
           "expected_revision": "string?",
           "force": "boolean?",
+          "reason": "string?",
           "request_id": "string?",
           "slug": "string",
           "source_id": "string?",
@@ -3081,6 +3106,10 @@
             "force": {
               "description": "Ignore the revision.",
               "type": "boolean"
+            },
+            "reason": {
+              "description": "Why this change, one line (max 500 chars); kept in page history.",
+              "type": "string"
             },
             "request_id": {
               "description": "Reuse only to retry.",
@@ -6436,24 +6465,47 @@
         "scope": "write"
       },
       {
-        "description": "List unverified auto-extracted entity stubs awaiting owner review (the quarantine lane from extract_entities). Promote or reject them with extraction_review.",
+        "description": "List what waits for review: unverified auto-extracted entity stubs (pending; promote or reject them with extraction_review), facts saved without an entity (unattributed; relink each with remember entity + replaces, never forget first), and, when include names it, recently created entity pages whose name is one edit or one acronym letter from another entity (possible_duplicates; flag only, never merged).",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "extraction_pending",
         "parameters": {
+          "include": "array?",
           "limit": "number?",
-          "offset": "number?"
+          "offset": "number?",
+          "possible_duplicates_cursor": "string?",
+          "since_days": "number?",
+          "unattributed_offset": "number?"
         },
         "required_scopes": [],
         "schema": {
           "properties": {
+            "include": {
+              "description": "Lists to return: pending, unattributed, possible_duplicates. Default pending and unattributed.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
             "limit": {
-              "description": "Max rows (default 100, cap 500).",
+              "description": "Max rows per list (default 100 for pending, 50 for the others; cap 500).",
               "type": "number"
             },
             "offset": {
-              "description": "Pagination offset.",
+              "description": "Pagination offset for pending.",
+              "type": "number"
+            },
+            "possible_duplicates_cursor": {
+              "description": "Continuation for possible_duplicates (its next_cursor).",
+              "type": "string"
+            },
+            "since_days": {
+              "description": "possible_duplicates: entity pages created in the last N days (default 30).",
+              "type": "number"
+            },
+            "unattributed_offset": {
+              "description": "Pagination offset for unattributed (its next_offset).",
               "type": "number"
             }
           },
@@ -6463,24 +6515,29 @@
         "scope": "read"
       },
       {
-        "description": "Promote or reject unverified auto-extracted entity stubs (batch). Promote flips `status` to verified (provenance kept for audit); reject soft-deletes the stub. Owner-only: this op is refused for any non-local caller. (The markers are ordinary frontmatter — the boundary against rewriting them wholesale is put_page write authz, same as for any page.)",
+        "description": "Decide on review rows (batch). promote flips an unverified auto-extracted stub's `status` to verified (provenance kept for audit); reject soft-deletes the stub; distinct records that each of slugs is a different entity from of (`distinct_from` frontmatter), so possible_duplicates stops pairing them. Every decision writes through the page door: Git first on a source with a repository, the database on a repo-less source. Owner-only: this op is refused for any non-local caller. (The markers are ordinary frontmatter — the boundary against rewriting them wholesale is put_page write authz, same as for any page.)",
         "idempotent": false,
         "local_only": true,
         "mutating": true,
         "name": "extraction_review",
         "parameters": {
           "action": "string",
+          "of": "string?",
           "slugs": "array"
         },
         "required_scopes": [],
         "schema": {
           "properties": {
             "action": {
-              "description": "'promote' or 'reject'.",
+              "description": "'promote', 'reject' or 'distinct'.",
+              "type": "string"
+            },
+            "of": {
+              "description": "distinct only: the existing entity page each of slugs is not the same as.",
               "type": "string"
             },
             "slugs": {
-              "description": "Stub slugs to act on (batch).",
+              "description": "Slugs to act on (batch).",
               "items": {
                 "type": "string"
               },
@@ -6490,6 +6547,131 @@
           "required": [
             "action",
             "slugs"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Save a pasted document as a source page, proposed pages for new entities and facts on the entities it names, all planned and checked before any write. Returns a report: status per item, coverage, spend, approve and undo actions. attempt_id alone reads a report; with resume: true continues it.",
+        "idempotent": false,
+        "local_only": false,
+        "mutating": true,
+        "name": "ingest",
+        "parameters": {
+          "attempt_id": "string?",
+          "content": "string?",
+          "dry_run": "boolean?",
+          "max_usd": "number?",
+          "no_facts": "boolean?",
+          "request_id": "string?",
+          "resume": "boolean?",
+          "slug": "string?",
+          "source_id": "string?",
+          "title": "string?",
+          "trusted_extraction": "boolean?",
+          "type": "string?",
+          "valid_from": "string?",
+          "visibility": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "attempt_id": {
+              "description": "From a report: alone reads it; with resume continues it.",
+              "type": "string"
+            },
+            "content": {
+              "description": "Document text (max 200,000 chars).",
+              "type": "string"
+            },
+            "dry_run": {
+              "description": "Preview candidates, windows and cost; no provider call or write.",
+              "type": "boolean"
+            },
+            "max_usd": {
+              "description": "Spend cap for this ingest in USD (default ingest.max_usd, 0.50).",
+              "type": "number"
+            },
+            "no_facts": {
+              "description": "Save the document and its entity pages without facts.",
+              "type": "boolean"
+            },
+            "request_id": {
+              "description": "Idempotency key: a repeat with the same key returns the same attempt.",
+              "type": "string"
+            },
+            "resume": {
+              "description": "Continue an incomplete attempt (same content).",
+              "type": "boolean"
+            },
+            "slug": {
+              "description": "Slug of the source page (default inbox/ingest-<hash>).",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Source to write (default: your source).",
+              "type": "string"
+            },
+            "title": {
+              "description": "Source page title.",
+              "type": "string"
+            },
+            "trusted_extraction": {
+              "description": "Local owner only: create model-typed new entities as real pages instead of proposed.",
+              "type": "boolean"
+            },
+            "type": {
+              "description": "Source page type (default note).",
+              "type": "string"
+            },
+            "valid_from": {
+              "description": "When the document's facts became true (ISO date).",
+              "type": "string"
+            },
+            "visibility": {
+              "description": "world (default) or private (local CLI).",
+              "enum": [
+                "world",
+                "private"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Undo one ingest attempt. Without yes: a preview and plan_hash, no write. With yes and expect: <plan_hash>: strikes its facts and soft-deletes its pages, skipping anything edited, promoted, referenced or supported since.",
+        "idempotent": false,
+        "local_only": false,
+        "mutating": true,
+        "name": "ingest_undo",
+        "parameters": {
+          "attempt_id": "string",
+          "expect": "string?",
+          "yes": "boolean?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "attempt_id": {
+              "description": "From the ingest report.",
+              "type": "string"
+            },
+            "expect": {
+              "description": "plan_hash from the preview.",
+              "type": "string"
+            },
+            "yes": {
+              "description": "Apply (needs expect).",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "attempt_id"
           ],
           "type": "object"
         },
@@ -7009,6 +7191,7 @@
           "id": "number?",
           "match": "string?",
           "reason": "string?",
+          "reason_scan_limit": "number?",
           "request_id": "string?",
           "source_id": "string?",
           "status": "boolean?",
@@ -7048,6 +7231,10 @@
             "reason": {
               "description": "Optional short reason stored in the text-free purge ledger.",
               "type": "string"
+            },
+            "reason_scan_limit": {
+              "description": "Check only the newest N commits for change reasons quoting the claim (after a reason_purge_scan_capped refusal, with the user's choice); older commits are not tombstoned.",
+              "type": "number"
             },
             "request_id": {
               "description": "Reuse only to retry.",
@@ -7224,6 +7411,86 @@
           "required": [
             "facts",
             "idempotency_key"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Memory writeback settings: the mode agents follow, the exact rule text, every mode's rule, background capture state, and whether you may change it.",
+        "idempotent": false,
+        "local_only": false,
+        "mutating": false,
+        "name": "get_memory_settings",
+        "parameters": {},
+        "required_scopes": [],
+        "schema": {
+          "properties": {},
+          "required": [],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Change the brain-wide writeback mode agents are told to follow (inherit uses the operator's setting). Admin scope and the operator's grant required; background capture is not changed.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "set_memory_writeback",
+        "parameters": {
+          "dry_run": "boolean?",
+          "mode": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "dry_run": {
+              "description": "Preview the change; writes nothing.",
+              "type": "boolean"
+            },
+            "mode": {
+              "description": "inherit | off | salient | all.",
+              "enum": [
+                "inherit",
+                "off",
+                "salient",
+                "all"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "type": "object"
+        },
+        "scope": "admin"
+      },
+      {
+        "description": "Use when the user says \"save everything from here\" (all) or \"stop saving\" (off): returns this conversation's memory rule. Stores nothing.",
+        "idempotent": false,
+        "local_only": false,
+        "mutating": false,
+        "name": "memory_conversation_mode",
+        "parameters": {
+          "mode": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "mode": {
+              "description": "all | salient | off (explicit saves only) | brain (this brain's mode).",
+              "enum": [
+                "brain",
+                "off",
+                "salient",
+                "all"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode"
           ],
           "type": "object"
         },
