@@ -30,6 +30,25 @@ export interface EngineSettings {
    * model is `embedding` above. Without it every AI call refuses `engine_scope_missing`; no process key is used.
    */
   ai?: EngineAISettings;
+  /**
+   * The object store file_register and file_verify check, as values: `local` needs `localPath`, `s3` its bucket and
+   * keys, `supabase` its bucket, `projectUrl` and `serviceRoleKey`. Every object key is `<prefix>/<path>` when
+   * `prefix` is set, so brains sharing a bucket never see each other's objects; no prefix keeps today's keys.
+   */
+  storage?: EngineStorageSettings;
+}
+
+export interface EngineStorageSettings {
+  backend: 'local' | 's3' | 'supabase';
+  bucket?: string;
+  localPath?: string;
+  region?: string;
+  endpoint?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  projectUrl?: string;
+  serviceRoleKey?: string;
+  prefix?: string;
 }
 
 export interface EngineAISettings {
@@ -39,9 +58,10 @@ export interface EngineAISettings {
 
 /** The settings `embeddedSettings` returns: everything the host passed except the writer credential and the provider keys. */
 type DeepReadonly<T> = { readonly [K in keyof T]: DeepReadonly<T[K]> };
-export type EmbeddedSettingsView = DeepReadonly<Omit<EngineSettings, 'writer' | 'ai'> & {
+export type EmbeddedSettingsView = DeepReadonly<Omit<EngineSettings, 'writer' | 'ai' | 'storage'> & {
   writer?: { id: string; lane: 'cli' | 'stdio' };
   ai?: { providers: Record<string, { baseUrl?: string; hasApiKey: boolean }>; models?: EngineAISettings['models'] };
+  storage?: Omit<EngineStorageSettings, 'secretAccessKey' | 'serviceRoleKey'> & { hasSecret: boolean };
 }>;
 
 interface EmbeddedRecord {
@@ -125,11 +145,12 @@ export function embeddedSettingsRecord(engine: object): EngineSettings | undefin
 export function embeddedSettings(engine: object): EmbeddedSettingsView | undefined {
   const settings = embeddedSettingsRecord(engine);
   if (!settings) return undefined;
-  const { writer, ai, ...rest } = settings;
+  const { writer, ai, storage, ...rest } = settings;
   const providers = ai && Object.fromEntries(Object.entries(ai.providers)
     .map(([id, p]) => [id, { ...(p.baseUrl ? { baseUrl: p.baseUrl } : {}), hasApiKey: !!p.apiKey }]));
   const view = structuredClone({ ...rest, ...(writer ? { writer: { id: writer.id, lane: writer.lane } } : {}),
-    ...(ai ? { ai: { providers: providers!, ...(ai.models ? { models: { ...ai.models } } : {}) } } : {}) });
+    ...(ai ? { ai: { providers: providers!, ...(ai.models ? { models: { ...ai.models } } : {}) } } : {}),
+    ...(storage ? { storage: (({ secretAccessKey, serviceRoleKey, ...open }) => ({ ...open, hasSecret: !!(secretAccessKey || serviceRoleKey) }))(storage) } : {}) });
   const freeze = (value: unknown): void => {
     if (!value || typeof value !== 'object' || Object.isFrozen(value)) return;
     Object.freeze(value);

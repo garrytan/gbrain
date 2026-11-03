@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A host that stores a file's bytes itself can now record and check them.** On an engine opened from settings, `file_register` records the files row for an object the host already wrote at the path `file_upload` would use, after reading it back and matching its size and SHA-256, and `file_verify` lists which rows still have their object or re-hashes one. Both use the engine's own `settings.storage` (local, s3 or supabase, with an optional key `prefix` so brains sharing a bucket never see each other's objects), never the process storage config. A brain the CLI or a server opens is unchanged: there both refuse `embedded_engine_required`, and neither is ever an MCP tool. Contributed by @bradgessler (#8457).
+
+### Itemized changes
+
+- `src/core/ops/files.ts`: `file_register` accepts only the upload layout path (`<page_slug>/<filename>`, or `unsorted/<first 8 hash chars>-<filename>`), refuses `page_not_found` for a page the caller's read policy hides (member access and privacy, the private-pages hatch included), and records nothing unless the stored object matches. Registering the same path again updates its row.
+- A store that does not answer is the new `store_unavailable` code, never a file reported missing and never a row recorded.
+- `openEngine` refuses `engine_settings_invalid` for a `storage` setting missing a value its backend needs (so no backend falls back to a default path or environment credentials), an unknown field or a malformed prefix; `embeddedSettings()` reads back `hasSecret` instead of the secret.
+- `src/core/storage/local.ts` and `s3.ts` stream an object's size and SHA-256 (`hashObject`); other backends hash one download.
+- `test/file-register.test.ts`: real PGLite engines and a real local store; the unreachable store is a closed local port.
+
 ## [0.60.564.0] - 2026-11-03
 
 **A brain opened from settings brings its own AI providers.** `settings.ai` names the providers an embedded engine may call, with their keys and base URLs as values, and the models it uses for chat, expansion and reranking. Its embed, chat and rerank calls go only there, never to a key in the process environment, `~/.gbrain/config.json` or the process-wide gateway, so two brains in one process never spend each other's keys or see each other's cached query vectors. A call to a provider the settings don't name refuses `engine_scope_missing` and sends nothing. While such an engine is open, an AI call made outside any engine's scope refuses the same way unless the host configured a process gateway. Each engine's chat usage lands in its own database. Keys never show up in errors, logs, doctor output or `embeddedSettings()`, also for a call still in flight when the engine disconnects. Every other engine, and the CLI, keeps the process gateway exactly as before. Contributed by @bradgessler (#8456, #8085).
