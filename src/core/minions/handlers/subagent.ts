@@ -52,6 +52,7 @@ import {
 import { resolveModel, isAnthropicProvider, isOpenRouterSubagentFamily, TIER_DEFAULTS } from '../../model-config.ts';
 import { splitProviderModelId, normalizeModelId } from '../../model-id.ts';
 import { anthropicClientOptions } from '../../ai/anthropic-key.ts';
+import { withEngineScope } from '../../engine-scope.ts';
 import { buildSystemPrompt, DEFAULT_SUBAGENT_SYSTEM } from '../system-prompt.ts';
 import { toolLoop as gatewayToolLoop, isThinkingModel, THINKING_MODEL_MAX_OUTPUT_TOKENS } from '../../ai/gateway.ts';
 import type { ChatToolDef, ChatMessage, ChatBlock, ChatResult, ToolHandler } from '../../ai/gateway.ts';
@@ -255,11 +256,11 @@ export function makeSubagentHandler(deps: SubagentDeps) {
   // lives at sdk.messages.create. Assigning sdk.messages directly gets the
   // right object; JS method-call semantics preserve `this` at the call
   // site (subagent.ts invokes client.create(...) with client === sdk.messages).
-  // Resolve the key env-first, then config (anthropic_api_key) — a bare
-  // new Anthropic() only reads env, so launchd/MCP workers whose key lives
-  // in the gbrain config file would fail auth (#2048).
-  const makeAnthropic = deps.makeAnthropic ?? (() => new Anthropic(anthropicClientOptions()));
-  const client: MessagesClient = deps.client ?? makeAnthropic().messages;
+  // #2048: the key resolves env, then config (anthropic_api_key); for an embedded engine, its own key and endpoint,
+  // in this handler's engine's scope (engine-scope.ts), when a job first calls the client.
+  const makeAnthropic = deps.makeAnthropic ?? (() => new Anthropic(withEngineScope(engine, anthropicClientOptions)));
+  let messages = deps.client;
+  const client: MessagesClient = { create: (params, opts) => (messages ??= makeAnthropic().messages).create(params, opts) };
   const config = deps.config ?? loadConfig() ?? ({ engine: 'postgres' } as GBrainConfig);
   const rateLeaseKey = deps.rateLeaseKey ?? DEFAULT_RATE_KEY;
   const maxConcurrent = deps.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;

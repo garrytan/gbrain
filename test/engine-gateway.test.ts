@@ -15,6 +15,12 @@ import Anthropic from '@anthropic-ai/sdk';
 import { anthropicClientOptions, resolveAnthropicKey } from '../src/core/ai/anthropic-key.ts';
 import { embeddedEngineInScope } from '../src/core/engine-scope.ts';
 import { PersistenceConsumer } from '../src/core/persistence/consumer.ts';
+import { makeSubagentHandler } from '../src/core/minions/handlers/subagent.ts';
+import { MinionQueue } from '../src/core/minions/queue.ts';
+import { applyReranker } from '../src/core/search/rerank.ts';
+import { resolveSearchMode } from '../src/core/search/mode.ts';
+import { DEFAULT_RERANKER_MODEL } from '../src/core/ai/defaults.ts';
+import type { MinionJobContext } from '../src/core/minions/types.ts';
 import { startPersistenceConsumer, stopPersistenceConsumer } from '../src/core/persistence/service.ts';
 import { embeddedSettings, openEngine, withEngineScope, type EngineSettings } from '../src/core/engine-open.ts';
 import { createEngine } from '../src/core/engine-factory.ts';
@@ -233,6 +239,79 @@ describe('process base URLs never reach an engine', () => {
       }
     });
   });
+});
+
+describe('search reranking on an engine', () => {
+  test('search uses the engine\'s settings.ai.models.reranker unless the brain or the call names one', async () => {
+    const engine = await openEngine(settingsFor({ ai: { providers: { voyage: { apiKey: key('v') } }, models: { reranker: 'voyage:rerank-2.5' } } }));
+    try {
+      expect(withEngineScope(engine, () => resolveSearchMode({ mode: 'balanced' }).reranker_model)).toBe('voyage:rerank-2.5');
+      expect(withEngineScope(engine, () => resolveSearchMode({ mode: 'balanced', overrides: { reranker_model: 'voyage:rerank-3' } }).reranker_model)).toBe('voyage:rerank-3');
+      expect(withEngineScope(engine, () => resolveSearchMode({ mode: 'balanced', perCall: { reranker_model: 'voyage:rerank-3-lite' } }).reranker_model)).toBe('voyage:rerank-3-lite');
+      expect(resolveSearchMode({ mode: 'balanced' }).reranker_model).toBe(DEFAULT_RERANKER_MODEL);
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('a reranker provider the engine was not given is a quiet no_key skip, not a provider failure', async () => {
+    installStubs();
+    const engine = await openEngine(settingsFor({ ai: { providers: { openai: { apiKey: key('a') } } } }));
+    try {
+      const results = [{ slug: 'a', chunk_text: 'alpha' }, { slug: 'b', chunk_text: 'beta' }] as never[];
+      const seen: string[] = [];
+      const out = await withEngineScope(engine, () => applyReranker('q', results, {
+        enabled: true, topNIn: 2, topNOut: 2, model: DEFAULT_RERANKER_MODEL, timeoutMs: 1000,
+        onSkip: (reason: string) => seen.push(`skip:${reason}`), onFailure: (reason: string) => seen.push(`failure:${reason}`),
+      } as never));
+      expect(out).toBe(results);
+      expect(seen).toEqual(['skip:no_key']);
+      expect(sent).toEqual([]);
+    } finally {
+      await engine.disconnect();
+    }
+  });
+});
+
+describe('the subagent handler\'s Anthropic client', () => {
+  const PROXY = 'https://process-proxy.invalid';
+  async function runJob(engine: BrainEngine) {
+    const handler = makeSubagentHandler({ engine, toolRegistry: [] });
+    const job = await new MinionQueue(engine).add('subagent', { prompt: 'hello' }, {}, { allowProtectedSubmit: true });
+    const ctx = {
+      id: job.id, name: job.name, data: { prompt: 'hello' }, attempts_made: 0, signal: new AbortController().signal, deadlineAtMs: null,
+      shutdownSignal: new AbortController().signal, async updateProgress() {}, async updateTokens() {}, async log() {}, async isActive() { return true; }, async readInbox() { return []; },
+    } as unknown as MinionJobContext;
+    return handler(ctx);
+  }
+
+  test('is built for the handler\'s engine, whatever scope built the handler, and only when a job calls it', async () => {
+    const calls: { url: string; key: string | null }[] = [];
+    const fetchSpy = spyOn(Anthropic.prototype as unknown as { fetchWithTimeout: (url: string, init: RequestInit) => Promise<Response> }, 'fetchWithTimeout').mockImplementation((async (url: string, init: RequestInit) => {
+      calls.push({ url, key: new Headers(init.headers as HeadersInit).get('x-api-key') });
+      return new Response(JSON.stringify({ id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-sonnet-4-6', stop_reason: 'end_turn', stop_sequence: null,
+        content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as never);
+    try {
+      await withEnv({ ...ambient, ANTHROPIC_BASE_URL: PROXY }, async () => {
+        const keyA = key('a');
+        const named = await openEngine(settingsFor({ ai: { providers: { anthropic: { apiKey: keyA } } } }));
+        const without = await openEngine(settingsFor({ ai: { providers: { openai: { apiKey: keyA } } } }));
+        try {
+          await named.initSchema();
+          await without.initSchema();
+          expect((await runJob(named)).result).toBe('ok');
+          expect(calls).toEqual([{ url: 'https://api.anthropic.com/v1/messages', key: keyA }]);
+          expect((await failure(() => withEngineScope(named, () => runJob(without))))?.code).toBe('engine_scope_missing');
+          expect(calls).toHaveLength(1);
+        } finally {
+          await Promise.all([named.disconnect(), without.disconnect()]);
+        }
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  }, 120_000);
 });
 
 describe('the persistence consumer stays in its engine\'s scope', () => {

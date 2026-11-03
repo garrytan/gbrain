@@ -88,6 +88,12 @@ export function scopedGatewayState(normalize: (config: AIGatewayConfig) => AIGat
   return state;
 }
 
+/** In an embedded engine's scope, its settings.ai.models.reranker; search uses it in place of the mode bundle's default. */
+export function engineRerankerModel(): string | undefined {
+  const engine = embeddedEngineInScope();
+  return engine ? embeddedSettingsRecord(engine)?.ai?.models?.reranker : undefined;
+}
+
 /** The refusal for a call whose provider the engine was not given. Names the provider and touchpoint, never a key. */
 export function engineScopeMissing(provider: string, touchpoint: string): Error {
   return opError('engine_scope_missing', `This engine has no AI provider ${provider} for ${touchpoint}.`,
