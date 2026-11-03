@@ -28,20 +28,20 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const AI_MODELS = ['chat', 'expansion', 'reranker'];
 
 const STORAGE_NEEDS: Record<string, readonly (keyof EngineStorageSettings)[]> = {
-  local: ['localPath'], s3: ['bucket', 'accessKeyId', 'secretAccessKey'], supabase: ['bucket', 'projectUrl', 'serviceRoleKey'],
+  local: ['localPath'], s3: ['bucket', 'endpoint', 'accessKeyId', 'secretAccessKey'],
 };
-const STORAGE_FIELDS = new Set(['backend', 'bucket', 'localPath', 'region', 'endpoint', 'accessKeyId', 'secretAccessKey', 'projectUrl', 'serviceRoleKey', 'prefix']);
-const PREFIX = /^[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)*$/i;
+const STORAGE_FIELDS = new Set(['backend', 'bucket', 'localPath', 'region', 'endpoint', 'accessKeyId', 'secretAccessKey', 'prefix']);
+const PREFIX = /^[a-z0-9][a-z0-9_-]*$/i;
 
-/** Every value the backend needs is given, so no backend falls back to a default path or reads credentials from the environment. */
+/** Every value the backend needs is given, so no backend falls back to a default path or reads an endpoint or credentials from the environment. */
 function checkStorage(storage: EngineStorageSettings): void {
   const needs = storage && typeof storage === 'object' ? STORAGE_NEEDS[storage.backend] : undefined;
-  if (!needs) throw invalid('storage.backend', "storage is { backend: 'local' | 's3' | 'supabase', ... }.");
+  if (!needs) throw invalid('storage.backend', "storage is { backend: 'local' | 's3', ... }.");
   const extra = Object.keys(storage).find(field => !STORAGE_FIELDS.has(field));
   if (extra) throw invalid(`storage.${extra}`, `storage takes ${[...STORAGE_FIELDS].join(', ')}.`);
   const missing = needs.find(field => !text(storage[field]));
   if (missing) throw invalid(`storage.${missing}`, `A ${storage.backend} store needs ${needs.join(', ')}.`);
-  if (storage.prefix !== undefined && !PREFIX.test(storage.prefix)) throw invalid('storage.prefix', 'prefix is one or more slash-separated segments of letters, digits, - and _.');
+  if (storage.prefix !== undefined && !PREFIX.test(storage.prefix)) throw invalid('storage.prefix', 'prefix is one segment of letters, digits, - and _.');
 }
 
 /** Names the setting that is wrong, never a key: a key's value is never part of a refusal. */

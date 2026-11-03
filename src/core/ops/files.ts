@@ -105,7 +105,8 @@ const file_upload: Operation = {
     // read (file_url, files verify, restore) would trust a phantom object.
     // Typed error BEFORE any insert; git-tracked small files have their own
     // lane (`gbrain files upload-raw --page <slug>`).
-    if (!ctx.config.storage) {
+    const embedded = isEmbeddedEngine(ctx.engine) ? await embeddedFileStore(ctx, 'file_upload') : null;
+    if (!embedded && !ctx.config.storage) {
       const slugOk = pageSlug !== null && /^[a-z0-9][a-z0-9._/-]*$/i.test(pageSlug);
       // #5963: the git-tracked lane is refused on a managed worktree, so it is not offered there.
       if (slugOk && await (await import('../raw-file-upload.ts')).rawUploadRefusedFor(ctx.engine, pageSlug!, ctx.sourceId ?? 'default')) throw opError('storage_error',
@@ -120,7 +121,7 @@ const file_upload: Operation = {
       );
     }
     const { createStorage } = await import('../storage.ts');
-    const storage = await createStorage(ctx.config.storage as any);
+    const storage = embedded?.storage ?? await createStorage(ctx.config.storage as any);
 
     const { sqlQueryForEngine, executeRawJsonb, FILES_METADATA_MERGE_SQL } = await import('../sql-query.ts');
     const sql = sqlQueryForEngine(ctx.engine);
@@ -159,7 +160,7 @@ const file_upload: Operation = {
            mime_type = EXCLUDED.mime_type,
            ${FILES_METADATA_MERGE_SQL}`,
         [pageSlug, filename, storagePath, mimeType, stat.size, hash],
-        [{ storage: (ctx.config.storage as { backend: string }).backend }],
+        [embedded?.metadata ?? { storage: (ctx.config.storage as { backend: string }).backend }],
       );
     } catch (dbErr) {
       // Rollback: clean up storage if DB write failed
@@ -194,7 +195,8 @@ const file_url: Operation = {
     // #4302: resolve a REAL URL from the backend, after confirming the object
     // is actually there — the old `gbrain:files/<path>` placeholder pointed
     // at nothing and hid rows whose bytes had vanished.
-    if (!ctx.config.storage) {
+    const embedded = isEmbeddedEngine(ctx.engine);
+    if (!embedded && !ctx.config.storage) {
       throw opError(
         'storage_error',
         `No storage backend configured — cannot produce a URL for ${p.storage_path}.`,
@@ -202,8 +204,11 @@ const file_url: Operation = {
       );
     }
     const { createStorage } = await import('../storage.ts');
-    const storage = await createStorage(ctx.config.storage as any);
-    const present = await storage.exists(rows[0].storage_path as string).catch(() => false);
+    const storage = embedded ? await embeddedStorage(ctx, 'file_url') : await createStorage(ctx.config.storage as any);
+    const present = await storage.exists(rows[0].storage_path as string).catch(error => {
+      if (embedded) throw storeUnavailable('file_url', error);
+      return false;
+    });
     if (!present) {
       throw opError(
         'storage_error',
@@ -215,16 +220,22 @@ const file_url: Operation = {
   },
 };
 
-/** file_register and file_verify serve a host that stores bytes itself: they run only on an engine opened from settings, against its settings.storage. */
+/** file_register and file_verify serve a host that stores bytes itself: they run only on an engine opened from settings, against its settings.storage, which every file op on such an engine uses. */
 async function embeddedStorage(ctx: OperationContext, op: string) {
   if (!isEmbeddedEngine(ctx.engine)) throw opError('embedded_engine_required', `${op} runs only on an engine an embedding host opened from settings (embedded_core: true).`,
-    'On a brain the CLI opens, upload the file with gbrain files upload and check it with gbrain files verify.');
+    'A brain the CLI or a server opens stores files only through file_upload (gbrain files upload), so there is nothing to register or check this way.');
   const settings = embeddedSettingsRecord(ctx.engine)?.storage;
   if (!settings) throw opError('storage_error', `This engine was opened with no settings.storage, so ${op} cannot check any stored object.`,
-    'Open the engine with storage (local | s3 | supabase, with its values) in its settings; the process storage config is never used for an engine opened from settings. Nothing was recorded.');
+    'Open the engine with storage (local or s3, with its values) in its settings; the process storage config is never used for an engine opened from settings. Nothing was recorded.');
   const { createStorage, prefixedStorage } = await import('../storage.ts');
   const { prefix, ...config } = settings;
   try { return prefixedStorage(await createStorage({ bucket: '', ...config }), prefix); } catch (error) { throw storeUnavailable(op, error); }
+}
+
+async function embeddedFileStore(ctx: OperationContext, op: string) {
+  const storage = await embeddedStorage(ctx, op);
+  const { backend, prefix } = embeddedSettingsRecord(ctx.engine)!.storage!;
+  return { storage, metadata: { storage: backend, ...(prefix ? { prefix } : {}) } };
 }
 
 function storeUnavailable(op: string, error: unknown) {
@@ -239,8 +250,8 @@ function uploadLayoutPath(pageSlug: string | null, filename: string, hash: strin
 
 async function pageReadable(ctx: OperationContext, slug: string): Promise<boolean> {
   const rows = await ctx.engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages fp WHERE fp.slug = $1
-    AND ${await resolveExcludePrivatePages(ctx.engine, ctx.remote) ? `NOT ${privatePagesFilterForCaller('fp')}` : 'FALSE'}`, [slug]);
-  return rows[0]!.n === 0;
+    AND ${await resolveExcludePrivatePages(ctx.engine, ctx.remote) ? privatePagesFilterForCaller('fp') : 'TRUE'}`, [slug]);
+  return rows[0]!.n > 0;
 }
 
 const file_register: Operation = {
@@ -261,7 +272,7 @@ const file_register: Operation = {
   localOnly: true,
   cliOnly: { argv: ['gbrain', 'files', 'upload', '<file>', '--page', '<page_slug>'] },
   handler: async (ctx, p) => {
-    const storage = await embeddedStorage(ctx, 'file_register');
+    const { storage, metadata } = await embeddedFileStore(ctx, 'file_register');
     const filename = p.filename as string, hash = p.content_hash as string, size = p.size_bytes as number;
     const pageSlug = (p.page_slug as string | undefined) || null;
     validateFilename(filename);
@@ -281,7 +292,7 @@ const file_register: Operation = {
     catch (error) { throw storeUnavailable('file_register', error); }
     if (!stored) throw opError('storage_error', `The storage backend has no object at ${storagePath}, so no row was recorded.`, 'Store the bytes at that path first, then register it.');
     if (stored.size !== size || stored.sha256 !== hash) throw opError('storage_error', `The object at ${storagePath} does not match size_bytes and content_hash, so no row was recorded.`,
-      `The stored object is ${stored.size} bytes with SHA-256 ${stored.sha256}. Register the values of the bytes actually stored.`);
+      'Register the size and SHA-256 of the bytes actually stored at that path.');
     const { executeRawJsonb, FILES_METADATA_MERGE_SQL } = await import('../sql-query.ts');
     await executeRawJsonb(ctx.engine,
       `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
@@ -292,7 +303,7 @@ const file_register: Operation = {
          mime_type = EXCLUDED.mime_type,
          ${FILES_METADATA_MERGE_SQL}`,
       [pageSlug, filename, storagePath, (p.mime_type as string | undefined) ?? null, size, hash],
-      [{ storage: embeddedSettingsRecord(ctx.engine)!.storage!.backend }]);
+      [metadata]);
     return { status: 'registered', storage_path: storagePath, size_bytes: size };
   },
 };

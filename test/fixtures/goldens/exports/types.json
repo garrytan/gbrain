@@ -4433,7 +4433,7 @@
         "kind": "type",
         "name": "EmbeddedSettingsView",
         "signature": [
-          "{ readonly pglite?: DeepReadonly<{ shared_buffers?: string; } | undefined>; readonly host: DeepReadonly<{ id: string; }>; readonly database: DeepReadonly<{ url?: string; directUrl?: string; path?: string; }>; readonly embedding?: DeepReadonly<{ model: string; dimensions: number; } | undefined>; readonly embedded_core: DeepReadonly<boolean>; readonly engine: DeepReadonly<\"postgres\" | \"pglite\">; readonly pool?: DeepReadonly<{ max?: number; } | undefined>; readonly keyword_statement_timeout_ms?: number | undefined; readonly writer?: DeepReadonly<{ id: string; lane: \"cli\" | \"stdio\"; } | undefined>; readonly ai?: DeepReadonly<{ providers: Record<string, { baseUrl?: string; hasApiKey: boolean; }>; models?: EngineAISettings[\"models\"]; } | undefined>; readonly storage?: DeepReadonly<(Omit<EngineStorageSettings, \"secretAccessKey\" | \"serviceRoleKey\"> & { hasSecret: boolean; }) | undefined>; }"
+          "{ readonly pglite?: DeepReadonly<{ shared_buffers?: string; } | undefined>; readonly host: DeepReadonly<{ id: string; }>; readonly database: DeepReadonly<{ url?: string; directUrl?: string; path?: string; }>; readonly embedding?: DeepReadonly<{ model: string; dimensions: number; } | undefined>; readonly embedded_core: DeepReadonly<boolean>; readonly engine: DeepReadonly<\"postgres\" | \"pglite\">; readonly pool?: DeepReadonly<{ max?: number; } | undefined>; readonly keyword_statement_timeout_ms?: number | undefined; readonly writer?: DeepReadonly<{ id: string; lane: \"cli\" | \"stdio\"; } | undefined>; readonly ai?: DeepReadonly<{ providers: Record<string, { baseUrl?: string; hasApiKey: boolean; }>; models?: EngineAISettings[\"models\"]; } | undefined>; readonly storage?: DeepReadonly<(Omit<EngineStorageSettings, \"secretAccessKey\"> & { hasSecret: boolean; }) | undefined>; }"
         ]
       },
       {
@@ -4465,15 +4465,13 @@
         "kind": "interface",
         "members": [
           "accessKeyId?: string | undefined",
-          "backend: \"local\" | \"s3\" | \"supabase\"",
+          "backend: \"local\" | \"s3\"",
           "bucket?: string | undefined",
           "endpoint?: string | undefined",
           "localPath?: string | undefined",
           "prefix?: string | undefined",
-          "projectUrl?: string | undefined",
           "region?: string | undefined",
-          "secretAccessKey?: string | undefined",
-          "serviceRoleKey?: string | undefined"
+          "secretAccessKey?: string | undefined"
         ],
         "name": "EngineStorageSettings"
       },

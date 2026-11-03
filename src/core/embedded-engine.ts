@@ -31,23 +31,21 @@ export interface EngineSettings {
    */
   ai?: EngineAISettings;
   /**
-   * The object store file_register and file_verify check, as values: `local` needs `localPath`, `s3` its bucket and
-   * keys, `supabase` its bucket, `projectUrl` and `serviceRoleKey`. Every object key is `<prefix>/<path>` when
-   * `prefix` is set, so brains sharing a bucket never see each other's objects; no prefix keeps today's keys.
+   * The object store every file operation on this engine uses, as values: `local` needs `localPath`, `s3` its bucket,
+   * endpoint and keys (nothing is read from AWS_* variables or ~/.aws). Every object key is `<prefix>/<path>` when
+   * `prefix` (one segment) is set; brains sharing a bucket each set a different prefix. No prefix keeps today's keys.
    */
   storage?: EngineStorageSettings;
 }
 
 export interface EngineStorageSettings {
-  backend: 'local' | 's3' | 'supabase';
+  backend: 'local' | 's3';
   bucket?: string;
   localPath?: string;
   region?: string;
   endpoint?: string;
   accessKeyId?: string;
   secretAccessKey?: string;
-  projectUrl?: string;
-  serviceRoleKey?: string;
   prefix?: string;
 }
 
@@ -61,7 +59,7 @@ type DeepReadonly<T> = { readonly [K in keyof T]: DeepReadonly<T[K]> };
 export type EmbeddedSettingsView = DeepReadonly<Omit<EngineSettings, 'writer' | 'ai' | 'storage'> & {
   writer?: { id: string; lane: 'cli' | 'stdio' };
   ai?: { providers: Record<string, { baseUrl?: string; hasApiKey: boolean }>; models?: EngineAISettings['models'] };
-  storage?: Omit<EngineStorageSettings, 'secretAccessKey' | 'serviceRoleKey'> & { hasSecret: boolean };
+  storage?: Omit<EngineStorageSettings, 'secretAccessKey'> & { hasSecret: boolean };
 }>;
 
 interface EmbeddedRecord {
@@ -150,7 +148,7 @@ export function embeddedSettings(engine: object): EmbeddedSettingsView | undefin
     .map(([id, p]) => [id, { ...(p.baseUrl ? { baseUrl: p.baseUrl } : {}), hasApiKey: !!p.apiKey }]));
   const view = structuredClone({ ...rest, ...(writer ? { writer: { id: writer.id, lane: writer.lane } } : {}),
     ...(ai ? { ai: { providers: providers!, ...(ai.models ? { models: { ...ai.models } } : {}) } } : {}),
-    ...(storage ? { storage: (({ secretAccessKey, serviceRoleKey, ...open }) => ({ ...open, hasSecret: !!(secretAccessKey || serviceRoleKey) }))(storage) } : {}) });
+    ...(storage ? { storage: (({ secretAccessKey, ...open }) => ({ ...open, hasSecret: !!secretAccessKey }))(storage) } : {}) });
   const freeze = (value: unknown): void => {
     if (!value || typeof value !== 'object' || Object.isFrozen(value)) return;
     Object.freeze(value);

@@ -4,7 +4,7 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { embeddedSettings, openEngine, type EngineSettings, type EngineStorageSettings } from '../src/core/engine-open.ts';
@@ -34,6 +34,7 @@ function store(path: string, bytes: Buffer): void {
   mkdirSync(dirname(join(storageRoot, path)), { recursive: true });
   writeFileSync(join(storageRoot, path), bytes);
 }
+const addPage = (engine: BrainEngine, slug: string) => importFromContent(engine, slug, ['---', 'type: note', `title: ${slug}`, '---', `# ${slug}`, '', 'Plan body.'].join('\n'));
 const fileRows = async (engine: BrainEngine) => Number((await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM files'))[0]!.n);
 
 const engines: BrainEngine[] = [];
@@ -53,6 +54,7 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 describe('file_register', () => {
   test('records one row for an object stored at the file_upload path, and registering again updates it', async () => {
     const engine = await embedded();
+    await addPage(engine, 'notes/plan');
     const bytes = Buffer.from('report bytes');
     store('notes/plan/report.pdf', bytes);
     const params = { storage_path: 'notes/plan/report.pdf', filename: 'report.pdf', page_slug: 'notes/plan', content_hash: sha(bytes), size_bytes: bytes.length, mime_type: 'application/pdf' };
@@ -62,6 +64,20 @@ describe('file_register', () => {
     await run('file_register', ctxFor(engine), { ...params, content_hash: sha(next), size_bytes: next.length });
     const rows = await engine.executeRaw<{ page_slug: string; content_hash: string; size_bytes: unknown }>('SELECT page_slug, content_hash, size_bytes FROM files');
     expect(rows.map(r => ({ ...r, size_bytes: Number(r.size_bytes) }))).toEqual([{ page_slug: 'notes/plan', content_hash: sha(next), size_bytes: next.length }]);
+    expect(await run('file_register', ctxFor(engine, { dryRun: true }), { ...params, filename: 'other.pdf', storage_path: 'notes/plan/other.pdf' }))
+      .toEqual({ dry_run: true, action: 'file_register', storage_path: 'notes/plan/other.pdf' });
+    expect(await fileRows(engine)).toBe(1);
+  });
+
+  test('refuses a page that does not exist and an object it cannot read back, recording nothing', async () => {
+    const engine = await embedded();
+    const bytes = Buffer.from('orphan');
+    store('notes/none/o.txt', bytes);
+    expect((await failure(() => run('file_register', ctxFor(engine), { storage_path: 'notes/none/o.txt', filename: 'o.txt', page_slug: 'notes/none', content_hash: sha(bytes), size_bytes: bytes.length })))?.code).toBe('page_not_found');
+    await addPage(engine, 'notes/plan');
+    mkdirSync(join(storageRoot, 'notes/plan/dir.txt'), { recursive: true });
+    expect((await failure(() => run('file_register', ctxFor(engine), { storage_path: 'notes/plan/dir.txt', filename: 'dir.txt', page_slug: 'notes/plan', content_hash: sha(bytes), size_bytes: bytes.length })))?.code).toBe('store_unavailable');
+    expect(await fileRows(engine)).toBe(0);
   });
 
   test('refuses a path other than the file_upload layout, a missing or different object and bad inputs, recording nothing', async () => {
@@ -100,6 +116,7 @@ describe('file_register', () => {
   test('two brains sharing one store under different prefixes see only their own objects', async () => {
     const a = await embedded({ storage: { ...storage, prefix: 'brain-a' } });
     const b = await embedded({ storage: { ...storage, prefix: 'brain-b' } });
+    await Promise.all([addPage(a, 'notes/plan'), addPage(b, 'notes/plan')]);
     const bytes = Buffer.from('brain a bytes');
     store('brain-a/notes/plan/a.txt', bytes);
     const params = { storage_path: 'notes/plan/a.txt', filename: 'a.txt', page_slug: 'notes/plan', content_hash: sha(bytes), size_bytes: bytes.length };
@@ -107,6 +124,22 @@ describe('file_register', () => {
     expect((await failure(() => run('file_register', ctxFor(b), params)))?.code).toBe('storage_error');
     expect(await fileRows(b)).toBe(0);
     expect(await run('file_verify', ctxFor(a), { storage_path: 'notes/plan/a.txt' })).toEqual({ storage_path: 'notes/plan/a.txt', present: true, size_matches: true, hash_matches: true });
+    const [{ metadata }] = await a.executeRaw<{ metadata: unknown }>('SELECT metadata FROM files');
+    expect(metadata).toEqual({ storage: 'local', prefix: 'brain-a' });
+  });
+
+  test('file_upload and file_url on an engine opened from settings use its store and prefix, never the process store', async () => {
+    const engine = await embedded({ storage: { ...storage, prefix: 'brain-a' } });
+    await addPage(engine, 'notes/plan');
+    const source = join(root, 'upload.txt');
+    writeFileSync(source, 'uploaded bytes');
+    const processStore = { backend: 'local', bucket: 'test', localPath: join(root, 'process-store') };
+    const ctx = ctxFor(engine, { config: { storage: processStore } } as never);
+    expect(await run('file_upload', ctx, { path: source, page_slug: 'notes/plan' })).toMatchObject({ status: 'uploaded', storage_path: 'notes/plan/upload.txt' });
+    expect(readFileSync(join(storageRoot, 'brain-a/notes/plan/upload.txt'), 'utf8')).toBe('uploaded bytes');
+    expect(existsSync(join(root, 'process-store'))).toBe(false);
+    expect(await run('file_url', ctx, { storage_path: 'notes/plan/upload.txt' })).toEqual({ storage_path: 'notes/plan/upload.txt', url: `file://${join(storageRoot, 'brain-a/notes/plan/upload.txt')}` });
+    expect(await run('file_verify', ctx, { storage_path: 'notes/plan/upload.txt' })).toMatchObject({ present: true, hash_matches: true });
   });
 
   test('a store that cannot be reached is store_unavailable and records nothing', async () => {
@@ -124,8 +157,8 @@ describe('settings.storage', () => {
   test('openEngine refuses a store missing a value it needs, an unknown backend, field or prefix, and the view hides its secret', async () => {
     const cases: Array<[unknown, string]> = [
       [{ backend: 'nope' }, 'storage.backend'], [{ backend: 'local' }, 'storage.localPath'],
-      [{ backend: 's3', bucket: 'b', accessKeyId: 'k' }, 'storage.secretAccessKey'], [{ backend: 'supabase', bucket: 'b', projectUrl: 'https://x.example' }, 'storage.serviceRoleKey'],
-      [{ ...storage, region2: 'x' }, 'storage.region2'], [{ ...storage, prefix: '../a' }, 'storage.prefix'], [{ ...storage, prefix: 'a/' }, 'storage.prefix'],
+      [{ backend: 'supabase', bucket: 'b' }, 'storage.backend'], [{ ...unreachable, endpoint: undefined }, 'storage.endpoint'], [{ ...unreachable, secretAccessKey: '' }, 'storage.secretAccessKey'],
+      [{ ...storage, region2: 'x' }, 'storage.region2'], [{ ...storage, prefix: '../a' }, 'storage.prefix'], [{ ...storage, prefix: 'a/b' }, 'storage.prefix'],
     ];
     for (const [given, setting] of cases) {
       const error = await failure(() => openEngine(settings({ storage: given as EngineStorageSettings })));
@@ -145,11 +178,35 @@ describe('hashing a stored object', () => {
     const s3 = new S3Storage({ backend: 's3', bucket: 'test' }, client as never);
     expect(await s3.hashObject('a/b.txt')).toEqual({ size: 23, sha256: sha(Buffer.concat(parts)) });
   });
+
+  test('a backend without hashObject is hashed from one download', async () => {
+    const { hashStoredObject } = await import('../src/core/storage.ts');
+    const bytes = Buffer.from('downloaded');
+    expect(await hashStoredObject({ download: async () => bytes } as never, 'a.txt')).toEqual({ size: bytes.length, sha256: sha(bytes) });
+  });
+
+  test('an s3 store sends every request to its settings endpoint, never one named by AWS_* variables', async () => {
+    const hits = { settings: 0, env: 0 };
+    const settingsServer = Bun.serve({ port: 0, fetch: () => { hits.settings++; return new Response(null, { status: 404 }); } });
+    const envServer = Bun.serve({ port: 0, fetch: () => { hits.env++; return new Response(null, { status: 200 }); } });
+    try {
+      await withEnv({ AWS_ENDPOINT_URL_S3: `http://127.0.0.1:${envServer.port}`, AWS_ENDPOINT_URL: `http://127.0.0.1:${envServer.port}` }, async () => {
+        const engine = await embedded({ storage: { ...unreachable, endpoint: `http://127.0.0.1:${settingsServer.port}` } });
+        const bytes = Buffer.from('s3');
+        const error = await failure(() => run('file_register', ctxFor(engine), { storage_path: `unsorted/${sha(bytes).slice(0, 8)}-s.txt`, filename: 's.txt', content_hash: sha(bytes), size_bytes: 2 }));
+        expect([error?.code, hits.env, hits.settings > 0]).toEqual(['storage_error', 0, true]);
+      });
+    } finally {
+      settingsServer.stop(true);
+      envServer.stop(true);
+    }
+  });
 });
 
 describe('file_verify', () => {
   test('lists presence per row, reads one object back, and notices bytes changed underneath', async () => {
     const engine = await embedded();
+    await addPage(engine, 'notes/plan');
     const a = Buffer.from('alpha'), b = Buffer.from('bravo');
     store('notes/plan/a.txt', a);
     store('notes/plan/b.txt', b);
