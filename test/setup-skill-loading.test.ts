@@ -15,7 +15,7 @@
  *    value is refused.
  * Spawns `bun src/cli.ts setup` against a temp HOME / GBRAIN_HOME.
  */
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -25,6 +25,8 @@ import { BRAIN_FIRST_BEGIN, BRAIN_FIRST_END } from '../src/core/setup/brain-firs
 import { inspectSkillsBlock, loaderAllowRule, renderSkillsBlock, SKILLS_BLOCK_BEGIN, SKILLS_BLOCK_END } from '../src/core/setup/skills-block.ts';
 import { bundledCatalogId, bundledSkills } from '../src/core/skills/bundled.ts';
 
+// Each test spawns setup several times, and each spawn asks the launcher for its catalog; 5 s is too tight on a loaded shard.
+setDefaultTimeout(30_000);
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
 const BIN_DIR = mkdtempSync(join(tmpdir(), 'gbrain-skill-bin-'));
 const LAUNCHER = join(BIN_DIR, 'gbrain');
@@ -235,6 +237,42 @@ describe('skill loading: launcher, permission and refresh', () => {
     await setup(c, ['claude-code', '--instructions-only', '--gbrain-bin', LAUNCHER, '--skill-loading', 'spring']);
     await setup(c, ['claude-code', '--instructions-only', '--gbrain-bin', LAUNCHER, '--remove']);
     expect(JSON.parse(read(cSettings)).permissions.allow).toEqual([rule, 'Read']);
+  });
+
+  test('an index is never written naming a gbrain that serves fewer skills than it lists (a thin-client launcher)', async () => {
+    const b = box();
+    const thin = join(BIN_DIR, 'gbrain-thin');
+    writeFileSync(thin, `#!/bin/sh\necho '${JSON.stringify({ schema_version: 1, catalog: bundledCatalogId(), skills: bundledSkills('downstream').map((s) => ({ name: s.name })) })}'\n`);
+    chmodSync(thin, 0o755);
+    const r = await setup(b, ['claude-code', '--instructions-only', '--gbrain-bin', thin, '--skill-loading', 'spring']);
+    expect(r.exitCode).toBe(1);
+    expect(r.doc.skills).toMatchObject({ action: 'preserve', reason: 'launcher_catalog_mismatch' });
+    expect(read(join(b.home, '.claude', 'CLAUDE.md'))).not.toContain(SKILLS_BLOCK_BEGIN);
+  });
+
+  test('--skills-index-only keeps the loader rule in the Claude profile the install recorded', async () => {
+    const b = box();
+    const profileA = join(b.home, 'profile-a'), profileB = join(b.home, 'profile-b');
+    const rule = loaderAllowRule(LAUNCHER);
+    await setup(b, ['claude-code', '--instructions-only', '--gbrain-bin', LAUNCHER, '--skill-loading', 'spring'], { CLAUDE_CONFIG_DIR: profileA });
+    expect(JSON.parse(read(join(profileA, 'settings.json'))).permissions.allow).toEqual([rule]);
+    const r = await setup(b, ['claude-code', '--skills-index-only'], { CLAUDE_CONFIG_DIR: profileB });
+    expect(r.exitCode).toBe(0);
+    expect(JSON.parse(read(join(profileA, 'settings.json'))).permissions.allow).toEqual([rule]);
+    expect(existsSync(join(profileB, 'settings.json')) ? JSON.parse(read(join(profileB, 'settings.json'))).permissions?.allow ?? [] : []).not.toContain(rule);
+  });
+
+  test('codex --no-instructions also strips the index left in AGENTS.md after AGENTS.override.md took over', async () => {
+    const b = box();
+    const agents = join(b.home, '.codex', 'AGENTS.md');
+    await setup(b, ['codex', '--instructions-only', '--gbrain-bin', LAUNCHER, '--skill-loading', 'spring']);
+    expect(read(agents)).toContain(SKILLS_BLOCK_BEGIN);
+    writeFileSync(join(b.home, '.codex', 'AGENTS.override.md'), '# override rules for alice-example\n');
+    const r = await setup(b, ['codex', '--instructions-only', '--no-instructions', '--no-hooks']);
+    expect(r.exitCode).toBe(0);
+    expect(existsSync(agents) ? read(agents) : '').not.toContain(SKILLS_BLOCK_BEGIN);
+    const ledger = JSON.parse(read(join(b.home, '.gbrain', 'skill-loading.json')));
+    expect(ledger.entries.filter((e: { mode: string }) => e.mode === 'spring')).toEqual([]);
   });
 
   test('codex gets no permission edit (its sandbox runs the read-only loader)', async () => {

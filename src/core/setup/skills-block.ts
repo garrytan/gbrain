@@ -34,7 +34,7 @@ import { bundledCatalogId, bundledSkills, type SkillAudience } from '../skills/b
 import { shellQuote } from '../shell-quote.ts';
 import { renderSkillIndexBlock, SKILL_INDEX_VERSION, SkillIndexTooLarge, skillIndexCatalog } from '../skills/spring-index.ts';
 import { SKILLS_BLOCK_BEGIN, SKILLS_BLOCK_END } from '../skills/index-block.ts';
-import { BRAIN_FIRST_END, brainFirstTargetAt, CURSOR_HEAD, direntExists, readBrainFirstLedger, writeUnlessChanged, type BrainFirstHarness, type BrainFirstTarget } from './brain-first.ts';
+import { BRAIN_FIRST_END, brainFirstTargetAt, CURSOR_HEAD, direntExists, isProjectSurface, readBrainFirstLedger, writeUnlessChanged, type BrainFirstHarness, type BrainFirstTarget } from './brain-first.ts';
 
 export { SKILLS_BLOCK_BEGIN, SKILLS_BLOCK_END };
 export const SKILL_LOADING_ENV = 'GBRAIN_SKILL_LOADING';
@@ -68,9 +68,9 @@ export function indexLauncher(): string | null {
  * from the ones indexed (another install earlier on PATH, a stale
  * --gbrain-bin). Engine-free and read-only on the launcher's side.
  */
-const servedCatalogs = new Map<string, { catalog: string } | { error: string }>();
+const servedCatalogs = new Map<string, { catalog: string; names: string[] } | { error: string }>();
 
-export function launcherCatalog(launcher: string): { catalog: string } | { error: string } {
+export function launcherCatalog(launcher: string): { catalog: string; names: string[] } | { error: string } {
   if (!isAbsolute(launcher)) return { error: `${launcher} is not an absolute path (GUI-launched harnesses inherit no PATH)` };
   const known = servedCatalogs.get(launcher);
   if (known) return known;
@@ -79,12 +79,13 @@ export function launcherCatalog(launcher: string): { catalog: string } | { error
   return served;
 }
 
-function askLauncher(launcher: string): { catalog: string } | { error: string } {
+function askLauncher(launcher: string): { catalog: string; names: string[] } | { error: string } {
   const r = spawnSync(launcher, ['bundled-skill', '--json'], { encoding: 'utf8', timeout: 20_000 }) as { status: number | null; stdout?: string; stderr?: string; error?: Error };
   if (r.status !== 0) return { error: `${launcher} bundled-skill --json failed: ${(r.error?.message ?? r.stderr ?? '').trim().split('\n')[0] || `exit ${r.status}`}` };
   try {
-    const catalog = (JSON.parse(r.stdout ?? '') as { catalog?: unknown }).catalog;
-    return typeof catalog === 'string' ? { catalog } : { error: `${launcher} reported no skill catalog (a gbrain without bundled-skill)` };
+    const { catalog, skills } = JSON.parse(r.stdout ?? '') as { catalog?: unknown; skills?: unknown };
+    if (typeof catalog !== 'string') return { error: `${launcher} reported no skill catalog (a gbrain without bundled-skill)` };
+    return { catalog, names: Array.isArray(skills) ? skills.map((s) => (s as { name?: unknown })?.name).filter((n): n is string => typeof n === 'string') : [] };
   } catch {
     return { error: `${launcher} bundled-skill --json printed no JSON` };
   }
@@ -389,7 +390,7 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * outcome with a reason, and the file is left as it was unless the detail
  * says otherwise.
  */
-export function syncSkillsBlock(opts: { target: BrainFirstTarget; launcher: string; decision: SkillLoadingDecision; writer: string; dryRun: boolean; audience?: SkillAudience; settingsPath?: string }): SkillsBlockOutcome {
+export function syncSkillsBlock(opts: { target: BrainFirstTarget; launcher: string; decision: SkillLoadingDecision; writer: string; dryRun: boolean; audience?: SkillAudience; settingsPath?: string; thisFileOnly?: boolean }): SkillsBlockOutcome {
   const { target, launcher, decision } = opts;
   const settings = opts.settingsPath ?? claudeUserSettingsPath();
   const audience = opts.audience ?? 'owner';
@@ -420,6 +421,11 @@ export function syncSkillsBlock(opts: { target: BrainFirstTarget; launcher: stri
     return out('preserve', `the skills markers in ${target.path} were hand-edited (duplicate, orphan or out of order); fix or delete them, then re-run`, { reason: 'damaged_markers' });
   }
   if (decision.value === 'off') {
+    if (!target.project && !opts.thisFileOnly && decision.source !== 'default') {
+      for (const other of readSkillLoadingLedger().filter((e) => e.harness === target.harness && e.path !== target.path && e.mode === 'spring' && !isProjectSurface(e.harness, e.path))) {
+        syncSkillsBlock({ ...opts, target: { ...target, path: other.path }, audience: other.audience, settingsPath: other.allow_settings, thisFileOnly: true });
+      }
+    }
     if (decision.source === 'default' && !prior && (before.state === 'current' || before.state === 'stale')) {
       return out('skip', `the skills index in ${target.path} is not in this gbrain's record (${skillLoadingLedgerPath()}); another gbrain home or install probably wrote it, so it is left as it is. Pass --skill-loading off to remove it from here`);
     }
@@ -454,6 +460,10 @@ export function syncSkillsBlock(opts: { target: BrainFirstTarget; launcher: stri
   if ('error' in served) return out('preserve', `${served.error}; ${target.path} was left as it was. Pass --gbrain-bin <absolute path of this gbrain>`, { reason: 'launcher_unusable' });
   if (served.catalog !== bundledCatalogId()) {
     return out('preserve', `${launcher} serves skill catalog ${served.catalog}, not this gbrain's ${bundledCatalogId()}, so the index would load other text than it lists; ${target.path} was left as it was. Pass --gbrain-bin <absolute path of this gbrain>, or upgrade that install`, { reason: 'launcher_catalog_mismatch' });
+  }
+  const unserved = bundledSkills(audience).filter((s) => !served.names.includes(s.name)).map((s) => s.name);
+  if (unserved.length) {
+    return out('preserve', `${launcher} does not serve ${unserved.length} skill(s) the index would list (${unserved.slice(0, 5).join(', ')}${unserved.length > 5 ? ', …' : ''}), probably because it runs as a thin client; ${target.path} was left as it was. Pass --gbrain-bin <absolute path of the gbrain this agent uses>`, { reason: 'launcher_catalog_mismatch' });
   }
   if (target.harness === 'hermes' && (before.state === 'no_file' || (() => { try { return readFileSync(target.path, 'utf8').trim() === ''; } catch { return true; } })())) {
     return out('skip', `${target.path} is missing or empty, and Hermes uses a non-empty SOUL.md instead of its default identity; start Hermes once (it seeds SOUL.md) or write your identity there, then re-run`, { reason: 'hermes_soul_missing' });
@@ -719,6 +729,8 @@ export function refreshSkillsIndexes(harness: BrainFirstHarness, opts: { mode?: 
     decision: off ? { value: 'off', source: 'flag' } : { value: 'spring', source: opts.mode === 'spring' ? 'flag' : 'prior' },
     writer: e.writer,
     dryRun: opts.dryRun,
+    settingsPath: e.allow_settings,
+    thisFileOnly: true,
   }));
   if (!opts.dryRun || harness !== 'claude-code') return outcomes;
   // Each row previewed alone sees the others still owning a shared rule. When the batch drops that rule from every
