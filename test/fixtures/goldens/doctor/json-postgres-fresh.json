@@ -1083,7 +1083,7 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
-          "message": "RLS enabled on 171/171 public tables",
+          "message": "RLS enabled on 172/172 public tables",
           "name": "rls",
           "status": "ok"
         },
