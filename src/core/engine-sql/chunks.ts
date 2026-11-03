@@ -933,7 +933,7 @@ async function* iterateChunklessEmbeddingStates(exec: ScopedRead,
 }
 
 /**
- * Counts per embedding state. `full`: an exact chunk aggregate and a bounded
+ * Counts per embedding state. `full`: an exact chunk aggregate and a paged
  * chunkless projection walk. `ops`: only index-backed reads, and `basis: 'unknown'`
  * when no valid partial index on content_chunks has the predicate
  * `<active column> IS NULL` (never a slow scan): the vector-less chunks through

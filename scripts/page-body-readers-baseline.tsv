@@ -365,7 +365,7 @@ src/core/output/writer.ts	runValidators	field	INLINE
 src/core/oversized-backfill.ts	PAGE_BYTES_SQL	sql	SEGW	
 src/core/oversized-backfill.ts	rewritePage	call:serializeMarkdown	SEGW	
 src/core/oversized-backfill.ts	rewritePage	field	SEGW	
-src/core/ordinary-chunk-presence.ts	inspectOrdinaryChunkPresence	field	INLINE	rejects a segmented or changed snapshot before reading privacy-filtered inline body fields; ordinary projection presence only
+src/core/ordinary-chunk-presence.ts	inspectOrdinaryChunkPresence	field	INLINE	scoped snapshot identity, revision and inline-shape checks gate use; fence overlay and prose preparation exclude private claims from ordinary chunks
 src/core/page-body/body-digests.ts	fileBodyDigests	field	NONE	scan.timeline is the scanned file's timeline byte ranges and digests.timeline a SHA-256, not a page body; each region is hashed piece by piece
 src/core/page-body/body-scan.ts	scanMarkdownString	field	NONE	not a stored body: scans an incoming markdown string for the segmenter
 src/core/page-body/content-hash-stream.ts	ContentHashStream.fromState	field	NONE	not a stored body: resumes the streaming content hash over incoming text
