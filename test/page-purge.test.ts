@@ -89,6 +89,23 @@ describe('page purge', () => {
     expect(await engine.executeRaw(`SELECT 1 FROM fact_purges WHERE reason='page purge'`)).toHaveLength(1);
   }, 60_000);
 
+  test('a file_upload to a page in a non-default source records that page, so purging it removes the row and the stored object (#8513)', async () => {
+    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-a', 'source-a') ON CONFLICT DO NOTHING");
+    await importFromContent(engine, 'notes/plan', '---\ntitle: Plan\ntype: note\n---\n# Plan\n\nBody.\n', { noEmbed: true, sourceId: 'source-a' });
+    const [page] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug='notes/plan' AND source_id='source-a'");
+    const upload = join(storageDir, '..', 'attachment.txt');
+    writeFileSync(upload, 'attachment bytes');
+    const ctx = { ...context(), sourceId: 'source-a' };
+    await withEnv({ GBRAIN_HOME: home }, () => op('file_upload').handler(ctx, { path: upload, page_slug: 'notes/plan' }));
+    expect(await engine.executeRaw('SELECT source_id, page_id FROM files')).toEqual([{ source_id: 'source-a', page_id: page!.id }]);
+    expect(existsSync(join(storageDir, 'notes/plan/attachment.txt'))).toBe(true);
+    const snapshot = await engine.readPageSnapshot('notes/plan', { sourceId: 'source-a', includeDeleted: true });
+    const result = await withEnv({ GBRAIN_HOME: home }, () => op('delete_page').handler(ctx, { slug: 'notes/plan', purge: true, request_id: randomUUID(), expected_revision: snapshot!.revision })) as Record<string, any>;
+    expect([result.status, result.purge.removed.files, result.purge.blobs_remaining]).toEqual(['purged', 1, []]);
+    expect(await engine.executeRaw('SELECT 1 FROM files')).toEqual([]);
+    expect(existsSync(join(storageDir, 'notes/plan/attachment.txt'))).toBe(false);
+  });
+
   test('the tombstone refuses the same content under any slug until unpurge; edited content imports', async () => {
     await importFromContent(engine, SLUG, CONTENT, { noEmbed: true, sourceId: 'default' });
     await runExtractFacts(engine, { slugs: [SLUG] });

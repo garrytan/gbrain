@@ -146,20 +146,23 @@ const file_upload: Operation = {
     }
 
     try {
+      // #8513: the row names the caller's source and the page's id there, so purging that page finds it in any source.
+      const sourceId = ctx.sourceId ?? 'default';
+      const [page] = pageSlug ? await ctx.engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1 AND source_id = $2', [pageSlug, sourceId]) : [];
       // #4910: stamp the storage lane (doctor image_assets / files verify
       // classify on it) and merge metadata on conflict so legacy `{}` rows
       // heal on their next content change. Real object via executeRawJsonb —
       // never a JSON string into ::jsonb (#2339).
       await executeRawJsonb(
         ctx.engine,
-        `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+        `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, source_id, page_id, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
          ON CONFLICT (storage_path) DO UPDATE SET
            content_hash = EXCLUDED.content_hash,
            size_bytes = EXCLUDED.size_bytes,
            mime_type = EXCLUDED.mime_type,
            ${FILES_METADATA_MERGE_SQL}`,
-        [pageSlug, filename, storagePath, mimeType, stat.size, hash],
+        [pageSlug, filename, storagePath, mimeType, stat.size, hash, sourceId, page?.id ?? null],
         [embedded?.metadata ?? { storage: (ctx.config.storage as { backend: string }).backend }],
       );
     } catch (dbErr) {
