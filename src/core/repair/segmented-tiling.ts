@@ -8,12 +8,15 @@
  * Preview (read-only; trusted local CLI, on the host that owns the source's checkout): each damaged page with its live
  * generation, the bytes its rows cover, its file, HEAD's commit, the file's blob at HEAD (object id, SHA-256 and size) and
  * the sync hold on it. The hash binds the pages, their revisions and generations, the blobs and the holds. A page with no
- * file, a file HEAD does not hold or one over pages.max_bytes is listed held and never written. A source without a Git
+ * file, a file HEAD does not hold or one over pages.max_bytes is listed held and never written, as is one another sync
+ * hold withholds (any but the unreadable-body `page_write_failed` hold) or one the next sync's import screen would hold
+ * (purged page content, the write gate, private visibility, a fence it refuses). A source without a Git
  * checkout (a repo-less brain) refuses: this repair republishes the copy Git holds, and the database has no other.
  *
  * `--apply --expect <hash>` re-checks every page (`preview_changed`), then per page, in one transaction under the page's
  * key lock (a coordinated maintenance write on a managed brain; refused while a sync or write in flight names the file):
- * versions the damaged generation by reference, stages the blob's body and publishes it as a new generation through the
+ * versions the damaged generation by reference, screens the blob again and stages the body the screen's fence step and
+ * the purge and withdrawal overlay admit (a purged claim the file still carries stays out), publishes it as a new generation through the
  * generation flip (which refuses one that does not tile), keeps the page's title, type, frontmatter, tags and trust tier,
  * clears the sync hold the preview saw and asks the next sync to re-screen the file (so a file that differs from the
  * stored page in anything else imports normally), and writes the page's receipt, also appended to the `segmented-tiling`
@@ -33,7 +36,10 @@ import { getWorktreeBinding } from '../persistence/ownership.ts';
 import { checkOwner, ownerUnavailableError } from '../persistence/owner-refusal.ts';
 import { localHostId } from '../persistence/identity.ts';
 import { loadRepairBusySet, repairBusy, repairBusyError } from '../persistence/repair-busy.ts';
-import { clearGitHold, readGitHold, requestGitHoldRetry } from '../persistence/sync-holds.ts';
+import { clearGitHold, readGitHold, requestGitHoldRetry, type GitHoldRecord } from '../persistence/sync-holds.ts';
+import { unreadPageImportScreen } from '../persistence/sync-screen.ts';
+import { PAGE_BODY_FAULT_CODES } from '../persistence/sync-fault-class.ts';
+import { preserveWithdrawnFenceRows } from '../facts/withdrawal.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { applySegmentedBody, sealSegmentedPage, segmentedLivePage } from '../persistence/segmented-apply.ts';
 import { withPageTierKept } from '../trust/fence-append.ts';
@@ -114,6 +120,28 @@ function selectionOf(scope: RepairScope, slugs: readonly string[] | undefined): 
 const describe = (page: HealPage) => `generation ${page.body_generation}: ${page.rows} row(s) cover ${page.covered_bytes ?? 'with a gap'}${page.covered_bytes === null ? '' : ' bytes'} of ${page.body_bytes}; `
   + `republish ${page.source_path} from HEAD ${page.head.slice(0, 12)} (blob ${page.blob_oid.slice(0, 12)}, ${page.blob_bytes} bytes)${page.hold_observed_at ? '; clears its sync hold' : ''}`;
 
+/** A sync hold this repair may clear: the one a managed sync opens when it cannot read the page's stored body. */
+const segmentedReadHold = (hold: GitHoldRecord) => hold.code === 'page_write_failed'
+  && PAGE_BODY_FAULT_CODES.has(String((hold.meta as { write_failure?: { code?: unknown } } | null)?.write_failure?.code ?? ''));
+
+/**
+ * The body this repair publishes from `content` (the blob HEAD holds), or why the page is held: a sync hold other than the
+ * unreadable-body one withholds the file, or the screen the next sync gives the file refuses it. Admitted bytes take the
+ * fence step and the purge and withdrawal overlay an import applies, so a purged claim the file still carries stays out.
+ */
+async function stageable(engine: BrainEngine, page: { source_id: string; slug: string; source_path: string }, checkout: { root: string; incarnation: string },
+  content: string): Promise<{ held: string } | { truth: string; timeline: string; hold: GitHoldRecord | null }> {
+  const hold = await readGitHold(engine, page.source_id, checkout.incarnation, page.source_path);
+  if (hold && !segmentedReadHold(hold)) return { held: `its sync hold (${hold.code}) withholds the file; resolve that hold first (gbrain sources status ${page.source_id})` };
+  const screen = await unreadPageImportScreen(engine, { sourceId: page.source_id, root: checkout.root, path: page.source_path, slug: page.slug, content,
+    snapshot: await engine.readPageSnapshot(page.slug, { sourceId: page.source_id }) });
+  if (screen.status === 'refused') return { held: `the next sync would hold the file (${screen.refusal.code}): ${screen.refusal.message}` };
+  const parsed = screen.status === 'importable' && screen.parsed ? screen.parsed : parseMarkdown(content, `${page.slug}.md`);
+  const body = screen.status === 'importable' && screen.fences ? screen.fences.after : { compiled_truth: parsed.compiled_truth, timeline: parsed.timeline ?? '' };
+  return { hold, truth: (await preserveWithdrawnFenceRows(engine, page.source_id, body.compiled_truth, page.slug)).trim(),
+    timeline: (await preserveWithdrawnFenceRows(engine, page.source_id, body.timeline ?? '', page.slug)).trim() };
+}
+
 /** Every damaged page of the selection, as the preview lists it (republishable pages and held ones). */
 async function survey(engine: BrainEngine, selection: Selection): Promise<{ pages: HealPage[]; listing: RepairListing[]; held: number }> {
   const checkout = await sourceCheckout(engine, selection.source_id);
@@ -126,17 +154,18 @@ async function survey(engine: BrainEngine, selection: Selection): Promise<{ page
     const blob = page.source_path ? headBlob(checkout.root, page.source_path, maxBytes) : { held: 'the page has no file, so Git holds no copy of it' };
     if ('held' in blob) { held++; listing.push({ item: label, class: 'held', detail: blob.held }); continue; }
     const bytes = readBlob(checkout.root, blob.oid, blob.bytes);
-    const hold = await readGitHold(engine, page.source_id, checkout.incarnation, page.source_path!);
+    const staged = await stageable(engine, { ...page, source_path: page.source_path! }, checkout, bytes.toString('utf8'));
+    if ('held' in staged) { held++; listing.push({ item: label, class: 'held', detail: staged.held }); continue; }
     const heal: HealPage = { ...page, source_path: page.source_path!, incarnation: checkout.incarnation, head: blob.head, blob_oid: blob.oid, blob_sha256: sha256(bytes),
-      blob_bytes: bytes.length, hold_observed_at: hold?.observed_at ?? null };
+      blob_bytes: bytes.length, hold_observed_at: staged.hold?.observed_at ?? null };
     pages.push(heal);
     listing.push({ item: label, class: 'republish', detail: describe(heal) });
   }
   return { pages: pages.sort((a, b) => a.page_id - b.page_id), listing, held };
 }
 
-/** Republishes one page's body from `content` in the caller's transaction; false when the page changed since the preview. */
-async function republish(tx: BrainEngine, page: HealPage, content: string): Promise<{ generation: number; unsealed: boolean; hold_cleared: boolean } | false> {
+/** Republishes one page's body (`stageable`'s) in the caller's transaction and clears `hold`; false when the page changed since the preview. */
+async function republish(tx: BrainEngine, page: HealPage, body: { truth: string; timeline: string }, hold: GitHoldRecord | null): Promise<{ generation: number; unsealed: boolean; hold_cleared: boolean } | false> {
   await tx.lockPageKeys([{ sourceId: page.source_id, slug: page.slug }]);
   const [now] = await untiledSegmentedPages(tx, { sourceIds: [page.source_id], slugs: [page.slug] });
   if (!now || now.page_id !== page.page_id || now.revision !== page.revision || now.body_generation !== page.body_generation) return false;
@@ -144,8 +173,7 @@ async function republish(tx: BrainEngine, page: HealPage, content: string): Prom
     corpus_generation: string | null; tags: string[] }>(`SELECT p.title, p.type, p.page_kind, p.frontmatter, p.contextual_retrieval_mode, p.corpus_generation,
       COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS tags FROM pages p WHERE p.id=$1`, [page.page_id]);
   const frontmatter = row!.frontmatter ?? {};
-  const parsed = parseMarkdown(content, `${page.slug}.md`);
-  const truth = parsed.compiled_truth, timeline = parsed.timeline ?? '';
+  const { truth, timeline } = body;
   const { principal } = await maintenanceAttribution(tx);
   await tx.createVersion(page.slug, { sourceId: page.source_id });
   const prepared = await prepareSegmentedBody(tx, { sourceId: page.source_id, slug: page.slug, live: await segmentedLivePage(tx, page.page_id),
@@ -159,8 +187,8 @@ async function republish(tx: BrainEngine, page: HealPage, content: string): Prom
     pageId: page.page_id, prepared, promotion: false, retireMaxRows: flipRetireMaxRows,
     meta: { title: row!.title, type: row!.type as never, frontmatter: frontmatter as never, page_kind: row!.page_kind as never } }));
   if (applied.complete) await sealSegmentedPage(tx, page.page_id);
-  const hold_cleared = page.hold_observed_at !== null
-    && await clearGitHold(tx, { sourceId: page.source_id, incarnation: page.incarnation, path: page.source_path, observedAt: page.hold_observed_at });
+  const hold_cleared = hold !== null
+    && await clearGitHold(tx, { sourceId: page.source_id, incarnation: page.incarnation, path: page.source_path, observedAt: hold.observed_at });
   await requestGitHoldRetry(tx, page.source_id, page.incarnation, [page.source_path]);
   return { generation: prepared.newGeneration, unsealed: !applied.complete, hold_cleared };
 }
@@ -221,6 +249,8 @@ export const segmentedTilingRepair: RepairHandler = {
       const checkout = await sourceCheckout(ctx.engine, page.source_id);
       const bytes = readBlob(checkout.root, page.blob_oid, page.blob_bytes);
       if (sha256(bytes) !== page.blob_sha256) return { applied: false, outcome: 'changed_since_preview', reason: 'the blob no longer has the previewed bytes' };
+      const staged = await stageable(ctx.engine, page, checkout, bytes.toString('utf8'));
+      if ('held' in staged) return { applied: false, outcome: 'held', reason: staged.held };
       if (checkout.managed) {
         const busy = await loadRepairBusySet(ctx.engine, page.source_id, page.incarnation);
         if (repairBusy(busy, { sourcePath: page.source_path, slug: page.slug })) throw repairBusyError(busy, page.source_id, page.source_path);
@@ -228,7 +258,7 @@ export const segmentedTilingRepair: RepairHandler = {
       const written = await ctx.engine.transaction(async tx => {
         const attribution = await maintenanceAttribution(tx);
         const write = async () => {
-          const result = await republish(tx, page, bytes.toString('utf8'));
+          const result = await republish(tx, page, staged, staged.hold);
           if (!result) return null;
           const [after] = await tx.executeRaw<{ revision: string }>('SELECT knowledge_revision::text AS revision FROM pages WHERE id=$1', [page.page_id]);
           const receipt = { kind: 'segmented-tiling', hash, source_id: page.source_id, slug: page.slug, page_id: page.page_id, revision_before: page.revision,

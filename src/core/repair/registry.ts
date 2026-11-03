@@ -561,10 +561,10 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
     summary: 'Republish, from the file Git holds at HEAD, each live page stored in segments whose live generation\'s rows do not cover its body (GST-1209; '
       + 'doctor segmented_tiling): such a page refuses every read (page_body_rows_unreadable) and a managed sync holds its file on every retry. Needs '
       + '--source; --slug <slug> narrows. The preview, on the host that owns the checkout, lists each page with its generation, the bytes its rows '
-      + 'cover, its file, HEAD\'s commit, the blob\'s object id, SHA-256 and size and its sync hold; a page with no file or a file HEAD does not hold is '
-      + 'listed held. A source without a Git checkout (a repo-less brain) refuses (not_a_git_repo). --apply --expect <hash> re-checks each page, then '
+      + 'cover, its file, HEAD\'s commit, the blob\'s object id, SHA-256 and size and its sync hold; a page with no file or a file HEAD does not hold, '
+      + 'another sync hold withholds or the next sync\'s import screen would hold is listed held. A source without a Git checkout (a repo-less brain) refuses (not_a_git_repo). --apply --expect <hash> re-checks each page, then '
       + 'per page, in one transaction under its key lock (a coordinated maintenance write on a managed brain): versions the damaged generation by '
-      + 'reference, publishes the blob\'s body as a new generation (title, type, frontmatter, tags and trust tier kept), clears the previewed sync hold, '
+      + 'reference, publishes the body the import screen and the purge overlay admit as a new generation (title, type, frontmatter, tags and trust tier kept), clears the previewed sync hold, '
       + 'asks the next sync to re-screen the file and writes the page\'s receipt and audit line. Trusted local CLI only; runs only when named; never on upgrade.',
   },
   'uncommitted-deletions': {

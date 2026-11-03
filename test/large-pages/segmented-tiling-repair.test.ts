@@ -20,7 +20,7 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { performManagedSync } from '../../src/core/persistence/sync-run.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
-import { readGitHold } from '../../src/core/persistence/sync-holds.ts';
+import { readGitHold, writeGitHold } from '../../src/core/persistence/sync-holds.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { materializeSegmentedBody } from '../../src/core/page-body/ingest.ts';
 import { untiledSegmentedPages } from '../../src/core/page-body/body-tiling.ts';
@@ -41,7 +41,12 @@ let engine: PGLiteEngine;
 
 function git(root: string, ...args: string[]): string { return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim(); }
 function commit(root: string): void { git(root, 'add', '-A'); git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'test content'); }
-const person = (bytes: number) => '---\ntype: person\ntitle: Person Example\n---\n\n# Person Example\n\n' + conversationBody(bytes, { seed: 7 }) + '\n<!-- timeline -->\n- **2026-10-01** | manual — first\n';
+const person = (bytes: number, fence = '') => '---\ntype: person\ntitle: Person Example\n---\n\n# Person Example\n\n' + fence + conversationBody(bytes, { seed: 7 }) + '\n<!-- timeline -->\n- **2026-10-01** | manual — first\n';
+const PURGED = 'Person Example keeps the spare key under the blue mat.';
+const KEPT = 'Person Example prefers the green notebook.';
+const FENCE = ['## Facts', '', '<!--- gbrain:facts:begin -->', '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |',
+  '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|', `| 1 | ${PURGED} | fact | 1.0 | world | medium | 2026-01-01 |  | chat |  |`,
+  `| 2 | ${KEPT} | fact | 1.0 | world | medium | 2026-01-01 |  | chat |  |`, '<!--- gbrain:facts:end -->', '', ''].join('\n');
 /** Deletes the page's last live manifest row: its live generation no longer covers its body. */
 const damage = (sourceId: string, pageId: number) => withManagedFixtureWrite(engine, [sourceId], tx => tx.executeRaw(
   'DELETE FROM page_body_manifest WHERE page_id=$1 AND staging_id IS NULL AND seq=(SELECT max(seq) FROM page_body_manifest WHERE page_id=$1 AND staging_id IS NULL)', [pageId]));
@@ -55,14 +60,14 @@ afterAll(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-async function managedFixture() {
+async function managedFixture(content = person(1260 * 1024)) {
   await disposePersistenceConsumer(engine);
   await engine.setConfig('pages.segmented_storage', 'on');
   const sourceId = `tiling-${randomUUID().slice(0, 8)}`;
   const root = join(home, sourceId);
   mkdirSync(join(root, 'people'), { recursive: true });
   git(root, 'init', '-q');
-  writeFileSync(join(root, FILE), person(1260 * 1024));
+  writeFileSync(join(root, FILE), content);
   commit(root);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{}')", [sourceId, root]);
@@ -127,6 +132,58 @@ test('doctor lists the damaged page read-only; the repair republishes it from HE
   expect(after.held ?? []).toEqual([]);
   expect((await segmentedTilingCheck(engine, [f.sourceId])).status).toBe('ok');
   expect((await run(false)).listing ?? []).toEqual([]);
+}), 300_000);
+
+test('a page HEAD no longer holds, or whose file another sync hold withholds, is listed held and never written', async () => withEnv(env, async () => {
+  const f = await managedFixture();
+  await damage(f.sourceId, f.pageId);
+  const scope = await resolveRepairScope(engine, f.sourceId);
+  const run = (apply: boolean, expect?: string) => repairRunner(engine, { apply, logger }).then(runner => runner.run('segmented-tiling', scope, { explicit: true, sourceFlag: f.sourceId, ...(expect ? { expect } : {}) }));
+  const [damaged] = await untiledSegmentedPages(engine, { sourceIds: [f.sourceId] });
+  git(f.root, 'rm', '-q', FILE);
+  commit(f.root);
+  const gone = await run(false);
+  expect(gone.listing).toEqual([{ item: `${f.sourceId}:${SLUG} (revision ${damaged!.revision})`, class: 'held', detail: expect.stringContaining(`holds no file at ${FILE}`) }]);
+  expect(await run(true, gone.preview_hash!)).toMatchObject({ applied: 0 });
+  expect(await untiledSegmentedPages(engine, { sourceIds: [f.sourceId] })).toEqual([damaged!]);
+
+  git(f.root, 'checkout', '-q', 'HEAD~1', '--', FILE);
+  commit(f.root);
+  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [f.sourceId]);
+  await writeGitHold(engine, { source_id: f.sourceId, incarnation: source!.incarnation, path: FILE, source_path: FILE, slug: SLUG, page_id: f.pageId, code: 'write_gate_rejected',
+    message: 'The write gate rejected this file.', upstream_version: null, observed_at: new Date().toISOString(), run_id: null, mode: 'managed', meta: { recovery_version: 1 } });
+  const gated = await run(false);
+  expect(gated.listing).toEqual([expect.objectContaining({ class: 'held', detail: expect.stringContaining('sync hold (write_gate_rejected)') })]);
+  expect(await run(true, gated.preview_hash!)).toMatchObject({ applied: 0 });
+  expect(await untiledSegmentedPages(engine, { sourceIds: [f.sourceId] })).toEqual([damaged!]);
+  expect(await readGitHold(engine, f.sourceId, source!.incarnation, FILE)).toMatchObject({ code: 'write_gate_rejected' });
+}), 300_000);
+
+test('the apply refuses preview_changed when HEAD moved after the preview, and writes nothing', async () => withEnv(env, async () => {
+  const f = await managedFixture();
+  await damage(f.sourceId, f.pageId);
+  const scope = await resolveRepairScope(engine, f.sourceId);
+  const run = (apply: boolean, expect?: string) => repairRunner(engine, { apply, logger }).then(runner => runner.run('segmented-tiling', scope, { explicit: true, sourceFlag: f.sourceId, ...(expect ? { expect } : {}) }));
+  const preview = await run(false);
+  appendFileSync(join(f.root, FILE), '- **2026-11-03** | meeting — third\n');
+  commit(f.root);
+  const before = await counts();
+  await expect(run(true, preview.preview_hash!)).rejects.toMatchObject({ code: 'preview_changed' });
+  expect(await counts()).toEqual(before);
+  expect(await untiledSegmentedPages(engine, { sourceIds: [f.sourceId] })).toHaveLength(1);
+}), 300_000);
+
+test('a claim the owner purged stays out: the apply republishes the file through the purge overlay', async () => withEnv(env, async () => {
+  const f = await managedFixture(person(1260 * 1024, FENCE));
+  await engine.executeRaw("INSERT INTO fact_purges(source_id, visibility, subject, fact_hash) VALUES ($1, 'world', '*', gbrain_fact_fingerprint($2))", [f.sourceId, PURGED]);
+  await damage(f.sourceId, f.pageId);
+  const scope = await resolveRepairScope(engine, f.sourceId);
+  const run = (apply: boolean, expect?: string) => repairRunner(engine, { apply, logger }).then(runner => runner.run('segmented-tiling', scope, { explicit: true, sourceFlag: f.sourceId, ...(expect ? { expect } : {}) }));
+  expect(await run(true, (await run(false)).preview_hash!)).toMatchObject({ applied: 1 });
+  const body = await materializeSegmentedBody(engine, f.pageId, f.sourceId);
+  expect(body.compiled_truth).toContain(KEPT);
+  expect(body.compiled_truth).not.toContain(PURGED);
+  expect(await engine.executeRaw('SELECT count(*)::int AS n FROM content_chunks WHERE page_id=$1 AND chunk_text LIKE $2', [f.pageId, `%${PURGED}%`])).toEqual([{ n: 0 }]);
 }), 300_000);
 
 test('a source without a Git checkout refuses the preview: Git is the only copy it republishes', async () => withEnv(env, async () => {

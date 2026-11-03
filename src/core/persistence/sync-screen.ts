@@ -331,6 +331,20 @@ export async function screenFrozenContent(screenInput: SyncImportScreenInput, ru
 }
 
 /**
+ * GST-1209: the screen the next sync gives a file imported over a page whose stored body cannot be read (the segmented-tiling
+ * repair's input): the run's schema pack, sanity settings, purge tombstones and write gate, the coordinated fence step and
+ * the private-visibility hold, against the page's snapshot unread. A hold policy of `fail` still screens.
+ */
+export async function unreadPageImportScreen(engine: BrainEngine, input: { sourceId: string; root: string; path: string; slug: string; content: string;
+  snapshot: SyncImportScreenInput['snapshot'] }): Promise<ImportScreenResult> {
+  const activePack = (await loadActivePackForEngine(engine, { remote: false, sourceId: input.sourceId }).catch(() => null))?.manifest;
+  const run: SyncScreenRun = { policy: await readSyncHoldPolicy(engine), sanity: await loadImportSanityConfig(engine), activePack, normalize: () => fencesNormalizeEnabled(engine) };
+  return screenFrozenContent({ content: input.content, rawHash: sha256(input.content), lineEndingOnly: false, slug: input.slug, sourcePath: input.path, path: input.path,
+    root: input.root, snapshot: input.snapshot, base: input.snapshot, renamed: false, activePack, sanity: run.sanity,
+    purgedPages: await readPagePurgeTombstones(engine, input.sourceId), writeGateSource: await runWriteGateSource(engine, run, input.sourceId) }, run);
+}
+
+/**
  * The hold a frozen import earns, or null to admit it. Throws
  * `sync_parser_regression` (policy `stop`, opt-in) when gbrain would hold bytes
  * the page's provenance says a validating gbrain imported.

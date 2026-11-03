@@ -92,4 +92,18 @@ export function defineSegmentedPublishTilingCases(opts: { getEngine: () => Brain
       expect(await coveredBytes(engine, retried)).toBe(retried.body_bytes);
     }, 300_000);
   }
+
+  test('a staging that is no longer live keeps its state: an abort leaves a committed one and a move on of a terminal one refuses', async () => {
+    const engine = opts.getEngine();
+    await importFromContent(engine, SLUG, original, { sourceId: 'default', noEmbed: true });
+    const [{ id }] = await engine.executeRaw<{ id: string }>("SELECT id FROM page_body_stagings WHERE slug=$1 AND state='committed'", [SLUG]);
+    const state = async () => (await engine.executeRaw<{ state: string }>('SELECT state FROM page_body_stagings WHERE id=$1', [id]))[0]!.state;
+    await engine.setBodyStagingState(id, 'aborted');
+    await engine.setBodyStagingState(id, 'expired');
+    expect(await state()).toBe('committed');
+    await expect(engine.setBodyStagingState(id, 'prepared')).rejects.toMatchObject({ code: 'body_staging_expired' });
+    await engine.executeRaw("UPDATE page_body_stagings SET state='aborted' WHERE id=$1", [id]);
+    await expect(engine.setBodyStagingState(id, 'committed')).rejects.toMatchObject({ code: 'body_staging_expired' });
+    expect(await state()).toBe('aborted');
+  }, 300_000);
 }
