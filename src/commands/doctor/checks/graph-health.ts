@@ -361,6 +361,7 @@ export const timelineHistoryEntry: DoctorEntry = {
     'unbound_source',
     'writer_version',
     'segmented_storage',
+    'segmented_tiling',
     'self_capture',
     'vector_plan',
     'keyword_plan',
