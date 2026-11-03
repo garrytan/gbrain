@@ -10,6 +10,21 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.563.0] - 2026-11-03
+
+**A degraded or partial read now says so on the result itself.** Search, query, recall and the other reads already recorded degraded stages (an embedding timeout, a failed arm, a keyword-only brain, a held file) in notices and `_meta` fields that a harness had to know to look for, and recall and think dropped their page search's stages entirely. Every degraded or partial read result now carries one stamp naming why with stable codes. An MCP result gets `_meta.degraded: { reasons: [...] }` and one extra text block, `[gbrain degraded: <reasons>] ...`, after the others; a CLI `--json` object gets a `degraded` key, and other CLI output gets that line on stderr. A clean result carries no stamp, and no existing field changed. The code table is in docs/protocol/MCP_META_CHANNELS.md.
+
+**A write refused for naming another source says where the connection can write.** A `remember` naming a `source_id` outside the connection's write grant is still refused `scope_denied` (a page write: `permission_denied`), and the refusal now carries `writable_source_ids`: the sources the connection's own grant lets it write, never another source, identical whether the named source exists or not. On `remember` the `fix` repeats the call against that source once the user agrees (`next: ask_user`, naming both sources), keeps the caller's visibility (a visibility the caller left out stays out, so the brain's default applies), and carries no request id; `forget`, `forget_fact` and page writes carry no fix.
+
+### Itemized changes
+
+- `src/core/degraded-stamp.ts` (new): `degradedStampFor` builds the stamp from a result's degraded stages, skipping stages that do not affect recall (`reranker_skipped`); `src/mcp/dispatch.ts` adds `_meta.degraded` and the text block, and `src/cli/op-notices.ts` adds the `--json` key or the stderr line. It covers search, query, recall, find_experts, context_pack, delta, entity, get_page (`file_held`), think and synthesize, search_exact, open_loops and rank_entities.
+- recall reports its page search's degraded stages in `_meta.retrieval.degraded` and its `degraded_recall` notice; think and synthesize report them as `GATHER_DEGRADED:<stage>` warnings; a keyword-only search or recall on Postgres reports `keyword_candidates_incomplete` when the rank bound applies.
+- A `traverse_graph` walk cut at the row cap (`graph_walk_truncated`) offers, over MCP, the same walk one level shallower; a depth-1 walk offers no fix. CLI flag validation is unchanged.
+- `src/core/persistence/write-grant.ts` (new): `grantedWriteSource` and `writeGrantRefusal`, used by `remember`, `forget`, `forget_fact` and page writes. The `user_message` names the caller's `source_id` only when it is a valid source id. `OperationError.writableSourceIds` is exported.
+- Docs: docs/protocol/AGENT_OPERATOR_v1.md, MCP_META_CHANNELS.md, MEMORY_VERBS_v1.md and the agent-operator-protocol skill.
+- Tests: `test/degraded-stamp.test.ts`, `test/degraded-stamp-cli.test.ts`, `test/degraded-stamp-paths.serial.test.ts`, `test/write-grant-refusal.test.ts`, plus golden and fixture updates for the stamp.
+
 ## [0.60.562.0] - 2026-11-03
 
 **A write to a page stored in segments can no longer publish a body nobody can read.** When a fact purge or a staging sweep collected a write's staging while the write was preparing, the write's last preparation step moved the staging back to `prepared`, so the publish passed its staging check, closed the page's old segment rows and published none. Every read of the page then refused `page_body_rows_unreadable` and a managed sync held its file on every retry. The write now refuses `body_staging_expired` (send it again) and the page keeps its previous body; the publish also refuses any generation whose rows do not cover the body it records. A new doctor check, `segmented_tiling`, lists pages an older version left like this, and `gbrain repair segmented-tiling --source <id>` republishes each from its file at HEAD, preview first, only when applied with the preview's hash.

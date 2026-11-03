@@ -20,6 +20,7 @@ import { takeChatFallbackHopNotices } from '../core/ai/fallback-hop-queue.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { loadConfig } from '../core/config.ts';
 import type { RetrievalCoverage } from '../core/search/retrieval-coverage.ts';
+import { degradedStampFor, degradedStampLine, type DegradedStamp } from '../core/degraded-stamp.ts';
 
 let pending: Notice[] = [];
 
@@ -46,10 +47,35 @@ export function captureRetrievalNotices(
   pending.push(...recallInteropNotices(op, result, { retrieval: retrieval ?? {} }, params, { config, transport: 'cli' }));
 }
 
-/** Drain the captured notices into the result (`--json` objects) and/or a stderr string. */
-export function applyCliOpNotices(result: unknown, json: boolean): { result: unknown; stderr?: string } {
+/**
+ * GBRA-200: the degraded stamp on CLI output: a `--json` object gets a `degraded` key, everything else (human
+ * output, a bare `--json` array) the one-line `[gbrain degraded: …]` marker on stderr. A clean result is unchanged.
+ */
+export function withDegradedStamp(result: unknown, json: boolean, stamp: DegradedStamp | null | undefined): { result: unknown; stderr?: string } {
+  if (!stamp?.reasons?.length) return { result };
+  if (json && typeof result === 'object' && result !== null && !Array.isArray(result)) return { result: { ...(result as Record<string, unknown>), degraded: stamp } };
+  return { result, stderr: degradedStampLine(stamp) + '\n' };
+}
+
+/** The routed (thin-client) path: the server's stamp, or (an older server) the one its result and retrieval meta imply. */
+export function withRoutedDegradedStamp(op: string, result: unknown, meta: Record<string, unknown> | undefined, json: boolean): { result: unknown; stderr?: string } {
+  return withDegradedStamp(result, json, (meta?.degraded as DegradedStamp | undefined) ?? degradedStampFor(op, result, meta, []));
+}
+
+/**
+ * Drain the captured notices into the result (`--json` objects) and/or a stderr string. With `call` (the op and its
+ * retrieval meta), the degraded stamp is derived from the result and every captured notice, before dedupe.
+ */
+export function applyCliOpNotices(result: unknown, json: boolean, call?: { op: string; retrieval: Record<string, unknown> | null }): { result: unknown; stderr?: string } {
   const captured = [...pending, ...takeChatFallbackHopNotices()];
   pending = [];
+  const stamped = withDegradedStamp(result, json, call ? degradedStampFor(call.op, result, { retrieval: call.retrieval }, captured) : null);
+  const notices = applyAdmittedNotices(stamped.result, json, captured);
+  const stderr = (stamped.stderr ?? '') + (notices.stderr ?? '');
+  return stderr ? { result: notices.result, stderr } : { result: notices.result };
+}
+
+function applyAdmittedNotices(result: unknown, json: boolean, captured: Notice[]): { result: unknown; stderr?: string } {
   if (captured.length === 0) return { result };
   let admitted = captured;
   try { admitted = processNoticeLedger().admit(captured, { transport: 'cli' }, mutedNoticeCodes()); } catch { /* fail-open */ }
