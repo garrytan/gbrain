@@ -5,6 +5,9 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { openEngine, type EngineSettings } from '../src/core/engine-open.ts';
 
 const base = (): Record<string, unknown> => ({ embedded_core: true, engine: 'pglite', database: {}, host: { id: randomUUID() } });
@@ -40,7 +43,12 @@ describe('unknown settings keys', () => {
   });
 
   test('every known key opens, storage included (Wave C checks its fields)', async () => {
-    const settings = { ...base(), pool: { max: 2 }, embedding: { model: 'openai:text-embedding-3-small', dimensions: 1536 }, keyword_statement_timeout_ms: 1000, pglite: {}, storage: {} };
-    expect(await refusal(settings)).toBeNull();
+    const store = mkdtempSync(join(tmpdir(), 'gbrain-settings-keys-'));
+    try {
+      const settings = { ...base(), pool: { max: 2 }, embedding: { model: 'openai:text-embedding-3-small', dimensions: 1536 }, keyword_statement_timeout_ms: 1000, pglite: {}, storage: { backend: 'local', localPath: store } };
+      expect(await refusal(settings)).toBeNull();
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+    }
   }, 60_000);
 });
