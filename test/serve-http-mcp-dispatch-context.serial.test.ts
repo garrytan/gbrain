@@ -13,27 +13,33 @@
  * Why new: outcome tests show remote/auth/surface indirectly; nothing pinned
  * the literal dispatch context the handler builds.
  *
+ *
+ * Value: protects=POST /mcp dispatches inside the serving engine's scope once the process holds an embedded engine; fails_when=withEngineScope is dropped from the /mcp handler;
+ *   why_new=the entry-point tests call core functions directly; none drove the HTTP handler; seam=none; no_claim=per-engine AI keys (scope identity only; stock PGLite, no providers)
+ *
  * Serial: mock.module wraps the real dispatcher to record its arguments.
  */
 
 import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from 'bun:test';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import express from 'express';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { openEngine } from '../src/core/engine-open.ts';
+import { currentEngineScope } from '../src/core/engine-scope.ts';
 import { getBrainHotMemoryMeta } from '../src/core/facts/meta-hook.ts';
 import { operations } from '../src/core/operations.ts';
 import { filterOpsForSurface } from '../src/mcp/surface.ts';
 import * as realDispatch from '../src/mcp/dispatch.ts';
 
 type DispatchArgs = Parameters<typeof realDispatch.dispatchToolCall>;
-const calls: Array<{ name: string; opts: NonNullable<DispatchArgs[3]>; stderrBefore: string[] }> = [];
+const calls: Array<{ name: string; opts: NonNullable<DispatchArgs[3]>; stderrBefore: string[]; scope: object | undefined }> = [];
 const stderrLines: string[] = [];
 const passthrough = { ...realDispatch };
 mock.module('../src/mcp/dispatch.ts', () => ({
   ...passthrough,
   dispatchToolCall: async (...args: DispatchArgs) => {
-    calls.push({ name: args[1], opts: args[3] ?? {}, stderrBefore: [...stderrLines] });
+    calls.push({ name: args[1], opts: args[3] ?? {}, stderrBefore: [...stderrLines], scope: currentEngineScope() });
     return passthrough.dispatchToolCall(...args);
   },
 }));
@@ -165,4 +171,22 @@ describe('POST /mcp dispatch context', () => {
     expect([...opts.allowedOps!].sort()).toEqual(expected);
     for (const name of listed) expect(opts.allowedOps!.has(name)).toBe(true);
   });
+});
+
+describe('POST /mcp engine scope', () => {
+  test('a tool call dispatches in the serving engine\'s scope when the process holds an embedded engine', async () => {
+    const embedded = await openEngine({
+      embedded_core: true, engine: 'pglite', database: {}, host: { id: randomUUID() },
+      embedding: { model: 'openai:text-embedding-3-small', dimensions: 1536 },
+    });
+    try {
+      const { base, token } = await start(undefined, 'scope');
+      calls.length = 0;
+      await rpc(base, token, 'tools/call', { name: 'whoami', arguments: {} });
+      expect(calls.map(c => c.name)).toEqual(['whoami']);
+      expect(calls[0].scope).toBe(engine);
+    } finally {
+      await embedded.disconnect();
+    }
+  }, 60_000);
 });
