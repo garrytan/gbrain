@@ -38,6 +38,23 @@ export interface EngineSettings {
    * a cloned or restored database shares that.
    */
   cache_namespace?: string;
+  /**
+   * The object store every file operation on this engine uses, as values: `local` needs `localPath`, `s3` its bucket,
+   * endpoint and keys (nothing is read from AWS_* variables or ~/.aws). Every object key is `<prefix>/<path>` when
+   * `prefix` (one segment) is set; brains sharing a bucket each set a different prefix. No prefix keeps today's keys.
+   */
+  storage?: EngineStorageSettings;
+}
+
+export interface EngineStorageSettings {
+  backend: 'local' | 's3';
+  bucket?: string;
+  localPath?: string;
+  region?: string;
+  endpoint?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  prefix?: string;
 }
 
 export interface EngineAISettings {
@@ -47,9 +64,10 @@ export interface EngineAISettings {
 
 /** The settings `embeddedSettings` returns: everything the host passed except the writer credential and the provider keys. */
 type DeepReadonly<T> = { readonly [K in keyof T]: DeepReadonly<T[K]> };
-export type EmbeddedSettingsView = DeepReadonly<Omit<EngineSettings, 'writer' | 'ai'> & {
+export type EmbeddedSettingsView = DeepReadonly<Omit<EngineSettings, 'writer' | 'ai' | 'storage'> & {
   writer?: { id: string; lane: 'cli' | 'stdio' };
   ai?: { providers: Record<string, { baseUrl?: string; hasApiKey: boolean }>; models?: EngineAISettings['models'] };
+  storage?: Omit<EngineStorageSettings, 'secretAccessKey'> & { hasSecret: boolean };
 }>;
 
 interface EmbeddedRecord {
@@ -134,11 +152,12 @@ export function embeddedSettingsRecord(engine: object): EngineSettings | undefin
 export function embeddedSettings(engine: object): EmbeddedSettingsView | undefined {
   const settings = embeddedSettingsRecord(engine);
   if (!settings) return undefined;
-  const { writer, ai, ...rest } = settings;
+  const { writer, ai, storage, ...rest } = settings;
   const providers = ai && Object.fromEntries(Object.entries(ai.providers)
     .map(([id, p]) => [id, { ...(p.baseUrl ? { baseUrl: p.baseUrl } : {}), hasApiKey: !!p.apiKey }]));
   const view = structuredClone({ ...rest, ...(writer ? { writer: { id: writer.id, lane: writer.lane } } : {}),
-    ...(ai ? { ai: { providers: providers!, ...(ai.models ? { models: { ...ai.models } } : {}) } } : {}) });
+    ...(ai ? { ai: { providers: providers!, ...(ai.models ? { models: { ...ai.models } } : {}) } } : {}),
+    ...(storage ? { storage: (({ secretAccessKey, ...open }) => ({ ...open, hasSecret: !!secretAccessKey }))(storage) } : {}) });
   const freeze = (value: unknown): void => {
     if (!value || typeof value !== 'object' || Object.isFrozen(value)) return;
     Object.freeze(value);

@@ -25,6 +25,43 @@ identifiers and attribution are available in the pre-removal Git revision
 - `examples/embedded-two-brains.ts` (new): two brains with distinct fake providers on 127.0.0.1, package exports only; `test/examples-embedded-two-brains.test.ts` runs it. New tests: `test/engine-scope-required.test.ts`, `engine-scope-entry-points`, `engine-open-usage`, `engine-open-settings-keys`, `engine-gateway-state`, `engine-alias-policy`, `engine-cache-namespace`, and `test/e2e/engine-open-b3a-postgres.test.ts` (reconnect usage and 1,000 per-call cycles). Fake transports only, no network.
 - Still to come: the two-engine seam suite moves onto `openEngine` once train R (#8148) lands; `drainPersistence` does not exist yet (W5a enters scope there); close order and `drainFacts` are B3b.
 
+## [0.60.568.0] - 2026-11-03
+
+**A brain opened from settings keeps its files in its own store.** On an engine opened from settings, every file operation (`file_upload`, `file_url`, page purge and the new `file_verify`) uses the engine's own `settings.storage`: a local path, or s3 with its endpoint and keys, and an optional one-segment key `prefix` so brains sharing a bucket each keep their own keys. The process storage config is never used there. `file_verify` lists which rows still have their object or re-hashes one. A brain the CLI or a server opens is unchanged, and there `file_verify` refuses `embedded_engine_required`; it is never an MCP tool. `file_register`, which lets a host record bytes it stored itself, ships separately. Contributed by @bradgessler (#8457).
+
+### Itemized changes
+
+- `src/core/storage/s3.ts`: `file_url` on an s3 store with an endpoint builds the URL from the endpoint the SDK resolves, instead of throwing.
+- A store that does not answer `file_verify` or `file_url` is the new `store_unavailable` code, never a file reported missing.
+- On an engine opened from settings, `delete_page` purge deletes a page's files from `settings.storage` too. A file it can't find there, or a store that doesn't answer, is reported in `blobs_remaining`, never as deleted; files an embedded engine's `file_upload` wrote before this release live in the process store, so delete those remaining paths by hand. Rows an embedded engine's `file_upload` wrote before this release point at the process store, so `file_url` and `file_verify` look for them in `settings.storage`.
+- `openEngine` refuses `engine_settings_invalid` for a `storage` setting missing a value its backend needs (so no backend falls back to a default path or environment credentials), an unknown field, a backend other than local or s3, or a prefix that is not one segment; an s3 store must name its endpoint, so no AWS_* variable or ~/.aws file picks it; `embeddedSettings()` reads back `hasSecret` instead of the secret.
+- `src/core/storage/local.ts` and `s3.ts` stream an object's size and SHA-256 (`hashObject`); other backends hash one download.
+- `test/embedded-file-store.test.ts`: real PGLite engines and a real local store; the unreachable store is a closed local port.
+
+## [0.60.567.0] - 2026-11-03
+
+**/ship now carries its unit, serial, slow and E2E lanes from a passed full-ci run instead of running them again.** `.gstack/pregate.json` declares `ship_lanes_from` (gstack 1.94+): `bun run test`, `bun run test:serial`, `bun run test:slow` and `bun run test:e2e` carry from the Test (`full-suite`) and E2E (`e2e-full-suite`) runs at the exact, clean tree, and print `LANE: <label> carried run=<id>/<attempt>`. A dirty tree, a newer red or running run, or a run whose `tree.json` misses a file the lane runs still runs the lane locally. Each lane's file list comes from `scripts/pregate-remote-gate.sh --list` on the full gate, so a tree that changes the CI reuse files never carries its own runs.
+
+### Itemized changes
+
+- `.gstack/pregate.json`: `ship_lanes_from` maps the four lane commands to the `test` and `e2e` run profiles. The E2E lane names both, because test.yml's reconciliation job runs two `test/e2e/` files. `bun run verify` and `bun run typecheck` still run locally: `tree.json` records test files only.
+- `.gstack/ship-policy.json`: `min_gstack_version` is 1.94.4.0. A gstack below 1.94.0.0 rejects `ship_lanes_from` as an unknown key.
+- `docs/ci-event-parity.md#ship-lanes` lists the exact lane commands and the carry conditions; AGENTS.md and CONTRIBUTING.md point /ship at it. `test/scripts/pregate-remote-gate.test.ts` keeps the table and the config in step.
+- Nightly shard weights refreshed (2026-11-03).
+
+## [0.60.566.0] - 2026-11-03
+
+**Two installs at once no longer drop each other's instruction-ledger entry, and a Codex skills opt-out reaches the file Codex used before.** Every install lane reads the brain-first ledger (`~/.gbrain/agent-instructions.json`) or the skill-loading ledger, edits the instruction file and rewrites the ledger. Two installs at once (say `setup claude-code` and `setup codex`) could each read the ledger before the other wrote it, and one entry was lost; a later opt-out then left that block, and its Claude Code allow rule, in place. Each install now holds one shared lock for the whole step, and the second waits for the first. Separately, Codex loads `AGENTS.override.md` when it is non-empty and `AGENTS.md` otherwise, so an explicit skills opt-out made after the override appeared left the index in `AGENTS.md`, where it came back once the override was removed.
+
+### Itemized changes
+
+- The brain-first and skill-loading ledgers share one lock (`~/.gbrain/agent-instructions.lock`), held across each install step: the ledger read, the file edit, the Claude Code permission edit and the ledger write (#8484). An install that waited reads the recorded choice again under the lock, so an opt-out the other install just recorded stays in force. An install that cannot take it within 10 seconds, or cannot create it, changes nothing and reports why (the skills outcome's reason is `ledger_locked`). A dry run takes no lock.
+- `gbrain setup codex --skill-loading off`, `--no-instructions` and `GBRAIN_SKILL_LOADING=off` also strip a spring index gbrain recorded in the other global instruction file of the same `CODEX_HOME` (`AGENTS.md` or `AGENTS.override.md`), and report it as a second skills line in the plain output (`paired` in `--json`), in `--dry-run` too (#8485). A plain re-run strips it only when brain-first instructions are declined on record for that Codex home, and no other Codex home, OpenClaw workspace or Claude profile is touched.
+
+## [0.60.565.0] - 2026-11-03
+
+**The per-file index describes how pages stored in segments are written and held.** The key-files entries for `write-through.ts` and `sync-entry-fault.ts` contradicted v0.60.560.0: the first said every page is rendered whole and `content` always holds the bytes written, and the second said a page-body fault at the freeze stops the run. They now describe the streamed write of a segmented page (measured at its snapshot's revision, checked against the scan cap before `source_path` binds, `inlineOnly` and `segmented_page`) and the `page_write_failed` hold that names `page_body_segmented` or `page_body_rows_unreadable`. The entries for full sync, `sync status`, the derived write-through and export also name `reexport_failures`, `last_error.request_id: null`, the `freeze_page_body_*` routing, the derived writer's `segmented_page` skip and the export's revision pin. Docs only.
+
 ## [0.60.564.0] - 2026-11-03
 
 **A brain opened from settings brings its own AI providers.** `settings.ai` names the providers an embedded engine may call, with their keys and base URLs as values, and the models it uses for chat, expansion and reranking. Its embed, chat and rerank calls go only there, never to a key in the process environment, `~/.gbrain/config.json` or the process-wide gateway, so two brains in one process never spend each other's keys or see each other's cached query vectors. A call to a provider the settings don't name refuses `engine_scope_missing` and sends nothing. While such an engine is open, an AI call made outside any engine's scope refuses the same way unless the host configured a process gateway. Each engine's chat usage lands in its own database. Keys never show up in errors, logs, doctor output or `embeddedSettings()`, also for a call still in flight when the engine disconnects. Every other engine, and the CLI, keeps the process gateway exactly as before. Contributed by @bradgessler (#8456, #8085).
