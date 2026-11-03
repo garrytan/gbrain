@@ -133,7 +133,7 @@ export function factVisibilitySql(alias: string, visibility: readonly string[]):
  * cross from one such page to another or to an ordinary page.
  */
 export function onOwnedMemoryPageSql(alias: string): string {
-  return `(starts_with(COALESCE(${alias}.source_markdown_slug, ''), '${MEMBER_PAGE_PREFIX}') OR ${alias}.source_markdown_slug = '${SCOPE_PAGE_SLUG}')`;
+  return `(starts_with(COALESCE(${alias}.source_markdown_slug, ''), '${MEMBER_PAGE_PREFIX}') OR COALESCE(${alias}.source_markdown_slug, '') = '${SCOPE_PAGE_SLUG}')`;
 }
 
 /**

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 269480,
-    "stdoutSha256": "a5efd152d5b57d8cab862c842421d4b321090631a5c72139cc5d1195e2849563",
+    "stdoutBytes": 269780,
+    "stdoutSha256": "cda3d9e0ad1f81977a5a7dfacb8b786702ba2be1f5c278ab7d4ba09e36c6e09d",
     "toolNames": [
       "remember",
       "entity",
@@ -7168,7 +7168,8 @@
         "parameters": {
           "acting_user": "string?",
           "facts": "array",
-          "idempotency_key": "string"
+          "idempotency_key": "string",
+          "source_id": "string?"
         },
         "required_scopes": [],
         "schema": {
@@ -7216,6 +7217,10 @@
             },
             "idempotency_key": {
               "description": "1-128 visible ASCII characters; the same key replays this write.",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Save on this scope source's shared page (memory/scope), read by everyone who reads that source; it must be one of the credential's scope sources. Omit to save for the person alone.",
               "type": "string"
             }
           },
