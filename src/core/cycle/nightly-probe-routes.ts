@@ -22,6 +22,8 @@
  */
 
 import type { ConfigReader } from '../config-snapshot.ts';
+import { assertTouchpoint, resolveRecipe } from '../ai/model-resolver.ts';
+import type { QualityProbeAuditEvent } from '../audit-quality-probe.ts';
 import {
   TIER_DEFAULTS,
   resolveAlias,
@@ -55,6 +57,23 @@ export interface NightlyProbeModelRoutes {
   extractor: ResolvedModel;
   /** Alias-expanded model per slot whose config key is set; unset and blank keys are absent. */
   slots: Partial<Record<NightlyProbeSlotId, string>>;
+}
+
+/** Validate explicit pins only. Defaults retain the cross-modal command's existing substitution policy. */
+export function checkNightlyJudgeCapabilities(slots: NightlyProbeModelRoutes['slots']):
+  Required<Pick<QualityProbeAuditEvent, 'judge_capabilities' | 'capability_distinct_models'>> {
+  const ready = new Set<string>();
+  const judge_capabilities = Object.entries(slots).map(([slot, model]) => {
+    try {
+      const { recipe, parsed } = resolveRecipe(model);
+      assertTouchpoint(recipe, 'chat', parsed.modelId);
+      ready.add(`${recipe.id}:${parsed.modelId}`);
+      return { slot, model, capability_ready: true };
+    } catch (err) {
+      return { slot, model, capability_ready: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+  return { judge_capabilities, capability_distinct_models: ready.size };
 }
 
 /**

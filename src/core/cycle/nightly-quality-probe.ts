@@ -47,7 +47,8 @@ import {
 } from '../budget/budget-tracker.ts';
 import { resolveAuditDir } from '../minions/handlers/shell-audit.ts';
 import type { CrossModalBatchSummary } from './nightly-probe-adapters.ts';
-import { NightlyProbeModelRoutesError, type NightlyProbeModelRoutes } from './nightly-probe-routes.ts';
+import { checkNightlyJudgeCapabilities, NightlyProbeModelRoutesError, type NightlyProbeModelRoutes } from './nightly-probe-routes.ts';
+import { diagnoseReaderFailure } from '../../eval/longmemeval/reader.ts';
 
 /** Run-once gate window in ms. 24h matches the "nightly" cadence. */
 const NIGHTLY_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -285,6 +286,21 @@ function routeFields(routes: NightlyProbeModelRoutes | undefined): Partial<Quali
   return routes ? { reader_model: routes.reader.model, extractor_model: routes.extractor.model } : {};
 }
 
+/** Attach causes to judged answer failures with a matching reader row, never judge-only errors. */
+function readerFailureCauses(failures: QualityProbeFailure[], receiptPath: string): QualityProbeFailure[] {
+  const rows = new Map<string, Record<string, unknown>>();
+  try {
+    for (const line of fs.readFileSync(receiptPath, 'utf8').split('\n').filter(Boolean)) {
+      try {
+        const row = JSON.parse(line);
+        if (row && typeof row.question_id === 'string') rows.set(row.question_id, row);
+      } catch { /* A malformed row is not evidence for a restart. */ }
+    }
+  } catch { /* Receipt unavailable: preserve the original failure audit. */ }
+  return failures.map(f => f.verdict === 'fail' && rows.has(f.question_id)
+    ? { ...f, reader_cause: diagnoseReaderFailure(rows.get(f.question_id)!) } : f);
+}
+
 /** Metered chat spend of every call; `est_cost_usd` stays the batch's pre-flight estimate for its judges. */
 function spendFields(meter: ChatCallMeter): Partial<QualityProbeAuditEvent> {
   return {
@@ -378,6 +394,7 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
   let meter: ChatCallMeter | undefined;
   let tracker: ProbeBudgetTracker | undefined;
   let capFields: Partial<QualityProbeAuditEvent> = {};
+  let capabilityFields: Partial<QualityProbeAuditEvent> = {};
   const stopped = (): Partial<QualityProbeAuditEvent> => {
     if (!tracker?.exhausted) return {};
     const reason = tracker.exhausted.reason;
@@ -397,6 +414,18 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
         modelRoutes = await deps.resolveModelRoutes();
       } catch (err) {
         throw err instanceof NightlyProbeModelRoutesError ? err : new NightlyProbeModelRoutesError(err);
+      }
+      capabilityFields = checkNightlyJudgeCapabilities(modelRoutes.slots);
+      const invalid = capabilityFields.judge_capabilities!.filter(s => !s.capability_ready);
+      if (invalid.length) {
+        const detail = invalid.map(s => `slot ${s.slot}: ${s.error}`).join('; ');
+        logQualityProbeEvent({
+          outcome: 'error', exit_code: 1, reason: 'capability_error', detail,
+          pass_count: 0, fail_count: 0, inconclusive_count: 0, error_count: 0, est_cost_usd: 0,
+          fixture_sha8: fixtureSha8, ...routeFields(modelRoutes), ...capabilityFields,
+          chat_calls: 0, chat_cost_usd: 0, unpriced_chat_calls: 0,
+        });
+        return { outcome: 'error', exit_code: 1, detail };
       }
     }
     const policy = deps.resolveBudgetPolicy ? await deps.resolveBudgetPolicy() : { capSource: 'default' as const };
@@ -426,6 +455,7 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
         fixture_sha8: fixtureSha8,
         ...fields,
         ...routeFields(modelRoutes),
+        ...capabilityFields,
         ...spendFields(runMeter),
         ...capFields,
         ...keepReceipts(workDir, deps.now()),
@@ -455,7 +485,7 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
     const collapse = (verdict === 'pass' || verdict === 'fail') && summary ? collapsedPanel(summary) : undefined;
     const outcome: NightlyProbeResult['outcome'] = collapse ? 'inconclusive' : verdict;
 
-    const failures = outcome !== 'pass' ? summary?.failures : undefined;
+    const failures = outcome !== 'pass' && summary?.failures ? readerFailureCauses(summary.failures, lmeOutPath) : undefined;
     const digest = summary && outcome !== 'pass' ? failureDigest(summary, failures ?? []) : undefined;
     const detail = collapse
       ? `${collapse} (batch verdict: ${verdict})${digest ? `; ${digest}` : ''}`
@@ -473,6 +503,7 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
       ...(collapse ? { reason: 'panel_collapsed' } : {}),
       ...stopped(),
       ...routeFields(modelRoutes),
+      ...capabilityFields,
       ...(summary ? panelFields(summary) : {}),
       ...(failures?.length ? { failures: failures.slice(0, AUDIT_MAX_FAILURES) } : {}),
       ...spendFields(runMeter),
@@ -498,6 +529,7 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
       detail,
       ...(budget.reason ? { reason: budget.reason } : {}),
       ...routeFields(modelRoutes),
+      ...capabilityFields,
       ...(meter ? spendFields(meter) : {}),
       ...capFields,
       ...keepReceipts(workDir, deps.now()),

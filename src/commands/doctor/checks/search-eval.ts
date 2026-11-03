@@ -482,7 +482,7 @@ function judgePanelNote(event: ProbeJudgePanelFields): string {
 }
 
 interface ProbeFailureFields {
-  failures?: ReadonlyArray<{ question_id?: string; dimensions?: ReadonlyArray<{ dimension: string; mean?: number; scores?: ReadonlyArray<number | null>; fail_reason: string }> }>;
+  failures?: ReadonlyArray<{ question_id?: string; reader_cause?: string; dimensions?: ReadonlyArray<{ dimension: string; mean?: number; scores?: ReadonlyArray<number | null>; fail_reason: string }> }>;
   reader_model?: string;
   receipt_dir?: string;
 }
@@ -521,14 +521,16 @@ function probeFailureExplanation(bad: ReadonlyArray<ProbeFailureFields>, rubric:
   const styleOnly = !tally.has('correctness');
   const latest = bad[bad.length - 1]!;
   const receipt = [...bad].reverse().find(e => typeof e.receipt_dir === 'string')?.receipt_dir;
+  const readerCauses = [...new Set(bad.flatMap(e => (e.failures ?? []).map(f => f.reader_cause ?? 'reader_receipt_unavailable')))];
   const text = ` Failing judge dimension(s): ${parts.join('; ')}. The bar is a mean of at least ${PASS_MEAN_THRESHOLD} across judges and no judge below ${PASS_FLOOR_THRESHOLD}, on a 1-10 scale.`
     + (question ? ` ${top.dimension} asks: ${question}` : '')
     + (styleOnly ? ` Correctness never failed, so the answers matched the expected facts and were judged on ${top.dimension} alone: this points at the reader's answer style`
       + `${latest.reader_model ? ` (reader ${latest.reader_model})` : ''} or the judges' rubric, not at retrieval or your brain.` : '')
     + ` Next: read the answers and per-judge scores the run kept ${receipt ? `in ${receipt} (lme-output.jsonl, summary.json)` : "under the audit dir's nightly-probe/ receipts"}; `
-    + 'an answer carrying notes or reasoning means the reader ran without --reader-mode direct (an autopilot daemon started before an upgrade keeps running the old probe: restart it); '
+    + `reader diagnosis: ${readerCauses.join(', ')}. Check reader_mode, reader_prompt_sha, reader_finish_reason and recall_all_hit before the hypothesis. `
+    + 'A matching direct receipt points at answer quality or literal handling; explanation text alone does not establish an old daemon. '
     + "a terse correct answer scored low means the judges' rubric needs recalibrating (models.eval.cross_modal.slot_a, slot_b and slot_c choose the judges, models.eval.longmemeval the reader).";
-  return { text, details: { failing_dimensions: dims, bar: { mean_at_least: PASS_MEAN_THRESHOLD, every_judge_at_least: PASS_FLOOR_THRESHOLD, scale: '1-10' }, correctness_failed: !styleOnly,
+  return { text, details: { reader_causes: readerCauses, failing_dimensions: dims, bar: { mean_at_least: PASS_MEAN_THRESHOLD, every_judge_at_least: PASS_FLOOR_THRESHOLD, scale: '1-10' }, correctness_failed: !styleOnly,
     ...(latest.reader_model ? { reader_model: latest.reader_model } : {}), ...(receipt ? { receipt_dir: receipt } : {}) } };
 }
 
