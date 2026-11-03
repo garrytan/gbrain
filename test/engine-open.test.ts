@@ -325,37 +325,14 @@ describe('repo source', () => {
 });
 
 /**
- * Persistence modules that still read this process's file identity directly. Each one runs only from a CLI command on
- * the brain's own host, against a managed checkout that host owns (activation, claim, transfer, topology, checkout sync
- * and repair). An engine opened from settings owns no managed checkout: activation and claims refuse any host but the
- * owner, and `hostIdFor(engine)` answers every call an operation, publication or consumer effect makes for it.
+ * Core modules that still read this process's file identity directly. Every other core call site resolves the host id
+ * through `hostIdFor(engine)` / `existingHostIdFor(engine)`, which answer the id given at open for an engine opened
+ * from settings and `localHostId()` for every other engine. The CLI layer (src/commands) keeps the file identity: it
+ * only runs against the engine the CLI connected.
  */
 const FILE_IDENTITY_ALLOWLIST: Record<string, string> = {
-  'activation.ts': 'gbrain activation mints the host identity on the brain host by design',
-  'admin-lock.ts': 'writer admin lock, set by CLI administration on the brain host',
-  'administration.ts': 'gbrain sources writer status/claim/register, local administration',
-  'connector-sync.ts': 'connector checkout sync owned by the brain host',
-  'coordination-lock.ts': 'fallback only when a caller passes no host id; claims pass hostIdFor(engine)',
-  'deactivation.ts': 'gbrain deactivation on the brain host',
-  'diagnostics.ts': 'local writer diagnostics for the CLI',
-  'engine-graduation.ts': 'PGLite to Postgres graduation, a local CLI command',
-  'file-repair.ts': 'checkout file repair on the owning host',
-  'git-conversion.ts': 'repository conversion of a local checkout',
-  'git-durability-administration.ts': 'git durability administration of a local checkout',
-  'onboarding.ts': 'local onboarding preflight',
-  'pre-activation-release.ts': 'pre-activation release on the brain host',
-  'reconcile-state.ts': 'checkout reconcile on the owning host',
-  'skill-activation.ts': 'shared skill activation, local administration',
-  'source-lifecycle.ts': 'managed source add/move/rebind on the owning host',
-  'sync-discovery.ts': 'checkout sync discovery on the owning host',
-  'sync-drain.ts': 'gbrain sync drain on the owning host',
-  'sync-freshness.ts': 'checkout sync freshness report on the owning host',
-  'sync-movement.ts': 'checkout sync movement on the owning host',
-  'topology-clone.ts': 'topology clone/reclone of a local checkout',
-  'topology-locks.ts': 'topology locks of a local checkout',
-  'topology-recovery.ts': 'topology recovery of a local checkout',
-  'transfer-administration.ts': 'writer transfer administration between hosts',
-  'worktree-refresh.ts': 'managed worktree refresh on the owning host',
+  'persistence/coordination-lock.ts': 'fallback only when a caller passes no host id; every claim and reservation passes hostIdFor(engine)',
+  'persistence/engine-graduation.ts': 'PGLite to Postgres graduation, run only by gbrain migrate on the brain host',
 };
 
 describe('static guards', () => {
@@ -363,12 +340,12 @@ describe('static guards', () => {
   const code = (path: string) => readFileSync(join(root, path), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
   const FILE_IDENTITY = /\b(localHostId|localHostIdentity|existingLocalHostId)\(/;
 
-  test('persistence code resolves the host id through hostIdFor(engine), except the justified allowlist', () => {
-    const dirPath = join(root, 'src/core/persistence');
+  test('core code resolves the host id through hostIdFor(engine), except the justified allowlist', () => {
+    const dirPath = join(root, 'src/core');
     const callers = readdirSync(dirPath, { recursive: true, withFileTypes: true })
       .filter(entry => entry.isFile() && entry.name.endsWith('.ts'))
-      .map(entry => relative(dirPath, join(entry.parentPath, entry.name)))
-      .filter(name => name !== 'identity.ts' && FILE_IDENTITY.test(code(join('src/core/persistence', name))))
+      .map(entry => relative(dirPath, join(entry.parentPath, entry.name)).split('\\').join('/'))
+      .filter(name => name !== 'persistence/identity.ts' && FILE_IDENTITY.test(code(join('src/core', name))))
       .sort();
     expect(callers.filter(name => !(name in FILE_IDENTITY_ALLOWLIST))).toEqual([]);
     // A row whose file stopped reading the file identity is stale: delete it.

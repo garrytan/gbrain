@@ -149,10 +149,10 @@ export async function readSourceMovement(engine: BrainEngine, opts: { sourceIds?
   }
   const backlog = new Map(backlogRows.map(b => [b.source_id, b]));
   const policy = await readPreparationPolicy(engine);
-  const { localHostId } = await import('./identity.ts');
+  const { hostIdFor } = await import('./identity.ts');
   const { persistenceConsumerStatus } = await import('./service.ts');
   const { liveSyncStatus } = await import('../db-lock.ts');
-  const host = localHostId();
+  const host = hostIdFor(engine);
   const localConsumer = persistenceConsumerStatus(engine).state === 'open';
   let heartbeat: Promise<boolean> | undefined;
   const liveHeartbeat = () => heartbeat ??= listHostConsumers(engine, host).then(rows => rows.some(row => (row.mode === 'full' || row.mode === 'promoted') && row.liveness === 'live'), () => false);

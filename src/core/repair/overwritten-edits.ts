@@ -20,7 +20,7 @@ import { OperationError, opError, type OperationContext } from '../ops/contract.
 import { readFix } from '../ops/op-fix.ts';
 import { unifiedDiff } from '../skillpack/diff-text.ts';
 import { scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
-import { localHostId } from '../persistence/identity.ts';
+import { hostIdFor } from '../persistence/identity.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
 import { fileMatchesSnapshot } from '../persistence/page-prepare.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
@@ -176,7 +176,7 @@ async function holdDivergentFile(engine: BrainEngine, edit: ApprovedEdit, reques
   const snapshot = await engine.readPageSnapshot(edit.slug, { sourceId: edit.source_id });
   if (!snapshot?.page.source_path) return { held: false, why: 'no_recorded_file' };
   const binding = await getWorktreeBinding(engine, edit.source_id);
-  if (!binding?.local_path || binding.owner_host_id !== localHostId()) return { held: false, why: 'checkout_not_on_this_host' };
+  if (!binding?.local_path || binding.owner_host_id !== hostIdFor(engine)) return { held: false, why: 'checkout_not_on_this_host' };
   const root = join(binding.local_path, binding.relative_path);
   const mode = await scannerSlugRootMode(engine, edit.source_id, root);
   const target = resolveSourceLocalFilePath(root, snapshot.page.source_path, edit.slug, mode);
