@@ -39,7 +39,6 @@ const EXEMPT: Record<string, string> = {
   'src/core/facts/relink-publish.ts': 'relinks existing facts to an entity (placement)',
   'src/core/facts/unfenced-facts.ts': 'repairs fence positions of existing rows',
   'src/core/facts/withdrawal.ts': 'withdrawal ledger and expiry (lifecycle)',
-  'src/core/ops/extraction.ts': 'owner review of already-extracted rows (extraction_review)',
   'src/core/page-state/materialize.ts': 'writes stored timeline rows back into the page body; no new text',
   'src/core/page-state/rename-alias.ts': 'slug alias (placement only)',
   'src/core/page-state/versions.ts': 'page_versions snapshots copy the live row',
