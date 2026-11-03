@@ -57,6 +57,11 @@ export interface ConnectionManagerOpts {
    */
   directUrl?: string | null;
   /**
+   * False for an engine opened from settings (engine-open.ts): the direct URL is `directUrl` alone (absent: none, or
+   * the route a known pooler URL derives) and GBRAIN_DIRECT_DATABASE_URL is never read.
+   */
+  directUrlFromEnv?: boolean;
+  /**
    * Inherit pools + kill-switch state from a parent manager (worker engines,
    * transaction clones). When set, this manager is a thin reference holder
    * and does NOT open its own pools.
@@ -196,7 +201,7 @@ export class ConnectionManager {
       this._isSupabase = isSupabasePoolerUrl(opts.url);
       // Direct URL: explicit override > env > derive > null. Pooler-shaped
       // overrides are normalized to a real direct host (or dropped).
-      const envOverride = process.env.GBRAIN_DIRECT_DATABASE_URL;
+      const envOverride = opts.directUrlFromEnv === false ? undefined : process.env.GBRAIN_DIRECT_DATABASE_URL;
       const override = opts.directUrl ?? envOverride;
       this._directUrl = normalizeDirectUrl(opts.url, override);
       // #1915: an operator override is respected as-is — never second-guessed

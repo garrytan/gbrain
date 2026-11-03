@@ -20,6 +20,7 @@
     "./operations": "./src/core/operations.ts",
     "./minions": "./src/core/minions/index.ts",
     "./engine-factory": "./src/core/engine-factory.ts",
+    "./engine-open": "./src/core/engine-open.ts",
     "./pglite-engine": "./src/core/pglite-engine.ts",
     "./link-extraction": "./src/core/link-extraction.ts",
     "./import-file": "./src/core/import-file.ts",

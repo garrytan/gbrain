@@ -124,6 +124,7 @@ import { buildKeywordChunkMatch, KEYWORD_RANK_CANDIDATES, KEYWORD_RANKED_ROWS_CT
 import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment, privatePagesFilterForCaller } from './search/private-visibility.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { readStoredEmbeddingIdentity } from './stored-embedding-identity.ts';
+import { assertEmbeddedEmbedding, embeddedSchemaEmbedding, embeddedSettingsRecord, isEmbeddedEngine } from './embedded-engine.ts';
 import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP, TRAVERSE_WALK_ROW_CAP } from './engine-constants.ts';
 import { PageMissingError } from './engine-errors.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
@@ -427,6 +428,7 @@ export class PostgresEngine implements BrainEngine {
       const url = config.database_url;
       if (!url) throw new GBrainError('No database URL', 'database_url is missing', 'Provide --url');
       const size = Math.min(config.poolSize, db.resolvePoolSize(config.poolSize));
+      const embedded = isEmbeddedEngine(this);
       // Honor PgBouncer transaction-mode detection on worker-instance pools too.
       // Without this, `gbrain jobs work` against a Supabase pooler URL hits
       // "prepared statement does not exist" under load just like the module
@@ -457,7 +459,7 @@ export class PostgresEngine implements BrainEngine {
         opts.prepare = prepare;
       }
       this._sql = postgres(url, traceSqlOptions(opts, 'instance'));
-      await db.checkPoolAndLoadSharedTypes(this._sql, url);
+      await db.checkPoolAndLoadSharedTypes(this._sql, url, { persisted: !embedded });
       await db.setSessionDefaults(this._sql);
       this._connectionStyle = 'instance';
 
@@ -470,6 +472,7 @@ export class PostgresEngine implements BrainEngine {
         readPoolOwnedExternally: true, // we own _sql; manager just routes
         onpoisoned: this.onPoisoned,
         health: this.poolHealth,
+        ...(embedded ? { directUrl: embeddedSettingsRecord(this)?.database.directUrl ?? null, directUrlFromEnv: false } : {}),
       });
       this.connectionManager.setReadPool(this._sql);
     } else {
@@ -567,7 +570,9 @@ export class PostgresEngine implements BrainEngine {
 
     let dims: number = DEFAULT_EMBEDDING_DIMENSIONS;
     let model: string = DEFAULT_EMBEDDING_MODEL;
-    try {
+    const embedded = embeddedSchemaEmbedding(this); // settings.embedding, never the process gateway
+    if (embedded) ({ dimensions: dims, model } = embedded);
+    else try {
       // Keep the gateway lazy: its static closure is large, and evaluation inside
       // this try/catch preserves the unconfigured-gateway default fallback.
       const gw = await import('./ai/gateway.ts'); // engine-dynamic-import-ok
@@ -581,6 +586,7 @@ export class PostgresEngine implements BrainEngine {
     const storedIdentity = await readStoredEmbeddingIdentity(this);
     if (storedIdentity) {
       if (!storedIdentity.model) throw new Error('Stored embedding model is unknown. Run gbrain migrate embeddings --status and explicitly migrate before schema initialization.');
+      if (embedded) assertEmbeddedEmbedding(embedded, storedIdentity);
       dims = storedIdentity.dimensions;
       model = storedIdentity.model;
     }
@@ -2619,7 +2625,7 @@ export class PostgresEngine implements BrainEngine {
     // scope ingest_log queries. Default 'default' matches the column DEFAULT.
     const sourceId = entry.source_id ?? 'default';
     // v254: the writer's version, host and segment-reader mark (writer-versions.ts writerStamp).
-    const stamp = writerStamp({ mint: false });
+    const stamp = writerStamp({ mint: false, engine: this });
     await sql`
       INSERT INTO ingest_log (source_id, source_type, source_ref, pages_updated, summary, writer_version, writer_host_id, writer_segment_reader)
       VALUES (${sourceId}, ${entry.source_type}, ${entry.source_ref}, ${sql.json(entry.pages_updated)}, ${entry.summary}, ${stamp.version}, ${stamp.hostId}::uuid, true)
