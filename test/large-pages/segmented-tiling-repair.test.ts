@@ -7,7 +7,8 @@
  *    version by reference, writes a receipt, clears the sync hold, and the next managed sync completes with no hold.
  *    A source with no Git checkout refuses the preview (not_a_git_repo); a remote caller is refused.
  * 2. Fails when: doctor misses the page or writes, an apply runs without the previewed hash or against a changed page,
- *    the republished generation does not tile, the hold survives, or a repo-less source reads as republishable.
+ *    the republished generation does not tile, the hold survives, a repo-less source reads as republishable, or a file
+ *    that narrows who can read the page or that the content gate would quarantine is republished under the stored frontmatter.
  * 3. PGLite; the managed fixture follows test/large-pages/managed-sync-segmented-freeze.test.ts.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
@@ -173,6 +174,26 @@ test('a file the next sync would hold, or one that changes who can read the page
     expect(await run(true, preview.preview_hash!)).toMatchObject({ applied: 0 });
     expect(await untiledSegmentedPages(engine, { sourceIds: [f.sourceId] })).toEqual([damaged!]);
   }
+}), 300_000);
+
+test('a file a privacy alias makes private, or one the content gate would quarantine, is listed held and never written', async () => withEnv(env, async () => {
+  const f = await managedFixture();
+  await damage(f.sourceId, f.pageId);
+  const scope = await resolveRepairScope(engine, f.sourceId);
+  const run = (apply: boolean, expect?: string) => repairRunner(engine, { apply, logger }).then(runner => runner.run('segmented-tiling', scope, { explicit: true, sourceFlag: f.sourceId, ...(expect ? { expect } : {}) }));
+  const [damaged] = await untiledSegmentedPages(engine, { sourceIds: [f.sourceId] });
+  const cases = [[person(1260 * 1024).replace('type: person\n', 'type: person\naccess: private\n'), 'changes who can read the page'],
+    [person(1260 * 1024).replace('type: person\n', 'type: person\nconfidentiality: secret\n'), 'changes who can read the page'],
+    [person(1260 * 1024).replace('# Person Example\n\n', '# Person Example\n\nCloudflare Ray ID: 0000example\n\n'), 'content gate would mark the page quarantine']] as const;
+  for (const [content, detail] of cases) {
+    writeFileSync(join(f.root, FILE), content);
+    commit(f.root);
+    const preview = await run(false);
+    expect(preview.listing).toEqual([expect.objectContaining({ class: 'held', detail: expect.stringContaining(detail) })]);
+    expect(await run(true, preview.preview_hash!)).toMatchObject({ applied: 0 });
+    expect(await untiledSegmentedPages(engine, { sourceIds: [f.sourceId] })).toEqual([damaged!]);
+  }
+  expect(await engine.executeRaw('SELECT count(*)::int AS n FROM content_chunks WHERE page_id=$1 AND chunk_text LIKE $2', [f.pageId, '%0000example%'])).toEqual([{ n: 0 }]);
 }), 300_000);
 
 test('the apply refuses preview_changed when HEAD moved after the preview, and writes nothing', async () => withEnv(env, async () => {

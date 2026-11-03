@@ -11,7 +11,8 @@
  * file, a file HEAD does not hold or one over pages.max_bytes is listed held and never written, as is one another sync
  * hold withholds (any but the unreadable-body `page_write_failed` hold) or one the next sync's import screen would hold
  * (purged page content, the write gate, private visibility, a fence it refuses), one that changes who can read the page
- * (the apply keeps the stored frontmatter) or one over the 24 MiB the screen reads whole. A source without a Git
+ * or one the next sync's content gate would quarantine, flag or skip embedding (the apply keeps the stored frontmatter),
+ * or one over the 24 MiB the screen reads whole. A source without a Git
  * checkout (a repo-less brain) refuses: this repair republishes the copy Git holds, and the database has no other.
  *
  * `--apply --expect <hash>` re-checks every page (`preview_changed`), then per page, in one transaction under the page's
@@ -50,7 +51,11 @@ import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 import { assertPreparedFactWithdrawals } from '../facts/withdrawal.ts';
 import { buildSegmentedProjection } from '../page-body/projection.ts';
 import { untiledSegmentedPages, type UntiledPage } from '../page-body/body-tiling.ts';
-import { isQuarantined } from '../quarantine.ts';
+import { CONTENT_FLAG_KEY, isQuarantined, QUARANTINE_KEY } from '../quarantine.ts';
+import { EMBED_SKIP_KEY } from '../embed-skip.ts';
+import { settleContentDisposition, stripGateOwnedMarkers } from '../import-screen.ts';
+import { ownerSourceGateInput } from '../trust/channel.ts';
+import { isPrivatePage, PRIVACY_ALIASES } from '../search/private-visibility.ts';
 import { createAuditWriter } from '../audit/audit-writer.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 
@@ -141,11 +146,21 @@ async function stageable(engine: BrainEngine, page: { source_id: string; slug: s
     snapshot: await engine.readPageSnapshot(page.slug, { sourceId: page.source_id }) });
   if (screen.status === 'refused') return { held: `the next sync would hold the file (${screen.refusal.code}): ${screen.refusal.message}` };
   const parsed = screen.status === 'importable' && screen.parsed ? screen.parsed : parseMarkdown(content, `${page.slug}.md`);
-  const [stored] = await engine.executeRaw<{ frontmatter: Record<string, unknown> | null }>('SELECT frontmatter FROM pages WHERE source_id=$1 AND slug=$2', [page.source_id, page.slug]);
-  const access = (fm: Record<string, unknown> | null | undefined) => JSON.stringify([fm?.visibility ?? null, fm?.readable_by ?? null]);
-  if (access(parsed.frontmatter) !== access(stored?.frontmatter)) {
-    return { held: 'the file changes who can read the page (visibility or readable_by), and this repair republishes the body under the stored frontmatter' };
+  const [stored] = await engine.executeRaw<{ type: string; frontmatter: Record<string, unknown> | null }>('SELECT type, frontmatter FROM pages WHERE source_id=$1 AND slug=$2', [page.source_id, page.slug]);
+  const storedFrontmatter = stored?.frontmatter ?? {};
+  const access = (fm: Record<string, unknown>) => JSON.stringify(['visibility', 'readable_by', 'pinned_question', ...Object.keys(PRIVACY_ALIASES)].map(key => fm[key] ?? null));
+  if (access(parsed.frontmatter) !== access(storedFrontmatter)
+    || isPrivatePage({ type: parsed.type, frontmatter: parsed.frontmatter }) !== isPrivatePage({ type: stored?.type ?? null, frontmatter: storedFrontmatter })) {
+    return { held: 'the file changes who can read the page (visibility, readable_by, a privacy alias such as access or confidentiality, or a type that is private by default), and this repair republishes the body under the stored frontmatter' };
   }
+  const settled = structuredClone(parsed);
+  const writeGate = await ownerSourceGateInput(engine, page.source_id, settled.frontmatter);
+  stripGateOwnedMarkers(settled, { preserveGateMarkers: true, writeGate });
+  try { await settleContentDisposition(engine, settled, { slug: page.slug, sourceId: page.source_id, stripped: false, writeGate }); } catch (error) {
+    return { held: `the next sync's content gate refuses the file: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  const marked = [QUARANTINE_KEY, EMBED_SKIP_KEY, CONTENT_FLAG_KEY].filter(key => settled.frontmatter[key] != null && storedFrontmatter[key] == null);
+  if (marked.length) return { held: `the next sync's content gate would mark the page ${marked.join(', ')}, and this repair republishes the body under the stored frontmatter` };
   const body = screen.status === 'importable' && screen.fences ? screen.fences.after : { compiled_truth: parsed.compiled_truth, timeline: parsed.timeline ?? '' };
   return { hold, truth: (await preserveWithdrawnFenceRows(engine, page.source_id, body.compiled_truth, page.slug)).trim(),
     timeline: (await preserveWithdrawnFenceRows(engine, page.source_id, body.timeline ?? '', page.slug)).trim() };

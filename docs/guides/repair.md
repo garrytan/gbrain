@@ -448,10 +448,13 @@ is listed `held` and never written. So is a file that another sync hold
 withholds (any hold but the `page_write_failed` one a sync opens when it
 cannot read the stored body), and a file the next sync's import screen would
 hold: purged page content, a write-gate reject, private visibility it would
-not store, a fence it refuses. A file that changes who can read the page
-(`visibility` or `readable_by`) is held too, because the apply keeps the
-stored frontmatter, and so is a file over 24 MiB, the most the import screen
-reads whole. A source without a Git checkout, a
+not store, a fence it refuses. The apply keeps the stored frontmatter, so a
+file that changes who can read the page is held too (`visibility`,
+`readable_by`, a privacy alias such as `access` or `confidentiality`, or a
+type that is private by default), as is one the next sync's content gate
+would quarantine, flag or stop embedding when the stored page carries no
+such marker. So is a file over 24 MiB, the most the import screen reads
+whole. A source without a Git checkout, a
 repo-less brain included, refuses with `not_a_git_repo`: this repair
 republishes the copy Git holds, and there the database has no other copy.
 On such a brain, rewrite the page from a copy you hold (`put_page`).
