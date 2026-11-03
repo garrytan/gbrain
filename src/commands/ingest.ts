@@ -41,9 +41,7 @@ const VALUE_FLAGS = new Set(['--file', '--type', '--title', '--slug', '--source'
 
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
-  if (i !== -1) return args[i + 1];
-  const eq = args.find(a => a.startsWith(name + '='));
-  return eq ? eq.slice(name.length + 1) : undefined;
+  return i === -1 ? undefined : args[i + 1];
 }
 
 function positional(args: string[]): string | undefined {
