@@ -12,9 +12,39 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
+**Memory train (GBRA-286): `forget` edits the page files first, pasted documents ingest into pages and facts, `recall` can weigh how far a fact deserves belief, page versions carry a human reason and can be read by date, and agents can read and switch the saving rule. Every new mode is off by default, and every feature works on a brain with no Git repository.**
+
+This release folds eight approved memory PRs into one: #7616, #7791, #7797, #7809, #7803, #7810, #7798 + #7804 and #7795. Each was brought up to current master. Where a new path skipped a guard master added since (member-scoped access with `readable_by`, the trust-tier quote fence for remote readers, the private-request hold on content imports), the guard now applies there too, with a test that failed first.
+
+### Forget writes the page files first (#7616)
+
+Git stays the parent: a withdrawal is now a page write, published to Git before the database changes.
+
+| Situation | Before | Now |
+|---|---|---|
+| `forget` / `forget_fact` | the database expired the fact; the page files caught up later through a mirror | every page whose `## Facts` table carries the claim gets its row struck (`~~claim~~`, a `valid_until` date, `forgotten: <reason>`), all in one publication and one commit, then the ledger row and expiries in the same transaction |
+| `remember` without an entity | a database-only row | a row of the `memory/unattributed` page's `## Facts` table, created on first use, so Git, `recall` and search see it |
+| Remembering that claim again with an entity | two copies | the entity row is written and the unattributed row struck in the same publication |
+| A brain rebuilt from Git | lost its withdrawals | a trusted local sync, import or page write of a struck row records the withdrawal again; remote page writes cannot create one |
+| A member forgets a fact on their own member page | withdrawn for that page | unchanged: the withdrawal stays on that page, and other members' copies stay active |
+
+A forget now waits for the source's writer the way `remember` does: with the writer unavailable it returns the pending-write receipt, and the fact is still recalled until it publishes. Migration v287 adds the multi-page recovery record (one record restores every file of an interrupted publication); it rewrites no data.
+
+### Review lists, review decisions through the page door, and pasted-document ingest (#7791, #7797, #7809)
+
+- `extraction_pending` gains two lists. `unattributed` (on by default) lists active facts saved without an entity, each with the relink action. `possible_duplicates` (opt-in through `include`) flags new entity pages whose name is a typo or acronym of another's. It only flags: nothing is merged and no identity is written.
+- `extraction_review` promote and reject are now page-door writes (`edit_page` of the frontmatter, `delete_page`), so on a source with a repository each decision is a Git commit. A new `distinct` action records that two flagged pages are different entities.
+- `ingest` (CLI `gbrain ingest`, MCP on the starter surface) turns a pasted document into a source page, a report page `ingest/<attempt_id>` and proposed entity pages and facts. It validates and checks grants before any provider call, extracts the whole document under the spend cap with a resumable checkpoint, and writes Git first on a repository source; on a repo-less source the database is the record. `ingest_undo` previews first and applies only with `--yes --expect <plan_hash>`, retracting only what that attempt created and nothing that was edited, promoted or relied on since.
+- A pasted document that asks for `visibility: private` in any spelling is refused with `visibility_not_applied` before any provider call unless the ingest itself is private. Remote report reads and the unattributed list hide pages and facts the caller can't read.
+- Reserved: generic writes to a page of type `ingest-report` or a slug `ingest/<attempt_id>` are refused. Reserving all of `ingest/` is behind `ingest.reserve_namespace` (default off).
+
+Guide: [ingest](docs/guides/ingest.md).
+
+### Recall weighting, entity grouping and the keyless claim lane (#7803, #7810)
+
 **`recall` can weigh how much a fact deserves to be believed, and can group a no-entity question's facts by entity. Both are opt-in.**
 
-### What changed
+#### What changed
 
 | Situation | Before | With the switch on |
 |---|---|---|
@@ -32,7 +62,7 @@ On a keyless 60-question fixture (old confirmed truth against fresh agent and ex
 
 `remember` takes an optional typed claim (`claim_metric`, `claim_value`, `claim_unit`, `claim_period`). Two saved claims about the same entity with the same metric, unit and period in the same as-of bucket (the day, or the week, month, quarter or year the period names) are a conflict. Figures in different buckets are history, so a monthly series, a run of funding rounds or a forecast next to an actual are never flagged. Finding conflicts is off by default: `gbrain config set dream.claim_conflicts.mode propose` turns on the nightly phase, and `gbrain decide sweep --claims` runs it once (`--dry-run` writes nothing). Each conflict becomes one pending proposal that nothing applies until you decide it.
 
-### What changed
+#### What changed
 
 | Situation | Before | Now |
 |---|---|---|
@@ -44,11 +74,13 @@ On a keyless 60-question fixture (old confirmed truth against fresh agent and ex
 
 A run files at most `dream.claim_conflicts.max_pairs` (default 500) proposals per source and leaves the rest for the next run. A new unique index keeps concurrent runs to one proposal per pair (migration v288); it rewrites no data. Everything reads and writes database rows, so it works the same on a brain with no git repository. Guide: the "Old and conflicting facts" section of `docs/guides/memory-trust.md`.
 
+### Page versions carry a human reason, and pages read by date (#7798, #7804)
+
 **A page write can say why it was made, and page history shows it.**
 
 `put_page`, `edit_page`, `revert_version` and each `put_pages` item take an optional `reason` (one line, at most 500 characters; `--reason` on the CLI). It is stored on the version the write replaced, and `get_versions` returns it as `replaced_because`, so the newest version explains the text you read now; `gbrain history` prints it as `changed because: …`. When the page's file reaches Git, the commit carries it as a trailer naming the file, `gbrain-reason: <path>: <text>`, beside any `gbrain-repair:` trailer. A brain with no Git repository gets the same history from the database. Every write result reports where the reason went in `reason_recorded`.
 
-### What changed
+#### What changed
 
 | Situation | Before | Now |
 |---|---|---|
@@ -61,7 +93,7 @@ A run files at most `dream.claim_conflicts.max_pairs` (default 500) proposals pe
 
 Guide: [page history](docs/guides/page-history.md).
 
-### Read a page as it stood on a date
+#### Read a page as it stood on a date
 
 A page can now say when its text takes effect, with `valid_from` and `valid_until` in its frontmatter, and you can ask what was in force on any date: `get_page {slug, as_of: '2026-03-01'}`, or `gbrain get <slug> --as-of 2026-03-01`. Say to your agent: *"What did our refund policy say on March 1?"*
 
@@ -74,11 +106,13 @@ A page can now say when its text takes effect, with `valid_from` and `valid_unti
 
 Guide: [page history](docs/guides/page-history.md#valid-time).
 
+### Memory writeback settings over MCP (#7795)
+
 **Agents and settings screens can now read the memory-saving rule, an admin can change it remotely, and a user can say "save everything from here" or "stop saving" for one conversation.**
 
 Before, the rule for what an agent saves lived in the MCP instructions, and only the brain operator could see or change `memory.auto_writeback`, from a shell on the host. Three MCP tools change that. Every one keeps its state in the database, so a brain with no git repository gets all of them.
 
-### What changed
+#### What changed
 
 | Tool | Who can call it | What it does |
 |---|---|---|
