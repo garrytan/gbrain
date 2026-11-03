@@ -98,6 +98,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('mcp_request_log', 'operational', 'MCP request log.'),
     carry('mcp_spend_log', 'operational', 'MCP spend log.'),
     carry('mcp_spend_reservations', 'operational', 'Pending and unresolved MCP charges; admission counts them and late settlement needs them.'),
+    carry('memory_proposals', 'user_data', 'Held QM proposals awaiting owner review and their closed outcomes until retention; replays and receipts read them.'),
     carry('mention_gazetteer_entries', 'operational', 'Entity mention index: the linkable names the last mention pass used per source; a name change rescans only affected pages.'),
     carry('mention_index_status', 'operational', 'Entity mention index: per-source pass state, generation and coverage the entity card reports.'),
     carry('migration_impact_log', 'operational', 'Remediation impact log.'),

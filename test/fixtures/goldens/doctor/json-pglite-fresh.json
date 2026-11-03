@@ -1115,7 +1115,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 172 table(s) the applied migrations create exist.",
+          "message": "All 173 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
@@ -2520,6 +2520,13 @@
           "elapsed_ms": "<volatile>",
           "message": "System One is off (every decide slot is off; nothing is sent).",
           "name": "decide_health",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "No memory proposals await the owner.",
+          "name": "memory_proposals_pending",
           "status": "ok"
         },
         {

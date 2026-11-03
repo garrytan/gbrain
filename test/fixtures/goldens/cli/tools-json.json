@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 269480,
-    "stdoutSha256": "a5efd152d5b57d8cab862c842421d4b321090631a5c72139cc5d1195e2849563",
+    "stdoutBytes": 272301,
+    "stdoutSha256": "c3d3b8b5c69b60ac1c9f014ba7323d2be0905cd0df259baaa7f2ac834b10105e",
     "toolNames": [
       "remember",
       "entity",
@@ -158,6 +158,7 @@
       "unpurge_page",
       "memory_recall",
       "memory_write",
+      "memory_propose",
       "find_contradictions",
       "find_experts",
       "find_trajectory",
@@ -7221,6 +7222,101 @@
           },
           "required": [
             "facts",
+            "idempotency_key"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Propose one timeline entry or link on a shared page for the person this call serves; the brain owner approves it before it is written. Needs an attested person. Poll get_write_request with the request_id; the same idempotency_key replays.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "memory_propose",
+        "parameters": {
+          "acting_user": "string?",
+          "context": "string?",
+          "date": "string?",
+          "detail": "string?",
+          "expected_revision": "string?",
+          "idempotency_key": "string",
+          "kind": "string",
+          "link_type": "string?",
+          "source": "string?",
+          "summary": "string?",
+          "target": "string",
+          "to": "string?",
+          "valid_from": "string?",
+          "valid_until": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "acting_user": {
+              "description": "Set by the trusted system: equal to the x-qm-actor header, or omit.",
+              "type": "string"
+            },
+            "context": {
+              "description": "link: context.",
+              "type": "string"
+            },
+            "date": {
+              "description": "timeline: YYYY-MM-DD.",
+              "type": "string"
+            },
+            "detail": {
+              "description": "timeline: details.",
+              "type": "string"
+            },
+            "expected_revision": {
+              "description": "The revision shown to the person; refused when the page moved.",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "description": "1-128 visible ASCII characters; the same key replays this proposal.",
+              "type": "string"
+            },
+            "kind": {
+              "description": "timeline (date, summary) or link (to).",
+              "enum": [
+                "timeline",
+                "link"
+              ],
+              "type": "string"
+            },
+            "link_type": {
+              "description": "link: a type the schema pack declares.",
+              "type": "string"
+            },
+            "source": {
+              "description": "timeline: where it came from.",
+              "type": "string"
+            },
+            "summary": {
+              "description": "timeline: one line.",
+              "type": "string"
+            },
+            "target": {
+              "description": "Slug the write lands on (a link's from page).",
+              "type": "string"
+            },
+            "to": {
+              "description": "link: the page it points to.",
+              "type": "string"
+            },
+            "valid_from": {
+              "description": "link: YYYY-MM-DD.",
+              "type": "string"
+            },
+            "valid_until": {
+              "description": "link: YYYY-MM-DD.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "target",
             "idempotency_key"
           ],
           "type": "object"

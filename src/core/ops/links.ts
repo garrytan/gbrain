@@ -68,7 +68,7 @@ import {
 export { MANAGED_LINK_SOURCES };
 
 /** add_link valid_from / valid_until: calendar dates on a dated relation type. Null when neither is given. */
-function validateLinkDates(ctx: OperationContext, p: Record<string, unknown>, linkType: string): { validFrom?: string; validUntil?: string } | null {
+export function validateLinkDates(ctx: OperationContext, p: Record<string, unknown>, linkType: string): { validFrom?: string; validUntil?: string } | null {
   const validFrom = p.valid_from, validUntil = p.valid_until;
   if (validFrom === undefined && validUntil === undefined) return null;
   for (const [name, value] of [['valid_from', validFrom], ['valid_until', validUntil]] as const) {
