@@ -1512,6 +1512,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // a durable-vs-ephemeral rubric for agent work-session transcripts).
   // Composes with BOTH honest-notability prompt variants.
   'facts.extraction_prompt_appendix',
+  // Prospective trusted-local capture routing and explicit original-deadline expiry.
+  // Unset preserves existing behavior; 'work_shared_expiring' enables the policy.
+  'facts.automatic_capture_policy',
   // #3852: kill-switch for the deterministic junk gate on extracted fact text
   // (plan narration / provider error strings / meta-chatter). Default on.
   'facts.extraction_junk_filter',

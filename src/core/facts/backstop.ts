@@ -41,12 +41,12 @@ import { observationDateFrom, resolveObservationDate, type ObservationDate } fro
 import { factEventTime } from './event-time.ts';
 import type { BrainEngine, FactAttribution, FactInsertStatus, NewFact } from '../engine.ts';
 import { withSpeakerNote } from './speaker-context.ts';
-import type { ResolutionSource } from '../entities/resolve.ts';
+import { resolveEntitySlugWithSource, type ResolutionSource } from '../entities/resolve.ts';
 import { isFactsBackstopEligible } from './eligibility.ts';
 import type { PageType } from '../types.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
-import type { ManagedFactsRefusal } from '../persistence/facts-maintenance.ts';
+import type { ManagedFactsRefusal, ManagedFactsSession } from '../persistence/facts-maintenance.ts';
 import type { GBrainConfig } from '../config.ts';
 import { isAvailable } from '../ai/gateway.ts';
 import { withAIInvocationPreflight } from '../ai/invocation-guard.ts';
@@ -54,7 +54,9 @@ import { decideSingleFact } from './single-prepare.ts';
 import { cosineVerdict, dedupCapturedFacts, withCaptureDrops, wouldDedupSamePage } from './capture-dedup.ts';
 import { warnSamePageShadow } from './same-page-shadow.ts';
 import { readSupersessionThreshold } from './supersession-threshold.ts';
-import { assertAmbientCaptureAdmissible, type FactsBackstopSource } from './capture-sources.ts';
+import { assertAmbientCaptureAdmissible, captureGateLaneForSource, type FactsBackstopSource } from './capture-sources.ts';
+import { getExtractorVariant, type ExtractedFact } from './extract.ts';
+import { tightenToStoredPage } from './visibility.ts';
 import { appendContextNote, type InferredVia } from './subject-infer.ts';
 import { inferenceNote, inferMissingSubjects } from './subject-infer-write.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
@@ -747,6 +749,68 @@ async function derivedFactWriter(ctx: FactsBackstopCtx, input: PipelineInput, de
 }
 
 /** The actual pipeline body — always runs inside a BudgetTracker scope (#4210). */
+async function prepareCapturedFacts(
+  ctx: FactsBackstopCtx, input: PipelineInput, extracted: ExtractedFact[],
+  fallback: 'private' | 'world', managed: ManagedFactsSession | null, policy: boolean,
+): Promise<{ facts: ExtractedFact[]; dropped: number[] }> {
+  const normalized: ExtractedFact[] = [];
+  for (const original of extracted) {
+    const fact = ctx.speaker ? asAgentSpoken(original) : { ...original };
+    let visibility = policy ? fact.visibility ?? 'private' : fallback;
+    if (ctx.visibility === 'private') visibility = 'private';
+    if (policy && visibility === 'world') {
+      // Positive work identity is required; an invented entity or private page cannot widen a claim.
+      const target = fact.entity_slug ? await ctx.engine.getPage(fact.entity_slug, { sourceId: ctx.sourceId }) : null;
+      const workEntity = target && ['project', 'company', 'organization'].includes(target.type);
+      visibility = workEntity ? await tightenToStoredPage(ctx.engine, ctx.sourceId, 'world', target) : 'private';
+      const originSlug = input.pageSlug ?? ctx.sourceSlug;
+      if (originSlug) {
+        const origin = await ctx.engine.getPage(originSlug, { sourceId: ctx.sourceId });
+        visibility = origin ? await tightenToStoredPage(ctx.engine, ctx.sourceId, visibility, origin) : 'private';
+      }
+      if (visibility === 'world') {
+        // Historical privacy is sticky even after expiry; recapture must not create a public copy.
+        const prior = await ctx.engine.executeRaw<{ id: number }>(
+          "SELECT id FROM facts WHERE source_id=$1 AND visibility='private' AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($2) LIMIT 1",
+          [ctx.sourceId, fact.fact],
+        );
+        if (prior.length) visibility = 'private';
+      }
+    }
+    normalized.push({ ...fact, visibility });
+  }
+  const facts: ExtractedFact[] = [], dropped: number[] = [];
+  // Each bucket retains the existing source/entity/visibility-aware dedup and inference contract.
+  for (const visibility of ['world', 'private'] as const) {
+    const bucket = normalized.filter(fact => fact.visibility === visibility);
+    if (!bucket.length) continue;
+    const inferred = await inferMissingSubjects(ctx, bucket, visibility, input.pageSlug, managed);
+    const result = await dedupCapturedFacts(ctx, inferred, visibility, resolveEntitySlugWithSource);
+    facts.push(...result.facts); dropped.push(...result.dropped);
+  }
+  return { facts, dropped };
+}
+
+async function captureExtractionOptions(ctx: FactsBackstopCtx) {
+  const filter = ctx.notabilityFilter ?? 'all';
+  // `all` means ALL TIERS — a pinned contract (test/facts-backstop.test.ts
+  // "notabilityFilter=all embeds and persists every tier"), so no admission
+  // is passed and the extractor labels low honestly instead of withholding
+  // it. Behavior note for the eval fix wave: pre-wave the extractor prompt
+  // told the model to skip low rows entirely, so `all` under-delivered on
+  // its own promise; it now really does capture them. Callers that want
+  // suppression pass 'high-only' (sync does).
+  const notabilityAdmission = filter === 'high-only'
+    ? { allowed: ['high'] as const, invalid: 'drop' as const }
+    : filter === 'medium-and-up'
+      ? { allowed: ['high', 'medium'] as const, invalid: 'drop' as const }
+      : undefined;
+  const capturePolicy = ctx.remote === false && captureGateLaneForSource(ctx.source) !== null
+    && await ctx.engine.getConfig('facts.automatic_capture_policy').catch(() => null) === 'work_shared_expiring';
+  const variant = capturePolicy ? { ...await getExtractorVariant(ctx.engine), automaticCapturePolicy: true } : undefined;
+  return { filter, notabilityAdmission, capturePolicy, variant };
+}
+
 async function runPipelineBodyInner(
   input: PipelineInput,
   ctx: FactsBackstopCtx,
@@ -773,20 +837,9 @@ async function runPipelineBodyInner(
     managed.embedding = embedding && isAvailable('embedding', embedding.model) ? embedding : null;
   }
 
-  const filter = ctx.notabilityFilter ?? 'all';
-  // `all` means ALL TIERS — a pinned contract (test/facts-backstop.test.ts
-  // "notabilityFilter=all embeds and persists every tier"), so no admission
-  // is passed and the extractor labels low honestly instead of withholding
-  // it. Behavior note for the eval fix wave: pre-wave the extractor prompt
-  // told the model to skip low rows entirely, so `all` under-delivered on
-  // its own promise; it now really does capture them. Callers that want
-  // suppression pass 'high-only' (sync does).
-  const notabilityAdmission = filter === 'high-only'
-    ? { allowed: ['high'] as const, invalid: 'drop' as const }
-    : filter === 'medium-and-up'
-      ? { allowed: ['high', 'medium'] as const, invalid: 'drop' as const }
-      : undefined;
+  const { filter, notabilityAdmission, capturePolicy, variant } = await captureExtractionOptions(ctx);
   const extract = () => extractFactsFromTurnWithOutcome({
+    ...(variant ? { variant } : {}),
     turnText: input.extractText ?? input.turnText,
     sessionId: ctx.sessionId,
     entityHints: ctx.entityHints,
@@ -832,7 +885,7 @@ async function runPipelineBodyInner(
   const { resolveDefaultVisibility } = await import('./visibility.ts');
   const visibility = ctx.visibility ?? (await resolveDefaultVisibility(ctx.engine));
   // #5888: one exact-duplicate check for the capture lanes, before either writer.
-  const { facts, dropped } = await dedupCapturedFacts(ctx, await inferMissingSubjects(ctx, ctx.speaker ? outcome.facts.map(f => asAgentSpoken(f)) : outcome.facts, visibility, input.pageSlug, managed), visibility, resolveEntitySlugWithSource);
+  const { facts, dropped } = await prepareCapturedFacts(ctx, input, outcome.facts, visibility, managed, capturePolicy);
   if (!managed) await assertAmbientCaptureAdmissible(ctx.engine, ctx.source);
   if (managed) return withCaptureDrops(dropped, facts.length || !dropped.length ? await publishManagedFacts(ctx.engine, managed, ctx, facts, visibility, input.pageSlug, { withdrawn: 'skip' }) : null);
 
@@ -855,6 +908,7 @@ async function runPipelineBodyInner(
   const survived: SurvivedFact[] = [];
 
   for (const f of facts) {
+    const visibility = f.visibility ?? (ctx.visibility ?? 'private');
     if (abortSignal?.aborted) break;
 
     // D4: notability filter applied post-extraction, pre-insert.
@@ -958,7 +1012,7 @@ async function runPipelineBodyInner(
       fact: f.fact,
       kind: f.kind,
       entity_slug: resolvedSlug,
-      visibility,
+      visibility: f.visibility ?? visibility,
       notability: f.notability,
       source: f.source,
       source_session: f.source_session ?? null,
@@ -969,6 +1023,7 @@ async function runPipelineBodyInner(
       // DB-only row has no fence to name the page it came from, so the page
       // path's slug fills context when the caller passed no sourceSlug.
       valid_from: factEventTime(f, ctx),
+      valid_until: f.valid_until,
       context: withSpeakerNote(ctx.speaker, annotateUnverifiedResolution(ctx.sourceSlug ?? input.pageSlug ?? null, resolutionSource, f.entity_inferred)),
     };
     await insertDerivedFact(newFact); // legacy DB-only fallback for unparented / thin-client facts (no entity page to fence onto)
@@ -994,11 +1049,12 @@ async function runPipelineBodyInner(
       // #4206: the caller's source_slug (which page/transcript the turn came
       // from) lands in the fence context cell — visible in recall projections.
       context: withSpeakerNote(ctx.speaker, annotateUnverifiedResolution(ctx.sourceSlug ?? null, resolutionSource, f.entity_inferred)),
-      visibility,
+      visibility: f.visibility ?? visibility,
       confidence: f.confidence,
       // #4206: extractor-derived date wins; then the caller's event time
       // (historical imports); then import time.
       validFrom: factEventTime(f, ctx) ?? new Date(),
+      validUntil: f.valid_until,
       embedding: f.embedding ?? null,
       embedding_model: f.embedding_model ?? null, attributedTo: f.attributed_to ?? undefined,
       sessionId: f.source_session ?? null,
@@ -1049,7 +1105,7 @@ async function runPipelineBodyInner(
           fact: f.fact,
           kind: f.kind,
           entity_slug: f.entity_inferred ? null : slug,
-          visibility,
+          visibility: f.visibility ?? visibility,
           notability: f.notability,
           source: f.source,
           source_session: f.source_session ?? null,
@@ -1058,6 +1114,7 @@ async function runPipelineBodyInner(
           embedding_model: f.embedding_model ?? null, attributed_to: f.attributed_to ?? null,
           // #4206: caller event-time fallback + provenance context.
           valid_from: factEventTime(f, ctx),
+          valid_until: f.valid_until,
           context: withSpeakerNote(ctx.speaker, ctx.sourceSlug ?? input.pageSlug ?? null),
         };
         await insertDerivedFact(newFact); // stub-guard / unresolvable-target fallback for unprefixed or fallback-resolved entity slugs (no fenceable page or usable tree)
@@ -1078,7 +1135,7 @@ async function runPipelineBodyInner(
           fact: f.fact,
           kind: f.kind,
           entity_slug: f.entity_inferred && result.databaseOnlyReason !== 'file_database_drift' ? null : slug,
-          visibility,
+          visibility: f.visibility ?? visibility,
           notability: f.notability,
           source: f.source,
           source_session: f.source_session ?? null,
@@ -1087,6 +1144,7 @@ async function runPipelineBodyInner(
           embedding_model: f.embedding_model ?? null, attributed_to: f.attributed_to ?? null,
           // #4206: caller event-time fallback + provenance context.
           valid_from: factEventTime(f, ctx),
+          valid_until: f.valid_until,
           context: withSpeakerNote(ctx.speaker, result.databaseOnlyReason === 'file_database_drift' ? annotateUnverifiedResolution(ctx.sourceSlug ?? input.pageSlug ?? null, groupResolutionSource, f.entity_inferred) : ctx.sourceSlug ?? input.pageSlug ?? null),
         };
         await insertDerivedFact(newFact); // DB-only fallback when the fence lane declined the write (write_through opt-out race / localPath echo)

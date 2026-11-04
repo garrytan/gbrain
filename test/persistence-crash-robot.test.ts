@@ -161,13 +161,23 @@ describe('a sync op whose user commit did not land (run 41092788952)', () => {
   }, 120_000);
 
   test('a commit that cannot land fails the run; the sync is never reported committed', async () => {
-    await robotBrain(async ({ world }) => {
+    const foreign = mkdtempSync(join(tmpdir(), 'gbrain-foreign-hook-'));
+    const config = join(foreign, 'gitconfig'), foreignHook = join(foreign, 'pre-commit');
+    const original = '#!/bin/sh\n# Synthetic inherited hook must remain intact.\nexit 0\n';
+    writeFileSync(foreignHook, original); chmodSync(foreignHook, 0o755);
+    writeFileSync(config, `[core]\n hooksPath = ${JSON.stringify(foreign)}\n`);
+    try { await withEnv({ GIT_CONFIG_GLOBAL: config }, () => robotBrain(async ({ world }) => {
       const schedule = raceOps(); const sync = schedule.ops.find(d => d.id === 'sy1')!;
-      const root = world.roots![sync.source]; const hook = join(gitPath(root, 'hooks'), 'pre-commit');
+      const root = world.roots![sync.source];
+      const hooks = join(gitIn(root)('rev-parse', '--absolute-git-dir').stdout.toString().trim(), 'hooks');
+      expect(gitIn(root)('config', 'core.hooksPath', hooks).exitCode).toBe(0);
+      const hook = join(hooks, 'pre-commit');
       writeFileSync(hook, '#!/bin/sh\necho "pre-commit refused" >&2\nexit 1\n'); chmodSync(hook, 0o755);
       await expect(executeOp(world, sync)).rejects.toThrow(/sy1: the user's commit of notes\/alpha did not land \(git commit exit 1\): pre-commit refused/);
       expect(world.observations.has('sy1')).toBe(false);
-    });
+    }));
+    expect(readFileSync(foreignHook, 'utf8')).toBe(original);
+    } finally { rmSync(foreign, { recursive: true, force: true }); }
   }, 120_000);
 
   test('a committed sync whose marker the page lacks is still a lost write', async () => {
