@@ -25,6 +25,10 @@ import type { SearchOpts } from '../../src/core/types.ts';
 import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { callSearch } from '../helpers/keyword-paging-fixture.ts';
+import { identifierProbeQuery } from '../../src/core/search/keyword-identifier-probe.ts';
+import { degradedStampFor, degradedStampLine } from '../../src/core/degraded-stamp.ts';
+import type { HybridSearchMeta } from '../../src/core/types.ts';
 
 const DIMS = 1536;
 const MODEL = 'openai:text-embedding-3-large';
@@ -193,6 +197,28 @@ for (const kind of testBackends()) {
         const results = await hybridSearch(engine, DIGEST_Q, { ...REMOTE, limit: 10, expansion: false });
         expect(results[0]?.slug).toBe(TARGET);
         for (const leaked of ['digests/other-source-412', 'digests/private-412', 'digests/unsealed-412']) expect(slugs(results)).not.toContain(leaked);
+      });
+
+      test.skipIf(kind !== 'pglite')('a probe that times out stamps the result degraded, never a silent miss', async () => {
+        const db = (engine as unknown as { db: { query: (...args: unknown[]) => Promise<unknown> } }).db;
+        const query = db.query;
+        const probe = identifierProbeQuery(DIGEST_Q);
+        db.query = function (this: unknown, ...args: unknown[]) {
+          if ((args[1] as unknown[] | undefined)?.[0] === probe) return Promise.reject(Object.assign(new Error('canceling statement due to statement timeout'), { name: 'TimeoutError' }));
+          return query.apply(this, args);
+        };
+        try {
+          let meta: HybridSearchMeta | undefined;
+          await hybridSearch(engine, DIGEST_Q, { limit: 10, expansion: false, onMeta: m => { meta = m; } });
+          expect(meta?.degraded).toContainEqual({ stage: 'keyword_candidates_incomplete', reason: 'timeout' });
+          const { rows, retrieval } = await callSearch(engine, { query: DIGEST_Q }, false);
+          expect(retrieval.degraded).toContainEqual({ stage: 'keyword_candidates_incomplete', reason: 'timeout' });
+          const stamp = degradedStampFor('search', rows, { retrieval });
+          expect(stamp?.reasons).toContain('keyword_candidates_incomplete');
+          expect(degradedStampLine(stamp!)).toStartWith('[gbrain degraded: keyword_candidates_incomplete');
+        } finally {
+          db.query = query;
+        }
       });
     });
   });

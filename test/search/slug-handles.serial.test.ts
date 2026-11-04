@@ -123,6 +123,24 @@ for (const kind of testBackends()) {
       expect(slugs(rows)).toEqual(['people/dan-example']);
     });
 
+    test('<handle> -term excludes a page that contains the term, in keyword mode and the hybrid keyword arm', async () => {
+      const q = 'dan-example -procurement';
+      const { rows, retrieval } = await callSearch(engine, { query: q, match: 'keyword' }, false);
+      expect(slugs(rows)).not.toContain('people/dan-example');
+      expect(slugs(rows)).not.toContain('companies/northwind-example');
+      expect(retrieval.total).toBe(rows.length);
+      expect(slugs(await engine.searchKeyword(q, { limit: 20, orFallback: true }))).not.toContain('people/dan-example');
+    });
+
+    test('a quoted phrase beside a handle is respected, and so are the other words of a strict match', async () => {
+      const phrase = await callSearch(engine, { query: 'dan-example "renewal due"', match: 'keyword' }, false);
+      expect(slugs(phrase.rows)).toEqual(['companies/northwind-example']);
+      expect(phrase.retrieval.total).toBe(1);
+      expect(slugs(await engine.searchKeyword('dan-example "renewal due"', { limit: 20, orFallback: true }))).not.toContain('people/dan-example');
+      const other = await callSearch(engine, { query: 'dan-example quokka', match: 'keyword' }, false);
+      expect(slugs(other.rows)).toEqual([]);
+    });
+
     test('precision callers (no orFallback) keep the strict-AND contract', async () => {
       expect(slugs(await engine.searchKeyword(Q, { limit: 20 }))).not.toContain('people/dan-example');
     });

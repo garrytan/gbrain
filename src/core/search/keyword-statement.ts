@@ -45,7 +45,7 @@ interface KeywordMatch { where: string; score: string; handleWhere?: string; han
 const FROM = `content_chunks cc JOIN pages p ON p.id = cc.page_id JOIN sources s ON s.id = p.source_id`;
 
 /** The shared match: WHERE text (with leading predicate) and the chunk score, or null when nothing can match. */
-export function buildKeywordMatch(query: string, opts: SearchOpts | undefined, handles: readonly string[] | null = slugHandles(query), handlesOnly = false): KeywordMatch | null {
+export function buildKeywordMatch(query: string, opts: SearchOpts | undefined, handles: readonly string[] | null = slugHandles(query, true), handlesOnly = false): KeywordMatch | null {
   const params: unknown[] = [];
   let predicate: string;
   let rank: () => string;

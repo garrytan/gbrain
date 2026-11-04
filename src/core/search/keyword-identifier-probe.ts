@@ -22,12 +22,15 @@
  * strict rows when strict matched, and ahead of the relaxed rows when it did
  * not. Queries without such a token, a paged read (offset), precision callers
  * (no orFallback) and queries with a quoted phrase or a negation run exactly
- * as before. A failed probe adds nothing.
+ * as before. A failed probe or handle read adds no rows and reports the keyword
+ * candidates incomplete (`onIncomplete`: timeout or provider_error), so a
+ * failure is never a silent miss.
  */
 import type { SearchResult } from '../types.ts';
 import { parseIdentifier } from './identifier-query.ts';
 import { buildOrFallbackWebsearchQuery, orFallbackTokens } from './sql-ranking.ts';
 import { slugHandles } from './keyword-handles.ts';
+import { isTimeoutError } from './hybrid/degraded.ts';
 
 const HASH_NUMBER_RE = /^#(\d+)$/;
 
@@ -87,12 +90,15 @@ export async function keywordArmRows<R>(a: {
   runRelaxed: (orQuery: string) => Promise<R[]>;
   /** GBRA-108: the pages the query's slug handles name (search/keyword-handles.ts); they lead the rows, untagged. */
   runHandles?: (handles: string[]) => Promise<SearchResult[]>;
+  /** A probe or handle read failed: its rows are missing (SearchOpts.onKeywordIncomplete). */
+  onIncomplete?: (reason: 'timeout' | 'provider_error') => void;
 }): Promise<SearchResult[]> {
+  const failed = <T>(err: unknown): T[] => { a.onIncomplete?.(isTimeoutError(err) ? 'timeout' : 'provider_error'); return []; };
   const handles = a.orFallback && a.offset === 0 && a.runHandles ? slugHandles(a.query) : null;
-  const named = handles ? await a.runHandles!(handles).catch(() => [] as SearchResult[]) : [];
+  const named = handles ? await a.runHandles!(handles).catch(failed<SearchResult>) : [];
   const orQuery = a.orFallback ? buildOrFallbackWebsearchQuery(a.query) : null;
   const probeQuery = orQuery && a.offset === 0 ? identifierProbeQuery(a.query) : null;
-  const probe = probeQuery ? (await a.runProbe(probeQuery, orQuery!).catch(() => [] as R[])).map(a.toResult) : [];
+  const probe = probeQuery ? (await a.runProbe(probeQuery, orQuery!).catch(failed<R>)).map(a.toResult) : [];
   if (a.strict.length > 0 || !orQuery) return appendPages(named, appendPages(a.strict.map(a.toResult), probe, a.limit), a.limit);
   const relaxed = (await a.runRelaxed(orQuery)).map(r => ({ ...a.toResult(r), keyword_relaxed: true as const }));
   return appendPages(named, appendPages(probe, relaxed, a.limit), a.limit);
