@@ -3684,6 +3684,50 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "area": "files"
   },
   {
+    "name": "file_register",
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Record the files row for an object the host already stored at the path file_upload would use (<page_slug>/<filename>, or unsorted/<first 8 hash chars>-<filename>), after reading it back and matching its size and SHA-256. Use when an embedded host writes bytes to storage itself. Runs only on an engine opened from settings; registering the same path again updates its row.",
+    "params": {
+      "storage_path": {
+        "type": "string",
+        "required": true,
+        "description": "Where the host stored the object; must be the file_upload layout for page_slug, filename and content_hash"
+      },
+      "filename": {
+        "type": "string",
+        "required": true
+      },
+      "content_hash": {
+        "type": "string",
+        "required": true,
+        "description": "SHA-256 of the bytes, 64 lowercase hex characters"
+      },
+      "size_bytes": {
+        "type": "integer",
+        "required": true
+      },
+      "page_slug": {
+        "type": "string",
+        "description": "Page the file belongs to"
+      },
+      "mime_type": {
+        "type": "string"
+      }
+    },
+    "mutating": true,
+    "scope": "admin",
+    "localOnly": true,
+    "cliOnly": {
+      "argv": [
+        "gbrain",
+        "files",
+        "verify"
+      ]
+    },
+    "area": "files"
+  },
+  {
     "name": "file_verify",
     "mutating": false,
     "idempotent": true,

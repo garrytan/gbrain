@@ -1349,7 +1349,7 @@ More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An operation that serves an embedding host (file_verify) was called on an engine the CLI or a server opened, so it did nothing. | These operations trust a host that stores bytes itself; a brain opened the usual way stores files through file_upload, so the operations stay off there and its behavior is unchanged. | Call it on an engine opened from settings with settings.storage; a brain the CLI or a server opens stores files only through file_upload (gbrain files upload). | agent | `repeat the read that failed` | 1 | no |
+| An operation that serves an embedding host (file_register, file_verify) was called on an engine the CLI or a server opened, so it did nothing. | These operations trust a host that stores bytes itself; a brain opened the usual way stores files through file_upload, so the operations stay off there and its behavior is unchanged. | Call it on an engine opened from settings with settings.storage; a brain the CLI or a server opens stores files only through file_upload (gbrain files upload). | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
 
@@ -4507,7 +4507,7 @@ Override: reason `database_contention`: retryable, exit 1, retryable.
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The object store an engine opened from settings names did not answer a file check (file_verify, file_url), so nothing was recorded and no file was reported missing. | A failed read says nothing about whether the object exists; reporting it missing could lead a host to re-upload or delete a file that is still there. | Check the store named in settings.storage (its path, or its endpoint, bucket and keys), then call again. | agent | `repeat the read that failed` | 1 | yes |
+| The object store an engine opened from settings names did not answer a file check (file_register, file_verify, file_url), so nothing was recorded and no file was reported missing. | A failed read says nothing about whether the object exists; reporting it missing could lead a host to re-upload or delete a file that is still there. | Check the store named in settings.storage (its path, or its endpoint, bucket and keys), then call again. | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
 

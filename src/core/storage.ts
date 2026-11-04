@@ -87,19 +87,28 @@ export async function settingsStorage(engine: object): Promise<StorageBackend | 
   return prefixedStorage(await createStorage({ bucket: '', ...config }), prefix);
 }
 
-/** `backend` with every object key under `<prefix>/`; list() returns keys without it. No prefix returns `backend` itself. */
+/**
+ * `backend` with every object key under `<prefix>/`; list() returns keys without it. No prefix returns `backend` itself.
+ * A key with an empty, `.` or `..` segment (a leading `/` included) is refused, so no key reaches outside the prefix.
+ */
 export function prefixedStorage(backend: StorageBackend, prefix: string | undefined): StorageBackend {
   if (!prefix) return backend;
-  const key = (path: string) => `${prefix}/${path}`;
+  const key = (path: string, listing = false) => {
+    const segments = listing && path === '' ? [] : path.split('/');
+    if (segments.some(segment => segment === '' || segment === '.' || segment === '..')) {
+      throw new Error(`Path traversal blocked: ${path} resolves outside storage prefix ${prefix}`);
+    }
+    return `${prefix}/${path}`;
+  };
   return {
-    upload: (path, data, mime) => backend.upload(key(path), data, mime),
-    uploadFile: (path, filePath, mime, sha256) => backend.uploadFile(key(path), filePath, mime, sha256),
-    download: path => backend.download(key(path)),
-    delete: path => backend.delete(key(path)),
-    exists: path => backend.exists(key(path)),
-    list: async listPrefix => (await backend.list(key(listPrefix))).map(path => path.slice(prefix.length + 1)),
-    getUrl: path => backend.getUrl(key(path)),
-    ...(backend.hashObject ? { hashObject: (path: string) => backend.hashObject!(key(path)) } : {}),
+    upload: async (path, data, mime) => backend.upload(key(path), data, mime),
+    uploadFile: async (path, filePath, mime, sha256) => backend.uploadFile(key(path), filePath, mime, sha256),
+    download: async path => backend.download(key(path)),
+    delete: async path => backend.delete(key(path)),
+    exists: async path => backend.exists(key(path)),
+    list: async listPrefix => (await backend.list(key(listPrefix, true))).map(path => path.slice(prefix.length + 1)),
+    getUrl: async path => backend.getUrl(key(path)),
+    ...(backend.hashObject ? { hashObject: async (path: string) => backend.hashObject!(key(path)) } : {}),
   };
 }
 

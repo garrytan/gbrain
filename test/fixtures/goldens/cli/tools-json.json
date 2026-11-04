@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 269584,
-    "stdoutSha256": "4a230961a0ca1344ea6f4d1bad0771d04484e2f3cc71e8475a48ff1f4ec4e0b9",
+    "stdoutBytes": 271176,
+    "stdoutSha256": "11b0723e57b0040255ec7b4ef698862ddcbc848a07bc76fafc1ba8f06590942c",
     "toolNames": [
       "remember",
       "entity",
@@ -90,6 +90,7 @@
       "file_list",
       "file_upload",
       "file_url",
+      "file_register",
       "file_verify",
       "submit_job",
       "get_job",
@@ -4288,6 +4289,55 @@
           },
           "required": [
             "storage_path"
+          ],
+          "type": "object"
+        },
+        "scope": "admin"
+      },
+      {
+        "description": "Record the files row for an object the host already stored at the path file_upload would use (<page_slug>/<filename>, or unsorted/<first 8 hash chars>-<filename>), after reading it back and matching its size and SHA-256. Use when an embedded host writes bytes to storage itself. Runs only on an engine opened from settings; registering the same path again updates its row.",
+        "idempotent": true,
+        "local_only": true,
+        "mutating": true,
+        "name": "file_register",
+        "parameters": {
+          "content_hash": "string",
+          "filename": "string",
+          "mime_type": "string?",
+          "page_slug": "string?",
+          "size_bytes": "integer",
+          "storage_path": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "content_hash": {
+              "description": "SHA-256 of the bytes, 64 lowercase hex characters",
+              "type": "string"
+            },
+            "filename": {
+              "type": "string"
+            },
+            "mime_type": {
+              "type": "string"
+            },
+            "page_slug": {
+              "description": "Page the file belongs to",
+              "type": "string"
+            },
+            "size_bytes": {
+              "type": "integer"
+            },
+            "storage_path": {
+              "description": "Where the host stored the object; must be the file_upload layout for page_slug, filename and content_hash",
+              "type": "string"
+            }
+          },
+          "required": [
+            "storage_path",
+            "filename",
+            "content_hash",
+            "size_bytes"
           ],
           "type": "object"
         },

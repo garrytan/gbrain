@@ -10,6 +10,19 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.573.0] - 2026-11-04
+
+**A host can record bytes it stored itself, and every file row names its page.** On an engine opened from settings, the new `file_register` records the `files` row for an object the host already wrote to `settings.storage` at the path `file_upload` would use (`<page_slug>/<filename>`, or `unsorted/<first 8 hash chars>-<filename>`), after reading it back and matching its size and SHA-256. It resolves the page in the caller's source under the caller's read policy and records the row's `source_id` and `page_id`. Registering the same path again updates that row, and never moves it to another source or another page, including a new page that took a renamed page's slug. `file_upload` now records its row's source and page on every engine, so purging a page in a source other than `default` removes its attachments. A brain the CLI or a server opens refuses `file_register` with `embedded_engine_required`; it is never an MCP tool. Contributed by @bradgessler (#8457).
+
+### Itemized changes
+
+- `src/core/ops/files.ts`: `file_register` accepts only the upload layout path, refuses `page_not_found` for a page that does not exist or that the caller's read policy hides, and refuses `invalid_params` for a path whose row belongs to another source or page id; the pre-check and the `ON CONFLICT … WHERE` guard both compare `page_id` with `IS DISTINCT FROM`.
+- `file_upload` writes `source_id` and the page's id in that source on each row it inserts (#8513). Rows written before this release keep `source_id = 'default'` and no page id; nothing rewrites them. The `gbrain files upload` CLI is unchanged.
+- `file_upload` refuses `unknown_source` for a source the brain has not registered, before it writes any bytes. When a row already holds the path, it takes the uploader's source and page id only if the uploader's source has that page. A row attached to a live page in another source stays with that source. Identical bytes return `already_exists` without moving it, and different bytes refuse `invalid_params` before any bytes are written.
+- Page purge and its verification match a file by slug only when the row has no page id, so purging one page never removes another page's attachment at the same slug.
+- `src/core/storage.ts`: `prefixedStorage` refuses a key with an empty, `.` or `..` segment or a leading `/` (`Path traversal blocked`), so on a local store a path such as `../brain-b/x` never reaches another brain's prefix.
+- `test/file-register.test.ts`: real PGLite engines and a real local store.
+
 ## [0.60.572.0] - 2026-11-04
 
 **A source whose automatic sync is off no longer extracts and reconciles every page on every autopilot cycle.** A per-source cycle that runs no sync for its source (`config.syncEnabled=false`, a claimed source awaiting activation, a gbrain-owned content directory, or a source with no checkout) now extracts links and timeline, reconciles facts and recomputes emotional weight only for the source's pages changed since its previous cycle, as connector sources already did, at most 2,000 pages per cycle. Before, `extract_facts` walked the whole source each time and `extract` walked its whole checkout, so a sync-disabled source of about 27,000 pages or more hit the 30-minute job timeout on every cycle and never stamped its freshness. Pages an explicit `gbrain sync --source` imports between cycles land in the next window, and a large import is worked through over several cycles instead of timing out. A source with no recorded cycle starts from its oldest page and walks forward the same way. Reported by @mlahatte (#8573).
