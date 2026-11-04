@@ -356,6 +356,41 @@ for (const kind of testBackends()) {
       expect(allJson.skipped).toEqual([{ ref: after.items[0]!.ref, reason: 'contradiction', next: 'Decide it with one of its commands: gbrain trust review --kind contradiction' }]);
     }));
 
+    test('a paid-sweep conflict proposal lists as kind conflict; its forget withdraws the proposed fact and its confirm raises it, old fact untouched', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+      const src = await source();
+      const insert = async (entity: string) => {
+        const older = await fact(src, { entity, value: 100, at: '2026-09-10T08:00:00Z', tier: 'agent_written' });
+        const newer = await fact(src, { entity, value: 120, at: '2026-09-10T09:00:00Z', tier: 'agent_written' });
+        await engine.executeRaw("INSERT INTO decide_proposals (source_id, sweep_id, pair_index, new_fact_id, old_fact_id, direction, p_supersede, proposal_floor) VALUES ($1, $2, 0, $3, $4, 'old_supersedes_new', 0.9, 0.5)",
+          [src, 'sweep-paid-' + randomUUID(), older, newer]);
+        return { proposed: older, other: newer };
+      };
+      const forget = await insert('companies/paid-forget-example');
+      const confirm = await insert('companies/paid-confirm-example');
+      const review = await buildTrustReview(engine, { sourceId: src, kind: 'contradiction' });
+      const item = (id: number) => review.items.find(i => i.summary.startsWith('f' + id + ' '))!;
+      expect(item(forget.proposed)).toMatchObject({ kind: 'contradiction', detail: 'conflict' });
+      expect(item(forget.proposed).command_meta!.forget!.why).toStartWith('The proposed fact is wrong: withdraw f' + forget.proposed);
+      const factState = async (id: number) => (await engine.executeRaw<R>('SELECT expired_at IS NOT NULL AS expired, trust_tier FROM facts WHERE id = $1', [id]))[0]!;
+      const forgetArgv = item(forget.proposed).commands.forget!;
+      await capture(() => runForget(engine, forgetArgv.slice(2)));
+      expect(await factState(forget.proposed)).toMatchObject({ expired: true });
+      expect(await factState(forget.other)).toMatchObject({ expired: false });
+
+      const confirmItem = item(confirm.proposed);
+      const ref = confirmItem.commands.confirm![3]!;
+      const token = (await previewOwnerAction(engine, { action: 'confirm', ref })).token;
+      const input = new PassThrough(); const output = new PassThrough();
+      output.on('data', chunk => { if (String(chunk).includes('to confirm')) input.write(token + '\n'); });
+      __setConfirmationIoForTests({ probe: { stdinIsTTY: true, stdoutIsTTY: true, env: { GBRAIN_INTERACTIVE: '1' } }, input, output, timeoutMs: 3000 });
+      await capture(() => runTrustOwnerCommand(localTrustBackend(engine), confirmItem.commands.confirm![2]!, confirmItem.commands.confirm!.slice(3)));
+      __setConfirmationIoForTests(null);
+      expect((await factState(confirm.proposed)).trust_tier).toBe('user_confirmed');
+      expect((await factState(confirm.other)).trust_tier).toBe('agent_written');
+      const after = await buildTrustReview(engine, { sourceId: src, kind: 'contradiction' });
+      expect(after.items.map(i => i.summary.split(' ')[0])).toEqual(['f' + confirm.proposed]);
+    }));
+
     test('recall labels a fact in a pending pair contested, only when the caller can read the other fact; a failed lookup degrades', async () => {
       const entity = 'companies/contested-example';
       const old = await fact('default', { entity, value: 10, at: '2026-10-01T08:00:00Z' });

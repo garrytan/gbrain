@@ -11,7 +11,7 @@
  * - contradictions (`dp<id>`): pending decide_proposals whose two facts are
  *   both still active, from the keyless claim lane (facts/claim-conflicts.ts)
  *   and the paid conflict sweep alike; each carries supersede (accept), forget
- *   (the newer fact), confirm (the newer fact) and drop (reject) with the
+ *   (the proposed fact), confirm (the proposed fact) and drop (reject) with the
  *   actor and consent of each;
  * - the owner's active allow rules (`a<id>`) and the kill-switch state.
  *
@@ -220,8 +220,8 @@ async function contradictions(engine: BrainEngine, filter: TrustReviewFilter): P
       summary: `${newer} "${snippet(r.new_fact, 60)}" contradicts ${older} "${snippet(r.old_fact, 60)}"${values} about ${r.entity_slug ?? 'no entity'}`,
       commands: { supersede: decide('accept'), forget: ['gbrain', 'forget', newer.slice(1), '--source', String(r.source_id)], confirm: trust('confirm', newer), drop: decide('reject') },
       command_meta: {
-        supersede: { actor: 'agent', consent: 'ask_user', durable: false, undo: decide('undo'), why: `The newer fact is right: ${newer} supersedes ${older}.` },
-        forget: { actor: 'agent', consent: 'ask_user', durable: true, why: `The newer fact is wrong: withdraw ${newer}; ${older} stays current and dp${id} goes stale. A withdrawal has no undo.` },
+        supersede: { actor: 'agent', consent: 'ask_user', durable: false, undo: decide('undo'), why: `The proposed fact is right: ${newer} supersedes ${older}.` },
+        forget: { actor: 'agent', consent: 'ask_user', durable: true, why: `The proposed fact is wrong: withdraw ${newer}; ${older} stays current and dp${id} goes stale. A withdrawal has no undo.` },
         confirm: { actor: 'user', consent: 'owner_tty', durable: false, why: `Raise ${newer} to confirmed by you (typed at the terminal); dp${id} stays pending until you supersede or drop it.` },
         drop: { actor: 'agent', consent: 'ask_user', durable: false, why: `Not a contradiction: reject dp${id}; both facts stay current and the pair is not proposed again.` },
       },
