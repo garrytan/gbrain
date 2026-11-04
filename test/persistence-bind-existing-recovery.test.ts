@@ -414,10 +414,14 @@ test('P2 escaped long paths reserve publication and abort recovery capacity', fi
   }
 }, { longPath: true }), 60_000);
 
-for (const boundary of ['reserved', 'physical_ready']) {
-  test(`P2 classic add cannot steal reserved source ID after ${boundary}`, fixture(async ({ params, apply, call, restart }) => {
+for (const boundary of ['reserved', 'physical_ready']) for (const kind of ['classic', 'meetings', 'slack'] as const) {
+  test(`P2 ${kind} add cannot steal reserved source ID after ${boundary}`, fixture(async ({ params, apply, call, restart }) => {
     await expect(apply({ boundary(name) { if (name === boundary) throw new Error('classic bind interrupted'); } })).rejects.toThrow('classic bind interrupted');
-    await expect(addSource(engine, { id: String(params.source_id) })).rejects.toMatchObject({ code: 'recovery_required' });
+    const opts = { id: String(params.source_id),
+      ...(kind === 'meetings' ? { meetings: { provider: 'fireflies' as const, record: 'database' as const, transcript: 'summary' as const, private: false } } : {}),
+      ...(kind === 'slack' ? { slack: { channels: ['C_TEST'], record: 'database' as const, private: false } } : {}),
+    };
+    await expect(addSource(engine, opts)).rejects.toMatchObject({ code: 'recovery_required' });
     expect(await engine.executeRaw('SELECT id FROM sources WHERE id=$1', [params.source_id])).toHaveLength(0);
     await restart(); expect(await recoverSourceTopologies(engine)).toBe(1);
     expect((await call(params)).state).toBe('committed');

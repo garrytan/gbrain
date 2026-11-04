@@ -699,7 +699,9 @@ export async function addSource(
       [opts.id, displayName, finalPath, JSON.stringify(config)],
     ));
   } else if (opts.meetings || opts.slack) {
-    await insertApiSource(engine, opts, opts.slack ? 'slack' : 'meetings');
+    await withSourceKeyReservationGuard(engine, opts.id, tx =>
+      insertApiSource(tx, opts, opts.slack ? 'slack' : 'meetings'),
+    );
   } else {
     // ── Path B: --path or no path (existing behavior, pre-v0.28) ─────────
     // #2707: only validate when the path actually exists — a not-yet-created
