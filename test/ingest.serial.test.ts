@@ -56,6 +56,10 @@ for (const storage of ['git', 'database'] as ReviewStorage[]) {
       fx = await reviewDoorFixture(engine, storage);
       await S.deletedPageScenario(engine);
     }, 60_000);
+    test('a blocked window is billed: its spend is booked on the attempt', async () => {
+      fx = await reviewDoorFixture(engine, storage);
+      await S.failedWindowSpendScenario(engine);
+    }, 60_000);
     test('dry run makes no provider call and writes nothing', async () => {
       fx = await reviewDoorFixture(engine, storage);
       await S.dryRunScenario(engine);

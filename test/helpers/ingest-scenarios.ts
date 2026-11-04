@@ -11,7 +11,7 @@ import { localHostId } from '../../src/core/persistence/identity.ts';
 import { parseMarkdown } from '../../src/core/markdown.ts';
 import { __setChatTransportForTests, configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import { reviewCtx, committedFile, type ReviewDoorFixture } from './review-door-scenarios.ts';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { tryAcquireDbLock } from '../../src/core/db-lock.ts';
 
 export type Report = Record<string, any>;
@@ -47,7 +47,7 @@ const GOLDEN_ROWS: StubRow[] = [
 export interface ChatStub { calls: number; restore: () => void }
 
 /** The ingest extractor's stub: each window gets the entities and claims whose marker sentence it contains. */
-export function stubChat(opts: { rows?: StubRow[]; usage?: number; onCall?: (n: number) => Promise<void> | void } = {}): ChatStub {
+export function stubChat(opts: { rows?: StubRow[]; usage?: number; onCall?: (n: number) => Promise<void> | void; stopReason?: (n: number) => string } = {}): ChatStub {
   const rows = opts.rows ?? GOLDEN_ROWS;
   configureGateway({ chat_model: 'anthropic:claude-haiku-4-5', env: { ANTHROPIC_API_KEY: 'test-key' } } as never);
   const stub: ChatStub = { calls: 0, restore: () => { __setChatTransportForTests(null); resetGateway(); } };
@@ -58,7 +58,7 @@ export function stubChat(opts: { rows?: StubRow[]; usage?: number; onCall?: (n: 
     const hit = rows.filter(r => text.includes(r.marker));
     return {
       text: JSON.stringify({ entities: hit.flatMap(r => r.entities), facts: hit.flatMap(r => r.facts.map(f => ({ ...f, notability: 'high' }))) }),
-      blocks: [], stopReason: 'end', model: 'anthropic:claude-haiku-4-5', providerId: 'anthropic',
+      blocks: [], stopReason: opts.stopReason?.(stub.calls) ?? 'end', model: 'anthropic:claude-haiku-4-5', providerId: 'anthropic',
       usage: { input_tokens: opts.usage ?? 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 },
     } as never;
   });
@@ -333,6 +333,13 @@ export async function namespaceScenario(engine: BrainEngine): Promise<void> {
   }
   const typed = await put.handler(reviewCtx(engine), { slug: 'notes/fake-report', content: '---\ntype: ingest-report\ntitle: x\n---\n\nmine\n' }).catch(e => e) as OperationError;
   expect(typed.code).toBe('ingest_namespace_reserved');
+  const staged = '---\ntype: ingest-report\ntitle: x\n---\n\nstaged\n';
+  const sha = (t: string) => createHash('sha256').update(t).digest('hex');
+  const session = await operationsByName.begin_page_upload!.handler(reviewCtx(engine), { slug: 'notes/staged-fake-report', mode: 'create', total_bytes: Buffer.byteLength(staged), sha256: sha(staged), request_id: randomUUID() }) as Report;
+  await operationsByName.upload_page_part!.handler(reviewCtx(engine), { upload_id: session.upload_id, part: 0, text: staged, part_sha256: sha(staged) });
+  const committed = await operationsByName.commit_page_upload!.handler(reviewCtx(engine), { upload_id: session.upload_id, wait_ms: 30_000 }).catch(e => e) as Report;
+  expect(JSON.stringify({ code: committed.code, error: committed.error, receipt: committed.receipt })).toContain('ingest_namespace_reserved');
+  expect(await engine.getPage('notes/staged-fake-report')).toBeNull();
   const reportRev = (await engine.readPageSnapshot(report.report_page))!.revision;
   const editReport = await operationsByName.edit_page!.handler(reviewCtx(engine, { remote: true } as never), { slug: report.report_page, expected_revision: reportRev,
     edits: [{ old_text: 'ingest', new_text: 'mine' }] }).catch(e => e) as OperationError;
@@ -664,3 +671,21 @@ export async function deletedPageScenario(engine: BrainEngine): Promise<void> {
   } finally { resetGateway(); }
 }
 
+
+/** A window the provider blocks is still billed: its spend is booked on the attempt, so max_usd bounds the attempt across resumes. */
+export async function failedWindowSpendScenario(engine: BrainEngine): Promise<void> {
+  await seedEntities(engine);
+  const stub = stubChat({ usage: 200_000, stopReason: n => (n === 2 ? 'content_filter' : 'end') });
+  try {
+    const first = await ingest(engine, { content: goldenDocument(), max_usd: 100 });
+    expect(first.status).toBe('failed');
+    expect(first.failure.reason).toBe('content_block');
+    expect(stub.calls).toBe(2);
+    const state = (await engine.executeRaw<{ spent: number | string; first: number | string }>(
+      "SELECT (completed_keys->0->>'spent_usd')::float8 AS spent, (completed_keys->0->'windows'->'0'->>'spent_usd')::float8 AS first FROM op_checkpoints WHERE op = 'ingest-attempt' AND fingerprint = $1",
+      [first.attempt_id]))[0]!;
+    expect(Number(state.first)).toBeGreaterThan(0);
+    expect(Number(state.spent)).toBeCloseTo(2 * Number(state.first), 6);
+    expect(first.spent_usd).toBeCloseTo(2 * Number(state.first), 6);
+  } finally { stub.restore(); }
+}

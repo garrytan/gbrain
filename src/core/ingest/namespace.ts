@@ -56,6 +56,12 @@ function refused(slug: string, why: string): OperationError {
     { docs: 'docs/guides/ingest.md#reserved-namespace', ...(REPORT_SLUG.test(slug) ? { fix: readFix('Shows the ingest attempt this report belongs to, read-only.', { argv: ['gbrain', 'ingest-show', attempt], mcp: { tool: 'ingest', arguments: { attempt_id: attempt } } }) } : {}) });
 }
 
+/** A staged upload's page is in its staged body, not its admission params, so its frontmatter type is checked when it is prepared. */
+export function assertStagedUploadNotReport(slug: string, page: { text: string } | { frontmatter: Record<string, unknown> | null | undefined }): void {
+  const reserved = 'text' in page ? declaresReportType(page.text) : coerceFrontmatterString(page.frontmatter?.type) === INGEST_REPORT_TYPE;
+  if (reserved) throw refused(slug, 'The ingest-report page type is reserved for ingest.');
+}
+
 /** The reserved-type and reserved-namespace check every generic page mutation passes at admission. */
 export async function assertIngestNamespaceWritable(engine: BrainEngine, input: { operation: string; slug: string; existing: Pick<PageSnapshot, 'page' | 'tags'> | null | undefined; params: Record<string, unknown> }): Promise<void> {
   const existing = input.existing && !input.existing.page.deleted_at ? input.existing : null;

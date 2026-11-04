@@ -260,6 +260,7 @@ async function extractRemaining(ctx: OperationContext, state: IngestAttemptState
       out = await extractWindow({ engine: ctx.engine, model: state.model!, window: w, windowsTotal: windows.length, remainingUsd: remaining });
     } catch (error) {
       state.in_flight = null;
+      state.spent_usd += Number((error as { spent_usd?: unknown } | null)?.spent_usd) || 0;
       await saveAttempt(ctx.engine, state);
       if (error instanceof IngestProviderFailure) return { failure: error };
       if ((error as Error)?.name === 'BudgetExhausted') return { stop: 'budget' };

@@ -120,6 +120,8 @@ export function parseIngestExtraction(raw: string): { entities: ExtractedEntity[
 
 export type ProviderFailureReason = 'auth' | 'billing' | 'model_not_found' | 'content_block' | 'rate_limit' | 'transient';
 export class IngestProviderFailure extends Error {
+  /** What the provider billed for the failed window (a blocked reply is billed in full); booked on the attempt. */
+  spent_usd = 0;
   constructor(readonly reason: ProviderFailureReason, readonly model: string, readonly window: number, cause: string) {
     super(cause);
   }
@@ -164,10 +166,12 @@ export async function extractWindow(input: WindowRunInput): Promise<ExtractedWin
     }
     text = result.text;
   } catch (error) {
-    if (error instanceof IngestProviderFailure || error instanceof BudgetExhausted) throw error;
-    if (input.signal?.aborted) throw error;
-    const reason = classifyGlobalLlmError(error) ?? 'transient';
-    throw new IngestProviderFailure(reason, input.model, input.window.index, sanitizeCause(error instanceof Error ? error.message : String(error)));
+    if (error instanceof BudgetExhausted) throw Object.assign(error, { spent_usd: tracker.totalSpent });
+    if (input.signal?.aborted && !(error instanceof IngestProviderFailure)) throw error;
+    const failure = error instanceof IngestProviderFailure ? error
+      : new IngestProviderFailure(classifyGlobalLlmError(error) ?? 'transient', input.model, input.window.index, sanitizeCause(error instanceof Error ? error.message : String(error)));
+    failure.spent_usd = tracker.totalSpent;
+    throw failure;
   }
   const parsed = parseIngestExtraction(text) ?? { entities: [], facts: [] };
   return { index: input.window.index, chars: input.window.text.length, entities: parsed.entities, facts: parsed.facts, spent_usd: tracker.totalSpent };
