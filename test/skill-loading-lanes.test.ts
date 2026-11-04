@@ -165,6 +165,22 @@ describe('bootstrap harness', () => {
     });
   });
 
+  test('an opt-out that strips only the Codex AGENTS.md index the override replaced still logs that removal', async () => {
+    const b = box();
+    await withEnv(b.env, async () => {
+      const paths = { claudeMemoryPath: join(b.home, '.claude', 'CLAUDE.md'), codexAgentsPath: join(b.home, '.codex', 'AGENTS.md'),
+        codexAgentsOverride: join(b.home, '.codex', 'AGENTS.override.md'), opencodeAgentsPath: join(b.home, '.config', 'opencode', 'AGENTS.md') };
+      const settingsPath = join(b.home, '.claude', 'settings.json');
+      writeHarnessSkillsIndex({ hosts: ['codex'], launcher: LAUNCHER, optOut: false, skillLoading: 'spring', paths, settingsPath, log: () => {} });
+      writeFileSync(paths.codexAgentsOverride, '# Override rules\n');
+      const log: string[] = [];
+      const [o] = writeHarnessSkillsIndex({ hosts: ['codex'], launcher: LAUNCHER, optOut: false, skillLoading: 'off', paths, settingsPath, log: (l) => log.push(l) });
+      expect(o.action).toBe('skip');
+      expect(o.paired).toMatchObject({ path: paths.codexAgentsPath, action: 'remove' });
+      expect(log.join('\n')).toContain(`skills index from ${paths.codexAgentsPath}`);
+    });
+  });
+
   test('removing one connection leaves the index in a file whose brain-first block belongs to another connection', async () => {
     const b = box();
     await withEnv(b.env, async () => {
@@ -450,6 +466,8 @@ describe('Claude Code loader rule: refresh, dry-run, ledger failures', () => {
       const c = ctx(b);
       const dir = join(b.home, '.gbrain');
       mkdirSync(dir, { recursive: true });
+      // An earlier install left the shared ledger lock behind, so the lock opens and the ledger write is what fails.
+      writeFileSync(join(dir, 'agent-instructions.lock'), '');
       chmodSync(dir, 0o500);
       let failed: SkillsBlockOutcome;
       try {

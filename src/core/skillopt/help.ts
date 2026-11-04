@@ -9,8 +9,9 @@ of a frozen agent. Validation-gated, budget-capped, atomic-versioned.
 
 By default it runs ONE gated rewrite: a forward pass on one train batch, one
 whole-body rewrite, then the selection gate. --loop runs the iterative edit
-loop instead; on gbrain's benchmarks it has not yet beaten the one-shot rewrite
-(same held-out score at ~1.8x the cost), so it is opt-in until it does.
+loop instead. The loop is deprecated and will be removed on or after
+2026-12-03: on gbrain's benchmarks it tied the one-shot rewrite (same held-out
+score at ~1.8x the cost). Nothing replaces it; edit the skill directly.
 
 Based on SkillOpt (arXiv 2605.23904, MSR May 2026).
 
@@ -56,6 +57,7 @@ Models:
 
 Modes:
   --loop                        Iterative reflect loop (edit ops, epochs).
+                                Deprecated: removed on or after 2026-12-03.
                                 Default is one gated one-shot rewrite.
   --dry-run                     Models plan, strict verdict + cost estimate,
                                 no LLM calls (exit 1 only on a strict failure)

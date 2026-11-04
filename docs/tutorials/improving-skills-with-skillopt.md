@@ -183,7 +183,8 @@ You'll watch it work: a baseline eval to set the bar, one forward pass over a
 batch of train tasks (run the skill), one rewrite of the skill body from those
 rollouts, and a validation gate that runs each sel task's judge 3 times and
 takes the median — accepting only if the median beats the baseline by more than
-0.05. (`--loop` runs the older iterative edit loop instead; see the
+0.05. (`--loop` runs the older iterative edit loop instead. It is deprecated
+and removed on or after 2026-12-03; see the
 [reference guide](../guides/skillopt.md#one-shot-rewrite-the-default).)
 
 When it finishes, the last lines tell you everything:

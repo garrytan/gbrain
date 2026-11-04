@@ -22,6 +22,60 @@ identifiers and attribution are available in the pre-removal Git revision
 - `gbrain repair segmented-tiling --apply` records the republished revision as imported from the HEAD blob when the file imports to the page's stored title, type, frontmatter and tags, so the next sync holds no `file_drift` for the page it just repaired. A file whose metadata changed since the last import records nothing, and sync still guards the stored version.
 - #8504 items 6 and 8: `untiledSegmentedPages` (doctor and the repair) skips archived sources; doctor's fix always names a `--source` and lists the other damaged sources' commands; a repair preview over 1,000 pages reports `truncated` and says to preview again after the apply.
 
+## [0.60.570.0] - 2026-11-04
+
+**GPT-style get_page calls that send several window selectors now read a window instead of refusing.** GPT-6.1 Sol fills every get_page argument it can, so it sends `lines`, `bytes` and often a real `around_chunk_id` together, beside `body: "full"` and `include_content: true`. get_page refused every such call with `invalid_params`. The refusal carried a runnable fix, but on GBEV-30's SkillOpt re-read Sol followed it 0 times in 305, so 52% of its briefing reads and 84% of its fact-check reads failed. Now get_page reads one window, in a fixed order: `cursor`, then `around_chunk_id`, then `lines`, then `bytes`. A whole-page flag beside a selector is set aside, so the answer is still a window and never the page. The response's `window_selector` names what applied and what was ignored. A call with one selector behaves as before.
+
+### Itemized changes
+
+- `src/core/ops/get-page-body.ts`: `parseBodyRequest` still validates each selector on its own, then orders them cursor, around_chunk_id, lines, bytes, and the first one applies. `body: "full"`, `include_content` and `content_only` beside a selector are set aside, while `body: "none"` or `"outline"` beside one still refuses. When a cursor can't read this page (another page's, another view's, or issued before the page changed) or an `around_chunk_id`'s chunk is no longer on the page, and another selector was sent, the read falls back to the next one; on its own, each still refuses as before. With `view: "markdown"`, `around_chunk_id` beside another selector is set aside. A read that set anything aside returns `window_selector {applied, ignored, note}`; when that includes `include_content` or `content_only`, the note says the window is not the page's content and that edits go through `edit_page`.
+- get_page's tool description states the order, and the four selector descriptions drop "One window selector only". `docs/guides/windowed-reads.md` and `docs/mcp/TOOL_REFERENCE.md` describe the rule.
+- Tests: `test/tool-args-empty-optional-sol.test.ts` replays Sol's recorded argument shape on every entry point (MCP over HTTP and stdio, `gbrain call`, the subagent registry and both SkillOpt registries). `test/get-page-body-modes.test.ts` checks the order, that the read equals the applied selector sent alone (`edit_target` included), that a whole-page ask beside a selector returns no page body, and that a failed cursor or stale chunk falls through to the next selector.
+
+## [0.60.569.0] - 2026-11-04
+
+**SkillOpt's iterative loop is deprecated and will be removed on or after 2026-12-03.** The loop tied a single rewrite on gbrain-evals' benchmarks at about 1.8 times the cost, and every edit it kept came from its first step, so it is being retired. `gbrain skillopt --loop`, a `--resume` of a run the loop started, `run_skillopt` with `optimizer_mode: "reflect"` and a queued `skillopt` job in loop mode now print the `skillopt_loop_deprecated` coaching notice once (over MCP, once per session) and otherwise run exactly as before. Nothing replaces the loop, so edit the skill directly or run the default one-shot rewrite, which stays. Nothing is removed and no default changes in this release.
+
+### Itemized changes
+
+- `src/core/skillopt/loop-deprecation.ts` (new): the notice text, the removal date and the one emitter, called by `gbrain skillopt` (after it resolves the mode, so a resumed loop run counts), the `run_skillopt` op (`ctx.emitNotice`, so MCP and `gbrain call` render it) and the `skillopt` job handler. `skillopt_loop_deprecated` is a new coaching code in `NOTICE_CODES`.
+- `gbrain skillopt --help`, the `run_skillopt` description and its `optimizer_mode` parameter, docs/guides/skillopt.md, the tutorial and the `skill-optimizer` skill mark the loop deprecated.
+- Ship policy: `.gstack/ship-policy.json` declares `stamp_placeholders: ["TBD"]` (and `min_gstack_version` 1.94.16.0, the first gstack that reads it), so a branch's own `since: 'TBD'` BEHAVIOR_CHANGES row that the slot restamp fills reads as a stamp instead of a change after /ship's review. It also declares `review_exclude_paths: ["docs/**", "test/fixtures/goldens/**"]`, so once this is on master /ship's reviewers leave docs and generated goldens out of their diffs and a large wave stays under their 2 MB ceiling; the privacy, gitleaks and doc checks still cover those files, and every code, test and config line is still reviewed.
+- `test/skillopt/loop-deprecation.serial.test.ts`: each entry point that runs the loop emits the notice exactly once and still runs it; the one-shot default, a one-shot job and the cycle phase emit none.
+
+## [0.60.568.0] - 2026-11-03
+
+**A brain opened from settings keeps its files in its own store.** On an engine opened from settings, every file operation (`file_upload`, `file_url`, page purge and the new `file_verify`) uses the engine's own `settings.storage`: a local path, or s3 with its endpoint and keys, and an optional one-segment key `prefix` so brains sharing a bucket each keep their own keys. The process storage config is never used there. `file_verify` lists which rows still have their object or re-hashes one. A brain the CLI or a server opens is unchanged, and there `file_verify` refuses `embedded_engine_required`; it is never an MCP tool. `file_register`, which lets a host record bytes it stored itself, ships separately. Contributed by @bradgessler (#8457).
+
+### Itemized changes
+
+- `src/core/storage/s3.ts`: `file_url` on an s3 store with an endpoint builds the URL from the endpoint the SDK resolves, instead of throwing.
+- A store that does not answer `file_verify` or `file_url` is the new `store_unavailable` code, never a file reported missing.
+- On an engine opened from settings, `delete_page` purge deletes a page's files from `settings.storage` too. A file it can't find there, or a store that doesn't answer, is reported in `blobs_remaining`, never as deleted; files an embedded engine's `file_upload` wrote before this release live in the process store, so delete those remaining paths by hand. Rows an embedded engine's `file_upload` wrote before this release point at the process store, so `file_url` and `file_verify` look for them in `settings.storage`.
+- `openEngine` refuses `engine_settings_invalid` for a `storage` setting missing a value its backend needs (so no backend falls back to a default path or environment credentials), an unknown field, a backend other than local or s3, or a prefix that is not one segment; an s3 store must name its endpoint, so no AWS_* variable or ~/.aws file picks it; `embeddedSettings()` reads back `hasSecret` instead of the secret.
+- `src/core/storage/local.ts` and `s3.ts` stream an object's size and SHA-256 (`hashObject`); other backends hash one download.
+- `test/embedded-file-store.test.ts`: real PGLite engines and a real local store; the unreachable store is a closed local port.
+
+## [0.60.567.0] - 2026-11-03
+
+**/ship now carries its unit, serial, slow and E2E lanes from a passed full-ci run instead of running them again.** `.gstack/pregate.json` declares `ship_lanes_from` (gstack 1.94+): `bun run test`, `bun run test:serial`, `bun run test:slow` and `bun run test:e2e` carry from the Test (`full-suite`) and E2E (`e2e-full-suite`) runs at the exact, clean tree, and print `LANE: <label> carried run=<id>/<attempt>`. A dirty tree, a newer red or running run, or a run whose `tree.json` misses a file the lane runs still runs the lane locally. Each lane's file list comes from `scripts/pregate-remote-gate.sh --list` on the full gate, so a tree that changes the CI reuse files never carries its own runs.
+
+### Itemized changes
+
+- `.gstack/pregate.json`: `ship_lanes_from` maps the four lane commands to the `test` and `e2e` run profiles. The E2E lane names both, because test.yml's reconciliation job runs two `test/e2e/` files. `bun run verify` and `bun run typecheck` still run locally: `tree.json` records test files only.
+- `.gstack/ship-policy.json`: `min_gstack_version` is 1.94.4.0. A gstack below 1.94.0.0 rejects `ship_lanes_from` as an unknown key.
+- `docs/ci-event-parity.md#ship-lanes` lists the exact lane commands and the carry conditions; AGENTS.md and CONTRIBUTING.md point /ship at it. `test/scripts/pregate-remote-gate.test.ts` keeps the table and the config in step.
+- Nightly shard weights refreshed (2026-11-03).
+
+## [0.60.566.0] - 2026-11-03
+
+**Two installs at once no longer drop each other's instruction-ledger entry, and a Codex skills opt-out reaches the file Codex used before.** Every install lane reads the brain-first ledger (`~/.gbrain/agent-instructions.json`) or the skill-loading ledger, edits the instruction file and rewrites the ledger. Two installs at once (say `setup claude-code` and `setup codex`) could each read the ledger before the other wrote it, and one entry was lost; a later opt-out then left that block, and its Claude Code allow rule, in place. Each install now holds one shared lock for the whole step, and the second waits for the first. Separately, Codex loads `AGENTS.override.md` when it is non-empty and `AGENTS.md` otherwise, so an explicit skills opt-out made after the override appeared left the index in `AGENTS.md`, where it came back once the override was removed.
+
+### Itemized changes
+
+- The brain-first and skill-loading ledgers share one lock (`~/.gbrain/agent-instructions.lock`), held across each install step: the ledger read, the file edit, the Claude Code permission edit and the ledger write (#8484). An install that waited reads the recorded choice again under the lock, so an opt-out the other install just recorded stays in force. An install that cannot take it within 10 seconds, or cannot create it, changes nothing and reports why (the skills outcome's reason is `ledger_locked`). A dry run takes no lock.
+- `gbrain setup codex --skill-loading off`, `--no-instructions` and `GBRAIN_SKILL_LOADING=off` also strip a spring index gbrain recorded in the other global instruction file of the same `CODEX_HOME` (`AGENTS.md` or `AGENTS.override.md`), and report it as a second skills line in the plain output (`paired` in `--json`), in `--dry-run` too (#8485). A plain re-run strips it only when brain-first instructions are declined on record for that Codex home, and no other Codex home, OpenClaw workspace or Claude profile is touched.
+
 ## [0.60.565.0] - 2026-11-03
 
 **The per-file index describes how pages stored in segments are written and held.** The key-files entries for `write-through.ts` and `sync-entry-fault.ts` contradicted v0.60.560.0: the first said every page is rendered whole and `content` always holds the bytes written, and the second said a page-body fault at the freeze stops the run. They now describe the streamed write of a segmented page (measured at its snapshot's revision, checked against the scan cap before `source_path` binds, `inlineOnly` and `segmented_page`) and the `page_write_failed` hold that names `page_body_segmented` or `page_body_rows_unreadable`. The entries for full sync, `sync status`, the derived write-through and export also name `reexport_failures`, `last_error.request_id: null`, the `freeze_page_body_*` routing, the derived writer's `segmented_page` skip and the export's revision pin. Docs only.

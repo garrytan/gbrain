@@ -25,6 +25,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { parse as parseJsonc, type ParseError } from 'jsonc-parser';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
+import { acquireNativeLockSync } from '../persistence/native-lock.ts';
 import { claudeUserMemoryPath, codexAgentsOverridePath, codexGlobalAgentsPath, opencodeConfigDir } from '../bootstrap/host-specs.ts';
 import { configDir } from '../config.ts';
 import { probeBlock, removeBlock, spliceBlock, type BlockMarkers } from '../managed-block.ts';
@@ -37,6 +38,7 @@ export const BRAIN_FIRST_END = '<!-- gbrain:brain-first:end -->';
 export const BRAIN_FIRST_OPT_OUT_ENV = 'GBRAIN_AGENT_INSTRUCTIONS';
 const MARKERS: BlockMarkers = { begin: BRAIN_FIRST_BEGIN, end: BRAIN_FIRST_END, label: 'brain-first', rerun: 'gbrain setup <harness> --instructions-only' };
 const LEDGER_FILE = 'agent-instructions.json';
+const LEDGER_LOCK_FILE = 'agent-instructions.lock';
 
 /** Harnesses whose instruction surface gbrain can write. */
 export const BRAIN_FIRST_HARNESSES = ['claude-code', 'codex', 'opencode', 'openclaw', 'hermes', 'cursor'] as const;
@@ -273,6 +275,39 @@ export function readBrainFirstLedger(): BrainFirstLedgerEntry[] {
   }
 }
 
+let ledgerLockHeld = false;
+
+/**
+ * #8484: run one instruction-ledger transaction (the ledger read, the file and
+ * permission edits it records, the ledger write) under a lock shared by this
+ * ledger and skill-loading.json, so two installs at once cannot drop each
+ * other's entry. Reentrant within a process (an opt-out that syncs another
+ * surface nests): `fn` learns whether it is the outermost transaction, the
+ * one that re-reads a recorded decision another install may have changed
+ * while this one waited. A dry run writes nothing and takes no lock. When the
+ * lock is held past the wait, or the host cannot take it, nothing runs and
+ * `refused` reports why.
+ */
+export function underInstructionLedgerLock<T>(dryRun: boolean, fn: (outermost: boolean) => T, refused: (why: string) => T): T {
+  if (ledgerLockHeld) return fn(false);
+  if (dryRun) return fn(true);
+  const path = join(configDir(), LEDGER_LOCK_FILE);
+  let lock: ReturnType<typeof acquireNativeLockSync>;
+  try {
+    lock = acquireNativeLockSync(path, { timeoutMs: 10_000 });
+  } catch (e) {
+    return refused(`${path} could not be locked (${e instanceof Error ? e.message : String(e)})`);
+  }
+  if (!lock) return refused(`another gbrain install is updating the instruction ledgers (it holds ${path}); re-run once it finishes`);
+  ledgerLockHeld = true;
+  try {
+    return fn(true);
+  } finally {
+    ledgerLockHeld = false;
+    try { lock.release(); } catch { /* the OS drops the lock with the handle when the process exits */ }
+  }
+}
+
 function writeLedger(entries: BrainFirstLedgerEntry[]): void {
   atomicWriteTextFile(brainFirstLedgerPath(), `${JSON.stringify({ version: 1, entries }, null, 2)}\n`, { freshMode: 0o600 });
 }
@@ -318,6 +353,14 @@ export function inspectBrainFirst(path: string, expected?: string): { state: Bra
   return { state: current ? 'current' : 'stale', version };
 }
 
+function stateForRefusal(path: string): BrainFirstState {
+  try {
+    return inspectBrainFirst(path).state;
+  } catch {
+    return 'damaged';
+  }
+}
+
 export interface BrainFirstOutcome {
   harness: string;
   path: string;
@@ -358,6 +401,16 @@ export function writeUnlessChanged(path: string, read: string, wasMissing: boole
  * of the install still finishes.
  */
 export function syncBrainFirst(opts: { target: BrainFirstTarget; access: BrainFirstAccess; decision: BrainFirstDecision; writer: string; dryRun: boolean }): BrainFirstOutcome {
+  return underInstructionLedgerLock(opts.dryRun, (outermost) => {
+    const recorded = opts.decision.source === 'prior' || opts.decision.source === 'default';
+    return syncBrainFirstLocked(outermost && recorded ? { ...opts, decision: resolveBrainFirstDecision(undefined, priorBrainFirst(opts.target.harness, opts.target.path)) } : opts);
+  }, (why) => ({
+    harness: opts.target.harness, path: opts.target.path, role: opts.target.role, decision: opts.decision, action: 'preserve',
+    state_before: stateForRefusal(opts.target.path), detail: `${why}; ${opts.target.path} was left as it was`,
+  }));
+}
+
+function syncBrainFirstLocked(opts: { target: BrainFirstTarget; access: BrainFirstAccess; decision: BrainFirstDecision; writer: string; dryRun: boolean }): BrainFirstOutcome {
   const { target, access, decision } = opts;
   const body = renderBrainFirstBlock(target.harness, access);
   const before = inspectBrainFirst(target.path, body);
@@ -418,6 +471,13 @@ export function syncBrainFirst(opts: { target: BrainFirstTarget; access: BrainFi
 
 /** The uninstall path: strip the block, delete the file only when gbrain created it and nothing else is left, forget the record. */
 export function removeBrainFirst(opts: { harness: string; path: string; dryRun: boolean; server?: string }): BrainFirstOutcome {
+  return underInstructionLedgerLock(opts.dryRun, () => removeBrainFirstLocked(opts), (why) => ({
+    harness: opts.harness, path: opts.path, role: 'instruction file', decision: { value: 'declined', source: 'flag' }, action: 'preserve',
+    state_before: stateForRefusal(opts.path), detail: `${why}; ${opts.path} was left as it was`,
+  }));
+}
+
+function removeBrainFirstLocked(opts: { harness: string; path: string; dryRun: boolean; server?: string }): BrainFirstOutcome {
   const prior = readBrainFirstLedger().find((e) => e.harness === opts.harness && e.path === opts.path);
   const before = inspectBrainFirst(opts.path);
   const decision: BrainFirstDecision = { value: 'declined', source: 'flag' };

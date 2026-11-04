@@ -8,7 +8,7 @@
  * leaves one whose file still holds another connection's brain-first block.
  */
 import { brainFirstTargetAt, codexInstructionFile, readBrainFirstLedger } from '../setup/brain-first.ts';
-import { describeSkillsBlockOutcome, installerSkillsBlock, removeSkillsBlocksBy, type SkillLoading, type SkillsBlockOutcome } from '../setup/skills-block.ts';
+import { describeSkillsBlockOutcome, installerSkillsBlock, removeSkillsBlocksBy, skillsOutcomeShown, type SkillLoading, type SkillsBlockOutcome } from '../setup/skills-block.ts';
 import type { BrainFirstHost, HarnessInstructionPaths } from './harness-brain-first.ts';
 
 const WRITER = 'gbrain bootstrap harness';
@@ -21,7 +21,7 @@ export function writeHarnessSkillsIndex(opts: { hosts: readonly BrainFirstHost[]
         : paths.opencodeAgentsPath;
     const declined = opts.optOut || readBrainFirstLedger().find((e) => e.harness === host && e.path === path)?.status === 'declined';
     const o = installerSkillsBlock({ target: brainFirstTargetAt(host, path), launcher: opts.launcher, writer: WRITER, brainFirstDeclined: declined, skillLoading: opts.skillLoading, audience: 'owner', settingsPath: opts.settingsPath });
-    if (o.decision.value === 'spring' || o.action !== 'skip') opts.log(describeSkillsBlockOutcome(o, false).trim());
+    if (skillsOutcomeShown(o)) opts.log(describeSkillsBlockOutcome(o, false).trim());
     return o;
   });
 }

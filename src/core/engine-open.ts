@@ -7,12 +7,12 @@ import type { BrainEngine } from './engine.ts';
 import type { EngineConfig } from './types.ts';
 import { opError } from './ops/contract.ts';
 import { createEngine } from './engine-factory.ts';
-import { connectionUrlProblem, markEmbeddedEngine, releaseEmbeddedEngine, type EngineAISettings, type EngineSettings } from './embedded-engine.ts';
+import { connectionUrlProblem, markEmbeddedEngine, releaseEmbeddedEngine, type EngineAISettings, type EngineSettings, type EngineStorageSettings } from './embedded-engine.ts';
 import { assertLocalWriterValue, setEngineHostId } from './persistence/identity.ts';
 import { engineProviderProblem, recipeKeyEnv, sharedProviderEnvConflict } from './ai/engine-gateway.ts';
 import { getRecipe } from './ai/recipes/index.ts';
 
-export type { EngineAISettings, EngineSettings, EmbeddedSettingsView } from './embedded-engine.ts';
+export type { EngineAISettings, EngineSettings, EngineStorageSettings, EmbeddedSettingsView } from './embedded-engine.ts';
 export { embeddedSettings, isEmbeddedEngine, processHasEmbeddedEngines } from './embedded-engine.ts';
 export { withEngineScope } from './engine-scope.ts';
 export { hostIdFor } from './persistence/identity.ts';
@@ -26,6 +26,23 @@ const invalid = (setting: string, why: string) => opError('engine_settings_inval
 const text = (value: unknown) => typeof value === 'string' && value.length > 0;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const AI_MODELS = ['chat', 'expansion', 'reranker'];
+
+const STORAGE_NEEDS: Record<string, readonly (keyof EngineStorageSettings)[]> = {
+  local: ['localPath'], s3: ['bucket', 'endpoint', 'accessKeyId', 'secretAccessKey'],
+};
+const STORAGE_FIELDS = new Set(['backend', 'bucket', 'localPath', 'region', 'endpoint', 'accessKeyId', 'secretAccessKey', 'prefix']);
+const PREFIX = /^[a-z0-9][a-z0-9_-]*$/i;
+
+/** Every value the backend needs is given, so no backend falls back to a default path or reads an endpoint or credentials from the environment. */
+function checkStorage(storage: EngineStorageSettings): void {
+  const needs = storage && typeof storage === 'object' ? STORAGE_NEEDS[storage.backend] : undefined;
+  if (!needs) throw invalid('storage.backend', "storage is { backend: 'local' | 's3', ... }.");
+  const extra = Object.keys(storage).find(field => !STORAGE_FIELDS.has(field));
+  if (extra) throw invalid(`storage.${extra}`, `storage takes ${[...STORAGE_FIELDS].join(', ')}.`);
+  const missing = needs.find(field => !text(storage[field]));
+  if (missing) throw invalid(`storage.${missing}`, `A ${storage.backend} store needs ${needs.join(', ')}.`);
+  if (storage.prefix !== undefined && !PREFIX.test(storage.prefix)) throw invalid('storage.prefix', 'prefix is one segment of letters, digits, - and _.');
+}
 
 /** Names the setting that is wrong, never a key: a key's value is never part of a refusal. */
 function checkAI(ai: EngineAISettings): void {
@@ -84,6 +101,7 @@ function checkSettings(settings: EngineSettings): void {
     throw invalid('embedding', 'embedding is { model, dimensions } with a model name and a positive whole width.');
   }
   if (settings.ai !== undefined) checkAI(settings.ai);
+  if (settings.storage !== undefined) checkStorage(settings.storage);
 }
 
 /**
@@ -112,6 +130,7 @@ export async function openEngine(settings: EngineSettings): Promise<BrainEngine>
     ...(settings.writer ? { writer: { ...settings.writer } } : {}),
     ...(settings.embedding ? { embedding: { ...settings.embedding } } : {}),
     ...(settings.pglite ? { pglite: { ...settings.pglite } } : {}),
+    ...(settings.storage ? { storage: { ...settings.storage } } : {}),
     ...(settings.ai ? { ai: {
       providers: Object.fromEntries(Object.entries(settings.ai.providers).map(([id, provider]) => [id, { ...provider }])),
       ...(settings.ai.models ? { models: { ...settings.ai.models } } : {}),
