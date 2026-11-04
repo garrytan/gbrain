@@ -37,6 +37,7 @@ import { DEFAULT_CHARS_PER_TOKEN, DEFAULT_SAFETY_FACTOR, embedRequestMaxInputTok
 export { splitByTokenBudget, capBatchItems, NO_BATCH_CAP_SUB_BATCH_ITEMS } from './embed-batch-plan.ts';
 import { BudgetTracker, type BudgetReservation } from '../budget/budget-tracker.ts';
 import { failedCallUsage, recordOnTracker } from './budget-record.ts';
+import { refusingRedirects } from './refuse-redirects.ts';
 import { estimateChatInputTokens } from './chat-input-estimate.ts';
 import { chatWithFallback, normalizeChatFallbackChain } from './chat-fallback.ts';
 import { applyThinkingOff, thinkingOffMaxOutputTokens } from './thinking-off.ts';
@@ -1516,7 +1517,7 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       // asymmetric models there too (#1400) — a strict pass-through when no
       // input_type was threaded, so symmetric deployments see zero wire
       // change.
-      const fetchWrapper =
+      const fetchWrapper = refusingRedirects(recipe,
         compat.fetch ??
         (recipe.id === 'voyage'
           ? voyageCompatFetch
@@ -1525,7 +1526,7 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
           ? nvidiaCompatFetch
           : recipe.id === 'perplexity'
           ? perplexityCompatFetch
-          : openAICompatAsymmetricFetch);
+          : openAICompatAsymmetricFetch));
       const client = createOpenAICompatible({
         name: recipe.id,
         baseURL: compat.baseURL,
@@ -2441,7 +2442,7 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       return createOpenAICompatible({
         name: recipe.id,
         baseURL: compat.baseURL,
-        ...(compat.fetch ? { fetch: compat.fetch } : {}),
+        fetch: refusingRedirects(recipe, compat.fetch),
         ...auth,
         supportsStructuredOutputs: recipeSupportsStructuredOutputs(recipe),
       }).languageModel(modelId);
@@ -3370,7 +3371,7 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
       return createOpenAICompatible({
         name: recipe.id,
         baseURL: compat.baseURL,
-        ...(compat.fetch ? { fetch: compat.fetch } : {}),
+        fetch: refusingRedirects(recipe, compat.fetch),
         ...auth,
         supportsStructuredOutputs: recipeSupportsStructuredOutputs(recipe),
       }).languageModel(modelId);
@@ -4479,7 +4480,7 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
     });
   };
   try {
-    const transport: RerankTransport = _rerankTransport ?? ((u, init) => fetch(u, init));
+    const transport: RerankTransport = _rerankTransport ?? ((u, init) => (refusingRedirects(recipe) ?? fetch)(u, init));
     const maxInputTokens = rerankRequestMaxInputTokens(input.query, input.documents);
     const resp = await invokeAI({ operation: 'gateway.rerank', kind: 'rerank', model: modelStr, maxInputTokens, estimatedInputTokens: Math.ceil(rerankChars / (recipe.touchpoints.embedding?.chars_per_token ?? 4)) }, () => transport(url, {
       method: 'POST',

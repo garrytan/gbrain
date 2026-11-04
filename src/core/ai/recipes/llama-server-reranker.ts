@@ -5,6 +5,7 @@ export const llamaServerReranker: Recipe = {
   name: 'llama.cpp llama-server (reranker, local)',
   tier: 'openai-compat',
   implementation: 'openai-compatible',
+  compat: { refuse_redirects: true },
   // Distinct default port from the embedding recipe (8080) so a user
   // running both locally can keep them on separate servers.
   base_url_default: 'http://localhost:8081/v1',

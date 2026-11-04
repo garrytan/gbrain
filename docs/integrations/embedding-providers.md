@@ -203,6 +203,8 @@ The recipe marks Ollama chat as **not** tool-capable. That is enough for local r
 
 User-driven models: launch llama-server with `--model <gguf-path> --embeddings`, then run `gbrain init --embedding-model llama-server:<your-id> --embedding-dimensions <N>`. gbrain trusts the dimension you declare (you know the GGUF you launched); the recipe refuses the implicit shorthand `--model llama-server` because there's no canonical first model.
 
+gbrain does not follow redirects from llama-server, Ollama or LM Studio. A redirect fails the call, so your text never reaches an address you did not configure. If a base URL redirects, set it to the server's final address.
+
 ### LM Studio (local)
 
 LM Studio's OpenAI-compatible local server, on default port 1234 (distinct from Ollama's 11434 and llama-server's 8080). No env required — the local server ignores auth. Optional `LMSTUDIO_BASE_URL` (default `http://localhost:1234/v1`) and `LMSTUDIO_API_KEY`.
