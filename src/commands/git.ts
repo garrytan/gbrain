@@ -153,7 +153,7 @@ export async function runGit(args: string[]): Promise<number> {
       throw opError('commit_paths_invalid', 'These flags do not combine.',
         'Use one mode: -m <msg> -- <paths> (commit + push), --pending [-m <msg>], --push-only [--keep-checkout] [--branch <b>] [--expect-remote <sha> --resolve ...], or --pull [--require-clean].');
     }
-    if (Boolean(p.resolve.length) !== Boolean(p.expectRemote) || (p.expectRemote && !/^[0-9a-f]{7,64}$/i.test(p.expectRemote))) {
+    if ((p.resolve.length && !p.expectRemote) || (p.expectRemote && !/^[0-9a-f]{7,64}$/i.test(p.expectRemote))) {
       throw opError('commit_paths_invalid', '--resolve and --expect-remote <sha> go together.',
         'Copy both from the integrate_conflict report: --expect-remote names the remote commit your choice was made against.');
     }
@@ -182,7 +182,8 @@ export async function runGit(args: string[]): Promise<number> {
       ...(p.allowOutside ? { allowOutsideSourceRoot: true } : {}),
       ...(p.keepCheckout ? { keepCheckout: true } : {}),
       ...(p.branch ? { branch: p.branch } : {}),
-      ...(p.resolve.length ? { resolutions: parseResolutions(p.resolve), expectRemote: p.expectRemote } : {}),
+      ...(p.resolve.length ? { resolutions: parseResolutions(p.resolve) } : {}),
+      ...(p.expectRemote ? { expectRemote: p.expectRemote } : {}),
     });
     if (result.outcome === 'push_deferred') {
       emit(json, { ...result, repo }, `push deferred: another push is running in ${repo} and will publish HEAD too`);

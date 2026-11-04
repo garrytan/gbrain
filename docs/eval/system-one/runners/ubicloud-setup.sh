@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Bootstrap a fresh Ubicloud Ubuntu VM for the System One eval arms
-# (scripts/ubicloud/ubi-runner.sh run --setup <this file>). Installs Bun and
+# (scripts/ubicloud/ubi-runner.sh run --ttl-hours <past the arm's run> --setup <this file>). Installs Bun and
 # the checkout's dependencies and creates an empty keyless PGLite brain.
 set -euo pipefail
 BUN_VERSION="${BUN_VERSION:-1.4.4}"

@@ -59,6 +59,7 @@ import { VERSION } from '../src/version.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { SourceTargetError } from '../src/core/source-resolver.ts';
 import { renderBrainFirstSnippet } from '../src/core/setup/brain-first.ts';
+import { hookLauncherPath } from '../src/core/setup/hook-launcher.ts';
 
 const TOKEN_A = `gbrain_${'a'.repeat(64)}`;
 const TOKEN_B = `gbrain_${'b'.repeat(64)}`;
@@ -333,6 +334,9 @@ describe('full apply', () => {
     const cmd = ((hooks.SessionStart[0] as { hooks: Array<{ command: string }> }).hooks[0]).command;
     expect(cmd).toContain('GBRAIN_HOOK_LANE=harness');
     expect(cmd).toContain('GBRAIN_SOURCE=default');
+    // #8428: the harness lane's hooks start gbrain through the launcher in its own directory, never the session's.
+    expect(cmd).toContain(`${hookLauncherPath(f.home)} /opt/fake/gbrain hook`);
+    expect(hooksJson).toContain(hookLauncherPath(f.home));
 
     const state = readHarnessReceiptState(f.home);
     expect(state.state).toBe('ok');
@@ -526,6 +530,35 @@ describe('full apply', () => {
     expect(code).toBe(1);
     expect(f.out.join('\n')).toMatch(/no_pglite_path.*MCP tools are the active seam/s);
     expect(f.err.join('\n')).toMatch(/GBRAIN_HOME \/ DATABASE_URL/);
+  });
+});
+
+describe('skills index exit codes (GBRA-194)', () => {
+  test('a requested skills index that is not written makes apply exit 1 and lands in --json', async () => {
+    const f = makeFake();
+    await withEnv({ GBRAIN_HOME: dirname(f.home), GBRAIN_SKILL_LOADING: undefined }, async () => {
+      const code = await applyHarness(flags(['--harness', 'claude-code', '--skill-loading', 'spring', '--json']), f.deps);
+      expect(code).toBe(1);
+      expect(f.err.join('\n')).toContain('skills index was not written');
+      const doc = JSON.parse(f.out.filter(l => l.trim().startsWith('{')).join('\n') || '{}') as { status?: string; skills_index?: Array<{ action: string; reason?: string }> };
+      expect(doc.status).toBe('failed');
+      expect(doc.skills_index?.[0]).toMatchObject({ action: 'preserve', reason: 'launcher_unusable' });
+    });
+  });
+
+  test('a skills index that cannot be removed makes --remove exit 1 and keeps the receipt', async () => {
+    const f = makeFake();
+    await withEnv({ GBRAIN_HOME: dirname(f.home), GBRAIN_SKILL_LOADING: undefined }, async () => {
+      expect(await applyHarness(flags(['--harness', 'claude-code']), f.deps)).toBe(0);
+      writeFileSync(join(f.home, 'skill-loading.json'), '{not json');
+      const removeDeps: HarnessDeps = {
+        ...f.deps,
+        runner: async (argv: string[]) => (argv[0] === 'claude' && argv[2] === 'get' ? { code: 0, stdout: `Type: http\nURL: ${URL}`, stderr: '' } : { code: 0, stdout: '', stderr: '' }),
+      };
+      expect(await removeHarness(parseHarnessArgs(['--remove', '--yes']), removeDeps)).toBe(1);
+      expect(readHarnessReceiptState(f.home).state).not.toBe('absent');
+      expect(readFileSync(join(f.home, 'skill-loading.json'), 'utf8')).toBe('{not json');
+    });
   });
 });
 

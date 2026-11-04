@@ -33,6 +33,8 @@
  */
 
 import type { BrainEngine, FactRow, FactKind } from '../core/engine.ts';
+import type { Notice } from '../core/agent-output.ts';
+import type { DegradedStamp } from '../core/degraded-stamp.ts';
 import { clampSearchLimit } from '../core/engine.ts';
 import { effectiveConfidence } from '../core/facts/decay.ts';
 import { resolveEntitySlug } from '../core/entities/resolve.ts';
@@ -447,6 +449,8 @@ export type RecallVerbResult = {
   facts_degraded?: { reason?: string; unembedded?: number };
   results?: Array<{ slug: string; title: string | null; evidence: string; chunk: string | null }>;
   search_degraded?: string;
+  /** GBRA-200: the degraded stamp (CLI only; MCP carries it as `_meta.degraded`). */
+  degraded?: DegradedStamp;
   budget_tokens?: number;
   budget_used?: number;
   dropped_count?: number;
@@ -460,9 +464,15 @@ export type RecallVerbResult = {
  */
 async function recallVerbResult(engine: BrainEngine, flags: ParsedFlags, sourceId?: string): Promise<RecallVerbResult> {
   const { operationsByName } = await import('../core/operations.ts');
+  const { degradedStampFor } = await import('../core/degraded-stamp.ts');
   const op = operationsByName['recall'];
+  // GBRA-200: the stamp reads the op's retrieval stages and degraded notices.
+  let retrieval: Record<string, unknown> | null = null;
+  const notices: Notice[] = [];
   const ctx = {
     engine,
+    emitResponseMeta: (key: string, value: unknown) => { if (key === 'retrieval' && value && typeof value === 'object') retrieval = value as Record<string, unknown>; },
+    emitNotice: (notice: Notice | null | undefined) => { if (notice) notices.push(notice); },
     config: loadConfig() || { engine: 'pglite' as const },
     logger: {
       info: (m: string) => process.stderr.write(`[info] ${m}\n`),
@@ -491,9 +501,16 @@ async function recallVerbResult(engine: BrainEngine, flags: ParsedFlags, sourceI
       ...(flags.pending ? { include_pending: true } : {}),
     } : {}),
   };
-  if (!oneShot || !isThinClient(ctx.config)) return await op.handler(ctx, params) as RecallVerbResult;
-  const { callRemoteTool, unpackToolResult } = await import('../core/mcp-client.ts');
-  return unpackToolResult(await callRemoteTool(ctx.config, 'recall', params, { timeoutMs: 30_000 })) as RecallVerbResult;
+  const stamped = (result: RecallVerbResult, stamp: RecallVerbResult['degraded'] | null): RecallVerbResult => (stamp ? { ...result, degraded: stamp } : result);
+  if (!oneShot || !isThinClient(ctx.config)) {
+    const result = await op.handler(ctx, params) as RecallVerbResult;
+    return stamped(result, degradedStampFor('recall', result, { retrieval }, notices));
+  }
+  const { callRemoteTool, extractResponseMeta, unpackToolResult } = await import('../core/mcp-client.ts');
+  const raw = await callRemoteTool(ctx.config, 'recall', params, { timeoutMs: 30_000 });
+  const result = unpackToolResult(raw) as RecallVerbResult;
+  const meta = extractResponseMeta(raw);
+  return stamped(result, (meta?.degraded as RecallVerbResult['degraded'] | undefined) ?? degradedStampFor('recall', result, meta, []));
 }
 
 export async function renderRecallVerbResult(flags: ParsedFlags, result: RecallVerbResult): Promise<void> {
@@ -528,6 +545,7 @@ export async function renderRecallVerbResult(flags: ParsedFlags, result: RecallV
     lines.push(`note: fact ranking degraded (${[d.reason, d.unembedded ? `${d.unembedded} fact(s) without a comparable embedding` : null].filter(Boolean).join('; ')})`);
   }
   if (result.search_degraded) lines.push(`note: search degraded (${result.search_degraded})`);
+  if (result.degraded) process.stderr.write((await import('../core/degraded-stamp.ts')).degradedStampLine(result.degraded) + '\n');
   if (result.budget_tokens !== undefined) {
     lines.push(`budget: ${result.budget_used}/${result.budget_tokens} tokens used, ${result.dropped_count} dropped`);
   }
@@ -850,6 +868,7 @@ async function fetchCursorPage(engine: BrainEngine, flags: ParsedFlags, sourceId
     activeOnly: !flags.includeExpired,
     limit: flags.limit,
     excludeAuditRows: true,
+    eligibility: {},
     grep: flags.grep ?? undefined,
     sessionId: flags.sessionId || undefined,
     ...narrow,
@@ -889,6 +908,7 @@ async function fetchRowsLocal(
     return engine.listSupersessions(sourceId, {
       since: resolvedSince ?? undefined,
       limit: flags.limit,
+      eligibility: {},
     });
   }
   // An explicit `--since DURATION` / `--today` cutoff is a "what happened in
@@ -910,6 +930,7 @@ async function fetchRowsLocal(
           limit: flags.limit,
           grep: flags.grep ?? undefined,
           excludeAuditRows: true,
+          eligibility: {},
         })
       : engine.listFactsByEntity(sourceId, entitySlug, {
           sessionId: flags.sessionId || undefined,
@@ -917,6 +938,7 @@ async function fetchRowsLocal(
           limit: flags.limit,
           grep: flags.grep ?? undefined,
           excludeAuditRows: true,
+          eligibility: {},
         })));
     const rows = mergeNewestFirst(lists, flags.limit, resolvedSince && !windowEventTime ? r => r.created_at : r => r.valid_from ?? r.created_at);
     // #4720: the bare positional is entity-first, but keyless/casual usage
@@ -936,6 +958,7 @@ async function fetchRowsLocal(
         limit: flags.limit,
         grep: flags.entity.toLowerCase(),
         excludeAuditRows: true,
+        eligibility: {},
       });
       if (textRows.length > 0) {
         noteEntityTextFallback(flags.entity, textRows.length);
@@ -953,6 +976,7 @@ async function fetchRowsLocal(
         limit: flags.limit,
         grep: flags.grep ?? undefined,
         excludeAuditRows: true,
+        eligibility: {},
       });
     }
     return engine.listFactsBySession(sourceId, flags.sessionId, {
@@ -960,6 +984,7 @@ async function fetchRowsLocal(
       limit: flags.limit,
       grep: flags.grep ?? undefined,
       excludeAuditRows: true,
+      eligibility: {},
     });
   }
   if (resolvedSince) {
@@ -978,6 +1003,7 @@ async function fetchRowsLocal(
       limit: flags.limit,
       grep: flags.grep ?? undefined,
       excludeAuditRows: true,
+      eligibility: {},
     });
   }
   return engine.listFactsSince(sourceId, new Date(0), {
@@ -986,6 +1012,7 @@ async function fetchRowsLocal(
     limit: flags.limit,
     grep: flags.grep ?? undefined,
     excludeAuditRows: true,
+    eligibility: {},
   });
 }
 

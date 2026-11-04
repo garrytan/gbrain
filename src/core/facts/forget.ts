@@ -19,6 +19,7 @@ import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesy
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
 import { contentHash } from '../utils.ts';
+import { locateOutsideCode } from '../fence-scan.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { rewriteLiveSegmentedFences } from '../page-body/segment-rewrite.ts';
 import type { BodyRegion } from '../page-body/types.ts';
@@ -76,6 +77,13 @@ export function supersededFact(fact: ParsedFact, today: string, newRowNum: numbe
   return { ...fact, active: false, validUntil, context };
 }
 
+/** A retired row: struck and dated like a superseded one, with the retirement reason instead of a withdrawal marker. */
+export function retiredFact(fact: ParsedFact, today: string, reason: string): ParsedFact {
+  const context = [`retired: ${reason}`, fact.context?.trim()].filter(Boolean).join(' | ');
+  const validUntil = fact.validUntil && /^\d{4}-\d{2}-\d{2}$/.test(fact.validUntil) && fact.validUntil < today ? fact.validUntil : today;
+  return { ...fact, active: false, validUntil, context };
+}
+
 /**
  * Strike fence row `rowNum` inside `body` with `strike` (strikethrough,
  * valid_until = today, and a withdrawal or supersession marker in context,
@@ -90,8 +98,8 @@ export function strikeFenceRow(body: string, rowNum: number, strike: (fact: Pars
   const target = parsed.facts.find(f => f.rowNum === rowNum);
   if (!target) return null;
   const updated: ParsedFact[] = parsed.facts.map(f => f.rowNum === rowNum ? strike(f) : f);
-  const begin = body.indexOf(FENCE_BEGIN);
-  const end = body.indexOf(FENCE_END, begin + 1);
+  // The splice uses the parser's own code-aware locator: a marker quoted in code (an inline span) above the fence is not it (#8059).
+  const { beginIdx: begin, endIdx: end } = locateOutsideCode(body, FENCE_BEGIN, FENCE_END);
   if (begin === -1 || end === -1) return null;
   return body.slice(0, begin) + renderFactsTable(updated) + body.slice(end + FENCE_END.length);
 }
@@ -133,6 +141,13 @@ export async function forgetFactInFence(
      * again and no other page is invalidated.
      */
     supersededBy?: { rowNum: number | null };
+    /**
+     * Retirement, not withdrawal: the source item the fact was extracted from
+     * changed or was deleted upstream. Expires and strikes the row with
+     * `retired: <reason>` in its context; no durable withdrawal is recorded, so a
+     * re-extraction of the current source may assert the claim again.
+     */
+    retired?: string;
   } = {},
 ): Promise<ForgetFactResult> {
   const reason = opts.reason ?? 'forgotten';
@@ -140,7 +155,7 @@ export async function forgetFactInFence(
   const supersession = opts.supersededBy;
   const strike = (fact: ParsedFact) => supersession
     ? supersededFact(fact, today, supersession.rowNum)
-    : withdrawnFact(fact, today, reason);
+    : opts.retired !== undefined ? retiredFact(fact, today, opts.retired) : withdrawnFact(fact, today, reason);
 
   const rows = await engine.executeRaw<FactDbRow>(
     `SELECT id, source_id, entity_slug, row_num, source_markdown_slug, expired_at, visibility
@@ -169,8 +184,8 @@ export async function forgetFactInFence(
 
   // A stale source file or rebuilt index must not silently restore an exact
   // withdrawn claim. Intent commits independently of filesystem availability.
-  // A supersession only expires the row.
-  if (supersession) {
+  // A supersession or a retirement only expires the row.
+  if (supersession || opts.retired !== undefined) {
     await maintenanceTransaction(engine, tx => tx.executeRaw(`UPDATE facts SET valid_until = LEAST(COALESCE(valid_until, now()), now()), expired_at = now()
       WHERE id = $1 AND expired_at IS NULL`, [factId]));
   } else {

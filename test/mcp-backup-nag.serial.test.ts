@@ -27,6 +27,7 @@ import { tmpdir } from 'node:os';
 import * as realHybrid from '../src/core/search/hybrid.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { encodeDeepResearchId } from '../src/core/deep-research-id.ts';
+import { fenceTranscriptText } from '../src/core/search/transcript-quote.ts';
 
 let nextResults: unknown[] = [{ id: encodeDeepResearchId('default', 'a'), page_id: 1, source_id: 'default', slug: 'a', chunk_text: 'x' }];
 
@@ -117,9 +118,11 @@ type CallOpts = { remote?: boolean; transport?: 'stdio' | 'http' };
  */
 function leanResults({ fetchCallable = true } = {}): unknown[] {
   // The search op labels every hit with its trust tier and origin (#5575 A6); the stub rows carry neither, so unknown/unrecorded.
+  // An unknown-tier row reaches a remote reader quoted (GST-687).
   return nextResults.map(r => {
     const { page_id: _p, id, ...lean } = r as Record<string, unknown>;
-    return { ...lean, ...(fetchCallable && id !== undefined ? { id } : {}), trust_tier: 'unknown', origin: 'unrecorded' };
+    return { ...lean, chunk_text: fenceTranscriptText(lean.chunk_text as string, lean.slug as string), quoted: 'transcript',
+      ...(fetchCallable && id !== undefined ? { id } : {}), trust_tier: 'unknown', origin: 'unrecorded' };
   });
 }
 
@@ -132,8 +135,9 @@ async function callSearch(opts: CallOpts = {}) {
   });
   // F3's degraded_recall notice (this keyless stub searches keyword-only) is
   // orthogonal to the backup block under test; it is pinned in
-  // test/mcp-notice-channels.test.ts. So is F2's keyword count line (test/search-keyword-paging.test.ts).
-  return { ...out, content: out.content.filter(c => !c.text.startsWith('[gbrain notice degraded_recall ') && !c.text.startsWith('[gbrain search] ')) };
+  // test/mcp-notice-channels.test.ts. So is F2's keyword count line (test/search-keyword-paging.test.ts),
+  // and the GBRA-200 degraded stamp (test/degraded-stamp-paths.serial.test.ts).
+  return { ...out, content: out.content.filter(c => !c.text.startsWith('[gbrain notice degraded_recall ') && !c.text.startsWith('[gbrain search] ') && !c.text.startsWith('[gbrain degraded: ')) };
 }
 
 async function waitFor(pred: () => boolean, ms = 2000): Promise<boolean> {

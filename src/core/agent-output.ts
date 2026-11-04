@@ -115,6 +115,8 @@ export interface AgentEnvelope {
   fence?: Record<string, unknown>; fence_issues?: Array<Record<string, unknown>>;
   /** A `fact_withdrawn` refusal's withdrawal (`at`, `subject`, `visibility`). */
   withdrawn?: WithdrawnDetail;
+  /** A write-grant refusal's writable sources, from the caller's own grant only (GBRA-200). */
+  writable_source_ids?: string[];
 }
 
 export interface RenderContext {
@@ -387,6 +389,7 @@ export interface EnvelopeParts {
   fence?: Record<string, unknown>;
   fence_issues?: Array<Record<string, unknown>>;
   withdrawn?: WithdrawnDetail;
+  writable_source_ids?: string[];
 }
 
 /** Replace each occurrence of `bare` that is a whole command (not followed by a word, path or more flags). */
@@ -436,6 +439,7 @@ export function buildEnvelope(p: EnvelopeParts, ctx: RenderContext): AgentEnvelo
     ...(p.fence !== undefined ? { fence: p.fence } : {}),
     ...(p.fence_issues?.length ? { fence_issues: p.fence_issues } : {}),
     ...(p.withdrawn !== undefined ? { withdrawn: p.withdrawn } : {}),
+    ...(p.writable_source_ids !== undefined ? { writable_source_ids: p.writable_source_ids } : {}),
     ...(p.reason !== undefined ? { reason: p.reason } : {}),
     ...(p.why !== undefined ? { why: p.why } : {}),
     ...(fix ? { fix } : {}),
@@ -545,7 +549,7 @@ function recoveryFix(p: EnvelopeParts, ctx: AgentErrorContext, fields?: ReceiptF
 
 const REFRESH_REFUSALS: ReadonlySet<string> = new Set([
   'refresh_not_managed', 'refresh_not_owner', 'refresh_no_upstream', 'fetch_failed', 'refresh_diverged', 'refresh_dirty',
-  'sync_in_progress', 'refresh_in_progress', 'refresh_drain_timeout', 'refresh_source_changed', 'refresh_recovery_required',
+  'sync_in_progress', 'refresh_in_progress', 'refresh_drain_timeout', 'refresh_lock_timeout', 'refresh_source_changed', 'refresh_recovery_required',
   'worktree_refreshing',
 ]);
 
@@ -579,6 +583,7 @@ const ROWS: Row[] = [
         write_request: j.write_request, write_error: e.writeError,
         ...(e.fence ? { fence: e.fence } : {}), ...(e.fenceIssues?.length ? { fence_issues: e.fenceIssues } : {}),
         ...(e.withdrawn ? { withdrawn: e.withdrawn } : {}),
+        ...(e.writableSourceIds ? { writable_source_ids: e.writableSourceIds } : {}),
         ...(e.retryable !== undefined ? { retryable: e.retryable } : {}),
       };
     },

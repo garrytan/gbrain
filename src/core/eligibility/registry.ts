@@ -25,7 +25,7 @@ export type ReadTrustHandling = 'filtered' | 'labeled' | 'text_free';
 
 export const OP_READ_TRUST: Readonly<Record<string, ReadTrustHandling>> = {
   // memory verbs and retrieval
-  recall: 'filtered', context_pack: 'filtered', delta: 'filtered',
+  recall: 'filtered', context_pack: 'filtered', delta: 'filtered', memory_recall: 'labeled',
   search: 'filtered', search_exact: 'filtered', query: 'filtered', get_page: 'filtered', fetch: 'filtered',
   get_chunks: 'filtered', get_timeline: 'filtered', takes_list: 'filtered', takes_search: 'filtered',
   assemble_evidence: 'filtered',

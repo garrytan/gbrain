@@ -48,7 +48,7 @@ beforeAll(async () => {
   await engine.setConfig('search.remote_private_pages', 'visible');
   __resetPrivateVisibilityCacheForTests();
 }, 120_000);
-afterAll(async () => { await engine.disconnect(); });
+afterAll(async () => { __resetPrivateVisibilityCacheForTests(); await engine.disconnect(); });
 
 describe('#6723 context_pack pinned questions are matched per source', () => {
   test('each source-qualified card carries only its own source\'s pin', async () => {

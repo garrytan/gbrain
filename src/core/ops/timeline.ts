@@ -13,12 +13,15 @@ import { opTransport } from './op-fix.ts';
 import { readPolicyOpts } from './context.ts';
 import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
 import { stampRowTrust } from '../eligibility/stamp.ts';
+import { quoteTimelineRows } from './timeline-quote.ts';
+import { unquoteTranscriptText } from '../search/transcript-quote.ts';
 import {
   enforceSubagentSlugFence,
   enforceClientSlugFence,
 } from './context.ts';
 
 // --- Timeline ---
+
 
 const add_timeline_entry: Operation = {
   name: 'add_timeline_entry',
@@ -62,7 +65,9 @@ const add_timeline_entry: Operation = {
     if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
       throw badDate(`Invalid calendar date "${date}"`);
     }
-    return submitPageMutation(ctx, { operation: 'add_timeline_entry', params: p });
+    // #8377: an entry an agent copied out of a quoted read (get_timeline, chronicle) is stored without the fence, so its replay key matches; #8384: its source too.
+    const unquote = (v: unknown) => typeof v === 'string' && ctx.remote !== false ? unquoteTranscriptText(v, String(p.slug).toLowerCase()) : v;
+    return submitPageMutation(ctx, { operation: 'add_timeline_entry', params: { ...p, summary: unquote(p.summary), ...(p.detail !== undefined ? { detail: unquote(p.detail) } : {}), ...(p.source !== undefined ? { source: unquote(p.source) } : {}) } });
   },
   cliHints: { name: 'timeline-add', positional: ['slug', 'date', 'summary'] },
 };
@@ -100,7 +105,7 @@ const get_timeline: Operation = {
       ...(limit !== undefined ? { limit } : {}),
       eligibility,
     });
-    return stampRowTrust(ctx.engine, 'timeline_entries', entries, e => (e as { id: number }).id);
+    return quoteTimelineRows(ctx, p.slug as string, await stampRowTrust(ctx.engine, 'timeline_entries', entries, e => (e as { id: number }).id));
   },
   scope: 'read',
   cliHints: { name: 'timeline', positional: ['slug'] },

@@ -326,7 +326,7 @@ async function runOnce(fixture: Fixture, over: RunOptsOverride = {}) {
     maxRuntimeMin: over.maxRuntimeMin ?? 1,
     force: true, // bypass dirty-tree (tempdir isn't a git repo)
     ...(over.heldOutPath ? { heldOutPath: over.heldOutPath } : {}),
-    ...(over.optimizerMode ? { optimizerMode: over.optimizerMode } : {}),
+    optimizerMode: over.optimizerMode ?? 'reflect',
     ...(over.reflectMode ? { reflectMode: over.reflectMode } : {}),
     ...(over.disableValidationGate ? { disableValidationGate: over.disableValidationGate } : {}),
   });

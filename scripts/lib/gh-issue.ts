@@ -112,7 +112,12 @@ function tokenClient(resolve: (path: string) => string, token: string): GitHubCl
       const res = await fetch(url, { headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json' }, redirect: 'manual' });
       const location = res.headers.get('location');
       const body = location ? await fetch(location) : res;
-      if (!body.ok) throw Object.assign(new Error(`GitHub download ${url} -> ${body.status}`), { status: body.status });
+      if (!body.ok) {
+        const text = await body.text().catch(() => '');
+        if (location) throw new Error(`GitHub download ${url} -> artifact storage answered ${body.status}: ${text.slice(0, 300)}`);
+        const rateLimited = body.headers.get('x-ratelimit-remaining') === '0' || body.headers.has('retry-after');
+        throw Object.assign(new Error(`GitHub download ${url} -> ${body.status}: ${text.slice(0, 300)}`), { status: body.status, rateLimited });
+      }
       return new Uint8Array(await body.arrayBuffer());
     },
   };
@@ -133,7 +138,11 @@ function ghCliClient(resolve: (path: string) => string): GitHubClient {
     },
     async download(path: string): Promise<Uint8Array> {
       const r = Bun.spawnSync(['gh', 'api', resolve(path)], { stdout: 'pipe', stderr: 'pipe' });
-      if (r.exitCode !== 0) throw new Error(`gh api ${resolve(path)} failed: ${r.stderr.toString().slice(0, 300)}. Fix: gh auth login, or export GH_TOKEN.`);
+      if (r.exitCode !== 0) {
+        const err = r.stderr.toString();
+        const status = Number(/HTTP (\d{3})/.exec(err)?.[1]) || undefined;
+        throw Object.assign(new Error(`gh api ${resolve(path)} failed: ${err.slice(0, 300)}. Fix: gh auth login, or export GH_TOKEN.`), { status });
+      }
       return new Uint8Array(r.stdout);
     },
   };
@@ -260,18 +269,28 @@ export function readZipEntry(zip: Uint8Array, name: string): Uint8Array | undefi
   return undefined;
 }
 
-/** One JSON file from a run's named artifact; `reason` says why it could not be read (missing, expired, unreadable). */
-export async function fetchArtifactJson(client: GitHubClient, runId: number, artifact: string, file: string): Promise<{ value?: unknown; reason?: string }> {
+/** One JSON file from a run's named artifact; `reason` says why it could not be read (missing, expired, unreadable), and `transient` marks a failed request that a later read may get past: no response, a 5xx, a 429, a rate-limit 403 (by its headers, or its text naming a rate limit or abuse detection) or a refusal from the artifact storage the download redirects to (a fresh read mints a new signed URL), never another 4xx such as a 403 or an expired artifact's 410. */
+export async function fetchArtifactJson(client: GitHubClient, runId: number, artifact: string, file: string): Promise<{ value?: unknown; reason?: string; transient?: boolean }> {
   if (!client.download) return { reason: 'this client cannot download artifacts' };
+  const failed = (e: unknown) => `reading run ${runId}'s '${artifact}' artifact failed: ${e instanceof Error ? e.message : String(e)}`;
+  let zip: Uint8Array;
   try {
     const list = await client.request<{ artifacts: Array<{ id: number; name: string; expired: boolean }> }>('GET', `repos/{repo}/actions/runs/${runId}/artifacts?name=${encodeURIComponent(artifact)}&per_page=10`);
     const found = list.artifacts.find(a => a.name === artifact);
     if (!found) return { reason: `run ${runId} has no '${artifact}' artifact` };
     if (found.expired) return { reason: `run ${runId}'s '${artifact}' artifact has expired` };
-    const bytes = readZipEntry(await client.download(`repos/{repo}/actions/artifacts/${found.id}/zip`), file);
+    zip = await client.download(`repos/{repo}/actions/artifacts/${found.id}/zip`);
+  } catch (e) {
+    const status = (e as { status?: number }).status ?? 0;
+    const rateLimited = status === 403 && ((e as { rateLimited?: boolean }).rateLimited || /rate limit|abuse detection/i.test(e instanceof Error ? e.message : ''));
+    const permanent = status >= 400 && status < 500 && status !== 429 && !rateLimited;
+    return permanent ? { reason: failed(e) } : { reason: failed(e), transient: true };
+  }
+  try {
+    const bytes = readZipEntry(zip, file);
     if (!bytes) return { reason: `run ${runId}'s '${artifact}' artifact has no readable ${file}` };
     return { value: JSON.parse(new TextDecoder().decode(bytes)) };
   } catch (e) {
-    return { reason: `reading run ${runId}'s '${artifact}' artifact failed: ${e instanceof Error ? e.message : String(e)}` };
+    return { reason: failed(e) };
   }
 }

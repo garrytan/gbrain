@@ -47,16 +47,14 @@ const makeMeta = (overrides: Partial<HybridSearchMeta> = {}): HybridSearchMeta =
 
 describe('recordSearchTelemetry — in-memory bucket', () => {
   test('first record creates a bucket; record() never blocks the caller', () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     expect(w.bucketCountForTest()).toBe(0);
     recordSearchTelemetry(engine, makeMeta(), { results_count: 5 });
     expect(w.bucketCountForTest()).toBe(1);
   });
 
   test('same (date, mode, intent) accumulates into one bucket', () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     recordSearchTelemetry(engine, makeMeta(), { results_count: 5 });
     recordSearchTelemetry(engine, makeMeta(), { results_count: 7 });
     recordSearchTelemetry(engine, makeMeta(), { results_count: 3 });
@@ -68,8 +66,7 @@ describe('recordSearchTelemetry — in-memory bucket', () => {
   });
 
   test('different modes / intents create distinct buckets', () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     recordSearchTelemetry(engine, makeMeta({ mode: 'conservative', intent: 'entity' }), { results_count: 2 });
     recordSearchTelemetry(engine, makeMeta({ mode: 'tokenmax', intent: 'temporal' }), { results_count: 9 });
     recordSearchTelemetry(engine, makeMeta({ mode: 'balanced', intent: 'event' }), { results_count: 4 });
@@ -77,8 +74,7 @@ describe('recordSearchTelemetry — in-memory bucket', () => {
   });
 
   test('cache_hit / cache_miss counters fire from meta.cache.status', () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     recordSearchTelemetry(engine, makeMeta({ cache: { status: 'hit' } }));
     recordSearchTelemetry(engine, makeMeta({ cache: { status: 'hit' } }));
     recordSearchTelemetry(engine, makeMeta({ cache: { status: 'miss' } }));
@@ -91,8 +87,7 @@ describe('recordSearchTelemetry — in-memory bucket', () => {
   });
 
   test('sum_budget_dropped accumulates from meta.token_budget.dropped', () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     recordSearchTelemetry(engine, makeMeta({ token_budget: { budget: 4000, used: 3800, kept: 8, dropped: 12 } }));
     recordSearchTelemetry(engine, makeMeta({ token_budget: { budget: 4000, used: 4000, kept: 10, dropped: 7 } }));
     const today = new Date().toISOString().slice(0, 10);
@@ -101,8 +96,7 @@ describe('recordSearchTelemetry — in-memory bucket', () => {
   });
 
   test('missing mode / intent fall back to "unset" — telemetry is non-blocking', () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     recordSearchTelemetry(engine, { vector_enabled: true, detail_resolved: null, expansion_applied: false });
     const today = new Date().toISOString().slice(0, 10);
     expect(w.bucketForTest(today, 'unset', 'unset')).not.toBeNull();
@@ -111,8 +105,7 @@ describe('recordSearchTelemetry — in-memory bucket', () => {
 
 describe('flush() writes to search_telemetry', () => {
   test('flush drains the bucket map atomically', async () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     recordSearchTelemetry(engine, makeMeta(), { results_count: 5 });
     recordSearchTelemetry(engine, makeMeta(), { results_count: 7 });
     expect(w.bucketCountForTest()).toBe(1);
@@ -128,8 +121,7 @@ describe('flush() writes to search_telemetry', () => {
   });
 
   test('ON CONFLICT DO UPDATE adds raw values (concurrent-flush semantics)', async () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
 
     // First flush: 3 calls under balanced/general.
     recordSearchTelemetry(engine, makeMeta(), { results_count: 5 });
@@ -151,16 +143,14 @@ describe('flush() writes to search_telemetry', () => {
   });
 
   test('flush is no-op when bucket map is empty', async () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     await w.flush(); // no records, no rows
     const rows = await engine.executeRaw<{ n: number }>('SELECT COUNT(*)::int AS n FROM search_telemetry');
     expect(rows[0].n).toBe(0);
   });
 
   test('concurrent flush() calls coalesce (flushInFlight reuse)', async () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     recordSearchTelemetry(engine, makeMeta(), { results_count: 1 });
     // Two simultaneous flush() awaits → both observe the same underlying drain.
     const [a, b] = await Promise.all([w.flush(), w.flush()]);
@@ -180,8 +170,7 @@ describe('readSearchStats — read-time derived averages', () => {
   });
 
   test('one bucket flushed → stats derive averages from sums/counts', async () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     recordSearchTelemetry(engine, makeMeta(), { results_count: 10 });
     recordSearchTelemetry(engine, makeMeta(), { results_count: 20 });
     recordSearchTelemetry(engine, makeMeta(), { results_count: 30 });
@@ -193,8 +182,7 @@ describe('readSearchStats — read-time derived averages', () => {
   });
 
   test('cache_hit_rate computed from hits + misses (excludes disabled)', async () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     recordSearchTelemetry(engine, makeMeta({ cache: { status: 'hit' } }));
     recordSearchTelemetry(engine, makeMeta({ cache: { status: 'hit' } }));
     recordSearchTelemetry(engine, makeMeta({ cache: { status: 'hit' } }));
@@ -209,8 +197,7 @@ describe('readSearchStats — read-time derived averages', () => {
   });
 
   test('intent_distribution and mode_distribution surface counts', async () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     recordSearchTelemetry(engine, makeMeta({ mode: 'conservative', intent: 'entity' }));
     recordSearchTelemetry(engine, makeMeta({ mode: 'conservative', intent: 'entity' }));
     recordSearchTelemetry(engine, makeMeta({ mode: 'tokenmax', intent: 'temporal' }));
@@ -254,8 +241,7 @@ describe('readSearchStats — read-time derived averages', () => {
 // diverts them out of the call/intent/mode aggregates.
 describe('empty_result bucket keyed by cause (WP2/T3)', () => {
   test('vector down + empty response → vector_disabled cause', async () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     recordSearchTelemetry(engine, makeMeta({ vector_enabled: false }), { results_count: 0 });
     await w.flush();
     const s = await readSearchStats(engine, { days: 7 });
@@ -264,8 +250,7 @@ describe('empty_result bucket keyed by cause (WP2/T3)', () => {
   });
 
   test('budget dropped everything → budget_dropped_all cause (beats vector_disabled)', async () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     recordSearchTelemetry(
       engine,
       makeMeta({
@@ -280,8 +265,7 @@ describe('empty_result bucket keyed by cause (WP2/T3)', () => {
   });
 
   test('degraded budget_dropped_all stage classifies the same way', async () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     recordSearchTelemetry(
       engine,
       makeMeta({ degraded: [{ stage: 'budget_dropped_all' }] }),
@@ -293,8 +277,7 @@ describe('empty_result bucket keyed by cause (WP2/T3)', () => {
   });
 
   test('healthy pipeline + zero hits → keyword_zero cause', async () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     recordSearchTelemetry(engine, makeMeta(), { results_count: 0 });
     await w.flush();
     const s = await readSearchStats(engine, { days: 7 });
@@ -302,8 +285,7 @@ describe('empty_result bucket keyed by cause (WP2/T3)', () => {
   });
 
   test('empty cache HIT (offset artifact) is NOT counted as an empty-result cause', async () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     recordSearchTelemetry(engine, makeMeta({ cache: { status: 'hit' } }), { results_count: 0 });
     await w.flush();
     const s = await readSearchStats(engine, { days: 7 });
@@ -311,8 +293,7 @@ describe('empty_result bucket keyed by cause (WP2/T3)', () => {
   });
 
   test('reserved rows never skew total_calls or the distributions', async () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     recordSearchTelemetry(engine, makeMeta(), { results_count: 5 });
     recordSearchTelemetry(engine, makeMeta({ vector_enabled: false }), { results_count: 0 });
     await w.flush();
@@ -334,8 +315,7 @@ describe('awaitPendingTelemetryFlush (#4143 drain)', () => {
   });
 
   test("exit mode flushes residual buckets — BOTH the normal and the empty_result bucket land", async () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     // One normal record + one zero-result record (the empty_result cause
     // bucket #4096 added — the second INSERT that turned the flush into the
     // close()-deadlock trigger).
@@ -355,8 +335,7 @@ describe('awaitPendingTelemetryFlush (#4143 drain)', () => {
   });
 
   test('disconnect mode awaits only the in-flight flush and DROPS residual buckets (lossy by design)', async () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     recordSearchTelemetry(engine, makeMeta(), { results_count: 5 });
     // Kick a flush so it is in flight, then buffer MORE — the post-swap
     // records that a disconnect-mode drain must NOT try to write.
@@ -375,7 +354,7 @@ describe('awaitPendingTelemetryFlush (#4143 drain)', () => {
   });
 
   test('a drain that exceeds its bound reports unfinished instead of hanging', async () => {
-    const w = getTelemetryWriter();
+    const w = getTelemetryWriter(engine);
     // A flush that never settles (simulated) — the drain must give up at the bound.
     (w as unknown as { flushInFlight: Promise<void> | null }).flushInFlight = new Promise<void>(() => {});
     const started = Date.now();

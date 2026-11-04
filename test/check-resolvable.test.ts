@@ -12,6 +12,11 @@ import {
 const SKILLS_DIR = join(import.meta.dir, "..", "skills");
 
 describe("parseResolverEntries", () => {
+  test('an orphan skills-index begin marker does not hide the resolver entries after it', () => {
+    const content = '## Brain\n<!-- gbrain:skills:begin -->\n- a stale line\n| "query the brain" | `skills/query/SKILL.md` |\n';
+    expect(parseResolverEntries(content).map((e) => e.skillPath)).toContain('skills/query/SKILL.md');
+  });
+
   test("extracts skill paths from markdown table rows", () => {
     const content = `## Brain operations
 | Trigger | Skill |

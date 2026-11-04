@@ -46,7 +46,7 @@ import type { PageSnapshot } from './page-state/types.ts';
 import { resolveRecordedSourceFilePath, resolveSourceLocalFilePath, sourceGitScope } from './markdown.ts';
 import { recordedPathFromFileUri, scannerSlugRootMode } from './write-through.ts';
 import { isOpPageSlug } from './ops/context.ts';
-import { existingLocalHostId } from './persistence/identity.ts';
+import { existingHostIdFor } from './persistence/identity.ts';
 import { getWorktreeBinding } from './persistence/ownership.ts';
 import { sourceMirrorReadOnly } from './persistence/mirror-read-only.ts';
 import { publishesDatabaseOnly } from './persistence/page-prepare.ts';
@@ -124,7 +124,7 @@ export type SourceContext = { ok: true; root: string; owner: GhostOwner; mode: A
 const missing = (error: unknown) => ['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException)?.code ?? '');
 
 export async function sourceContext(engine: BrainEngine, sourceId: string): Promise<SourceContext> {
-  const hostId = existingLocalHostId();
+  const hostId = existingHostIdFor(engine);
   const binding = await getWorktreeBinding(engine, sourceId, hostId);
   if (!binding) return { ok: false, status: 'not_applicable', reason: 'not_applicable' };
   if (!hostId || !binding.local_path || binding.owner_host_id !== hostId || binding.state !== 'active') {

@@ -38,6 +38,7 @@ const load_page_upload = () => import('./ops/page-upload.ts') as Promise<Record<
 const load_pages = () => import('./ops/pages.ts') as Promise<Record<string, unknown>>;
 const load_persistence = () => import('./ops/persistence.ts') as Promise<Record<string, unknown>>;
 const load_purge = () => import('./ops/purge.ts') as Promise<Record<string, unknown>>;
+const load_qm_memory = () => import('./ops/qm-memory.ts') as Promise<Record<string, unknown>>;
 const load_questions = () => import('./ops/questions.ts') as Promise<Record<string, unknown>>;
 const load_raw_data = () => import('./ops/raw-data.ts') as Promise<Record<string, unknown>>;
 const load_request_tools = () => import('./ops/request-tools.ts') as Promise<Record<string, unknown>>;
@@ -145,6 +146,8 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "file_list": [load_files, "filesOperations"],
   "file_upload": [load_files, "filesOperations"],
   "file_url": [load_files, "filesOperations"],
+  "file_register": [load_files, "filesOperations"],
+  "file_verify": [load_files, "filesOperations"],
   "submit_job": [load_jobs, "jobsOperations"],
   "get_job": [load_jobs, "jobsOperations"],
   "wait_job": [load_jobs, "jobsOperations"],
@@ -211,6 +214,8 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "purge_fact": [load_purge, "purgeOperations"],
   "list_page_purges": [load_purge, "purgeOperations"],
   "unpurge_page": [load_purge, "purgeOperations"],
+  "memory_recall": [load_qm_memory, "qmMemoryOperations"],
+  "memory_write": [load_qm_memory, "qmMemoryOperations"],
   "find_contradictions": [load_insights, "find_contradictions"],
   "find_experts": [load_insights, "find_experts"],
   "find_trajectory": [load_insights, "find_trajectory"],

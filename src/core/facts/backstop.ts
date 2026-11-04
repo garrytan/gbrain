@@ -380,8 +380,8 @@ export async function runFactsBackstop(
       : { mode: 'inline', inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], skipped };
   }
   // Facts extracted from a private page stay private, whatever the caller or the brain default says.
-  const { tightenToPage } = await import('./visibility.ts');
-  if (tightenToPage('world', parsedPage) === 'private') ctx = { ...ctx, visibility: 'private' };
+  const { tightenToStoredPage } = await import('./visibility.ts');
+  if (await tightenToStoredPage(ctx.engine, ctx.sourceId, 'world', parsedPage) === 'private') ctx = { ...ctx, visibility: 'private' };
   const { managedPersistenceEnabled } = await import('../persistence/ownership.ts');
   if (await managedPersistenceEnabled(ctx.engine)) {
     if (mode !== 'inline') {
@@ -876,12 +876,8 @@ async function runPipelineBodyInner(
     const exact = await decideSingleFact(ctx.engine, ctx.sourceId, { entity_slug: resolvedSlug, fact: f.fact, kind: f.kind ?? 'fact', visibility, attributed_to: f.attributed_to ?? null }, null);
     let matchedExistingId: number | null = exact?.candidate?.id ?? null;
     if (matchedExistingId === null && resolvedSlug && f.embedding && !f.entity_inferred) {
-      const candidates = await ctx.engine.findCandidateDuplicates(
-        ctx.sourceId,
-        resolvedSlug,
-        f.fact,
-        { embedding: f.embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null },
-      );
+      const candidates = await ctx.engine.findCandidateDuplicates(ctx.sourceId, resolvedSlug, f.fact,
+        { embedding: f.embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null, excludeMemberPages: true });
       let top: { row: typeof candidates[number]; score: number } | null = null;
       for (const c of candidates) {
         if (!c.embedding) continue;

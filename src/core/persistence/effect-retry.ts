@@ -8,7 +8,7 @@ import { OperationError, opError, type OperationContext } from '../ops/contract.
 import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { authorizeStoredRequest, authorizeWrite, submissionAuthority } from './authority.ts';
-import { existingLocalHostId } from './identity.ts';
+import { existingHostIdFor } from './identity.ts';
 import { guardEffectSource } from './effect-recovery.ts';
 import { assertEmbeddingEffectEnabled, readEmbeddingEffectProjection, selectedEffectPage } from './effects.ts';
 import { PARK_AFTER_FAILURES, type PersistenceEffect } from './effect-model.ts';
@@ -16,6 +16,7 @@ import type { WriteRequest } from './model.ts';
 import { targetedWithdrawalEffect, upgradeWithdrawalEffect } from './effect-targets.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 import { writerAdminState } from './admin-intent.ts';
+import { getWorktreeBinding } from './ownership.ts';
 
 const ownerStatusFix = (sourceId: string): Action => readFix(`Shows source ${sourceId}'s canonical owner with its blocking, retrying and parked effects, read-only.`,
   { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] });
@@ -101,6 +102,22 @@ async function ownerRevokedError(tx: BrainEngine, sourceId: string, request: Wri
 }
 
 /**
+ * The binding guard for a retried effect. #7985: an effect of a former binding is refused `source_changed` as before, but
+ * the refusal names its recorded binding, the current one and the settle preview, never only "inspect the owner".
+ */
+async function guardRetriedEffect(tx: BrainEngine, effect: PersistenceEffect, hostId: string, request: WriteRequest): Promise<void> {
+  try { await guardEffectSource(tx, effect, hostId); }
+  catch (error) {
+    if (!(error instanceof OperationError) || error.code !== 'source_changed') throw error;
+    const current = await getWorktreeBinding(tx, effect.source_id, hostId);
+    throw opError('source_changed', error.message,
+      `Request ${request.request_id}'s ${effect.kind} effect was recorded under worktree ${effect.worktree_id ?? '(none)'} of source incarnation ${effect.source_incarnation}; source ${effect.source_id} is now bound to ${current ? `worktree ${current.worktree_id} of incarnation ${current.source_incarnation}` : 'no worktree'}. Retry cannot run it, and the bulk retry previews (--parked-code, --parked-pushes) select only the current binding's effects, so their zero does not cover it. Preview settling it on proof: the fix command settles it or names what blocks it. Do not claim or transfer the source to force it through.`,
+      { fix: readFix(`Previews settling request ${request.request_id}'s effects of a former binding of source ${effect.source_id} on proof, read-only.`,
+        { argv: ['gbrain', 'sources', 'writer', 'settle-effects', effect.source_id, '--request-id', request.request_id, '--dry-run', '--json'] }) });
+  }
+}
+
+/**
  * #5612: parked Git and withdrawal effects of one committed request, plus
  * (GBRA-130) parked embedding targets and failed Git, withdrawal-mirror, links
  * and facts-backstop effects without parked targets (a mirror that failed
@@ -124,7 +141,7 @@ export async function retryParkedEffects(engine: BrainEngine, sourceId: string, 
       OR (kind='git' AND state='failed' AND error_code=ANY($3::text[]))) ORDER BY kind`,
   [request.id, options.parkedOnly === true, [...options.failedCodes ?? []]]);
   if (!tracked.length) return null;
-  const hostId = existingLocalHostId();
+  const hostId = existingHostIdFor(engine);
   if (!hostId) throw unregisteredHost(sourceId, requestId);
   return engine.transaction(async tx => {
     const refusal = await storedAuthorityRefusal(tx, request, sourceId);
@@ -132,7 +149,7 @@ export async function retryParkedEffects(engine: BrainEngine, sourceId: string, 
       tracked.some(effect => effect.kind === 'git' && effect.state === 'failed' && effect.error_code === 'targets_parked')) : null;
     const effects = [];
     for (const selected of tracked) {
-      await guardEffectSource(tx, selected, hostId);
+      await guardRetriedEffect(tx, selected, hostId, request);
       const [effect] = await tx.executeRaw<PersistenceEffect>('SELECT * FROM persistence_effects WHERE id=$1 FOR UPDATE', [selected.id]);
       const parked = effect.data.parked ?? [];
       const summary = { kind: effect.kind, error_code: effect.error_code, parked_targets: parked.length, targets: parked.slice(0, 20), retried: effect.data.retried ?? 0 };
@@ -237,7 +254,7 @@ export async function retryEmbeddingEffect(engine: BrainEngine, sourceId: string
     `Request ${requestId} in source ${sourceId} has no single embedding effect and no parked Git or withdrawal effect, so nothing was queued. Check that the request_id is the one from the write receipt and that ${sourceId} is the source it was written to.`,
     { fix: receiptFix(requestId) });
   const request = requests[0];
-  const hostId = existingLocalHostId();
+  const hostId = existingHostIdFor(engine);
   if (!hostId) throw unregisteredHost(sourceId, requestId);
   const config = await loadConfigWithEngine(engine, baseConfig);
   const configuredSignature = config?.embedding_model && config.embedding_dimensions

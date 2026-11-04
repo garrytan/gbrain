@@ -31,10 +31,11 @@ import { assertGraduationAdmission } from './graduation-custody.ts';
 import { schemaAdmissionRefusal } from './schema-admission.ts';
 import { CAPACITY_VERIFY } from './capacity-verify.ts';
 import { readManagedMode } from './managed-mode.ts';
-import { localHostId } from './identity.ts';
+import { hostIdFor } from './identity.ts';
 import { MANAGED_SYNC_PASS_OP } from './sync-pass-row.ts';
 import { BACKOFF_ELAPSED } from './transient-retry.ts';
 import { segmentWriteScope } from '../page-body/ingest.ts';
+import { sameAttestedActor } from '../access/member-facts.ts';
 import {
   isTerminal, principalKey, requestPrincipal, recoveryFiles,
   type JournalLimits, type Principal, type RecoveryRecord, type RequestState,
@@ -107,6 +108,27 @@ export function capacityError(resource: string, outstanding?: { used: number; li
     'Inspect writer status and configured persistence limits. Existing requests retain their reserved completion space.');
   if (outstanding) error.detail = outstandingCapacityDetail(outstanding.used, outstanding.limit);
   return error;
+}
+/**
+ * #8368: the outstanding-request refusal for `row`, or null when the write may be admitted. The local CLI principal is
+ * shared by every source's sync and maintenance on the host, so one source's requests that never settle could hold the
+ * whole principal cap and starve every other source. At that cap, a source holding less than its fair share (the cap
+ * divided by the sources holding outstanding requests on the principal, this one included) is still admitted; the brain
+ * cap and every other principal's cap stay hard. The share is checked before the admission, so a sync publication group
+ * larger than the share is admitted whole and a source passes its share by at most one group. A refusal names the source
+ * holding the most slots.
+ */
+async function outstandingRefusal(tx: SqlEngine, row: Counter, principal: Principal, sourceId: string, need: number, limit: number): Promise<OperationError | null> {
+  const used = Number(row.outstanding_count);
+  if (used + need <= limit) return null;
+  if (row.key === 'brain' || principal.kind !== 'local_cli') return capacityError(`${row.key === 'brain' ? 'brain' : 'principal'} outstanding requests`, { used, limit });
+  const holders = await tx.executeRaw<{ source_id: string; n: number | string }>(`SELECT source_id,count(*) AS n FROM persistence_requests
+    WHERE principal_kind=$1 AND principal_id=$2 AND state IN ('queued','running','recovering') GROUP BY source_id ORDER BY count(*) DESC,source_id`, [principal.kind, principal.id]);
+  const own = Number(holders.find(holder => holder.source_id === sourceId)?.n ?? 0);
+  const sources = holders.length + (own > 0 ? 0 : 1);
+  if (sources > 1 && own < Math.floor(limit / sources)) return null;
+  const top = holders[0];
+  return capacityError(`principal outstanding requests${top ? ` (source ${top.source_id} holds ${Number(top.n)})` : ''}`, { used, limit });
 }
 /**
  * #6696 (A6): a cumulative cap refusal is `write_quota_exhausted` (host only;
@@ -234,7 +256,8 @@ export function intentDigest(a: Pick<WriteAdmission, 'operation' | 'sourceId' | 
   return digest({ operation: a.operation, source_id: a.sourceId, slug: a.slug, intent: a.callerIntent });
 }
 export function assertReplayIntent(row: WriteRequest, expectedDigest: string): WriteRequest {
-  if (row.digest !== expectedDigest) throw opError('idempotency_conflict', 'This request_id was used for a different write; send a new one or omit it.',
+  // GST-359 C2: a request_id another person's attested write used is a different write, never a replay of it.
+  if (row.digest !== expectedDigest || !sameAttestedActor(row.authority?.actingFor)) throw opError('idempotency_conflict', 'This request_id was used for a different write; send a new one or omit it.',
     'A request_id is reused only to retry the same write. Send this write again with a new request_id or without one; the earlier write keeps its receipt.',
     { fix: readFix(`Reads the earlier write's receipt (request ${row.request_id}), read-only.`, row.principal_kind === 'local_cli'
       ? { argv: ['gbrain', 'write-request', '--', row.request_id] }
@@ -264,7 +287,7 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
   const bytes = jsonBytes(input.intent) + jsonBytes(input.authority);
   const terminalBytes = Math.max(input.terminalReservation ?? 0, receiptReservation(input));
   if (!Number.isSafeInteger(terminalBytes) || terminalBytes < 1024) throw new TypeError('Invalid terminal receipt reservation.');
-  const stamp = writerStamp();
+  const stamp = writerStamp({ engine });
   const origin = resolveAdmissionOrigin(input.origin);
   // #6741 C: a declared background producer is refused before any receipt when the source's owner fails its verification.
   if (input.worktreeId && declaredBackground(input.origin)) await assertBackgroundOwner(engine, input.sourceId, ownerStatusFix);
@@ -306,8 +329,8 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
     if (input.targetKind === 'skill_bundle') await assertSharedSkillPersistence(tx, input.sourceId);
     for (const row of counters) {
       const brain = row.key === 'brain';
-      const outstandingLimit = brain ? limits.brainOutstanding : limits.principalOutstanding;
-      if (Number(row.outstanding_count) + 1 > outstandingLimit) throw capacityError(`${brain ? 'brain' : 'principal'} outstanding requests`, { used: Number(row.outstanding_count), limit: outstandingLimit });
+      const outstanding = await outstandingRefusal(tx, row, input.principal, input.sourceId, 1, brain ? limits.brainOutstanding : limits.principalOutstanding);
+      if (outstanding) throw outstanding;
       if (Number(row.intent_bytes) + bytes > (brain ? limits.brainIntentBytes : limits.principalIntentBytes)) throw capacityError(`${brain ? 'brain' : 'principal'} intent bytes`);
       const scope = brain ? 'brain' : 'principal';
       if (Number(row.lifetime_ids) + 1 > limits[`${scope}LifetimeIds`]) throw await cumulativeCapacityError(tx, `${scope} permanent request IDs`,
@@ -347,7 +370,7 @@ export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: Writ
     || input.operation !== first.operation || (input.targetKind ?? 'page') !== 'page' || (input.protocolVersion ?? 1) !== 1 || digest(input.authority) !== digest(first.authority))) {
     throw new TypeError('A group admission requires one source, worktree, principal, operation and authority.');
   }
-  const stamp = writerStamp();
+  const stamp = writerStamp({ engine: tx });
   const items = inputs.map(input => ({ input, requestId: requireUuid(input.requestId ?? randomUUID()), fingerprint: intentDigest(input),
     bytes: jsonBytes(input.intent) + jsonBytes(input.authority), terminalBytes: Math.max(input.terminalReservation ?? 0, receiptReservation(input)) }));
   assertMutationProtocol({ target_kind: 'page', protocol_version: 1 });
@@ -390,8 +413,8 @@ export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: Writ
     const bytes = fresh.reduce((sum, item) => sum + item.bytes, 0), terminalBytes = fresh.reduce((sum, item) => sum + item.terminalBytes, 0);
     for (const row of counters) {
       const brain = row.key === 'brain', scope = brain ? 'brain' : 'principal';
-      const outstandingLimit = brain ? limits.brainOutstanding : limits.principalOutstanding;
-      if (Number(row.outstanding_count) + fresh.length > outstandingLimit) throw capacityError(`${scope} outstanding requests`, { used: Number(row.outstanding_count), limit: outstandingLimit });
+      const outstanding = await outstandingRefusal(tx, row, first.principal, first.sourceId, fresh.length, brain ? limits.brainOutstanding : limits.principalOutstanding);
+      if (outstanding) throw outstanding;
       if (Number(row.intent_bytes) + bytes > (brain ? limits.brainIntentBytes : limits.principalIntentBytes)) throw capacityError(`${scope} intent bytes`);
       if (Number(row.lifetime_ids) + fresh.length > limits[`${scope}LifetimeIds`]) throw await cumulativeCapacityError(tx, `${scope} permanent request IDs`,
         row.key, `${scope}LifetimeIds`, Number(row.lifetime_ids), limits[`${scope}LifetimeIds`]);
@@ -946,7 +969,7 @@ export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'co
     `Another owner pass claimed request ${row.request_id} in source ${row.source_id} before this pass recorded its outcome, so this pass's completion was discarded; the current claim records the final outcome. Inspect the request with the command in fix instead of resubmitting it.`,
     { fix: requestInspectFix(row) });
   // Only publication stamps the consumer; failures, cancellations and conflicts leave it unset.
-  const stamp = writerStamp();
+  const stamp = writerStamp({ engine: tx });
   // #6007: one statement sizes the queued effects, checks the terminal reservation, completes the row and
   // releases its outstanding counters; no row means the encoding exceeds the reservation and nothing changed.
   const resultBytes = jsonBytes(outcome) + jsonBytes(current.authority) + 1024 + Buffer.byteLength(error?.message ?? '') + (error?.detail ? jsonBytes(error.detail) : 0);
@@ -1083,7 +1106,7 @@ export async function sweepSegmentStorage(engine: BrainEngine): Promise<void> {
   if (!row?.present) return;
   if (!await readManagedMode(engine)) { await engine.sweepSegments({ expireStagings: true }); return; }
   const owned = await engine.executeRaw<{ source_id: string }>(`SELECT s.source_id FROM persistence_source_bindings s
-    JOIN persistence_worktrees w ON w.id=s.worktree_id WHERE w.owner_host_id=$1::uuid AND w.state='active'`, [localHostId()]);
+    JOIN persistence_worktrees w ON w.id=s.worktree_id WHERE w.owner_host_id=$1::uuid AND w.state='active'`, [hostIdFor(engine)]);
   for (const { source_id: sourceId } of owned) {
     const writes = await segmentWriteScope(engine, sourceId);
     await writes(exec => exec.sweepSegments({ sourceId, expireStagings: true }));

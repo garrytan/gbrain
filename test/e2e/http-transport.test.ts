@@ -13,6 +13,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { createHash, randomBytes } from 'crypto';
 import { startHttpTransport } from '../../src/mcp/http-transport.ts';
 import { hasDatabase, setupDB, teardownDB, getEngine, getConn } from './helpers.ts';
+import { fenceTranscriptText } from '../../src/core/search/transcript-quote.ts';
 
 const skip = !hasDatabase();
 const describeE2E = skip ? describe.skip : describe;
@@ -306,12 +307,13 @@ describeE2E('http-transport E2E (real Postgres)', () => {
     const marker = randomBytes(6).toString('hex');
     const worldFact = `E2E world fact ${marker}`;
     const privateFact = `E2E private fact SECRET-${marker}`;
-    await conn.unsafe(
+    const inserted = await conn.unsafe(
       `INSERT INTO facts (source_id, fact, kind, visibility, source) VALUES
          ('default', $1, 'fact', 'world', 'e2e-http'),
-         ('default', $2, 'fact', 'private', 'e2e-http')`,
+         ('default', $2, 'fact', 'private', 'e2e-http') RETURNING id, visibility`,
       [worldFact, privateFact],
     );
+    const worldId = inserted.find(row => row.visibility === 'world')!.id;
 
     // include_private only widens for trusted-local callers (ctx.remote ===
     // false); this transport always dispatches remote:true, so the flag must
@@ -335,9 +337,10 @@ describeE2E('http-transport E2E (real Postgres)', () => {
     const rawText = body.result.content[0].text;
     const parsed = JSON.parse(rawText);
     expect(parsed.protocol_version).toBe(1);
-    // World fact present — proves the facts arm actually ran (non-vacuous).
+    // World fact present — proves the facts arm actually ran (non-vacuous). A raw insert carries no
+    // owner tier, so this remote reader gets it quoted (GST-687).
     const factTexts = parsed.facts.map((f: { fact: string }) => f.fact);
-    expect(factTexts).toContain(worldFact);
+    expect(factTexts).toContain(fenceTranscriptText(worldFact, `fact ${worldId}`));
     // Private fact absent from facts[], from the injectable text, and from
     // the entire serialized payload (covers every additive field at once).
     expect(factTexts).not.toContain(privateFact);

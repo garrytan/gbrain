@@ -184,8 +184,8 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
     max_transient_retries: snapshot.preparation.transientRetries } : null;
   const { persistenceConsumerStatus } = await import('./service.ts');
   // #6317 (C1): the heartbeat rows of this host, read once, so each running claim can name its owner's liveness and pool.
-  const { existingLocalHostId } = await import('./identity.ts');
-  const hostId = existingLocalHostId();
+  const { existingHostIdFor } = await import('./identity.ts');
+  const hostId = existingHostIdFor(engine);
   const consumerRows = hostId ? await listHostConsumers(engine, hostId).catch(() => []) : [];
   const tracked = (engine as { getPoolDiagnostics?: () => { tracked?: unknown } | null }).getPoolDiagnostics?.()?.tracked ?? null;
   const claimStates = blockers.map(row => claimStateOf({ state: row.state, claim_phase: row.claim_phase, execution_token: row.execution_token, claim_lapsed: row.claim_lapsed, publication_started: row.publication_started }));

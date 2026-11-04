@@ -1393,7 +1393,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // weak-graded query), and unlike crag_think it is reachable by remote
   // callers — attacker-shaped weak queries drive that spend (ship security
   // review). See docs/operations/spend-controls.md.
-  // #5824 one-release rollback, latched per process (search/vector-legacy-guard.ts).
+  // #5824 one-release rollback, latched per engine (search/vector-legacy-guard.ts).
   'search.vector_legacy_guard',
   'search.hnsw_iterative_scan',
   'search.cjk_keyword_deadline_ms',

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { open } from 'fs/promises';
 import {
   S3Client,
@@ -131,6 +132,15 @@ export class S3Storage implements StorageBackend {
     return Buffer.from(await res.Body.transformToByteArray());
   }
 
+  async hashObject(path: string): Promise<{ size: number; sha256: string }> {
+    const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: path }));
+    if (!res.Body) throw new Error(`S3 download returned empty body: ${path}`);
+    const hash = createHash('sha256');
+    let size = 0;
+    for await (const chunk of res.Body as AsyncIterable<Uint8Array>) { hash.update(chunk); size += chunk.length; }
+    return { size, sha256: hash.digest('hex') };
+  }
+
   async delete(path: string): Promise<void> {
     await this.client.send(new DeleteObjectCommand({
       Bucket: this.bucket,
@@ -163,8 +173,9 @@ export class S3Storage implements StorageBackend {
     // For custom endpoints (R2, MinIO), use the endpoint URL
     const endpoint = (this.client.config as any).endpoint;
     if (endpoint) {
-      const base = typeof endpoint === 'function' ? (await endpoint()).url.toString() : endpoint;
-      return `${base}/${this.bucket}/${path}`;
+      const e = typeof endpoint === 'function' ? await endpoint() : endpoint;
+      const base = typeof e === 'string' ? e : e.url ? e.url.toString() : `${e.protocol}//${e.hostname}${e.port ? `:${e.port}` : ''}${e.path ?? ''}`;
+      return `${base.replace(/\/+$/, '')}/${this.bucket}/${path}`;
     }
     const region = await this.client.config.region();
     return `https://${this.bucket}.s3.${region}.amazonaws.com/${path}`;

@@ -15,7 +15,7 @@ import { buildGazetteer, findMentionedEntities, type Gazetteer } from './by-ment
 import { isCrossSourceLinksEnabled } from './link-extraction.ts';
 import { computeEffectiveDate } from './effective-date.ts';
 import { parseFrontmatter } from './backfill-effective-date.ts';
-import { isDerivationPrivate } from './search/private-visibility.ts';
+import { folderRestrictedSql, isDerivationPrivate } from './search/private-visibility.ts';
 import { quarantineFilterFragment } from './quarantine.ts';
 import { maintenanceTransaction } from './persistence/attribution.ts';
 import { derivedWriteTrust } from './trust/taint.ts';
@@ -82,6 +82,7 @@ interface MeetingRow {
   updated_at: string | Date;
   compiled_truth: string;
   timeline: string;
+  folder_restricted: boolean;
 }
 
 interface AttendedEdgeRow {
@@ -114,7 +115,8 @@ export async function extractTimelineFromMeetings(
   const meetingParams = opts.sourceIdFilter ? [opts.sourceIdFilter] : [];
   const meetings = await engine.executeRaw<MeetingRow>(
     `SELECT id, trust_tier, slug, source_id, title, effective_date, frontmatter, import_filename,
-            created_at, updated_at, compiled_truth, COALESCE(timeline, '') AS timeline
+            created_at, updated_at, compiled_truth, COALESCE(timeline, '') AS timeline,
+            ${folderRestrictedSql('pages')} AS folder_restricted
        FROM pages
       WHERE ${MEETING_PAGE_PREDICATE}
         AND deleted_at IS NULL
@@ -213,7 +215,7 @@ export async function extractTimelineFromMeetings(
     // timelines: the row carries no event_page_id (the (event_page_id, date)
     // unique index allows one row per event, not one per attendee), so the
     // remote private-event filter could never hide it. Fail closed: skip.
-    if (isDerivationPrivate({ frontmatter })) { privateSkipped++; continue; }
+    if (isDerivationPrivate({ frontmatter, folder_restricted: meeting.folder_restricted })) { privateSkipped++; continue; }
     // put_page-written pages never get effective_date computed (column stays
     // NULL); derive it exactly as `gbrain backfill effective_date` would —
     // same filename recipe (import_filename, else the slug tail) — so a later
@@ -464,12 +466,12 @@ export async function prepareMeetingTimeline(engine: BrainEngine, row: WriteRequ
   return { observedRevision: snapshot.revision, noop: true,
     validate: async tx => { await authorizeWrite(tx, row.authority, 'submit_job', row.slug); },
     apply: async tx => {
-      const meetings = new Map((await tx.executeRaw<{ id: number; slug: string; title: string; trust_tier: string | null; frontmatter: unknown }>(
-        `SELECT id, slug, title, trust_tier, frontmatter FROM pages WHERE id = ANY($1::int[]) AND deleted_at IS NULL AND ${MEETING_PAGE_PREDICATE}`,
+      const meetings = new Map((await tx.executeRaw<{ id: number; slug: string; title: string; trust_tier: string | null; frontmatter: unknown; folder_restricted: boolean }>(
+        `SELECT id, slug, title, trust_tier, frontmatter, ${folderRestrictedSql('pages')} AS folder_restricted FROM pages WHERE id = ANY($1::int[]) AND deleted_at IS NULL AND ${MEETING_PAGE_PREDICATE}`,
         [[...new Set(queued.map(r => r.meeting_id))]])).map(m => [Number(m.id), m]));
       const current = queued.filter(r => {
         const meeting = meetings.get(r.meeting_id);
-        return meeting && !isDerivationPrivate({ frontmatter: parseFrontmatter(meeting.frontmatter) })
+        return meeting && !isDerivationPrivate({ frontmatter: parseFrontmatter(meeting.frontmatter), folder_restricted: meeting.folder_restricted })
           && r.source === `${MEETING_SOURCE_PREFIX}${meeting.slug}` && r.summary === `Discussed in ${meeting.title}`;
       });
       const tiers = new Map([...meetings.values()].map(m => [Number(m.id), m.trust_tier]));

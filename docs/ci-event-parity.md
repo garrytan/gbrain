@@ -112,17 +112,26 @@ both did, the receipt comes from them: the same `PREGATE_REMOTE: tree= tests=
 failed=` line, with the runs' executed test identities as the counts, and no VM
 starts. The counts take each job at its newest attempt, so a run whose failed
 jobs were re-run counts its whole suite; a ledger that cannot show that is
-labelled `attempt N, partial count` on the `[ci-reuse] gate:` line. A full run
+labelled `attempt N, partial count` on the `[ci-reuse] gate:` line. A ledger an
+earlier attempt wrote counts only while its `executed-receipts` job was not re-run
+since. A full run
 on the tree still in progress is waited for (90 minutes at most, a progress
-line every minute), but while the other workflow has no full run on the tree
-the wait lasts five minutes, long enough for full-ci's second dispatch to
-appear. The newest full run on the tree decides,
+line every minute), also while the other workflow has no full run on the tree:
+full-ci's second dispatch can still appear, and a failure of the run in
+progress refuses instead of starting VMs. A passed run on the head whose
+executed-test receipt is refused (an unreadable, stale or empty ledger) ends the
+wait at once, since no later dispatch of the head is coming; the same refusal on
+another head with the same tree keeps waiting for the head's own dispatch, and a
+receipt download that failed transiently (no response, a 5xx, a 429, a rate-limit
+403, or a refusal from the artifact storage the download redirects to) is read
+again on the next poll. Any other 4xx, such as a 403 or an expired artifact's
+410, refuses at once. The newest full run on the tree decides,
 across the head and every recent head with the same tree, so neither an empty
 commit nor an older pass elsewhere skips a newer failure; a failed one refuses
 with no receipt. A run that did not run the full job (a diagnostic dispatch, a
 push that reused) is skipped. A tree that changes `.github/workflows/test.yml`,
 `.github/workflows/e2e.yml`, `scripts/ci-reuse.ts`, `scripts/lib/gh-issue.ts`,
-`scripts/ci-full-suite-tree.sh` or `scripts/ci-executed-counts.ts` relative to `origin/master` never reuses, since its runs would attest to themselves, and the
+`scripts/ci-full-suite-tree.sh`, `scripts/ci-executed-counts.ts` or `scripts/ci-manifest.ts` (which writes the run's `ci-manifest.json`) relative to `origin/master` never reuses, since its runs would attest to themselves, and the
 check runs without the model and database keys, like the gate. Every other case runs the gate: a dirty tree, a commit GitHub
 doesn't have, a missing workflow, an API error, or `GBRAIN_PREGATE_REUSE=0`.
 
@@ -131,6 +140,90 @@ new tree, so it needs its own passed full run or gate. A stamp-only difference
 reaches the head through gstack's stamp rule (`gstack-pregate clear --receipt`
 with the stamp files in `.gstack/ship-policy.json`), never through this check.
 Merge still requires `full-suite` and `e2e-full-suite` on the exact head.
+
+### Run evidence for gstack (`gstack-pregate clear --run`)
+
+gstack can take the same GitHub runs as evidence itself, so a slot runs one full
+suite per tree instead of a full-ci pass and a gate
+([gstack docs/pregate.md#run-evidence](https://github.com/garrytan/gstack/blob/main/docs/pregate.md#run-evidence)).
+`gstack-pregate clear --remote pregate.json/remote_gate --run <Test run> --run <E2E run> --allow-repo-commands`
+reads each run's `full-suite-tree` / `e2e-full-suite-tree` artifact and accepts the pair
+when both passed on pregate.json's tree and their executed files cover the gate's
+inventory:
+
+- `tree.json` carries `files` (every test file the run executed, repo-relative)
+  and `tests` (its executed tests). `scripts/ci-full-suite-tree.sh` takes them from
+  the run's `ci-manifest.json`, and only when that manifest is complete and names
+  the same run, attempt and commit. Otherwise both are left out with a warning:
+  the run still counts for merge, but gstack refuses it (`inventory_uncovered`).
+  A push that reused a run has no `full-suite` job, so it is never evidence.
+- `bash scripts/pregate-remote-gate.sh --list` prints the inventory: the gate
+  command with `--list` (`scripts/ci-ubicloud.ts --list`), the same lanes and
+  discovery the gate runs, one file per line. It exits non-zero when the
+  inventory fails or is empty (a doc-only tree under `:diff` runs no test file,
+  so it clears through the gate as before). It also prints no inventory for a
+  tree that changes one of the seven files above, or the inventory's own
+  builders `scripts/pregate-remote-gate.sh` and `scripts/ci-ubicloud.ts`,
+  relative to `origin/master` (or when there is no `origin/master`, or
+  `GBRAIN_PREGATE_REUSE=0`), so
+  gstack refuses that tree's own runs (`inventory_failed`) and the gate runs,
+  as remote-gate reuse already does. The gate leaves out the keyed-only
+  Tier 2 file (`test/e2e/skills.test.ts`): a VM has neither the keys nor
+  openclaw, so every test in it would skip.
+- gstack accepts only `push` and `workflow_dispatch` runs whose newest attempt
+  succeeded. **A flaky job means re-running the whole workflow.** "Re-run failed
+  jobs" carries every job that passed, the ledger job that writes the manifest
+  included, over from the older attempt, so the new attempt has no manifest of
+  its own and its `tree.json` has no `files` (`inventory_uncovered`); a
+  `tree.json` left from an older attempt is refused too (`artifact_mismatch`).
+- The profiles live in `.gstack/pregate.json`: `run_profiles` `test`
+  (`test.yml`, job `full-suite`, artifact `full-suite-tree`) and `e2e`
+  (`e2e.yml`, job `e2e-full-suite`, artifact `e2e-full-suite-tree`), each
+  accepting `workflow_dispatch` and `push` runs from the last 24 hours, and
+  `remote_gate_runs` naming both with this inventory command. gstack reads them
+  only from `origin/<base>`, so a branch cannot loosen them. gstack accepts
+  these keys from 1.91.377.0 on.
+
+<a id="ship-lanes"></a>
+### /ship lanes and CI carry
+
+CI's full run is the one full test run. gstack 1.94.0.0 and newer carry a /ship
+test lane from a passed full-ci run at the exact, clean tree instead of running
+it again (`LANE: <label> carried run=<id>/<attempt> tests_ran=<n>`), through
+`ship_lanes_from` in `.gstack/pregate.json`. gstack matches the lane's command
+byte for byte, so pass these commands to /ship as `--lane <label>=<command>`
+exactly as written:
+
+| Lane | Exact command | Run profiles | Inventory lanes |
+|---|---|---|---|
+| `unit` | `bun run test` | `test` | `unit,serial` |
+| `serial` | `bun run test:serial` | `test` | `serial` |
+| `slow` | `bun run test:slow` | `test` | `slow` |
+| `e2e` | `bun run test:e2e` | `test`, `e2e` | `e2e` |
+
+A lane carries only when every one of these holds:
+
+- The newest Test (`full-suite`) run at HEAD passed, and for `e2e` the newest
+  E2E (`e2e-full-suite`) run too (Test is named because the reconciliation
+  job runs two `test/e2e/` files). gstack refuses a newer red or running run on
+  HEAD, a run older than 24 hours, and a working tree that is not HEAD's
+  committed tree.
+- Every file the lane runs is in the runs' `tree.json`. The inventory is
+  `GBRAIN_PREGATE_GATE_CMD='bun run ci:ubicloud' bash scripts/pregate-remote-gate.sh --list --lanes <lanes>`,
+  the same lists the full Ubicloud gate runs. Like the remote gate's own
+  inventory, it refuses (exit 1, no list) on a tree that changes the CI reuse
+  files or the inventory builders, so such a tree's runs never carry its lanes
+  ([remote-gate reuse](#remote-gate-reuse)).
+- The `e2e` inventory leaves out `test/e2e/skills.test.ts`, which needs
+  provider keys and openclaw. full-ci runs neither, so the file never runs
+  there. Run it by name when your change touches it.
+
+`bun run verify` and `bun run typecheck` don't carry: `tree.json` records test
+files only, so no inventory can show that CI ran them. They take about a minute
+locally. pregate's guards, secrets and sealed checks always run.
+
+To check a lane before /ship does, at the pushed head:
+`~/.claude/skills/gstack/bin/gstack-ci-carry find --base master --command 'bun run test' --allow-repo-commands`.
 
 ## Dependency-audit rule
 

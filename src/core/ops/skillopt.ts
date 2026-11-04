@@ -11,6 +11,7 @@
 import type { Operation } from './contract.ts';
 import { opError } from './contract.ts';
 import { hostFix, invalidParam, paramUse } from './op-fix.ts';
+import { hookSessionCwd } from '../session-cwd.ts';
 
 // v0.41.18.0 (A7 + T16, codex finding #5): MCP op for federated / thin-client
 // brain installs to drive `gbrain onboard --auto` over MCP. Admin scope
@@ -131,7 +132,7 @@ const run_skillopt: Operation = {
   name: 'run_skillopt',
   idempotent: true,
   outputRedaction: { exempt: 'skill catalog files are installed instructions read verbatim; redaction would corrupt approved revisions' },
-  description: 'Run SkillOpt against a single skill. Admin scope and remote skill allowlist required. shared_skill stages an exact catalog revision privately and requires explicit skill_editor and put_skill grants; only accepted body changes publish through the original revision CAS. Rate-limited per-skill via DB lock.',
+  description: 'Run SkillOpt against a single skill; its iterative loop (optimizer_mode "reflect") is deprecated. Admin scope and remote skill allowlist required. shared_skill stages an exact catalog revision privately and requires explicit skill_editor and put_skill grants; only accepted body changes publish through the original revision CAS. Rate-limited per-skill via DB lock.',
   params: {
     skill_name: { type: 'string', required: true, description: 'Kebab-case skill name (resolves to skills/<name>/SKILL.md)' },
     benchmark_path: { type: 'string', description: 'Absolute path to benchmark JSONL; defaults to skills/<name>/skillopt-benchmark.jsonl' },
@@ -144,6 +145,7 @@ const run_skillopt: Operation = {
     allow_mutate_bundled: { type: 'boolean', description: 'Required to mutate bundled skills' },
     held_out_path: { type: 'string', description: 'Path to a held-out test set (JSONL). REQUIRED (>=5 rows) to mutate a bundled skill in place — otherwise the run hard-refuses. Remote callers: must resolve within the skills directory.' },
     dry_run: { type: 'boolean', description: 'Preview: models plan, strict verdict and cost estimate, no LLM calls' },
+    optimizer_mode: { type: 'string', enum: ['one-shot-rewrite', 'reflect'], description: 'Default one-shot-rewrite: one gated rewrite. reflect runs the iterative edit loop, which is deprecated (removed on or after 2026-12-03) and emits the skillopt_loop_deprecated notice.' },
     shared_skill: { type: 'boolean', description: 'Optimize an exact shared catalog revision in a private proposal workspace and publish the accepted body through put_skill.' },
     source_id: { type: 'string', description: 'Required with shared_skill: canonical source.' },
     source_incarnation: { type: 'string', description: 'Required with shared_skill: exact catalog source incarnation.' },
@@ -187,6 +189,10 @@ const run_skillopt: Operation = {
         'run_skillopt: max_cost_usd must be a positive number of USD for remote callers; 0 (uncapped) is a host-only setting',
         { example: 5 });
     }
+    const optimizerMode = p.optimizer_mode ?? 'one-shot-rewrite';
+    if (optimizerMode !== 'one-shot-rewrite' && optimizerMode !== 'reflect') {
+      throw invalidParam(ctx, 'run_skillopt', 'optimizer_mode', "run_skillopt: optimizer_mode must be 'one-shot-rewrite' or 'reflect'", { example: 'reflect' });
+    }
     const { clampRemoteReflectMaxTokens } = await import('../skillopt/output-cap.ts');
     let reflectMaxTokens: number | undefined;
     try {
@@ -213,7 +219,7 @@ const run_skillopt: Operation = {
     }
     const skillsDir = sharedSkill
       ? await (await import('../shared-skills/optimizer.ts')).sharedOptimizerSkillsDir(ctx, sharedSkill.source_id, sharedSkill.source_incarnation)
-      : autoDetectSkillsDirReadOnly(process.cwd()).dir;
+      : autoDetectSkillsDirReadOnly(hookSessionCwd()).dir;
     if (!skillsDir) {
       throw opError('config_error', 'run_skillopt: skills directory not found',
         'The brain host has no skills directory to optimize. Run `gbrain doctor --json` on the host; it reports where gbrain looks for skills.');
@@ -254,6 +260,7 @@ const run_skillopt: Operation = {
       confine('benchmark_path', p.benchmark_path as string | undefined);
       confine('held_out_path', heldOutPath);
     }
+    if (optimizerMode === 'reflect') ctx.emitNotice?.((await import('../skillopt/loop-deprecation.ts')).skillOptLoopDeprecatedNotice());
     const result = await runSkillOpt({
       engine: ctx.engine,
       operationContext: ctx,
@@ -269,6 +276,7 @@ const run_skillopt: Operation = {
       ...skillOptModelOpts(models),
       ...(reflectMaxTokens !== undefined ? { reflectMaxTokens } : {}),
       mode: 'patch',
+      optimizerMode,
       dryRun: (p.dry_run as boolean) === true,
       noMutate: (p.no_mutate as boolean) === true,
       allowMutateBundled: (p.allow_mutate_bundled as boolean) === true,

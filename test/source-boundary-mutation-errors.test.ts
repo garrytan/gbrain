@@ -35,6 +35,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PageMissingError } from '../src/core/engine-errors.ts';
 import { dispatchToolCall as dispatchToolCallImpl } from '../src/mcp/dispatch.ts';
 import { runSources } from '../src/commands/sources.ts';
+import { importFromContent } from '../src/core/import-file.ts';
 import type { AuthInfo } from '../src/core/operations.ts';
 
 let engine: PGLiteEngine;
@@ -386,5 +387,39 @@ describe('mutation-time deletion race reclassification (#4109)', () => {
       error: 'page_not_found',
       message: `add_link to page "topics/race-restored" was unavailable in writable source "${WRITE_SRC}" during the mutation.`,
     });
+  });
+});
+
+describe('GBRA-218: the source-boundary diagnostic never reveals a page the caller cannot read', () => {
+  const MISSING = 'topics/sbme-never-written';
+  const swap = <T,>(v: T, from: string, to: string): T => JSON.parse(JSON.stringify(v).replaceAll(from, to));
+  const ops = (slug: string): Array<[string, Record<string, unknown>]> => [
+    ['put_raw_data', { slug, source: 'acme-example', data: { a: 1 } }],
+    ['add_link', { from: FROM_SLUG, to: slug, link_type: 'mentions' }],
+    ['add_timeline_entry', { slug, date: '2026-01-01', summary: 'Boundary call' }],
+  ];
+  async function sameAsMissing(slug: string, missing: string, hiddenSource: string) {
+    for (const [op, params] of ops(slug)) {
+      const hidden = await dispatchToolCall(engine, op, params, GRANTED);
+      const absent = await dispatchToolCall(engine, op, swap(params, slug, missing), GRANTED);
+      expect({ op, isError: hidden.isError, body: swap(payload(hidden), slug, missing) }).toEqual({ op, isError: absent.isError, body: payload(absent) });
+      expect({ op, isError: hidden.isError }).toEqual({ op, isError: true });
+      if (hiddenSource === FOREIGN_SRC) expect(hidden.content[0]!.text).not.toContain(FOREIGN_SRC);
+    }
+  }
+
+  test('a private page that exists only in another granted source answers exactly as a missing slug', async () => {
+    const slug = 'topics/sbme-private-foreign';
+    await importFromContent(engine, slug, '---\ntype: concept\ntitle: Private foreign\nvisibility: private\n---\nPrivate fixture.', { sourceId: FOREIGN_SRC, noEmbed: true });
+    await sameAsMissing(slug, MISSING, FOREIGN_SRC);
+  });
+
+  test('a member-hidden write-source page with a readable twin answers exactly as a slug only the twin holds', async () => {
+    const slug = 'topics/sbme-twin-hidden', twinOnly = 'topics/sbme-twin-only';
+    await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1) ON CONFLICT DO NOTHING', ['alice-example']);
+    await importFromContent(engine, slug, '---\ntype: concept\ntitle: Twin hidden\nreadable_by: [alice-example]\n---\nHidden fixture.', { sourceId: WRITE_SRC, noEmbed: true });
+    await seed(slug, FOREIGN_SRC);
+    await seed(twinOnly, FOREIGN_SRC);
+    await sameAsMissing(slug, twinOnly, WRITE_SRC);
   });
 });

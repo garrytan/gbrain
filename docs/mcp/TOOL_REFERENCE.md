@@ -184,7 +184,9 @@ Read a page by slug (supports optional fuzzy matching). Slug aliases left by ren
 | `include_quarantined` | boolean | Admin scope only: return a quarantined page's body to a remote caller (default: false). Ignored without the admin scope; trusted local reads always include it. |
 | `section` | string | Only the section under this heading (case-insensitive, first match), with `heading_path`, `line_start` and `line_end`. Accepted on the starter surface; advertised on full. |
 | `grep` | string | Only the paragraphs containing this text (case-insensitive substring, not a regex), with line numbers and `total_matches`. Accepted on the starter surface; advertised on full. |
-| `context` | number | With grep: paragraphs of context either side (default 1, max 5). |
+| `context` | number | Applies only with grep (ignored without it): paragraphs of context either side (default 1, max 5). |
+
+The window parameters (`lines`, `bytes`, `around_chunk_id`, `cursor`) are advertised on the full surface. With several, one window is read: `cursor`, then `around_chunk_id`, then `lines`, then `bytes` (a cursor that can't read this page and an `around_chunk_id` no longer on it give way to the next, and `view: "markdown"` sets `around_chunk_id` aside beside another selector), and `body: "full"`, `include_content` and `content_only` beside a selector are set aside. The response's `window_selector` names what applied and what was ignored.
 
 ## `get_recent_salience`
 
@@ -456,7 +458,7 @@ Submit an LLM agent job that the worker dispatches via the gateway-native tool l
 
 ## `traverse_graph`
 
-Traverse link graph from a page. Remote callers default to bidirectional edges (GraphPath[]) at depth 2 (pass depth explicitly for deeper walks); trusted local no-filter callers get the legacy node shape at depth 5. The walk is breadth-first: each page comes back once at its shortest depth and each edge once, and a walk stops at 20,000 visited pages or 5,000 edge rows, keeping the shallowest (a stderr note says when).
+Traverse link graph from a page. Remote callers default to bidirectional edges (GraphPath[]) at depth 2 (pass depth explicitly for deeper walks); trusted local no-filter callers get the legacy node shape at depth 5. The walk is breadth-first: each page comes back once at its shortest depth and each edge once, and a walk stops at 20,000 visited pages or 5,000 edge rows, keeping the shallowest (a stderr note says when, and the result carries a `graph_walk_truncated` degraded notice; above depth 1 its fix repeats the walk one level shallower).
 
 | Parameter | Type | Guidance |
 | --- | --- | --- |

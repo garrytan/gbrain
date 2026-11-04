@@ -96,6 +96,8 @@ export class OperationError extends Error {
   public fenceIssues?: Array<Record<string, unknown>>;
   /** A `fact_withdrawn` refusal's withdrawal: when and for which subject the exact claim was forgotten. Absence carries no meaning. */
   public withdrawn?: WithdrawnDetail;
+  /** A write-grant refusal's writable sources: only ids the caller's own grant lets it write, never another source (GBRA-200). */
+  public writableSourceIds?: string[];
   /** #6643: a managed-sync refusal's owner-side classification (knock-on root, cursor fence snapshot); stored as the receipt's error_detail, never in the envelope. */
   public syncRefusal?: Record<string, unknown>;
   /** Set to 1 by opError(); toJSON() emits `contract_version` only when set. */
@@ -162,6 +164,7 @@ export class OperationError extends Error {
       ...(this.fence ? { fence: this.fence } : {}),
       ...(this.fenceIssues?.length ? { fence_issues: this.fenceIssues } : {}),
       ...(this.withdrawn ? { withdrawn: this.withdrawn } : {}),
+      ...(this.writableSourceIds ? { writable_source_ids: this.writableSourceIds } : {}),
       ...(this.contractVersion !== undefined ? { contract_version: this.contractVersion } : {}),
     };
   }
@@ -254,11 +257,23 @@ export function verbError(
 }
 
 export interface ParamDef {
-  type: 'string' | 'number' | 'boolean' | 'object' | 'array';
+  type: 'string' | 'number' | 'integer' | 'boolean' | 'object' | 'array';
   required?: boolean;
   description?: string;
   default?: unknown;
   enum?: string[];
+  /**
+   * GST-927: the valid range's lower bound (inclusive / exclusive). Read by normalizeOptionalParams and carried in the
+   * operation manifest, never in the tools/list schema. Only on read ops (test/tool-args-empty-optional-sol.test.ts): on an optional param whose range excludes 0, a 0 reads as omitted. Declare it only where 0 refuses.
+   */
+  minimum?: number;
+  exclusiveMinimum?: number;
+  /** GST-927: on an optional array param, `[]` reads as omitted when this is at least 1. Not in tools/list. */
+  minItems?: number;
+  /** GST-927: a flag that acts only when true, so an optional `false` reads as omitted. Not in tools/list. */
+  actsWhenTrue?: boolean;
+  /** GST-927: the param has no effect without this one, so any value of it reads as omitted when that param is absent. Not in tools/list. */
+  appliesWith?: string;
   items?: ParamDef;
   /** Object members (O-DX-3); a member with `required: true` lands in the schema's `required`. */
   properties?: Record<string, ParamDef>;
@@ -281,6 +296,20 @@ export interface AuthInfo {
   clientId: string;
   /** Durable, verifier-derived identity. Never infer this from a display name or request data. */
   principal?: { kind: 'oauth_client' | 'legacy_token'; id: string };
+  /**
+   * GBRA-218: the live member this credential is bound to and its groups, joined by the verifier
+   * (null = unbound). Undefined when no verifier joined it; src/core/access/caller.ts then looks the
+   * binding up from `principal` (fail closed). Never set from request data.
+   */
+  member?: { id: string; groups: string[] } | null;
+  /** GBRA-218: the stored `may_act_for` audience list (shared agents, PR B); stored and reported only. */
+  mayActFor?: string[] | null;
+  /**
+   * GST-359 C1: the live right to name the person a call serves (x-qm-actor), joined by the verifier: the system and
+   * the operations an attested call may run. Null when the credential holds none, is bound to a member, or (an OAuth
+   * client) its token did not come from the client-credentials grant. Undefined when no verifier joined it.
+   */
+  attest?: { system: string; ops: string[] } | null;
   /**
    * Human-readable agent name resolved at token-verification time.
    * For OAuth clients this is `oauth_clients.client_name`; for legacy
@@ -511,6 +540,13 @@ export interface OperationContext {
    * treated as 'full'.
    */
   surfaceCeiling?: 'verbs' | 'starter' | 'full';
+  /**
+   * GBRA-218 local `--as <member>`: the member identity a trusted local read previews. Set only by the
+   * CLI with `applyRemoteReadPolicy`; `remote` stays false, so upload confinement and write trust are unchanged.
+   */
+  accessIdentity?: readonly string[];
+  /** GBRA-218: page reads apply the remote read policy (readers and privacy) although the caller is local (`--as`). */
+  applyRemoteReadPolicy?: boolean;
   /** The stdio session's surface (stdio MCP only): `request_tools` widens it for this session, `whoami` reports it. */
   stdioSurface?: StdioSurfaceState;
   /**
@@ -559,6 +595,11 @@ export interface OperationContext {
    * allow-list equal to the stored delegated prefixes.
    */
   replayAuthority?: WriteAuthority;
+  /**
+   * GST-359 D: the attested operation a nested write serves (memory_write saves through remember). Set by the handler,
+   * never from arguments; the stored authority keeps it, so publication re-checks that operation's attest right.
+   */
+  attestedOp?: string;
   /**
    * #4216 — defer chunk embeddings on put_page writes: importFromContent runs
    * noEmbed and the standing embed machinery (embed phase / phase-end

@@ -96,6 +96,8 @@ export interface SyncResult {
   extract_error?: string;
   /** #5050: full sync re-sealed unchanged pages at the safe-chunk fence (see RunImportResult.resealed). */
   resealed?: import('./import.ts').RunImportResult['resealed'];
+  /** GBRA-287: DB-only pages (#2426) a full sync kept but could not re-export to the working tree; the run still completed. */
+  reexport_failures?: import('./sync/full.ts').ReexportFailure[];
   /**
    * v0.41.13.0 partial-sync fields (only set when status === 'partial').
    *
@@ -135,12 +137,12 @@ export interface SyncResult {
   connectorHolds?: { held: number; newly_held: number; retry_command: string; status_command: string };
   /**
    * #5988 Git holds: files held this run instead of blocking (detail capped at
-   * `GBRAIN_SYNC_HOLD_CAP`), their count, the source's outstanding total and the
+   * `GBRAIN_SYNC_HOLD_CAP`), their count (#7199: how many wait on a person), the source's outstanding total and the
    * exact inspect and repair commands. Remote callers get `held_count` and
    * `holds_fix` (a host-operator relay) only.
    */
   held?: import('../core/persistence/sync-holds.ts').GitHoldItem[];
-  held_count?: number;
+  held_count?: number; held_needs_human?: number;
   holds_outstanding?: number;
   holds_escalated?: boolean;
   holds_truncated?: boolean;

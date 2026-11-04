@@ -168,7 +168,8 @@ describe('startCycleLockRefresher (Tier-1 #1 + D5.11)', () => {
       throw new Error('pooler blip');
     }), controller, 'test-lock', 15);
     try {
-      await new Promise(r => setTimeout(r, 120));
+      const deadline = Date.now() + 5_000;
+      while (calls < 8 && Date.now() < deadline) await new Promise(r => setTimeout(r, 15));
       expect(calls).toBeGreaterThan(1); // kept retrying
       expect(controller.signal.aborted).toBe(false);
     } finally {

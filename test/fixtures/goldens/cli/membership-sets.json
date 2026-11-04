@@ -68,6 +68,7 @@
       ],
       "refusedNotInCliOnly": [],
       "refusedWithoutHint": [
+        "access",
         "beliefs",
         "diag",
         "edge-proposals",
@@ -90,6 +91,7 @@
     },
     "sets": {
       "CLI_ONLY": [
+        "access",
         "advisor",
         "agent",
         "anomalies",
@@ -104,6 +106,7 @@
         "book-mirror",
         "bootstrap",
         "brainstorm",
+        "bundled-skill",
         "cache",
         "calibration",
         "call",
@@ -218,6 +221,7 @@
         "whoknows"
       ],
       "CLI_ONLY_SELF_HELP": [
+        "access",
         "advisor",
         "agent",
         "anomalies",
@@ -230,6 +234,7 @@
         "book-mirror",
         "bootstrap",
         "brainstorm",
+        "bundled-skill",
         "cache",
         "capture",
         "check-resolvable",
@@ -319,6 +324,7 @@
         "whoknows"
       ],
       "SELF_HELP_WITHOUT_ENGINE": [
+        "access",
         "advisor",
         "agent",
         "anomalies",
@@ -363,6 +369,7 @@
         "whoknows"
       ],
       "STARTUP_HOOK_SKIP_COMMANDS": [
+        "bundled-skill",
         "check-update",
         "git",
         "hook",
@@ -372,6 +379,7 @@
         "upgrade"
       ],
       "THIN_CLIENT_REFUSED_COMMANDS": [
+        "access",
         "advisor",
         "apply-migrations",
         "beliefs",

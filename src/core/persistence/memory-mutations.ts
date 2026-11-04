@@ -24,12 +24,14 @@ import { declareDurablePersistence } from './protocol.ts';
 import { resolveFactWriteTarget } from './fact-write-target.ts';
 import { clientRequestIdOf, parseMutationPrecondition } from './preconditions.ts';
 import { withCoordinatedWrite } from './context.ts';
+import { grantedWriteSource, writeGrantRefusal } from './write-grant.ts';
 import { requestAttribution } from './attribution.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
 import { prepareMemoryMutation } from './memory-prepare.ts';
 import { retryWriteAdmission } from './admission-retry.ts';
-import { privateProvenanceFilterFragment, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { privateProvenanceFilterFragment, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
 import { markBeliefCommits } from '../belief/append.ts';
+import { callerMember, memberFactAdmitSql, memberFactPage, memberPageIsOwn, memberPageNotOwned, memberPageSlug } from '../access/member-facts.ts';
 
 export { prepareMemoryMutation } from './memory-prepare.ts';
 /** Only semantic appends without an explicit caller revision can be recomputed. */
@@ -44,14 +46,16 @@ export function isSemanticMemoryMutation(row: WriteRequest): boolean {
 }
 
 /** Stable caller intent is checked before entity resolution, relative TTLs or providers. */
-async function submission(ctx: OperationContext, operation: string, params: Record<string, unknown>) {
+async function submission(ctx: OperationContext, operation: string, params: Record<string, unknown>, retryArguments?: Record<string, unknown>) {
   assertPersistenceAccepting(ctx.engine);
   const p: Record<string, unknown> = { ...params, ...parseMutationPrecondition(params) };
   const requestId = typeof p.request_id === 'string' ? p.request_id : randomUUID();
   const sourceId = typeof p.source_id === 'string' ? p.source_id : ctx.sourceId ?? 'default';
-  if (ctx.remote !== false && sourceId !== (ctx.auth?.sourceId ?? ctx.sourceId ?? 'default')) {
-    throw opError('permission_denied', 'This source is outside the current write grant.',
-      `This connection may write only to source ${ctx.auth?.sourceId ?? ctx.sourceId ?? 'default'}. Omit source_id to write there, or ask the brain host's operator to grant source ${sourceId}.`);
+  const granted = grantedWriteSource(ctx);
+  if (ctx.remote !== false && sourceId !== granted) {
+    throw writeGrantRefusal(ctx,
+      `This connection may write only to source ${granted}. Omit source_id to write there, or ask the brain host's operator to grant source ${sourceId}.`,
+      retryArguments ? { tool: operation, arguments: retryArguments } : undefined);
   }
   await initializeLocalPersistence(ctx);
   const principal = await requestPrincipalForContext(ctx);
@@ -78,8 +82,9 @@ class InferredTargetRejected extends Error { constructor(readonly warning: Entit
  * malformed fences and any owner claim, so it can fall back instead.
  */
 async function planRememberTarget(ctx: OperationContext, sourceId: string, source: RememberSource, entitySlug: string | null,
-  inferred: { fact: string; visibility: string } | null, call: RememberCall) {
-  const slug = entitySlug ?? 'memory/unattributed';
+  inferred: { fact: string; visibility: string } | null, call: RememberCall, memberPage: string | null = null) {
+  // GST-359 C2: a member's remote fact goes to its own member page, created by the first one; the entity is metadata only.
+  const slug = memberPage ?? entitySlug ?? 'memory/unattributed';
   validatePageSlug(slug);
   enforceClientSlugFence(ctx, slug, 'remember'); enforceSubagentSlugFence(ctx, slug, 'remember');
   const authority = await submissionAuthority(ctx, 'remember', sourceId, source.incarnation, slug);
@@ -89,10 +94,11 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
     throw opError('page_not_found', 'The target entity is not writable by this caller.',
       `Entity page ${slug} in source ${sourceId} is deleted or not visible to this caller, so nothing was saved. Remember the fact against a visible entity, or without an entity (it is then filed under memory/unattributed).`);
   }
+  if (memberPage && snapshot && !memberPageIsOwn(memberPage, snapshot.page.frontmatter)) throw memberPageNotOwned(memberPage);
   if (inferred && !snapshot) throw new InferredTargetRejected('NO_ENTITY');
   // Wave B: a segmented entity page over the single-string ceiling cannot take a fence row; named or inferred, the save refuses
   // before admission instead of misfiling it. Below the ceiling an inferred target's checks read the page back whole, as preparation does.
-  if (entitySlug !== null && snapshot && segmentedOverCeiling(snapshot.page)) {
+  if ((entitySlug !== null || memberPage) && snapshot && segmentedOverCeiling(snapshot.page)) {
     throw segmentedRememberRefusal(slug, sourceId, inferred !== null, await rememberCarry(ctx, call, snapshot.page));
   }
   const whole = inferred && snapshot && isSegmentedPage(snapshot.page) ? await materializedPage(ctx.engine, snapshot.page) : snapshot?.page;
@@ -100,7 +106,7 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
     || parseFactsFence(whole!.compiled_truth).warnings.length)) throw new InferredTargetRejected('ENTITY_LINK_FAILED');
   // Preserve the stub guard: a fallback name remains DB-only until a real
   // entity page exists. No placeholder page is created by remember.
-  const fence = entitySlug !== null && snapshot !== null;
+  const fence = memberPage !== null || (entitySlug !== null && snapshot !== null);
   const sandbox = ctx.viaSubagent === true && !(ctx.allowedSlugPrefixes?.length);
   const configuredWriteThrough = !/^(false|0|off|no)$/i.test(await ctx.engine.getConfig('sync.write_through') ?? 'true');
   const writeThrough = configuredWriteThrough && !sandbox;
@@ -108,7 +114,7 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
   else if (!configuredWriteThrough) authority.databaseOnlyReason = 'disabled_by_config';
   // An inferred link never designates an owner or reports a missing one.
   const target = fence ? await resolveFactWriteTarget(ctx.engine, sourceId, source,
-    { sandbox, fileBacked: Boolean(snapshot!.page.source_path), remote: ctx.remote !== false }).catch((error: unknown) => {
+    { sandbox, fileBacked: Boolean(snapshot?.page.source_path), remote: ctx.remote !== false }).catch((error: unknown) => {
     if (inferred && error instanceof OperationError) throw new InferredTargetRejected('ENTITY_LINK_FAILED');
     throw error;
   }) : null;
@@ -136,13 +142,13 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
 
 /** The caller's remember parameters and whether it named a visibility (the verb fills the v1 default otherwise). */
 interface RememberCall { p: Record<string, unknown>; visibilityDefaulted: boolean }
-type PageLabel = { type?: string | null; frontmatter?: unknown };
+type PageLabel = { type?: string | null; frontmatter?: unknown; source_id: string; slug: string };
 
 /** The visibility a remember saves into `page`: the caller's own, or the resolved default that never widens a private target. */
 async function rememberVisibility(ctx: OperationContext, call: RememberCall, page: PageLabel | null | undefined): Promise<'world' | 'private'> {
   if (!call.visibilityDefaulted) return call.p.visibility === 'private' ? 'private' : 'world';
   const { resolveRememberVisibility } = await import('../facts/visibility.ts');
-  return resolveRememberVisibility(ctx.engine, page);
+  return resolveRememberVisibility(ctx.engine, page && await withFolderRestricted(ctx.engine, page));
 }
 
 async function rememberCarry(ctx: OperationContext, call: RememberCall, page: PageLabel): Promise<RememberCarry> {
@@ -179,7 +185,8 @@ async function inferRememberTarget(ctx: OperationContext, sourceId: string, sour
 export async function submitRememberMutation(ctx: OperationContext, params: Record<string, unknown>, waitMs?: number,
   opts: { visibilityDefaulted?: boolean } = {}): Promise<Record<string, unknown>> {
   registerMutationPreparer('remember', prepareMemoryMutation);
-  const sub = await submission(ctx, 'remember', params);
+  const { visibility: _defaulted, ...withoutDefault } = params;
+  const sub = await submission(ctx, 'remember', params, opts.visibilityDefaulted ? withoutDefault : params);
   if (sub.prior) { const prior = sub.prior; const settled = await waitForWrite(ctx.engine, prior, ctx.config, waitMs ?? ctx.writeWaitMs); return throwIfHeld(withRememberTarget(prior, () => writeResponse(settled))); }
   const { p, sourceId, principal, callerIntent, requestId, clientRequestId } = sub;
   const [source] = await ctx.engine.executeRaw<RememberSource>(
@@ -189,19 +196,22 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   const validUntil = parseTtlParam(p.ttl);
   const entity = typeof p.entity === 'string' && !isNullLikeEntity(p.entity) ? p.entity.trim() : null;
   const resolved = entity ? await resolveRememberEntity(ctx, sourceId, entity) : null;
-  const call: RememberCall = { p, visibilityDefaulted: opts.visibilityDefaulted === true };
-  const inference = entity === null ? await inferRememberTarget(ctx, sourceId, source, call) : null;
+  // GST-359 C2: a remote member's fact is private, on its member page, and never inferred onto another page.
+  const memberPage = memberFactPage(ctx);
+  const call: RememberCall = memberPage ? { p: { ...p, visibility: 'private', infer_entity: false }, visibilityDefaulted: false }
+    : { p, visibilityDefaulted: opts.visibilityDefaulted === true };
+  const inference = entity === null && !memberPage ? await inferRememberTarget(ctx, sourceId, source, call) : null;
   const linked = inference && 'target' in inference ? inference : null;
   const entitySlug = linked?.target.slug ?? resolved?.slug ?? null;
   // A source-scoped absent identity serializes subjectless facts. Bound writers
   // cannot use it to escape their namespace grant.
-  const { slug, authority, snapshot, fence, binding, writeThrough } = linked?.target ?? await planRememberTarget(ctx, sourceId, source, entitySlug, null, call);
+  const { slug, authority, snapshot, fence, binding, writeThrough } = linked?.target ?? await planRememberTarget(ctx, sourceId, source, entitySlug, null, call, memberPage);
   const { assertFactNotWithdrawn, decideReplacement, replacementVisibility } = await import('../facts/single-prepare.ts');
   const defaultedVisibility = await rememberVisibility(ctx, call, snapshot?.page);
   const visibility = call.visibilityDefaulted && p.replaces !== undefined && p.replaces !== null
     ? await replacementVisibility(ctx.engine, sourceId, Number(p.replaces), defaultedVisibility, { remote: ctx.remote !== false })
     : defaultedVisibility;
-  const factIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as never, visibility, entity_slug: entitySlug };
+  const factIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as never, visibility, entity_slug: entitySlug, ...(memberPage ? { page_slug: memberPage } : {}) };
   // Fail fast on an invalid target or a withdrawn claim; the coordinator re-checks both under its locks before publishing.
   if (p.replaces !== undefined && p.replaces !== null) {
     // Fail fast on an invalid target; the coordinator re-checks it under the row lock before publishing.
@@ -214,7 +224,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
     // The transport's session (MCP `_meta.session_id`) is recorded on the fact, as extract_facts records
     // it, so recall's session_id filter finds single facts too. Identity only — never a trust surface.
     intent: { ...callerIntent, entity_slug: entitySlug, fence, valid_from: typeof p.valid_from === 'string' ? new Date(p.valid_from).toISOString() : new Date().toISOString(), valid_until: validUntil?.toISOString() ?? null,
-      visibility, ...(call.visibilityDefaulted ? { visibility_defaulted: true } : {}),
+      visibility, ...(call.visibilityDefaulted ? { visibility_defaulted: true } : {}), ...(memberPage ? { member_page: true } : {}),
       ...(linked ? { entity_inferred: linked.via } : {}), ...(inference && 'warning' in inference ? { entity_warning: inference.warning } : {}),
       session_id: ctx.sessionId ?? null },
     authority, worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null });
@@ -325,8 +335,17 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   if (!Number.isSafeInteger(id) || id <= 0) throw verbError(operation === 'forget' ? 'not_found' : 'fact_not_found',
     `No fact with id "${rawId}".`, 'Pass the fact id returned by remember or recall.');
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
+  // GST-359 D: a remote caller that is one member (an attested person or a member-bound credential) withdraws only facts
+  // on its own member page, and only there (the page is the withdrawal's subject), so another member's copy of the same
+  // claim stays active and rememberable. Ownership is judged first: any other fact is not_found before a trust check,
+  // so no owner proposal is filed and its tier is never disclosed.
+  const member = ctx.remote !== false ? callerMember() : null;
+  const ownPage = member ? memberPageSlug(member) : null;
+  const notFound = () => verbError(operation === 'forget' ? 'not_found' : 'fact_not_found',
+    `No fact with id "${rawId}".`, 'Ids come from remember/recall. Recall the entity first to find the right fact.');
+  if (ownPage && !(await ctx.engine.executeRaw(`SELECT 1 FROM facts WHERE id=$1 AND source_id=$2 AND ${memberFactAdmitSql('facts')}`, [id, sourceId])).length) throw notFound();
   // #5575 I3: a remote caller cannot forget a fact more trusted than its own writes; the owner is asked instead.
-  if (ctx.remote !== false && Number.isSafeInteger(id) && id > 0) await guardRemoteForget(ctx.engine, { sourceId, factId: id, principal, reason, excludePrivate });
+  if (ctx.remote !== false) await guardRemoteForget(ctx.engine, { sourceId, factId: id, principal, reason, excludePrivate });
   // Retry the whole withdrawal, so source/principal guards and the connection
   // are released before backoff. Admission must not retry a nested savepoint.
   let withdrawn: WithdrawalCommit['pages'] = [];
@@ -349,11 +368,12 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
       return prior;
     }
     const [fact] = await tx.executeRaw<WithdrawalTarget>(`SELECT id,entity_slug,source_markdown_slug,expired_at,trust_tier FROM facts
-      WHERE id=$1 AND source_id=$2 AND ($3::boolean=false OR visibility='world')${excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''} FOR UPDATE`, [id, sourceId, ctx.remote !== false]);
-    if (!fact) throw verbError(operation === 'forget' ? 'not_found' : 'fact_not_found',
-      `No fact with id "${rawId}".`, 'Ids come from remember/recall. Recall the entity first to find the right fact.');
+      WHERE id=$1 AND source_id=$2 AND ${ownPage ? memberFactAdmitSql('facts')
+        : `($3::boolean=false OR visibility='world')${excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`} FOR UPDATE`,
+    ownPage ? [id, sourceId] : [id, sourceId, ctx.remote !== false]);
+    if (!fact) throw notFound();
     if (ctx.remote !== false && supersessionGuarded('agent_written', fact.trust_tier)) throw remoteForgetRaced(id);
-    await refuseForgetReachingOtherCopies(tx, sourceId, fact, ctx.remote !== false, excludePrivate);
+    if (!ownPage) await refuseForgetReachingOtherCopies(tx, sourceId, fact, ctx.remote !== false, excludePrivate);
     const slug = fact.source_markdown_slug ?? fact.entity_slug ?? 'memory/unattributed';
     enforceClientSlugFence(ctx, slug, operation); enforceSubagentSlugFence(ctx, slug, operation);
     const authority = await submissionAuthority({ ...ctx, engine: tx }, operation, sourceId, source.incarnation, slug);
@@ -363,7 +383,9 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
     return withCoordinatedWrite(tx, [sourceId], async () => {
       // Even an expired legacy fact acquires a ledger so a stale import cannot
       // reactivate it. Internal affected-page identities never enter the receipt.
-      withdrawn = (await recordFactWithdrawal(tx, id, sourceId, ctx.remote !== false, { requestId: row.id, semanticReview, excludePrivate, beliefReport })).pages;
+      withdrawn = (await recordFactWithdrawal(tx, id, sourceId, ctx.remote !== false, ownPage
+        ? { requestId: row.id, semanticReview: false, memberPage: ownPage, beliefReport }
+        : { requestId: row.id, semanticReview, excludePrivate, beliefReport })).pages;
       if (reason) await tx.executeRaw(`UPDATE facts SET context=concat_ws(' | ',NULLIF(context,''),$3::text)
         WHERE id=$1 AND source_id=$2`, [id, sourceId, `forgotten: ${reason}`]);
       if (operation === 'forget_fact' && fact.expired_at !== null) {

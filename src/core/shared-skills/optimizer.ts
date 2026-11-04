@@ -10,7 +10,7 @@ import { getWriteRequest } from '../persistence/journal.ts';
 import { submissionAuthority } from '../persistence/authority.ts';
 import { requireUuid, sha256 } from '../persistence/digest.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
-import { localHostId } from '../persistence/identity.ts';
+import { hostIdFor } from '../persistence/identity.ts';
 import { hasScope } from '../scope.ts';
 import { getWorkingTreeStatusForFile, splitFrontmatter } from '../skillopt/apply-edits.ts';
 import { assertBundledMutationHeldOut, getBundledSkillContext, shouldMutateSkillFile } from '../skillopt/bundled-skill-gate.ts';
@@ -34,7 +34,7 @@ export async function sharedOptimizerSkillsDir(ctx: OperationContext, sourceId: 
   const binding = await getWorktreeBinding(ctx.engine, sourceId);
   const ownerFix = { fix: hostFix(ctx, ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'],
     `Shows source ${sourceId}'s designated canonical owner and binding; optimization runs only on that host.`) };
-  if (!binding || binding.source_incarnation !== incarnation || binding.state !== 'active' || binding.owner_host_id !== localHostId() || !binding.local_path) {
+  if (!binding || binding.source_incarnation !== incarnation || binding.state !== 'active' || binding.owner_host_id !== hostIdFor(ctx.engine) || !binding.local_path) {
     throw opError('owner_unavailable', 'Shared optimization must run on the active canonical owner.',
       `Source ${sourceId}'s skills are optimized only on its active canonical owner host, and this host is not it (or the binding is inactive). Nothing ran and nothing was spent; run the optimization there.`, ownerFix);
   }
@@ -97,10 +97,11 @@ export async function optimizeSharedSkill(opts: SkillOptOpts, run: (opts: SkillO
   }
   skillName(opts.skillName); skillName(target.pack_id, 'pack_id');
   requireUuid(target.source_incarnation); requireUuid(target.expected_revision); requireUuid(target.request_id);
-  if (opts.resumeRunId || opts.writeCapture || opts.disableValidationGate || opts.optimizerMode || opts.reflectMode) {
-    throw opError('invalid_params', 'Shared optimization does not permit legacy resume, write capture, or evaluation ablations.',
-      'Drop the resume run id, write capture, validation-gate and optimizer/reflect mode overrides, then start the optimization again; shared skills always run the full gated evaluation.');
+  if (opts.resumeRunId || opts.writeCapture || opts.disableValidationGate || opts.reflectMode || opts.tasks || opts.rolloutHook || opts.criteriaText !== undefined || !opts.benchmarkPath) {
+    throw opError('invalid_params', 'Shared optimization does not permit legacy resume, write capture, evaluation ablations or harness inputs.',
+      'Drop the resume run id, write capture, validation-gate and reflect mode overrides, explicit tasks, criteria and rollout hook, and pass a benchmark file; then start the optimization again. Shared skills always run the full gated evaluation.');
   }
+  const benchmarkInput = opts.benchmarkPath;
   await authorize(ctx, opts);
   if (await getWriteRequest(ctx.engine, await requestPrincipalForContext(ctx), target.request_id)) {
     throw new OperationError('request_already_submitted', 'This optimizer publication request has already been submitted.',
@@ -132,7 +133,7 @@ export async function optimizeSharedSkill(opts: SkillOptOpts, run: (opts: SkillO
   }
   const files = normalizeSkillFiles(opts.skillName, stored.files.map(file => ({ ...file, encoding: 'base64' })));
   const evaluationInputs: Buffer[] = [];
-  for (const input of [opts.benchmarkPath, ...(opts.heldOutPath ? [opts.heldOutPath] : [])]) {
+  for (const input of [benchmarkInput, ...(opts.heldOutPath ? [opts.heldOutPath] : [])]) {
     let bytes: Buffer;
     if (ctx.remote !== false) {
       const path = skillPath(relative(dirname(skillsDir), resolve(input)).split(sep).join('/'));

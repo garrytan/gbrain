@@ -11,7 +11,7 @@ import { flushDirectory } from '../fs-durable.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { sha256 } from './digest.ts';
 import { authorizeStoredRequest } from './authority.ts';
-import { localHostId } from './identity.ts';
+import { hostIdFor } from './identity.ts';
 import { acquireWorktree, getWorktreeBinding, guardOwnership, type WorktreeBinding } from './ownership.ts';
 import { chargePreparationAttempt, clearResolvedRecovery, completeWrite, getWriteRequestById, lockCounters, markRecovering, prepareRecovery, releaseUnpublishedClaim } from './journal.ts';
 import type { WaitingOn } from './claim-phase.ts';
@@ -44,7 +44,7 @@ import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, pub
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { landedCommit, PENDING_IMPORT, SYNC_HELD } from './pending-import.ts';
-import { CANONICAL_FILE_MISSING, databaseRefusal, ownerExceptionFailure, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
+import { CANONICAL_FILE_MISSING, CHECKOUT_REFUSAL_ORIGINS, type CheckoutRefusalOrigin, databaseRefusal, ownerExceptionFailure, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
 import { SYNC_CURSOR_REPLACED, SYNC_PASS_SUPERSEDED } from './sync-checkpoint-replaced.ts';
 import { fenceFailureDetail } from '../fence-repair/refusal.ts';
 import { withdrawalFailureDetail } from '../facts/withdrawal.ts';
@@ -205,6 +205,7 @@ function requestError(error: unknown): PublicationFailure {
     // #6188: a typed fence refusal keeps its location in the bounded detail, which outlives receipt compaction.
     const detail = fenceFailureDetail(error) ?? withdrawalFailureDetail(error) ?? (error.syncRefusal as PublicationFailure['detail'] | undefined)
       ?? (error.detail === CANONICAL_FILE_MISSING ? { origin: CANONICAL_FILE_MISSING } : undefined)
+      ?? ((CHECKOUT_REFUSAL_ORIGINS as readonly unknown[]).includes(error.detail) ? { origin: error.detail as CheckoutRefusalOrigin } : undefined)
       // #6693: a refusal on a page whose file awaits import or is held by sync; the replay after import selects on it.
       ?? (error.code === 'source_changed' && (error.reason === PENDING_IMPORT || error.reason === SYNC_HELD) ? { origin: error.reason } : undefined);
     return { code: error.code, message: error.message, ...(detail ? { detail } : {}) };
@@ -333,7 +334,7 @@ export function preparationStalledFailure(row: WriteRequest, info: PreparationSt
  */
 export async function finishPreparationStalled(engine: BrainEngine, row: WriteRequest, info: Omit<PreparationStallInfo, 'attempts'>, charge: boolean): Promise<WriteRequest> {
   const attempts = charge ? await chargePreparationAttempt(engine, row) : row.preparation_attempts ?? info.limit;
-  const failure = withAttempt(preparationStalledFailure(row, { ...info, attempts }), 'preparation');
+  const failure = withAttempt(preparationStalledFailure(row, { ...info, attempts }), 'preparation', engine);
   return engine.transaction(tx => completeWrite(tx, row, 'failed', {}, failure));
 }
 
@@ -351,7 +352,7 @@ export async function releaseChargedInterruption(engine: BrainEngine, row: Write
   if (!charge) return null;
   const done = await engine.transaction(async tx => {
     const attempts = await chargeTransientInterruption(tx, row);
-    if (attempts > charge.limit) return completeWrite(tx, row, 'failed', {}, withAttempt(writeInterruptedFailure(row, charge.interruption, attempts, charge.limit), stage));
+    if (attempts > charge.limit) return completeWrite(tx, row, 'failed', {}, withAttempt(writeInterruptedFailure(row, charge.interruption, attempts, charge.limit), stage, tx));
     await releaseUnpublishedClaim(tx, row, reason);
     return null;
   }).then(outcome => ({ outcome }), () => null);
@@ -364,7 +365,7 @@ export async function finishUnpublishedFailure(engine: BrainEngine, row: WriteRe
   stage: PublicationStage = 'publication'): Promise<WriteRequest> {
   const charged = await releaseChargedInterruption(engine, row, error, stage);
   if (charged) return charged;
-  const failure = withAttempt(requestError(error), stage);
+  const failure = withAttempt(requestError(error), stage, engine);
   if (mayReprepare(row, failure) || transientDatabaseFailure(error)) {
     await releaseUnpublishedClaim(engine, row, transientDatabaseFailure(error) ? 'database_contention' : 'revision_changed_repreparing');
     return (await getWriteRequestById(engine, row.id))!;
@@ -453,7 +454,7 @@ function largeRecoveryRecord(row: WriteRequest, file: PageMutationFile, binding:
 }
 
 export async function publishMutation(engine: BrainEngine, row: WriteRequest, prepared: PreparedMutation,
-  hostId = localHostId(), callerHooks: PublicationHooks = {}): Promise<WriteRequest> {
+  hostId = hostIdFor(engine), callerHooks: PublicationHooks = {}): Promise<WriteRequest> {
   const hooks = withFaultPoints(callerHooks);
   let lock: NativeLockHandle | null = null;
   let releaseCapacity: (() => void) | null = null;
@@ -656,7 +657,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       if (!transactionBodyCompleted && transientInterruption(error)) await faultPoint('persistence:recovery_interruption_charged', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation, ...chargedInterruptionDetail(transientInterruption(error), error) });
       const terminal = charged ? charged.failure
         : !transactionBodyCompleted && !mayReprepare(row, requestError(error)) && !transientDatabaseFailure(error) ? requestError(error) : null;
-      const failure = terminal ? withAttempt(terminal, published ? 'after_file_publication' : 'publication') : undefined;
+      const failure = terminal ? withAttempt(terminal, published ? 'after_file_publication' : 'publication', engine) : undefined;
       try { await markRecovering(engine, row, failure ? 'publication_failed' : published ? 'commit_outcome_uncertain' : 'publication_not_started', failure); }
       catch { /* database outage: durable recovery record remains discoverable */ }
       if (lock) {
@@ -683,7 +684,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
   }
 }
 
-export async function recoverPublication(engine: BrainEngine, id: string, hostId = localHostId(), alreadyLocked = false,
+export async function recoverPublication(engine: BrainEngine, id: string, hostId = hostIdFor(engine), alreadyLocked = false,
   terminalError?: PublicationFailure, capacityAlreadyHeld = false, hooks: PublicationHooks = {}): Promise<WriteRequest> {
   let row = await getWriteRequestById(engine, id);
   if (!row) throw opError('not_found', 'Write request not found.',

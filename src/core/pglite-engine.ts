@@ -85,6 +85,7 @@ import { withVectorSettings } from './search/vector-settings.ts';
 import { PGLITE_SCHEMA_SQL, getPGLiteSchema } from './pglite-schema.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { readStoredEmbeddingIdentity } from './stored-embedding-identity.ts';
+import { assertEmbeddedEmbedding, embeddedSchemaEmbedding, isEmbeddedEngine } from './embedded-engine.ts';
 import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP, TRAVERSE_WALK_ROW_CAP } from './engine-constants.ts';
 import { PageMissingError } from './engine-errors.ts';
 import { SAFE_FENCE_CHUNKER_VERSION, bodyWriteChunkVersion, currentTextProjectionFilter, requiresSafeChunks, safeChunksFilter } from './search/safe-chunks.ts';
@@ -170,6 +171,7 @@ import * as titlesImpl from './engine-sql/titles.ts';
 import * as keywordPagesImpl from './engine-sql/keyword-pages.ts';
 import { applyForwardReferenceBootstrap, pgliteBootstrapTarget } from './engine-sql/bootstrap.ts';
 import { wellFormedJson } from './text-safe.ts';
+import { ENGINE_ROOT } from './engine-root.ts';
 
 /**
  * #4284 — opt-in out-of-band watchdog for a PGLite disconnect with a live
@@ -725,6 +727,7 @@ export async function probePgliteScratchStore(
 }
 
 export class PGLiteEngine implements BrainEngine {
+  readonly [ENGINE_ROOT]: object = this;
   private vectorIterativeScan?: Promise<boolean>;
   private readonly vectorScope = vectorScopeLoader(() => this.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL), ids => this.executeRaw<ScopeChunkCount>(SCOPE_CHUNKS_SQL, [ids]));
   /** Transaction clones keep chunk invalidation and replacement atomic. */
@@ -902,7 +905,7 @@ export class PGLiteEngine implements BrainEngine {
     // hash, load the dump and skip the schema replay. Mismatch or missing
     // file silently falls back to normal init.
     let loadDataDir: Blob | undefined;
-    if (!dataDir && process.env.GBRAIN_PGLITE_SNAPSHOT) {
+    if (!dataDir && process.env.GBRAIN_PGLITE_SNAPSHOT && !isEmbeddedEngine(this)) {
       const snapshotResult = tryLoadSnapshot(process.env.GBRAIN_PGLITE_SNAPSHOT);
       if (snapshotResult) {
         loadDataDir = snapshotResult;
@@ -1141,7 +1144,9 @@ export class PGLiteEngine implements BrainEngine {
     }
     let dims: number = DEFAULT_EMBEDDING_DIMENSIONS;
     let model: string = DEFAULT_EMBEDDING_MODEL;
-    try {
+    const embedded = embeddedSchemaEmbedding(this); // settings.embedding, never the process gateway
+    if (embedded) ({ dimensions: dims, model } = embedded);
+    else try {
       // Keep the gateway lazy: its static closure is large, and evaluation inside
       // this try/catch preserves the unconfigured-gateway default fallback.
       const gw = await import('./ai/gateway.ts'); // engine-dynamic-import-ok
@@ -1154,6 +1159,7 @@ export class PGLiteEngine implements BrainEngine {
     const storedIdentity = await readStoredEmbeddingIdentity(this);
     if (storedIdentity) {
       if (!storedIdentity.model) throw new Error('Stored embedding model is unknown. Run gbrain migrate embeddings --status and explicitly migrate before schema initialization.');
+      if (embedded) assertEmbeddedEmbedding(embedded, storedIdentity);
       dims = storedIdentity.dimensions;
       model = storedIdentity.model;
     }
@@ -2499,7 +2505,7 @@ export class PGLiteEngine implements BrainEngine {
     source_id: string,
     entitySlug: string,
     factText: string,
-    opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; arm?: 'keyword'; attributedTo?: import('./engine.ts').FactAttribution | null },
+    opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; arm?: 'keyword'; attributedTo?: import('./engine.ts').FactAttribution | null; excludeMemberPages?: boolean; onlyPage?: string },
   ): Promise<FactRow[]> {
     return factsImpl.findCandidateDuplicates(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id, entitySlug, factText, opts);
   }
@@ -2773,7 +2779,7 @@ export class PGLiteEngine implements BrainEngine {
     // scope ingest_log queries. Default 'default' matches the column DEFAULT.
     const sourceId = entry.source_id ?? 'default';
     // v254: the writer's version, host and segment-reader mark (writer-versions.ts writerStamp).
-    const stamp = writerStamp({ mint: false });
+    const stamp = writerStamp({ mint: false, engine: this });
     await this.db.query(
       `INSERT INTO ingest_log (source_id, source_type, source_ref, pages_updated, summary, writer_version, writer_host_id, writer_segment_reader)
        VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7::uuid, true)`,

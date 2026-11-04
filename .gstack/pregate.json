@@ -6,6 +6,9 @@
     "scripts/serial-files.tsv": [
       "test/scripts/serial-files.test.ts"
     ],
+    "docs/contracts/qm-memory-provider/v1.json": [
+      "test/qm-memory-contract.test.ts"
+    ],
     "src/cli.ts": [
       "test/cli-goldens.test.ts"
     ],
@@ -62,7 +65,28 @@
     ],
     "test/grandfather-capacity.test.ts": [
       "test/grandfather-managed.test.ts"
-    ]
+    ],
+    "scripts/ubicloud/*.sh": [
+      "test/scripts/awk-portability.test.ts"
+    ],
+    "scripts/postgres-arm-weights-postgres-only.json": [
+      "test/scripts/postgres-unit-arms.test.ts"
+    ],
+    "scripts/*-weights.metadata.json": [
+      "test/scripts/mine-shard-weights.test.ts"
+    ],
+    "docs/eval/system-one/runners/ubicloud-setup.sh": [
+      "test/scripts/vm-setup-usage.test.ts"
+    ],
+    "scripts/bench/production-soak/vm-setup.sh": [
+      "test/scripts/vm-setup-usage.test.ts"
+    ],
+    "scripts/bench/stall-repro-vm-setup.sh": [
+      "test/scripts/vm-setup-usage.test.ts"
+    ],
+    "scripts/bench/**": [],
+    "docs/eval/system-one/runners/**": [],
+    "docs/eval/system-one/generators/**": []
   },
   "guards": [
     {
@@ -122,6 +146,42 @@
     "visibility": "public"
   },
   "remote_gate": "bash scripts/pregate-remote-gate.sh",
+  "run_profiles": {
+    "test": {
+      "workflow": "test.yml",
+      "events": ["workflow_dispatch", "push"],
+      "jobs": ["full-suite"],
+      "artifact": "full-suite-tree"
+    },
+    "e2e": {
+      "workflow": "e2e.yml",
+      "events": ["workflow_dispatch", "push"],
+      "jobs": ["e2e-full-suite"],
+      "artifact": "e2e-full-suite-tree"
+    }
+  },
+  "remote_gate_runs": {
+    "profiles": ["test", "e2e"],
+    "inventory": "bash scripts/pregate-remote-gate.sh --list"
+  },
+  "ship_lanes_from": {
+    "bun run test": {
+      "profiles": ["test"],
+      "inventory": "GBRAIN_PREGATE_GATE_CMD='bun run ci:ubicloud' bash scripts/pregate-remote-gate.sh --list --lanes unit,serial"
+    },
+    "bun run test:serial": {
+      "profiles": ["test"],
+      "inventory": "GBRAIN_PREGATE_GATE_CMD='bun run ci:ubicloud' bash scripts/pregate-remote-gate.sh --list --lanes serial"
+    },
+    "bun run test:slow": {
+      "profiles": ["test"],
+      "inventory": "GBRAIN_PREGATE_GATE_CMD='bun run ci:ubicloud' bash scripts/pregate-remote-gate.sh --list --lanes slow"
+    },
+    "bun run test:e2e": {
+      "profiles": ["test", "e2e"],
+      "inventory": "GBRAIN_PREGATE_GATE_CMD='bun run ci:ubicloud' bash scripts/pregate-remote-gate.sh --list --lanes e2e"
+    }
+  },
   "allowlist": [
     {
       "finding": "pii.phone.e164",

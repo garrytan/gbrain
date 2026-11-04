@@ -53,6 +53,7 @@ import { runJobsWork } from './jobs/work.ts';
 import { runJobsSupervisor } from './jobs/supervisor.ts';
 import { runJobsWatch } from './jobs/watch.ts';
 import type { JobsCommandContext } from './jobs/shared.ts';
+import { withLocalScope } from '../core/engine-scope-store.ts';
 
 // Moved to src/core/minions/handlers/ (refactor wave 1); re-exported so importers keep this path.
 export { resolveJobPull } from '../core/minions/handlers/job-pull.ts';
@@ -464,7 +465,12 @@ const JOBS_SUBCOMMANDS: Record<string, (ctx: JobsCommandContext) => Promise<void
   watch: runJobsWatch,
 };
 
-export async function runJobs(engineOrNull: BrainEngine | null, args: string[]): Promise<void> {
+/** `gbrain jobs` (the worker included) runs in a local scope, so its own AI calls use the process gateway (engine-scope.ts). */
+export function runJobs(engineOrNull: BrainEngine | null, args: string[]): Promise<void> {
+  return withLocalScope(() => runJobsCommand(engineOrNull, args));
+}
+
+async function runJobsCommand(engineOrNull: BrainEngine | null, args: string[]): Promise<void> {
   const sub = args[0];
 
   // Help guards run BEFORE the thin-client refusal below: cli.ts routes

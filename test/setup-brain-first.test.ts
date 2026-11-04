@@ -27,6 +27,7 @@ import {
 } from '../src/core/setup/brain-first.ts';
 import { harnessWiringCheck, instructionBlockViews, withInstructionBlocks, withSurfaceNote, type InstructionBlockView } from '../src/commands/doctor/checks/harness-wiring.ts';
 import { installHarnessConnection } from '../src/core/harness/install.ts';
+import { ensureHookLauncher, hookLauncherPath } from '../src/core/setup/hook-launcher.ts';
 import type { HarnessCredentials } from '../src/core/harness/credentials.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
@@ -499,8 +500,10 @@ describe('brain-first block: full setup and the installer lanes', () => {
 });
 
 describe('doctor harness_wiring reports the block', () => {
+  /** A current stdio registration: serve behind gbrain's hook launcher, the shape setup writes (#8426). */
   function stdioRegistration(b: Box): void {
-    writeFileSync(join(b.home, '.claude.json'), JSON.stringify({ mcpServers: { gbrain: { type: 'stdio', command: b.bin, args: ['serve'] } } }));
+    const launcher = ensureHookLauncher(hookLauncherPath(join(b.home, '.gbrain')));
+    writeFileSync(join(b.home, '.claude.json'), JSON.stringify({ mcpServers: { gbrain: { type: 'stdio', command: launcher, args: [b.bin, 'serve'] } } }));
   }
   const env = (b: Box) => ({ ...b.env, CLAUDECODE: undefined, CLAUDE_CODE_ENTRYPOINT: undefined, CODEX_SANDBOX: undefined, CODEX_CI: undefined, OPENCODE: undefined, OPENCODE_PID: undefined });
 

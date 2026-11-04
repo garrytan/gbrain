@@ -17,7 +17,7 @@ import { pageBodyBytes } from '../../page-body/page-shape.ts';
 import { digest } from '../../persistence/digest.ts';
 import { RESERVED_RETIREMENT_KEYS, retireDerivedPagesInTransaction } from '../../persistence/derived-retirement-hold.ts';
 import { withWriteTrust } from '../../persistence/context.ts';
-import { effectiveVisibility, type Visibility } from '../../search/private-visibility.ts';
+import { effectiveVisibility, withFolderRestricted, type Visibility } from '../../search/private-visibility.ts';
 import { deriveTrust, lowerDerivedPageIn } from '../../trust/taint.ts';
 import { derivedGateConfig, derivedGateInput, timelineRowAllowed } from '../../trust/derived-gate.ts';
 import { assessTimelineForGate, type WriteGateAssessment } from '../../write-gate.ts';
@@ -41,11 +41,11 @@ export interface ChronicleDepthPin {
   visibility: Visibility;
 }
 
-export function pinDepth(snapshot: PageSnapshot): ChronicleDepthPin {
+export async function pinDepth(engine: Pick<BrainEngine, 'executeRaw'>, snapshot: PageSnapshot): Promise<ChronicleDepthPin> {
   return {
     slug: snapshot.page.slug, pageId: Number(snapshot.page.id), revision: snapshot.revision,
     contentHash: String(snapshot.page.content_hash ?? ''), incarnation: snapshot.sourceIncarnation,
-    visibility: effectiveVisibility({ kind: 'page', page: snapshot.page }),
+    visibility: effectiveVisibility({ kind: 'page', page: await withFolderRestricted(engine, snapshot.page) }),
   };
 }
 
@@ -55,7 +55,7 @@ export async function depthPinBroken(tx: BrainEngine, sourceId: string, pin: Chr
   if (!current) return 'page_missing';
   if (Number(current.page.id) !== pin.pageId || current.revision !== pin.revision
     || String(current.page.content_hash ?? '') !== pin.contentHash || current.sourceIncarnation !== pin.incarnation
-    || effectiveVisibility({ kind: 'page', page: current.page }) !== pin.visibility) return 'superseded';
+    || effectiveVisibility({ kind: 'page', page: await withFolderRestricted(tx, current.page) }) !== pin.visibility) return 'superseded';
   return decisionRequestId && !await grantHolds(tx, decisionRequestId) ? 'superseded' : null;
 }
 
@@ -221,7 +221,7 @@ export const chronicleEventAdapter: GenerationAdapter<ChronicleGenerationContext
   async readInput(engine, key, context) {
     const snapshot = await engine.readPageSnapshot(depthOf(key), { sourceId: key.sourceId });
     if (!snapshot) return null;
-    const pin = pinDepth(snapshot);
+    const pin = await pinDepth(engine, snapshot);
     const size = pageBodyBytes(snapshot.page);
     const revoked = context?.decisionRequestId ? !await grantHolds(engine, context.decisionRequestId) : false;
     return { pin: revoked ? `${depthInputPin(pin)}:grant_revoked` : depthInputPin(pin), size };

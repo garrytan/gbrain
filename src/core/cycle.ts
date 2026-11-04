@@ -586,7 +586,7 @@ export interface CycleOpts {
    * Validated via `assertValidSourceId` in `cycleLockIdFor` (defense-in-depth).
    */
   sourceId?: string;
-  /** #6803: a connector source's cycle (no sync phase) works on its pages changed after this (null: all); see cycle/source-window.ts. */
+  /** #6803, #8573: a source cycle with no sync works on a bounded window of its pages changed after this (null: from its oldest page); see cycle/source-window.ts. */
   sourceChangedSince?: string | null;
   /**
    * #4700 — bare `gbrain dream` may opt the brain's default-like source
@@ -2390,10 +2390,10 @@ async function runCycleUnscoped(
         const { result, duration_ms } = await timePhase(async () => (await import('./cycle/connector-extract.ts')).runPhaseExtractDatabaseOnly(engine, { dryRun, sourceId: cycleSourceId, timeBudgetMs: CYCLE_STALE_DRAIN_BUDGET_MS }), 'extract');
         phaseResults.push({ ...result, duration_ms });
       } else {
-        // If sync didn't run (phases exclude it) or failed, syncPagesAffected
+        // No sync (or a failed one) and no source window (#8573): syncPagesAffected
         // is undefined → extract falls back to full walk (safe default).
         progress.start('cycle.extract');
-        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, cycleSignal, cycleSourceId), 'extract');
+        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, brainDir, dryRun, sourceWindow?.slugs ?? syncPagesAffected, cycleSignal, cycleSourceId), 'extract');
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -3182,7 +3182,7 @@ async function runCycleUnscoped(
       await engine.updateSourceConfig(opts.sourceId, {
         last_source_cycle_at: nowIso,
         last_full_cycle_at: nowIso,
-        ...sourceCycleWindowStamp(phaseResults, opts.sourceChangedSince, sourceWindow),
+        ...sourceCycleWindowStamp(phaseResults, sourceWindow),
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);

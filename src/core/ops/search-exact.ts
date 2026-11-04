@@ -56,11 +56,11 @@ const search_exact: Operation = {
     phrase: { type: 'string', required: true, description: "The literal text, e.g. 'INV-2024-0042' or 'quarterly board pack'." },
     case_sensitive: { type: 'boolean', description: 'Match case exactly (default false).' },
     source_id: { type: 'string', description: "Only this source; '__all__' spans every source you can read." },
-    types: { type: 'array', items: { type: 'string' }, description: "Only these page types, e.g. ['meeting']." },
+    types: { type: 'array', minItems: 1, items: { type: 'string' }, description: "Only these page types, e.g. ['meeting']." },
     slug_prefix: { type: 'string', description: "Only slugs starting with this, e.g. 'meetings/'." },
-    limit: { type: 'number', description: 'Matching pages to return (default ' + EXACT_DEFAULT_LIMIT + ', max ' + EXACT_MAX_LIMIT + ').' },
+    limit: { type: 'number', minimum: 1, description: 'Matching pages to return (default ' + EXACT_DEFAULT_LIMIT + ', max ' + EXACT_MAX_LIMIT + ').' },
     after: { type: 'number', description: 'Resume a bounded scan: the resume_after of the previous call.' },
-    max_seconds: { type: 'number', description: 'Scan budget in seconds (default ' + EXACT_DEFAULT_SECONDS + ', max ' + EXACT_MAX_SECONDS + ').' },
+    max_seconds: { type: 'number', exclusiveMinimum: 0, description: 'Scan budget in seconds (default ' + EXACT_DEFAULT_SECONDS + ', max ' + EXACT_MAX_SECONDS + ').' },
     min_trust: MIN_TRUST_PARAM,
   },
   handler: async (ctx, p) => {
@@ -90,10 +90,14 @@ const search_exact: Operation = {
     });
     const { stampPageTrust } = await import('../eligibility/stamp.ts');
     const matches = await stampPageTrust(ctx.engine, result.matches.map(m => ({ ...m, chunk_text: m.snippets.map(s => s.text).join('\n') })), floor);
+    // GST-687: an untrusted reader gets a chat page's snippets, or snippets below the owner's tier, quoted (tool calls summarized on a chat page).
+    const { quotePageText, quotesStored } = await import('../search/transcript-quote.ts');
+    const quoted = <M extends Omit<(typeof matches)[number], 'chunk_text'>>(m: M) => ctx.remote !== false && quotesStored(m.type, (m as { trust_tier?: unknown }).trust_tier)
+      ? { ...m, snippets: m.snippets.map(s => ({ ...s, text: quotePageText(s.text, m.slug, m.type) })), quoted: 'transcript' as const } : m;
     return {
       phrase: params.phrase,
       case_sensitive: params.caseSensitive,
-      matches: matches.map(({ chunk_text: _text, ...m }) => m),
+      matches: matches.map(({ chunk_text: _text, ...m }) => quoted(m)),
       complete: result.complete,
       incomplete_reasons: result.incomplete_reasons,
       resume_after: result.resume_after,

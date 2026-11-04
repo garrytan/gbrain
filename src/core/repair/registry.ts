@@ -42,6 +42,7 @@ import { safeChunksRepair } from './safe-chunks.ts';
 import { contextualModeRepair } from './contextual-mode.ts';
 import { connectorCheckpointsRepair } from './connector-checkpoints.ts';
 import { requestIndexesRepair } from './request-indexes.ts';
+import { accessRepair } from './access.ts';
 import { connectorFencesRepair } from './connector-fences.ts';
 import { takeSupersessionRepair } from './take-supersession.ts';
 import { acceptedTakesRepair } from './accepted-takes.ts';
@@ -83,6 +84,7 @@ import { overwrittenEditsRepair } from './overwritten-edits.ts';
 import { missingTablesRepair } from './missing-tables.ts';
 import { urlCloneFencesRepair } from './url-clone-fences.ts';
 import { segmentedMirrorRepair } from './segmented-mirror.ts';
+import { segmentedTilingRepair } from './segmented-tiling.ts';
 import { uncommittedDeletionsRepair, UNCOMMITTED_DELETIONS_CONSENT_TEXT } from './uncommitted-deletions.ts';
 import { factClaimDatesRepair } from './fact-claim-dates.ts';
 import { provenanceRepair } from './provenance.ts';
@@ -148,6 +150,11 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
     handler: connectorCheckpointsRepair, embeds: 'none', checks: ['connector_checkpoints'],
     summary: 'Delete connector checkpoint rows and retry pointers that no registered connector source can load and that are older than 7 days (#5686). '
       + 'Cleanup only; no journal admission. Rows a pending write still references are kept. Brain-wide.',
+  },
+  access: {
+    handler: accessRepair, embeds: 'none', checks: ['access_page_readers_backfill'],
+    summary: 'Derive the readers of pages written before member access (GBRA-218) whose frontmatter already names readable_by. Until repaired such a page reads as nobody for every remote caller; '
+      + 'the repair only restores reads for the members it names and never widens anything. Updates only rows whose derived value changes; no revision, content hash or embedding change. No journal admission.',
   },
   'request-indexes': {
     handler: requestIndexesRepair, embeds: 'none', checks: ['persistence_request_indexes'],
@@ -548,6 +555,17 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'of the canonical render (gbrain export\'s bytes). A file that differs from the database for another reason is listed held '
       + '(file_database_drift) and never rewritten. Preview-bound and destructive: --apply --expect <hash> --yes re-checks each page and commits, per '
       + 'page, one receipted request whose withdrawal-mirror and Git effects rewrite and commit the file. Runs only when named; never on upgrade.',
+  },
+  'segmented-tiling': {
+    handler: segmentedTilingRepair, embeds: 'none', checks: ['segmented_tiling'], explicit_only: true, preview_bound: true,
+    summary: 'Republish, from the file Git holds at HEAD, each live page stored in segments whose live generation\'s rows do not cover its body (GST-1209; '
+      + 'doctor segmented_tiling): such a page refuses every read (page_body_rows_unreadable) and a managed sync holds its file on every retry. Needs '
+      + '--source; --slug <slug> narrows. The preview, on the host that owns the checkout, lists each page with its generation, the bytes its rows '
+      + 'cover, its file, HEAD\'s commit, the blob\'s object id, SHA-256 and size and its sync hold; a page with no file or a file HEAD does not hold, '
+      + 'another sync hold withholds or the next sync\'s import screen would hold is listed held. A source without a Git checkout (a repo-less brain) refuses (not_a_git_repo). --apply --expect <hash> re-checks each page, then '
+      + 'per page, in one transaction under its key lock (a coordinated maintenance write on a managed brain): versions the damaged generation by '
+      + 'reference, publishes the body the import screen and the purge overlay admit as a new generation (title, type, frontmatter, tags and trust tier kept), clears the previewed sync hold, '
+      + 'asks the next sync to re-screen the file and writes the page\'s receipt and audit line. Trusted local CLI only; runs only when named; never on upgrade.',
   },
   'uncommitted-deletions': {
     handler: uncommittedDeletionsRepair, embeds: 'none', checks: ['uncommitted_sync_deletions'], explicit_only: true, preview_bound: true, consent: 'destructive',

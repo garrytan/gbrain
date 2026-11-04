@@ -19,7 +19,7 @@ import { materializeTimeline, prepareCanonicalProjections } from './canonical-pr
 import { digest, sha256 } from './digest.ts';
 import { admitWriteInTransaction, assertReplayIntent, getWriteRequest, getWriteRequestById, intentDigest, receiptFor } from './journal.ts';
 import { acquireWorktree, containsPath, getWorktreeBinding, probeWorktreeWriter, readManagedMode, type WorktreeBinding } from './ownership.ts';
-import { localHostId } from './identity.ts';
+import { hostIdFor } from './identity.ts';
 import { assertPersistenceAccepting, startPersistenceConsumer, waitForWrite, writeResponse } from './service.ts';
 import { maintenancePublishWaitMs } from './maintenance-wait.ts';
 import { AGENT_WRITE_WAIT_MS, configuredWriteWaitMs } from './write-wait.ts';
@@ -27,14 +27,15 @@ import { managedSyncAuthority, validateManagedSyncOptions, validateSyncAuthority
 import type { PreparedContentImport } from './prepared-import.ts';
 import { persistenceFileHash, type PreparedMutation } from './coordinator.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
-import { databaseOnlyPublication, prepareFileTarget } from './page-prepare.ts';
+import { databaseOnlyPublication, prepareFileTarget, preparePrivateTransition } from './page-prepare.ts';
 import { sourceCanonicalGit } from './git-door.ts';
-import { isPrivatePage } from '../search/private-visibility.ts';
+import { isPrivacyPrivatePage } from '../search/private-visibility.ts';
 import { assertPhysicalRoot } from './physical-root.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { LockStolenError, syncLockId, withRefreshingLock, type DbLockHandle } from '../db-lock.ts';
 import { ownedGoogleReceipts, prepareGoogleReceiptPatch, type GoogleReceipts } from './connector-google-receipts.ts';
 import { connectorCheckpointKeys, connectorIdentity, connectorIdentityMatches, type ConnectorIdentity, type ConnectorKind } from './connector-identity.ts';
+import { connectorDirKey } from './connector-kinds.ts';
 import { CONNECTOR_PURGED_LIMIT, readManagedConnectorState, recordConnectorSyncAttempt, sameConnectorAccount, writeManagedConnectorState, type ConnectorAccount, type ConnectorPendingEntry, type ConnectorPurgedItem, type ConnectorRunCounts, type ConnectorState } from './connector-state.ts';
 import { connectorConfigDigest } from './connector-account-mismatch.ts';
 import { connectorAccountChanged, connectorFenceHint, docsAnchor, receiptDeliveredHint, CONNECTOR_INTENT_OUTDATED_OLD_HOST, CONNECTOR_INTENT_OUTDATED_PRE_UPGRADE } from './connector-errors.ts';
@@ -173,8 +174,8 @@ function connectorPublicationRefusal(code: RegistryCode, message: string, row: W
 }
 
 /** The connector binding's owner and incarnation checks; returns the paths they prove present. */
-function checkedConnectorBinding(sourceId: string, source: ConnectorSource, binding: WorktreeBinding) {
-  if (binding.owner_host_id !== localHostId() || !binding.local_path || !binding.coordination_path) {
+function checkedConnectorBinding(engine: object, sourceId: string, source: ConnectorSource, binding: WorktreeBinding) {
+  if (binding.owner_host_id !== hostIdFor(engine) || !binding.local_path || !binding.coordination_path) {
     throw opError('owner_unavailable', 'The connector canonical owner is unavailable on this host.',
       `Source ${sourceId} is owned by another host or its worktree binding is incomplete; run its connector sync on the owner host that gbrain sources writer status --source ${sourceId} --json names.`,
       { fix: ownerStatusFix(sourceId, 'Shows which host owns the source and whether its binding records a local and coordination path.') });
@@ -187,13 +188,13 @@ function checkedConnectorBinding(sourceId: string, source: ConnectorSource, bind
   return { localPath: binding.local_path, coordinationPath: binding.coordination_path, sourcePath: source.local_path };
 }
 
-function connectorBindingRoot(sourceId: string, source: ConnectorSource, binding: WorktreeBinding | null): string | null {
+function connectorBindingRoot(engine: object, sourceId: string, source: ConnectorSource, binding: WorktreeBinding | null): string | null {
   if (!binding) return null;
-  const { localPath, coordinationPath, sourcePath } = checkedConnectorBinding(sourceId, source, binding);
+  const { localPath, coordinationPath, sourcePath } = checkedConnectorBinding(engine, sourceId, source, binding);
   assertPhysicalRoot(localPath, { worktreeId: binding.worktree_id, coordinationPath });
   try {
     const root = realpathSync(join(localPath, binding.relative_path));
-    const configured = source.config[source.config.kind === 'google' ? 'g_dir' : 'gh_dir'];
+    const configured = source.config[connectorDirKey(source.config.kind as ConnectorKind)];
     const directory = typeof configured === 'string' && configured.length > 0 ? configured : sourcePath;
     if (!containsPath(localPath, root) || !statSync(root).isDirectory() || realpathSync(sourcePath) !== root || realpathSync(directory) !== root) {
       throw new Error('root mismatch');
@@ -249,7 +250,20 @@ async function connectorFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 
 async function strictPrivateImport(engine: BrainEngine, sourceId: string, content: string, sourcePath: string, snapshot: PageSnapshot | null): Promise<boolean> {
   const parsed = parseMarkdown(content, sourcePath);
   const frontmatter = snapshot?.page.frontmatter.visibility === 'private' ? { ...parsed.frontmatter, visibility: 'private' } : parsed.frontmatter;
-  return isPrivatePage({ type: parsed.type, frontmatter }) && await sourceCanonicalGit(engine, sourceId);
+  return isPrivacyPrivatePage({ type: parsed.type, frontmatter }) && await sourceCanonicalGit(engine, sourceId);
+}
+
+/**
+ * #7971: the file target of a strict private import, or null when the import is not one. A page turning private (its
+ * stored snapshot is live and public) gets the removal of the file it still has in the worktree or at HEAD, which the
+ * door commits with the publication (G7a, preparePrivateTransition), so the public file leaves HEAD and no private byte
+ * is committed. A page already private, or one without a file, publishes no file.
+ */
+async function strictPrivateFile(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'>, content: string, sourcePath: string,
+  snapshot: PageSnapshot | null): Promise<{ file: PreparedMutation['file'] } | null> {
+  if (!await strictPrivateImport(engine, row.source_id, content, sourcePath, snapshot)) return null;
+  const turning = snapshot && !snapshot.page.deleted_at && !isPrivacyPrivatePage({ type: snapshot.page.type, frontmatter: snapshot.page.frontmatter });
+  return { file: turning ? await preparePrivateTransition(engine, row, snapshot) : undefined };
 }
 
 export async function beginConnectorSync(engine: BrainEngine, sourceId: string, connector: ConnectorKind,
@@ -284,9 +298,9 @@ export async function beginConnectorSync(engine: BrainEngine, sourceId: string, 
   const authority = await managedSyncAuthority(engine, sourceId, source.incarnation, source.local_path ?? '');
   const binding = await getWorktreeBinding(engine, sourceId);
   // The locked acquisition re-stamps a device-only physical-root change (#5604) before the root is asserted.
-  if (binding) { checkedConnectorBinding(sourceId, source, binding); await probeWorktreeWriter(binding, engine); }
+  if (binding) { checkedConnectorBinding(engine, sourceId, source, binding); await probeWorktreeWriter(binding, engine); }
   else authority.writer.databaseOnlyReason = 'connector_database';
-  const canonicalRoot = connectorBindingRoot(sourceId, source, binding);
+  const canonicalRoot = connectorBindingRoot(engine, sourceId, source, binding);
   const session = new ManagedConnectorSync(engine, sourceId, identity, source, authority, binding, canonicalRoot, opts.noEmbed === true, opts.noSchemaPack === true,
     opts.retryFailed === true, lease, opts.resetCheckpoint === true, opts.githubItem !== undefined, opts.full === true);
   await session.load();
@@ -397,6 +411,8 @@ export class ManagedConnectorSync {
     this.checkpointKeys = connectorCheckpointKeys(sourceId, source.incarnation, identity);
     this.checkpointKey = this.checkpointKeys[0]!;
   }
+  /** Whether this run publishes canonical files (a bound worktree root) rather than database-only rows. */
+  get bound(): boolean { return this.canonicalRoot !== null; }
   async assertLease(engine: BrainEngine): Promise<void> {
     if (!this.lease) return;
     this.lease.signal.throwIfAborted();
@@ -531,7 +547,7 @@ export class ManagedConnectorSync {
     const binding = await getWorktreeBinding(engine, this.sourceId);
     if ((binding?.worktree_id ?? null) !== (this.binding?.worktree_id ?? null) ||
         String(binding?.owner_epoch) !== String(this.binding?.owner_epoch) ||
-        connectorBindingRoot(this.sourceId, source, binding) !== this.canonicalRoot) {
+        connectorBindingRoot(engine, this.sourceId, source, binding) !== this.canonicalRoot) {
       throw opError('source_changed', 'The connector ownership changed during the sweep.',
         `The owner binding or canonical root of ${this.sourceId} changed while this sweep ran; writes it already admitted keep their receipts. Inspect the owner before running gbrain sync --source ${this.sourceId} again.`,
         { fix: ownerStatusFix(this.sourceId, 'Shows the current owner, epoch and canonical root of the source.') });
@@ -892,7 +908,7 @@ export class ManagedConnectorSync {
       if (kind === 'connector_v2_delete') {
         if (this.binding || prepared.noop !== true) return false;
       } else {
-        const databaseOnly = !this.binding || await strictPrivateImport(this.engine, this.sourceId, intent.content ?? '', sourcePath ?? `${slug}.md`, snapshot);
+        const databaseOnly = !this.binding || !prepared.file && await strictPrivateImport(this.engine, this.sourceId, intent.content ?? '', sourcePath ?? `${slug}.md`, snapshot);
         const verdict = await inspectUnchanged(this.engine, { prepared, snapshot, sourcePath, databaseOnly });
         if (verdict.admitReason) return false;
       }
@@ -916,9 +932,11 @@ export class ManagedConnectorSync {
       extra.googleReceipts = ownedGoogleReceipts(snapshot, (this.identity.config as GoogleSourceConfig).account, extra.googleReceipts!);
       sourcePath = snapshot!.page.source_path!;
     }
-    const file = kind === 'connector_v2_checkpoint' || kind === 'connector_v2_import' && sourcePath && typeof extra.content === 'string'
-      && await strictPrivateImport(this.engine, this.sourceId, extra.content, sourcePath, snapshot) ? undefined : await connectorFileTarget(this.engine,
-      { source_id: this.sourceId, worktree_id: this.binding?.worktree_id ?? null, slug }, snapshot, extra.content ?? null, sourcePath, this.canonicalRoot);
+    const target = { source_id: this.sourceId, worktree_id: this.binding?.worktree_id ?? null, slug };
+    const strictPrivate = kind === 'connector_v2_import' && sourcePath && typeof extra.content === 'string'
+      ? await strictPrivateFile(this.engine, target, extra.content, sourcePath, snapshot) : null;
+    const file = kind === 'connector_v2_checkpoint' ? undefined : strictPrivate ? strictPrivate.file
+      : await connectorFileTarget(this.engine, target, snapshot, extra.content ?? null, sourcePath, this.canonicalRoot);
     if (file && sourcePath && resolve(file.path) !== resolve(this.canonicalRoot!, sourcePath)) {
       throw opError('source_changed', 'The connector source path no longer names its canonical file.',
         `The recorded path of ${slug} no longer resolves to its canonical file under the root of ${this.sourceId}, so nothing was submitted. Inspect the root and binding before running gbrain sync --source ${this.sourceId} again.`,
@@ -1100,7 +1118,7 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
       throw connectorPublicationRefusal('source_changed', 'The connector ownership binding changed after admission.', row,
         `The owner binding of ${row.source_id} changed after this write was admitted.`);
     }
-    if (connectorBindingRoot(row.source_id, source, binding) !== p.canonicalRoot) throw connectorPublicationRefusal('source_changed', 'The connector canonical root changed after admission.', row,
+    if (connectorBindingRoot(engine, row.source_id, source, binding) !== p.canonicalRoot) throw connectorPublicationRefusal('source_changed', 'The connector canonical root changed after admission.', row,
       `The canonical root of ${row.source_id} changed after this write was admitted.`);
     if (p.filePath !== null && (!p.canonicalRoot || !isWriteTargetContained(p.filePath, p.canonicalRoot) || persistenceFileHash(p.filePath) !== p.fileBeforeHash)) {
       throw connectorPublicationRefusal('source_changed', 'The connector canonical file changed after admission.', row,
@@ -1195,7 +1213,8 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
   const project = await prepareCanonicalProjections(engine, ready.parsedPage, row.slug, row.source_id, snapshot, 'preserving');
   const tags = [...new Set([...(snapshot?.tags ?? []), ...ready.parsedPage.tags])].sort();
   const page: Page = { ...(snapshot?.page ?? { id: 0, slug: row.slug, source_id: row.source_id, created_at: new Date(row.created_at), updated_at: new Date(row.created_at) }), ...ready.parsedPage };
-  const target = await strictPrivateImport(engine, row.source_id, p.content, p.sourcePath, snapshot) ? undefined
+  const strictPrivate = await strictPrivateFile(engine, row, p.content, p.sourcePath, snapshot);
+  const target = strictPrivate ? strictPrivate.file
     : await connectorFileTarget(engine, row, snapshot, serializePageToMarkdown(page, tags), p.sourcePath, p.canonicalRoot);
   // Google pages hold private mail: derived here from the stored connector, never submitted, so request ids are unchanged.
   const file = target && p.connector === 'google' ? { ...target, publishMode: 0o600 } : target;

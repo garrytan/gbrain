@@ -26,6 +26,9 @@ Bare `gbrain query "X"` routes to the default brain's default source. That
 is the right answer 90% of the time. Don't cross the boundary without a
 reason.
 
+A remote `not_found` or a short result may be a page whose `readable_by` or folder rule excludes
+this credential or the audience it acts for: check `whoami` (`access.applied`) before telling the user there are no notes.
+
 ## When to switch brain
 
 Switch brain (`--brain <id>`) when:

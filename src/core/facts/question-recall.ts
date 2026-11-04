@@ -211,7 +211,7 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
     const [pool, uncomparable, rule] = await Promise.all([
       collectFactCandidates(ctx.engine, question, scope, embedding, {
         depth: { keyword: QUESTION_POOL_DEPTH, cosine: QUESTION_POOL_DEPTH, entity: QUESTION_POOL_DEPTH }, filters, cosineForAll: true,
-        hnswIterativeScan: resolveHnswIterativeScan(ctx.config),
+        hnswIterativeScan: resolveHnswIterativeScan(ctx.engine, ctx.config),
       }),
       embedding ? countUncomparableFacts(ctx.engine, scope, filters, embedding.length) : [],
       admissionRule(ctx.engine),
