@@ -123,6 +123,13 @@ const file_upload: Operation = {
     const { createStorage } = await import('../storage.ts');
     const storage = embedded?.storage ?? await createStorage(ctx.config.storage as any);
 
+    // #8513: the row names the caller's source and the page's id there, so purging that page finds it in any source.
+    // The source is checked before any bytes are written, so a refused upload leaves the object at storagePath as it was.
+    const sourceId = ctx.sourceId ?? 'default';
+    if (!(await ctx.engine.executeRaw('SELECT 1 FROM sources WHERE id = $1', [sourceId])).length) throw opError('unknown_source',
+      `No source "${sourceId}", so nothing was uploaded.`, 'Upload under a registered source (gbrain sources list).');
+    const [page] = pageSlug ? await ctx.engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1 AND source_id = $2', [pageSlug, sourceId]) : [];
+
     const { sqlQueryForEngine, executeRawJsonb, FILES_METADATA_MERGE_SQL } = await import('../sql-query.ts');
     const sql = sqlQueryForEngine(ctx.engine);
     const existing = await sql`SELECT id FROM files WHERE content_hash = ${hash} AND storage_path = ${storagePath}`;
@@ -146,9 +153,7 @@ const file_upload: Operation = {
     }
 
     try {
-      // #8513: the row names the caller's source and the page's id there, so purging that page finds it in any source.
-      const sourceId = ctx.sourceId ?? 'default';
-      const [page] = pageSlug ? await ctx.engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1 AND source_id = $2', [pageSlug, sourceId]) : [];
+      // The bytes at storagePath are now the caller's, so a conflicting row takes the caller's source and page id.
       // #4910: stamp the storage lane (doctor image_assets / files verify
       // classify on it) and merge metadata on conflict so legacy `{}` rows
       // heal on their next content change. Real object via executeRawJsonb —
@@ -161,6 +166,8 @@ const file_upload: Operation = {
            content_hash = EXCLUDED.content_hash,
            size_bytes = EXCLUDED.size_bytes,
            mime_type = EXCLUDED.mime_type,
+           source_id = EXCLUDED.source_id,
+           page_id = EXCLUDED.page_id,
            ${FILES_METADATA_MERGE_SQL}`,
         [pageSlug, filename, storagePath, mimeType, stat.size, hash, sourceId, page?.id ?? null],
         [embedded?.metadata ?? { storage: (ctx.config.storage as { backend: string }).backend }],
@@ -272,7 +279,7 @@ const file_register: Operation = {
   mutating: true,
   scope: 'admin',
   localOnly: true,
-  cliOnly: { argv: ['gbrain', 'files', 'upload', '<file>', '--page', '<page_slug>'] },
+  cliOnly: { argv: ['gbrain', 'files', 'verify'] },
   handler: async (ctx, p) => {
     const { storage, metadata } = await embeddedFileStore(ctx, 'file_register');
     const filename = p.filename as string, hash = p.content_hash as string, size = p.size_bytes as number;
