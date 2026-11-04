@@ -1587,6 +1587,13 @@
         },
         {
           "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Every live page stored in segments has segment rows that cover its whole body.",
+          "name": "segmented_tiling",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
           "details": {
             "classified": 0,
             "count": "exact",

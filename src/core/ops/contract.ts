@@ -96,6 +96,8 @@ export class OperationError extends Error {
   public fenceIssues?: Array<Record<string, unknown>>;
   /** A `fact_withdrawn` refusal's withdrawal: when and for which subject the exact claim was forgotten. Absence carries no meaning. */
   public withdrawn?: WithdrawnDetail;
+  /** A write-grant refusal's writable sources: only ids the caller's own grant lets it write, never another source (GBRA-200). */
+  public writableSourceIds?: string[];
   /** #6643: a managed-sync refusal's owner-side classification (knock-on root, cursor fence snapshot); stored as the receipt's error_detail, never in the envelope. */
   public syncRefusal?: Record<string, unknown>;
   /** Set to 1 by opError(); toJSON() emits `contract_version` only when set. */
@@ -162,6 +164,7 @@ export class OperationError extends Error {
       ...(this.fence ? { fence: this.fence } : {}),
       ...(this.fenceIssues?.length ? { fence_issues: this.fenceIssues } : {}),
       ...(this.withdrawn ? { withdrawn: this.withdrawn } : {}),
+      ...(this.writableSourceIds ? { writable_source_ids: this.writableSourceIds } : {}),
       ...(this.contractVersion !== undefined ? { contract_version: this.contractVersion } : {}),
     };
   }

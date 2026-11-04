@@ -80,6 +80,13 @@ export class LocalStorage implements StorageBackend {
     return results;
   }
 
+  async hashObject(path: string): Promise<{ size: number; sha256: string }> {
+    const hash = createHash('sha256');
+    let size = 0;
+    for await (const chunk of createReadStream(this.contained(path))) { hash.update(chunk); size += chunk.length; }
+    return { size, sha256: hash.digest('hex') };
+  }
+
   async getUrl(path: string): Promise<string> {
     return `file://${this.contained(path)}`;
   }

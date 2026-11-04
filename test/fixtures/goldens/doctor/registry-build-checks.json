@@ -559,6 +559,10 @@
       },
       {
         "category": "brain",
+        "name": "segmented_tiling"
+      },
+      {
+        "category": "brain",
         "name": "self_capture"
       },
       {

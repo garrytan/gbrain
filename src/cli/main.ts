@@ -80,7 +80,7 @@ import {
 } from './command-table.ts';
 import { formatRememberResult } from './remember-format.ts';
 import { formatEntityResult, markEntityMiss } from './entity-format.ts';
-import { applyCliOpNotices, captureCapacityNotices, captureOpNotice, captureRetrievalNotices, retrievalIncompleteLine } from './op-notices.ts';
+import { applyCliOpNotices, captureCapacityNotices, captureOpNotice, captureRetrievalNotices, retrievalIncompleteLine, withRoutedDegradedStamp } from './op-notices.ts';
 import { admitAcrossCliCalls } from '../core/notice-ledger.ts';
 import { searchTimingsDocument, searchTimingsLine, timeCliPhase } from './search-timings.ts';
 
@@ -726,7 +726,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     // path's return value so renderers see the same shape they'd see on the
     // routed path. Date → ISO string; bigint → string (postgres.js shape);
     // Buffer → object. Microsecond-cost; eliminates a whole drift bug class.
-    const { result, stderr: noticeText } = applyCliOpNotices(normalizeLocalResult(rawResult), params.json === true);
+    const { result, stderr: noticeText } = applyCliOpNotices(normalizeLocalResult(rawResult), params.json === true, { op: op.name, retrieval: lastRetrievalMeta });
     const paged = op.name === 'get_page' && await (await import('./page-render.ts')).finishAsOfRead(async p => normalizeLocalResult(await op.handler(ctx, p)) as Record<string, any>, result as Record<string, any>, params, writeStdoutFinal); // GBRA-217
     const output = paged ? '' : formatResult(op.name, result, params);
     // Awaited delivery (#3423): queued stdout writes past 64KiB lose their
@@ -842,7 +842,7 @@ async function runThinClientRouted(
     const envelopeMeta = extractResponseMeta(raw);
     if (envelopeMeta?.retrieval) captureRetrievalMeta('retrieval', envelopeMeta.retrieval);
     checkHostHonoredParams(op, params, raw);
-    const result = unpackToolResult(raw);
+    const { result, stderr: stampText } = withRoutedDegradedStamp(op.name, unpackToolResult(raw), envelopeMeta, params.json === true);
     if (op.name === 'get_page' && await (await import('./page-render.ts')).finishAsOfRead(async p => unpackToolResult(await callRemoteTool(cfg, 'get_page', p, { timeoutMs, signal: sigintController.signal })) as Record<string, any>, // GBRA-217: an older host's
       result as Record<string, any>, params, writeStdoutFinal, { client: VERSION, host: identityCache.get(cfg.remote_mcp!.mcp_url)?.identity.version ?? null })) return; // reply fails closed
     hintAmbientNarrowing(op, params, result, ambientScope);
@@ -851,6 +851,7 @@ async function runThinClientRouted(
     const output = formatResult(op.name, result, params);
     // Awaited delivery (#3423) — same contract as the local-engine path.
     if (output) await writeStdoutFinal(output);
+    if (stampText) process.stderr.write(stampText);
     markEntityMiss(op.name, result);
     maybePrintConceptNudge(op.name, params);
   } catch (e: unknown) {

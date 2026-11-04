@@ -35,6 +35,9 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { canonicalLookup, priceAtPromptSize } from '../model-pricing.ts';
 import { priceFor, type PricingOverrides } from '../budget/reservation-cost.ts';
+import { embeddedEngineInScope } from '../engine-scope.ts';
+import { isEmbeddedEngine } from '../embedded-engine.ts';
+import { engineKey } from '../engine-key.ts';
 
 export interface ChatUsageRecord {
   /** "provider:modelId" of the model that actually answered. */
@@ -101,12 +104,23 @@ export function withChatCallMeter<T>(meter: ChatCallMeter, fn: () => T): T {
  * sink. Records route to the TOP live entry (still single-writer —
  * simultaneous multi-brain attribution stays documented best-effort).
  */
-interface SinkEntry { sink: ChatUsageSink }
+interface SinkEntry { sink: ChatUsageSink; engine?: object }
 let _sinks: SinkEntry[] = [];
 
-/** Register a usage sink. Returns an idempotent deregister handle. */
-export function registerChatUsageSink(sink: ChatUsageSink): () => void {
-  const entry: SinkEntry = { sink };
+/**
+ * The sink a record goes to: in an embedded engine's scope, that engine's own (engine-scope.ts); otherwise the top
+ * entry that is not an embedded engine's, so one brain's usage never lands in another's database.
+ */
+function sinkInScope(): ChatUsageSink | null {
+  const scoped = embeddedEngineInScope();
+  const entry = scoped ? _sinks.findLast(e => e.engine !== undefined && engineKey(e.engine) === engineKey(scoped))
+    : _sinks.findLast(e => e.engine === undefined || !isEmbeddedEngine(e.engine));
+  return entry?.sink ?? null;
+}
+
+/** Register a usage sink, for `engine` when given. Returns an idempotent deregister handle. */
+export function registerChatUsageSink(sink: ChatUsageSink, engine?: object): () => void {
+  const entry: SinkEntry = { sink, engine };
   _sinks.push(entry);
   return () => {
     _sinks = _sinks.filter((e) => e !== entry);
@@ -173,7 +187,7 @@ export function recordChatUsage(input: {
 }): void {
   const meter = __chatMeterStore.getStore();
   if (meter) meter.calls++;
-  const sink = _sinks.length > 0 ? _sinks[_sinks.length - 1]!.sink : null;
+  const sink = sinkInScope();
   const pricedMeter = meter && meter.cost_usd !== undefined ? meter : null;
   if (!sink && !pricedMeter) return;
   try {

@@ -148,6 +148,8 @@ Every hold and error has three fields, from one table
 | `write_gate_rejected` | page | none | yes | always: write_gate.external_mode=reject is the user's setting |
 | `legacy_slug_conflict` | page | none | yes | always: only a person decides which legacy page the file takes over |
 | `settle_mismatch` | page | none | yes | always: the pass cannot tell why the path does not settle |
+| `freeze_page_body_segmented` | page | upgrade | yes | always: a sync path read a page stored in segments whole |
+| `freeze_page_body_rows_unreadable` | page | retry | no | the page stays unreadable across syncs (a grant or row-level security policy hides its segment rows) |
 | `page_write_failed` | page | upgrade | yes | always: the writer cannot place the failure |
 | `file_unreadable` | page | none | yes | always: only a change to the checkout makes the file readable |
 | `visibility_noncanonical` | page | none | yes | always: only an edit to the file clears it |

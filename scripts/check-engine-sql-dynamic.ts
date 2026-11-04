@@ -86,6 +86,8 @@ const VETTED_BUILDERS: Record<string, string> = {
   factVisibilitySql: 'src/core/access/member-facts.ts: visibility values filtered to the constant set world/private; widened only by memberFactAdmitSql, whose member id passed ACCESS_ID_RE (no quote) and whose page test is privatePagesFilterForCaller; no values',
   onMemberPageSql: 'src/core/access/member-facts.ts: constant memory/members/ prefix test over a code-provided facts alias; no values',
   privateProvenanceFilterUnderPolicy: 'src/core/search/private-visibility.ts: constant fact-provenance predicate (readers part with no identity, or the caller identity on its own member page whose id passed ACCESS_ID_RE; privacy part dropped only under an operator relaxation); no values',
+  liveTilingSql: 'src/core/page-body/schema.ts: constant LATERAL aggregate of the live manifest rows of a caller page alias (count, covered bytes, gapless); no values (GST-1209)',
+  untiledSql: 'src/core/page-body/schema.ts: constant predicate over caller page and tiling aliases; no values (GST-1209)',
   stagingNeedsTextSql: 'src/core/page-body/schema.ts: constant live-staging text-reference EXISTS predicate over a caller text alias; no values (Wave B purge)',
   atomRetirementPurgeHold: 'src/core/persistence/atom-retirement-hold.ts: constant #7013 restorable-atom purge-hold predicate over a caller pages alias; no values',
   derivedRetirementPurgeHold: 'src/core/persistence/derived-retirement-hold.ts: constant GBRA-161 derived-retirement purge-hold predicate over a caller pages alias; no values',

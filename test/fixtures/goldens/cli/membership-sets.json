@@ -117,6 +117,7 @@
         "book-mirror",
         "bootstrap",
         "brainstorm",
+        "bundled-skill",
         "cache",
         "calibration",
         "call",
@@ -247,6 +248,7 @@
         "book-mirror",
         "bootstrap",
         "brainstorm",
+        "bundled-skill",
         "cache",
         "capture",
         "check-resolvable",
@@ -381,6 +383,7 @@
         "whoknows"
       ],
       "STARTUP_HOOK_SKIP_COMMANDS": [
+        "bundled-skill",
         "check-update",
         "git",
         "hook",

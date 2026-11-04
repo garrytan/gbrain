@@ -27,7 +27,7 @@ import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import type { BrainEngine } from '../engine.ts';
-import { existingLocalHostId } from './identity.ts';
+import { existingHostIdFor } from './identity.ts';
 import { getWorktreeBinding, type GitDurabilitySetting, type WorktreeBinding } from './ownership.ts';
 import { requireWriterAdminIntent, assertWriterAdminState, writerAdminState } from './admin-intent.ts';
 import { gitDurabilityPolicy, planGitDurabilityCatchUp, requeueGitDurabilityCatchUp } from './git-durability-policy.ts';
@@ -258,7 +258,7 @@ export async function retrySourceParkedCode(engine: BrainEngine, sourceId: strin
 }
 
 async function ownedBinding(engine: BrainEngine, sourceId: string): Promise<WorktreeBinding & { local_path: string }> {
-  const hostId = existingLocalHostId();
+  const hostId = existingHostIdFor(engine);
   const binding = await getWorktreeBinding(engine, sourceId, hostId);
   if (!binding) {
     throw opError('writer_registration_required', `Source ${sourceId} has no canonical owner on this brain.`,

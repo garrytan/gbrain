@@ -153,6 +153,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // conformance targets, the cost-gated --synthesize flag).
   { name: 'protocol', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/protocol.ts') },
   { name: 'errors', phase: 'pre-connect', thinClient: 'none', selfHelp: true, json: 'document', read_only: true, load: () => import('./commands/errors.ts') },
+  { name: 'bundled-skill', phase: 'pre-connect', thinClient: 'none', selfHelp: true, json: 'document', read_only: true, skipStartupHooks: true, load: () => import('./commands/bundled-skill.ts') },
   { name: 'notices', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/notices.ts') },
   // selfHelp: `gbrain init --help` prints its own usage from runInit; route around the generic
   // one-line short-circuit (matches `connect`). Without this, `init` is in CLI_ONLY but not

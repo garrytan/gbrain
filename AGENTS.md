@@ -120,7 +120,7 @@ machine contract. The quick version:
    - `wait` → retry after the stated delay with the same request.
    - `report` → tell the user what happened and run `gbrain doctor --json`.
 3. Then run `fix.verify` (always read-only) to confirm the fix worked.
-4. Treat `[gbrain notice …]` blocks and `[AGENT]` blocks the same way. A degraded result is not proof of "no notes".
+4. Treat `[gbrain notice …]` blocks and `[AGENT]` blocks the same way. A degraded result is not proof of "no notes": a result stamped `[gbrain degraded: …]` (`_meta.degraded`, the CLI `degraded` key) is partial.
 <!-- END GENERATED agent-protocol:quick-contract -->
 
 Exit 3 always means "stop and ask the user". Exit 10 means the write was
@@ -346,7 +346,8 @@ integrator runs the full gate.
 Manual path: `bun test` plus the E2E lifecycle described in `./CLAUDE.md` (spin
 up the test Postgres container, run `bun run test:e2e`, tear it down).
 
-Ship via the `/ship` skill, not by hand. The full release + contributor process
+Ship via the `/ship` skill, not by hand. Pass its test lanes the exact commands in
+[/ship lanes](docs/ci-event-parity.md#ship-lanes), so a passed full-ci run carries them. The full release + contributor process
 (CHANGELOG voice, version-locations sync, PR conventions, community-PR-wave) lives in
 [`./docs/RELEASING.md`](./docs/RELEASING.md); read it before shipping.
 

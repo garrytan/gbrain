@@ -128,6 +128,7 @@
       "  [OK] unbound_source: No page was written database-only to an unbound source.",
       "  [OK] writer_version: Every writer that admitted or published a request in the last 7 days is v0.60.5.0 or newer.",
       "  [OK] segmented_storage: Segmented page storage is on: pages over 1 MiB are stored in segments, up to 134217728 bytes on this PGLite brain.",
+      "  [OK] segmented_tiling: Every live page stored in segments has segment rows that cover its whole body.",
       "  [OK] self_capture: No session corpus is configured; nothing to classify.",
       "  [OK] vector_plan: Skipped: PGLite runs vector search in-process; the plan check applies to Postgres brains.",
       "  [OK] keyword_plan: Skipped: PGLite runs keyword search with no statement timeout; the canary applies to Postgres brains.",

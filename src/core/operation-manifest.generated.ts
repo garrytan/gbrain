@@ -3728,6 +3728,33 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "area": "files"
   },
   {
+    "name": "file_verify",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Check files rows against the storage backend. Without storage_path, lists up to 100 rows (optionally one page's) with whether each object is present; with it, reads that object back and says whether its size and SHA-256 match the row. Runs only on an engine opened from settings. A backend that fails the check is store_unavailable, never a file reported missing.",
+    "params": {
+      "storage_path": {
+        "type": "string",
+        "description": "Read back and hash this one object"
+      },
+      "slug": {
+        "type": "string",
+        "description": "List only this page's files"
+      }
+    },
+    "scope": "admin",
+    "localOnly": true,
+    "cliOnly": {
+      "argv": [
+        "gbrain",
+        "files",
+        "verify"
+      ]
+    },
+    "area": "files"
+  },
+  {
     "name": "submit_job",
     "idempotent": false,
     "outputRedaction": {

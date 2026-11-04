@@ -11,6 +11,7 @@
  */
 import type { Operation } from './ops/contract.ts';
 import { withOutputRedaction } from './search/output-redaction.ts';
+import { withEngineScope } from './engine-scope.ts';
 import { OPERATION_LOADERS } from './operation-loaders.generated.ts';
 
 // ---------------------------------------------------------------------------
@@ -78,7 +79,7 @@ const OP_AREAS: Record<string, string> = {
   log_ingest: 'ingest', get_ingest_log: 'ingest', ingest: 'ingest', ingest_undo: 'ingest',
   get_usage: 'admin',
   // files (localOnly)
-  file_list: 'files', file_upload: 'files', file_url: 'files',
+  file_list: 'files', file_upload: 'files', file_url: 'files', file_verify: 'files',
   // jobs (Minions + agent lane)
   submit_job: 'jobs', get_job: 'jobs', wait_job: 'jobs', list_jobs: 'jobs', cancel_job: 'jobs',
   retry_job: 'jobs', get_job_progress: 'jobs', pause_job: 'jobs',
@@ -124,7 +125,9 @@ export function finalizeOperation(op: Operation): void {
   if (op.area === undefined && OP_AREAS[op.name] !== undefined) {
     op.area = OP_AREAS[op.name];
   }
-  op.handler = withOutputRedaction(op);
+  // The handler runs in its engine's scope, so an embedded engine's AI calls use that engine's gateway (engine-scope.ts).
+  const handler = withOutputRedaction(op);
+  op.handler = (ctx, params) => withEngineScope(ctx.engine, () => handler(ctx, params));
 }
 
 /** The finalized operation named `name`, loading only the module that defines it. */

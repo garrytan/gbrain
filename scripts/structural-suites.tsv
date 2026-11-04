@@ -341,6 +341,11 @@ test/scripts/nightly-issue.test.ts	nightly-watch routing and guard	9	readFileSyn
 test/scripts/nightly-issue.test.ts	operator messages carry docs anchors that resolve	1	readFileSync
 test/scripts/postgres-lane-coverage.test.ts	check-postgres-lane-coverage.ts	9	readFileSync
 test/scripts/postgres-unit-arms.test.ts	postgres-unit-arms list	14	readFileSync
+test/scripts/pregate-remote-gate.test.ts	.gstack policy floor	1	readFileSync
+test/scripts/pregate-remote-gate.test.ts	pregate-remote-gate.sh	8	readFileSync
+test/scripts/pregate-remote-gate.test.ts	pregate-remote-gate.sh --list	4	readFileSync
+test/scripts/pregate-remote-gate.test.ts	reuse of GitHub full runs on the identical tree	9	readFileSync
+test/scripts/pregate-remote-gate.test.ts	ship_lanes_from (/ship lanes carried from CI, docs/ci-event-parity.md#ship-lanes)	3	readFileSync
 test/scripts/promote-stable.test.ts	promote-stable.yml	2	readFileSync
 test/scripts/regen-all.test.ts	regen:all	5	readFileSync
 test/scripts/require-executed-tests.test.ts	require-executed-tests	9	readFileSync
@@ -398,6 +403,7 @@ test/snapshot-shape-guard.test.ts	(file-level)	10	readFileSync
 test/sources-webhook.test.ts	Webhook sync job extraction contract	1	source-surface-helper
 test/spec-drain-lease-constants.test.ts	the TLA+ workflow runs when anything a mutant names changes	1	readFileSync
 test/spend-off-switch.test.ts	reindex / onboard off-switch dispatch (regression guards)	3	bun-file
+test/spring-skill-index.test.ts	spring-loaded skill index	10	readFileSync
 test/strict-source-unmanaged-import.test.ts	(file-level)	2	readFileSync
 test/supervisor.test.ts	recovery hook timeout bound (structural)	1	source-surface-helper
 test/sync-failures.test.ts	#4543 blocked output names failing files	4	doctor-source-helper,source-surface-helper

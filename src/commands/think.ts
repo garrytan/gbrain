@@ -270,7 +270,7 @@ prints what would have been the input (exit 0).
     saved_slug: savedSlug ?? null,
     evidence_inserted: evidenceInserted,
     take_row: takeRow,
-  }, json);
+  }, json, { op: 'think', retrieval: null });
   if (json) {
     console.log(JSON.stringify(jsonDoc, null, 2));
     return;

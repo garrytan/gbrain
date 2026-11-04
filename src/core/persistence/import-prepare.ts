@@ -25,7 +25,7 @@ import { FRONTMATTER_HEAD_MAX_BYTES, readPageBodyPolicy, type PageBodyPolicy } f
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { getWorktreeBinding } from './ownership.ts';
-import { localHostId } from './identity.ts';
+import { hostIdFor } from './identity.ts';
 import { sha256 } from './digest.ts';
 import { screeningPath } from './screening-paths.ts';
 import { isReservedSkillBundlePath } from '../skill-reserved-paths.ts';
@@ -168,7 +168,7 @@ export async function assertImportPaths(engine: BrainEngine, sourceId: string, r
   const sources = await engine.executeRaw<{ id: string; local_path: string | null; worktree_path: string | null; relative_path: string | null }>(
     `SELECT s.id,s.local_path,h.local_path AS worktree_path,b.relative_path FROM sources s
       LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation
-      LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid WHERE NOT s.archived`, [localHostId()]);
+      LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid WHERE NOT s.archived`, [hostIdFor(engine)]);
   for (const source of sources) {
     if (source.id === sourceId) continue;
     const roots = [source.local_path, source.worktree_path && source.relative_path !== null ? join(source.worktree_path, source.relative_path) : null];

@@ -76,6 +76,8 @@ export const EQUALS_READERS: Readonly<Record<string, readonly string[]>> = {
   'beliefs replay-purges': ['--archived-at', '--purge-mirror', '--from-url-env'],
   // core/consent.ts:126 via consentGateOrExit (book-mirror.ts:431, args :440, effects paid); book-mirror reads no --max-* itself.
   'book-mirror': ['--max-usd', '--max-cost'],
+  // cli/commands/bundled-skill.ts:51 reads --asset <p> and --asset=<p>, and refuses an empty value itself.
+  'bundled-skill': ['--asset'],
   // capture.ts:96 regex; every other = form is refused by capture's own parser (capture.ts:132).
   capture: ['--request-id', '--expected-revision'],
   // check-resolvable.ts:120 parseFlags.
