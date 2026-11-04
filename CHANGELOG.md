@@ -25,7 +25,6 @@ Git stays the parent: a withdrawal is now a page write, published to Git before 
 | `forget` / `forget_fact` | the database expired the fact; the page files caught up later through a mirror | every page whose `## Facts` table carries the claim gets its row struck (`~~claim~~`, a `valid_until` date, `forgotten: <reason>`), all in one publication and one commit, then the ledger row and expiries in the same transaction |
 | `remember` without an entity | a database-only row | a row of the `memory/unattributed` page's `## Facts` table, created on first use, so Git, `recall` and search see it |
 | Remembering that claim again with an entity | two copies | the entity row is written and the unattributed row struck in the same publication |
-| A brain rebuilt from Git | lost its withdrawals | a trusted local sync, import or page write of a struck row records the withdrawal again; remote page writes cannot create one |
 | A member forgets a fact on their own member page | withdrawn for that page | unchanged: the withdrawal stays on that page, and other members' copies stay active |
 
 A forget now waits for the source's writer the way `remember` does: with the writer unavailable it returns the pending-write receipt, and the fact is still recalled until it publishes. Migration v287 adds the multi-page recovery record (one record restores every file of an interrupted publication); it rewrites no data.

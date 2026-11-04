@@ -423,12 +423,12 @@ The struck rows are written first: every page file that carries the claim is
 published in one write (one Git commit on a source that commits through
 gbrain), and the withdrawal commits with it. A forget waits for the source's
 writer like any other write, so while that writer is unavailable the forget is
-accepted and pending, and the fact is still recalled. A brain rebuilt from Git
-keeps the withdrawal: a sync or import from the owner's checkout, or a local
-write, of a struck row dated in `valid_until` with a `forgotten:` context
-records it again. A row like that arriving in a remote page write is only an
-expired row; it withdraws nothing. A fact saved without an entity is a row of
-the `memory/unattributed` page, so its withdrawal has a file too.
+accepted and pending, and the fact is still recalled. The withdrawal itself is
+a database row, and only `forget` records one: a page write or sync of a struck
+row imports an expired fact and withdraws nothing, so a brain rebuilt from Git
+can save that claim again until it is forgotten there. A fact saved without an
+entity is a row of the `memory/unattributed` page, so its withdrawal has a file
+too.
 
 Automatic extraction (sync import, `put_page`, `extract_facts`, the sweep)
 skips a candidate whose exact claim was forgotten in that source and visibility

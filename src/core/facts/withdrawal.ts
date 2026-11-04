@@ -11,7 +11,6 @@ import { coverageActive, noteBelief, readLedgerSource, withBeliefBatch } from '.
 import { createPageVersion } from '../page-state/versions.ts';
 import { validateSlug } from '../utils.ts';
 import { factWithdrawalSubjectSql, onMemberPageSql } from '../access/member-facts.ts';
-import { UNATTRIBUTED_MEMORY_SLUG } from './extract-from-fence.ts';
 
 export interface WithdrawalCommit {
   withdrawn: boolean;
@@ -175,33 +174,6 @@ export async function recordFactWithdrawal(
       return { withdrawn: true, pages: committed };
     });
   });
-}
-
-/**
- * GBRA-190 G4 (D1): the ledger is derived from Git. A trusted local import (the owner's sync or import, a local page
- * write; never a remote one, prepareCanonicalProjections' `ledger`) of a fence row carrying the explicit withdrawal
- * marker (struck, a `valid_until` date and context `forgotten: ...`, as forget writes it) records its withdrawal at that
- * date, so a brain rebuilt from Git keeps it and the import overlay leaves the row as the file holds it. A struck row
- * without its date is an expired row with no ledger entry: deriving one would make the next import rewrite the row's
- * `valid_until`, so the stored body would no longer match the file. The subject is
- * the page's slug, and '*' only for a row of memory/unattributed (a fact saved without an entity). A '*' row is not
- * derived while the same claim is active on a fact with an entity: it would withdraw that fact too, which forget
- * refuses (`claim_linked`). Existing ledger rows are kept as they are. Returns the rows added.
- */
-export async function deriveFenceWithdrawals(tx: BrainEngine, sourceId: string, slug: string,
-  rows: readonly ParsedFact[]): Promise<number> {
-  const marked = rows.filter(row => !row.active && row.forgotten === true && /^\d{4}-\d{2}-\d{2}$/.test(row.validUntil ?? ''))
-    .map(row => ({ fact: row.claim, visibility: row.visibility, at: `${row.validUntil}T00:00:00Z` }));
-  if (!marked.length) return 0;
-  const inserted = await tx.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,subject,fact_hash,withdrawn_at)
-    SELECT $1,m.visibility,$2,gbrain_fact_fingerprint(m.fact),min(m.at::timestamptz)
-    FROM jsonb_to_recordset($3::text::jsonb) AS m(fact text,visibility text,at text)
-    WHERE m.visibility IN ('private','world')
-      AND ($2<>'*' OR NOT EXISTS (SELECT 1 FROM facts l WHERE l.source_id=$1 AND l.visibility=m.visibility AND l.entity_slug IS NOT NULL
-        AND l.expired_at IS NULL AND (l.valid_until IS NULL OR l.valid_until > now()) AND gbrain_fact_fingerprint(l.fact)=gbrain_fact_fingerprint(m.fact)))
-    GROUP BY m.visibility,gbrain_fact_fingerprint(m.fact)
-    ON CONFLICT DO NOTHING RETURNING fact_hash`, [sourceId, slug === UNATTRIBUTED_MEMORY_SLUG ? '*' : slug, JSON.stringify(marked)]);
-  return inserted.length;
 }
 
 // Fingerprint each incoming claim once. Inside the join condition the planner
