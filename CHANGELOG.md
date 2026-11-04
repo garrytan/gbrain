@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.571.0] - 2026-11-04
 
 **A sync hold on a page whose segment rows are missing now says to run the repair, and `gbrain sync status` finds one hold without paging.** A page stored in segments whose segment rows do not cover its body refuses every read, so a managed sync holds its file (`page_write_failed` naming `page_body_rows_unreadable`). That hold read retry with no person needed and pointed at `gbrain sources retry-held`, which can never clear it. It now reads needs_human with safe_actions repair, and its fix previews `gbrain repair segmented-tiling --source <id> --slug <slug>` (read-only; the apply needs the user's agreement and clears the hold). On a source with hundreds of holds the hold also sorted onto a late page of `sync status`, so a check reading the first page missed it.
 
