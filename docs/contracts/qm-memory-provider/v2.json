@@ -355,7 +355,7 @@
         "class": "caller",
         "summary": "A parameter is missing, has the wrong type, or has an invalid value.",
         "docs": "docs/guides/error-codes.md#invalid_params",
-        "note": "Bad arguments, refused before anything is saved. A reused idempotency_key with different facts carries write_error idempotency_conflict; a claim the person forgot carries the fact_withdrawn message. A memory_write whose source_id is the credential's own source carries reason source_is_member_source (omit source_id instead)."
+        "note": "Bad arguments, refused before anything is saved. A reused idempotency_key with different facts carries write_error idempotency_conflict; a claim the person forgot carries the fact_withdrawn message. A memory_write whose source_id is the credential's own source carries reason source_is_member_source (omit source_id instead). recall refuses a question over 2000 UTF-16 code units with reason question_too_long and detail max_chars=2000 received_chars=<n>; nothing is read and the question is never cut, so shorten it and retry."
       },
       {
         "code": "scope_denied",

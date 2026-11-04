@@ -91,8 +91,8 @@ export function recallArgv(args: Record<string, unknown>): string[] {
 }
 
 /** An `invalid_params` refusal whose fix is the same recall with `retry` arguments. */
-function invalidQuestionCall(message: string, suggestion: string, retry: Record<string, unknown>, why: string) {
-  const e = opError('invalid_params', message, suggestion, {
+function invalidQuestionCall(message: string, suggestion: string, retry: Record<string, unknown>, why: string, cause: { reason?: string; detail?: string } = {}) {
+  const e = opError('invalid_params', message, suggestion, { ...cause,
     fix: { argv: recallArgv(retry), mcp: { tool: 'recall', arguments: retry }, consent: [], actor: 'agent', requires_exclusive: false, why },
   });
   e.protocolVersion = MEMORY_VERBS_VERSION;
@@ -120,7 +120,8 @@ export function parseQuestionParam(p: Record<string, unknown>): string | null {
   }
   if (question.length > QUESTION_MAX_CHARS) {
     throw invalidQuestionCall(`question is ${question.length} characters; the limit is ${QUESTION_MAX_CHARS}.`,
-      `Shorten question to at most ${QUESTION_MAX_CHARS} characters.`, { ...args, question: question.slice(0, QUESTION_MAX_CHARS) }, `The same recall with question cut to ${QUESTION_MAX_CHARS} characters.`);
+      `Shorten question to at most ${QUESTION_MAX_CHARS} characters.`, { ...args, question: question.slice(0, QUESTION_MAX_CHARS) }, `The same recall with question cut to ${QUESTION_MAX_CHARS} characters.`,
+      { reason: 'question_too_long', detail: `max_chars=${QUESTION_MAX_CHARS} received_chars=${question.length}` });
   }
   return question;
 }

@@ -14,6 +14,7 @@ import { paramDefToSchema } from '../src/mcp/tool-defs.ts';
 import { CODES } from '../src/core/error-registry.ts';
 import { ACTOR_ARGUMENT, ACTOR_DEFERRED_OPS, ACTOR_HEADER, DEFAULT_ATTEST_OPS, EXTERNAL_ID_RE, QM_AUDIENCE_HEADER } from '../src/core/access/actor-model.ts';
 import { SCOPE_PAGE_SLUG } from '../src/core/access/principals.ts';
+import { QUESTION_MAX_CHARS } from '../src/core/facts/question-recall.ts';
 import { IDEMPOTENCY_KEY_RE, MEMORY_RECALL_MAX_CHARS, MEMORY_RECALL_QUERY_CHARS, MEMORY_WRITE_KINDS, MEMORY_WRITE_MAX_FACTS, MEMORY_WRITE_PROVENANCE_MAX, OWN_RECENT_WINDOW_HOURS, QM_MEMORY_OPS, unlinkedRecallResult } from '../src/core/ops/qm-memory.ts';
 
 export type QmContractVersion = 1 | 2;
@@ -77,7 +78,7 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
   const codes = v2 ? [...ERROR_CODES, 'permission_denied' as const] : ERROR_CODES;
   const notes: Record<string, string | undefined> = v2 ? { ...ERROR_NOTES,
     actor_not_attested: 'With no x-qm-actor header, acting_user is accepted only from a credential bound to a member and only naming that member (its member id or a canonical id linked to it); the call then runs exactly as the credential.',
-    invalid_params: `${ERROR_NOTES.invalid_params} A memory_write whose source_id is the credential's own source carries reason source_is_member_source (omit source_id instead).`,
+    invalid_params: `${ERROR_NOTES.invalid_params} A memory_write whose source_id is the credential's own source carries reason source_is_member_source (omit source_id instead). recall refuses a question over ${QUESTION_MAX_CHARS} UTF-16 code units with reason question_too_long and detail max_chars=${QUESTION_MAX_CHARS} received_chars=<n>; nothing is read and the question is never cut, so shorten it and retry.`,
     permission_denied: 'memory_recall named a source (source_id or source_ids) outside the credential\'s read grant; nothing was read. memory_write named a source_id that is not one of the credential\'s scope sources (reason source_not_attested, also at publication after the operator drops it), or the scope page names readers (reason scope_page_not_shared); nothing was saved.' } : ERROR_NOTES;
   return {
     contract: 'gbrain.qm-memory-provider', version,
