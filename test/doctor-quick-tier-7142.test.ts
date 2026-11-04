@@ -157,6 +157,24 @@ for (const kind of testBackends()) {
       expect(recordedNow.filter(c => c.name.startsWith('slow_')).map(c => c.name)).toEqual(['slow_a']);
     }, 60_000);
 
+    test('a check a later release moved to another entry is never served from the old entry\'s last known result', async () => {
+      await clear();
+      let moverDelayMs = 0;
+      const before: DoctorEntry = { name: 'mover_a', emits: ['mover_a', 'mover_b'], run: async () => [ok('mover_a'), { name: 'mover_b', status: 'fail', message: 'old result' }] };
+      await runDoctorRegistry(ctxFor(engine, 'standard'), [opsEntry, quickEntry, before]);
+      const shrunk: DoctorEntry = { name: 'mover_a', emits: ['mover_a'], run: async () => {
+        if (moverDelayMs) await new Promise((r) => setTimeout(r, moverDelayMs));
+        return [ok('mover_a')];
+      } };
+      const moved: DoctorEntry = { name: 'mover_b', emits: ['mover_b'], run: async () => [ok('mover_b', 'fresh result')] };
+      moverDelayMs = 800;
+      const checks = await runDoctorRegistry(ctxFor(engine, 'standard', { entryBudgetOverrideMs: 200 }), [opsEntry, quickEntry, shrunk, moved]);
+      moverDelayMs = 0;
+      expect(byName(checks, 'mover_a')!.details?.last_known).toMatchObject({ reason: 'budget' });
+      expect(checks.filter(c => c.name === 'mover_b')).toEqual([ok('mover_b', 'fresh result')].map(c => expect.objectContaining(c)));
+      expect(byName(checks, 'mover_b')!.details?.last_known).toBeUndefined();
+    }, 60_000);
+
     test('--only and source-scoped runs neither read nor write last known results', async () => {
       await clear();
       await runDoctorRegistry(ctxFor(engine, 'standard', { only: new Set(['slow_a']) }), entries);

@@ -25,6 +25,7 @@ import { holdVerdict, readSyncStatus, unblockSync } from '../src/core/persistenc
 import { gitHoldFix, writeGitHold } from '../src/core/persistence/sync-holds.ts';
 import { runSyncStatus } from '../src/commands/sync/operator.ts';
 import { DOCTOR_CHECK_REGISTRY } from '../src/commands/doctor/registry.ts';
+import { validateCommandFlags } from '../src/cli/main.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -65,6 +66,17 @@ test('a freeze hold on a page whose segment rows do not cover its body points to
   expect(fix.why).toContain('writes nothing');
   expect(gitHoldFix(freezeHold('page_body_segmented')).argv).toEqual(['gbrain', 'sources', 'retry-held', 'source-a']);
   expect(gitHoldFix(freezeHold('storage_error')).argv).toEqual(['gbrain', 'sources', 'retry-held', 'source-a']);
+});
+
+test('a receipt hold whose write failed page_body_rows_unreadable gets the same repair fix as its verdict', () => {
+  const receiptHold = { source_id: 'source-a', path: FILE, slug: SLUG, code: 'page_write_failed', held_at: new Date().toISOString(),
+    meta: { attempts: 3, write_failure: { ...failure('page_body_rows_unreadable'), origin: 'page_write', request_id: 'req-example', attempts: 3 } } } as never;
+  expect(holdVerdict(receiptHold, undefined)).toMatchObject({ safe_actions: ['repair'], needs_human: true });
+  expect(gitHoldFix(receiptHold).argv).toEqual(['gbrain', 'repair', 'segmented-tiling', '--source', 'source-a', '--slug', SLUG]);
+});
+
+test('the CLI flag gate accepts sync status --code and --slug', () => {
+  expect(validateCommandFlags('sync', ['status', '--source', 'source-a', '--code', 'page_body_rows_unreadable', '--slug', SLUG, '--json'])).toBeNull();
 });
 
 async function syncedSource(engine: BrainEngine) {

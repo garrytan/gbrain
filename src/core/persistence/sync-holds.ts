@@ -767,7 +767,7 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
       const failure = record.meta.write_failure;
       const verify = { argv: ['gbrain', 'sources', 'status', source, '--json'] };
       // GST-1209: rows that do not cover the stored body fail every read, so a retry never clears the hold; the repair republishes the page from its file.
-      if (failure?.origin === 'freeze' && failure.code === 'page_body_rows_unreadable') {
+      if (failure?.code === 'page_body_rows_unreadable') {
         return { argv: ['gbrain', 'repair', 'segmented-tiling', '--source', source, ...(record.slug ? ['--slug', record.slug] : [])], consent: [], actor: 'agent', requires_exclusive: false,
           docs: 'docs/guides/repair.md#segmented-tiling',
           why: `The segment rows of the page ${record.path} maps to do not cover its stored body, so every read of it refuses page_body_rows_unreadable and sync holds the file on every retry. `

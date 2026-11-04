@@ -126,7 +126,7 @@ export function applyLastKnown(checks: Check[], outcomes: readonly EntryOutcome[
       const uncovered = outcome.entry.emits.filter(name => !covered.has(name));
       if (outcome.state === 'expired') for (const name of outcome.entry.emits) if (covered.has(name)) replaced.add(name);
       if (outcome.state === 'not_run' && uncovered.length) stale.push({ ...outcome, entry: { ...outcome.entry, emits: uncovered } });
-      served.push(...last.checks.map(c => lastKnownCheck(c, last.measured_at, outcome.state === 'expired' ? 'budget' : 'not_in_tier', now)));
+      served.push(...last.checks.filter(c => outcome.entry.emits.includes(c.name)).map(c => lastKnownCheck(c, last.measured_at, outcome.state === 'expired' ? 'budget' : 'not_in_tier', now)));
     } else if (outcome.state === 'not_run') {
       stale.push(outcome);
     }
