@@ -60,6 +60,8 @@ export interface SyncStatusHold extends SyncFaultVerdict {
   public_category: PublicCategory;
   slug: string | null;
   path: string;
+  /** GST-1209: the failure code a `page_write_failed` hold recorded (`meta.write_failure.code`), so a listing names why it is held. */
+  fault_code?: string;
   attempts: number;
   held_since: string;
   /** When the hold can be retried on its own: now (`null`), or never without the named step. */
@@ -330,7 +332,9 @@ function holdStatus(record: GitHoldRecord, auto?: FenceAutoRepair): SyncStatusHo
   const terminal = classifyRecordedFault({ source_id: record.source_id, code: record.code, slug: record.slug });
   const fix = gitHoldFix(record, auto);
   // #6712 PR 2: an abandoned edit is the person's to commit or restore; unblock then finds the file clean and schedules it.
-  return { code: record.code, category: terminal.category, public_category: terminal.public_category, slug: record.slug, path: record.path, attempts, held_since: record.held_at, ...verdict,
+  const faultCode = record.code === 'page_write_failed' ? record.meta.write_failure?.code : undefined;
+  return { code: record.code, category: terminal.category, public_category: terminal.public_category, slug: record.slug, path: record.path, ...(faultCode ? { fault_code: faultCode } : {}),
+    attempts, held_since: record.held_at, ...verdict,
     retry_after: verdict.safe_actions[0] === 'retry' || verdict.safe_actions[0] === 'retry_when_clean' ? null : 'after the named step',
     fix: verdict.needs_human && record.code === 'worktree_dirty' ? { ...fix, ask_user: true, user_message: verdict.human_reason } : fix };
 }

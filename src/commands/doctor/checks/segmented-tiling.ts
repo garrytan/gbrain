@@ -23,8 +23,10 @@ export async function segmentedTilingCheck(engine: BrainEngine, sourceIds?: read
     return { name, status: 'fail', details: { pages, truncated: found.length > SAMPLE, sources, docs: DOCS },
       message: `${found.length > SAMPLE ? `More than ${SAMPLE}` : found.length} live page(s) stored in segments have segment rows that do not cover their body, so every read of them refuses `
         + `(page_body_rows_unreadable) and a sync holds their file: ${listed.join('; ')}. Preview the repair; it republishes each page from its file at HEAD only when applied with the user's agreement.`,
-      fix: agentFix(['gbrain', 'repair', 'segmented-tiling', ...(sources.length === 1 ? ['--source', sources[0]!] : [])],
-        'Previews republishing each listed page from its file at HEAD and writes nothing; applying it needs the user\'s agreement and the printed preview hash.', name, { docs: DOCS }) };
+      fix: agentFix(['gbrain', 'repair', 'segmented-tiling', '--source', sources[0]!],
+        'Previews republishing each listed page of that source from its file at HEAD and writes nothing; applying it needs the user\'s agreement and the printed preview hash.'
+          + (sources.length > 1 ? ` The listed pages also span ${sources.slice(1).map(source => `gbrain repair segmented-tiling --source ${source}`).join(', ')}${found.length > SAMPLE ? ` (from the first ${SAMPLE} pages; run the check again after each repair)` : ''}.` : ''),
+        name, { docs: DOCS }) };
   } catch (error) {
     return checkError(name, 'read the segment rows of pages stored in segments', error);
   }
