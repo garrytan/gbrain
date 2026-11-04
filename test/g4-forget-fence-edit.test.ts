@@ -236,6 +236,19 @@ for (const backend of testBackends()) describe(`[${backend}] G4: forget is a fen
     expect((await engine.executeRaw<{ active: boolean }>('SELECT expired_at IS NULL AS active FROM facts WHERE id=$1', [id]))[0]!.active).toBe(true);
   }, { databaseUrl, setup }), 180_000);
 
+  test('an unbound connector source still withdraws a claim its page file carries, database-only', () => managedBrain(async ({ engine, ctx, root }) => {
+    expect(await call(ctx, 'put_page', { slug: 'notes/a', content: note('A', [`| 1 | ${CLAIM} | fact | 1.0 | world | medium | 2026-01-01 |  | test |  |`]) })).toMatchObject({ state: 'committed' });
+    const { settleManagedGitEffects } = await import('./helpers/managed-brain.ts');
+    await settleManagedGitEffects(engine);
+    const id = (await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE source_id='default' AND fact=$1 AND expired_at IS NULL`, [CLAIM]))[0]!.id;
+    await unbind(engine);
+    await engine.executeRaw(`UPDATE sources SET local_path=COALESCE(local_path,$1), config = config || '{"kind":"google"}'::jsonb WHERE id='default'`, [root]);
+    const before = readFileSync(join(root, 'notes/a.md'), 'utf8');
+    expect(await call(ctx, 'forget', { id: String(id) })).toMatchObject({ state: 'committed', expired: true });
+    expect(await ledger(engine, CLAIM)).toEqual(['notes/a']);
+    expect(readFileSync(join(root, 'notes/a.md'), 'utf8')).toBe(before);
+  }, { databaseUrl, setup }), 180_000);
+
   test('a source whose owner is unavailable still withdraws a claim only a database-only page carries', () => managedBrain(async ({ engine, ctx, root }) => {
     await engine.setConfig('sync.write_through', 'false');
     expect(await call(ctx, 'put_page', { slug: 'notes/b', content: note('B', [`| 1 | ${OTHER} | fact | 1.0 | world | medium | 2026-01-01 |  | test |  |`]) })).toMatchObject({ state: 'committed' });
