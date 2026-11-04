@@ -120,7 +120,7 @@ export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequ
   const page = { sourceId: row.source_id, slug: row.slug };
   // Wave B: a segmented page is read back whole up to the single-string ceiling.
   if (segmentedOverCeiling(snapshot.page)) throw pageBodyOverCeilingError(snapshot.page, `${row.operation} facts fence write`);
-  const base = await materializedPage(engine, snapshot.page);
+  const base = await materializedPage(engine, snapshot.page, { generation: snapshot.bodyGeneration });
   const insert = (tx: BrainEngine, rowNum: number, indexed: NewFact) => insertFenceFactRow(tx, row, rowNum, indexed);
 
   if (input.mode === 'index-existing') {

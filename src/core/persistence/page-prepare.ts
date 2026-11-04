@@ -730,17 +730,18 @@ export async function prepareSegmentedTagMutation(engine: BrainEngine, row: Writ
     } };
 }
 
-/** The content_hash of a segmented page with `tags`: its stored body and frontmatter, resumed from the last live manifest row's midstate. */
+/** The content_hash with `tags`: the snapshot's body and frontmatter, resumed from that generation's last manifest row's midstate. */
 async function segmentedContentHash(engine: BrainEngine, snapshot: PageSnapshot, tags: string[]): Promise<string> {
   const pageId = Number(snapshot.page.id);
   const meta = { frontmatter: snapshot.page.frontmatter, tags };
-  const last = (await engine.readManifest(pageId)).at(-1);
+  const generation = snapshot.bodyGeneration;
+  const last = (await engine.readManifest(pageId, { generation })).at(-1);
   const resumed = last ? (() => { try { return ContentHashStream.fromState(last.hashState); } catch { return null; } })() : null;
   if (resumed && resumed.finish({ frontmatter: snapshot.page.frontmatter, tags: snapshot.tags }) === snapshot.page.content_hash) return resumed.finish(meta);
   segmentedTagWork.hashStreams++;
   const stream = ContentHashStream.begin(snapshot.page);
   const decoder = new TextDecoder();
-  for await (const part of readSegmentedBody(engine, pageId, snapshot.page.source_id)) {
+  for await (const part of readSegmentedBody(engine, pageId, snapshot.page.source_id, { generation })) {
     if (part.region === 'truth') stream.pushTruth(decoder.decode(part.bytes)); else stream.pushTimeline(decoder.decode(part.bytes));
   }
   return stream.finish(meta);
