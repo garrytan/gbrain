@@ -2,7 +2,7 @@ import type { Migration } from './types.ts';
 import { GIT_CANONICAL_COUNT_FUNCTION_SQL } from '../persistence/git-canonical-schema.ts';
 import { MANAGED_WRITER_GUARD_FUNCTION_SQL } from '../persistence/writer-guard-schema.ts';
 import {
-  EFFECT_PROTOCOL_GUARD_SQL, PROTOCOL_ACTIVATION_GUARD_SQL, REQUEST_PROTOCOL_GUARD_V278_SQL,
+  EFFECT_PROTOCOL_GUARD_SQL, PROTOCOL_ACTIVATION_GUARD_SQL, REQUEST_PROTOCOL_GUARD_SQL,
 } from '../shared-skills/persistence-schema.ts';
 
 // Applied by src/core/migrate.ts on the next initSchema(); see docs/ENGINES.md
@@ -27,6 +27,6 @@ export const v278: Migration = {
   version: 278,
   name: 'writer_fence_fail_closed',
   idempotent: true,
-  sql: [MANAGED_WRITER_GUARD_FUNCTION_SQL, GIT_CANONICAL_COUNT_FUNCTION_SQL, REQUEST_PROTOCOL_GUARD_V278_SQL,
+  sql: [MANAGED_WRITER_GUARD_FUNCTION_SQL, GIT_CANONICAL_COUNT_FUNCTION_SQL, REQUEST_PROTOCOL_GUARD_SQL,
     EFFECT_PROTOCOL_GUARD_SQL, PROTOCOL_ACTIVATION_GUARD_SQL].map(sql => `${sql.trim().replace(/;$/, '')};`).join('\n'),
 };

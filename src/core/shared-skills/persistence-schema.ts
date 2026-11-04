@@ -42,10 +42,10 @@ const requestProtocolGuardSql = (pageRecoveryMismatch: string): string => `CREAT
  * (the page files one publication writes together, model.ts PagesRecoveryRecord), which binaries that predate it
  * refuse unread (recovery-version.ts). v287 installs it.
  */
-export const REQUEST_PROTOCOL_GUARD_SQL = requestProtocolGuardSql(`record->>'version' IS DISTINCT FROM '1'
+export const REQUEST_PROTOCOL_GUARD_V287_SQL = requestProtocolGuardSql(`record->>'version' IS DISTINCT FROM '1'
         AND NOT (record->>'version'='3' AND record->>'target'='pages' AND jsonb_typeof(record->'files')='array')`);
-/** The request guard as v278 shipped it (page recovery version 1 only), so that migration's SQL stays as released. */
-export const REQUEST_PROTOCOL_GUARD_V278_SQL = requestProtocolGuardSql(`record->>'version' IS DISTINCT FROM '1'`);
+/** The request guard as v278 shipped it (page recovery version 1 only), so that published migration stays byte for byte as released; the current guard is REQUEST_PROTOCOL_GUARD_V287_SQL. */
+export const REQUEST_PROTOCOL_GUARD_SQL = requestProtocolGuardSql(`record->>'version' IS DISTINCT FROM '1'`);
 export const EFFECT_PROTOCOL_GUARD_SQL = `CREATE OR REPLACE FUNCTION gbrain_guard_effect_protocol() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
   DECLARE floor integer;
   BEGIN
@@ -98,7 +98,7 @@ export const SHARED_SKILLS_PERSISTENCE_SCHEMA_STATEMENTS: readonly string[] = [
       RAISE EXCEPTION 'writer_upgrade_required: this mutation requires persistence protocol 2' USING ERRCODE='42501';
     END IF;
   END $$`,
-  REQUEST_PROTOCOL_GUARD_SQL,
+  REQUEST_PROTOCOL_GUARD_V287_SQL,
   `DROP TRIGGER IF EXISTS gbrain_request_protocol ON persistence_requests`,
   `CREATE TRIGGER gbrain_request_protocol BEFORE INSERT OR UPDATE OR DELETE ON persistence_requests
     FOR EACH ROW EXECUTE FUNCTION gbrain_guard_request_protocol()`,

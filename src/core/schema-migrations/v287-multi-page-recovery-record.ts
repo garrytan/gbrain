@@ -1,5 +1,5 @@
 import type { Migration } from './types.ts';
-import { REQUEST_PROTOCOL_GUARD_SQL } from '../shared-skills/persistence-schema.ts';
+import { REQUEST_PROTOCOL_GUARD_V287_SQL } from '../shared-skills/persistence-schema.ts';
 
 export const v287: Migration = {
   // GBRA-190 G4 (D2): one publication may write several pages (a withdrawal strikes its claim on every page that
@@ -10,5 +10,5 @@ export const v287: Migration = {
   version: 287,
   name: 'multi_page_recovery_record',
   idempotent: true,
-  sql: REQUEST_PROTOCOL_GUARD_SQL + ';',
+  sql: REQUEST_PROTOCOL_GUARD_V287_SQL + ';',
 };
