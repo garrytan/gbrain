@@ -27,6 +27,7 @@ import { asOfExitCode, formatGetPage, validTimeLine } from '../src/cli/page-rend
 import { utcToday } from '../src/core/link-validity.ts';
 import { unquoteTranscriptText } from '../src/core/search/transcript-quote.ts';
 import { testBackends, requirePostgresTestDatabase } from './helpers/test-backends.ts';
+import { withTrustPromotion } from '../src/core/persistence/context.ts';
 import { importSegmented } from './helpers/segmented-privacy-fixture.ts';
 
 type R = Record<string, any>;
@@ -157,6 +158,18 @@ for (const backend of testBackends()) {
       expect(after.valid_time).toMatchObject({ status: 'not_in_force', chosen_is_current: true, valid_until: '2027-01-01' });
       expect(after.compiled_truth).toBeUndefined();
       expect(after.last_in_force.compiled_truth).toContain('receipts required');
+    });
+
+    test('a remote as_of read refuses a chosen edition below the trust floor, even when the current page meets it', async () => {
+      const slug = fresh('floor');
+      await put(slug, 'January canary text.', ["valid_from: '2026-01-01'"]);
+      await put(slug, 'June curated text.', ["valid_from: '2026-06-01'"]);
+      await engine.transaction(tx => withTrustPromotion(tx, 'operator_curated', () => tx.executeRaw("UPDATE pages SET trust_tier = 'operator_curated' WHERE slug = $1 AND source_id = 'default'", [slug])));
+      const current = await read(slug, '2026-07-01', true, { min_trust: 'operator_curated' });
+      expect(unquoteTranscriptText(String(current.compiled_truth ?? current.window?.text ?? ''), slug)).toContain('June curated text.');
+      const old = await refusal(read(slug, '2026-03-01', true, { min_trust: 'operator_curated' }));
+      expect(old?.code).toBe('page_not_found');
+      expect((await read(slug, '2026-03-01')).compiled_truth).toContain('January canary text.');
     });
 
     test('B-T1: a date-only change and a same-body renewal are flagged ambiguous_edition_dates', async () => {

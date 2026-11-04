@@ -132,7 +132,7 @@ export function currentValidTime(frontmatter: Record<string, unknown> | null | u
  * The first release whose get_page answers `as_of` (echoing `valid_time.as_of`). Stamped with the release at ship time;
  * the client names it in `host_upgrade_required`.
  */
-export const VALID_TIME_MIN_HOST_VERSION = '0.60.475.0';
+export const VALID_TIME_MIN_HOST_VERSION = '0.60.570.0';
 
 /**
  * B4 version skew: an `as_of` read's reply must echo `valid_time.as_of`. An older host ignores the parameter and

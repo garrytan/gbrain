@@ -17,6 +17,7 @@ import { renderAction, type Action } from '../agent-output.ts';
 import { assertExplicitSourceLive, federatedSearchScope, pageNotFoundError, parseSourceIdParam, validatePageSlug } from './context.ts';
 import { inlineBodyBytes } from './get-page-body.ts';
 import { pageTrustForRead } from './get-page-projection.ts';
+import { admitsTrust, type TrustTier } from '../trust/tier.ts';
 import { isCalendarDate } from '../link-validity.ts';
 import { replacedBecauseSql } from '../engine-sql/pages.ts';
 import { callerReadersAllowedSql, privacyForCaller, privateLinkOriginFilterFragment, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment, resolveExcludePrivatePages } from '../search/private-visibility.ts';
@@ -326,7 +327,10 @@ export async function getPageAsOf(ctx: OperationContext, p: Record<string, unkno
   const { identity, pin, picked, loaded, amendments } = read;
   const row = picked.row;
   const missing = () => pageNotFoundError(ctx, slug, { includeDeleted: false, sourceIdParam });
-  if (!(await pageTrustForRead(ctx, { id: identity.id }, p.min_trust))) throw missing();
+  const admitted = await pageTrustForRead(ctx, { id: identity.id }, p.min_trust);
+  if (!admitted) throw missing();
+  const floor = admitted.eligibility.floor;
+  if (floor && row && !admitsTrust((row.tier ?? 'unknown') as TrustTier, floor)) throw missing();
   if (!row) {
     const snap = await ctx.engine.readPageSnapshot(identity.slug, { sourceId: identity.source_id });
     if (!snap) throw missing();
