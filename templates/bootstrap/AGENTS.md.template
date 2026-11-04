@@ -95,7 +95,7 @@ instead of the CLI (one connection, no per-call startup).
 | Lookup | CLI | MCP tool |
 |---|---|---|
 | Find a page by name or path | `gbrain find <name\|prefix\|glob> [--type T] [--source S]` | `find_pages` |
-| Count pages by kind or source | `gbrain stats --by source,type [--since 30d] [--collapse-aliases]` | `get_stats` |
+| Count pages by kind or source | `gbrain stats --by source,type [--since 30d] [--collapse-aliases]` | `get_stats` (needs an admin-scope token) |
 | Answer a question, search a topic | `gbrain query "<question>" [--types '["meeting"]'] [--since 30d]` | `query` |
 | Pages with these words | `gbrain search "<words>" [--match keyword] [--source S]` | `search` |
 | Read a known page | `gbrain get <slug>` | `get_page` |

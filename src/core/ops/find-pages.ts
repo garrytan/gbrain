@@ -7,7 +7,7 @@
  * Scope follows `list_pages`: `federatedSearchScope` (an explicit `source_id`,
  * `'__all__'` included, is checked against the grant and must name a live
  * source). Every caller sees live pages in unarchived sources; a remote
- * caller's `readPolicyOpts` policy goes through `pageReadFilter` (private
+ * caller's (or a local `--as <member>` preview's) `readPolicyOpts` policy goes through `pageReadFilter` (private
  * pages, trust floor, quarantine). Like ranked search, find hides the
  * `resolveHardExcludes` prefixes unless the pattern targets one; the result
  * names the prefixes it hid.
@@ -73,7 +73,7 @@ const find_pages: Operation = {
     const requested = typeof p.limit === 'number' ? p.limit : undefined;
     const cap = ctx.remote === false ? FIND_PAGES_LOCAL_MAX_LIMIT : FIND_PAGES_REMOTE_MAX_LIMIT;
     const limit = clampSearchLimit(requested, FIND_PAGES_DEFAULT_LIMIT, cap);
-    const policy = ctx.remote === false ? undefined : await readPolicyOpts(ctx, scope);
+    const policy = ctx.remote === false && !ctx.applyRemoteReadPolicy ? undefined : await readPolicyOpts(ctx, scope);
     const hiddenPrefixes = hiddenPrefixesFor(pattern, resolveHardExcludes());
     const found = await ctx.engine.findPages({
       pattern,

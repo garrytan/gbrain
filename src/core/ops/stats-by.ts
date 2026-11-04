@@ -7,7 +7,7 @@
  *
  * Scope is the diagnostic ladder `get_stats` already uses (trusted local:
  * every source; remote: the caller's grant). Counts cover live pages in
- * unarchived sources; a remote caller's `readPolicyOpts` policy goes through
+ * unarchived sources; a remote caller's (or a local `--as <member>` preview's) `readPolicyOpts` policy goes through
  * `pageReadFilter` (private pages, trust floor, quarantine), like other
  * remote reads. Stats do not hide the search hard-exclude prefixes: they
  * count what is stored.
@@ -54,7 +54,7 @@ export async function statsBy(
   const groupTypes = by.includes('type') && !by.includes('source')
     ? (types: string[]) => { const collapse = collapseFor(types); return types.map((type) => collapse?.get(type)?.group ?? type); }
     : undefined;
-  const policy = ctx.remote === false ? undefined : await readPolicyOpts(ctx, scope);
+  const policy = ctx.remote === false && !ctx.applyRemoteReadPolicy ? undefined : await readPolicyOpts(ctx, scope);
   const counts = await ctx.engine.countPagesBy({
     ...scope,
     since,
