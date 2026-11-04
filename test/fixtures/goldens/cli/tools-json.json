@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 268935,
-    "stdoutSha256": "c93966124678ecbf3623a199aeebea8b5eac5e8d990bd4c9622531affc20a7bc",
+    "stdoutBytes": 269897,
+    "stdoutSha256": "39204fde48293f94039ada247d1125d6da50aa1adff8cbdf6dd434b5c9bc6959",
     "toolNames": [
       "remember",
       "entity",
@@ -90,6 +90,7 @@
       "file_list",
       "file_upload",
       "file_url",
+      "file_verify",
       "submit_job",
       "get_job",
       "wait_job",
@@ -4288,6 +4289,33 @@
           "required": [
             "storage_path"
           ],
+          "type": "object"
+        },
+        "scope": "admin"
+      },
+      {
+        "description": "Check files rows against the storage backend. Without storage_path, lists up to 100 rows (optionally one page's) with whether each object is present; with it, reads that object back and says whether its size and SHA-256 match the row. Runs only on an engine opened from settings. A backend that fails the check is store_unavailable, never a file reported missing.",
+        "idempotent": true,
+        "local_only": true,
+        "mutating": false,
+        "name": "file_verify",
+        "parameters": {
+          "slug": "string?",
+          "storage_path": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "slug": {
+              "description": "List only this page's files",
+              "type": "string"
+            },
+            "storage_path": {
+              "description": "Read back and hash this one object",
+              "type": "string"
+            }
+          },
+          "required": [],
           "type": "object"
         },
         "scope": "admin"

@@ -346,7 +346,8 @@ integrator runs the full gate.
 Manual path: `bun test` plus the E2E lifecycle described in `./CLAUDE.md` (spin
 up the test Postgres container, run `bun run test:e2e`, tear it down).
 
-Ship via the `/ship` skill, not by hand. The full release + contributor process
+Ship via the `/ship` skill, not by hand. Pass its test lanes the exact commands in
+[/ship lanes](docs/ci-event-parity.md#ship-lanes), so a passed full-ci run carries them. The full release + contributor process
 (CHANGELOG voice, version-locations sync, PR conventions, community-PR-wave) lives in
 [`./docs/RELEASING.md`](./docs/RELEASING.md); read it before shipping.
 
