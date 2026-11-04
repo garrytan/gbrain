@@ -44,6 +44,7 @@ import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import {
   computeTrajectoryStats,
+  comparableTrajectoryPairs,
   TRAJECTORY_SCHEMA_VERSION,
 } from '../core/trajectory.ts';
 
@@ -94,38 +95,38 @@ export function computeFounderScorecard(args: {
   const accurate = resolved.filter(t => t.resolved_outcome === true).length;
   const accuracyPct = resolved.length > 0 ? accurate / resolved.length : null;
 
-  // consistency — count consecutive value changes per metric. A 'change'
-  // is a pair where the relative delta is >=5%. The score normalizes
-  // by total typed facts so a long-stable trajectory scores 1.0.
+  // consistency — count changes between comparable consecutive points
+  // (comparableTrajectoryPairs: same metric, unit, period and population, at
+  // strictly later valid time). A 'change' is a pair where the relative
+  // delta is >=5%. The score normalizes by total typed facts so a
+  // long-stable trajectory scores 1.0; with no comparable pair it is unknown.
   const byMetric = new Map<string, TrajectoryPoint[]>();
   for (const p of args.points) {
     if (p.metric === null || p.value === null) continue;
     if (!byMetric.has(p.metric)) byMetric.set(p.metric, []);
     byMetric.get(p.metric)!.push(p);
   }
-  let metricChanges = 0;
-  let typedFacts = 0;
-  for (const series of byMetric.values()) {
-    typedFacts += series.length;
-    for (let i = 1; i < series.length; i++) {
-      const a = series[i - 1].value!;
-      const b = series[i].value!;
-      if (a === 0) continue;
-      if (Math.abs(b - a) / Math.abs(a) >= 0.05) metricChanges += 1;
-    }
-  }
-  const consistencyScore = typedFacts > 0
+  const pairs = comparableTrajectoryPairs(args.points);
+  const typedFacts = [...byMetric.values()].reduce((n, series) => n + series.length, 0);
+  const metricChanges = pairs.filter(([a, b]) =>
+    a.value !== 0 && Math.abs(b.value! - a.value!) / Math.abs(a.value!) >= 0.05).length;
+  const consistencyScore = pairs.length > 0
     ? Math.max(0, Math.min(1, 1 - metricChanges / typedFacts))
     : null;
 
-  // growth_trajectory — per metric, the most recent delta direction.
+  // growth_trajectory — per metric, the most recent comparable delta. The
+  // wire shape has no unit/period/population dimension, so a metric reports a
+  // direction only when it is one series and its latest point has a prior.
   const growth: FounderScorecard['growth_trajectory'] = [];
   for (const [metric, series] of byMetric) {
-    if (series.length < 2) continue;
-    const latest = series[series.length - 1].value!;
-    const prior = series[series.length - 2].value!;
-    if (prior === 0) continue;
-    const delta = (latest - prior) / prior;
+    const keys = new Set(series.map(p => JSON.stringify([p.unit, p.period, p.trajectory_evidence?.scope ?? null])));
+    if (keys.size !== 1) continue;
+    // Match the latest point by timestamp, not identity: a corroborating
+    // same-time duplicate of the latest value must not hide its pair.
+    const latestMs = series[series.length - 1].valid_from.getTime();
+    const pair = pairs.findLast(([, b]) => b.metric === metric && b.valid_from.getTime() === latestMs);
+    if (!pair || pair[0].value === 0) continue;
+    const delta = (pair[1].value! - pair[0].value!) / Math.abs(pair[0].value!);
     const dir: 'up' | 'down' | 'flat' =
       Math.abs(delta) < 0.01 ? 'flat' : (delta > 0 ? 'up' : 'down');
     growth.push({ metric, direction: dir, latest_delta_pct: delta });
@@ -271,6 +272,7 @@ export async function runFounder(engine: BrainEngine, args: string[]): Promise<v
         fact_id: number; valid_from: string;
         metric: string | null; value: number | null;
         unit: string | null; period: string | null;
+        trajectory_evidence?: TrajectoryPoint['trajectory_evidence'];
         event_type: string | null;
         text: string; source_session: string | null; source_markdown_slug: string | null;
       }>;
@@ -282,6 +284,7 @@ export async function runFounder(engine: BrainEngine, args: string[]): Promise<v
       value: p.value,
       unit: p.unit,
       period: p.period,
+      trajectory_evidence: p.trajectory_evidence,
       // v0.40.2.0: event_type may be absent on pre-v0.40 servers; default null.
       event_type: (p as { event_type?: string | null }).event_type ?? null,
       text: p.text,

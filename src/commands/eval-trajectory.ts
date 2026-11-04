@@ -13,7 +13,7 @@
  *   gbrain eval trajectory companies/acme-example --json
  */
 
-import type { BrainEngine } from '../core/engine.ts';
+import type { BrainEngine, TrajectoryPoint } from '../core/engine.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import {
@@ -39,6 +39,8 @@ interface WireTrajectoryResult {
     value: number | null;
     unit: string | null;
     period: string | null;
+    /** Producer time basis + population (trajectory-context.ts); absent = legacy. */
+    trajectory_evidence?: TrajectoryPoint['trajectory_evidence'];
     /** v0.40.2.0 — event-shaped row marker; null on metric rows. */
     event_type: string | null;
     text: string;
@@ -151,6 +153,7 @@ export async function runEvalTrajectory(engine: BrainEngine, args: string[]): Pr
         value: p.value,
         unit: p.unit,
         period: p.period,
+        ...(p.trajectory_evidence ? { trajectory_evidence: p.trajectory_evidence } : {}),
         event_type: p.event_type,
         text: p.text,
         source_session: p.source_session,

@@ -151,3 +151,22 @@ describe('eval-trajectory CLI — metric filter narrows results', () => {
     expect(parsed.points[0].metric).toBe('arr');
   });
 });
+
+describe('eval-trajectory CLI — local and op JSON parity', () => {
+  test('local --json keeps trajectory_evidence exactly as find_trajectory projects it', async () => {
+    const { operationsByName } = await import('../src/core/operations.ts');
+    const entity = 'cli-traj-evidence';
+    await insertTyped({ entity_slug: entity, metric: 'users', value: 100, valid_from: new Date('2026-01-01') });
+    await insertTyped({ entity_slug: entity, metric: 'users', value: 80, valid_from: new Date('2026-02-01') });
+    await engine.executeRaw('UPDATE facts SET context = $1 WHERE entity_slug = $2', [
+      JSON.stringify({ internal: 'not projected', trajectory: { scope: 'cohort-a', time_basis: 'reported', reported_on: '2026-02-01' } }), entity,
+    ]);
+    const { out } = await captureRun([entity, '--json']);
+    const local = JSON.parse(out);
+    const ctx = { engine, config: {}, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: false } as never;
+    const viaOp = await operationsByName['find_trajectory'].handler(ctx, { entity_slug: entity, kind: 'metric' }) as { points: unknown[] };
+    expect(local.points[0].trajectory_evidence).toEqual({ scope: 'cohort-a', time_basis: 'reported', reported_on: '2026-02-01' });
+    expect(local.points).toEqual(JSON.parse(JSON.stringify(viaOp.points)));
+    expect(out).not.toContain('not projected');
+  });
+});

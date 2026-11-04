@@ -214,3 +214,18 @@ describe('find_trajectory MCP op — regression + drift surface', () => {
     expect(result.drift_score).toBeNull();
   });
 });
+
+
+test('producer evidence survives database and MCP projection without suppressing point history', async () => {
+  const entity = 'optraj-report-time';
+  for (const [month, value] of [[1, 100], [2, 80]]) {
+    await insertTyped({ entity_slug: entity, metric: 'users', value, valid_from: new Date(`2026-0${month}-01`), visibility: 'world' });
+  }
+  const context = JSON.stringify({ producer: 'fixture', internal: 'not projected', trajectory: { scope: null, time_basis: 'reported', reported_on: '2026-02-01' } });
+  await engine.executeRaw('UPDATE facts SET context = $1 WHERE entity_slug = $2', [context, entity]);
+  const result = await operationsByName['find_trajectory'].handler(mkCtx({ remote: true }), { entity_slug: entity }) as any;
+  expect(result.points).toHaveLength(2);
+  expect(result.regressions).toEqual([]);
+  expect(result.points[0].trajectory_evidence).toEqual({ scope: null, time_basis: 'reported', reported_on: '2026-02-01' });
+  expect(JSON.stringify(result)).not.toContain('not projected');
+});

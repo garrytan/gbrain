@@ -241,3 +241,35 @@ describe('computeFounderScorecard — red_flags', () => {
     expect(sc.red_flags).toEqual([]);
   });
 });
+
+describe('temporal comparability in scorecards', () => {
+  const run = (points: TrajectoryPoint[]) => computeFounderScorecard({ entitySlug: 'companies/fixture', windowSince: null, windowUntil: null, points, takes: [] });
+  const a = pt({ id: 1, metric: 'users', value: 900, date: '2026-01-01' });
+  const b = pt({ id: 2, metric: 'users', value: 90, date: '2026-02-01' });
+  test('same-time, mismatched units and unknown population do not imply growth or perfect stability', () => {
+    for (const points of [
+      [a, { ...b, valid_from: a.valid_from }],
+      [a, { ...b, unit: 'other' }],
+      [a, b].map(p => ({ ...p, trajectory_evidence: { scope: null, time_basis: 'reported' as const, reported_on: '2026-02-01' } })),
+    ]) {
+      const result = run(points);
+      expect(result.growth_trajectory).toEqual([]);
+      expect(result.consistency.score).toBeNull();
+      expect(result.red_flags).toEqual([]);
+      expect(result.consistency.typed_facts).toBe(2);
+    }
+  });
+  test('negative values use numeric direction consistently', () => {
+    expect(run([{ ...a, value: -100 }, { ...b, value: -50 }]).growth_trajectory[0].direction).toBe('up');
+  });
+});
+
+test('a corroborating same-time duplicate of the latest value does not hide its growth direction', () => {
+  const points = [
+    pt({ id: 1, metric: 'users', value: 100, date: '2026-01-01' }),
+    pt({ id: 2, metric: 'users', value: 80, date: '2026-02-01' }),
+    pt({ id: 3, metric: 'users', value: 80, date: '2026-02-01' }),
+  ];
+  const sc = computeFounderScorecard({ entitySlug: 'companies/fixture', windowSince: null, windowUntil: null, points, takes: [] });
+  expect(sc.growth_trajectory).toEqual([{ metric: 'users', direction: 'down', latest_delta_pct: -0.2 }]);
+});
