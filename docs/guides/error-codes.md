@@ -1509,7 +1509,17 @@ More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An engine opened from settings made an AI call (embed, chat, expansion or rerank) through a provider its settings.ai does not name, or a call ran outside any engine scope in a process holding such engines, so nothing was sent. | An embedded engine's AI calls reach only the providers and keys its host passed as values. Falling back to a process.env key, ~/.gbrain/config.json or the process-wide gateway would spend another brain's key and send this brain's text where its host never pointed it. | Pass the provider in settings.ai.providers (apiKey, and baseUrl when it is not the default) to openEngine, or point settings.ai.models (or settings.embedding) at a provider the engine has. | agent | `repeat the read that failed` | 1 | no |
+| An engine opened from settings made an AI call (embed, chat, expansion or rerank) through a provider its settings.ai does not name, or after it was disconnected, so nothing was sent. | An embedded engine's AI calls reach only the providers and keys its host passed as values. Falling back to a process.env key, ~/.gbrain/config.json or the process-wide gateway would spend another brain's key and send this brain's text where its host never pointed it. | Pass the provider in settings.ai.providers (apiKey, and baseUrl when it is not the default) to openEngine, or point settings.ai.models (or settings.embedding) at a provider the engine has. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
+
+### engine_scope_required
+
+<a id="engine_scope_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An AI call (embed, chat, expansion or rerank) ran outside any engine scope while this process holds engines opened from settings, so nothing was sent. | With no scope the call's brain is unknown. Using the process gateway, a process.env key or ~/.gbrain/config.json would spend a key no brain's host gave and could send one brain's text where its host never pointed it, so the call refuses whatever process gateway the host configured. | Run the call inside withEngineScope(engine, fn) for the engine it belongs to, or withLocalScope(fn) for a call that belongs to the process gateway (both exported from gbrain/engine-open). | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
 

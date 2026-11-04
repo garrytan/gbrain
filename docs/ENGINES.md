@@ -771,8 +771,12 @@ working directory:
 - **AI gateway.** Embed, chat, expansion and rerank calls use only `settings.ai` (`providers`: id to
   `{ apiKey, baseUrl }`; `models`: chat, expansion, reranker) and `settings.embedding`, never a `process.env`
   key, the config file or the process gateway. An unnamed provider refuses `engine_scope_missing` and nothing is
-  sent. Operations and persistence consumers run in their engine's scope; a host calling core directly wraps it in
-  `withEngineScope(engine, fn)`.
+  sent. Operations, persistence consumers, minion jobs, `POST /mcp`, `hybridSearch` and the import paths enter
+  their engine's scope; wrap any other direct call in `withEngineScope(engine, fn)`. With an embedded engine open,
+  a call in no scope refuses `engine_scope_required`; `withLocalScope(fn)` (the CLI, serve and jobs enter it) uses
+  the process gateway. Batch shrink, no-key and structured-output memory, usage rows and the alias policy are per
+  engine. Query embeddings are cached per engine until close, unless `cache_namespace` (a host's name for
+  one tenant database) keeps them warm; a new key starts cold.
 - **Read back.** `embeddedSettings(engine)` returns a frozen copy with no secrets.
 - **Close.** `disconnect()` closes the engine for good and drops its settings, even while a reconnect is in flight
   (any pool that reconnect builds is ended). A later `connect()` or `reconnect()` refuses `engine_closed`; call
@@ -786,6 +790,12 @@ variables, the connection-events audit log, and operation-level
 config reads (content-sanity screening, schema-pack resolution, the embedding switch on publication). None of them
 picks an engine's database, host identity, writer, embedding identity or AI keys. A source with a git checkout keeps its native coordination lock under the
 process's persistence home.
+
+### Upgrading an embedded host
+
+- Unscoped AI calls refuse `engine_scope_required` even after `configureGateway`; wrap them as above.
+- `openEngine` refuses an unknown settings key, top-level or nested (`engine_settings_invalid` names it).
+- `examples/embedded-two-brains.ts` is a two-brain host on package exports only: `bun examples/embedded-two-brains.ts`.
 
 ## Canonical schema sources
 
@@ -1411,24 +1421,8 @@ and assert `jsonb_typeof` — the assertion PGLite cannot make.
 ## Adding a new engine
 
 1. Create `src/core/<name>-engine.ts` implementing `BrainEngine`
-2. Add to engine factory in `src/core/engine-factory.ts`:
-   ```typescript
-   export async function createEngine(config: EngineConfig): Promise<BrainEngine> {
-     switch (config.engine || 'postgres') {
-       case 'pglite': {
-         const { PGLiteEngine } = await import('./pglite-engine.ts');
-         return new PGLiteEngine();
-       }
-       case 'myengine': {
-         const { MyEngine } = await import('./my-engine.ts');
-         return new MyEngine();
-       }
-       // ...
-     }
-   }
-   ```
-   The factory uses dynamic imports so an engine's dependencies (e.g. the
-   PGLite WASM blob) are only loaded when that engine is selected.
+2. Add a case to `constructEngine` in `src/core/engine-construct.ts`, which `createEngine` and `openEngine`
+   both build through. Its dynamic imports load an engine's dependencies (the PGLite WASM blob) only when selected.
 3. If the engine speaks the Postgres dialect, add a dialect adapter that
    implements `SqlExecutor` (`src/core/engine-sql/executor.ts`) beside
    `dialect-pglite.ts` and `dialect-postgres.ts`, expose it through a private
@@ -1473,10 +1467,6 @@ Every method in `BrainEngine`. The full interface. No optional methods, no featu
 
 ## Future engine ideas
 
-**TursoEngine.** libSQL (SQLite fork) with embedded replicas and HTTP edge access. Would give SQLite's simplicity with cloud sync. Interesting for mobile/edge use cases.
-
-**DuckDBEngine.** Analytical workloads. Bulk exports, embedding analysis, brain-wide statistics. Not for OLTP. Could be a secondary engine for analytics alongside Postgres for operations.
-
-**Custom/Remote.** The interface is clean enough that someone could build an engine backed by any storage: Firestore, DynamoDB, a REST API, even a flat file system. The interface doesn't assume SQL.
-
-Note: there is no SQLite engine. PGLite uses the same SQL as Postgres, so no separate SQLite dialect with FTS5/sqlite-vss translation is needed.
+TursoEngine (libSQL with embedded replicas and edge sync), DuckDBEngine (analytics and bulk exports beside
+Postgres, not OLTP) and custom engines over any store: the interface assumes no SQL. There is no SQLite engine;
+PGLite speaks Postgres SQL, so no FTS5/sqlite-vss dialect is needed.

@@ -1,6 +1,7 @@
 import { engineKey } from './engine-key.ts';
 import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL } from './ai/defaults.ts';
 import { opError } from './ops/contract.ts';
+import { setEmbeddedKeyResolver } from './engine-scope-store.ts';
 
 /**
  * The value an embedding host passes to `openEngine` (engine-open.ts). Nothing in it is read from a config file, an
@@ -30,6 +31,13 @@ export interface EngineSettings {
    * model is `embedding` above. Without it every AI call refuses `engine_scope_missing`; no process key is used.
    */
   ai?: EngineAISettings;
+  /**
+   * Opaque name the host owns for one tenant database incarnation. With it, query embeddings cached for this engine
+   * stay warm across reopens of the same brain (tagged by the namespace and a hash of the provider configuration);
+   * without it every engine starts cold and its entries go when it closes. Never derive it from the stored brain id:
+   * a cloned or restored database shares that.
+   */
+  cache_namespace?: string;
   /**
    * The object store every file operation on this engine uses, as values: `local` needs `localPath`, `s3` its bucket,
    * endpoint and keys (nothing is read from AWS_* variables or ~/.aws). Every object key is `<prefix>/<path>` when
@@ -100,6 +108,7 @@ export function settingsConnectionOptions(url: string): { host: string; port: nu
 const records = new WeakMap<object, EmbeddedRecord>();
 let embeddedProcess = false;
 let openEmbeddedEngines = 0;
+setEmbeddedKeyResolver(engine => (records.has(engineKey(engine)) ? engineKey(engine) : undefined), processHoldsEmbeddedEngines);
 
 function recordOf(engine: object): EmbeddedRecord | undefined {
   return records.get(engineKey(engine));

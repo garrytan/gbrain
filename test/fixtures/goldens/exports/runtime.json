@@ -647,7 +647,8 @@
         "isEmbeddedEngine",
         "openEngine",
         "processHasEmbeddedEngines",
-        "withEngineScope"
+        "withEngineScope",
+        "withLocalScope"
       ],
       "./eval/longmemeval/reader": [
         "READER_MAX_SESSION_CHARS",

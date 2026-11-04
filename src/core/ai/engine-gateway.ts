@@ -3,14 +3,16 @@
  * alone: no `process.env` key, no `~/.gbrain/config.json` and no process-wide gateway reaches it. The gateway
  * (gateway.ts) reads it for every call that runs in that engine's scope (engine-scope.ts).
  */
+import { createHash } from 'node:crypto';
 import { opError } from '../ops/contract.ts';
 import { embeddedSettingsRecord, releasedEngineKeys, type EngineAISettings, type EngineSettings } from '../embedded-engine.ts';
 
 type EngineAIProvider = EngineAISettings['providers'][string];
-import { embeddedEngineInScope } from '../engine-scope.ts';
+import { embeddedEngineInScope, unscopedInEmbeddedProcess } from '../engine-scope.ts';
 import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL } from './defaults.ts';
 import { getRecipe } from './recipes/index.ts';
 import type { AIGatewayConfig, Recipe } from './types.ts';
+import { dropQueryEmbeddingsTagged } from './query-embed-cache.ts';
 
 /** Each native SDK reads its base URL from this env name when it is not given one, so an engine always gives one. */
 const NATIVE_BASE_URL: Partial<Record<Recipe['implementation'], { env: string; url: string }>> = {
@@ -83,8 +85,24 @@ export function engineGatewayInput(settings: EngineSettings): { config: AIGatewa
   };
 }
 
-/** The config a gateway call uses and the clients built from it. `providers` is set only on an embedded engine's state. */
-export interface GatewayState { config: AIGatewayConfig | null; modelCache: Map<string, any>; providers?: ReadonlySet<string>; cacheTag: string }
+/**
+ * The config a gateway call uses, the clients built from it and what its calls taught the gateway. `providers` is set
+ * only on an embedded engine's state; the process keeps its own (gateway.ts), so one engine's lessons never reach another.
+ */
+export interface GatewayState {
+  config: AIGatewayConfig | null; modelCache: Map<string, any>; providers?: ReadonlySet<string>; cacheTag: string;
+  /** Batch shrink-on-miss factor by recipe id (gateway.ts effectiveSafetyFactor). */
+  shrink: Map<string, { factor: number; consecutiveSuccesses: number }>;
+  /** Reranker models whose missing key already wrote its one no_key audit row. */
+  noKeyNoticed: Set<string>;
+  /** Recipes that rejected json_schema at call time, so their structured calls go straight to the text path. */
+  structuredOutputRejected: Set<string>;
+}
+
+/** A gateway state that has learned nothing yet. */
+export function freshGatewayState(config: AIGatewayConfig | null, cacheTag: string, providers?: ReadonlySet<string>): GatewayState {
+  return { config, modelCache: new Map(), ...(providers ? { providers } : {}), cacheTag, shrink: new Map(), noKeyNoticed: new Set(), structuredOutputRejected: new Set() };
+}
 
 /** Keyed by the settings the engine holds, so a disconnect (which drops them) drops the state; see releasedKeyEnv. */
 const states = new WeakMap<EngineSettings, GatewayState>();
@@ -101,10 +119,30 @@ export function scopedGatewayState(normalize: (config: AIGatewayConfig) => AIGat
   let state = states.get(settings);
   if (!state) {
     const { config, providers } = engineGatewayInput(settings);
-    state = { config: normalize(config), modelCache: new Map(), providers, cacheTag: `engine:${crypto.randomUUID()}:` };
+    state = freshGatewayState(normalize(config), queryCacheTag(settings), providers);
     states.set(settings, state);
   }
   return state;
+}
+
+/**
+ * The query-embedding cache tag: unique to this engine object, or, with `settings.cache_namespace`, the namespace plus
+ * the provider-configuration generation (provider ids, base URLs and a fingerprint of each key; the key itself never
+ * enters the tag), so a reopened brain hits and a replaced key or endpoint starts cold.
+ */
+function queryCacheTag(settings: EngineSettings): string {
+  if (!settings.cache_namespace) return `engine:${crypto.randomUUID()}:`;
+  const sha = (value: string) => createHash('sha256').update(value).digest('hex');
+  const generation = Object.entries(settings.ai?.providers ?? {}).sort(([a], [b]) => a.localeCompare(b))
+    .map(([id, provider]) => [id, provider.baseUrl ?? '', provider.apiKey ? sha(provider.apiKey) : '']);
+  return `ns:${sha(JSON.stringify([settings.cache_namespace, generation]))}:`;
+}
+
+/** At an embedded engine's close, before its settings go: drop the query embeddings it cached, unless a namespace keeps them for its next open. */
+export function releaseEngineGatewayState(engine: object): void {
+  const settings = embeddedSettingsRecord(engine);
+  const state = settings && states.get(settings);
+  if (state && !settings.cache_namespace) dropQueryEmbeddingsTagged(state.cacheTag);
 }
 
 /** Provider keys of a disconnected engine in scope, as env entries, so a call still in flight scrubs them from its error. */
@@ -113,10 +151,18 @@ export function releasedKeyEnv(): Record<string, string> {
   return Object.fromEntries((engine ? releasedEngineKeys(engine) : []).map((value, i) => [`RELEASED_${i}_API_KEY`, value]));
 }
 
-/** The refusal for an AI call made outside any engine scope in a process holding embedded engines whose host configured no process gateway. */
-export function engineScopeUnentered(): Error {
-  return opError('engine_scope_missing', 'An AI call ran outside any engine scope in a process that holds engines opened from settings.',
-    'Its brain is unknown, so no process.env key, ~/.gbrain/config.json or default gateway is used and nothing was sent. Run it inside withEngineScope(engine, fn), or configure a process gateway (configureGateway) for calls that belong to no engine.');
+/**
+ * The refusal for an AI call that entered no scope in a process holding open embedded engines. It decides by scope
+ * presence alone: a process gateway the host configured never opens it.
+ */
+export function engineScopeRequired(): Error {
+  return opError('engine_scope_required', 'An AI call ran outside any engine scope in a process that holds engines opened from settings.',
+    'Its brain is unknown, so no process.env key, ~/.gbrain/config.json or process gateway is used and nothing was sent. Run it inside withEngineScope(engine, fn) for the engine it belongs to, or withLocalScope(fn) for a call that belongs to the process gateway.');
+}
+
+/** Every gateway AI call starts here: with no scope in a process holding open embedded engines it refuses `engine_scope_required`. */
+export function refuseUnscoped(): void {
+  if (unscopedInEmbeddedProcess()) throw engineScopeRequired();
 }
 
 /** In an embedded engine's scope, its settings.ai.models.reranker; search uses it in place of the mode bundle's default. */
