@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.569.0] - 2026-11-04
 
 **SkillOpt's iterative loop is deprecated and will be removed on or after 2026-12-03.** The loop tied a single rewrite on gbrain-evals' benchmarks at about 1.8 times the cost, and every edit it kept came from its first step, so it is being retired. `gbrain skillopt --loop`, a `--resume` of a run the loop started, `run_skillopt` with `optimizer_mode: "reflect"` and a queued `skillopt` job in loop mode now print the `skillopt_loop_deprecated` coaching notice once (over MCP, once per session) and otherwise run exactly as before. Nothing replaces the loop: edit the skill directly, or run the default one-shot rewrite, which stays. Nothing is removed and no default changes in this release.
 
