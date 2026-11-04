@@ -14,10 +14,11 @@ import type { BrainEngine } from './engine.ts';
 import type { OperationContext } from './ops/contract.ts';
 import { privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages } from './search/private-visibility.ts';
 import { buildNearNameIndex, loadEntityNames, normalizeEntityName, queryNearNames, shardCountFor, type NearNameKind } from './entities/near-name.ts';
+import { quoteFacts } from './search/transcript-quote.ts';
 
 export interface ReviewAction { kind: string; run_by: 'caller' | 'owner'; argv: string[]; mcp?: { tool: string; arguments: Record<string, unknown> }; inputs?: Array<{ name: string; how: string }>; why: string }
 
-export interface UnattributedRow { fact_id: string; fact: string; kind: string; visibility: string; source_id: string; created_at: string; actions: ReviewAction[] }
+export interface UnattributedRow { fact_id: string; fact: string; kind: string; visibility: string; source_id: string; created_at: string; quoted?: 'transcript'; actions: ReviewAction[] }
 
 export const UNATTRIBUTED_DEFAULT_LIMIT = 50;
 export const REVIEW_LIST_MAX_LIMIT = 500;
@@ -26,18 +27,21 @@ export async function listUnattributedFacts(engine: BrainEngine, ctx: OperationC
   Promise<{ count: number; rows: UnattributedRow[]; next_offset: number | null; complete: boolean }> {
   const worldOnly = ctx.remote !== false;
   const provenance = await resolveExcludePrivatePages(engine, ctx.remote) ? ` AND ${privateProvenanceFilterUnderPolicy('facts')}` : '';
-  const rows = await engine.executeRaw<{ id: number | string; fact: string; kind: string | null; visibility: string; source_id: string; created_at: string }>(
-    `SELECT id, fact, kind, visibility, source_id, created_at::text AS created_at FROM facts
+  const rows = await engine.executeRaw<{ id: number | string; fact: string; kind: string | null; visibility: string; source_id: string; created_at: string; source: string | null }>(
+    `SELECT id, fact, kind, visibility, source_id, created_at::text AS created_at, source FROM facts
       WHERE source_id = ANY($1::text[]) AND entity_slug IS NULL AND expired_at IS NULL
         AND (valid_until IS NULL OR valid_until > now())
         AND ($2::boolean = false OR visibility = 'world')${provenance}
       ORDER BY id DESC LIMIT $3 OFFSET $4`,
     [sourceIds, worldOnly, opts.limit + 1, opts.offset],
   );
-  const page = rows.slice(0, opts.limit).map((r): UnattributedRow => {
+  // A remote caller reads text below the owner's tier quoted as source material (GST-687), actions included.
+  const read = await quoteFacts(engine, rows.slice(0, opts.limit).map(r => ({ ...r, id: Number(r.id) })), worldOnly);
+  const page = read.map((r): UnattributedRow => {
     const id = String(r.id);
     return {
       fact_id: id, fact: r.fact, kind: r.kind ?? 'fact', visibility: r.visibility, source_id: r.source_id, created_at: r.created_at,
+      ...(r.quoted ? { quoted: r.quoted } : {}),
       actions: [{
         kind: 'relink', run_by: 'caller',
         argv: ['gbrain', 'remember', r.fact, '--entity', '<entity-slug>', '--replaces', id, '--source', r.source_id],

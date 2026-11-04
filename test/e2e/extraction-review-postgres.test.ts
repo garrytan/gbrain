@@ -18,6 +18,7 @@ import { hasDatabase, setupLegacyEmbeddingDB, teardownDB } from './helpers.ts';
 import { enrichEntity } from '../../src/core/enrichment-service.ts';
 import { isUnverifiedExtraction, STATUS_VERIFIED, EXTRACTION_STATUS_KEY } from '../../src/core/extraction-review.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
+import { unquoteFactText } from '../../src/core/search/transcript-quote.ts';
 
 const RUN = hasDatabase();
 const d = RUN ? describe : describe.skip;
@@ -112,7 +113,7 @@ d('extraction quarantine lane (live Postgres)', () => {
     await engine.putPage('companies/pg-acme', { title: 'PGACME', type: 'company', compiled_truth: '# PGACME', timeline: '', frontmatter: {} });
     await engine.putPage('companies/pg-acmx', { title: 'PGACMX', type: 'company', compiled_truth: '# PGACMX', timeline: '', frontmatter: {} });
     const out = await operationsByName['extraction_pending']!.handler(ctx(), { include: ['unattributed', 'possible_duplicates'] }) as Record<string, any>;
-    const facts = out.unattributed.rows.map((r: any) => r.fact);
+    const facts = out.unattributed.rows.map((r: any) => unquoteFactText(r.fact));
     expect(facts).toContain('pg world claim');
     expect(facts).not.toContain('pg private claim');
     const flagged = out.possible_duplicates.rows.flatMap((r: any) => [r.slug, ...r.near.map((n: any) => n.slug)]);
