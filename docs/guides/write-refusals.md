@@ -649,9 +649,11 @@ of a self-hosted Postgres brain that never ran
 of truth: gbrain reads it and does not write files into it. Page writes through
 `put_page`, `capture`, `delete_page`, `restore_page`, `revert_version`,
 `add_tag`, `remove_tag`, `add_timeline_entry` and the `takes_*` tools refuse
-with `unbound_source`, and so does `remember` about an existing entity page
-(its frozen code stays `unavailable`, with `write_error: owner_unavailable`
-and the same detail and fix). What works:
+with `unbound_source`, and so do `remember` about an existing entity page and
+`forget` or `forget_fact` of a claim that a canonical file carries (their
+frozen code stays `unavailable`, with `write_error: owner_unavailable` and the
+same detail and fix; a claim that only database-only pages carry is still
+withdrawn, database-only). What works:
 
 1. **Write the file, commit, sync** (the classic write path). Write or edit
    `<checkout>/<slug>.md`, check generated frontmatter with
