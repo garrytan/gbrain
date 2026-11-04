@@ -159,6 +159,44 @@ describeE2E('openEngine on Postgres', () => {
     expect(await codeOf(oldDirect`SELECT 1`)).not.toBe('resolved');
   }, 60_000);
 
+  for (const shutdown of ['reconnect', 'disconnect'] as const) {
+    test(`${shutdown} closes a real direct pool whose initialization finishes after shutdown (#8478)`, async () => {
+      const engine = await openEngine({ embedded_core: true, engine: 'postgres', database: { url: urls[0]!, directUrl: urls[0]! }, pool: { max: 2 }, host: { id: randomUUID() } });
+      const manager = internals(engine).connectionManager as unknown as { ddl(): Promise<postgres.Sql>; initDirectPool(): Promise<postgres.Sql> };
+      const original = manager.initDirectPool;
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      let ready!: (pool: postgres.Sql) => void;
+      const probed = new Promise<postgres.Sql>(resolve => { ready = resolve; });
+      manager.initDirectPool = async function () {
+        const pool = await original.call(this);
+        ready(pool); // the real SELECT 1 has completed; handoff to the manager is still pending
+        await gate;
+        return pool;
+      };
+      const waiting = codeOf(manager.ddl());
+      let oldDirect: postgres.Sql | undefined;
+      try {
+        oldDirect = await probed;
+        await engine[shutdown]();
+        release();
+        expect(await waiting).toBe('CONNECTION_ENDED');
+        expect(await codeOf(oldDirect`SELECT 1`)).toBe('CONNECTION_ENDED');
+        if (shutdown === 'reconnect') {
+          const replacement = internals(engine).connectionManager as unknown as { ddl(): Promise<postgres.Sql> };
+          expect(replacement).not.toBe(manager);
+          expect(await codeOf((await replacement.ddl())`SELECT 1`)).toBe('resolved');
+        }
+      } finally {
+        release();
+        await waiting;
+        manager.initDirectPool = original;
+        await engine.disconnect();
+        await oldDirect?.end({ timeout: 1 }); // also clean up the intentionally failing upstream discrimination
+      }
+    }, 60_000);
+  }
+
   test('a reconnect lets in-flight work on the superseded direct pool finish before that pool ends', async () => {
     const engine = await openEngine({ embedded_core: true, engine: 'postgres', database: { url: urls[0]!, directUrl: urls[0]! }, pool: { max: 2 }, host: { id: randomUUID() } });
     try {

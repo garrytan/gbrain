@@ -186,6 +186,7 @@ export class ConnectionManager {
   /** #1915: single-flight guard for the session-pooler retry. */
   private _sessionInit: Promise<Sql> | null = null;
   private _sessionFallbackLogged = false;
+  private _closed = false;
 
   constructor(opts: ConnectionManagerOpts) {
     this.opts = opts;
@@ -252,6 +253,7 @@ export class ConnectionManager {
    * we don't double-create when db.ts:connect already owns the singleton.
    */
   async getReadPool(): Promise<Sql> {
+    this.assertOpen();
     if (this._readPool) return this._readPool;
     if (this._readPoolOwnedExternally) {
       throw new Error('connection-manager: read pool marked as externally-owned but not provided');
@@ -285,6 +287,7 @@ export class ConnectionManager {
    * Throws if pool not ready.
    */
   read(): Sql {
+    this.assertOpen();
     if (!this._readPool) {
       throw new Error('connection-manager: read pool not initialized; call getReadPool() first or set externally');
     }
@@ -301,6 +304,7 @@ export class ConnectionManager {
    * await the same init instead of racing two pool constructions.
    */
   async ddl(): Promise<Sql> {
+    this.assertOpen();
     if (!this.isDirectRouteConfigured()) {
       return this.getReadPool();
     }
@@ -314,6 +318,7 @@ export class ConnectionManager {
    * + caller-side timeout SET LOCAL).
    */
   async bulk(_timeoutSeconds?: number): Promise<Sql> {
+    this.assertOpen();
     if (!this.isDualPoolActive()) {
       return this.getReadPool();
     }
@@ -324,10 +329,7 @@ export class ConnectionManager {
     if (this._directPool) return this._directPool;
     // A1: cache the Promise so concurrent first callers await the same init.
     if (!this._directInit) {
-      this._directInit = this.initDirectPool().then(pool => {
-        this._directPool = pool;
-        return pool;
-      }).catch(err => {
+      this._directInit = this.initDirectPool().then(pool => this.adoptDirectPool(pool)).catch(err => {
         // Reset cache on failure so next caller can retry.
         this._directInit = null;
         throw err;
@@ -337,6 +339,8 @@ export class ConnectionManager {
     try {
       pool = await this._directInit;
     } catch (err) {
+      // A retired/disconnected manager must not restart routing on a late failure.
+      this.assertOpen();
       // #1641: the derived direct host (db.<ref>.supabase.co) is IPv6-only
       // without Supabase's IPv4 add-on. On IPv4-only networks the direct
       // pool can never connect — permanently fall back to the read pool
@@ -365,10 +369,7 @@ export class ConnectionManager {
             if (sessionUrl && sessionUrl !== this._directUrl) {
               const prevHost = this._directUrl ? this.hostOnly(this._directUrl) : 'unknown host';
               this._directUrl = sessionUrl;
-              this._sessionInit = this.initDirectPool().then(p => {
-                this._directPool = p;
-                return p;
-              });
+              this._sessionInit = this.initDirectPool().then(p => this.adoptDirectPool(p));
               const p = await this._sessionInit;
               if (!this._sessionFallbackLogged) {
                 this._sessionFallbackLogged = true;
@@ -381,6 +382,7 @@ export class ConnectionManager {
               return p;
             }
           } catch {
+            this.assertOpen();
             // Session pooler also failed → fall through to the #1641
             // read-pool kill-switch below (the original behavior).
           }
@@ -461,6 +463,21 @@ export class ConnectionManager {
     }
   }
 
+  private assertOpen(): void {
+    if (this._closed) throw Object.assign(new Error('connection-manager: closed'), { code: 'CONNECTION_ENDED' });
+  }
+
+  /** The init promise owns its new pool until this synchronous handoff, including during shutdown. */
+  private async adoptDirectPool(pool: Sql): Promise<Sql> {
+    if (this._closed) {
+      // No caller has received this pool yet, so there is no in-flight work to drain unboundedly.
+      await endPoolBounded(pool);
+      this.assertOpen();
+    }
+    this._directPool = pool;
+    return pool;
+  }
+
   /**
    * SELECT 1 latency probe on each pool. Used by doctor's connection_routing
    * check + healthCheck() in the gateway.
@@ -489,6 +506,7 @@ export class ConnectionManager {
    * (db.ts singleton path). Direct pool is always ours.
    */
   async disconnect(): Promise<void> {
+    this._closed = true;
     // #1972: end both pools concurrently with a gbrain-owned hard bound, so the
     // per-pool drains don't STACK (sequential 2s waits → ~4-6s once the
     // instance/module pool is added downstream) and neither can hang teardown
@@ -508,6 +526,7 @@ export class ConnectionManager {
 
   /** Ends a manager a reconnect superseded once its in-flight work finishes, with no hard bound (a long hold such as CREATE INDEX CONCURRENTLY completes). */
   retire(): void {
+    this._closed = true;
     const pools = [this._directPool, this._readPoolOwnedExternally ? null : this._readPool];
     this._directPool = null;
     this._directInit = null;
