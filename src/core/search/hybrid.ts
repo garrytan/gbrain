@@ -1081,8 +1081,8 @@ export async function hybridSearch(
   query: string,
   opts?: HybridSearchOpts,
 ): Promise<SearchResult[]> {
-  if (needsEngineScope(engine)) return withEngineScope(engine, () => hybridSearch(engine, query, opts));
   if (opts?.types?.length === 0) return [];
+  if (needsEngineScope(engine)) return withEngineScope(engine, () => hybridSearch(engine, query, opts));
   const timer = opts?._timings ?? UNTIMED;
   if (opts?.type || opts?.types?.length) {
     const { expandEngineTypeFilters } = await import('../schema-pack/query-types.ts');
@@ -1207,8 +1207,8 @@ export async function hybridSearchCached(
   query: string,
   opts?: HybridSearchOpts,
 ): Promise<SearchResult[]> {
-  if (needsEngineScope(engine)) return withEngineScope(engine, () => hybridSearchCached(engine, query, opts));
   if (opts?.types?.length === 0) return [];
+  if (needsEngineScope(engine)) return withEngineScope(engine, () => hybridSearchCached(engine, query, opts));
   const timer = opts?._timings ?? UNTIMED;
   const { modeInputForCache, resolvedForCache, knobsHash } = await timer.stage('setup', () => resolveCacheSearchMode(engine, opts));
   const queryPrefix = opts?._queryPrefix ?? await timer.stage('setup', () => loadEmbeddingQueryPrefix(engine));

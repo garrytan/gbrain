@@ -353,19 +353,12 @@ export async function importFromContent(
     onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void;
   } & ImportFenceOptions = {},
 ): Promise<ImportResult> {
-  if (needsEngineScope(engine)) return withEngineScope(engine, () => importFromContent(engine, slug, content, opts));
   // Normalize BEFORE any tx write: putPage lowercases via validateSlug but
   // upsertChunks used to query by the caller's raw slug, so a mixed-case slug
   // created the page row then failed the chunk upsert with "Page not found",
   // rolling back the whole import (#430).
   slug = validateSlug(slug);
 
-  // v0.18.0+ multi-source: when caller is syncing under a non-default source,
-  // every per-page tx call must carry `sourceId` so writes target the right
-  // (source_id, slug) row. Pre-fix, putPage relied on the schema DEFAULT and
-  // silently fabricated a duplicate at (default, slug) — causing later
-  // bare-slug subqueries (getTags, deleteChunks, etc.) to crash with 21000.
-  const sourceId = opts.sourceId;
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
   // so the network path behaves identically to the file path.
@@ -373,6 +366,23 @@ export async function importFromContent(
   if (screen.status === 'refused') {
     return { slug, status: screen.refusal.code === 'file_too_large' ? 'skipped' : 'error', chunks: 0, error: screen.refusal.message, refusal: screen.refusal, skip_reason: screen.refusal.code };
   }
+  if (needsEngineScope(engine)) return withEngineScope(engine, () => importScreenedContent(engine, slug, content, opts, screen));
+  return importScreenedContent(engine, slug, content, opts, screen);
+}
+
+async function importScreenedContent(
+  engine: BrainEngine,
+  slug: string,
+  content: string,
+  opts: NonNullable<Parameters<typeof importFromContent>[3]>,
+  screen: ReturnType<typeof screenImportContent>,
+): Promise<ImportResult> {
+  // v0.18.0+ multi-source: when caller is syncing under a non-default source,
+  // every per-page tx call must carry `sourceId` so writes target the right
+  // (source_id, slug) row. Pre-fix, putPage relied on the schema DEFAULT and
+  // silently fabricated a duplicate at (default, slug) — causing later
+  // bare-slug subqueries (getTags, deleteChunks, etc.) to crash with 21000.
+  const sourceId = opts.sourceId;
   const parsed = (screen as { parsed: ParsedMarkdown }).parsed;
   if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct content import', { sourceId: sourceId ?? 'default' });
   // Canonicalize only free-prose fields before protected-fence parsing, hidden
