@@ -115,7 +115,7 @@ failed on the call, `why` names it, since a failed arm is not evidence of absenc
 | `target_dropped_return_sizing` | Autocut or adaptive return trimmed it. | `get_page`, or repeat with `autocut: false` (query). |
 | `target_dropped_token_budget` | The evidence budget filled first. | Repeat with a larger `token_budget`. |
 | `target_dropped_relaxed_keyword` | Only a loose keyword match found it. | `get_page`, or rephrase with the page's own terms. |
-| `target_not_retrieved` | No arm returned it for this query. | `query --expand` (`expand: true`; one call to the configured expansion model) or rephrase. |
+| `target_not_retrieved` | No arm returned it for this query. | `query --expand` (`expand: true`; one call to the configured expansion model) or rephrase. The fix carries `consent: ["paid", "egress"]`, so it renders `next: ask_user`: the agent asks before sending the query to the model. |
 | `target_not_embedded` | Its chunks have no vectors (held from embedding or not embedded yet), so only a keyword or title match can return it. | `gbrain doctor --json` names the held pages and the embed command. |
 | `target_not_indexed` | The page has no indexed chunks. | `gbrain doctor --json` names the re-index command. |
 | `target_projection_stale` | The page changed and its searchable text is still being rebuilt. | Retry after `gbrain doctor` shows the backlog drained. |

@@ -22,7 +22,7 @@
  */
 
 import type { SearchResult, PageReadPolicy } from '../types.ts';
-import type { Action } from '../agent-output.ts';
+import type { Action, Effect } from '../agent-output.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
 import { belowSafeChunkFence, chunkGenerationFilter } from './safe-chunks.ts';
 
@@ -102,17 +102,18 @@ function armsOf(trace: TargetTrace): ExplainTargetDiagnosis['arms'] {
 type Retry = { tool: 'search' | 'query'; arguments: Record<string, unknown> };
 
 /** A complete retry: the MCP call and the CLI argv for the same arguments (#7192: a fix always names its command). */
-function retryAction(tool: 'search' | 'query', args: Record<string, unknown>, why: string): Action {
+function retryAction(tool: 'search' | 'query', args: Record<string, unknown>, why: string, consent: Effect[] = []): Action {
   const { json, ...mcpArgs } = args;
   const argv = ['gbrain', tool, String(args.query ?? '')];
   for (const [key, value] of Object.entries(mcpArgs)) {
-    if (key === 'query' || value === undefined || value === null || typeof value === 'object') continue;
+    if (key === 'query' || value === undefined || value === null) continue;
     const flag = key.replace(/_/g, '-');
-    if (typeof value === 'boolean') argv.push(value ? `--${flag}` : `--no-${flag}`);
+    if (typeof value === 'object') argv.push(`--${flag}`, JSON.stringify(value));
+    else if (typeof value === 'boolean') argv.push(value ? `--${flag}` : `--no-${flag}`);
     else argv.push(`--${flag}`, String(value));
   }
   if (json === true) argv.push('--json');
-  return { mcp: { tool, arguments: mcpArgs }, argv, consent: [], actor: 'agent', requires_exclusive: false, why };
+  return { mcp: { tool, arguments: mcpArgs }, argv, consent, actor: 'agent', requires_exclusive: false, why };
 }
 
 /** Recall-affecting arm failures on this call, as one clause (#7171): an arm that did not answer is not evidence of absence. */
@@ -165,7 +166,7 @@ export function diagnoseTrace(
   if (arms.length === 0) {
     return { target, state: 'not_retrieved', code: 'target_not_retrieved', arms, stages,
       why: `No retrieval arm (semantic, keyword, title, relational) returned the page for this query.${degradedClause(degraded)}`,
-      fix: retryAction('query', { ...retry.arguments, expand: true }, 'Expansion (one LLM call) recovers pages phrased differently from the question; or read the page directly with get_page.') };
+      fix: retryAction('query', { ...retry.arguments, expand: true }, 'Expansion (one LLM call) recovers pages phrased differently from the question; or read the page directly with get_page.', ['paid', 'egress']) };
   }
   // The page reached at least one arm: find the first post-arm stage that lost it.
   const keywordRaw = trace.last('arm:keyword_raw');

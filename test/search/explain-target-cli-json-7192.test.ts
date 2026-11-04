@@ -42,7 +42,20 @@ describe('#7192 explain_target in CLI --json', () => {
     captureRetrievalMeta('retrieval', { explain_target: diag });
     const out = JSON.parse(formatResult('search', [], { json: true, explain_target: 'notes/x' }));
     expect(out.results).toEqual([]);
-    expect(out.explain_target.fix).toMatchObject({ next: 'run', argv: ['gbrain', 'query', 'q', '--expand'] });
+    expect(out.explain_target.fix).toMatchObject({ next: 'ask_user', argv: ['gbrain', 'query', 'q', '--expand'] });
+    expect(diag.fix?.consent).toEqual(['paid', 'egress']);
+  });
+
+  test('the retry argv carries array and object arguments, so it repeats the diagnosed call', () => {
+    const t = new TargetTrace({ slug: 'notes/x' });
+    const pool = [row('notes/a', 0.9), row('notes/x', 0.7)];
+    t.observe('arm:keyword', pool);
+    for (const stage of ['fused', 'deduped', 'return_pool'] as const) t.observe(stage, pool);
+    t.observe('limit_slice', pool.slice(0, 1));
+    const diag = diagnoseTrace(t, pool.slice(0, 1), { tool: 'query', arguments: { query: 'q', limit: 1, types: ['meeting'], source_ids: ['source-a', 'source-b'] } });
+    expect(diag.code).toBe('target_beyond_limit');
+    expect(diag.fix?.argv).toEqual(['gbrain', 'query', 'q', '--limit', '7', '--types', '["meeting"]', '--source-ids', '["source-a","source-b"]']);
+    expect(diag.fix?.mcp?.arguments).toEqual({ query: 'q', limit: 7, types: ['meeting'], source_ids: ['source-a', 'source-b'] });
   });
 
   test('with --timings the diagnosis joins the timings document instead of replacing it', () => {
