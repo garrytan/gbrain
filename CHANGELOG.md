@@ -52,7 +52,7 @@ A handle is a hyphenated token with a letter in it, bare or quoted on its own (`
 #### What to watch for after you upgrade
 
 - A search naming an identifier costs one more keyword statement, served by the full-text index. Other searches run the same statements as before, except that an any-word retry of 5 to 12 words now also runs the bounded rare-word read and, when a rare word is found, one more retry statement (both already ran for retries of up to 4 words). The rare-word read skips stopwords, and on Postgres it skips words the column statistics already estimate as common, so its cost follows the question's rare words, not its length.
-- A query with a hyphenated token costs one more index lookup on page slugs: one more statement in hybrid search, and one more arm of the same statement with `--match keyword`. `keyword_total` and the `--match keyword` count include the named pages.
+- A query with a hyphenated token costs one more index lookup on page slugs. That is one more statement in hybrid search, and one more arm of the same statement with `--match keyword`. `keyword_total` and the `--match keyword` count include the named pages.
 - Pages that hold the identifier but not the other words can now rank above pages that match the question's meaning better. The page holding every word still comes first among keyword rows.
 - `_meta.retrieval.coverage.could_affect` can carry `pending_images`, and `could_affect.pending_projection` can drop for queries whose digits or short words used to match unrelated slugs.
 - A script that matched the text `clean miss` in an empty result should match `retrieval healthy` instead; `_meta.retrieval` is unchanged.
@@ -60,12 +60,12 @@ A handle is a hyphenated token with a letter in it, bare or quoted on its own (`
 
 ### Find a page by name, count pages by kind (#7191, #7233)
 
-Agents fell back to the filesystem for two kinds of lookup that gbrain had no direct answer for: finding the page called X or under path Y, and counting pages of each kind.
+Agents fell back to the filesystem for two kinds of lookup that gbrain had no direct answer for. One was finding the page called X or under path Y, and the other was counting pages of each kind.
 
 | Situation | Before | Now |
 |---|---|---|
-| Find a page by name or path | `ls`, `find` or `grep` on the checkout, or a ranked search | `gbrain find <name\|prefix\|glob> [--type T] [--source S] [--limit N]` (MCP `find_pages`). A bare name matches a title or the last slug segment, served by the trigram indexes. A prefix (contains `/`) or a glob (`*`, `?`) matches the slug or `source_path`. Rows sort by slug, with `total` and `complete`. The default limit is 50, capped at 500 locally and 100 remotely, and `limit_clamped_from` says when the cap applied |
-| Count pages by kind or source | `gbrain stats` gave brain-wide totals only | `gbrain stats --by source,type [--since 30d] [--collapse-aliases]` (MCP `get_stats` gains `by`, `since` and `collapse_aliases`) reports page counts beside distinct-slug counts, so twins across sources show. `--collapse-aliases` folds type aliases through the active schema pack |
+| Find a page by name or path | `ls`, `find` or `grep` on the checkout, or a ranked search | `gbrain find <name\|prefix\|glob> [--type T] [--source S] [--limit N]` (MCP `find_pages`). A bare name matches a title or the last slug segment, served by the trigram indexes. A prefix (contains `/`) or a glob (`*`, `?`) matches the slug or `source_path`. Rows sort by slug, with `total` and `complete`. The default limit is 50, capped at 500 locally and 100 remotely, and `limit_clamped_from` says when the cap applied. Under `--as <member>`, find and `stats --by` show only what that member reads |
+| Count pages by kind or source | `gbrain stats` gave brain-wide totals only | `gbrain stats --by source,type [--since 30d] [--collapse-aliases]` (MCP `get_stats`, an admin-scope tool, gains `by`, `since` and `collapse_aliases`) reports page counts beside distinct-slug counts, so twins across sources show. `--collapse-aliases` folds type aliases through the active schema pack |
 | Which call for which lookup | spread across the skills | one table in `skills/conventions/brain-first.md`, copied into AGENTS.md, INSTALL_FOR_AGENTS.md, skills/RESOLVER.md and the bootstrap template by `bun run regen:all` |
 
 Remote callers get the shared read policy (private pages, trust floor, quarantine), their source grant, and the ranked-search hard excludes (`test/`, `.raw/`), so every remote `find` hit is also readable through remote `get_page`. On Postgres these reads run with JIT off. On a 305k-page brain at 40 ms RTT, a cold `find` costs about as much as `gbrain get` of one page (about 1.0 to 1.2 s). No migration.
@@ -91,7 +91,7 @@ Remote callers get the shared read policy (private pages, trust floor, quarantin
 
 ### Embedded-core guardrails (#8098)
 
-Guardrails for the embedded core: a ratchet on what `src/core` reads from the process and the machine, a two-brains-in-one-process suite, a hermeticity test, and an upgrade-from-the-previous-release harness. Nothing changes for local users.
+The embedded core gets guardrails. They are a ratchet on what `src/core` reads from the process and the machine, a two-brains-in-one-process suite, a hermeticity test, and an upgrade-from-the-previous-release harness. Nothing changes for local users.
 
 The planned embedded core lets one server process run many brains, each opened from its own settings. This release adds the guards that wave and every later one is measured against, with no runtime change. `bun run check:core-world-reads` (in `bun run verify`) counts, per file in `src/core`, `loadConfig` calls, environment reads, `fs` imports, module-level collections, spawn imports, process-wide hooks and `AsyncLocalStorage` stores, and fails when a count rises or a baseline row goes stale. The two-engine suite opens two brains in one process on PGLite and Postgres and shows what they still share today (AI keys and model clients, the query-embedding cache, the usage and telemetry sinks, link semantics, the admission and retrieval-tracking caches, page-lock names and home paths, and on Postgres the connection pool), each case naming the wave that fixes it. The upgrade harness opens a brain and keyless config written by the previous release, as a repository brain, a content-directory brain and a no-root brain, and requires the same page, schema, resolved settings and untouched config file.
 
