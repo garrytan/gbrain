@@ -19,5 +19,6 @@
     "<!-- gbrain-runbook-stamp: {version} -->"
   ],
   "stamp_placeholders": ["TBD"],
+  "review_exclude_paths": ["docs/**", "test/fixtures/goldens/**"],
   "migrations": { "dir": "src/core/schema-migrations", "id": "^v(\\d+)-" }
 }

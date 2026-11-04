@@ -741,6 +741,11 @@ gstack reads both from master, so a branch's edits take effect after it merges.
   `stamp_placeholders: ["TBD"]` lets a branch's own `since: 'TBD'` row become
   `since: '<version>'` at the slot and still count as a stamp, so /ship's
   finish step does not read the restamp as a change made after review.
+  `review_exclude_paths: ["docs/**", "test/fixtures/goldens/**"]` (gstack
+  1.93.33.0 or newer, read from master only) keeps docs and generated goldens
+  out of /ship's reviewer diffs, so a large wave stays under the reviewers'
+  2 MB ceiling. Those files stay covered by the privacy, gitleaks and doc
+  checks, and every code, test and config line is still reviewed.
 
 ### How a contributor PR lands
 
