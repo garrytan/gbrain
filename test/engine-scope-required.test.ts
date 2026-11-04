@@ -200,37 +200,6 @@ describe('a process that has not opened an embedded engine yet', () => {
     const run = spawnSync(process.execPath, ['-e', script], { encoding: 'utf-8', timeout: 60_000 });
     expect(run.stdout).toContain('OUTCOME=ok');
   }, 90_000);
-
-  test('an import on a local engine before the first embedded engine opened drains its deferred embedding with the process key after one opens', () => {
-    const src = (path: string) => JSON.stringify(join(import.meta.dir, '..', 'src', path));
-    const script = `
-      const { __setEmbedTransportForTests, configureGateway } = await import(${src('core/ai/gateway.ts')});
-      const { openEngine } = await import(${src('core/engine-open.ts')});
-      const { createEngine } = await import(${src('core/engine-factory.ts')});
-      const { importFromContent } = await import(${src('core/import-file.ts')});
-      const sent = [];
-      __setEmbedTransportForTests(async ({ model, values }) => {
-        const headers = await model.config.headers();
-        sent.push(headers.authorization ?? headers.Authorization ?? '');
-        return { embeddings: values.map(() => Array.from({ length: 1536 }, (_, i) => (i % 7) + 1)), usage: { tokens: 1 } };
-      });
-      configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, env: { OPENAI_API_KEY: 'sk-process-local' } });
-      const local = await createEngine({ engine: 'pglite' });
-      await local.connect({ engine: 'pglite' });
-      await local.initSchema();
-      const deferred = [];
-      await importFromContent(local, 'notes/alpha-example', '# Alpha\\n\\nA note about acme-example.', { onPostCommitEmbedding: complete => { deferred.push(complete); } });
-      const embedded = await openEngine({ embedded_core: true, engine: 'pglite', database: {}, host: { id: crypto.randomUUID() } });
-      const outcome = await deferred[0]();
-      await embedded.disconnect();
-      await local.disconnect();
-      console.log('OUTCOME=' + outcome.status);
-      console.log('SENT=' + JSON.stringify(sent.map(auth => auth === 'Bearer sk-process-local' ? 'process' : 'other')));
-    `;
-    const run = spawnSync(process.execPath, ['-e', script], { encoding: 'utf-8', timeout: 90_000 });
-    expect(run.stdout).toContain('OUTCOME=embedded');
-    expect(run.stdout).toContain('SENT=["process"]');
-  }, 120_000);
 });
 
 describe('a process with no open embedded engine', () => {

@@ -21,10 +21,10 @@ export function withEngineScope<T>(engine: object, fn: () => T): T {
   return scope.run(engine, fn);
 }
 
-/** True when the call does not run in `engine`'s scope yet: the entry point re-enters itself in it, so work it defers keeps that scope. */
+/** True in a process that opened an embedded engine when the call does not run in `engine`'s scope yet: the entry point re-enters itself in it. */
 export function needsEngineScope(engine: object): boolean {
   const current = scope.getStore();
-  return current === undefined || engineKey(current) !== engineKey(engine);
+  return processHasEmbeddedEngines() && (current === undefined || engineKey(current) !== engineKey(engine));
 }
 
 /** The engine scope the current call runs in, for deferred work to resume in with runInEngineScope. */
