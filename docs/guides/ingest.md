@@ -38,7 +38,9 @@ What gets written:
 
 A name one edit or one acronym letter away from an existing entity name or alias (`ACMX` next to `ACME`) is
 flagged in `near_names` and proposed, never merged
-([entity detection](entity-detection.md#ingest)).
+([entity detection](entity-detection.md#ingest)). A name that matches more than one existing page (two people
+named Alice Example) attaches to neither: it is `skipped: ambiguous_name` with the candidates in `near_names`, and
+a claim naming only that entity is `skipped: ambiguous_entity`.
 
 ## Keyless and keyed runs
 

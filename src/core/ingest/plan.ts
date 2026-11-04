@@ -7,7 +7,7 @@
 import { createHash } from 'node:crypto';
 import type { OperationContext } from '../ops/contract.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence, validatePageSlug } from '../ops/context.ts';
-import { resolveStrictEntityReference } from '../entities/resolve.ts';
+import { entityReferenceCandidates, resolveStrictEntityReference } from '../entities/resolve.ts';
 import {
   buildNearNameIndex, classifyNearName, loadEntityNames, queryNearNames, shardCountFor, type NearNameMatch,
 } from '../entities/near-name.ts';
@@ -126,8 +126,15 @@ export async function planIngest(input: PlanInput): Promise<IngestPlan> {
     if (type === 'person' && !/\s/.test(e.name.trim())) { skip('bare_first_name'); continue; }
     const strict = await resolveStrictEntityReference(ctx.engine, sourceId, e.name, { sameName: true, excludePrivate });
     const near: NearNameMatch[] = indexes.flatMap(index => queryNearNames(index, e.name));
-    const same = near.find(m => m.kind === 'same');
-    const existingSlug = strict.slug ?? same?.slug ?? null;
+    const same = near.filter(m => m.kind === 'same');
+    // An ambiguous name attaches to no namesake: skipped with every candidate named, as remember refuses it.
+    if (strict.slug === null && (strict.miss === 'ambiguous' || new Set(same.map(m => m.slug)).size > 1)) {
+      const candidates = [...new Set([...same.map(m => m.slug), ...await entityReferenceCandidates(ctx.engine, sourceId, e.name, { excludePrivate })])];
+      const page: PlannedPage = { ...base, type, slug: '', status: 'skipped', reason: 'ambiguous_name', near_names: candidates.map(slug => ({ slug, name: e.name, kind: 'same' })) };
+      pages.push(page); byName.set(key, page);
+      continue;
+    }
+    const existingSlug = strict.slug ?? same[0]?.slug ?? null;
     if (existingSlug) {
       const page: PlannedPage = insideGrant(ctx, existingSlug)
         ? { ...base, type, slug: existingSlug, status: 'existing' }
@@ -171,7 +178,11 @@ export async function planIngest(input: PlanInput): Promise<IngestPlan> {
     for (const n of f.entities) { const p = byName.get(n.toLowerCase()); if (p && p.status !== 'skipped') named.set(p.slug, p); }
     for (const p of pages) if (p.status !== 'skipped' && !named.has(p.slug) && firstMention(f.fact, p.name) !== Number.POSITIVE_INFINITY) named.set(p.slug, p);
     const targets = [...named.values()].sort((a, b) => (a.first_mention < 0 ? Infinity : a.first_mention) - (b.first_mention < 0 ? Infinity : b.first_mention)).slice(0, 2);
-    if (!targets.length) { facts.push({ ...base, status: 'skipped', reason: 'no_entity', copies: [] }); continue; }
+    if (!targets.length) {
+      const ambiguous = f.entities.some(n => byName.get(n.toLowerCase())?.reason === 'ambiguous_name');
+      facts.push({ ...base, status: 'skipped', reason: ambiguous ? 'ambiguous_entity' : 'no_entity', copies: [] });
+      continue;
+    }
     const copies: PlannedCopy[] = [];
     for (const t of targets) {
       if (t.status !== 'existing') { copies.push({ entity_slug: t.slug, status: 'planned' }); continue; }

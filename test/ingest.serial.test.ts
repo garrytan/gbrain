@@ -128,6 +128,10 @@ for (const storage of ['git', 'database'] as ReviewStorage[]) {
       fx = await reviewDoorFixture(engine, storage);
       await S.undoUnverifiableScenario(engine);
     }, 60_000);
+    test('an ambiguous name attaches to neither namesake, and its claim is written nowhere', async () => {
+      fx = await reviewDoorFixture(engine, storage);
+      await S.ambiguousNamesakeScenario(engine);
+    }, 60_000);
   });
 }
 

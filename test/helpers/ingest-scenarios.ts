@@ -689,3 +689,30 @@ export async function failedWindowSpendScenario(engine: BrainEngine): Promise<vo
     expect(first.spent_usd).toBeCloseTo(2 * Number(state.first), 6);
   } finally { stub.restore(); }
 }
+
+
+/**
+ * Item A (outside review of #8481): two distinct pages share the name the document uses. The strict resolver answers
+ * ambiguous, so ingest attaches the name to neither namesake: the name is skipped with both candidates named and its
+ * claim is written to no page.
+ */
+export async function ambiguousNamesakeScenario(engine: BrainEngine): Promise<void> {
+  const put = operationsByName.put_page!;
+  for (const suffix of ['a', 'b']) {
+    await put.handler(reviewCtx(engine), { slug: 'people/alice-example-' + suffix, content: '---\ntype: person\ntitle: Alice Example\n---\n\nAlice Example ' + suffix + ' is a founder.\n' });
+  }
+  await drain(engine);
+  const { resolveStrictEntityReference } = await import('../../src/core/entities/resolve.ts');
+  expect(await resolveStrictEntityReference(engine, 'default', 'Alice Example', { sameName: true })).toEqual({ slug: null, miss: 'ambiguous' });
+  const stub = stubChat({ rows: [{ marker: 'moved to Lisbon', entities: [{ name: 'Alice Example', type: 'person', context: 'Alice Example moved to Lisbon in March.' }],
+    facts: [{ fact: 'Alice Example moved to Lisbon in March.', kind: 'event', entities: ['Alice Example'] }] }] });
+  try {
+    const report = await ingest(engine, { content: 'Alice Example moved to Lisbon in March.', title: 'Call notes' });
+    const alice = report.pages.find((p: Report) => p.name === 'Alice Example');
+    expect(alice).toMatchObject({ status: 'skipped', reason: 'ambiguous_name' });
+    expect(alice.near_names.map((n: Report) => n.slug).sort()).toEqual(['people/alice-example-a', 'people/alice-example-b']);
+    expect(report.facts.find((f: Report) => f.fact === 'Alice Example moved to Lisbon in March.')).toMatchObject({ status: 'skipped', reason: 'ambiguous_entity' });
+    expect((await factsOn(engine, 'people/alice-example-a')).length).toBe(0);
+    expect((await factsOn(engine, 'people/alice-example-b')).length).toBe(0);
+  } finally { stub.restore(); }
+}

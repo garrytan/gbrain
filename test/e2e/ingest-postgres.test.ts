@@ -82,6 +82,7 @@ d('ingest and ingest_undo (live Postgres)', () => {
     test('undo keeps changed pages (' + label + ')', async () => { fx = await fixture(storage); await S.undoKeepsChangedPagesScenario(engine); }, 90_000);
     test('undo keeps relied-on claims (' + label + ')', async () => { fx = await fixture(storage); await S.undoKeepsReliedOnScenario(engine); }, 90_000);
     test('undo unverifiable (' + label + ')', async () => { fx = await fixture(storage); await S.undoUnverifiableScenario(engine); }, 60_000);
+    test('ambiguous namesake (' + label + ')', async () => { fx = await fixture(storage); await S.ambiguousNamesakeScenario(engine); }, 60_000);
   }
   test('Git target unavailable refuses before writes', async () => { fx = await fixture('git'); await S.storageUnavailableScenario(engine); }, 60_000);
 });
