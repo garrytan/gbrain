@@ -352,6 +352,7 @@ export const SECTIONS: DocSection[] = [
         description:
           "Mirror GitHub issues, PRs, comments, reviews and CI checks as brain pages. One key + one registration command to a searchable mirror; webhook-driven instant refresh, poll-sweep fallback, daily reconcile, App-credential option.",
         path: "docs/guides/github-source.md",
+        includeInFull: false,
       },
       {
         title: "docs/mcp/DEPLOY.md",

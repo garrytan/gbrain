@@ -2,6 +2,10 @@
 # scripts/check-core-world-reads.ts via `bun run check:core-world-reads` (in verify).
 # Rows: path<TAB>metric<TAB>count<TAB>justification (the wave that removes it, or why it stays).
 # Counts only fall; --prune lowers stale rows and never raises one. docs/architecture/topologies.md#embedded-core-planned
+src/core/access/policy-git.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/access/policy-git.ts	process_env	4	W6: settings plane out of the core
+src/core/access/policy-git.ts	spawn_import	1	W7: process-wide effects move to src/cli
+src/core/access/policy-transfer.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/advisor/collect-setup-smells.ts	process_env	1	W6: settings plane out of the core
 src/core/advisor/collect-uninstalled-brain-pack.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/advisor/history.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -27,6 +31,7 @@ src/core/ai/chat-fallback-planes.ts	process_env	4	W3: AI settings arrive on the 
 src/core/ai/chat-key-probe.ts	load_config	1	W3: AI settings arrive on the engine
 src/core/ai/chat-key-probe.ts	process_env	1	W3: AI settings arrive on the engine
 src/core/ai/chat-usage.ts	als_store	2	W2: engine scope (decision E) replaces ad hoc async context
+src/core/ai/chat-usage.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/ai/decide/config.ts	process_env	1	W3: AI settings arrive on the engine
 src/core/ai/decide/dataset.ts	module_collection	2	W3: per-engine gateway state
 src/core/ai/decide/index.ts	process_env	1	W3: AI settings arrive on the engine
@@ -34,11 +39,12 @@ src/core/ai/decide/receipts.ts	process_env	2	W3: AI settings arrive on the engin
 src/core/ai/decide/review-lane.ts	module_collection	1	W3: per-engine gateway state
 src/core/ai/decide/runtime.ts	module_collection	1	W3: per-engine gateway state
 src/core/ai/decide/store.ts	module_collection	2	W3: per-engine gateway state
+src/core/ai/engine-gateway.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/ai/gateway-model-sources.ts	module_collection	1	W3: per-engine gateway state
 src/core/ai/gateway-model-sources.ts	process_env	1	W3: AI settings arrive on the engine
 src/core/ai/gateway.ts	als_store	2	W2: engine scope (decision E) replaces ad hoc async context
 src/core/ai/gateway.ts	load_config	3	W3: AI settings arrive on the engine
-src/core/ai/gateway.ts	module_collection	5	W3: per-engine gateway state
+src/core/ai/gateway.ts	module_collection	1	W3: per-engine gateway state
 src/core/ai/gateway.ts	process_env	4	W3: AI settings arrive on the engine
 src/core/ai/invocation-guard.ts	als_store	3	W2: engine scope (decision E) replaces ad hoc async context
 src/core/ai/invocation-guard.ts	module_collection	2	W3: per-engine gateway state
@@ -223,8 +229,9 @@ src/core/config.ts	load_config	1	W6: settings plane out of the core
 src/core/config.ts	process_env	54	W6: settings plane out of the core
 src/core/connection-audit.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/connection-manager.ts	process_env	6	W6: settings plane out of the core
+src/core/connectors/api-source.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/connectors/credentials.ts	fs_import	1	W7: filesystem boundary moves to the local app
-src/core/connectors/credentials.ts	process_env	2	W6: settings plane out of the core
+src/core/connectors/credentials.ts	process_env	4	W6: settings plane out of the core
 src/core/connectors/item-holds-store.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/connectors/providers/claude.ts	module_collection	3	W6: per-engine state, or mark as a constant table
 src/core/connectors/spool.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -335,6 +342,7 @@ src/core/embed-stale-images.ts	process_global	1	W7: process-wide effects move to
 src/core/embed-stale-images.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/embed-stall.ts	process_env	1	W6: settings plane out of the core
 src/core/embed-takes.ts	process_env	1	W6: settings plane out of the core
+src/core/embedded-engine.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/embedding-dim-check.ts	load_config	1	W6: settings plane out of the core
 src/core/embedding-dim-check.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/embedding-disabled.ts	load_config	1	W6: settings plane out of the core
@@ -346,6 +354,8 @@ src/core/embedding-state.ts	load_config	1	W6: settings plane out of the core
 src/core/engine-connect.ts	load_config	1	W6: settings plane out of the core
 src/core/engine-connect.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/engine-connect.ts	process_env	2	W6: settings plane out of the core
+src/core/engine-open.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
+src/core/engine-scope-store.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/env-number.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/env-number.ts	process_env	1	W6: settings plane out of the core
 src/core/env-trust.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -475,13 +485,15 @@ src/core/ingestion/sources/markdown-greenfield.ts	fs_import	1	W7: filesystem bou
 src/core/init-embed-check.ts	process_env	1	W6: settings plane out of the core
 src/core/interaction.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/interaction.ts	process_env	3	W6: settings plane out of the core
-src/core/last-retrieved.ts	module_collection	1	W6: per-engine state, or mark as a constant table
+src/core/last-retrieved.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/link-extraction.ts	process_env	2	W6: settings plane out of the core
 src/core/link-validity.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/markdown-chunks.ts	process_env	1	W6: settings plane out of the core
 src/core/markdown.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/mcp-client.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/mcp-client.ts	process_env	1	W6: settings plane out of the core
+src/core/meetings/source-add.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/meetings/source-add.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/memory-trace.ts	process_env	2	W6: settings plane out of the core
 src/core/mentions/pass.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/migrate.ts	process_env	2	W6: settings plane out of the core
@@ -573,7 +585,6 @@ src/core/ops/contract.ts	module_collection	1	W6: per-engine state, or mark as a 
 src/core/ops/facts.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/ops/files.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/ops/schema-packs.ts	fs_import	2	W7: filesystem boundary moves to the local app
-src/core/ops/schema-packs.ts	load_config	4	W6: settings plane out of the core
 src/core/ops/skillopt.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/output/post-write.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/oversized-backfill.ts	load_config	2	W6: settings plane out of the core
@@ -597,7 +608,7 @@ src/core/persistence/bounded-reads.ts	module_collection	1	W6: per-engine state, 
 src/core/persistence/bundle-files.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/bundle-files.ts	process_global	1	W7: process-wide effects move to src/cli
 src/core/persistence/canonical-projections.ts	module_collection	1	W6: per-engine state, or mark as a constant table
-src/core/persistence/capacity-snapshot.ts	module_collection	3	W6: per-engine state, or mark as a constant table
+src/core/persistence/capacity-snapshot.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/persistence/checkout-state.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/persistence/compaction-pass.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/persistence/connector-sync.ts	fs_import	1	W5: repo-less persistence for hosts
@@ -652,6 +663,7 @@ src/core/persistence/hosted-repo.ts	spawn_import	1	W7: process-wide effects move
 src/core/persistence/housekeeping-turn.ts	process_env	1	W6: settings plane out of the core
 src/core/persistence/identity.ts	als_store	3	W2: engine scope (decision E) replaces ad hoc async context
 src/core/persistence/identity.ts	fs_import	1	W5: repo-less persistence for hosts
+src/core/persistence/identity.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/persistence/identity.ts	process_env	2	W6: settings plane out of the core
 src/core/persistence/ignore-rules.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/ignore-rules.ts	module_collection	3	W6: per-engine state, or mark as a constant table
@@ -680,7 +692,6 @@ src/core/persistence/ownership.ts	process_env	2	W6: settings plane out of the co
 src/core/persistence/page-mutations.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/page-prepare.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/page-purge.ts	module_collection	3	W6: per-engine state, or mark as a constant table
-src/core/persistence/page-visibility.ts	process_env	1	W6: settings plane out of the core
 src/core/persistence/pending-import.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/persistence/physical-root-record.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/physical-root-record.ts	spawn_import	1	W7: process-wide effects move to src/cli
@@ -693,6 +704,7 @@ src/core/persistence/prepared-maintenance.ts	load_config	1	W6: settings plane ou
 src/core/persistence/projection-reindex.ts	load_config	1	W6: settings plane out of the core
 src/core/persistence/protocol.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/persistence/publication-deadline.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
+src/core/persistence/publication-deadline.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/persistence/publication-timing.ts	process_env	1	W6: settings plane out of the core
 src/core/persistence/purge-deleted.ts	load_config	1	W6: settings plane out of the core
 src/core/persistence/put-page-screen.ts	load_config	1	W6: settings plane out of the core
@@ -706,6 +718,7 @@ src/core/persistence/reconcile.ts	load_config	1	W6: settings plane out of the co
 src/core/persistence/recovery-resolve.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/resolve-paths.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/root-registry.ts	fs_import	1	W5: repo-less persistence for hosts
+src/core/persistence/root-registry.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/persistence/rows-behind.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/persistence/screening-paths.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/persistence/segmented-mirror-gate.ts	module_collection	2	W6: per-engine state, or mark as a constant table
@@ -721,7 +734,7 @@ src/core/persistence/sync-authority.ts	als_store	1	W2: engine scope (decision E)
 src/core/persistence/sync-blobs.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/persistence/sync-capacity-preflight.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/sync-discovery.ts	fs_import	1	W5: repo-less persistence for hosts
-src/core/persistence/sync-discovery.ts	module_collection	1	W6: per-engine state, or mark as a constant table
+src/core/persistence/sync-discovery.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/persistence/sync-discovery.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/persistence/sync-entry-fault.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/sync-entry-fault.ts	module_collection	1	W6: per-engine state, or mark as a constant table
@@ -778,7 +791,7 @@ src/core/persistence/worktree-manifest.ts	fs_import	1	W5: repo-less persistence 
 src/core/persistence/worktree-refresh.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/worktree-refresh.ts	load_config	2	W6: settings plane out of the core
 src/core/persistence/worktree-refresh.ts	module_collection	1	W6: per-engine state, or mark as a constant table
-src/core/persistence/worktree-refresh.ts	process_env	5	W6: settings plane out of the core
+src/core/persistence/worktree-refresh.ts	process_env	7	W6: settings plane out of the core
 src/core/persistence/write-wait.ts	load_config	2	W6: settings plane out of the core
 src/core/persistence/write-wait.ts	process_env	3	W6: settings plane out of the core
 src/core/pg-access-classify.ts	process_env	1	W6: settings plane out of the core
@@ -847,6 +860,7 @@ src/core/repair/registry.ts	load_config	1	W6: settings plane out of the core
 src/core/repair/rename-identity.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/rows-behind.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/segmented-mirror.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/repair/segmented-tiling.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/repair/slug-autoheal.ts	load_config	1	W6: settings plane out of the core
 src/core/repair/slug-conflicts.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/slug-conflicts.ts	process_env	2	W6: settings plane out of the core
@@ -890,6 +904,7 @@ src/core/search/cosine-rescore.ts	process_env	1	W6: settings plane out of the co
 src/core/search/decide-stage.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/search/eval.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/search/eval.ts	load_config	1	W6: settings plane out of the core
+src/core/search/hnsw-iterative-scan.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/search/hnsw-iterative-scan.ts	process_env	1	W6: settings plane out of the core
 src/core/search/hybrid.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/search/hybrid.ts	process_env	2	W6: settings plane out of the core
@@ -900,8 +915,8 @@ src/core/search/image-loader.ts	fs_import	1	W7: filesystem boundary moves to the
 src/core/search/image-vector-presence.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/search/mode-switch-ux.ts	process_env	1	W6: settings plane out of the core
 src/core/search/private-visibility.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
-src/core/search/private-visibility.ts	module_collection	3	W6: per-engine state, or mark as a constant table
-src/core/search/private-visibility.ts	process_env	1	W6: settings plane out of the core
+src/core/search/private-visibility.ts	module_collection	6	W6: per-engine state, or mark as a constant table
+src/core/search/private-visibility.ts	process_env	4	W6: settings plane out of the core
 src/core/search/projection-readiness.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/search/projection-readiness.ts	process_env	1	W6: settings plane out of the core
 src/core/search/projection-statistics.ts	module_collection	1	W6: per-engine state, or mark as a constant table
@@ -910,7 +925,9 @@ src/core/search/recency-decay.ts	process_env	1	W6: settings plane out of the cor
 src/core/search/safe-chunks.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/search/search-cost.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/search/source-boost.ts	process_env	2	W6: settings plane out of the core
+src/core/search/telemetry.ts	module_collection	3	W6: per-engine state, or mark as a constant table
 src/core/search/token-budget.ts	process_env	1	W6: settings plane out of the core
+src/core/search/vector-legacy-guard.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/search/vector-legacy-guard.ts	process_env	1	W6: settings plane out of the core
 src/core/secret-scan-allowlist.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/secret-scan-allowlist.ts	module_collection	1	W6: per-engine state, or mark as a constant table
@@ -934,15 +951,24 @@ src/core/serve-service.ts	fs_import	1	W7: filesystem boundary moves to the local
 src/core/serve-service.ts	process_env	1	W6: settings plane out of the core
 src/core/serve-sync-runner.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/serve-sync-runner.ts	process_env	2	W6: settings plane out of the core
+src/core/session-cwd.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/session-cwd.ts	process_env	2	W6: settings plane out of the core
 src/core/setup/brain-first.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/setup/brain-first.ts	process_env	10	W6: settings plane out of the core
 src/core/setup/claude-code.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/setup/codex.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/setup/hermes-turn-hook.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/setup/hook-launcher-refresh.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/setup/hook-launcher.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/setup/launcher-lanes.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/setup/local-receipts.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/setup/openclaw-turn-plugin.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/setup/openclaw-turn-plugin.ts	process_env	2	W6: settings plane out of the core
 src/core/setup/openclaw-turn-plugin.ts	spawn_import	1	W7: process-wide effects move to src/cli
+src/core/setup/skills-block.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/setup/skills-block.ts	module_collection	1	W6: per-engine state, or mark as a constant table
+src/core/setup/skills-block.ts	process_env	1	W6: settings plane out of the core
+src/core/setup/skills-block.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/setup/turn-hook-check.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/setup/turn-hook-check.ts	process_env	4	W6: settings plane out of the core
 src/core/setup/turn-hook-check.ts	spawn_import	1	W7: process-wide effects move to src/cli
